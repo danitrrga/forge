@@ -1,0 +1,7 @@
+{
+  "_doc": "The global npm and pip packages forge toolchain checks under the current node and python, and forge toolchain --fix installs at the pinned version when they are missing (a package that is present at another version is only reported). forge init no longer writes this file: a stranger's GSD is unpatched and comes from pnpm dlx (gsd_patches false), so nothing is pinned; copy it to config/toolchain.json to pin a package by hand. Add an entry per package: {\"name\": ..., \"version\": ..., \"why\": ...}.",
+  "npm": [
+    {"name": "get-shit-done-cc", "version": "1.42.3", "why": "GSD's runtime: scripts/sync/sync_gsd_runtime.py stages the package's own installer to regenerate the gsd agents, engine and skills"}
+  ],
+  "pip": []
+}

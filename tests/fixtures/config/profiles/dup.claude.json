@@ -1,0 +1,11 @@
+{
+  "_doc": "A toy profile whose ~/.claude.json key a suite seeds twice, once with a trailing slash. project_path is a placeholder: a suite moves it into its own toy world.",
+  "project": "dup",
+  "project_path": "/srv/toy/dup",
+  "enableAllProjectMcpServers": true,
+  "servers": [],
+  "env": {"TOY": "1"},
+  "plugins_keep": [],
+  "skills_keep": ["*"],
+  "permissions": {}
+}

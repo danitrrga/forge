@@ -1,0 +1,13 @@
+#!/bin/sh
+# The personal-data patterns over the commit message: `forge commit` reuses one message for the
+# engine and the data history, so it is checked before it can be published.
+root=$(git rev-parse --show-toplevel) || exit 1
+forge="$root/bin/forge"
+if [ ! -x "$forge" ]; then
+    echo "commit-msg: refused: $forge is missing, so the personal-data check cannot run" >&2
+    exit 1
+fi
+"$forge" check-public --message "$1" || {
+    echo "commit-msg: refused: personal data in the message, listed above; reword it" >&2
+    exit 1
+}

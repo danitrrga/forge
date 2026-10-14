@@ -1,0 +1,11 @@
+{
+  "_doc": "A toy trimmed profile that is not in skill_keep.extras: it takes the gsd-* baseline by union. project_path is a placeholder: a suite moves it into its own toy world.",
+  "project": "tool",
+  "project_path": "/srv/toy/tool",
+  "enableAllProjectMcpServers": true,
+  "servers": [],
+  "env": {},
+  "plugins_keep": [],
+  "skills_keep": ["toy-common"],
+  "permissions": {}
+}

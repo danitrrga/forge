@@ -1,0 +1,33 @@
+{
+  "_doc": "The toy forge.json the suites build their world from (tests/sandbox.py seed()): every integration on but jev (its setup.py is a private skill a stranger's copy lacks), a few neutral skill tables so the generators have something to apply, and nothing of anyone's machine. Same shape as examples/forge.json. The names under skill_keep are made up: toy-common is the one skill every trimmed profile keeps, and app.claude.json is the one profile that takes the gsd-* baseline by full replace. A suite that needs another table writes its own copy over this one.",
+  "integrations": {
+    "codex": true,
+    "gsd": true,
+    "jev": false,
+    "hindsight": true,
+    "caveman": true
+  },
+  "user_settings": {"model": "sonnet", "advisorModel": "opus", "env": {"TOY_FLAG": "1"}},
+  "user_hooks": [],
+  "skill_keep": {
+    "sets": {},
+    "design_permissions": {
+      "allow": [],
+      "additionalDirectories": []
+    },
+    "extras": {
+      "app.claude.json": []
+    },
+    "no_gsd_baseline": [],
+    "common_skills": ["toy-common"],
+    "common_permissions": {
+      "allow": []
+    },
+    "common_env": {"TOY_ENV": "1", "MCPORTER_CONFIG": "~/.config/mcporter/mcporter.json"},
+    "common_plugins": [],
+    "common_opt_out": {},
+    "common_exclude": []
+  },
+  "instruction_files_skip": [],
+  "doctor_extra": []
+}

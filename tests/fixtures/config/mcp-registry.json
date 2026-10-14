@@ -1,0 +1,11 @@
+{
+  "_doc": "A toy MCP registry for the suites that run the generators (tests/sandbox.py seed()): one stdio server with no secret, which no toy profile asks for.",
+  "servers": {
+    "toy-echo": {
+      "type": "stdio",
+      "command": "toy-echo",
+      "args": [],
+      "env": {}
+    }
+  }
+}

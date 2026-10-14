@@ -1,0 +1,4 @@
+{
+  "_doc": "The MCP servers forge can give a project, one entry each: {\"name\": {\"type\": \"stdio\", \"command\": \"...\", \"args\": [], \"env\": {\"TOKEN\": \"${NAME}\"}}}. A ${NAME} in env is resolved from credentials/secrets.json when the profile is applied, and a server whose secret is missing is not written. A profile lists the servers it gets in its servers field. Keys that start with _ are documentation.",
+  "servers": {}
+}

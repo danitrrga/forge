@@ -1,0 +1,127 @@
+# The engine allowlist: what the public history tracks. Everything else is private data.
+#
+# `/*` ignores every top-level entry; each `!/dir/` below lets one back in, and a `/dir/*` pair
+# narrows a directory that is only partly public. Last match wins, so order matters. A new file
+# in an allowlisted directory is public; a new file anywhere else is private until a line here
+# names it (`forge commit` says which line). At the split this file becomes the engine's own
+# .gitignore, and until then `git ls-files -c -i --exclude-from=publish/engine.gitignore` lists
+# what it would leave out.
+/*
+
+# Root files the engine owns.
+!/.gitignore
+!/README.md
+!/LICENSE
+!/NOTICE
+!/CLAUDE.md
+!/AGENTS.md
+
+# Whole directories.
+!/bin/
+!/forge/
+!/githooks/
+!/examples/
+!/.github/
+!/tests/
+/tests/test_gate.py
+
+# hooks/: the guards, the output discipline, the router, the notifier, caveman's two, and their tests.
+!/hooks/
+/hooks/*
+!/hooks/guard_tool_use.py
+!/hooks/worktree_guard.py
+!/hooks/gsd-prompt-guard.js
+!/hooks/gsd-read-injection-scanner.js
+!/hooks/gsd_output_discipline.py
+!/hooks/ref_corpus_router.py
+!/hooks/omarchy_notify.py
+!/hooks/caveman_house_rules.py
+!/hooks/caveman_persist_level.js
+!/hooks/test_guard_tool_use.py
+!/hooks/test_guard_mutants.py
+!/hooks/test_worktree_guard.py
+!/hooks/test_gsd_output_discipline.py
+!/hooks/test_read_injection_scanner.py
+!/hooks/test_read_injection_scanner.mjs
+
+# scripts/: the metrics, and the sync generators with their tests.
+!/scripts/
+/scripts/*
+!/scripts/metrics/
+!/scripts/sync/
+/scripts/sync/*
+!/scripts/sync/relink_skills.py
+!/scripts/sync/verify_skill_refs.py
+!/scripts/sync/sync_gsd_runtime.py
+!/scripts/sync/sync_skill_keep.py
+!/scripts/sync/sync_agent_config.py
+!/scripts/sync/sync_system_doc.py
+!/scripts/sync/memory_doctor.py
+!/scripts/sync/test_relink_skills.py
+!/scripts/sync/test_sync_gsd_runtime.py
+!/scripts/sync/test_sync_skill_keep.py
+!/scripts/sync/test_sync_system_doc.py
+!/scripts/sync/test_memory_doctor.py
+
+# config/: the GSD patch payloads only.
+!/config/
+/config/*
+!/config/gsd/
+
+# The private history lives here, in the same folder.
+/.forge-data.git
+
+# ---- today's .gitignore, verbatim ----
+# The credential store — app secrets, OAuth files. Never commit.
+credentials/
+config/secrets.json
+config/secrets.*.json
+# A timestamped backup of the secrets file is not matched by either line above:
+# secrets.json.bak.<epoch> has no .json suffix. One such file sat untracked and
+# unignored after a key rotation.
+config/secrets.json.bak.*
+.env
+.secrets
+.secrets/
+client_secret_*.json
+*googleusercontent.com.json
+
+# Generated: the generator resolves ${VAR} into real tokens here.
+.mcp.json
+**/.mcp.json
+.claude/AGENT-SYSTEM.md
+.claude/settings.local.json
+
+# claude-mem archive stores (retired) + audit logs — per-machine runtime state.
+data/memory/
+logs/
+
+# Python / Node
+__pycache__/
+*.pyc
+node_modules/
+
+# One-shot backups. Git is the real rollback; a .bak is written once, ever.
+*.bak
+
+# OS
+.DS_Store
+Thumbs.db
+
+
+# vendored MCP server installs (node_modules trees)
+vendor/
+
+# Design-system benchmark: upstream harness checkout, generated fixtures, the
+# isolated agent home and run artifacts. benchmarks/design-system/systems.json and
+# harness.pin are the only committed parts.
+benchmarks/design-system/harness/
+benchmarks/design-system/fixtures/
+benchmarks/design-system/agent-home/
+benchmarks/design-system/runs/
+benchmarks/design-system/audit.json
+.codex/
+data/memory-lite/
+
+# Playwright MCP scratch output (screenshots, page snapshots) — never part of the repo.
+.playwright-mcp/

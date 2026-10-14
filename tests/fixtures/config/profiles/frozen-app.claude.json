@@ -1,0 +1,11 @@
+{
+  "_doc": "A toy profile of a project a suite freezes in its own world (forge writes nothing there while \"frozen\" is true); here it is not frozen. project_path is a placeholder: a suite moves it into its own toy world.",
+  "project": "frozen-app",
+  "project_path": "/srv/toy/frozen-app",
+  "enableAllProjectMcpServers": true,
+  "servers": [],
+  "env": {"TOY": "1"},
+  "plugins_keep": [],
+  "skills_keep": ["*"],
+  "permissions": {}
+}

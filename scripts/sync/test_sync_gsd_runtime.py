@@ -1,0 +1,758 @@
+#!/usr/bin/env python3
+"""sync_gsd_runtime.py's copy-and-patch step on toy staging and destination trees, in-process.
+
+The script is loaded as a module with HOME set to a toy dir before the import, so every constant
+derived from HOME (the agents dir, the engine, the skills mirror, the staging tree, the npm
+stamp) lands inside the toy root; FORGE_SKILLS and BLOCKS, which derive from the checkout, are
+repointed there too, and every one is checked before a case runs. main(), stage(),
+package_root() and npm_latest() are never called, and npm_nag() only with npm_latest stubbed and
+the module's subprocess replaced by one that raises: nothing here runs the GSD installer, and
+npm and node run only in defaults_gsd_reads (`npm root -g`, then node on the installed config.cjs
+with HOME on the toy dir). Apply is on by assigning CTX, not by passing --apply, because
+lib.may_write() refuses in a linked worktree and a "not written" assertion would then pass for the
+wrong reason; each case's positive control proves the write path is live.
+
+- A patch whose anchor no longer matches upstream is an error, and the file it belongs to is not
+  written: replacing a working patched runtime file with unpatched upstream text undoes the fix
+  the anchor check exists to protect. The file does not count as changed. Seen failing on 7ce50ff:
+  "tree: a.md was rewritten with unpatched text: 'upstream drifted text\\n'" and
+  "skills: gsd-x was rewritten with unpatched text, changed=1, output lists it True". With the
+  held-back `continue` removed from sync_tree (the regression control) the four tree failures
+  come back, "tree: a.md was rewritten with unpatched text" first; removed from sync_skills, the
+  skills one does. The held-back line itself is asserted too: until attack round 4 the suite passed
+  with `held.append` deleted and the `continue` kept, so a held-back file vanished from the output
+  unnoticed. With that mutation "tree: output does not name the held-back a.md and
+  c.md: []" in sync_tree and "skills: output does not name the held-back gsd-x: []" in sync_skills.
+- A patch whose target file is gone (not staged, excluded by `only`, or a skill forge no longer
+  ships) applies to nothing: an error, once per cause. Seen failing on 5ffcc88:
+  "tree: patches with no target file: raised None, errors name [], want ['gsd-gone.md',
+  'other.md']: []" and "skills: ... errors per skill {'gsd-x': 0, 'gsd-gone': 0,
+  'gsd-unshipped': 0, 'gsd-orphan': 1}". Controls: with the tree check emptied the tree line
+  comes back; without the `- set(missing)` the skills one does, gsd-orphan counted 2.
+- check_skill_refs on a fresh HOME counts a missing skills mirror or agents dir as empty. Seen
+  failing on 9f4998f: "refs: no ~/.claude at all: raised FileNotFoundError: [Errno
+  2] No such file or directory: '<toy>/refs-none/home/.claude/skills'" and the same for
+  '.../refs-mirror-only/home/.claude/agents'. Controls: with the agents guard back to
+  os.listdir both cases fail on '.claude/agents'; with the mirror guard back, refs-none fails on
+  '.claude/skills'. refs-mirror-only also proves an existing mirror is still read.
+- A destination file is compared byte for byte (lib.holds). Seen failing on 8f6b6f0,
+  which read it with universal newlines: "crlf: raised None, errors [], count 1 (want 2), want
+  '1 in sync': == toy == |    2 in sync |    wrote 1 new: gone.md" (the CRLF file read as in
+  sync), "not-utf8: raised UnicodeDecodeError: 'utf-8' codec can't decode byte 0xe9 in position
+  3: invalid continuation byte" and "skills: a CRLF SKILL.md: raised None, errors [], changed 0".
+  Controls: with sync_tree's lib.holds replaced by False, "crlf: ... count 3 (want 2) ... 0 in
+  sync"; with added and changed swapped, "crlf: want crlf.md changed and gone.md new: ... wrote
+  1 new: crlf.md | wrote 1 changed: gone.md" and not-utf8 reads "wrote 1 new: latin.md".
+- npm_nag's once-a-day throttle: no stamp checks and writes one, a fresh stamp does not check
+  again, a stale one does. Nothing ran it since the fixture seeds its stamp (4c3725c). It passed
+  on first run, so each assertion was shown red by a mutation of npm_nag (restored
+  from a backup copy each time): with the throttle's `return` made `pass`, and again with the
+  stamp read forced to 0.0, "npm: a stamp a minute old: raised None, npm_latest calls [8] (want
+  none), stamp rewritten True, said 'GSD 9.9.9 is published ...'"; with the lib.write_text call
+  removed, "npm: no stamp: ... stamp None" and "npm: a stamp two days old: ... stamp
+  '<t> 1.0.0\\n'"; with the throttle widened to 30 days, only "npm: a stamp two days old: raised
+  None, npm_latest calls [] (want [8])"; with `timeout=8` dropped, "calls [60] (want [8])" in the
+  no-stamp and stale cases; with the print's condition made False, "npm: no stamp: ... said ''".
+- ~/.gsd/defaults.json is a copy of config/gsd/defaults.json (defaults_copy), and GSD reads it
+  (defaults_gsd_reads). Seen failing against master's sync_gsd_runtime.py, which has no
+  GSD_DEFAULTS: "AttributeError: module 'sync_gsd_runtime' has no attribute 'GSD_DEFAULTS'" out of
+  guard() on the first case. A differing real file is the user's, not a fault (changed later):
+  against the first version, which put it in errors, "defaults: a real file that differs,
+  apply=False: raised None, errors ['<toy>/.../defaults.json is a real file that differs from ...
+  -- left alone; delete it to let forge copy it'], changes 0 ..." (and apply=True). Mutations of
+  sync_defaults (restored from a backup copy each time): that branch returning 1, "... errors [],
+  changes 1" in both cases; its line prefixed with "!", a failure in both cases; and, from the
+  first version, the link removal
+  before write_text deleted, "defaults: a link to forge's file, apply: ... still a link True" and
+  "a link to another file, apply: ... the target's bytes kept False" (write_text writes through
+  the link into the file it points at); the copy made a link again, 5 failures from "defaults: a
+  second apply" on; in-sync decided
+  without comparing bytes, "defaults: a real file that differs ... said ... in sync". With
+  config/gsd/defaults.json changed to {"workflow": {"ui_phase": true}}, "gsd reads: with the copy,
+  (ui_phase, ui_safety_gate) = (True, True), want (False, False)". guard() sees GSD_DEFAULTS:
+  pointed outside the toy root it exits "FAIL harness: outside the toy root: ['GSD_DEFAULTS'] ...".
+"""
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+
+sys.dont_write_bytecode = True
+FORGE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+sys.path.insert(0, os.path.join(FORGE, "tests"))
+import sandbox  # noqa: E402
+
+TOY = sandbox.mkdtemp("gsd-runtime-test-")
+os.environ["HOME"] = os.path.join(TOY, "home")
+os.makedirs(os.environ["HOME"])
+for var in ("CLAUDE_PROJECT_DIR", "FORGE_WRITE_LOG"):
+    os.environ.pop(var, None)
+sys.argv = [sys.argv[0]]
+_spec = importlib.util.spec_from_file_location(
+    "sync_gsd_runtime", os.path.join(FORGE, "scripts", "sync", "sync_gsd_runtime.py"))
+gsd = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(gsd)
+gsd.FORGE_SKILLS = os.path.join(TOY, "forge-skills")
+gsd.BLOCKS = os.path.join(TOY, "blocks")
+gsd.CTX = gsd.lib.Ctx(True, None, True)
+
+REAL_PATCHES = {k: list(v) for k, v in gsd.SKILL_PATCHES.items()}  # the cases below replace gsd.SKILL_PATCHES
+
+PATHS = ("AGENTS_DIR", "GSD_DIR", "SKILLS_MIRROR", "FORGE_SKILLS", "BLOCKS", "STAGE_ROOT", "STAGE",
+         "STAMP", "NPM_STAMP", "GSD_DEFAULTS")
+
+
+LAST_CHANGES = [None]  # run_defaults' sync_defaults return value (the change count)
+DRY_OK = False  # set by run_defaults for a dry-run case, whose positive control is the apply case beside it
+
+
+def guard():
+    """Exit before a case runs if any path the script writes or reads is outside the toy root."""
+    out = [n for n in PATHS if not os.path.realpath(getattr(gsd, n)).startswith(TOY + os.sep)]
+    if out or not gsd.lib.HOME.startswith(TOY + os.sep) or not (gsd.CTX.apply or DRY_OK):
+        sys.exit("FAIL harness: outside the toy root: %s, lib.HOME %s, apply %s"
+                 % (out, gsd.lib.HOME, gsd.CTX.apply))
+
+
+def write(p, text):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def read(p):
+    if not os.path.exists(p):
+        return None
+    with open(p, encoding="utf-8") as f:
+        return f.read()
+
+
+def call(fn, *args, **kw):
+    """(fn's return, what it printed, the exception it raised or None)."""
+    guard()
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            return fn(*args, **kw), buf.getvalue(), None
+    except Exception as e:  # a crash is a failure to report, not a traceback that ends the run
+        return None, buf.getvalue(), "%s: %s" % (type(e).__name__, e)
+
+
+def case_dir(name):
+    d = os.path.join(TOY, name)
+    os.makedirs(d)
+    return d
+
+
+TREE_PATCHES = {
+    "a.md": [("p-replace", "replace", "OLD ANCHOR", "NEW PAYLOAD")],
+    "c.md": [("p-append", "append", "APPEND ANCHOR", "APPENDED BLOCK\n")],
+}
+
+
+def tree_failed_anchor(failures):
+    """Both patched files had their patch applied by an earlier run; upstream then rewrote both
+    anchors. Neither may be rewritten; the unpatched b.md beside them still is."""
+    d = case_dir("tree-failed")
+    src, dst = os.path.join(d, "stage"), os.path.join(d, "runtime")
+    write(os.path.join(src, "a.md"), "upstream drifted text\n")
+    write(os.path.join(src, "b.md"), "plain\n")
+    write(os.path.join(src, "c.md"), "anchor rewritten upstream\n")
+    write(os.path.join(dst, "a.md"), "upstream NEW PAYLOAD text\n")
+    write(os.path.join(dst, "c.md"), "APPEND ANCHOR\n\nAPPENDED BLOCK\n")
+    errors = []
+    n, out, exc = call(gsd.sync_tree, src, dst, TREE_PATCHES, "toy", errors)
+    if exc:
+        failures.append("tree: sync_tree raised %s" % exc)
+        return
+    if read(os.path.join(dst, "a.md")) != "upstream NEW PAYLOAD text\n":
+        failures.append("tree: a.md was rewritten with unpatched text: %r" % read(os.path.join(dst, "a.md")))
+    if read(os.path.join(dst, "c.md")) != "APPEND ANCHOR\n\nAPPENDED BLOCK\n":
+        failures.append("tree: c.md was rewritten with unpatched text: %r" % read(os.path.join(dst, "c.md")))
+    if read(os.path.join(dst, "b.md")) != "plain\n":
+        failures.append("tree: the unpatched b.md beside them was not written: %r" % read(os.path.join(dst, "b.md")))
+    if n != 1:
+        failures.append("tree: %s file(s) counted as changed, want 1 (b.md): %s" % (n, sandbox.tail(out, 4)))
+    named = sorted(x for x in ("a.md", "c.md") if any(x in e for e in errors))
+    if named != ["a.md", "c.md"]:
+        failures.append("tree: errors name %s, want both a.md and c.md: %s" % (named, errors))
+    wrote = [ln for ln in out.splitlines() if "wrote" in ln]
+    if any("a.md" in ln or "c.md" in ln for ln in wrote):
+        failures.append("tree: output says a held-back file was written: %s" % wrote)
+    held = [ln for ln in out.splitlines() if "held back" in ln]
+    if len(held) != 1 or "held back 2 " not in held[0] or "a.md" not in held[0] or "c.md" not in held[0]:
+        failures.append("tree: output does not name the held-back a.md and c.md: %s" % held)
+
+
+def tree_control(failures):
+    """Control: the same patches with their anchors intact, over a stale runtime, are written."""
+    d = case_dir("tree-control")
+    src, dst = os.path.join(d, "stage"), os.path.join(d, "runtime")
+    write(os.path.join(src, "a.md"), "upstream OLD ANCHOR text\n")
+    write(os.path.join(src, "b.md"), "plain\n")
+    write(os.path.join(src, "c.md"), "APPEND ANCHOR\n")
+    write(os.path.join(dst, "a.md"), "stale\n")
+    write(os.path.join(dst, "c.md"), "stale\n")
+    errors = []
+    n, out, exc = call(gsd.sync_tree, src, dst, TREE_PATCHES, "toy", errors)
+    got = (read(os.path.join(dst, "a.md")), read(os.path.join(dst, "c.md")), read(os.path.join(dst, "b.md")))
+    want = ("upstream NEW PAYLOAD text\n", "APPEND ANCHOR\n\nAPPENDED BLOCK\n", "plain\n")
+    if exc or errors or n != 3 or got != want:
+        failures.append("control: tree with intact anchors: raised %s, errors %s, count %s, files %r"
+                        % (exc, errors, n, got))
+
+
+def skills_setup(name, staged_text, forge_text):
+    d = case_dir(name)
+    gsd.STAGE = os.path.join(d, "stage", "cfg")
+    gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
+    write(os.path.join(gsd.STAGE, "skills", "gsd-x", "SKILL.md"), staged_text)
+    write(os.path.join(gsd.FORGE_SKILLS, "gsd-x", "SKILL.md"), forge_text)
+    gsd.SKILL_PATCHES = {"gsd-x": [("p-skill", "replace", "OLD ANCHOR", "NEW PAYLOAD")]}
+    return os.path.join(gsd.FORGE_SKILLS, "gsd-x", "SKILL.md")
+
+
+def skills_failed_anchor(failures):
+    p = skills_setup("skills-failed", "upstream drifted text\n", "upstream NEW PAYLOAD text\n")
+    errors = []
+    n, out, exc = call(gsd.sync_skills, errors)
+    if exc:
+        failures.append("skills: sync_skills raised %s" % exc)
+        return
+    listed = any("gsd-x" in ln for ln in out.splitlines() if "rewrote" in ln)
+    if read(p) != "upstream NEW PAYLOAD text\n" or n != 0 or listed:
+        failures.append("skills: gsd-x was rewritten with unpatched text, changed=%s, output lists it %s"
+                        % (n, listed))
+    if not any("gsd-x" in e and "p-skill" in e for e in errors):
+        failures.append("skills: no error names the failed patch: %s" % errors)
+    held = [ln for ln in out.splitlines() if "held back" in ln]
+    if len(held) != 1 or "held back 1 " not in held[0] or "gsd-x" not in held[0]:
+        failures.append("skills: output does not name the held-back gsd-x: %s" % held)
+
+
+def skills_control(failures):
+    p = skills_setup("skills-control", "upstream OLD ANCHOR text\n", "stale\n")
+    errors = []
+    n, out, exc = call(gsd.sync_skills, errors)
+    if exc or errors or n != 1 or read(p) != "upstream NEW PAYLOAD text\n":
+        failures.append("control: skills with an intact anchor: raised %s, errors %s, changed %s, file %r"
+                        % (exc, errors, n, read(p)))
+
+
+NS_DESC = 'description: "codebase intelligence | map docs learnings"'
+NS_ROW = "| Query mapped intelligence files | gsd-map-codebase --query |\n"
+TOY_NS_CONTEXT = ("---\nname: gsd-ns-context\n" + NS_DESC + "\n---\n\n| Task | Skill |\n|---|---|\n" + NS_ROW
+                  + "| Update project documentation | gsd-docs-update |\n")
+
+
+def ns_context_setup(name):
+    """Upstream gsd-ns-context is forge's copy with the two graphify lines put back (the measured
+    difference against GSD 1.42.3). forge's copy is the real file in this checkout where it has
+    one, and TOY_NS_CONTEXT, which holds the two patched spots, where skills/ is private and absent:
+    red before, on a copy_engine copy in a toy HOME (M1), "AttributeError: 'NoneType' object has no
+    attribute 'replace'" on the missing file's read."""
+    forge_text = read(os.path.join(FORGE, "skills", "gsd-ns-context", "SKILL.md")) or TOY_NS_CONTEXT
+    staged = forge_text.replace(NS_DESC, 'description: "codebase intelligence | map graphify docs learnings"')
+    staged = staged.replace(NS_ROW, NS_ROW + "| Generate a knowledge graph | gsd-graphify |\n")
+    d = case_dir(name)
+    gsd.STAGE = os.path.join(d, "stage", "cfg")
+    gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
+    write(os.path.join(gsd.STAGE, "skills", "gsd-ns-context", "SKILL.md"), staged)
+    p = os.path.join(gsd.FORGE_SKILLS, "gsd-ns-context", "SKILL.md")
+    write(p, forge_text)
+    return p, forge_text, staged
+
+
+def skills_ns_context(failures):
+    """gsd-ns-context is patched upstream text, not a forge-authored skill: the real patches turn
+    staged text into forge's file byte for byte (no drift), and with the second patch dropped the
+    drift is reported. Red messages are quoted in the commit body."""
+    if "gsd-ns-context" in gsd.FORGE_AUTHORED or len(gsd.FORGE_AUTHORED) != 3:
+        failures.append("skills: FORGE_AUTHORED is %s, want the three authored skills" % sorted(gsd.FORGE_AUTHORED))
+    p, forge_text, staged = ns_context_setup("skills-ns")
+    gsd.SKILL_PATCHES = {"gsd-ns-context": REAL_PATCHES.get("gsd-ns-context", [])}
+    errors = []
+    n, out, exc = call(gsd.sync_skills, errors)
+    if exc or errors or n != 0 or "1 shipped here, 3 forge-authored" not in out or "rewrote" in out \
+            or read(p) != forge_text:
+        failures.append("skills: gsd-ns-context patched: raised %s, errors %s, changed %s, output %r"
+                        % (exc, errors, n, out))
+    p, forge_text, staged = ns_context_setup("skills-ns-control")
+    gsd.SKILL_PATCHES = {"gsd-ns-context": REAL_PATCHES.get("gsd-ns-context", [])[:1]}
+    errors = []
+    n, out, exc = call(gsd.sync_skills, errors)
+    if exc or errors or n != 1 or "rewrote 1: gsd-ns-context" not in out:
+        failures.append("skills: gsd-ns-context without no-graphify-row: raised %s, errors %s, changed %s "
+                        "(want 1), no 'rewrote 1: gsd-ns-context' in %r" % (exc, errors, n, out))
+
+
+def tree_missing_target(failures):
+    """A patch keyed to a file the package no longer stages, and one to a staged file the `only`
+    filter excludes, each apply to nothing: both are errors. The intact patch beside them is not."""
+    d = case_dir("tree-missing")
+    src, dst = os.path.join(d, "stage"), os.path.join(d, "runtime")
+    write(os.path.join(src, "gsd-a.md"), "upstream OLD ANCHOR text\n")
+    write(os.path.join(src, "other.md"), "OLD ANCHOR\n")
+    patches = {k: [("p-%s" % k, "replace", "OLD ANCHOR", "NEW PAYLOAD")]
+               for k in ("gsd-a.md", "gsd-gone.md", "other.md")}
+    errors = []
+    n, out, exc = call(gsd.sync_tree, src, dst, patches, "toy", errors, only=lambda rel: rel.startswith("gsd-"))
+    named = sorted(k for k in patches if any(k in e for e in errors))
+    if exc or named != ["gsd-gone.md", "other.md"]:
+        failures.append("tree: patches with no target file: raised %s, errors name %s, want "
+                        "['gsd-gone.md', 'other.md']: %s" % (exc, named, errors))
+    if read(os.path.join(dst, "gsd-a.md")) != "upstream NEW PAYLOAD text\n":
+        failures.append("tree: the patch with a target was not applied: %r" % read(os.path.join(dst, "gsd-a.md")))
+
+
+def skills_missing_target(failures):
+    """gsd-gone: in SKILL_PATCHES, neither staged nor shipped. gsd-unshipped: staged, not in forge.
+    gsd-orphan: shipped, not staged -- already reported as a skill without upstream counterpart,
+    so exactly one error names it."""
+    skills_setup("skills-missing", "upstream OLD ANCHOR text\n", "stale\n")
+    write(os.path.join(gsd.STAGE, "skills", "gsd-unshipped", "SKILL.md"), "OLD ANCHOR\n")
+    write(os.path.join(gsd.FORGE_SKILLS, "gsd-orphan", "SKILL.md"), "OLD ANCHOR\n")
+    for k in ("gsd-gone", "gsd-unshipped", "gsd-orphan"):
+        gsd.SKILL_PATCHES[k] = [("p-%s" % k, "replace", "OLD ANCHOR", "NEW PAYLOAD")]
+    errors = []
+    n, out, exc = call(gsd.sync_skills, errors)
+    count = {k: sum(k in e for e in errors) for k in ("gsd-x", "gsd-gone", "gsd-unshipped", "gsd-orphan")}
+    if exc or count != {"gsd-x": 0, "gsd-gone": 1, "gsd-unshipped": 1, "gsd-orphan": 1}:
+        failures.append("skills: patches with no target file: raised %s, errors per skill %s, want "
+                        "gsd-x 0 and one each for the others: %s" % (exc, count, errors))
+
+
+def write_bytes(p, data):
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "wb") as f:
+        f.write(data)
+
+
+def read_bytes(p):
+    with open(p, "rb") as f:
+        return f.read()
+
+
+def tree_crlf(failures):
+    """A runtime file that holds its LF text with CRLF line ends is not in sync: it is listed as
+    changed and rewritten. Beside it, a byte-identical file stays in sync and a missing one is new,
+    so a check that always answered "differs", or swapped new and changed, fails here too."""
+    d = case_dir("tree-crlf")
+    src, dst = os.path.join(d, "stage"), os.path.join(d, "runtime")
+    for name in ("crlf.md", "gone.md", "same.md"):
+        write(os.path.join(src, name), "line one\nline two\n")
+    write_bytes(os.path.join(dst, "crlf.md"), b"line one\r\nline two\r\n")
+    write_bytes(os.path.join(dst, "same.md"), b"line one\nline two\n")
+    errors = []
+    n, out, exc = call(gsd.sync_tree, src, dst, {}, "toy", errors)
+    lines = out.splitlines()
+    if exc or errors or n != 2 or "   1 in sync" not in lines:
+        failures.append("crlf: raised %s, errors %s, count %s (want 2), want '1 in sync': %s"
+                        % (exc, errors, n, sandbox.tail(out, 4)))
+    if "   wrote 1 changed: crlf.md" not in lines or "   wrote 1 new: gone.md" not in lines:
+        failures.append("crlf: want crlf.md changed and gone.md new: %s" % sandbox.tail(out, 4))
+    got = {name: read_bytes(os.path.join(dst, name)) if os.path.exists(os.path.join(dst, name)) else None
+           for name in ("crlf.md", "gone.md", "same.md")}
+    if set(got.values()) != {b"line one\nline two\n"}:
+        failures.append("crlf: runtime files not all LF text: %r" % got)
+
+
+def tree_not_utf8(failures):
+    """A runtime file that is not UTF-8 is rewritten, not a UnicodeDecodeError out of the run."""
+    d = case_dir("tree-not-utf8")
+    src, dst = os.path.join(d, "stage"), os.path.join(d, "runtime")
+    write(os.path.join(src, "latin.md"), "caf\u00e9\n")
+    write_bytes(os.path.join(dst, "latin.md"), b"caf\xe9\n")
+    errors = []
+    n, out, exc = call(gsd.sync_tree, src, dst, {}, "toy", errors)
+    got = read_bytes(os.path.join(dst, "latin.md"))
+    if exc or errors or n != 1 or "   wrote 1 changed: latin.md" not in out.splitlines() \
+            or got != "caf\u00e9\n".encode():
+        failures.append("not-utf8: raised %s, errors %s, count %s, file %r: %s"
+                        % (exc, errors, n, got, sandbox.tail(out, 4)))
+
+
+def skills_crlf(failures):
+    """sync_skills compares the same way: a forge SKILL.md with CRLF line ends is drift."""
+    p = skills_setup("skills-crlf", "upstream OLD ANCHOR text\n", "stale\n")
+    write_bytes(p, b"upstream NEW PAYLOAD text\r\n")
+    errors = []
+    n, out, exc = call(gsd.sync_skills, errors)
+    if exc or errors or n != 1 or read_bytes(p) != b"upstream NEW PAYLOAD text\n":
+        failures.append("skills: a CRLF SKILL.md: raised %s, errors %s, changed %s, file %r"
+                        % (exc, errors, n, read_bytes(p)))
+
+
+def refs_setup(name):
+    d = case_dir(name)
+    gsd.SKILLS_MIRROR = os.path.join(d, "home", ".claude", "skills")
+    gsd.AGENTS_DIR = os.path.join(d, "home", ".claude", "agents")
+    gsd.GSD_DIR = os.path.join(d, "home", ".claude", "get-shit-done")
+    return d
+
+
+def refs_no_dirs(failures):
+    """A fresh HOME: no skills mirror, no agents dir. Both count as empty."""
+    refs_setup("refs-none")
+    errors = []
+    _, out, exc = call(gsd.check_skill_refs, errors)
+    if exc or errors or "0 gsd-* skills, 0 agents installed" not in out:
+        failures.append("refs: no ~/.claude at all: raised %s, errors %s: %s" % (exc, errors, sandbox.tail(out, 2)))
+
+
+def refs_no_agents(failures):
+    """The mirror is there, the agents dir is not: the mirror is still read, and a routing row
+    to a name that is neither a skill nor an agent is still reported. Also the control that the
+    check reads a directory that exists."""
+    d = refs_setup("refs-mirror-only")
+    real = os.path.join(d, "forge-skills", "gsd-toy")
+    write(os.path.join(real, "SKILL.md"), "| route | gsd-zz-toy-missing |\n")
+    os.makedirs(gsd.SKILLS_MIRROR)
+    os.symlink(real, os.path.join(gsd.SKILLS_MIRROR, "gsd-toy"))
+    errors = []
+    _, out, exc = call(gsd.check_skill_refs, errors)
+    dangling = [e for e in errors if "gsd-toy -> gsd-zz-toy-missing" in e]
+    if exc or len(errors) != 1 or not dangling or "1 gsd-* skills, 0 agents installed" not in out:
+        failures.append("refs: mirror without agents dir: raised %s, errors %s: %s" % (exc, errors, sandbox.tail(out, 2)))
+
+
+def npm_nag_throttle(failures):
+    """npm_nag asks npm at most once a day, and the stamp is what says when it last did: no stamp
+    (its directory not there either, as on a fresh HOME) checks and writes one; a stamp a minute
+    old does not check, print or rewrite; a stamp two days old checks again and is rewritten.
+    npm_latest is a stub that records its timeout, and the module's subprocess is replaced by one
+    that raises, so nothing here reaches npm or the network."""
+    d = case_dir("npm-nag")
+    gsd.NPM_STAMP = os.path.join(d, "home", ".cache", "forge", "gsd-stage", "NPM-CHECKED")
+    calls = []
+
+    def latest(timeout=60):
+        calls.append(timeout)
+        return "9.9.9"
+
+    class NoSubprocess:
+        def __getattr__(self, name):
+            raise AssertionError("npm_nag reached subprocess.%s" % name)
+
+    def stamped(t0, t1):
+        """Whether the stamp holds a time within [t0, t1] (to %f's microsecond) and 9.9.9."""
+        parts = (read(gsd.NPM_STAMP) or "").split()
+        return len(parts) == 2 and t0 - 1e-5 <= float(parts[0]) <= t1 + 1e-5 and parts[1] == "9.9.9"
+
+    real = gsd.npm_latest, gsd.subprocess
+    gsd.npm_latest, gsd.subprocess = latest, NoSubprocess()
+    try:
+        t0 = time.time()
+        _, out, exc = call(gsd.npm_nag, "1.0.0")
+        t1 = time.time()
+        if exc or calls != [8] or not stamped(t0, t1) or "GSD 9.9.9 is published (installed 1.0.0)" not in out:
+            failures.append("npm: no stamp: raised %s, npm_latest calls %s (want [8]), stamp %r, said %r"
+                            % (exc, calls, read(gsd.NPM_STAMP), out))
+
+        del calls[:]
+        write(gsd.NPM_STAMP, "%f 9.9.9\n" % (time.time() - 60))
+        before = read(gsd.NPM_STAMP)
+        _, out, exc = call(gsd.npm_nag, "1.0.0")
+        if exc or calls or read(gsd.NPM_STAMP) != before or out:
+            failures.append("npm: a stamp a minute old: raised %s, npm_latest calls %s (want none), stamp "
+                            "rewritten %s, said %r" % (exc, calls, read(gsd.NPM_STAMP) != before, out))
+
+        del calls[:]
+        write(gsd.NPM_STAMP, "%f 1.0.0\n" % (time.time() - 2 * 86400))
+        t0 = time.time()
+        _, out, exc = call(gsd.npm_nag, "1.0.0")
+        t1 = time.time()
+        if exc or calls != [8] or not stamped(t0, t1):
+            failures.append("npm: a stamp two days old: raised %s, npm_latest calls %s (want [8]), stamp %r"
+                            % (exc, calls, read(gsd.NPM_STAMP)))
+
+        # A dry-run writes nothing, the stamp included, and so does not ask npm either: `forge
+        # sync` from a worktree or by hand wrote the real ~/.cache/forge/gsd-stage/NPM-CHECKED
+        # and ran `npm view` (found in use). Seen failing before the fix: "npm: a dry-run
+        # with no stamp: raised None, npm_latest calls [8] (want none), stamp written True".
+        # call()'s guard wants apply on; it runs first, and the dry-run CTX only for npm_nag itself.
+        del calls[:]
+        os.remove(gsd.NPM_STAMP)
+        guard()
+        gsd.CTX = gsd.lib.Ctx(False, None, True)
+        buf, exc = io.StringIO(), None
+        try:
+            with contextlib.redirect_stdout(buf):
+                gsd.npm_nag("1.0.0")
+        except Exception as e:
+            exc = "%s: %s" % (type(e).__name__, e)
+        finally:
+            gsd.CTX = gsd.lib.Ctx(True, None, True)
+        out = buf.getvalue()
+        if exc or calls or os.path.exists(gsd.NPM_STAMP) or out:
+            failures.append("npm: a dry-run with no stamp: raised %s, npm_latest calls %s (want none), "
+                            "stamp written %s" % (exc, calls, os.path.exists(gsd.NPM_STAMP)))
+    finally:
+        gsd.npm_latest, gsd.subprocess = real
+
+
+def defaults_world(name):
+    """A toy ~/.gsd and a toy forge config/gsd holding forge's REAL defaults.json bytes (so the
+    node case below proves the file forge ships, not a stand-in); returns (src, dst)."""
+    d = case_dir(name)
+    gsd.BLOCKS = os.path.join(d, "blocks")
+    gsd.GSD_DEFAULTS = os.path.join(d, "home", ".gsd", "defaults.json")
+    src = os.path.join(gsd.BLOCKS, "defaults.json")
+    write(src, read(os.path.join(FORGE, "config", "gsd", "defaults.json")))
+    return src, gsd.GSD_DEFAULTS
+
+
+def run_defaults(apply):
+    global DRY_OK
+    real, DRY_OK = gsd.CTX, not apply
+    gsd.CTX = gsd.lib.Ctx(apply, None, True)
+    try:
+        errors = []
+        n, out, exc = call(lambda e: gsd.sync_defaults(e), errors)  # looked up inside call(): a crash is a failure line
+        LAST_CHANGES[:] = [n]
+        return out, exc, errors
+    finally:
+        gsd.CTX, DRY_OK = real, False
+
+
+def defaults_copy(failures):
+    """~/.gsd/defaults.json is a real-file COPY of forge's config/gsd/defaults.json, never a link:
+    GSD's settings workflow writes that file (settings.md:393-399), and through a link the write
+    would land in forge's tracked file. Absent: a dry-run writes nothing and says it would copy,
+    an apply copies (the positive control: the write path is live), a second apply changes
+    nothing. A link there, to forge's file or to another, is replaced by the copy and the file it
+    pointed at keeps its bytes (write_text writes through a link, so a link left in place would
+    overwrite forge's file). A real file that differs is the user's own (GSD's settings workflow writes it
+    legitimately) and is never overwritten, dry-run or apply: no error, 0 changes, one plain line
+    with no '!', and the bytes kept.
+    A real file with forge's bytes is in sync. Forge's file gone is an error. Red before
+    the script had GSD_DEFAULTS and sync_defaults: see the module docstring."""
+    src, dst = defaults_world("defaults-absent")
+    forge_bytes = read_bytes(src)
+    out, exc, errors = run_defaults(False)
+    if exc or errors or os.path.lexists(dst) or os.path.exists(os.path.dirname(dst)) or "would copy" not in out:
+        failures.append("defaults: absent, dry-run: raised %s, errors %s, file there %s, said %s"
+                        % (exc, errors, os.path.lexists(dst), sandbox.tail(out, 2)))
+    out, exc, errors = run_defaults(True)
+    if (exc or errors or os.path.islink(dst) or not os.path.isfile(dst) or read_bytes(dst) != forge_bytes
+            or "copied" not in out):
+        failures.append("defaults: absent, apply: raised %s, errors %s, link %s, bytes equal %s: %s"
+                        % (exc, errors, os.path.islink(dst), os.path.isfile(dst) and read_bytes(dst) == forge_bytes,
+                           sandbox.tail(out, 2)))
+    before = os.lstat(dst).st_mtime_ns if os.path.lexists(dst) else None
+    out, exc, errors = run_defaults(True)
+    if exc or errors or before is None or os.lstat(dst).st_mtime_ns != before or "in sync" not in out:
+        failures.append("defaults: a second apply: raised %s, errors %s, said %s" % (exc, errors, sandbox.tail(out, 2)))
+
+    for label, other in (("a link to forge's file", "defaults.json"),
+                         ("a link to another file", "defaults.other.json"),
+                         ("a dangling link into another checkout", os.path.join("wt", "defaults.json"))):
+        src, dst = defaults_world("defaults-" + label.replace(" ", "-").replace("'", ""))
+        theirs = os.path.join(os.path.dirname(src), other)
+        if other == "defaults.other.json":
+            write(theirs, "other bytes\n")
+        kept = read_bytes(theirs) if os.path.isfile(theirs) else None
+        os.makedirs(os.path.dirname(dst))
+        os.symlink(theirs, dst)
+        out, exc, errors = run_defaults(False)
+        if exc or errors or os.readlink(dst) != theirs or "would replace the link" not in out:
+            failures.append("defaults: %s, dry-run: raised %s, errors %s, link now %s: %s"
+                            % (label, exc, errors, os.readlink(dst) if os.path.islink(dst) else None, sandbox.tail(out, 2)))
+        out, exc, errors = run_defaults(True)
+        if (exc or errors or os.path.islink(dst) or read_bytes(dst) != read_bytes(src)
+                or "replaced the link" not in out or (kept is not None and read_bytes(theirs) != kept)):
+            failures.append("defaults: %s, apply: raised %s, errors %s, still a link %s, the target's bytes kept %s: %s"
+                            % (label, exc, errors, os.path.islink(dst),
+                               kept is None or read_bytes(theirs) == kept, sandbox.tail(out, 2)))
+
+    src, dst = defaults_world("defaults-differs")
+    write(dst, '{"workflow": {"ui_phase": true}}\n')
+    mine, forge_bytes = read_bytes(dst), read_bytes(src)
+    for apply in (False, True):
+        out, exc, errors = run_defaults(apply)
+        if (exc or errors or LAST_CHANGES[0] != 0 or "differs from" not in out or "left alone" not in out
+                or any(ln.lstrip().startswith("!") for ln in out.splitlines())
+                or os.path.islink(dst) or read_bytes(dst) != mine or read_bytes(src) != forge_bytes):
+            failures.append("defaults: a real file that differs, apply=%s: raised %s, errors %s, changes %s, "
+                            "a link now %s, bytes kept %s: %s"
+                            % (apply, exc, errors, LAST_CHANGES[0], os.path.islink(dst), read_bytes(dst) == mine,
+                               sandbox.tail(out, 2)))
+
+    src, dst = defaults_world("defaults-same-bytes")
+    write(dst, read(src))
+    before = os.lstat(dst).st_mtime_ns
+    for apply in (False, True):
+        out, exc, errors = run_defaults(apply)
+        if exc or errors or os.path.islink(dst) or os.lstat(dst).st_mtime_ns != before or "in sync" not in out:
+            failures.append("defaults: forge's own bytes as a real file, apply=%s: raised %s, errors %s, said %s"
+                            % (apply, exc, errors, sandbox.tail(out, 2)))
+
+    src, dst = defaults_world("defaults-no-source")
+    os.remove(src)
+    out, exc, errors = run_defaults(True)
+    if exc or len(errors) != 1 or "defaults.json" not in errors[0] or os.path.lexists(dst):
+        failures.append("defaults: forge's file gone: raised %s, errors %s, file there %s"
+                        % (exc, errors, os.path.lexists(dst)))
+
+
+GSD_CONFIG_JS = """
+const {cmdConfigNewProject} = require(process.argv[1]);
+cmdConfigNewProject(process.argv[2], '', false);
+"""
+
+
+def defaults_gsd_reads(failures):
+    """GSD itself, run on the toy HOME, reads the copy: a project it creates has workflow.ui_phase
+    and workflow.ui_safety_gate false, and without the file true (GSD's own default) -- the pair is
+    the control, so a file GSD ignored, or a node call that always said false, fails one half.
+    buildNewProjectConfig is not exported, so this goes through cmdConfigNewProject, which writes
+    its result to .planning/config.json in a toy project dir. Skipped, with a printed line, when
+    node or the installed package is missing. Red before the copy existed: with sync_defaults
+    absent the first half raises AttributeError (the file is never made)."""
+    try:
+        base = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60).stdout.strip()
+    except Exception:
+        base = ""
+    pkg_cfg = os.path.join(base, "get-shit-done-cc", "get-shit-done", "bin", "lib", "config.cjs") if base else ""
+    node = shutil.which("node")
+    if not node or not os.path.isfile(pkg_cfg):
+        print("SKIP defaults_gsd_reads: node %s, package config.cjs %s" % (node, pkg_cfg or "not found"))
+        return
+
+    def ui_flags(tag, with_file):
+        src, dst = defaults_world(tag)
+        if with_file:
+            out, exc, errors = run_defaults(True)
+            if exc or errors or not os.path.isfile(dst):
+                return "sync_defaults failed: raised %s, errors %s" % (exc, errors)
+        home = os.path.dirname(os.path.dirname(dst))
+        proj = os.path.join(os.path.dirname(home), "project")
+        os.makedirs(proj)
+        env = {k: v for k, v in os.environ.items() if k not in ("GSD_HOME", "GSD_WORKSTREAM")}
+        env["HOME"] = home
+        r = subprocess.run([node, "-e", GSD_CONFIG_JS, pkg_cfg, proj], env=env, cwd=proj,
+                           capture_output=True, text=True, timeout=60)
+        cfg = os.path.join(proj, ".planning", "config.json")
+        if r.returncode or not os.path.isfile(cfg):
+            return "node exit %d: %s" % (r.returncode, (r.stderr or r.stdout).strip()[:200])
+        wf = json.loads(read(cfg)).get("workflow", {})
+        return (wf.get("ui_phase"), wf.get("ui_safety_gate"))
+
+    got = ui_flags("gsd-reads-with", True)
+    if got != (False, False):
+        failures.append("gsd reads: with the copy, (ui_phase, ui_safety_gate) = %s, want (False, False)" % (got,))
+    got = ui_flags("gsd-reads-without", False)
+    if got != (True, True):
+        failures.append("gsd reads: without the file, (ui_phase, ui_safety_gate) = %s, want GSD's own (True, True)" % (got,))
+
+
+def skills_no_dir(failures):
+    """A stranger's checkout has no skills/ until something puts a skill there, and sync_skills
+    listed it with os.listdir. Seen failing on a2e69f6: "skills no dir: apply: raised
+    FileNotFoundError: [Errno 2] No such file or directory: '<toy>/skills-no-dir-apply/forge-skills'"
+    (and the same for the dry-run). Apply creates skills/; a dry-run does not. The staged package
+    is not read here, so the case has a gsd-x upstream skill that forge does not ship yet: the
+    run must list it as not shipped, never fail. Controls: skills_control above, with skills/
+    present, passes through the same code."""
+    global DRY_OK
+    for label, apply in (("apply", True), ("dry-run", False)):
+        d = case_dir("skills-no-dir-" + label)
+        gsd.STAGE = os.path.join(d, "stage", "cfg")
+        gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
+        write(os.path.join(gsd.STAGE, "skills", "gsd-x", "SKILL.md"), "upstream\n")
+        gsd.SKILL_PATCHES = {}
+        gsd.CTX = gsd.lib.Ctx(apply, None, True)
+        DRY_OK = not apply
+        try:
+            errors = []
+            n, out, exc = call(gsd.sync_skills, errors)
+        finally:
+            gsd.CTX = gsd.lib.Ctx(True, None, True)
+            DRY_OK = False
+        made = os.path.isdir(gsd.FORGE_SKILLS)
+        if exc or errors or n != 0 or made != apply or "1 upstream skills not shipped" not in out:
+            failures.append("skills no dir: %s: raised %s, errors %s, changed %s, skills/ made %s "
+                            "(want %s), output %r" % (label, exc, errors, n, made, apply, out))
+
+
+def update_text_names_no_machine(failures):
+    """The gsd-update patch payload is written into skills/gsd-update/SKILL.md, which a stranger
+    generates: it must not name the author's checkout. Seen failing on a2e69f6:
+    "update text: names an absolute path of this machine: ['gsd-update/forge-update-route: <home>/dev/Projects/forge/skills/', ...]" (five
+    paths). The real
+    SKILL_PATCHES are read from REAL_PATCHES, since the cases above replace gsd.SKILL_PATCHES."""
+    bad = []
+    for name, patches in REAL_PATCHES.items():
+        for pid, op, anchor, payload in patches:
+            if not payload.startswith("file:"):
+                bad += ["%s/%s: %s" % (name, pid, m) for m in re.findall(r"/(?:home|Users|root)/[^\s`]*", payload)]
+    if bad:
+        failures.append("update text: names an absolute path of this machine: %s" % bad)
+
+
+def unpatched_main(failures):
+    """With gsd on and `gsd_patches` false, main() is a stranger's GSD, installed by GSD's own installer:
+    it stages nothing, patches nothing, copies nothing, reaches for neither npm nor the package, prints
+    one line that says so (no '!') and exits 0. With `gsd_patches` true it goes on to the package, as
+    before. package_root, stage and the module's subprocess are replaced by ones that raise, so a gate
+    that lets main() through shows up as the sentinel, and the toy HOME is checked for anything written.
+    The positive control is the true case beside it: it reaches package_root. Seen failing before the
+    gate: "unpatched main: gsd_patches false: raised Reached: package_root, output '', want one line
+    saying unpatched, exit 0, nothing written" (main went on to the package), and the same for the absent
+    key. The true case passes before the gate too: it is the positive control, and with `not` dropped
+    from the gate it fails with "gsd_patches true: reached package_root False"."""
+    class Reached(Exception):
+        pass
+
+    def package_root():
+        raise Reached("package_root")
+
+    class NoSubprocess:
+        def __getattr__(self, name):
+            raise Reached("subprocess.%s" % name)
+    real = gsd.package_root, gsd.subprocess, gsd.lib.SETTINGS
+    gsd.package_root, gsd.subprocess = package_root, NoSubprocess()
+    try:
+        for label, doc, patched in (("gsd_patches false", {"integrations": {"gsd": True}, "gsd_patches": False}, False),
+                                    ("gsd_patches absent", {"integrations": {"gsd": True}}, False),
+                                    ("gsd_patches true", {"integrations": {"gsd": True}, "gsd_patches": True}, True)):
+            d = case_dir("unpatched-" + label.replace(" ", "-"))
+            gsd.lib.SETTINGS = os.path.join(d, "forge.json")
+            write(gsd.lib.SETTINGS, json.dumps(doc))
+            code, out, exc = call(gsd.main)
+            reached = exc == "Reached: package_root"
+            written = [n for n in ("AGENTS_DIR", "GSD_DIR", "STAGE_ROOT") if os.path.exists(getattr(gsd, n))]
+            lines = [l for l in out.splitlines() if l.strip()]
+            if patched:
+                if not reached or code is not None:
+                    failures.append("unpatched main: %s: reached package_root %s, raised %s, output %r" % (label, reached, exc, out))
+            elif exc or code != 0 or written or len(lines) != 1 or "unpatched" not in out or "!" in out:
+                failures.append("unpatched main: %s: raised %s, exit %s, wrote %s, output %r, want one line "
+                                "saying unpatched, exit 0, nothing written" % (label, exc, code, written, out))
+    finally:
+        gsd.package_root, gsd.subprocess, gsd.lib.SETTINGS = real
+
+
+def main():
+    failures = []
+    cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
+             tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
+             refs_no_dirs, refs_no_agents, npm_nag_throttle, skills_ns_context, defaults_copy,
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main)
+    for case in cases:
+        case(failures)
+    for msg in failures:
+        print("FAIL", msg)
+    print("%d failure(s) over %d cases" % (len(failures), len(cases)))
+    sandbox.cleanup(failures)
+    sys.exit(1 if failures else 0)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,11 @@
+{
+  "_doc": "The toy profile of the checkout itself: it keeps every skill. project_path is a placeholder: a suite moves it into its own toy world.",
+  "project": "forge",
+  "project_path": "/srv/toy/forge",
+  "enableAllProjectMcpServers": true,
+  "servers": [],
+  "env": {},
+  "plugins_keep": [],
+  "skills_keep": ["*"],
+  "permissions": {}
+}

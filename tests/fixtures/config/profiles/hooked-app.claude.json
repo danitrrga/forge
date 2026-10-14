@@ -1,0 +1,16 @@
+{
+  "_doc": "A toy profile that declares hooks and turns the command guard on, for tests/test_profile_hooks.py: the audit and the tracker as a project's profile declares them, the guard left to command_guard.",
+  "project": "hooked-app",
+  "project_path": "/srv/toy/hooked-app",
+  "command_guard": true,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {"type": "command", "command": "python3 /opt/toy-forge/hooks/audit_tool_use.py", "timeout": 10},
+          {"type": "command", "command": "python3 /opt/toy-forge/hooks/track_skill_usage.py", "timeout": 10}
+        ]
+      }
+    ]
+  }
+}

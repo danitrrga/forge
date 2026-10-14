@@ -1,0 +1,14 @@
+{
+  "_doc": "A toy canonical Hindsight config for the suites that render one (tests/sandbox.py seed()): the keys forge reads, a local address nothing listens on, and a bank map a suite fills in.",
+  "apiUrl": "http://127.0.0.1:9",
+  "apiToken": "",
+  "bankId": "toy",
+  "optInOnly": true,
+  "optInPaths": [],
+  "mapPathToBank": {},
+  "banks": {"no-memory": {}, "toybank": {}},
+  "manageBankConfig": false,
+  "autoSeed": false,
+  "autoInject": "recall",
+  "retainSessions": true
+}

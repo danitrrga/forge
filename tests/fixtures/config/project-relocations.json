@@ -1,0 +1,6 @@
+{
+  "_doc": "A toy project-relocations.json for the suites that run the generators (tests/sandbox.py seed()): one key that moves from an old project path to a new one.",
+  "relocations": [
+    {"from": "/srv/toy/old-app", "to": "/srv/toy/new-app", "reason": "the toy app moved"}
+  ]
+}

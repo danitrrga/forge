@@ -1,0 +1,20 @@
+#!/bin/sh
+# Refuses a staged path the .gitignore ignores (private data added with `git add -f`), then runs
+# the personal-data check over the staged files. Enabled per clone: git config core.hooksPath githooks
+root=$(git rev-parse --show-toplevel) || exit 1
+forge="$root/bin/forge"
+if [ ! -x "$forge" ]; then
+    echo "pre-commit: refused: $forge is missing, so the personal-data check cannot run" >&2
+    exit 1
+fi
+ignored=$(git diff --cached --name-only --diff-filter=ACMR -z | git check-ignore --no-index -z --stdin | tr '\0' '\n')
+if [ -n "$ignored" ]; then
+    echo "pre-commit: refused: staged path(s) ignored by .gitignore (private data added with -f):" >&2
+    printf '%s\n' "$ignored" | sed 's/^/  /' >&2
+    echo "  unstage with: git reset -q -- <path>" >&2
+    exit 1
+fi
+"$forge" check-public --staged || {
+    echo "pre-commit: refused: personal data in the staged files, listed above" >&2
+    exit 1
+}

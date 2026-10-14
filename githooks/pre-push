@@ -1,0 +1,19 @@
+#!/bin/sh
+# The personal-data check over the content and message of every commit about to be pushed. A
+# commit made with --no-verify is caught here. A new remote branch (all-zero remote sha) checks
+# every commit no remote branch has; a branch deletion is not checked.
+root=$(git rev-parse --show-toplevel) || exit 1
+forge="$root/bin/forge"
+if [ ! -x "$forge" ]; then
+    echo "pre-push: refused: $forge is missing, so the personal-data check cannot run" >&2
+    exit 1
+fi
+rc=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+    "$forge" check-public --range "$remote_sha..$local_sha" || rc=1
+done
+if [ "$rc" -ne 0 ]; then
+    echo "pre-push: refused: personal data in the commits being pushed, listed above" >&2
+fi
+exit "$rc"

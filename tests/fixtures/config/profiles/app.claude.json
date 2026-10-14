@@ -1,0 +1,11 @@
+{
+  "_doc": "A toy trimmed profile that takes the gsd-* baseline by full replace (the fixture forge.json lists it under skill_keep.extras). project_path is a placeholder: a suite moves it into its own toy world.",
+  "project": "app",
+  "project_path": "/srv/toy/app",
+  "enableAllProjectMcpServers": true,
+  "servers": [],
+  "env": {"TOY": "1"},
+  "plugins_keep": [],
+  "skills_keep": ["toy-common"],
+  "permissions": {}
+}

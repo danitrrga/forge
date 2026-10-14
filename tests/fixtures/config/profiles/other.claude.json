@@ -1,0 +1,11 @@
+{
+  "_doc": "A toy profile of a project no run in a suite is scoped to: its ~/.claude.json key must never move. project_path is a placeholder: a suite moves it into its own toy world.",
+  "project": "other",
+  "project_path": "/srv/toy/other",
+  "enableAllProjectMcpServers": true,
+  "servers": [],
+  "env": {"TOY": "1"},
+  "plugins_keep": [],
+  "skills_keep": ["*"],
+  "permissions": {}
+}
