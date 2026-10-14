@@ -20,7 +20,7 @@ Seen failing on 947b2e4 (hooks.py with every row in code; the file run in a copy
     `coding-agents`; written for the agents it names only, and "on": false, were red the same way
   no user_hooks: the code holds none of the rows that moved out -- rows
     ['<moved row>.py', ...]
-  this machine's forge.json: 17 rows, the two after the code's -- last two were the coding-agents rows
+  this machine's forge.json: 15 rows, the two after the code's (the Hindsight rows are written per project)
   user_settings: model and env come from the file -- wrote model 'sonnet' advisorModel 'opus' env
     {'MEM_NO_AUTO_ADOPT': '1', ...}, want haiku, no advisorModel and {'TOY_FLAG': '1'}
   codex off: the writer says NOT RUN, NOT ARMED -- the line was "~/.codex/hooks.json -> appended
@@ -231,12 +231,12 @@ check("a settings file with two user_hooks rows: the code's rows, then the two i
 if os.path.exists(os.path.join(REPO, "skills", "jev", "scripts", "setup.py")):
     h = toy_settings(12, user_hooks=two, integrations={n: True for n in lib.INTEGRATIONS})
     real = [(r[0], r[3]) for r in h.USER_HOOKS]
-    check("all integrations on and two user_hooks rows: 17 rows, the two after the code's, jev_setup loaded",
-          len(real) == 17 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")]
+    check("all integrations on and two user_hooks rows: 15 rows (the two Hindsight rows are written per project), the two after the code's, jev_setup loaded",
+          len(real) == 15 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")]
           and h.jev_setup is not None and h.jev_setup.HOOK_CMD in commands(h.USER_HOOKS),
           "%d rows, last two %r, jev_setup %r" % (len(real), real[-2:], h.jev_setup))
 else:
-    print("NOT RUN: the jev-on table (17 rows) -- skills/jev/scripts/setup.py is not in this checkout")
+    print("NOT RUN: the jev-on table (15 rows) -- skills/jev/scripts/setup.py is not in this checkout")
 
 # 6. user_settings come from the file: its keys and nothing else.
 h = toy_settings(6, user_settings={"model": "haiku", "env": {"TOY_FLAG": "1"}})
