@@ -62,9 +62,11 @@ touches one reads `lib.on("<name>")`; with the integration off, forge writes non
 the entries it wrote itself (matched by exact command). A new feature that depends on an external tool needs a
 switch, a SKIP line for the off state, and a FAIL naming the fix for on-but-broken.
 
-Codex gets no hooks from forge: it is used as a reviewer, not an orchestrator. `forge sync` writes no row into
-`~/.codex/hooks.json` and takes out of it only the entries forge once wrote (exact command), and the `codex hooks`
-row of `forge doctor` fails while one is left there.
+`codex_harness` in `config/forge.json` (read only with Codex on, default false) says whether Codex is set up like
+Claude Code: true, `forge sync` writes its hook rows into `~/.codex/hooks.json` and each project's MCP servers into
+`.codex/config.toml`; false, it writes neither and takes out only what it wrote (hook entries by exact command, the
+`[mcp_servers.<registry name>]` tables of `.codex/config.toml`), keeping the `.agents/skills` links, and the `codex hooks`
+row of `forge doctor` follows the switch.
 
 ## Committing
 
