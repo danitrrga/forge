@@ -401,8 +401,10 @@ def allowlist_cases():
     want("tracked and ignored by the allowlist, of the private paths", sorted(p for p in private if p in tracked and p not in ignored), [])
     want("tracked and not ignored, of the engine paths", sorted(p for p in public if p in tracked and p in ignored), [])
     want("every named engine path is tracked", sorted(p for p in public if p not in tracked), [])
+    # docs/assets/ holds the README's images, which are public; the rest of docs/ is not.
     want("no skill, doc, design file or profile in the engine",
-         sorted(p for p in engine if p.split("/")[0] in ("skills", "docs", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
+         sorted(p for p in engine if (p.split("/")[0] in ("skills", "docs", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
+                                      and not p.startswith("docs/assets/"))
                 or p.startswith("config/profiles/") or (p.startswith("config/") and not p.startswith("config/gsd/"))), [])
     # The private list runs over today's engine files: exit 0, no hit in any file. The gate's `public tree` row
     # holds the same state from the other side.
