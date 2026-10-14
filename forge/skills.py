@@ -87,9 +87,10 @@ def guard_command(name, script=GUARD_SCRIPT):
 
 
 # What a guard's entry is when it can stop a call. The one definition: _own_guard writes it and the
-# doctor's rows (cli.guard_problem, cli.worktree_guard_problem) compare against it.
-def canonical_hook(command):
-    return {"type": "command", "command": command, "timeout": GUARD_TIMEOUT}
+# doctor's rows (cli.guard_problem, cli.worktree_guard_problem) compare against it. A row written per
+# project (forge.hooks.project_hooks) is the same shape with its own timeout.
+def canonical_hook(command, timeout=GUARD_TIMEOUT):
+    return {"type": "command", "command": command, "timeout": timeout}
 
 
 def _runs_forge_guard(command, script=GUARD_SCRIPT):
@@ -100,12 +101,16 @@ def _runs_forge_guard(command, script=GUARD_SCRIPT):
         os.path.isabs(t) and os.path.realpath(t) == want for t in command.split())
 
 
-def _has_forge_guard(sl):
+def _holds(sl, ours):
+    """Whether the file's hooks hold an entry whose command `ours` accepts."""
     hooks = sl.get("hooks")
     return isinstance(hooks, dict) and any(
-        _groups_ok(have) and any(_runs_forge_guard(h.get("command"), row[0]) for g in have
-                                 for h in g.get("hooks", []) for row in GUARDS)
+        _groups_ok(have) and any(ours(h.get("command")) for g in have for h in g.get("hooks", []))
         for have in hooks.values())
+
+
+def _has_forge_guard(sl):
+    return _holds(sl, lambda cmd: any(_runs_forge_guard(cmd, row[0]) for row in GUARDS))
 
 
 def _own_guard(sl, prof, row):
@@ -184,14 +189,6 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
     return summary
 
 
-def _holds_command(sl, commands):
-    """Whether the file's hooks hold an entry running one of `commands` exactly."""
-    hooks = sl.get("hooks")
-    return isinstance(hooks, dict) and any(
-        _groups_ok(have) and any(h.get("command") in commands for g in have for h in g.get("hooks", []))
-        for have in hooks.values())
-
-
 def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=()):
     """Owns <project>/.claude/settings.local.json: everything the profile says goes there, merged
     into the file. For a claude profile carrying `plugins_keep` and/or `skills_keep`, that is:
@@ -247,7 +244,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     # kept a stale skillOverrides hiding skills in a project that had stopped trimming.
     sl = lib.read_owned(slp)
     if not declared and not any(k in sl for k in ("skillOverrides", "enabledPlugins", "env")) \
-            and not _has_forge_guard(sl) and not _holds_command(sl, {row[1] for row in project_hooks}):
+            and not _has_forge_guard(sl) and not _holds(sl, lambda cmd: any(cmd == row[1] for row in project_hooks)):
         return None
     on_machine = global_skills() | neighbour_skills(ppath)
     proj_skills = set(skill_dirs(os.path.join(ppath, ".claude", "skills")))
@@ -366,7 +363,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     for row in GUARDS:
         hooks_summary += _own_guard(sl, prof, row)
     for event, cmd, timeout, marker, matcher, wanted in project_hooks:
-        hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event,{"type": "command", "command": cmd, "timeout": timeout},
+        hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event, canonical_hook(cmd, timeout),
                                    matcher, wanted, "%s %s" % (marker, event), marker)
 
     # .mcp.json approval, owned by the profile when it declares `mcpjson_approved`. Claude Code
