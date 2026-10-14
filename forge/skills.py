@@ -117,12 +117,20 @@ def _own_guard(sl, prof, row):
     moved to the line). Entries that do not run the guard are never touched. Runs after the
     `hooks` merge, so what the merge appended is judged too. Returns the summary text."""
     script, matcher, is_on, label, short = row
-    on = is_on(prof)
+    return _own_hook(sl, prof, lambda cmd: _runs_forge_guard(cmd, script), "PreToolUse",
+                     canonical_hook(guard_command(prof.get("project"), script)), matcher, is_on(prof), label, short)
+
+
+def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
+    """_own_guard's ownership, for any one entry forge owns in the file: every hook whose command
+    `ours` accepts is forge's. On, the file ends with exactly one, `entry` in a `want_event` group
+    with `matcher`, the first one whose command is entry's kept whatever its timeout or type; off,
+    only a command the profile's own `hooks` declares stays. Returns the summary text."""
     hooks = sl.get("hooks")
     if hooks is not None and not isinstance(hooks, dict):
         return ", %s not merged (the file's hooks is not an object)" % short if on else ""
     hooks = hooks if hooks is not None else {}
-    canon = guard_command(prof.get("project"), script)
+    canon = entry["command"]
     declared = {h.get("command") for groups in (prof.get("hooks") or {}).values()
                 for g in groups for h in g.get("hooks", [])}
     removed, seen = 0, False
@@ -135,11 +143,11 @@ def _own_guard(sl, prof, row):
             kept = []
             for h in g.get("hooks", []):
                 cmd = h.get("command")
-                if _runs_forge_guard(cmd, script):
-                    # On, only the first canonical entry of PreToolUse, in a group with the row's
-                    # matcher, stays; off, what the profile declares.
+                if ours(cmd):
+                    # On, only the first canonical entry of the wanted event, in a group with the
+                    # row's matcher, stays; off, what the profile declares.
                     if on:
-                        stays = cmd == canon and event == "PreToolUse" and g.get("matcher") == matcher and not seen
+                        stays = cmd == canon and event == want_event and g.get("matcher") == matcher and not seen
                         seen = seen or stays
                     else:
                         stays = cmd in declared
@@ -158,13 +166,13 @@ def _own_guard(sl, prof, row):
                 del hooks[event]
     summary = ""
     if on and not seen:
-        have = hooks.get("PreToolUse", [])
+        have = hooks.get(want_event, [])
         if not _groups_ok(have):
-            summary = ", %s not merged (PreToolUse is not a list of hook groups)" % short
+            summary = ", %s not merged (%s is not a list of hook groups)" % (short, want_event)
         else:
             group = {"matcher": matcher} if matcher else {}
-            group["hooks"] = [canonical_hook(canon)]
-            hooks["PreToolUse"] = have + [group]
+            group["hooks"] = [dict(entry)]
+            hooks[want_event] = have + [group]
     if on and not summary:
         summary = ", %s on" % label
     if removed:
