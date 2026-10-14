@@ -385,6 +385,16 @@ def exercise(sb, check):
     git(sb.forge, "worktree", "add", "-q", wt)
     for d in NEVER_COPY:  # as in a real forge worktree
         os.symlink(os.path.join("..", "forge", d), os.path.join(wt, d))
+    if not REAL:
+        # The engine's .gitignore leaves config/forge.json untracked, so `git worktree add` does not carry
+        # the seeded one over and the run stops at "! config/forge.json missing -- run bin/forge init"
+        # before it reaches the worktree line. Red before, in a pure engine clone: "FAIL a worktree --apply
+        # says so on its first line: ! config/forge.json missing -- run bin/forge init". A private
+        # checkout tracks it, so there the worktree has it already and this does not run.
+        for rel in ("config/forge.json",):
+            if not os.path.exists(os.path.join(wt, rel)):
+                os.makedirs(os.path.dirname(os.path.join(wt, rel)), exist_ok=True)
+                shutil.copy2(os.path.join(sb.forge, rel), os.path.join(wt, rel))
     d = read_json(cjp)
     d["projects"][OLD_KEY] = {"mcpServers": {"old": {"command": "old"}}}
     write_json(cjp, d, 0o644)

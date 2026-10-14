@@ -46,7 +46,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-from forge import cli  # noqa: E402
+from forge import cli, lib  # noqa: E402
 import sandbox  # noqa: E402
 
 failures = []
@@ -359,8 +359,26 @@ def row_cases(tmp):
     want("row, npm root -g fails = (exit, level)", (code, lines[0][:4]), (1, "FAIL"))
 
 
+def toy_settings(tmp):
+    """On a checkout with no config/forge.json (a pure engine clone) the "no file" cases read no
+    settings, so GSD reads as off and a missing config/toolchain.json is a SKIP, not the FAIL they
+    expect. Red there before: "no file = (exit, levels) = (0, []), want (1, ['FAIL'])", and the same
+    for the doctor row. The toy file is the fixture's with GSD patched on, which is the machine this
+    suite is written for; where the checkout has its own file it is read as before."""
+    if os.path.exists(lib.SETTINGS):
+        return
+    with open(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "forge.json"), encoding="utf-8") as fh:
+        doc = json.load(fh)
+    doc["integrations"]["gsd"], doc["gsd_patches"] = True, True
+    lib.SETTINGS = os.path.join(tmp, "forge.json")
+    with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh)
+    lib.settings.cache_clear()
+
+
 def main():
     tmp = sandbox.mkdtemp("toolchain-test-")
+    toy_settings(tmp)
     file_cases(FIXTURE, "the fixture's")
     if os.path.exists(REAL):
         file_cases(REAL, "this machine's")
