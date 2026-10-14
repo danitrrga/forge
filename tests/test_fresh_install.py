@@ -20,8 +20,10 @@ at a count of 0):
   and its untracked files are exactly the set pinned below; init twice, and add of a missing directory, a
   registered name and a name that is not kebab-case are each refused and write nothing.
 Controls, run every time in the same world and put back afterwards:
-  (a) integrations.hindsight true: the hook-path assertion fails and names the world's ~/.hindsight/coding-agents/
-      dist/claude-hook.js, then passes again once it is switched off;
+  (a) integrations.hindsight true and the demo profile granted hindsight-coding-agents: the hook-path assertion,
+      over ~/.claude/settings.json and demo's settings.local.json (where those rows are written per project),
+      fails and names the world's ~/.hindsight/coding-agents/dist/claude-hook.js, then passes again once both
+      are put back (the put-back sync takes the rows out of demo's file);
   (b) the real HOME in a profile env: the no-real-HOME assertion fails and names the file, then passes again;
   (c) on a machine that has the private data (config/profiles/ beside publish/engine.gitignore or
       config/publish-deny.txt): a world built with sandbox.copy_checkout(untracked=True), which carries every
@@ -177,8 +179,9 @@ def git_out(*argv):
 
 # ---------------------------------------------------------------- the assertions
 
-def hook_commands(home):
-    doc = read_json(os.path.join(home, ".claude", "settings.json"))
+def hook_commands(home, also=()):
+    """Every hook command in home/.claude/settings.json, then in each settings file of `also` (a project's
+    .claude/settings.local.json, where the hooks written per project land)."""
     out = []
 
     def walk(x):
@@ -190,15 +193,17 @@ def hook_commands(home):
         elif isinstance(x, list):
             for v in x:
                 walk(v)
-    walk((doc or {}).get("hooks"))
+    for f in (os.path.join(home, ".claude", "settings.json"),) + tuple(also):
+        walk((read_json(f) or {}).get("hooks"))
     return out
 
 
-def hook_check(home):
+def hook_check(home, also=()):
     """(how many hook commands name a path, [(command, path)] for each path that does not exist) over
-    every hook command in home/.claude/settings.json. A `~/` in a command is the world's HOME."""
+    every hook command in home/.claude/settings.json and the settings files of `also`. A `~/` in a
+    command is the world's HOME."""
     checked, missing = 0, []
-    for command in hook_commands(home):
+    for command in hook_commands(home, also):
         try:
             words = shlex.split(command)
         except ValueError:
@@ -436,20 +441,30 @@ def controls(w, before):
     fj_path = w.path("config", "forge.json")
     good_fj = open(fj_path).read()
 
-    # (a) hindsight on: its hook rows name files under the world's HOME that do not exist.
+    # (a) hindsight on and demo using it: its hook rows, written into demo's settings.local.json (a profile
+    # uses Hindsight when its servers list hindsight-coding-agents), name files under the world's HOME that
+    # do not exist. The world's registry lacks the server: sync says so and still writes the file.
     fj = json.loads(good_fj)
     fj["integrations"]["hindsight"] = True
     write_json(fj_path, fj)
+    dp_path = w.path("config", "profiles", "demo.claude.json")
+    good_dp = open(dp_path).read()
+    dp = json.loads(good_dp)
+    dp["servers"] = dp.get("servers", []) + ["hindsight-coding-agents"]
+    write_json(dp_path, dp)
+    demo_sl = (os.path.join(w.demo, ".claude", "settings.local.json"),)
     code, out = w.forge("sync", "--apply", "--all")
-    checked, missing = hook_check(w.home)
+    checked, missing = hook_check(w.home, demo_sl)
     target = os.path.join(w.home, HINDSIGHT_HOOK)
     print("control (a), hindsight on: %d hook command(s) checked, missing %s" % (checked, sorted({p for _, p in missing})))
     check("control (a): with hindsight on the hook-path assertion fails and names %s" % target, any(p == target for _, p in missing),
           "sync exit %d; %d checked; missing %s; %s" % (code, checked, sorted({p for _, p in missing}), tail(out)))
     with open(fj_path, "w") as fh:
         fh.write(good_fj)
+    with open(dp_path, "w") as fh:
+        fh.write(good_dp)
     code, out = w.forge("sync", "--apply", "--all")
-    checked, missing = hook_check(w.home)
+    checked, missing = hook_check(w.home, demo_sl)
     check("control (a) put back: the hook-path assertion passes again (%d checked)" % checked, checked > 0 and not missing,
           "sync exit %d, missing %s" % (code, missing[:2]))
 

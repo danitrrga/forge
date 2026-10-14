@@ -193,15 +193,30 @@ _CODE_ROWS = [
     # `npx @vectorize-io/hindsight-coding-agents install codex`, because that installer merges into
     # hooks.json and rewrites ~/.codex/config.toml (installer.js:4517-4545), both generated here.
     # Codex gates hooks behind a persisted trust hash: a new entry fires only once trusted.
-    ("UserPromptSubmit", 'node "%s/claude-hook.js"' % HINDSIGHT_DIST, 30,
-     "coding-agents", None, (CLAUDE,)),
-    ("Stop", 'node "%s/claude-stop-hook.js"' % HINDSIGHT_DIST, 60,
-     "coding-agents", None, (CLAUDE,)),
+    # The two Claude rows are _PROJECT_CODE_ROWS below; the Codex ones stay here, since forge writes
+    # no per-project Codex hooks file.
     ("UserPromptSubmit", 'node "%s/codex-hook.js"' % HINDSIGHT_DIST, 30,
      "coding-agents", None, (CODEX,)),
     ("Stop", 'node "%s/codex-stop-hook.js"' % HINDSIGHT_DIST, 60,
      "coding-agents", None, (CODEX,)),
 ]
+
+# Rows written per project, never at user scope: one project uses one memory system, so Hindsight's
+# Claude hooks go only into the .claude/settings.local.json of a profile that uses Hindsight (its
+# `servers` holds hindsight-coding-agents, SCOPES), through skills.write_settings_local, which owns
+# them by exact command there. At user scope they fired on every prompt of every project and only
+# Hindsight's own config made them inert outside its projects. config/forge.json's `user_hooks` rows
+# with `"scope": "hindsight"` join them (_config_rows). Every one of them is also an OFF_HOOKS row, so
+# reconcile() takes forge's old user-scope entry out by its exact command.
+_PROJECT_CODE_ROWS = [
+    ("UserPromptSubmit", 'node "%s/claude-hook.js"' % HINDSIGHT_DIST, 30,
+     "coding-agents", None, (CLAUDE,)),
+    ("Stop", 'node "%s/claude-stop-hook.js"' % HINDSIGHT_DIST, 60,
+     "coding-agents", None, (CLAUDE,)),
+]
+# A project scope's name (a `user_hooks` row's `scope`, and the integration that gates it) -> whether
+# a profile is in it.
+SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or [])}
 
 # The integration (lib.INTEGRATIONS) each gated row belongs to, by marker. A row whose integration
 # is off is not written, and reconcile() takes out the entries whose command EQUALS the row's, never
@@ -231,10 +246,14 @@ def _row_on(marker):
     return not (marker in ROW_HOUSE and lib.settings().get("house_hooks") is not True)
 
 
-def _config_rows():
+def _config_rows(scopes=None):
     """config/forge.json's `user_hooks` as (table row, on) pairs, `<ROOT>` expanded; `on` is False
     only for "on": false. A row that is not an object with the five keys is an exit 1 with a "!"
-    line: a half-read row would write a hook that cannot start."""
+    line: a half-read row would write a hook that cannot start. `scopes`, a list, gets each row's
+    optional `scope`, in order: None for a user-scope row, or a SCOPES name for one written per
+    project instead (`"scope": "hindsight"`: only into the settings.local.json of the profiles that
+    use Hindsight, see _PROJECT_CODE_ROWS). A scoped row is Claude's alone: forge writes no
+    per-project Codex hooks."""
     rows = []
     for i, r in enumerate(lib.settings().get("user_hooks") or []):
         bad = None
@@ -249,29 +268,53 @@ def _config_rows():
                 bad = "has a matcher that is neither a string nor null"
             if bad is None and not (isinstance(r.get("agents"), list) and r["agents"] and set(r["agents"]) <= set(BOTH)):
                 bad = "has agents that are not a non-empty list of %s" % " and ".join(BOTH)
+            if bad is None and r.get("scope") is not None and r["scope"] not in SCOPES:
+                bad = "has a scope that is not one of %s" % ", ".join(SCOPES)
+            if bad is None and r.get("scope") is not None and r["agents"] != [CLAUDE]:
+                bad = 'has a scope and agents other than ["%s"]: codex has no per-project hooks' % CLAUDE
         if bad:
             sys.exit("! config/forge.json user_hooks[%d] %s" % (i, bad))
         rows.append(((r["event"], r["command"].replace("<ROOT>", ROOT), r["timeout"], r["marker"],
                       r["matcher"], tuple(r["agents"])), r.get("on") is not False))
+        if scopes is not None:
+            scopes.append(r.get("scope"))
     return rows
 
 
 def _split():
-    """(rows to write, rows to take out): the code's rows, then config/forge.json's `user_hooks`,
-    each in its own order; the rows of an off integration and the `"on": false` ones go to the
-    second list."""
-    live, off = [], []
+    """(rows to write, rows to take out, project rows): the code's rows, then config/forge.json's
+    `user_hooks`, each in its own order; the rows of an off integration and the `"on": false` ones go
+    to the second list. The third holds (row, scope, on) for every row written per project, on or
+    off; each of those is in the second list too."""
+    live, off, project = [], [], []
     for row in _CODE_ROWS:
         (live if _row_on(row[3]) else off).append(row)
-    for row, on in _config_rows():
-        (live if on else off).append(row)
+    for row in _PROJECT_CODE_ROWS:
+        project.append((row, "hindsight", _row_on(row[3])))
+    scopes = []
+    for (row, on), scope in zip(_config_rows(scopes), scopes):
+        if scope:
+            project.append((row, scope, on and lib.on(scope)))
+        else:
+            (live if on else off).append(row)
+    off += [row for row, _, _ in project]
     # An off row never takes out what a live row writes with the same command.
     written = {row[1] for row in live}
-    return live, [row for row in off if row[1] not in written]
+    return live, [row for row in off if row[1] not in written], project
 
 
-# Every row written, and every row whose entries reconcile() takes out by exact command.
-USER_HOOKS, OFF_HOOKS = _split()
+# Every row written at user scope, every row whose entries reconcile() takes out of the user-scope
+# files by exact command, and the rows written per project instead (project_hooks).
+USER_HOOKS, OFF_HOOKS, PROJECT_ROWS = _split()
+_PER_PROJECT = {row[1] for row, _, _ in PROJECT_ROWS}
+
+
+def project_hooks(prof):
+    """The rows skills.write_settings_local owns in this profile's settings.local.json, as
+    (event, command, timeout, marker, matcher, wanted): `wanted` when the row is on and the profile
+    is in its scope. One not wanted is taken out of the file by its exact command."""
+    return [(event, cmd, timeout, marker, matcher, on and SCOPES[scope](prof))
+            for (event, cmd, timeout, marker, matcher, _), scope, on in PROJECT_ROWS]
 
 # Hooks removed from EVERY event on every run. The hindsight package installs a third hook,
 # SessionStart, which writes `deferInitialReflect` into the session cache whenever the bank has
@@ -419,7 +462,8 @@ def reconcile(doc, agent):
                 g["hooks"] = kept
             if removed:
                 groups[:] = [g for g in groups if _hook_list(g) != []]
-                notes.append("dropped %d %s (%s: off in config/forge.json)" % (removed, marker, event))
+                notes.append("dropped %d %s (%s: %s)" % (removed, marker, event, "written per project"
+                                                         if cmd in _PER_PROJECT else "off in config/forge.json"))
 
     # A marker's entries belong to this agent's rows with that marker. One on an event where none of
     # those rows lives is a row that was deleted or moved: the pass below only visits events that

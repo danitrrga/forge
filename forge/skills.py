@@ -184,7 +184,15 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
     return summary
 
 
-def write_settings_local(ctx, prof, secrets=None, errors=None):
+def _holds_command(sl, commands):
+    """Whether the file's hooks hold an entry running one of `commands` exactly."""
+    hooks = sl.get("hooks")
+    return isinstance(hooks, dict) and any(
+        _groups_ok(have) and any(h.get("command") in commands for g in have for h in g.get("hooks", []))
+        for have in hooks.values())
+
+
+def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=()):
     """Owns <project>/.claude/settings.local.json: everything the profile says goes there, merged
     into the file. For a claude profile carrying `plugins_keep` and/or `skills_keep`, that is:
       * enabledPlugins -- full canonical map (kept=True, rest=False; whole-object,
@@ -206,6 +214,10 @@ def write_settings_local(ctx, prof, secrets=None, errors=None):
         line is absent, except what the profile's own `hooks` declares (_own_guard).
       * worktree guard -- `worktree_guard` (lib.worktree_guard_on) does the same for
         hooks/worktree_guard.py, its group behind the matcher of every writing tool (GUARDS).
+      * project_hooks -- the rows forge writes per project instead of at user scope
+        (forge.hooks.project_hooks: Hindsight's, for a profile that uses it), each owned by its
+        exact command the same way: a wanted row ends as one entry, one not wanted goes. The
+        callers pass them, so this module never reads config/forge.json.
     Returns a one-line summary string, or None if the profile carries none of those keys and the
     file holds none of the three written only while declared (skillOverrides, enabledPlugins, env),
     which go when the profile stops declaring them.
@@ -228,13 +240,14 @@ def write_settings_local(ctx, prof, secrets=None, errors=None):
     ppath = prof["project_path"]
     slp = os.path.join(ppath, ".claude", "settings.local.json")
     declared = (trim or prof.get("permissions") or prof.get("env") or prof.get("hooks") or prof.get("command_guard")
-                or prof.get("worktree_guard") or prof.get("mcpjson_approved") is not None or prof.get("mcpjson_disabled") is not None)
+                or prof.get("worktree_guard") or prof.get("mcpjson_approved") is not None or prof.get("mcpjson_disabled") is not None
+                or any(row[5] for row in project_hooks))
     # A profile that declares none of it still owns the keys written only while declared: read
     # the file, and leave early only when it holds none of them. Returning first, as it once did,
     # kept a stale skillOverrides hiding skills in a project that had stopped trimming.
     sl = lib.read_owned(slp)
     if not declared and not any(k in sl for k in ("skillOverrides", "enabledPlugins", "env")) \
-            and not _has_forge_guard(sl):
+            and not _has_forge_guard(sl) and not _holds_command(sl, {row[1] for row in project_hooks}):
         return None
     on_machine = global_skills() | neighbour_skills(ppath)
     proj_skills = set(skill_dirs(os.path.join(ppath, ".claude", "skills")))
@@ -352,6 +365,9 @@ def write_settings_local(ctx, prof, secrets=None, errors=None):
     # every entry that runs one of its guards, which the append-only merge above could never remove.
     for row in GUARDS:
         hooks_summary += _own_guard(sl, prof, row)
+    for event, cmd, timeout, marker, matcher, wanted in project_hooks:
+        hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event,{"type": "command", "command": cmd, "timeout": timeout},
+                                   matcher, wanted, "%s %s" % (marker, event), marker)
 
     # .mcp.json approval, owned by the profile when it declares `mcpjson_approved`. Claude Code
     # reads enableAllProjectMcpServers and enabledMcpjsonServers from settings.local.json, and

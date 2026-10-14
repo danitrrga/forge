@@ -367,9 +367,12 @@ want = [
     ("Notification", "omarchy_notify.py", 10, None, ("claude",), "python3 <R>/hooks/omarchy_notify.py"),
     ("SessionStart", "memory_doctor.py", 15, None, ("claude",), "python3 <R>/scripts/sync/memory_doctor.py --hook"),
 ]
-check("full config: today's rows, in today's order (eight named, session sync, memory gate, then the four coding-agents rows)",
+# The two Claude coding-agents rows are written per project (tests/test_hindsight_project_hooks.py);
+# the two Codex ones stay here.
+check("full config: today's rows, in today's order (eight named, session sync, memory gate, then the two codex coding-agents rows)",
       [g for g in got if g[1] not in ("forge session-start", "coding-agents")] == want
-      and [g[1] for g in got] == [w[1] for w in want[:8]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 4,
+      and [g[1] for g in got] == [w[1] for w in want[:8]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 2
+      and [g[4] for g in got if g[1] == "coding-agents"] == [("codex",)] * 2,
       "got %r" % (got,))
 
 sandbox.cleanup(bool(failures))

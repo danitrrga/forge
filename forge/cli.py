@@ -89,11 +89,13 @@ def settings_forge_would_write(name, prof, registry):
     nothing because the file is already what it says. Computed in memory: the one write that function
     makes, lib.write_json at its end, is replaced by a recorder for the call, so no byte reaches the
     project, no .bak either. The recorder is restored in a finally."""
+    from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
     sel = [s for s in prof.get("servers", []) if s in registry]
     wanted, real = [], lib.write_json
     lib.write_json = lambda path, data, **kw: wanted.append(data)
     try:
-        skills.write_settings_local(lib.Ctx(True, {name}, False), mcp.with_denied_tools(prof, sel, registry))
+        skills.write_settings_local(lib.Ctx(True, {name}, False), mcp.with_denied_tools(prof, sel, registry), None, None,
+                                    hooks.project_hooks(prof))
     finally:
         lib.write_json = real
     return wanted[-1] if wanted else None

@@ -211,7 +211,8 @@ def _run(argv, rule):
 
         env_errors = []
         try:
-            ov = skills.write_settings_local(ctx, mcp.with_denied_tools(prof, sel, registry), secrets, env_errors)
+            ov = skills.write_settings_local(ctx, mcp.with_denied_tools(prof, sel, registry), secrets, env_errors,
+                                            hooks.project_hooks(prof))
         except lib.Unreadable as e:
             ov = _unreadable(e)
         if ov:
