@@ -734,6 +734,32 @@ def integrations_row():
     return out
 
 
+def codex_hooks_row():
+    """The `codex hooks` row: Codex gets no hook from forge, so ~/.codex/hooks.json holding a command forge
+    wrote (forge.hooks.codex_commands) is a FAIL. PASS says how many entries it looked at, or that the file
+    is not there; a file it could not read, or one with an entry of the wrong shape, is a FAIL, never a
+    PASS over what was not looked at; SKIP while codex is off, as forge sync does not read the file then."""
+    if not lib.on("codex"):
+        return lib.Result("SKIP", "codex hooks", NOT_ARMED + "codex is off in config/forge.json")
+    from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
+    where = lib.short(hooks.CODEX_HOOKS)
+    try:
+        doc = lib.read_owned(hooks.CODEX_HOOKS, None)
+    except lib.Unreadable as e:
+        return lib.Result("FAIL", "codex hooks", "%s is unreadable, so what it holds was not checked: %s" % (where, e))
+    if doc is None:
+        return lib.Result("PASS", "codex hooks", "%s is not there, so forge left no hook in it" % where)
+    entries, bad = lib.hook_entries(doc)
+    if bad:
+        return lib.Result("FAIL", "codex hooks", "%s has %d entr%s of the wrong shape, so what it holds was not checked"
+                          % (where, bad, "y" if bad == 1 else "ies"))
+    ours = hooks.codex_commands()
+    found = ["%s %s" % (event, hook.get("command")) for event, _, _, hook in entries if hook.get("command") in ours]
+    if found:
+        return lib.Result("FAIL", "codex hooks", "%s still holds %d hook(s) forge wrote: %s" % (where, len(found), "; ".join(found)))
+    return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
+
+
 def doctor_extra_row():
     """config/forge.json's `doctor_extra`: [name, argv, fix] rows, each a command run from ROOT that
     exits 0 when healthy, shown as a row of its own named `name` (the last line of its output, and the
@@ -768,6 +794,7 @@ CHECKS = [
     ("toolchain", toolchain_row, "forge toolchain --fix (installs what is missing; a version that differs is only reported)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
+    ("codex hooks", codex_hooks_row, "forge sync --apply takes forge's entries out of ~/.codex/hooks.json; a file that does not parse is Codex's own to repair"),
     ("jev", ["skills/jev/scripts/jev.py", "check"], "python3 skills/jev/scripts/jev.py router status"),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),

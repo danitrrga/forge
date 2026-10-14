@@ -1356,6 +1356,52 @@ def integrations_cases(tmp):
         want("a user_hooks row forge.hooks cannot read is a FAIL, not an exit", [l[0] for l in got if "could not read them" in l[1]], ["FAIL"])
 
 
+def codex_hooks_cases(tmp):
+    """The `codex hooks` row: Codex gets no hook from forge, so ~/.codex/hooks.json holding a command forge
+    wrote is a FAIL naming the fix. Red before: every case on "AttributeError: module 'forge.cli' has no
+    attribute 'codex_hooks_row'". Negative control: with the check made to find nothing (the row returning
+    PASS whatever the file holds) "a forge entry in the file" = [('PASS', ...)], want a FAIL."""
+    target = os.path.join(tmp, "codex-hooks", "hooks.json")
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    real = hooks.CODEX_HOOKS
+    hooks.CODEX_HOOKS = target
+    forge_cmd = "python3 %s/caveman_house_rules.py" % hooks.HOOK_DIR
+
+    def put(doc):
+        with open(target, "w", encoding="utf-8") as fh:
+            fh.write(doc if isinstance(doc, str) else json.dumps(doc))
+
+    def entry(cmd):
+        return {"hooks": [{"type": "command", "command": cmd, "timeout": 5}]}
+    try:
+        on = dict(OFF, codex=True)
+        with toy_settings(settings_world(tmp, "codex-hooks-on", dict(integrations=on))):
+            want("the row is registered", {n: c for n, c, _ in cli.CHECKS}.get("codex hooks") is getattr(cli, "codex_hooks_row", 0), True)
+            if os.path.exists(target):
+                os.remove(target)
+            want("no hooks.json: PASS, and says there is none", call("codex_hooks_row"),
+                 [("PASS", "%s is not there, so forge left no hook in it" % lib.short(target))])
+            put({"hooks": {"Stop": [entry("node /opt/herdr/notify.js")]}})
+            want("a file with only a foreign entry: PASS, and says how many it looked at", call("codex_hooks_row"),
+                 [("PASS", "1 entry in %s, none is forge's" % lib.short(target))])
+            put({"hooks": {"SessionStart": [entry(forge_cmd)], "Stop": [entry("node /opt/herdr/notify.js")]}})
+            want("a forge entry in the file: FAIL, naming the event and the command", call("codex_hooks_row"),
+                 [("FAIL", "%s still holds 1 hook(s) forge wrote: SessionStart %s" % (lib.short(target), forge_cmd))])
+            put({"hooks": {"SessionStart": [entry("python3 /elsewhere/caveman_house_rules.py")]}})
+            want("the same script under another path is not forge's: PASS", [l[0] for l in call("codex_hooks_row")], ["PASS"])
+            put("{bad")
+            want("a file that does not parse: FAIL", [l[0] for l in call("codex_hooks_row")], ["FAIL"])
+            put({"hooks": {"SessionStart": ["x", entry("node /opt/herdr/notify.js")]}})
+            want("a file with an entry of the wrong shape: FAIL, never a PASS over what could not be read",
+                 [l[0] for l in call("codex_hooks_row")], ["FAIL"])
+        with toy_settings(settings_world(tmp, "codex-hooks-off", dict(integrations=OFF))):
+            put({"hooks": {"SessionStart": [entry(forge_cmd)]}})
+            want("codex off: a SKIP that did not look", call("codex_hooks_row"),
+                 [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json")])
+    finally:
+        hooks.CODEX_HOOKS = real
+
+
 def skip_cases(tmp):
     """instruction_files_skip, session_wait and the gsd step, each read from the toy file."""
     base = inst_world(tmp, "skipcfg", {"skipme": {"CLAUDE.md": "x\n<!-- BEGIN:other-tool -->\n"}})
@@ -1487,6 +1533,7 @@ def main():
     pending_cases()
     extra_cases(tmp)
     integrations_cases(tmp)
+    codex_hooks_cases(tmp)
     skip_cases(tmp)
     test_cases(tmp)
     project_cases(tmp)
