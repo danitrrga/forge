@@ -57,17 +57,7 @@ a name that is not kebab-case. By default forge writes no file git tracks in the
 
 ## How it works
 
-```mermaid
-flowchart LR
-    P["config/profiles/*.claude.json"] --> G["forge sync"]
-    R["config/mcp-registry.json"] --> G
-    S["credentials/secrets.json"] --> G
-    K["skills/"] --> G
-    G --> L["each project: .claude/settings.local.json"]
-    G --> U["~/.claude.json and ~/.claude/settings.json"]
-    G --> C["Codex: .codex/config.toml and ~/.codex/"]
-    H["SessionStart hook"] --> G
-```
+<img src="docs/assets/how-it-works.svg" alt="How forge works: the profiles, the MCP registry, the secrets file and skills/ feed forge sync, which a SessionStart hook runs for the project you open; it writes each project's .claude/settings.local.json, its MCP servers in ~/.claude.json, the user-scope hooks and skill links, and optionally the Codex config; forge doctor checks the result." width="100%">
 
 A profile, `config/profiles/<name>.claude.json`, holds a project's path, the MCP servers it gets from
 `config/mcp-registry.json`, the skills and plugins it keeps, permissions, env and hooks. The accepted fields

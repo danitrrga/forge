@@ -39,6 +39,7 @@ ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
 # path: a changed byte fails again until someone looks again, and an SVG is still read line by line.
 PUBLIC_ASSETS = {
     "docs/assets/forge-banner.png": "992e30e69a0e3e5f88adb242aae844c111ce773f8b9654b1e77f449b92e26f78",
+    "docs/assets/how-it-works.svg": "15be9dbe2b8716eb03910153eafb557da60cc9b2f2fa9653a96bba1dc4b250d9",
 }
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
