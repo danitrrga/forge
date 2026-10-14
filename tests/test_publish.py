@@ -166,6 +166,13 @@ PUBLIC_CASES = [
     ("home path, a user name that starts with an underscore still hits", "a.txt", "x = " + HOME_DIR + "_svc/dev\n", "home path"),
     ("email", "a.txt", "mail bob@" + j("acme", ".io") + " now\n", "email"),
     ("email, the no-reply form passes", "a.txt", "mail " + NOREPLY + " now\n", None),
+    ("email, the trailer's no-reply address passes", "a.txt", "Co-Authored-By: Claude Sonnet <noreply@" + j("anthropic", ".com") + ">\n", None),
+    ("email, a no-reply name without the digits is refused", "a.txt", "mail someone@" + j("users", ".noreply.github.com") + "\n", "email"),
+    ("email, a subdomain of the no-reply host is refused", "a.txt", "mail 12345+x@a." + j("users", ".noreply.github.com") + "\n", "email"),
+    ("email, another name at the anthropic domain is refused", "a.txt", "mail bob@" + j("anthropic", ".com") + "\n", "email"),
+    ("email, a longer local part before noreply is refused", "a.txt", "mail xnoreply@" + j("anthropic", ".com") + "\n", "email"),
+    ("email, noreply at another domain is refused", "a.txt", "mail noreply@" + j("acme", ".io") + "\n", "email"),
+    ("email, the anthropic address with a suffix domain is refused", "a.txt", "mail noreply@" + j("anthropic", ".com.acme.io") + "\n", "email"),
     ("email, example.com passes", "a.txt", "mail bob@" + j("example", ".com") + "\n", None),
     ("email, example.org passes", "a.txt", "mail bob@" + j("example", ".org") + "\n", None),
     ("email, localhost passes", "a.txt", "mail bob@" + j("local", "host") + "\n", None),
@@ -565,6 +572,12 @@ def hook_cases():
     has("commit-msg, a planted address", out, "(message):1 [email]")
     code, out = g(root, "commit", "-q", "-m", "fix for " + NOREPLY)
     want("commit-msg, the no-reply form = (exit, moved)", (code, head(root) != before), (0, True))
+    # The standard trailer must not be refused as an address.
+    write(root, "forge/extra.py", "X = 4\n")
+    git_out(root, "add", "forge/extra.py")
+    before = head(root)
+    code, out = g(root, "commit", "-q", "-m", "x\n\nCo-Authored-By: Claude Sonnet <noreply@" + j("anthropic", ".com") + ">")
+    want("commit-msg, the standard trailer = (exit, moved)", (code, head(root) != before), (0, True))
     # pre-push: a commit made with --no-verify is caught on the way out; clean history goes.
     remote = os.path.join(TMP, "remote.git")
     run(["git", "init", "-q", "--bare", remote], TMP)

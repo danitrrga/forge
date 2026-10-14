@@ -35,7 +35,11 @@ ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
              ".bmp", ".tif", ".tiff", ".avif", ".heic", ".svg"}
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
-EMAIL_OK = ("users.noreply.github.com", "example.com", "example.org")
+EMAIL_OK = ("example.com", "example.org")
+# The two public no-reply addresses, matched whole and nothing wider: the commit trailer's address and a
+# GitHub no-reply `<digits>+<name>@`. Any other name at those hosts is an address like any other.
+EMAIL_PUBLIC_RE = re.compile(r"noreply@anthropic\.com|[0-9]{1,20}\+[A-Za-z0-9-]{1,39}@users\.noreply\.github\.com",
+                             re.IGNORECASE)
 # 10/8, 172.16/12, 192.168/16 and 100.64/10, as (address, prefix length): this file is scanned
 # too, and a dotted literal here would be a hit.
 PRIVATE_NETS = [ipaddress.IPv4Network(n) for n in ((10 << 24, 8), ((172 << 24) | (16 << 16), 12),
@@ -72,7 +76,7 @@ def public_hits(line):
     if "@" in line:
         for m in EMAIL_RE.finditer(line):
             d = m.group(1).lower()
-            if not any(d == ok or d.endswith("." + ok) for ok in EMAIL_OK):
+            if not EMAIL_PUBLIC_RE.fullmatch(m.group(0)) and not any(d == ok or d.endswith("." + ok) for ok in EMAIL_OK):
                 out.append(("email", m.group(0)))
     if "." in line:
         for m in IPV4_RE.finditer(line):
