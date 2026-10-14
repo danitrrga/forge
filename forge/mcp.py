@@ -461,9 +461,9 @@ class ClaudeJson:
         print("   servers +%s  -%s" % (add or "[]", rem or "[]"))
         if not errors:
             proj["mcpServers"] = new_ms
-            proj["enabledMcpjsonServers"] = sel
-            if prof.get("enableAllProjectMcpServers") is not None:
-                proj["enableAllProjectMcpServers"] = prof["enableAllProjectMcpServers"]
+            # The .mcp.json approval keys are not written here: Claude Code reads them from the
+            # project's settings.local.json (forge/skills.py), and removes them from this entry on
+            # its own, so putting them back made every run a write. Neither added nor removed.
             # preserve disabledMcpServers as-is
 
     def commit(self, ctx):

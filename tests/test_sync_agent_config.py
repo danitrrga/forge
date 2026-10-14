@@ -1139,6 +1139,65 @@ check(sorted(k for k in direct if k.startswith("_")) == [] and "deny_tools" not 
       and direct.get("command") == "run",
       "resolved_server kept %r" % sorted(k for k in direct if k.startswith("_")))
 
+# 27b. The .mcp.json approval keys (enabledMcpjsonServers, enableAllProjectMcpServers) belong in
+# a project's settings.local.json, where Claude Code reads them; in ~/.claude.json they did
+# nothing, and Claude Code removes them from a project entry itself. forge put them back on every
+# run, so a session start said `~/.claude.json -> wrote` and the dry-run right after said `would
+# write`. Now ClaudeJson.project neither adds nor removes them. Red before: see the commit body.
+reset_home()
+d27b = os.path.join(TOY, "approvalkeys", "projects", "a")
+repo(d27b)
+P27B = {"servers": [], "enableAllProjectMcpServers": True}
+code, out, _ = case("approvalkeys", {"a": P27B})
+ent = json.loads(read(CJ))["projects"][mcp.project_key(d27b)]
+for k in ("enabledMcpjsonServers", "enableAllProjectMcpServers"):
+    ent.pop(k, None)  # what Claude Code 2.1.294 does to a project entry
+seed(CJ, json.dumps({"projects": {mcp.project_key(d27b): ent}}))
+before = read(CJ)
+code, out, _ = case("approvalkeys-again", {"a": dict(P27B, project_path=d27b)})
+back = sorted(k for k in json.loads(read(CJ))["projects"][mcp.project_key(d27b)]
+              if k in ("enabledMcpjsonServers", "enableAllProjectMcpServers"))
+line = [l for l in out.splitlines() if "~/.claude.json ->" in l]
+check(code == 0 and line == ["   ~/.claude.json -> already current"] and read(CJ) == before and not back,
+      "an entry without the two keys, rerun: exit %r, ~/.claude.json line %r, keys back %r" % (code, line, back))
+# Neither does it remove them: a session may have set them, and Claude Code removes them itself.
+ent = json.loads(read(CJ))["projects"][mcp.project_key(d27b)]
+ent["enabledMcpjsonServers"], ent["enableAllProjectMcpServers"] = ["sess"], False
+seed(CJ, json.dumps({"projects": {mcp.project_key(d27b): ent}}))
+before = read(CJ)
+code, out, _ = case("approvalkeys-held", {"a": dict(P27B, project_path=d27b, mcpjson_approved=["x"])})
+now = json.loads(read(CJ))["projects"][mcp.project_key(d27b)]
+line = [l for l in out.splitlines() if "~/.claude.json ->" in l]
+check(code == 0 and line == ["   ~/.claude.json -> already current"] and read(CJ) == before
+      and now.get("enabledMcpjsonServers") == ["sess"] and now.get("enableAllProjectMcpServers") is False,
+      "an entry holding the keys, rerun: exit %r, ~/.claude.json line %r, enabledMcpjsonServers %r (want ['sess'])"
+      % (code, line, now.get("enabledMcpjsonServers")))
+
+# 27c. enableAllProjectMcpServers reaches settings.local.json whenever the profile declares it, with or
+# without `mcpjson_approved`: it was written only beside the approved list, so the profiles that
+# declare it alone would have it nowhere once ~/.claude.json stopped carrying it. enabledMcpjsonServers
+# stays written only with `mcpjson_approved`. Negative controls: a profile that does not declare the key,
+# or declares false, gets no `true`.
+for label, prof, want, summary in (
+        ("a bare profile with the key", {"enableAllProjectMcpServers": True}, True, "(ALL: on)"),
+        ("a trimmed profile with the key", {"skills_keep": [], "enableAllProjectMcpServers": True}, True, "(ALL: on)"),
+        ("a trimmed profile with the key false", {"skills_keep": [], "enableAllProjectMcpServers": False}, False, None),
+        ("a trimmed profile without the key", {"skills_keep": []}, None, None),
+        ("an approved list and the key", {"mcpjson_approved": ["x"], "enableAllProjectMcpServers": True}, True, "(ALL: on)"),
+        ("an approved list, no key", {"mcpjson_approved": ["x"]}, None, None)):
+    reset_home()
+    name = "allkey-" + re.sub(r"\W+", "-", label)
+    code, out, dirs = case(name, {"a": prof})
+    slp = os.path.join(dirs["a"], ".claude", "settings.local.json")
+    doc = json.loads(read(slp)) if os.path.exists(slp) else {}
+    line = [l for l in out.splitlines() if "overrides ->" in l]
+    check(code == 0 and doc.get("enableAllProjectMcpServers") == want
+          and ("enabledMcpjsonServers" in doc) == ("mcpjson_approved" in prof)
+          and ((summary is None and not any("(ALL: on)" in l for l in line))
+               or (summary is not None and len(line) == 1 and summary in line[0])),
+          "%s: exit %r, enableAllProjectMcpServers %r (want %r), keys %r, overrides lines %r"
+          % (label, code, doc.get("enableAllProjectMcpServers"), want, sorted(doc), line))
+
 # 28. reconcile() owns a marker's entries on EVERY event, per agent: an entry carrying the marker of one
 # of this agent's rows, on an event where none of this agent's rows with that marker lives, is dropped
 # with a note naming the event. Without it, deleting the UserPromptSubmit gsd_output_discipline.py row

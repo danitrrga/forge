@@ -14,8 +14,8 @@ This file is a synced copy (`.claude/AGENT-SYSTEM.md` in each project, git-ignor
 
 ## Never hand-edit these
 
-- `~/.claude.json`: MCP servers, project keys and enable flags.
-- Any project's `.claude/settings.local.json`: plugin and skill on/off, permissions, env.
+- `~/.claude.json`: MCP servers and project keys.
+- Any project's `.claude/settings.local.json`: plugin and skill on/off, permissions, env, the `.mcp.json` approval flags.
 - The hook rows forge wrote into `~/.claude/settings.json` (its other keys are yours).
 - With Codex on: `~/.codex/hooks.json`, a project's `.codex/config.toml` and its `.agents/skills` links.
 - Any `.claude/AGENT-SYSTEM.md`, which is this synced copy.

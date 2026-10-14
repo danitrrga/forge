@@ -238,6 +238,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     slp = os.path.join(ppath, ".claude", "settings.local.json")
     declared = (trim or prof.get("permissions") or prof.get("env") or prof.get("hooks") or prof.get("command_guard")
                 or prof.get("worktree_guard") or prof.get("mcpjson_approved") is not None or prof.get("mcpjson_disabled") is not None
+                or prof.get("enableAllProjectMcpServers") is not None
                 or any(row[5] for row in project_hooks))
     # A profile that declares none of it still owns the keys written only while declared: read
     # the file, and leave early only when it holds none of them. Returning first, as it once did,
@@ -366,7 +367,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event, canonical_hook(cmd, timeout),
                                    matcher, wanted, "%s %s" % (marker, event), marker)
 
-    # .mcp.json approval, owned by the profile when it declares `mcpjson_approved`. Claude Code
+    # .mcp.json approval, owned by the profile when it declares `mcpjson_approved` (the list) or
+    # `enableAllProjectMcpServers` (that key alone, with or without a list). Claude Code
     # reads enableAllProjectMcpServers and enabledMcpjsonServers from settings.local.json, and
     # the generator once wrote them only into ~/.claude.json -- so whatever a session
     # had once approved in-session stayed approved. One project's file said
@@ -384,12 +386,14 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     # can also name servers in `mcpjson_disabled`, written whole into disabledMcpjsonServers.
     mcp_summary = ""
     approved = prof.get("mcpjson_approved")
+    if prof.get("enableAllProjectMcpServers") is not None:
+        sl["enableAllProjectMcpServers"] = prof["enableAllProjectMcpServers"]
     if approved is not None:
         sl["enabledMcpjsonServers"] = list(approved)
-        if prof.get("enableAllProjectMcpServers") is not None:
-            sl["enableAllProjectMcpServers"] = prof["enableAllProjectMcpServers"]
         mcp_summary = ", .mcp.json approved %d%s" % (
             len(approved), "" if sl.get("enableAllProjectMcpServers") is not True else " (ALL: on)")
+    elif sl.get("enableAllProjectMcpServers") is True:
+        mcp_summary = ", .mcp.json (ALL: on)"
     disabled = prof.get("mcpjson_disabled")
     if disabled is not None:
         sl["disabledMcpjsonServers"] = list(disabled)
