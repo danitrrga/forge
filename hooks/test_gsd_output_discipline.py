@@ -152,6 +152,46 @@ for nombre, texto, debe in CASOS_DOC_NUEVOS:
     fails += not ok
     print(f"{'PASS' if ok else '*** FAIL ***':<14} {nombre:<52} marco={marco} esperado={debe}")
 
+# Falsas alarmas medidas en 14 dias de sesiones reales (11 cortes: 5 genuinos, 6 falsos).
+# Los seis falsos eran nombres que no son identificadores de decision ni de tarea: ficheros
+# de sesion (`SESION-79`) y el nombre de un modelo (`GPT-6`). Los cinco genuinos siguen
+# cortando: son lineas de estado donde el sujeto es un codigo de plan.
+CASOS_FALSAS_ALARMAS = [
+ # (nombre, texto, debe_cortar)
+ ("falsa alarma: fichero de sesion, vineta",
+  "- `SESION-79` cerrada y archivada.\n", False),
+ ("falsa alarma: fichero de sesion, encabezado",
+  "## SESION-80\nResumen de lo hecho.\n", False),
+ ("falsa alarma: fichero de sesion, celda de tabla",
+  "| `SESION-81` | traspaso listo |\n", False),
+ ("falsa alarma: fichero de sesion, frase corta",
+  "Leo `SESION-79` primero.\n", False),
+ ("falsa alarma: fichero de sesion con ruta y extension",
+  "`docs/sesiones/SESION-80.md` listo.\n", False),
+ ("falsa alarma: nombre de modelo",
+  "GPT-6 sale pronto.\n", False),
+ ("genuino: estado con dos codigos de plan",
+  "02-74 merged and closed. Dispatching 02-75.\n", True),
+ ("genuino: decision como sujeto de vineta",
+  "- D-12 pending\n", True),
+ ("genuino: tarea ADV cerrada",
+  "ADV-3 closed.\n", True),
+ ("genuino: riesgo abierto",
+  "R-2 open.\n", True),
+ ("genuino: pedir permiso por el codigo con la ola",
+  "Dispatch 02-75?\n", True),
+ ("genuino: codigo entre backticks sin ruta ni extension",
+  "| `02-74` | cerrada |\n", True),
+ ("genuino: fichero de sesion y codigo de plan en la misma linea",
+  "- `SESION-79` cierra 02-74.\n", True),
+]
+for nombre, texto, debe in CASOS_FALSAS_ALARMAS:
+    dec = run_chat(texto)
+    bloqueo = dec == "block"
+    ok = bloqueo == debe
+    fails += not ok
+    print(f"{'PASS' if ok else '*** FAIL ***':<14} {nombre:<52} bloqueo={bloqueo} esperado={debe}")
+
 print()
-print(f"casos fallidos totales: {fails}/{len(CASES) + len(CASOS_CHAT) + len(CASOS_DOC_NUEVOS)}")
+print(f"casos fallidos totales: {fails}/{len(CASES) + len(CASOS_CHAT) + len(CASOS_DOC_NUEVOS) + len(CASOS_FALSAS_ALARMAS)}")
 sys.exit(1 if fails else 0)

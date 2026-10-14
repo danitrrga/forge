@@ -96,6 +96,10 @@ PREFIJOS_NO = {
     "UTF", "ISO", "SHA", "MD", "CRC", "AES", "RSA", "TLS", "SSL", "HTTP", "HTTPS",
     "AGPL", "LGPL", "GPL", "BSD", "MIT", "CC", "RFC", "PEP", "CVE", "UTC", "GMT",
     "IEC", "ANSI", "UNE", "EN", "RD", "WCAG", "AA", "AAA", "COVID", "RS", "USB",
+    # Nombres de producto o modelo (`GPT-6`): una version, no una decision ni una tarea.
+    # Lista corta y cerrada a proposito; un nombre nuevo se anade aqui cuando aparezca.
+    "GPT", "GEMINI", "CLAUDE", "SONNET", "OPUS", "HAIKU", "LLAMA", "QWEN", "GLM",
+    "GEMMA", "GROK", "PHI", "MISTRAL", "DEEPSEEK", "KIMI",
 }
 RE_IDENT = re.compile(r"""(?<![\w-])(
       (?:[A-Z][A-Z0-9]{0,7}-\d{1,3}(?:\.\d+)?[a-z]?)   # ADR-012, ENG-02, D-48, D3-5, T-04
@@ -338,6 +342,32 @@ def _unidades(texto: str) -> list:
 
 RE_RANGO = re.compile(r"[:.]\d")   # `thresholds.ts:14-45` es un rango de lineas, no una ola
 
+# NOMBRES DE FICHERO, no identificadores. Medido en 14 dias de sesiones reales: 11 cortes, 5
+# genuinos y 6 falsos, y los falsos eran `SESION-79`, `SESION-80`, `SESION-81` (ficheros de
+# sesion) y `GPT-6` (un modelo, ver PREFIJOS_NO). Un nombre de fichero es el nombre de la cosa.
+# Se reconoce por la forma, no por una lista: (a) dentro de backticks con separador de ruta o
+# con extension (`docs/SESION-79.md`), (b) pegado a una extension sin backticks (SESION-79.md),
+# (c) palabra en mayusculas de LARGO_PREFIJO_NOMBRE letras o mas delante del numero. Los codigos
+# de plan llevan prefijos cortos (D, R, ADV, ADR, MEM, ENG) o ninguno (02-74). Un codigo entre
+# backticks sin ruta ni extension (`02-74`) SIGUE siendo un identificador.
+LARGO_PREFIJO_NOMBRE = 6
+RE_PREFIJO_NOMBRE = re.compile(r"^[A-Z]{%d,}-" % LARGO_PREFIJO_NOMBRE)
+RE_EXTENSION = re.compile(r"\.[A-Za-z][A-Za-z0-9]{0,4}$")
+
+
+def _es_nombre_de_fichero(unidad: str, m) -> bool:
+    """True si el identificador que casa `m` es parte del nombre de un fichero."""
+    if RE_PREFIJO_NOMBRE.match(m.group(1)):
+        return True
+    ini, fin = m.start(1), m.end(1)
+    ant, pos = unidad[:ini], unidad[fin:]
+    if ant.count("`") % 2 == 1 and "`" in pos:      # dentro de un span de codigo
+        span = ant[ant.rindex("`") + 1:] + m.group(1) + pos[:pos.index("`")]
+        return bool("/" in span or "\\" in span or RE_EXTENSION.search(span))
+    # Sin backticks: solo la extension pegada cuenta, `D-12/D-13` es una pareja de codigos.
+    trozo = re.split(r"\s", pos, 1)[0].rstrip(".,;:!?)]}\"'")
+    return bool(RE_EXTENSION.search(m.group(1) + trozo)) and trozo.startswith(".")
+
 
 def identificadores_sin_nombre(texto: str) -> list:
     """La otra mitad de la Regla 1 en chat: el identificador cuya frase no lo nombra.
@@ -354,6 +384,7 @@ def identificadores_sin_nombre(texto: str) -> list:
         for oracion in partir_oraciones(unidad):
             ids = [m.group(1) for m in RE_IDENT_CHAT.finditer(oracion)
                    if _es_identificador(m.group(1))
+                   and not _es_nombre_de_fichero(oracion, m)
                    and not RE_RANGO.search(oracion[max(0, m.start(1) - 2):m.start(1)])]
             if not ids:
                 continue
@@ -381,6 +412,8 @@ def identificadores_sujeto(texto: str) -> list:
                 continue
             if RE_RANGO.search(unidad[max(0, m.start(1) - 2):m.start(1)]):
                 continue  # `thresholds.ts:14-45`
+            if _es_nombre_de_fichero(unidad, m):
+                continue  # `SESION-79`, `docs/SESION-79.md`
             if _palabras_con_carga(unidad[:m.start(1)]):
                 break  # ya se nombro algo antes; no es el sujeto
             hallazgos.append((n, ident, unidad.strip()[:80]))
