@@ -134,6 +134,13 @@ class Sandbox:
         self.log = os.path.join(self.root, "systemctl.log")
         self.outputs, self.manifests, self.portal_keys = {}, {}, {}
         self._copy(mutation)
+        # The seeds below carry a caveman hook for --apply to repair, so the toy world runs with caveman on
+        # whatever this machine's config says. Red before, once caveman is off in the real config/forge.json:
+        # "FAIL  --apply repairs the seeded user-scope files: ['codex hooks.json repaired']".
+        settings = os.path.join(self.forge, "config", "forge.json")
+        doc = read_json(settings)
+        doc.setdefault("integrations", {})["caveman"] = True
+        write_json(settings, doc)
         self._profiles()
         self._secrets()
         git(self.forge, "init", "-q")
