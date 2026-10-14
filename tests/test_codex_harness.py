@@ -15,8 +15,9 @@ Everything runs in-process against a toy HOME, a toy forge.json and a toy config
 written (the toy forge.json carries no jev: its setup.py is a private skill).
 
 Seen failing on 3f9febe (no switch: Codex never gets a hook, and a project always gets its config.toml;
-this file as it is, run in a plain copy of that commit), 32 of 53 checks red, the other 21 are controls that
-pass there (the switch off, codex off, the table lists Codex rows, config.toml with true). Messages:
+this file as it is, run in a plain copy of that commit), 32 of 55 checks red, the other 23 are controls that
+pass there (the switch off, codex off, the table lists Codex rows, config.toml with true, a missing
+project_path, which is an error in both states). Messages:
   true: "codex_harness true, no file: every Codex row is written -- hooks.json exists False, line '   ~/.codex/
     hooks.json -> no hook of forge's (already current)', wrote [], want [...]" (the same for the second run,
     the dry-run, the ward, the repair of a stale row and the user_hooks row)
@@ -387,6 +388,16 @@ for label, body in (("not TOML", "[mcp_servers\nbroken"),
     check("false, a file that is %s: left as it is, the line says so, exit 0" % label,
           code == 0 and read(cfg_path) == body and any("left alone" in l for l in mcp_line(out)),
           "exit %r, bytes %r, lines %r" % (code, read(cfg_path), mcp_line(out)))
+
+# 9.0 A profile whose project_path is not a directory is an error in both states, as it was before the
+# switch: the '!' line and exit 1 (write_codex_project_mcp's message, kept by drop_codex_project_mcp).
+# Red before the line was kept: "false, project_path missing: exit 0, lines []" (the drop said nothing).
+for label, value in (("true", True), ("false", False)):
+    world(harness=value)
+    code, out, proj = generate("mcp-gone-%s" % label, prepare=lambda p: (prep(p), os.rename(p, p + "-moved")))
+    check("codex_harness %s, project_path missing: the '!' line says so and the run exits 1" % label,
+          code == 1 and any(l.lstrip().startswith("!") and "codex mcp: project_path does not exist on disk" in l
+                            for l in out.splitlines()), "exit %r\n%s" % (code, out))
 
 # 9a. A config.toml that is a link is never rewritten through, as the writer never does: the file it points
 # at (a tracked one, say) keeps forge's server table and the line says it was not changed.

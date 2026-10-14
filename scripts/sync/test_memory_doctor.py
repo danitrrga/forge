@@ -125,6 +125,20 @@ def run_full(manifest, trusted=False, hind=None, known=None, hook=False, setting
     return rc, out.getvalue().splitlines()
 
 
+def harness(value):
+    """The toy world's config/forge.json with codex_harness set to `value` (a missing key when None)."""
+    path = os.path.join(WORLD, "config", "forge.json")
+    with open(path, encoding="utf-8") as fh:
+        doc = json.load(fh)
+    if value is None:
+        doc.pop("codex_harness", None)
+    else:
+        doc["codex_harness"] = value
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh)
+    md.lib.settings.cache_clear()
+
+
 def run(manifest, trusted=False):
     """Returns (exit code or the traceback's last line, the codex-untrusted lines of the output)."""
     rc, lines = run_full(manifest, trusted)
@@ -145,14 +159,26 @@ def main():
     if rc != 0 or not any(l.lstrip().startswith("PASS") and "0 examined" in l for l in lines):
         failures.append("missing hooks.json: exit %s, output %r" % (rc, " | ".join(lines)))
 
-    # Codex gets no hook from forge, so a config with no hook trust record is the normal state, not a
-    # finding: a PASS line that says 0 examined, not a WARN. Red before: "no trust records: exit 0, output
-    # ['  WARN  codex-trust        no hook trust records in <config.toml>', ...]". The control is the case
-    # below: a trust record whose manifest is there still PASSes.
+    # With `codex_harness` false or absent Codex gets no hook from forge, so a config with no hook trust
+    # record is the normal state, not a finding: a PASS line that says 0 examined, not a WARN. Red before:
+    # "no trust records: exit 0, output ['  WARN  codex-trust        no hook trust records in <config.toml>',
+    # ...]". The control is the case below: a trust record whose manifest is there still PASSes.
+    for label, value in (("codex_harness false", False), ("codex_harness absent", None), ("codex_harness \"yes\"", "yes")):
+        harness(value)
+        rc, lines = run_full(None)
+        if rc != 0 or any("codex-trust" in l and l.lstrip().startswith("WARN") for l in lines) \
+                or not any("codex-trust" in l and l.lstrip().startswith("PASS") and "0 examined" in l for l in lines):
+            failures.append("no trust records, %s: exit %s, output %r" % (label, rc, [l for l in lines if "codex-trust" in l]))
+    # With it true forge registers Codex hooks again, and Codex runs one only once it is trusted, so no
+    # trust record is a WARN again (exit 0: a warning does not fail). Red before the switch reached this
+    # line: "no trust records, codex_harness true: exit 0, output ['  PASS  codex-trust        no hook trust
+    # records in <config.toml> (0 examined)', ...]". Negative control: the WARN made unreachable (the
+    # branch always a PASS) reproduces that failure.
+    harness(True)
     rc, lines = run_full(None)
-    if rc != 0 or any("codex-trust" in l and l.lstrip().startswith("WARN") for l in lines) \
-            or not any("codex-trust" in l and l.lstrip().startswith("PASS") and "0 examined" in l for l in lines):
-        failures.append("no trust records: exit %s, output %r" % (rc, [l for l in lines if "codex-trust" in l]))
+    if rc != 0 or not any("codex-trust" in l and l.lstrip().startswith("WARN") and "no hook trust records" in l for l in lines) \
+            or any("codex-trust" in l and l.lstrip().startswith("PASS") for l in lines):
+        failures.append("no trust records, codex_harness true: exit %s, output %r" % (rc, [l for l in lines if "codex-trust" in l]))
 
     rc, lines = run(json.dumps(HOOK), trusted=True)
     if rc != 0 or not any(l.lstrip().startswith("PASS") and "every registered hook is trusted (1 examined)"

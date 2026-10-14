@@ -230,7 +230,7 @@ def _run(argv, rule):
                     cx = mcp.write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors)
                 else:
                     # `codex_harness` off: no MCP server for Codex, and forge's own are taken out.
-                    cx = mcp.drop_codex_project_mcp(ctx, prof, registry)
+                    cx = mcp.drop_codex_project_mcp(ctx, prof, registry, errors)
                 if cx:
                     print(cx)
                 ms = skills.mirror_for_codex(ctx, prof)

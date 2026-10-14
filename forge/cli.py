@@ -740,9 +740,11 @@ def codex_hooks_row():
     from forge, so ~/.codex/hooks.json holding a command forge wrote (forge.hooks.codex_commands) is a FAIL.
     True: Codex is configured like Claude Code, so the file must hold every row forge writes there, and
     it is a FAIL while forge's own writer (hooks.reconcile, run on a copy) would still change anything, and
-    the PASS says how many rows it checked. Either way a file it could not read, or one with an entry of the
-    wrong shape, is a FAIL, never a PASS over what was not looked at; SKIP while codex is off, as forge sync
-    does not read the file then, and with the switch true while no row lists codex."""
+    the PASS says how many rows it checked. Either way a file it could not read is a FAIL, and so is an
+    entry of the wrong shape where the check looks: with the switch false every entry, with it true only
+    the events forge has a row for (reconcile repairs those, and leaves a foreign event's entries alone, as the
+    writer does). Never a PASS over what was not looked at; SKIP while codex is off, as forge sync does not
+    read the file then, and with the switch true while no row lists codex."""
     if not lib.on("codex"):
         return lib.Result("SKIP", "codex hooks", NOT_ARMED + "codex is off in config/forge.json")
     from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on

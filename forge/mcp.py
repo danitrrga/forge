@@ -388,17 +388,18 @@ def drop_codex_servers(text, names):
     return new, ours, None
 
 
-def drop_codex_project_mcp(ctx, prof, registry):
+def drop_codex_project_mcp(ctx, prof, registry, errors):
     """The `codex_harness` false half of write_codex_project_mcp: forge writes no MCP server for Codex, and
     takes out of <project>/.codex/config.toml the ones it wrote. Those are the `[mcp_servers.<name>]` tables
     (and their `.env` tables) whose name is a registry server; any other table, key and comment stays, and
     so does [shell_environment_policy] (forge's too, but not an MCP server) and the file itself: forge keeps
     no record of who created it, and Codex may have written to it since. A file that is absent is not
     created; one that does not parse, or holds a registry name in a shape the line reader cannot take out
-    whole, is left as it is and the line says so. Returns a one-line summary, or None when there is no
-    project directory."""
+    whole, is left as it is and the line says so. A project_path that is not a directory is the writer's
+    error, word for word, so the run exits 1 in both states. Returns a one-line summary, or None."""
     ppath = prof["project_path"]
     if not os.path.isdir(ppath):
+        errors.append("codex mcp: project_path does not exist on disk: %s" % ppath)
         return None
     path = os.path.join(ppath, ".codex", "config.toml")
     short = lib.short(path)
