@@ -108,9 +108,10 @@ _n = [0]
 
 def forge_json(integrations, **top):
     """A toy config/forge.json, lib pointed at it; returns its path. Codex and Hindsight are what the
-    tests switch, so a name not given is off."""
+    tests switch, so a name not given is off. `codex_harness` is true unless `top` says otherwise: this
+    suite is about where Codex's files go, and the switch has its own suite (test_codex_harness.py)."""
     _n[0] += 1
-    doc = dict({"integrations": dict({k: False for k in lib.INTEGRATIONS}, **integrations)}, **top)
+    doc = dict({"integrations": dict({k: False for k in lib.INTEGRATIONS}, **integrations)}, **dict({"codex_harness": True}, **top))
     path = os.path.join(TOY, "forge-%d.json" % _n[0])
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)

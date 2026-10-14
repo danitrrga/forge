@@ -14,11 +14,11 @@ Source of truth:
 Targets written:
   ~/.claude.json  projects["<forward-slash path>"].mcpServers (+ enable flags)
   <project>/.claude/settings.local.json  (plugin/skill overrides, env)
-  <project>/.codex/config.toml  (the same servers, for Codex)
+  <project>/.codex/config.toml  (the same servers, for Codex, with codex_harness true; false takes forge's out)
   <project>/.agents/skills/<name>  (links to the project's .claude/skills, for Codex)
   <project>/.gitignore  (the .codex/ and .agents/ lines, before either is written)
   ~/.claude/settings.json  (user-scope hooks and defaults)
-  ~/.codex/hooks.json  (no hook is written, forge's own entries are taken out; $CODEX_HOME when set)
+  ~/.codex/hooks.json  (the same hooks, for Codex, with codex_harness true; false takes forge's out; $CODEX_HOME when set)
   ~/.hindsight/coding-agent.json  (rendered from config/hindsight-coding-agents.json)
   data/memory-lite/<project>  (each project's claude-mem-lite store directory)
   the jev-proxy systemd user units and the Jev status-bar extension links
@@ -226,7 +226,11 @@ def _run(argv, rule):
             print(hooks._not_run("codex mcp, project skills", "codex"))
         elif not errors:
             try:
-                cx = mcp.write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors)
+                if lib.codex_harness():
+                    cx = mcp.write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors)
+                else:
+                    # `codex_harness` off: no MCP server for Codex, and forge's own are taken out.
+                    cx = mcp.drop_codex_project_mcp(ctx, prof, registry)
                 if cx:
                     print(cx)
                 ms = skills.mirror_for_codex(ctx, prof)

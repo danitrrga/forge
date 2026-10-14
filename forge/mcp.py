@@ -198,7 +198,10 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     Whole-file rewrite (not a merge): every existing .codex/config.toml on this machine
     contains ONLY the two sections written here, so there is nothing else to preserve --
     same "fully generated, never hand-edited" contract as settings.local.json.
-    Returns a one-line summary."""
+
+    Only called while config/forge.json's `codex_harness` is true (Codex configured like Claude Code,
+    lib.codex_harness); with it false forge writes no MCP server for Codex and drop_codex_project_mcp
+    takes out the ones it wrote. Returns a one-line summary."""
     ppath = prof["project_path"]
     if not os.path.isdir(ppath):
         errors.append("codex mcp: project_path does not exist on disk: %s" % ppath)
@@ -315,6 +318,112 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     if not changed:
         return msg + (" (would chmod 600 %s)" % ", ".join(loose) if loose else " (already current)")
     return msg + (" (would update)" if existed else " (would create)")
+
+
+def _toml_header_path(line):
+    """The key path of a TOML table header line (`[a."b".c]`, `[[a.b]]`) as a list, or None when the line
+    is not one. The line is parsed by tomllib itself, so quoting and spacing are its business."""
+    if not line.lstrip().startswith("["):
+        return None
+    try:
+        node = tomllib.loads(line)
+    except tomllib.TOMLDecodeError:
+        return None
+    path = []
+    while isinstance(node, (dict, list)):
+        if isinstance(node, list):  # [[array of tables]]
+            node = node[0] if node else {}
+            continue
+        if len(node) != 1:
+            break
+        (key, node), = node.items()
+        path.append(key)
+    return path or None
+
+
+def drop_codex_servers(text, names):
+    """(the text without the `[mcp_servers.<name>]` tables and their sub-tables for every `name` in `names`,
+    the names it took out, None), or (None, [], why not) when it cannot be done safely.
+
+    Line by line: a table header whose path is mcp_servers.<name>[...] opens a block that runs to the next
+    header, a comment that sits directly above the next header stays with it. The result is then parsed
+    and compared with the original less those names; a mismatch (a name set by dotted keys or an inline
+    table, a header-looking line inside a multi-line string) means the text is returned unchanged with
+    the reason, never a guess. Everything else, comments included, is kept as written."""
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        return None, [], "it does not parse as TOML (%s)" % e
+    servers = before.get("mcp_servers")
+    ours = [n for n in (servers if isinstance(servers, dict) else {}) if n in names]
+    if not ours:
+        return text, [], None
+    out, tail, dropping = [], [], False
+    for line in text.splitlines(keepends=True):
+        path = _toml_header_path(line)
+        if path is not None:
+            if dropping and any(l.strip() for l in tail):  # comments above the next header are its own
+                out.extend(tail)
+            tail = []
+            dropping = len(path) >= 2 and path[0] == "mcp_servers" and path[1] in ours
+            if not dropping:
+                out.append(line)
+        elif dropping:
+            tail = tail + [line] if (line.strip() == "" or line.lstrip().startswith("#")) else []
+        else:
+            out.append(line)
+    if dropping and any(l.strip() for l in tail):
+        out.extend(tail)
+    new = "".join(out).lstrip("\n")
+    want = {k: v for k, v in before.items() if k != "mcp_servers"}
+    rest = {n: v for n, v in servers.items() if n not in ours}
+    if rest:
+        want["mcp_servers"] = rest
+    try:
+        got = tomllib.loads(new)
+    except tomllib.TOMLDecodeError:
+        got = None
+    if got is None or {k: v for k, v in got.items() if not (k == "mcp_servers" and v == {})} != want:
+        return None, [], "a server of forge's name is written in a shape that cannot be taken out whole"
+    return new, ours, None
+
+
+def drop_codex_project_mcp(ctx, prof, registry):
+    """The `codex_harness` false half of write_codex_project_mcp: forge writes no MCP server for Codex, and
+    takes out of <project>/.codex/config.toml the ones it wrote. Those are the `[mcp_servers.<name>]` tables
+    (and their `.env` tables) whose name is a registry server; any other table, key and comment stays, and
+    so does [shell_environment_policy] (forge's too, but not an MCP server) and the file itself: forge keeps
+    no record of who created it, and Codex may have written to it since. A file that is absent is not
+    created; one that does not parse, or holds a registry name in a shape the line reader cannot take out
+    whole, is left as it is and the line says so. Returns a one-line summary, or None when there is no
+    project directory."""
+    ppath = prof["project_path"]
+    if not os.path.isdir(ppath):
+        return None
+    path = os.path.join(ppath, ".codex", "config.toml")
+    short = lib.short(path)
+    head = "   codex mcp -> %s (codex_harness off: no MCP server written" % short
+    if not os.path.lexists(path):
+        return head + ", none of forge's in it)"
+    # Same as the writer: a link anywhere in the path would send the rewrite wherever it points.
+    where = os.path.realpath(path)
+    if where != os.path.join(os.path.realpath(ppath), ".codex", "config.toml"):
+        return "   ! codex mcp -> %s NOT changed: it resolves to %s" % (short, lib.short(where))
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+    except (OSError, UnicodeDecodeError) as e:
+        return head + "; file left alone, it cannot be read as UTF-8: %s)" % e
+    new, dropped, why = drop_codex_servers(text, set(registry))
+    if why:
+        return head + "; file left alone, %s)" % why
+    if not dropped:
+        return head + ", none of forge's in it)"
+    msg = head + "; forge's out: %s)" % ", ".join(dropped)
+    if ctx.apply:
+        lib.write_text(path, new, mode=0o600, backup=True)
+        return msg + " (updated)"
+    return msg + " (would update)"
 
 
 def load_inputs(cfg):

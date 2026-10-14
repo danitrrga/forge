@@ -19,6 +19,7 @@ that says which runs, in what order, and what "healthy" means.
 """
 import argparse
 import contextlib
+import copy
 import json
 import os
 import re
@@ -735,10 +736,13 @@ def integrations_row():
 
 
 def codex_hooks_row():
-    """The `codex hooks` row: Codex gets no hook from forge, so ~/.codex/hooks.json holding a command forge
-    wrote (forge.hooks.codex_commands) is a FAIL. PASS says how many entries it looked at, or that the file
-    is not there; a file it could not read, or one with an entry of the wrong shape, is a FAIL, never a
-    PASS over what was not looked at; SKIP while codex is off, as forge sync does not read the file then."""
+    """The `codex hooks` row, by config/forge.json's `codex_harness`. False (the default): Codex gets no hook
+    from forge, so ~/.codex/hooks.json holding a command forge wrote (forge.hooks.codex_commands) is a FAIL.
+    True: Codex is configured like Claude Code, so the file must hold every row forge writes there, and
+    it is a FAIL while forge's own writer (hooks.reconcile, run on a copy) would still change anything, and
+    the PASS says how many rows it checked. Either way a file it could not read, or one with an entry of the
+    wrong shape, is a FAIL, never a PASS over what was not looked at; SKIP while codex is off, as forge sync
+    does not read the file then, and with the switch true while no row lists codex."""
     if not lib.on("codex"):
         return lib.Result("SKIP", "codex hooks", NOT_ARMED + "codex is off in config/forge.json")
     from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
@@ -747,6 +751,15 @@ def codex_hooks_row():
         doc = lib.read_owned(hooks.CODEX_HOOKS, None)
     except lib.Unreadable as e:
         return lib.Result("FAIL", "codex hooks", "%s is unreadable, so what it holds was not checked: %s" % (where, e))
+    if lib.codex_harness():
+        n = sum(1 for row in hooks.USER_HOOKS if hooks.CODEX in row[5])
+        pending = hooks.reconcile(copy.deepcopy(doc) if doc is not None else {}, hooks.CODEX)
+        if pending:
+            return lib.Result("FAIL", "codex hooks", "codex_harness is true and %s %s: %s"
+                              % (where, "is not there" if doc is None else "is out of date", "; ".join(pending)))
+        if not n:
+            return lib.Result("SKIP", "codex hooks", NOT_ARMED + "codex_harness is true but no hook row lists codex")
+        return lib.Result("PASS", "codex hooks", "codex_harness is true, and %s holds all %d row(s) forge writes there" % (where, n))
     if doc is None:
         return lib.Result("PASS", "codex hooks", "%s is not there, so forge left no hook in it" % where)
     entries, bad = lib.hook_entries(doc)
@@ -794,7 +807,7 @@ CHECKS = [
     ("toolchain", toolchain_row, "forge toolchain --fix (installs what is missing; a version that differs is only reported)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
-    ("codex hooks", codex_hooks_row, "forge sync --apply takes forge's entries out of ~/.codex/hooks.json; a file that does not parse is Codex's own to repair"),
+    ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     ("jev", ["skills/jev/scripts/jev.py", "check"], "python3 skills/jev/scripts/jev.py router status"),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),

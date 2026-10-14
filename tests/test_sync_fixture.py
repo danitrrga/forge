@@ -236,8 +236,9 @@ class Sandbox:
             if os.path.isdir(os.path.join(self.forge, "skills", s)):
                 os.makedirs(os.path.join(h, ".claude", "skills"), exist_ok=True)
                 os.symlink(os.path.join(self.forge, "skills", s), os.path.join(h, ".claude", "skills", s))
-        # Codex gets no hook from forge: --apply takes out forge's own entry (its exact command) and leaves
-        # the rest, malformed parts and a relocated script of the same name included.
+        # The fixture's forge.json has codex_harness true: --apply repairs this file like Claude's, and the entry
+        # of forge's own (the exact command) stays, written as the row says. With the switch false it would
+        # take that entry out and leave the rest (tests/test_codex_harness.py).
         write_json(os.path.join(h, ".codex", "hooks.json"), {"hooks": {"Stop": "not a list", "SessionStart": [
             "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/caveman_house_rules.py", "timeout": 5},
                                {"type": "command", "command": "python3 %s/hooks/caveman_house_rules.py" % self.forge,
@@ -347,9 +348,8 @@ def exercise(sb, check):
     seeds = {"warded": not any("claude-sessionstart-hook.js" in c for c in cmds),
              "foreign hook kept": "node /opt/herdr/herdr.js" in cmds,
              "model": st.get("model") == "sonnet",
-             "codex hooks.json: forge's entry out, the rest as it was":
-             cx["hooks"]["Stop"] == "not a list" and cx["hooks"]["SessionStart"] == [
-                 "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/caveman_house_rules.py", "timeout": 5}]}]}
+             "codex hooks.json repaired": isinstance(cx["hooks"]["Stop"], list)
+             and all(isinstance(g, dict) for g in cx["hooks"]["SessionStart"])}
     check("--apply repairs the seeded user-scope files", all(seeds.values()), [k for k, v in seeds.items() if not v])
     dirty = git(sb.forge, "status", "--porcelain")
     check("--apply writes nothing git would track in the forge copy", not dirty, dirty.strip())

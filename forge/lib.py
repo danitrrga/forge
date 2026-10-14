@@ -70,6 +70,14 @@ def gsd_patched():
     return settings().get("gsd_patches") is True
 
 
+def codex_harness():
+    """Whether Codex is configured like Claude Code: the integration `codex` is on AND the key
+    `codex_harness` is the JSON true (anything else, absent included, is off). On, forge writes its hook
+    rows into ~/.codex/hooks.json and each project's MCP servers into .codex/config.toml; off, it writes
+    neither and takes out only what it wrote itself. The key is not read while codex is off."""
+    return on("codex") and settings().get("codex_harness") is True
+
+
 def profiles(skipped=None):
     """{project name: profile} for every config/profiles/*.claude.json. A directory that is there
     but cannot be listed raises: glob swallowed the PermissionError and answered "no projects".

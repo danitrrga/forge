@@ -1357,8 +1357,9 @@ def integrations_cases(tmp):
 
 
 def codex_hooks_cases(tmp):
-    """The `codex hooks` row: Codex gets no hook from forge, so ~/.codex/hooks.json holding a command forge
-    wrote is a FAIL naming the fix. Red before: every case on "AttributeError: module 'forge.cli' has no
+    """The `codex hooks` row. With `codex_harness` false or absent Codex gets no hook from forge, so
+    ~/.codex/hooks.json holding a command forge wrote is a FAIL naming the fix; with it true the file must
+    hold every row forge writes there. Red before: every case on "AttributeError: module 'forge.cli' has no
     attribute 'codex_hooks_row'". Negative control: with the check made to find nothing (the row returning
     PASS whatever the file holds) "a forge entry in the file" = [('PASS', ...)], want a FAIL."""
     target = os.path.join(tmp, "codex-hooks", "hooks.json")
@@ -1397,6 +1398,57 @@ def codex_hooks_cases(tmp):
         with toy_settings(settings_world(tmp, "codex-hooks-off", dict(integrations=OFF))):
             put({"hooks": {"SessionStart": [entry(forge_cmd)]}})
             want("codex off: a SKIP that did not look", call("codex_hooks_row"),
+                 [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json")])
+        # codex_harness true: the file must hold every row forge writes there (the writer's own reconcile, run
+        # on a copy, is the judge), so a forge entry in it is no longer a FAIL. Red before (4 of the cases
+        # below): "codex_harness true, no hooks.json: FAIL, says it is not there = [('PASS', False)], want
+        # [('FAIL', True)]"; "every row written ...: PASS = [('FAIL', '.../hooks.json still holds 9 hook(s)
+        # forge wrote: ...')]"; "one row missing ... = [('FAIL', False)]"; "no row lists codex: a SKIP = [('PASS',
+        # \"1 entry in ..., none is forge's\")]". Negative controls, each put back from a copy: the true branch
+        # passing whatever the file holds turns "no hooks.json", "one row missing" and "an entry of the wrong
+        # shape" red (3); the switch not read turns four red (the PASS case among them); the false branch
+        # never failing turns three red (the old case and the absent and "yes" ones).
+        with toy_settings(settings_world(tmp, "codex-hooks-harness", dict(integrations=on, codex_harness=True))):
+            n = sum(1 for row in hooks.USER_HOOKS if hooks.CODEX in row[5])
+            want("codex_harness true: the toy table holds Codex rows (so the cases below look at something)", n > 0, True)
+            if os.path.exists(target):
+                os.remove(target)
+            want("codex_harness true, no hooks.json: FAIL, says it is not there",
+                 [(l[0], l[1].startswith("codex_harness is true and %s is not there: appended " % lib.short(target))) for l in call("codex_hooks_row")],
+                 [("FAIL", True)])
+            written = {}
+            hooks.reconcile(written, hooks.CODEX)
+            written["hooks"].setdefault("Stop", []).append(entry("node /opt/herdr/notify.js"))
+            put(written)
+            want("codex_harness true, every row written (and a foreign entry beside them): PASS, says how many rows",
+                 call("codex_hooks_row"),
+                 [("PASS", "codex_harness is true, and %s holds all %d row(s) forge writes there" % (lib.short(target), n))])
+            ev, groups = next((e, g) for e, g in written["hooks"].items() if e != "Stop" and g)
+            groups.pop()
+            put(written)
+            want("codex_harness true, one row missing: FAIL, says the file is out of date",
+                 [(l[0], "is out of date: appended " in l[1] or "is out of date: repaired " in l[1]) for l in call("codex_hooks_row")],
+                 [("FAIL", True)])
+            put("{bad")
+            want("codex_harness true, a file that does not parse: FAIL", [l[0] for l in call("codex_hooks_row")], ["FAIL"])
+            put({"hooks": {"SessionStart": ["x"]}})
+            want("codex_harness true, an entry of the wrong shape: FAIL, never a PASS", [l[0] for l in call("codex_hooks_row")], ["FAIL"])
+            rows, hooks.USER_HOOKS = hooks.USER_HOOKS, [r for r in hooks.USER_HOOKS if hooks.CODEX not in r[5]]
+            try:
+                put({"hooks": {"Stop": [entry("node /opt/herdr/notify.js")]}})
+                want("codex_harness true, no row lists codex: a SKIP that checked nothing",
+                     call("codex_hooks_row"), [("SKIP", "NOT RUN, NOT ARMED: codex_harness is true but no hook row lists codex")])
+            finally:
+                hooks.USER_HOOKS = rows
+        for label, harness in (("absent", None), ('"yes"', "yes")):
+            doc = dict(integrations=on) if harness is None else dict(integrations=on, codex_harness=harness)
+            with toy_settings(settings_world(tmp, "codex-hooks-h-" + str(harness), doc)):
+                put({"hooks": {"SessionStart": [entry(forge_cmd)]}})
+                want("codex_harness %s is false: a forge entry in the file is a FAIL" % label,
+                     [l[0] for l in call("codex_hooks_row")], ["FAIL"])
+        with toy_settings(settings_world(tmp, "codex-hooks-harness-off", dict(integrations=OFF, codex_harness=True))):
+            put({"hooks": {"SessionStart": [entry(forge_cmd)]}})
+            want("codex off, codex_harness true: a SKIP that did not look", call("codex_hooks_row"),
                  [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json")])
     finally:
         hooks.CODEX_HOOKS = real

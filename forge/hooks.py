@@ -1,10 +1,12 @@
-"""User-scope hooks and defaults: ~/.claude/settings.json, and what forge takes out of ~/.codex/hooks.json.
+"""User-scope hooks and defaults: ~/.claude/settings.json and ~/.codex/hooks.json.
 
-Every hook forge owns is one USER_HOOKS row, written for Claude Code, and the two plain defaults
-(model, advisorModel) and the env keys sit beside them in one load and one write of settings.json.
-Codex gets no hook from forge (it is a reviewer, not an orchestrator): write_codex_hooks only removes
-the entries forge wrote there before. These files are shared by every session on the machine, so only
-a run whose scope includes the user files writes them (lib.context's `globals`)."""
+Every hook forge owns is one USER_HOOKS row, written for Claude Code and, when config/forge.json's
+`codex_harness` is true (lib.codex_harness: Codex configured like Claude Code), for Codex from the same
+table. The two plain defaults (model, advisorModel) and the env keys sit beside the rows in one load and
+one write of settings.json. With `codex_harness` off, the default, Codex gets no hook from forge (it is
+a reviewer, not an orchestrator): write_codex_hooks only takes out the entries forge wrote there. These
+files are shared by every session on the machine, so only a run whose scope includes the user files
+writes them (lib.context's `globals`)."""
 import importlib.util
 import os
 import sys
@@ -44,8 +46,9 @@ JEV_ROW = (("UserPromptSubmit", jev_setup.HOOK_CMD, jev_setup.HOOK_TIMEOUT_S, je
 # Every user-scope hook forge's code owns, in one table (config/forge.json's
 # `user_hooks` rows follow it, see _split):
 #   (event, command, timeout, marker, matcher, targets)
-# `targets` says where forge wrote the command: forge writes only the CLAUDE ones now, and CODEX in it
-# names an entry write_codex_hooks takes out of ~/.codex/hooks.json (see CODEX_COMMANDS).
+# `targets` says where forge writes the command: CODEX in it is written into ~/.codex/hooks.json only
+# while `codex_harness` is true, and with it false names an entry write_codex_hooks takes out of that file
+# (see codex_commands).
 # `marker` is the substring that says an entry is ours; reconcile() keeps exactly one
 # entry per row per event and never touches one without its marker (herdr's, a plugin's).
 #
@@ -57,9 +60,11 @@ JEV_ROW = (("UserPromptSubmit", jev_setup.HOOK_CMD, jev_setup.HOOK_TIMEOUT_S, je
 # interpreter + path (Linux interpreter rule, AGENT-SYSTEM.md -- relative paths broke
 # historically). Scripts that only matter in one project self-gate inside the script.
 #
-# WHY ~/.codex/hooks.json GETS NONE: Codex is used as a reviewer, not as an orchestrator, so it is
-# no longer configured like Claude Code. The rows below that list CODEX are the ones forge once
-# mirrored there; write_codex_hooks removes exactly those commands and nothing else.
+# WHY ~/.codex/hooks.json GETS NONE BY DEFAULT: a Codex used as a reviewer, not as an orchestrator, should
+# not be configured like Claude Code. `codex_harness` (config/forge.json, only read with the codex
+# integration on) is the switch: true mirrors the rows that list CODEX into the file, false (the default)
+# writes none and write_codex_hooks removes exactly those commands, whether the row is on or off, and
+# nothing else.
 _CODE_ROWS = [
     # Caveman house rules. The caveman plugin reads its ruleset from its OWN SKILL.md inside
     # the plugin cache and has no extension point (its config takes `defaultMode` only), so
@@ -176,8 +181,9 @@ _CODE_ROWS = [
 
     # Hindsight coding-agents: exactly two hooks, never the package's SessionStart one (see
     # HOOK_WARDS). Asserted with their exact commands so a half-removed or relocated wiring
-    # self-heals. The two Claude rows are _PROJECT_CODE_ROWS below. The two Codex ones below are
-    # no longer written: they are what write_codex_hooks takes out of ~/.codex/hooks.json.
+    # self-heals. The two Claude rows are _PROJECT_CODE_ROWS below. The two Codex ones below are written
+    # only with `codex_harness` true; with it false they are what write_codex_hooks takes out of
+    # ~/.codex/hooks.json.
     ("UserPromptSubmit", 'node "%s/codex-hook.js"' % HINDSIGHT_DIST, 30,
      "coding-agents", None, (CODEX,)),
     ("Stop", 'node "%s/codex-stop-hook.js"' % HINDSIGHT_DIST, 60,
@@ -312,7 +318,12 @@ def project_hooks(prof):
 # was retired. Warded, not just dropped from USER_HOOKS,
 # because reconcile() never touches an entry no row owns -- a dropped row would leave the
 # old entry firing forever against a script that no longer exists.
-HOOK_WARDS = {CLAUDE: ("claude-sessionstart-hook.js", "reap_claude_mem_worker.py")}
+#
+# CODEX is warded only while `codex_harness` is true (write_codex_hooks): the Codex package's own
+# SessionStart entry has the same flaw, and the claude-mem audit fired there too. With it false forge
+# takes out nothing it did not write, by exact command.
+HOOK_WARDS = {CLAUDE: ("claude-sessionstart-hook.js", "reap_claude_mem_worker.py"),
+              CODEX: ("codex-sessionstart-hook.js", "reap_claude_mem_worker.py")}
 
 # Files no Claude session should read, as native permission rules (settings.json permissions.deny),
 # so the refusal comes from the harness and not from a hook that can be skipped. Unioned in order
@@ -667,11 +678,18 @@ def drop_codex_entries(doc):
 
 
 def write_codex_hooks(ctx):
-    """Codex gets no hook from forge: take out of ~/.codex/hooks.json the entries forge wrote there
-    (drop_codex_entries) and leave the rest. A file that is absent stays absent, and one with no entry of
-    forge's is not rewritten. Codex off (config/forge.json integrations.codex): the file is not read or
-    written, and the line says so."""
+    """~/.codex/hooks.json, by config/forge.json's `codex_harness` (lib.codex_harness).
+
+    True: Codex is configured like Claude Code, the USER_HOOKS rows that list CODEX are mirrored into
+    the file (reconcile) and HOOK_WARDS[CODEX] is taken out. False, the default: no row is written and
+    the entries forge wrote there are taken out (drop_codex_entries), the rest left as it is; a file that
+    is absent stays absent, and one with no entry of forge's is not rewritten. Codex off (integrations.codex):
+    the switch is not read, the file is not read or written, and the line says so."""
     if not lib.on("codex"):
         return _not_run(lib.short(CODEX_HOOKS), "codex")
     s = lib.read_owned(CODEX_HOOKS)
+    if lib.codex_harness():
+        n = sum(1 for row in USER_HOOKS if CODEX in row[5])
+        return _commit(ctx, CODEX_HOOKS, s, reconcile(s, CODEX),
+                       "%d hooks, %s warded off" % (n, ", ".join(HOOK_WARDS[CODEX])))
     return _commit(ctx, CODEX_HOOKS, s, drop_codex_entries(s), "no hook of forge's")
