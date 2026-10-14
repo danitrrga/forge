@@ -330,7 +330,13 @@ check("a forge.json with the path the code hard-coded: MCPORTER_CONFIG is that p
 # This checkout's own config/forge.json, where it has one: the same value comes out of it.
 REAL_SETTINGS = os.path.join(sandbox.FORGE, "config", "forge.json")
 if os.path.exists(REAL_SETTINGS):
-    lib.SETTINGS = REAL_SETTINGS
+    # A copy with codex_harness true: the value is read from .codex/config.toml, which is not written with
+    # the switch off. Red before, with it false in the real file: "set to None".
+    doc = json.load(open(REAL_SETTINGS))
+    doc["codex_harness"] = True
+    lib.SETTINGS = os.path.join(TOY, "machine-forge.json")
+    with open(lib.SETTINGS, "w") as fh:
+        json.dump(doc, fh)
     lib.settings.cache_clear()
     code, out, d = generate("mcporter-machine", {}, prepare=repo)
     text, got = mcporter_of(d)

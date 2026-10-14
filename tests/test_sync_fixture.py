@@ -141,6 +141,9 @@ class Sandbox:
         settings = os.path.join(self.forge, "config", "forge.json")
         doc = read_json(settings)
         doc.setdefault("integrations", {})["caveman"] = True
+        # The same for codex_harness: the fixture checks Codex's hook rows and .codex/config.toml. Red before,
+        # with it false in the real config/forge.json: "FileNotFoundError: ... projects/<app>/.codex/config.toml".
+        doc["codex_harness"] = True
         write_json(settings, doc)
         self._profiles()
         self._secrets()
