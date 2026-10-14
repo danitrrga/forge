@@ -121,7 +121,8 @@ installed unpatched from its package when the `gsd` integration is on. forge doe
   `credentials/secrets.json`. A server whose secret is missing is not written.
 - **No personal data in the public history.** `forge check-public --all` scans every engine file for home
   paths, email addresses, private IPv4 ranges, tailnet host names, private-key headers, files over 1 MiB and
-  font or image files. An optional `config/publish-deny.txt` adds your own patterns. The hooks in `githooks/`
+  font or image files, except an image pinned by path and sha256 in `PUBLIC_ASSETS` (`forge/publish.py`) after
+  someone has looked at it. An optional `config/publish-deny.txt` adds your own patterns. The hooks in `githooks/`
   run it on every commit, commit message and push.
 
 ## Commands

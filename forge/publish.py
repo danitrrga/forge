@@ -6,8 +6,8 @@ commits (pre-push) and the whole engine tree (CI, the merge gate).
 
 Two lists run together:
   * the public list, below: home paths, email addresses, private IPv4 ranges, tailnet host
-    names, private-key headers, files over 1 MiB, font and image files. It is in this file,
-    so a stranger's checkout has it;
+    names, private-key headers, files over 1 MiB, font and image files (except the few in
+    PUBLIC_ASSETS, pinned by path and sha256). It is in this file, so a stranger's checkout has it;
   * the private list, config/publish-deny.txt: one regular expression per line, names and
     addresses the owner of the checkout forbids. It is data and may be missing; a list that
     is there but holds no pattern, or an invalid one, is an error (exit 2), never a pass.
@@ -19,6 +19,7 @@ the engine history (what the engine's .gitignore does not ignore) and the data h
 
 Exit codes: 0 clean, 1 hits (or nothing checked by --all), 2 the check could not run.
 """
+import hashlib
 import ipaddress
 import os
 import re
@@ -33,6 +34,10 @@ DATA_GIT = ".forge-data.git"
 MAX_BYTES = 1024 * 1024
 ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico",
              ".bmp", ".tif", ".tiff", ".avif", ".heic", ".svg"}
+# The image files a person has looked at and found free of personal data, by repo-relative path and the
+# sha256 of the bytes looked at. Only the extension rule is waived, and only for those exact bytes at that
+# path: a changed byte fails again until someone looks again, and an SVG is still read line by line.
+PUBLIC_ASSETS = {}
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
 EMAIL_OK = ("example.com", "example.org")
@@ -119,7 +124,7 @@ def scan(path, data, deny):
     """[(line or 0, rule, text)] for one file's bytes. LICENSE is exempt from the private list: it
     must name a holder."""
     out = []
-    if os.path.splitext(path)[1].lower() in ASSET_EXT:
+    if os.path.splitext(path)[1].lower() in ASSET_EXT and PUBLIC_ASSETS.get(path) != hashlib.sha256(data).hexdigest():
         out.append((0, "binary asset", os.path.splitext(path)[1].lower()))
     if len(data) > MAX_BYTES:
         out.append((0, "size", "%d bytes" % len(data)))

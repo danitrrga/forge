@@ -230,6 +230,36 @@ def public_cases():
     want("no mode = exit", code, 2)
 
 
+# --- 1b. a reviewed asset: an image or font file is refused by its extension, since its bytes cannot
+# be read for personal data; publish.PUBLIC_ASSETS names the few a person has looked at, by path and
+# sha256. Red before the pin existed: "the pinned bytes at the pinned path = [(0, 'binary asset',
+# '.png')], want []".
+def pinned_asset_cases():
+    sys.path.insert(0, FORGE)
+    from forge import publish
+    import hashlib
+    data = b"\x89PNG reviewed"
+    saved = dict(getattr(publish, "PUBLIC_ASSETS", {}))
+    try:
+        publish.PUBLIC_ASSETS = {"docs/assets/x.png": hashlib.sha256(data).hexdigest()}
+        want("the pinned bytes at the pinned path", publish.scan("docs/assets/x.png", data, None), [])
+        want("one changed byte at the pinned path", publish.scan("docs/assets/x.png", data + b"!", None),
+             [(0, "binary asset", ".png")])
+        want("the pinned bytes at another path", publish.scan("docs/assets/y.png", data, None),
+             [(0, "binary asset", ".png")])
+        # A pinned text asset (an SVG) is still read line by line: the pin waives the extension rule only.
+        svg = ("<svg><text>" + HOME_DIR + "alice</text></svg>\n").encode()
+        publish.PUBLIC_ASSETS = {"docs/assets/x.svg": hashlib.sha256(svg).hexdigest()}
+        want("a pinned SVG is still scanned", [r for _, r, _ in publish.scan("docs/assets/x.svg", svg, None)], ["home path"])
+    finally:
+        publish.PUBLIC_ASSETS = saved
+    # Every real pin matches the file it names, so a stale pin is a failure here, not a silent hit later.
+    for rel, digest in saved.items():
+        full = os.path.join(FORGE, rel)
+        got = hashlib.sha256(open(full, "rb").read()).hexdigest() if os.path.exists(full) else "(missing)"
+        want("pin of %s" % rel, got, digest)
+
+
 # --- 2. the private list
 def private_cases():
     root = toy("deny")
@@ -621,6 +651,7 @@ def hook_cases():
 
 def main():
     public_cases()
+    pinned_asset_cases()
     private_cases()
     real_deny_cases()
     allowlist_cases()
