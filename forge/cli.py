@@ -548,7 +548,8 @@ def toolchain_check():
     python3 that were asked. A list that cannot be read or is empty is one FAIL named `toolchain`."""
     if not os.path.exists(TOOLCHAIN) and not _gsd_pinned():
         return [lib.Result("SKIP", "toolchain", NOT_ARMED + "no config/toolchain.json, so no global package is pinned "
-                           "(forge init writes one when GSD is on)")], [], ""
+                           "(examples/toolchain.json is the template; a missing file is a FAIL "
+                           "when GSD is on and gsd_patches is true)")], [], ""
     entries, why = toolchain_entries()
     if why:
         return [lib.Result("FAIL", "toolchain", why)], [], ""

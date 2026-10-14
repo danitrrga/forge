@@ -1,5 +1,5 @@
 {
-  "_doc": "The toy forge.json the suites build their world from (tests/sandbox.py seed()): every integration on but jev (its setup.py is a private skill a stranger's copy lacks), a few neutral skill tables so the generators have something to apply, and nothing of anyone's machine. Same shape as examples/forge.json. The names under skill_keep are made up: toy-common is the one skill every trimmed profile keeps, and app.claude.json is the one profile that takes the gsd-* baseline by full replace. A suite that needs another table writes its own copy over this one.",
+  "_doc": "The toy forge.json the suites build their world from (tests/sandbox.py seed()): every integration on but jev (its setup.py is a private skill a stranger's copy lacks), gsd_patches and house_hooks true so the user-hook rows they gate (forge's GSD copies, the house rows) are in the world, a few neutral skill tables so the generators have something to apply, and nothing of anyone's machine. Same shape as examples/forge.json. The names under skill_keep are made up: toy-common is the one skill every trimmed profile keeps, and app.claude.json is the one profile that takes the gsd-* baseline by full replace. A suite that needs another table writes its own copy over this one.",
   "integrations": {
     "codex": true,
     "gsd": true,
@@ -7,6 +7,8 @@
     "hindsight": true,
     "caveman": true
   },
+  "gsd_patches": true,
+  "house_hooks": true,
   "user_settings": {"model": "sonnet", "advisorModel": "opus", "env": {"TOY_FLAG": "1"}},
   "user_hooks": [],
   "skill_keep": {

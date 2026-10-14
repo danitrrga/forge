@@ -207,9 +207,28 @@ _CODE_ROWS = [
 # is off is not written, and reconcile() takes out the entries whose command EQUALS the row's, never
 # by marker: `coding-agents` is also what Hindsight's own installer writes, and one a person
 # installed themselves stays. HOOK_WARDS, by marker, is for retired rows only.
+#
+# Two more gates, both off unless the JSON true. The three gsd rows are forge's GSD patches (the same
+# file names are GSD's own hooks, which its installer writes with its own commands): they are written
+# only with `gsd_patches` true as well (lib.gsd_patched), and with it off they are not written and
+# not taken out either, an off row going only by forge's exact command and never by file name.
+# `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
 ROW_INTEGRATION = {"caveman_house_rules.py": "caveman", "caveman_persist_level.js": "caveman",
                    "gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
-                   "gsd_output_discipline.py": "gsd", "jev_router.py": "jev", "coding-agents": "hindsight"}
+                   "gsd_output_discipline.py": "gsd", "jev_router.py": "jev", "coding-agents": "hindsight",
+                   "memory_doctor.py": "hindsight"}
+ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py")
+ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
+
+
+def _row_on(marker):
+    """Whether forge's own row with this marker is written."""
+    name = ROW_INTEGRATION.get(marker)
+    if name and not lib.on(name):
+        return False
+    if marker in ROW_PATCHED and not lib.gsd_patched():
+        return False
+    return not (marker in ROW_HOUSE and lib.settings().get("house_hooks") is not True)
 
 
 def _config_rows():
@@ -243,8 +262,7 @@ def _split():
     second list."""
     live, off = [], []
     for row in _CODE_ROWS:
-        name = ROW_INTEGRATION.get(row[3])
-        (off if name and not lib.on(name) else live).append(row)
+        (live if _row_on(row[3]) else off).append(row)
     for row, on in _config_rows():
         (live if on else off).append(row)
     # An off row never takes out what a live row writes with the same command.

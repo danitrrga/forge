@@ -38,6 +38,14 @@ Negative controls on the finished code, each put back from a copy of the file (t
   jev setup always loaded -- 3: setup.py is not loaded, both jev writers
   user_settings hard-coded again -- user_settings: model and env come from the file (1)
   user_hooks put before the code's rows -- "on": false and the 17-rows check (2)
+Stranger's table (section 10), seen failing on 8c4a9c3 before the gates, 11 of 30 red (the full-config check is the control and passed):
+  stranger: none of the six rows is written -- USER_HOOKS holds ['gsd-prompt-guard.js',
+    'gsd-read-injection-scanner.js', 'gsd_output_discipline.py', 'memory_doctor.py', 'omarchy_notify.py',
+    'ref_corpus_router.py']
+  stranger: GSD's own entries stay -- PreToolUse [('node <forge>/hooks/gsd-prompt-guard.js', 'Write|Edit', 10)]: replaced
+  stranger: forge's own old copy goes by its exact command, GSD's entry stays -- GSD's entry gone
+  gsd_patches true / house_hooks absent, house_hooks true / gsd_patches false, house_hooks "yes", hindsight off:
+    each still held all of the markers above
 Not written here, run by `forge test`'s other suites: the byte-identity of the real files (gate.py)."""
 import importlib
 import json
@@ -88,8 +96,9 @@ def attempt(fn, *a, **k):
 def toy_settings(n, **over):
     """Write toy config/forge.json number n, point lib at it and reload hooks over it."""
     doc = {"integrations": {"codex": True, "gsd": True, "jev": False, "hindsight": True, "caveman": True},
-           "user_settings": {}, "user_hooks": []}
+           "gsd_patches": True, "house_hooks": True, "user_settings": {}, "user_hooks": []}
     doc.update(over)
+    doc = {k: v for k, v in doc.items() if v is not None}  # an override of None drops the key
     path = os.path.join(TOY, "forge-%d.json" % n)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)
@@ -142,8 +151,9 @@ off_markers = {"claude-hook.js", "coding-agents", "gsd_output_discipline.py", "g
 written = sorted({r[3] for r in h.USER_HOOKS} & off_markers)
 check("off integrations: no row of an off integration is written", not written,
       "USER_HOOKS still holds the markers %r" % (written,))
-check("off integrations: forge's other rows still are (omarchy, session sync, memory gate)",
-      {"omarchy_notify.py", "forge session-start", "memory_doctor.py"} <= {r[3] for r in h.USER_HOOKS},
+check("off integrations: forge's other rows still are (omarchy, session sync), the memory gate follows hindsight",
+      {"omarchy_notify.py", "forge session-start"} <= {r[3] for r in h.USER_HOOKS}
+      and "memory_doctor.py" not in {r[3] for r in h.USER_HOOKS},
       "markers %r" % sorted(r[3] for r in h.USER_HOOKS))
 # a row off is also off for codex's file
 cdoc = {"hooks": {"UserPromptSubmit": [group('node "%s/codex-hook.js"' % h.HINDSIGHT_DIST, 30)]}}
@@ -162,7 +172,7 @@ check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
       getattr(h, "ROW_INTEGRATION", {}) == {"caveman_house_rules.py": "caveman", "caveman_persist_level.js": "caveman",
                                            "gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                                            "gsd_output_discipline.py": "gsd", "jev_router.py": "jev",
-                                           "coding-agents": "hindsight"},
+                                           "coding-agents": "hindsight", "memory_doctor.py": "hindsight"},
       "ROW_INTEGRATION = %r" % (getattr(h, "ROW_INTEGRATION", None),))
 
 # 3. Rows that are not forge's come from `user_hooks`, appended after the code's, <ROOT> expanded.
@@ -292,6 +302,75 @@ with open(profile, encoding="utf-8") as fh:
 check("caveman_persist_level.js finds its profiles from __dirname",
       r.returncode == 0 and 'caveman level "lite" persisted for app (profile)' in r.stdout and level == "lite",
       "exit %d, stdout %r, stderr %r, profile level %r" % (r.returncode, r.stdout, r.stderr[-200:], level))
+
+# 10. A stranger's table. The gsd rows are forge's GSD patches: written only with gsd on AND gsd_patches
+# true. ref_corpus_router.py and omarchy_notify.py are this machine's own: written only with house_hooks
+# true (absent is false). memory_doctor.py --hook follows hindsight. A stranger's GSD entries under the
+# same file names (GSD's own installer writes them into ~/.claude/settings.json, other commands) are
+# never replaced and never removed.
+GSD_ROWS = {"gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py"}
+HOUSE_ROWS = {"ref_corpus_router.py", "omarchy_notify.py"}
+SIX = GSD_ROWS | HOUSE_ROWS | {"memory_doctor.py"}
+stranger = {"codex": False, "gsd": True, "jev": False, "hindsight": False, "caveman": False}
+h = toy_settings(20, integrations=stranger, gsd_patches=False, house_hooks=None)
+check("stranger (gsd on, gsd_patches false, no house_hooks, hindsight off): none of the six rows is written",
+      not (SIX & {r[3] for r in h.USER_HOOKS}), "USER_HOOKS holds %r" % (sorted(SIX & {r[3] for r in h.USER_HOOKS}),))
+own = "node /x/.claude/hooks/gsd-prompt-guard.js"
+scan = "node /x/.claude/hooks/gsd-read-injection-scanner.js"
+doc = {"hooks": {"PreToolUse": [group(own, 5, "Write|Edit")], "PostToolUse": [group(scan, 5, "Read")]}}
+cdoc = {"hooks": {"PreToolUse": [group(own, 5, "Write|Edit")]}}
+attempt(h.reconcile, doc, h.CLAUDE)
+attempt(h.reconcile, cdoc, h.CODEX)
+check("stranger: GSD's own gsd-prompt-guard.js and scanner entries stay as they are",
+      entries(doc, "PreToolUse") == [(own, "Write|Edit", 5)] and entries(doc, "PostToolUse") == [(scan, "Read", 5)],
+      "PreToolUse %r, PostToolUse %r" % (entries(doc, "PreToolUse"), entries(doc, "PostToolUse")))
+check("stranger: codex's file keeps the GSD entry too", entries(cdoc, "PreToolUse") == [(own, "Write|Edit", 5)],
+      "%r" % (entries(cdoc, "PreToolUse"),))
+check("stranger: no forge row of the six lands in the file",
+      not [c for ev in doc["hooks"] for c, _, _ in entries(doc, ev) if h.HOOK_DIR in c or "memory_doctor" in c],
+      "commands %r" % (sorted({c for ev in doc["hooks"] for c, _, _ in entries(doc, ev)}),))
+# forge's own copy written by an earlier run (gsd_patches was true) goes by its exact command; GSD's stays.
+fg = "node %s/gsd-prompt-guard.js" % h.HOOK_DIR
+doc = {"hooks": {"PreToolUse": [group(fg, 10, "Write|Edit"), group(own, 5, "Write|Edit")]}}
+attempt(h.reconcile, doc, h.CLAUDE)
+check("stranger: forge's own old copy goes by its exact command, GSD's entry stays",
+      entries(doc, "PreToolUse") == [(own, "Write|Edit", 5)], "PreToolUse %r" % (entries(doc, "PreToolUse"),))
+
+h = toy_settings(21, gsd_patches=True, house_hooks=None)
+m = {r[3] for r in h.USER_HOOKS}
+check("gsd_patches true, house_hooks absent: the gsd rows are written, ref_corpus_router and omarchy are not",
+      GSD_ROWS <= m and not (HOUSE_ROWS & m), "markers %r" % (sorted(m),))
+h = toy_settings(22, gsd_patches=False)
+m = {r[3] for r in h.USER_HOOKS}
+check("house_hooks true, gsd_patches false: ref_corpus_router and omarchy are written, the gsd rows are not",
+      HOUSE_ROWS <= m and not (GSD_ROWS & m), "markers %r" % (sorted(m),))
+h = toy_settings(23, house_hooks="yes")
+check("house_hooks: only the JSON true switches the house rows on",
+      not (HOUSE_ROWS & {r[3] for r in h.USER_HOOKS}), "markers %r" % (sorted(r[3] for r in h.USER_HOOKS),))
+h = toy_settings(24, integrations={"codex": True, "gsd": True, "jev": False, "hindsight": False, "caveman": True})
+check("hindsight off: memory_doctor.py --hook is not written", "memory_doctor.py" not in {r[3] for r in h.USER_HOOKS},
+      "markers %r" % (sorted(r[3] for r in h.USER_HOOKS),))
+
+# The full config (gsd_patches true, house_hooks true, hindsight on) writes the table that was written
+# before the gates existed, in the same order.
+h = toy_settings(25)
+got = [(r[0], r[3], r[2], r[4], r[5], r[1].replace(h.ROOT, "<R>")) for r in h.USER_HOOKS]
+BOTH_A = ("claude", "codex")
+want = [
+    ("SessionStart", "caveman_house_rules.py", 5, None, BOTH_A, "python3 <R>/hooks/caveman_house_rules.py"),
+    ("UserPromptSubmit", "ref_corpus_router.py", 10, None, BOTH_A, "python3 <R>/hooks/ref_corpus_router.py"),
+    ("PreToolUse", "gsd-prompt-guard.js", 10, "Write|Edit", BOTH_A, "node <R>/hooks/gsd-prompt-guard.js"),
+    ("PostToolUse", "gsd-read-injection-scanner.js", 10, "Read", BOTH_A, "node <R>/hooks/gsd-read-injection-scanner.js"),
+    ("PostToolUse", "gsd_output_discipline.py", 10, "Write|Edit", BOTH_A, "python3 <R>/hooks/gsd_output_discipline.py"),
+    ("Stop", "gsd_output_discipline.py", 10, None, BOTH_A, "python3 <R>/hooks/gsd_output_discipline.py"),
+    ("UserPromptSubmit", "caveman_persist_level.js", 10, None, BOTH_A, "node <R>/hooks/caveman_persist_level.js"),
+    ("Notification", "omarchy_notify.py", 10, None, ("claude",), "python3 <R>/hooks/omarchy_notify.py"),
+    ("SessionStart", "memory_doctor.py", 15, None, ("claude",), "python3 <R>/scripts/sync/memory_doctor.py --hook"),
+]
+check("full config: today's rows, in today's order (eight named, session sync, memory gate, then the four coding-agents rows)",
+      [g for g in got if g[1] not in ("forge session-start", "coding-agents")] == want
+      and [g[1] for g in got] == [w[1] for w in want[:8]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 4,
+      "got %r" % (got,))
 
 sandbox.cleanup(bool(failures))
 if failures:
