@@ -63,6 +63,11 @@
 !/scripts/sync/test_sync_system_doc.py
 !/scripts/sync/test_memory_doctor.py
 
+# docs/: the README's images only; the rest of docs/ is the checkout owner's (forge init writes docs/AGENT-SYSTEM.md).
+!/docs/
+/docs/*
+!/docs/assets/
+
 # config/: the GSD patch payloads only.
 !/config/
 /config/*

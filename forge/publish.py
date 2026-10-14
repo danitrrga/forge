@@ -37,7 +37,9 @@ ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
 # The image files a person has looked at and found free of personal data, by repo-relative path and the
 # sha256 of the bytes looked at. Only the extension rule is waived, and only for those exact bytes at that
 # path: a changed byte fails again until someone looks again, and an SVG is still read line by line.
-PUBLIC_ASSETS = {}
+PUBLIC_ASSETS = {
+    "docs/assets/forge-banner.png": "992e30e69a0e3e5f88adb242aae844c111ce773f8b9654b1e77f449b92e26f78",
+}
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
 EMAIL_OK = ("example.com", "example.org")

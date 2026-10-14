@@ -1,5 +1,7 @@
 # forge
 
+<img src="docs/assets/forge-banner.png" alt="forge: one source of truth for the Claude Code and Codex setup of every project, beside a terminal running forge doctor and forge sync --apply" width="100%">
+
 **One source of truth for the Claude Code and Codex setup of every project on your machine.**
 
 [![ci](https://github.com/danitrrga/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/danitrrga/forge/actions/workflows/ci.yml)
