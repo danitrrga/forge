@@ -51,6 +51,13 @@ removed (1 red), every parsed .bak taken for forge's (1), any table taken for fo
 foreign set keys accepted (2), MCPORTER_CONFIG not accepted (2), parse-and-compare of the policy edit removed (1),
 the edit writing a .bak again (3), the .bak removed in a dry-run too (2), the policy never taken out (10), the
 .bak never removed (5), inherit-only accepted while forge would write a set (1).
+The .bak is judged by shape and not by today's registry or env, because it holds the OLDEST content and its names
+drift (a retired server, a key the profile dropped): a regular file, not behind a link, whose only top-level
+keys are mcp_servers and a policy with `inherit = "core"`, or that names a registry server. Seen failing on the
+commit that matched names: "false, a .bak drifted: removed, the line says so -- ... (codex_harness off: no MCP
+server written, none of forge's in it)" (1 of 88 red, the three foreign .bak controls pass there). Negative
+controls: other top-level keys allowed (1 red), inherit not checked (1), a policy not required (1), only
+registry names counted (2).
 """
 import contextlib
 import importlib
@@ -604,7 +611,14 @@ check("policy edit: a set written inline is part of the table's block and goes w
 # unreadable one and a link stay; a .bak with no config.toml beside it is judged the same way.
 for label, body, gone in (("registry", '[mcp_servers.toy-a]\ncommand = "node"\n', True),
                           ("policy", '[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nTOY_PLAIN = "old"\n', True),
-                          ("foreign", 'model = "mine"\n[mcp_servers.mine]\ncommand = "z"\n', False)):
+                          # The oldest content: a server since retired from the registry and a policy key the
+                          # profile no longer carries. Forge's all the same (the writer always wrote the policy).
+                          ("drifted", '[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nGONE_KEY = "old"\n\n'
+                                      '[mcp_servers.retired]\ncommand = "x"\n[mcp_servers.retired.env]\nK = "v"\n', True),
+                          ("foreign", 'model = "mine"\n[mcp_servers.mine]\ncommand = "z"\n', False),
+                          ("foreign-with-policy", 'model = "mine"\n[shell_environment_policy]\ninherit = "core"\n', False),
+                          ("foreign-inherit-all", '[shell_environment_policy]\ninherit = "all"\n[mcp_servers.retired]\ncommand = "x"\n', False),
+                          ("foreign-no-policy", '[mcp_servers.retired]\ncommand = "x"\n', False)):
     code, out, proj = fresh(with_config('model = "m"\n', body))
     check("false, a .bak %s: %s" % (label, "removed, the line says so" if gone else "left as it is, no word of it"),
           code == 0 and os.path.exists(bak_of(proj)) != gone

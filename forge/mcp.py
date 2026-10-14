@@ -462,13 +462,14 @@ def _codex_env_names(prof):
     return names
 
 
-def _bak_verdict(ppath, path, registry, names):
+def _bak_verdict(ppath, path, registry):
     """What drop_codex_project_mcp finds at `path`.bak, the once-ever copy lib.write_text keeps of the file's
     first replaced content: ("none", None) when there is none, ("forge", None) when it is forge's,
     ("foreign", None) when it holds nothing forge writes, and ("unsure", why) when forge cannot tell or
     must not touch it. Forge's is a regular file, not a link nor behind one, that parses and holds a
-    registry server or a [shell_environment_policy] of forge's shape: what its first write replaced. Its
-    content is never printed."""
+    registry server, or whose only top-level keys are mcp_servers and a [shell_environment_policy] with
+    `inherit = "core"` (the oldest content, so its names have drifted: the writer's whole-file rewrite
+    always had that table first and nothing else but the servers). Its content is never printed."""
     bak = path + ".bak"
     if not os.path.lexists(bak):
         return "none", None
@@ -486,7 +487,12 @@ def _bak_verdict(ppath, path, registry, names):
     servers = doc.get("mcp_servers")
     if isinstance(servers, dict) and any(n in registry for n in servers):
         return "forge", None
-    if POLICY in doc and _policy_mismatch(doc[POLICY], names) is None:
+    # The oldest content, so its names have drifted: a retired server, a key the profile no longer carries.
+    # The writer's whole-file rewrite always began with the policy table and held nothing but it and the
+    # servers, so that is the mark: those two top-level keys at most, the policy `inherit = "core"`.
+    pol = doc.get(POLICY)
+    if isinstance(pol, dict) and set(doc) <= {"mcp_servers", POLICY} and set(pol) <= {"inherit", "set"} \
+            and pol.get("inherit") == "core":
         return "forge", None
     return "foreign", None
 
@@ -533,7 +539,7 @@ def drop_codex_project_mcp(ctx, prof, registry, errors):
             written = new
         if pwhy:
             parts.append("[%s] left alone, %s" % (POLICY, pwhy))
-    state, why = _bak_verdict(ppath, path, registry, names)
+    state, why = _bak_verdict(ppath, path, registry)
     if state == "unsure":
         parts.append(".bak left alone, %s" % why)
     if written is not None and ctx.apply:
