@@ -13,7 +13,8 @@ WHAT IT CHECKS, and why each one earns its place:
 
   codex-trust       Codex gates hooks behind a persisted trust hash. An entry in
                     [hooks.state] whose manifest no longer exists is a hook that will never
-                    fire again, recorded as though it were healthy.
+                    fire again, recorded as though it were healthy. No record at all is normal:
+                    forge registers no Codex hook.
   codex-untrusted   The mirror image: a hook registered in the manifest with NO trust record
                     never fires at all. A freshly written one is legitimately untrusted until
                     the next Codex session approves it, so this warns rather than fails -- but
@@ -394,8 +395,8 @@ def main() -> int:
     # their absence is not a finding. Said once, as the sync's NOT RUN, NOT ARMED lines say it.
     if lib.on("codex"):
         trusted = codex_trusted_hook_sources(CODEX_USER_CONFIG)
-        if not trusted:
-            warn("machine", "codex-trust", "no hook trust records in " + CODEX_USER_CONFIG)
+        if not trusted:  # normal: forge registers no Codex hook, so this is a line and not a warning
+            check("machine", "codex-trust", True, "no hook trust records in %s (0 examined)" % CODEX_USER_CONFIG)
         for src in trusted:
             resolved = resolve_codex_hook_source(src)
             check("machine", "codex-trust", resolved is not None,
