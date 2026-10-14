@@ -7,9 +7,10 @@ integrations.codex on, and only the JSON true counts (absent, false and "yes" ar
        project's MCP servers into <project>/.codex/config.toml.
   off: neither is written. On --apply forge takes out only what it wrote: the hook entries whose command
        EQUALS one it wrote, and in config.toml the [mcp_servers.<name>] tables (and their .env tables)
-       whose name is a registry server; a foreign hook, a foreign table, a foreign key and
-       [shell_environment_policy] stay, and the file stays too. Kept in both states: the
-       .agents/skills links.
+       whose name is a registry server, the [shell_environment_policy] table of the shape forge writes (it
+       holds the profile's env as resolved) and the once-ever config.toml.bak when it holds forge's; a
+       foreign hook, a foreign table, a foreign key and a policy table of another shape stay, and the file
+       stays too. Kept in both states: the .agents/skills links.
 
 Everything runs in-process against a toy HOME, a toy forge.json and a toy config/; nothing real is read or
 written (the toy forge.json carries no jev: its setup.py is a private skill).
@@ -40,6 +41,16 @@ Codex ward emptied (1: the package's SessionStart entry stays); the false branch
 the final parse-and-compare of drop_codex_servers removed (2: dotted keys, inline table); tables matched
 by any name and not the registry's (6: `mine` goes); a link in the path followed (1); the comment above
 the next table dropped with the block (2).
+Section 12 (the policy table and the .bak), seen failing on the commit before it: 22 of 84 checks red, the other
+62 are controls that pass there. Messages: "false, apply: no table, no secret in the file, ... the .bak is gone --
+lines ['   codex mcp -> ... (codex_harness off: no MCP server written; forge's out: toy-a) (updated)']" (the table
+stayed, and so did the .bak); "policy edit: ... -- False 'no mcp.drop_codex_policy'"; "false, a file of forge's
+and no .bak: the edit leaves no .bak behind -- dir ['config.toml', 'config.toml.bak']" (the old edit made one,
+holding the secret again). Negative controls on the finished code, each put back from a copy: .bak link check
+removed (1 red), every parsed .bak taken for forge's (1), any table taken for forge's (5), inherit not checked (1),
+foreign set keys accepted (2), MCPORTER_CONFIG not accepted (2), parse-and-compare of the policy edit removed (1),
+the edit writing a .bak again (3), the .bak removed in a dry-run too (2), the policy never taken out (10), the
+.bak never removed (5), inherit-only accepted while forge would write a set (1).
 """
 import contextlib
 import importlib
@@ -267,7 +278,7 @@ def repo(d):
     subprocess.run(["git", "-C", d, "init", "-q"], check=True)
 
 
-def generate(name, apply=True, prepare=None, servers=("toy-a", "toy-b")):
+def generate(name, apply=True, prepare=None, servers=("toy-a", "toy-b"), env=None, secrets=None):
     """One agent_config run over a toy config/ holding the one project `name` (its directory is
     <TOY>/<name>/projects/p). Returns (exit code, output, the project's directory). `prepare(dir)`
     makes the project before the run. The toy forge.json in force is the last world() call's."""
@@ -276,14 +287,14 @@ def generate(name, apply=True, prepare=None, servers=("toy-a", "toy-b")):
     project = os.path.join(base, "projects", "p")
     os.makedirs(pdir, exist_ok=True)
     seed(os.path.join(cfg, "mcp-registry.json"), json.dumps(REGISTRY))
-    seed(os.path.join(base, "secrets.json"), "{}")
+    seed(os.path.join(base, "secrets.json"), json.dumps(secrets or {}))
     if not os.path.lexists(os.path.join(cfg, "secrets.json")):
         os.symlink(os.path.join(base, "secrets.json"), os.path.join(cfg, "secrets.json"))
     seed(os.path.join(cfg, "project-relocations.json"), '{"relocations": []}')
     os.makedirs(project, exist_ok=True)
     if prepare:
         prepare(project)
-    seed(os.path.join(pdir, "p.claude.json"), json.dumps({"project": "p", "servers": list(servers), "project_path": project}))
+    seed(os.path.join(pdir, "p.claude.json"), json.dumps(dict({"project": "p", "servers": list(servers), "project_path": project}, **({"env": env} if env else {}))))
     sync.CFG, lib.PROFILES = cfg, pdir
     if not os.path.realpath(project).startswith(TOY + os.sep):
         sys.exit("FENCE: %s is outside the toy world -- nothing run" % project)
@@ -361,16 +372,16 @@ check("true -> false, apply: exit 0 and the line says it updated",
 check("true -> false, apply: toy-a and toy-b are gone, the foreign server and its env stay",
       t is not None and sorted(t.get("mcp_servers", {})) == ["mine"] and t["mcp_servers"]["mine"] == before_doc["mcp_servers"]["mine"],
       "servers %r" % (sorted((t or {}).get("mcp_servers", {})),))
-check("true -> false, apply: the foreign top key and table stay, and so does what forge wrote that is not an MCP server",
+check("true -> false, apply: the foreign top key and table stay, and the [shell_environment_policy] forge wrote goes",
       t is not None and t.get("model") == "toy-model" and t.get("profiles") == before_doc["profiles"]
-      and t.get("shell_environment_policy") == before_doc["shell_environment_policy"],
+      and "shell_environment_policy" not in t,
       "keys %r" % (sorted(t or {}),))
 text = read(cfg_path)
 check("true -> false, apply: the user's comments and text are kept as written",
       "# my own codex settings" in text and "# a server of mine" in text and 'command = "toy-own"' in text
       and "toy-a" not in text and "toy-b" not in text and "a.js" not in text, text)
-check("true -> false, apply: the file keeps mode 600 and the once-ever .bak exists",
-      (os.stat(cfg_path).st_mode & 0o777) == 0o600 and os.path.exists(cfg_path + ".bak"), "")
+check("true -> false, apply: the file keeps mode 600 and no .bak is left holding what forge wrote",
+      (os.stat(cfg_path).st_mode & 0o777) == 0o600 and not os.path.exists(cfg_path + ".bak"), "")
 check("true -> false, apply: the .agents/skills link is still there",
       os.path.islink(os.path.join(proj, ".agents", "skills", "s1")), "")
 before = open(cfg_path, "rb").read()
@@ -458,6 +469,196 @@ code, out, proj = generate("mcp-codex-off", prepare=prep)
 check("codex off, codex_harness true: no .codex/, no .agents/, and NOT RUN, NOT ARMED",
       not os.path.lexists(os.path.join(proj, ".codex")) and not os.path.lexists(os.path.join(proj, ".agents"))
       and any("NOT RUN, NOT ARMED" in l and "codex" in l for l in out.splitlines()), out)
+
+# 12. [shell_environment_policy] and the .bak. With the switch off Codex gets nothing Claude-style from
+# forge: the policy table forge wrote (it holds the profile's env as resolved, secrets included) goes with
+# the servers, and so does the once-ever .bak forge wrote, which holds the old values. Forge's table is
+# recognised by its SHAPE, not its name: `inherit = "core"` and nothing else but a `set` table whose keys
+# are all ones forge would write for the profile (the profile's env keys and MCPORTER_CONFIG), or no `set`
+# at all when forge would write none. Values are not compared: a rotated secret or an edited profile leaves
+# a table whose values are stale and still forge's, and still the one that must go. A table of any other
+# shape is a person's, and stays. A .bak is forge's when it is a regular file, not a link, and holds a
+# registry server or a table of that shape: what forge's first write replaced. The names below are the
+# test's own; the secret is a made-up string.
+ENV = {"TOY_TOKEN": "${TOY_SECRET}", "TOY_PLAIN": "p"}
+SECRETS = {"TOY_SECRET": "toy-secret-value-xyz"}
+OLD_FORGE = ('[shell_environment_policy]\ninherit = "core"\n\n[shell_environment_policy.set]\nTOY_PLAIN = "old"\n'
+             'TOY_TOKEN = "toy-secret-value-old"\n\n[mcp_servers.toy-a]\ncommand = "node"\n')
+_pn = [0]
+
+
+def bak_of(proj):
+    return os.path.join(proj, ".codex", "config.toml.bak")
+
+
+def toml_text(proj):
+    return read(os.path.join(proj, ".codex", "config.toml"))
+
+
+def with_config(body, bak=None):
+    """A prepare(): the project, its .codex/config.toml holding `body`, and a .codex/config.toml.bak when given."""
+    def prepare(project):
+        prep(project)
+        if body is not None:
+            seed(os.path.join(project, ".codex", "config.toml"), body)
+        if bak is not None:
+            seed(os.path.join(project, ".codex", "config.toml.bak"), bak)
+    return prepare
+
+
+def fresh(prepare, **kw):
+    """generate() in a world of its own, so each case starts from its own project."""
+    _pn[0] += 1
+    return generate("pol-%d" % _pn[0], prepare=prepare, env=kw.pop("env", ENV), secrets=SECRETS, **kw)
+
+
+# 12a. true with an env writes the table and keeps the .bak (control: nothing changes with the switch on),
+# then false takes the table, the secret and the .bak out. The old file is forge's earlier output, so the
+# .bak holds its old secret, as a real one does.
+world(harness=True)
+code, out, proj = generate("pol-switch", prepare=with_config(OLD_FORGE), env=ENV, secrets=SECRETS)
+cfg_path = os.path.join(proj, ".codex", "config.toml")
+t = toml_of(proj)
+check("true, with an env: the policy table holds the resolved secret and the .bak holds the old one (control)",
+      t is not None and t["shell_environment_policy"]["set"]["TOY_TOKEN"] == "toy-secret-value-xyz"
+      and "toy-secret-value-old" in read(bak_of(proj)), "exit %r, %r" % (code, t))
+code, out, proj = generate("pol-switch", prepare=with_config(OLD_FORGE), env=ENV, secrets=SECRETS)
+check("true, a second run: policy and .bak stay as they are (control)",
+      "toy-secret-value-xyz" in toml_text(proj) and os.path.exists(bak_of(proj)), "")
+seed(cfg_path, "# mine\nmodel = \"toy-model\"\n\n" + toml_text(proj))
+os.chmod(cfg_path, 0o600)
+world(harness=False)
+before = open(cfg_path, "rb").read()
+code, out, proj = generate("pol-switch", apply=False, prepare=prep, env=ENV, secrets=SECRETS)
+check("false, dry-run: the line names the table and the .bak it would take out, and nothing is written",
+      code == 0 and open(cfg_path, "rb").read() == before and os.path.exists(bak_of(proj))
+      and any("would update" in l and "forge's out: toy-a, toy-b, [shell_environment_policy]" in l
+              and ".bak would be removed" in l for l in mcp_line(out)), "exit %r, lines %r" % (code, mcp_line(out)))
+check("false, dry-run: no line prints a value", all("toy-secret" not in l for l in out.splitlines()), out)
+code, out, proj = generate("pol-switch", apply=True, prepare=prep, env=ENV, secrets=SECRETS)
+check("false, apply: no table, no secret in the file, the foreign key stays, the .bak is gone, the line says so",
+      code == 0 and "shell_environment_policy" not in toml_text(proj) and "toy-secret" not in toml_text(proj)
+      and toml_of(proj) == {"model": "toy-model"} and not os.path.exists(bak_of(proj))
+      and any("(updated)" in l and "forge's out: toy-a, toy-b, [shell_environment_policy]" in l
+              and ".bak removed" in l for l in mcp_line(out)), "exit %r, lines %r, text %r" % (code, mcp_line(out), toml_text(proj)))
+check("false, apply: the user's comment stays", "# mine" in toml_text(proj), toml_text(proj))
+before = open(cfg_path, "rb").read()
+code, out, proj = generate("pol-switch", apply=True, prepare=prep, env=ENV, secrets=SECRETS)
+check("false, a second apply changes nothing and says none of forge's is in it",
+      open(cfg_path, "rb").read() == before and any("none of forge's" in l for l in mcp_line(out)), "lines %r" % (mcp_line(out),))
+
+# 12a2. With no .bak beforehand the edit itself makes none: it would hold the secret again.
+code, out, proj = fresh(with_config(OLD_FORGE))
+check("false, a file of forge's and no .bak: the edit leaves no .bak behind",
+      toml_of(proj) == {} and not os.path.exists(bak_of(proj)), "lines %r, dir %r" % (mcp_line(out), os.listdir(os.path.dirname(cfg_path))))
+
+# 12b. A policy table that is not forge's shape stays, with a line saying so; the servers still go.
+FOREIGN_POLICIES = (
+    ("inherit all", '[shell_environment_policy]\ninherit = "all"\n[shell_environment_policy.set]\nTOY_PLAIN = "p"\n'),
+    ("a key forge would not write", '[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nMY_OWN = "1"\n'),
+    ("an extra key", '[shell_environment_policy]\ninherit = "core"\nexclude = ["*KEY*"]\n'),
+    ("inherit only while forge would write a set", '[shell_environment_policy]\ninherit = "core"\n'),
+)
+for label, body in FOREIGN_POLICIES:
+    text = body + '\n[mcp_servers.toy-a]\ncommand = "node"\n'
+    code, out, proj = fresh(with_config(text))
+    t = toml_of(proj)
+    check("false, a policy with %s: it stays untouched, the server goes, the line says it was left alone" % label,
+          code == 0 and t == {k: v for k, v in tomllib.loads(text).items() if k != "mcp_servers"}
+          and any("[shell_environment_policy] left alone" in l and "forge's out: toy-a" in l for l in mcp_line(out)),
+          "exit %r, lines %r, text %r" % (code, mcp_line(out), toml_text(proj)))
+
+# 12c. forge's table alone (no servers in the file), and a profile with no env, where forge writes the
+# inherit key only: that table is forge's too. The line names it and no server.
+for label, env, body in (("with a set", ENV, '[shell_environment_policy]\ninherit = "core"\n\n[shell_environment_policy.set]\nTOY_PLAIN = "p"\n'),
+                         ("inherit only, a profile with no env", {}, '[shell_environment_policy]\ninherit = "core"\n')):
+    code, out, proj = fresh(with_config('model = "m"\n\n' + body), env=env)
+    check("false, only forge's policy %s: it goes, the rest stays, the line names it alone" % label,
+          code == 0 and toml_of(proj) == {"model": "m"}
+          and any("forge's out: [shell_environment_policy]" in l and "toy-a" not in l for l in mcp_line(out)),
+          "exit %r, lines %r, text %r" % (code, mcp_line(out), toml_text(proj)))
+
+# 12d. The text edit itself.
+dcp = getattr(mcp, "drop_codex_policy", lambda text, names: (None, False, "no mcp.drop_codex_policy"))
+PT = ('# top\nmodel = "m"\n\n# about the env\n[shell_environment_policy]   # forge\ninherit = "core"\n\n'
+      '[ shell_environment_policy . set ]\nA = "1"\nMCPORTER_CONFIG = "x"\n\n# keep me\n[profiles.x]\ny = 1\n')
+new, taken, why = dcp(PT, {"A"})
+check("policy edit: both tables go whatever the spelling, every other line and comment stays",
+      why is None and taken and tomllib.loads(new or "") == {"model": "m", "profiles": {"x": {"y": 1}}}
+      and all(c in (new or "") for c in ("# top", "# about the env", "# keep me", "[profiles.x]")) and "inherit" not in (new or ""), "%r %r\n%s" % (taken, why, new))
+check("policy edit: MCPORTER_CONFIG is a key forge writes whatever the profile says",
+      dcp('[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nMCPORTER_CONFIG = "x"\n', set())[1] is True, "")
+check("policy edit: no table is no change, byte for byte",
+      dcp('[profiles.x]\ny = 1\n', {"A"}) == ('[profiles.x]\ny = 1\n', False, None), "")
+new, taken, why = dcp(PT, {"B"})
+check("policy edit: a key that is not the profile's keeps the table, and the reason names the key and no value",
+      new == PT and not taken and why and "A" in why and '"1"' not in why, "%r %r" % (taken, why))
+new, taken, why = dcp('shell_environment_policy.inherit = "core"\n', set())
+check("policy edit: dotted keys cannot be taken out whole, so nothing is changed",
+      new == 'shell_environment_policy.inherit = "core"\n' and not taken and why and "shape" in why, "%r %r" % (taken, why))
+new, taken, why = dcp('[shell_environment_policy]\ninherit = "core"\nset = { A = "1" }\n', {"A"})
+check("policy edit: a set written inline is part of the table's block and goes with it",
+      why is None and taken and new == "", "%r %r %r" % (new, taken, why))
+
+# 12e. The .bak. Forge's when it is a regular file holding something forge writes. A foreign one, an
+# unreadable one and a link stay; a .bak with no config.toml beside it is judged the same way.
+for label, body, gone in (("registry", '[mcp_servers.toy-a]\ncommand = "node"\n', True),
+                          ("policy", '[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nTOY_PLAIN = "old"\n', True),
+                          ("foreign", 'model = "mine"\n[mcp_servers.mine]\ncommand = "z"\n', False)):
+    code, out, proj = fresh(with_config('model = "m"\n', body))
+    check("false, a .bak %s: %s" % (label, "removed, the line says so" if gone else "left as it is, no word of it"),
+          code == 0 and os.path.exists(bak_of(proj)) != gone
+          and (any(".bak removed" in l for l in mcp_line(out)) == gone)
+          and not any(".bak left alone" in l for l in mcp_line(out))
+          and toml_text(proj) == 'model = "m"\n', "exit %r, lines %r" % (code, mcp_line(out)))
+code, out, proj = fresh(with_config(None, "[mcp_servers\nbroken"))
+check("false, a .bak that does not parse and no config.toml: left as it is, the line says it could not tell",
+      code == 0 and read(bak_of(proj)) == "[mcp_servers\nbroken" and any(".bak left alone" in l for l in mcp_line(out)), "lines %r" % (mcp_line(out),))
+code, out, proj = fresh(with_config(None, '[mcp_servers.toy-a]\ncommand = "node"\n'))
+check("false, no config.toml, a .bak of forge's: removed, and no config.toml is created",
+      code == 0 and not os.path.exists(bak_of(proj)) and not os.path.exists(os.path.join(proj, ".codex", "config.toml"))
+      and any(".bak removed" in l for l in mcp_line(out)), "lines %r" % (mcp_line(out),))
+
+
+def linked_bak(project):
+    prep(project)
+    seed(os.path.join(project, "elsewhere.toml"), '[mcp_servers.toy-a]\ncommand = "node"\n')
+    os.makedirs(os.path.join(project, ".codex"), exist_ok=True)
+    os.symlink(os.path.join("..", "elsewhere.toml"), os.path.join(project, ".codex", "config.toml.bak"))
+
+
+code, out, proj = fresh(linked_bak)
+check("false, a .bak that is a link: the link and its target stay, the line says so",
+      os.path.islink(bak_of(proj)) and read(os.path.join(proj, "elsewhere.toml")) == '[mcp_servers.toy-a]\ncommand = "node"\n'
+      and any(".bak left alone" in l and "link" in l for l in mcp_line(out)), "lines %r" % (mcp_line(out),))
+
+# 12f. A config.toml that is a link: its target keeps the policy, and so does a .bak beside the link.
+
+
+def linked_config(project):
+    prep(project)
+    seed(os.path.join(project, "tracked.toml"), PT)
+    os.makedirs(os.path.join(project, ".codex"))
+    os.symlink(os.path.join("..", "tracked.toml"), os.path.join(project, ".codex", "config.toml"))
+    seed(os.path.join(project, ".codex", "config.toml.bak"), '[mcp_servers.toy-a]\ncommand = "node"\n')
+
+
+code, out, proj = fresh(linked_config)
+check("false, .codex/config.toml is a link: the target keeps its policy, the .bak stays, the line says NOT changed",
+      read(os.path.join(proj, "tracked.toml")) == PT and os.path.exists(bak_of(proj))
+      and any("NOT changed" in l for l in mcp_line(out)), "exit %r, lines %r" % (code, mcp_line(out)))
+
+# 12g. A file that does not parse keeps its policy and its .bak.
+code, out, proj = fresh(with_config("[shell_environment_policy\nbroken", '[mcp_servers.toy-a]\ncommand = "node"\n'))
+check("false, a config.toml that does not parse: file and .bak are left as they are, the line says so",
+      toml_text(proj) == "[shell_environment_policy\nbroken" and os.path.exists(bak_of(proj))
+      and any("left alone" in l for l in mcp_line(out)), "lines %r" % (mcp_line(out),))
+
+# 12h. Codex off: the switch is not read, and neither the policy nor the .bak is touched (control).
+world(codex=False, harness=False)
+code, out, proj = fresh(with_config(OLD_FORGE, OLD_FORGE))
+check("codex off: config.toml and .bak are not touched (control)",
+      toml_text(proj) == OLD_FORGE and read(bak_of(proj)) == OLD_FORGE, "")
 
 failed = bool(failures)
 for f in failures:

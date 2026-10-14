@@ -65,7 +65,7 @@ switch, a SKIP line for the off state, and a FAIL naming the fix for on-but-brok
 `codex_harness` in `config/forge.json` (read only with Codex on, default false) says whether Codex is set up like
 Claude Code: true, `forge sync` writes its hook rows into `~/.codex/hooks.json` and each project's MCP servers into
 `.codex/config.toml`; false, it writes neither and takes out only what it wrote (hook entries by exact command, the
-`[mcp_servers.<registry name>]` tables of `.codex/config.toml`), keeping the `.agents/skills` links, and the `codex hooks`
+`[mcp_servers.<registry name>]` tables of `.codex/config.toml`, its `[shell_environment_policy]` table when it has the shape forge writes, and the `.bak` of that file when it holds forge's), keeping the `.agents/skills` links, and the `codex hooks`
 row of `forge doctor` follows the switch.
 
 ## Committing

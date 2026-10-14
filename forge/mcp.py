@@ -168,6 +168,15 @@ def toml_str(v):
     return '"' + "".join(out) + '"'
 
 
+def _mcporter_config():
+    """The MCPORTER_CONFIG value forge puts in a project's Codex env, `~` expanded as sync_skill_keep.py
+    expands it, or None when config/forge.json's skill_keep.common_env has none."""
+    keep = lib.settings().get("skill_keep")
+    common_env = keep.get("common_env") if isinstance(keep, dict) else None
+    mcporter = common_env.get("MCPORTER_CONFIG") if isinstance(common_env, dict) else None
+    return os.path.expanduser(mcporter) if isinstance(mcporter, str) else None
+
+
 def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     """Mirror a project's resolved MCP server set (the SAME `sel` list already written to
     that project's ~/.claude.json entry) into <project>/.codex/config.toml, so a Codex CLI
@@ -232,11 +241,9 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     # skill_keep.common_env, not imported from that script (it decides APPLY from sys.argv at
     # import time, which would print its refusal into this run's output); a file without the key
     # writes nothing. `~` expands as sync_skill_keep.py expands it.
-    keep = lib.settings().get("skill_keep")
-    common_env = keep.get("common_env") if isinstance(keep, dict) else None
-    mcporter = common_env.get("MCPORTER_CONFIG") if isinstance(common_env, dict) else None
-    if isinstance(mcporter, str):
-        env_set.setdefault("MCPORTER_CONFIG", os.path.expanduser(mcporter))
+    mcporter = _mcporter_config()
+    if mcporter is not None:
+        env_set.setdefault("MCPORTER_CONFIG", mcporter)
     if env_set:
         lines.append("[shell_environment_policy.set]")
         for k, v in sorted(env_set.items()):
@@ -341,6 +348,29 @@ def _toml_header_path(line):
     return path or None
 
 
+def _drop_blocks(text, owns):
+    """The text without every table whose header path `owns` says is the caller's: a block runs from its
+    header to the next one, a comment that sits directly above the next header stays with it. The caller
+    parses and compares the result; this only edits lines."""
+    out, tail, dropping = [], [], False
+    for line in text.splitlines(keepends=True):
+        path = _toml_header_path(line)
+        if path is not None:
+            if dropping and any(l.strip() for l in tail):  # comments above the next header are its own
+                out.extend(tail)
+            tail = []
+            dropping = owns(path)
+            if not dropping:
+                out.append(line)
+        elif dropping:
+            tail = tail + [line] if (line.strip() == "" or line.lstrip().startswith("#")) else []
+        else:
+            out.append(line)
+    if dropping and any(l.strip() for l in tail):
+        out.extend(tail)
+    return "".join(out).lstrip("\n")
+
+
 def drop_codex_servers(text, names):
     """(the text without the `[mcp_servers.<name>]` tables and their sub-tables for every `name` in `names`,
     the names it took out, None), or (None, [], why not) when it cannot be done safely.
@@ -358,23 +388,7 @@ def drop_codex_servers(text, names):
     ours = [n for n in (servers if isinstance(servers, dict) else {}) if n in names]
     if not ours:
         return text, [], None
-    out, tail, dropping = [], [], False
-    for line in text.splitlines(keepends=True):
-        path = _toml_header_path(line)
-        if path is not None:
-            if dropping and any(l.strip() for l in tail):  # comments above the next header are its own
-                out.extend(tail)
-            tail = []
-            dropping = len(path) >= 2 and path[0] == "mcp_servers" and path[1] in ours
-            if not dropping:
-                out.append(line)
-        elif dropping:
-            tail = tail + [line] if (line.strip() == "" or line.lstrip().startswith("#")) else []
-        else:
-            out.append(line)
-    if dropping and any(l.strip() for l in tail):
-        out.extend(tail)
-    new = "".join(out).lstrip("\n")
+    new = _drop_blocks(text, lambda path: len(path) >= 2 and path[0] == "mcp_servers" and path[1] in ours)
     want = {k: v for k, v in before.items() if k != "mcp_servers"}
     rest = {n: v for n, v in servers.items() if n not in ours}
     if rest:
@@ -388,15 +402,108 @@ def drop_codex_servers(text, names):
     return new, ours, None
 
 
+POLICY = "shell_environment_policy"
+
+
+def _policy_mismatch(table, names):
+    """Why `table` (the parsed [shell_environment_policy]) is not the one write_codex_project_mcp writes for a
+    profile whose env keys are `names`, or None when it is. Forge's is `inherit = "core"` and nothing else but
+    a `set` table, whose keys are all `names` or MCPORTER_CONFIG; with no `names` it writes no `set`, and a
+    table with none is its too. Values are never compared, and never named: a rotated secret or an edited
+    profile leaves a table whose values are stale and still forge's, and the reason lines are printed."""
+    if not isinstance(table, dict):
+        return "it is not a table"
+    extra = sorted(set(table) - {"inherit", "set"})
+    if extra:
+        return "it holds keys forge does not write (%s)" % ", ".join(extra)
+    if table.get("inherit") != "core":
+        return 'its inherit is not "core"'
+    env = table.get("set")
+    if env is None:
+        return None if not names else "forge would write a set table for this profile and this one has none"
+    if not isinstance(env, dict):
+        return "its set is not a table"
+    foreign = sorted(k for k in env if k not in names and k != "MCPORTER_CONFIG")
+    if foreign:
+        return "it sets keys forge does not write for this profile (%s)" % ", ".join(foreign)
+    return None
+
+
+def drop_codex_policy(text, names):
+    """(the text without the [shell_environment_policy] table and its `.set` table, True, None) when forge's
+    is there, (text, False, None) when no such table is, and (text, False, why) when one is that is not
+    forge's shape (_policy_mismatch) or cannot be taken out whole: dotted keys, a header-looking line inside
+    a multi-line string. As for drop_codex_servers, the line edit is checked by parsing the result and
+    comparing it with the original less the table, and a mismatch changes nothing."""
+    try:
+        before = tomllib.loads(text)
+    except tomllib.TOMLDecodeError as e:
+        return text, False, "it does not parse as TOML (%s)" % e
+    if POLICY not in before:
+        return text, False, None
+    why = _policy_mismatch(before[POLICY], names)
+    if why:
+        return text, False, why
+    new = _drop_blocks(text, lambda path: path[0] == POLICY)
+    try:
+        got = tomllib.loads(new)
+    except tomllib.TOMLDecodeError:
+        got = None
+    if got != {k: v for k, v in before.items() if k != POLICY}:
+        return text, False, "it is written in a shape that cannot be taken out whole"
+    return new, True, None
+
+
+def _codex_env_names(prof):
+    """The env keys write_codex_project_mcp writes into a profile's [shell_environment_policy.set]."""
+    names = set(prof.get("env") or {})
+    if _mcporter_config() is not None:
+        names.add("MCPORTER_CONFIG")
+    return names
+
+
+def _bak_verdict(ppath, path, registry, names):
+    """What drop_codex_project_mcp finds at `path`.bak, the once-ever copy lib.write_text keeps of the file's
+    first replaced content: ("none", None) when there is none, ("forge", None) when it is forge's,
+    ("foreign", None) when it holds nothing forge writes, and ("unsure", why) when forge cannot tell or
+    must not touch it. Forge's is a regular file, not a link nor behind one, that parses and holds a
+    registry server or a [shell_environment_policy] of forge's shape: what its first write replaced. Its
+    content is never printed."""
+    bak = path + ".bak"
+    if not os.path.lexists(bak):
+        return "none", None
+    if os.path.islink(bak) or os.path.realpath(bak) != os.path.join(os.path.realpath(ppath), ".codex", "config.toml.bak"):
+        return "unsure", "it is a link, or sits behind one"
+    if not os.path.isfile(bak):
+        return "unsure", "it is not a regular file"
+    try:
+        with open(bak, encoding="utf-8", newline="") as fh:
+            doc = tomllib.loads(fh.read())
+    except (OSError, UnicodeDecodeError) as e:
+        return "unsure", "it cannot be read as UTF-8: %s" % e
+    except tomllib.TOMLDecodeError as e:
+        return "unsure", "it does not parse as TOML (%s)" % e
+    servers = doc.get("mcp_servers")
+    if isinstance(servers, dict) and any(n in registry for n in servers):
+        return "forge", None
+    if POLICY in doc and _policy_mismatch(doc[POLICY], names) is None:
+        return "forge", None
+    return "foreign", None
+
+
 def drop_codex_project_mcp(ctx, prof, registry, errors):
-    """The `codex_harness` false half of write_codex_project_mcp: forge writes no MCP server for Codex, and
-    takes out of <project>/.codex/config.toml the ones it wrote. Those are the `[mcp_servers.<name>]` tables
-    (and their `.env` tables) whose name is a registry server; any other table, key and comment stays, and
-    so does [shell_environment_policy] (forge's too, but not an MCP server) and the file itself: forge keeps
-    no record of who created it, and Codex may have written to it since. A file that is absent is not
-    created; one that does not parse, or holds a registry name in a shape the line reader cannot take out
-    whole, is left as it is and the line says so. A project_path that is not a directory is the writer's
-    error, word for word, so the run exits 1 in both states. Returns a one-line summary, or None."""
+    """The `codex_harness` false half of write_codex_project_mcp: with the switch off Codex gets nothing
+    Claude-style from forge, so forge takes out of <project>/.codex/config.toml what it wrote there: the
+    `[mcp_servers.<name>]` tables (and their `.env` tables) whose name is a registry server, and the
+    [shell_environment_policy] table (with its `.set`) when it has the shape forge writes for this profile
+    (drop_codex_policy); one of another shape stays and the line says so. Any other table, key and comment
+    stays, and so does the file itself: forge keeps no record of who created it, and Codex may have written
+    to it since. The once-ever `.bak` that lib.write_text kept of its first replaced content holds the old
+    values (resolved secrets among them), so it goes too when it is forge's (_bak_verdict), and the edit is
+    written without making a new one, which would hold them again. A file that is absent is not created;
+    one that does not parse, or holds a registry name in a shape the line reader cannot take out whole, is
+    left as it is, its .bak with it, and the line says so. A project_path that is not a directory is the
+    writer's error, word for word, so the run exits 1 in both states. Returns a one-line summary, or None."""
     ppath = prof["project_path"]
     if not os.path.isdir(ppath):
         errors.append("codex mcp: project_path does not exist on disk: %s" % ppath)
@@ -404,27 +511,48 @@ def drop_codex_project_mcp(ctx, prof, registry, errors):
     path = os.path.join(ppath, ".codex", "config.toml")
     short = lib.short(path)
     head = "   codex mcp -> %s (codex_harness off: no MCP server written" % short
-    if not os.path.lexists(path):
+    names = _codex_env_names(prof)
+    parts, written = [], None
+    if os.path.lexists(path):
+        # Same as the writer: a link anywhere in the path would send the rewrite wherever it points.
+        where = os.path.realpath(path)
+        if where != os.path.join(os.path.realpath(ppath), ".codex", "config.toml"):
+            return "   ! codex mcp -> %s NOT changed: it resolves to %s" % (short, lib.short(where))
+        try:
+            with open(path, encoding="utf-8", newline="") as fh:
+                text = fh.read()
+        except (OSError, UnicodeDecodeError) as e:
+            return head + "; file left alone, it cannot be read as UTF-8: %s)" % e
+        new, dropped, why = drop_codex_servers(text, set(registry))
+        if why:
+            return head + "; file left alone, %s)" % why
+        new, policy, pwhy = drop_codex_policy(new, names)
+        out = dropped + (["[%s]" % POLICY] if policy else [])
+        if out:
+            parts.append("forge's out: %s" % ", ".join(out))
+            written = new
+        if pwhy:
+            parts.append("[%s] left alone, %s" % (POLICY, pwhy))
+    state, why = _bak_verdict(ppath, path, registry, names)
+    if state == "unsure":
+        parts.append(".bak left alone, %s" % why)
+    if written is not None and ctx.apply:
+        lib.write_text(path, written, mode=0o600, backup=False)  # before the .bak goes: a failed write keeps both
+    if state == "forge":
+        removed = "would be removed"
+        if ctx.apply:
+            try:
+                os.remove(path + ".bak")
+                removed = "removed"
+            except OSError as e:
+                removed = "NOT removed: %s" % e
+        parts.append(".bak %s (the copy forge made, it holds what forge wrote)" % removed)
+    if not parts:
         return head + ", none of forge's in it)"
-    # Same as the writer: a link anywhere in the path would send the rewrite wherever it points.
-    where = os.path.realpath(path)
-    if where != os.path.join(os.path.realpath(ppath), ".codex", "config.toml"):
-        return "   ! codex mcp -> %s NOT changed: it resolves to %s" % (short, lib.short(where))
-    try:
-        with open(path, encoding="utf-8", newline="") as fh:
-            text = fh.read()
-    except (OSError, UnicodeDecodeError) as e:
-        return head + "; file left alone, it cannot be read as UTF-8: %s)" % e
-    new, dropped, why = drop_codex_servers(text, set(registry))
-    if why:
-        return head + "; file left alone, %s)" % why
-    if not dropped:
-        return head + ", none of forge's in it)"
-    msg = head + "; forge's out: %s)" % ", ".join(dropped)
-    if ctx.apply:
-        lib.write_text(path, new, mode=0o600, backup=True)
-        return msg + " (updated)"
-    return msg + " (would update)"
+    msg = head + "; " + "; ".join(parts) + ")"
+    if written is not None:
+        msg += " (updated)" if ctx.apply else " (would update)"
+    return msg
 
 
 def load_inputs(cfg):
