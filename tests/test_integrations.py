@@ -155,9 +155,9 @@ check("off integrations: forge's other rows still are (omarchy, session sync), t
       {"omarchy_notify.py", "forge session-start"} <= {r[3] for r in h.USER_HOOKS}
       and "memory_doctor.py" not in {r[3] for r in h.USER_HOOKS},
       "markers %r" % sorted(r[3] for r in h.USER_HOOKS))
-# a row off is also off for codex's file
+# the codex rows go from codex's file whether or not their integration is on (it is off here)
 cdoc = {"hooks": {"UserPromptSubmit": [group('node "%s/codex-hook.js"' % h.HINDSIGHT_DIST, 30)]}}
-attempt(h.reconcile, cdoc, h.CODEX)
+attempt(h.drop_codex_entries, cdoc)
 check("off integrations: the codex rows go from codex's file too",
       not entries(cdoc, "UserPromptSubmit") or all("codex-hook.js" not in c for c, _, _ in entries(cdoc, "UserPromptSubmit")),
       "%r" % (entries(cdoc, "UserPromptSubmit"),))
@@ -183,13 +183,12 @@ last = h.USER_HOOKS[-1] if h.USER_HOOKS else None
 check("user_hooks: the row is appended after the code's rows, <ROOT> expanded",
       last == ("UserPromptSubmit", "python3 %s/toy/curfew.py" % h.ROOT, 7, "curfew.py", "Bash", ("claude",)),
       "last row %r of %d" % (last, len(h.USER_HOOKS)))
-doc, cdoc = {}, {}
+doc = {}
 attempt(h.reconcile, doc, h.CLAUDE)
-attempt(h.reconcile, cdoc, h.CODEX)
-check("user_hooks: written for the agents it names only",
+check("user_hooks: written for Claude, and not a command forge takes out of Codex's file",
       ("python3 %s/toy/curfew.py" % h.ROOT, "Bash", 7) in entries(doc, "UserPromptSubmit")
-      and not any("curfew.py" in c for c, _, _ in entries(cdoc, "UserPromptSubmit")),
-      "claude %r, codex %r" % (entries(doc, "UserPromptSubmit"), entries(cdoc, "UserPromptSubmit")))
+      and "python3 %s/toy/curfew.py" % h.ROOT not in h.codex_commands(),
+      "claude %r, codex commands %r" % (entries(doc, "UserPromptSubmit"), sorted(h.codex_commands())))
 h = toy_settings(4, user_hooks=[dict(row, on=False)])
 doc = {"hooks": {"UserPromptSubmit": [group("python3 %s/toy/curfew.py" % h.ROOT, 99, "Other")]}}
 attempt(h.reconcile, doc, h.CLAUDE)
@@ -256,10 +255,67 @@ line = attempt(h.write_codex_hooks, ctx)
 check("codex off: the writer says NOT RUN, NOT ARMED and writes no file",
       isinstance(line, str) and "NOT RUN, NOT ARMED" in line and "codex" in line and not os.path.exists(h.CODEX_HOOKS),
       "line %r, hooks.json exists %s" % (line, os.path.exists(h.CODEX_HOOKS)))
-h = toy_settings(8)
+
+# 7b. Codex gets no hooks from forge. With codex on the writer writes no row, takes out only the entries
+# whose command is exactly one forge wrote (a user_hooks row that lists codex among its agents included),
+# leaves every other entry, event and key as it was, and leaves a file that is absent absent. Red before
+# (the writer mirrored the shared rows into the file): "codex on, no file: the writer writes none: line
+# '... -> appended SessionStart caveman_house_rules.py; ...', hooks.json exists True"; "every entry holding
+# a command forge wrote is gone: left [... 'python3 .../caveman_house_rules.py' ...]"; "a file with no
+# entry of forge's is not rewritten" (the rows were appended to it).
+cfg_row = {"event": "UserPromptSubmit", "command": "python3 <ROOT>/toy_codex_row.py", "timeout": 10,
+           "marker": "toy_codex_row.py", "matcher": None, "agents": ["claude", "codex"]}
+h = toy_settings(8, user_hooks=[cfg_row])
 line = attempt(h.write_codex_hooks, ctx)
-check("codex on: the writer writes the file (control)",
-      isinstance(line, str) and "NOT RUN" not in line and os.path.exists(h.CODEX_HOOKS), "line %r" % (line,))
+check("codex on, no file: the writer writes none and says nothing changed",
+      isinstance(line, str) and "already current" in line and not os.path.exists(h.CODEX_HOOKS),
+      "line %r, hooks.json exists %s" % (line, os.path.exists(h.CODEX_HOOKS)))
+if os.path.exists(h.CODEX_HOOKS):
+    os.remove(h.CODEX_HOOKS)
+forge_cmds = {"SessionStart": [("python3 %s/caveman_house_rules.py" % h.HOOK_DIR, None, 5)],
+              "UserPromptSubmit": [('node "%s/codex-hook.js"' % h.HINDSIGHT_DIST, None, 30),
+                                   ("python3 %s/toy_codex_row.py" % h.ROOT, None, 10)],
+              "PreToolUse": [("node %s/gsd-prompt-guard.js" % h.HOOK_DIR, "Write|Edit", 10)],
+              "Stop": [('node "%s/codex-stop-hook.js"' % h.HINDSIGHT_DIST, None, 60)]}
+foreign_cmds = {"UserPromptSubmit": [("node /opt/herdr/notify.js", None, 5), ("node /other/codex-hook.js", None, 30)],
+                "Notification": [("python3 /x/omarchy_notify.py", None, 5)]}
+doc = {"theme": "toy", "hooks": {}}
+for src in (forge_cmds, foreign_cmds):
+    for event, rows in src.items():
+        doc["hooks"].setdefault(event, []).extend(group(c, t, m) for c, m, t in rows)
+# the forge command again under another timeout and matcher: it goes too, whatever those say
+doc["hooks"]["Stop"].append(group(forge_cmds["Stop"][0][0], 5, "Bash"))
+os.makedirs(os.path.dirname(h.CODEX_HOOKS), exist_ok=True)
+with open(h.CODEX_HOOKS, "w", encoding="utf-8") as fh:
+    json.dump(doc, fh)
+before = open(h.CODEX_HOOKS, "rb").read()
+line = attempt(h.write_codex_hooks, lib.Ctx(False, None, True))
+check("codex on, dry-run: the writer says what it would take out and writes nothing",
+      isinstance(line, str) and "would write" in line and open(h.CODEX_HOOKS, "rb").read() == before, "line %r" % (line,))
+line = attempt(h.write_codex_hooks, ctx)
+with open(h.CODEX_HOOKS, encoding="utf-8") as fh:
+    after = json.load(fh)
+left = sorted(c for ev in after.get("hooks", {}) for c, _, _ in entries(after, ev))
+check("codex on: every entry holding a command forge wrote is gone, and nothing else",
+      left == ["node /opt/herdr/notify.js", "node /other/codex-hook.js", "python3 /x/omarchy_notify.py"],
+      "left %r; line %r" % (left, line))
+check("codex on: an event that held only forge's entries is gone, a foreign event and key stay",
+      sorted(after.get("hooks", {})) == ["Notification", "UserPromptSubmit"] and after.get("theme") == "toy",
+      "events %r, theme %r" % (sorted(after.get("hooks", {})), after.get("theme")))
+check("codex on: the line says what was dropped", isinstance(line, str) and "dropped" in line, "line %r" % (line,))
+before = open(h.CODEX_HOOKS, "rb").read()
+line = attempt(h.write_codex_hooks, ctx)
+check("codex on: a second run is already current and leaves the bytes",
+      isinstance(line, str) and "already current" in line and open(h.CODEX_HOOKS, "rb").read() == before, "line %r" % (line,))
+os.remove(h.CODEX_HOOKS)
+if os.path.exists(h.CODEX_HOOKS + ".bak"):
+    os.remove(h.CODEX_HOOKS + ".bak")
+with open(h.CODEX_HOOKS, "w", encoding="utf-8") as fh:
+    json.dump({"hooks": {"UserPromptSubmit": [group("node /opt/herdr/notify.js", 5)]}}, fh)
+before = open(h.CODEX_HOOKS, "rb").read()
+line = attempt(h.write_codex_hooks, ctx)
+check("codex on: a file with no entry of forge's is not rewritten, and gets no .bak",
+      open(h.CODEX_HOOKS, "rb").read() == before and not os.path.exists(h.CODEX_HOOKS + ".bak"), "line %r" % (line,))
 os.remove(h.CODEX_HOOKS)
 
 # 8. Jev off: its setup is not loaded and both writers say so, naming the way back.
@@ -320,7 +376,7 @@ scan = "node /x/.claude/hooks/gsd-read-injection-scanner.js"
 doc = {"hooks": {"PreToolUse": [group(own, 5, "Write|Edit")], "PostToolUse": [group(scan, 5, "Read")]}}
 cdoc = {"hooks": {"PreToolUse": [group(own, 5, "Write|Edit")]}}
 attempt(h.reconcile, doc, h.CLAUDE)
-attempt(h.reconcile, cdoc, h.CODEX)
+attempt(h.drop_codex_entries, cdoc)
 check("stranger: GSD's own gsd-prompt-guard.js and scanner entries stay as they are",
       entries(doc, "PreToolUse") == [(own, "Write|Edit", 5)] and entries(doc, "PostToolUse") == [(scan, "Read", 5)],
       "PreToolUse %r, PostToolUse %r" % (entries(doc, "PreToolUse"), entries(doc, "PostToolUse")))

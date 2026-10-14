@@ -84,7 +84,7 @@ installed another way.
 
 | Integration | What it adds | What it needs | Default |
 |---|---|---|---|
-| `codex` | `~/.codex/hooks.json` and `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills | `codex` on PATH | off; `init` offers it when `codex` is found |
+| `codex` | `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills; no hooks (forge only takes its own entries out of `~/.codex/hooks.json`) | `codex` on PATH | off; `init` offers it when `codex` is found |
 | `gsd` | the `gsd-*` skills, agents and engine from `get-shit-done-cc`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
 | `caveman` | two hooks around the `caveman` plugin: one injects your own rules from `hooks/caveman_house_rules.md` if you write that file, one makes a `/caveman` level stick in the profile | the plugin, installed in Claude Code; `node` | off |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |

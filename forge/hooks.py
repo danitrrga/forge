@@ -1,9 +1,10 @@
-"""User-scope hooks and defaults: ~/.claude/settings.json and ~/.codex/hooks.json.
+"""User-scope hooks and defaults: ~/.claude/settings.json, and what forge takes out of ~/.codex/hooks.json.
 
-Every hook forge owns is one USER_HOOKS row, written for both agents from the same table, and
-the two plain defaults (model, advisorModel) and the env keys sit beside them in one load and one
-write of settings.json. These files are shared by every session on the machine, so only a run
-whose scope includes the user files writes them (lib.context's `globals`)."""
+Every hook forge owns is one USER_HOOKS row, written for Claude Code, and the two plain defaults
+(model, advisorModel) and the env keys sit beside them in one load and one write of settings.json.
+Codex gets no hook from forge (it is a reviewer, not an orchestrator): write_codex_hooks only removes
+the entries forge wrote there before. These files are shared by every session on the machine, so only
+a run whose scope includes the user files writes them (lib.context's `globals`)."""
 import importlib.util
 import os
 import sys
@@ -40,9 +41,11 @@ JEV_ROW = (("UserPromptSubmit", jev_setup.HOOK_CMD, jev_setup.HOOK_TIMEOUT_S, je
            if jev_setup else
            ("UserPromptSubmit", "python3 %s/hooks/jev_router.py" % ROOT, 6, "jev_router.py", None, (CLAUDE,)))
 
-# Every user-scope hook forge's code owns, for both agents, in one table (config/forge.json's
+# Every user-scope hook forge's code owns, in one table (config/forge.json's
 # `user_hooks` rows follow it, see _split):
 #   (event, command, timeout, marker, matcher, targets)
+# `targets` says where forge wrote the command: forge writes only the CLAUDE ones now, and CODEX in it
+# names an entry write_codex_hooks takes out of ~/.codex/hooks.json (see CODEX_COMMANDS).
 # `marker` is the substring that says an entry is ours; reconcile() keeps exactly one
 # entry per row per event and never touches one without its marker (herdr's, a plugin's).
 #
@@ -54,16 +57,9 @@ JEV_ROW = (("UserPromptSubmit", jev_setup.HOOK_CMD, jev_setup.HOOK_TIMEOUT_S, je
 # interpreter + path (Linux interpreter rule, AGENT-SYSTEM.md -- relative paths broke
 # historically). Scripts that only matter in one project self-gate inside the script.
 #
-# WHY ~/.codex/hooks.json GETS THE SAME ROWS (provider independence: not
-# locking the whole harness to one AI company). Confirmed portable at the time:
-# a project's .codex/hooks/hooks.json and the then-installed Codex plugins (claude-mem, since retired;
-# figma, replayio)
-# declare "$schema": "https://json.schemastore.org/claude-code-settings.json" and use
-# SessionStart, UserPromptSubmit, PreToolUse, PostToolUse and Stop with the exact
-# {matcher, hooks:[{type, command, timeout}]} shape, so the rows are shared, not reinvented.
-# hooks.json is a dedicated file with no other keys. Claude-only rows say why below; the
-# Notification event in particular stays off Codex: no plugin or project here was found using
-# it, and an unsupported top-level key risked breaking hooks.json parsing. Confirm first.
+# WHY ~/.codex/hooks.json GETS NONE: Codex is used as a reviewer, not as an orchestrator, so it is
+# no longer configured like Claude Code. The rows below that list CODEX are the ones forge once
+# mirrored there; write_codex_hooks removes exactly those commands and nothing else.
 _CODE_ROWS = [
     # Caveman house rules. The caveman plugin reads its ruleset from its OWN SKILL.md inside
     # the plugin cache and has no extension point (its config takes `defaultMode` only), so
@@ -144,7 +140,7 @@ _CODE_ROWS = [
     # agentPushNotifEnabled push to Anthropic's apps; neither reaches the local desktop, so a
     # session waiting for input is invisible unless its window is on screen. The toast's click
     # focuses the exact Hyprland window. Self-gates on `omarchy-notification-send` on PATH and
-    # exits 0 on every path. Claude only: see the Notification note above.
+    # exits 0 on every path.
     ("Notification", "python3 %s/omarchy_notify.py" % HOOK_DIR, 10,
      "omarchy_notify.py", None, (CLAUDE,)),
 
@@ -154,8 +150,7 @@ _CODE_ROWS = [
     # also picks Sonnet or Opus, which jev-proxy applies (write_jev_proxy): a hook cannot switch
     # the model itself (UserPromptSubmit has no model field, verified on 2.1.280). Fails open:
     # no key, `router off`, or a Jev call over 2 s leaves the prompt untouched and the session
-    # on Sonnet. Timeout 6 s covers two calls. Claude only: Codex does not need the feature
-    # (by decision).
+    # on Sonnet. Timeout 6 s covers two calls.
     JEV_ROW,
 
     # Session sync. A session brings its OWN project's generated config up to date and nothing
@@ -163,8 +158,7 @@ _CODE_ROWS = [
     # four generators sat in forge's and a sibling project's settings, ran in parallel
     # (Claude Code runs a hook group concurrently), and rewrote all 19 projects from whichever of
     # those sessions started -- hot-reloading another project's running sessions. Silent unless it
-    # wrote something, never fails the session. Claude only: Codex hooks carry no
-    # CLAUDE_PROJECT_DIR, and a session there would sync everything.
+    # wrote something, never fails the session.
     ("SessionStart", "python3 %s/bin/forge session-start || printf '%%s\\n' "
      "'{\"systemMessage\": \"forge session-start could not run (is python3 on PATH?)\"}'" % ROOT, lib.SESSION_START_TIMEOUT,
      "forge session-start", "startup", (CLAUDE,)),
@@ -180,21 +174,10 @@ _CODE_ROWS = [
     ("SessionStart", "python3 %s/memory_doctor.py --hook" % SYNC_DIR, 15,
      "memory_doctor.py", None, (CLAUDE,)),
 
-    # Hindsight coding-agents: exactly two hooks per agent, never the package's SessionStart one
-    # (see HOOK_WARDS). Asserted with their exact commands so a half-removed or relocated wiring
-    # self-heals. THE SAME TWO FOR CODEX: the runtime ships codex-sessionstart-hook.js,
-    # codex-hook.js and codex-stop-hook.js and nothing here registered them. They are the SAME
-    # CODE as the Claude bundles with one string changed -- codex-hook.js differs from
-    # claude-hook.js in 43 bytes of 134,560, all `runHarnessPrompt("codex")` -- and
-    # `deferInitialReflect` appears four times in both sessionstart bundles, so the ban applies
-    # unchanged. Codex takes the Claude manifest verbatim (harness configStyle "nested", same event
-    # names, codexPrompt spreads claudePrompt and emits the same additionalContext; only the
-    # payload parse differs, inside the bundle). Forge writes them rather than
-    # `npx @vectorize-io/hindsight-coding-agents install codex`, because that installer merges into
-    # hooks.json and rewrites ~/.codex/config.toml (installer.js:4517-4545), both generated here.
-    # Codex gates hooks behind a persisted trust hash: a new entry fires only once trusted.
-    # The two Claude rows are _PROJECT_CODE_ROWS below; the Codex ones stay here, since forge writes
-    # no per-project Codex hooks file.
+    # Hindsight coding-agents: exactly two hooks, never the package's SessionStart one (see
+    # HOOK_WARDS). Asserted with their exact commands so a half-removed or relocated wiring
+    # self-heals. The two Claude rows are _PROJECT_CODE_ROWS below. The two Codex ones below are
+    # no longer written: they are what write_codex_hooks takes out of ~/.codex/hooks.json.
     ("UserPromptSubmit", 'node "%s/codex-hook.js"' % HINDSIGHT_DIST, 30,
      "coding-agents", None, (CODEX,)),
     ("Stop", 'node "%s/codex-stop-hook.js"' % HINDSIGHT_DIST, 60,
@@ -325,12 +308,11 @@ def project_hooks(prof):
 # @vectorize-io/hindsight-coding-agents install claude-code` is also how the package updates,
 # and it re-merges all three hooks without a word.
 #
-# reap_claude_mem_worker.py: the claude-mem schema audit fired on every SessionStart of both
-# agents until claude-mem was retired. Warded, not just dropped from USER_HOOKS,
+# reap_claude_mem_worker.py: the claude-mem schema audit fired on every SessionStart until claude-mem
+# was retired. Warded, not just dropped from USER_HOOKS,
 # because reconcile() never touches an entry no row owns -- a dropped row would leave the
 # old entry firing forever against a script that no longer exists.
-HOOK_WARDS = {CLAUDE: ("claude-sessionstart-hook.js", "reap_claude_mem_worker.py"),
-              CODEX: ("codex-sessionstart-hook.js", "reap_claude_mem_worker.py")}
+HOOK_WARDS = {CLAUDE: ("claude-sessionstart-hook.js", "reap_claude_mem_worker.py")}
 
 # Files no Claude session should read, as native permission rules (settings.json permissions.deny),
 # so the refusal comes from the harness and not from a hook that can be skipped. Unioned in order
@@ -645,12 +627,51 @@ def write_user_settings(ctx, proxy_up):
     return _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), list(warnings) + deny_warnings)
 
 
+def codex_commands():
+    """The commands forge ever wrote into ~/.codex/hooks.json: every row of the code's table and every
+    `user_hooks` row of config/forge.json that lists codex, whether the row is on or off."""
+    rows = list(_CODE_ROWS) + [row for row, _ in _config_rows()]
+    return {row[1] for row in rows if CODEX in row[5]}
+
+
+def drop_codex_entries(doc):
+    """Take out of doc["hooks"] every entry whose command EQUALS one of codex_commands(), whatever its
+    matcher, timeout or event; returns one note per event changed. A group or an event left empty by it
+    goes too. Everything else stays as it is: a foreign entry (one that only shares a script name
+    included), a malformed part, another key."""
+    notes = []
+    hooks = doc.get("hooks")
+    if not isinstance(hooks, dict):
+        return notes
+    ours = codex_commands()
+    for event, groups in list(hooks.items()):
+        if not isinstance(groups, list):
+            continue
+        removed = 0
+        for g in list(groups):
+            hl = _hook_list(g)
+            if hl is None:
+                continue
+            kept = [h for h in hl if not (_well_formed(h) and h.get("command") in ours)]
+            if len(kept) == len(hl):
+                continue
+            removed += len(hl) - len(kept)
+            g["hooks"] = kept
+            if not kept:
+                groups.remove(g)
+        if removed:
+            if not groups:
+                del hooks[event]
+            notes.append("dropped %d forge hook(s) (%s)" % (removed, event))
+    return notes
+
+
 def write_codex_hooks(ctx):
-    """Mirror the shared USER_HOOKS rows into ~/.codex/hooks.json (see the table's header). Codex
-    off (config/forge.json integrations.codex): the file is not read or written, and the line says so."""
+    """Codex gets no hook from forge: take out of ~/.codex/hooks.json the entries forge wrote there
+    (drop_codex_entries) and leave the rest. A file that is absent stays absent, and one with no entry of
+    forge's is not rewritten. Codex off (config/forge.json integrations.codex): the file is not read or
+    written, and the line says so."""
     if not lib.on("codex"):
         return _not_run(lib.short(CODEX_HOOKS), "codex")
     s = lib.read_owned(CODEX_HOOKS)
-    notes = reconcile(s, CODEX)
-    n = sum(1 for row in USER_HOOKS if CODEX in row[5])
-    return _commit(ctx, CODEX_HOOKS, s, notes, "%d hooks, %s warded off" % (n, ", ".join(HOOK_WARDS[CODEX])))
+    return _commit(ctx, CODEX_HOOKS, s, drop_codex_entries(s), "no hook of forge's")

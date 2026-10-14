@@ -17,7 +17,7 @@ This file is a synced copy (`.claude/AGENT-SYSTEM.md` in each project, git-ignor
 - `~/.claude.json`: MCP servers and project keys.
 - Any project's `.claude/settings.local.json`: plugin and skill on/off, permissions, env, the `.mcp.json` approval flags.
 - The hook rows forge wrote into `~/.claude/settings.json` (its other keys are yours).
-- With Codex on: `~/.codex/hooks.json`, a project's `.codex/config.toml` and its `.agents/skills` links.
+- With Codex on: a project's `.codex/config.toml` and its `.agents/skills` links. forge writes no Codex hook.
 - Any `.claude/AGENT-SYSTEM.md`, which is this synced copy.
 
 In-session skill toggles, `claude mcp add` and manual JSON edits to those files are wiped on the next
@@ -40,7 +40,7 @@ change), then with `--apply`, and restart the affected session.
 | Add a managed project | `python3 bin/forge add <path>`, which writes `config/profiles/<name>.claude.json` | (`add` runs the sync for it) |
 | Add or edit a skill | `skills/<name>/SKILL.md` in forge; forge links it into `~/.claude/skills` | `python3 bin/forge sync --apply` |
 | Add a skill to one project only | `<project>/.claude/skills/<name>/SKILL.md`. Claude Code reads it directly; for Codex forge mirrors it into `<project>/.agents/skills/<name>` | `python3 bin/forge sync --apply` |
-| Add a hook for every session | a row in `user_hooks` in `config/forge.json` (forge writes `~/.claude/settings.json`, and `~/.codex/hooks.json` for a row that lists `codex`) | `python3 bin/forge sync --apply --all` |
+| Add a hook for every session | a row in `user_hooks` in `config/forge.json` (forge writes `~/.claude/settings.json`; Codex gets no hook) | `python3 bin/forge sync --apply --all` |
 | Add a hook for one project | the project's own `.claude/settings.json`, which forge never touches; use an absolute path and the interpreter for the file (`python3`, `node`, `bash`) | restart the session |
 | Switch an integration on or off | `integrations` in `config/forge.json` | `python3 bin/forge sync --apply --all` |
 | Edit this document | `docs/AGENT-SYSTEM.md` in forge | `python3 scripts/sync/sync_system_doc.py --apply` |

@@ -274,9 +274,11 @@ code, out, dirs = case("missing", {"a": {}}, globals_=True)
 check(code == 0, "clean toy run: exit %r, want 0\n%s" % (code, out))
 check(os.path.exists(CJ) and dirs["a"] in json.loads(read(CJ)).get("projects", {}),
       "clean toy run did not write the project key into a missing ~/.claude.json")
-check(os.path.exists(hooks.USER_SETTINGS) and os.path.exists(os.path.join(CODEX_HOME, "hooks.json"))
+# Codex gets no hook from forge: no hooks.json is created, in $CODEX_HOME or in ~/.codex. Red before:
+# "clean toy run created $CODEX_HOME/hooks.json".
+check(os.path.exists(hooks.USER_SETTINGS) and not os.path.exists(os.path.join(CODEX_HOME, "hooks.json"))
       and not os.path.exists(os.path.join(HOME, ".codex")),
-      "clean toy run did not create settings.json and $CODEX_HOME/hooks.json, or wrote ~/.codex: "
+      "clean toy run did not create settings.json, or created $CODEX_HOME/hooks.json or ~/.codex: "
       "the generator's hooks.json is %s" % hooks.CODEX_HOOKS.replace(HOME, "~"))
 
 # 3. A key relocation never touches a frozen project's key (unify-plan rule 1: forge writes El
@@ -637,7 +639,7 @@ for label, env in (("null", None), ("a list", ["x"])):
         line = [l for l in out.splitlines() if "settings.json" in l]
         check(code == (1 if HAVE_JEV else 0) and doc.get("env") == env and doc.get("theme") == "dark"
               and ("   ! env is not an object, left alone" in out.splitlines()) == HAVE_JEV
-              and os.path.exists(os.path.join(CODEX_HOME, "hooks.json"))
+              and any(l.startswith("   ~/.codex") or "codex-home/hooks.json" in l for l in out.splitlines())
               and (run == "first" or (len(line) == 1 and "(already current)" in line[0])),
               "settings.json with env %s, %s run: exit %r, env %r, settings lines %r"
               % (label, run, code, doc.get("env"), line))
@@ -829,7 +831,7 @@ memory.ROOT = real_root
 # forge owns; left as it is in a foreign one, which reconcile never touches. Red before:
 # "raised TypeError: argument of type 'NoneType' is not a container or iterable" for
 # both agents, from the ward loop's `mark in h.get("command", "")`.
-for agent in (hooks.CLAUDE, hooks.CODEX):
+for agent in (hooks.CLAUDE,):
     ev = next(row[0] for row in hooks.USER_HOOKS if agent in row[5])
     foreign = [{"hooks": [{"type": "command", "command": None}, {"type": "command", "command": 5}]}]
     doc = {"hooks": {ev: [{"hooks": [{"type": "command", "command": None}, {"type": "command", "command": 5},
@@ -1203,14 +1205,13 @@ for label, prof, want, summary in (
 # with a note naming the event. Without it, deleting the UserPromptSubmit gsd_output_discipline.py row
 # (T1, docs/hooks-phase-design.md) leaves the old entry firing on every prompt forever, because
 # reconcile never touched an event that has no row. Controls in the same case: a foreign entry beside
-# it, omarchy_notify.py (a Claude-only row) in a Codex Notification event, and the PostToolUse and Stop
-# discipline entries, all left as they were; a second run says nothing. Red before, both agents:
+# it, and the PostToolUse and Stop discipline entries, left as they were; a second run says nothing. Red before:
 # "notes ['dropped 1 stale UserPromptSubmit gsd_output_discipline.py'], UserPromptSubmit still carries
 # ['python3 .../hooks/gsd_output_discipline.py'], PreCompact left ['python3 .../hooks/gsd_output_discipline.py',
 # 'some-foreign-hook --flag']" (the UserPromptSubmit row still existed, so the stray copy was only a
 # duplicate; the PreCompact entry, on an event with no row, survived).
 GSD_CMD = "python3 %s/gsd_output_discipline.py" % hooks.HOOK_DIR
-for agent in (hooks.CLAUDE, hooks.CODEX):
+for agent in (hooks.CLAUDE,):
     doc = {"hooks": {}}
     attempt(hooks.reconcile, doc, agent)  # every row in place; the controls below start from here
     keep_post = json.loads(json.dumps(doc["hooks"]["PostToolUse"]))
@@ -1219,9 +1220,6 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
     foreign = {"type": "command", "command": "some-foreign-hook --flag", "timeout": 5}
     doc["hooks"].setdefault("UserPromptSubmit", []).append({"hooks": [dict(stray)]})
     doc["hooks"]["PreCompact"] = [{"hooks": [dict(stray), dict(foreign)]}]
-    if agent == hooks.CODEX:
-        omarchy = {"type": "command", "command": "python3 /x/omarchy_notify.py", "timeout": 5}
-        doc["hooks"]["Notification"] = [{"hooks": [dict(omarchy)]}]
     notes = attempt(hooks.reconcile, doc, agent)
     cmds = lambda ev: [h.get("command") for g in doc["hooks"].get(ev) or [] for h in g.get("hooks", [])]
     again = attempt(hooks.reconcile, doc, agent)
@@ -1230,12 +1228,11 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
                     "dropped 1 gsd_output_discipline.py (PreCompact: no row on this event)"]
           and gsd_prompt == [] and cmds("PreCompact") == ["some-foreign-hook --flag"]
           and doc["hooks"]["PostToolUse"] == keep_post and doc["hooks"]["Stop"] == keep_stop
-          and (agent == hooks.CLAUDE or cmds("Notification") == ["python3 /x/omarchy_notify.py"])
           and again == [],
           "%s: notes %r, UserPromptSubmit still carries %r, PreCompact left %r, PostToolUse kept %s, "
-          "Stop kept %s, Notification %r, second run %r"
+          "Stop kept %s, second run %r"
           % (agent, notes, gsd_prompt, cmds("PreCompact"), doc["hooks"]["PostToolUse"] == keep_post,
-             doc["hooks"]["Stop"] == keep_stop, cmds("Notification"), again))
+             doc["hooks"]["Stop"] == keep_stop, again))
 
 # 29. Native deny rules for secret files (T3, docs/hooks-phase-design.md): write_user_settings unions
 # twenty-three Read rules (nine of forge's own, fourteen machine credential stores) into

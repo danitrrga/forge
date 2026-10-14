@@ -136,7 +136,8 @@ class Sandbox:
         self._copy(mutation)
         # The seeds below carry a caveman hook for --apply to repair, so the toy world runs with caveman on
         # whatever this machine's config says. Red before, once caveman is off in the real config/forge.json:
-        # "FAIL  --apply repairs the seeded user-scope files: ['codex hooks.json repaired']".
+        # "FAIL  --apply repairs the seeded user-scope files: ['codex hooks.json repaired']" (that check was
+        # of the mirrored row; it is now of forge's entry being taken out).
         settings = os.path.join(self.forge, "config", "forge.json")
         doc = read_json(settings)
         doc.setdefault("integrations", {})["caveman"] = True
@@ -235,9 +236,12 @@ class Sandbox:
             if os.path.isdir(os.path.join(self.forge, "skills", s)):
                 os.makedirs(os.path.join(h, ".claude", "skills"), exist_ok=True)
                 os.symlink(os.path.join(self.forge, "skills", s), os.path.join(h, ".claude", "skills", s))
-        # Not the shape hooks.reconcile expects: a non-list event, non-dict parts, a relocated script.
+        # Codex gets no hook from forge: --apply takes out forge's own entry (its exact command) and leaves
+        # the rest, malformed parts and a relocated script of the same name included.
         write_json(os.path.join(h, ".codex", "hooks.json"), {"hooks": {"Stop": "not a list", "SessionStart": [
-            "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/caveman_house_rules.py", "timeout": 5}]}]}})
+            "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/caveman_house_rules.py", "timeout": 5},
+                               {"type": "command", "command": "python3 %s/hooks/caveman_house_rules.py" % self.forge,
+                                "timeout": 5}]}]}})
         write(os.path.join(h, ".hindsight", "coding-agents", "dist", "claude-hook.js"), "// stub runtime; knows autoInject\n")
         write_json(os.path.join(h, ".hindsight", "coding-agents", ".install-origin.json"), {"commit": "63da8d7" + "0" * 33})
         os.makedirs(os.path.join(h, ".vscode", "extensions"))
@@ -343,8 +347,9 @@ def exercise(sb, check):
     seeds = {"warded": not any("claude-sessionstart-hook.js" in c for c in cmds),
              "foreign hook kept": "node /opt/herdr/herdr.js" in cmds,
              "model": st.get("model") == "sonnet",
-             "codex hooks.json repaired": isinstance(cx["hooks"]["Stop"], list)
-             and all(isinstance(g, dict) for g in cx["hooks"]["SessionStart"])}
+             "codex hooks.json: forge's entry out, the rest as it was":
+             cx["hooks"]["Stop"] == "not a list" and cx["hooks"]["SessionStart"] == [
+                 "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/caveman_house_rules.py", "timeout": 5}]}]}
     check("--apply repairs the seeded user-scope files", all(seeds.values()), [k for k, v in seeds.items() if not v])
     dirty = git(sb.forge, "status", "--porcelain")
     check("--apply writes nothing git would track in the forge copy", not dirty, dirty.strip())

@@ -6,8 +6,8 @@ claude-hook.js, Stop claude-stop-hook.js) and every config/forge.json `user_hook
 `"scope": "hindsight"` land in that project's .claude/settings.local.json, through
 skills.write_settings_local, and never at user scope: the exact-command reconcile takes forge's old
 entries out of ~/.claude/settings.json and leaves a foreign hook. A project that does not use
-Hindsight, or every project while the integration is off, loses the entries a run wrote before. The
-Codex rows stay at user scope: Codex has no per-project hooks file forge writes.
+Hindsight, or every project while the integration is off, loses the entries a run wrote before. Codex
+gets no Hindsight row at all: the two it once had are only taken out of ~/.codex/hooks.json.
 
 Runs in-process against a toy forge.json (lib.SETTINGS), a toy HOME and toy projects; nothing real
 is written.
@@ -182,9 +182,9 @@ check("on: a profile without the server gets none (control)",
       not ({UP, STOP} & all_commands(read(slp(plain)))), "file %r" % (read(slp(plain)),))
 claude_rows = [(r[0], "claude") for r in hooks.USER_HOOKS if r[3] == "coding-agents" and hooks.CLAUDE in r[5]]
 check("on: USER_HOOKS holds no Claude coding-agents row", not claude_rows, "markers %r" % (claude_rows,))
-check("on: the Codex coding-agents rows stay at user scope (control)",
-      [r[0] for r in hooks.USER_HOOKS if r[3] == "coding-agents" and hooks.CODEX in r[5]] == ["UserPromptSubmit", "Stop"],
-      "rows %r" % ([r for r in hooks.USER_HOOKS if r[3] == "coding-agents"],))
+check("on: the Codex coding-agents commands are the ones taken out of ~/.codex/hooks.json",
+      CODEX_UP in hooks.codex_commands() and CODEX_UP.replace("codex-hook", "codex-stop-hook") in hooks.codex_commands(),
+      "commands %r" % (sorted(hooks.codex_commands()),))
 user = {"hooks": {"UserPromptSubmit": [group(UP, 30), group(FOREIGN, 5)], "Stop": [group(STOP, 60)]}}
 notes = attempt(hooks.reconcile, user, hooks.CLAUDE)
 check("on: ~/.claude/settings.json loses forge's two rows",
@@ -194,9 +194,9 @@ check("on: a foreign hook in ~/.claude/settings.json stays (control)", (FOREIGN,
       "UserPromptSubmit %r" % (entries(user, "UserPromptSubmit"),))
 check("on: the note says the rows are written per project",
       isinstance(notes, list) and any("per project" in n for n in notes), "notes %r" % (notes,))
-cdoc = {}
-attempt(hooks.reconcile, cdoc, hooks.CODEX)
-check("on: ~/.codex/hooks.json still gets the codex row (control)", (CODEX_UP, None, 30) in entries(cdoc, "UserPromptSubmit"),
+cdoc = {"hooks": {"UserPromptSubmit": [group(CODEX_UP, 30), group(FOREIGN, 5)]}}
+attempt(hooks.drop_codex_entries, cdoc)
+check("on: ~/.codex/hooks.json loses the codex row and keeps a foreign hook", entries(cdoc, "UserPromptSubmit") == [(FOREIGN, None, 5)],
       "%r" % (entries(cdoc, "UserPromptSubmit"),))
 # The doctor's drift row computes what the generator would write with the same rows.
 want = attempt(cli.settings_forge_would_write, "hs", hs, {})

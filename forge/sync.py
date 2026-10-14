@@ -18,7 +18,7 @@ Targets written:
   <project>/.agents/skills/<name>  (links to the project's .claude/skills, for Codex)
   <project>/.gitignore  (the .codex/ and .agents/ lines, before either is written)
   ~/.claude/settings.json  (user-scope hooks and defaults)
-  ~/.codex/hooks.json  (the same hooks, for Codex; $CODEX_HOME when set)
+  ~/.codex/hooks.json  (no hook is written, forge's own entries are taken out; $CODEX_HOME when set)
   ~/.hindsight/coding-agent.json  (rendered from config/hindsight-coding-agents.json)
   data/memory-lite/<project>  (each project's claude-mem-lite store directory)
   the jev-proxy systemd user units and the Jev status-bar extension links

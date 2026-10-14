@@ -62,6 +62,10 @@ touches one reads `lib.on("<name>")`; with the integration off, forge writes non
 the entries it wrote itself (matched by exact command). A new feature that depends on an external tool needs a
 switch, a SKIP line for the off state, and a FAIL naming the fix for on-but-broken.
 
+Codex gets no hooks from forge: it is used as a reviewer, not an orchestrator. `forge sync` writes no row into
+`~/.codex/hooks.json` and takes out of it only the entries forge once wrote (exact command), and the `codex hooks`
+row of `forge doctor` fails while one is left there.
+
 ## Committing
 
 `forge commit -m MESSAGE [PATH...]` sends each changed path to the history that owns it (the engine's, or the
