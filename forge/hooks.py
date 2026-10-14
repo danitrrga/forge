@@ -268,7 +268,7 @@ def _config_rows(scopes=None):
                 bad = "has a matcher that is neither a string nor null"
             if bad is None and not (isinstance(r.get("agents"), list) and r["agents"] and set(r["agents"]) <= set(BOTH)):
                 bad = "has agents that are not a non-empty list of %s" % " and ".join(BOTH)
-            if bad is None and r.get("scope") is not None and r["scope"] not in SCOPES:
+            if bad is None and r.get("scope") is not None and not (isinstance(r["scope"], str) and r["scope"] in SCOPES):
                 bad = "has a scope that is not one of %s" % ", ".join(SCOPES)
             if bad is None and r.get("scope") is not None and r["agents"] != [CLAUDE]:
                 bad = 'has a scope and agents other than ["%s"]: codex has no per-project hooks' % CLAUDE

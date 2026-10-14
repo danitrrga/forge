@@ -697,17 +697,22 @@ def integrations_row():
     integrations = checked
     try:
         from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
-        rows = hooks._config_rows()
+        scopes = []
+        rows = hooks._config_rows(scopes)
     except (Exception, SystemExit) as e:
         out.append(lib.Result("FAIL", "integrations", "user_hooks not checked, forge.hooks could not read them: %s: %s"
                               % (type(e).__name__, e)))
-        rows, unread = [], True
-    for (event, command, _, marker, _, _), on in rows:
+        rows, scopes, unread = [], [], True
+    for ((event, command, _, marker, _, _), on), scope in zip(rows, scopes):
         scripts = hook_scripts(command)
         if not scripts:
             continue
         if not on:
             out.append(lib.Result("SKIP", "integrations", '%suser_hooks row %s is "on": false in config/forge.json' % (NOT_ARMED, marker)))
+            continue
+        if scope and not lib.on(scope):  # written per project only while its integration is on (forge.hooks)
+            out.append(lib.Result("SKIP", "integrations", "%suser_hooks row %s has scope %s, which is off in config/forge.json"
+                                  % (NOT_ARMED, marker, scope)))
             continue
         for script in scripts:
             checked += 1

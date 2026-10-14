@@ -40,7 +40,13 @@ Negative controls on the finished code, each put back from a copy of the file:
   a wanted row not counted as declared -- 1 red: a profile that declares nothing else is still written
   cli.settings_forge_would_write passing no rows -- 1 red: would write None for a project not yet written
   scope not validated -- 1 red: ValueError "unknown integration 'elsewhere'" instead of a "!" line
-  codex allowed on a scoped row -- 1 red; scope ignored -- 3 red (the three scope hindsight checks)."""
+  codex allowed on a scoped row -- 1 red; scope ignored -- 3 red (the three scope hindsight checks).
+Two cases from a Codex review, seen failing on the code before their fix (the other 28 passed):
+  scope not a string: refused with a "!" line -- reload gave ('raised', 'TypeError', "cannot use 'list'
+    as a dict key (unhashable type: 'list')")
+  doctor: a scoped row with its integration off is a SKIP -- rows [Result(level='FAIL', ..., detail='user_hooks
+    row toy_injection_audit.py (SessionStart): ... does not exist, so the hook cannot start ...')]
+  (its control, the same row with the integration on, is a FAIL before and after)."""
 import importlib
 import json
 import os
@@ -258,6 +264,19 @@ check("scope \"elsewhere\": refused with a \"!\" line",
 got = toy_settings(7, user_hooks=[dict(AUDIT, scope="hindsight", agents=["claude", "codex"])])
 check("scope hindsight with codex in agents: refused with a \"!\" line",
       isinstance(got, tuple) and got[0] == "exit" and "codex" in got[1], "reload gave %r" % (got,))
+got = toy_settings(10, user_hooks=[dict(AUDIT, scope=[])])
+check("scope not a string: refused with a \"!\" line, not a traceback",
+      isinstance(got, tuple) and got[0] == "exit" and "scope" in got[1], "reload gave %r" % (got,))
+# The doctor's integrations row reads the same rows: a scoped row whose integration is off is not armed,
+# so its missing script is a SKIP, as an "on": false row's is; with the integration on, a FAIL (control).
+toy_settings(11, user_hooks=[dict(AUDIT, scope="hindsight")], integrations=dict(INTEGRATIONS, hindsight=False))
+rows = [r for r in (attempt(cli.integrations_row) or []) if "toy_injection_audit.py" in getattr(r, "detail", str(r))]
+check("doctor: a scoped row with its integration off is a SKIP, not a FAIL",
+      rows and all(r.level == "SKIP" for r in rows), "rows %r" % (rows,))
+toy_settings(12, user_hooks=[dict(AUDIT, scope="hindsight")])
+rows = [r for r in (attempt(cli.integrations_row) or []) if "toy_injection_audit.py" in getattr(r, "detail", str(r))]
+check("doctor: a scoped row with its integration on and its script missing is a FAIL (control)",
+      rows and all(r.level == "FAIL" for r in rows), "rows %r" % (rows,))
 toy_settings(8, user_hooks=[dict(AUDIT, scope="hindsight")], integrations=dict(INTEGRATIONS, hindsight=False))
 run(hs)
 check("scope hindsight off: no project gets it, the earlier entry goes", AUDIT_CMD not in all_commands(read(slp(hs))),
