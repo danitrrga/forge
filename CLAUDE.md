@@ -25,6 +25,7 @@ tests/               the suites; tests/sandbox.py builds a toy world
 python3 bin/forge sync          # dry-run of every generator; --apply writes, --project NAME / --all set the scope
 python3 bin/forge doctor        # one PASS/FAIL/SKIP line per check, exit 1 on a FAIL; `doctor NAME` scopes it to a project
 python3 bin/forge test          # every tracked test_*.py at nice 19; `--mutants` runs only the on-demand guard mutants
+python3 tests/test_<name>.py    # one suite: each is a plain script (no pytest) that prints its FAILs and exits 1 on any
 python3 bin/forge check-public --all   # personal data in the engine files
 ```
 
