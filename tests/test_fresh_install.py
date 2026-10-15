@@ -345,6 +345,10 @@ def main_world():
     before = w.snapshot()
     code, out = w.forge("init", "--yes", "--without", "codex,gsd")
     check("init --yes --without codex,gsd exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
+    # Control of the init exit rules below: every step passed or was not run (the SKIP and NOT RUN rows
+    # of this world), and nothing says it failed.
+    check("init with nothing broken prints no '! forge init' line and has NOT RUN rows",
+          "! forge init" not in out and "NOT RUN, NOT ARMED" in out, tail(out, 12))
     want("no stub was called (npm, pnpm, codex, systemctl)", w.stub_calls(), {"npm": [], "pnpm": [], "codex": [], "systemctl": []})
     after = w.snapshot()
     changed = changed_since(before, after)
@@ -561,6 +565,11 @@ def gsd_world():
         check("the init output has the %s step" % step, "== forge init: %s ==" % step in out, tail(out, 12))
     check("there is no toolchain or gsd skills step", "== forge init: toolchain ==" not in out and "== forge init: gsd skills ==" not in out, tail(out, 12))
     check("a pnpm that exits 0 is not named as a failed step", "failed -- gsd" not in out, tail(out, 12))
+    # The pnpm stub installs nothing, so the doctor's skill keep row FAILs: a step that ran and broke exits 1,
+    # with its reason on a '!' line. Red before this change: exit 1 with no '! forge init' line at all ("exit 1,
+    # no failed line: ... SUMMARY: 8 passed, 0 warnings, 1 failures | put your own skills in ...").
+    check("a doctor that FAILs exits init 1, and a '!' line names it",
+          code == 1 and "! forge init: failed -- doctor (exit 1)" in out, "exit %d: %s" % (code, tail(out, 6)))
     want("no config/toolchain.json: no npm package is pinned", os.path.exists(w.path("config", "toolchain.json")), False)
     doc = read_json(w.path("config", "forge.json")) or {}
     want("forge.json: gsd on, codex off, gsd_patches false", (doc.get("integrations", {}).get("gsd"), doc.get("integrations", {}).get("codex"), doc.get("gsd_patches")),
@@ -569,6 +578,19 @@ def gsd_world():
     check("forge sync says the gsd runtime is the user's own unpatched install, with no '!' line",
           "GSD is your own unpatched install" in out and not any(l.lstrip().startswith("!") and "gsd" in l.lower() for l in out.splitlines()), tail(out, 12))
     want("forge sync touched neither npm nor pnpm again", (w.stub_calls()["npm"], w.stub_calls()["pnpm"]), ([], [GSD_DLX]))
+
+
+def broken_gsd_world():
+    """init with GSD on and a pnpm that exits 3: the installer ran and broke, which is a failure (the machine has
+    the tool, so it is not a NOT RUN). The later steps still run, and the '!' line says which step and its exit
+    code. Negative control: the same world with a pnpm that exits 0 has no 'failed -- gsd' (gsd_world)."""
+    w = World("gsd-broken")
+    stub(os.path.join(w.top, "stubs"), w.logs, "pnpm", "exit 3")
+    code, out = w.forge("init", "--yes", "--without", "codex")
+    # Red before this change: the line was "! forge init: failed -- gsd" (no exit code).
+    check("a pnpm that exits 3: init exits 1 and the '!' line names the gsd step and its exit code",
+          code == 1 and "! forge init: failed -- gsd (exit 3)" in out, "exit %d: %s" % (code, tail(out, 6)))
+    check("a failed gsd step does not stop sync and doctor", all("== forge init: %s ==" % s in out for s in ("sync", "doctor")), tail(out, 12))
 
 
 def kept_world():
@@ -601,7 +623,7 @@ def other_checkout_world():
 
 
 def main():
-    for part in (choice_cases, doctor_row_cases, main_world, track_world, gsd_world, kept_world, other_checkout_world):
+    for part in (choice_cases, doctor_row_cases, main_world, track_world, gsd_world, broken_gsd_world, kept_world, other_checkout_world):
         try:
             part()
         except Exception as e:  # a part that cannot run is a failure of its own, and the others still run

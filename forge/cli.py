@@ -1371,20 +1371,27 @@ def cmd_init(a):
         print("! forge init: %s" % why)
         return 1
     init_write(integrations, a.track)
+    # A step that ran and broke exits non-zero and lands here with its code. What could not run (a tool that
+    # is not there, an integration that is off) never gets this far: init_choices leaves GSD off without pnpm,
+    # and the generators and the doctor print NOT RUN, NOT ARMED / SKIP and exit 0.
     failed = []
     if integrations["gsd"]:
         # The example's gsd_patches is false: GSD straight from its package, nothing staged, patched or pinned.
-        if init_step("gsd", GSD_INSTALL, tool=True):
-            failed.append("gsd")
-    if init_step("sync", ["bin/forge", "sync", "--apply", "--all"]):
-        failed.append("sync")
+        code = init_step("gsd", GSD_INSTALL, tool=True)
+        if code:
+            failed.append(("gsd", code))
+    code = init_step("sync", ["bin/forge", "sync", "--apply", "--all"])
+    if code:
+        failed.append(("sync", code))
     code = init_step("doctor", ["bin/forge", "doctor"])
+    if code:
+        failed.append(("doctor", code))
     if failed:
-        print("! forge init: failed -- %s" % ", ".join(failed))
+        print("! forge init: failed -- %s" % ", ".join("%s (exit %d)" % f for f in failed))
     print("put your own skills in %s/skills/<name>/SKILL.md (git ignores them; forge init --track versions them), "
           "then run forge sync --apply" % lib.ROOT)
     print("next: forge add <path>")
-    return 1 if failed or code else 0
+    return 1 if failed else 0
 
 
 def cmd_add(a):
