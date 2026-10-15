@@ -393,6 +393,31 @@ def _well_formed(h):
     return isinstance(h, dict) and isinstance(h.get("command", ""), str)
 
 
+def _strip(hooks, event, groups, ours):
+    """Take out of `groups` (hooks[event]) every well-formed entry whose command `ours` accepts and
+    return how many went. A group that only this emptied goes with them, and so does the event key
+    when that left it with no group: a list that was empty before, an empty group that was already
+    there and a malformed part are not forge's to change, so nothing of them is touched. `hooks` is
+    the caller's copy of doc["hooks"] and the caller iterates over a snapshot of it."""
+    removed, emptied = 0, []
+    for g in groups:
+        hl = _hook_list(g)
+        if hl is None:
+            continue
+        kept = [h for h in hl if not (_well_formed(h) and ours(h.get("command", "")))]
+        if len(kept) == len(hl):
+            continue
+        removed += len(hl) - len(kept)
+        g["hooks"] = kept
+        if not kept:
+            emptied.append(id(g))
+    if emptied:
+        groups[:] = [g for g in groups if id(g) not in emptied]
+    if removed and not groups:
+        del hooks[event]
+    return removed
+
+
 def reconcile(doc, agent):
     """Make doc["hooks"] carry exactly one conforming entry per USER_HOOKS row for `agent`.
 
@@ -422,18 +447,10 @@ def reconcile(doc, agent):
         for event, groups in list(hooks.items()):
             if not isinstance(groups, list):
                 continue
-            removed = 0
-            for g in groups:
-                hl = _hook_list(g)
-                if hl is None:
-                    continue
-                # A malformed entry carries no mark: not ours, so left here (the pass below drops it
-                # from the events we own).
-                kept = [h for h in hl if not (_well_formed(h) and mark in h.get("command", ""))]
-                removed += len(hl) - len(kept)
-                g["hooks"] = kept
+            # A malformed entry carries no mark: not ours, so left here (the pass below drops it
+            # from the events we own).
+            removed = _strip(hooks, event, groups, lambda c, mark=mark: mark in c)
             if removed:
-                groups[:] = [g for g in groups if _hook_list(g) != []]
                 notes.append("warded off %d %s (%s)" % (removed, mark, event))
 
     # Rows that are off (an integration switched off, a user_hooks row with "on": false): the entries
@@ -445,16 +462,8 @@ def reconcile(doc, agent):
         for event, groups in list(hooks.items()):
             if not isinstance(groups, list):
                 continue
-            removed = 0
-            for g in groups:
-                hl = _hook_list(g)
-                if hl is None:
-                    continue
-                kept = [h for h in hl if not (_well_formed(h) and h.get("command") == cmd)]
-                removed += len(hl) - len(kept)
-                g["hooks"] = kept
+            removed = _strip(hooks, event, groups, lambda c, cmd=cmd: c == cmd)
             if removed:
-                groups[:] = [g for g in groups if _hook_list(g) != []]
                 notes.append("dropped %d %s (%s: %s)" % (removed, marker, event, "written per project"
                                                          if cmd in _PER_PROJECT else "off in config/forge.json"))
 
@@ -471,16 +480,8 @@ def reconcile(doc, agent):
         for marker, events in own.items():
             if event in events:
                 continue
-            removed = 0
-            for g in groups:
-                hl = _hook_list(g)
-                if hl is None:
-                    continue
-                kept = [h for h in hl if not (_well_formed(h) and marker in h.get("command", ""))]
-                removed += len(hl) - len(kept)
-                g["hooks"] = kept
+            removed = _strip(hooks, event, groups, lambda c, marker=marker: marker in c)
             if removed:
-                groups[:] = [g for g in groups if _hook_list(g) != []]
                 notes.append("dropped %d %s (%s: no row on this event)" % (removed, marker, event))
 
     for event, cmd, timeout, marker, matcher, targets in USER_HOOKS:
@@ -658,21 +659,8 @@ def drop_codex_entries(doc):
     for event, groups in list(hooks.items()):
         if not isinstance(groups, list):
             continue
-        removed = 0
-        for g in list(groups):
-            hl = _hook_list(g)
-            if hl is None:
-                continue
-            kept = [h for h in hl if not (_well_formed(h) and h.get("command") in ours)]
-            if len(kept) == len(hl):
-                continue
-            removed += len(hl) - len(kept)
-            g["hooks"] = kept
-            if not kept:
-                groups.remove(g)
+        removed = _strip(hooks, event, groups, lambda c: c in ours)
         if removed:
-            if not groups:
-                del hooks[event]
             notes.append("dropped %d forge hook(s) (%s)" % (removed, event))
     return notes
 

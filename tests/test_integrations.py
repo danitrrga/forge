@@ -431,6 +431,75 @@ check("full config: today's rows, in today's order (eight named, session sync, m
       and [g[4] for g in got if g[1] == "coding-agents"] == [("codex",)] * 2,
       "got %r" % (got,))
 
+# 11. An event list that forge's own removal empties goes with its key; one that was empty before, or
+# that holds anything not forge's, stays as it is. Switching an integration off used to leave
+# "Stop": [] and "PostToolUse": [] behind in the user-scope file.
+def empty_keys(doc):
+    return sorted(e for e, g in (doc.get("hooks") or {}).items() if g == [])
+
+
+def read_json_file(p):
+    with open(p, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+ON = {"codex": True, "gsd": True, "jev": False, "hindsight": False, "caveman": False}
+OFF = dict(ON, gsd=False)
+foreign_stop = "node /elsewhere/own-stop.js"
+os.makedirs(os.path.join(HOME, ".claude"), exist_ok=True)
+with open(os.path.join(HOME, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
+    json.dump({"hooks": {"SubagentStop": [], "PreCompact": [{"hooks": []}], "Stop": [group(foreign_stop, 5)]}, "theme": "toy"}, fh)
+h = toy_settings(30, integrations=ON)
+attempt(h.write_user_settings, ctx, False)
+on_doc = read_json_file(h.USER_SETTINGS)
+check("gsd on: its Stop and PostToolUse rows are written beside the foreign Stop entry",
+      any(c.endswith("gsd_output_discipline.py") for c, _, _ in entries(on_doc, "Stop"))
+      and (foreign_stop, None, 5) in entries(on_doc, "Stop") and entries(on_doc, "PostToolUse"),
+      "Stop %r, PostToolUse %r" % (entries(on_doc, "Stop"), entries(on_doc, "PostToolUse")))
+h = toy_settings(31, integrations=OFF)
+line = attempt(h.write_user_settings, ctx, False)
+off_doc = read_json_file(h.USER_SETTINGS)
+check("on, apply, off, apply: no event key left empty by forge",
+      "PostToolUse" not in off_doc["hooks"] and empty_keys(off_doc) == ["SubagentStop"],
+      "empty keys %r, events %r, line %r" % (empty_keys(off_doc), sorted(off_doc["hooks"]), line))
+check("on, apply, off, apply: the user's own empty list and empty group stay, a foreign entry keeps its event",
+      off_doc["hooks"].get("SubagentStop") == [] and off_doc["hooks"].get("PreCompact") == [{"hooks": []}]
+      and entries(off_doc, "Stop") == [(foreign_stop, None, 5)] and off_doc.get("theme") == "toy",
+      "hooks %r" % (off_doc["hooks"],))
+lone = {"hooks": {"Stop": [], "PostToolUse": [{"hooks": []}]}}
+attempt(h.reconcile, lone, h.CLAUDE)
+check("off from the start: a list that was already empty, and an empty group, are not touched",
+      lone["hooks"].get("Stop") == [] and lone["hooks"].get("PostToolUse") == [{"hooks": []}],
+      "hooks %r" % (lone["hooks"],))
+beside = {"hooks": {"Stop": [{"hooks": []}, group("python3 %s/gsd_output_discipline.py" % h.HOOK_DIR, 10)]}}
+attempt(h.reconcile, beside, h.CLAUDE)
+check("an event forge takes an entry out of keeps the user's empty group, and so its key",
+      beside["hooks"].get("Stop") == [{"hooks": []}], "hooks %r" % (beside["hooks"],))
+# the marker passes: a warded entry alone in its event
+warded = {"hooks": {"Odd": [group("node /x/claude-sessionstart-hook.js", 5)], "Elsewhere": []}}
+attempt(h.reconcile, warded, h.CLAUDE)
+check("a warded entry alone in its event: the event goes, an unrelated empty one stays",
+      "Odd" not in warded["hooks"] and warded["hooks"].get("Elsewhere") == [],
+      "hooks %r" % (warded["hooks"],))
+# an entry of the row-less-event pass (a row deleted or moved): the owned event it sits on is the one
+# that is not in the marker's rows
+moved = {"hooks": {"Odd": [group("node %s/caveman_persist_level.js" % h.HOOK_DIR, 5)]}}
+h = toy_settings(32, integrations=dict(ON, caveman=True))
+attempt(h.reconcile, moved, h.CLAUDE)
+check("a row's entry on an event the row no longer lives on: the event goes with it",
+      "Odd" not in moved["hooks"], "hooks %r" % (moved["hooks"],))
+# controls that already held: the codex file's drop and a project's settings.local.json
+cx = {"hooks": {"Stop": [group(next(iter(sorted(h.codex_commands()))), 5)], "Own": []}}
+attempt(h.drop_codex_entries, cx)
+check("codex file: an event emptied by the drop goes, an empty one of the user's stays",
+      "Stop" not in cx["hooks"] and cx["hooks"].get("Own") == [], "hooks %r" % (cx["hooks"],))
+from forge import skills  # noqa: E402
+sl = {"hooks": {"PreToolUse": [group("python3 /x/guard.py", 10)], "Own": []}}
+skills._own_hook(sl, {}, lambda cmd: "guard.py" in (cmd or ""), "PreToolUse", {"type": "command", "command": "python3 /x/guard.py"},
+                 None, False, "label", "short")
+check("project settings.local.json: an event emptied by the removal goes, an empty one of the user's stays",
+      "PreToolUse" not in sl.get("hooks", {}) and sl.get("hooks", {}).get("Own") == [], "file %r" % (sl,))
+
 sandbox.cleanup(bool(failures))
 if failures:
     print("%d of %d checks failed" % (len(failures), n_cases[0]))
