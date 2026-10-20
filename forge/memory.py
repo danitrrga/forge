@@ -7,7 +7,7 @@ checked against what that config asks for (check_hindsight_runtime). A memory mi
 every write for its profile; a runtime that cannot honour the config is an error of the run."""
 import os
 
-from forge import lib, mcp
+from forge import lib, mcp, owned
 
 ROOT = lib.ROOT
 
@@ -138,6 +138,9 @@ def write_hindsight_config(ctx, secrets, errors):
     old = lib.read_json(TARGET)
     shapeless = not isinstance(old, dict)  # rendered whole, so a non-object is simply replaced
     old = _object(old)
+    # The ownership record (forge/owned.py): the file holds `resolved` once this run has written it or found
+    # it so, and `resolved` can hold a secret, so only its hash is kept.
+    claimed = [owned.claim("file", [], resolved, "hindsight")]
     if old == resolved:
         # Mode is part of the contract, not cosmetics: the file and its once-ever .bak may carry
         # a secret in clear (an old .bak held a dead server's bearer). It once checked only the file here, so a 644 .bak beside a
@@ -146,10 +149,12 @@ def write_hindsight_config(ctx, secrets, errors):
         # .bak looked for beside the link, so the one holding the secret was never seen.
         loose = mcp.loose_secrets(TARGET)
         if not loose:
+            owned.record(TARGET, claimed, ctx.apply)
             return "   config -> %s (already current)" % short
         if not ctx.apply:
             return "   would chmod 600 %s (content current)" % ", ".join(lib.short(p) for p in loose)
         lib.write_json(TARGET, resolved, mode=0o600, backup=True)
+        owned.record(TARGET, claimed, True)
         if loose == [TARGET]:
             return "   config -> %s (content current, mode corrected to 600)" % short
         return "   config -> %s (content current, chmod 600 %s)" % (short, ", ".join(os.path.basename(p) for p in loose))
@@ -169,6 +174,7 @@ def write_hindsight_config(ctx, secrets, errors):
     if not ctx.apply:
         return "   would write %s (%s)" % (short, what)
     lib.write_json(TARGET, resolved, mode=0o600, backup=True)
+    owned.record(TARGET, claimed, True)
     return "   config -> %s (%s)" % (short, what)
 
 
