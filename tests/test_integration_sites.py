@@ -397,7 +397,8 @@ code, out = run_script(root, home, RELINK)
 check("control, relink_skills with codex on: both mirrors are linked",
       all(os.path.islink(os.path.join(home, m, "skills", "alpha")) for m in (".claude", ".codex")), "exit %r, %r" % (code, out))
 
-MEMORY = (DOCTOR, os.path.join("forge", "memory.py"), os.path.join("forge", "mcp.py"))
+MEMORY = (DOCTOR, os.path.join("forge", "memory.py"), os.path.join("forge", "mcp.py"),
+          os.path.join("forge", "owned.py"))  # mcp.py imports it
 for label, integrations in (("both off", {}), ("both on", {"codex": True, "hindsight": True})):
     root, home = toy_root("doctor-" + label.replace(" ", "-"), integrations, *MEMORY)
     seed(os.path.join(root, "config", "memory-known-empty.json"), '{"known": {}}')

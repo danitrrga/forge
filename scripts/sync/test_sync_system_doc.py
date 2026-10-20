@@ -68,7 +68,7 @@ def world(case):
     t = sandbox.mkdtemp("sysdoc-test-")
     WORLDS[t] = case
     root, home, projects = (os.path.join(t, d) for d in ("forge", "home", "projects"))
-    sandbox.mini_root(root, SCRIPT)
+    sandbox.mini_root(root, SCRIPT, os.path.join("forge", "mcp.py"), os.path.join("forge", "owned.py"))  # the script claims what it creates
     # The canonical doc is the fixture's, never this checkout's docs/AGENT-SYSTEM.md, which a checkout without
     # docs/ lacks: red before, on a copy_engine copy in a toy HOME (M1), "FileNotFoundError: [Errno 2] No such
     # file or directory: '.../docs/AGENT-SYSTEM.md'" from mini_root's copy. The cases compare copies of it with

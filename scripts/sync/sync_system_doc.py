@@ -19,6 +19,10 @@ WHAT IT DOES (idempotent, dry-run by default)
        (replaced between stable markers -> never touches the rest of the file)
     4. make <project>/AGENTS.md a symlink to CLAUDE.md
 
+  What it creates and could not recognise afterwards is recorded in the ownership record (forge/owned.py,
+  part "system-doc"): the ignore line of step 2 and the link of step 4, each only when this run made it.
+  The copy and the pointer block are recognisable by their content and markers, and need no claim.
+
 USAGE
   python scripts/sync/sync_system_doc.py            # dry-run (prints what would change)
   python scripts/sync/sync_system_doc.py --apply     # write
@@ -31,7 +35,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ROOT_FS = ROOT.replace("\\", "/")  # forward-slash form for doc text
 CANON = os.path.join(ROOT, "docs", "AGENT-SYSTEM.md")
 sys.path.insert(0, ROOT)
-from forge import lib  # noqa: E402
+from forge import lib, mcp, owned  # noqa: E402
 # A SessionStart run writes its own project only; a refused --apply is a dry-run.
 CTX = lib.context(sys.argv[1:])
 
@@ -121,6 +125,7 @@ def ensure_gitignore(proj_dir, changes):
         return True
     gi = os.path.join(proj_dir, ".gitignore")
     ignored, suffix = lib.ensure_ignored(CTX.apply, proj_dir, ".claude/AGENT-SYSTEM.md", False)
+    mcp.claim_ignore_line(CTX.apply, proj_dir, ".claude/AGENT-SYSTEM.md", suffix, False, PART, "core")
     if not ignored:
         changes.append(("SKIP-gitignore(a symlink, which git does not read)", gi))
     elif suffix:
@@ -176,6 +181,21 @@ def ensure_pointer(proj_dir, fname, changes, text):
             lib.write_text(p, new)
 
 
+PART = "system-doc"  # this script's share of the ownership record's claims on a file
+LINK_VALUE = "symlink:CLAUDE.md"
+
+
+def claim_link(p, created):
+    """The ownership record of the AGENTS.md link at `p`, kind `file`, whose value is LINK_VALUE. `created` is
+    True when this run made the link, and it is claimed; None when the right link was already there, which
+    may be the user's own, so it is claimed only if an earlier run claimed it; False when AGENTS.md is
+    something forge leaves alone, and a claim of it goes. Nothing for a dry-run."""
+    if not CTX.apply:
+        return
+    held = created is True or (created is None and owned.previous(p, PART)[0] != [])
+    mcp.record_claims(p, [owned.claim("file", [], LINK_VALUE, "core")] if held else [], True, PART)
+
+
 def ensure_agents_md(proj_dir, changes):
     """AGENTS.md is a SYMLINK to CLAUDE.md, not a copy -- the precedent
     another project already set after living with the alternative:
@@ -212,18 +232,22 @@ def ensure_agents_md(proj_dir, changes):
         return
     if os.path.islink(p):
         if os.readlink(p) == "CLAUDE.md":
+            claim_link(p, None)
             return
         changes.append(("agents-md-relink", p))
         if CTX.apply:
             lib.replace_symlink("CLAUDE.md", p)
+            claim_link(p, True)
         return
     cur = _read(p)
     if cur is not None and not (BEGIN in cur and END in cur):
         changes.append(("SKIP-agents-md(non-forge content)", p))
+        claim_link(p, False)
         return
     changes.append(("agents-md-symlink", p))
     if CTX.apply:
         lib.replace_symlink("CLAUDE.md", p)
+        claim_link(p, True)
 
 
 def main():

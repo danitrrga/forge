@@ -42,7 +42,7 @@ def main():
     portal, app = os.path.join(dev, "Projects", "frozen-app"), os.path.join(dev, "Projects", "app")
     # The doc is the fixture's, not docs/AGENT-SYSTEM.md of this checkout: a copy_engine copy has none. Red there
     # before (M1): "FileNotFoundError" copying .../docs/AGENT-SYSTEM.md from sandbox.mini_root.
-    sandbox.mini_root(root, SCRIPT)
+    sandbox.mini_root(root, SCRIPT, os.path.join("forge", "mcp.py"), os.path.join("forge", "owned.py"))  # the script claims what it creates
     os.makedirs(os.path.join(root, "docs"))
     shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"),
                 os.path.join(root, "docs", "AGENT-SYSTEM.md"))
