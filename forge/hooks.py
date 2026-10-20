@@ -603,6 +603,7 @@ def write_user_settings(ctx):
         if s.get(k) != v:
             notes.append("%s %s -> %s" % (k, s.get(k), v))
             s[k] = v
+    key_claims = [owned.claim("key", [k], v, "core") for k, v in plain]  # what is written below is claimed with it
     warnings = []
     if isinstance(wanted.get("env"), dict) and wanted["env"]:
         env = s.setdefault("env", {})
@@ -613,17 +614,20 @@ def write_user_settings(ctx):
                 if env.get(k) != v:
                     notes.append("env %s=%s" % (k, v))
                     env[k] = v
+                key_claims.append(owned.claim("key", ["env", k], v, "core"))
     hook_notes, hook_warnings, claims = reconcile_owned(s, CLAUDE, USER_SETTINGS)
     notes += hook_notes
     warnings += hook_warnings
     deny_notes, deny_warnings = deny_secret_files(s)
     notes += deny_notes
+    if not deny_warnings:  # a permissions or deny of the wrong shape was left alone: nothing of ours is in it
+        key_claims += [owned.claim("item", ["permissions", "deny", r], r, "core") for r in SECRET_DENY]
     n = sum(1 for row in USER_HOOKS if CLAUDE in row[5])
     current = ["%s=%s" % kv for kv in plain] + [
         "%d hooks" % n,
         "%s warded off" % ", ".join(HOOK_WARDS[CLAUDE]), "%d secret-read deny rules" % len(SECRET_DENY)]
     line = _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), warnings + deny_warnings)
-    owned.record(USER_SETTINGS, claims, ctx.apply)
+    owned.record(USER_SETTINGS, claims + key_claims, ctx.apply)
     return line
 
 
