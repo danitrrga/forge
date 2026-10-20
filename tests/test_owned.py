@@ -214,6 +214,23 @@ check("recording a part beside old part-less claims keeps them",
 put(json.dumps({"version": 1, "claims": {F: [dict(ca, part=3)]}}))
 check("a claim whose part is not a string makes the registry untrusted", owned.load()[0] == {} and owned.load()[1].startswith("  ! "))
 
+# simplify-5 T1: record() of a part whose claims are unchanged writes nothing. A replaced part moves to
+# the end of the file's list, so with two parts in one file the first one re-recorded would reorder
+# (and rewrite) the registry on every run. Seen failing with the guard absent (record as on ebc4601):
+#   FAIL parts: re-recording the first of two parts unchanged leaves the registry's bytes -- bytes changed True, mtime changed True, returned True
+os.remove(REGISTRY)
+owned.record(F, [ca], apply=True, part="skills")
+owned.record(F, [cb], apply=True, part="mcp")
+os.utime(REGISTRY, ns=(10**9, 10**9))
+before, mtime = open(REGISTRY, "rb").read(), os.stat(REGISTRY).st_mtime_ns
+wrote = owned.record(F, [dict(ca)], apply=True, part="skills")
+changed = (open(REGISTRY, "rb").read() != before, os.stat(REGISTRY).st_mtime_ns != mtime)
+check("parts: re-recording the first of two parts unchanged leaves the registry's bytes", changed == (False, False) and wrote is False,
+      "bytes changed %s, mtime changed %s, returned %r" % (changed + (wrote,)))
+owned.record(F, [dict(ca, owner="other")], apply=True, part="skills")
+check("parts: a changed owner is still recorded, and the part moves last",
+      [c["owner"] for c in owned.previous(F)[0]] == ["core", "other"], repr(owned.previous(F)[0]))
+
 # the .bak lib.write_text creates is claimed, as part "bak", once, never with its content
 # Seen failing before the hook: FAIL bak: a new .bak is claimed as kind file at [], owner core -- got [] (no claim)
 os.remove(REGISTRY)

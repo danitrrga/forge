@@ -57,20 +57,6 @@ def migrate_project_keys(cj, relocations):
     return changed
 
 
-def record_claims(file, claims, apply, part=None):
-    """owned.record, but a run that would record what the registry already holds writes nothing. owned.record
-    moves the part it replaces to the end of the file's claims, so with several parts in one file (~/.claude.json
-    holds one per project) each record would leave the registry in another order than the next, and a run that
-    changed nothing would write it twice. Equal means the same (kind, at, sum, owner) in the same order."""
-    if not apply:
-        return False
-    key = lambda c: (c["kind"], c["at"], c["sum"], c["owner"])
-    prev, _ = owned.previous(file, part)
-    if [key(c) for c in prev] == [key(c) for c in claims]:
-        return False
-    return owned.record(file, claims, apply, part)
-
-
 def _ignore_site(ppath, entry, repo_owned):
     """(the file ensure_ignored puts `entry` in, the line it writes there), or None when it cannot be said. A
     project the repo owns gets the repository's info/exclude and the line anchored to the project's
@@ -119,7 +105,7 @@ def claim_ignore_line(apply, ppath, entry, suffix, repo_owned, part, owner):
             out.append(c)
     if added and not seen:
         out.append(owned.claim("item", mine, line, owner))
-    return record_claims(file, out, apply, part)
+    return owned.record(file, out, apply, part)
 
 
 def project_key(path):
@@ -387,7 +373,7 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     if ctx.apply and (changed or loose):
         lib.write_text(path, content, mode=0o600, backup=True)
     if ctx.apply:  # the file holds `content` now, whoever wrote it last: only its hash is kept
-        record_claims(path, [owned.claim("file", [], content, "codex")], True, part="codex")
+        owned.record(path, [owned.claim("file", [], content, "codex")], True, part="codex")
     if ctx.apply and (changed or loose):
         if not changed:
             return msg + " (content current, chmod 600 %s)" % ", ".join(loose)
@@ -614,7 +600,7 @@ def drop_codex_project_mcp(ctx, prof, registry, errors):
         parts.append(".bak left alone, %s" % why)
     if written is not None and ctx.apply:
         lib.write_text(path, written, mode=0o600, backup=False)  # before the .bak goes: a failed write keeps both
-        record_claims(path, [], True, part="codex")  # no longer the text forge wrote
+        owned.record(path, [], True, part="codex")  # no longer the text forge wrote
     if state == "forge":
         removed = "would be removed"
         if ctx.apply:
@@ -810,6 +796,6 @@ class ClaudeJson:
         projects this run wrote, and the keys a relocation moved away (their claims go), are touched; only the
         hash of each definition is kept (it holds secrets)."""
         for fk in self.moved - self.claims.keys():
-            record_claims(self.path, [], ctx.apply, part="mcp:" + fk)
+            owned.record(self.path, [], ctx.apply, part="mcp:" + fk)
         for fk, claims in self.claims.items():
-            record_claims(self.path, claims, ctx.apply, part="mcp:" + fk)
+            owned.record(self.path, claims, ctx.apply, part="mcp:" + fk)

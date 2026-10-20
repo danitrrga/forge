@@ -212,7 +212,7 @@ def claim_link(p, created):
     may be the user's own, so it is claimed only if an earlier run claimed it; False when AGENTS.md is
     something forge leaves alone, and a claim of it goes. Nothing for a dry-run."""
     held = created is True or (created is None and owned.previous(p, PART)[0] != [])
-    mcp.record_claims(p, [owned.claim("file", [], LINK_VALUE, "core")] if held else [], CTX.apply, PART)
+    owned.record(p, [owned.claim("file", [], LINK_VALUE, "core")] if held else [], CTX.apply, PART)
 
 
 def ensure_agents_md(proj_dir, changes):

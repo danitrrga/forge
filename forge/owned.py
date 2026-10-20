@@ -228,11 +228,17 @@ def record(file, claims, apply, part=None):
     no claims drops the file's entry. With a `part`, replace only that part's claims of `file` (each stored
     with its "part" field) and keep the file's other claims; none left drops the entry. Returns whether the registry was written: False for a dry-run
     (`apply` false) or when lib.may_write() refuses. A registry that cannot be read is replaced by one
-    holding only this file's claims. Written through lib.write_json, 0600."""
+    holding only this file's claims. Written through lib.write_json, 0600. A part whose stored claims already
+    equal `claims` (same kind, at, sum and owner, in order) writes nothing: the replaced part moves to the end
+    of the file's list, so a file with several parts (~/.claude.json holds one per project) would otherwise be
+    rewritten on every run."""
     if not apply or not lib.may_write()[0]:
         return False
     registry, _ = load()  # a fresh dict on every call, so it is ours to change
     if part is not None:
+        key = lambda c: (c["kind"], c["at"], c["sum"], c["owner"])
+        if [key(c) for c in registry.get(file, []) if c.get("part") == part] == [key(c) for c in claims]:
+            return False
         claims = [c for c in registry.get(file, []) if c.get("part") != part] + [dict(c, part=part) for c in claims]
     if claims:
         registry[file] = claims
