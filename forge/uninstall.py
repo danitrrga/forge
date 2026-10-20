@@ -138,13 +138,7 @@ class Run:
 
     def text(self, path):
         if path not in self.files:
-            try:
-                with open(path, encoding="utf-8", newline="") as fh:
-                    text = fh.read()
-            except FileNotFoundError:
-                text = None
-            except (OSError, UnicodeDecodeError) as e:
-                raise lib.Unreadable(path, str(e)) from e
+            text = lib.read_text(path)
             self.files[path] = {"kind": "text", "doc": text, "was": text}
         return self.files[path]["doc"]
 
@@ -265,7 +259,7 @@ def _found(run, file, c):
         if file in run.files:  # already deleted by this run
             return False, None
         return owned.current(file, c)
-    if c["kind"] == "item" and c["at"][:1] == ["line"]:
+    if owned.is_line(c):
         text = run.text(file)
         return (False, None) if text is None else owned.current(file, c, text)
     doc = run.json(file)
@@ -277,7 +271,7 @@ def _take_out(run, file, c):
     kind, at = c["kind"], c["at"]
     if kind == "file":
         run.delete(file)
-    elif kind == "item" and at[:1] == ["line"]:
+    elif owned.is_line(c):
         lines = run.text(file).splitlines(keepends=True)
         run.set_text(file, "".join(l for l in lines if l.strip() != at[1]))
     elif kind == "hook":

@@ -201,6 +201,18 @@ def read_json(path, default=None, quiet=False):
         return default if default is not None else {}
 
 
+def read_text(path):
+    """The text of `path`, newlines untranslated; None for a file that is not there; Unreadable for any
+    other failure to read it (not UTF-8, a directory, no permission)."""
+    try:
+        with open(path, encoding="utf-8", newline="") as fh:
+            return fh.read()
+    except FileNotFoundError:
+        return None
+    except (OSError, UnicodeDecodeError) as e:
+        raise Unreadable(path, str(e)) from e
+
+
 def read_owned(path, missing={}):
     """read_json for a file whose other keys belong to someone else (~/.claude.json, settings.json,
     ~/.codex/hooks.json, settings.local.json): missing is a copy of `missing` (callers mutate what

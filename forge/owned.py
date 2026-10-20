@@ -165,6 +165,27 @@ def hook_site(at):
     return (at[1], ANY, at[2]) if at[0] == "hooks" else tuple(at)
 
 
+def is_line(c):
+    """Whether claim `c` is an ignore line: kind item, `at` ["line", <the line>]."""
+    return c["kind"] == "item" and len(c["at"]) == 2 and c["at"][0] == "line"
+
+
+def read_doc(file, c):
+    """The document current() wants for claim `c` of `file`: None for a `file` claim (current reads that one
+    itself) and for a file that is not there, the text for an ignore line, the parsed JSON object otherwise.
+    Raises lib.Unreadable."""
+    if c["kind"] == "file":
+        return None
+    return lib.read_text(file) if is_line(c) else lib.read_owned(file, None)
+
+
+def unchanged(file, c, doc=None):
+    """Whether claim `c` is found in `file` and still exactly what forge wrote (current's value, removable);
+    `doc` as for current."""
+    found, value = current(file, c, doc)
+    return found and removable(c, value)
+
+
 def current(file, c, doc=None):
     """(found, value): what is now at claim `c`'s place in `file`, read the way its writer wrote it, for
     removable() to compare. It never prints, and a value never leaves the caller.
@@ -198,20 +219,12 @@ def current(file, c, doc=None):
             except ValueError:
                 return True, text
         return True, text
-    if kind == "item" and at[:1] == ["line"] and len(at) == 2:
-        if doc is None:
-            try:
-                with open(file, encoding="utf-8") as fh:
-                    doc = fh.read()
-            except FileNotFoundError:
-                return False, None
-            except (OSError, UnicodeDecodeError) as e:
-                raise lib.Unreadable(file, str(e)) from e
-        return any(l.strip() == at[1] for l in doc.splitlines()), at[1]
     if doc is None:
-        doc = lib.read_owned(file, None)
+        doc = read_doc(file, c)
         if doc is None:
             return False, None
+    if is_line(c):
+        return any(l.strip() == at[1] for l in doc.splitlines()), at[1]
     if kind == "hook" and len(at) == 3:
         event, matcher, command = hook_site(at)
         found = hooks_with(doc, event, command, matcher)

@@ -779,18 +779,9 @@ def _loaded(loaded, file, c):
     (current reads that one itself) and for a file that is not there (current says so). Raises lib.Unreadable."""
     if c["kind"] == "file":
         return None
-    kind = "text" if c["kind"] == "item" and c["at"][:1] == ["line"] else "json"
+    kind = "text" if owned.is_line(c) else "json"
     if kind not in loaded:
-        if kind == "json":
-            loaded[kind] = lib.read_owned(file, None)
-        else:
-            try:
-                with open(file, encoding="utf-8") as fh:
-                    loaded[kind] = fh.read()
-            except FileNotFoundError:
-                loaded[kind] = None
-            except (OSError, UnicodeDecodeError) as e:
-                raise lib.Unreadable(file, str(e)) from e
+        loaded[kind] = owned.read_doc(file, c)
     return loaded[kind]
 
 
@@ -815,14 +806,14 @@ def owned_row():
             continue
         loaded = {}  # the file read once for all its claims: its parsed JSON, and its text for the ignore lines
         try:
-            now = [owned.current(file, c, _loaded(loaded, file, c)) for c in items]
+            same = [owned.unchanged(file, c, _loaded(loaded, file, c)) for c in items]
         except lib.Unreadable as e:
             unread.append("%s (%s)" % (lib.short(e.path), e.reason))
             continue
         looked += 1
-        for c, (found, value) in zip(items, now):
+        for c, ok in zip(items, same):
             compared += 1
-            if not (found and owned.removable(c, value)):
+            if not ok:
                 changed.append("%s %s" % (lib.short(file), json.dumps(c["at"], ensure_ascii=False)))
     seen = "%d claim(s) in %d file(s)" % (compared, looked)
     if changed or unread or (absent and not looked):
