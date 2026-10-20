@@ -130,10 +130,9 @@ def record(file, claims, apply):
     holding only this file's claims. Written through lib.write_json, 0600."""
     if not apply or not lib.may_write()[0]:
         return False
-    registry, _ = load()
-    registry = dict(registry)
+    registry, _ = load()  # a fresh dict on every call, so it is ours to change
     if claims:
-        registry[file] = list(claims)
+        registry[file] = claims
     else:
         registry.pop(file, None)
     lib.write_json(path(), {"version": VERSION, "claims": registry}, mode=0o600, newline=True)
