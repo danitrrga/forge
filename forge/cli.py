@@ -13,6 +13,7 @@
   forge session-start    the SessionStart hook: this session's project only, silent unless it wrote
   forge check-public     --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG [PATH...]  each changed path to the history that owns it (forge/publish.py)
+  forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
 Every step is still the script it was (scripts/sync/*.py and the doctors); this is the one place
 that says which runs, in what order, and what "healthy" means.
@@ -1509,6 +1510,12 @@ def _publish():
     return publish
 
 
+def _uninstall():
+    """forge.uninstall, imported only when it runs, like _publish."""
+    from forge import uninstall
+    return uninstall
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="forge", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -1563,5 +1570,11 @@ def main(argv=None):
     i.add_argument("--name", help="the profile's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="let forge write files that are tracked in the project")
     i.set_defaults(fn=cmd_add)
+    u = sub.add_parser("uninstall", help="take out what forge wrote; a dry-run unless --apply")
+    u.add_argument("--apply", action="store_true", help="remove; without it, only show what would go")
+    scope = u.add_mutually_exclusive_group()
+    scope.add_argument("--integration", choices=lib.INTEGRATIONS, help="only this integration's, once it is off in config/forge.json")
+    scope.add_argument("--project", help="only this project's, once its profile is frozen or deleted")
+    u.set_defaults(fn=lambda a: _uninstall().main(a))
     a = p.parse_args(argv)
     return a.fn(a)

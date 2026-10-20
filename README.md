@@ -128,6 +128,7 @@ forge toolchain [--fix]                                     the global npm and p
 forge commit -m MESSAGE [PATH...]                           commit each changed path to the history that owns it
 forge check-public --all                                    personal data in the files the engine publishes
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
+forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)
 ```
 
 Every command takes `--help`. A doctor check with nothing to look at (no skills, an integration that is off,
@@ -147,10 +148,18 @@ ignore goes to the engine history, every other path to your data history when yo
 
 ## Uninstall
 
-forge has no uninstall command. Delete the hook rows it wrote from `~/.claude/settings.json` (their commands
-point into the checkout), the links in `~/.claude/skills` that point into it, the project keys it wrote from
-`~/.claude.json`, each project's `.claude/settings.local.json` and `.codex/`, and then the checkout.
-`forge sync` without `--apply` lists every file it would write.
+`forge uninstall` lists what it would take out; `forge uninstall --apply` takes it out. It removes what forge
+wrote and nothing else: each value its ownership record (`~/.local/state/forge/owned.json`) says forge wrote and
+that is still unchanged, then what is forge's by construction (the skill links into the checkout, a project's
+`.agents/skills` links, the guard hook entries, the copy of `AGENT-SYSTEM.md`, the pointer block in `CLAUDE.md`,
+GSD's defaults while they are forge's copy, `~/.cache/forge`), then forge's SessionStart row and last the record
+itself. A value you edited stays and is named on a `!` line; a setting forge removed falls back to Claude Code's
+default, nothing earlier is restored. Your own hooks, permission rules and `.gitignore` lines stay.
+
+It leaves, and says so: GSD's agents and engine in `~/.claude` (with the command that removes them), any `.bak`
+older than the record, and the checkout, whose deletion command it prints and never runs.
+`--integration N` takes out one integration's share once it is off in `config/forge.json`; `--project N` one
+project's, once its profile is frozen or deleted.
 
 ## Not a fit?
 

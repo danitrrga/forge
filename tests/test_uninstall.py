@@ -1,19 +1,41 @@
 #!/usr/bin/env python3
-"""The doctor's `owned` row over every claim kind, in a world `forge sync --all --apply` built.
+"""`forge uninstall` (forge/uninstall.py) and the doctor's `owned` row over every claim kind.
 
-The world is W/forge (an engine copy plus tests/fixtures/config, one toy skill, one profile `app`), W/home
+Each world is W/forge (an engine copy plus tests/fixtures/config, one toy skill, one profile `app`), W/home
 and W/projects/app (a repository with a .gitignore line and a CLAUDE.md of its own), side by side, the shape
 lib.may_write allows a toy HOME to write. Codex, codex_harness, Hindsight and caveman are on, GSD is off;
-systemctl is a logging stub. After the sync, by hand: a user hook in ~/.claude/settings.json, a user allow rule
-and an edited env in app's settings.local.json. Nothing real is read or written, and no secret exists in it.
+systemctl is a logging stub. `forge sync --all --apply` builds what forge writes, and then, by hand: a user
+hook in ~/.claude/settings.json, a user allow rule and an edited env in app's settings.local.json; the
+.gitignore line `node_modules/` and ~/.claude/settings.json.bak were there before the sync. Nothing real is
+read or written, and no secret exists in the world.
 
-Assertions: PASS over a record holding .gitignore lines, a config.toml, a link and .bak files; WARN naming
-settings.local.json ["env"] (never its value) after the hand edit.
+Assertions:
+  the doctor row: PASS over a record holding .gitignore lines, a config.toml, a link and .bak files; WARN
+  naming settings.local.json ["env"] (never its value) after the hand edit;
+  a dry-run changes no byte (manifest of home and projects, mtimes included) and says how much it looked at;
+  `--integration hindsight` while hindsight is on and `--project app` (a live profile) are refused, exit 1,
+  writing nothing; with hindsight switched off in the toy config/forge.json, `--integration hindsight --apply`
+  takes out hindsight's claims only;
+  `--apply`: every claim of the record is gone but the edited env, which is named on a '  ! ' line; the
+  by-construction items are gone (skill links in both mirrors, the .agents link, the guard entry, the copy of
+  AGENT-SYSTEM.md, the pointer block, ~/.gsd/defaults.json, ~/.cache/forge, the state dir), the claimed
+  ~/.claude.json.bak too; the four hand things stay; the keys of ~/.claude.json forge never claimed are
+  byte-identical; the old .bak is listed and kept; a link into another tree stays; the output names GSD's
+  removal command and the command that deletes the checkout.
+Negative controls, run every time, each in a world of its own:
+  removable() made to ignore the digest (in the world's copy of forge/owned.py): the edited env is deleted,
+  and the env check of the main world would have failed;
+  owned.json removed: the claim part says NOT RUN, NOT ARMED and the by-construction count is above 0;
+  a world where nothing ran: FAIL, looked at zero, exit 1.
 
-Seen failing on 2af06d1 (the row read every claimed file as JSON):
-  "doctor right after the sync: PASS over every claim kind -- WARN could not read: .../projects/app/.gitignore
-  (.../projects/app/.gitignore unreadable (Expecting value: line 1 column 1 (char 0)))", and the hand-edit
-  check with the same WARN, which named no ["env"]."""
+Seen failing on 2af06d1 (this file as it is), 28 of 44 checks: "doctor right after the sync: PASS over every
+claim kind -- WARN could not read: .../projects/app/.gitignore (.../projects/app/.gitignore unreadable
+(Expecting value: line 1 column 1 (char 0)))" (the row read every claimed file as JSON), and every uninstall
+call: "exit 2: forge: error: argument cmd: invalid choice: 'uninstall' (choose from 'sync', 'doctor', ...)".
+Mutations of forge/uninstall.py, each put back from a copy, and the checks that went red: commit() writing in a
+dry-run (2: "dry-run: not a byte changed", "the refusals wrote nothing"); every link in ~/.claude/skills taken
+for forge's (2: "a skill link into another tree stays", and the empty world's FAIL, which then found one);
+an edited claim removed like an intact one (3: the env checks)."""
 import json
 import os
 import re
@@ -200,6 +222,122 @@ level, detail = w.doctor_row()
 check("doctor after a hand edit of a claimed key: WARN naming the file and [\"env\"] -- %s %s" % (level, detail),
       level == "WARN" and "settings.local.json" in detail and '["env"]' in detail, detail)
 check("the WARN names no value", '"9"' not in detail and "TOY" not in detail, detail)
+
+# A dry-run writes nothing at all.
+before = w.manifest()
+code, out = w.forge("uninstall")
+check("dry-run: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 4)), code == 0, out)
+diff = sorted(k for k in set(before) | set(w.manifest()) if before.get(k) != w.manifest().get(k))
+check("dry-run: not a byte changed -- %s" % diff[:8], not diff)
+seen = looked(out)
+check("dry-run: says how many claims and by-construction items it looked at -- %r" % (seen,),
+      seen is not None and seen[0] > 0 and seen[1] > 0, out)
+
+# Refusals.
+code, out = w.forge("uninstall", "--integration", "hindsight", "--apply")
+check("--integration hindsight while on: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
+      code == 1 and "! hindsight is on in config/forge.json: set it false first" in out, out)
+code, out = w.forge("uninstall", "--project", "app", "--apply")
+check("--project of a live profile: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)), code == 1 and "!" in out, out)
+diff = sorted(k for k in set(before) | set(w.manifest()) if before.get(k) != w.manifest().get(k))
+check("the refusals wrote nothing -- %s" % diff[:8], not diff)
+
+# --integration hindsight once it is off: hindsight's claims only.
+reg = load(w.registry)["claims"]
+mine = {f: [c for c in cs if c["owner"] == "hindsight"] for f, cs in reg.items()}
+mine = {f: cs for f, cs in mine.items() if cs}
+rest = {f: [c for c in cs if c["owner"] != "hindsight" and c.get("part") != "bak"] for f, cs in reg.items()}
+w.set_integration("hindsight", False)
+code, out = w.forge("uninstall", "--integration", "hindsight", "--apply")
+check("--integration hindsight, off: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 4)), code == 0, out)
+check("control: hindsight has claims in three files at least -- %s" % sorted(mine), len(mine) >= 3)
+check("--integration hindsight: every hindsight claim is gone -- %s" % claims_left(w, mine)[:6], not claims_left(w, mine))
+left = claims_left(w, rest)
+check("--integration hindsight: every other claim stays -- %d of %d"
+      % (len(left), sum(len(v) for v in rest.values())), len(left) == sum(len(v) for v in rest.values()), left)
+check("--integration hindsight: its claims leave the record, the others stay",
+      not any(c["owner"] == "hindsight" for cs in load(w.registry)["claims"].values() for c in cs)
+      and any(c["owner"] == "caveman" for cs in load(w.registry)["claims"].values() for c in cs))
+w.set_integration("hindsight", True)
+
+# The whole uninstall.
+reg = load(w.registry)["claims"]
+cj_before = load(w.cj)
+check("control: the SessionStart row and the claimed ~/.claude.json.bak are there",
+      any("bin/forge session-start" in c for c in commands(load(w.settings))) and os.path.exists(w.cj + ".bak"))
+code, out = w.forge("uninstall", "--apply")
+check("apply: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 6)), code == 0, out)
+left = claims_left(w, reg)
+check("apply: every claim is gone but the edited env -- %s" % left, left == [("W/projects/app/.claude/settings.local.json", '["env"]')], out)
+check("apply: the edited env is named on a '  ! ' line", any(l.startswith("  ! ") and "settings.local.json" in l and '["env"]' in l
+                                                           for l in out.splitlines()), out)
+sl = load(w.slp) if os.path.exists(w.slp) else {}
+check("apply: the edited env stays as the user left it -- %r" % sl.get("env"), sl.get("env") == {"TOY": "9"})
+check("apply: the user's allow rule stays, forge's goes -- %r" % sl.get("permissions"),
+      sl.get("permissions") == {"allow": [USER_RULE]})
+check("apply: the guard entry and the Hindsight rows are out of settings.local.json -- %r" % sl.get("hooks"), "hooks" not in sl)
+s = load(w.settings)
+check("apply: the user's hook stays, every forge row goes, the SessionStart row too -- %r" % commands(s), commands(s) == [USER_HOOK])
+check("apply: settings.json keeps its own keys, forge's go -- %r" % sorted(s), sorted(s) == ["hooks", "theme"])
+check("apply: ~/.codex/hooks.json, left {}, is deleted", not os.path.exists(w.codex_hooks))
+check("apply: the old settings.json.bak stays", read(w.settings + ".bak") == "{}")
+check("apply: the old .bak is listed with its path", "~/.claude/settings.json.bak" in out, out)
+check("apply: the claimed ~/.claude.json.bak is deleted", not os.path.exists(w.cj + ".bak"))
+cj = load(w.cj)
+check("apply: ~/.claude.json keys forge never claimed are byte-identical",
+      json.dumps(cj.get("numStartups")) == json.dumps(cj_before.get("numStartups"))
+      and json.dumps(cj["projects"].get("/srv/toy/elsewhere")) == json.dumps(cj_before["projects"]["/srv/toy/elsewhere"])
+      and sorted(cj) == sorted(cj_before), cj)
+check("apply: the .gitignore keeps the line that predates forge, alone", read(os.path.join(w.app, ".gitignore")) == "node_modules/\n",
+      read(os.path.join(w.app, ".gitignore")))
+check("apply: CLAUDE.md is what it was before the pointer", read(os.path.join(w.app, "CLAUDE.md")) == "# app\n",
+      read(os.path.join(w.app, "CLAUDE.md")))
+gone = {"~/.claude/skills/toy-common": os.path.join(w.home, ".claude", "skills", "toy-common"),
+        "~/.codex/skills/toy-common": os.path.join(w.home, ".codex", "skills", "toy-common"),
+        "app/.agents/skills/x": os.path.join(w.app, ".agents", "skills", "x"),
+        "app/AGENTS.md": os.path.join(w.app, "AGENTS.md"),
+        "app/.claude/AGENT-SYSTEM.md": os.path.join(w.app, ".claude", "AGENT-SYSTEM.md"),
+        "app/.codex/config.toml": os.path.join(w.app, ".codex", "config.toml"),
+        "~/.hindsight/coding-agent.json": os.path.join(w.home, ".hindsight", "coding-agent.json"),
+        "~/.gsd/defaults.json": os.path.join(w.home, ".gsd", "defaults.json"),
+        "~/.cache/forge": os.path.join(w.home, ".cache", "forge"),
+        "~/.local/state/forge": os.path.join(w.home, ".local", "state", "forge")}
+check("apply: every by-construction item is gone -- left %s" % [k for k, p in gone.items() if os.path.lexists(p)],
+      not any(os.path.lexists(p) for p in gone.values()))
+check("apply: a skill link into another tree stays", os.path.islink(os.path.join(w.home, ".claude", "skills", FOREIGN)))
+check("apply: the target of forge's skill links stays", os.path.isfile(os.path.join(w.root, "skills", "toy-common", "SKILL.md")))
+check("apply: the output names GSD's removal command", "get-shit-done-cc" in out and "--uninstall" in out, out)
+check("apply: the output ends with the command that deletes the checkout, never run",
+      "rm -rf %s" % w.root in out.strip().splitlines()[-1] and os.path.isdir(w.root), sandbox.tail(out, 2))
+
+# ---------------------------------------------------------------- negative controls
+# removable() ignoring the digest: the edited env goes, which the main world's check catches.
+m = World("mutant")
+m.hand_edits()
+src = os.path.join(m.root, "forge", "owned.py")
+text = read(src)
+anchor = '    return digest(current_value) == c["sum"]\n'
+check("control: the removable() anchor occurs once", text.count(anchor) == 1)
+write(src, text.replace(anchor, "    return True\n"))
+code, out = m.forge("uninstall", "--apply")
+sl = load(m.slp) if os.path.exists(m.slp) else {}
+check("control: removable() ignoring the digest deletes the edited env (red for the main world) -- env %r" % sl.get("env"),
+      "env" not in sl, out)
+
+# No record: the claim part is NOT RUN, NOT ARMED, the by-construction part still runs and counts.
+n = World("norecord")
+os.remove(n.registry)
+code, out = n.forge("uninstall")
+seen = looked(out)
+check("no record: the claim part says NOT RUN, NOT ARMED -- %s" % sandbox.tail(out, 4), "NOT RUN, NOT ARMED" in out, out)
+check("no record: the by-construction count is above 0, exit 0 -- exit %d, %r" % (code, seen),
+      code == 0 and seen is not None and seen[1] > 0, out)
+
+# Nothing ran: looked at zero is a FAIL.
+e = World("empty", sync=False)
+code, out = e.forge("uninstall")
+check("an empty world: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
+      code == 1 and "FAIL" in out and "looked at zero" in out, out)
 
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
 sandbox.cleanup(bool(failures))
