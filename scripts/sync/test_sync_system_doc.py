@@ -55,6 +55,11 @@ from sandbox import tail  # noqa: E402
 
 SCRIPT = os.path.join("scripts", "sync", "sync_system_doc.py")
 DOC = os.path.join(".claude", "AGENT-SYSTEM.md")
+BEGIN = re.search(r'^BEGIN = "(.*)"$', open(os.path.join(sandbox.FORGE, SCRIPT), encoding="utf-8").read(), re.M).group(1)
+NOTE = "IMPORTANT USER NOTE: never commit the staging database.\n"
+# CLAUDE.md files whose BEGIN marker is not forge's block: quoted in prose, or an orphan on a line of its own.
+STRAY = {"stray-prose": "# app\n\nforge puts its block between %s markers.\n\n" % BEGIN + NOTE,
+         "stray-orphan": "# app\n\n%s\n\n" % BEGIN + NOTE}
 BAD = {"broken.claude.json": "{broken", "null.claude.json": "null", "list.claude.json": "[1]"}
 
 
@@ -97,6 +102,8 @@ def world(case):
     elif case == "claude-hardlink":
         write(os.path.join(projects, "toy", "AGENTS.md"), "# my rules\n")
         os.link(os.path.join(projects, "toy", "AGENTS.md"), os.path.join(projects, "toy", "CLAUDE.md"))
+    elif case in STRAY:
+        write(os.path.join(projects, "toy", "CLAUDE.md"), STRAY[case])
     elif case == "refused":
         write(os.path.join(t, "other", "bin", "forge"), "")
         sandbox.installed_settings(home, os.path.join(t, "other"))
@@ -264,10 +271,36 @@ def main():
     if rc or not any(l.startswith("  ~ toy ") for l in out.splitlines()) or " other " in out:
         failures.append("profile whose project field is not its file name: exit %d: %s" % (rc, tail(out, 25)))
 
+    # A CLAUDE.md with a BEGIN that opens no block (quoted in prose, or an orphan) keeps every byte of the
+    # user's text through two syncs, and is named on a '  ! ' line: ensure_pointer replaced from the first BEGIN
+    # to the first END, so the second sync took the user's note with it. Red on 34c191b: see the commit body.
+    # The control: one complete pair around the user's text is still replaced in place, the text outside kept.
+    for case in sorted(STRAY):
+        t = world(case)
+        toy = os.path.join(projects(t), "toy", "CLAUDE.md")
+        _, dry = run(t)
+        run(t, "--apply")
+        rc, out = run(t, "--apply")
+        got = text(toy)
+        named = [l for l in out.splitlines() if l.startswith("  !") and "CLAUDE.md" in l]
+        dry_says = any(l.startswith("  !") and "CLAUDE.md" in l for l in dry.splitlines())
+        if got != STRAY[case] or not named or not rc or not dry_says:
+            failures.append("%s: file unchanged after 2 --apply %s, '  ! ' line naming CLAUDE.md %s, exit %d, "
+                            "dry-run says it %s, got %r" % (case, got == STRAY[case], bool(named), rc, dry_says, got))
+    t = world("plain")
+    toy = os.path.join(projects(t), "toy", "CLAUDE.md")
+    run(t, "--apply")
+    block = text(toy)
+    write(toy, "# mine\n\n" + block.replace("Shared agent-config system", "Old title") + "\n" + NOTE)
+    rc, out = run(t, "--apply")
+    got = text(toy)
+    if rc or got != "# mine\n\n" + block + "\n" + NOTE:
+        failures.append("one complete pair is replaced in place, the text around it kept: exit %d, got %r" % (rc, got))
+
     failures += RULE
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 11 cases" % len(failures))
+    print("%d failure(s) over 14 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 

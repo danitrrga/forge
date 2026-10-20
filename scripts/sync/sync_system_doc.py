@@ -154,9 +154,32 @@ def claude_md_refused(proj_dir):
     return None
 
 
+class MarkerError(ValueError):
+    """CLAUDE.md holds a BEGIN or END marker that is not one complete ordered pair."""
+
+
+def marker_error(text):
+    """Why the markers in `text` are not forge's one complete pair, or None when they are (or there are none).
+    The block is replaced from the first BEGIN to the first END, so a BEGIN quoted in prose or left orphaned
+    started the replacement and the user's text up to the END went with it (found in an attack round: the
+    second sync took a note away). The same rule ds_readiness applies to its stanza: a file whose markers are
+    not one complete pair is refused and named, never guessed at."""
+    nb, ne = text.count(BEGIN), text.count(END)
+    if nb != ne:
+        return "%d BEGIN and %d END marker(s), not one complete pair" % (nb, ne)
+    if nb > 1:
+        return "%d BEGIN...END pairs, forge writes one" % nb
+    if nb and text.index(END) < text.index(BEGIN):
+        return "the END marker comes before its BEGIN"
+    return None
+
+
 def ensure_pointer(proj_dir, fname, changes, text):
     p = os.path.join(proj_dir, fname)
     cur = _read(p)
+    why = marker_error(cur) if cur is not None else None
+    if why:
+        raise MarkerError("%s: %s" % (fname, why))
     if cur is None:
         # create a minimal file that is just the pointer
         changes.append(("create", p))
@@ -299,6 +322,10 @@ def main():
                 else:
                     ensure_pointer(proj_dir, "CLAUDE.md", changes, pointer(proj_dir, profs))
                     ensure_agents_md(proj_dir, changes)
+        except MarkerError as e:
+            print("  ! %-20s %s -- left as it is, fix the markers by hand" % (tag, e))
+            failed = True
+            continue
         except Exception as e:
             # Adversarial testing: none of these four had a try/except, so a
             # permission error, a mid-write race, or any other exception on ONE project
