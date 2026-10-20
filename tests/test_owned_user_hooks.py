@@ -26,7 +26,8 @@ Negative controls on the finished code, each mutation put back from a copy of th
 removal not asking owned.removable (6: an edited entry is taken out); the stale loop off (12); the record
 written in a dry-run (2); the owner always core (2); the group matcher ignored in the removal (2: the claimed
 entry's twin under another matcher goes); the doctor never comparing (1); never SKIPping (1); not FAILing on an
-unreadable record (1)."""
+unreadable record (1); every claimed file gone not a WARN (1); the false branch of write_codex_hooks keeping
+the claims (2: a taken-out entry is then called a hand edit by the doctor)."""
 import importlib
 import json
 import os
@@ -74,7 +75,7 @@ KEEP_CMD = KEEP["command"].replace("<ROOT>", lib.ROOT)
 _n = [0]
 
 
-def world(harness=True):
+def world(harness=True, keep=False):
     """A toy forge.json (caveman on so a code row has an integration owner, codex on, two config rows),
     hooks reloaded over it (its rows are computed at import), and none of the files a run leaves."""
     _n[0] += 1
@@ -86,7 +87,7 @@ def world(harness=True):
     lib.settings.cache_clear()
     importlib.reload(hooks)
     hooks.USER_SETTINGS, hooks.CODEX_HOOKS = SETTINGS, CODEX
-    for p in (SETTINGS, SETTINGS + ".bak", CODEX, CODEX + ".bak", REGISTRY):
+    for p in () if keep else (SETTINGS, SETTINGS + ".bak", CODEX, CODEX + ".bak", REGISTRY):
         if os.path.exists(p):
             os.remove(p)
     return hooks
@@ -259,10 +260,22 @@ for which, path in (("claude", SETTINGS), ("codex", CODEX)):
           "could not read" in line and "!" in line and GONE_CMD in cmds(path), line)
     check("%s: and the apply replaced it with one that reads" % tag, registry(path) is not None, line)
 
-# 8. the Codex file with codex_harness off: nothing claimed, no record, forge's own commands still taken out.
+# 8. the Codex file with codex_harness off: no record is made, and one that exists for the file is emptied
+# with the entries (else the doctor would call every taken-out entry a hand edit).
 h = world(harness=False)
 run(h, "codex")
 check("codex_harness false: no record is written: registry exists %s" % os.path.exists(REGISTRY), not os.path.exists(REGISTRY))
+h = world(harness=True)
+run(h, "codex")
+run(h, "claude")
+check("control: codex_harness true claims the Codex file", bool(registry(CODEX)), registry(CODEX))
+h = world(harness=False, keep=True)
+line = run(h, "codex")
+check("true -> false: the entries are out", KEEP_CMD not in cmds(CODEX), line)
+check("true -> false: the Codex claims go with them: %r" % (registry(CODEX),), not registry(CODEX), line)
+check("true -> false: the Claude file's claims stay", bool(registry(SETTINGS)), registry(SETTINGS))
+r = doctor()
+check("true -> false: the doctor does not call the taken-out entries a hand edit -- %r" % (r,), r.level == "PASS", r)
 
 # 9. HOOK_WARDS keeps working beside the record: a warded entry is dropped with no claim behind it.
 h = world()
@@ -297,16 +310,25 @@ check("doctor after an apply that replaced the record: PASS again -- %r" % (r,),
 check("doctor is a row of CHECKS, with the fix that rewrites the record",
       any(name == "owned" and cmd is cli.owned_row and "forge sync --apply" in fix for name, cmd, fix in cli.CHECKS), "")
 
-# 11. a claimed file that is gone or does not parse is said, and counted as not looked at.
+# 11. a claimed file that is gone or does not parse is said. Both files are claimed here; one gone is a PASS that
+# says so (a missing file is not a hand edit), every one gone is a WARN (nothing was compared), one that does not
+# parse is a WARN naming it.
+h = world()
+run(h)
+run(h, "codex")
 os.remove(SETTINGS)
 r = doctor()
-check("doctor: a claimed file that is not there is not a PASS over it -- %r" % (r,),
-      r.level in ("WARN", "PASS") and "not there" in r.detail, r)
+check("doctor: one claimed file gone, the other compared: PASS that says it is not there -- %r" % (r,),
+      r.level == "PASS" and "not there" in r.detail and "settings.json" in r.detail and "in 1 file(s)" in r.detail, r)
+os.remove(CODEX)
+r = doctor()
+check("doctor: every claimed file gone: WARN, nothing was looked at -- %r" % (r,),
+      r.level == "WARN" and "not there" in r.detail and "0 claim(s) in 0 file(s)" in r.detail, r)
 with open(SETTINGS, "w", encoding="utf-8") as fh:
     fh.write("{not json")
 r = doctor()
 check("doctor: a claimed file that does not parse is a WARN naming it -- %r" % (r,),
-      r.level == "WARN" and "settings.json" in r.detail, r)
+      r.level == "WARN" and "settings.json" in r.detail and "could not read" in r.detail, r)
 
 sandbox.cleanup(bool(failures))
 for f in failures:

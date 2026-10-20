@@ -670,4 +670,7 @@ def write_codex_hooks(ctx):
         line = _commit(ctx, CODEX_HOOKS, s, notes, "%d hooks, %s warded off" % (n, ", ".join(HOOK_WARDS[CODEX])), warnings)
         owned.record(CODEX_HOOKS, claims, ctx.apply)
         return line
-    return _commit(ctx, CODEX_HOOKS, s, drop_codex_entries(s), "no hook of forge's")
+    line = _commit(ctx, CODEX_HOOKS, s, drop_codex_entries(s), "no hook of forge's")
+    if owned.previous(CODEX_HOOKS)[0]:  # the entries those claims name are out: an empty record, never a first one
+        owned.record(CODEX_HOOKS, [], ctx.apply)
+    return line
