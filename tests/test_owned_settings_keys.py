@@ -197,7 +197,32 @@ d = doc(p)
 check("keys no longer declared: written by declaration, skillOverrides/enabledPlugins/env are gone",
       not any(k in d for k in ("skillOverrides", "enabledPlugins", "env")), d)
 check("keys no longer declared: the line prunes nothing", ", pruned" not in line, line)
-check("keys no longer declared: no key claim is left", not any(k[0] == "key" for k in claimed(slp(p))), sorted(claimed(slp(p))))
+check("keys no longer declared: the claims of the keys that went are gone",
+      not any(k[0] == "key" and k[1] in (("skillOverrides",), ("enabledPlugins",), ("env",)) for k in claimed(slp(p))), sorted(claimed(slp(p))))
+check("keys no longer declared: the keys that stay in the file keep theirs (defaultMode, the mcpjson keys)",
+      {("key", ("permissions", "defaultMode")), ("key", ("enabledMcpjsonServers",))} <= set(claimed(slp(p))) and "defaultMode" in doc(p)["permissions"],
+      (sorted(claimed(slp(p))), doc(p)))
+
+# 5b. The three .mcp.json keys (and permissions.<k>) are written only while declared and never taken out (a
+# value approved in a session may sit there), so a key forge wrote stays in the file after the profile stops declaring it, and its
+# claim must stay with it while it is still what forge wrote (a Codex review: "the claim disappears"); one
+# edited by hand since is the user's and loses the claim.
+drop_registry()
+p = project()
+run(p, rows=(), mcpjson_approved=["srv"], mcpjson_disabled=["old"], enableAllProjectMcpServers=False)
+d = doc(p)
+d["disabledMcpjsonServers"] = ["old", "by-hand"]
+lib.write_json(slp(p), d)
+run(p, rows=(), permissions={"allow": ["Bash(a:*)"]})
+got = claimed(slp(p))
+check("mcp keys no longer declared: still in the file", doc(p)["enabledMcpjsonServers"] == ["srv"]
+      and doc(p)["enableAllProjectMcpServers"] is False, doc(p))
+check("mcp keys no longer declared: the untouched ones keep their claim",
+      ("key", ("enabledMcpjsonServers",)) in got
+      and ("key", ("enableAllProjectMcpServers",)) in got, sorted(got))
+check("mcp keys no longer declared: the one edited by hand loses it", ("key", ("disabledMcpjsonServers",)) not in got, sorted(got))
+run(p, rows=(), permissions={"allow": ["Bash(a:*)"]})
+check("a second run keeps the carried claims", claimed(slp(p)).keys() == got.keys(), sorted(set(got) ^ set(claimed(slp(p)))))
 
 # 6. The Hindsight row: claimed while wanted; when the row goes off, _own_hook takes it out and the prune loop
 # finds nothing more to do (they do not fight): one entry removed, no ', pruned', the claim gone. A row of

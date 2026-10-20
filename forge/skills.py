@@ -219,6 +219,17 @@ def _claims(prof, written=()):
     return list(now.values())
 
 
+def _holds_key(sl, c):
+    """Whether the file still holds, at the key claim `c`'s path (["key"] or ["permissions", "key"]), exactly
+    the value forge wrote."""
+    node = sl
+    for k in c["at"]:
+        if not isinstance(node, dict) or k not in node:
+            return False
+        node = node[k]
+    return owned.removable(c, node)
+
+
 def _prune_item(sl, c):
     """Take the element claim `c` names out of its list, when it is still exactly what forge wrote.
     Returns 1 for an element removed, else 0. A list or object this run empties goes with it."""
@@ -503,6 +514,10 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         mcp_summary += ", .mcp.json disabled %d" % len(disabled)
 
     now = _claims(prof, written)  # again, now that the .mcp.json keys are written too
+    # A key forge wrote and the profile stopped declaring may stay in the file (the .mcp.json keys and the
+    # permissions keys are never taken out), so its claim is carried forward while the file still holds exactly
+    # what forge wrote; an edited or removed one is the user's and drops out.
+    now += [c for c in owned.stale(prev, now) if c["kind"] == "key" and _holds_key(sl, c)]
     skill_summary = ("%s, skills off %d, kept-global %s"
                      % (pl_summary, len(overrides), "ALL (*)" if all_skills else len(skills_keep))
                      if trim else "untrimmed (pass-through only)")
