@@ -38,6 +38,8 @@ sys.path.insert(0, ROOT)
 from forge import lib, mcp, owned  # noqa: E402
 # A SessionStart run writes its own project only; a refused --apply is a dry-run.
 CTX = lib.context(sys.argv[1:])
+PART = "system-doc"  # this script's share of the ownership record's claims on a file
+LINK_VALUE = "symlink:CLAUDE.md"
 
 GEN_BANNER = (
     "<!-- GENERATED — DO NOT EDIT. Synced from "
@@ -181,19 +183,13 @@ def ensure_pointer(proj_dir, fname, changes, text):
             lib.write_text(p, new)
 
 
-PART = "system-doc"  # this script's share of the ownership record's claims on a file
-LINK_VALUE = "symlink:CLAUDE.md"
-
-
 def claim_link(p, created):
     """The ownership record of the AGENTS.md link at `p`, kind `file`, whose value is LINK_VALUE. `created` is
     True when this run made the link, and it is claimed; None when the right link was already there, which
     may be the user's own, so it is claimed only if an earlier run claimed it; False when AGENTS.md is
     something forge leaves alone, and a claim of it goes. Nothing for a dry-run."""
-    if not CTX.apply:
-        return
     held = created is True or (created is None and owned.previous(p, PART)[0] != [])
-    mcp.record_claims(p, [owned.claim("file", [], LINK_VALUE, "core")] if held else [], True, PART)
+    mcp.record_claims(p, [owned.claim("file", [], LINK_VALUE, "core")] if held else [], CTX.apply, PART)
 
 
 def ensure_agents_md(proj_dir, changes):
