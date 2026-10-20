@@ -773,6 +773,27 @@ def codex_hooks_row():
     return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
 
 
+def _loaded(loaded, file, c):
+    """The document owned.current wants for claim `c` of `file`, read into `loaded` the first time and reused:
+    the parsed JSON for a key, item or hook claim, the text for an ignore line, None for a whole-file claim
+    (current reads that one itself) and for a file that is not there (current says so). Raises lib.Unreadable."""
+    if c["kind"] == "file":
+        return None
+    kind = "text" if c["kind"] == "item" and c["at"][:1] == ["line"] else "json"
+    if kind not in loaded:
+        if kind == "json":
+            loaded[kind] = lib.read_owned(file, None)
+        else:
+            try:
+                with open(file, encoding="utf-8") as fh:
+                    loaded[kind] = fh.read()
+            except FileNotFoundError:
+                loaded[kind] = None
+            except (OSError, UnicodeDecodeError) as e:
+                raise lib.Unreadable(file, str(e)) from e
+    return loaded[kind]
+
+
 def owned_row():
     """The ownership record (forge/owned.py): what each writer last put into the files it writes or merges
     into. SKIP while no record exists (nothing has recorded yet), FAIL when it cannot be read or used.
@@ -792,10 +813,11 @@ def owned_row():
         if not os.path.lexists(file):
             absent.append(lib.short(file))
             continue
+        loaded = {}  # the file read once for all its claims: its parsed JSON, and its text for the ignore lines
         try:
-            now = [owned.current(file, c) for c in items]
+            now = [owned.current(file, c, _loaded(loaded, file, c)) for c in items]
         except lib.Unreadable as e:
-            unread.append("%s (%s)" % (lib.short(file), e))
+            unread.append("%s (%s)" % (lib.short(e.path), e.reason))
             continue
         looked += 1
         for c, (found, value) in zip(items, now):

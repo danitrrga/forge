@@ -97,6 +97,52 @@ lib.write_json(slp, {"hooks": {}})
 r, level, detail = row()
 check("a hook gone from the file: WARN -- %r" % (r,), level == "WARN" and at in detail, r)
 
+# 5. A claimed file is read and parsed once, whatever its number of claims. Red on 34c191b: the row called
+# owned.current without the loaded document, so every claim re-read the file: "FAIL a file with 40 claims is read
+# once -- 40 read(s)" (one per rule). Controls: the verdict is the same as before (PASS, the
+# claims counted), and an edited rule is still named.
+os.remove(owned.path())
+p = os.path.join(TOY, "proj3")
+os.makedirs(os.path.join(p, ".claude"))
+slp = os.path.join(p, ".claude", "settings.local.json")
+rules = ["Bash(r%d)" % i for i in range(40)]
+with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+    skills.write_settings_local(lib.Ctx(True, None, False), {"project": "toy", "project_path": p,
+                                                              "permissions": {"allow": rules}}, {}, [])
+reads, real_read = [], lib.read_owned
+
+
+def counting_read(path, *rest):
+    reads.append(path)
+    return real_read(path, *rest)
+
+
+lib.read_owned = counting_read
+try:
+    r, level, detail = row()
+finally:
+    lib.read_owned = real_read
+n = reads.count(slp)
+check("a file with 40 claims is read once -- %d read(s)" % n, n == 1, n)
+check("and the row still passes over every claim -- %r" % (r,), level == "PASS" and "40 claim(s) in 1 file(s)" in detail, r)
+with open(slp, encoding="utf-8") as fh:
+    d = json.load(fh)
+d["permissions"]["allow"].remove("Bash(r7)")
+lib.write_json(slp, d)
+r, level, detail = row()
+check("an edited rule is still named -- %r" % (r,), level == "WARN" and "Bash(r7)" in detail and "Bash(r8)" not in detail, r)
+
+# 6. A claimed file that cannot be read is named once: the short path and the reason, not the path twice. Red on
+# 34c191b: "FAIL ... named once -- 2 occurrence(s) in: could not read: ~/.../settings.local.json (<full path>
+# unreadable (Expecting value: line 1 column 1 (char 0)))". Control: the reason is still there.
+with open(slp, "w", encoding="utf-8") as fh:
+    fh.write("{not json")
+r, level, detail = row()
+short = lib.short(slp)
+check("an unreadable claimed file is named once -- %d occurrence(s) in: %s" % (detail.count(os.path.basename(os.path.dirname(os.path.dirname(slp)))), detail),
+      level == "WARN" and detail.count(os.path.basename(os.path.dirname(os.path.dirname(slp)))) == 1, r)
+check("and the reason is there", "Expecting" in detail and "could not read: %s (" % short in detail, r)
+
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
 sandbox.cleanup(bool(failures))
 sys.exit(1 if failures else 0)
