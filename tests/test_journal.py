@@ -147,6 +147,31 @@ check("(c) forge log of an unknown project exits 1 and says so", code == 1 and "
 code, out = forge("log", "--since", "yesterday")
 check("(c) forge log --since a non-date exits nonzero and says so", code != 0 and "--since" in out, "exit %d: %s" % (code, tail(out)))
 
+# (c, again) --since is strictly YYYY-MM-DD, an empty one included, and an unreadable profile is not "unknown".
+# Red on 34c191b: "(c) --since 1999-3-1 is refused, not a silent empty answer -- exit 0: " (strptime accepted the
+# unpadded date and the filter compared raw text, so 1999-03-10 sorted before it), "(c) --since '' is refused --
+# exit 0: <every line>" (an empty string is falsy, so neither the check nor the filter ran) and "(c) forge log of a
+# profile that cannot be read says so -- exit 1: ! forge log: unknown project: broken (known: toy-a, toy-b)".
+# Controls: the padded date still filters, the unknown project is still unknown.
+with open(JOURNAL, "w", encoding="utf-8") as fh:
+    fh.write("\n".join("1999-%s %s sync agent-config wrote /some/path" % (d, "T") for d in ("01-06", "03-10", "10-20")) + "\n")
+for bad in ("1999-3-1", "1999-1-5", "", "1999-03-1", "99-03-01", "1999-13-01"):
+    code, out = forge("log", "--since", bad)
+    check("(c) --since %r is refused, not a silent answer" % bad, code == 2 and "--since wants YYYY-MM-DD" in out,
+          "exit %d: %s" % (code, tail(out)))
+code, out = forge("log", "--since", "1999-03-01")
+check("(c) --since a padded date keeps the lines from that day on", code == 0 and out.count("\n") == 2 and "1999-01-06" not in out,
+      "exit %d: %s" % (code, tail(out)))
+broken = os.path.join(cfg, "profiles", "broken.claude.json")
+write_json(broken, {"project": "broken", "project_path": 5})  # a field of the wrong type: the profile is skipped
+code, out = forge("log", "broken")
+check("(c) forge log of a profile that cannot be read says so", code == 1 and "broken" in out and "cannot be read" in out
+      and "unknown project" not in out, "exit %d: %s" % (code, tail(out)))
+code, out = forge("log", "no-such-project")
+check("(c) a project that is neither known nor skipped is still unknown", code == 1 and "unknown project: no-such-project" in out,
+      "exit %d: %s" % (code, tail(out)))
+os.remove(broken)
+
 # (d) past 10000 lines the journal keeps the last ones.
 old = ["1999-06-01T00:00:00+00:00 sync agent-config wrote /old/%d" % i for i in range(10005)]
 with open(JOURNAL, "w", encoding="utf-8") as fh:

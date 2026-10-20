@@ -1030,17 +1030,26 @@ def cmd_sync(a):
 def cmd_log(a):
     """forge log [--since YYYY-MM-DD] [NAME]: the change journal (lib.journal), oldest first, from DATE on,
     and with NAME only the changes under that project's project_path. Reads only."""
-    if a.since:
+    if a.since is not None:
+        # Strictly the zero-padded form: the filter compares the journal's text, so 2026-3-1 (which strptime
+        # accepts) sorted after every line of March, and an empty value (falsy) was taken for "no --since".
         try:
+            if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", a.since):
+                raise ValueError(a.since)
             time.strptime(a.since, "%Y-%m-%d")
         except ValueError:
             print("! forge log: --since wants YYYY-MM-DD, got %r" % a.since)
             return 2
     roots = ()
     if a.project:
-        profs = lib.profiles()
+        skipped = []
+        profs = lib.profiles(skipped)
         if a.project not in profs:
-            print("! forge log: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(profs))))
+            why = {f[:-len(".claude.json")]: (f, w) for f, w in skipped}.get(a.project)
+            if why:
+                print("! forge log: profile %s cannot be read (%s)" % why)
+            else:
+                print("! forge log: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(profs))))
             return 1
         pp = profs[a.project].get("project_path")
         if not pp:
@@ -1054,7 +1063,7 @@ def cmd_log(a):
         print("forge log: no journal yet (%s)" % lib.JOURNAL, file=sys.stderr)
         return 0
     for line in lines:
-        if not line or (a.since and line[:10] < a.since):
+        if not line or (a.since is not None and line[:10] < a.since):
             continue
         path = line.split(" ", 4)[-1]
         if roots and not any(path == r or path.startswith(r + os.sep) for r in roots):
