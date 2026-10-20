@@ -438,6 +438,12 @@ for args in ((), ("--apply",)):
     check("canonical doc missing %s: no traceback, a '  ! ' line, exit 1 -- exit %d: %s" % (args, code, sandbox.tail(out, 3)),
           "Traceback" not in out and code == 1 and bang_lines(out, "AGENT-SYSTEM.md"), out)
 check("canonical doc missing: the project's copy stays", os.path.isfile(os.path.join(w.app, ".claude", "AGENT-SYSTEM.md")))
+# The same for one that is not UTF-8 (Codex's review). Red before its fix: 'UnicodeDecodeError' traceback.
+with open(os.path.join(w.root, "docs", "AGENT-SYSTEM.md"), "wb") as fh:
+    fh.write(b"\xff\xfe not utf-8")
+code, out = w.forge("uninstall")
+check("canonical doc not UTF-8: no traceback, a '  ! ' line, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
+      "Traceback" not in out and code == 1 and bang_lines(out, "AGENT-SYSTEM.md"), out)
 
 # F11 and F17: ~/.cache/forge and ~/.local/state/forge as links are removed as links, their targets kept.
 # Red on 34c191b: 'OSError: Cannot call rmtree on a symbolic link', exit 1, the SessionStart row and the record left.

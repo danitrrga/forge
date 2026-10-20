@@ -411,8 +411,8 @@ def _project_files(run, pp, doc_mod):
         n += 1
         try:
             ours = not os.path.islink(copy) and lib.holds(copy, doc_mod.GEN_BANNER + _read(doc_mod.CANON))
-        except OSError as e:
-            run.fail("%s left in place: %s cannot be read (%s), so the copy cannot be compared" % (lib.short(copy), lib.short(doc_mod.CANON), e.strerror))
+        except (OSError, UnicodeDecodeError) as e:
+            run.fail("%s left in place: %s cannot be read (%s), so the copy cannot be compared" % (lib.short(copy), lib.short(doc_mod.CANON), e))
         else:
             if ours:
                 run.delete(copy)
