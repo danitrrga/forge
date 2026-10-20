@@ -213,14 +213,6 @@ def _claims(prof):
     return list(now.values())
 
 
-def _record(slp, now, apply):
-    """owned.record for this file, unless lib.write_json is not forge's own: cli.settings_forge_would_write
-    swaps it for a recorder to compute the document forge would write, in memory and with `apply` true,
-    and a registry write through the recorder would be taken for that document."""
-    if getattr(lib.write_json, "__module__", None) == lib.__name__:
-        owned.record(slp, now, apply)
-
-
 def _prune_item(sl, c):
     """Take the element claim `c` names out of its list, when it is still exactly what forge wrote.
     Returns 1 for an element removed, else 0. A list or object this run empties goes with it."""
@@ -505,16 +497,16 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     loose = [os.path.basename(p) for p in mcp.loose_secrets(slp)] if from_secrets else []
     if lib.dumps(sl) == sl_before and os.path.exists(slp):
         if not loose:
-            _record(slp, now, ctx.apply)
+            owned.record(slp, now, ctx.apply)
             return "   %s (already current)" % summary
         if ctx.apply:
             for p in mcp.loose_secrets(slp):
                 lib.chmod(p, 0o600)
-        _record(slp, now, ctx.apply)
+        owned.record(slp, now, ctx.apply)
         return "   %s (content current, %schmod 600 %s)" % (summary, "" if ctx.apply else "would ", ", ".join(loose))
     if ctx.apply:
         lib.write_json(slp, sl, mode=0o600 if from_secrets else None, backup=True)
-        _record(slp, now, ctx.apply)
+        owned.record(slp, now, ctx.apply)
         return "   " + summary
     return "   would write " + summary
 

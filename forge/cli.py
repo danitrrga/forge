@@ -87,19 +87,21 @@ def skill_name_clashes(only=None):
 def settings_forge_would_write(name, prof, registry):
     """The settings.local.json document the generator would write for `prof` (the dict forge/sync.py
     hands skills.write_settings_local, as if the profile were not frozen), or None when it would write
-    nothing because the file is already what it says. Computed in memory: the one write that function
-    makes, lib.write_json at its end, is replaced by a recorder for the call, so no byte reaches the
-    project, no .bak either. The recorder is restored in a finally."""
-    from forge import hooks  # not at import: it reads config/forge.json
+    nothing because the file is already what it says. Computed in memory: lib.write_json is replaced by
+    a recorder for the call, so no byte reaches the project, no .bak and no ownership record either; the
+    document is the last one recorded for a path other than the record's (owned.path()). The recorder is
+    restored in a finally."""
+    from forge import hooks, owned  # not at import: hooks reads config/forge.json
     sel = [s for s in prof.get("servers", []) if s in registry]
     wanted, real = [], lib.write_json
-    lib.write_json = lambda path, data, **kw: wanted.append(data)
+    lib.write_json = lambda path, data, **kw: wanted.append((path, data))
     try:
         skills.write_settings_local(lib.Ctx(True, {name}, False), mcp.with_denied_tools(prof, sel, registry), None, None,
                                     hooks.project_hooks(prof))
     finally:
         lib.write_json = real
-    return wanted[-1] if wanted else None
+    docs = [data for path, data in wanted if path != owned.path()]
+    return docs[-1] if docs else None
 
 
 ABSENT = object()
