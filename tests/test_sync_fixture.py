@@ -38,6 +38,7 @@ The real machine is never touched: its credentials are never copied or opened, a
 generator runs in an empty network namespace, so nothing it runs can reach a service on the host."""
 import difflib
 import glob
+import hashlib
 import json
 import os
 import re
@@ -252,8 +253,21 @@ class Sandbox:
 
     def manifest(self):
         """sandbox.manifest of the toy HOME, the projects and the forge copy's data/, the sandbox
-        path masked so two sandboxes compare equal."""
-        return sandbox.manifest(self.root, ("home", "projects", "forge/data"), mask=True)
+        path masked so two sandboxes compare equal. The ownership record (forge/owned.py) keeps the
+        SHA-256 of each value forge wrote, and a value can hold the sandbox path (a hook's command),
+        which no mask reaches inside a hash: its entry is the hash of the record with every "sum"
+        dropped, so the files, kinds, `at`s and owners still compare. With the raw hash, two runs of
+        the same code differed only in that file (gate diff: "owned.json f 600 <hash>", both ways)."""
+        m = sandbox.manifest(self.root, ("home", "projects", "forge/data"), mask=True)
+        rel = os.path.join("home", ".local", "state", "forge", "owned.json")
+        if rel in m and m[rel][0] == "f":
+            doc = read_json(os.path.join(self.root, rel))
+            for claims in doc.get("claims", {}).values():
+                for c in claims:
+                    c.pop("sum", None)
+            body = json.dumps(doc, sort_keys=True).replace(self.root, "@S@").encode()
+            m[rel] = m[rel][:2] + (hashlib.sha256(body).hexdigest(),) + m[rel][3:]
+        return m
 
     def artifacts(self):
         """What --dump saves: every run's output and its manifest without mtimes."""
