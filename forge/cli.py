@@ -779,8 +779,9 @@ def owned_row():
     digest of the entry against the claim's sum): PASS says how many files and claims it looked at, WARN
     names each hook claim whose entry changed since forge wrote it, and each file that is gone or does not
     parse, as file and `at` only, never a value. A claim of another kind is counted and not compared
-    until its writer is wired to this row. A record with no claim (every writer's rows are gone) is a SKIP, not
-    a PASS over nothing."""
+    until its writer is wired to this row. A hook claim is at [event, matcher, command]
+    (user scope) or ["hooks", event, command] with no matcher (a project's settings.local.json): each is read
+    as its writer wrote it. A record with no claim (every writer's rows are gone) is a SKIP, not a PASS over nothing."""
     if not os.path.exists(owned.path()):
         return lib.Result("SKIP", "owned", NOT_ARMED + "no ownership record yet (%s): it is written by the first forge sync --apply"
                           % lib.short(owned.path()))
@@ -804,8 +805,15 @@ def owned_row():
                 other += 1
                 continue
             compared += 1
-            event, matcher, cmd = c["at"]
-            if not any(owned.removable(c, h) for h in hooks.entries(doc, event, matcher, cmd)):
+            if c["at"][0] == "hooks":  # skills.py's layout in settings.local.json: ["hooks", event, command], no matcher
+                _, event, cmd = c["at"]
+                groups = (doc.get("hooks") or {}).get(event) if isinstance(doc.get("hooks"), dict) else None
+                now = [h for g in groups if hooks._hook_list(g) is not None for h in g["hooks"]
+                       if hooks._well_formed(h) and h.get("command") == cmd] if isinstance(groups, list) else []
+            else:  # hooks.py's layout, user scope: [event, matcher, command]
+                event, matcher, cmd = c["at"]
+                now = hooks.entries(doc, event, matcher, cmd)
+            if not any(owned.removable(c, h) for h in now):
                 changed.append("%s %s" % (lib.short(file), json.dumps(c["at"], ensure_ascii=False)))
     seen = "%d claim(s) in %d file(s)" % (compared + other, looked)
     notes = (["%d of another kind not compared" % other] if other else []) + (
