@@ -571,15 +571,16 @@ def _claim_ignore_line(prof, gi, entry=".agents/"):
         if found:
             targets[found[0]] = "/" + found[1] + entry
     for file, line in targets.items():
-        prev = owned.previous(file, "skills")[0]
+        prev = [c for c in registry.get(file, []) if c.get("part") == "skills"]
         at = ["line", line]
         was = any(c["kind"] == "item" and c["at"] == at for c in prev)
         new_here = gi.startswith(" +exclude" if file.endswith(exclude_tail) else " +gitignore")
         keep = [c for c in prev if not (c["kind"] == "item" and c["at"] == at)]
         if (was or new_here) and _has_exact_line(file, line):
             keep.append(owned.claim("item", at, line, owner))
-        if sorted(owned.digest(dict(c, part="")) for c in keep) != sorted(owned.digest(dict(c, part="")) for c in prev):
-            owned.record(file, keep, True, part="skills")  # (compared without the part: stored claims carry it)
+        sig = lambda cs: sorted((c["kind"], c["at"], c["sum"], c["owner"]) for c in cs)  # no part: stored claims carry it
+        if sig(keep) != sig(prev):
+            owned.record(file, keep, True, part="skills")
 
 
 def mirror_for_codex(ctx, prof):
