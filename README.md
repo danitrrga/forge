@@ -122,6 +122,7 @@ forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new 
 forge add PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
 forge sync [--apply] [--project NAME | --all]               what would change (or change it)
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
+forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19
 forge toolchain [--fix]                                     the global npm and pip packages config/toolchain.json pins
 forge commit -m MESSAGE [PATH...]                           commit each changed path to the history that owns it

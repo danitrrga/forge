@@ -18,6 +18,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME = os.path.expanduser("~")
 STATE = os.path.join(HOME, ".local", "state", "forge")
 LOCK = os.path.join(STATE, "sync.lock")
+JOURNAL = os.path.join(STATE, "journal.log")
+JOURNAL_KEEP = 10000
 PROFILES = os.path.join(ROOT, "config", "profiles")
 # Codex's own convention for relocating ~/.codex. memory_doctor.py honoured it while the generator
 # wrote ~/.codex/hooks.json regardless, so the two could read and write different files.
@@ -261,8 +263,9 @@ def hook_entries(doc):
 
 def record(what, path):
     """One line, `what` and `path`, appended to the file FORGE_WRITE_LOG names, for a change forge
-    just made on disk: wrote, chmod, link, unlink, mkdir or rmtree. forge session-start sets it
-    for each step and tells the user what the step wrote from it: it once guessed from
+    just made on disk: wrote, chmod, link, unlink, mkdir or rmtree. forge session-start and
+    forge sync --apply set it for each step, and journal() keeps what it noted; session-start also
+    tells the user what the step wrote from it: it once guessed from
     the printed text, and a session start could rewrite a project's settings.local.json and say
     nothing. Nothing is printed, so every generator's output stays what it was. Unset, nothing
     happens. It never raises: the change it records has already been made.
@@ -279,6 +282,32 @@ def record(what, path):
                 fh.write("%s %s\n" % (what, path))
         except OSError:
             pass
+
+
+def journal(lines, cmd, step):
+    """`lines`, the (what, path) pairs lib.record noted for one step, appended to JOURNAL as
+    `<ISO8601 local time> <cmd> <step> <what> <path>`, one per change; the last JOURNAL_KEEP lines
+    are kept. Paths only, never content, so never a secret. `step` has its spaces made hyphens, so
+    the first four fields are single words and the path is the rest of the line. Nothing to note,
+    or a checkout that may not write (may_write), writes nothing: a dry-run has no lines and never
+    creates the journal. It never raises on a disk error, as record never does. Callers hold the sync lock, so the read-append-write is not racing."""
+    if not lines or not may_write()[0]:
+        return
+    stamp = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+    stamp = stamp[:-2] + ":" + stamp[-2:]
+    step = "-".join(step.split()) or "-"
+    new = ["%s %s %s %s %s" % (stamp, cmd, step, what, str(path).replace("\n", "\\n")) for what, path in lines]
+    try:
+        try:
+            with open(JOURNAL, encoding="utf-8", errors="replace") as fh:
+                old = fh.read().split("\n")
+            if old[-1] == "":
+                old.pop()
+        except FileNotFoundError:
+            old = []
+        write_text(JOURNAL, "\n".join((old + new)[-JOURNAL_KEEP:]) + "\n")
+    except OSError:
+        pass  # like record: the changes it notes are already made, and a full disk must not fail the run
 
 
 def chmod(path, mode):

@@ -938,23 +938,85 @@ def memory_note(started):
     return ""
 
 
+def note_writes(log, cmd, step):
+    """What the step just wrote, from its write log (lib.record): handed on to the log this process
+    itself was given, if any, and to the journal. Returns the (what, path) pairs."""
+    with open(log, encoding="utf-8", errors="replace") as fh:
+        lines = [l.partition(" ")[::2] for l in fh.read().splitlines()]
+    for what, p in lines:
+        lib.record(what, p)
+    lib.journal(lines, cmd, step)
+    return lines
+
+
 def cmd_sync(a):
     failed = []
     scope = (["--project", a.project] if a.project else []) + (["--all"] if a.all else [])
-    with lib.lock() if a.apply else contextlib.nullcontext():
-        for name, script, dry_flag, apply_flag, _ in SYNC:
-            flag = apply_flag if a.apply else dry_flag
-            if STEP_INTEGRATION.get(name) and not lib.on(STEP_INTEGRATION[name]):
-                print("== forge: %s == NOT RUN, NOT ARMED (%s off)" % (name, STEP_INTEGRATION[name]), flush=True)
+    log = None
+    if a.apply:  # an apply notes each change it makes in the journal; a dry-run makes none
+        fd, log = tempfile.mkstemp(prefix="forge-writes-")
+        os.close(fd)
+    try:
+        with lib.lock() if a.apply else contextlib.nullcontext():
+            for name, script, dry_flag, apply_flag, _ in SYNC:
+                flag = apply_flag if a.apply else dry_flag
+                if STEP_INTEGRATION.get(name) and not lib.on(STEP_INTEGRATION[name]):
+                    print("== forge: %s == NOT RUN, NOT ARMED (%s off)" % (name, STEP_INTEGRATION[name]), flush=True)
+                    print(flush=True)
+                    continue
+                print("== forge: %s ==" % name, flush=True)
+                env = None
+                if log:
+                    open(log, "w").close()
+                    env = dict(os.environ, FORGE_WRITE_LOG=log)
+                if lib.run([script] + ([flag] if flag else []) + scope, env=env).returncode:
+                    failed.append(name)
+                if log:
+                    note_writes(log, "sync", name)
                 print(flush=True)
-                continue
-            print("== forge: %s ==" % name, flush=True)
-            if lib.run([script] + ([flag] if flag else []) + scope).returncode:
-                failed.append(name)
-            print(flush=True)
+    finally:
+        if log:
+            with contextlib.suppress(OSError):
+                os.remove(log)
     if failed:
         print("forge sync: failed -- %s" % ", ".join(failed))
     return 1 if failed else 0
+
+
+def cmd_log(a):
+    """forge log [--since YYYY-MM-DD] [NAME]: the change journal (lib.journal), oldest first, from DATE on,
+    and with NAME only the changes under that project's project_path. Reads only."""
+    if a.since:
+        try:
+            time.strptime(a.since, "%Y-%m-%d")
+        except ValueError:
+            print("! forge log: --since wants YYYY-MM-DD, got %r" % a.since)
+            return 2
+    roots = ()
+    if a.project:
+        profs = lib.profiles()
+        if a.project not in profs:
+            print("! forge log: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(profs))))
+            return 1
+        pp = profs[a.project].get("project_path")
+        if not pp:
+            print("! forge log: %s has no project_path, so no path is its own" % a.project)
+            return 1
+        roots = {pp.rstrip("/"), os.path.realpath(pp)}
+    try:
+        with open(lib.JOURNAL, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().split("\n")
+    except FileNotFoundError:
+        print("forge log: no journal yet (%s)" % lib.JOURNAL, file=sys.stderr)
+        return 0
+    for line in lines:
+        if not line or (a.since and line[:10] < a.since):
+            continue
+        path = line.split(" ", 4)[-1]
+        if roots and not any(path == r or path.startswith(r + os.sep) for r in roots):
+            continue
+        print(line)
+    return 0
 
 
 # Lines a generator prints when something is wrong: a warning, a failure, or a write it refused.
@@ -1032,10 +1094,7 @@ def cmd_session_start(a):
                         continue  # said by forge sync; a session start says only what changed or failed
                     open(log, "w").close()
                     r = lib.run([script, apply_flag] if apply_flag else [script], capture=True, env=env)
-                    with open(log, encoding="utf-8") as fh:
-                        lines = [l.partition(" ")[::2] for l in fh.read().splitlines()]
-                    for what, p in lines:
-                        lib.record(what, p)
+                    lines = note_writes(log, "session-start", step)
                     note = written(lines)
                     if note:
                         notes.append("%s: %s" % (step, note))
@@ -1434,6 +1493,10 @@ def main(argv=None):
     t = sub.add_parser("toolchain", help="the global npm and pip packages config/toolchain.json pins")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
     t.set_defaults(fn=cmd_toolchain)
+    g = sub.add_parser("log", help="the change journal: what forge sync --apply and session start wrote")
+    g.add_argument("project", nargs="?", help="this project's paths only")
+    g.add_argument("--since", help="YYYY-MM-DD, changes from this day")
+    g.set_defaults(fn=cmd_log)
     sub.add_parser("session-start", help="the SessionStart hook").set_defaults(fn=cmd_session_start)
     c = sub.add_parser("check-public", help="scan for personal data that must not be published")
     mode = c.add_mutually_exclusive_group(required=True)
