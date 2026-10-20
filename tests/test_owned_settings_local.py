@@ -247,6 +247,54 @@ check("in-memory computation: the document is the settings file's",
 check("in-memory computation: the registry is not written", not os.path.exists(REGISTRY), REGISTRY)
 check("in-memory computation: the file is not written", not os.path.exists(slp(p)), slp(p))
 
+# 14. A hand-edited `permissions` of the wrong shape is left alone and named, the rest of the profile still written,
+# and nothing is claimed for what was not merged. Red on 34c191b: write_settings_local raised "AttributeError: 'list'
+# object has no attribute 'get'" at cur[k] = list(dict.fromkeys((cur.get(k) or []) + ...)), which ends sync's loop over
+# every later profile. The control: a well-formed file is merged as before (sections 1 to 13).
+def run_errors(p, **keys):
+    errors = []
+    prof = dict({"project": "toy", "project_path": p, "env": {"A": "1"}}, **keys)
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            line = skills.write_settings_local(APPLY, prof, {}, errors)
+    except Exception as e:  # a crash is a red check, not a traceback
+        return "raised %s: %s" % (type(e).__name__, e), errors
+    return line, errors
+
+
+drop_registry()
+p = project({"permissions": ["not", "an", "object"]})
+line, errors = run_errors(p, **perms(allow=["Bash(ls)"]))
+check("permissions not an object: no crash", not line.startswith("raised"), line)
+check("permissions not an object: left alone", doc(p).get("permissions") == ["not", "an", "object"], doc(p))
+check("permissions not an object: named on a '!' line", any("permissions" in e and "not an object" in e for e in errors), errors)
+check("permissions not an object: the rest of the profile is written", doc(p).get("env") == {"A": "1"}, doc(p))
+check("permissions not an object: nothing is claimed for the rules", not any(k[0] == "item" for k in claimed(p)), claimed(p))
+p = project({"permissions": {"allow": "Bash(ls)", "deny": ["Bash(rm:*)"]}})
+line, errors = run_errors(p, **perms(allow=["Bash(pwd)"], deny=["Bash(dd:*)"]))
+check("an allow that is not a list: no crash", not line.startswith("raised"), line)
+check("an allow that is not a list: left alone and named", doc(p)["permissions"]["allow"] == "Bash(ls)"
+      and any("allow" in e for e in errors), (doc(p), errors))
+check("an allow that is not a list: the deny list is still merged", doc(p)["permissions"]["deny"] == ["Bash(rm:*)", "Bash(dd:*)"], doc(p))
+
+# 15. Without a resolved secret the write keeps the file's own mode and gives the once-ever .bak the same: it wrote
+# at the umask default and widened a settings.local.json the user kept 0600. Red on 34c191b: "FAIL a 0600 file
+# with no secret stays 0600 -- (644, 644)". Controls: a 0644 file stays 0644; a file with a secret is 0600 as before.
+for first in (0o600, 0o644):
+    drop_registry()
+    p = project({"permissions": {"allow": ["Bash(old)"]}})
+    os.chmod(slp(p), first)
+    run_errors(p, **perms(allow=["Bash(ls)"]))
+    got = (os.stat(slp(p)).st_mode & 0o777, os.stat(slp(p) + ".bak").st_mode & 0o777)
+    check("a %o file with no secret stays %o, and so does its .bak" % (first, first), got == (first, first),
+          "(%o, %o)" % got)
+drop_registry()
+p = project({"permissions": {"allow": ["Bash(old)"]}})
+os.chmod(slp(p), 0o644)
+run(p, **perms(allow=["Bash(ls)"]))
+check("a file that now holds a secret is 0600", os.stat(slp(p)).st_mode & 0o777 == 0o600, oct(os.stat(slp(p)).st_mode))
+
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
 sandbox.cleanup(bool(failures))
 sys.exit(1 if failures else 0)

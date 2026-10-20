@@ -374,18 +374,31 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     # permission key (e.g. defaultMode) overwrites. Profiles without "permissions" are untouched.
     perm_summary = ""
     perms = prof.get("permissions")
+    unmerged = set()  # the permissions keys left alone because the file's shape is wrong: claimed as nothing
     if perms:
         cur = sl.get("permissions") or {}
-        for k in ("allow", "deny", "ask"):
-            if perms.get(k):
-                cur[k] = list(dict.fromkeys((cur.get(k) or []) + list(perms[k])))
-        for k, v in perms.items():
-            if k not in ("allow", "deny", "ask"):
-                cur[k] = v
-                if k != "additionalDirectories":  # a list, claimed element by element (_claims)
-                    written.append(("key", ["permissions", k], v, None))
-        sl["permissions"] = cur
-        perm_summary = ", perms allow %d" % len(cur.get("allow") or [])
+        if not isinstance(cur, dict):
+            # Hand-edited into a shape Claude Code rejects too: not ours to fix, named, and the rest goes on.
+            unmerged = set(perms)
+            perm_summary = ", permissions not merged (the file's is not an object)"
+            if errors is not None:
+                errors.append("%s: permissions is not an object, left alone" % lib.short(slp))
+        else:
+            for k in ("allow", "deny", "ask"):
+                if perms.get(k):
+                    if not isinstance(cur.get(k) or [], list):
+                        unmerged.add(k)
+                        if errors is not None:
+                            errors.append("%s: permissions.%s is not a list, left alone" % (lib.short(slp), k))
+                        continue
+                    cur[k] = list(dict.fromkeys((cur.get(k) or []) + list(perms[k])))
+            for k, v in perms.items():
+                if k not in ("allow", "deny", "ask"):
+                    cur[k] = v
+                    if k != "additionalDirectories":  # a list, claimed element by element (_claims)
+                        written.append(("key", ["permissions", k], v, None))
+            sl["permissions"] = cur
+            perm_summary = ", perms allow %d" % len(cur.get("allow") or [])
 
     # env pass-through (project memory/plugin routing). Claude Code applies settings `env` to every
     # session AND to the subprocesses it spawns -- which is how plugin hooks inherit it, and how
@@ -468,7 +481,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     # cannot tell its leftovers from the user's in-session approvals in the same lists, so only an element
     # it claimed (forge/owned.py) is ever removed, and only unchanged. A hook entry edited since stays and
     # is named. With no record nothing is stale. Runs after both merges, so a rule still declared stays.
-    now = _claims(prof, written)
+    claim_prof = dict(prof, permissions={k: v for k, v in perms.items() if k not in unmerged}) if unmerged else prof
+    now = _claims(claim_prof, written)
     slp_short = lib.short(slp)
     pruned = 0
     for c in owned.stale(prev, now):  # a `key` claim is not pruned: those keys already go by declaration, above
@@ -513,7 +527,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         written.append(("key", ["disabledMcpjsonServers"], sl["disabledMcpjsonServers"], None))
         mcp_summary += ", .mcp.json disabled %d" % len(disabled)
 
-    now = _claims(prof, written)  # again, now that the .mcp.json keys are written too
+    now = _claims(claim_prof, written)  # again, now that the .mcp.json keys are written too
     # A key forge wrote and the profile stopped declaring may stay in the file (the .mcp.json keys and the
     # permissions keys are never taken out), so its claim is carried forward while the file still holds exactly
     # what forge wrote; an edited or removed one is the user's and drops out.
@@ -538,7 +552,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         owned.record(slp, now, ctx.apply)
         return "   %s (content current, %schmod 600 %s)" % (summary, "" if ctx.apply else "would ", ", ".join(loose))
     if ctx.apply:
-        lib.write_json(slp, sl, mode=0o600 if from_secrets else None, backup=True)
+        lib.write_json(slp, sl, mode=0o600 if from_secrets else ("keep" if os.path.exists(slp) else None), backup=True)
         owned.record(slp, now, ctx.apply)
         return "   " + summary
     return "   would write " + summary
