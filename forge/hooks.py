@@ -380,7 +380,7 @@ def _well_formed(h):
     return isinstance(h, dict) and isinstance(h.get("command", ""), str)
 
 
-def _strip_if(hooks, event, groups, ours):
+def strip_if(hooks, event, groups, ours):
     """Take out of `groups` (hooks[event]) every well-formed entry for which `ours(group, entry)` holds and
     return how many went. A group that only this emptied goes with them, and so does the event key
     when that left it with no group: a list that was empty before, an empty group that was already
@@ -406,8 +406,8 @@ def _strip_if(hooks, event, groups, ours):
 
 
 def _strip(hooks, event, groups, ours):
-    """_strip_if for an `ours` that judges the command alone."""
-    return _strip_if(hooks, event, groups, lambda g, h: ours(h.get("command", "")))
+    """strip_if for an `ours` that judges the command alone."""
+    return strip_if(hooks, event, groups, lambda g, h: ours(h.get("command", "")))
 
 
 def reconcile(doc, agent):
@@ -520,17 +520,6 @@ def reconcile(doc, agent):
     return notes
 
 
-def entries(doc, event, matcher, command):
-    """The well-formed hook entries of doc["hooks"][event], in a group whose matcher is `matcher`, whose
-    command is `command`."""
-    hooks = doc.get("hooks")
-    groups = hooks.get(event) if isinstance(hooks, dict) and isinstance(event, str) else None
-    if not isinstance(groups, list):
-        return []
-    return [h for g in groups if _hook_list(g) is not None and g.get("matcher") == matcher
-            for h in g["hooks"] if _well_formed(h) and h.get("command") == command]
-
-
 def reconcile_owned(doc, agent, file):
     """reconcile(doc, agent), then the ownership record's part (forge/owned.py) for `file`: returns
     (notes, warnings, claims). `claims` is one hook claim per row for `agent`, at [event, matcher, command],
@@ -544,7 +533,7 @@ def reconcile_owned(doc, agent, file):
     warnings = [warn.strip()] if warn else []
     now = []
     for event, cmd, _, marker, matcher, targets in USER_HOOKS:
-        found = entries(doc, event, matcher, cmd) if agent in targets else []
+        found = owned.hooks_with(doc, event, cmd, matcher) if agent in targets else []
         if found:  # reconcile left exactly the conforming one
             now.append(owned.claim("hook", [event, matcher, cmd], found[0], ROW_INTEGRATION.get(marker, "core")))
     hooks = doc["hooks"]
@@ -552,13 +541,13 @@ def reconcile_owned(doc, agent, file):
         if c["kind"] != "hook" or len(c["at"]) != 3:
             continue
         event, matcher, cmd = c["at"]
-        if not entries(doc, event, matcher, cmd):
+        if not owned.hooks_with(doc, event, cmd, matcher):
             continue
-        removed = _strip_if(hooks, event, hooks[event], lambda g, h: g.get("matcher") == matcher
-                            and h.get("command") == cmd and owned.removable(c, h))
+        removed = strip_if(hooks, event, hooks[event], lambda g, h: g.get("matcher") == matcher
+                           and h.get("command") == cmd and owned.removable(c, h))
         if removed:
             notes.append("dropped %d %s (%s: its row is gone)" % (removed, cmd, event))
-        if entries(doc, event, matcher, cmd):
+        if owned.hooks_with(doc, event, cmd, matcher):
             warnings.append("! %s: %s [%s] was edited, left in place" % (lib.short(file), cmd, event))
     return notes, warnings, now
 

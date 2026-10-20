@@ -143,19 +143,26 @@ def removable(c, current_value):
     return digest(current_value) == c["sum"]
 
 
-_ANY = object()
+ANY = object()
 
 
-def _hooks_with(doc, event, command, matcher):
+def hooks_with(doc, event, command, matcher):
     """The well-formed entries of doc["hooks"][event] whose command is `command`, in a group whose matcher is
-    `matcher` (any group when `matcher` is _ANY)."""
+    `matcher` (any group when `matcher` is ANY)."""
     hooks = doc.get("hooks")
     groups = hooks.get(event) if isinstance(hooks, dict) and isinstance(event, str) else None
     if not isinstance(groups, list):
         return []
     return [h for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
-            and (matcher is _ANY or g.get("matcher") == matcher)
+            and (matcher is ANY or g.get("matcher") == matcher)
             for h in g["hooks"] if isinstance(h, dict) and h.get("command") == command]
+
+
+def hook_site(at):
+    """(event, matcher, command) of a hook claim's `at`, in either of the two layouts the record keeps:
+    ["hooks", event, command] is a project's settings.local.json claim, whose matcher is ANY (any group of
+    the event); [event, matcher, command] is a claim in ~/.claude/settings.json or hooks.json."""
+    return (at[1], ANY, at[2]) if at[0] == "hooks" else tuple(at)
 
 
 def current(file, c, doc=None):
@@ -206,8 +213,8 @@ def current(file, c, doc=None):
         if doc is None:
             return False, None
     if kind == "hook" and len(at) == 3:
-        event, matcher, command = (at[1], _ANY, at[2]) if at[0] == "hooks" else at
-        found = _hooks_with(doc, event, command, matcher)
+        event, matcher, command = hook_site(at)
+        found = hooks_with(doc, event, command, matcher)
         if not found:
             return False, None
         return True, next((h for h in found if removable(c, h)), found[0])

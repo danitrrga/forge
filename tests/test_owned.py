@@ -142,6 +142,15 @@ check("removable: an edited value is never removable", edited is False,
       "removable(claim, edited value) = %r, want False" % edited)
 check("removable: an edited object is never removable", owned.removable(hook, {"type": "command", "command": "y"}) is False)
 
+# simplify-5 T3: hook_site decodes a hook claim's `at` once, in both layouts. Seen failing on the code before
+# it existed: "AttributeError: module 'forge.owned' has no attribute 'hook_site'". Negative control, its two
+# branches swapped (put back from a copy): see the commit message for the FAIL lines.
+check("hook_site: a settings.local.json claim [hooks, event, command] has any matcher",
+      owned.hook_site(["hooks", "SessionStart", "cmd"]) == ("SessionStart", owned.ANY, "cmd"), owned.hook_site(["hooks", "SessionStart", "cmd"]))
+check("hook_site: a settings.json claim [event, matcher, command] is itself",
+      owned.hook_site(["PreToolUse", "Bash", "cmd"]) == ("PreToolUse", "Bash", "cmd")
+      and owned.hook_site(["SessionStart", None, "cmd"]) == ("SessionStart", None, "cmd"), owned.hook_site(["PreToolUse", "Bash", "cmd"]))
+
 # a record that cannot be trusted loads as empty and says so
 bad = (("corrupt JSON", "{not json"),
        ("version 2", json.dumps({"version": 2, "claims": {A: [perm1]}})),

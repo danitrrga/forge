@@ -96,28 +96,10 @@ def _prune(doc, path):
 def _drop_entries(doc, event, drop):
     """Take out of doc["hooks"][event] every entry for which drop(group, entry) holds; a group, the event and
     `hooks` left empty go with them. Returns how many went."""
-    groups = doc["hooks"][event]
-    n = 0
-    for g in list(groups):
-        if not (isinstance(g, dict) and isinstance(g.get("hooks"), list)):
-            continue
-        kept = [h for h in g["hooks"] if not (isinstance(h, dict) and drop(g, h))]
-        if len(kept) != len(g["hooks"]):
-            n += len(g["hooks"]) - len(kept)
-            g["hooks"] = kept
-            if not kept:
-                groups[:] = [x for x in groups if x is not g]
+    n = hooks.strip_if(doc["hooks"], event, doc["hooks"][event], drop)
     if n:
-        _prune(doc, ["hooks", event])
+        _prune(doc, ["hooks"])  # strip_if has already deleted an event it emptied
     return n
-
-
-def _hook_entries(doc):
-    """Every well-formed hook entry of doc["hooks"], whatever its event."""
-    events = doc.get("hooks")
-    return [h for groups in (events.values() if isinstance(events, dict) else []) if isinstance(groups, list)
-            for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
-            for h in g["hooks"] if isinstance(h, dict)]
 
 
 def _drop_hooks(doc, drop):
@@ -300,8 +282,8 @@ def _take_out(run, file, c):
         run.set_text(file, "".join(l for l in lines if l.strip() != at[1]))
     elif kind == "hook":
         doc = run.json(file)
-        event, matcher, cmd = (at[1], None, at[2]) if at[0] == "hooks" else at
-        _drop_entries(doc, event, lambda g, h: h.get("command") == cmd and (at[0] == "hooks" or g.get("matcher") == matcher)
+        event, matcher, cmd = owned.hook_site(at)
+        _drop_entries(doc, event, lambda g, h: h.get("command") == cmd and (matcher is owned.ANY or g.get("matcher") == matcher)
                       and owned.removable(c, h))
     else:
         doc = run.json(file)
@@ -476,7 +458,7 @@ def _last(run, scope, deferred):
     k = 0 if deferred or doc is None or row is None else _drop_hooks(doc, lambda g, h: h.get("command") == row)
     if k:
         run.say("   %s -> %s forge's SessionStart row" % (lib.short(USER_SETTINGS), run.verb("remove")))
-    if doc is not None and any(_session_start(h.get("command")) for h in _hook_entries(doc)):
+    if doc is not None and any(_session_start(h.get("command")) for *_, h in lib.hook_entries(doc)[0]):
         run.say("  ! %s: a SessionStart row that runs forge's session-start was edited, left in place" % lib.short(USER_SETTINGS))
     run.commit()
     return 1 if k else 0
