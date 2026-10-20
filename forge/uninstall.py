@@ -115,18 +115,18 @@ def _drop_entries(doc, event, drop):
 
 def _hook_entries(doc):
     """Every well-formed hook entry of doc["hooks"], whatever its event."""
-    hooks = doc.get("hooks")
-    return [h for groups in (hooks.values() if isinstance(hooks, dict) else []) if isinstance(groups, list)
+    events = doc.get("hooks")
+    return [h for groups in (events.values() if isinstance(events, dict) else []) if isinstance(groups, list)
             for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
             for h in g["hooks"] if isinstance(h, dict)]
 
 
 def _drop_hooks(doc, drop):
     """_drop_entries over every event that is a list."""
-    hooks = doc.get("hooks")
-    if not isinstance(hooks, dict):
+    events = doc.get("hooks")
+    if not isinstance(events, dict):
         return 0
-    return sum(_drop_entries(doc, event, drop) for event in list(hooks) if isinstance(hooks.get(event), list))
+    return sum(_drop_entries(doc, event, drop) for event in list(events) if isinstance(events.get(event), list))
 
 
 class Run:
