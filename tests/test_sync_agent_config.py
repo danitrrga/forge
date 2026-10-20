@@ -613,9 +613,13 @@ for label, make in (("not UTF-8", lambda gi: open(gi, "wb").write(b"*.pyc\n\xff\
           "a .gitignore that is %s: exit %r, a's .codex %s, b's config.toml %s"
           % (label, code, os.path.exists(os.path.join(a, ".codex")), os.path.exists(os.path.join(b, ".codex", "config.toml"))))
 
-# 10. A settings.json whose `env` is not an object is left as it is, and the rest of the user scope still
+# 10. A settings.json whose `env` is not an object is left as it is, said so on a '!' line of its
+# own (forge/cli.py's CHANGED shows those at session start), and the rest of the user scope still
 # runs. write_user_settings used to raise AttributeError on it, so ~/.codex/hooks.json and Hindsight
-# never ran. Nothing prints a '!' line for it (the one that did was a removed integration's), so the exit is 0.
+# never ran. The '!' line exits 1 (agent_config's exit rule): forge's env keys (the advisor switch
+# among them) are then not applied, which must not pass silently. A warning alone never rewrites the
+# file. The line used to come from Jev's setup.py; with Jev removed write_user_settings says it itself:
+# without that, this case failed with "exit 0, ... settings lines" and no '!' line.
 for label, env in (("null", None), ("a list", ["x"])):
     name = "env-" + label.split()[-1]
     reset_home()
@@ -624,7 +628,8 @@ for label, env in (("null", None), ("a list", ["x"])):
         code, out, _ = case("%s-%s" % (name, run), {"a": {}}, globals_=True)
         doc = json.loads(read(hooks.USER_SETTINGS))
         line = [l for l in out.splitlines() if "settings.json" in l]
-        check(code == 0 and doc.get("env") == env and doc.get("theme") == "dark"
+        check(code == 1 and doc.get("env") == env and doc.get("theme") == "dark"
+              and "   ! env is not an object, left alone" in out.splitlines()
               and any(l.startswith("   ~/.codex") or "codex-home/hooks.json" in l for l in out.splitlines())
               and (run == "first" or (len(line) == 1 and "(already current)" in line[0])),
               "settings.json with env %s, %s run: exit %r, env %r, settings lines %r"

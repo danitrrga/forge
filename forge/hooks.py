@@ -555,9 +555,12 @@ def write_user_settings(ctx):
         if s.get(k) != v:
             notes.append("%s %s -> %s" % (k, s.get(k), v))
             s[k] = v
+    warnings = []
     if isinstance(wanted.get("env"), dict) and wanted["env"]:
         env = s.setdefault("env", {})
-        if isinstance(env, dict):  # one that is not is left alone
+        if not isinstance(env, dict):  # hand-edited into a shape Claude Code rejects too: not ours to fix
+            warnings.append("! env is not an object, left alone")
+        else:
             for k, v in wanted["env"].items():
                 if env.get(k) != v:
                     notes.append("env %s=%s" % (k, v))
@@ -569,7 +572,7 @@ def write_user_settings(ctx):
     current = ["%s=%s" % kv for kv in plain] + [
         "%d hooks" % n,
         "%s warded off" % ", ".join(HOOK_WARDS[CLAUDE]), "%d secret-read deny rules" % len(SECRET_DENY)]
-    return _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), deny_warnings)
+    return _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), warnings + deny_warnings)
 
 
 def codex_commands():
