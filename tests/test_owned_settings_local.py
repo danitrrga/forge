@@ -214,7 +214,8 @@ run(p, hooks={"Stop": [{"hooks": [HOOK]}]}, **perms(allow=["Bash(x:*)"]))
 check("the file received the secret (the control for the next check)", doc(p)["env"]["TOKEN"] == FAKE_TOKEN, doc(p))
 check("the registry holds no secret value", slurp(REGISTRY) != b"" and FAKE_TOKEN.encode() not in slurp(REGISTRY),
       "the registry is missing, or holds it")
-check("the registry holds no env claim", not any(k[1][0] == "env" for k in claimed(p)), claimed(p))
+# Since the key claims (test_owned_settings_keys.py) env IS claimed, as a key, and only by its digest.
+check("the env claim keeps only a digest", set(claimed(p).get(("key", ("env",)), {})) == {"kind", "at", "sum", "owner"}, claimed(p))
 
 # 11. A broken registry prunes nothing and its warning is printed.
 p = project()

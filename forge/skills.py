@@ -66,6 +66,7 @@ def _groups_ok(have):
 
 
 GUARD_SCRIPT = "guard_tool_use.py"
+PROJECT_ROW_OWNER = "hindsight"  # whose claim a per-project hook row is (hooks.SCOPES has the one scope)
 GUARD_TIMEOUT = 10  # the guard entry's own timeout in settings.local.json, and the doctor's probes'
 # forge's guards, each one PreToolUse entry it owns: (script in hooks/, the group's matcher or None,
 # whether the profile turns it on, its name in the summary line's "<name> on", its name in "<name>
@@ -189,15 +190,18 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
     return summary
 
 
-def _claims(prof):
+def _claims(prof, written=()):
     """What forge puts in settings.local.json because the profile declares it, as owned claims: each
     permissions allow/deny/ask rule and additionalDirectories entry (located by the string itself), each
     hook entry of the profile's `hooks` (located by event and command). Owner: the profile's name.
-    Identities are unique, so a rule listed twice is one claim."""
+    `written` is what the run wrote besides, as (kind, at, value, owner or None for the profile): the keys
+    (skillOverrides, enabledPlugins, env, permissions.<k>, the mcpjson ones) and forge's per-project hook
+    rows, claimed only when this run wrote them. Identities are unique, so a rule listed twice is one
+    claim, and a profile's own claim of a hook row comes before the row's."""
     owner, now = prof.get("project") or "", {}
 
-    def add(kind, at, value):
-        now.setdefault((kind, tuple(at)), owned.claim(kind, at, value, owner))
+    def add(kind, at, value, who=None):
+        now.setdefault((kind, tuple(at)), owned.claim(kind, at, value, who or owner))
 
     perms = prof.get("permissions")
     for k in ("allow", "deny", "ask", "additionalDirectories"):
@@ -210,6 +214,8 @@ def _claims(prof):
             for h in g.get("hooks", []) if isinstance(g, dict) and isinstance(g.get("hooks", []), list) else ():
                 if isinstance(h, dict) and isinstance(h.get("command"), str):
                     add("hook", ["hooks", event, h["command"]], h)
+    for kind, at, value, who in written:
+        add(kind, at, value, who)
     return list(now.values())
 
 
@@ -325,6 +331,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
                  else {s: "off" for s in sorted(on_machine - proj_skills - skills_keep)})
 
     sl_before = lib.dumps(sl)
+    written = []  # what this run writes into the file besides the profile's lists and hooks: _claims
     pl_summary = "plugins unchanged"
     removed = []
     if keep:
@@ -333,6 +340,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         for p in keep:               # keep entries not in the current universe -> still enable
             enabled.setdefault(p, True)
         sl["enabledPlugins"] = enabled
+        written.append(("key", ["enabledPlugins"], enabled, None))
         pl_summary = "plugins %d/%d on" % (sum(1 for v in enabled.values() if v), len(enabled))
     elif sl.pop("enabledPlugins", None) is not None:
         # Written whole only while `plugins_keep` asks for it, like env: left behind, the map from
@@ -341,6 +349,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         pl_summary = "plugins untrimmed"
     if trim and not all_skills:
         sl["skillOverrides"] = overrides
+        written.append(("key", ["skillOverrides"], overrides, None))
     elif sl.pop("skillOverrides", None) is not None and not trim:
         # Under the wildcard, dropped silently as it always was: writing an empty map is harmless,
         # but a STALE one left from before would keep every skill off. Absent == all available.
@@ -362,6 +371,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         for k, v in perms.items():
             if k not in ("allow", "deny", "ask"):
                 cur[k] = v
+                if k != "additionalDirectories":  # a list, claimed element by element (_claims)
+                    written.append(("key", ["permissions", k], v, None))
         sl["permissions"] = cur
         perm_summary = ", perms allow %d" % len(cur.get("allow") or [])
 
@@ -392,6 +403,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         from_secrets = len(got)
         sl["env"] = {k: got.get(k, prof_env[k]) for k in sorted(prof_env) if k not in refs or k in got}
         env_summary = ", env %d%s" % (len(prof_env), " (%d from secrets)" % from_secrets if from_secrets else "")
+        written.append(("key", ["env"], sl["env"], None))  # only its digest is kept (owned.claim): it holds secrets
     elif sl.pop("env", None) is not None:
         # The key is generator-owned in both directions: a profile with no env gets none. Only
         # overwriting when the profile had one left a project capturing into a retired
@@ -438,15 +450,17 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     for event, cmd, timeout, marker, matcher, wanted in project_hooks:
         hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event, canonical_hook(cmd, timeout),
                                    matcher, wanted, "%s %s" % (marker, event), marker)
+        if wanted and _holds(sl, lambda c, cmd=cmd: c == cmd):  # not merged into a hooks that is not an object: not claimed
+            written.append(("hook", ["hooks", event, cmd], canonical_hook(cmd, timeout), PROJECT_ROW_OWNER))
 
     # What the profile declared last time and no longer does goes, if it is still what forge wrote: forge
     # cannot tell its leftovers from the user's in-session approvals in the same lists, so only an element
     # it claimed (forge/owned.py) is ever removed, and only unchanged. A hook entry edited since stays and
     # is named. With no record nothing is stale. Runs after both merges, so a rule still declared stays.
-    now = _claims(prof)
+    now = _claims(prof, written)
     slp_short = lib.short(slp)
     pruned = 0
-    for c in owned.stale(prev, now):
+    for c in owned.stale(prev, now):  # a `key` claim is not pruned: those keys already go by declaration, above
         if c["kind"] == "item" and len(c["at"]) == 3 and c["at"][0] == "permissions":
             pruned += _prune_item(sl, c)
         elif c["kind"] == "hook" and len(c["at"]) == 3 and c["at"][0] == "hooks":
@@ -474,8 +488,10 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     approved = prof.get("mcpjson_approved")
     if prof.get("enableAllProjectMcpServers") is not None:
         sl["enableAllProjectMcpServers"] = prof["enableAllProjectMcpServers"]
+        written.append(("key", ["enableAllProjectMcpServers"], sl["enableAllProjectMcpServers"], None))
     if approved is not None:
         sl["enabledMcpjsonServers"] = list(approved)
+        written.append(("key", ["enabledMcpjsonServers"], sl["enabledMcpjsonServers"], None))
         mcp_summary = ", .mcp.json approved %d%s" % (
             len(approved), "" if sl.get("enableAllProjectMcpServers") is not True else " (ALL: on)")
     elif sl.get("enableAllProjectMcpServers") is True:
@@ -483,8 +499,10 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     disabled = prof.get("mcpjson_disabled")
     if disabled is not None:
         sl["disabledMcpjsonServers"] = list(disabled)
+        written.append(("key", ["disabledMcpjsonServers"], sl["disabledMcpjsonServers"], None))
         mcp_summary += ", .mcp.json disabled %d" % len(disabled)
 
+    now = _claims(prof, written)  # again, now that the .mcp.json keys are written too
     skill_summary = ("%s, skills off %d, kept-global %s"
                      % (pl_summary, len(overrides), "ALL (*)" if all_skills else len(skills_keep))
                      if trim else "untrimmed (pass-through only)")
@@ -515,6 +533,53 @@ def _agents_link(name):
     """The target of our link .agents/skills/<name>: relative, so a clone of the repo anywhere
     still resolves. The create check and the prune check both ask this, so they cannot drift."""
     return os.path.join("..", "..", ".claude", "skills", name)
+
+
+def _exclude_file(ppath):
+    """(the info/exclude file of the repository holding `ppath`, the project's prefix in it), or None
+    where the repository does not answer; the two questions lib._exclude_entry asks before it adds a
+    line there."""
+    common = lib._git_out(ppath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    prefix = lib._git_out(ppath, "rev-parse", "--show-prefix")
+    return (os.path.join(common, "info", "exclude"), prefix) if common and prefix is not None else None
+
+
+def _has_exact_line(file, line):
+    try:
+        with open(file, encoding="utf-8") as fh:
+            return any(l.strip() == line for l in fh.read().splitlines())
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def _claim_ignore_line(prof, gi, entry=".agents/"):
+    """Claim, under part "skills" of the file it sits in, the line forge added to keep `entry` out of
+    version control (lib.ensure_ignored; `gi` is its summary suffix): item ["line", <the line>], owner the
+    profile. That is the project's .gitignore, or the repository's info/exclude for a repo-owned one. A
+    line that was already there is not forge's and is never claimed; one claimed on an earlier run is
+    claimed again while it is still in the file (a run that adds nothing must not drop it) and dropped
+    once it is not. Other lines' claims of the part (another project's, in a shared exclude file) are
+    kept, and a registry with nothing new in it is not rewritten. Called only for an apply."""
+    ppath, owner = prof["project_path"], prof.get("project") or ""
+    registry, _ = owned.load()
+    targets = {os.path.join(ppath, ".gitignore"): entry}
+    exclude_tail = os.path.join("info", "exclude")
+    if gi.startswith(" +exclude") or any(
+            f.endswith(exclude_tail) and any(c.get("part") == "skills" and c["kind"] == "item" and c["at"][:1] == ["line"]
+                                             for c in cs) for f, cs in registry.items()):
+        found = _exclude_file(ppath)
+        if found:
+            targets[found[0]] = "/" + found[1] + entry
+    for file, line in targets.items():
+        prev = owned.previous(file, "skills")[0]
+        at = ["line", line]
+        was = any(c["kind"] == "item" and c["at"] == at for c in prev)
+        new_here = gi.startswith(" +exclude" if file.endswith(exclude_tail) else " +gitignore")
+        keep = [c for c in prev if not (c["kind"] == "item" and c["at"] == at)]
+        if (was or new_here) and _has_exact_line(file, line):
+            keep.append(owned.claim("item", at, line, owner))
+        if sorted(owned.digest(dict(c, part="")) for c in keep) != sorted(owned.digest(dict(c, part="")) for c in prev):
+            owned.record(file, keep, True, part="skills")  # (compared without the part: stored claims carry it)
 
 
 def mirror_for_codex(ctx, prof):
@@ -575,6 +640,8 @@ def mirror_for_codex(ctx, prof):
         ignored, gi = lib.ensure_ignored(ctx.apply, ppath, ".agents/", lib.repo_owns_tracked_files(prof))
         if not ignored:
             return "   ! codex sees project skills -> %s NOT linked%s" % (lib.short(dst), gi)
+    if ctx.apply:
+        _claim_ignore_line(prof, gi)
     created, repointed, pruned = [], [], []
     existing = set(os.listdir(dst)) if os.path.isdir(dst) else set()
 
