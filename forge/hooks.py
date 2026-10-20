@@ -10,7 +10,7 @@ writes them (lib.context's `globals`)."""
 import os
 import sys
 
-from forge import lib
+from forge import lib, owned
 
 ROOT = lib.ROOT
 HOME = lib.HOME
@@ -362,8 +362,8 @@ def _well_formed(h):
     return isinstance(h, dict) and isinstance(h.get("command", ""), str)
 
 
-def _strip(hooks, event, groups, ours):
-    """Take out of `groups` (hooks[event]) every well-formed entry whose command `ours` accepts and
+def _strip_if(hooks, event, groups, ours):
+    """Take out of `groups` (hooks[event]) every well-formed entry for which `ours(group, entry)` holds and
     return how many went. A group that only this emptied goes with them, and so does the event key
     when that left it with no group: a list that was empty before, an empty group that was already
     there and a malformed part are not forge's to change, so nothing of them is touched. `hooks` is
@@ -373,7 +373,7 @@ def _strip(hooks, event, groups, ours):
         hl = _hook_list(g)
         if hl is None:
             continue
-        kept = [h for h in hl if not (_well_formed(h) and ours(h.get("command", "")))]
+        kept = [h for h in hl if not (_well_formed(h) and ours(g, h))]
         if len(kept) == len(hl):
             continue
         removed += len(hl) - len(kept)
@@ -385,6 +385,11 @@ def _strip(hooks, event, groups, ours):
     if removed and not groups:
         del hooks[event]
     return removed
+
+
+def _strip(hooks, event, groups, ours):
+    """_strip_if for an `ours` that judges the command alone."""
+    return _strip_if(hooks, event, groups, lambda g, h: ours(h.get("command", "")))
 
 
 def reconcile(doc, agent):
@@ -497,6 +502,50 @@ def reconcile(doc, agent):
     return notes
 
 
+def entries(doc, event, matcher, command):
+    """The well-formed hook entries of doc["hooks"][event], in a group whose matcher is `matcher`, whose
+    command is `command`."""
+    hooks = doc.get("hooks")
+    groups = hooks.get(event) if isinstance(hooks, dict) and isinstance(event, str) else None
+    return [h for g in groups if _hook_list(g) is not None and g.get("matcher") == matcher
+            for h in g["hooks"] if _well_formed(h) and h.get("command") == command] if isinstance(groups, list) else []
+
+
+def reconcile_owned(doc, agent, file):
+    """reconcile(doc, agent), then the ownership record's part (forge/owned.py) for `file`: returns
+    (notes, warnings, claims). `claims` is one hook claim per row for `agent`, at [event, matcher, command],
+    owner `core` or the row's integration, over the entry reconcile left in place. A claim the previous
+    run recorded and no row wants now (the row was deleted from the code) loses its entry when that is
+    still exactly what forge wrote; an edited one stays and is named in `warnings`, as is a record that
+    cannot be read. An entry forge never claimed is never touched, and with no previous record nothing is
+    taken out. The caller records `claims` once the file is written."""
+    notes = reconcile(doc, agent)
+    prev, warn = owned.previous(file)
+    warnings = [warn.strip()] if warn else []
+    now = []
+    for event, cmd, _, marker, matcher, targets in USER_HOOKS:
+        found = entries(doc, event, matcher, cmd) if agent in targets else []
+        if found:  # reconcile left exactly the conforming one
+            now.append(owned.claim("hook", [event, matcher, cmd], found[0], ROW_INTEGRATION.get(marker, "core")))
+    hooks = doc["hooks"]
+    for c in owned.stale(prev, now):
+        at = c["at"]
+        if not (c["kind"] == "hook" and len(at) == 3 and isinstance(at[0], str) and isinstance(at[2], str)
+                and (at[1] is None or isinstance(at[1], str))):
+            continue
+        event, matcher, cmd = at
+        groups = hooks.get(event)
+        if not isinstance(groups, list):
+            continue
+        removed = _strip_if(hooks, event, groups, lambda g, h: g.get("matcher") == matcher
+                            and h.get("command") == cmd and owned.removable(c, h))
+        if removed:
+            notes.append("dropped %d %s (%s: its row is gone)" % (removed, cmd, event))
+        if entries(doc, event, matcher, cmd):
+            warnings.append("! %s: %s [%s] was edited, left in place" % (lib.short(file), cmd, event))
+    return notes, warnings, now
+
+
 def _commit(ctx, path, doc, notes, current, warnings=()):
     """Write `doc` once if anything changed, and return the status line for `path`, then one
     "!" line per warning (a value in a shape left alone). A warning alone writes nothing; its
@@ -565,14 +614,18 @@ def write_user_settings(ctx):
                 if env.get(k) != v:
                     notes.append("env %s=%s" % (k, v))
                     env[k] = v
-    notes += reconcile(s, CLAUDE)
+    hook_notes, hook_warnings, claims = reconcile_owned(s, CLAUDE, USER_SETTINGS)
+    notes += hook_notes
+    warnings += hook_warnings
     deny_notes, deny_warnings = deny_secret_files(s)
     notes += deny_notes
     n = sum(1 for row in USER_HOOKS if CLAUDE in row[5])
     current = ["%s=%s" % kv for kv in plain] + [
         "%d hooks" % n,
         "%s warded off" % ", ".join(HOOK_WARDS[CLAUDE]), "%d secret-read deny rules" % len(SECRET_DENY)]
-    return _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), warnings + deny_warnings)
+    line = _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), warnings + deny_warnings)
+    owned.record(USER_SETTINGS, claims, ctx.apply)
+    return line
 
 
 def codex_commands():
@@ -614,6 +667,8 @@ def write_codex_hooks(ctx):
     s = lib.read_owned(CODEX_HOOKS)
     if lib.codex_harness():
         n = sum(1 for row in USER_HOOKS if CODEX in row[5])
-        return _commit(ctx, CODEX_HOOKS, s, reconcile(s, CODEX),
-                       "%d hooks, %s warded off" % (n, ", ".join(HOOK_WARDS[CODEX])))
+        notes, warnings, claims = reconcile_owned(s, CODEX, CODEX_HOOKS)
+        line = _commit(ctx, CODEX_HOOKS, s, notes, "%d hooks, %s warded off" % (n, ", ".join(HOOK_WARDS[CODEX])), warnings)
+        owned.record(CODEX_HOOKS, claims, ctx.apply)
+        return line
     return _commit(ctx, CODEX_HOOKS, s, drop_codex_entries(s), "no hook of forge's")

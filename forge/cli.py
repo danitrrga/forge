@@ -30,7 +30,7 @@ import sys
 import tempfile
 import time
 
-from forge import lib, mcp, skills
+from forge import lib, mcp, owned, skills
 
 # The order is the contract: skill links come first because the overrides are computed from
 # them, the system doc comes last. (name, script, its dry-run flag, its apply flag, user_scope_only.)
@@ -770,6 +770,54 @@ def codex_hooks_row():
     return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
 
 
+def owned_row():
+    """The ownership record (forge/owned.py): what each writer last put into the shared files it merges
+    into. SKIP while no record exists (nothing has recorded yet), FAIL when it cannot be read or used.
+    Otherwise each file it names is read and every hook claim compared with the entry now there (the
+    digest of the entry against the claim's sum): PASS says how many files and claims it looked at, WARN
+    names each hook claim whose entry changed since forge wrote it, and each file that is gone or does not
+    parse, as file and `at` only, never a value. A claim of another kind is counted and not compared
+    until its writer is wired to this row. A record with no claim (every writer's rows are gone) is a SKIP, not
+    a PASS over nothing."""
+    if not os.path.exists(owned.path()):
+        return lib.Result("SKIP", "owned", NOT_ARMED + "no ownership record yet (%s): it is written by the first forge sync --apply"
+                          % lib.short(owned.path()))
+    claims, warn = owned.load()
+    if warn:
+        return lib.Result("FAIL", "owned", warn.strip().removeprefix("! "))
+    from forge import hooks  # not at import: it reads config/forge.json
+    looked, compared, other, changed, absent, unread = 0, 0, 0, [], [], []
+    for file, items in claims.items():
+        try:
+            doc = lib.read_owned(file, None)
+        except lib.Unreadable as e:
+            unread.append("%s (%s)" % (lib.short(file), e))
+            continue
+        if doc is None:
+            absent.append(lib.short(file))
+            continue
+        looked += 1
+        for c in items:
+            if c["kind"] != "hook" or len(c["at"]) != 3:
+                other += 1
+                continue
+            compared += 1
+            event, matcher, cmd = c["at"]
+            if not any(owned.removable(c, h) for h in hooks.entries(doc, event, matcher, cmd)):
+                changed.append("%s %s" % (lib.short(file), json.dumps(c["at"], ensure_ascii=False)))
+    seen = "%d claim(s) in %d file(s)" % (compared + other, looked)
+    notes = (["%d of another kind not compared" % other] if other else []) + (
+        ["%d file(s) not there: %s" % (len(absent), ", ".join(absent))] if absent else [])
+    if changed or unread or (absent and not looked):
+        said = (["changed since forge wrote them, so a sync leaves or repairs them: " + "; ".join(changed)] if changed else []) + (
+            ["could not read: " + "; ".join(unread)] if unread else []) + (
+            ["every file it names is not there: " + ", ".join(absent)] if absent and not looked else [])
+        return lib.Result("WARN", "owned", "%s; looked at %s" % (" | ".join(said), seen))
+    if not claims or not (compared + other):
+        return lib.Result("SKIP", "owned", NOT_ARMED + "the ownership record holds no claim")
+    return lib.Result("PASS", "owned", "%s%s" % (seen, " (%s)" % ", ".join(notes) if notes else ""))
+
+
 def doctor_extra_row():
     """config/forge.json's `doctor_extra`: [name, argv, fix] rows, each a command run from ROOT that
     exits 0 when healthy, shown as a row of its own named `name` (the last line of its output, and the
@@ -802,6 +850,7 @@ CHECKS = [
     ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
     ("toolchain", toolchain_row, "forge toolchain --fix (installs what is missing; a version that differs is only reported)"),
+    ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
