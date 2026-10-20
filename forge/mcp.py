@@ -57,57 +57,6 @@ def migrate_project_keys(cj, relocations):
     return changed
 
 
-def _ignore_site(ppath, entry, repo_owned):
-    """(the file ensure_ignored puts `entry` in, the line it writes there), or None when it cannot be said. A
-    project the repo owns gets the repository's info/exclude and the line anchored to the project's
-    directory (lib._exclude_entry); any other gets its .gitignore and `entry` as it is."""
-    if not repo_owned:
-        return os.path.join(ppath, ".gitignore"), entry
-    common = lib._git_out(ppath, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    prefix = lib._git_out(ppath, "rev-parse", "--show-prefix")
-    if not common or prefix is None:
-        return None
-    return os.path.join(common, "info", "exclude"), "/" + prefix + entry
-
-
-def _holds_line(file, line):
-    """Whether `file` has `line` as a line, with or without a trailing slash (ignore rules read both as one)."""
-    try:
-        with open(file, encoding="utf-8") as fh:
-            return any(l.strip() in (line, line.rstrip("/")) for l in fh.read().splitlines())
-    except (OSError, UnicodeDecodeError):
-        return False
-
-
-def claim_ignore_line(apply, ppath, entry, suffix, repo_owned, part, owner):
-    """Claim the ignore line lib.ensure_ignored(apply, ppath, entry, repo_owned) has just ensured, whose
-    summary suffix is `suffix`, as the item ["line", <the line>] of the file that holds it, under `part`.
-    Only a line forge added is claimed: the suffix says "+gitignore" or "+exclude" when it did. A line that was
-    there before is not, and one claimed on an earlier run stays claimed while it is still in the file. The
-    claims of the same part for any other line are kept where they are: an `.agents/` line is another
-    writer's. Nothing for a dry-run (the suffix then says "would add")."""
-    if not apply:
-        return False
-    site = _ignore_site(ppath, entry, repo_owned)
-    if site is None:
-        return False
-    file, line = site
-    mine = ["line", line]
-    added = suffix.startswith(" +exclude" if repo_owned else " +gitignore")
-    prev, _ = owned.previous(file, part)
-    out, seen = [], False
-    for c in prev:
-        if c["kind"] == "item" and c["at"] == mine:
-            seen = True
-            if added or _holds_line(file, line):
-                out.append(owned.claim("item", mine, line, owner))
-        else:
-            out.append(c)
-    if added and not seen:
-        out.append(owned.claim("item", mine, line, owner))
-    return owned.record(file, out, apply, part)
-
-
 def project_key(path):
     """A project's ~/.claude.json key: the forward-slash, normalised path, case kept -- the form
     Claude Code itself writes. A profile's `/x/proj/` used to become the key as written, which
@@ -277,7 +226,7 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
         return "   ! codex mcp -> %s NOT written: it resolves to %s" % (short, lib.short(where))
     repo_owned = lib.repo_owns_tracked_files(prof)
     ignored, gi_line = lib.ensure_ignored(ctx.apply, ppath, ".codex/", repo_owned)
-    claim_ignore_line(ctx.apply, ppath, ".codex/", gi_line, repo_owned, "codex", "codex")
+    owned.claim_ignore_line(ctx.apply, ppath, ".codex/", gi_line, repo_owned, "codex", "codex")
     if not ignored:
         # It carries resolved secrets: never written where git would pick it up.
         return "   ! codex mcp -> %s NOT written%s" % (short, gi_line)

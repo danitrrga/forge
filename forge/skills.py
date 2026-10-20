@@ -564,54 +564,6 @@ def _agents_link(name):
     return os.path.join("..", "..", ".claude", "skills", name)
 
 
-def _exclude_file(ppath):
-    """(the info/exclude file of the repository holding `ppath`, the project's prefix in it), or None
-    where the repository does not answer; the two questions lib._exclude_entry asks before it adds a
-    line there."""
-    common = lib._git_out(ppath, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    prefix = lib._git_out(ppath, "rev-parse", "--show-prefix")
-    return (os.path.join(common, "info", "exclude"), prefix) if common and prefix is not None else None
-
-
-def _has_exact_line(file, line):
-    try:
-        with open(file, encoding="utf-8") as fh:
-            return any(l.strip() == line for l in fh.read().splitlines())
-    except (OSError, UnicodeDecodeError):
-        return False
-
-
-def _claim_ignore_line(prof, gi, entry=".agents/"):
-    """Claim, under part "skills" of the file it sits in, the line forge added to keep `entry` out of
-    version control (lib.ensure_ignored; `gi` is its summary suffix): item ["line", <the line>], owner the
-    profile. That is the project's .gitignore, or the repository's info/exclude for a repo-owned one. A
-    line that was already there is not forge's and is never claimed; one claimed on an earlier run is
-    claimed again while it is still in the file (a run that adds nothing must not drop it) and dropped
-    once it is not. Other lines' claims of the part (another project's, in a shared exclude file) are
-    kept, and a registry with nothing new in it is not rewritten. Called only for an apply."""
-    ppath, owner = prof["project_path"], prof.get("project") or ""
-    registry, _ = owned.load()
-    targets = {os.path.join(ppath, ".gitignore"): entry}
-    exclude_tail = os.path.join("info", "exclude")
-    if gi.startswith(" +exclude") or any(
-            f.endswith(exclude_tail) and any(c.get("part") == "skills" and c["kind"] == "item" and c["at"][:1] == ["line"]
-                                             for c in cs) for f, cs in registry.items()):
-        found = _exclude_file(ppath)
-        if found:
-            targets[found[0]] = "/" + found[1] + entry
-    for file, line in targets.items():
-        prev = [c for c in registry.get(file, []) if c.get("part") == "skills"]
-        at = ["line", line]
-        was = any(c["kind"] == "item" and c["at"] == at for c in prev)
-        new_here = gi.startswith(" +exclude" if file.endswith(exclude_tail) else " +gitignore")
-        keep = [c for c in prev if not (c["kind"] == "item" and c["at"] == at)]
-        if (was or new_here) and _has_exact_line(file, line):
-            keep.append(owned.claim("item", at, line, owner))
-        sig = lambda cs: sorted((c["kind"], c["at"], c["sum"], c["owner"]) for c in cs)  # no part: stored claims carry it
-        if sig(keep) != sig(prev):
-            owned.record(file, keep, True, part="skills")
-
-
 def mirror_for_codex(ctx, prof):
     """Make a project's OWN skills visible to Codex, not just to Claude Code.
 
@@ -670,8 +622,8 @@ def mirror_for_codex(ctx, prof):
         ignored, gi = lib.ensure_ignored(ctx.apply, ppath, ".agents/", lib.repo_owns_tracked_files(prof))
         if not ignored:
             return "   ! codex sees project skills -> %s NOT linked%s" % (lib.short(dst), gi)
-    if ctx.apply:
-        _claim_ignore_line(prof, gi)
+    owned.claim_ignore_line(ctx.apply, ppath, ".agents/", gi, lib.repo_owns_tracked_files(prof), "skills",
+                            prof.get("project") or "")
     created, repointed, pruned = [], [], []
     existing = set(os.listdir(dst)) if os.path.isdir(dst) else set()
 

@@ -603,23 +603,31 @@ def _git_out(ppath, *args):
     return r.stdout.rstrip("\n") if r.returncode == 0 else None
 
 
-def _exclude_entry(apply, ppath, entry):
-    """Add `entry`, anchored to the project's directory, to the repository's info/exclude (git's
-    per-clone ignore file, which no commit carries) for a project whose .gitignore the repo owns.
-    Returns the summary suffix ("" when the line is already there), or None when it cannot be done:
-    git does not answer, or the file is a link (write_text would replace its target) or is not
-    UTF-8; the caller then refuses as it always did. `--git-common-dir` is the main repository's
-    directory for a linked worktree too (`--git-path` resolves a link before this could see it),
-    and `--show-prefix` is where ppath sits in the repository, so a project that
-    is a directory of a larger repository does not hide `entry` in all of it."""
+def exclude_site(ppath, entry):
+    """(the repository's info/exclude file, the line that hides `entry` there) for the project at `ppath`,
+    or None when git does not answer. `--git-common-dir` is the main repository's directory for a linked
+    worktree too (`--git-path` resolves a link before this could see it), and `--show-prefix` is where
+    ppath sits in the repository, so a project that is a directory of a larger repository does not hide
+    `entry` in all of it."""
     common = _git_out(ppath, "rev-parse", "--path-format=absolute", "--git-common-dir")
     prefix = _git_out(ppath, "rev-parse", "--show-prefix")
     if not common or prefix is None:
         return None
-    ex = os.path.join(common, "info", "exclude")
+    return os.path.join(common, "info", "exclude"), "/" + prefix + entry
+
+
+def _exclude_entry(apply, ppath, entry):
+    """Add `entry`, anchored to the project's directory, to the repository's info/exclude (git's
+    per-clone ignore file, which no commit carries) for a project whose .gitignore the repo owns.
+    Returns the summary suffix ("" when the line is already there), or None when it cannot be done:
+    git does not answer (exclude_site), or the file is a link (write_text would replace its target) or is
+    not UTF-8; the caller then refuses as it always did."""
+    site = exclude_site(ppath, entry)
+    if site is None:
+        return None
+    ex, line = site
     if os.path.islink(ex):
         return None
-    line = "/" + prefix + entry
     try:
         with open(ex, encoding="utf-8") as fh:
             cur = fh.read()

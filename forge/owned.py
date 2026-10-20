@@ -259,3 +259,38 @@ def claim_backup(bak, apply):
         record(bak, [claim("file", [], text, "core")], apply, part="bak")
     except (OSError, UnicodeDecodeError):
         pass
+
+
+def claim_ignore_line(apply, ppath, entry, suffix, repo_owned, part, owner):
+    """Claim the ignore line lib.ensure_ignored(apply, ppath, entry, repo_owned) has just ensured, whose
+    summary suffix is `suffix`, as the item ["line", <the line>] of the file that holds it, under `part`:
+    the repository's info/exclude (lib.exclude_site) for a repo-owned project, the project's .gitignore for
+    any other. Only a line forge added is claimed: the suffix says "+exclude" or "+gitignore" when it did. A
+    line that was there before is not, and one claimed on an earlier run stays claimed while a line of the
+    file is still it (current's test) and loses its claim once it is not. The claims of the same part for any
+    other line are kept where they are: another project's, in a shared exclude file, or another writer's.
+    Nothing for a dry-run (the suffix then says "would add") or where git cannot say which file."""
+    if not apply:
+        return False
+    site = lib.exclude_site(ppath, entry) if repo_owned else (os.path.join(ppath, ".gitignore"), entry)
+    if site is None:
+        return False
+    file, line = site
+    mine = ["line", line]
+    added = suffix.startswith(" +exclude" if repo_owned else " +gitignore")
+    now = claim("item", mine, line, owner)
+    prev, _ = previous(file, part)
+    out, seen = [], False
+    for c in prev:
+        if c["kind"] == "item" and c["at"] == mine:
+            seen = True
+            try:
+                if added or current(file, now)[0]:
+                    out.append(now)
+            except lib.Unreadable:  # a file that cannot be read does not hold the line
+                pass
+        else:
+            out.append(c)
+    if added and not seen:
+        out.append(now)
+    return record(file, out, apply, part)

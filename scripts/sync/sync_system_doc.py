@@ -35,7 +35,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 ROOT_FS = ROOT.replace("\\", "/")  # forward-slash form for doc text
 CANON = os.path.join(ROOT, "docs", "AGENT-SYSTEM.md")
 sys.path.insert(0, ROOT)
-from forge import lib, mcp, owned  # noqa: E402
+from forge import lib, owned  # noqa: E402
 # A SessionStart run writes its own project only; a refused --apply is a dry-run.
 CTX = lib.context(sys.argv[1:])
 PART = "system-doc"  # this script's share of the ownership record's claims on a file
@@ -127,7 +127,7 @@ def ensure_gitignore(proj_dir, changes):
         return True
     gi = os.path.join(proj_dir, ".gitignore")
     ignored, suffix = lib.ensure_ignored(CTX.apply, proj_dir, ".claude/AGENT-SYSTEM.md", False)
-    mcp.claim_ignore_line(CTX.apply, proj_dir, ".claude/AGENT-SYSTEM.md", suffix, False, PART, "core")
+    owned.claim_ignore_line(CTX.apply, proj_dir, ".claude/AGENT-SYSTEM.md", suffix, False, PART, "core")
     if not ignored:
         changes.append(("SKIP-gitignore(a symlink, which git does not read)", gi))
     elif suffix:

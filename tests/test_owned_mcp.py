@@ -286,6 +286,20 @@ check("C12: a .codex/ line that was already there is not claimed", claims(gi_i) 
 run_codex(APPLY, prof(pi, "toy-i"), ["srv"])
 check("C12: nor on a second apply", claims(gi_i) == [], claims(gi_i))
 
+# simplify-5 T2: a claimed line the user rewrites to its slash-less form is no longer the line forge wrote: the
+# claim goes, as the doctor row and uninstall (owned.current's exact line test) already read it. Seen failing on
+# ebc4601, whose mcp._holds_line took the slash-less form for the line:
+#   FAIL C12: a claimed .codex/ line rewritten as `.codex` loses its claim -- [{'kind': 'item', 'at': ['line', '.codex/'], ...
+drop_registry()
+pq = project(gitignore="node_modules/\n")
+gi_q = os.path.join(pq, ".gitignore")
+run_codex(APPLY, prof(pq, "toy-q"), ["srv"])
+check("control: the line was claimed before it was rewritten", len(claims(gi_q, "codex")) == 1, raw())
+with open(gi_q, "w", encoding="utf-8") as fh:
+    fh.write("node_modules/\n.codex\n")
+run_codex(APPLY, prof(pq, "toy-q"), ["srv"])
+check("C12: a claimed .codex/ line rewritten as `.codex` loses its claim", claims(gi_q, "codex") == [], claims(gi_q, "codex"))
+
 # A line the user already had without the slash is the same line to git, and not claimed either.
 drop_registry()
 pj = project(gitignore=".codex\n")
