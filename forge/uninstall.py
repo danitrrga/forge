@@ -25,7 +25,8 @@ directory was (~/.cache/forge, the state directory) is removed as a link; a sett
 that is a link and is left empty is written through, never unlinked.
 
 Left in place and said: GSD's agents and engine in ~/.claude (the command that removes them is printed), a
-.bak older than the record, and the checkout itself (the command that deletes it is printed, never run)."""
+.bak older than the record, a project's `.codex/` and `.agents/skills/` that forge made (they stay, empty and
+unnamed), and the checkout itself (the command that deletes it is printed, never run)."""
 import collections
 import json
 import os

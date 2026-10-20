@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """forge/owned.py, the record of what forge wrote (increment I2 of step 10, task T1): ~/.local/state/forge/
 owned.json holds, per file forge merged into, one claim per value it put there -- kind, JSON path, the
-SHA-256 of the value and the owner, never the value, since a resolved env holds secrets. Nothing calls
-the module yet; this is its core alone: claim, digest, load, previous, stale, removable, record.
+SHA-256 of the value and the owner, never the value, since a resolved env holds secrets. The module's core:
+claim, digest, load, previous, stale, removable, record.
 
 HOME is a toy dir set before forge.lib is imported (lib.STATE is computed at import), so the registry
 under test is the toy's. lib.may_write() is stubbed to allow in the cases that write, because this

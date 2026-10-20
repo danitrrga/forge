@@ -1,4 +1,4 @@
-"""The record of what forge wrote: the core of step 10, increment I2.
+"""The record of what forge wrote.
 
 forge decides what in a shared file is its own without state (an exact command, a file shape, a
 declaration), so something it wrote outlives its source: a permission taken out of a profile stays in
@@ -20,9 +20,9 @@ command), never a list index, which moves. `owner` is core, an
 integration's name or a profile. `part` is optional and names one writer's share of a file, so several writers
 can claim in the same file without erasing each other: record(file, claims, apply, part="skills") replaces only
 the claims of that part and previous(file, part) returns only those. Without `part` (None) a call means the
-whole file's claims, as before, and a claim without a "part" field (every registry written before parts
+whole file's claims, and a claim without a "part" field (every registry written before parts
 existed) counts as part None; the field is omitted when None, so the version stays 1. A part is a short string
-such as "skills" or "gitignore:system-doc"; "bak" is the one core uses for a `.bak` file forge created (below).
+such as "skills" or "system-doc"; "bak" is the one core uses for a `.bak` file forge created (below).
 Only the SHA-256 of a value is kept, never the value: a resolved env
 holds secrets, and the record must not become another place they live. The file is written 0600, because
 the hash of a short secret can be guessed.
@@ -32,7 +32,7 @@ write_text's .bak branch: kind `file`, `at` [], `sum` the digest of its content 
 is never stored), part "bak", keyed by the .bak's own path, so that a later uninstall can delete it if it is
 still what forge copied. A `.bak` that existed before is never claimed: write_text does not create it.
 
-How a caller uses it (forge/skills.py and forge/hooks.py wire it in a later task):
+How a caller uses it (hooks.reconcile_owned and skills.write_settings_local follow this pattern):
 
     prev, warn = owned.previous(path)                 # what the last run recorded for this file; print warn if any
     now = [owned.claim(kind, at, value, owner), ...]  # what this run puts there
