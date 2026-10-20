@@ -26,7 +26,10 @@ Negative controls, run every time, each in a world of its own:
   removable() made to ignore the digest (in the world's copy of forge/owned.py): the edited env is deleted,
   and the env check of the main world would have failed;
   owned.json removed: the claim part says NOT RUN, NOT ARMED and the by-construction count is above 0;
-  a world where nothing ran: FAIL, looked at zero, exit 1.
+  a world where nothing ran: a whole uninstall says nothing is left of forge, exit 0; --integration gsd there is
+  still FAIL, looked at zero, exit 1.
+The round-11 findings (docs/audits/round-11.md) each have a world of their own below the main one, every comment
+quoting what was seen on 34c191b: 23 of 89 checks red on that code.
 
 Seen failing on 2af06d1 (this file as it is), 28 of 44 checks: "doctor right after the sync: PASS over every
 claim kind -- WARN could not read: .../projects/app/.gitignore (.../projects/app/.gitignore unreadable
@@ -310,6 +313,181 @@ check("apply: the output names GSD's removal command", "get-shit-done-cc" in out
 check("apply: the output ends with the command that deletes the checkout, never run",
       "rm -rf %s" % w.root in out.strip().splitlines()[-1] and os.path.isdir(w.root), sandbox.tail(out, 2))
 
+# ---------------------------------------------------------------- round-11 findings (docs/audits/round-11.md)
+BEGIN_MARK = "<!-- BEGIN LIFEOS-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
+END_MARK = "<!-- END LIFEOS-SYSTEM-POINTER -->"
+
+
+def settings_rows(w, event="SessionStart"):
+    return [h.get("command") for g in (load(w.settings).get("hooks") or {}).get(event, []) for h in g.get("hooks", [])]
+
+
+def bang_lines(out, *words):
+    return [l for l in out.splitlines() if l.startswith("  ! ") and all(x in l for x in words)]
+
+
+# F1 and F4: --project N on a frozen parent leaves a live profile nested under N's project_path alone.
+# Red on 34c191b: the dry-run listed '.../projects/app/sub/.claude/settings.local.json -> would remove 3 claim(s)'
+# and `--project app --apply` deleted sub's settings.local.json and .codex/config.toml.
+w = World("nested")
+sub = os.path.join(w.app, "sub")
+write(os.path.join(sub, "CLAUDE.md"), "# sub\n")
+sandbox.git(sub, "init", "-q")
+write_json(os.path.join(w.root, "config", "profiles", "sub.claude.json"), {
+    "project": "sub", "project_path": sub, "servers": ["toy-echo"], "env": {"SUB_FLAG": "1"},
+    "permissions": {"allow": ["Bash(sub-only-rule)"]}, "skills_keep": ["toy-common"], "plugins_keep": [], "command_guard": True})
+code, out = w.forge("sync", "--all", "--apply")
+check("nested: the sync builds both profiles", code == 0 and os.path.isfile(os.path.join(sub, ".claude", "settings.local.json")), sandbox.tail(out, 6))
+sub_files = sorted(f for f in load(w.registry)["claims"] if f.startswith(sub + os.sep))
+check("control: the record holds claims under the nested project -- %s" % [f.replace(w.top, "W") for f in sub_files], len(sub_files) >= 2)
+sub_manifest = {k: v for k, v in w.manifest().items() if k.startswith("projects/app/sub")}
+prof = load(os.path.join(w.root, "config", "profiles", "app.claude.json"))
+prof["frozen"] = True
+write_json(os.path.join(w.root, "config", "profiles", "app.claude.json"), prof)
+code, out = w.forge("uninstall", "--project", "app")
+check("nested: the dry-run of --project app names nothing under the nested project -- %s"
+      % [l for l in out.splitlines() if "app/sub" in l][:3], "app/sub" not in out, out)
+code, out = w.forge("uninstall", "--project", "app", "--apply")
+check("nested: --project app --apply exits 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+after = {k: v for k, v in w.manifest().items() if k.startswith("projects/app/sub")}
+check("nested: not a byte under the nested live project changed -- %s" % sorted(k for k in set(sub_manifest) | set(after) if sub_manifest.get(k) != after.get(k))[:6],
+      sub_manifest == after)
+check("nested: the nested project's claims stay in the record", all(f in load(w.registry)["claims"] for f in sub_files))
+check("nested: the project's own settings.local.json is gone (control: the run did something)", not os.path.exists(w.slp))
+
+# F2: an unreadable record is refused, and the record and the state directory stay for repair.
+# Red on 34c191b: exit 0 for --apply; '! could not read .../owned.json ... nothing will be removed', then
+# '~/.local/state/forge -> remove', owned.json gone and every claimed value left in place.
+w = World("badrec")
+raw = read(w.registry)
+write(w.registry, raw[:len(raw) // 2])
+code, out = w.forge("uninstall")
+check("unreadable record, dry-run: exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 1, out)
+code, out = w.forge("uninstall", "--apply")
+check("unreadable record, --apply: exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 1 and bang_lines(out, "owned.json"), out)
+check("unreadable record, --apply: the record and the state directory stay",
+      os.path.exists(w.registry) and read(w.registry) == raw[:len(raw) // 2])
+check("unreadable record, --apply: the SessionStart row and claimed values stay",
+      any("bin/forge session-start" in r for r in settings_rows(w)) and os.path.exists(w.slp) and os.path.exists(w.codex_hooks))
+
+# F3: a settings.local.json or hooks.json that is a link and is left empty keeps its link; the emptied document is
+# written through it. Red on 34c191b: both links gone (islink False) and forge's rows left in the targets.
+w = World("links")
+dots = os.path.join(w.top, "dotfiles")
+os.makedirs(dots)
+for src, name in ((w.codex_hooks, "hooks.json"), (w.slp, "settings.local.json")):
+    shutil.move(src, os.path.join(dots, name))
+    os.symlink(os.path.join(dots, name), src)
+code, out = w.forge("uninstall", "--apply")
+check("linked json: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+check("linked json: both links are still links -- %s" % [os.path.islink(p) for p in (w.codex_hooks, w.slp)],
+      os.path.islink(w.codex_hooks) and os.path.islink(w.slp))
+check("linked json: the targets hold no forge row, and are {} -- %s" % [read(os.path.join(dots, n)) for n in ("hooks.json", "settings.local.json")],
+      all(load(os.path.join(dots, n)) == {} for n in ("hooks.json", "settings.local.json")))
+
+# F5 and F7: SessionStart. An edited row of forge's is named and never removed, by this run or the next; a user hook
+# whose command only starts like forge's is not forge's. Red on 34c191b: no '!' line, the row deleted by the
+# second run; and 'session-start-audit' deleted with no record.
+w = World("edited")
+s = load(w.settings)
+row = next(h for g in s["hooks"]["SessionStart"] for h in g["hooks"] if "bin/forge session-start" in h["command"])
+row["command"] += " ; echo mine-after-forge"
+mine = row["command"]
+write_json(w.settings, s)
+code, out = w.forge("uninstall", "--apply")
+check("edited SessionStart row: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+check("edited SessionStart row: named on a '  ! ' line -- %s" % sandbox.tail(out, 8), bang_lines(out, "SessionStart", "edited"), out)
+check("edited SessionStart row: left in place", mine in settings_rows(w), settings_rows(w))
+code, out = w.forge("uninstall", "--apply")
+check("edited SessionStart row: the next uninstall leaves it too -- %s" % settings_rows(w), mine in settings_rows(w), out)
+
+w = World("prefix")
+os.remove(w.registry)
+s = load(w.settings)
+audit = "python3 %s/bin/forge session-start-audit" % w.root
+s["hooks"]["SessionStart"][0]["hooks"].append({"type": "command", "command": audit})
+write_json(w.settings, s)
+code, out = w.forge("uninstall", "--apply")
+rows = settings_rows(w)
+check("user hook that only starts like forge's row, no record: stays -- %s" % rows, audit in rows, out)
+check("control: forge's own row goes with no record -- %s" % rows, not any(r.startswith("python3 %s/bin/forge session-start ||" % w.root) for r in rows), rows)
+
+# F6 and F8: the pointer block is forge's pair only when CLAUDE.md holds exactly one BEGIN and one END, BEGIN first;
+# otherwise the file is left and named. Red on 34c191b: A: 'IMPORTANT USER NOTE' deleted and the sentence cut;
+# B: the first pair removed, the second pair left unnamed.
+w = World("markers")
+md = os.path.join(w.app, "CLAUDE.md")
+synced = read(md)
+block = synced[synced.index(BEGIN_MARK):synced.index(END_MARK) + len(END_MARK)]
+check("control: the synced CLAUDE.md holds forge's block", block.startswith(BEGIN_MARK) and block.endswith(END_MARK))
+quoted = "# app\n\nforge puts its block between %s markers.\n\nIMPORTANT USER NOTE: never commit the staging database.\n\n%s\n" % (BEGIN_MARK, block)
+write(md, quoted)
+code, out = w.forge("uninstall", "--apply")
+check("a stray BEGIN before forge's block: CLAUDE.md untouched and named -- %r" % read(md)[:120],
+      read(md) == quoted and bang_lines(out, "CLAUDE.md"), out)
+twice = "%s\n\nMY NOTES\n\n%s\n" % (block, block)
+write(md, twice)
+code, out = w.forge("uninstall", "--apply")
+check("a block pasted twice: CLAUDE.md untouched and named -- %r" % read(md)[:120], read(md) == twice and bang_lines(out, "CLAUDE.md"), out)
+
+# F9: the canonical docs/AGENT-SYSTEM.md is missing. Red on 34c191b: 'Traceback ... FileNotFoundError' in both runs.
+w = World("nodoc")
+os.rename(os.path.join(w.root, "docs", "AGENT-SYSTEM.md"), os.path.join(w.top, "AGENT-SYSTEM.md.aside"))
+for args in ((), ("--apply",)):
+    code, out = w.forge("uninstall", *args)
+    check("canonical doc missing %s: no traceback, a '  ! ' line, exit 1 -- exit %d: %s" % (args, code, sandbox.tail(out, 3)),
+          "Traceback" not in out and code == 1 and bang_lines(out, "AGENT-SYSTEM.md"), out)
+check("canonical doc missing: the project's copy stays", os.path.isfile(os.path.join(w.app, ".claude", "AGENT-SYSTEM.md")))
+
+# F11 and F17: ~/.cache/forge and ~/.local/state/forge as links are removed as links, their targets kept.
+# Red on 34c191b: 'OSError: Cannot call rmtree on a symbolic link', exit 1, the SessionStart row and the record left.
+w = World("symdirs")
+cache, state = os.path.join(w.home, ".cache", "forge"), os.path.dirname(w.registry)
+elsewhere = os.path.join(w.top, "elsewhere")
+os.makedirs(elsewhere)
+for d, n in ((cache, "cache"), (state, "state")):
+    shutil.move(d, os.path.join(elsewhere, n))
+    os.symlink(os.path.join(elsewhere, n), d)
+code, out = w.forge("uninstall", "--apply")
+check("symlinked cache and state dirs: no traceback, exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), "Traceback" not in out and code == 0, out)
+check("symlinked cache and state dirs: the links are gone -- %s" % [os.path.lexists(d) for d in (cache, state)],
+      not os.path.lexists(cache) and not os.path.lexists(state))
+check("symlinked cache and state dirs: their targets stay", all(os.path.isdir(os.path.join(elsewhere, n)) for n in ("cache", "state")))
+check("symlinked cache and state dirs: the SessionStart row is gone", not settings_rows(w))
+
+# F12: a second whole uninstall finds nothing left of forge: exit 0, no FAIL, the state directory not made and unmade.
+# Red on 34c191b: exit 1, 'FAIL: looked at zero: no ownership record and nothing forge made by construction' and
+# '~/.local/state/forge -> remove' printed for the directory the run's own lock made.
+w = World("twice")
+code, out = w.forge("uninstall", "--apply")
+code, out = w.forge("uninstall", "--apply")
+check("second whole uninstall: exit 0, nothing left of forge -- exit %d: %s" % (code, sandbox.tail(out, 4)),
+      code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
+check("second whole uninstall: no line for the state directory, and none left",
+      ".local/state/forge ->" not in out and not os.path.lexists(os.path.dirname(w.registry)), out)
+
+# F18: the record is read under lib.lock. The driver stands for a sync that recorded a claim just before uninstall got
+# the lock. Red on 34c191b: extra.txt is still there, its claim missing from the record uninstall read before the lock.
+w = World("race")
+extra = os.path.join(w.home, "extra.txt")
+write(extra, "forge wrote this\n")
+driver = r"""
+import argparse, contextlib, sys
+sys.path.insert(0, %r)
+from forge import lib, owned, uninstall
+orig = lib.lock
+@contextlib.contextmanager
+def racing(*a, **k):
+    with orig(*a, **k):
+        owned.record(%r, [owned.claim("file", [], "forge wrote this\n", "core")], True)
+        yield
+lib.lock = racing
+sys.exit(uninstall.main(argparse.Namespace(integration=None, project=None, apply=True)))
+""" % (w.root, extra)
+r = subprocess.run([sys.executable, "-c", driver], cwd=w.root, env=w.env, capture_output=True, text=True, timeout=600)
+check("race: exit 0 -- exit %d: %s" % (r.returncode, sandbox.tail(r.stdout + r.stderr, 3)), r.returncode == 0, r.stdout + r.stderr)
+check("race: a claim recorded before the lock was taken is removed", not os.path.exists(extra), r.stdout)
+
 # ---------------------------------------------------------------- negative controls
 # removable() ignoring the digest: the edited env goes, which the main world's check catches.
 m = World("mutant")
@@ -333,10 +511,13 @@ check("no record: the claim part says NOT RUN, NOT ARMED -- %s" % sandbox.tail(o
 check("no record: the by-construction count is above 0, exit 0 -- exit %d, %r" % (code, seen),
       code == 0 and seen is not None and seen[1] > 0, out)
 
-# Nothing ran: looked at zero is a FAIL.
+# Nothing there: a whole uninstall says so and exits 0; a scoped one that looked at zero is still a FAIL.
 e = World("empty", sync=False)
 code, out = e.forge("uninstall")
-check("an empty world: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
+check("an empty world, whole: exit 0, nothing left of forge -- exit %d: %s" % (code, sandbox.tail(out, 3)),
+      code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
+code, out = e.forge("uninstall", "--integration", "gsd")
+check("an empty world, --integration gsd: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 1 and "FAIL" in out and "looked at zero" in out, out)
 
 print("%d checks, %d failed" % (n_checks[0], len(failures)))

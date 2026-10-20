@@ -18,11 +18,15 @@ N's claims and what N has by construction; `--project N`, refused unless the pro
 lies under its project_path and its part of ~/.claude.json. A dry-run unless --apply, and a dry-run writes
 nothing at all; --apply writes through lib (lib.may_write) under lib.lock, ~/.claude.json only when nobody
 wrote it since it was read. It never reads config/secrets.json or credentials/: it decides by digests.
+An ownership record that cannot be read stops every scope (exit 1, the record stays for repair); no record at
+all is "only what forge makes by construction", and a whole uninstall that finds nothing says nothing is left
+(exit 0). `--project N` leaves what lies under another profile's project_path inside N's. A link where a
+directory was (~/.cache/forge, the state directory) is removed as a link; a settings.local.json or hooks.json
+that is a link and is left empty is written through, never unlinked.
 
 Left in place and said: GSD's agents and engine in ~/.claude (the command that removes them is printed), a
 .bak older than the record, and the checkout itself (the command that deletes it is printed, never run)."""
 import collections
-import contextlib
 import importlib.util
 import json
 import os
@@ -30,7 +34,7 @@ import re
 import shutil
 import sys
 
-from forge import lib, mcp, owned, skills
+from forge import hooks, lib, mcp, owned, skills
 
 USER_SETTINGS = os.path.join(lib.HOME, ".claude", "settings.json")
 CLAUDE_JSON = os.path.join(lib.HOME, ".claude.json")
@@ -62,9 +66,15 @@ def _inside(p, d):
 
 
 def _session_start(cmd):
-    """Whether hook command `cmd` runs this checkout's `forge session-start` (lib.installed_root's reading)."""
-    m = re.search(r"(\S+)/bin/forge session-start", cmd) if isinstance(cmd, str) else None
+    """Whether hook command `cmd` runs this checkout's `forge session-start`, with whatever else it says
+    (lib.installed_root's reading, with an end: `session-start-audit` is another command)."""
+    m = re.search(r"(\S+)/bin/forge session-start(?:\s|$)", cmd) if isinstance(cmd, str) else None
     return bool(m) and os.path.realpath(m.group(1)) == os.path.realpath(lib.ROOT)
+
+
+def _session_row():
+    """The command of the SessionStart row this checkout writes (hooks.USER_HOOKS), byte for byte."""
+    return next((row[1] for row in hooks.USER_HOOKS if row[3] == "forge session-start"), None)
 
 
 def _get(doc, path):
@@ -101,6 +111,14 @@ def _drop_entries(doc, event, drop):
     if n:
         _prune(doc, ["hooks", event])
     return n
+
+
+def _hook_entries(doc):
+    """Every well-formed hook entry of doc["hooks"], whatever its event."""
+    hooks = doc.get("hooks")
+    return [h for groups in (hooks.values() if isinstance(hooks, dict) else []) if isinstance(groups, list)
+            for g in groups if isinstance(g, dict) and isinstance(g.get("hooks"), list)
+            for h in g["hooks"] if isinstance(h, dict)]
 
 
 def _drop_hooks(doc, drop):
@@ -163,8 +181,15 @@ class Run:
             return
         for path, f in files.items():
             if f["kind"] == "tree":
-                if os.path.isdir(path):
-                    shutil.rmtree(path)
+                if os.path.islink(path):  # a link to a directory goes as a link, its target stays
+                    lib.unlink(path)
+                    self.changes.append(("unlink", path))
+                elif os.path.isdir(path):
+                    try:
+                        shutil.rmtree(path)
+                    except OSError as e:
+                        self.fail("%s could not be removed (%s)" % (lib.short(path), e))
+                        continue
                     lib.record("rmtree", path)
                     self.changes.append(("rmtree", path))
                 continue
@@ -173,7 +198,7 @@ class Run:
             # Left empty by this run: a settings.local.json or ~/.codex/hooks.json at {}, a text file with nothing in it.
             emptied = (f["doc"] == {} and (path.endswith(os.sep + SLP) or path == CODEX_HOOKS) if f["kind"] == "json"
                        else f["kind"] == "text" and not f["doc"].strip())
-            if f["kind"] == "delete" or emptied:
+            if f["kind"] == "delete" or (emptied and not os.path.islink(path)):  # an emptied link is written through
                 if os.path.lexists(path):
                     lib.unlink(path)
                     self.changes.append(("unlink", path))
@@ -217,6 +242,9 @@ class Scope:
         if a.project and not self.ppaths and not self.refusal:
             self.refusal = "%s: no profile with a project_path and no claim of it in the record" % a.project
         self.real = [os.path.realpath(p) for p in self.ppaths]
+        # Another profile's tree inside this project's is its own: a path belongs to the longest project_path.
+        others = {os.path.realpath(p["project_path"]) for n, p in profs.items() if n != a.project and p.get("project_path")}
+        self.nested = [o for o in others if any(o != d and _inside(o, d) for d in self.real)] if a.project else []
         self.keys = {"mcp:" + mcp.project_key(p) for p in self.ppaths}
 
     def has(self, *what):
@@ -225,7 +253,7 @@ class Scope:
 
     def under(self, path):
         d = os.path.realpath(os.path.dirname(path))
-        return any(_inside(d, p) for p in self.real)
+        return any(_inside(d, p) for p in self.real) and not any(_inside(d, n) for n in self.nested)
 
     def _takes(self, file, c):
         if self.whole:
@@ -381,11 +409,16 @@ def _project_files(run, pp, doc_mod):
     copy = os.path.join(pp, ".claude", "AGENT-SYSTEM.md")
     if os.path.lexists(copy):
         n += 1
-        if not os.path.islink(copy) and lib.holds(copy, doc_mod.GEN_BANNER + _read(doc_mod.CANON)):
-            run.delete(copy)
-            run.say("   %s -> %s" % (lib.short(copy), run.verb("remove")))
+        try:
+            ours = not os.path.islink(copy) and lib.holds(copy, doc_mod.GEN_BANNER + _read(doc_mod.CANON))
+        except OSError as e:
+            run.fail("%s left in place: %s cannot be read (%s), so the copy cannot be compared" % (lib.short(copy), lib.short(doc_mod.CANON), e.strerror))
         else:
-            run.say("  ! %s is not the copy forge writes, left in place" % lib.short(copy))
+            if ours:
+                run.delete(copy)
+                run.say("   %s -> %s" % (lib.short(copy), run.verb("remove")))
+            else:
+                run.say("  ! %s is not the copy forge writes, left in place" % lib.short(copy))
     md = os.path.join(pp, "CLAUDE.md")
     try:
         text = None if os.path.islink(md) else run.text(md)
@@ -394,8 +427,8 @@ def _project_files(run, pp, doc_mod):
     if text is not None and (doc_mod.BEGIN in text or doc_mod.END in text):
         n += 1
         b, e = text.find(doc_mod.BEGIN), text.find(doc_mod.END)
-        if b < 0 or e < b:
-            run.say("  ! %s: the pointer block's markers are broken, left in place" % lib.short(md))
+        if (text.count(doc_mod.BEGIN), text.count(doc_mod.END)) != (1, 1) or e < b:  # forge writes exactly one pair
+            run.say("  ! %s: the markers are not one BEGIN then one END, left in place" % lib.short(md))
         else:
             head, tail = text[:b].rstrip("\n"), text[e + len(doc_mod.END):].lstrip("\n")
             new = head + ("\n\n" if head and tail else "\n" if head else "") + tail
@@ -430,48 +463,67 @@ def _old_baks(scope, claims):
 
 def _last(run, scope, deferred):
     """forge's SessionStart row in ~/.claude/settings.json: through its claim when the record holds it, else by
-    its exact command. Returns how many items it found by construction (0 or 1)."""
+    its exact command; a row that runs forge's session-start with anything changed is the user's, and named.
+    Returns how many items it found by construction (0 or 1)."""
     if deferred:
         _claims(run, deferred)
-        run.commit()
-        return 0
     try:
         doc = run.json(USER_SETTINGS)
     except lib.Unreadable as e:
-        run.fail("%s could not be read (%s): forge's SessionStart row is left in place" % (lib.short(USER_SETTINGS), e.reason))
+        if not deferred:  # the claims above named it
+            run.fail("%s could not be read (%s): forge's SessionStart row is left in place" % (lib.short(USER_SETTINGS), e.reason))
         return 0
-    k = _drop_hooks(doc, lambda g, h: _session_start(h.get("command"))) if doc is not None else 0
+    row = _session_row()
+    k = 0 if deferred or doc is None or row is None else _drop_hooks(doc, lambda g, h: h.get("command") == row)
     if k:
         run.say("   %s -> %s forge's SessionStart row" % (lib.short(USER_SETTINGS), run.verb("remove")))
+    if doc is not None and any(_session_start(h.get("command")) for h in _hook_entries(doc)):
+        run.say("  ! %s: a SessionStart row that runs forge's session-start was edited, left in place" % lib.short(USER_SETTINGS))
     run.commit()
     return 1 if k else 0
 
 
+def _record():
+    """(claims, warning): the ownership record's claims, None when there is no record to go by."""
+    claims, warn = owned.load()
+    return (None if warn or not os.path.exists(owned.path()) else claims), warn
+
+
+def _plan(a):
+    """(scope, claims, lines): what the record and the arguments allow, and the '!' lines that stop the run."""
+    claims, warn = _record()
+    scope = Scope(a, claims)
+    if scope.refusal:
+        return scope, claims, ["  ! " + scope.refusal]
+    if warn:  # nothing is known of what forge wrote: the record stays for repair, not deleted with the state directory
+        return scope, claims, [warn, "  ! the record is kept: repair it, or delete it to uninstall only what forge makes by construction"]
+    return scope, claims, []
+
+
 def main(a):
     """forge uninstall [--integration N | --project N] [--apply]: 0, or 1 on a FAIL or a refusal."""
-    claims, warn = owned.load()
-    if warn or not os.path.exists(owned.path()):
-        claims = None  # no record to go by
-    scope = Scope(a, claims)
+    scope, claims, stop = _plan(a)
     print("forge uninstall: %s (%s)" % (scope.name, "APPLY" if a.apply else "dry-run: nothing is written; --apply removes"), flush=True)
-    if scope.refusal:
-        print("  ! " + scope.refusal)
-        return 1
-    if a.apply:
+    if not stop and a.apply:
         ok, why = lib.may_write()
-        if not ok:
-            print("  ! " + why)
-            return 1
+        stop = [] if ok else ["  ! " + why]
+    if stop:
+        print("\n".join(stop))
+        return 1
     run = Run(a.apply)
     had_state = os.path.isdir(lib.STATE)  # before lib.lock, which makes it
-    with lib.lock() if a.apply else contextlib.nullcontext():
-        return _uninstall(run, scope, claims, warn, had_state)
+    if not a.apply:
+        return _uninstall(run, scope, claims, had_state)
+    with lib.lock():
+        scope, claims, stop = _plan(a)  # the record as a sync that ran before the lock left it
+        if stop:
+            print("\n".join(stop))
+            return 1
+        return _uninstall(run, scope, claims, had_state)
 
 
-def _uninstall(run, scope, claims, warn, had_state):
+def _uninstall(run, scope, claims, had_state):
     if claims is None:
-        if warn:
-            run.say(warn)
         run.say("== claims == NOT RUN, NOT ARMED: no ownership record (%s); only what forge makes by construction"
                 % lib.short(owned.path()))
         chosen = []
@@ -497,7 +549,8 @@ def _uninstall(run, scope, claims, warn, had_state):
     lib.journal(run.changes, "uninstall", scope.name)  # nothing for a dry-run, which changes nothing
     if scope.whole and not run.failed and os.path.isdir(lib.STATE):
         run.delete(lib.STATE, tree=True)
-        run.say("   %s -> %s" % (lib.short(lib.STATE), run.verb("remove")))
+        if had_state:  # else the run's own lock made it
+            run.say("   %s -> %s" % (lib.short(lib.STATE), run.verb("remove")))
         run.commit()
     baks = _old_baks(scope, claims)
     if baks:
@@ -506,8 +559,10 @@ def _uninstall(run, scope, claims, warn, had_state):
             run.say("   " + lib.short(b))
     run.say("looked at %d claim(s) and %d item(s) forge made by construction" % (len(chosen), items))
     if claims is None and not items:
-        run.say("FAIL: looked at zero: no ownership record and nothing forge made by construction")
-        return 1
+        if not (scope.whole and not run.failed):
+            run.say("FAIL: looked at zero: no ownership record and nothing forge made by construction")
+            return 1
+        run.say("nothing left of forge on this machine: no ownership record, no state directory, nothing made by construction")
     if scope.whole or scope.integration == "gsd":
         run.say("GSD's agents and engine stay installed in ~/.claude; to remove them: " + GSD_REMOVE)
     if scope.whole:
