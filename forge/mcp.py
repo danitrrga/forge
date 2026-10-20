@@ -10,7 +10,7 @@ import os
 import re
 import tomllib
 
-from forge import lib
+from forge import lib, owned
 
 VARRE = re.compile(r"^\$\{(\w+)\}$")
 
@@ -55,6 +55,71 @@ def migrate_project_keys(cj, relocations):
             merge_project_entry(projects[new], old_state)
         changed.append((old, new))
     return changed
+
+
+def record_claims(file, claims, apply, part=None):
+    """owned.record, but a run that would record what the registry already holds writes nothing. owned.record
+    moves the part it replaces to the end of the file's claims, so with several parts in one file (~/.claude.json
+    holds one per project) each record would leave the registry in another order than the next, and a run that
+    changed nothing would write it twice. Equal means the same (kind, at, sum, owner) in the same order."""
+    if not apply:
+        return False
+    key = lambda c: (c["kind"], c["at"], c["sum"], c["owner"])
+    prev, _ = owned.previous(file, part)
+    if [key(c) for c in prev] == [key(c) for c in claims]:
+        return False
+    return owned.record(file, claims, apply, part)
+
+
+def _ignore_site(ppath, entry, repo_owned):
+    """(the file ensure_ignored puts `entry` in, the line it writes there), or None when it cannot be said. A
+    project the repo owns gets the repository's info/exclude and the line anchored to the project's
+    directory (lib._exclude_entry); any other gets its .gitignore and `entry` as it is."""
+    if not repo_owned:
+        return os.path.join(ppath, ".gitignore"), entry
+    common = lib._git_out(ppath, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    prefix = lib._git_out(ppath, "rev-parse", "--show-prefix")
+    if not common or prefix is None:
+        return None
+    return os.path.join(common, "info", "exclude"), "/" + prefix + entry
+
+
+def _holds_line(file, line):
+    """Whether `file` has `line` as a line, with or without a trailing slash (ignore rules read both as one)."""
+    try:
+        with open(file, encoding="utf-8") as fh:
+            return any(l.strip() in (line, line.rstrip("/")) for l in fh.read().splitlines())
+    except (OSError, UnicodeDecodeError):
+        return False
+
+
+def claim_ignore_line(apply, ppath, entry, suffix, repo_owned, part, owner):
+    """Claim the ignore line lib.ensure_ignored(apply, ppath, entry, repo_owned) has just ensured, whose
+    summary suffix is `suffix`, as the item ["line", <the line>] of the file that holds it, under `part`.
+    Only a line forge added is claimed: the suffix says "+gitignore" or "+exclude" when it did. A line that was
+    there before is not, and one claimed on an earlier run stays claimed while it is still in the file. The
+    claims of the same part for any other line are kept where they are: an `.agents/` line is another
+    writer's. Nothing for a dry-run (the suffix then says "would add")."""
+    if not apply:
+        return False
+    site = _ignore_site(ppath, entry, repo_owned)
+    if site is None:
+        return False
+    file, line = site
+    mine = ["line", line]
+    added = suffix.startswith(" +exclude" if repo_owned else " +gitignore")
+    prev, _ = owned.previous(file, part)
+    out, seen = [], False
+    for c in prev:
+        if c["kind"] == "item" and c["at"] == mine:
+            seen = True
+            if added or _holds_line(file, line):
+                out.append(owned.claim("item", mine, line, owner))
+        else:
+            out.append(c)
+    if added and not seen:
+        out.append(owned.claim("item", mine, line, owner))
+    return record_claims(file, out, apply, part)
 
 
 def project_key(path):
@@ -224,7 +289,9 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     where = os.path.realpath(path)
     if where != os.path.join(os.path.realpath(ppath), ".codex", "config.toml"):
         return "   ! codex mcp -> %s NOT written: it resolves to %s" % (short, lib.short(where))
-    ignored, gi_line = lib.ensure_ignored(ctx.apply, ppath, ".codex/", lib.repo_owns_tracked_files(prof))
+    repo_owned = lib.repo_owns_tracked_files(prof)
+    ignored, gi_line = lib.ensure_ignored(ctx.apply, ppath, ".codex/", repo_owned)
+    claim_ignore_line(ctx.apply, ppath, ".codex/", gi_line, repo_owned, "codex", "codex")
     if not ignored:
         # It carries resolved secrets: never written where git would pick it up.
         return "   ! codex mcp -> %s NOT written%s" % (short, gi_line)
@@ -319,6 +386,9 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
         gi_line)
     if ctx.apply and (changed or loose):
         lib.write_text(path, content, mode=0o600, backup=True)
+    if ctx.apply:  # the file holds `content` now, whoever wrote it last: only its hash is kept
+        record_claims(path, [owned.claim("file", [], content, "codex")], True, part="codex")
+    if ctx.apply and (changed or loose):
         if not changed:
             return msg + " (content current, chmod 600 %s)" % ", ".join(loose)
         return msg + (" (updated)" if existed else " (created)")
@@ -544,6 +614,7 @@ def drop_codex_project_mcp(ctx, prof, registry, errors):
         parts.append(".bak left alone, %s" % why)
     if written is not None and ctx.apply:
         lib.write_text(path, written, mode=0o600, backup=False)  # before the .bak goes: a failed write keeps both
+        record_claims(path, [], True, part="codex")  # no longer the text forge wrote
     if state == "forge":
         removed = "would be removed"
         if ctx.apply:
@@ -638,6 +709,7 @@ class ClaudeJson:
     def __init__(self, path, doc, err, mtime):
         self.path, self.doc, self.err, self.mtime = path, doc, err, mtime
         self.before = lib.dumps(doc)
+        self.claims = {}  # project key -> the claims of the servers this run wrote there
 
     @classmethod
     def open(cls, ctx):
@@ -705,6 +777,8 @@ class ClaudeJson:
         print("   servers +%s  -%s" % (add or "[]", rem or "[]"))
         if not errors:
             proj["mcpServers"] = new_ms
+            self.claims[fk] = [owned.claim("key", ["projects", fk, "mcpServers", s], d, prof.get("project") or "")
+                               for s, d in new_ms.items()]
             # The .mcp.json approval keys are not written here: Claude Code reads them from the
             # project's settings.local.json (forge/skills.py), and removes them from this entry on
             # its own, so putting them back made every run a write. Neither added nor removed.
@@ -716,6 +790,7 @@ class ClaudeJson:
         if self.err:
             raise self.err
         if lib.dumps(self.doc) == self.before:
+            self._record(ctx)
             return "   ~/.claude.json -> already current"
         if ctx.apply and os.path.exists(self.path) and os.stat(self.path).st_mtime_ns != self.mtime:
             # Every open Claude Code session writes this file too. Writing our copy now would drop
@@ -723,5 +798,13 @@ class ClaudeJson:
             return "   ~/.claude.json -> changed by another process while generating; not written, next run retries"
         if ctx.apply:
             lib.write_json(self.path, self.doc, mode=0o600, backup=True)
+            self._record(ctx)
             return "   ~/.claude.json -> wrote"
         return "   ~/.claude.json -> would write"
+
+    def _record(self, ctx):
+        """The ownership record (forge/owned.py) of the servers forge wrote this run, one part per project
+        key: the file is every project's, so a run over one project leaves the others' claims. Only the
+        projects this run wrote are touched, and only the hash of each definition is kept (it holds secrets)."""
+        for fk, claims in self.claims.items():
+            record_claims(self.path, claims, ctx.apply, part="mcp:" + fk)
