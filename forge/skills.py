@@ -195,19 +195,21 @@ def _claims(prof):
     hook entry of the profile's `hooks` (located by event and command). Owner: the profile's name.
     Identities are unique, so a rule listed twice is one claim."""
     owner, now = prof.get("project") or "", {}
+
+    def add(kind, at, value):
+        now.setdefault((kind, tuple(at)), owned.claim(kind, at, value, owner))
+
     perms = prof.get("permissions")
-    if isinstance(perms, dict):
-        for k in ("allow", "deny", "ask", "additionalDirectories"):
-            for v in perms[k] if isinstance(perms.get(k), list) else ():
-                if isinstance(v, str):
-                    now.setdefault(("item", ("permissions", k, v)), owned.claim("item", ["permissions", k, v], v, owner))
+    for k in ("allow", "deny", "ask", "additionalDirectories"):
+        for v in perms.get(k) if isinstance(perms, dict) and isinstance(perms.get(k), list) else ():
+            if isinstance(v, str):
+                add("item", ["permissions", k, v], v)
     hooks = prof.get("hooks")
     for event, groups in (hooks.items() if isinstance(hooks, dict) else ()):
         for g in groups if isinstance(groups, list) else ():
             for h in g.get("hooks", []) if isinstance(g, dict) and isinstance(g.get("hooks", []), list) else ():
                 if isinstance(h, dict) and isinstance(h.get("command"), str):
-                    now.setdefault(("hook", ("hooks", event, h["command"])),
-                                   owned.claim("hook", ["hooks", event, h["command"]], h, owner))
+                    add("hook", ["hooks", event, h["command"]], h)
     return list(now.values())
 
 
