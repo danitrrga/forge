@@ -30,7 +30,6 @@ import collections
 import importlib.util
 import json
 import os
-import re
 import shutil
 import sys
 
@@ -67,8 +66,8 @@ def _inside(p, d):
 
 def _session_start(cmd):
     """Whether hook command `cmd` runs this checkout's `forge session-start`, with whatever else it says
-    (lib.installed_root's reading, with an end: `session-start-audit` is another command)."""
-    m = re.search(r"(\S+)/bin/forge session-start(?:\s|$)", cmd) if isinstance(cmd, str) else None
+    (lib.SESSION_START, the rule lib.installed_root reads too)."""
+    m = lib.SESSION_START.search(cmd) if isinstance(cmd, str) else None
     return bool(m) and os.path.realpath(m.group(1)) == os.path.realpath(lib.ROOT)
 
 

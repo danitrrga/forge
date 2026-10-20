@@ -1083,6 +1083,12 @@ def main():
     guard["names this checkout"] = (lib.may_write(), (True, ""))
     guard["require_write from this checkout"] = (exits(), "returned")
     guard["installed_root, named"] = (lib.installed_root(), tmp)
+    # lib.SESSION_START is the one rule for "this row runs forge's session-start" (uninstall reads it
+    # too): a row of another command that only starts with it is no SessionStart row. Seen failing on
+    # ebc4601, where installed_root's regex had no end: "may_write installed_root, only a session-start-audit row = '<tmp>/installed', want None".
+    names(text=json.dumps({"hooks": {"SessionStart": [{"hooks": [{"type": "command", "command":
+                           "python3 %s/bin/forge session-start-audit" % other}]}]}}))
+    guard["installed_root, only a session-start-audit row"] = (lib.installed_root(), None)
     names(gone)
     guard["names a checkout no longer on disk (forge relocated)"] = (lib.may_write(), (True, ""))
     names(other)

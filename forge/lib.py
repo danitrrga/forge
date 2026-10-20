@@ -718,6 +718,11 @@ def resolve_project(path):
     return best[0]
 
 
+# A hook command that runs some checkout's `forge session-start`; group 1 is that checkout. The end
+# matters: `forge session-start-audit` is another command. installed_root and uninstall share it.
+SESSION_START = re.compile(r"(\S+)/bin/forge session-start(?:\s|$)")
+
+
 def installed_root():
     """The forge checkout this machine runs: the realpath of the one whose bin/forge the
     SessionStart hook in ~/.claude/settings.json calls (forge/hooks.py's USER_HOOKS row).
@@ -745,8 +750,8 @@ def installed_root():
     def strings(x):  # every string under x, whatever shape the hooks are in
         x = list(x.values()) if isinstance(x, dict) else x
         return [s for v in x for s in strings(v)] if isinstance(x, list) else [x] if isinstance(x, str) else []
-    roots = {os.path.realpath(m.group(1)) for m in (re.search(r"(\S+)/bin/forge session-start", s)
-                                                    for s in strings(doc.get("hooks"))) if m}
+    roots = {os.path.realpath(m.group(1)) for m in (SESSION_START.search(s)
+                                                     for s in strings(doc.get("hooks"))) if m}
     roots = sorted(r for r in roots if os.path.isfile(os.path.join(r, "bin", "forge")))
     if len(roots) > 1:
         raise ValueError("%s runs two checkouts: %s" % (settings, ", ".join(roots)))
