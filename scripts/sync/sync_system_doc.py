@@ -32,23 +32,14 @@ Runs from `forge session-start`, scoped to the session's own project.
 import os, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-ROOT_FS = ROOT.replace("\\", "/")  # forward-slash form for doc text
-CANON = os.path.join(ROOT, "docs", "AGENT-SYSTEM.md")
 sys.path.insert(0, ROOT)
 from forge import lib, owned  # noqa: E402
+from forge.system_doc import BEGIN, CANON, END, GEN_BANNER, ROOT_FS, marker_error  # noqa: E402
 # A SessionStart run writes its own project only; a refused --apply is a dry-run.
 CTX = lib.context(sys.argv[1:])
 PART = "system-doc"  # this script's share of the ownership record's claims on a file
 LINK_VALUE = "symlink:CLAUDE.md"
 
-GEN_BANNER = (
-    "<!-- GENERATED — DO NOT EDIT. Synced from "
-    + ROOT_FS + "/docs/AGENT-SYSTEM.md by "
-    "scripts/sync/sync_system_doc.py. Edit the canonical copy in forge. -->\n\n"
-)
-
-BEGIN = "<!-- BEGIN LIFEOS-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
-END = "<!-- END LIFEOS-SYSTEM-POINTER -->"
 # La linea en blanco tras BEGIN no es cosmetica. `gsd-tools
 # generate-claude-md` normaliza el fichero dejando un renglon vacio entre el
 # marcador y el encabezado; este guion lo escribia sin el. Los dos corren en cada
@@ -156,22 +147,6 @@ def claude_md_refused(proj_dir):
 
 class MarkerError(ValueError):
     """CLAUDE.md holds a BEGIN or END marker that is not one complete ordered pair."""
-
-
-def marker_error(text):
-    """Why the markers in `text` are not forge's one complete pair, or None when they are (or there are none).
-    The block is replaced from the first BEGIN to the first END, so a BEGIN quoted in prose or left orphaned
-    started the replacement and the user's text up to the END went with it (found in an attack round: the
-    second sync took a note away). The same rule ds_readiness applies to its stanza: a file whose markers are
-    not one complete pair is refused and named, never guessed at."""
-    nb, ne = text.count(BEGIN), text.count(END)
-    if nb != ne:
-        return "%d BEGIN and %d END marker(s), not one complete pair" % (nb, ne)
-    if nb > 1:
-        return "%d BEGIN...END pairs, forge writes one" % nb
-    if nb and text.index(END) < text.index(BEGIN):
-        return "the END marker comes before its BEGIN"
-    return None
 
 
 def ensure_pointer(proj_dir, fname, changes, text):

@@ -55,7 +55,7 @@ from sandbox import tail  # noqa: E402
 
 SCRIPT = os.path.join("scripts", "sync", "sync_system_doc.py")
 DOC = os.path.join(".claude", "AGENT-SYSTEM.md")
-BEGIN = re.search(r'^BEGIN = "(.*)"$', open(os.path.join(sandbox.FORGE, SCRIPT), encoding="utf-8").read(), re.M).group(1)
+BEGIN = re.search(r'^BEGIN = "(.*)"$', open(os.path.join(sandbox.FORGE, "forge", "system_doc.py"), encoding="utf-8").read(), re.M).group(1)
 NOTE = "IMPORTANT USER NOTE: never commit the staging database.\n"
 # CLAUDE.md files whose BEGIN marker is not forge's block: quoted in prose, or an orphan on a line of its own.
 STRAY = {"stray-prose": "# app\n\nforge puts its block between %s markers.\n\n" % BEGIN + NOTE,
@@ -73,7 +73,7 @@ def world(case):
     t = sandbox.mkdtemp("sysdoc-test-")
     WORLDS[t] = case
     root, home, projects = (os.path.join(t, d) for d in ("forge", "home", "projects"))
-    sandbox.mini_root(root, SCRIPT, os.path.join("forge", "owned.py"))  # the script claims what it creates
+    sandbox.mini_root(root, SCRIPT, os.path.join("forge", "owned.py"), os.path.join("forge", "system_doc.py"))  # the script claims what it creates
     # The canonical doc is the fixture's, never this checkout's docs/AGENT-SYSTEM.md, which a checkout without
     # docs/ lacks: red before, on a copy_engine copy in a toy HOME (M1), "FileNotFoundError: [Errno 2] No such
     # file or directory: '.../docs/AGENT-SYSTEM.md'" from mini_root's copy. The cases compare copies of it with

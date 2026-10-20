@@ -14,7 +14,12 @@ CLAUDE.md moves; the frozen directory gets nothing; a second run changes nothing
 
 Seen failing before the fix: "dev's CLAUDE.md names its frozen project frozen-app and
 its profile: got '<!-- BEGIN <pointer marker> (managed by sync_system_doc.py) -->\\n\\n##
-Shared agent-config system...'" -- the plain pointer, with no note."""
+Shared agent-config system...'" -- the plain pointer, with no note.
+
+The constants the script and forge/uninstall.py share (banner, canonical doc, markers, marker_error) live in
+forge/system_doc.py, so uninstall imports them instead of running the script. Seen failing on 813e597, where
+the module does not exist: "FileNotFoundError: [Errno 2] No such file or directory: '.../forge/system_doc.py'"
+from this file's own read of the markers."""
 import os
 import re
 import shutil
@@ -25,7 +30,8 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
 
 SCRIPT = os.path.join("scripts", "sync", "sync_system_doc.py")
-END = re.search(r'^END = "(.*)"$', open(os.path.join(sandbox.FORGE, SCRIPT), encoding="utf-8").read(), re.M).group(1)
+MODULE = os.path.join("forge", "system_doc.py")
+END = re.search(r'^END = "(.*)"$', open(os.path.join(sandbox.FORGE, MODULE), encoding="utf-8").read(), re.M).group(1)
 
 
 def read(p):
@@ -42,7 +48,8 @@ def main():
     portal, app = os.path.join(dev, "Projects", "frozen-app"), os.path.join(dev, "Projects", "app")
     # The doc is the fixture's, not docs/AGENT-SYSTEM.md of this checkout: a copy_engine copy has none. Red there
     # before (M1): "FileNotFoundError" copying .../docs/AGENT-SYSTEM.md from sandbox.mini_root.
-    sandbox.mini_root(root, SCRIPT, os.path.join("forge", "mcp.py"), os.path.join("forge", "owned.py"))  # the script claims what it creates
+    sandbox.mini_root(root, SCRIPT, os.path.join("forge", "mcp.py"), os.path.join("forge", "owned.py"),
+                     MODULE)  # the script claims what it creates
     os.makedirs(os.path.join(root, "docs"))
     shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"),
                 os.path.join(root, "docs", "AGENT-SYSTEM.md"))
@@ -73,6 +80,17 @@ def main():
         cwd=tmp, env=env, capture_output=True, text=True, timeout=60).stdout
     check("the toy checkout's POINTER can be read", plain.endswith(END), plain)
 
+    # forge/system_doc.py holds what the script and uninstall share; the script re-exports it, same objects.
+    probe = ("import sys; sys.argv = ['x']; sys.path.insert(0, %r); sys.path.insert(0, %r); import sync_system_doc as s; "
+             "from forge import system_doc as m; "
+             "sys.stdout.write(repr([getattr(s, n) is getattr(m, n) for n in ('CANON', 'GEN_BANNER', 'BEGIN', 'END', 'marker_error')]"
+             " + [m.marker_error(m.BEGIN + m.BEGIN + m.END + m.END) is not None, m.marker_error(m.END + m.BEGIN) is not None,"
+             " m.marker_error(m.BEGIN + m.END) is None, m.marker_error('') is None]))"
+             % (root, os.path.dirname(os.path.join(root, SCRIPT))))
+    r = subprocess.run([sys.executable, "-c", probe], cwd=tmp, env=env, capture_output=True, text=True, timeout=60)
+    check("forge.system_doc is what the script uses, and marker_error names the bad pairs",
+          r.stdout == repr([True] * 9), r.stdout + r.stderr)
+
     before = sandbox.manifest(portal)
     rc, out = run("--apply")
     check("the first --apply exits 0", rc == 0, out)
@@ -90,7 +108,7 @@ def main():
 
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 5 cases" % len(failures))
+    print("%d failure(s) over 6 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 

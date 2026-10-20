@@ -27,13 +27,11 @@ that is a link and is left empty is written through, never unlinked.
 Left in place and said: GSD's agents and engine in ~/.claude (the command that removes them is printed), a
 .bak older than the record, and the checkout itself (the command that deletes it is printed, never run)."""
 import collections
-import importlib.util
 import json
 import os
 import shutil
-import sys
 
-from forge import hooks, lib, mcp, owned, skills
+from forge import hooks, lib, mcp, owned, skills, system_doc
 
 USER_SETTINGS = os.path.join(lib.HOME, ".claude", "settings.json")
 CLAUDE_JSON = os.path.join(lib.HOME, ".claude.json")
@@ -44,20 +42,6 @@ CACHE = os.path.join(lib.HOME, ".cache", "forge")
 SKILL_DIRS = {"claude": os.path.join(lib.HOME, ".claude", "skills"), "codex": os.path.join(lib.CODEX_HOME, "skills")}
 GSD_REMOVE = "npx get-shit-done-cc@latest --claude --global --uninstall"
 SLP = os.path.join(".claude", "settings.local.json")
-
-
-def _system_doc():
-    """scripts/sync/sync_system_doc.py as a module, for its banner, its canonical doc and its markers. It reads
-    its argv when imported (lib.context), so it is imported with none: a dry-run context, which writes nothing."""
-    p = os.path.join(lib.ROOT, "scripts", "sync", "sync_system_doc.py")
-    spec = importlib.util.spec_from_file_location("forge_system_doc", p)
-    mod = importlib.util.module_from_spec(spec)
-    argv, sys.argv = sys.argv, [p]
-    try:
-        spec.loader.exec_module(mod)
-    finally:
-        sys.argv = argv
-    return mod
 
 
 def _inside(p, d):
@@ -331,7 +315,6 @@ def _by_construction(run, scope):
         if links:
             run.say("   %s -> %s %d link(s) into forge's skills/" % (lib.short(d), run.verb("remove"), len(links)))
         n += len(links)
-    doc_mod = _system_doc() if scope.has("whole", "project") else None
     for pp in scope.ppaths:
         if scope.has("whole", "codex", "project"):
             d = os.path.join(pp, ".agents", "skills")
@@ -342,9 +325,9 @@ def _by_construction(run, scope):
             if links:
                 run.say("   %s -> %s %d link(s)" % (lib.short(d), run.verb("remove"), len(links)))
             n += len(links)
-        if doc_mod is None:
+        if not scope.has("whole", "project"):
             continue
-        n += _project_files(run, pp, doc_mod)
+        n += _project_files(run, pp)
     if scope.has("whole", "gsd") and os.path.lexists(GSD_DEFAULTS):
         n += 1
         src = os.path.join(lib.ROOT, "config", "gsd", "defaults.json")
@@ -366,7 +349,7 @@ def _read(p):
         return fh.read()
 
 
-def _project_files(run, pp, doc_mod):
+def _project_files(run, pp):
     """A project's guard entries, its copy of AGENT-SYSTEM.md and its pointer block. Returns how many it found."""
     n = 0
     slp = os.path.join(pp, SLP)
@@ -385,9 +368,9 @@ def _project_files(run, pp, doc_mod):
     if os.path.lexists(copy):
         n += 1
         try:
-            ours = not os.path.islink(copy) and lib.holds(copy, doc_mod.GEN_BANNER + _read(doc_mod.CANON))
+            ours = not os.path.islink(copy) and lib.holds(copy, system_doc.GEN_BANNER + _read(system_doc.CANON))
         except (OSError, UnicodeDecodeError) as e:
-            run.fail("%s left in place: %s cannot be read (%s), so the copy cannot be compared" % (lib.short(copy), lib.short(doc_mod.CANON), e))
+            run.fail("%s left in place: %s cannot be read (%s), so the copy cannot be compared" % (lib.short(copy), lib.short(system_doc.CANON), e))
         else:
             if ours:
                 run.delete(copy)
@@ -399,13 +382,13 @@ def _project_files(run, pp, doc_mod):
         text = None if os.path.islink(md) else run.text(md)
     except lib.Unreadable:
         text = None
-    if text is not None and (doc_mod.BEGIN in text or doc_mod.END in text):
+    if text is not None and (system_doc.BEGIN in text or system_doc.END in text):
         n += 1
-        b, e = text.find(doc_mod.BEGIN), text.find(doc_mod.END)
-        if (text.count(doc_mod.BEGIN), text.count(doc_mod.END)) != (1, 1) or e < b:  # forge writes exactly one pair
+        if system_doc.marker_error(text):  # forge writes exactly one pair
             run.say("  ! %s: the markers are not one BEGIN then one END, left in place" % lib.short(md))
         else:
-            head, tail = text[:b].rstrip("\n"), text[e + len(doc_mod.END):].lstrip("\n")
+            b, e = text.find(system_doc.BEGIN), text.find(system_doc.END)
+            head, tail = text[:b].rstrip("\n"), text[e + len(system_doc.END):].lstrip("\n")
             new = head + ("\n\n" if head and tail else "\n" if head else "") + tail
             run.set_text(md, new)
             run.say("   %s -> %s the pointer block%s" % (lib.short(md), run.verb("remove"),

@@ -546,7 +546,7 @@ def drift_cases(tmp):
 TURBO = "<!-- BEGIN:turborepo-agent-rules -->\n# This is NOT the Turborepo you know\n<!-- END:turborepo-agent-rules -->\n"
 NEXT = "<!-- BEGIN:nextjs-agent-rules -->\n# This is NOT the Next.js you know\n<!-- END:nextjs-agent-rules -->\n"
 # The markers are the generator's own constants, read from its source: this file names none of them.
-_SYSDOC = open(os.path.join(sandbox.FORGE, "scripts", "sync", "sync_system_doc.py"), encoding="utf-8").read()
+_SYSDOC = open(os.path.join(sandbox.FORGE, "forge", "system_doc.py"), encoding="utf-8").read()
 FORGE_OWN = (re.search(r'^BEGIN = "(.*)"$', _SYSDOC, re.M).group(1) + "\nsee AGENT-SYSTEM.md\n"
              + re.search(r'^END = "(.*)"$', _SYSDOC, re.M).group(1) + "\n<!-- ds-readiness:begin -->\nimport from ui\n<!-- ds-readiness:end -->\n")
 OWN = "# The project's own text\n\nRun the tests before a commit.\n"
