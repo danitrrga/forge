@@ -17,8 +17,8 @@ register_project.py is first run dry: its plan must name the copy's own profile 
 names any other checkout, no write case runs at all, because it would write there.
 
 Every script runs in an empty network namespace with a PATH whose systemctl only logs: if the
-guard broke, register_project --apply would start the copy's sync_agent_config.py, whose jev
-setup calls systemctl --user and probes 127.0.0.1:18790.
+guard broke, register_project --apply would start the copy's sync_agent_config.py, which can
+reach for the host's systemd and network.
 
 Seen failing on 3c8f6a2: sync_system_doc.py --apply from the copy "wrote
 ['projects/forge', 'projects/forge/.claude', 'projects/forge/.claude/AGENT-SYSTEM.md', ...]",
@@ -30,7 +30,7 @@ its guard removed, register_project.py --apply-fs "exit 0 (want 1), no refusal m
 'projects/guard-probe', ...]". The two tripwires, seen firing the same day: with the copy counted as a
 real checkout, "/tmp/forge-guard-.../forge gained the probe project 'guard-probe'"; with lib's
 copy check removed, register_project --apply ran the copy's sync_agent_config.py and "systemctl
-was called: ['--user daemon-reload', '--user enable --now jev-proxy.socket', '']" -- the stub,
+was called: ['--user daemon-reload', ...]" -- the stub,
 in the empty namespace. refused() asserts the whole refusal, "; apply from <installed>" included:
 with lib printing the older text, "sync_system_doc.py --apply from a copy: exit 0 (want 0), no
 refusal message, wrote []".

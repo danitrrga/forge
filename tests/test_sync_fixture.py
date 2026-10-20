@@ -35,8 +35,7 @@ checks that its first --apply installs the sandbox copy. With installed_root() r
 unconditionally that check failed: "before 'None', after 'None'".
 
 The real machine is never touched: its credentials are never copied or opened, and the
-generator runs in an empty network namespace, because jev's setup probes 127.0.0.1:18790 and a
-connect to that socket-activated port starts the real proxy."""
+generator runs in an empty network namespace, so nothing it runs can reach a service on the host."""
 import difflib
 import glob
 import json
@@ -71,10 +70,6 @@ if REAL:
 else:  # the `from` and `to` of tests/fixtures/config/project-relocations.json
     APP, DUP, MEMAPP, OTHER, FROZEN = "app", "dup", "memapp", "other", "frozen-app"
     OLD_KEY, NEW_KEY = "/srv/toy/old-app", "/srv/toy/new-app"
-# A checkout that has skills/jev (a private skill) runs the world with jev on, as the machine that has it
-# does; without it jev is off in every world, and the one case that breaks jev's setup.py is NOT RUN.
-HAVE_JEV = os.path.exists(os.path.join(sandbox.FORGE, "skills", "jev", "scripts", "setup.py"))
-JEV_FILES = ("skills/jev", "config/systemd", "hooks/jev_router.py", "scripts/tools")
 PORTAL_KEY = {"mcpServers": {"stale-portal": {"command": "stale"}}}
 # (what, the file it mutates, anchor, replacement). Keyed by file because the refactor moves each
 # anchor out of the generator: the indent row goes to forge/lib.py at S2, the timeout row to
@@ -86,11 +81,6 @@ CONTROLS = [
      "return json.dumps(data, ensure_ascii=ensure_ascii, indent=2)",
      "return json.dumps(data, ensure_ascii=ensure_ascii, indent=3)"),
 ]
-# A jev setup.py that does not import (docs/unify-split-design.md section 5): forge/hooks.py loads
-# it eagerly, so the run must stop before it writes anything. Loaded lazily, inside write_jev_proxy,
-# the profile loop and ~/.claude.json were written first.
-JEV_BROKEN = (os.path.join("skills", "jev", "scripts", "setup.py"),
-              "HOOK_TIMEOUT_S = 6  # two Jev calls at most", "HOOK_TIMEOUT_S = = 6")
 # lib.write_text's recorder call, which the session-start control deletes.
 RECORDER = (os.path.join("forge", "lib.py"), '    record("wrote", path)\n', "")
 
@@ -125,8 +115,7 @@ def changed(a, b):
 
 
 class Sandbox:
-    def __init__(self, mutation=None, jev=None):
-        self.jev = HAVE_JEV if jev is None else jev  # the fixture world's switch; the real world's is the checkout's own
+    def __init__(self, mutation=None):
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="forge-s0-"))
         self.forge, self.home, self.projects = (os.path.join(self.root, d) for d in ("forge", "home", "projects"))
         self.cjp = os.path.join(self.home, ".claude.json")
@@ -166,20 +155,11 @@ class Sandbox:
             write(p, read(p).replace(old, new))  # main() checked the anchor occurs once
 
     def _copy_fixture_world(self):
-        # The engine files plus the fixtures, for a copy that has no profiles and skills of this machine's. Red
-        # there before, M1: "FileNotFoundError: .../skills/jev/scripts/setup.py" at the JEV_BROKEN read, and
-        # with a seeded all-off file nothing to run on.
+        # The engine files plus the fixtures, for a copy that has no profiles and skills of this machine's.
         sandbox.copy_engine(self.forge)
         sandbox.seed(self.forge)
         # One toy skill, so relink has something to link and the stale links seeded for it to remove.
         write(os.path.join(self.forge, "skills", "toy-common", "SKILL.md"), "---\nname: toy-common\ndescription: stub\n---\n")
-        if self.jev:  # the private files jev's setup reads: the skill, its units, its router and its statusline
-            files = sandbox.ls_files("--", *JEV_FILES)
-            sandbox._copy_files([f for f in files if f], self.forge, set())
-            settings = os.path.join(self.forge, "config", "forge.json")
-            doc = read_json(settings)
-            doc["integrations"]["jev"] = True
-            write_json(settings, doc)
 
     def _profiles(self):
         self.profiles = {}
@@ -364,8 +344,7 @@ def exercise(sb, check):
           "exit %d, lines %s, changed %s" % (code, wrote, moved))
 
     calls = read(sb.log).splitlines() if os.path.exists(sb.log) else []
-    # Only jev's setup calls systemctl: with jev off the log is empty, and every call it holds is --user.
-    check("systemctl is the logging stub, called only with --user", (calls or not sb.jev) and all(c.startswith("--user ") for c in calls), calls)
+    check("systemctl is the logging stub, called only with --user", all(c.startswith("--user ") for c in calls), calls)
 
     seed_local(APP)
     seed_local("forge")
@@ -441,9 +420,7 @@ def exercise(sb, check):
     # forge/sync.py agent_config's one exit rule, over every run above: a line whose first
     # non-space character is '!' means exit 1, and no other line does. Red on 0ad2214,
     # before the rule: "dry-run: exit 0, first '!' line \"   ! clearing user-scope (top-level)
-    # mcpServers -- leak into ALL projects: ['leaky']\"", the same for apply; "apply-again: exit 0,
-    # first '!' line '   ! jev-proxy did not start: port closed'", the same for session-forge;
-    # "worktree: exit 0, first '!' line '!! config/secrets.json is missing, so no secret
+    # mcpServers -- leak into ALL projects: ['leaky']\"", the same for apply; "worktree: exit 0, first '!' line '!! config/secrets.json is missing, so no secret
     # resolves.'"; "unfrozen-control: exit 0, first '!' line '   ! codex mcp -> @S@/projects/
     # frozen-app/.codex/config.toml NOT written !not-git-ignored(SKIPPED: repo-owned .gitignore does
     # not ignore .codex/)'".
@@ -545,14 +522,9 @@ def session_cases(sb, check):
             local = "@S@/projects/%s/.claude/settings.local.json" % APP
             check("the %s session start's note names the settings.local.json it wrote" % APP, local in msg, "note %r" % msg)
         code, msg, logged, before, after = session_start(sb, proj)
-        # The jev-proxy port is unreachable here by design, and that warning is the one note left in
-        # a forge session: it has no '!' and exits 0, and cli.CHANGED shows it
-        # by its own alternative. With that alternative deleted this check fails, "a second forge
-        # session start logs nothing and says only the proxy warning: exit 0, logged [], notes []".
         notes = [n for n in msg[len("forge -- "):].split(" | ") if n] if msg else []
-        said = ["agent config: jev-proxy did not start: port closed"] if proj == "forge" and sb.jev else []
-        check("a second %s session start logs nothing and says %s" % (proj, "only the proxy warning" if said else "nothing"),
-              code == 0 and not logged and notes == said and not changed_by_forge(before, after),
+        check("a second %s session start logs nothing and says nothing" % proj,
+              code == 0 and not logged and not notes and not changed_by_forge(before, after),
               "exit %d, logged %s, notes %s" % (code, logged[:8], notes))
 
     # Content current, mode loose: the writes the old pattern caught only by their wording
@@ -623,10 +595,10 @@ def main(argv):
     opt = lambda flag: argv[argv.index(flag) + 1] if flag in argv[:-1] else None
 
     ok, detail = sandbox.unshare_ok()
-    check("the generator runs with no network: 127.0.0.1:18790 is unreachable", ok, detail)
+    check("the generator runs with no network: a loopback listener on the host is unreachable", ok, detail)
     # Before any sandbox exists: an exit from inside one left every sandbox built so far in /tmp,
     # with no 'sandbox kept:' line to say where.
-    for what, rel, old, new in (CONTROLS if "--controls" in argv else []) + ([("", ) + JEV_BROKEN] if HAVE_JEV else []):
+    for what, rel, old, new in (CONTROLS if "--controls" in argv else []):
         if read(os.path.join(sandbox.FORGE, rel)).count(old) != 1:
             sys.exit("control anchor must occur exactly once in %s: %r" % (rel, old))
     sandboxes = []
@@ -641,18 +613,6 @@ def main(argv):
         if opt("--compare"):
             msgs = compare(load_dump(opt("--compare")), sb.artifacts(), opt("--compare"))
             check("output and writes identical to %s" % opt("--compare"), not msgs, "\n      ".join(msgs))
-        if HAVE_JEV:
-            jev = Sandbox(JEV_BROKEN, jev=True)
-            sandboxes.append(jev)
-            before = jev.manifest()
-            code, out = jev.run("broken-jev", ["--apply"])
-            moved = changed(before, jev.manifests["broken-jev"])
-            check("a jev setup.py that does not import stops an --apply before any write",
-                  code != 0 and "SyntaxError" in out and not moved,
-                  "exit %d, changed %s: %s" % (code, moved, sandbox.tail(out, 3)))
-        else:
-            results.append(("NOTRUN", "a jev setup.py that does not import stops an --apply before any write",
-                            "no skills/jev in this checkout"))
         ss = Sandbox()
         sandboxes.append(ss)
         session_cases(ss, check)

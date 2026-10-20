@@ -13,7 +13,7 @@ integrations.codex on, and only the JSON true counts (absent, false and "yes" ar
        stays too. Kept in both states: the .agents/skills links.
 
 Everything runs in-process against a toy HOME, a toy forge.json and a toy config/; nothing real is read or
-written (the toy forge.json carries no jev: its setup.py is a private skill).
+written.
 
 Seen failing on 3f9febe (no switch: Codex never gets a hook, and a project always gets its config.toml;
 this file as it is, run in a plain copy of that commit), 32 of 55 checks red, the other 23 are controls that
@@ -115,7 +115,7 @@ def world(codex=True, harness="absent", **top):
     Hindsight and caveman are on so the code's Codex rows exist; `harness` is the value of codex_harness,
     or the string "absent" to leave the key out."""
     _n[0] += 1
-    doc = {"integrations": {"codex": codex, "gsd": False, "jev": False, "hindsight": True, "caveman": True},
+    doc = {"integrations": {"codex": codex, "gsd": False, "hindsight": True, "caveman": True},
            "user_settings": {}, "user_hooks": [TOY_ROW, CLAUDE_ROW]}
     if harness != "absent":
         doc["codex_harness"] = harness

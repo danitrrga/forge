@@ -69,7 +69,7 @@ sys.path.insert(0, sandbox.FORGE)
 from forge import lib  # noqa: E402
 # hooks reads the settings file when it is imported, and this checkout's config/forge.json is private
 # data a stranger's copy lacks (red there before, M1: "! config/forge.json missing -- run bin/forge
-# init" at the import). A toy file with every integration off, and no jev, whose setup.py is private.
+# init" at the import). A toy file with every integration off.
 lib.SETTINGS = os.path.join(TOY, "forge-0.json")
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
     json.dump({"integrations": {k: False for k in lib.INTEGRATIONS}}, fh)
@@ -94,10 +94,8 @@ def stub(module, name, result):
     setattr(module, name, f)
 
 
-# Everything that reaches systemd, VS Code, ~/.claude/settings.json, ~/.codex or the Hindsight runtime
+# Everything that reaches ~/.claude/settings.json, ~/.codex or the Hindsight runtime
 # is stubbed; the two Hindsight stubs say whether they ran, which is what the gate is about.
-stub(hooks, "write_jev_proxy", ("   jev proxy (stub)", False))
-stub(hooks, "write_jev_status_extension", "   jev extension (stub)")
 stub(hooks, "write_user_settings", "   user settings (stub)")
 stub(hooks, "write_codex_hooks", "   codex hooks (stub)")
 stub(memory, "write_hindsight_config", "   hindsight config (stub)")

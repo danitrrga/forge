@@ -24,7 +24,7 @@ PROFILES = os.path.join(ROOT, "config", "profiles")
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # The names `on()` accepts: what a stranger's forge may switch off (docs/portable-design.md section 5).
-INTEGRATIONS = ("codex", "gsd", "jev", "hindsight", "caveman")
+INTEGRATIONS = ("codex", "gsd", "hindsight", "caveman")
 
 
 @functools.lru_cache(maxsize=None)
@@ -226,9 +226,7 @@ def hook_entries(doc):
     "<manifest>:<event>:<group>:<hook>" from them -- so a bad entry is skipped and counted, never
     filtered out first. A falsy `hooks`, event or group list is no entries; a value of the wrong
     type at any depth counts as one malformed entry and is not descended into. The caller decides
-    what a nonzero count means (a doctor: the manifest is unreadable).
-    Lives here rather than in forge/hooks.py, which imports skills/jev/scripts/setup.py: a doctor
-    must not execute a skill script on import."""
+    what a nonzero count means (a doctor: the manifest is unreadable)."""
     out, bad = [], 0
     if not isinstance(doc, dict):
         return out, 1
@@ -463,7 +461,7 @@ def write_json(path, data, mode=None, backup=False, newline=False, ensure_ascii=
 def replace_symlink(target, link):
     """`link` -> `target`, swapped in through a temp link `link.tmp.<pid>` and os.replace, so there
     is no moment when `link` is absent (sync_system_doc.py's AGENTS.md swap). The unlink-then-
-    symlink pairs in relink_skills.py, the codex skill mirror and jev's setup.py lose the link when
+    symlink pairs in relink_skills.py and the codex skill mirror lose the link when
     symlink() then fails, and since 781b620 relink keeps going past that. A leftover at the temp
     name is removed first; whatever raises, no temp link is left. A real directory at `link` is
     never replaced: os.replace refuses it."""

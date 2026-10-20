@@ -67,7 +67,7 @@ sys.path.insert(0, REPO)
 from forge import lib  # noqa: E402
 
 assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
-INTEGRATIONS = {"codex": True, "gsd": True, "jev": False, "hindsight": True, "caveman": True}
+INTEGRATIONS = {"codex": True, "gsd": True, "hindsight": True, "caveman": True}
 lib.SETTINGS = os.path.join(TOY, "forge-0.json")
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
     json.dump({"integrations": INTEGRATIONS}, fh)

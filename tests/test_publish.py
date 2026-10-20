@@ -386,7 +386,7 @@ def allowlist_cases():
     code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-i", "-z", "--exclude-from=publish/engine.gitignore"], FORGE)
     ignored = set(p for p in out.split("\0") if p)
     engine = tracked - ignored
-    private = ["hooks/jev_router.py", "hooks/test_audit_tool_use.py", "hooks/caveman_house_rules.md",
+    private = ["hooks/test_audit_tool_use.py", "hooks/caveman_house_rules.md",
                "hooks/audit_tool_use.py", "hooks/track_skill_usage.py", "scripts/sync/hindsight_doctor.py",
                "scripts/sync/test_hindsight_doctor.py", "tests/test_gate.py", j("config/profiles/life", "os.claude.json"),
                "config/mcp-registry.json", "config/toolchain.json", "docs/portable-design.md", "design/taste/README.md",

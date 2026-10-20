@@ -21,7 +21,6 @@ Targets written:
   ~/.codex/hooks.json  (the same hooks, for Codex, with codex_harness true; false takes forge's out; $CODEX_HOME when set)
   ~/.hindsight/coding-agent.json  (rendered from config/hindsight-coding-agents.json)
   data/memory-lite/<project>  (each project's claude-mem-lite store directory)
-  the jev-proxy systemd user units and the Jev status-bar extension links
 
 Default = DRY RUN (prints what would change). Pass --apply to write.
 Writes are atomic (temp -> replace) with a one-time .bak backup. Idempotent.
@@ -110,13 +109,8 @@ def agent_config(argv):
     Hindsight config and its install origin). A line printed inside lib is as much the run's line
     as one printed here, and a new print needs no flag to count.
 
-    Lines that deliberately carry no '!' and exit 0:
-      * `jev-proxy did not start` (skills/jev/scripts/setup.py). A decision: a proxy that
-        is down is a warning, not a failure; forge/cli.py's CHANGED shows it at session start by
-        its own alternative.
+    A line that deliberately carries no '!' and exits 0:
       * `~/.claude.json -> changed by another process ... next run retries`: a retry.
-      * The Jev status extension's `<id> exists and is not our symlink, left alone`: someone
-        else's install of it, which is left as it is.
     The other steps keep the same rule in their own process: relink_skills.py and
     sync_system_doc.py exit 1 exactly when they printed a '!' line."""
     rule = lib.Rule(sys.stdout)
@@ -253,10 +247,7 @@ def _run(argv, rule):
 
     if ctx.globals:
         print("== user-scope hooks and defaults ==")
-        proxy_line, proxy_up = hooks.write_jev_proxy(ctx)
-        print(proxy_line)
-        for step in (lambda: hooks.write_user_settings(ctx, proxy_up), lambda: hooks.write_jev_status_extension(ctx),
-                     lambda: hooks.write_codex_hooks(ctx)):
+        for step in (lambda: hooks.write_user_settings(ctx), lambda: hooks.write_codex_hooks(ctx)):
             try:
                 print(step())
             except lib.Unreadable as e:

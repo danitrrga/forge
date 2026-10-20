@@ -89,8 +89,6 @@ installed another way.
 | `caveman` | two hooks around the `caveman` plugin: one injects your own rules from `hooks/caveman_house_rules.md` if you write that file, one makes a `/caveman` level stick in the profile | the plugin, installed in Claude Code; `node` | off |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
 
-A fifth switch, `jev`, belongs to code that is not part of this repository. `forge init` refuses it.
-
 ## Bring your own skills
 
 forge ships **no skills**. Put yours in `skills/<name>/SKILL.md` inside the checkout and run

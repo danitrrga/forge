@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import socket
 import stat
 import subprocess
 import sys
@@ -27,7 +28,9 @@ NEVER_COPY = {"credentials", "data"}
 ASSETS = {"design"}
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 UNSHARE = ("unshare", "-rn")
-PROBE = ("import socket\ntry:\n    socket.create_connection(('127.0.0.1', 18790), timeout=0.2)\n"
+# Run inside the namespace under test, with the port of a listener the parent holds on the host's loopback:
+# an empty network namespace cannot reach it, the host's own can.
+PROBE = ("import socket, sys\ntry:\n    socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=0.2)\n"
          "    print('reachable')\nexcept OSError:\n    print('unreachable')")
 _made = []
 
@@ -86,8 +89,8 @@ def bare_env(home, tmp, bin_dir=None, **extra):
 
 
 def stub_systemctl(bin_dir, log):
-    """A systemctl that only appends its argv to `log`: jev's setup calls systemctl --user, and the
-    real one would start or stop this machine's jev-proxy."""
+    """A systemctl that only appends its argv to `log`: forge asks `systemctl --user` about the Hindsight
+    unit, and the real one would answer for this machine's session, not the toy world's."""
     os.makedirs(bin_dir, exist_ok=True)
     p = os.path.join(bin_dir, "systemctl")
     with open(p, "w") as f:
@@ -97,11 +100,14 @@ def stub_systemctl(bin_dir, log):
 
 
 def unshare_ok(ns=UNSHARE):
-    """(whether `ns` gives an empty network namespace, what the probe said). It proves
-    127.0.0.1:18790 unreachable, not merely that unshare ran: jev's setup probes that port, and a
-    connect to the socket-activated port starts the real proxy."""
+    """(whether `ns` gives an empty network namespace, what the probe said). It proves a loopback
+    listener the host holds unreachable from inside, not merely that unshare ran."""
     try:
-        r = subprocess.run(list(ns) + [sys.executable, "-c", PROBE], capture_output=True, text=True, timeout=30)
+        with socket.socket() as listener:
+            listener.bind(("127.0.0.1", 0))
+            listener.listen(1)
+            r = subprocess.run(list(ns) + [sys.executable, "-c", PROBE, str(listener.getsockname()[1])],
+                               capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired) as e:
         return False, str(e)
     return r.stdout.strip() == "unreachable", (r.stdout + r.stderr).strip()

@@ -2,12 +2,11 @@
 
 Every hook forge owns is one USER_HOOKS row, written for Claude Code and, when config/forge.json's
 `codex_harness` is true (lib.codex_harness: Codex configured like Claude Code), for Codex from the same
-table. The two plain defaults (model, advisorModel) and the env keys sit beside the rows in one load and
+table. The plain defaults (`model` and the like) and the env keys sit beside the rows in one load and
 one write of settings.json. With `codex_harness` off, the default, Codex gets no hook from forge (it is
 a reviewer, not an orchestrator): write_codex_hooks only takes out the entries forge wrote there. These
 files are shared by every session on the machine, so only a run whose scope includes the user files
 writes them (lib.context's `globals`)."""
-import importlib.util
 import os
 import sys
 
@@ -22,26 +21,6 @@ SYNC_DIR = os.path.join(ROOT, "scripts", "sync")
 HINDSIGHT_DIST = os.path.join(HOME, ".hindsight", "coding-agents", "dist")
 CLAUDE, CODEX = "claude", "codex"
 BOTH = (CLAUDE, CODEX)
-
-# The Jev routers' machine setup (proxy units, base URL, status-line wrap) lives in the skill, so a
-# clone of forge can install it without this generator; this one calls the same functions,
-# and takes the Jev router's USER_HOOKS row from it.
-# Loaded by path, never put on sys.path, and only while the jev integration is on: a checkout
-# without skills/jev (config/forge.json integrations.jev false) never reads the file. While on it
-# is loaded at import, so a setup.py that does not import fails the run before any project is written.
-def _load_jev_setup():
-    spec = importlib.util.spec_from_file_location("jev_setup", os.path.join(ROOT, "skills", "jev", "scripts", "setup.py"))
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-jev_setup = _load_jev_setup() if lib.on("jev") else None
-# The Jev row. Off, setup.py is not loaded, so the row is spelled out here: reconcile() still needs
-# its exact command to take forge's own entry out of the files.
-JEV_ROW = (("UserPromptSubmit", jev_setup.HOOK_CMD, jev_setup.HOOK_TIMEOUT_S, jev_setup.HOOK_MARKER, None, (CLAUDE,))
-           if jev_setup else
-           ("UserPromptSubmit", "python3 %s/hooks/jev_router.py" % ROOT, 6, "jev_router.py", None, (CLAUDE,)))
 
 # Every user-scope hook forge's code owns, in one table (config/forge.json's
 # `user_hooks` rows follow it, see _split):
@@ -149,15 +128,6 @@ _CODE_ROWS = [
     ("Notification", "python3 %s/omarchy_notify.py" % HOOK_DIR, 10,
      "omarchy_notify.py", None, (CLAUDE,)),
 
-    # Jev router. Jev (TypeSafe's System One model, ~0.4 s and a fraction of a cent a prompt)
-    # picks which enabled skill fits each prompt instead of Claude guessing from a truncated
-    # listing, and the hook injects that one line. On a session's first prompt the same call
-    # also picks Sonnet or Opus, which jev-proxy applies (write_jev_proxy): a hook cannot switch
-    # the model itself (UserPromptSubmit has no model field, verified on 2.1.280). Fails open:
-    # no key, `router off`, or a Jev call over 2 s leaves the prompt untouched and the session
-    # on Sonnet. Timeout 6 s covers two calls.
-    JEV_ROW,
-
     # Session sync. A session brings its OWN project's generated config up to date and nothing
     # else; a forge session also the user-scope files (forge/lib.py context). Once
     # four generators sat in forge's and a sibling project's settings, ran in parallel
@@ -219,8 +189,7 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
 ROW_INTEGRATION = {"caveman_house_rules.py": "caveman", "caveman_persist_level.js": "caveman",
                    "gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
-                   "gsd_output_discipline.py": "gsd", "jev_router.py": "jev", "coding-agents": "hindsight",
-                   "memory_doctor.py": "hindsight"}
+                   "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight", "memory_doctor.py": "hindsight"}
 ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py")
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
 
@@ -544,39 +513,11 @@ def _commit(ctx, path, doc, notes, current, warnings=()):
 
 
 def _not_run(what, integration):
-    """The status line of a writer whose integration is off. Jev's says how a machine that had it on
-    undoes it: a base URL left pointing at a stopped proxy would break every session."""
-    line = "   %s -> NOT RUN, NOT ARMED: %s is off in config/forge.json" % (what, integration)
-    if integration == "jev":
-        line += " (a machine that had it on runs skills/jev/scripts/setup.py --uninstall --apply)"
-    return line
+    """The status line of a writer whose integration is off."""
+    return "   %s -> NOT RUN, NOT ARMED: %s is off in config/forge.json" % (what, integration)
 
 
-def write_jev_proxy(ctx):
-    """Install and start jev-proxy (skills/jev/scripts/setup.py); returns (status line(s), listening).
-
-    The proxy (skills/jev/scripts/routerd.py) is how a session gets the model Jev chose for its
-    first prompt: every request goes through it and it rewrites `model`, since nothing inside a
-    session can. That puts it in the path of every Claude Code request, so write_user_settings()
-    only points ANTHROPIC_BASE_URL at it while the port accepts a connection, and takes the
-    variable back out otherwise -- a stopped proxy costs routing, never a working session.
-
-    Jev off (config/forge.json integrations.jev): nothing runs, and the line says so."""
-    if jev_setup is None:
-        return _not_run("jev-proxy", "jev"), False
-    return jev_setup.install_units(ctx.apply)
-
-
-def write_jev_status_extension(ctx):
-    """Symlink the Jev status-bar extension into every VS Code-family host on this machine
-    (skills/jev/scripts/setup.py's install_extension) so the terminal's model/skill visibility
-    also reaches the graphical VS Code and Antigravity panels, which have no statusLine."""
-    if jev_setup is None:
-        return _not_run("jev-status extension", "jev")
-    return jev_setup.install_extension(ctx.apply)
-
-
-def write_user_settings(ctx, proxy_up):
+def write_user_settings(ctx):
     """Everything forge owns in ~/.claude/settings.json, in one load and one write.
 
     Once thirteen functions each loaded and rewrote this file; now the hooks come
@@ -584,17 +525,11 @@ def write_user_settings(ctx, proxy_up):
     are on this machine, and why, is that file's). lib.read_owned() preserves every other key
     (enabledPlugins, theme, extraKnownMarketplaces, statusLine...).
 
-    MODEL DEFAULTS. The goal is a cheaper Claude that stays as good. On this
-    account (a Team seat on the Max 5x tier) "cheaper" means the 5-hour and weekly limits last
-    longer, and Opus spends them far faster than Sonnet. Claude Code 2.1.280 ships a server-side
-    advisor (`advisorModel`, `/advisor`, `--advisor`): the session model does the work and
-    consults the stronger one at key moments. Measured with sonnet + advisor opus: it
-    works from the settings keys alone, and one consult cost $0.15 against $0.05 for the rest of
-    the turn, because the advisor reads the whole context uncached -- so nothing nudges Claude to
-    consult it; it stays Sonnet's own call. Opus 5.5 is preferred over Fable as the advisor.
-    Sonnet is what a session gets unless Jev sends its first prompt to Opus (write_jev_proxy):
-    router off, a short or slash first prompt, Jev failing, the proxy down. No project sets either key,
-    so user scope reaches all of them. Before this, `model: opus` was hand-set and unowned.
+    MODEL DEFAULTS. A session defaults to Sonnet; Opus is chosen by hand at launch and never
+    mid-session, because a model switch re-reads the whole history uncached. The advisor tool is
+    disabled with CLAUDE_CODE_DISABLE_ADVISOR_TOOL=1: each advisor call re-reads the full
+    transcript uncached (measured $0.15 a consult against $0.05 for the rest of the turn). Both
+    sit in config/forge.json's `user_settings`, so user scope reaches every project.
 
     MEM_NO_AUTO_ADOPT=1. From v3.13 claude-mem-lite writes a slug-scoped managed block into each
     project's own CLAUDE.md -- a committed file -- on EVERY SessionStart, plus a detail file under
@@ -622,21 +557,19 @@ def write_user_settings(ctx, proxy_up):
             s[k] = v
     if isinstance(wanted.get("env"), dict) and wanted["env"]:
         env = s.setdefault("env", {})
-        if isinstance(env, dict):  # one that is not is left alone, and settings_changes() says so
+        if isinstance(env, dict):  # one that is not is left alone
             for k, v in wanted["env"].items():
                 if env.get(k) != v:
                     notes.append("env %s=%s" % (k, v))
                     env[k] = v
-    changes, warnings = jev_setup.settings_changes(s, proxy_up) if jev_setup else ([], [])
-    notes += changes
     notes += reconcile(s, CLAUDE)
     deny_notes, deny_warnings = deny_secret_files(s)
     notes += deny_notes
     n = sum(1 for row in USER_HOOKS if CLAUDE in row[5])
     current = ["%s=%s" % kv for kv in plain] + [
-        "via jev-proxy" if proxy_up else "direct to Anthropic", "%d hooks" % n,
+        "%d hooks" % n,
         "%s warded off" % ", ".join(HOOK_WARDS[CLAUDE]), "%d secret-read deny rules" % len(SECRET_DENY)]
-    return _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), list(warnings) + deny_warnings)
+    return _commit(ctx, USER_SETTINGS, s, notes, ", ".join(current), deny_warnings)
 
 
 def codex_commands():

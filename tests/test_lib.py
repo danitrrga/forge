@@ -534,7 +534,7 @@ def git_cases(tmp):
 
 def symlink_cases(tmp):
     """replace_symlink (S1 item 6): a link repointed through a temp link and a rename is never
-    absent, where the unlink-then-symlink pairs (relink_skills, the codex skill mirror, jev's setup)
+    absent, where the unlink-then-symlink pairs (relink_skills, the codex skill mirror)
     lose it when symlink() fails after the unlink -- and relink goes on past that since 781b620.
 
     The control is in the test: the old pair, run under the same failing symlink(), must lose the
@@ -670,7 +670,6 @@ def record_cases(tmp):
             ("  ~ other-app            copy:AGENT-SYSTEM.md, SKIP-agents-md(non-forge content):AGENTS.md", True),
             ("relink_skills: 86 skills | 0 linked, 0 pruned | BLOCKED(real dir in mirror): ~/.claude/skills/x", True),
             ("relink_skills: memory unlink failed: [Errno 13] Permission denied", True),
-            ("   jev-proxy did not start: port closed", True),  # a warning (exit 0), no "!"
             ("   ! any failure at all", True),
             ("GSD 1.43.0 is published (installed 1.42.3). Update: see the procedure at the top of "
              "scripts/sync/sync_gsd_runtime.py", True),
@@ -815,12 +814,12 @@ def settings_cases(tmp):
 
     A missing file is an exit 1 with the `!` line, never an empty dict: an engine that read {} would
     switch every integration off and write a stranger's settings from nothing. config/forge.json
-    (the fixture's, all on but jev) and examples/forge.json (a stranger's) are loaded as the real files: the stranger's has
+    (the fixture's, all on) and examples/forge.json (a stranger's) are loaded as the real files: the stranger's has
     every integration off and no personal data.
 
     Each case was seen failing on a mutated copy of lib.py: a missing file returning {},
     "settings with no file = {}, want ('exit', '! config/forge.json missing -- run bin/forge init')";
-    bool() for `is True`, "on('jev') on the string 'false' = True, want False"; the unknown-name check
+    bool() for `is True`, "on('caveman') on the string 'false' = True, want False"; the unknown-name check
     dropped, "on('codeX'), a name that is no integration = False, want True"; the deepcopy dropped,
     "settings after a caller mutated the last one = True, want False"; lru_cache(maxsize=0), "a file
     rewritten after it was read (cached) = False, want True"; the object check dropped, "settings on a
@@ -853,16 +852,25 @@ def settings_cases(tmp):
         want("settings with no file", exits(lib.settings), ("exit", missing_line))
         want("on('codex') with no file", exits(lib.on, "codex"), ("exit", missing_line))
 
-        lib.SETTINGS = put("off.json", '{"integrations": {"codex": false, "gsd": true, "jev": "false"}}')
+        lib.SETTINGS = put("off.json", '{"integrations": {"codex": false, "gsd": true, "caveman": "false"}}')
         want("on('codex') on a file holding false", lib.on("codex"), False)
         want("on('gsd') on a file holding true", lib.on("gsd"), True)
         want("on('hindsight') with the key absent", lib.on("hindsight"), False)
-        want("on('jev') on the string 'false'", lib.on("jev"), False)
+        want("on('caveman') on the string 'false'", lib.on("caveman"), False)
         want("on('codeX'), a name that is no integration", str(raised(lib.on, "codeX")).startswith("('raised', 'ValueError'"), True)
 
         got = lib.settings()
         got["x"] = 1
         want("settings after a caller mutated the last one", "x" in lib.settings(), False)
+
+        # A key of an integration forge no longer has (a machine's file written while Jev existed) is
+        # ignored, not an error: the table is only ever read by name, and a name outside INTEGRATIONS is
+        # a ValueError only for a caller that asks. Red on the commit before the removal: "on('jev') on a
+        # file that still carries the removed key = False, want True" (jev was an integration then).
+        lib.SETTINGS = put("legacy.json", '{"integrations": {"codex": true, "jev": false}}')
+        want("on('codex') on a file that still carries a removed integration's key", lib.on("codex"), True)
+        want("on('jev') on a file that still carries the removed key",
+             str(raised(lib.on, "jev")).startswith("('raised', 'ValueError'"), True)
 
         lib.SETTINGS = put("later.json", '{"integrations": {"codex": true}}')
         want("a path read first time", lib.on("codex"), True)
@@ -882,10 +890,10 @@ def settings_cases(tmp):
         lib.SETTINGS = real
         lib.settings.cache_clear()
 
-    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "jev", "hindsight", "caveman"))
+    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight", "caveman"))
     ours = json.load(open(os.path.join(FIXTURES, "forge.json")))
-    want("tests/fixtures/config/forge.json integrations, all on but jev (its setup.py is a private skill)",
-         ours["integrations"], {n: n != "jev" for n in lib.INTEGRATIONS})
+    want("tests/fixtures/config/forge.json integrations, all on",
+         ours["integrations"], {n: True for n in lib.INTEGRATIONS})
     theirs = json.load(open(os.path.join(REPO, "examples", "forge.json")))
     want("examples/forge.json integrations, all off", theirs["integrations"], {n: False for n in lib.INTEGRATIONS})
     for key, empty in (("user_settings", {}), ("user_hooks", []), ("instruction_files_skip", []),

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """T4 of docs/portable-design.md: forge/hooks.py reads config/forge.json. An integration that is off
 drops forge's own entries from the user-scope files (by exact command, never by marker), `user_hooks`
-rows come from the file and follow the code's rows, `user_settings` come from the file, jev's setup
-is not loaded when jev is off, and the codex and jev writers say NOT RUN, NOT ARMED. The caveman
+rows come from the file and follow the code's rows, `user_settings` come from the file, and the codex
+writer says NOT RUN, NOT ARMED. The caveman
 level hook finds its profiles from where it sits, not from a path written into it.
 
 Everything runs against a toy forge.json (lib.SETTINGS) and a toy HOME; nothing real is written.
 
 Seen failing on 947b2e4 (hooks.py with every row in code; the file run in a copy of that tree), 17 of
 20 checks red, the other 3 are controls that pass there:
-  off integrations: the exact commands go -- the hindsight, caveman and jev entries were all still in
+  off integrations: the exact commands go -- the hindsight and caveman entries were all still in
     UserPromptSubmit, and the gsd ones in Stop and PostToolUse
   off integrations: a foreign `coding-agents` entry stays -- it was gone (the old reconcile drops every
     entry carrying the marker that is not the row's exact command)
@@ -25,9 +25,6 @@ Seen failing on 947b2e4 (hooks.py with every row in code; the file run in a copy
     {'MEM_NO_AUTO_ADOPT': '1', ...}, want haiku, no advisorModel and {'TOY_FLAG': '1'}
   codex off: the writer says NOT RUN, NOT ARMED -- the line was "~/.codex/hooks.json -> appended
     UserPromptSubmit <moved row>.py; ..." and the file was written
-  jev off: setup.py is not loaded -- hooks.jev_setup is <module 'jev_setup' ...>
-  jev off: write_jev_proxy and write_jev_status_extension say NOT RUN, NOT ARMED -- returned ('would
-    install and start jev-proxy (...)', True) and 'jev-status extension -> no VS Code-family host ...'
   caveman_persist_level.js finds its profiles from __dirname -- exit 0, stdout '', stderr '', profile
     level 'full' (the old hook read the profiles of the checkout written into it)
 Negative controls on the finished code, each put back from a copy of the file (the checks that went red):
@@ -35,7 +32,6 @@ Negative controls on the finished code, each put back from a copy of the file (t
   integration gate ignored (every row live) -- 5: exact commands go, foreign stays, no row written, codex
     rows go, ...rows are in the table
   codex gate removed -- codex off: the writer says NOT RUN (1)
-  jev setup always loaded -- 3: setup.py is not loaded, both jev writers
   user_settings hard-coded again -- user_settings: model and env come from the file (1)
   user_hooks put before the code's rows -- "on": false and the 17-rows check (2)
 Stranger's table (section 10), seen failing on 8c4a9c3 before the gates, 11 of 30 red (the full-config check is the control and passed):
@@ -69,10 +65,10 @@ sys.path.insert(0, REPO)
 from forge import lib  # noqa: E402
 # hooks reads the settings file when it is imported, and this checkout's config/forge.json is
 # private data a stranger's copy lacks (red there before, M1: "! config/forge.json missing -- run
-# bin/forge init" at the import). A toy file with jev off, since jev's setup.py is a private skill.
+# bin/forge init" at the import).
 lib.SETTINGS = os.path.join(TOY, "forge-0.json")
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
-    json.dump({"integrations": {"codex": True, "gsd": True, "jev": False, "hindsight": True, "caveman": True}}, fh)
+    json.dump({"integrations": {"codex": True, "gsd": True, "hindsight": True, "caveman": True}}, fh)
 from forge import hooks  # noqa: E402
 
 failures, n_cases = [], [0]
@@ -95,7 +91,7 @@ def attempt(fn, *a, **k):
 
 def toy_settings(n, **over):
     """Write toy config/forge.json number n, point lib at it and reload hooks over it."""
-    doc = {"integrations": {"codex": True, "gsd": True, "jev": False, "hindsight": True, "caveman": True},
+    doc = {"integrations": {"codex": True, "gsd": True, "hindsight": True, "caveman": True},
            "gsd_patches": True, "house_hooks": True, "user_settings": {}, "user_hooks": []}
     doc.update(over)
     doc = {k: v for k, v in doc.items() if v is not None}  # an override of None drops the key
@@ -128,26 +124,25 @@ def commands(rows):
 
 # 1. Off integrations. Entries holding forge's exact command go, whatever their matcher or timeout;
 # a foreign entry under the same marker stays; the rows of an integration that is off are not written.
-h = toy_settings(1, integrations={"codex": True, "gsd": False, "jev": False, "hindsight": False, "caveman": False})
+h = toy_settings(1, integrations={"codex": True, "gsd": False, "hindsight": False, "caveman": False})
 hs_up = 'node "%s/claude-hook.js"' % h.HINDSIGHT_DIST
 hs_stop = 'node "%s/claude-stop-hook.js"' % h.HINDSIGHT_DIST
 foreign = 'node /somewhere/else/.hindsight/coding-agents/dist/claude-hook.js'
 gsd_cmd = "python3 %s/gsd_output_discipline.py" % h.HOOK_DIR
 caveman_cmd = "node %s/caveman_persist_level.js" % h.HOOK_DIR
-jev_cmd = "python3 %s/hooks/jev_router.py" % h.ROOT
-doc = {"hooks": {"UserPromptSubmit": [group(hs_up, 99, "Odd"), group(foreign, 30), group(caveman_cmd, 10), group(jev_cmd, 6)],
+doc = {"hooks": {"UserPromptSubmit": [group(hs_up, 99, "Odd"), group(foreign, 30), group(caveman_cmd, 10)],
                  "Stop": [group(hs_stop, 60), group(gsd_cmd, 10)],
                  "PostToolUse": [group(gsd_cmd, 10, "Write|Edit")]}}
 notes = attempt(h.reconcile, doc, h.CLAUDE)
 ups, stops, posts = (entries(doc, e) for e in ("UserPromptSubmit", "Stop", "PostToolUse"))
 check("off integrations: the exact commands go, whatever the matcher and timeout",
-      not any(c in (hs_up, caveman_cmd, jev_cmd) for c, _, _ in ups) and not any(c in (hs_stop, gsd_cmd) for c, _, _ in stops)
+      not any(c in (hs_up, caveman_cmd) for c, _, _ in ups) and not any(c in (hs_stop, gsd_cmd) for c, _, _ in stops)
       and not any(c == gsd_cmd for c, _, _ in posts),
       "UserPromptSubmit %r, Stop %r, PostToolUse %r, notes %r" % (ups, stops, posts, notes))
 check("off integrations: a foreign `coding-agents` entry stays (nothing removes by marker)",
       (foreign, None, 30) in ups, "UserPromptSubmit %r" % (ups,))
 off_markers = {"claude-hook.js", "coding-agents", "gsd_output_discipline.py", "gsd-prompt-guard.js",
-               "gsd-read-injection-scanner.js", "caveman_house_rules.py", "caveman_persist_level.js", "jev_router.py"}
+               "gsd-read-injection-scanner.js", "caveman_house_rules.py", "caveman_persist_level.js"}
 written = sorted({r[3] for r in h.USER_HOOKS} & off_markers)
 check("off integrations: no row of an off integration is written", not written,
       "USER_HOOKS still holds the markers %r" % (written,))
@@ -166,12 +161,12 @@ check("off integrations: the codex rows go from codex's file too",
 h = toy_settings(2)
 markers = [r[3] for r in h.USER_HOOKS]
 check("integrations on: gsd, caveman and hindsight rows are in the table",
-      {"gsd-prompt-guard.js", "gsd_output_discipline.py", "caveman_persist_level.js", "coding-agents"} <= set(markers)
-      and "jev_router.py" not in markers, "markers %r" % (markers,))
+      {"gsd-prompt-guard.js", "gsd_output_discipline.py", "caveman_persist_level.js", "coding-agents"} <= set(markers),
+      "markers %r" % (markers,))
 check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
       getattr(h, "ROW_INTEGRATION", {}) == {"caveman_house_rules.py": "caveman", "caveman_persist_level.js": "caveman",
                                            "gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
-                                           "gsd_output_discipline.py": "gsd", "jev_router.py": "jev",
+                                           "gsd_output_discipline.py": "gsd",
                                            "coding-agents": "hindsight", "memory_doctor.py": "hindsight"},
       "ROW_INTEGRATION = %r" % (getattr(h, "ROW_INTEGRATION", None),))
 
@@ -212,10 +207,9 @@ check("no user_hooks: the code holds none of the rows that moved out",
       not [r for r in h.USER_HOOKS if r[3] in MOVED],
       "rows %r" % ([r[3] for r in h.USER_HOOKS if r[3] in MOVED],))
 
-# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 15 rows with jev
-# on, so 17 with the two that moved out of the code (the curfew and the injection audit, here under
-# toy names). jev on needs skills/jev/scripts/setup.py, a private skill: where it is missing the
-# jev-on case is NOT RUN.
+# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 14 rows with every
+# integration on, so 16 with the two that moved out of the code (the curfew and the injection audit,
+# here under toy names).
 two = [{"event": "UserPromptSubmit", "command": "python3 /opt/toy/prompt_guard.py", "timeout": 10,
         "marker": "prompt_guard.py", "matcher": None, "agents": ["claude", "codex"]},
        {"event": "SessionStart", "command": "python3 %s/scripts/toy_audit.py" % lib.ROOT, "timeout": 10,
@@ -227,20 +221,16 @@ check("a settings file with two user_hooks rows: the code's rows, then the two i
       len(real) == code_rows + 2 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")]
       and not [m for _, m in real[:-2] if m in ("prompt_guard.py", "toy_audit.py")],
       "%d rows (code %d), last two %r" % (len(real), code_rows, real[-2:]))
-if os.path.exists(os.path.join(REPO, "skills", "jev", "scripts", "setup.py")):
-    h = toy_settings(12, user_hooks=two, integrations={n: True for n in lib.INTEGRATIONS})
-    real = [(r[0], r[3]) for r in h.USER_HOOKS]
-    check("all integrations on and two user_hooks rows: 15 rows (the two Hindsight rows are written per project), the two after the code's, jev_setup loaded",
-          len(real) == 15 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")]
-          and h.jev_setup is not None and h.jev_setup.HOOK_CMD in commands(h.USER_HOOKS),
-          "%d rows, last two %r, jev_setup %r" % (len(real), real[-2:], h.jev_setup))
-else:
-    print("NOT RUN: the jev-on table (15 rows) -- skills/jev/scripts/setup.py is not in this checkout")
+h = toy_settings(12, user_hooks=two, integrations={n: True for n in lib.INTEGRATIONS})
+real = [(r[0], r[3]) for r in h.USER_HOOKS]
+check("all integrations on and two user_hooks rows: 14 rows (the two Hindsight rows are written per project), the two after the code's",
+      len(real) == 14 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
+      "%d rows, last two %r" % (len(real), real[-2:]))
 
 # 6. user_settings come from the file: its keys and nothing else.
 h = toy_settings(6, user_settings={"model": "haiku", "env": {"TOY_FLAG": "1"}})
 ctx = lib.Ctx(True, None, True)
-buf = attempt(h.write_user_settings, ctx, False)
+buf = attempt(h.write_user_settings, ctx)
 with open(h.USER_SETTINGS, encoding="utf-8") as fh:
     written = json.load(fh)
 check("user_settings: model and env come from the file, and no other key of the old code",
@@ -250,7 +240,7 @@ check("user_settings: model and env come from the file, and no other key of the 
 os.remove(h.USER_SETTINGS)
 
 # 7. Codex off: the writer says so and writes no file.
-h = toy_settings(7, integrations={"codex": False, "gsd": True, "jev": False, "hindsight": True, "caveman": True})
+h = toy_settings(7, integrations={"codex": False, "gsd": True, "hindsight": True, "caveman": True})
 line = attempt(h.write_codex_hooks, ctx)
 check("codex off: the writer says NOT RUN, NOT ARMED and writes no file",
       isinstance(line, str) and "NOT RUN, NOT ARMED" in line and "codex" in line and not os.path.exists(h.CODEX_HOOKS),
@@ -318,22 +308,14 @@ check("codex on: a file with no entry of forge's is not rewritten, and gets no .
       open(h.CODEX_HOOKS, "rb").read() == before and not os.path.exists(h.CODEX_HOOKS + ".bak"), "line %r" % (line,))
 os.remove(h.CODEX_HOOKS)
 
-# 8. Jev off: its setup is not loaded and both writers say so, naming the way back.
+# 8. write_user_settings settles: the second run is already current, and its line carries no proxy fragment.
 h = toy_settings(9)
-check("jev off: setup.py is not loaded", getattr(h, "jev_setup", "missing") is None,
-      "hooks.jev_setup is %r" % (getattr(h, "jev_setup", "missing"),))
-dry = lib.Ctx(False, None, True)  # never apply here: on the old code install_units would run the real systemctl --user
-proxy = attempt(h.write_jev_proxy, dry)
-ext = attempt(h.write_jev_status_extension, dry)
-check("jev off: write_jev_proxy says NOT RUN, NOT ARMED and reports the proxy down",
-      isinstance(proxy, tuple) and len(proxy) == 2 and "NOT RUN, NOT ARMED" in str(proxy[0]) and proxy[1] is False
-      and "--uninstall" in str(proxy[0]), "returned %r" % (proxy,))
-check("jev off: write_jev_status_extension says NOT RUN, NOT ARMED", isinstance(ext, str) and "NOT RUN, NOT ARMED" in ext,
-      "returned %r" % (ext,))
-attempt(h.write_user_settings, ctx, False)
-line = attempt(h.write_user_settings, dry, False)
-check("jev off: write_user_settings settles with no jev step (the second run is already current)",
-      isinstance(line, str) and "already current" in line and "direct to Anthropic" in line, "returned %r" % (line,))
+dry = lib.Ctx(False, None, True)
+attempt(h.write_user_settings, ctx)
+line = attempt(h.write_user_settings, dry)
+check("write_user_settings settles (the second run is already current, no proxy fragment)",
+      isinstance(line, str) and "already current" in line and "direct to Anthropic" not in line and "proxy" not in line,
+      "returned %r" % (line,))
 
 # 9. hooks/caveman_persist_level.js finds profiles next to itself: a copy in a toy tree reads the toy's.
 toy_forge = os.path.join(TOY, "forge")
@@ -367,7 +349,7 @@ check("caveman_persist_level.js finds its profiles from __dirname",
 GSD_ROWS = {"gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py"}
 HOUSE_ROWS = {"ref_corpus_router.py", "omarchy_notify.py"}
 SIX = GSD_ROWS | HOUSE_ROWS | {"memory_doctor.py"}
-stranger = {"codex": False, "gsd": True, "jev": False, "hindsight": False, "caveman": False}
+stranger = {"codex": False, "gsd": True, "hindsight": False, "caveman": False}
 h = toy_settings(20, integrations=stranger, gsd_patches=False, house_hooks=None)
 check("stranger (gsd on, gsd_patches false, no house_hooks, hindsight off): none of the six rows is written",
       not (SIX & {r[3] for r in h.USER_HOOKS}), "USER_HOOKS holds %r" % (sorted(SIX & {r[3] for r in h.USER_HOOKS}),))
@@ -403,7 +385,7 @@ check("house_hooks true, gsd_patches false: ref_corpus_router and omarchy are wr
 h = toy_settings(23, house_hooks="yes")
 check("house_hooks: only the JSON true switches the house rows on",
       not (HOUSE_ROWS & {r[3] for r in h.USER_HOOKS}), "markers %r" % (sorted(r[3] for r in h.USER_HOOKS),))
-h = toy_settings(24, integrations={"codex": True, "gsd": True, "jev": False, "hindsight": False, "caveman": True})
+h = toy_settings(24, integrations={"codex": True, "gsd": True, "hindsight": False, "caveman": True})
 check("hindsight off: memory_doctor.py --hook is not written", "memory_doctor.py" not in {r[3] for r in h.USER_HOOKS},
       "markers %r" % (sorted(r[3] for r in h.USER_HOOKS),))
 
@@ -443,21 +425,21 @@ def read_json_file(p):
         return json.load(fh)
 
 
-ON = {"codex": True, "gsd": True, "jev": False, "hindsight": False, "caveman": False}
+ON = {"codex": True, "gsd": True, "hindsight": False, "caveman": False}
 OFF = dict(ON, gsd=False)
 foreign_stop = "node /elsewhere/own-stop.js"
 os.makedirs(os.path.join(HOME, ".claude"), exist_ok=True)
 with open(os.path.join(HOME, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
     json.dump({"hooks": {"SubagentStop": [], "PreCompact": [{"hooks": []}], "Stop": [group(foreign_stop, 5)]}, "theme": "toy"}, fh)
 h = toy_settings(30, integrations=ON)
-attempt(h.write_user_settings, ctx, False)
+attempt(h.write_user_settings, ctx)
 on_doc = read_json_file(h.USER_SETTINGS)
 check("gsd on: its Stop and PostToolUse rows are written beside the foreign Stop entry",
       any(c.endswith("gsd_output_discipline.py") for c, _, _ in entries(on_doc, "Stop"))
       and (foreign_stop, None, 5) in entries(on_doc, "Stop") and entries(on_doc, "PostToolUse"),
       "Stop %r, PostToolUse %r" % (entries(on_doc, "Stop"), entries(on_doc, "PostToolUse")))
 h = toy_settings(31, integrations=OFF)
-line = attempt(h.write_user_settings, ctx, False)
+line = attempt(h.write_user_settings, ctx)
 off_doc = read_json_file(h.USER_SETTINGS)
 check("on, apply, off, apply: no event key left empty by forge",
       "PostToolUse" not in off_doc["hooks"] and empty_keys(off_doc) == ["SubagentStop"],

@@ -55,7 +55,7 @@ from forge import cli, lib  # noqa: E402  (pure functions and two path constants
 failures, notrun, n_checks = [], [], [0]
 GIT_ENV = dict(os.environ, **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
-INTEGRATIONS = ("codex", "gsd", "jev", "hindsight", "caveman")
+INTEGRATIONS = ("codex", "gsd", "hindsight", "caveman")
 # What `forge add` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # profile with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
@@ -267,7 +267,6 @@ def choice_cases():
          (dict(off, hindsight=True, caveman=True), None, []))
     for label, with_names, have, names, in (("--with codex without codex on PATH", ["codex"], neither, "codex"),
                                            ("--with gsd without pnpm on PATH", ["gsd"], neither, "pnpm"),
-                                           ("--with jev, which is not offered", ["jev"], both, "jev"),
                                            ("--with an unknown name", ["nope"], both, "nope")):
         got, why, q = run(True, with_names, [], have)
         check("init_choices %s is refused, naming %s" % (label, names), got is None and names in (why or ""), "got %r, %r" % (got, why))

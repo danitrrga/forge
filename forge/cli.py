@@ -90,7 +90,7 @@ def settings_forge_would_write(name, prof, registry):
     nothing because the file is already what it says. Computed in memory: the one write that function
     makes, lib.write_json at its end, is replaced by a recorder for the call, so no byte reaches the
     project, no .bak either. The recorder is restored in a finally."""
-    from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
+    from forge import hooks  # not at import: it reads config/forge.json
     sel = [s for s in prof.get("servers", []) if s in registry]
     wanted, real = [], lib.write_json
     lib.write_json = lambda path, data, **kw: wanted.append(data)
@@ -653,12 +653,7 @@ def _gsd_missing():
         % (tool, "node" if tool == "npm" else "pnpm"))
 
 
-def _jev_missing():
-    return None if os.path.isdir(os.path.join(lib.ROOT, "skills", "jev")) else "jev is on but skills/jev is missing"
-
-
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
-                     "jev": (_jev_missing, "skills/jev is there"),
                      "hindsight": (None, "no dependency checked here"), "caveman": (None, "no dependency checked here")}
 
 
@@ -697,7 +692,7 @@ def integrations_row():
                    else lib.Result("PASS", "integrations", "%s is on, %s" % (name, why)))
     integrations = checked
     try:
-        from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
+        from forge import hooks  # not at import: it reads config/forge.json
         scopes = []
         rows = hooks._config_rows(scopes)
     except (Exception, SystemExit) as e:
@@ -747,7 +742,7 @@ def codex_hooks_row():
     read the file then, and with the switch true while no row lists codex."""
     if not lib.on("codex"):
         return lib.Result("SKIP", "codex hooks", NOT_ARMED + "codex is off in config/forge.json")
-    from forge import hooks  # not at import: it reads config/forge.json and loads the Jev setup when that is on
+    from forge import hooks  # not at import: it reads config/forge.json
     where = lib.short(hooks.CODEX_HOOKS)
     try:
         doc = lib.read_owned(hooks.CODEX_HOOKS, None)
@@ -810,18 +805,9 @@ CHECKS = [
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
-    ("jev", ["skills/jev/scripts/jev.py", "check"], "python3 skills/jev/scripts/jev.py router status"),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
 ]
-
-# A row that belongs to an integration (lib.INTEGRATIONS) is a SKIP, never a run, while that integration
-# is off: its script may not exist, and a row that ran and failed would blame a stranger for a feature
-# they never asked for. The note says how to turn the feature off for good where that is not just a flag.
-OFF_ROW = {"jev": "jev"}
-OFF_ROW_NOTE = {"jev": "; a machine that turns it off runs `python3 skills/jev/scripts/setup.py --uninstall --apply`, "
-                       "or a base URL left pointing at a stopped proxy breaks its sessions"}
-
 
 # What `forge sync --project NAME` (a dry-run) prints for a file its --apply would change: one
 # alternative per line, beside where it is printed and a sample of the text (grep the text: line
@@ -980,8 +966,6 @@ CHANGED = re.compile(r"""
       ^\s*!                       # a warning or failure: lib.read_json and forge/{sync,mcp,memory,
                                   # skills,hooks}.py; sync_gsd_runtime.py; sync_system_doc.py, whose
                                   # one ERROR line is "  ! <project> ERROR: <why> -- skipped..."
-    | ^\s*jev-proxy\ did\ not\ start  # skills/jev/scripts/setup.py "   jev-proxy did not start: port closed",
-                                  #                                a warning that exits 0
     | ^GSD\ \S+\ is\ published    # sync_gsd_runtime.py npm_nag    "GSD <v> is published (installed <v>).
                                   #                                Update: ...", once a day, exit 0
     | SKIP-                       # sync_system_doc.py             "  ~ <project>  SKIP-agents-md(non-forge
@@ -1092,9 +1076,6 @@ def cmd_doctor(a):
         rows = project_checks(project, known.get(project), unreadable.get(project))
     results = []
     for name, cmd, fix in rows:
-        if OFF_ROW.get(name) and not lib.on(OFF_ROW[name]):
-            results.append(lib.Result("SKIP", name, "%s%s is off in config/forge.json%s" % (NOT_ARMED, OFF_ROW[name], OFF_ROW_NOTE.get(name, ""))))
-            continue
         if callable(cmd):
             try:
                 res = cmd()
@@ -1223,8 +1204,7 @@ def cmd_metrics(a):
 # need before the generators have anything to read. Both only create: a file that is already there is kept.
 EXAMPLES = os.path.join(lib.ROOT, "examples")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
-# What init asks about, and what it asks. The others are switched on by hand with --with; jev is not offered
-# (its code is not part of this repository).
+# What init asks about, and what it asks. The others are switched on by hand with --with.
 QUESTIONS = {"codex": "Codex found: manage its config too? [Y/n]",
              "gsd": "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx get-shit-done-cc)? [Y/n]"}
 # GSD's own installer, run by init through pnpm: the package's README names npx
@@ -1256,8 +1236,6 @@ def init_choices(yes, with_names, without_names, have, ask):
     for n in with_names + without_names:
         if n not in lib.INTEGRATIONS:
             return None, "unknown integration %r (one of %s)" % (n, ", ".join(lib.INTEGRATIONS))
-    if "jev" in with_names:
-        return None, "jev is not offered: its code is not part of this repository"
     both = sorted(set(with_names) & set(without_names))
     if both:
         return None, "%s is in both --with and --without" % ", ".join(both)

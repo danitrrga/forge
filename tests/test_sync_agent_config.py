@@ -37,18 +37,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from forge import lib  # noqa: E402
 # The settings every case runs on are the fixture's, never this machine's config/forge.json: a copy_engine
 # copy has none (red there before, M1: "! config/forge.json missing -- run bin/forge init" at the import
-# of forge.hooks). Every integration on but jev, whose setup.py is a private skill: where this checkout has
-# that skill, jev is on too, as it is on the machine that has it.
+# of forge.hooks).
 FIXTURES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures", "config")
-HAVE_JEV = os.path.exists(os.path.join(sandbox.FORGE, "skills", "jev", "scripts", "setup.py"))
 lib.SETTINGS = os.path.join(FIXTURES, "forge.json")
-if HAVE_JEV:
-    with open(lib.SETTINGS, encoding="utf-8") as fh:
-        doc = json.load(fh)
-    doc["integrations"]["jev"] = True
-    lib.SETTINGS = os.path.join(TOY, "forge-jev.json")
-    with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh)
 from forge import hooks, mcp, memory, skills, sync  # noqa: E402
 
 assert hooks.HOME == HOME and hooks.USER_SETTINGS.startswith(HOME + os.sep), "the import saw the real HOME"
@@ -60,14 +51,14 @@ lib.context = lambda argv: run_ctx
 memory.LITE_ROOT = os.path.join(TOY, "lite")
 real_write_hindsight_config = memory.write_hindsight_config  # case 5 calls it on a toy ROOT
 real_check_hindsight_runtime = memory.check_hindsight_runtime  # and case 17 this one
-# Everything that reaches systemd, VS Code or the Hindsight runtime is stubbed, and each stub says
+# Everything that reaches the Hindsight runtime is stubbed, and each stub says
 # it ran: a run that went around one would reach the real thing and nothing here would notice.
 ran = set()
 
 
 def stub(module, name, result):
     """Replace module.name. A name the module does not have is refused: the function moved, and a
-    stub set beside it would leave the real one to run (systemd, the real proxy)."""
+    stub set beside it would leave the real one to run (the real Hindsight runtime)."""
     if not callable(getattr(module, name, None)):
         sys.exit("STUB: %s has no %s -- nothing run" % (module.__name__, name))
 
@@ -77,11 +68,9 @@ def stub(module, name, result):
     setattr(module, name, f)
 
 
-stub(hooks, "write_jev_proxy", ("   jev proxy (stub)", False))
-stub(hooks, "write_jev_status_extension", "   jev extension (stub)")
 stub(memory, "write_hindsight_config", "   hindsight config (stub)")
 stub(memory, "check_hindsight_runtime", None)
-STUBS = {"write_jev_proxy", "write_jev_status_extension", "write_hindsight_config", "check_hindsight_runtime"}
+STUBS = {"write_hindsight_config", "check_hindsight_runtime"}
 
 CJ = os.path.join(HOME, ".claude.json")
 failures = []
@@ -624,13 +613,9 @@ for label, make in (("not UTF-8", lambda gi: open(gi, "wb").write(b"*.pyc\n\xff\
           "a .gitignore that is %s: exit %r, a's .codex %s, b's config.toml %s"
           % (label, code, os.path.exists(os.path.join(a, ".codex")), os.path.exists(os.path.join(b, ".codex", "config.toml"))))
 
-# 10. A settings.json whose `env` is not an object is left as it is, said so on a '!' line of its
-# own (forge/cli.py's CHANGED shows those at session start), and the rest of the user scope still
-# runs. write_user_settings used to raise AttributeError on it, so the Jev extension,
-# ~/.codex/hooks.json and Hindsight never ran. A warning alone never rewrites the file. The '!'
-# line exits 1 (agent_config's exit rule); it exited 0 before the rule. The '!' line is the
-# Jev setup's (skills/jev/scripts/setup.py settings_changes), so without that private skill there is no
-# line and the exit is 0: the file is left as it is and the rest of the user scope still runs.
+# 10. A settings.json whose `env` is not an object is left as it is, and the rest of the user scope still
+# runs. write_user_settings used to raise AttributeError on it, so ~/.codex/hooks.json and Hindsight
+# never ran. Nothing prints a '!' line for it (the one that did was a removed integration's), so the exit is 0.
 for label, env in (("null", None), ("a list", ["x"])):
     name = "env-" + label.split()[-1]
     reset_home()
@@ -639,8 +624,7 @@ for label, env in (("null", None), ("a list", ["x"])):
         code, out, _ = case("%s-%s" % (name, run), {"a": {}}, globals_=True)
         doc = json.loads(read(hooks.USER_SETTINGS))
         line = [l for l in out.splitlines() if "settings.json" in l]
-        check(code == (1 if HAVE_JEV else 0) and doc.get("env") == env and doc.get("theme") == "dark"
-              and ("   ! env is not an object, left alone" in out.splitlines()) == HAVE_JEV
+        check(code == 0 and doc.get("env") == env and doc.get("theme") == "dark"
               and any(l.startswith("   ~/.codex") or "codex-home/hooks.json" in l for l in out.splitlines())
               and (run == "first" or (len(line) == 1 and "(already current)" in line[0])),
               "settings.json with env %s, %s run: exit %r, env %r, settings lines %r"

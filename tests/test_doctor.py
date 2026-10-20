@@ -124,8 +124,6 @@ toy forge.json (`settings_world`, `toy_settings`), never the real one. Seen fail
   nothing" held, "a malformed doctor_extra row is a FAIL = [], want ['FAIL doctor_extra']";
   CHECKS: "the hindsight and design rows left CHECKS = ['hindsight', 'design'], want []", "the integrations row is
   registered = False, want True";
-  jev off: "jev off: the row is a SKIP that was not run = ('FAIL', False), want ('SKIP', True)" (the toy command
-  exits 1 and ran), "jev off: the SKIP says how to turn it off for good = False";
   integrations: every case on "AttributeError: module 'forge.cli' has no attribute 'integrations_row'", e.g. "a
   user_hooks row naming a missing script = ('raised', ...), want ('FAIL', ...)";
   instruction_files_skip: "a project the config skips = ('WARN', ...), want ('SKIP', ...)";
@@ -1188,7 +1186,7 @@ def toy_settings(path):
         lib.settings.cache_clear()
 
 
-OFF = {"codex": False, "gsd": False, "jev": False, "hindsight": False, "caveman": False}
+OFF = {"codex": False, "gsd": False, "hindsight": False, "caveman": False}
 
 
 def lines_of(results):
@@ -1209,7 +1207,7 @@ def call(fn_name, *args):
 
 
 def extra_cases(tmp):
-    """doctor_extra rows join the full doctor; a jev that is off is a SKIP that did not run."""
+    """doctor_extra rows join the full doctor."""
     extra_row = [r for r in cli.CHECKS if r[0] == "doctor_extra"]
     toy_row = ["toy", ["-c", "print('toy ok')"], "fix toy"]
     bad_row = ["bad", ["-c", "import sys; print('toy broke'); sys.exit(1)"], "fix bad"]
@@ -1229,20 +1227,6 @@ def extra_cases(tmp):
         want("a malformed doctor_extra row names its place", "row 0 is not [name, [argv...], fix]" in (lines + ["", ""])[0]
              and "row 1 is not" in (lines + ["", ""])[1], True)
 
-    # jev off: the row is not run. The toy command exits 1, so a run would be a FAIL.
-    jev_row = [("jev", ["-c", "import sys; print('ran'); sys.exit(1)"], "fix jev")]
-    with toy_settings(settings_world(tmp, "jev-off", dict(integrations=dict(OFF)))):
-        code, lines, err = doctor(jev_row)
-        level, name, detail = fields(lines, 0)
-        want("jev off: the row is a SKIP that was not run", (code, level, name, "ran" in detail, "NOT RUN, NOT ARMED: jev is off" in detail),
-             (0, "SKIP", "jev", False, True))
-        want("jev off: the SKIP says how to turn it off for good", "setup.py --uninstall --apply" in detail, True)
-        want("jev off: a SKIP carries no fix", "fix jev" in detail, False)
-        want("jev off: a SKIP is not in the summary's counts", summary(lines), "SUMMARY: 0 passed, 0 warnings, 0 failures")
-    with toy_settings(settings_world(tmp, "jev-on", dict(integrations=dict(OFF, jev=True)))):
-        code, lines, err = doctor(jev_row)
-        want("control, jev on: the same row runs", (code, fields(lines, 0)), (1, ["FAIL", "jev", "ran -- fix jev"]))
-
 
 def integrations_cases(tmp):
     """The `integrations` row: integrations, then the scripts the user_hooks rows name."""
@@ -1260,11 +1244,8 @@ def integrations_cases(tmp):
             row["on"] = on
         return row
 
-    def run(name, integrations, user_hooks, root=None, **extra):
+    def run(name, integrations, user_hooks, **extra):
         with toy_settings(settings_world(tmp, name, dict(integrations=integrations, user_hooks=user_hooks, **extra))):
-            if root:
-                with toy(root):
-                    return call("integrations_row")
             return call("integrations_row")
 
     got = run("hook-missing", OFF, [hook(missing, "gone.py")])
@@ -1275,7 +1256,7 @@ def integrations_cases(tmp):
     got = run("hook-present", OFF, [hook(present, "here.py")])
     want("control: the same row naming a script that exists PASSes", got,
          [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: gsd is off in config/forge.json"),
-          ("SKIP", "NOT RUN, NOT ARMED: jev is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: caveman is off in config/forge.json"),
           ("PASS", "user_hooks row here.py (UserPromptSubmit): %s is there" % present),
           ("PASS", "checked 1: 0 integration(s) on, 1 user_hooks script(s)")])
@@ -1339,13 +1320,6 @@ def integrations_cases(tmp):
         want("control: gsd on, unpatched, found on PATH", at(got, 1), ("PASS", "gsd is on, pnpm found on PATH"))
     finally:
         os.environ["PATH"] = real_path
-    world = os.path.join(tmp, "integ-jev-world")
-    os.makedirs(world)
-    got = run("jev-gone", dict(OFF, jev=True), [], root=world)
-    want("jev on and skills/jev missing", at(got, 2), ("FAIL", "jev is on but skills/jev is missing"))
-    os.makedirs(os.path.join(world, "skills", "jev"))
-    got = run("jev-here", dict(OFF, jev=True), [], root=world)
-    want("control: jev on and skills/jev there", at(got, 2), ("PASS", "jev is on, skills/jev is there"))
     got = run("quiet", dict(OFF, hindsight=True, caveman=True), [])
     want("hindsight and caveman on need nothing here", [l for l in got if l[0] != "SKIP"], [
         ("PASS", "hindsight is on, no dependency checked here"), ("PASS", "caveman is on, no dependency checked here"),
