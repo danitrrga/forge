@@ -7,7 +7,7 @@ linked into .agents/skills, the root Codex reads (mirror_for_codex)."""
 import functools
 import os
 
-from forge import lib, mcp
+from forge import lib, mcp, owned
 
 
 def skill_dirs(path):
@@ -189,6 +189,79 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
     return summary
 
 
+def _claims(prof):
+    """What forge puts in settings.local.json because the profile declares it, as owned claims: each
+    permissions allow/deny/ask rule and additionalDirectories entry (located by the string itself), each
+    hook entry of the profile's `hooks` (located by event and command). Owner: the profile's name.
+    Identities are unique, so a rule listed twice is one claim."""
+    owner, now = prof.get("project") or "", {}
+    perms = prof.get("permissions")
+    if isinstance(perms, dict):
+        for k in ("allow", "deny", "ask", "additionalDirectories"):
+            for v in perms[k] if isinstance(perms.get(k), list) else ():
+                if isinstance(v, str):
+                    now.setdefault(("item", ("permissions", k, v)), owned.claim("item", ["permissions", k, v], v, owner))
+    hooks = prof.get("hooks")
+    for event, groups in (hooks.items() if isinstance(hooks, dict) else ()):
+        for g in groups if isinstance(groups, list) else ():
+            for h in g.get("hooks", []) if isinstance(g, dict) and isinstance(g.get("hooks", []), list) else ():
+                if isinstance(h, dict) and isinstance(h.get("command"), str):
+                    now.setdefault(("hook", ("hooks", event, h["command"])),
+                                   owned.claim("hook", ["hooks", event, h["command"]], h, owner))
+    return list(now.values())
+
+
+def _record(slp, now, apply):
+    """owned.record for this file, unless lib.write_json is not forge's own: cli.settings_forge_would_write
+    swaps it for a recorder to compute the document forge would write, in memory and with `apply` true,
+    and a registry write through the recorder would be taken for that document."""
+    if getattr(lib.write_json, "__module__", None) == lib.__name__:
+        owned.record(slp, now, apply)
+
+
+def _prune_item(sl, c):
+    """Take the element claim `c` names out of its list, when it is still exactly what forge wrote.
+    Returns 1 for an element removed, else 0. A list or object this run empties goes with it."""
+    _, key, value = c["at"]
+    perms = sl.get("permissions")
+    have = perms.get(key) if isinstance(perms, dict) else None
+    if not isinstance(have, list) or value not in have or not owned.removable(c, value):
+        return 0
+    perms[key] = [v for v in have if v != value]
+    if not perms[key]:
+        del perms[key]
+    if not perms:
+        del sl["permissions"]
+    return 1
+
+
+def _prune_hook(sl, c, slp_short):
+    """Take the hook entry claim `c` names out of the file's hooks, when unchanged; an edited one stays
+    and is named on one '  ! ' line. Returns 1 for an entry removed, else 0. A group, an event and the
+    `hooks` key this run empties go with it."""
+    _, event, command = c["at"]
+    hooks = sl.get("hooks")
+    have = hooks.get(event) if isinstance(hooks, dict) else None
+    if not _groups_ok(have):
+        return 0
+    for g in have:
+        for h in g.get("hooks", []):
+            if h.get("command") != command:
+                continue
+            if not owned.removable(c, h):
+                print("  ! %s: hook %s (%s) was edited by hand, left in place" % (slp_short, command, event))
+                return 0
+            g["hooks"].remove(h)
+            if not g["hooks"]:
+                have.remove(g)
+            if not have:
+                del hooks[event]
+            if not hooks:
+                del sl["hooks"]
+            return 1
+    return 0
+
+
 def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=()):
     """Owns <project>/.claude/settings.local.json: everything the profile says goes there, merged
     into the file. For a claude profile carrying `plugins_keep` and/or `skills_keep`, that is:
@@ -244,7 +317,12 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
     # the file, and leave early only when it holds none of them. Returning first, as it once did,
     # kept a stale skillOverrides hiding skills in a project that had stopped trimming.
     sl = lib.read_owned(slp)
-    if not declared and not any(k in sl for k in ("skillOverrides", "enabledPlugins", "env")) \
+    # What the last run recorded for this file (forge/owned.py): a profile that dropped everything it
+    # declared still has leftovers to prune, so a record keeps the run going.
+    prev, warn = owned.previous(slp)
+    if warn:
+        print(warn)
+    if not declared and not prev and not any(k in sl for k in ("skillOverrides", "enabledPlugins", "env")) \
             and not _has_forge_guard(sl) and not _holds(sl, lambda cmd: any(cmd == row[1] for row in project_hooks)):
         return None
     on_machine = global_skills() | neighbour_skills(ppath)
@@ -367,6 +445,20 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event, canonical_hook(cmd, timeout),
                                    matcher, wanted, "%s %s" % (marker, event), marker)
 
+    # What the profile declared last time and no longer does goes, if it is still what forge wrote: forge
+    # cannot tell its leftovers from the user's in-session approvals in the same lists, so only an element
+    # it claimed (forge/owned.py) is ever removed, and only unchanged. A hook entry edited since stays and
+    # is named. With no record nothing is stale. Runs after both merges, so a rule still declared stays.
+    now = _claims(prof)
+    slp_short = lib.short(slp)
+    pruned = 0
+    for c in owned.stale(prev, now):
+        if c["kind"] == "item" and len(c["at"]) == 3 and c["at"][0] == "permissions":
+            pruned += _prune_item(sl, c)
+        elif c["kind"] == "hook" and len(c["at"]) == 3 and c["at"][0] == "hooks":
+            pruned += _prune_hook(sl, c, slp_short)
+    pruned_summary = ", pruned %d" % pruned if pruned else ""
+
     # .mcp.json approval, owned by the profile when it declares `mcpjson_approved` (the list) or
     # `enableAllProjectMcpServers` (that key alone, with or without a list). Claude Code
     # reads enableAllProjectMcpServers and enabledMcpjsonServers from settings.local.json, and
@@ -399,26 +491,28 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         sl["disabledMcpjsonServers"] = list(disabled)
         mcp_summary += ", .mcp.json disabled %d" % len(disabled)
 
-    slp_short = lib.short(slp)
     skill_summary = ("%s, skills off %d, kept-global %s"
                      % (pl_summary, len(overrides), "ALL (*)" if all_skills else len(skills_keep))
                      if trim else "untrimmed (pass-through only)")
     removed_summary = ", %s removed" % " and ".join(removed) if removed else ""
-    summary = "overrides -> %s (%s%s%s%s%s%s)" % (
-        slp_short, skill_summary, removed_summary, perm_summary, env_summary, hooks_summary, mcp_summary)
+    summary = "overrides -> %s (%s%s%s%s%s%s%s)" % (
+        slp_short, skill_summary, removed_summary, perm_summary, env_summary, hooks_summary, mcp_summary, pruned_summary)
     # The file carries resolved secrets from here on, so it is 0600 (mcp.loose_secrets, the rule
     # ~/.claude.json follows): set when written, and corrected when the content is current but the
     # mode is not, since Claude Code rewrites this file too.
     loose = [os.path.basename(p) for p in mcp.loose_secrets(slp)] if from_secrets else []
     if lib.dumps(sl) == sl_before and os.path.exists(slp):
         if not loose:
+            _record(slp, now, ctx.apply)
             return "   %s (already current)" % summary
         if ctx.apply:
             for p in mcp.loose_secrets(slp):
                 lib.chmod(p, 0o600)
+        _record(slp, now, ctx.apply)
         return "   %s (content current, %schmod 600 %s)" % (summary, "" if ctx.apply else "would ", ", ".join(loose))
     if ctx.apply:
         lib.write_json(slp, sl, mode=0o600 if from_secrets else None, backup=True)
+        _record(slp, now, ctx.apply)
         return "   " + summary
     return "   would write " + summary
 
