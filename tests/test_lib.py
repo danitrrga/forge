@@ -621,7 +621,8 @@ def record_cases(tmp):
         want("write_text, the same text with a loose mode", logged(lib.write_text, p, "a", mode=0o600),
              (None, ["wrote D/f.txt"]))
         want("write_text with a backup", logged(lib.write_text, p, "b", mode=0o600, backup=True),
-             (None, ["wrote D/f.txt.bak", "wrote D/f.txt"]))
+             (None, ["wrote D/f.txt.bak", "wrote " + os.path.join(lib.STATE, "owned.json"), "wrote D/f.txt"]))
+        # the new .bak is claimed in forge's ownership record (forge/owned.py claim_backup), hence the middle line
         os.chmod(p + ".bak", 0o644)
         want("write_text, the same text beside a loose .bak", logged(lib.write_text, p, "b", mode=0o600, backup=True),
              (None, ["chmod D/f.txt.bak"]))

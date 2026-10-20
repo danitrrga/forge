@@ -436,6 +436,8 @@ def write_text(path, text, mode=None, backup=False, fsync=False, check=None):
             if mode is not None:
                 os.chmod(bak, mode)
             record("wrote", bak)
+            from forge import owned  # lazily: owned imports lib
+            owned.claim_backup(bak, True)  # write_text only runs for a real write; claim_backup asks may_write
         except Exception:
             pass
     # Suffixed with our own pid: two SessionStart runs racing on the same path (opening a second

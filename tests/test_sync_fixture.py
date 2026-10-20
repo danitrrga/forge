@@ -303,7 +303,10 @@ def exercise(sb, check):
         before, cj0 = sb.manifest(), read_json(cjp)
         code, out = sb.run(step, args, **extra)
         moved = changed(before, sb.manifests[step])
-        stray = [p for p in moved if not under(p, "projects/" + own) and p != "home/.claude.json"]
+        # a .bak forge creates is claimed in the ownership record (forge/owned.py claim_backup), so the
+        # first write of ~/.claude.json creates the registry: those two paths are expected, nothing else
+        record = ("home/.local/state/forge", "home/.local/state/forge/owned.json")
+        stray = [p for p in moved if not under(p, "projects/" + own) and p != "home/.claude.json" and p not in record]
         return code, out, moved, stray, [sb.norm(k) for k in cj_diff(cj0, read_json(cjp))]
 
     check("%s's profile is frozen" % FROZEN, sb.profiles[FROZEN].get("frozen") is True, "config/profiles/%s.claude.json" % FROZEN)

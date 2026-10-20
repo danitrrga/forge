@@ -168,6 +168,97 @@ owned.record(B, [perm2], apply=True)
 check("record over an unreadable registry replaces it with this file's claims",
       owned.load() == ({B: [perm2]}, ""), repr(owned.load()))
 
+# parts: several writers claim in one file (step 10, I3, task T0). Seen failing before `part` existed:
+#   TypeError: record() got an unexpected keyword argument 'part'
+# Negative control, record() made to ignore `part` (replace the file's whole list), put back from a copy:
+#   FAIL parts: recording part B leaves part A's claims -- got [('item', ('b',))], want a and b both
+put("")
+os.remove(REGISTRY)
+F = os.path.join(top, "proj-p", ".gitignore")
+ca = owned.claim("item", ["a"], "a", "core")
+cb = owned.claim("item", ["b"], "b", "core")
+cc = owned.claim("item", ["c"], "c", "core")
+owned.record(F, [ca], apply=True, part="skills")
+owned.record(F, [cb], apply=True, part="mcp")
+got = owned.previous(F)[0]
+check("parts: recording part B leaves part A's claims", identities(got) == [("item", ("a",)), ("item", ("b",))],
+      "got %s, want a and b both" % identities(got))
+check("parts: previous(file, part) gives only that part's claims",
+      identities(owned.previous(F, "skills")[0]) == [("item", ("a",))]
+      and identities(owned.previous(F, "mcp")[0]) == [("item", ("b",))] and owned.previous(F, "none")[0] == [])
+check("parts: the part is stored in each claim and a claim made without one carries no part field",
+      {c.get("part") for c in got} == {"skills", "mcp"} and "part" not in ca and "part" not in owned.claim("key", ["k"], 1, "core"),
+      repr(got))
+owned.record(F, [cc], apply=True, part="skills")
+check("parts: re-recording a part replaces that part only",
+      identities(owned.previous(F, "skills")[0]) == [("item", ("c",))] and identities(owned.previous(F, "mcp")[0]) == [("item", ("b",))])
+owned.record(F, [], apply=True, part="skills")
+check("parts: no claims for a part drops that part and keeps the other",
+      owned.previous(F, "skills")[0] == [] and identities(owned.previous(F)[0]) == [("item", ("b",))])
+owned.record(F, [], apply=True, part="mcp")
+check("parts: dropping the last part drops the file's entry", F not in owned.load()[0], repr(owned.load()[0]))
+owned.record(F, [ca], apply=True, part="skills")
+owned.record(F, [cb], apply=True, part="mcp")
+owned.record(F, [cc], apply=True)
+check("part None still replaces the whole file's claims, parts included",
+      identities(owned.previous(F)[0]) == [("item", ("c",))] and owned.previous(F, "skills")[0] == [], repr(owned.previous(F)[0]))
+before = open(REGISTRY, encoding="utf-8").read()
+owned.record(F, [ca], apply=False, part="skills")
+check("parts: a dry-run records nothing", open(REGISTRY, encoding="utf-8").read() == before)
+put(json.dumps({"version": 1, "claims": {F: [ca, cb]}}))
+check("an old registry without part fields loads, its claims count as part None",
+      owned.load() == ({F: [ca, cb]}, "") and owned.previous(F) == ([ca, cb], "") and owned.previous(F, "skills")[0] == [])
+owned.record(F, [cc], apply=True, part="skills")
+check("recording a part beside old part-less claims keeps them",
+      identities(owned.previous(F)[0]) == [("item", ("a",)), ("item", ("b",)), ("item", ("c",))], repr(owned.previous(F)[0]))
+put(json.dumps({"version": 1, "claims": {F: [dict(ca, part=3)]}}))
+check("a claim whose part is not a string makes the registry untrusted", owned.load()[0] == {} and owned.load()[1].startswith("  ! "))
+
+# the .bak lib.write_text creates is claimed, as part "bak", once, never with its content
+# Seen failing before the hook: FAIL bak: a new .bak is claimed as kind file at [], owner core -- got [] (no claim)
+os.remove(REGISTRY)
+cfg = os.path.join(top, "proj-q", "settings.json")
+os.makedirs(os.path.dirname(cfg))
+orig = json.dumps({"env": {"TOKEN": FAKE_TOKEN}})
+with open(cfg, "w", encoding="utf-8") as fh:
+    fh.write(orig)
+bak = cfg + ".bak"
+allow(False, "forge: stub refusal")
+lib.write_text(cfg, json.dumps({"env": {}}), mode=0o600, backup=True)
+check("bak: a checkout that may not write claims nothing", os.path.exists(bak) and not os.path.exists(REGISTRY),
+      "bak exists %s, registry exists %s" % (os.path.exists(bak), os.path.exists(REGISTRY)))
+os.remove(bak)
+with open(cfg, "w", encoding="utf-8") as fh:
+    fh.write(orig)
+allow(True)
+lib.write_text(cfg, json.dumps({"env": {}}), mode=0o600, backup=True)
+got = owned.previous(bak, "bak")[0]
+check("bak: a new .bak is claimed as kind file at [], owner core",
+      len(got) == 1 and got[0]["kind"] == "file" and got[0]["at"] == [] and got[0].get("part") == "bak" and got[0]["owner"] == "core",
+      "got %r (no claim)" % got)
+check("bak: the claim is the digest of the .bak's content, so removable() says it is unchanged",
+      bool(got) and owned.removable(got[0], orig) and not owned.removable(got[0], orig + " edited"))
+regtext = open(REGISTRY, encoding="utf-8").read() if os.path.exists(REGISTRY) else None
+check("bak: the claim holds no content (and a registry exists to hold none)", regtext is not None and FAKE_TOKEN not in regtext)
+check("bak: the original file is the one the .bak holds", open(bak, encoding="utf-8").read() == orig)
+check("bak: only the .bak is claimed, not the file written", cfg not in owned.load()[0], repr(list(owned.load()[0])))
+lib.write_text(cfg, json.dumps({"env": {"X": 1}}), mode=0o600, backup=True)
+check("bak: a second write leaves the claim as it was",
+      os.path.exists(REGISTRY) and open(REGISTRY, encoding="utf-8").read() == regtext)
+if os.path.exists(REGISTRY):
+    os.remove(REGISTRY)
+lib.write_text(cfg, json.dumps({"env": {"X": 2}}), mode=0o600, backup=True)
+check("bak: a .bak that existed before is never claimed", not os.path.exists(REGISTRY), "registry exists after a write beside an old .bak")
+other_cfg = os.path.join(top, "proj-q", "other.json")
+with open(other_cfg, "w", encoding="utf-8") as fh:
+    fh.write(orig)
+lib.write_text(other_cfg, "{}", mode=0o600)
+check("bak: backup=False creates no .bak and claims nothing", not os.path.exists(other_cfg + ".bak") and not os.path.exists(REGISTRY))
+owned.claim_backup(bak, apply=False)
+check("bak: claim_backup in a dry-run claims nothing", not os.path.exists(REGISTRY))
+owned.claim_backup(os.path.join(top, "proj-q", "gone.bak"), apply=True)
+check("bak: claim_backup of a missing file claims nothing and does not raise", not os.path.exists(REGISTRY))
+
 lib.may_write = real_may_write
 sandbox.cleanup(bool(failures))
 if failures:

@@ -9,16 +9,28 @@ stopped wanting and take only that out.
 The registry is one machine file, <lib.STATE>/owned.json, never in a repo:
 
     {"version": 1, "claims": {"<absolute file path>": [claim, ...]}}
-    claim = {"kind": "item|key|hook|file", "at": [JSON path ...], "sum": "<sha256 hex>", "owner": "<name>"}
+    claim = {"kind": "item|key|hook|file", "at": [JSON path ...], "sum": "<sha256 hex>", "owner": "<name>",
+             "part": "<name>"}
 
 `kind` says what the claim is: `item` one element of a list, `key` one key of an object, `hook` one hook
 row, `file` the file itself. `at` locates it, and (kind, at) is the claim's identity, which `stale` compares:
 two claims with the same kind and `at` are the same claim, whatever their sums. So for an item `at` ends in
 a locator the caller picks that names the element and is not a secret (a permission string, a hook's
 command), never a list index, which moves. `owner` is core, an
-integration's name or a profile. Only the SHA-256 of a value is kept, never the value: a resolved env
+integration's name or a profile. `part` is optional and names one writer's share of a file, so several writers
+can claim in the same file without erasing each other: record(file, claims, apply, part="skills") replaces only
+the claims of that part and previous(file, part) returns only those. Without `part` (None) a call means the
+whole file's claims, as before, and a claim without a "part" field (every registry written before parts
+existed) counts as part None; the field is omitted when None, so the version stays 1. A part is a short string
+such as "skills" or "gitignore:system-doc"; "bak" is the one core uses for a `.bak` file forge created (below).
+Only the SHA-256 of a value is kept, never the value: a resolved env
 holds secrets, and the record must not become another place they live. The file is written 0600, because
 the hash of a short secret can be guessed.
+
+A `.bak` that lib.write_text creates (backup=True, once ever) is claimed through claim_backup, called from
+write_text's .bak branch: kind `file`, `at` [], `sum` the digest of its content as a string (the content itself
+is never stored), part "bak", keyed by the .bak's own path, so that a later uninstall can delete it if it is
+still what forge copied. A `.bak` that existed before is never claimed: write_text does not create it.
 
 How a caller uses it (forge/skills.py and forge/hooks.py wire it in a later task):
 
@@ -79,7 +91,8 @@ def _valid(doc):
             return "the claims of %s are not a list" % file
         for c in items:
             if not (isinstance(c, dict) and c.get("kind") in KINDS and isinstance(c.get("at"), list)
-                    and isinstance(c.get("sum"), str) and isinstance(c.get("owner"), str)):
+                    and isinstance(c.get("sum"), str) and isinstance(c.get("owner"), str)
+                    and isinstance(c.get("part", ""), str)):
                 return "a claim of %s is malformed" % file
     return None
 
@@ -101,10 +114,14 @@ def load():
     return doc["claims"], ""
 
 
-def previous(file):
-    """(claims, warning): what the last run recorded for `file`, as load's warning goes with it."""
+def previous(file, part=None):
+    """(claims, warning): what the last run recorded for `file`, as load's warning goes with it. With a
+    `part`, only that part's claims; None is the whole file's, a claim of any part included."""
     claims, warn = load()
-    return claims.get(file, []), warn
+    items = claims.get(file, [])
+    if part is not None:
+        items = [c for c in items if c.get("part") == part]
+    return items, warn
 
 
 def _identity(c):
@@ -123,17 +140,33 @@ def removable(c, current_value):
     return digest(current_value) == c["sum"]
 
 
-def record(file, claims, apply):
+def record(file, claims, apply, part=None):
     """Replace the claims of `file` (an absolute path) with `claims`, leaving every other file's alone;
-    no claims drops the file's entry. Returns whether the registry was written: False for a dry-run
+    no claims drops the file's entry. With a `part`, replace only that part's claims of `file` (each stored
+    with its "part" field) and keep the file's other claims; none left drops the entry. Returns whether the registry was written: False for a dry-run
     (`apply` false) or when lib.may_write() refuses. A registry that cannot be read is replaced by one
     holding only this file's claims. Written through lib.write_json, 0600."""
     if not apply or not lib.may_write()[0]:
         return False
     registry, _ = load()  # a fresh dict on every call, so it is ours to change
+    if part is not None:
+        claims = [c for c in registry.get(file, []) if c.get("part") != part] + [dict(c, part=part) for c in claims]
     if claims:
         registry[file] = claims
     else:
         registry.pop(file, None)
     lib.write_json(path(), {"version": VERSION, "claims": registry}, mode=0o600, newline=True)
     return True
+
+
+def claim_backup(bak, apply):
+    """Claim `bak`, a `.bak` file lib.write_text has just created, as kind `file` under part "bak": the
+    digest of its content as a string, never the content. Nothing for a dry-run, a checkout that may not
+    write, or a file that is missing or not UTF-8 (a stray file is left alone, the safe direction). It never
+    raises: lib.write_text, its caller, has made the copy already."""
+    try:
+        with open(bak, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+        record(bak, [claim("file", [], text, "core")], apply, part="bak")
+    except (OSError, UnicodeDecodeError):
+        pass
