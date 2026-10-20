@@ -353,6 +353,24 @@ def deny_secret_files(s):
     return (["permissions.deny +%d (secret files)" % len(added)] if added else []), []
 
 
+def prune_deny(s, prev, now):
+    """Take out of s["permissions"]["deny"] each rule forge claimed last run (`prev`) and no longer declares
+    (`now`), while the file still holds it as forge wrote it; returns one note, or none. Called only when
+    deny_secret_files found `permissions.deny` a list. A rule forge stopped declaring stayed for good, its
+    claim forgotten with the next record (found in an attack round); one forge never claimed is the user's."""
+    deny = s["permissions"]["deny"]
+    gone = [c["at"][2] for c in owned.stale(prev, now) if c["kind"] == "item" and len(c["at"]) == 3
+            and c["at"][:2] == ["permissions", "deny"] and c["at"][2] in deny and owned.removable(c, c["at"][2])]
+    if not gone:
+        return []
+    deny[:] = [r for r in deny if r not in gone]
+    if not deny:
+        del s["permissions"]["deny"]
+        if not s["permissions"]:
+            del s["permissions"]
+    return ["dropped %d permissions.deny rule(s) (forge stopped declaring them)" % len(gone)]
+
+
 def _hook_list(g):
     return g.get("hooks") if isinstance(g, dict) and isinstance(g.get("hooks"), list) else None
 
@@ -555,7 +573,10 @@ def _commit(ctx, path, doc, notes, current, warnings=()):
         line = "   %s -> %s (already current)" % (short, current)
     else:
         if ctx.apply:
-            lib.write_json(path, doc, backup=True)
+            # An existing file keeps its mode and its .bak gets the same one: ~/.claude/settings.json can hold an
+            # env token and was widened from 0600 to the umask default (found in an attack round). A new file
+            # is written at the umask default as before.
+            lib.write_json(path, doc, mode="keep" if os.path.exists(path) else None, backup=True)
         line = "   %s%s -> %s" % ("" if ctx.apply else "would write ", short, "; ".join(notes))
     return "\n".join([line] + ["   " + w for w in warnings])
 
@@ -622,6 +643,7 @@ def write_user_settings(ctx):
     notes += deny_notes
     if not deny_warnings:  # a permissions or deny of the wrong shape was left alone: nothing of ours is in it
         key_claims += [owned.claim("item", ["permissions", "deny", r], r, "core") for r in SECRET_DENY]
+        notes += prune_deny(s, owned.previous(USER_SETTINGS)[0], key_claims)
     n = sum(1 for row in USER_HOOKS if CLAUDE in row[5])
     current = ["%s=%s" % kv for kv in plain] + [
         "%d hooks" % n,

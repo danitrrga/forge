@@ -193,6 +193,63 @@ h = world(seed={"model": "sonnet"})
 run(h)
 want("key", ["model"], "sonnet")
 
+# 9. The mode of a file the user kept 0600 survives forge's rewrite, and so does the .bak's: hooks._commit wrote at
+# the umask default (0644), widening a settings.json that can hold an env token, and its once-ever .bak with it.
+# Red on 34c191b: "FAIL a 0600 settings.json stays 0600 -- (644, 644)" and "FAIL its .bak is no wider than it -- ...".
+# Controls: a file the user kept 0644 stays 0644 (the mode is kept, not forced), and the .bak of a 0600 file made
+# by an older run at 0644 is narrowed.
+def modes():
+    return (os.stat(SETTINGS).st_mode & 0o777, os.stat(SETTINGS + ".bak").st_mode & 0o777 if os.path.exists(SETTINGS + ".bak") else None)
+
+
+for first in (0o600, 0o644):
+    h = world(seed={"env": {"USER_TOKEN": FAKE_TOKEN}})
+    os.chmod(SETTINGS, first)
+    run(h)
+    got = modes()
+    check("a %o settings.json stays %o" % (first, first), got[0] == first, "(%o, %s)" % (got[0], got[1] and "%o" % got[1]))
+    check("its .bak is no wider than it", got[1] is not None and got[1] & ~first == 0 and got[1] == first, got)
+h = world(seed={"env": {"USER_TOKEN": FAKE_TOKEN}})
+os.chmod(SETTINGS, 0o600)
+with open(SETTINGS + ".bak", "w", encoding="utf-8") as fh:
+    fh.write("{}")
+os.chmod(SETTINGS + ".bak", 0o644)
+run(h)
+check("a .bak left at 0644 beside a 0600 settings.json is narrowed", modes() == (0o600, 0o600), modes())
+
+# 10. A deny rule forge claimed and stopped declaring (dropped from SECRET_DENY) is taken out while it is still what
+# forge wrote, as a hook row is; the user's own rules, and a rule forge never claimed, stay. Red on 34c191b: after the
+# second run the deny list was ['Bash(rm:*)', 'Read(/a/**)', 'Read(/b/**)'] and its claims held only Read(/a/**),
+# so the rule was neither pruned nor claimed: "FAIL a dropped SECRET_DENY rule is taken out -- ...".
+h = world(seed={"permissions": {"deny": ["Bash(rm:*)"]}})
+h.SECRET_DENY = ["Read(/a/**)", "Read(/b/**)"]
+run(h)
+check("both rules are written first (the control)", doc()["permissions"]["deny"] == ["Bash(rm:*)", "Read(/a/**)", "Read(/b/**)"], doc())
+h.SECRET_DENY = ["Read(/a/**)"]
+line = run(h)
+deny = doc()["permissions"]["deny"]
+check("a dropped SECRET_DENY rule is taken out", deny == ["Bash(rm:*)", "Read(/a/**)"], (deny, line))
+check("the run says so", "dropped" in line, line)
+check("its claim is gone and the declared one stays", ("item", ("permissions", "deny", "Read(/b/**)")) not in claimed()
+      and ("item", ("permissions", "deny", "Read(/a/**)")) in claimed(), sorted(claimed()))
+check("the user's own rule stays", "Bash(rm:*)" in deny, deny)
+line = run(h)
+check("a third run is already current", "already current" in line, line)
+h = world(seed={"permissions": {"deny": ["Read(/b/**)"]}})  # a rule forge never claimed, though SECRET_DENY once had it
+h.SECRET_DENY = ["Read(/a/**)"]
+run(h)
+check("a rule forge never claimed stays", "Read(/b/**)" in doc()["permissions"]["deny"], doc())
+h = world()
+h.SECRET_DENY = ["Read(/a/**)", "Read(/b/**)"]
+run(h)
+d = doc()
+d["permissions"]["deny"].remove("Read(/b/**)")  # the user took it out themselves
+lib.write_json(SETTINGS, d)
+h.SECRET_DENY = ["Read(/a/**)"]
+line = run(h)
+check("a claimed rule the user already removed: no crash, the file is as the user left it",
+      not line.startswith("raised") and doc()["permissions"]["deny"] == ["Read(/a/**)"], line)
+
 sandbox.cleanup(bool(failures))
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
 sys.exit(1 if failures else 0)
