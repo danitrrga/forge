@@ -710,6 +710,7 @@ class ClaudeJson:
         self.path, self.doc, self.err, self.mtime = path, doc, err, mtime
         self.before = lib.dumps(doc)
         self.claims = {}  # project key -> the claims of the servers this run wrote there
+        self.moved = set()  # project keys a relocation took out of the document
 
     @classmethod
     def open(cls, ctx):
@@ -747,6 +748,7 @@ class ClaudeJson:
         if kept:
             for old, new in migrate_project_keys(self.doc, kept):
                 print("project key relocation:", old, "->", new)
+                self.moved.add(old)
 
     def project(self, prof, sel, registry, secrets, errors):
         """Give one profile's project its servers `sel`, resolved. A secret that does not resolve
@@ -805,6 +807,9 @@ class ClaudeJson:
     def _record(self, ctx):
         """The ownership record (forge/owned.py) of the servers forge wrote this run, one part per project
         key: the file is every project's, so a run over one project leaves the others' claims. Only the
-        projects this run wrote are touched, and only the hash of each definition is kept (it holds secrets)."""
+        projects this run wrote, and the keys a relocation moved away (their claims go), are touched; only the
+        hash of each definition is kept (it holds secrets)."""
+        for fk in self.moved - self.claims.keys():
+            record_claims(self.path, [], ctx.apply, part="mcp:" + fk)
         for fk, claims in self.claims.items():
             record_claims(self.path, claims, ctx.apply, part="mcp:" + fk)

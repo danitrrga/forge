@@ -19,7 +19,7 @@ resolves FAKE_TOKEN, run in-process; the record must never hold the token. lib.m
 allow, because this checkout may be a linked worktree, which never writes. A dry-run records nothing, and
 a second --apply that changes nothing does not rewrite the record.
 
-Seen failing on 78d36ba (mcp.py claims nothing): 22 of 43 checks red, the 21 others (controls, dry-runs, a pre-existing line) pass there. First lines:
+Seen failing on 78d36ba (mcp.py claims nothing): 24 of 47 checks red, the 23 others (controls, dry-runs, a pre-existing line) pass there. First lines:
   FAIL C7: the server is claimed for project A -- []
   FAIL C7: two projects' claims coexist in the record -- ...
   FAIL C10: config.toml is claimed as a file, owner codex, part codex -- []
@@ -30,12 +30,13 @@ already-current path not recording (2); a dry-run recording (1); one shared part
 claim kind item (2); record_claims always rewriting (1); a line claimed whether or not forge added it (5); a
 claim not kept on later runs (4); the claims of other lines of the part erased (2); the ignore line never
 claimed (9); a repo-owned project's line looked for in .gitignore (3); config.toml never claimed (4), claimed
-without its part (2), its claim left when codex_harness goes off (1)."""
+without its part (2), its claim left when codex_harness goes off (1), a relocated key's claims left behind (1)."""
 import contextlib
 import io
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
@@ -91,12 +92,15 @@ def prof(p, name, **keys):
     return dict({"project": name, "project_path": p}, **keys)
 
 
-def run_cj(ctx, *pairs):
-    """One ~/.claude.json run over (profile, servers) pairs, as sync.py drives it: open, project each, commit."""
+def run_cj(ctx, *pairs, relocations=()):
+    """One ~/.claude.json run over (profile, servers) pairs, as sync.py drives it: open, relocate, project
+    each, commit."""
     errors = []
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         cj = mcp.ClaudeJson.open(ctx)
+        if relocations:
+            cj.relocate(ctx, {"toy.claude.json": pairs[0][0]}, list(relocations))
         for pr, sel in pairs:
             cj.project(pr, sel, REGISTRY, SECRETS, errors)
         line = cj.commit(ctx)
@@ -156,6 +160,7 @@ check("C7: the claim's sum is the hash of the definition as written (token resol
 check("C7: the record never holds the token", FAKE_TOKEN not in raw() and "9c1d" not in raw(), "token in owned.json")
 
 before, stamp = raw(), mtime()
+time.sleep(0.05)  # the file system's clock is coarse: a rewrite within a tick would keep the mtime
 line, _ = run_cj(APPLY, (prof(pa, "toy-a"), ["srv"]), (prof(pb, "toy-b"), ["srv", "srv2"]))
 check("control: a second run is already current", "already current" in line, line)
 check("C7: a second apply that changes nothing leaves the record's bytes and mtime",
@@ -177,6 +182,19 @@ line, _ = run_cj(APPLY, (prof(pa, "toy-a"), ["srv"]), (prof(pb, "toy-b"), ["srv2
 check("C7: a server taken out of B's profile loses its claim, A's and B's other claim stay",
       sorted(tuple(c["at"])[3] for c in claims(CJ, "mcp:" + kb)) == ["srv2"] and len(claims(CJ, "mcp:" + ka)) == 1,
       claims(CJ))
+
+# A project that moved (config/project-relocations.json): its key is gone from ~/.claude.json, so its claims go
+# with it, and the claims of the new key are recorded; a project that did not move keeps its own.
+drop_registry()
+pr1, pr2 = project(), project()
+k1, k2 = mcp.project_key(pr1), mcp.project_key(pr2)
+run_cj(APPLY, (prof(pr1, "toy-r"), ["srv"]), (prof(pb, "toy-b"), ["srv2"]))
+check("control: the project is claimed under its first key", len(claims(CJ, "mcp:" + k1)) == 1, claims(CJ))
+run_cj(APPLY, (prof(pr2, "toy-r"), ["srv"]), relocations=[{"from": pr1, "to": pr2}])
+check("control: the relocation moved the key", k1 not in cj_doc()["projects"] and k2 in cj_doc()["projects"], list(cj_doc()["projects"]))
+check("C7: a relocated project's claims under the old key are gone", claims(CJ, "mcp:" + k1) == [], claims(CJ))
+check("C7: and the new key's are recorded, another project's stay",
+      len(claims(CJ, "mcp:" + k2)) == 1 and len(claims(CJ, "mcp:" + kb)) == 1, claims(CJ))
 
 drop_registry()
 pc = project()
@@ -209,6 +227,7 @@ check("C10: config.toml is claimed as a file, owner codex, part codex",
 check("C10: the sum is the hash of the text written", got and got[0]["sum"] == owned.digest(text), got)
 check("C10: the record never holds the token", FAKE_TOKEN not in raw(), "token in owned.json")
 before, stamp = raw(), mtime()
+time.sleep(0.05)  # the file system's clock is coarse: a rewrite within a tick would keep the mtime
 run_codex(APPLY, prof(pe, "toy-e"), ["srv"])
 check("C10: a second apply (content current) keeps the claim and leaves the record's bytes",
       raw() != "" and raw() == before and mtime() == stamp, "rewritten")
