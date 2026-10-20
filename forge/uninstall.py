@@ -21,6 +21,7 @@ wrote it since it was read. It never reads config/secrets.json or credentials/: 
 
 Left in place and said: GSD's agents and engine in ~/.claude (the command that removes them is printed), a
 .bak older than the record, and the checkout itself (the command that deletes it is printed, never run)."""
+import collections
 import contextlib
 import importlib.util
 import json
@@ -237,9 +238,7 @@ class Scope:
         """[(file, claim)] in scope, in the record's order. A claimed .bak goes with its file when every claim of
         that file is in scope (a project's: when it lies under the project)."""
         out = [(f, c) for f, cs in claims.items() for c in cs if c.get("part") != "bak" and self._takes(f, c)]
-        taken = {}
-        for f, c in out:
-            taken[f] = taken.get(f, 0) + 1
+        taken = collections.Counter(f for f, _ in out)
         for f, cs in claims.items():
             for c in cs:
                 if c.get("part") != "bak":
@@ -282,10 +281,9 @@ def _take_out(run, file, c):
         parent = _get(doc, at[:-1])
         if kind == "item":
             parent[:] = [v for v in parent if v != at[-1]]
-            _prune(doc, at[:-1])
         else:
             del parent[at[-1]]
-            _prune(doc, at[:-1])
+        _prune(doc, at[:-1])
 
 
 def _claims(run, chosen):
@@ -347,7 +345,7 @@ def _by_construction(run, scope):
     if scope.has("whole", "gsd") and os.path.lexists(GSD_DEFAULTS):
         n += 1
         src = os.path.join(lib.ROOT, "config", "gsd", "defaults.json")
-        if not os.path.islink(GSD_DEFAULTS) and os.path.isfile(src) and _bytes(GSD_DEFAULTS) == _bytes(src):
+        if not os.path.islink(GSD_DEFAULTS) and os.path.isfile(src) and lib.holds(GSD_DEFAULTS, _read(src)):
             run.delete(GSD_DEFAULTS)
             run.say("   %s -> %s" % (lib.short(GSD_DEFAULTS), run.verb("remove")))
         else:
@@ -360,8 +358,8 @@ def _by_construction(run, scope):
     return n
 
 
-def _bytes(p):
-    with open(p, "rb") as fh:
+def _read(p):
+    with open(p, encoding="utf-8", newline="") as fh:
         return fh.read()
 
 
@@ -383,9 +381,7 @@ def _project_files(run, pp, doc_mod):
     copy = os.path.join(pp, ".claude", "AGENT-SYSTEM.md")
     if os.path.lexists(copy):
         n += 1
-        with open(doc_mod.CANON, encoding="utf-8") as fh:
-            want = doc_mod.GEN_BANNER + fh.read()
-        if not os.path.islink(copy) and lib.holds(copy, want):
+        if not os.path.islink(copy) and lib.holds(copy, doc_mod.GEN_BANNER + _read(doc_mod.CANON)):
             run.delete(copy)
             run.say("   %s -> %s" % (lib.short(copy), run.verb("remove")))
         else:
@@ -453,9 +449,10 @@ def _last(run, scope, deferred):
 
 def main(a):
     """forge uninstall [--integration N | --project N] [--apply]: 0, or 1 on a FAIL or a refusal."""
-    exists = os.path.exists(owned.path())
     claims, warn = owned.load()
-    scope = Scope(a, claims if exists and not warn else None)
+    if warn or not os.path.exists(owned.path()):
+        claims = None  # no record to go by
+    scope = Scope(a, claims)
     print("forge uninstall: %s (%s)" % (scope.name, "APPLY" if a.apply else "dry-run: nothing is written; --apply removes"), flush=True)
     if scope.refusal:
         print("  ! " + scope.refusal)
@@ -468,7 +465,7 @@ def main(a):
     run = Run(a.apply)
     had_state = os.path.isdir(lib.STATE)  # before lib.lock, which makes it
     with lib.lock() if a.apply else contextlib.nullcontext():
-        return _uninstall(run, scope, claims if exists and not warn else None, warn, had_state)
+        return _uninstall(run, scope, claims, warn, had_state)
 
 
 def _uninstall(run, scope, claims, warn, had_state):
@@ -488,8 +485,9 @@ def _uninstall(run, scope, claims, warn, had_state):
     items = _by_construction(run, scope)
     run.commit()
     if claims is not None and not (scope.whole and not run.failed) and handled and run.apply:
+        gone = {id(c) for _, c in handled}
         for f in dict.fromkeys(f for f, _ in handled):
-            owned.record(f, [c for c in claims[f] if (f, c) not in handled], True)
+            owned.record(f, [c for c in claims[f] if id(c) not in gone], True)
     if scope.whole and run.failed:
         run.say("  ! forge's SessionStart row and %s stay while something above failed: run it again once that is fixed"
                 % lib.short(lib.STATE))
