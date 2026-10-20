@@ -507,8 +507,10 @@ def entries(doc, event, matcher, command):
     command is `command`."""
     hooks = doc.get("hooks")
     groups = hooks.get(event) if isinstance(hooks, dict) and isinstance(event, str) else None
+    if not isinstance(groups, list):
+        return []
     return [h for g in groups if _hook_list(g) is not None and g.get("matcher") == matcher
-            for h in g["hooks"] if _well_formed(h) and h.get("command") == command] if isinstance(groups, list) else []
+            for h in g["hooks"] if _well_formed(h) and h.get("command") == command]
 
 
 def reconcile_owned(doc, agent, file):
@@ -529,15 +531,12 @@ def reconcile_owned(doc, agent, file):
             now.append(owned.claim("hook", [event, matcher, cmd], found[0], ROW_INTEGRATION.get(marker, "core")))
     hooks = doc["hooks"]
     for c in owned.stale(prev, now):
-        at = c["at"]
-        if not (c["kind"] == "hook" and len(at) == 3 and isinstance(at[0], str) and isinstance(at[2], str)
-                and (at[1] is None or isinstance(at[1], str))):
+        if c["kind"] != "hook" or len(c["at"]) != 3:
             continue
-        event, matcher, cmd = at
-        groups = hooks.get(event)
-        if not isinstance(groups, list):
+        event, matcher, cmd = c["at"]
+        if not entries(doc, event, matcher, cmd):
             continue
-        removed = _strip_if(hooks, event, groups, lambda g, h: g.get("matcher") == matcher
+        removed = _strip_if(hooks, event, hooks[event], lambda g, h: g.get("matcher") == matcher
                             and h.get("command") == cmd and owned.removable(c, h))
         if removed:
             notes.append("dropped %d %s (%s: its row is gone)" % (removed, cmd, event))
