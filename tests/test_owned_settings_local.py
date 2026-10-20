@@ -232,20 +232,19 @@ p = project()
 check("nothing declared, no record: None",
       skills.write_settings_local(APPLY, {"project": "toy", "project_path": p}, {}, []) is None)
 
-# 13. cli.settings_forge_would_write computes the document in memory with write_json swapped for a
-# recorder and apply true (the frozen drift row): the registry is not written, and the last thing the
-# recorder saw is the settings document, not the registry's.
+# 13. cli.settings_forge_would_write (the frozen drift row) computes the document in memory, with
+# write_json swapped for a recorder and apply true: the registry is not written, and the document it
+# returns is the settings file's, not the registry's.
+lib.SETTINGS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tests", "fixtures", "config", "forge.json")
 drop_registry()
 p = project()
-wanted, real = [], lib.write_json
-lib.write_json = lambda path, data, **kw: wanted.append((path, data))
-try:
-    run(p, **perms(allow=["Bash(x:*)"]))
-finally:
-    lib.write_json = real
-check("in-memory computation: the last write seen is the settings file", wanted and wanted[-1][0] == slp(p),
-      [w[0] for w in wanted])
+doc_in_memory = cli.settings_forge_would_write(
+    "toy", {"project": "toy", "project_path": p, "permissions": {"allow": ["Bash(x:*)"]}}, {})
+check("in-memory computation: the document is the settings file's",
+      isinstance(doc_in_memory, dict) and doc_in_memory.get("permissions") == {"allow": ["Bash(x:*)"]}
+      and "claims" not in doc_in_memory and "version" not in doc_in_memory, doc_in_memory)
 check("in-memory computation: the registry is not written", not os.path.exists(REGISTRY), REGISTRY)
+check("in-memory computation: the file is not written", not os.path.exists(slp(p)), slp(p))
 
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
 sandbox.cleanup(bool(failures))
