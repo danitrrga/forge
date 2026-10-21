@@ -134,8 +134,9 @@ toy forge.json (`settings_world`, `toy_settings`), never the real one. Seen fail
   forge doctor NAME: "a healthy project's rows = {..., 'hindsight': 'SKIP'}, want {...}" and "a healthy project has
   no hindsight row = True, want False".
 
-11. The `ponytail` row: per profile whose own `hooks` run hooks/ponytail_subagent.py, one entry under
-SubagentStart that gives gsd-executor the ruleset and gsd-planner nothing; none wiring it is a SKIP. Seen
+11. The `ponytail` row: per profile whose own `hooks` run hooks/ponytail_subagent.py, one entry under each
+of SubagentStart and UserPromptSubmit (red before that rule: "UserPromptSubmit missing = ['PASS'], want
+['FAIL']"), the SubagentStart one giving gsd-executor the ruleset and gsd-planner nothing; none wiring it is a SKIP. Seen
 failing before the row (12 cases): "no profile wires the hook = (['raised'], 'AttributeError', False), want
 (['SKIP'], 'ponytail', True)", "the row is in forge doctor = False, want True". Each mutation fails a case:
 the planner probe dropped, "a hook that answers all = (['PASS'], True), want (['FAIL'], True)"; the event
@@ -1053,7 +1054,7 @@ if MODE == "all" or (MODE == "ok" and agent == "gsd-executor"):
 """
 
 
-def ponytail_world(tmp, name, stub="ok", events=("SubagentStart",), frozen=False, others=()):
+def ponytail_world(tmp, name, stub="ok", events=("SubagentStart", "UserPromptSubmit"), frozen=False, others=()):
     """A toy ROOT with a stub hooks/ponytail_subagent.py and a profile `name` whose own `hooks` run it
     once under each of `events`; `others` are profiles that wire nothing."""
     root = os.path.join(tmp, "pt-" + name)
@@ -1084,7 +1085,8 @@ def ponytail_cases(tmp):
         rows = smoke(ponytail_world(tmp, stub, stub=stub), "ponytail_row")
         want("a hook that answers %s" % stub, (levels(rows), says in rows[0][2]), (["FAIL"], True))
     for label, kw in (("wired under PreToolUse", {"events": ("PreToolUse",)}),
-                      ("wired twice", {"events": ("SubagentStart", "PreToolUse")}),
+                      ("wired once more, under PreToolUse", {"events": ("SubagentStart", "UserPromptSubmit", "PreToolUse")}),
+                      ("UserPromptSubmit missing", {"events": ("SubagentStart",)}),
                       ("wired but frozen", {"frozen": True})):
         rows = smoke(ponytail_world(tmp, label.replace(" ", "-"), **kw), "ponytail_row")
         want(label, levels(rows), ["FAIL"])

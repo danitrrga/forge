@@ -452,10 +452,12 @@ def worktree_guard_smoke(only=None):
 
 
 # Ponytail for GSD's executing, debugging and reviewing agents (hooks/ponytail_subagent.py), which a
-# profile wires in its own `hooks` block. For each profile that does: exactly one entry, under
-# SubagentStart, whose command gives gsd-executor Ponytail's ruleset and gsd-planner nothing. The probe
-# runs the real install, so a Ponytail update that moved its builder is a FAIL, not a silent no-op.
+# profile wires in its own `hooks` block. For each profile that does: exactly one entry under each of
+# SubagentStart and UserPromptSubmit (without the second a manual /ponytail never reaches the agents), and
+# the SubagentStart command gives gsd-executor Ponytail's ruleset and gsd-planner nothing. The probe runs
+# the real install, so a Ponytail update that moved its builder is a FAIL, not a silent no-op.
 PONYTAIL_SCRIPT, PONYTAIL_TIMEOUT = "ponytail_subagent.py", 15
+PONYTAIL_EVENTS = ("SubagentStart", "UserPromptSubmit")
 
 
 def ponytail_entries(prof):
@@ -468,12 +470,13 @@ def ponytail_problem(prof, entries):
     """Why this profile's Ponytail hook would not scope Ponytail in a session, or None."""
     if prof.get("frozen"):
         return "the profile wires it but is frozen, so forge writes none of its hooks"
-    if [e for e, _ in entries] != ["SubagentStart"]:
-        return "the profile runs %s under %s, want once under SubagentStart" % (PONYTAIL_SCRIPT, [e for e, _ in entries])
+    if sorted(e for e, _ in entries) != list(PONYTAIL_EVENTS):
+        return "the profile runs %s under %s, want once under each of %s" % (PONYTAIL_SCRIPT, [e for e, _ in entries], list(PONYTAIL_EVENTS))
+    command = dict(entries)["SubagentStart"]
     for agent, wanted in (("gsd-executor", True), ("gsd-planner", False)):
         payload = json.dumps({"hook_event_name": "SubagentStart", "agent_type": agent})
         try:
-            r = subprocess.run(entries[0][1], shell=True, input=payload, text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
+            r = subprocess.run(command, shell=True, input=payload, text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
         except subprocess.TimeoutExpired:
             return "%s got no answer in %d s" % (agent, PONYTAIL_TIMEOUT)
         try:
@@ -911,7 +914,7 @@ CHECKS = [
     ("instruction files", instruction_file_blocks, "forge never writes in a project: the change is in that project's repo"),
     ("command guard", command_guard_smoke, "forge sync --apply; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
     ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
-    ("ponytail", ponytail_row, "the profile's hooks run hooks/ponytail_subagent.py once, under SubagentStart; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
+    ("ponytail", ponytail_row, "the profile's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
     ("toolchain", toolchain_row, "forge toolchain --fix (installs what is missing; a version that differs is only reported)"),
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
