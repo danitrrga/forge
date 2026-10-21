@@ -451,6 +451,61 @@ def worktree_guard_smoke(only=None):
     return lib.Result("SKIP", "worktree guard", NOT_ARMED + "no profile turns on worktree_guard")
 
 
+# Ponytail for GSD's executing, debugging and reviewing agents (hooks/ponytail_subagent.py), which a
+# profile wires in its own `hooks` block. For each profile that does: exactly one entry, under
+# SubagentStart, whose command gives gsd-executor Ponytail's ruleset and gsd-planner nothing. The probe
+# runs the real install, so a Ponytail update that moved its builder is a FAIL, not a silent no-op.
+PONYTAIL_SCRIPT, PONYTAIL_TIMEOUT = "ponytail_subagent.py", 15
+
+
+def ponytail_entries(prof):
+    """[(event, command)] of the profile's own hooks that run forge's hooks/ponytail_subagent.py."""
+    return [(e, h["command"]) for e, groups in (prof.get("hooks") or {}).items() if skills._groups_ok(groups)
+            for g in groups for h in g.get("hooks", []) if skills._runs_forge_guard(h.get("command"), PONYTAIL_SCRIPT)]
+
+
+def ponytail_problem(prof, entries):
+    """Why this profile's Ponytail hook would not scope Ponytail in a session, or None."""
+    if prof.get("frozen"):
+        return "the profile wires it but is frozen, so forge writes none of its hooks"
+    if [e for e, _ in entries] != ["SubagentStart"]:
+        return "the profile runs %s under %s, want once under SubagentStart" % (PONYTAIL_SCRIPT, [e for e, _ in entries])
+    for agent, wanted in (("gsd-executor", True), ("gsd-planner", False)):
+        payload = json.dumps({"hook_event_name": "SubagentStart", "agent_type": agent})
+        try:
+            r = subprocess.run(entries[0][1], shell=True, input=payload, text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            return "%s got no answer in %d s" % (agent, PONYTAIL_TIMEOUT)
+        try:
+            got = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"].startswith("PONYTAIL MODE ACTIVE")
+        except (ValueError, KeyError, TypeError, AttributeError):
+            got = False
+        if r.returncode != 0 or got != wanted or (not wanted and r.stdout.strip()):
+            last = (r.stderr.strip().splitlines() or [""])[-1]
+            return "%s %s (exit %d%s)" % (agent, "got no ruleset" if wanted else "got output", r.returncode,
+                                          ": " + last if last else "")
+    return None
+
+
+def ponytail_row(only=None):
+    """One result per profile that wires hooks/ponytail_subagent.py, named `ponytail <project>`, each
+    saying how many are wired; a SKIP when none does. With `only`, that profile alone, and a PASS when it
+    does not wire it."""
+    wired = [(n, p, e) for n, p in sorted(lib.profiles().items()) for e in [ponytail_entries(p)] if e]
+    rows = []
+    for name, prof, entries in wired:
+        if only in (None, name):
+            why = ponytail_problem(prof, entries)
+            rows.append(lib.Result("FAIL", "ponytail " + name, "%s (%d wired)" % (why, len(wired))) if why
+                        else lib.Result("PASS", "ponytail " + name, "gsd-executor gets the ruleset, gsd-planner "
+                                        "nothing (%d wired)" % len(wired)))
+    if rows:
+        return rows
+    if only:
+        return lib.Result("PASS", "ponytail", "%s does not wire hooks/%s" % (only, PONYTAIL_SCRIPT))
+    return lib.Result("SKIP", "ponytail", NOT_ARMED + "no profile wires hooks/" + PONYTAIL_SCRIPT)
+
+
 # The global npm and pip packages the machine's mise-managed node and python must carry. mise
 # installs every node and python into its own prefix and global packages do not follow: on
 # one day `latest` moved (node 26.8.1 to 26.11.1, python 3.14.7 to 3.15.0) and the new toolchain
@@ -856,6 +911,7 @@ CHECKS = [
     ("instruction files", instruction_file_blocks, "forge never writes in a project: the change is in that project's repo"),
     ("command guard", command_guard_smoke, "forge sync --apply; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
     ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
+    ("ponytail", ponytail_row, "the profile's hooks run hooks/ponytail_subagent.py once, under SubagentStart; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
     ("toolchain", toolchain_row, "forge toolchain --fix (installs what is missing; a version that differs is only reported)"),
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
@@ -925,6 +981,7 @@ def project_checks(name, prof, why):
         ("instruction files", lambda: instruction_file_blocks(name), fix["instruction files"]),
         ("command guard", lambda: command_guard_smoke(name), fix["command guard"]),
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
+        ("ponytail", lambda: ponytail_row(name), fix["ponytail"]),
         ("memory", ["scripts/sync/memory_doctor.py", "--project", name],
          "python3 scripts/sync/memory_doctor.py --project %s --verbose" % name),
     ]

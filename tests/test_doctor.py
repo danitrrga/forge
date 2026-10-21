@@ -132,7 +132,14 @@ toy forge.json (`settings_world`, `toy_settings`), never the real one. Seen fail
   forge sync: "gsd off: forge sync says NOT RUN = False" and "gsd off: the step did not run = False";
   forge test: "forge test lists the data history's tests = (0, False, ...), want (0, True, ...)";
   forge doctor NAME: "a healthy project's rows = {..., 'hindsight': 'SKIP'}, want {...}" and "a healthy project has
-  no hindsight row = True, want False"."""
+  no hindsight row = True, want False".
+
+11. The `ponytail` row: per profile whose own `hooks` run hooks/ponytail_subagent.py, one entry under
+SubagentStart that gives gsd-executor the ruleset and gsd-planner nothing; none wiring it is a SKIP. Seen
+failing before the row (12 cases): "no profile wires the hook = (['raised'], 'AttributeError', False), want
+(['SKIP'], 'ponytail', True)", "the row is in forge doctor = False, want True". Each mutation fails a case:
+the planner probe dropped, "a hook that answers all = (['PASS'], True), want (['FAIL'], True)"; the event
+check dropped, "wired under PreToolUse = ['PASS'], want ['FAIL']" and "wired twice = ['PASS'], want ['FAIL']"."""
 import argparse
 import contextlib
 import glob
@@ -1033,6 +1040,63 @@ def row(rows, name):
     return rows.get(name, ("", ""))
 
 
+# A stand-in for hooks/ponytail_subagent.py: what is under test is the check, not the hook. It answers
+# gsd-executor with a ruleset; MODE "all" answers every agent, "none" answers none, "crash" exits 1.
+STUB_PONYTAIL = """import json, sys
+MODE = %r
+agent = json.load(sys.stdin).get("agent_type")
+if MODE == "crash":
+    print("ponytail_subagent: LookupError: ponytail@ponytail is not installed", file=sys.stderr)
+    sys.exit(1)
+if MODE == "all" or (MODE == "ok" and agent == "gsd-executor"):
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": "PONYTAIL MODE ACTIVE"}}))
+"""
+
+
+def ponytail_world(tmp, name, stub="ok", events=("SubagentStart",), frozen=False, others=()):
+    """A toy ROOT with a stub hooks/ponytail_subagent.py and a profile `name` whose own `hooks` run it
+    once under each of `events`; `others` are profiles that wire nothing."""
+    root = os.path.join(tmp, "pt-" + name)
+    os.makedirs(os.path.join(root, "hooks"))
+    os.makedirs(os.path.join(root, "config", "profiles"))
+    with open(os.path.join(root, "hooks", "ponytail_subagent.py"), "w") as fh:
+        fh.write(STUB_PONYTAIL % stub)
+    cmd = "python3 " + os.path.join(root, "hooks", "ponytail_subagent.py")
+    prof = {"project": name, "project_path": os.path.join(root, name),
+            "hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": 10}]}] for e in events}}
+    if frozen:
+        prof["frozen"] = True
+    put_profile(root, name, prof)
+    for o in others:
+        put_profile(root, o, {"project": o, "project_path": os.path.join(root, o)})
+    return root
+
+
+def ponytail_cases(tmp):
+    rows = smoke(ponytail_world(tmp, "skip", events=()), "ponytail_row")
+    want("no profile wires the hook", (levels(rows), rows[0][1], rows[0][2].startswith(cli.NOT_ARMED)),
+         (["SKIP"], "ponytail", True))
+    rows = smoke(ponytail_world(tmp, "ok", others=("plain",)), "ponytail_row")
+    want("a wired profile whose hook answers right", (levels(rows), rows[0][1], "1 wired" in rows[0][2]),
+         (["PASS"], "ponytail ok", True))
+    # The negative controls: a hook that gives every agent the ruleset, none, or crashes is a FAIL.
+    for stub, says in (("all", "gsd-planner"), ("none", "gsd-executor"), ("crash", "not installed")):
+        rows = smoke(ponytail_world(tmp, stub, stub=stub), "ponytail_row")
+        want("a hook that answers %s" % stub, (levels(rows), says in rows[0][2]), (["FAIL"], True))
+    for label, kw in (("wired under PreToolUse", {"events": ("PreToolUse",)}),
+                      ("wired twice", {"events": ("SubagentStart", "PreToolUse")}),
+                      ("wired but frozen", {"frozen": True})):
+        rows = smoke(ponytail_world(tmp, label.replace(" ", "-"), **kw), "ponytail_row")
+        want(label, levels(rows), ["FAIL"])
+    root = ponytail_world(tmp, "scoped", others=("plain",))
+    want("doctor NAME, a profile that wires nothing", levels(smoke(root, "ponytail_row", "plain")), ["PASS"])
+    want("doctor NAME, the wired profile", [r[1] for r in smoke(root, "ponytail_row", "scoped")], ["ponytail scoped"])
+    with toy(root):
+        names = [n for n, _, _ in cli.project_checks("scoped", lib.profiles()["scoped"], None)]
+    want("the row is in forge doctor NAME", "ponytail" in names, True)
+    want("the row is in forge doctor", "ponytail" in [n for n, _, _ in cli.CHECKS], True)
+
+
 def pending_cases():
     """cli.pending_writes over the generators' own sample lines: each write line counts once, and
     no line of a project that is up to date, or that the generator refuses to change, does."""
@@ -1091,7 +1155,7 @@ def project_cases(tmp):
     rows = rows_of(lines)
     levels = {k: v[0] for k, v in rows.items()}
     want("a healthy project's rows", levels, {"profile": "PASS", "generated": "PASS", "skill names": "PASS",
-                                              "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS",
+                                              "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS",
                                               "memory": levels.get("memory", "(none)")})
     want("a healthy project's memory row", "memory" in rows, True)
     want("a healthy project has no hindsight row", "hindsight" in rows, False)
@@ -1556,6 +1620,7 @@ def main():
     instruction_cases(tmp)
     guard_cases(tmp)
     wtguard_cases(tmp)
+    ponytail_cases(tmp)
     pending_cases()
     extra_cases(tmp)
     integrations_cases(tmp)
