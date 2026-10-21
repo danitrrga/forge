@@ -1214,6 +1214,57 @@ FORGE_BLOCK = [
     ("(HUSKY=0 git push)", "HUSKY=0"),
     ("echo ok; export LEFTHOOK_BIN=/bin/true", "LEFTHOOK_BIN"),
     ("LEFTHOOK_BIN=/bin/true git commit -m \"x", "LEFTHOOK_BIN"),
+    # False-positive round (a 30-day audit of the guard's own refusals). Each allow case of the same
+    # name in FORGE_ALLOW "FP" was red first; these are the opposite verdicts that keep the fix from
+    # opening a hole. The mutants of test_guard_mutants.py ("fp:") pin each one.
+    # FP-1: `-n` counts only in commit's own stage of a pipeline.
+    ("git commit -n -m x | tail -n 3", "git commit -n"),
+    ("git commit -F m 2>&1 | tail -n 3; git commit -n -m x", "git commit -n"),
+    ("echo x | git commit -n -F -", "git commit -n"),
+    ("sh -c 'git commit -n -F m | tail -n 3'", "git commit -n"),
+    # FP-2: only a grep's PATTERN is text; the flag, and anything that runs, stay read as written.
+    ("grep -n x f; git commit --no-verify -m y", "--no-verify"),
+    ("git commit -m x --no-verify | grep -n 'x'", "--no-verify"),
+    ("grep -n 'x' f && git commit -m m --no-verify", "--no-verify"),
+    ("grep \"$(git commit --no-verify -m x)\" f", "--no-verify"),
+    ("grep -n x f | git commit --no-verify -F -", "--no-verify"),
+    # FP-3: a backslash before `.env` is no excuse unless it is process\.env or meta\.env.
+    ("cat foo\\.env", "credential store"),
+    ("sed -n '/process\\.env/p' .env", "credential store"),
+    ("sed -i 's/a/b/' cfg\\.env", "credential store"),
+    # FP-4: an exclusion operand is blanked, nothing else on the line is.
+    ("git grep -n foo -- .env", "credential store"),
+    ("git grep -n foo ':.env'", "credential store"),
+    ("git grep -n foo -- ':(top).env'", "credential store"),
+    ("git diff -- ':!.mcp.json' .env.local", "credential store"),
+    ("git show HEAD:.mcp.json", "credential store"),
+    ("grep -rn foo --exclude='.env*' .env", "credential store"),
+    ("grep -rn foo --include='.env*' .", "credential store"),
+    ("grep -rn foo --exclude-from=.env .", "credential store"),
+    ("rg foo -g '.env*' .", "credential store"),
+    ("rg foo -g '!x' .env", "credential store"),
+    ("tar -cf x.tar --exclude=.env .env", "credential store"),
+    ("tar -cf x.tar --exclude-from .env .", "credential store"),
+    ("cat --exclude=.env x", "credential store"),
+    ("python3 tool.py --exclude=.env", "credential store"),
+    ("grep -rn foo --exclude .npmrc .npmrc", "credential store"),
+    ("rg --pre 'git commit --no-verify -m x' foo .", "--no-verify"),
+    ("cat 'foo\\.env", "credential store"),
+    # FP-5: a pipe inside a quoted grep pattern is not a pipe; a real one still is.
+    ("echo aGk= | base64 -d | grep -E 'a|b' | bash", "base64 decode"),
+    ("echo aGk= | base64 -d | grep x | bun run -", "base64 decode"),
+    ("grep -E 'a|sh' f | base64 -d | sh", "base64 decode"),
+    ("echo aGk= | base64 -d | iex", "base64 decode"),
+    ("echo aGk= | base64 -d | grep x; iex $(echo hi)", "base64 decode"),
+    ("grep -rnE 'a|bash' .env", "credential store"),
+    ("grep -rnE 'a|b' src | bash; cat .env", "credential store"),
+    ("ls .env* | while read f; do cat $f; done", "credential store"),
+    ("ls .env | xargs cat", "credential store"),
+    # FP-6: a `<` or a substitution inside single quotes is text; outside them it is a read.
+    ("jq '.env' <(cat .env)", "credential store"),
+    ("jq .env cfg.json < .env.local", "credential store"),
+    ("jq \".env\" cfg.json \"$(cat .env)\"", "credential store"),
+    ("grep -n '\\.env' cfg.json < .env.local", "credential store"),
 ]
 FORGE_ALLOW = [
     # 1. A downstream project's template is .env.sample, and 64 of its 200 credential-store refusals were
@@ -1597,6 +1648,61 @@ FORGE_ALLOW = [
     "cd %s && grep -rn %s notes.md" % (os.path.dirname(GF()), os.path.basename(GF())),  # a pattern that names a directory
     "grep -rn Projects docs",
     "grep -r foo .",
+    # "FP": the refusals of a 30-day audit that read text, not a bypass or a secret. Each was red first,
+    # as `SHOULD ALLOW but rc=2 (...)`, and the message is kept beside its group.
+    # FP-1. Red before: "SHOULD ALLOW but rc=2 (BLOCKED - git commit -n is --no-verify, it bypasses the
+    # pre-commit gate): 'git commit -F msg.txt 2>&1 | tail -n 3'" -- the -n of tail was read as commit's.
+    "git commit -F msg.txt 2>&1 | tail -n 3",
+    "git commit -F /tmp/m.txt 2>&1 | tail -n 15",
+    "git commit -m x | head -n 5",
+    "sh -c 'git commit -F m 2>&1 | tail -n 3'",
+    "git commit -q -F m && git log -n 2 | head -n 1",
+    # FP-2. Red before: "SHOULD ALLOW but rc=2 (BLOCKED - --no-verify bypasses the pre-commit and pre-push
+    # gates): \"grep -nE 'quality:update|--force|--no-verify|no-verify' plans/PLAN-01.md\"".
+    "grep -nE 'quality:update|--force|--no-verify|no-verify' plans/PLAN-01.md",
+    "grep -rn \"git commit --no-verify\" docs | head",
+    "grep -n -e '--no-verify' notes.md",
+    "git grep -n -e '--no-verify' -- docs",
+    "cat docs/hooks.md | grep -n 'git commit --no-verify'",
+    # FP-3. Red before: "SHOULD ALLOW but rc=2 (BLOCKED - this would print a credential store ... (matched
+    # (?<!process)(?<!meta)\.env(?!(?:\.[\w-]+)*?\.(?:example|sample|template|dist)..."
+    # -- `process\.env` in a regex is the JavaScript object, as `process.env` already was.
+    "sed -i 's/Number(process\\.env\\.SLOTS || 6)/6/' tools/run.mjs",
+    "sed -E \"s/process\\.env[.\\[]['\\\"]?//\" src/a.ts",
+    "cat src/a.ts | sed -n '/import\\.meta\\.env/p'",
+    "node -e \"const r=/process\\.env|import\\.meta\\.env/;console.log(r.test('x'))\"",
+    # FP-4. Red before: "SHOULD ALLOW but rc=2 (BLOCKED - this would print a credential store ... (matched
+    # (?<!process)(?<!meta)\.env...): \"git grep -lE 'X' -- ':!*.env*'\"" -- an exclusion names what it keeps out.
+    "git grep -n foo -- . ':!*.env*'",
+    "git grep -lE 'A|B' -- ':!.env*' ':!**/.env*' ':!.npmrc' ':!.codex'",
+    "git grep -n foo -- . ':(exclude).env*'",
+    "git grep -n foo -- . ':^.mcp.json'",
+    "nice -n 19 git grep -lE 'X' -- ':!*.env*' | head -80",
+    "git diff --stat -- . ':!.env*'",
+    "git log -p -- . ':!.mcp.json'",
+    "grep -rIn foo --exclude='.env*' --exclude-dir=.codex .",
+    "grep -rn foo --exclude=.mcp.json --exclude=\".env*\" .",
+    "grep -rIl foo --exclude-dir=node_modules --exclude .npmrc .",
+    "rg -n foo -g '!.env*' -g '!.mcp.json'",
+    "rg foo --glob '!.env*'",
+    "rg foo --glob='!.npmrc' src",
+    "tar -xzf pr.tgz -C src --exclude='*/.env*'",
+    "rsync -a --exclude='.env*' src/ dst/",
+    "grep -rn '\\.env' --exclude .npmrc .",
+    "rg -n '\\.env' -g '!.mcp.json' src",
+    # FP-5. Red before: "SHOULD ALLOW but rc=2 (BLOCKED - base64 decode into a shell or interpreter):
+    # \"... | base64 -d | grep -n -E 'TOKEN|bun ' | head -30\"" -- the `|bun` of a regex alternation; and the
+    # same alternation read as a pipe into a shell by the credential rule's inert check.
+    "gh api repos/o/r/contents/action.yml --jq .content | base64 -d | grep -n -E 'TOKEN|working-directory|bun ' | head -30",
+    "gh api r --jq .content | base64 -d | grep -nE 'a|sh|bash' | head",
+    "echo TUlUIExpY2Vuc2UKCkNvcHlyaWdodA== | base64 -d && echo ...",
+    "grep -rnE \"http|curl|python|bash|Widget\\.env\" a.qml b.qml | cut -c1-160 | head -20",
+    "grep -rn 'a|sh|\\.env' notes.md",
+    # FP-6. Red before: "SHOULD ALLOW but rc=2 (BLOCKED - this would print a credential store ... (matched
+    # (?<!process)(?<!meta)\.env...)): \"jq 'del(.env) | walk(... \"<redacted>\" ...)' .claude/settings.local.json\"".
+    "jq 'del(.env) | walk(if type==\"string\" then \"<redacted>\" else . end)' .claude/settings.local.json",
+    "jq '.env | keys' cfg.json",
+    "grep -n '<.env>' notes.md",
 ]
 # (command, rc) run with the forge checkout as the project and as the directory.
 ROOTED = [

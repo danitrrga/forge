@@ -46,7 +46,7 @@ MUTANTS = {
         ("        return not re.search(DUMP_COMMANDS, part) or only_pattern_names(pat, cmd, args, part)", "        return True"),
     "drop the process.env / import.meta.env lookbehind (over-block)":
         # Rewritten in forge: the env pattern carries ENV_TEMPLATE (addition 1).
-        (r'r"(?<!process)(?<!meta)\.env(?!(?:', r'r"\.env(?!(?:'),
+        (r'r"(?<!process)(?<!process\\)(?<!meta)(?<!meta\\)\.env(?!(?:', r'r"\.env(?!(?:'),
     "drop KEYRING_DUMP check":
         ("if KEYRING_DUMP.search(low) and not REDIRECT_TO_FILE.search(cmd):", "if False:"),
     "drop PROTECTED_FILES check (Read/Write/Edit)":
@@ -108,7 +108,7 @@ MUTANTS = {
     "shell words not checked (quote-split names pass)":
         ("    return tokens is not None and any(re.search(pat, t) for t in tokens)", "    return False"),
     "drop pipe-to-exec (ls secret | xargs cat)":
-        ('    if PIPE_TO_EXEC.search("|".join(rest)):\n        return False\n', ""),
+        ('    if PIPE_TO_EXEC.search("|".join(blank_grep_patterns(st) for st in rest)):\n        return False\n', ""),
     "cp/ln destination read as the first path, not the last":
         ("        dest, srcs = paths[-1:], paths[:-1]", "        dest, srcs = paths[:1], paths[1:]"),
     "drop cp -t":
@@ -256,8 +256,10 @@ MUTANTS = {
         ("            if a not in JQ_BOOL_LONG:", "            if False:"),
     "jq accepts any short flag (-f)":
         ("            if not set(a[1:]) <= JQ_BOOL_SHORT:", "            if False:"),
+    "grep ignores a substitution in the segment":
+        ('    if reads_behind(seg):\n        return False\n    ops = grep_operands(cmd, args)', '    ops = grep_operands(cmd, args)'),
     "jq ignores a substitution in the segment":
-        ('    if re.search(r"\\$\\(|`|<", seg):\n        return False\n    positional = []', "    positional = []"),
+        ('    if reads_behind(seg):\n        return False\n    positional = []', "    positional = []"),
     # forge's additions (docs/command-guard-design.md), one or more each.
     "1. .env.example is the only template":
         ('ENV_TEMPLATE = r"(?:example|sample|template|dist)"', 'ENV_TEMPLATE = r"(?:example)"'),
@@ -677,7 +679,7 @@ MUTANTS = {
     "wrappers: env -S is not split into a command":
         ('                            spliced = split_words(value) or []\n                        break', '                            spliced = []\n                        break'),
     "braces in a read: the expanded text is not checked":
-        ("            if braced != pcmd:\n", "            if False:\n"),
+        ("            if braced != scmd:\n", "            if False:\n"),
     "braces in a read: the expanded text is not resolved against a cd":
         ("cd_resolved(braced, SECRET_FILES + secrets).lower()]", "braced.lower()]"),
     "braces in a read: running out of the budget crashes (exit 1 is not a block)":
@@ -791,6 +793,47 @@ MUTANTS = {
         ('    if cmd not in ("grep", "egrep", "fgrep", "rg") or', "    if False or"),
     "name-only readers: a -l after other options is not seen":
         ('        if re.match(r"^-[a-z]*[lcq][a-z]*$", a):', '        if i == 0 and re.match(r"^-[a-z]*[lcq][a-z]*$", a):'),
+    # False-positive round (a 30-day audit of the guard's own refusals). Each fix is pinned from both
+    # sides: a mutant that removes it fails the allow case it opened, a mutant that widens it fails the
+    # block case that keeps it narrow (the FP groups of test_guard_tool_use.py).
+    "fp: commit -n reads every stage of a pipe (the -n of tail is commit's)":
+        ("split_words(pipeline(seg)[0])", "split_words(seg)"),
+    "fp: commit -n reads the last stage of a pipe, not commit's own":
+        ("split_words(pipeline(seg)[0])", "split_words(pipeline(seg)[-1])"),
+    "fp: a grep pattern is read as a flag (--no-verify in a pattern)":
+        ('(?![\\w-])", blank_grep_patterns(low)):', '(?![\\w-])", low):'),
+    "fp: a grep that substitutes keeps its pattern blanked":
+        ("        if not found or reads_behind(stage):", "        if not found:"),
+    "fp: a grep option the guard does not read is skipped (rg --pre runs its value)":
+        ('            if "=" not in a:\n                return None\n            others.append(a)',
+         '            others.append(a)'),
+    "fp: the base64 pipe check reads grep patterns (a|bun in a regex)":
+        ("PIPE_TO_SHELL.search(blank_grep_patterns(low))", "PIPE_TO_SHELL.search(low)"),
+    "fp: iex matches inside any word (a base64 payload holds it)":
+        ("(?<![\\w-])iex(?![\\w-])", "iex"),
+    "fp: iex is no pipe into a shell":
+        ("|(?<![\\w-])iex(?![\\w-])", ""),
+    "fp: the inert check reads grep patterns as pipes (grep -E 'a|bash')":
+        ('"|".join(blank_grep_patterns(st) for st in rest)', '"|".join(rest)'),
+    "fp: any backslash before .env is the regex's escape":
+        (r"(?<!process)(?<!process\\)(?<!meta)(?<!meta\\)\.env(?!(?:", r"(?<!process)(?<!\\)(?<!meta)\.env(?!(?:"),
+    "fp: the credential rule reads exclusion operands":
+        ("            scmd = blank_exclusions(pcmd)", "            scmd = pcmd"),
+    "fp: --exclude-from is an exclusion":
+        ('(?<=\\s)(--exclude(?:-dir)?)(=|\\s+)', '(?<=\\s)(--exclude[\\w-]*)(=|\\s+)'),
+    "fp: --include is an exclusion":
+        ('(?<=\\s)(--exclude(?:-dir)?)(=|\\s+)', '(?<=\\s)(--(?:ex|in)clude(?:-dir)?)(=|\\s+)'),
+    "fp: --exclude is one for every command":
+        ('        if name in ("grep", "egrep", "fgrep", "rg", "tar", "rsync"):', "        if True:"),
+    "fp: a rg glob that selects is an exclusion":
+        ("(['\"]?)![^\\s'\"`$();&|<>]*\\3", "(['\"]?)!?[^\\s'\"`$();&|<>]*\\3"),
+    "fp: any git pathspec magic is an exclusion":
+        ("(?:!|\\^|\\(exclude\\))[^\\s", "(?:!|\\^|\\([a-z]+\\))[^\\s"),
+    "fp: a < inside quotes reads a file":
+        ("    rest, last = [], 0\n    for a, b in _quoted_spans(seg):\n        rest.append(seg[last:a])\n",
+         "    return bool(re.search(r\"\\$\\(|`|<\", seg))\n    rest, last = [], 0\n    for a, b in _quoted_spans(seg):\n        rest.append(seg[last:a])\n"),
+    "fp: a substitution inside double quotes reads nothing":
+        ("        if seg[a] == '\"':\n", "        if False:\n"),
 }
 # A mutant no realistic command tells apart from the real guard: bash also reads an
 # unterminated heredoc to the end, so nothing after it runs either way. The backslash-

@@ -64,7 +64,7 @@ DANGEROUS_SHELL = [
 # a downstream project's 36 base64 refusals in the replay of its recorded commands).
 PIPE_TO_SHELL = re.compile(
     r"(\|\s*(?:sudo\s+)?(?:zsh|dash|ksh|fish|python[\d.]*|perl|ruby|node|php|deno|bun|source|eval|xargs)\b"
-    r"|\|\s*\.(?=\s|$)|\$\(|`|<\(|\bsh\b|\bbash\b|iex|invoke-expression)", re.I)
+    r"|\|\s*\.(?=\s|$)|\$\(|`|<\(|\bsh\b|\bbash\b|(?<![\w-])iex(?![\w-])|invoke-expression)", re.I)
 OOB_DOMAINS = [
     r"\.interact\.sh", r"\.oast\.(pro|live|site|fun|me)", r"\.burpcollaborator\.net",
     r"\.requestbin\.", r"\.pipedream\.net", r"webhook\.site", r"\.ngrok\.io",
@@ -144,7 +144,8 @@ SECRET_FILES = [
     # `process.env` and `import.meta.env` are JavaScript, not files, and searching source
     # for them is ordinary work. An env template carries placeholder names only and is
     # tracked (harness-security.md m7: blocking `.env.example` was the defect).
-    r"(?<!process)(?<!meta)\.env(?!(?:\.[\w-]+)*?\." + ENV_TEMPLATE + r"(?![\w.-]))\b",
+    # A backslash before it is the regex's escape (`process\.env\.X` in a sed or grep pattern).
+    r"(?<!process)(?<!process\\)(?<!meta)(?<!meta\\)\.env(?!(?:\.[\w-]+)*?\." + ENV_TEMPLATE + r"(?![\w.-]))\b",
     # `.env_prod`, `.env2`: the `\b` above lets a `_` or a digit after `env` pass, which keeps
     # `.environment` readable. Only where a name starts, so `cfg.env_file` in code is not one;
     # `.env_example` is a template (`_` as the separator), `.env_example.local` is not.
@@ -593,13 +594,25 @@ GREP_BOOL_FLAGS = {"grep": set("abcghilnopqrstuvwxyz"), "rg": set("abchilnopqsuv
                    "git grep": set("abcghilnopqrstuvwxyz")}
 
 
-def only_pattern_names(pat, cmd, args, seg):
-    """A search FOR a secret's name, not a read of the secret: `grep -n "\\.env" notes.md`.
-    True only when the pattern operand (the first positional, or each -e value) is what
-    names it: no file operand, glob or option does, and nothing in the segment reads a file
-    behind the guard's back (`$(`, a backtick, a `<` redirect). Break-it round, U13."""
-    if re.search(r"\$\(|`|<", seg):
-        return False
+def reads_behind(seg):
+    """True when seg holds a command substitution, a backtick or a `<` the shell would act on.
+    Inside single quotes all three are text, and inside double quotes only the first two run, so
+    `jq '... "<redacted>" ...'` and `grep '<h1>' f` read nothing behind the guard's back. Every
+    caller has split the segment into words already, so its quotes are balanced."""
+    rest, last = [], 0
+    for a, b in _quoted_spans(seg):
+        rest.append(seg[last:a])
+        if seg[a] == '"':
+            rest.append(" ".join(re.findall(r"\$\(|`", seg[a:b])))
+        last = b
+    rest.append(seg[last:])
+    return bool(re.search(r"\$\(|`|<", " ".join(rest)))
+
+
+def grep_operands(cmd, args):
+    """(patterns, others) of a grep-family command's arguments: the pattern operand (the first
+    positional, or each -e value) and every other operand or option. None when an option is not
+    understood, which callers read as "could be anything"."""
     bools = GREP_BOOL_FLAGS[cmd]
     # A cluster ending in e takes the pattern next: `-e PAT`, and `-iE PAT` once lowercased,
     # which reads the same word either way. An e anywhere else is ambiguous and not accepted.
@@ -610,7 +623,7 @@ def only_pattern_names(pat, cmd, args, seg):
         a = args[i]
         if a == "--regexp" or ends_e(a):
             if i + 1 >= len(args):
-                return False
+                return None
             patterns.append(args[i + 1])
             i += 1
         elif a.startswith("--regexp="):
@@ -621,18 +634,108 @@ def only_pattern_names(pat, cmd, args, seg):
             break
         elif a.startswith("--"):
             if "=" not in a:
-                return False
+                return None
             others.append(a)
         elif a.startswith("-") and len(a) > 1:
             # A context or count flag with its number attached (`-A3`, `-C5`, `-m5`).
             if not set(a[1:].rstrip("0123456789")) <= (bools | {"m"} if a[-1].isdigit() else bools):
-                return False
+                return None
         elif not has_e and not patterns:
             patterns.append(a)
         else:
             others.append(a)
         i += 1
+    return patterns, others
+
+
+def only_pattern_names(pat, cmd, args, seg):
+    """A search FOR a secret's name, not a read of the secret: `grep -n "\\.env" notes.md`.
+    True only when the pattern operand (the first positional, or each -e value) is what
+    names it: no file operand, glob or option does, and nothing in the segment reads a file
+    behind the guard's back (`$(`, a backtick, a `<` redirect). Break-it round, U13."""
+    if reads_behind(seg):
+        return False
+    ops = grep_operands(cmd, args)
+    if ops is None:
+        return False
+    patterns, others = ops
     return bool(patterns) and not any(re.search(pat, w) for w in others)
+
+
+STAGE_SPLIT = re.compile(SEGMENT_SPLIT.pattern + "|" + PIPE.pattern)
+
+
+def map_stages(text, fn):
+    """text with each command of it (cut at ; && || & newline and every `|` outside quotes)
+    replaced by fn(command); the separators stay where they were."""
+    spans, k, out, last = _quoted_spans(text), 0, [], 0
+    for m in STAGE_SPLIT.finditer(text):
+        while k < len(spans) and spans[k][1] <= m.start():
+            k += 1
+        if k < len(spans) and spans[k][0] <= m.start():
+            continue
+        out.append(fn(text[last:m.start()]) + m.group(0))
+        last = m.end()
+    return "".join(out) + fn(text[last:])
+
+
+def search_command(stage):
+    """('grep' | 'rg' | 'git grep', its arguments) when stage runs a grep-family search, else None."""
+    words = strip_prefix(split_words(stage) or [])
+    if not words:
+        return None
+    cmd, args = os.path.basename(words[0]), words[1:]
+    if cmd == "git":
+        sub = git_subcommand(args)[1]
+        return ("git grep", sub[1:]) if sub[:1] == ["grep"] else None
+    if cmd in ("grep", "egrep", "fgrep"):
+        return "grep", args
+    return ("rg", args) if cmd == "rg" else None
+
+
+def blank_grep_patterns(text):
+    """text with the quoted pattern operand of each grep, egrep, fgrep, rg and git grep in it
+    replaced by 'PATTERN': a search pattern is text, never a command or a flag, so the
+    `--no-verify` of `grep -n 'a|--no-verify' PLAN.md` and the `|bash` of `grep -E 'x|bash'` are
+    not read as what they would be anywhere else. A search that substitutes or redirects is left
+    as written, and so is every operand that is not the pattern."""
+    def blank(stage):
+        found = search_command(stage)
+        if not found or reads_behind(stage):
+            return stage
+        ops = grep_operands(*found)
+        if not ops or not ops[0]:
+            return stage
+        for a, b in reversed(_quoted_spans(stage)):
+            if split_words(stage[a:b]) in [[p] for p in ops[0]]:
+                stage = stage[:a] + "'PATTERN'" + stage[b:]
+        return stage
+    return map_stages(text, blank)
+
+
+# What keeps paths out of a command: `--exclude=GLOB` and `--exclude-dir=GLOB` of a search, an
+# archive or a copy, rg's `-g '!GLOB'`, and a git pathspec `':!GLOB'`. The operand is blanked
+# before the credential rule reads the line, so `grep -rn foo --exclude='.env*' .` names no store.
+# `--exclude-from`, `--include` and a positive glob are not exclusions and are left alone.
+_OPERAND = r"""(?:'[^']*'|"[^"$`\\]*"|[^\s'"`$();&|<>]+)"""
+EXCLUDE_OPTION = re.compile(r"(?<=\s)(--exclude(?:-dir)?)(=|\s+)" + _OPERAND)
+RG_EXCLUDE = re.compile(r"""(?<=\s)(--i?glob|-g)(=|\s*)(['"]?)![^\s'"`$();&|<>]*\3""")
+GIT_EXCLUDE_WORD = re.compile(r"""(?<=\s)(['"]?):(?:!|\^|\(exclude\))[^\s'"`$();&|<>]*\1(?=\s|$)""")
+
+
+def blank_exclusions(text):
+    """text with each exclusion operand of a grep, rg, tar, rsync or git command replaced by EXCL."""
+    def blank(stage):
+        words = strip_prefix(split_words(stage) or [])
+        name = os.path.basename(words[0]) if words else ""
+        if name in ("grep", "egrep", "fgrep", "rg", "tar", "rsync"):
+            stage = EXCLUDE_OPTION.sub(r"\1=EXCL", stage)
+        if name == "rg":
+            stage = RG_EXCLUDE.sub("--glob=EXCL", stage)
+        if name == "git":
+            stage = GIT_EXCLUDE_WORD.sub("EXCL", stage)
+        return stage
+    return map_stages(text, blank)
 
 
 # jq's switches that take no value, lowercased (-C, -M, -R, -S fold onto c, m, r, s). Every
@@ -653,7 +756,7 @@ def only_jq_path_names(pat, args, seg):
     every option is a plain switch; no file operand names the secret; and nothing in the
     segment reads a file behind the guard's back. yq stays a read: its load and load_str
     operators open whatever file the filter names."""
-    if re.search(r"\$\(|`|<", seg):
+    if reads_behind(seg):
         return False
     positional = []
     for a in args:
@@ -763,7 +866,8 @@ def inert_segment(pat, seg):
     stages = pipeline(seg)
     # An xargs whose command is a name-only grep or rg puts no content on screen, so it is no executor here.
     rest = [" true " if xargs_names_only(st) else st for st in stages]
-    if PIPE_TO_EXEC.search("|".join(rest)):
+    # A search pattern is text: the `|bash` of `grep -E 'x|bash'` is no pipe into a shell.
+    if PIPE_TO_EXEC.search("|".join(blank_grep_patterns(st) for st in rest)):
         return False
     parts = [p for p in stages if seg_names_secret(pat, p)]
     return bool(parts) and all(inert_command(pat, p) for p in parts)
@@ -1752,7 +1856,8 @@ def hook_bypass(cmd):
     low = cmd.lower()
     # git accepts any unique prefix of a long option, so `--no-veri` is --no-verify
     # (break-it round, U44). `(?![\w-])` keeps `--no-verbose` and `--no-verify-signatures`.
-    if re.search(r"--no-v(?:e(?:r(?:i(?:f(?:y)?)?)?)?)?(?![\w-])", low):
+    # A search pattern is text: `grep -n 'a|--no-verify' PLAN.md` runs no commit.
+    if re.search(r"--no-v(?:e(?:r(?:i(?:f(?:y)?)?)?)?)?(?![\w-])", blank_grep_patterns(low)):
         return "--no-verify bypasses the pre-commit and pre-push gates. " + FIX_THE_HOOK
     assigns = command_assignments(low) if "lefthook" in low or "husky" in low else []
     if any(n == "lefthook" and SWITCH_OFF.match(v) for n, v in assigns):
@@ -1773,8 +1878,10 @@ def hook_bypass(cmd):
 
 def commit_n(seg):
     """True when seg runs `git commit` with -n in a flag cluster, directly or in a nested
-    shell (`sh -c 'true; git commit -n'` passed until the nested-shell fix)."""
-    words = strip_prefix(split_words(seg) or [])
+    shell (`sh -c 'true; git commit -n'` passed until the nested-shell fix). Only the first stage of
+    a pipeline is commit's own: the `-n` of `git commit -F m 2>&1 | tail -n 3` is tail's, and a
+    commit later in a pipe is a piece of its own (pieces())."""
+    words = strip_prefix(split_words(pipeline(seg)[0]) or [])
     bodies = nested_bodies(words)
     if bodies:
         return any(commit_n(p) for a in bodies for p in pieces(a))
@@ -1916,10 +2023,9 @@ def main(argv=None):
         if cmd:
             low = cmd.lower()
             pcmd = strip_prose(cmd)
-            plow = pcmd.lower()
             for pat, reason in DANGEROUS_SHELL:
                 if re.search(pat, low):
-                    if (reason.startswith("base64 decode") and not PIPE_TO_SHELL.search(low)
+                    if (reason.startswith("base64 decode") and not PIPE_TO_SHELL.search(blank_grep_patterns(low))
                             and not any(piped_shell_inputs(seg) for seg in segments(low))):
                         continue
                     deny(reason)
@@ -1949,17 +2055,20 @@ def main(argv=None):
                     "Instead, redirect it straight into a file the rotation tool reads "
                     "(secret-tool lookup ... > \"$T\"), and never into stdout."
                 )
-            resolved = cd_resolved(pcmd, SECRET_FILES + secrets).lower()
+            # What the command keeps out (`--exclude='.env*'`, `':!.mcp.json'`) names no store it reads.
+            scmd = blank_exclusions(pcmd)
+            plow = scmd.lower()
+            resolved = cd_resolved(scmd, SECRET_FILES + secrets).lower()
             # The command as the shell reads it after brace expansion, for the names it builds.
             BUDGET[0] = CANDIDATE_BUDGET
             try:
-                braced = brace_text(pcmd)
+                braced = brace_text(scmd)
             except OverBudget:
                 deny("this command names more brace alternatives than the guard can check against the "
                      "credential stores (%d), so it is refused as if it read one. Instead, name the "
                      "paths, or split the braces over several commands" % CANDIDATE_BUDGET)
             texts = [plow, resolved]
-            if braced != pcmd:
+            if braced != scmd:
                 texts += [braced.lower(), cd_resolved(braced, SECRET_FILES + secrets).lower()]
             texts = list(dict.fromkeys(texts))
             for pat in SECRET_FILES + secrets:

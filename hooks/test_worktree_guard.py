@@ -226,6 +226,18 @@ WT_BLOCK = [
     bash("truncate --reference=probe.txt %s/new.txt" % MAIN) + ("%s/new.txt resolves" % MAIN,),
     bash("truncate -s 10 %s/new.txt" % MAIN) + ("%s/new.txt resolves" % MAIN,),
     bash("sed -i 's/x/y/' %s/AGENTS.md" % MAIN) + ("outside this worktree",),
+    # The opposite verdicts of the sed cases in WT_ALLOW: the script is skipped, the file after it is not
+    # (a real target after -e, -f, a cluster, a suffix; and a sed -i in any stage of a pipe).
+    bash("sed -i -e '/^<<<<<<< HEAD$/d' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -i -e 's/a/b/' -e '/x/d' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -i -e 's/a/b/' -f s.sed %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -ni -e '/x/p' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -i.bak -E -e '/x/d' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed --in-place --expression='/x/d' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -i -f %s/fix.sed %s/AGENTS.md" % (MAIN, MAIN)) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("echo a | sed -i 's/x/y/' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -i 's/x/y/' %s/AGENTS.md | cat" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
+    bash("sed -n 1,5p a.txt | sed -i 's/x/y/' %s/AGENTS.md" % MAIN) + ("%s/AGENTS.md resolves" % MAIN,),
     bash("dd if=a of=%s/x" % MAIN) + ("outside this worktree",),
     bash("sh -c 'echo x > %s/f'" % MAIN) + ("outside this worktree",),
     bash("bash -c \"true; cp a %s/x\"" % MAIN) + ("outside this worktree",),
@@ -497,6 +509,18 @@ WT_ALLOW = [
     write("~notes.txt"),
     bash("echo x > ~notes.txt"),
     bash("touch ~wtguard-no-such-user/x"),
+    # False-positive round: a sed script is no file. Red before, `SHOULD ALLOW but rc=2 (BLOCKED - shell
+    # write: /^<<<<<<< HEAD$/d resolves to /^<<<<<<< HEAD$/d, outside this worktree)`, and
+    # `sed -n 150,354p F | grep -iE x`, where the -i of the grep was read as sed's.
+    bash("sed -i -e '/^<<<<<<< HEAD$/d' -e '/^>>>>>>> branch$/d' -e 's/^=======$//' notes.md"),
+    bash("sed -i -e '/^  containerRef,$/d' src/a.ts"),
+    bash("sed -ni -e '/x/p' notes.md"),
+    bash("sed -i -f /nonexistent/fix.sed notes.md"),
+    bash("sed -i --expression='/x/d' notes.md"),
+    bash("sed -i.bak -E -e '/x/d' notes.md"),
+    bash("sed -n 150,354p %s/AGENTS.md | grep -iE 'a|b' | head -40" % MAIN),
+    bash("sed -n 1,5p a.txt | grep -ic x"),
+    bash("cat a.txt | sed -n '/x/p' | grep -in y"),
 ]
 
 # From inside the worktree, allowed by profile `toy`'s write_roots only, and refused under

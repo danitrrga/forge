@@ -565,13 +565,46 @@ def operands(args, values, long_values):
     return out
 
 
+def sed_files(args):
+    """The files of a `sed -i` command: its operands less the script. The script is the first operand,
+    unless an option gave it (`-e SCRIPT`, `-f FILE`, `--expression=`, `--file=`, alone or at the end of
+    a cluster), and each of those values is a word of its own that is no file written: `-e '/^x$/d'`
+    is a script, not the path /^x$/d. In a cluster `i` takes the rest as the backup suffix."""
+    files, scripted, i = [], False, 0
+    while i < len(args):
+        a = args[i]
+        i += 1
+        if a == "--":
+            files += args[i:]
+            break
+        if a.startswith("--"):
+            if a in ("--expression", "--file", "--line-length") and i < len(args):
+                scripted = scripted or a != "--line-length"
+                i += 1
+            elif a.startswith(("--expression=", "--file=")):
+                scripted = True
+        elif a.startswith("-") and len(a) > 1:
+            for k, ch in enumerate(a[1:]):
+                if ch == "i":
+                    break
+                if ch in "efl":
+                    scripted = scripted or ch != "l"
+                    i += 1 if not a[k + 2:] and i < len(args) else 0
+                    break
+        else:
+            files.append(a)
+    return files if scripted else files[1:]
+
+
 def write_targets(seg):
     """Paths one shell command writes, removes or moves, as far as its text shows."""
     out = redirect_targets(seg)
     for body in substitution_bodies(seg):
         for part in pieces(body):
             out += write_targets(part)
-    words = strip_prefix(split_words(seg) or [])
+    # The command's own words are those of its first stage: the -i of `sed -n 5p f | grep -iE x` is
+    # grep's. The later stages of a pipe are commands of their own (walk() and pieces() visit each).
+    words = strip_prefix(split_words(split_unquoted(seg, PIPE)[0]) or [])
     if not words:
         return out
     cmd, args = os.path.basename(words[0]), strip_redirect_words(words[1:])
@@ -595,7 +628,7 @@ def write_targets(seg):
     elif cmd in ("rm", "unlink", "shred", "rmdir", "tee", "mkdir"):
         out += paths
     elif cmd in ("sed", "perl") and any(re.match(r"^-[a-zA-Z]*i", a) or a.startswith("--in-place") for a in args):
-        out += paths[1:] if cmd == "sed" and not any(a in ("-e", "-f") or a.startswith("--expression") for a in args) else paths
+        out += sed_files(args) if cmd == "sed" else paths
     elif cmd == "dd":
         out += [a[3:] for a in args if a.startswith("of=")]
     elif cmd in FETCHERS:
