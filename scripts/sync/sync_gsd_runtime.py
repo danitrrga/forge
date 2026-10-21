@@ -45,6 +45,10 @@ WHAT FORGE OWNS ON TOP
     `agent_skills` injection cannot carry agent-reach either -- `global:agent-reach` resolves the
     symlink and its path check rejects anything outside ~/.claude/skills ("Path escapes allowed
     directory", measured).
+  * planner Edit tool -- gsd-planner is given `Read, Write, Bash, ...` without Edit, so revising
+    a PLAN.md meant rewriting it whole or scripting the change: in one project the planner wrote
+    56 files and 224 inline scripts outside the repo in 30 days, among them wave-renumbering
+    scripts over 22 PLAN.md files. With Edit it changes the lines it means to.
   * npm package name -- the config skill prints `npm i -g get-shit-done` as the install hint.
     The package is `get-shit-done-cc`.
   * update route -- the update skill is rewritten to run the procedure below instead of the
@@ -187,7 +191,11 @@ UI_RESEARCHER_NEW = (
     "WebSearch/WebFetch."
 )
 
+PLANNER_TOOLS_OLD = "tools: Read, Write, Bash, Glob, Grep, WebFetch, mcp__context7__*"
+PLANNER_TOOLS_NEW = "tools: Read, Write, Edit, Bash, Glob, Grep, WebFetch, mcp__context7__*"
+
 AGENT_PATCHES = {
+    "gsd-planner.md": [("planner-edit", "replace", PLANNER_TOOLS_OLD, PLANNER_TOOLS_NEW)],
     "gsd-doc-classifier.md": [("classifier-hash", "replace", CLASSIFIER_OLD, CLASSIFIER_NEW)],
     "gsd-project-researcher.md": [("reach-routing", "replace", PROJECT_RESEARCHER_OLD, REACH_BLOCK)],
     "gsd-phase-researcher.md": [("reach-routing", "replace", PHASE_RESEARCHER_OLD, REACH_BLOCK)],
