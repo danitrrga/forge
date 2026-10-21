@@ -58,7 +58,7 @@ only rollback: a `.bak` file is written once, ever.
 
 ## Optional integrations
 
-Codex, GSD, Hindsight and caveman are switched on and off in `config/forge.json` (`integrations`). Code that
+Codex, GSD and Hindsight are switched on and off in `config/forge.json` (`integrations`). Code that
 touches one reads `lib.on("<name>")`; with the integration off, forge writes none of its files and removes only
 the entries it wrote itself (matched by exact command). A new feature that depends on an external tool needs a
 switch, a SKIP line for the off state, and a FAIL naming the fix for on-but-broken.

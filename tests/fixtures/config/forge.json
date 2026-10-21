@@ -3,8 +3,7 @@
   "integrations": {
     "codex": true,
     "gsd": true,
-    "hindsight": true,
-    "caveman": true
+    "hindsight": true
   },
   "gsd_patches": true,
   "house_hooks": true,

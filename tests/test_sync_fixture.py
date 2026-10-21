@@ -76,8 +76,8 @@ PORTAL_KEY = {"mcpServers": {"stale-portal": {"command": "stale"}}}
 # anchor out of the generator: the indent row goes to forge/lib.py at S2, the timeout row to
 # forge/hooks.py at S6.
 CONTROLS = [
-    ("a USER_HOOKS timeout", os.path.join("forge", "hooks.py"), 'caveman_house_rules.py" % HOOK_DIR, 5,',
-     'caveman_house_rules.py" % HOOK_DIR, 7,'),
+    ("a USER_HOOKS timeout", os.path.join("forge", "hooks.py"), 'ref_corpus_router.py" % HOOK_DIR, 10,',
+     'ref_corpus_router.py" % HOOK_DIR, 12,'),
     ("the write_json indent", os.path.join("forge", "lib.py"),
      "return json.dumps(data, ensure_ascii=ensure_ascii, indent=2)",
      "return json.dumps(data, ensure_ascii=ensure_ascii, indent=3)"),
@@ -124,14 +124,9 @@ class Sandbox:
         self.log = os.path.join(self.root, "systemctl.log")
         self.outputs, self.manifests, self.portal_keys = {}, {}, {}
         self._copy(mutation)
-        # The seeds below carry a caveman hook for --apply to repair, so the toy world runs with caveman on
-        # whatever this machine's config says. Red before, once caveman is off in the real config/forge.json:
-        # "FAIL  --apply repairs the seeded user-scope files: ['codex hooks.json repaired']" (that check was
-        # of the mirrored row; it is now of forge's entry being taken out).
         settings = os.path.join(self.forge, "config", "forge.json")
         doc = read_json(settings)
-        doc.setdefault("integrations", {})["caveman"] = True
-        # The same for codex_harness: the fixture checks Codex's hook rows and .codex/config.toml. Red before,
+        # codex_harness: the fixture checks Codex's hook rows and .codex/config.toml. Red before,
         # with it false in the real config/forge.json: "FileNotFoundError: ... projects/<app>/.codex/config.toml".
         doc["codex_harness"] = True
         write_json(settings, doc)
@@ -223,10 +218,10 @@ class Sandbox:
         # The fixture's forge.json has codex_harness true: --apply repairs this file like Claude's, and the entry
         # of forge's own (the exact command) stays, written as the row says. With the switch false it would
         # take that entry out and leave the rest (tests/test_codex_harness.py).
-        write_json(os.path.join(h, ".codex", "hooks.json"), {"hooks": {"Stop": "not a list", "SessionStart": [
-            "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/caveman_house_rules.py", "timeout": 5},
-                               {"type": "command", "command": "python3 %s/hooks/caveman_house_rules.py" % self.forge,
-                                "timeout": 5}]}]}})
+        write_json(os.path.join(h, ".codex", "hooks.json"), {"hooks": {"Stop": "not a list", "UserPromptSubmit": [
+            "junk", {"hooks": [42, {"type": "command", "command": "python3 /old/ref_corpus_router.py", "timeout": 10},
+                               {"type": "command", "command": "python3 %s/hooks/ref_corpus_router.py" % self.forge,
+                                "timeout": 10}]}]}})
         write(os.path.join(h, ".hindsight", "coding-agents", "dist", "claude-hook.js"), "// stub runtime; knows autoInject\n")
         write_json(os.path.join(h, ".hindsight", "coding-agents", ".install-origin.json"), {"commit": "63da8d7" + "0" * 33})
         os.makedirs(os.path.join(h, ".vscode", "extensions"))
@@ -349,7 +344,7 @@ def exercise(sb, check):
              "foreign hook kept": "node /opt/herdr/herdr.js" in cmds,
              "model": st.get("model") == "sonnet",
              "codex hooks.json repaired": isinstance(cx["hooks"]["Stop"], list)
-             and all(isinstance(g, dict) for g in cx["hooks"]["SessionStart"])}
+             and all(isinstance(g, dict) for g in cx["hooks"]["UserPromptSubmit"])}
     check("--apply repairs the seeded user-scope files", all(seeds.values()), [k for k, v in seeds.items() if not v])
     dirty = git(sb.forge, "status", "--porcelain")
     check("--apply writes nothing git would track in the forge copy", not dirty, dirty.strip())

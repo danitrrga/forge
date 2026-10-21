@@ -26,7 +26,7 @@ PROFILES = os.path.join(ROOT, "config", "profiles")
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # The names `on()` accepts: what a stranger's forge may switch off (docs/portable-design.md section 5).
-INTEGRATIONS = ("codex", "gsd", "hindsight", "caveman")
+INTEGRATIONS = ("codex", "gsd", "hindsight")
 
 
 @functools.lru_cache(maxsize=None)

@@ -76,10 +76,10 @@ _n = [0]
 
 
 def world(harness=True, keep=False):
-    """A toy forge.json (caveman on so a code row has an integration owner, codex on, two config rows),
+    """A toy forge.json (hindsight on so a code row has an integration owner, codex on, two config rows),
     hooks reloaded over it (its rows are computed at import), and none of the files a run leaves."""
     _n[0] += 1
-    doc = {"integrations": {"codex": True, "gsd": False, "hindsight": False, "caveman": True},
+    doc = {"integrations": {"codex": True, "gsd": False, "hindsight": True},
            "user_settings": {}, "user_hooks": [KEEP, GONE], "codex_harness": harness}
     lib.SETTINGS = os.path.join(TOY, "forge-%d.json" % _n[0])
     with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
@@ -174,7 +174,7 @@ for which, path in (("claude", SETTINGS), ("codex", CODEX)):
           == sorted(json.dumps([r[0], r[4], r[1]]) for r in rows), claims)
     owners = {c["at"][2]: c["owner"] for c in claims}
     check("%s: owner is core, or the row's integration" % tag,
-          owners.get(GONE_CMD) == "core" and any(o == "caveman" for o in owners.values()), owners)
+          owners.get(GONE_CMD) == "core" and any(o == "hindsight" for o in owners.values()), owners)
     check("%s: the record holds no command text beyond `at` and no entry body" % tag,
           all(set(c) == {"kind", "at", "sum", "owner"} for c in claims), claims)
     line = run(h, which)

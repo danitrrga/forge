@@ -112,11 +112,11 @@ CLAUDE_ROW = {"event": "UserPromptSubmit", "command": "python3 <ROOT>/toy/claude
 
 def world(codex=True, harness="absent", **top):
     """Point lib at a toy forge.json and reload hooks over it (its rows are computed at import).
-    Hindsight and caveman are on so the code's Codex rows exist; `harness` is the value of codex_harness,
+    Hindsight and the house hooks are on so the code's Codex rows exist; `harness` is the value of codex_harness,
     or the string "absent" to leave the key out."""
     _n[0] += 1
-    doc = {"integrations": {"codex": codex, "gsd": False, "hindsight": True, "caveman": True},
-           "user_settings": {}, "user_hooks": [TOY_ROW, CLAUDE_ROW]}
+    doc = {"integrations": {"codex": codex, "gsd": False, "hindsight": True},
+           "house_hooks": True, "user_settings": {}, "user_hooks": [TOY_ROW, CLAUDE_ROW]}
     if harness != "absent":
         doc["codex_harness"] = harness
     doc.update(top)
@@ -178,7 +178,7 @@ def load_hooks():
 h = world(harness=True)
 want_cmds = sorted({r[1] for r in h.USER_HOOKS if "codex" in r[5]})
 claude_only = {r[1] for r in h.USER_HOOKS if "codex" not in r[5]}
-check("control: the table holds Codex rows (the two Hindsight ones, caveman's, the user_hooks row) and Claude-only ones",
+check("control: the table holds Codex rows (the two Hindsight ones, the house router's, the user_hooks row) and Claude-only ones",
       len(want_cmds) >= 4 and any("codex-hook.js" in c for c in want_cmds) and any("codex_row.py" in c for c in want_cmds)
       and any("claude_row.py" in c for c in claude_only), "codex %r, claude only %r" % (want_cmds, sorted(claude_only)))
 reset_hooks_file()

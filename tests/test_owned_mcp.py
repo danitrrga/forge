@@ -55,7 +55,7 @@ assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
 lib.may_write = lambda: (True, "")
 lib.SETTINGS = os.path.join(TOY, "forge.json")
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
-    json.dump({"integrations": {"codex": True, "gsd": False, "hindsight": False, "caveman": False},
+    json.dump({"integrations": {"codex": True, "gsd": False, "hindsight": False},
                "codex_harness": True}, fh)
 lib.settings.cache_clear()
 
@@ -248,7 +248,7 @@ run_codex(APPLY, prof(pg, "toy-g"), ["srv"])
 cfg_g = os.path.join(pg, ".codex", "config.toml")
 check("the file is claimed before the switch goes off", len(claims(cfg_g)) == 1, claims(cfg_g))
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
-    json.dump({"integrations": {"codex": True, "gsd": False, "hindsight": False, "caveman": False},
+    json.dump({"integrations": {"codex": True, "gsd": False, "hindsight": False},
                "codex_harness": False}, fh)
 lib.settings.cache_clear()
 out = io.StringIO()
@@ -257,7 +257,7 @@ with contextlib.redirect_stdout(out):
 check("control: codex_harness off took forge's tables out", FAKE_TOKEN not in open(cfg_g, encoding="utf-8").read(), line)
 check("C10: with codex_harness off the file's claim is gone", claims(cfg_g) == [], claims(cfg_g))
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
-    json.dump({"integrations": {"codex": True, "gsd": False, "hindsight": False, "caveman": False},
+    json.dump({"integrations": {"codex": True, "gsd": False, "hindsight": False},
                "codex_harness": True}, fh)
 lib.settings.cache_clear()
 

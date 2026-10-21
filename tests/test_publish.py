@@ -386,14 +386,14 @@ def allowlist_cases():
     code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-i", "-z", "--exclude-from=publish/engine.gitignore"], FORGE)
     ignored = set(p for p in out.split("\0") if p)
     engine = tracked - ignored
-    private = ["hooks/test_audit_tool_use.py", "hooks/caveman_house_rules.md",
+    private = ["hooks/test_audit_tool_use.py",
                "hooks/audit_tool_use.py", "hooks/track_skill_usage.py", "scripts/sync/hindsight_doctor.py",
                "scripts/sync/test_hindsight_doctor.py", "tests/test_gate.py", j("config/profiles/life", "os.claude.json"),
                "config/mcp-registry.json", "config/toolchain.json", "docs/portable-design.md", "design/taste/README.md",
                "skills/new-project/SKILL.md", j("mcp-servers/vdw", "aals-mcp.py"), "scripts/dev/gate.py",
                "scripts/backup/t7-backup.sh", ".claude/settings.json", "publish/engine.gitignore"]
     public = ["bin/forge", "forge/cli.py", "forge/publish.py", "hooks/guard_tool_use.py", "hooks/test_guard_tool_use.py",
-              "hooks/worktree_guard.py", "hooks/gsd-prompt-guard.js", "hooks/caveman_persist_level.js",
+              "hooks/worktree_guard.py", "hooks/gsd-prompt-guard.js", "hooks/omarchy_notify.py",
               "hooks/test_guard_mutants.py", "config/gsd/defaults.json", "scripts/sync/sync_skill_keep.py",
               "scripts/sync/test_sync_skill_keep.py", "scripts/sync/memory_doctor.py", "scripts/metrics/harness-metrics.mjs",
               "githooks/pre-commit", "githooks/commit-msg", "githooks/pre-push", "tests/sandbox.py",

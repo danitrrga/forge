@@ -688,7 +688,7 @@ def record_cases(tmp):
             ("   wrote 2 changed: a.md, b.md", False),
             ("GSD runtime in sync (2 file(s) written).", False),
             ("chmod 600 ~/.claude.json (it carries resolved secrets)", False),
-            ("   ~/.codex/hooks.json -> repaired SessionStart caveman_house_rules.py", False)):
+            ("   ~/.codex/hooks.json -> repaired UserPromptSubmit ref_corpus_router.py", False)):
         want("cli.CHANGED shows %r" % line, bool(cli.CHANGED.search(line)), shown)
     return failures, want.count()
 
@@ -820,7 +820,7 @@ def settings_cases(tmp):
 
     Each case was seen failing on a mutated copy of lib.py: a missing file returning {},
     "settings with no file = {}, want ('exit', '! config/forge.json missing -- run bin/forge init')";
-    bool() for `is True`, "on('caveman') on the string 'false' = True, want False"; the unknown-name check
+    bool() for `is True`, "on('hindsight') on the string 'false' = True, want False"; the unknown-name check
     dropped, "on('codeX'), a name that is no integration = False, want True"; the deepcopy dropped,
     "settings after a caller mutated the last one = True, want False"; lru_cache(maxsize=0), "a file
     rewritten after it was read (cached) = False, want True"; the object check dropped, "settings on a
@@ -853,25 +853,31 @@ def settings_cases(tmp):
         want("settings with no file", exits(lib.settings), ("exit", missing_line))
         want("on('codex') with no file", exits(lib.on, "codex"), ("exit", missing_line))
 
-        lib.SETTINGS = put("off.json", '{"integrations": {"codex": false, "gsd": true, "caveman": "false"}}')
+        lib.SETTINGS = put("off.json", '{"integrations": {"codex": false, "gsd": true, "hindsight": "false"}}')
         want("on('codex') on a file holding false", lib.on("codex"), False)
         want("on('gsd') on a file holding true", lib.on("gsd"), True)
-        want("on('hindsight') with the key absent", lib.on("hindsight"), False)
-        want("on('caveman') on the string 'false'", lib.on("caveman"), False)
+        want("on('hindsight') on the string 'false'", lib.on("hindsight"), False)
         want("on('codeX'), a name that is no integration", str(raised(lib.on, "codeX")).startswith("('raised', 'ValueError'"), True)
 
         got = lib.settings()
         got["x"] = 1
         want("settings after a caller mutated the last one", "x" in lib.settings(), False)
 
-        # A key of an integration forge no longer has (a machine's file written while Jev existed) is
-        # ignored, not an error: the table is only ever read by name, and a name outside INTEGRATIONS is
-        # a ValueError only for a caller that asks. Red on the commit before the removal: "on('jev') on a
-        # file that still carries the removed key = False, want True" (jev was an integration then).
-        lib.SETTINGS = put("legacy.json", '{"integrations": {"codex": true, "jev": false}}')
-        want("on('codex') on a file that still carries a removed integration's key", lib.on("codex"), True)
-        want("on('jev') on a file that still carries the removed key",
-             str(raised(lib.on, "jev")).startswith("('raised', 'ValueError'"), True)
+        # A key of an integration forge no longer has (a machine's file written while Jev or caveman
+        # existed) is ignored, not an error: the table is only ever read by name, and a name outside
+        # INTEGRATIONS is a ValueError only for a caller that asks. Red on the commit before each removal:
+        # "on('jev') on a file that still carries the removed key = False, want True" (jev was an
+        # integration then). Caveman, with "caveman" put back in INTEGRATIONS: "on('caveman') on a file
+        # that still carries the removed key = False, want True" (no raise: it was an integration again).
+        # With lib.on raising on any key of the table outside INTEGRATIONS (an engine that does not
+        # tolerate a machine's old key): "ValueError: unknown integration key in the table", a crash at
+        # the on('codex') of the next line before any want() runs.
+        lib.SETTINGS = put("legacy.json", '{"integrations": {"codex": true, "jev": false, "caveman": true}}')
+        want("on('codex') on a file that still carries removed integrations' keys", lib.on("codex"), True)
+        want("on('hindsight') with its key absent beside them", lib.on("hindsight"), False)
+        for gone in ("jev", "caveman"):
+            want("on(%r) on a file that still carries the removed key" % gone,
+                 str(raised(lib.on, gone)).startswith("('raised', 'ValueError'"), True)
 
         lib.SETTINGS = put("later.json", '{"integrations": {"codex": true}}')
         want("a path read first time", lib.on("codex"), True)
@@ -891,7 +897,7 @@ def settings_cases(tmp):
         lib.SETTINGS = real
         lib.settings.cache_clear()
 
-    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight", "caveman"))
+    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight"))
     ours = json.load(open(os.path.join(FIXTURES, "forge.json")))
     want("tests/fixtures/config/forge.json integrations, all on",
          ours["integrations"], {n: True for n in lib.INTEGRATIONS})

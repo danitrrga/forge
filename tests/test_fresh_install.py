@@ -55,7 +55,7 @@ from forge import cli, lib  # noqa: E402  (pure functions and two path constants
 failures, notrun, n_checks = [], [], [0]
 GIT_ENV = dict(os.environ, **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
-INTEGRATIONS = ("codex", "gsd", "hindsight", "caveman")
+INTEGRATIONS = ("codex", "gsd", "hindsight")
 # What `forge add` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # profile with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
@@ -263,13 +263,19 @@ def choice_cases():
     want("init_choices asks only about what --without left open", (got, q), (dict(off, gsd=True), [ASK_GSD]))
     got, why, q = run(False, [], [], {"codex": False, "pnpm": True})
     want("init_choices asks only about the tools it found", (got, q), (dict(off, gsd=True), [ASK_GSD]))
-    want("init_choices --with switches on what is not detected", run(True, ["hindsight", "caveman"], [], neither),
-         (dict(off, hindsight=True, caveman=True), None, []))
+    want("init_choices --with switches on what is not detected", run(True, ["hindsight"], [], neither),
+         (dict(off, hindsight=True), None, []))
     for label, with_names, have, names, in (("--with codex without codex on PATH", ["codex"], neither, "codex"),
                                            ("--with gsd without pnpm on PATH", ["gsd"], neither, "pnpm"),
                                            ("--with an unknown name", ["nope"], both, "nope")):
         got, why, q = run(True, with_names, [], have)
         check("init_choices %s is refused, naming %s" % (label, names), got is None and names in (why or ""), "got %r, %r" % (got, why))
+    # caveman was an integration until it was removed: it is an unknown name now, in either list, and the
+    # generic refusal names it and the names that remain.
+    for flag, with_names, without_names in (("--with", ["caveman"], []), ("--without", [], ["caveman"])):
+        got, why, q = run(True, with_names, without_names, both)
+        want("init_choices %s caveman is refused as an unknown integration" % flag, (got, why),
+             (None, "unknown integration 'caveman' (one of codex, gsd, hindsight)"))
     got, why, q = run(True, ["hindsight"], ["hindsight"], both)
     check("init_choices a name in both lists is refused", got is None and "hindsight" in (why or ""), "got %r, %r" % (got, why))
 
@@ -342,6 +348,12 @@ def main_world():
     w = World("main")
     want("the world has no config/profiles yet", os.path.exists(w.path("config", "profiles")), False)
     before = w.snapshot()
+    # caveman was an integration until its removal: init refuses it as it refuses any unknown name, and writes
+    # nothing. Red with "caveman" put back in lib.INTEGRATIONS: "init --with caveman is refused as an unknown integration, exit 1, nothing written -- exit 1: ! forge init: failed -- doctor (exit 1) | ..." (init ran and wrote config/forge.json).
+    code, out = w.forge("init", "--yes", "--with", "caveman")
+    check("init --with caveman is refused as an unknown integration, exit 1, nothing written",
+          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, gsd, hindsight)" in out
+          and not os.path.exists(w.path("config", "forge.json")), "exit %d: %s" % (code, tail(out, 3)))
     code, out = w.forge("init", "--yes", "--without", "codex,gsd")
     check("init --yes --without codex,gsd exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     # Control of the init exit rules below: every step passed or was not run (the SKIP and NOT RUN rows
@@ -529,12 +541,12 @@ def controls(w, before):
 
 def track_world():
     w = World("track")
-    code, out = w.forge("init", "--yes", "--without", "codex,gsd", "--with", "caveman", "--track")
-    check("init --track --with caveman exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
-    want("--with caveman switched it on, and nothing else", (read_json(w.path("config", "forge.json")) or {}).get("integrations"),
-         dict({k: False for k in INTEGRATIONS}, caveman=True))
+    code, out = w.forge("init", "--yes", "--without", "codex,gsd", "--track")
+    check("init --track exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
+    want("--track leaves every integration off", (read_json(w.path("config", "forge.json")) or {}).get("integrations"),
+         {k: False for k in INTEGRATIONS})
     checked, missing = hook_check(w.home)
-    check("with caveman on, every hook command still names a script that exists (%d checked)" % checked, checked > 0 and not missing, "missing %s" % missing[:2])
+    check("with --track, every hook command still names a script that exists (%d checked)" % checked, checked > 0 and not missing, "missing %s" % missing[:2])
     data = w.path(".forge-data.git")
     want("init --track makes .forge-data.git, a history over the checkout (a git directory, not bare)",
          (os.path.isdir(data), git_out("--git-dir", data, "rev-parse", "--is-bare-repository").strip()), (True, "false"))

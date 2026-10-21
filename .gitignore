@@ -25,7 +25,7 @@
 !/tests/
 /tests/test_gate.py
 
-# hooks/: the guards, the output discipline, the router, the notifier, caveman's two, Ponytail's scoping, and their tests.
+# hooks/: the guards, the output discipline, the router, the notifier, Ponytail's scoping, and their tests.
 !/hooks/
 /hooks/*
 !/hooks/guard_tool_use.py
@@ -35,8 +35,6 @@
 !/hooks/gsd_output_discipline.py
 !/hooks/ref_corpus_router.py
 !/hooks/omarchy_notify.py
-!/hooks/caveman_house_rules.py
-!/hooks/caveman_persist_level.js
 !/hooks/ponytail_subagent.py
 !/hooks/test_ponytail_subagent.py
 !/hooks/test_guard_tool_use.py

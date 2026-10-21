@@ -1252,7 +1252,7 @@ def toy_settings(path):
         lib.settings.cache_clear()
 
 
-OFF = {"codex": False, "gsd": False, "hindsight": False, "caveman": False}
+OFF = {"codex": False, "gsd": False, "hindsight": False}
 
 
 def lines_of(results):
@@ -1323,7 +1323,6 @@ def integrations_cases(tmp):
     want("control: the same row naming a script that exists PASSes", got,
          [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: gsd is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
-          ("SKIP", "NOT RUN, NOT ARMED: caveman is off in config/forge.json"),
           ("PASS", "user_hooks row here.py (UserPromptSubmit): %s is there" % present),
           ("PASS", "checked 1: 0 integration(s) on, 1 user_hooks script(s)")])
     got = run("hook-off", OFF, [hook(missing, "gone.py", on=False), hook(present, "here.py")])
@@ -1386,10 +1385,10 @@ def integrations_cases(tmp):
         want("control: gsd on, unpatched, found on PATH", at(got, 1), ("PASS", "gsd is on, pnpm found on PATH"))
     finally:
         os.environ["PATH"] = real_path
-    got = run("quiet", dict(OFF, hindsight=True, caveman=True), [])
-    want("hindsight and caveman on need nothing here", [l for l in got if l[0] != "SKIP"], [
-        ("PASS", "hindsight is on, no dependency checked here"), ("PASS", "caveman is on, no dependency checked here"),
-        ("PASS", "checked 2: 2 integration(s) on, 0 user_hooks script(s)")])
+    got = run("quiet", dict(OFF, hindsight=True), [])
+    want("hindsight on needs nothing here", [l for l in got if l[0] != "SKIP"], [
+        ("PASS", "hindsight is on, no dependency checked here"),
+        ("PASS", "checked 1: 1 integration(s) on, 0 user_hooks script(s)")])
     # A hook row that is not an object: the generator exits on it, the doctor says so as a FAIL.
     with toy_settings(settings_world(tmp, "hook-garbage", dict(integrations=OFF, user_hooks=["nope"]))):
         got = call("integrations_row")
@@ -1406,7 +1405,7 @@ def codex_hooks_cases(tmp):
     os.makedirs(os.path.dirname(target), exist_ok=True)
     real = hooks.CODEX_HOOKS
     hooks.CODEX_HOOKS = target
-    forge_cmd = "python3 %s/caveman_house_rules.py" % hooks.HOOK_DIR
+    forge_cmd = "python3 %s/ref_corpus_router.py" % hooks.HOOK_DIR
 
     def put(doc):
         with open(target, "w", encoding="utf-8") as fh:
@@ -1428,7 +1427,7 @@ def codex_hooks_cases(tmp):
             put({"hooks": {"SessionStart": [entry(forge_cmd)], "Stop": [entry("node /opt/herdr/notify.js")]}})
             want("a forge entry in the file: FAIL, naming the event and the command", call("codex_hooks_row"),
                  [("FAIL", "%s still holds 1 hook(s) forge wrote: SessionStart %s" % (lib.short(target), forge_cmd))])
-            put({"hooks": {"SessionStart": [entry("python3 /elsewhere/caveman_house_rules.py")]}})
+            put({"hooks": {"SessionStart": [entry("python3 /elsewhere/ref_corpus_router.py")]}})
             want("the same script under another path is not forge's: PASS", [l[0] for l in call("codex_hooks_row")], ["PASS"])
             put("{bad")
             want("a file that does not parse: FAIL", [l[0] for l in call("codex_hooks_row")], ["FAIL"])

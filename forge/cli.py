@@ -690,9 +690,8 @@ def toolchain_row():
 
 
 # What each integration needs that forge itself does not ship: a check returning the problem or None,
-# and what a PASS says. Hindsight and caveman need nothing from the machine here: Hindsight's runtime
-# has its own doctor row (doctor_extra) and the generator's `!` lines, and both caveman hooks exit 0
-# without their inputs.
+# and what a PASS says. Hindsight needs nothing from the machine here: its runtime
+# has its own doctor row (doctor_extra) and the generator's `!` lines.
 NOT_ARMED = "NOT RUN, NOT ARMED: "
 
 
@@ -715,7 +714,7 @@ def _gsd_missing():
 
 
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
-                     "hindsight": (None, "no dependency checked here"), "caveman": (None, "no dependency checked here")}
+                     "hindsight": (None, "no dependency checked here")}
 
 
 def hook_scripts(command):

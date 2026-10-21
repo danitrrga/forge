@@ -3,7 +3,7 @@
 
 Each world is W/forge (an engine copy plus tests/fixtures/config, one toy skill, one profile `app`), W/home
 and W/projects/app (a repository with a .gitignore line and a CLAUDE.md of its own), side by side, the shape
-lib.may_write allows a toy HOME to write. Codex, codex_harness, Hindsight and caveman are on, GSD is off;
+lib.may_write allows a toy HOME to write. Codex, codex_harness and Hindsight are on, GSD is off;
 systemctl is a logging stub. `forge sync --all --apply` builds what forge writes, and then, by hand: a user
 hook in ~/.claude/settings.json, a user allow rule and an edited env in app's settings.local.json; the
 .gitignore line `node_modules/` and ~/.claude/settings.json.bak were there before the sync. Nothing real is
@@ -109,7 +109,7 @@ class World:
         sandbox.seed(self.root)
         write(os.path.join(self.root, "skills", "toy-common", "SKILL.md"), "---\nname: toy-common\ndescription: stub\n---\n")
         cfg = load(self.cfg)
-        cfg["integrations"] = {"codex": True, "gsd": False, "hindsight": True, "caveman": True}
+        cfg["integrations"] = {"codex": True, "gsd": False, "hindsight": True}
         cfg["codex_harness"] = True
         write_json(self.cfg, cfg)
         reg = os.path.join(self.root, "config", "mcp-registry.json")
@@ -260,7 +260,7 @@ check("--integration hindsight: every other claim stays -- %d of %d"
       % (len(left), sum(len(v) for v in rest.values())), len(left) == sum(len(v) for v in rest.values()), left)
 check("--integration hindsight: its claims leave the record, the others stay",
       not any(c["owner"] == "hindsight" for cs in load(w.registry)["claims"].values() for c in cs)
-      and any(c["owner"] == "caveman" for cs in load(w.registry)["claims"].values() for c in cs))
+      and any(c["owner"] == "codex" for cs in load(w.registry)["claims"].values() for c in cs))
 w.set_integration("hindsight", True)
 
 # The whole uninstall.
@@ -522,6 +522,9 @@ e = World("empty", sync=False)
 code, out = e.forge("uninstall")
 check("an empty world, whole: exit 0, nothing left of forge -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
+code, out = e.forge("uninstall", "--integration", "caveman")  # removed: no longer a choice. Red with "caveman" put back in lib.INTEGRATIONS: "exit 1: looked at 0 claim(s) and 0 item(s) forge made by construction | FAIL: looked at zero"
+check("--integration caveman: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
+      code == 2 and "invalid choice: 'caveman' (choose from 'codex', 'gsd', 'hindsight')" in out, out)
 code, out = e.forge("uninstall", "--integration", "gsd")
 check("an empty world, --integration gsd: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 1 and "FAIL" in out and "looked at zero" in out, out)

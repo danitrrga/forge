@@ -22,7 +22,7 @@ session starts.
   it, every file written is named.
 - **`forge doctor` names what is broken and the command that fixes it.** One PASS / FAIL / SKIP / WARN line
   per check, exit 1 on a FAIL.
-- **Optional integrations that switch off cleanly.** Codex, GSD, caveman and Hindsight are each one switch.
+- **Optional integrations that switch off cleanly.** Codex, GSD and Hindsight are each one switch.
   Turning one off removes only the entries forge wrote.
 - **A personal-data guard.** `forge check-public` and the git hooks refuse a commit that carries a home path,
   an email address, a private IP or a private key, so your own config never leaks into a public repository.
@@ -86,7 +86,6 @@ installed another way.
 |---|---|---|---|
 | `codex` | `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills; with `codex_harness` true in `config/forge.json` also its hook rows in `~/.codex/hooks.json` and each project's MCP servers in `.codex/config.toml`, with it false (the default, Codex as a reviewer) neither, and forge takes out only what it wrote | `codex` on PATH | off; `init` offers it when `codex` is found |
 | `gsd` | the `gsd-*` skills, agents and engine from `get-shit-done-cc`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
-| `caveman` | two hooks around the `caveman` plugin: one injects your own rules from `hooks/caveman_house_rules.md` if you write that file, one makes a `/caveman` level stick in the profile | the plugin, installed in Claude Code; `node` | off |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
 
 ## Bring your own skills
@@ -142,7 +141,7 @@ ignore goes to the engine history, every other path to your data history when yo
 
 - Linux.
 - Python 3.10 or newer, git, and Claude Code (`claude`).
-- Optional: `codex` for the Codex integration, `pnpm` for GSD, `node` for the GSD, caveman and Hindsight hooks.
+- Optional: `codex` for the Codex integration, `pnpm` for GSD, `node` for the GSD and Hindsight hooks.
 
 `forge init` checks each one and says which are missing.
 

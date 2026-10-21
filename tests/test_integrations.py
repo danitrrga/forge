@@ -2,19 +2,18 @@
 """T4 of docs/portable-design.md: forge/hooks.py reads config/forge.json. An integration that is off
 drops forge's own entries from the user-scope files (by exact command, never by marker), `user_hooks`
 rows come from the file and follow the code's rows, `user_settings` come from the file, and the codex
-writer says NOT RUN, NOT ARMED. The caveman
-level hook finds its profiles from where it sits, not from a path written into it.
+writer says NOT RUN, NOT ARMED.
 
 Everything runs against a toy forge.json (lib.SETTINGS) and a toy HOME; nothing real is written.
 
 Seen failing on 947b2e4 (hooks.py with every row in code; the file run in a copy of that tree), 17 of
 20 checks red, the other 3 are controls that pass there:
-  off integrations: the exact commands go -- the hindsight and caveman entries were all still in
+  off integrations: the exact commands go -- the hindsight entries were all still in
     UserPromptSubmit, and the gsd ones in Stop and PostToolUse
   off integrations: a foreign `coding-agents` entry stays -- it was gone (the old reconcile drops every
     entry carrying the marker that is not the row's exact command)
   off integrations: no row of an off integration is written -- USER_HOOKS still holds the markers
-    ['caveman_house_rules.py', 'caveman_persist_level.js', 'coding-agents', 'gsd-prompt-guard.js', ...]
+    ['coding-agents', 'gsd-prompt-guard.js', ...]
   integrations on: ROW_INTEGRATION names the owner of each gated marker -- ROW_INTEGRATION = None
   user_hooks: the row is appended after the code's rows -- the last row was the codex Stop row of
     `coding-agents`; written for the agents it names only, and "on": false, were red the same way
@@ -25,8 +24,6 @@ Seen failing on 947b2e4 (hooks.py with every row in code; the file run in a copy
     {'MEM_NO_AUTO_ADOPT': '1', ...}, want haiku, no advisorModel and {'TOY_FLAG': '1'}
   codex off: the writer says NOT RUN, NOT ARMED -- the line was "~/.codex/hooks.json -> appended
     UserPromptSubmit <moved row>.py; ..." and the file was written
-  caveman_persist_level.js finds its profiles from __dirname -- exit 0, stdout '', stderr '', profile
-    level 'full' (the old hook read the profiles of the checkout written into it)
 Negative controls on the finished code, each put back from a copy of the file (the checks that went red):
   off rows matched by marker, not exact command -- the foreign `coding-agents` entry stays (1)
   integration gate ignored (every row live) -- 5: exact commands go, foreign stays, no row written, codex
@@ -46,8 +43,6 @@ Not written here, run by `forge test`'s other suites: the byte-identity of the r
 import importlib
 import json
 import os
-import shutil
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -68,7 +63,7 @@ from forge import lib  # noqa: E402
 # bin/forge init" at the import).
 lib.SETTINGS = os.path.join(TOY, "forge-0.json")
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
-    json.dump({"integrations": {"codex": True, "gsd": True, "hindsight": True, "caveman": True}}, fh)
+    json.dump({"integrations": {"codex": True, "gsd": True, "hindsight": True}}, fh)
 from forge import hooks  # noqa: E402
 
 failures, n_cases = [], [0]
@@ -91,7 +86,7 @@ def attempt(fn, *a, **k):
 
 def toy_settings(n, **over):
     """Write toy config/forge.json number n, point lib at it and reload hooks over it."""
-    doc = {"integrations": {"codex": True, "gsd": True, "hindsight": True, "caveman": True},
+    doc = {"integrations": {"codex": True, "gsd": True, "hindsight": True},
            "gsd_patches": True, "house_hooks": True, "user_settings": {}, "user_hooks": []}
     doc.update(over)
     doc = {k: v for k, v in doc.items() if v is not None}  # an override of None drops the key
@@ -124,25 +119,24 @@ def commands(rows):
 
 # 1. Off integrations. Entries holding forge's exact command go, whatever their matcher or timeout;
 # a foreign entry under the same marker stays; the rows of an integration that is off are not written.
-h = toy_settings(1, integrations={"codex": True, "gsd": False, "hindsight": False, "caveman": False})
+h = toy_settings(1, integrations={"codex": True, "gsd": False, "hindsight": False})
 hs_up = 'node "%s/claude-hook.js"' % h.HINDSIGHT_DIST
 hs_stop = 'node "%s/claude-stop-hook.js"' % h.HINDSIGHT_DIST
 foreign = 'node /somewhere/else/.hindsight/coding-agents/dist/claude-hook.js'
 gsd_cmd = "python3 %s/gsd_output_discipline.py" % h.HOOK_DIR
-caveman_cmd = "node %s/caveman_persist_level.js" % h.HOOK_DIR
-doc = {"hooks": {"UserPromptSubmit": [group(hs_up, 99, "Odd"), group(foreign, 30), group(caveman_cmd, 10)],
+doc = {"hooks": {"UserPromptSubmit": [group(hs_up, 99, "Odd"), group(foreign, 30)],
                  "Stop": [group(hs_stop, 60), group(gsd_cmd, 10)],
                  "PostToolUse": [group(gsd_cmd, 10, "Write|Edit")]}}
 notes = attempt(h.reconcile, doc, h.CLAUDE)
 ups, stops, posts = (entries(doc, e) for e in ("UserPromptSubmit", "Stop", "PostToolUse"))
 check("off integrations: the exact commands go, whatever the matcher and timeout",
-      not any(c in (hs_up, caveman_cmd) for c, _, _ in ups) and not any(c in (hs_stop, gsd_cmd) for c, _, _ in stops)
+      not any(c == hs_up for c, _, _ in ups) and not any(c in (hs_stop, gsd_cmd) for c, _, _ in stops)
       and not any(c == gsd_cmd for c, _, _ in posts),
       "UserPromptSubmit %r, Stop %r, PostToolUse %r, notes %r" % (ups, stops, posts, notes))
 check("off integrations: a foreign `coding-agents` entry stays (nothing removes by marker)",
       (foreign, None, 30) in ups, "UserPromptSubmit %r" % (ups,))
 off_markers = {"claude-hook.js", "coding-agents", "gsd_output_discipline.py", "gsd-prompt-guard.js",
-               "gsd-read-injection-scanner.js", "caveman_house_rules.py", "caveman_persist_level.js"}
+               "gsd-read-injection-scanner.js"}
 written = sorted({r[3] for r in h.USER_HOOKS} & off_markers)
 check("off integrations: no row of an off integration is written", not written,
       "USER_HOOKS still holds the markers %r" % (written,))
@@ -160,12 +154,11 @@ check("off integrations: the codex rows go from codex's file too",
 # 2. The same file with the integrations on writes those rows, from the code, after the table's start.
 h = toy_settings(2)
 markers = [r[3] for r in h.USER_HOOKS]
-check("integrations on: gsd, caveman and hindsight rows are in the table",
-      {"gsd-prompt-guard.js", "gsd_output_discipline.py", "caveman_persist_level.js", "coding-agents"} <= set(markers),
+check("integrations on: gsd and hindsight rows are in the table",
+      {"gsd-prompt-guard.js", "gsd_output_discipline.py", "coding-agents"} <= set(markers),
       "markers %r" % (markers,))
 check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
-      getattr(h, "ROW_INTEGRATION", {}) == {"caveman_house_rules.py": "caveman", "caveman_persist_level.js": "caveman",
-                                           "gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
+      getattr(h, "ROW_INTEGRATION", {}) == {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                                            "gsd_output_discipline.py": "gsd",
                                            "coding-agents": "hindsight", "memory_doctor.py": "hindsight"},
       "ROW_INTEGRATION = %r" % (getattr(h, "ROW_INTEGRATION", None),))
@@ -207,8 +200,8 @@ check("no user_hooks: the code holds none of the rows that moved out",
       not [r for r in h.USER_HOOKS if r[3] in MOVED],
       "rows %r" % ([r[3] for r in h.USER_HOOKS if r[3] in MOVED],))
 
-# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 14 rows with every
-# integration on, so 16 with the two that moved out of the code (the curfew and the injection audit,
+# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 12 rows with every
+# integration on, so 14 with the two that moved out of the code (the curfew and the injection audit,
 # here under toy names).
 two = [{"event": "UserPromptSubmit", "command": "python3 /opt/toy/prompt_guard.py", "timeout": 10,
         "marker": "prompt_guard.py", "matcher": None, "agents": ["claude", "codex"]},
@@ -223,8 +216,8 @@ check("a settings file with two user_hooks rows: the code's rows, then the two i
       "%d rows (code %d), last two %r" % (len(real), code_rows, real[-2:]))
 h = toy_settings(12, user_hooks=two, integrations={n: True for n in lib.INTEGRATIONS})
 real = [(r[0], r[3]) for r in h.USER_HOOKS]
-check("all integrations on and two user_hooks rows: 14 rows (the two Hindsight rows are written per project), the two after the code's",
-      len(real) == 14 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
+check("all integrations on and two user_hooks rows: 12 rows (the two Hindsight rows are written per project), the two after the code's",
+      len(real) == 12 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
       "%d rows, last two %r" % (len(real), real[-2:]))
 
 # 6. user_settings come from the file: its keys and nothing else.
@@ -240,7 +233,7 @@ check("user_settings: model and env come from the file, and no other key of the 
 os.remove(h.USER_SETTINGS)
 
 # 7. Codex off: the writer says so and writes no file.
-h = toy_settings(7, integrations={"codex": False, "gsd": True, "hindsight": True, "caveman": True})
+h = toy_settings(7, integrations={"codex": False, "gsd": True, "hindsight": True})
 line = attempt(h.write_codex_hooks, ctx)
 check("codex off: the writer says NOT RUN, NOT ARMED and writes no file",
       isinstance(line, str) and "NOT RUN, NOT ARMED" in line and "codex" in line and not os.path.exists(h.CODEX_HOOKS),
@@ -250,8 +243,8 @@ check("codex off: the writer says NOT RUN, NOT ARMED and writes no file",
 # whose command is exactly one forge wrote (a user_hooks row that lists codex among its agents included),
 # leaves every other entry, event and key as it was, and leaves a file that is absent absent. Red before
 # (the writer mirrored the shared rows into the file): "codex on, no file: the writer writes none: line
-# '... -> appended SessionStart caveman_house_rules.py; ...', hooks.json exists True"; "every entry holding
-# a command forge wrote is gone: left [... 'python3 .../caveman_house_rules.py' ...]"; "a file with no
+# '... -> appended SessionStart <forge row>.py; ...', hooks.json exists True"; "every entry holding
+# a command forge wrote is gone: left [... 'python3 .../<forge row>.py' ...]"; "a file with no
 # entry of forge's is not rewritten" (the rows were appended to it).
 cfg_row = {"event": "UserPromptSubmit", "command": "python3 <ROOT>/toy_codex_row.py", "timeout": 10,
            "marker": "toy_codex_row.py", "matcher": None, "agents": ["claude", "codex"]}
@@ -262,7 +255,7 @@ check("codex on, no file: the writer writes none and says nothing changed",
       "line %r, hooks.json exists %s" % (line, os.path.exists(h.CODEX_HOOKS)))
 if os.path.exists(h.CODEX_HOOKS):
     os.remove(h.CODEX_HOOKS)
-forge_cmds = {"SessionStart": [("python3 %s/caveman_house_rules.py" % h.HOOK_DIR, None, 5)],
+forge_cmds = {"PostToolUse": [("python3 %s/gsd_output_discipline.py" % h.HOOK_DIR, "Write|Edit", 10)],
               "UserPromptSubmit": [('node "%s/codex-hook.js"' % h.HINDSIGHT_DIST, None, 30),
                                    ("python3 %s/toy_codex_row.py" % h.ROOT, None, 10)],
               "PreToolUse": [("node %s/gsd-prompt-guard.js" % h.HOOK_DIR, "Write|Edit", 10)],
@@ -317,30 +310,6 @@ check("write_user_settings settles (the second run is already current, no proxy 
       isinstance(line, str) and "already current" in line and "direct to Anthropic" not in line and "proxy" not in line,
       "returned %r" % (line,))
 
-# 9. hooks/caveman_persist_level.js finds profiles next to itself: a copy in a toy tree reads the toy's.
-toy_forge = os.path.join(TOY, "forge")
-os.makedirs(os.path.join(toy_forge, "hooks"))
-os.makedirs(os.path.join(toy_forge, "config", "profiles"))
-shutil.copy(os.path.join(REPO, "hooks", "caveman_persist_level.js"), os.path.join(toy_forge, "hooks"))
-app = os.path.join(TOY, "app")
-os.makedirs(app)
-profile = os.path.join(toy_forge, "config", "profiles", "toyapp.claude.json")
-with open(profile, "w", encoding="utf-8") as fh:
-    json.dump({"project": "toyapp", "project_path": app, "env": {"CAVEMAN_DEFAULT_MODE": "full"}}, fh)
-plug = os.path.join(HOME, ".claude", "plugins", "cache", "caveman", "caveman", "abc", "src", "hooks")
-os.makedirs(plug)
-with open(os.path.join(plug, "caveman-parse.js"), "w", encoding="utf-8") as fh:
-    fh.write("exports.parseModeChange = (p) => ({action: 'set', mode: p.split(' ')[1]});\n")
-with open(os.path.join(plug, "caveman-config.js"), "w", encoding="utf-8") as fh:
-    fh.write("exports.getDefaultMode = () => 'full';\n")
-r = subprocess.run(["node", os.path.join(toy_forge, "hooks", "caveman_persist_level.js")], capture_output=True, text=True,
-                   input=json.dumps({"prompt": "/caveman lite", "cwd": app}), env=dict(os.environ, HOME=HOME), timeout=30)
-with open(profile, encoding="utf-8") as fh:
-    level = json.load(fh)["env"]["CAVEMAN_DEFAULT_MODE"]
-check("caveman_persist_level.js finds its profiles from __dirname",
-      r.returncode == 0 and 'caveman level "lite" persisted for app (profile)' in r.stdout and level == "lite",
-      "exit %d, stdout %r, stderr %r, profile level %r" % (r.returncode, r.stdout, r.stderr[-200:], level))
-
 # 10. A stranger's table. The gsd rows are forge's GSD patches: written only with gsd on AND gsd_patches
 # true. ref_corpus_router.py and omarchy_notify.py are this machine's own: written only with house_hooks
 # true (absent is false). memory_doctor.py --hook follows hindsight. A stranger's GSD entries under the
@@ -349,7 +318,7 @@ check("caveman_persist_level.js finds its profiles from __dirname",
 GSD_ROWS = {"gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py"}
 HOUSE_ROWS = {"ref_corpus_router.py", "omarchy_notify.py"}
 SIX = GSD_ROWS | HOUSE_ROWS | {"memory_doctor.py"}
-stranger = {"codex": False, "gsd": True, "hindsight": False, "caveman": False}
+stranger = {"codex": False, "gsd": True, "hindsight": False}
 h = toy_settings(20, integrations=stranger, gsd_patches=False, house_hooks=None)
 check("stranger (gsd on, gsd_patches false, no house_hooks, hindsight off): none of the six rows is written",
       not (SIX & {r[3] for r in h.USER_HOOKS}), "USER_HOOKS holds %r" % (sorted(SIX & {r[3] for r in h.USER_HOOKS}),))
@@ -385,7 +354,7 @@ check("house_hooks true, gsd_patches false: ref_corpus_router and omarchy are wr
 h = toy_settings(23, house_hooks="yes")
 check("house_hooks: only the JSON true switches the house rows on",
       not (HOUSE_ROWS & {r[3] for r in h.USER_HOOKS}), "markers %r" % (sorted(r[3] for r in h.USER_HOOKS),))
-h = toy_settings(24, integrations={"codex": True, "gsd": True, "hindsight": False, "caveman": True})
+h = toy_settings(24, integrations={"codex": True, "gsd": True, "hindsight": False})
 check("hindsight off: memory_doctor.py --hook is not written", "memory_doctor.py" not in {r[3] for r in h.USER_HOOKS},
       "markers %r" % (sorted(r[3] for r in h.USER_HOOKS),))
 
@@ -395,21 +364,19 @@ h = toy_settings(25)
 got = [(r[0], r[3], r[2], r[4], r[5], r[1].replace(h.ROOT, "<R>")) for r in h.USER_HOOKS]
 BOTH_A = ("claude", "codex")
 want = [
-    ("SessionStart", "caveman_house_rules.py", 5, None, BOTH_A, "python3 <R>/hooks/caveman_house_rules.py"),
     ("UserPromptSubmit", "ref_corpus_router.py", 10, None, BOTH_A, "python3 <R>/hooks/ref_corpus_router.py"),
     ("PreToolUse", "gsd-prompt-guard.js", 10, "Write|Edit", BOTH_A, "node <R>/hooks/gsd-prompt-guard.js"),
     ("PostToolUse", "gsd-read-injection-scanner.js", 10, "Read", BOTH_A, "node <R>/hooks/gsd-read-injection-scanner.js"),
     ("PostToolUse", "gsd_output_discipline.py", 10, "Write|Edit", BOTH_A, "python3 <R>/hooks/gsd_output_discipline.py"),
     ("Stop", "gsd_output_discipline.py", 10, None, BOTH_A, "python3 <R>/hooks/gsd_output_discipline.py"),
-    ("UserPromptSubmit", "caveman_persist_level.js", 10, None, BOTH_A, "node <R>/hooks/caveman_persist_level.js"),
     ("Notification", "omarchy_notify.py", 10, None, ("claude",), "python3 <R>/hooks/omarchy_notify.py"),
     ("SessionStart", "memory_doctor.py", 15, None, ("claude",), "python3 <R>/scripts/sync/memory_doctor.py --hook"),
 ]
 # The two Claude coding-agents rows are written per project (tests/test_hindsight_project_hooks.py);
 # the two Codex ones stay here.
-check("full config: today's rows, in today's order (eight named, session sync, memory gate, then the two codex coding-agents rows)",
+check("full config: today's rows, in today's order (six named, session sync, memory gate, then the two codex coding-agents rows)",
       [g for g in got if g[1] not in ("forge session-start", "coding-agents")] == want
-      and [g[1] for g in got] == [w[1] for w in want[:8]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 2
+      and [g[1] for g in got] == [w[1] for w in want[:6]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 2
       and [g[4] for g in got if g[1] == "coding-agents"] == [("codex",)] * 2,
       "got %r" % (got,))
 
@@ -425,7 +392,7 @@ def read_json_file(p):
         return json.load(fh)
 
 
-ON = {"codex": True, "gsd": True, "hindsight": False, "caveman": False}
+ON = {"codex": True, "gsd": True, "hindsight": False}
 OFF = dict(ON, gsd=False)
 foreign_stop = "node /elsewhere/own-stop.js"
 os.makedirs(os.path.join(HOME, ".claude"), exist_ok=True)
@@ -465,8 +432,8 @@ check("a warded entry alone in its event: the event goes, an unrelated empty one
       "hooks %r" % (warded["hooks"],))
 # an entry of the row-less-event pass (a row deleted or moved): the owned event it sits on is the one
 # that is not in the marker's rows
-moved = {"hooks": {"Odd": [group("node %s/caveman_persist_level.js" % h.HOOK_DIR, 5)]}}
-h = toy_settings(32, integrations=dict(ON, caveman=True))
+moved = {"hooks": {"Odd": [group("python3 %s/gsd_output_discipline.py" % h.HOOK_DIR, 5)]}}
+h = toy_settings(32, integrations=ON)
 attempt(h.reconcile, moved, h.CLAUDE)
 check("a row's entry on an event the row no longer lives on: the event goes with it",
       "Odd" not in moved["hooks"], "hooks %r" % (moved["hooks"],))

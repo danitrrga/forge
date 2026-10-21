@@ -45,14 +45,6 @@ BOTH = (CLAUDE, CODEX)
 # writes none and write_codex_hooks removes exactly those commands, whether the row is on or off, and
 # nothing else.
 _CODE_ROWS = [
-    # Caveman house rules. The caveman plugin reads its ruleset from its OWN SKILL.md inside
-    # the plugin cache and has no extension point (its config takes `defaultMode` only), so
-    # the house additions -- no bureaucracy, never ask for approval by bare identifier -- are a
-    # second SessionStart context block instead of a patch to a cache dir that
-    # `/plugin update caveman` would silently revert.
-    ("SessionStart", "python3 %s/caveman_house_rules.py" % HOOK_DIR, 5,
-     "caveman_house_rules.py", None, BOTH),
-
     # ref/ corpus router. one project carries 1,140 files of third-party
     # reference material under ref/ and, measured, had zero automated touchpoints
     # into planning, research, review or coding; it had been read by hand twice in two phases.
@@ -109,16 +101,6 @@ _CODE_ROWS = [
      "gsd_output_discipline.py", "Write|Edit", BOTH),
     ("Stop", "python3 %s/gsd_output_discipline.py" % HOOK_DIR, 10,
      "gsd_output_discipline.py", None, BOTH),
-
-    # Caveman level persistence. The plugin treats a level as session state, and the default
-    # is pinned per project in the profile env (CAVEMAN_DEFAULT_MODE), so a level the user
-    # switched to would silently revert. The script writes it back to the owning profile AND
-    # that project's settings.local.json -- both, because Claude Code reads env at session init,
-    # before any SessionStart hook, so a generator-only update lands a session late. It does
-    # nothing unless the prompt is an explicit /caveman command in a directory a profile owns.
-    # Node, to reuse the plugin's own caveman-parse.js instead of re-implementing the grammar.
-    ("UserPromptSubmit", "node %s/caveman_persist_level.js" % HOOK_DIR, 10,
-     "caveman_persist_level.js", None, BOTH),
 
     # Omarchy desktop toast on Notification. Claude Code's inputNeededNotifEnabled /
     # agentPushNotifEnabled push to Anthropic's apps; neither reaches the local desktop, so a
@@ -187,8 +169,7 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # only with `gsd_patches` true as well (lib.gsd_patched), and with it off they are not written and
 # not taken out either, an off row going only by forge's exact command and never by file name.
 # `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
-ROW_INTEGRATION = {"caveman_house_rules.py": "caveman", "caveman_persist_level.js": "caveman",
-                   "gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
+ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                    "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight", "memory_doctor.py": "hindsight"}
 ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py")
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")

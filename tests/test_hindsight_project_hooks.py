@@ -21,7 +21,7 @@ and the integration-off and "on": false cases, where the old code wrote nothing 
     arguments but 5 were given')
   on: USER_HOOKS holds no Claude coding-agents row -- markers [('UserPromptSubmit', 'claude'), ('Stop', 'claude')]
   on: ~/.claude/settings.json loses forge's two rows -- claude-hook.js still in UserPromptSubmit
-  on: the note says the rows are written per project -- notes ['appended SessionStart caveman_house_rules.py', ...]
+  on: the note says the rows are written per project -- notes ['appended SessionStart <forge row>.py', ...]
   on: the doctor's would-write matches the file after the run -- would write {'permissions': {'allow': ['Bash(ls)']}}
   on: the doctor's would-write for a Hindsight project not yet written holds the two rows -- would write None
   a profile `hooks` entry with the same command is never taken out -- Stop []
@@ -67,7 +67,7 @@ sys.path.insert(0, REPO)
 from forge import lib  # noqa: E402
 
 assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
-INTEGRATIONS = {"codex": True, "gsd": True, "hindsight": True, "caveman": True}
+INTEGRATIONS = {"codex": True, "gsd": True, "hindsight": True}
 lib.SETTINGS = os.path.join(TOY, "forge-0.json")
 with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
     json.dump({"integrations": INTEGRATIONS}, fh)

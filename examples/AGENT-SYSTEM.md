@@ -65,7 +65,7 @@ A profile is `config/profiles/<name>.claude.json`. Its fields and their types ar
 
 ## Optional integrations
 
-Codex, GSD, Hindsight and caveman are switches in `config/forge.json`. An integration that is off prints
+Codex, GSD and Hindsight are switches in `config/forge.json`. An integration that is off prints
 `SKIP ... NOT RUN, NOT ARMED` in `forge doctor`, and forge removes only the entries it wrote for it.
 
 ## Checking the system
