@@ -418,6 +418,10 @@ def main_world():
     pending = cli.pending_writes(out.splitlines())
     check("a second `forge sync --all` dry-run exits 0 with no pending write", code == 0 and pending == 0,
           "exit %d, %d pending: %s" % (code, pending, tail(out, 12)))
+    # The two user-scope steps left forge sync for forge skills (docs/toolchain-design.md section 5).
+    check("forge sync --all runs neither of them", "skill links" not in out and "gsd runtime" not in out, tail(out, 12))
+    code, out = w.forge("skills")
+    check("forge skills exits 0", code == 0, "exit %d: %s" % (code, tail(out, 12)))
     # docs/portable-design.md section 10 says the relink line reads NOT RUN, NOT ARMED; the code (T5) prints a SKIP line.
     check("the relink step says SKIP, with nothing to link", "relink_skills: SKIP -- skills/ holds no skill, so there is nothing to link" in out, tail(out, 12))
     check("the gsd step says NOT RUN, NOT ARMED", "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)" in out, tail(out, 12))
@@ -572,7 +576,8 @@ def gsd_world():
     calls = w.stub_calls()
     want("init with gsd on calls pnpm once, with GSD's non-interactive flags for a global Claude Code install", calls["pnpm"], [GSD_DLX])
     want("init with gsd on never calls npm", calls["npm"], [])
-    for step in ("gsd", "sync", "doctor"):
+    # Red before the skills step: "the init output has the skills step" (init ran gsd, sync, doctor).
+    for step in ("gsd", "skills", "sync", "doctor"):
         check("the init output has the %s step" % step, "== forge init: %s ==" % step in out, tail(out, 12))
     check("there is no toolchain or gsd skills step", "== forge init: toolchain ==" not in out and "== forge init: gsd skills ==" not in out, tail(out, 12))
     check("a pnpm that exits 0 is not named as a failed step", "failed -- gsd" not in out, tail(out, 12))
@@ -585,10 +590,10 @@ def gsd_world():
     doc = read_json(w.path("config", "forge.json")) or {}
     want("forge.json: gsd on, codex off, gsd_patches false", (doc.get("integrations", {}).get("gsd"), doc.get("integrations", {}).get("codex"), doc.get("gsd_patches")),
          (True, False, False))
-    code, out = w.forge("sync", "--all")
-    check("forge sync says the gsd runtime is the user's own unpatched install, with no '!' line",
+    code, out = w.forge("skills")
+    check("forge skills says the gsd runtime is the user's own unpatched install, with no '!' line",
           "GSD is your own unpatched install" in out and not any(l.lstrip().startswith("!") and "gsd" in l.lower() for l in out.splitlines()), tail(out, 12))
-    want("forge sync touched neither npm nor pnpm again", (w.stub_calls()["npm"], w.stub_calls()["pnpm"]), ([], [GSD_DLX]))
+    want("forge skills touched neither npm nor pnpm again", (w.stub_calls()["npm"], w.stub_calls()["pnpm"]), ([], [GSD_DLX]))
 
 
 def broken_gsd_world():
@@ -601,7 +606,7 @@ def broken_gsd_world():
     # Red before this change: the line was "! forge init: failed -- gsd" (no exit code).
     check("a pnpm that exits 3: init exits 1 and the '!' line names the gsd step and its exit code",
           code == 1 and "! forge init: failed -- gsd (exit 3)" in out, "exit %d: %s" % (code, tail(out, 6)))
-    check("a failed gsd step does not stop sync and doctor", all("== forge init: %s ==" % s in out for s in ("sync", "doctor")), tail(out, 12))
+    check("a failed gsd step does not stop skills, sync and doctor", all("== forge init: %s ==" % s in out for s in ("skills", "sync", "doctor")), tail(out, 12))
 
 
 def kept_world():

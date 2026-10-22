@@ -1546,7 +1546,7 @@ def skip_cases(tmp):
             cli.SYNC, lib.resolve_project, lib.profiles, lib.lock = saved
         want("a session start with no config/forge.json still exits 0, and says why", (code, "config/forge.json missing" in out.getvalue()), (0, True))
 
-    # forge sync: a step whose integration is off is said, not run.
+    # forge skills: a step whose integration is off is said, not run.
     root = os.path.join(tmp, "sync-world")
     os.makedirs(os.path.join(root, "scripts"))
     marker = os.path.join(root, "ran.txt")
@@ -1554,18 +1554,18 @@ def skip_cases(tmp):
         fh.write("open(%r, 'a').write('x')\n" % marker)
 
     def sync(integrations):
-        saved = cli.SYNC
-        cli.SYNC = [("gsd runtime", "scripts/step.py", None, "--apply", True)]
+        saved = cli.SKILLS
+        cli.SKILLS = [("gsd runtime", "scripts/step.py", None, "--apply", [])]
         out = io.StringIO()
         try:
             with toy_settings(settings_world(tmp, "sync-%s" % integrations["gsd"], dict(integrations=integrations))), toy(root):
                 with contextlib.redirect_stdout(out):
-                    code = cli.cmd_sync(argparse.Namespace(apply=False, project=None, all=False))
+                    code = cli.cmd_skills(argparse.Namespace(apply=False))
         finally:
-            cli.SYNC = saved
+            cli.SKILLS = saved
         return code, out.getvalue()
     code, out = sync(dict(OFF))
-    want("gsd off: forge sync says NOT RUN", (code, "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)" in out), (0, True))
+    want("gsd off: forge skills says NOT RUN", (code, "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)" in out), (0, True))
     want("gsd off: the step did not run", os.path.exists(marker), False)
     code, out = sync(dict(OFF, gsd=True))
     want("control, gsd on: the step runs", (code, os.path.exists(marker), "NOT RUN" in out), (0, True, False))

@@ -4,13 +4,15 @@
                          an empty registry and secrets file, then sync --apply --all and doctor
   forge add PATH         register a project: config/profiles/NAME.claude.json, then sync --apply --project NAME
   forge sync [--apply]   regenerate every project's config, in a fixed order, one run at a time
+  forge skills [--apply] the skill links (~/.claude/skills) and the GSD runtime, which belong to the machine, not to a project
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
                          with a project's name, only the checks that concern it, scoped to it
   forge test             run every test_*.py in the repo
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
-  forge session-start    the SessionStart hook: this session's project only, silent unless it wrote
+  forge session-start    the SessionStart hook: this session's project only, then a note if the GSD runtime or the toolchain is off;
+                         silent unless it wrote or has one
   forge check-public     --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
   forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
@@ -33,20 +35,21 @@ import time
 
 from forge import lib, mcp, owned, skills, toolchain
 
-# The order is the contract: skill links come first because the overrides are computed from
-# them, the system doc comes last. (name, script, its dry-run flag, its apply flag, user_scope_only.)
-# user_scope_only: the step writes only user-scope files and returns 0 at once without ctx.globals
-# (relink_skills.main, sync_gsd_runtime.main), so a session start whose lib.session_scope has no
-# globals skips it instead of paying an interpreter start for nothing (0.2-0.6 s each, measured in
-# a project session). forge sync runs every row.
+# The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
+# extra arguments.) A session start runs these for its own project and nothing else; what it says about
+# the machine (the GSD runtime, the toolchain) is check_and_tell.
 SYNC = [
-    ("skill links", "scripts/sync/relink_skills.py", "--dry-run", None, True),
-    ("gsd runtime", "scripts/sync/sync_gsd_runtime.py", None, "--apply", True),
-    ("agent config", "scripts/sync/sync_agent_config.py", None, "--apply", False),
-    ("system doc", "scripts/sync/sync_system_doc.py", None, "--apply", False),
+    ("agent config", "scripts/sync/sync_agent_config.py", None, "--apply", []),
+    ("system doc", "scripts/sync/sync_system_doc.py", None, "--apply", []),
 ]
-# The integration (lib.INTEGRATIONS) a step belongs to, by name: with it off, forge sync says so and
-# does not run the step, and a session start does not either (docs/portable-design.md section 5).
+# forge skills: the user-scope steps, run on their own (docs/toolchain-design.md section 5). Skill links
+# first, because the project overrides are computed from them.
+SKILLS = [
+    ("skill links", "scripts/sync/relink_skills.py", "--dry-run", None, []),
+    ("gsd runtime", "scripts/sync/sync_gsd_runtime.py", None, "--apply", ["--skills"]),
+]
+# The integration (lib.INTEGRATIONS) a step belongs to, by name: with it off, the command says so and
+# does not run the step (docs/portable-design.md section 5).
 STEP_INTEGRATION = {"gsd runtime": "gsd"}
 
 
@@ -822,6 +825,7 @@ MEMORY_HEALTH = None  # a test points it at a stand-in server; None reads sessio
 MEMORY_WAIT = 30
 MEMORY_POLL = 2
 HOOK_TIMEOUT, HOOK_MARGIN = lib.SESSION_START_TIMEOUT, 10
+GSD_DIFFERS = 2  # sync_gsd_runtime.py's DIFFERS
 
 
 def session_wait():
@@ -885,17 +889,18 @@ def note_writes(log, cmd, step):
     return lines
 
 
-def cmd_sync(a):
+def run_steps(command, steps, apply, scope):
+    """`forge <command>`: each of `steps` as its script, in order, one run at a time, noting what an apply wrote
+    in the journal. Returns 1 when a step failed."""
     failed = []
-    scope = (["--project", a.project] if a.project else []) + (["--all"] if a.all else [])
     log = None
-    if a.apply:  # an apply notes each change it makes in the journal; a dry-run makes none
+    if apply:  # an apply notes each change it makes in the journal; a dry-run makes none
         fd, log = tempfile.mkstemp(prefix="forge-writes-")
         os.close(fd)
     try:
-        with lib.lock() if a.apply else contextlib.nullcontext():
-            for name, script, dry_flag, apply_flag, _ in SYNC:
-                flag = apply_flag if a.apply else dry_flag
+        with lib.lock() if apply else contextlib.nullcontext():
+            for name, script, dry_flag, apply_flag, extra in steps:
+                flag = apply_flag if apply else dry_flag
                 if STEP_INTEGRATION.get(name) and not lib.on(STEP_INTEGRATION[name]):
                     print("== forge: %s == NOT RUN, NOT ARMED (%s off)" % (name, STEP_INTEGRATION[name]), flush=True)
                     print(flush=True)
@@ -905,18 +910,26 @@ def cmd_sync(a):
                 if log:
                     open(log, "w").close()
                     env = dict(os.environ, FORGE_WRITE_LOG=log)
-                if lib.run([script] + ([flag] if flag else []) + scope, env=env).returncode:
+                if lib.run([script] + ([flag] if flag else []) + extra + scope, env=env).returncode:
                     failed.append(name)
                 if log:
-                    note_writes(log, "sync", name)
+                    note_writes(log, command, name)
                 print(flush=True)
     finally:
         if log:
             with contextlib.suppress(OSError):
                 os.remove(log)
     if failed:
-        print("forge sync: failed -- %s" % ", ".join(failed))
+        print("forge %s: failed -- %s" % (command, ", ".join(failed)))
     return 1 if failed else 0
+
+
+def cmd_sync(a):
+    return run_steps("sync", SYNC, a.apply, (["--project", a.project] if a.project else []) + (["--all"] if a.all else []))
+
+
+def cmd_skills(a):
+    return run_steps("skills", SKILLS, a.apply, ["--all"])  # --all: not scoped to the session that happens to run it
 
 
 def cmd_log(a):
@@ -1008,9 +1021,28 @@ def written(lines):
                      for what, ps in kinds.items())
 
 
+def check_and_tell():
+    """What a session start says about the machine, and fixes nothing (docs/toolchain-design.md section 5): one
+    note when the GSD runtime differs from forge's staged, patched copy (`sync_gsd_runtime.py --check`,
+    which never restages), the check's own '!' lines when it failed, and one for a failing `toolchain` row.
+    Every session says it, whatever its project: a runtime or a python that lost its libraries breaks them all."""
+    notes = []
+    if lib.on("gsd"):
+        r = lib.run(["scripts/sync/sync_gsd_runtime.py", "--check", "--all"], capture=True)
+        if r.returncode == GSD_DIFFERS:
+            notes.append("GSD runtime differs from forge's patched copy -- run `forge skills --apply`")
+        elif r.returncode:
+            why = " | ".join(l.strip() for l in (r.stdout + r.stderr).splitlines() if CHANGED.search(l)) or "check exit %d" % r.returncode
+            notes.append("gsd runtime: %s -- run `forge skills` to see why" % why)
+    row = toolchain.row()
+    if row.level == "FAIL":
+        notes.append("toolchain: %s -- run `forge toolchain --fix`" % row.detail)
+    return notes
+
+
 def cmd_session_start(a):
-    """Bring this session's own project up to date, and in forge the user-scope files too
-    (lib.context scopes each generator by CLAUDE_PROJECT_DIR). It says only what changed or
+    """Bring this session's own project up to date (lib.context scopes each generator by CLAUDE_PROJECT_DIR),
+    then say what is wrong with the machine without fixing it (check_and_tell). It says only what changed or
     failed, as a systemMessage the user sees and the model's context never gets, and it always
     exits 0: a broken sync must never block a session. What a step wrote comes from the write log
     it is handed (FORGE_WRITE_LOG, lib.record), and goes on into this process's own log when it
@@ -1030,15 +1062,10 @@ def cmd_session_start(a):
             # The steps scope themselves by CLAUDE_PROJECT_DIR alone (lib.context), so they get the
             # directory resolved here: from the cwd, without it, each one ran over every project.
             env = dict(os.environ, CLAUDE_PROJECT_DIR=session, FORGE_WRITE_LOG=log)
-            scope = lib.session_scope(name)  # what lib.context gives each step from CLAUDE_PROJECT_DIR
             with lib.lock(timeout=20):
-                for step, script, _, apply_flag, user_scope_only in SYNC:
-                    if user_scope_only and not scope.globals:
-                        continue
-                    if STEP_INTEGRATION.get(step) and not lib.on(STEP_INTEGRATION[step]):
-                        continue  # said by forge sync; a session start says only what changed or failed
+                for step, script, _, apply_flag, extra in SYNC:
                     open(log, "w").close()
-                    r = lib.run([script, apply_flag] if apply_flag else [script], capture=True, env=env)
+                    r = lib.run([script] + ([apply_flag] if apply_flag else []) + extra, capture=True, env=env)
                     lines = note_writes(log, "session-start", step)
                     note = written(lines)
                     if note:
@@ -1049,6 +1076,7 @@ def cmd_session_start(a):
                     notes += ["%s: %s" % (step, l) for l in new]
                     if r.returncode:
                         notes.append("%s: exit %d -- run `forge sync` in forge to see why" % (step, r.returncode))
+        notes += check_and_tell()
     except (Exception, SystemExit) as e:  # lib.settings() exits on a missing config/forge.json
         notes.append("session-start: %s: %s" % (type(e).__name__, e))
     finally:
@@ -1362,6 +1390,9 @@ def cmd_init(a):
         code = init_step("gsd", GSD_INSTALL, tool=True)
         if code:
             failed.append(("gsd", code))
+    code = init_step("skills", ["bin/forge", "skills", "--apply"])  # the skill mirror used to come from sync
+    if code:
+        failed.append(("skills", code))
     code = init_step("sync", ["bin/forge", "sync", "--apply", "--all"])
     if code:
         failed.append(("sync", code))
@@ -1426,6 +1457,9 @@ def main(argv=None):
     scope.add_argument("--project", help="this project only, no user-scope files")
     scope.add_argument("--all", action="store_true", help="every project, even inside a session")
     s.set_defaults(fn=cmd_sync)
+    k = sub.add_parser("skills", help="the skill links and the GSD runtime (a dry-run unless --apply)")
+    k.add_argument("--apply", action="store_true", help="write")
+    k.set_defaults(fn=cmd_skills)
     d = sub.add_parser("doctor", help="what is broken")
     d.add_argument("project", nargs="?", help="this project only: each check scoped to it")
     d.set_defaults(fn=cmd_doctor)

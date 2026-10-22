@@ -73,6 +73,9 @@ USAGE
   python3 scripts/sync/sync_gsd_runtime.py --apply    # write agents + engine (SessionStart does this)
   --skills        also compare (and with --apply, rewrite) forge/skills/gsd-* from the package
   --restage       force a fresh staging install even if the package version has not changed
+  --check         read-only, for session start: no restage, no write; exit 0 when the runtime is what
+                  --apply would write, 2 when it differs (a file, or a staging made for another package
+                  version), 1 on an error
   --check-npm     ask npm right now (with --apply a throttled check runs on its own, once a day,
                   and says nothing unless a newer version exists)
 """
@@ -104,6 +107,8 @@ CTX = lib.context(sys.argv[1:])
 DO_SKILLS = "--skills" in sys.argv
 RESTAGE = "--restage" in sys.argv
 CHECK_NPM = "--check-npm" in sys.argv
+CHECK = "--check" in sys.argv
+DIFFERS = 2  # --check's exit code for a runtime that differs; 1 stays "something is wrong"
 
 # Skills forge authored itself -- no upstream file, never generated, never overwritten.
 FORGE_AUTHORED = {"gsd-musk", "gsd-cut-the-ceremony", "gsd-boil-the-ocean"}
@@ -323,14 +328,19 @@ def package_version(pkg):
     return m.group(1) if m else "?"
 
 
+def staged_current(version):
+    """Whether the staging was made for `version` and still has its skills."""
+    have = read(STAMP).strip() if os.path.exists(STAMP) else ""
+    return have == version and os.path.isdir(os.path.join(STAGE, "skills"))
+
+
 def stage(pkg, version):
     """Run GSD's own installer into a throwaway config dir.
 
     The installer is the only faithful source of the converted skill and agent text -- it
     rewrites frontmatter, paths and attribution -- so forge uses it rather than reimplementing
     the conversion, and points it at a staging directory where it can touch nothing real."""
-    have = read(STAMP).strip() if os.path.exists(STAMP) else ""
-    if have == version and os.path.isdir(os.path.join(STAGE, "skills")) and not RESTAGE:
+    if staged_current(version) and not RESTAGE:
         return False
     if os.path.isdir(STAGE):
         shutil.rmtree(STAGE)
@@ -630,6 +640,8 @@ def sync_defaults(errors):
 
 
 def main():
+    if CHECK and CTX.apply:
+        sys.exit("! --check reads only: drop --apply")
     if not CTX.globals:
         return 0  # user-scope files; a SessionStart outside forge leaves them alone
     if lib.on("gsd") and not lib.gsd_patched():
@@ -651,7 +663,12 @@ def main():
         print("npm latest: %s%s" % (latest, "   <- newer than installed" if newer else ""))
     else:
         npm_nag(pkg_v)
-    fresh = stage(pkg, pkg_v)
+    if CHECK and not staged_current(pkg_v):
+        # Session start must not run GSD's installer, nor hold the lock it needs: a staging made for
+        # another version already says the runtime will change.
+        print("staging: not made for package %s, so --apply would restage and change the runtime" % pkg_v)
+        return DIFFERS
+    fresh = False if CHECK else stage(pkg, pkg_v)
     print("staging: %s\n" % ("rebuilt from the package" if fresh else "reused (same version)"))
 
     errors = []
@@ -674,6 +691,7 @@ def main():
         return 1
     if changes and not CTX.apply:
         print("%d file(s) would change. Re-run with --apply." % changes)
+        return DIFFERS if CHECK else 0
     else:
         print("GSD runtime in sync (%d file(s) %s)." % (changes, "written" if CTX.apply else "pending"))
     return 0
