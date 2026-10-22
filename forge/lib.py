@@ -920,6 +920,7 @@ class Rule:
 
 # level is PASS, WARN or FAIL; a FAIL's detail ends with the command that fixes it.
 Result = collections.namedtuple("Result", "level name detail")
+NOT_ARMED = "NOT RUN, NOT ARMED: "  # a check that could not run or has nothing to look at: neither a PASS nor a FAIL
 
 
 @contextlib.contextmanager

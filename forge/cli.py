@@ -7,8 +7,8 @@
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
                          with a project's name, only the checks that concern it, scoped to it
   forge test             run every test_*.py in the repo
-  forge toolchain [--fix]  the global npm and pip packages in config/toolchain.json, present under
-                         the current node and python; --fix installs the missing ones at their pin
+  forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
+                         (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, silent unless it wrote
   forge check-public     --staged | --all | --range A..B | --message FILE: personal data that must not be published
@@ -31,7 +31,7 @@ import sys
 import tempfile
 import time
 
-from forge import lib, mcp, owned, skills
+from forge import lib, mcp, owned, skills, toolchain
 
 # The order is the contract: skill links come first because the overrides are computed from
 # them, the system doc comes last. (name, script, its dry-run flag, its apply flag, user_scope_only.)
@@ -509,190 +509,10 @@ def ponytail_row(only=None):
     return lib.Result("SKIP", "ponytail", NOT_ARMED + "no profile wires hooks/" + PONYTAIL_SCRIPT)
 
 
-# The global npm and pip packages the machine's mise-managed node and python must carry. mise
-# installs every node and python into its own prefix and global packages do not follow: on
-# one day `latest` moved (node 26.8.1 to 26.11.1, python 3.14.7 to 3.15.0) and the new toolchain
-# had none, so GSD's runtime sync, pnpm, neonctl, mcporter, opencli, PyYAML and more were missing
-# and three forge tests failed with nothing in forge naming the cause. Each entry is looked up under
-# the CURRENT `npm root -g` and `python3` on PATH, which is what the failure was about.
-TOOLCHAIN = os.path.join(lib.ROOT, "config", "toolchain.json")
-TOOL_KINDS = ("npm", "pip")
-TOOL_LIST_TIMEOUT, TOOL_INSTALL_TIMEOUT = 120, 900
-
-
-def toolchain_entries():
-    """([(kind, name, version)], why not): config/toolchain.json's entries, npm first. A file that
-    cannot be read, a wrong shape or no entry at all is a reason, and the list is then empty: a check
-    that saw nothing is not a pass (non-negotiable 7)."""
-    try:
-        with open(TOOLCHAIN, encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError) as e:
-        return [], "config/toolchain.json cannot be read: %s" % e
-    if not isinstance(doc, dict):
-        return [], "config/toolchain.json is not an object with an \"npm\" and a \"pip\" list"
-    # An unknown key is a misspelled section ("pips"), whose entries would go unchecked and let a
-    # missing package pass; "_"-prefixed keys are comments (the file's own `_doc`).
-    unknown = sorted(k for k in doc if k not in TOOL_KINDS and not k.startswith("_"))
-    if unknown:
-        return [], "config/toolchain.json: unknown section %s, want only \"npm\" and \"pip\"" % ", ".join(
-            "\"%s\"" % k for k in unknown)
-    out = []
-    for kind in TOOL_KINDS:
-        entries = doc.get(kind, [])
-        if not isinstance(entries, list):
-            return [], "config/toolchain.json: \"%s\" is not a list" % kind
-        for e in entries:
-            if not isinstance(e, dict) or not all(isinstance(e.get(k), str) and e[k].strip() for k in ("name", "version")):
-                return [], "config/toolchain.json: a \"%s\" entry without a name and a pinned version: %r" % (kind, e)
-            out.append((kind, e["name"], e["version"]))
-    if not out:
-        return [], "config/toolchain.json lists 0 packages, and a check that saw nothing is not a pass"
-    return out, None
-
-
-def tool_run(argv, timeout):
-    """(exit code, stdout, last line of stderr) of argv; a command that cannot run is (None, "", why)."""
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return None, "", "%s: %s" % (type(e).__name__, e)
-    return r.returncode, r.stdout, (r.stderr.strip().splitlines() or [""])[-1]
-
-
-def pip_name(name):
-    """PEP 503: how pip compares names (case, and - _ . alike)."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
-def npm_state(names):
-    """(root, {name: version or None}, why not) under the current `npm root -g`: a package is what
-    <root>/<name>/package.json says it is, and None when that file does not read."""
-    code, out, err = tool_run(["npm", "root", "-g"], TOOL_LIST_TIMEOUT)
-    root = out.strip()
-    if code != 0 or not root:
-        return None, {}, "npm root -g failed (exit %s): %s" % (code, err or "no output")
-    have = {}
-    for name in names:
-        try:
-            with open(os.path.join(root, name, "package.json"), encoding="utf-8") as fh:
-                have[name] = str(json.load(fh)["version"])
-        except (OSError, ValueError, KeyError, TypeError):
-            have[name] = None
-    return root, have, None
-
-
-def pip_state():
-    """({normalised name: version}, why not) of what the current `python3` has installed."""
-    cmd = ["python3", "-m", "pip", "list", "--format=json", "--disable-pip-version-check"]
-    code, out, err = tool_run(cmd, TOOL_LIST_TIMEOUT)
-    if code != 0:
-        return {}, "`%s` failed (exit %s): %s" % (" ".join(cmd), code, err)
-    try:
-        return {pip_name(d["name"]): d["version"] for d in json.loads(out)}, None
-    except (ValueError, KeyError, TypeError) as e:
-        return {}, "`%s` printed no JSON list of packages (%s: %s)" % (" ".join(cmd), type(e).__name__, e)
-
-
-def _gsd_pinned():
-    """Whether GSD is on and patched, which is what makes a missing config/toolchain.json a FAIL: the
-    patched, staged copy installs through npm and its package is the one entry pinned. An unpatched GSD
-    (a stranger's, installed by forge init through pnpm dlx) pins nothing. A checkout with no
-    config/forge.json has not been initialised, and says so on every other row; here it is off."""
-    try:
-        return lib.on("gsd") and lib.gsd_patched()
-    except SystemExit:
-        return False
-
-
-def toolchain_check():
-    """(results, missing, where): one result per entry of config/toolchain.json (PASS present at the
-    pin; WARN present at another version, which nothing here changes; FAIL missing, or its tool could
-    not be asked), the entries that are missing and that an install could add, and the npm root and
-    python3 that were asked. A list that cannot be read or is empty is one FAIL named `toolchain`."""
-    if not os.path.exists(TOOLCHAIN) and not _gsd_pinned():
-        return [lib.Result("SKIP", "toolchain", NOT_ARMED + "no config/toolchain.json, so no global package is pinned "
-                           "(examples/toolchain.json is the template; a missing file is a FAIL "
-                           "when GSD is on and gsd_patches is true)")], [], ""
-    entries, why = toolchain_entries()
-    if why:
-        return [lib.Result("FAIL", "toolchain", why)], [], ""
-    root, npm_have, npm_why = npm_state([n for k, n, _ in entries if k == "npm"])
-    pip_have, pip_why = pip_state()
-    results, missing = [], []
-    for kind, name, pin in entries:
-        label, have = "%s:%s" % (kind, name), (npm_have.get(name) if kind == "npm" else pip_have.get(pip_name(name)))
-        if (npm_why if kind == "npm" else pip_why):
-            results.append(lib.Result("FAIL", label, npm_why if kind == "npm" else pip_why))
-        elif have is None:
-            results.append(lib.Result("FAIL", label, "missing, pinned %s" % pin))
-            missing.append((kind, name, pin))
-        elif have == pin:
-            results.append(lib.Result("PASS", label, have))
-        else:
-            results.append(lib.Result("WARN", label, "present at %s, pinned %s; left as it is" % (have, pin)))
-    return results, missing, "npm root -g: %s; python3: %s" % (root or "(none)", shutil.which("python3") or "(none)")
-
-
-def toolchain_install(missing):
-    """{entry label: what ran, and how it ended} after installing each missing entry at its pin: one
-    `npm install -g name@version` per npm entry, one `pip install name==version ...` for all the pip
-    ones so the resolver sees them together. Never --upgrade: nothing present is touched."""
-    calls = [(["npm", "install", "-g", "%s@%s" % (n, v)], ["npm:" + n]) for k, n, v in missing if k == "npm"]
-    pips = [(n, v) for k, n, v in missing if k == "pip"]
-    if pips:
-        calls.append((["python3", "-m", "pip", "install", "--disable-pip-version-check"] + ["%s==%s" % p for p in pips],
-                      ["pip:" + n for n, _ in pips]))
-    ran = {}
-    for argv, labels in calls:
-        code, _, err = tool_run(argv, TOOL_INSTALL_TIMEOUT)
-        cmd = "`%s`" % " ".join(argv)
-        ran.update({label: ("still missing after " + cmd if code == 0 else "%s failed (exit %s): %s" % (cmd, code, err))
-                    for label in labels})
-    return ran
-
-
-def cmd_toolchain(a):
-    results, missing, where = toolchain_check()
-    if a.fix and missing:
-        ran = toolchain_install(missing)
-        # The recheck is the verdict, not the installer's exit code: an install that exits 0 into the
-        # wrong prefix (the failure above) is still a FAIL.
-        results, _, where = toolchain_check()
-        results = [r._replace(detail="%s; %s" % (r.detail, ran[r.name])) if r.level == "FAIL" and r.name in ran else
-                   r._replace(detail=r.detail + " (installed by --fix)") if r.name in ran else r for r in results]
-    if where:
-        print(where)
-    return lib.report(results)
-
-
-def toolchain_row():
-    """The `toolchain` row of forge doctor: toolchain_check without --fix, in one result that says how
-    many packages it checked. FAIL when one is missing (or its tool could not be asked, or the list is
-    empty); WARN when one is present at another version, which nothing here changes; SKIP when there is
-    no file and GSD is off; else PASS."""
-    results, missing, _ = toolchain_check()
-    if len(results) == 1 and results[0].name == "toolchain":
-        return results[0]
-    checked = "%d npm + %d pip" % tuple(sum(r.name.startswith(k + ":") for r in results) for k in TOOL_KINDS)
-    lost = ["%s:%s" % (k, n) for k, n, _ in missing]
-    broken = [r for r in results if r.level == "FAIL" and r.name not in lost]
-    other = [r.name for r in results if r.level == "WARN"]
-    fails = (["%d missing: %s" % (len(lost), ", ".join(lost))] if lost else []) + (
-        ["%d could not be checked: %s" % (len(broken), broken[0].detail)] if broken else [])
-    if fails:
-        return lib.Result("FAIL", "toolchain", "%s (checked %s)%s" % (
-            "; ".join(fails), checked, "; also at another version: " + ", ".join(other) if other else ""))
-    if other:
-        return lib.Result("WARN", "toolchain", "%d present at another version, left as it is: %s (checked %s)"
-                          % (len(other), ", ".join(other), checked))
-    return lib.Result("PASS", "toolchain", "checked %s package(s), all present at their pin" % checked)
-
-
 # What each integration needs that forge itself does not ship: a check returning the problem or None,
 # and what a PASS says. Hindsight needs nothing from the machine here: its runtime
 # has its own doctor row (doctor_extra) and the generator's `!` lines.
-NOT_ARMED = "NOT RUN, NOT ARMED: "
+NOT_ARMED = lib.NOT_ARMED
 
 
 def _codex_missing():
@@ -915,7 +735,7 @@ CHECKS = [
     ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
     ("ponytail", ponytail_row, "the profile's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
-    ("toolchain", toolchain_row, "forge toolchain --fix (installs what is missing; a version that differs is only reported)"),
+    ("toolchain", toolchain.row, "forge toolchain --fix (writes mise's forge.toml, installs what is missing; a pip version that differs is only reported)"),
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
@@ -1621,9 +1441,9 @@ def main(argv=None):
     t = sub.add_parser("test", help="run every test except the on-demand suites")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
     t.set_defaults(fn=cmd_test)
-    t = sub.add_parser("toolchain", help="the global npm and pip packages config/toolchain.json pins")
+    t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
-    t.set_defaults(fn=cmd_toolchain)
+    t.set_defaults(fn=toolchain.cmd)
     g = sub.add_parser("log", help="the change journal: what forge sync --apply and session start wrote")
     g.add_argument("project", nargs="?", help="this project's paths only")
     g.add_argument("--since", help="YYYY-MM-DD, changes from this day")

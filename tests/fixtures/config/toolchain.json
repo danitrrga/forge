@@ -1,8 +1,8 @@
 {
-  "_doc": "A toy toolchain.json for the suites that read one (tests/sandbox.py seed()): the same shape as a real file, with two public packages per kind and a why for each.",
-  "npm": [
-    {"name": "pnpm", "version": "10.32.1", "why": "the package manager of the toy project"},
-    {"name": "typescript", "version": "5.9.3", "why": "the compiler the toy project builds with"}
+  "_doc": "A toy toolchain.json for the suites that read one (tests/sandbox.py seed()): the same shape as a real file, with two public tools and two public libraries, each with a why.",
+  "tools": [
+    {"name": "npm:pnpm", "version": "10.32.1", "why": "the package manager of the toy project"},
+    {"name": "npm:typescript", "version": "5.9.3", "why": "the compiler the toy project builds with"}
   ],
   "pip": [
     {"name": "PyYAML", "version": "6.0.3", "why": "the toy scripts read YAML"},
