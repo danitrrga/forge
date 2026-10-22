@@ -71,8 +71,8 @@ row of `forge doctor` follows the switch.
 
 ## Committing
 
-`forge commit -m MESSAGE [PATH...]` sends each changed path to the history that owns it (the engine's, or the
-user's own data history if they keep one) and prints each hash. The `githooks/` run `forge check-public` on the
+`forge commit -m MESSAGE (PATH... | --all)` sends each changed path to the history that owns it (the engine's, or the
+user's own data history if they keep one) and prints each hash. With no path it refuses unless given `--all`, so one commit never sweeps in unrelated changes. The `githooks/` run `forge check-public` on the
 staged files, the message and the pushed range, and refuse a commit that carries personal data. Use a
 `docs(...)`, `fix(...)`, `test(...)` or `feat(...)` prefix, and describe what changed and why.
 

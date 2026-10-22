@@ -348,6 +348,9 @@ def commit_side(name, data, paths, msg):
 
 
 def cmd_commit(a):
+    if not a.paths and not a.all:
+        print("forge commit: name the paths to commit, or pass --all for every change", file=sys.stderr)
+        return 2
     paths = []
     for p in a.paths:
         rel = os.path.relpath(os.path.abspath(p), lib.ROOT)
