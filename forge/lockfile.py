@@ -4,11 +4,13 @@
 pins of config/toolchain.json, for release notes. A release is a commit of both, so a newcomer gets the versions
 the maintainer runs. Four sections:
 
-  plugins  Claude Code plugins: the newest install of each (installed_plugins.json lists one per project)
+  plugins  Claude Code plugins: the newest install of each (installed_plugins.json lists one per project), less
+           the names in config/forge.json `lock_exclude`: the lock is published, and a plugin of the user's own is not
   skills   outside skills, from each skills/<name>/NOTICE.md: a repository and a commit, or an npm package
   gsd      the GSD runtime's VERSION file
-  mcp      the package each `npx` server in config/mcp-registry.json launches, as written (a floating one stays
-           floating here: resolving it needs the network, and step 5 turns these into pinned tools)
+  mcp      the package each `npx` server in config/mcp-registry.json launches, by package (a server's name can
+           carry a project's), with the version as written or "floating" (resolving it needs the network, and
+           step 5 turns these into pinned tools)
 """
 import json
 import os
@@ -36,8 +38,10 @@ def dumps(doc):
 def plugins():
     """{"name@market": {"version", "sha"?}}: the entry with the newest lastUpdated of each plugin."""
     doc = lib.read_json(os.path.join(lib.HOME, ".claude", "plugins", "installed_plugins.json")).get("plugins", {})
-    out = {}
+    out, skip = {}, lib.settings().get("lock_exclude") or []
     for name, installs in doc.items():
+        if name in skip:
+            continue
         newest = max(installs, key=lambda e: e.get("lastUpdated", ""))
         out[name] = {"version": newest["version"]}
         if newest.get("gitCommitSha"):
@@ -74,13 +78,15 @@ def skills(problems):
 
 
 def mcp():
-    """{server: package spec} for each `npx` server of the registry: the first argument that is no flag."""
+    """{package: version} for the `npx` servers of the registry: the first argument that is no flag, split at the
+    version's `@` (a leading one is the scope's), "floating" when there is none or it is `latest`."""
     out = {}
-    for name, server in lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json")).get("servers", {}).items():
+    for server in lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json")).get("servers", {}).values():
         if server.get("command") == "npx":
             spec = next((a for a in server.get("args", []) if not a.startswith("-")), None)
             if spec:
-                out[name] = spec
+                name, _, version = spec.rpartition("@") if "@" in spec[1:] else (spec, "", "")
+                out[name] = version if version and version != "latest" else "floating"
     return out
 
 
@@ -153,7 +159,7 @@ def rows():
         out.append(("skills", name, p["npm"] if "npm" in p else "%s@%s" % (p["repo"].rsplit("github.com/", 1)[-1], p["commit"][:7])))
     if "gsd" in lock:
         out.append(("gsd", "gsd", lock["gsd"]))
-    out += [("mcp", name, spec) for name, spec in lock.get("mcp", {}).items()]
+    out += [("mcp", name, version) for name, version in lock.get("mcp", {}).items()]
     return out
 
 

@@ -39,6 +39,8 @@ def put(path, text):
 top = sandbox.mkdtemp("lockfile-test-")
 root, home = os.path.join(top, "forge"), os.path.join(top, "home")
 lib.ROOT, lib.HOME, toolchain.MANIFEST = root, home, os.path.join(root, "config", "toolchain.json")
+lib.SETTINGS = os.path.join(root, "config", "forge.json")
+lib.settings.cache_clear()
 lib.may_write = lambda: (True, "")  # the toy checkout is not the installed one
 LOCK = os.path.join(root, "config", "forge.lock.json")
 SHA_A, SHA_B = "a" * 40, "b" * 40
@@ -51,6 +53,7 @@ put(os.path.join(home, ".claude", "plugins", "installed_plugins.json"), json.dum
         {"version": "2.0.0", "gitCommitSha": SHA_A, "lastUpdated": "2026-08-01T00:00:00Z"},
         {"version": "1.5.0", "gitCommitSha": SHA_B, "lastUpdated": "2026-10-01T00:00:00Z"},
         {"version": "1.0.0", "gitCommitSha": SHA_A, "lastUpdated": "2026-09-01T00:00:00Z"}],
+    "private@market": [{"version": "3.0.0", "lastUpdated": "2026-10-02T00:00:00Z"}],
     "beta@market": [{"version": "0.1.0", "lastUpdated": "2026-10-02T00:00:00Z"}]}}))
 # skills: the three NOTICE forms in the vendored set, and a skill with none (not third-party: left out)
 put(os.path.join(root, "skills", "one", "NOTICE.md"),
@@ -67,20 +70,22 @@ put(os.path.join(root, "config", "mcp-registry.json"), json.dumps({"servers": {
     "bare": {"command": "npx", "args": ["-y", "pkg-b", "mcp"]},
     "remote": {"command": "npx", "args": ["-y", "mcp-remote", "https://example.invalid/mcp"]},
     "script": {"command": "python", "args": ["x.py"]}, "url": {"url": "https://example.invalid"}}}))
+# the lock is published, so a plugin of the user's own is left out by name (config/forge.json lock_exclude)
+put(lib.SETTINGS, json.dumps({"lock_exclude": ["private@market"]}))
 put(toolchain.MANIFEST, json.dumps({"tools": [{"name": "node", "version": "26.12.1", "why": "runtime"}],
                                     "pip": [{"name": "PyYAML", "version": "6.0.3", "why": "yaml"}]}))
 
 doc, problems = lockfile.collect()
 want("problems with every NOTICE parseable", problems, [])
-want("plugins: the newest entry of each", doc.get("plugins"),
+want("plugins: the newest entry of each, less lock_exclude", doc.get("plugins"),
      {"alpha@market": {"version": "1.5.0", "sha": SHA_B}, "beta@market": {"version": "0.1.0"}, "zeta@market": {"version": "9.0.0"}})
 want("skills: the three NOTICE forms, and not a skill with none", doc.get("skills"), {
     "one": {"repo": "https://github.com/o/r", "commit": SHA_A},
     "two": {"repo": "https://github.com/o/s", "commit": SHA_B},
     "three": {"npm": "pkg-x@6.5.0"}})
 want("gsd: the runtime's VERSION file", doc.get("gsd"), "1.42.3")
-want("mcp: only npx servers, the package named by the first non-flag argument", doc.get("mcp"), {
-    "pinned": "@scope/pkg-p@1.3.0", "floating": "@scope/pkg-f@latest", "bare": "pkg-b", "remote": "mcp-remote"})
+want("mcp: by package, not by the server's name (a project's name must not reach the lock); a version as written, else floating",
+     doc.get("mcp"), {"@scope/pkg-p": "1.3.0", "@scope/pkg-f": "floating", "pkg-b": "floating", "mcp-remote": "floating"})
 want("collect is deterministic: the same document twice, keys sorted", (lockfile.dumps(doc) == lockfile.dumps(lockfile.collect()[0]),
      list(doc["skills"]) == sorted(doc["skills"])), (True, True))
 
@@ -118,7 +123,7 @@ want("lock after GSD moved: the dry-run names the change", (code, "gsd: 1.42.3 -
 
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=False))
 want("versions: tools, pip and the lock together",
-     (code, "node 26.12.1" in out, "PyYAML 6.0.3" in out, "alpha@market 1.5.0" in out, "one " in out, "gsd 1.42.3" in out), (0, True, True, True, True, True))
+     (code, "node 26.12.1" in out, "PyYAML 6.0.3" in out, "alpha@market 1.5.0" in out, "one " in out, "gsd 1.42.3" in out, "pkg-p 1.3.0" in out), (0, True, True, True, True, True, True))
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=True))
 want("versions --md: a markdown table", (code, "| node | 26.12.1 |" in out, "| alpha@market | 1.5.0 (bbbbbbb) |" in out), (0, True, True))
 if os.path.exists(LOCK):
