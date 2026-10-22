@@ -1,0 +1,110 @@
+{
+  "gsd": "1.42.3",
+  "mcp": {
+    "@21st-dev/magic": "floating",
+    "@conorbronsdon/substack-mcp": "1.3.0",
+    "@playwright/mcp": "floating",
+    "firecrawl-mcp": "floating",
+    "mcp-remote": "floating",
+    "rea-agents": "6.5.0"
+  },
+  "plugins": {
+    "claude-code-setup@claude-plugins-official": {
+      "version": "1.0.0"
+    },
+    "claude-md-management@claude-plugins-official": {
+      "version": "1.0.0"
+    },
+    "claude-mem-lite@sdsrss": {
+      "sha": "5443e879f58cad1e56744d38a5cfb6fc2f302718",
+      "version": "6.30.1"
+    },
+    "code-review@claude-plugins-official": {
+      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
+      "version": "af59ee3a1051"
+    },
+    "code-simplifier@claude-plugins-official": {
+      "version": "1.0.0"
+    },
+    "context7@claude-plugins-official": {
+      "sha": "d1adba47161a271799de7b548225d929310046bd",
+      "version": "d1adba47161a"
+    },
+    "frontend-design@claude-plugins-official": {
+      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
+      "version": "af59ee3a1051"
+    },
+    "hindsight-memory@hindsight": {
+      "sha": "54226f62afb7ce3d4ff858e470aa09bea09b8875",
+      "version": "0.7.5"
+    },
+    "openviking-memory@openviking": {
+      "sha": "c73d7e3cc71e05e5361ff59454fd7be159e01602",
+      "version": "0.4.5"
+    },
+    "playwright@claude-plugins-official": {
+      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
+      "version": "af59ee3a1051"
+    },
+    "ponytail@ponytail": {
+      "sha": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
+      "version": "5.3.2"
+    },
+    "rust-analyzer-lsp@claude-plugins-official": {
+      "version": "1.0.0"
+    },
+    "skill-creator@claude-plugins-official": {
+      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
+      "version": "af59ee3a1051"
+    },
+    "superpowers@claude-plugins-official": {
+      "sha": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
+      "version": "7.0.0"
+    },
+    "tex-display@claude-code-latex": {
+      "sha": "836203075a301868c2f70e17f0638acdaa54bc26",
+      "version": "0.1.0"
+    },
+    "vercel@claude-plugins-official": {
+      "sha": "882e66c2698689324c341b7bb8fd8beb92c27bf6",
+      "version": "0.50.0"
+    }
+  },
+  "skills": {
+    "anatomy": {
+      "commit": "1482e8469b0a9e0d8cc18ea2740a01423d29ae80",
+      "repo": "https://github.com/wheresryan22/anatomy"
+    },
+    "codebase-design": {
+      "commit": "49dd158d1076134a641b33efb035946536778336",
+      "repo": "https://github.com/mattpocock/skills"
+    },
+    "domain-modeling": {
+      "commit": "49dd158d1076134a641b33efb035946536778336",
+      "repo": "https://github.com/mattpocock/skills"
+    },
+    "fixing-accessibility": {
+      "commit": "df4eb34c5dee830e8e36490d6fde3451c187339b",
+      "repo": "https://github.com/ibelick/ui-skills"
+    },
+    "fixing-motion-performance": {
+      "commit": "df4eb34c5dee830e8e36490d6fde3451c187339b",
+      "repo": "https://github.com/ibelick/ui-skills"
+    },
+    "grilling": {
+      "commit": "49dd158d1076134a641b33efb035946536778336",
+      "repo": "https://github.com/mattpocock/skills"
+    },
+    "improve-codebase-architecture": {
+      "commit": "49dd158d1076134a641b33efb035946536778336",
+      "repo": "https://github.com/mattpocock/skills"
+    },
+    "learnharness": {
+      "commit": "1c5024c8c280be127c0c316b3f57a3783fce471d",
+      "repo": "https://github.com/amosblomqvist/learnharness"
+    },
+    "reverse-engineer-anything": {
+      "npm": "rea-agents@6.5.0"
+    }
+  }
+}

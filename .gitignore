@@ -72,6 +72,8 @@
 !/config/
 /config/*
 !/config/gsd/
+# The lock records the versions a release ships (forge lock); the engine publishes it.
+!/config/forge.lock.json
 
 # The private history lives here, in the same folder.
 /.forge-data.git
