@@ -739,12 +739,78 @@ def unpatched_main(failures):
         gsd.package_root, gsd.subprocess, gsd.lib.SETTINGS = real
 
 
+def check_mode(failures):
+    """`--check` is what session start asks: read-only, and never a restage. Exit 0 when the runtime is what
+    forge's staged, patched copy would write, 2 when it differs (a file, or a staging made for another
+    package version), 1 on an error. The staged tree, the runtime and the package are toy trees; the module's
+    subprocess raises, so a check that restages (runs GSD's installer) shows up as the sentinel, and the toy
+    runtime's bytes and the staging's presence are compared after. Controls: the in-sync case is the one that
+    must exit 0 (a check that always said 2 would fail it), and the differing file's case proves the compare
+    reads the files. Seen failing on 26a3ed5, which has no --check: "check: a differing runtime file: exit 0
+    (want 2), raised None, output 'MODE: DRY-RUN ...'" and "check: a staging for another version: raised
+    Reached: subprocess.run" (the old main restages under any flag)."""
+    class Reached(Exception):
+        pass
+
+    class NoSubprocess:
+        def __getattr__(self, name):
+            raise Reached("subprocess.%s" % name)
+    paths = {n: getattr(gsd, n) for n in PATHS}  # the case points every one at its own toy dir
+    real = (gsd.package_root, gsd.subprocess, gsd.CTX, getattr(gsd, "CHECK", False), gsd.AGENT_PATCHES, gsd.ENGINE_PATCHES,
+            gsd.lib.SETTINGS)
+    paths = {n: getattr(gsd, n) for n in PATHS}  # the case points every one at its own toy dir
+    global DRY_OK
+    DRY_OK = True
+    gsd.subprocess, gsd.CTX, gsd.CHECK, gsd.AGENT_PATCHES, gsd.ENGINE_PATCHES = NoSubprocess(), gsd.lib.Ctx(False, None, True), True, {}, {}
+    try:
+        for label, runtime_text, stamp, want in (("an in-sync runtime", "staged\n", "1.0.0\n", 0),
+                                                 ("a differing runtime file", "installed\n", "1.0.0\n", 2),
+                                                 ("a staging for another version", "staged\n", "0.9.0\n", 2)):
+            d = case_dir("check-" + label.replace(" ", "-"))
+            for n, v in (("AGENTS_DIR", "home/.claude/agents"), ("GSD_DIR", "home/.claude/get-shit-done"), ("STAGE_ROOT", "home/stage"),
+                         ("SKILLS_MIRROR", "home/.claude/skills"), ("BLOCKS", "blocks"), ("GSD_DEFAULTS", "home/.gsd/defaults.json")):
+                setattr(gsd, n, os.path.join(d, v))
+            gsd.STAGE, gsd.STAMP = os.path.join(gsd.STAGE_ROOT, "cfg"), os.path.join(gsd.STAGE_ROOT, "STAGED-VERSION")
+            gsd.NPM_STAMP = os.path.join(gsd.STAGE_ROOT, "NPM-CHECKED")
+            pkg = os.path.join(d, "pkg")
+            write(os.path.join(pkg, "package.json"), '{"version": "1.0.0"}')
+            gsd.package_root = lambda pkg=pkg: pkg
+            write(os.path.join(gsd.STAGE, "agents", "gsd-x.md"), "staged\n")
+            write(os.path.join(gsd.STAGE, "get-shit-done", "e.md"), "staged\n")
+            os.makedirs(os.path.join(gsd.STAGE, "skills"))
+            write(gsd.STAMP, stamp)
+            write(os.path.join(gsd.AGENTS_DIR, "gsd-x.md"), runtime_text)
+            write(os.path.join(gsd.GSD_DIR, "e.md"), "staged\n")
+            write(os.path.join(gsd.BLOCKS, "defaults.json"), "{}\n")
+            write(gsd.GSD_DEFAULTS, "{}\n")
+            gsd.lib.SETTINGS = os.path.join(d, "forge.json")
+            write(gsd.lib.SETTINGS, json.dumps({"integrations": {"gsd": True}, "gsd_patches": True}))
+            before = {p: read(p) for p in (os.path.join(gsd.AGENTS_DIR, "gsd-x.md"), os.path.join(gsd.GSD_DIR, "e.md"), gsd.STAMP)}
+            code, out, exc = call(gsd.main)
+            after = {p: read(p) for p in before}
+            if exc or code != want or before != after or not os.path.isdir(os.path.join(gsd.STAGE, "skills")):
+                failures.append("check: %s: exit %s (want %d), raised %s, files untouched %s, output %r"
+                                % (label, code, want, exc, before == after, out[-200:]))
+        gsd.CTX = gsd.lib.Ctx(True, None, True)  # --check --apply writes nothing: it refuses
+        try:
+            gsd.main()
+            failures.append("check: with --apply, main() returned instead of refusing")
+        except SystemExit as e:
+            if "--check reads only" not in str(e):
+                failures.append("check: with --apply, exit message %r" % (e.code,))
+    finally:
+        (gsd.package_root, gsd.subprocess, gsd.CTX, gsd.CHECK, gsd.AGENT_PATCHES, gsd.ENGINE_PATCHES, gsd.lib.SETTINGS) = real
+        for n, v in paths.items():
+            setattr(gsd, n, v)
+        DRY_OK = False
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, npm_nag_throttle, skills_ns_context, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode)
     for case in cases:
         case(failures)
     for msg in failures:

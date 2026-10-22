@@ -91,7 +91,7 @@ installed another way.
 ## Bring your own skills
 
 forge ships **no skills**. Put yours in `skills/<name>/SKILL.md` inside the checkout and run
-`forge sync --apply`. forge links each one into `~/.claude/skills`, and each profile's `skills_keep` decides
+`forge skills --apply`. forge links each one into `~/.claude/skills`, and each profile's `skills_keep` decides
 which of them a project loads (`["*"]` for all). The engine's git ignores `skills/`, so `git pull` never
 conflicts with them. `forge init --track` gives your data a second, local history when you want it versioned.
 
@@ -119,7 +119,8 @@ installed unpatched from its package when the `gsd` integration is on. forge doe
 ```
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
 forge add PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
-forge sync [--apply] [--project NAME | --all]               what would change (or change it)
+forge sync [--apply] [--project NAME | --all]               what would change (or change it), per project
+forge skills [--apply]                                      the skill links in ~/.claude/skills and the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19

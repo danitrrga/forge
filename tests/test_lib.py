@@ -1259,10 +1259,18 @@ def main():
     # With no CLAUDE_PROJECT_DIR the session start resolves its project from the cwd, and the
     # generators it runs must get that same directory: they scope themselves by the variable
     # alone (lib.context), and without it every one of them ran over all projects and the user files.
-    seen_env, ran = [], []
-    lib.run = lambda args, capture=False, env=None: (seen_env.append((env or {}).get("CLAUDE_PROJECT_DIR")),
-                                                     ran.append(args[0]),
-                                                     subprocess.CompletedProcess(args, 0, "", ""))[2]
+    # The machine check (sync_gsd_runtime.py --check --all) is no generator and needs no project: it is
+    # recorded apart, and must run once in every session, whatever the project.
+    seen_env, ran, checks = [], [], []
+
+    def record(args, capture=False, env=None):
+        if "--check" in args:
+            checks.append(args)
+        else:
+            seen_env.append((env or {}).get("CLAUDE_PROJECT_DIR"))
+            ran.append(args[0])
+        return subprocess.CompletedProcess(args, 0, "", "")
+    lib.run = record
     cwd = os.getcwd()
     os.chdir(os.path.join(dev, "app"))
     with contextlib.redirect_stdout(io.StringIO()):
@@ -1272,36 +1280,28 @@ def main():
         failures.append("session start from the cwd %s gave its steps CLAUDE_PROJECT_DIR %r"
                         % (os.path.join(dev, "app"), seen_env))
 
-    # Outside forge a session start runs only the two steps that write a project: relink_skills and
-    # sync_gsd_runtime write only user-scope files and return 0 at once without ctx.globals, and in
-    # an app session each cost 0.2-0.6 s of interpreter start for nothing. Red on the old cli.py:
-    # "session start in app ran ['scripts/sync/relink_skills.py',
-    # 'scripts/sync/sync_gsd_runtime.py', 'scripts/sync/sync_agent_config.py',
-    # 'scripts/sync/sync_system_doc.py'], want ['scripts/sync/sync_agent_config.py',
-    # 'scripts/sync/sync_system_doc.py']".
+    # A session start runs the two steps that write a project, in every session, forge's too: skill links
+    # and the GSD runtime left it for forge skills (step 2 of docs/toolchain-design.md). Red on 26a3ed5:
+    # "session start in forge ran ['scripts/sync/relink_skills.py', 'scripts/sync/sync_gsd_runtime.py',
+    # 'scripts/sync/sync_agent_config.py', 'scripts/sync/sync_system_doc.py'], want
+    # ['scripts/sync/sync_agent_config.py', 'scripts/sync/sync_system_doc.py']".
     project_steps = ["scripts/sync/sync_agent_config.py", "scripts/sync/sync_system_doc.py"]
-    if ran != project_steps:
-        failures.append("session start in app ran %r, want %r" % (ran, project_steps))
-    # forge's session still runs all four, in SYNC's order. This passes on the old cli.py, which ran
-    # every step everywhere; it is the control on the skip: with `and not scope.globals` deleted
-    # from cli, so the two steps are skipped in every session, red: "session start in
-    # forge ran ['scripts/sync/sync_agent_config.py', 'scripts/sync/sync_system_doc.py'], want
-    # ['scripts/sync/relink_skills.py', 'scripts/sync/sync_gsd_runtime.py',
-    # 'scripts/sync/sync_agent_config.py', 'scripts/sync/sync_system_doc.py']".
+    check_args = [["scripts/sync/sync_gsd_runtime.py", "--check", "--all"]]
+    if ran != project_steps or checks != check_args:
+        failures.append("session start in app ran %r and checked %r, want %r and %r" % (ran, checks, project_steps, check_args))
     forge_dir, forge_prof = os.path.join(dev, "forge"), os.path.join(prof_dir, "forge.claude.json")
     os.makedirs(forge_dir)
     with open(forge_prof, "w") as f:
         f.write('{"project_path": "%s"}' % forge_dir)
-    del ran[:]
+    del ran[:], checks[:]
     os.environ["CLAUDE_PROJECT_DIR"] = forge_dir
     with contextlib.redirect_stdout(io.StringIO()):
         cli.cmd_session_start(None)
     os.environ.pop("CLAUDE_PROJECT_DIR")
     os.remove(forge_prof)
     os.rmdir(forge_dir)
-    every = ["scripts/sync/relink_skills.py", "scripts/sync/sync_gsd_runtime.py"] + project_steps
-    if ran != every:
-        failures.append("session start in forge ran %r, want %r" % (ran, every))
+    if ran != project_steps or checks != check_args:
+        failures.append("session start in forge ran %r and checked %r, want %r and %r" % (ran, checks, project_steps, check_args))
 
     # A profile lib.profiles() leaves out is named at every session start. Left out silently, a
     # session in that project resolved to no project (or to a shallower one) and synced nothing

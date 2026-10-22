@@ -465,6 +465,11 @@ def session_start(sb, proj):
     except ValueError:
         msg = "not JSON: %r %r" % (r.stdout, r.stderr)
     logged = [l.split(" ", 1)[1] for l in read(log).splitlines() if " " in l]
+    # The machine's notes (the GSD runtime, the toolchain row) are about the machine this runs on, not about the
+    # sandbox, and tests/test_skills_split.py owns them: left in, a fresh sandbox HOME always "differs".
+    kept = [n for n in msg.removeprefix("forge -- ").split(" | ")
+            if not n.startswith(("gsd runtime:", "GSD runtime differs", "toolchain:"))]
+    msg = "forge -- " + " | ".join(kept) if kept != [""] and kept else ""
     return r.returncode, sb.norm(msg), logged, before, sb.manifest()
 
 
@@ -482,9 +487,9 @@ def unlogged(sb, before, after, logged):
 
 
 def changed_by_forge(before, after):
-    """changed(), less npm's own debug logs (~/.npm/_logs, from the gsd step's `npm root -g`):
-    npm's writes, not forge's."""
-    return [p for p in changed(before, after) if not under(p, "home/.npm")]
+    """changed(), less npm's own debug logs (~/.npm/_logs, from the gsd step's `npm root -g`) and the state
+    mise makes on its first run in a fresh HOME (session start's toolchain row runs `mise ls`): theirs, not forge's."""
+    return [p for p in changed(before, after) if not under(p, "home/.npm") and not under(p, "home/.local/state/mise")]
 
 
 def gsd_installed():
@@ -514,9 +519,9 @@ def session_cases(sb, check):
     write(os.path.join(sb.home, ".cache", "forge", "gsd-stage", "NPM-CHECKED"), "%f ?\n" % time.time())
     # Links each step removes: relink's dangling mirror link and the native-memory link it severs,
     # and the codex mirror's link to a project skill that is gone.
-    stale = {"forge": [(os.path.join(sb.home, ".claude", "skills", "gone"), os.path.join(sb.forge, "skills", "gone")),
-                       (os.path.join(sb.home, ".claude", "projects", sb.forge.replace("/", "-"), "memory"),
-                        os.path.join(sb.forge, "memories"))],
+    # (relink's two, which a session start no longer runs: they left for `forge skills`, and
+    # scripts/sync/test_relink_skills.py owns them.)
+    stale = {"forge": [],
              APP: [(os.path.join(sb.pp(APP), ".agents", "skills", "gone"), os.path.join("..", "..", ".claude", "skills", "gone"))]}
     for proj in (["forge"] if gsd else []) + [APP]:
         for link, target in stale[proj]:
