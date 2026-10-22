@@ -1,0 +1,19 @@
+version: 2
+# The engine has no package manifest, so only the actions it pins are tracked. The cooldown
+# matches dependabot-cooldown in zizmor.yml.
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 3
+    commit-message:
+      prefix: "ci(deps)"
+    groups:
+      actions-minor:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"

@@ -1,0 +1,12 @@
+# zizmor configuration: https://docs.zizmor.sh/configuration/
+# Copied from Kaneo (zizmor.yml, MIT): every action is pinned by commit hash.
+rules:
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin
+  # Three days, not zizmor's default seven: the cooldown matches pnpm's minimumReleaseAge
+  # (4320 minutes in pnpm-workspace.yaml), as the system design decided (section 3.7).
+  dependabot-cooldown:
+    config:
+      days: 3

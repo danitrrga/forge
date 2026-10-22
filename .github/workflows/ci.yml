@@ -1,27 +1,176 @@
-# The engine's checks on every push and pull request. They run on a bare runner: no private deny
-# file (config/publish-deny.txt, so check-public applies the public list alone), no credentials,
-# and a toy HOME that the fresh-install test builds for itself.
-# One job, so branch protection has a single check to require; the second step runs even when the
-# first fails, so one run reports both.
-name: ci
+name: CI
+
+# One workflow for every PR, from forge's repo kit. `all-checks` aggregates every result into
+# the single check a branch rule can require. Shape copied from trigger.dev
+# (.github/workflows/pr_checks.yml, Apache-2.0); workflow security from trigger.dev's
+# workflow-checks.yml and Kaneo's zizmor.yml (MIT).
+#
+# The kit wrote this file once and the project owns it. The project's own jobs
+# live in checks.yml, which `project` calls: every job added there is inside the aggregate,
+# with no `needs` line to remember. A job left out of `needs` would never gate anything.
+#
+# Runs on pull requests and on pushes to the default branch, not on a pushed branch without a PR.
+#
+# harden-runner (StepSecurity, audit mode) logs every outbound endpoint of the job it runs in,
+# on GitHub's runners.
 
 on:
-  push:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [master]
+
+# A new push cancels the previous run of the same PR. Pushes to the default branch queue
+# instead: the secrets scan there covers only the commits each push adds, so a cancelled run
+# would leave its commits unscanned for good.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  engine:
+  # The project's own checks (.github/workflows/checks.yml), as a reusable workflow. It gets
+  # no secrets: a check that needs one names it here, never `secrets: inherit`.
+  # zizmor 1.30.1 asks for GitHub's July 2026 self-repository form (`$/.github/...`), which
+  # actionlint 1.7.12 rejects ("is not following the format ... nor ./path/to/workflow.yml"),
+  # and both run below. The risk that form removes is a step loading an action cloned at
+  # runtime; a job-level reusable workflow is read from the run's own commit.
+  project:
+    name: Project
+    uses: ./.github/workflows/checks.yml # zizmor: ignore[self-repository]
+    permissions:
+      contents: read
+
+  # Every PR, whatever it touches: the local hook scans only what is staged, and a commit
+  # that skipped it (another machine, a hook that did not run, a merge or a rebase, which
+  # run no pre-commit hook) is caught here. It scans the commits the PR adds, or the push
+  # adds to the default branch.
+  gitleaks:
+    name: Secrets (gitleaks)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-python@v6
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
         with:
-          python-version: "3.12"
-      - name: check-public
-        run: python3 bin/forge check-public --all
-      - name: fresh install
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      # The range reaches the script through env, never interpolated into it. An all-zero
+      # "before" has no range, so everything reachable from the head is scanned. --verbose
+      # prints each finding's file, line, rule and commit (the secret itself stays redacted):
+      # without it the log said only "leaks found: 1".
+      #
+      # The rules are the base's, never the PR's. gitleaks takes its config, its ignore file and
+      # the baseline (findings recorded and redacted before the scan began) from the checkout,
+      # so a PR that carried an allowlist for its own token, or a baseline entry or an ignore
+      # line for it, would scan itself clean. The three files are copied from the commit the
+      # range starts at into a directory outside the workspace, and the container is given that
+      # directory and the repo's .git, never the checkout: a --config or --baseline-path flag
+      # alone left the checkout's .gitleaksignore in force (measured with this image, 2026-10-08).
+      # A base without a config gets the default rules, passed explicitly. With no base there is
+      # nothing to trust, and the head's own files are used.
+      - name: gitleaks, new commits
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          range="$BASE..$HEAD"
+          from="$BASE"
+          case "$BASE" in ""|0000000000000000000000000000000000000000) range="$HEAD"; from="$HEAD" ;; esac
+          trusted=$(mktemp -d "$RUNNER_TEMP/gitleaks-rules.XXXXXX")
+          for f in .gitleaks.toml .gitleaksignore .github/gitleaks-baseline.json; do
+            git show "$from:$f" > "$trusted/${f##*/}" 2>/dev/null || rm -f "$trusted/${f##*/}"
+          done
+          if [ ! -f "$trusted/.gitleaks.toml" ]; then
+            printf '[extend]\nuseDefault = true\n' > "$trusted/.gitleaks.toml"
+          fi
+          rules=(--config /trusted/.gitleaks.toml --gitleaks-ignore-path /trusted)
+          if [ -f "$trusted/gitleaks-baseline.json" ]; then
+            rules+=(--baseline-path /trusted/gitleaks-baseline.json)
+          fi
+          echo "commits in range: $(git rev-list --count "$range") ($range)"
+          docker run --rm -v "$PWD/.git:/repo/.git:ro" -v "$trusted:/trusted:ro" -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --redact --verbose --no-banner "${rules[@]}" --log-opts="$range" .
+      # The whole history, every fetched ref, only when the range changes the baseline or a
+      # gitleaks config: that is the change that can turn an old commit into a new finding.
+      # A step and not a job of its own, because a small repo's history scans in seconds
+      # and a large one pays for it only on the PR that touches those files. It reads the PR's
+      # own files, on purpose: it is the check of that change, an allowlist or baseline entry
+      # for an old finding, and it can only add a failure. The PR's own commits were scanned
+      # above by the base's rules, so this step cannot clear them.
+      - name: gitleaks, full history (when the baseline or a gitleaks config changes)
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          case "$BASE" in ""|0000000000000000000000000000000000000000)
+            echo "No base commit: the step above already scanned everything reachable from $HEAD."
+            exit 0 ;;
+          esac
+          changed=$(git diff --name-only "$BASE...$HEAD" -- .github/gitleaks-baseline.json .gitleaksignore .gitleaks.toml)
+          if [ -z "$changed" ]; then
+            echo "Neither the baseline nor a gitleaks config changed: the full-history scan is not needed."
+            exit 0
+          fi
+          echo "changed: $changed"
+          baseline=()
+          if [ -f .github/gitleaks-baseline.json ]; then
+            baseline=(--baseline-path .github/gitleaks-baseline.json)
+          fi
+          echo "commits on all fetched refs: $(git rev-list --count --all)"
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            ghcr.io/gitleaks/gitleaks:v8.30.1@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f \
+            git --redact --verbose --no-banner "${baseline[@]}" .
+
+  # Every PR: both tools take seconds.
+  workflow-security:
+    name: Workflow security (actionlint, zizmor)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.12@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667
+      # advanced-security off: a private personal repo has no code scanning to upload SARIF
+      # to, so findings print in the log and fail the job instead. zizmor fails by default
+      # when it finds no workflow to audit. The online audits (known-vulnerable actions,
+      # impostor commits, stale pins) use the job's read-only token. It runs even when
+      # actionlint failed, so one red run shows both tools' findings.
+      - name: zizmor
         if: ${{ !cancelled() }}
-        run: python3 tests/test_fresh_install.py
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
+        with:
+          version: 1.30.1
+          advanced-security: false
+          config: .github/zizmor.yml
+
+  all-checks:
+    name: All checks
+    needs: [project, gitleaks, workflow-security]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify all checks
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+          FAILED: ${{ contains(needs.*.result, 'failure') }}
+          CANCELLED: ${{ contains(needs.*.result, 'cancelled') }}
+        run: |
+          echo "Job results: $RESULTS"
+          if [ "$FAILED" = "true" ]; then
+            echo "One or more checks failed"
+            exit 1
+          fi
+          if [ "$CANCELLED" = "true" ]; then
+            echo "One or more checks were cancelled"
+            exit 1
+          fi
+          echo "All checks passed."

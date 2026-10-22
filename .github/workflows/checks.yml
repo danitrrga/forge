@@ -1,0 +1,36 @@
+name: Project checks
+
+# The engine's checks, called by ci.yml's `project` job. They run on a bare runner: no private deny
+# file (config/publish-deny.txt, so check-public applies the public list alone), no credentials,
+# and a toy HOME that the fresh-install test builds for itself.
+# Add jobs here, not in ci.yml: every job in this file is already inside "All checks". No trigger
+# but workflow_call and workflow_dispatch, and no top-level `concurrency` (ci.yml owns both).
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  engine:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: check-public
+        run: python3 bin/forge check-public --all
+      # The second step runs even when the first fails, so one run reports both.
+      - name: fresh install
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_fresh_install.py
