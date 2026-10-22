@@ -1,0 +1,21 @@
+name: Ticket
+description: A change, in plain sentences, with how we know it is done.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Write in plain sentences. Name the thing, not its identifier; an identifier goes in parentheses behind the sentence.
+  - type: textarea
+    id: what
+    attributes:
+      label: What we want
+      description: What changes for the person using the project, or for the system, and why.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: How we know it is done
+      description: What can be checked.
+    validations:
+      required: true

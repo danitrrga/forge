@@ -76,6 +76,15 @@ user's own data history if they keep one) and prints each hash. The `githooks/` 
 staged files, the message and the pushed range, and refuse a commit that carries personal data. Use a
 `docs(...)`, `fix(...)`, `test(...)` or `feat(...)` prefix, and describe what changed and why.
 
+## Branches and CI
+
+The default branch takes changes by pull request only: work on a branch (`feat/...`, `fix/...`, `chore/...`),
+open a PR from the PR template, and merge when `All checks` is green. `.github/workflows/ci.yml` (from
+`repo-kit/`) aggregates the engine's own checks in `checks.yml`, a secrets scan and a workflow audit (actionlint,
+zizmor) into that one check; add a job to `checks.yml`, never to `ci.yml`. Every action is pinned by commit hash
+(`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --apply` puts the same rule on GitHub.
+Work in a git worktree, since only the installed checkout writes (rule 1).
+
 ## Where things go
 
 - A new generator step goes in `forge/sync.py`'s sequence: the sequence is the output, and the output is an API.
