@@ -10,6 +10,8 @@
   forge test             run every test_*.py in the repo
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
+  forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill, GSD and MCP package versions this machine runs
+  forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, then a note if the GSD runtime or the toolchain is off;
                          silent unless it wrote or has one
@@ -33,7 +35,7 @@ import sys
 import tempfile
 import time
 
-from forge import lib, mcp, owned, skills, toolchain
+from forge import lib, lockfile, mcp, owned, skills, toolchain
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1478,6 +1480,12 @@ def main(argv=None):
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
     t.set_defaults(fn=toolchain.cmd)
+    t = sub.add_parser("lock", help="record the plugin, outside-skill, GSD and MCP package versions (a dry-run unless --apply)")
+    t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
+    t.set_defaults(fn=lockfile.cmd_lock)
+    t = sub.add_parser("versions", help="the toolchain pins and the lock together, for release notes")
+    t.add_argument("--md", action="store_true", help="markdown tables")
+    t.set_defaults(fn=lockfile.cmd_versions)
     g = sub.add_parser("log", help="the change journal: what forge sync --apply and session start wrote")
     g.add_argument("project", nargs="?", help="this project's paths only")
     g.add_argument("--since", help="YYYY-MM-DD, changes from this day")
