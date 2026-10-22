@@ -110,7 +110,9 @@ if a == ["ls", "--json"]:
     sys.exit(0)
 if a[:1] == ["install"] and len(a) > 1 and all("@" in x and not x.startswith("-") for x in a[1:]):
     if os.environ.get("FAKE_MISE_INSTALL_FAIL"):
-        sys.stderr.write("mise ERROR install failed\\n")
+        sys.stderr.write("mise x npm:pnpm@10.32.1 failed: refusing to add pnpm: only 113 weekly downloads\\n")
+        sys.stderr.write("mise ERROR Failed to install tools: npm:pnpm@10.32.1\\n")
+        sys.stderr.write("mise ERROR Run with --verbose or MISE_VERBOSE=1 for more information\\n")
         sys.exit(1)
     if not os.environ.get("FAKE_NOOP"):
         have = json.load(open(state))
@@ -390,7 +392,9 @@ def check_cases(tmp):
     # An install that fails says why, in the line of what it was installing.
     w = world(DOC, {}, ALL_PIP)
     code, lines = w.run("toolchain", "--fix", FAKE_MISE_INSTALL_FAIL="1")
-    want("a failing mise install = (exit, detail)", (code, "failed (exit 1): mise ERROR install failed" in line_of(lines, "npm:pnpm")), (1, True))
+    # The real mise ends its error with a line of noise ("Run with --verbose"); the reason (here the supply-chain guard
+    # that refuses a package under 1000 weekly downloads) is the line before, so the detail keeps the last three.
+    want("a failing mise install = (exit, detail names the reason)", (code, "only 113 weekly downloads" in line_of(lines, "npm:pnpm")), (1, True))
 
     # No mise on PATH, or a mise that cannot list: every tool FAILs with the reason, and --fix installs nothing.
     w = world(DOC, ALL_TOOLS, ALL_PIP, with_mise=False)

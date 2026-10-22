@@ -135,12 +135,13 @@ def file_state(path, text):
 
 
 def tool_run(argv, timeout, cwd=None):
-    """(exit code, stdout, last line of stderr) of argv; a command that cannot run is (None, "", why)."""
+    """(exit code, stdout, last three lines of stderr) of argv; a command that cannot run is (None, "", why). Three,
+    because mise ends its errors with a line of noise and the reason is the one before."""
     try:
         r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     except (OSError, subprocess.TimeoutExpired) as e:
         return None, "", "%s: %s" % (type(e).__name__, e)
-    return r.returncode, r.stdout, (r.stderr.strip().splitlines() or [""])[-1]
+    return r.returncode, r.stdout, " | ".join(r.stderr.strip().splitlines()[-3:])
 
 
 def pip_name(name):
