@@ -120,7 +120,7 @@ installed unpatched from its package when the `gsd` integration is on. forge doe
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
 forge add PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
 forge sync [--apply] [--project NAME | --all]               what would change (or change it), per project
-forge skills [--apply]                                      the skill links in ~/.claude/skills and the GSD runtime
+forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19
