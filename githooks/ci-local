@@ -1,0 +1,17 @@
+#!/bin/sh
+# The checks .github/workflows run, on this machine, for when Actions minutes are out or a run is
+# not worth the wait. Same tools and pins as ci.yml and checks.yml; every step runs even when an
+# earlier one fails, so one run lists everything. Usage: githooks/ci-local [BASE]  (BASE: the
+# commit the secrets scan starts after, default origin/master)
+cd "$(git rev-parse --show-toplevel)" || exit 1
+base=${1:-origin/master}
+rc=0
+step() { name=$1; echo "== $name"; shift; "$@" || { echo "FAIL: $name" >&2; rc=1; }; }
+step check-public python3 bin/forge check-public --all
+step fresh-install python3 tests/test_fresh_install.py
+step actionlint mise x actionlint@1.7.12 -- actionlint
+step zizmor mise x zizmor@1.30.1 -- zizmor --offline --config .github/zizmor.yml .github
+echo "commits in range: $(git rev-list --count "$base..HEAD")"
+step "gitleaks ($base..HEAD)" mise x gitleaks@8.30.1 -- gitleaks git --redact --verbose --no-banner --log-opts="$base..HEAD" .
+[ "$rc" -eq 0 ] && echo "ci-local: all checks passed" || echo "ci-local: FAILED" >&2
+exit "$rc"

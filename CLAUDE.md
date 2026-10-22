@@ -84,6 +84,8 @@ open a PR from the PR template, and merge when `All checks` is green. `.github/w
 zizmor) into that one check; add a job to `checks.yml`, never to `ci.yml`. Every action is pinned by commit hash
 (`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --apply` puts the same rule on GitHub.
 Work in a git worktree, since only the installed checkout writes (rule 1).
+`githooks/ci-local` runs the same checks on this machine in seconds (control: a planted AWS key in a commit makes
+its gitleaks step, and so the script, fail); use it when Actions minutes are out.
 
 ## Where things go
 
