@@ -50,7 +50,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
 
 sys.path.insert(0, sandbox.FORGE)
-from forge import cli, lib  # noqa: E402  (pure functions and two path constants only: nothing here writes through them)
+from forge import cli, lib, toolchain  # noqa: E402  (pure functions and two path constants only: nothing here writes through them)
 
 failures, notrun, n_checks = [], [], [0]
 GIT_ENV = dict(os.environ, **sandbox.GIT_ENV)
@@ -291,7 +291,7 @@ def doctor_row_cases():
     FAIL because something is configured. In process, against a toy config/profiles and a toy
     config/forge.json (lib.PROFILES and lib.SETTINGS, put back afterwards)."""
     top = sandbox.mkdtemp("fresh-install-rows-")
-    real = (lib.PROFILES, lib.SETTINGS, cli.TOOLCHAIN)
+    real = (lib.PROFILES, lib.SETTINGS, toolchain.MANIFEST)
     try:
         lib.PROFILES = os.path.join(top, "profiles")
         os.makedirs(lib.PROFILES)
@@ -313,32 +313,32 @@ def doctor_row_cases():
         for gsd in (False, True):
             write_json(lib.SETTINGS, {"integrations": {"gsd": gsd}, "gsd_patches": True})
             lib.settings.cache_clear()
-            cli.TOOLCHAIN = os.path.join(top, "no-such-toolchain.json")
-            results, missing, where = cli.toolchain_check()
+            toolchain.MANIFEST = os.path.join(top, "no-such-toolchain.json")
+            results, todo, where = toolchain.check()
             if gsd:
                 want("toolchain: no file with gsd on stays a FAIL", [r.level for r in results], ["FAIL"])
             else:
                 want("toolchain: no file with gsd off is a SKIP, saying NOT RUN, NOT ARMED, with nothing to install",
-                     ([r.level for r in results], results[0].detail.startswith(cli.NOT_ARMED), missing), (["SKIP"], True, []))
-            want("toolchain row, no file, gsd %s" % ("on" if gsd else "off"), cli.toolchain_row().level, "FAIL" if gsd else "SKIP")
-            cli.TOOLCHAIN = os.path.join(top, "empty-toolchain.json")
-            write_json(cli.TOOLCHAIN, {"npm": [], "pip": []})
-            want("toolchain: a file that lists nothing is a FAIL, gsd %s" % ("on" if gsd else "off"), cli.toolchain_row().level, "FAIL")
+                     ([r.level for r in results], results[0].detail.startswith(cli.NOT_ARMED), any(todo.values())), (["SKIP"], True, False))
+            want("toolchain row, no file, gsd %s" % ("on" if gsd else "off"), toolchain.row().level, "FAIL" if gsd else "SKIP")
+            toolchain.MANIFEST = os.path.join(top, "empty-toolchain.json")
+            write_json(toolchain.MANIFEST, {"tools": [], "pip": []})
+            want("toolchain: a file that lists nothing is a FAIL, gsd %s" % ("on" if gsd else "off"), toolchain.row().level, "FAIL")
         # GSD on but unpatched (a stranger's): no package is pinned, because GSD comes from pnpm dlx. Red before:
         # "toolchain: gsd on, gsd_patches false, no file is a SKIP = (['FAIL'], []), want (['SKIP'], [])".
         for label, doc in (("gsd_patches false", {"integrations": {"gsd": True}, "gsd_patches": False}),
                            ("gsd_patches absent", {"integrations": {"gsd": True}})):
             write_json(lib.SETTINGS, doc)
             lib.settings.cache_clear()
-            cli.TOOLCHAIN = os.path.join(top, "no-such-toolchain.json")
-            results, missing, where = cli.toolchain_check()
-            want("toolchain: gsd on, %s, no file is a SKIP" % label, ([r.level for r in results], missing), (["SKIP"], []))
+            toolchain.MANIFEST = os.path.join(top, "no-such-toolchain.json")
+            results, todo, where = toolchain.check()
+            want("toolchain: gsd on, %s, no file is a SKIP" % label, ([r.level for r in results], any(todo.values())), (["SKIP"], False))
         lib.SETTINGS = os.path.join(top, "no-such-forge.json")
         lib.settings.cache_clear()
-        cli.TOOLCHAIN = os.path.join(top, "no-such-toolchain.json")
-        want("toolchain: no config/forge.json is a SKIP, not an exit", cli.toolchain_row().level, "SKIP")
+        toolchain.MANIFEST = os.path.join(top, "no-such-toolchain.json")
+        want("toolchain: no config/forge.json is a SKIP, not an exit", toolchain.row().level, "SKIP")
     finally:
-        lib.PROFILES, lib.SETTINGS, cli.TOOLCHAIN = real
+        lib.PROFILES, lib.SETTINGS, toolchain.MANIFEST = real
         lib.settings.cache_clear()
 
 
