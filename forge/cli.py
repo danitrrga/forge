@@ -45,8 +45,10 @@ SYNC = [
     ("system doc", "scripts/sync/sync_system_doc.py", None, "--apply", []),
 ]
 # forge skills: the user-scope steps, run on their own (docs/toolchain-design.md section 5). Skill links
-# first, because the project overrides are computed from them.
+# first, because the project overrides are computed from them; the online skills before that, since the links
+# are made to what they write.
 SKILLS = [
+    ("online skills", "scripts/sync/materialise_skills.py", None, "--apply", []),
     ("skill links", "scripts/sync/relink_skills.py", "--dry-run", None, []),
     ("gsd runtime", "scripts/sync/sync_gsd_runtime.py", None, "--apply", ["--skills"]),
 ]
@@ -1404,7 +1406,7 @@ def cmd_init(a):
     if failed:
         print("! forge init: failed -- %s" % ", ".join("%s (exit %d)" % f for f in failed))
     print("put your own skills in %s/skills/<name>/SKILL.md (git ignores them; forge init --track versions them), "
-          "then run forge sync --apply" % lib.ROOT)
+          "then run forge skills --apply" % lib.ROOT)
     print("next: forge add <path>")
     return 1 if failed else 0
 

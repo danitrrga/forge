@@ -47,7 +47,7 @@ def entries():
         return {}, "config/toolchain.json is not an object with a \"tools\" and a \"pip\" list"
     # An unknown key is a misspelled section ("pips"), whose entries would go unchecked and let a missing
     # package pass, or the old "npm" section; "_"-prefixed keys are comments (the file's own `_doc`).
-    unknown = sorted(k for k in doc if k not in SECTIONS and not k.startswith("_"))
+    unknown = sorted(k for k in doc if k not in SECTIONS + ("skills",) and not k.startswith("_"))  # skills: forge/skillpins.py's
     if unknown:
         return {}, "config/toolchain.json: unknown section %s, want only \"tools\" and \"pip\"" % ", ".join(
             "\"%s\"" % k for k in unknown)

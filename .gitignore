@@ -51,6 +51,7 @@
 !/scripts/sync/
 /scripts/sync/*
 !/scripts/sync/relink_skills.py
+!/scripts/sync/materialise_skills.py
 !/scripts/sync/verify_skill_refs.py
 !/scripts/sync/sync_gsd_runtime.py
 !/scripts/sync/sync_skill_keep.py
