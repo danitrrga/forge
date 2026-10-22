@@ -484,7 +484,7 @@ def commit_cases():
     root = toy("overlay", overlay=True)
     write(root, "config/profiles/a.claude.json", "{}\n")
     write(root, "notes.txt", "n\n")
-    code, out = forge(root, "commit", "-m", "seed")
+    code, out = forge(root, "commit", "--all", "-m", "seed")
     want("seed = exit", code, 0)
     git_out(root, "config", "core.hooksPath", "githooks")
     engine = [".gitignore", "bin/forge"] + ["forge/" + f for f in os.listdir(os.path.join(FORGE, "forge")) if f.endswith(".py")]
@@ -494,13 +494,13 @@ def commit_cases():
     want("seed: data files", files_of(root, data=True), ["config/profiles/a.claude.json", "notes.txt"])
     want("seed: nothing from either git directory in the data history",
          [f for f in files_of(root, data=True) if f.startswith((".git/", ".forge-data.git/"))], [])
-    want("seed: a second run has nothing to commit = exit", forge(root, "commit", "-m", "again")[0], 0)
+    want("seed: a second run has nothing to commit = exit", forge(root, "commit", "--all", "-m", "again")[0], 0)
     # The routing: one change in each history, and a new file outside the allowlist.
     e0, d0 = head(root), head(root, data=True)
     write(root, "forge/extra.py", "X = 1\n")
     write(root, "config/profiles/a.claude.json", '{"a": 1}\n')
     write(root, "notes/new.md", "new\n")
-    code, out = forge(root, "commit", "-m", "mixed change")
+    code, out = forge(root, "commit", "--all", "-m", "mixed change")
     want("mixed change = exit", code, 0)
     want("mixed: engine files", files_of(root), ["forge/extra.py"])
     want("mixed: data files", files_of(root, data=True), ["config/profiles/a.claude.json", "notes/new.md"])
@@ -534,13 +534,13 @@ def commit_cases():
     root = toy("overlay-noexclude", overlay=True)
     write(root, ".forge-data.git/info/exclude", "/bin\n/forge\n/githooks\n/.gitignore\n")
     write(root, "n.txt", "n\n")
-    code, out = forge(root, "commit", "-m", "seed")
+    code, out = forge(root, "commit", "--all", "-m", "seed")
     want("no exclude lines: data files", files_of(root, data=True), ["n.txt"])
     # Without a second history it is plain add and commit.
     root = toy("single")
     write(root, "a.txt", "a\n")
     write(root, "forge/x.py", "x\n")
-    code, out = forge(root, "commit", "-m", "single")
+    code, out = forge(root, "commit", "--all", "-m", "single")
     want("single history = exit", code, 0)
     want("single history: one commit with everything", [f for f in files_of(root) if f in ("a.txt", "forge/x.py")], ["a.txt", "forge/x.py"])
     lacks("single history", out, "private history")
@@ -554,6 +554,14 @@ def commit_cases():
     has("nothing to commit", out, "nothing to commit")
     code, out = forge(root, "commit")
     want("no message = exit", code, 2)
+    # No path and no --all must not sweep every change into a commit (the 31-file commit of 2026-10-22).
+    # Red before the change: "no paths, no --all = exit: got 0, want 2".
+    write(root, "forge/swept.py", "X = 2\n")
+    e1, d1 = head(root), head(root, data=True)
+    code, out = forge(root, "commit", "-m", "no paths")
+    want("no paths, no --all = exit", code, 2)
+    has("no paths, no --all", out, "--all")
+    want("no paths, no --all = neither history moved", (head(root), head(root, data=True)), (e1, d1))
 
 
 # --- 6. the hooks, only in toy repositories
@@ -564,12 +572,12 @@ def hook_cases():
         want("githooks/%s is an executable file" % name, os.path.isfile(p) and os.access(p, os.X_OK), True)
     root = toy("hooks", overlay=True)
     write(root, "config/profiles/a.claude.json", "{}\n")
-    code, out = forge(root, "commit", "-m", "seed")
+    code, out = forge(root, "commit", "--all", "-m", "seed")
     want("hooks: seed = exit", code, 0)
     git_out(root, "config", "core.hooksPath", "githooks")
     if os.path.isdir(os.path.join(root, "githooks")):
         modes = git_out(root, "ls-files", "-s", "githooks")
-        want("hooks: modes in the index", sorted(l.split()[0] for l in modes.splitlines()), ["100755"] * 3)
+        want("hooks: modes in the index", sorted(l.split()[0] for l in modes.splitlines()), ["100755"] * len(os.listdir(os.path.join(root, "githooks"))))
     # pre-commit: a clean engine commit passes through the hook ...
     write(root, "forge/extra.py", "X = 1\n")
     git_out(root, "add", "forge/extra.py")

@@ -551,7 +551,7 @@ def track_world():
     want("init --track makes .forge-data.git, a history over the checkout (a git directory, not bare)",
          (os.path.isdir(data), git_out("--git-dir", data, "rev-parse", "--is-bare-repository").strip()), (True, "false"))
     want("the data history has no remote", git_out("--git-dir", data, "remote").strip(), "")
-    code, out = w.forge("commit", "-m", "my data")
+    code, out = w.forge("commit", "--all", "-m", "my data")
     check("forge commit puts the data in the data history", code == 0 and "private" in out, "exit %d: %s" % (code, tail(out)))
     tracked = git_out("--git-dir", data, "--work-tree", w.root, "ls-files").split()
     check("the data history holds config/forge.json and the profile", {"config/forge.json", "config/profiles/forge.claude.json"} <= set(tracked),

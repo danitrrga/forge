@@ -124,7 +124,7 @@ forge doctor [NAME]                                         one line per check; 
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
-forge commit -m MESSAGE [PATH...]                           commit each changed path to the history that owns it
+forge commit -m MESSAGE (PATH... | --all)                        commit each changed path to the history that owns it
 forge check-public --all                                    personal data in the files the engine publishes
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
 forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)

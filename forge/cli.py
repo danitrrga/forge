@@ -12,7 +12,7 @@
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, silent unless it wrote
   forge check-public     --staged | --all | --range A..B | --message FILE: personal data that must not be published
-  forge commit -m MSG [PATH...]  each changed path to the history that owns it (forge/publish.py)
+  forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
   forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
 Every step is still the script it was (scripts/sync/*.py and the doctors); this is the one place
@@ -1458,7 +1458,8 @@ def main(argv=None):
     c.set_defaults(fn=lambda a: _publish().cmd_check_public(a))
     c = sub.add_parser("commit", help="commit each changed path to the history that owns it")
     c.add_argument("-m", "--message", required=True)
-    c.add_argument("paths", nargs="*", help="only these paths; default: every change")
+    c.add_argument("paths", nargs="*", help="only these paths")
+    c.add_argument("--all", action="store_true", help="every change, when no path is named")
     c.set_defaults(fn=lambda a: _publish().cmd_commit(a))
     i = sub.add_parser("init", help="first run for a new checkout: its data, sync --apply --all, doctor")
     i.add_argument("--yes", action="store_true", help="take what init found (Codex, pnpm) without asking")
