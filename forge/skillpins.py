@@ -9,6 +9,9 @@ manifest instead of git carrying it (docs/toolchain-design.md section 3, G).
   {"name": "grilling", "source": "http:some-skills", "path": "skills/productivity/grilling",
    "repo": "https://github.com/owner/some-skills", "license_file": "LICENSE", "why": "..."}
 
+The licence is the text of `license_file` out of the archive, or, with a `license` line instead, that line (for a skill
+whose directory already ships its LICENSE: the NOTICE says so rather than copying it a second time).
+
 A dry-run names what would change per skill (created, or the files that differ, are missing or are extra); --apply
 makes the copy match: it overwrites a changed file and removes an extra one, so a skill listed here is derived data
 and an edit inside it is drift, never kept.
@@ -26,15 +29,17 @@ NAME = re.compile(r"^[A-Za-z0-9._-]+$")
 
 def _error(e, tools):
     """What is wrong with one `skills` entry, or None."""
-    if not isinstance(e, dict) or not all(isinstance(e.get(k), str) and e[k].strip() for k in ("name", "source", "repo", "license_file", "why")):
-        return "needs a name, a source, a repo, a license_file and a why"
+    if not isinstance(e, dict) or not all(isinstance(e.get(k), str) and e[k].strip() for k in ("name", "source", "repo", "why")):
+        return "needs a name, a source, a repo and a why"
+    if ("license" in e) == ("license_file" in e) or not isinstance(e.get("license", e.get("license_file")), str) or not e.get("license", e.get("license_file")).strip():
+        return "needs a license_file or a license line, and not both"
     if not NAME.match(e["name"]) or e["name"] in (".", ".."):
         return "has a name that is not a plain directory name"
     if not isinstance(e.get("path", ""), str) or os.path.isabs(e.get("path", "")) or ".." in e.get("path", "").split("/"):
         return "has a path that leaves the archive"
     if not e["repo"].startswith("https://"):
         return "has a repo that is no https URL"
-    if os.path.isabs(e["license_file"]) or ".." in e["license_file"].split("/"):
+    if os.path.isabs(e.get("license_file", "")) or ".." in e.get("license_file", "").split("/"):
         return "has a license_file that leaves the archive"
     tool = tools.get(e["source"])
     if tool is None or not e["source"].startswith("http:"):
@@ -83,7 +88,7 @@ def render_notice(e, commit, licence):
     is the form forge lock reads (lockfile.notice)."""
     where = e["path"] or "the whole repository"
     return ("From %s at commit %s, %s.\n\nUnchanged: every file is byte-identical to that commit; this NOTICE.md is the only "
-            "addition.\n\n%s" % (e["repo"], commit, where, licence)).encode("utf-8")
+            "addition.\n\n%s" % (e["repo"], commit, where, licence if "license_file" in e else "Licence: %s\n" % e["license"])).encode("utf-8")
 
 
 def plan(e):
@@ -95,8 +100,10 @@ def plan(e):
     where = os.path.join(install, e["path"])
     try:
         want = read_tree(where)
-        with open(os.path.join(install, e["license_file"]), encoding="utf-8") as fh:
-            licence = fh.read()
+        licence = ""
+        if "license_file" in e:
+            with open(os.path.join(install, e["license_file"]), encoding="utf-8") as fh:
+                licence = fh.read()
     except OSError as ex:
         return None, None, "%s is not readable in %s: %s" % (e["path"] or "the archive", install, ex)
     if not want:

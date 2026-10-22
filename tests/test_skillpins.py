@@ -122,6 +122,23 @@ want("dry-run on a drifted copy: names the changed, the missing and the extra fi
 code, out = run(apply=True)
 want("apply restores the copy and removes the extra file", tree(DEST).keys() - {"NOTICE.md"} == base.keys() and get(os.path.join(DEST, "SKILL.md")) == base["SKILL.md"], True)
 
+# a `license` line instead of a `license_file`: the NOTICE says it and does not copy a licence the skill already ships
+# (learnharness: AGPL, 661 lines, in the LICENSE beside its SKILL.md). Red before: "needs a name, a source, a repo, a
+# license_file and a why" for an entry with a `license` and no `license_file`.
+BETA = {"name": "beta", "source": TOOL, "path": "skills/eng/beta", "repo": "https://github.com/o/toy-skills",
+        "license": "AGPL-3.0-only. Its full text is the LICENSE file beside this one.", "why": "toy"}
+manifest([ALPHA, BETA])
+code, out = run(apply=True)
+beta = get(os.path.join(root, "skills", "beta", "NOTICE.md")).decode() if os.path.exists(os.path.join(root, "skills", "beta", "NOTICE.md")) else ""
+want("a license line: exit 0, the NOTICE ends with it and holds no licence text", (code, beta.endswith("addition.\n\nLicence: AGPL-3.0-only. Its full text is the LICENSE file beside this one.\n"), "Toy licence" in beta), (0, True, False))
+manifest([dict(ALPHA, license="x")])
+_, why = skillpins.entries()
+want("a license and a license_file together are refused", "license" in (why or ""), True)
+manifest([{k: v for k, v in ALPHA.items() if k != "license_file"}])
+_, why = skillpins.entries()
+want("neither a license nor a license_file is refused", "license" in (why or ""), True)
+manifest([ALPHA])
+
 # the source is not installed: a failure that names the fix, and nothing is written
 import shutil  # noqa: E402
 shutil.rmtree(DEST)
