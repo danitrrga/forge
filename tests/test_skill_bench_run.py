@@ -82,6 +82,9 @@ def make_bench(tmp, n, crash_task=None):
 FAKE = '''#!/usr/bin/env python3
 import json, os, subprocess, sys, glob, time
 args = sys.argv[1:]
+if args and args[0] == "--version":
+    print("9.9.9 (Fake Code)")
+    sys.exit(0)
 prompt = args[args.index("-p") + 1] if "-p" in args else ""
 tasks = os.environ["FAKE_TASKS"]
 mode = "naive"
@@ -96,6 +99,7 @@ for tid in sorted(os.listdir(tasks)):
         subprocess.run(["git", "apply", patch], check=True)
         msg = open(os.path.join(tasks, tid, "naive" if mode in ("naive", "slow") else mode, "message.md")).read()
         break
+print(json.dumps({"type": "system", "subtype": "init", "model": os.environ.get("FAKE_MODEL_ID", "fake-model-1")}))
 print(json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Skill", "input": {"skill": mode}}]}}))
 print(json.dumps({"type": "result", "result": msg, "is_error": False, "num_turns": 3, "duration_ms": 1000,
                   "total_cost_usd": 0.5 if mode == "ideal" else 0.25,
@@ -184,6 +188,48 @@ def main():
     want("default --out is under $XDG_DATA_HOME/forge/skill-bench/runs", (code, os.path.isdir(runs_dir) and len(os.listdir(runs_dir)) == 1), (0, True))
     code, text = cli("report", "--base", "none", env=env_x)
     want("report without --out reads the latest run", (code, "skill-bench report" in text), (0, True))
+
+    # identity: every run says which model, CLI and skill content produced it, so comparisons are never between unknowns
+    man = json.load(open(os.path.join(out, "run.json")))
+    want("run.json: model alias, CLI version, k, seed", (man["model_alias"], man["cli_version"], man["k"], man["seed"]), ("sonnet", "9.9.9 (Fake Code)", 2, 7))
+    import hashlib
+
+    def tree_hash(d):
+        """The documented rule: sha256 over the sorted files, each as relative path, NUL, bytes, NUL."""
+        h = hashlib.sha256()
+        for root, _, files in sorted(os.walk(d)):
+            for f in sorted(files):
+                full = os.path.join(root, f)
+                h.update(os.path.relpath(full, d).encode() + b"\0" + open(full, "rb").read() + b"\0")
+        return h.hexdigest()
+    want("run.json: the arm's skill content is pinned by a hash of its files", man["arms"]["good"]["skills"][0]["sha256"], tree_hash(good))
+    want("run.json: the none arm mounts nothing", man["arms"]["none"]["skills"], [])
+    want("run.json: a fingerprint of the task files and the task list", (len(man["tasks_fingerprint"]), len(man["tasks"])), (64, 6))
+    want("every result carries the resolved model id", {r["model_id"] for r in res}, {"fake-model-1"})
+    code, text = cli("report", "--out", out, "--base", "none")
+    want("report names the model per arm and the CLI", ("fake-model-1" in text and "9.9.9 (Fake Code)" in text), True)
+    # the same --out with another model alias, or an arm name whose skill content changed, is refused
+    code, text = cli("run", *common[:-4], "--out", out, "--k", "2", "--seed", "7", "--model", "opus", "--arm", "none", env=env)
+    want("same --out, another model alias: refused, naming the model", (code, "model" in text.lower()), (1, True))
+    import shutil
+    shutil.copytree(good, os.path.join(tmp, "skills", "good-b"), dirs_exist_ok=True)
+    put(os.path.join(tmp, "skills", "good-b", "EXTRA.md"), "changed\n")
+    code, text = cli("run", *common, "--arm", "good=" + os.path.join(tmp, "skills", "good-b"), env=env)
+    want("same --out, arm name with other skill content: refused", (code, "good" in text and "changed" in text.lower()), (1, True))
+    # arms run on different models cannot be compared by accident
+    outm = os.path.join(tmp, "runs-mixed")
+    cli("run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", outm, "--k", "1", "--tasks", "t0", "--arm", "none",
+        env=dict(env, FAKE_MODEL_ID="model-A"))
+    cli("run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", outm, "--k", "1", "--tasks", "t0", "--arm", "good=" + good,
+        env=dict(env, FAKE_MODEL_ID="model-B"))
+    code, text = cli("report", "--out", outm, "--base", "none")
+    want("arms on different models: report refuses and names both", (code, "model-A" in text and "model-B" in text and "different models" in text), (1, True))
+    code, text = cli("report", "--out", outm, "--base", "none", "--allow-mixed-models")
+    want("--allow-mixed-models lets it through, still naming them", (code, "model-A" in text and "model-B" in text), (0, True))
+    cli("calibrate", "--bench", bench, "--out", out)
+    want("calibrate records the model id and CLI version", (json.load(open(os.path.join(bench, "calibration.json"))).get("model_ids"),
+                                                           json.load(open(os.path.join(bench, "calibration.json"))).get("cli_version")),
+         (["fake-model-1"], "9.9.9 (Fake Code)"))
 
     # resume: a second run with the same --out does no new work
     code, text = cli("run", *common, "--arm", "none", "--arm", "good=" + good, "--arm", "idle=" + bad, env=env)
