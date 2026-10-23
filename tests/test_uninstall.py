@@ -309,7 +309,7 @@ check("apply: every by-construction item is gone -- left %s" % [k for k, p in go
       not any(os.path.lexists(p) for p in gone.values()))
 check("apply: a skill link into another tree stays", os.path.islink(os.path.join(w.home, ".claude", "skills", FOREIGN)))
 check("apply: the target of forge's skill links stays", os.path.isfile(os.path.join(w.root, "skills", "toy-common", "SKILL.md")))
-check("apply: the output names GSD's removal command", "get-shit-done-cc" in out and "--uninstall" in out, out)
+check("apply: the output names GSD's removal command", "@opengsd/gsd-core" in out and "--uninstall" in out, out)
 check("apply: the output ends with the command that deletes the checkout, never run",
       "rm -rf %s" % w.root in out.strip().splitlines()[-1] and os.path.isdir(w.root), sandbox.tail(out, 2))
 

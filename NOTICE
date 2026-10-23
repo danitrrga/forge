@@ -3,18 +3,24 @@ Copyright (c) 2026 danitrrga, MIT licence (see LICENSE).
 
 This product includes software from other projects, under their own licences.
 
-get-shit-done-cc (GSD)
-  https://github.com/gsd-build/get-shit-done, MIT licence.
-  Copyright (c) 2025 Lex Christopherson
+@opengsd/gsd-core (GSD Core)
+  https://github.com/open-gsd/gsd-core, MIT licence.
+  Copyright (c) 2026 Open GSD
 
-  - hooks/gsd-prompt-guard.js and hooks/gsd-read-injection-scanner.js are copies of the hooks of
-    get-shit-done-cc 1.42.3, with local edits.
   - scripts/sync/sync_gsd_runtime.py quotes passages of the package's own text (its agents, engine
     files and skills) as the anchors of the patches it applies. The package is not shipped in this
     repository: the script runs GSD's installer into a staging directory on the user's machine and
     patches the result.
 
-  The licence text of get-shit-done-cc follows.
+get-shit-done-cc (GSD, the package GSD Core continues)
+  https://github.com/gsd-build/get-shit-done, MIT licence.
+  Copyright (c) 2025 Lex Christopherson
+
+  - hooks/gsd-prompt-guard.js and hooks/gsd-read-injection-scanner.js are copies of the hooks of
+    get-shit-done-cc 1.42.3, with local edits.
+
+  The licence text of get-shit-done-cc follows. GSD Core's licence is the same MIT text with the
+  copyright line above.
 
   MIT License
 

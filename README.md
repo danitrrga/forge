@@ -46,7 +46,7 @@ and only for tools it found: manage Codex's config too, and install GSD. `--yes`
 `--with a,b` and `--without a,b` switch integrations, and `--track` gives your data its own local git history.
 It then writes your data into the checkout: `config/forge.json` (your switches), a profile for the checkout
 itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGENT-SYSTEM.md` and an empty
-`skills/`. With GSD on, it runs GSD's own installer (`pnpm dlx get-shit-done-cc@latest --claude --global`).
+`skills/`. With GSD on, it runs GSD's own installer (`pnpm dlx @opengsd/gsd-core@latest --claude --global`).
 Last, it runs `forge sync --apply --all`, which installs the SessionStart hook, and exits with `forge doctor`'s
 status.
 
@@ -85,7 +85,7 @@ installed another way.
 | Integration | What it adds | What it needs | Default |
 |---|---|---|---|
 | `codex` | `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills; with `codex_harness` true in `config/forge.json` also its hook rows in `~/.codex/hooks.json` and each project's MCP servers in `.codex/config.toml`, with it false (the default, Codex as a reviewer) neither, and forge takes out only what it wrote | `codex` on PATH | off; `init` offers it when `codex` is found |
-| `gsd` | the `gsd-*` skills, agents and engine from `get-shit-done-cc`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
+| `gsd` | the `gsd-*` skills, agents and engine from `@opengsd/gsd-core`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
 
 ## Bring your own skills

@@ -95,7 +95,7 @@ def collect():
     problems = []
     doc = {"plugins": plugins(), "skills": skills(problems), "mcp": mcp()}
     try:
-        with open(os.path.join(lib.HOME, ".claude", "get-shit-done", "VERSION"), encoding="utf-8") as fh:
+        with open(os.path.join(lib.HOME, ".claude", "gsd-core", "VERSION"), encoding="utf-8") as fh:
             doc["gsd"] = fh.read().strip()
     except FileNotFoundError:
         pass

@@ -64,9 +64,9 @@ INTEGRATIONS = ("codex", "gsd", "hindsight")
 DEMO_UNTRACKED = set()
 REAL_HOME = pwd.getpwuid(os.getuid()).pw_dir
 ASK_CODEX = "Codex found: manage its config too? [Y/n]"
-ASK_GSD = "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx get-shit-done-cc)? [Y/n]"
+ASK_GSD = "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx @opengsd/gsd-core)? [Y/n]"
 # What init runs for GSD: GSD's own installer, through pnpm, for Claude Code, global.
-GSD_DLX = "dlx get-shit-done-cc@latest --claude --global"
+GSD_DLX = "dlx @opengsd/gsd-core@latest --claude --global"
 
 
 def check(label, ok, detail=""):

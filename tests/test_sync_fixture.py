@@ -487,19 +487,10 @@ def unlogged(sb, before, after, logged):
 
 
 def changed_by_forge(before, after):
-    """changed(), less npm's own debug logs (~/.npm/_logs, from the gsd step's `npm root -g`) and the state
-    mise makes on its first run in a fresh HOME (session start's toolchain row runs `mise ls`): theirs, not forge's."""
-    return [p for p in changed(before, after) if not under(p, "home/.npm") and not under(p, "home/.local/state/mise")]
-
-
-def gsd_installed():
-    """(whether the gsd step can run here, why not): it stages the package with node."""
-    try:
-        base = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60).stdout.strip()
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return False, str(e)
-    ok = bool(shutil.which("node")) and os.path.isdir(os.path.join(base, "get-shit-done-cc"))
-    return ok, "" if ok else "no node, or no get-shit-done-cc under `npm root -g` (%s)" % base
+    """changed(), less npm's own debug logs (~/.npm/_logs, from `npm root -g`) and the state and cache
+    mise makes on its first run in a fresh HOME (session start's checks run `mise ls` and `mise where`): theirs, not forge's."""
+    return [p for p in changed(before, after) if not under(p, "home/.npm") and not under(p, "home/.local/state/mise")
+            and not under(p, "home/.cache/mise") and p != "home/.cache"]  # the directory mise made for its cache
 
 
 def session_cases(sb, check):
@@ -509,21 +500,13 @@ def session_cases(sb, check):
     path the manifest shows changed and the note names them, the second logs nothing and says
     nothing. A frozen project's session logs nothing, beside the unfrozen run that does."""
     outside = lambda logged: [p for p in logged if not p.startswith(sb.root + os.sep)]
-    gsd, why = gsd_installed()
-    check("the forge session start can run the gsd step (node and a global get-shit-done-cc)", gsd, why)
-    # npm_nag's once-a-day stamp, as if checked just now: in the empty network namespace its
-    # `npm view get-shit-done-cc version` runs to the 8 s timeout (measured 8.03 s, twice). Seeded
-    # here, not in Sandbox._home, because the dumped manifests walk home/ and the stamp holds a
-    # time. Measured on fresh sandboxes: the first forge session start took 15.6 s
-    # unseeded and 6.5 s seeded, and its write log differed only by the stamp's own line.
-    write(os.path.join(sb.home, ".cache", "forge", "gsd-stage", "NPM-CHECKED"), "%f ?\n" % time.time())
     # Links each step removes: relink's dangling mirror link and the native-memory link it severs,
     # and the codex mirror's link to a project skill that is gone.
     # (relink's two, which a session start no longer runs: they left for `forge skills`, and
     # scripts/sync/test_relink_skills.py owns them.)
     stale = {"forge": [],
              APP: [(os.path.join(sb.pp(APP), ".agents", "skills", "gone"), os.path.join("..", "..", ".claude", "skills", "gone"))]}
-    for proj in (["forge"] if gsd else []) + [APP]:
+    for proj in ("forge", APP):
         for link, target in stale[proj]:
             os.makedirs(os.path.dirname(link), exist_ok=True)
             os.symlink(target, link)
@@ -549,7 +532,7 @@ def session_cases(sb, check):
     # ("(content current, mode corrected to 600)").
     loose = {"forge": [os.path.join(sb.home, ".hindsight", "coding-agent.json")],
              APP: [sb.cjp, os.path.join(sb.pp(APP), ".codex", "config.toml")]}
-    for proj in (["forge"] if gsd else []) + [APP]:
+    for proj in ("forge", APP):
         for p in loose[proj]:
             os.chmod(p, 0o644)
         code, msg, logged, before, after = session_start(sb, proj)

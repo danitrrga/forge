@@ -41,7 +41,7 @@ HINDSIGHT = os.path.join(lib.HOME, ".hindsight", "coding-agent.json")
 GSD_DEFAULTS = os.path.join(lib.HOME, ".gsd", "defaults.json")
 CACHE = os.path.join(lib.HOME, ".cache", "forge")
 SKILL_DIRS = {"claude": os.path.join(lib.HOME, ".claude", "skills"), "codex": os.path.join(lib.CODEX_HOME, "skills")}
-GSD_REMOVE = "npx get-shit-done-cc@latest --claude --global --uninstall"
+GSD_REMOVE = "npx @opengsd/gsd-core@latest --claude --global --uninstall"
 SLP = os.path.join(".claude", "settings.local.json")
 
 

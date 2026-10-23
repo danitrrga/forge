@@ -63,7 +63,7 @@ put(os.path.join(root, "skills", "two", "NOTICE.md"),
 put(os.path.join(root, "skills", "three", "NOTICE.md"),
     "From the npm package pkg-x@6.5.0 (https://www.npmjs.com/package/pkg-x/v/6.5.0, dist.integrity sha512-abc==), skills/three.\n")
 put(os.path.join(root, "skills", "mine", "SKILL.md"), "forge's own\n")
-put(os.path.join(home, ".claude", "get-shit-done", "VERSION"), "1.42.3")
+put(os.path.join(home, ".claude", "gsd-core", "VERSION"), "1.42.3")
 put(os.path.join(root, "config", "mcp-registry.json"), json.dumps({"servers": {
     "pinned": {"command": "npx", "args": ["-y", "@scope/pkg-p@1.3.0"]},
     "floating": {"command": "npx", "args": ["-y", "@scope/pkg-f@latest", "--flag"]},
@@ -117,7 +117,7 @@ want("lock --apply writes the document, plugins in sorted order on disk", (code,
      (0, doc, ["alpha@market", "beta@market", "zeta@market"]))
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
 want("lock again: up to date", (code, "up to date" in out), (0, True))
-put(os.path.join(home, ".claude", "get-shit-done", "VERSION"), "1.43.0")
+put(os.path.join(home, ".claude", "gsd-core", "VERSION"), "1.43.0")
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
 want("lock after GSD moved: the dry-run names the change", (code, "gsd: 1.42.3 -> 1.43.0" in out), (0, True))
 
