@@ -1,5 +1,5 @@
 {
-  "_doc": "The template forge init copies for a new user: every third-party tool forge depends on and the Python libraries its scripts import. Copy it to config/toolchain.json and edit: `tools` are mise tool names (node, python, npm:<package>, pipx:<package>, http:<name> with an `options.url`, or a plain mise tool), `pip` are libraries scripts import under plain python3, `skills` are online skills (an entry names an `http:` tool of `tools`, with a checksum option, a path in its archive and a `license_file` of the archive (or a `license` line): forge skills copies the path into skills/<name> byte for byte and generates its NOTICE.md). `version` is an exact pin, `track` is latest (forge update follows upstream) or frozen, and `why` says what needs the entry. forge toolchain --fix writes ~/.config/mise/conf.d/forge.toml and ~/.default-python-packages from it and installs what is missing; mise keeps each tool in a directory that holds no node or python version, so an upgrade of either never removes one.",
+  "_doc": "The template forge init copies for a new user: every third-party tool forge depends on and the Python libraries its scripts import. Copy it to config/toolchain.json and edit: `tools` are mise tool names (node, python, npm:<package>, pipx:<package>, http:<name> with an `options.url`, or a plain mise tool), `pip` are libraries scripts import under plain python3, `skills` are online skills (an entry names an `http:` tool of `tools`, with a checksum option, a path in its archive and a `license_file` of the archive (or a `license` line): forge skills copies the path into skills/<name> byte for byte and generates its NOTICE.md). `version` is an exact pin, `track` is latest (forge update follows upstream) or frozen, and `why` says what needs the entry. forge toolchain --fix writes ~/.config/mise/conf.d/forge.toml and ~/.default-python-packages from it and installs what is missing; mise keeps each tool in a directory that holds no node or python version, so an upgrade of either never removes one. A tool with `when: {\"gsd_default\": \"graphify.enabled\"}` is installed, written to mise's file and checked only while that key of ~/.gsd/defaults.json (GSD's own global defaults) is the JSON true; off, it is a SKIP and is never installed or uninstalled.",
   "tools": [
     {
       "name": "node",
@@ -15,6 +15,14 @@
       "name": "npm:pnpm",
       "version": "10.32.1",
       "why": "the package manager of the Node projects"
+    },
+    {
+      "name": "pipx:graphifyy",
+      "version": "0.9.93",
+      "why": "the `graphify` command GSD's /gsd-graphify needs, installed only while graphify.enabled is true in ~/.gsd/defaults.json",
+      "when": {
+        "gsd_default": "graphify.enabled"
+      }
     }
   ],
   "skills": [],

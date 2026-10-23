@@ -151,7 +151,8 @@ def cmd_lock(a):
 def rows():
     """[(section, name, version)]: the mise pins of config/toolchain.json, then the lock's four sections."""
     manifest, _ = toolchain.entries()
-    out = [(sec, e["name"], e["version"]) for sec in toolchain.SECTIONS for e in manifest.get(sec, [])]
+    out = [(sec, e["name"], e["version"]) for sec in toolchain.SECTIONS for e in manifest.get(sec, [])
+           if sec != "tools" or toolchain.wanted(e)[0]]  # a tool whose GSD default is off is not installed
     lock = lib.read_json(path())
     for name, p in lock.get("plugins", {}).items():
         out.append(("plugins", name, p["version"] + (" (%s)" % p["sha"][:7] if p.get("sha") else "")))

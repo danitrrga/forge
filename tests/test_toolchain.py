@@ -151,8 +151,14 @@ class World:
     two generated files in the state `files` says: "current" (what toolchain.render_* makes of `doc`),
     None (absent), "stale" (forge's header over other content) or "foreign" (no header)."""
 
-    def __init__(self, base, doc, mise_have=None, pip_have=None, files="current", with_mise=True):
+    def __init__(self, base, doc, mise_have=None, pip_have=None, files="current", with_mise=True, gsd_defaults=None):
         self.base = base
+        os.makedirs(base, exist_ok=True)
+        # the user's GSD defaults (~/.gsd/defaults.json), which a tool's `when` reads; absent when None
+        self.gsd_defaults = os.path.join(base, "gsd-defaults.json")
+        if gsd_defaults is not None:
+            with open(self.gsd_defaults, "w") as fh:
+                fh.write(gsd_defaults if isinstance(gsd_defaults, str) else json.dumps(gsd_defaults))
         os.makedirs(os.path.join(base, "bin"), exist_ok=True)
         for name, body in (("mise", MISE_STUB), ("python3", PY_STUB)):
             if name == "mise" and not with_mise:
@@ -179,7 +185,17 @@ class World:
         self.mise_file = os.path.join(self.mise_dir, "conf.d", "forge.toml")
         self.pip_file = os.path.join(base, "default-python-packages")
         if files and isinstance(doc, dict):
-            texts = {"current": (toolchain.render_mise(doc.get("tools", [])), toolchain.render_pips(doc.get("pip", []))),
+            def _on(e):
+                try:  # a manifest with a bad `when` is a case of its own: the file is then rendered whole
+                    return toolchain.wanted(e)[0]
+                except (AttributeError, TypeError):
+                    return True
+            real_gd, toolchain.GSD_DEFAULTS = toolchain.GSD_DEFAULTS, self.gsd_defaults  # the `when` reads this world's
+            try:
+                on = [e for e in doc.get("tools", []) if _on(e)]
+            finally:
+                toolchain.GSD_DEFAULTS = real_gd
+            texts = {"current": (toolchain.render_mise(on), toolchain.render_pips(doc.get("pip", []))),
                      "stale": (HEADER + "[tools]\n", HEADER + "PyYAML==1.0\n"),
                      "foreign": ("[tools]\n", "left-pad==1\n")}[files]
             for p, text in zip((self.mise_file, self.pip_file), texts):
@@ -201,8 +217,9 @@ class World:
         `only_row`, forge doctor runs that CHECKS row alone: the others would ask the real machine."""
         env = self.env(**extra)
         saved = {k: os.environ.get(k) for k in env}
-        real = (toolchain.MANIFEST, cli.CHECKS, lib.may_write)
+        real = (toolchain.MANIFEST, cli.CHECKS, lib.may_write, getattr(toolchain, "GSD_DEFAULTS", None))
         toolchain.MANIFEST = self.config
+        toolchain.GSD_DEFAULTS = self.gsd_defaults
         lib.may_write = lambda: may_write
         if only_row:
             cli.CHECKS = [r for r in cli.CHECKS if r[0] == only_row]
@@ -219,7 +236,7 @@ class World:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
-            toolchain.MANIFEST, cli.CHECKS, lib.may_write = real
+            toolchain.MANIFEST, cli.CHECKS, lib.may_write, toolchain.GSD_DEFAULTS = real
         return code, out.getvalue().splitlines()
 
     def installs(self):
@@ -265,6 +282,64 @@ PIP_ALL = "python3 -m pip install --disable-pip-version-check PyYAML==6.0.3 goog
 def render_cases():
     want("render_mise = the golden text", toolchain.render_mise(DOC["tools"]), MISE_GOLDEN)
     want("render_pips = the golden text", toolchain.render_pips(DOC["pip"]), PIP_GOLDEN)
+
+
+GRAPH = {"name": "pipx:graphifyy", "version": "0.9.93", "why": "w", "when": {"gsd_default": "graphify.enabled"}}
+DOC_G = {"tools": DOC["tools"] + [GRAPH], "pip": DOC["pip"]}
+GRAPH_ON = {"graphify": {"enabled": True}}
+
+
+def when_cases(tmp):
+    """A tool with `when: {"gsd_default": "graphify.enabled"}` is installed, written to mise's file and checked only while the
+    user's GSD defaults (~/.gsd/defaults.json) hold that key as the JSON true: graphify (the `graphifyy` package, which
+    GSD's /gsd-graphify needs) comes with mise but only for a user who turned it on (Daniel, 2026-10-23). Off, the entry is a
+    SKIP that says NOT RUN, NOT ARMED, never a FAIL, never in the file, never installed, and never uninstalled when it is
+    already there. Seen failing on 3c608bc: "when off: pipx:graphifyy = ... FAIL missing, pinned 0.9.93" (the old check
+    knew no `when`) and "when: a manifest with a bad when: ... want a FAIL naming `when`"."""
+    n = [0]
+
+    def world(*a, **k):
+        n[0] += 100
+        return World(os.path.join(tmp, "when%d" % n[0]), *a, **k)
+
+    for label, defaults in (("no defaults file", None), ("graphify off", {"graphify": {"enabled": False}}),
+                            ("the string true", {"graphify": {"enabled": "true"}}), ("an empty object", {})):
+        w = world(DOC_G, ALL_TOOLS, ALL_PIP, gsd_defaults=defaults)
+        code, lines = w.run("toolchain")
+        got = line_of(lines, "pipx:graphifyy")
+        want("when off (%s): exit 0, a SKIP that says NOT RUN, NOT ARMED" % label,
+             (code, got.startswith("SKIP"), "NOT RUN, NOT ARMED" in got), (0, True, True))
+        want("when off (%s): the rest passes and mise's file lacks the tool" % label,
+             (levels(lines), "graphifyy" in (w.read(w.mise_file) or "")), (ALL, False))
+        code, lines = w.run("toolchain", "--fix")
+        want("when off (%s): --fix installs nothing" % label, (code, w.installs()), (0, []))
+
+    w = world(DOC_G, ALL_TOOLS, ALL_PIP, gsd_defaults={})
+    code, lines = w.run("doctor", only_row="toolchain")
+    want("when off: the doctor row says how many it looked at and what is off",
+         (code, any(l.startswith("PASS") and "3 tool(s), 2 pip package(s), 2 file(s), 1 off by a GSD default: pipx:graphifyy" in l for l in lines)), (0, True))
+
+    # on and missing: a FAIL naming the pin, --fix installs it with the rest in one call and writes it to the file
+    w = world(DOC_G, ALL_TOOLS, ALL_PIP, files=None, gsd_defaults=GRAPH_ON)
+    code, lines = w.run("toolchain")
+    want("when on, missing = (exit, level, detail)", (code, levels(lines).get("pipx:graphifyy"), line_of(lines, "pipx:graphifyy").endswith("missing, pinned 0.9.93")), (1, "FAIL", True))
+    code, lines = w.run("toolchain", "--fix")
+    want("when on: --fix installs it", (code, w.installs()), (0, ["mise install pipx:graphifyy@0.9.93"]))
+    want("when on: the file holds it", '"pipx:graphifyy" = "0.9.93"' in (w.read(w.mise_file) or ""), True)
+
+    # on and present: PASS. Off again while installed: a SKIP, the file loses the line, nothing is uninstalled.
+    w = world(DOC_G, dict(ALL_TOOLS, **{"pipx:graphifyy": "0.9.93"}), ALL_PIP, gsd_defaults=GRAPH_ON)
+    code, lines = w.run("toolchain")
+    want("when on, installed = (exit, level)", (code, levels(lines).get("pipx:graphifyy")), (0, "PASS"))
+    w = world(DOC_G, dict(ALL_TOOLS, **{"pipx:graphifyy": "0.9.93"}), ALL_PIP, files="current", gsd_defaults={})
+    code, lines = w.run("toolchain", "--fix")
+    want("when off but installed: --fix removes nothing", (code, [c for c in open(w.log) if "uninstall" in c or " rm " in c]), (0, []))
+
+    # a `when` that is not {"gsd_default": "<key>"} is a manifest error, named
+    for bad in ({"nope": "x"}, {"gsd_default": ""}, "graphify", {"gsd_default": "a", "x": 1}):
+        w = world(dict(DOC_G, tools=DOC["tools"] + [dict(GRAPH, when=bad)]), ALL_TOOLS, ALL_PIP, gsd_defaults=GRAPH_ON)
+        code, lines = w.run("toolchain")
+        want("when: a bad when %r = (exit, a FAIL naming `when`)" % (bad,), (code, any(l.startswith("FAIL") and "when" in l for l in lines)), (1, True))
 
 
 def check_cases(tmp):
@@ -520,6 +595,7 @@ def main():
         file_cases(REAL, "this machine's")
     render_cases()
     check_cases(tmp)
+    when_cases(tmp)
     row_cases(tmp)
     for msg in failures:
         print("FAIL", msg)
