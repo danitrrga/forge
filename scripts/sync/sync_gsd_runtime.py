@@ -2,8 +2,9 @@
 """Regenerate the whole GSD surface from the npm package, with forge's edits re-applied.
 
 WHAT THIS REPLACES
-  GSD ships as `get-shit-done-cc` on npm. Its own installer writes the agents
-  (~/.claude/agents/gsd-*.md), the engine (~/.claude/get-shit-done/) and its skills
+  GSD ships as `@opengsd/gsd-core` on npm (the archived `get-shit-done-cc` before 2026-10), installed by mise
+  as the `npm:@opengsd/gsd-core` tool of config/toolchain.json. Its own installer writes the agents
+  (~/.claude/agents/gsd-*.md), the engine (~/.claude/gsd-core/) and its skills
   (~/.claude/skills/gsd-*/SKILL.md). Three things make running that installer against the real
   ~/.claude unacceptable here, all verified:
 
@@ -45,12 +46,9 @@ WHAT FORGE OWNS ON TOP
     `agent_skills` injection cannot carry agent-reach either -- `global:agent-reach` resolves the
     symlink and its path check rejects anything outside ~/.claude/skills ("Path escapes allowed
     directory", measured).
-  * planner Edit tool -- gsd-planner is given `Read, Write, Bash, ...` without Edit, so revising
-    a PLAN.md meant rewriting it whole or scripting the change: in one project the planner wrote
-    56 files and 224 inline scripts outside the repo in 30 days, among them wave-renumbering
-    scripts over 22 PLAN.md files. With Edit it changes the lines it means to.
-  * npm package name -- the config skill prints `npm i -g get-shit-done` as the install hint.
-    The package is `get-shit-done-cc`.
+  * (retired with gsd-core 1.18: the planner now has Edit, and the config skill names the right package.)
+  * MemPalace -- the context router sends two rows to gsd-mempalace-*, skills of a memory product forge does
+    not run (Hindsight is its memory), so those rows go, as the graphify one did.
   * update route -- the update skill is rewritten to run the procedure below instead of the
     installer, for reason 1 above.
 
@@ -63,10 +61,11 @@ bug would have come back unnoticed. The file that patch belongs to is not writte
 copy already on disk stays until the anchor is re-derived.
 
 UPDATING GSD
-  npm install -g get-shit-done-cc@latest
-  python3 scripts/sync/sync_gsd_runtime.py --skills            # dry-run: what changes, what is new
-  python3 scripts/sync/sync_gsd_runtime.py --skills --apply    # write agents, engine, forge skills
-  python3 scripts/sync/sync_skill_keep.py --apply && python3 scripts/sync/sync_agent_config.py --apply
+  # set the new version of npm:@opengsd/gsd-core in config/toolchain.json, then:
+  python3 bin/forge toolchain --fix                            # mise installs it
+  python3 bin/forge skills                                     # dry-run: what changes, what is new
+  python3 bin/forge skills --apply                             # write agents, engine, forge skills
+  python3 bin/forge sync --apply --all
 
 USAGE
   python3 scripts/sync/sync_gsd_runtime.py            # dry-run: agents + engine + checks
@@ -90,7 +89,8 @@ sys.path.insert(0, ROOT)
 from forge import lib  # noqa: E402
 HOME = lib.HOME
 AGENTS_DIR = os.path.join(HOME, ".claude", "agents")
-GSD_DIR = os.path.join(HOME, ".claude", "get-shit-done")
+PACKAGE = "@opengsd/gsd-core"
+GSD_DIR = os.path.join(HOME, ".claude", "gsd-core")
 SKILLS_MIRROR = os.path.join(HOME, ".claude", "skills")
 FORGE_SKILLS = os.path.join(ROOT, "skills")
 BLOCKS = os.path.join(ROOT, "config", "gsd")
@@ -156,31 +156,10 @@ libraries, ecosystem exploration. Read the full routing table (Reddit, X, YouTub
 Announce the route ("agent-reach → exa") and never silently substitute one source for another.
 """
 
-PROJECT_RESEARCHER_OLD = """### Exa Semantic Search (MCP)
-
-Check `exa_search` from orchestrator context. If `true`, use Exa for research-heavy, semantic queries:
-
-```
-mcp__exa__web_search_exa with query: "your semantic query"
-```
-
-**Best for:** Research questions where keyword search fails — "best approaches to X", finding technical/academic content, discovering niche libraries, ecosystem exploration. Returns semantically relevant results rather than keyword matches.
-
-If `exa_search: false` (or not set), fall back to WebSearch or Brave Search.
-"""
-
-PHASE_RESEARCHER_OLD = """### Exa Semantic Search (MCP)
-
-Check `exa_search` from init context. If `true`, use Exa for semantic, research-heavy queries:
-
-```
-mcp__exa__web_search_exa with query: "your semantic query"
-```
-
-**Best for:** Research questions where keyword search fails — "best approaches to X", finding technical/academic content, discovering niche libraries. Returns semantically relevant results.
-
-If `exa_search: false` (or not set), fall back to WebSearch or Brave Search.
-"""
+# gsd-core 1.18 replaced the "Exa Semantic Search (MCP)" section with a fetch plan (`gsd_run query research-plan`)
+# whose provider table ends in this line, in both researchers; Exa is still only a provider when the exa_search
+# flag is true, which needs a key, so the routing block goes right after it.
+RESEARCHER_TABLE_END = "For any other provider id `X` not listed above: use `mcp__X__*` if available, else fall back to `WebSearch`."
 
 UI_RESEARCHER_OLD = (
     "**Exa/Firecrawl:** Check `exa_search` and `firecrawl` from orchestrator context. "
@@ -196,20 +175,15 @@ UI_RESEARCHER_NEW = (
     "WebSearch/WebFetch."
 )
 
-PLANNER_TOOLS_OLD = "tools: Read, Write, Bash, Glob, Grep, WebFetch, mcp__context7__*"
-PLANNER_TOOLS_NEW = "tools: Read, Write, Edit, Bash, Glob, Grep, WebFetch, mcp__context7__*"
-
 AGENT_PATCHES = {
-    "gsd-planner.md": [("planner-edit", "replace", PLANNER_TOOLS_OLD, PLANNER_TOOLS_NEW)],
     "gsd-doc-classifier.md": [("classifier-hash", "replace", CLASSIFIER_OLD, CLASSIFIER_NEW)],
-    "gsd-project-researcher.md": [("reach-routing", "replace", PROJECT_RESEARCHER_OLD, REACH_BLOCK)],
-    "gsd-phase-researcher.md": [("reach-routing", "replace", PHASE_RESEARCHER_OLD, REACH_BLOCK)],
+    "gsd-project-researcher.md": [("reach-routing", "replace", RESEARCHER_TABLE_END, RESEARCHER_TABLE_END + "\n\n" + REACH_BLOCK)],
+    "gsd-phase-researcher.md": [("reach-routing", "replace", RESEARCHER_TABLE_END, RESEARCHER_TABLE_END + "\n\n" + REACH_BLOCK)],
     "gsd-ui-researcher.md": [("reach-routing", "replace", UI_RESEARCHER_OLD, UI_RESEARCHER_NEW)],
 }
 
 INGEST_OLD = """Per-spawn prompt fields:
 - `FILEPATH` — absolute path to the doc
-- `OUTPUT_DIR` — `.planning/intel/classifications/`
 """
 INGEST_NEW = """Before spawning, compute one collision-proof suffix per doc — the classifier
 has no shell and cannot do this itself:
@@ -222,7 +196,6 @@ done
 
 Per-spawn prompt fields:
 - `FILEPATH` — absolute path to the doc
-- `OUTPUT_DIR` — `.planning/intel/classifications/`
 - `SOURCE_HASH` — the 8-hex-char suffix computed above for THIS doc. Mandatory: without it
   two `README.md` files from different folders write the same classification file and one
   silently overwrites the other.
@@ -250,23 +223,20 @@ Run this instead, from the forge checkout (the directory that holds `bin/forge`)
 what it prints:
 
 ```bash
-npm install -g get-shit-done-cc@latest
-python3 scripts/sync/sync_gsd_runtime.py --skills
-python3 scripts/sync/sync_gsd_runtime.py --skills --apply
-python3 scripts/sync/sync_skill_keep.py --apply
-python3 scripts/sync/sync_agent_config.py --apply
+# set the new version of npm:@opengsd/gsd-core in config/toolchain.json, then:
+python3 bin/forge toolchain --fix
+python3 bin/forge skills
+python3 bin/forge skills --apply
+python3 bin/forge sync --apply --all
 ```
 
-That installs the package, regenerates agents, engine and skills from it, re-applies forge's
+That installs the package through mise, regenerates agents, engine and skills from it, re-applies forge's
 patches, and names the upstream skills that are new since last time. Everything below this
 paragraph describes the upstream flow and is kept for reference only — do not execute it.
 
 Original objective: check for GSD updates, install if available, and display what changed."""
 
 SKILL_PATCHES = {
-    "gsd-config": [("npm-package-name", "replace",
-                    "Install GSD via 'npm i -g get-shit-done'",
-                    "Install GSD via 'npm i -g get-shit-done-cc'")],
     "gsd-update": [("forge-update-route", "replace", UPDATE_OLD, UPDATE_NEW)],
     # Claude Code 2.1.268 stopped offering TodoWrite on current models unless
     # CLAUDE_CODE_ENABLE_TODO_TOOLS=1, so the entry is dead (031aa98). The neighbours are in the
@@ -279,14 +249,21 @@ SKILL_PATCHES = {
     # reads as applied.
     "gsd-ns-context": [
         ("no-graphify-description", "replace",
-         'description: "codebase intelligence | map graphify docs learnings"',
-         'description: "codebase intelligence | map docs learnings"'),
+         'description: "codebase intel | map graphify docs learnings mempalace"',
+         'description: "codebase intel | map docs learnings"'),
         ("no-graphify-row", "replace",
          "| Query mapped intelligence files | gsd-map-codebase --query |\n"
          "| Generate a knowledge graph | gsd-graphify |\n"
          "| Update project documentation | gsd-docs-update |\n",
          "| Query mapped intelligence files | gsd-map-codebase --query |\n"
          "| Update project documentation | gsd-docs-update |\n"),
+        # The MemPalace skills belong to a memory product forge does not run (Hindsight is its memory). The
+        # extract-learnings row is in the anchor and the payload so the payload is no substring of upstream.
+        ("no-mempalace-rows", "replace",
+         "| Extract learnings from a completed phase | gsd-extract-learnings |\n"
+         "| Recall prior decisions and patterns before planning | gsd-mempalace-recall |\n"
+         "| File a phase artifact into MemPalace | gsd-mempalace-capture |\n\n",
+         "| Extract learnings from a completed phase | gsd-extract-learnings |\n\n"),
     ],
 }
 
@@ -310,17 +287,20 @@ def listdir(path):
 
 
 def package_root():
-    """Where npm put get-shit-done-cc. `npm root -g` rather than a fixed path: mise switches node
-    versions and a hardcoded path goes stale on the next node upgrade."""
-    try:
-        out = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60)
-        base = out.stdout.strip()
-    except Exception:
-        base = ""
-    pkg = os.path.join(base, "get-shit-done-cc") if base else ""
-    if not pkg or not os.path.isdir(pkg):
-        sys.exit("! get-shit-done-cc not found under `npm root -g` (%s) -- is GSD installed?" % base)
-    return pkg
+    """Where `@opengsd/gsd-core` is installed: under the directory mise gives its `npm:` tool
+    (`mise where`, node_modules/@opengsd/gsd-core in it), else under `npm root -g`. Neither is a fixed
+    path: mise switches node versions, and a path baked in goes stale on the next bump."""
+    for cmd, sub in ((["mise", "where", "npm:" + PACKAGE], os.path.join("node_modules", PACKAGE)),
+                     (["npm", "root", "-g"], PACKAGE)):
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=60).stdout.strip()
+        except Exception:
+            out = ""
+        pkg = os.path.join(out, sub) if out else ""
+        if pkg and os.path.isfile(os.path.join(pkg, "package.json")):
+            return pkg
+    sys.exit("! %s not found under mise or `npm root -g` -- run `forge toolchain --fix` (config/toolchain.json lists npm:%s)"
+             % (PACKAGE, PACKAGE))
 
 
 def package_version(pkg):
@@ -531,7 +511,7 @@ def check_skill_refs(errors):
         if not os.path.exists(p):
             continue
         body = read(p)
-        for wf in set(re.findall(r"@\$HOME/\.claude/get-shit-done/([A-Za-z0-9_./-]+\.md)", body)):
+        for wf in set(re.findall(r"@\$HOME/\.claude/gsd-core/([A-Za-z0-9_./-]+\.md)", body)):
             if not os.path.exists(os.path.join(GSD_DIR, wf)):
                 missing_wf.append("%s -> %s" % (name, wf))
         # A routing table's action column: `| ... | gsd-foo |`. Prose mentions are deliberately
@@ -564,7 +544,7 @@ def check_skill_refs(errors):
 
 def npm_latest(timeout=60):
     try:
-        r = subprocess.run(["npm", "view", "get-shit-done-cc", "version"],
+        r = subprocess.run(["npm", "view", PACKAGE, "version"],
                            capture_output=True, text=True, timeout=timeout)
         return r.stdout.strip() or "?"
     except Exception:
@@ -675,8 +655,8 @@ def main():
     changes = sync_tree(os.path.join(STAGE, "agents"), AGENTS_DIR, AGENT_PATCHES,
                         "GSD agents (~/.claude/agents)", errors,
                         only=lambda rel: rel.startswith("gsd-") and rel.endswith(".md"))
-    changes += sync_tree(os.path.join(STAGE, "get-shit-done"), GSD_DIR, ENGINE_PATCHES,
-                         "GSD engine (~/.claude/get-shit-done)", errors)
+    changes += sync_tree(os.path.join(STAGE, "gsd-core"), GSD_DIR, ENGINE_PATCHES,
+                         "GSD engine (~/.claude/gsd-core)", errors)
     changes += sync_defaults(errors)
     if DO_SKILLS:
         changes += sync_skills(errors)

@@ -121,8 +121,8 @@ check("gsd differs: lib.run was given something, and never --apply", bool(ran) a
 msg, ran, _ = session(gsd_exit=0)
 check("gsd in sync and toolchain passing: silent", msg == "", "message %r" % msg)
 
-msg, ran, _ = session(gsd_exit=1, gsd_out="! get-shit-done-cc not found under `npm root -g` (/x) -- is GSD installed?\nnoise\n")
-check("gsd check failed: its '!' line and forge skills, once", msg.count("get-shit-done-cc not found") == 1 and "forge skills" in msg and "noise" not in msg,
+msg, ran, _ = session(gsd_exit=1, gsd_out="! @opengsd/gsd-core not found under mise or `npm root -g` -- run `forge toolchain --fix`\nnoise\n")
+check("gsd check failed: its '!' line and forge skills, once", msg.count("@opengsd/gsd-core not found") == 1 and "forge skills" in msg and "noise" not in msg,
       "message %r" % msg)
 
 msg, ran, _ = session(gsd_exit=2, gsd_on=False)

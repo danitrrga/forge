@@ -75,7 +75,7 @@ _CODE_ROWS = [
      "gsd-read-injection-scanner.js", "Read", BOTH),
 
     # GSD output discipline: names the thing, and cuts repetition. The two rules live in
-    # ~/.claude/get-shit-done/references/mandatory-initial-read.md, imported by the five GSD
+    # ~/.claude/gsd-core/references/mandatory-initial-read.md, imported by the five GSD
     # agents that write documents; that is doctrine competing with everything else in context,
     # and a stated rule fails exactly under pressure, which is when it matters.
     # It measures only the two mechanical failures on the text just written: an identifier

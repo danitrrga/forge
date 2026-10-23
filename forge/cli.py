@@ -529,7 +529,7 @@ def _codex_missing():
 
 def _gsd_tool():
     """The tool GSD's install needs: npm for forge's patched copy (sync_gsd_runtime.py), pnpm for the
-    unpatched one forge init installs with `pnpm dlx get-shit-done-cc`."""
+    unpatched one forge init installs with `pnpm dlx @opengsd/gsd-core`."""
     return "npm" if lib.gsd_patched() else "pnpm"
 
 
@@ -1242,11 +1242,11 @@ EXAMPLES = os.path.join(lib.ROOT, "examples")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # What init asks about, and what it asks. The others are switched on by hand with --with.
 QUESTIONS = {"codex": "Codex found: manage its config too? [Y/n]",
-             "gsd": "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx get-shit-done-cc)? [Y/n]"}
+             "gsd": "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx @opengsd/gsd-core)? [Y/n]"}
 # GSD's own installer, run by init through pnpm: the package's README names npx
-# get-shit-done-cc [options] and bin/install.js's --help lists `--claude` (Claude Code only) and `-g, --global`
+# @opengsd/gsd-core [options] and bin/install.js's --help lists `--claude` (Claude Code only) and `-g, --global`
 # (the config directory); with a runtime and a location given it asks nothing.
-GSD_INSTALL = ["pnpm", "dlx", "get-shit-done-cc@latest", "--claude", "--global"]
+GSD_INSTALL = ["pnpm", "dlx", "@opengsd/gsd-core@latest", "--claude", "--global"]
 # Local, never shared: the data history must not take a secret or a file the generators rewrite.
 DATA_EXCLUDE = ("credentials/", "config/secrets.json", "config/secrets.*.json", ".claude/settings.local.json", ".claude/AGENT-SYSTEM.md", ".codex/", ".mcp.json", "*.bak")
 

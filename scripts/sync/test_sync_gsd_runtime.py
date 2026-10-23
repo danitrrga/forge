@@ -245,21 +245,23 @@ def skills_control(failures):
                         % (exc, errors, n, read(p)))
 
 
-NS_DESC = 'description: "codebase intelligence | map docs learnings"'
+NS_DESC = 'description: "codebase intel | map docs learnings"'
+NS_LAST = "| Extract learnings from a completed phase | gsd-extract-learnings |\n\n"
 NS_ROW = "| Query mapped intelligence files | gsd-map-codebase --query |\n"
 TOY_NS_CONTEXT = ("---\nname: gsd-ns-context\n" + NS_DESC + "\n---\n\n| Task | Skill |\n|---|---|\n" + NS_ROW
-                  + "| Update project documentation | gsd-docs-update |\n")
+                  + "| Update project documentation | gsd-docs-update |\n" + NS_LAST + "Invoke the matched skill.\n")
 
 
 def ns_context_setup(name):
-    """Upstream gsd-ns-context is forge's copy with the two graphify lines put back (the measured
-    difference against GSD 1.42.3). forge's copy is the real file in this checkout where it has
-    one, and TOY_NS_CONTEXT, which holds the two patched spots, where skills/ is private and absent:
-    red before, on a copy_engine copy in a toy HOME (M1), "AttributeError: 'NoneType' object has no
-    attribute 'replace'" on the missing file's read."""
-    forge_text = read(os.path.join(FORGE, "skills", "gsd-ns-context", "SKILL.md")) or TOY_NS_CONTEXT
-    staged = forge_text.replace(NS_DESC, 'description: "codebase intelligence | map graphify docs learnings"')
+    """Upstream gsd-ns-context (gsd-core 1.18) is the patched text with the graphify description token, the
+    graphify row and the two MemPalace rows put back (measured against 1.18.0). The patched text is TOY_NS_CONTEXT,
+    which holds the four spots, never the real file: that one is data and changes with every regeneration (this
+    case once read it, and read the 1.42.3 text after the migration)."""
+    forge_text = TOY_NS_CONTEXT
+    staged = forge_text.replace(NS_DESC, 'description: "codebase intel | map graphify docs learnings mempalace"')
     staged = staged.replace(NS_ROW, NS_ROW + "| Generate a knowledge graph | gsd-graphify |\n")
+    staged = staged.replace(NS_LAST, NS_LAST[:-1] + "| Recall prior decisions and patterns before planning | gsd-mempalace-recall |\n"
+                            "| File a phase artifact into MemPalace | gsd-mempalace-capture |\n\n")
     d = case_dir(name)
     gsd.STAGE = os.path.join(d, "stage", "cfg")
     gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
@@ -616,10 +618,9 @@ def defaults_gsd_reads(failures):
     node or the installed package is missing. Red before the copy existed: with sync_defaults
     absent the first half raises AttributeError (the file is never made)."""
     try:
-        base = subprocess.run(["npm", "root", "-g"], capture_output=True, text=True, timeout=60).stdout.strip()
-    except Exception:
-        base = ""
-    pkg_cfg = os.path.join(base, "get-shit-done-cc", "get-shit-done", "bin", "lib", "config.cjs") if base else ""
+        pkg_cfg = os.path.join(gsd.package_root(), "gsd-core", "bin", "lib", "config.cjs")
+    except SystemExit:
+        pkg_cfg = ""
     node = shutil.which("node")
     if not node or not os.path.isfile(pkg_cfg):
         print("SKIP defaults_gsd_reads: node %s, package config.cjs %s" % (node, pkg_cfg or "not found"))
@@ -805,12 +806,111 @@ def check_mode(failures):
         DRY_OK = False
 
 
+def package_location(failures):
+    """package_root() finds `@opengsd/gsd-core` where mise installed it (`mise where npm:@opengsd/gsd-core`, then
+    node_modules/@opengsd/gsd-core under it), else under `npm root -g`, else exits naming the package and the fix.
+    `mise` and `npm` are scripts of the case on PATH, so neither the machine's mise nor its npm answers. Seen failing on
+    43a581a, which looks for get-shit-done-cc under `npm root -g` alone: "package location: mise knows it: returned
+    SystemExit: ! get-shit-done-cc not found under `npm root -g` (<toy>/npm-root) -- is GSD installed?" (and the
+    same for the other two cases)."""
+    d = case_dir("package-location")
+    pkg_rel = os.path.join("node_modules", "@opengsd", "gsd-core")
+    mise_dir, npm_root = os.path.join(d, "mise-install"), os.path.join(d, "npm-root")
+    write(os.path.join(mise_dir, pkg_rel, "package.json"), '{"version": "1.0.0"}')
+    write(os.path.join(npm_root, "@opengsd", "gsd-core", "package.json"), '{"version": "1.0.0"}')
+    bindir = os.path.join(d, "bin")
+
+    def tools(mise_answer, npm_answer):
+        write(os.path.join(bindir, "mise"), "#!/bin/sh\n%s\n" % (
+            'echo "%s"' % mise_answer if mise_answer else 'echo "mise ERROR not installed" >&2; exit 1'))
+        write(os.path.join(bindir, "npm"), "#!/bin/sh\necho '%s'\n" % npm_answer)
+        for n in ("mise", "npm"):
+            os.chmod(os.path.join(bindir, n), 0o755)
+    real_path = os.environ["PATH"]
+    os.environ["PATH"] = bindir + os.pathsep + real_path
+    try:
+        for label, mise_answer, npm_answer, want in (
+                ("mise knows it", mise_dir, os.path.join(d, "empty"), os.path.join(mise_dir, pkg_rel)),
+                ("only npm root -g has it", None, npm_root, os.path.join(npm_root, "@opengsd", "gsd-core")),
+                ("neither has it", None, os.path.join(d, "empty"), None)):
+            tools(mise_answer, npm_answer)
+            try:
+                got = gsd.package_root()
+            except SystemExit as e:
+                got = str(e)
+            if want is None:
+                if not (isinstance(got, str) and "@opengsd/gsd-core" in got and "forge toolchain --fix" in got):
+                    failures.append("package location: %s: returned %r, want an exit naming the package and `forge toolchain --fix`" % (label, got))
+            elif got != want:
+                failures.append("package location: %s: returned %r, want %r" % (label, got, want))
+    finally:
+        os.environ["PATH"] = real_path
+
+
+def real_package(failures):
+    """Against the real `@opengsd/gsd-core` (staged by its own installer into a toy dir; skipped, with a printed
+    line, when the package, node or the installer's output is missing): every patch's anchor matches the staged text and
+    changes it, and every agent Ponytail's subagent hook gives its ruleset to (hooks/ponytail_subagent.py AGENTS)
+    exists, so a rename upstream cannot switch Ponytail off in silence. Seen failing on 43a581a, whose patches were
+    written for get-shit-done-cc 1.42.3: "real package: gsd-planner.md: anchor for patch 'planner-edit' no longer
+    matches upstream" and four more (reach-routing twice, classifier-hash-dispatch, npm-package-name, no-graphify)."""
+    try:
+        pkg = gsd.package_root()
+    except SystemExit as e:
+        print("SKIP real_package: NOT RUN, NOT ARMED: %s" % e)
+        return
+    if not shutil.which("node"):
+        print("SKIP real_package: NOT RUN, NOT ARMED: no node")
+        return
+    d = case_dir("real-package")
+    saved = {n: getattr(gsd, n) for n in ("STAGE_ROOT", "STAGE", "STAMP", "BLOCKS")}
+    gsd.BLOCKS = os.path.join(FORGE, "config", "gsd")  # the real prose payloads: the patches are the real ones
+    gsd.STAGE_ROOT = os.path.join(d, "stage-root")
+    gsd.STAGE, gsd.STAMP = os.path.join(gsd.STAGE_ROOT, "cfg"), os.path.join(gsd.STAGE_ROOT, "STAGED-VERSION")
+    try:
+        os.makedirs(gsd.STAGE_ROOT)
+        guard_ok = os.path.realpath(gsd.STAGE).startswith(TOY + os.sep)
+        if not guard_ok:
+            sys.exit("FAIL harness: the staging dir is outside the toy root")
+        gsd.stage(pkg, gsd.package_version(pkg))
+        errors = []
+        for kind, patches, base, path in (("agents", gsd.AGENT_PATCHES, "agents", "%s"), ("engine", gsd.ENGINE_PATCHES, "gsd-core", "%s"),
+                                          ("skills", REAL_PATCHES, "skills", "%s/SKILL.md")):
+            for name, plist in patches.items():
+                src = os.path.join(gsd.STAGE, base, path % name)
+                if not os.path.isfile(src):
+                    failures.append("real package: %s %s is not in the staged package" % (kind, name))
+                    continue
+                before = len(errors)
+                staged = gsd.normalize(read(src))
+                got = gsd.apply_patches(staged, name, plist, errors)
+                if len(errors) == before and got == staged:
+                    failures.append("real package: %s: patches %s change nothing, so they are retired or already upstream"
+                                    % (name, [p[0] for p in plist]))
+        failures += ["real package: " + e for e in errors]
+        router = gsd.apply_patches(gsd.normalize(read(os.path.join(gsd.STAGE, "skills", "gsd-ns-context", "SKILL.md"))),
+                                   "gsd-ns-context", REAL_PATCHES["gsd-ns-context"], [])
+        dangling = [n for n in ("gsd-graphify", "gsd-mempalace-recall", "gsd-mempalace-capture") if n in router]
+        if dangling:
+            failures.append("real package: the patched gsd-ns-context still routes to %s, skills forge does not ship" % dangling)
+        spec = importlib.util.spec_from_file_location("ponytail_subagent", os.path.join(FORGE, "hooks", "ponytail_subagent.py"))
+        ponytail = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(ponytail)
+        agents = {f[:-3] for f in os.listdir(os.path.join(gsd.STAGE, "agents")) if f.endswith(".md")}
+        if not ponytail.AGENTS or ponytail.AGENTS - agents:
+            failures.append("real package: Ponytail's agents %s are not all staged agents (missing %s)"
+                            % (sorted(ponytail.AGENTS), sorted(ponytail.AGENTS - agents)))
+    finally:
+        for n, v in saved.items():
+            setattr(gsd, n, v)
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, npm_nag_throttle, skills_ns_context, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package)
     for case in cases:
         case(failures)
     for msg in failures:
