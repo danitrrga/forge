@@ -2,8 +2,8 @@
 """forge doctor row `project roots`: a project that lives inside another profile's git repository and has skills of its
 own is a FAIL. Why: forge switches an enclosing project's neighbours' skills off in its settings (skills.neighbour_skills),
 Claude Code applies those settings inside the nested directory too, and an inner "on" does not override an outer "off"
-(tested 2026-10-23 with claude -p on a toy tree: parent off + child on, in settings.local.json and in settings.json, the
-child's skill stayed hidden). The learn vault inside LifeOS lost /teach and five more skills that way. The standard is one
+(tested with claude -p on a toy tree: parent off + child on, in settings.local.json and in settings.json, the
+child's skill stayed hidden). A vault nested inside another project's repository lost six of its skills that way. The standard is one
 git repository per project: `git init` in the nested directory, ignored by the outer repository.
 
 Toy projects under /tmp with real `git init`s. The row is the function cli.nested_project_roots(only, profs).

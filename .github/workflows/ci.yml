@@ -70,7 +70,7 @@ jobs:
       # line for it, would scan itself clean. The three files are copied from the commit the
       # range starts at into a directory outside the workspace, and the container is given that
       # directory and the repo's .git, never the checkout: a --config or --baseline-path flag
-      # alone left the checkout's .gitleaksignore in force (measured with this image, 2026-10-08).
+      # alone left the checkout's .gitleaksignore in force (measured with this image).
       # A base without a config gets the default rules, passed explicitly. With no base there is
       # nothing to trust, and the head's own files are used.
       - name: gitleaks, new commits

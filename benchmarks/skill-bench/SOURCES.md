@@ -1,6 +1,6 @@
 # Public sources for skill-bench
 
-Researched 2026-10-23 (licences read on each repo or dataset card; "unknown" means none was found, never a guess).
+Researched in October 2026 (licences read on each repo or dataset card; "unknown" means none was found, never a guess).
 The rule is **public first**: a task whose gold answer and tests come from a vetted public benchmark beats one we write.
 Authored tasks (`source.kind: authored`) cover only what no public set does, and are listed under "Gaps".
 Datasets are never committed: `source.ref` + `source.license` in a task say where it came from.

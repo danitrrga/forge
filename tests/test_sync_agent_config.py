@@ -1202,7 +1202,7 @@ for label, prof, want, summary in (
 # ['python3 .../hooks/gsd_output_discipline.py'], SessionEnd left ['python3 .../hooks/gsd_output_discipline.py',
 # 'some-foreign-hook --flag']" (the UserPromptSubmit row still existed, so the stray copy was only a
 # duplicate; the SessionEnd entry, on an event with no row, survived). The event was PreCompact until gsd-core's
-# context monitor got a row there (2026-10-23): a stray on an event WITH a row is the other case, tested above.
+# context monitor got a row there: a stray on an event WITH a row is the other case, tested above.
 GSD_CMD = "python3 %s/gsd_output_discipline.py" % hooks.HOOK_DIR
 for agent in (hooks.CLAUDE, hooks.CODEX):
     doc = {"hooks": {}}

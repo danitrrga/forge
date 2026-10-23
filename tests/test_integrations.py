@@ -379,9 +379,9 @@ want = [
 ]
 # The two Claude coding-agents rows are written per project (tests/test_hindsight_project_hooks.py);
 # the two Codex ones stay here.
-# gsd-core's hooks (Daniel 2026-10-23, no cap on GSD): every hook its installer registers, less the two forge keeps its own
+# gsd-core's hooks (no cap on GSD): every hook its installer registers, less the two forge keeps its own
 # file of (above) and four it leaves out, each judged on its own: read-guard (Claude Code enforces read-before-edit itself),
-# secret-read-guard (a hard block on .env reads in every project, not gated to GSD ones: Daniel's call), check-update and
+# secret-read-guard (a hard block on .env reads in every project, not gated to GSD ones: the owner's call), check-update and
 # update-banner (forge update replaces them; the banner needs GSD's statusline). Claude only: Codex has none of them.
 CLAUDE_A = ("claude",)
 D = h.GSD_HOOK_DIR

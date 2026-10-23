@@ -144,7 +144,7 @@ _CODE_ROWS = [
      "coding-agents", None, (CODEX,)),
 ]
 
-# gsd-core's own hooks, wired from GSD_HOOK_DIR (Daniel, 2026-10-23: GSD with no cap). Every hook its installer
+# gsd-core's own hooks, wired from GSD_HOOK_DIR (the owner's call: GSD with no cap). Every hook its installer
 # registers in settings.json, less six: the two forge keeps its own, hardened files of (above), and four each judged
 # on its own -- read-guard (Claude Code enforces read-before-edit itself, so the advisory would be noise on every Edit),
 # secret-read-guard (a hard block on reading .env files in EVERY project, not gated to GSD ones), check-update and

@@ -292,7 +292,7 @@ GRAPH_ON = {"graphify": {"enabled": True}}
 def when_cases(tmp):
     """A tool with `when: {"gsd_default": "graphify.enabled"}` is installed, written to mise's file and checked only while the
     user's GSD defaults (~/.gsd/defaults.json) hold that key as the JSON true: graphify (the `graphifyy` package, which
-    GSD's /gsd-graphify needs) comes with mise but only for a user who turned it on (Daniel, 2026-10-23). Off, the entry is a
+    GSD's /gsd-graphify needs) comes with mise but only for a user who turned it on. Off, the entry is a
     SKIP that says NOT RUN, NOT ARMED, never a FAIL, never in the file, never installed, and never uninstalled when it is
     already there. Seen failing on 3c608bc: "when off: pipx:graphifyy = ... FAIL missing, pinned 0.9.93" (the old check
     knew no `when`) and "when: a manifest with a bad when: ... want a FAIL naming `when`"."""
