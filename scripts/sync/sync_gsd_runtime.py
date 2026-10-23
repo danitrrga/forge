@@ -31,6 +31,11 @@ WHAT THIS REPLACES
   files forge patches. The `$HOME/.claude/...` spelling in those files is the installer's own
   output for a global install, not a hand edit.
 
+WHAT FORGE SYNCS (2026-10-23: the whole of gsd-core, no cap)
+  Every agent, the whole engine, every skill (--skills) and every hook script (staged hooks/ to ~/.claude/hooks, but
+  the two files forge keeps its own hardened version of): forge/hooks.py wires them (GSD_CORE_ROWS). forge sets no GSD
+  default (config/gsd/defaults.md).
+
 WHAT FORGE OWNS ON TOP
   * output discipline -- the block appended to references/mandatory-initial-read.md, which the
     five document-writing GSD agents import. Kept as a file (config/gsd/output-discipline.md) so
@@ -47,8 +52,7 @@ WHAT FORGE OWNS ON TOP
     symlink and its path check rejects anything outside ~/.claude/skills ("Path escapes allowed
     directory", measured).
   * (retired with gsd-core 1.18: the planner now has Edit, and the config skill names the right package.)
-  * MemPalace -- the context router sends two rows to gsd-mempalace-*, skills of a memory product forge does
-    not run (Hindsight is its memory), so those rows go, as the graphify one did.
+  * (retired 2026-10-23: the graphify and MemPalace router rows are back, every upstream skill ships now.)
   * update route -- the update skill is rewritten to run the procedure below instead of the
     installer, for reason 1 above.
 
@@ -70,7 +74,8 @@ UPDATING GSD
 USAGE
   python3 scripts/sync/sync_gsd_runtime.py            # dry-run: agents + engine + checks
   python3 scripts/sync/sync_gsd_runtime.py --apply    # write agents + engine (SessionStart does this)
-  --skills        also compare (and with --apply, rewrite) forge/skills/gsd-* from the package
+  --skills        also compare (and with --apply, rewrite or create) forge/skills/gsd-*: every skill of the package
+                  is shipped, the ones forge has not written yet are new
   --restage       force a fresh staging install even if the package version has not changed
   --check         read-only, for session start: no restage, no write; exit 0 when the runtime is what
                   --apply would write, 2 when it differs (a file, or a staging made for another package
@@ -91,6 +96,7 @@ HOME = lib.HOME
 AGENTS_DIR = os.path.join(HOME, ".claude", "agents")
 PACKAGE = "@opengsd/gsd-core"
 GSD_DIR = os.path.join(HOME, ".claude", "gsd-core")
+HOOKS_DIR = os.path.join(HOME, ".claude", "hooks")
 SKILLS_MIRROR = os.path.join(HOME, ".claude", "skills")
 FORGE_SKILLS = os.path.join(ROOT, "skills")
 BLOCKS = os.path.join(ROOT, "config", "gsd")
@@ -112,6 +118,19 @@ DIFFERS = 2  # --check's exit code for a runtime that differs; 1 stays "somethin
 
 # Skills forge authored itself -- no upstream file, never generated, never overwritten.
 FORGE_AUTHORED = {"gsd-musk", "gsd-cut-the-ceremony", "gsd-boil-the-ocean"}
+
+# The two hook files forge keeps its own version of (hooks/ of this checkout, hardened; forge/hooks.py wires them
+# from there) and the scripts of the other runtimes the installer stages: not copied to ~/.claude/hooks.
+HOOKS_NOT_COPIED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js")
+
+# What config/gsd/defaults.json held before forge stopped capping GSD (2026-10-23). A ~/.gsd/defaults.json with
+# exactly these bytes is forge's own stale copy, not the user's, and is replaced.
+FORMER_DEFAULTS = ('{\n  "workflow": {\n    "ui_phase": false,\n    "ui_safety_gate": false\n  }\n}\n',)
+
+
+def hook_wanted(rel):
+    """Whether the staged hooks/<rel> is copied into ~/.claude/hooks."""
+    return rel not in HOOKS_NOT_COPIED and not rel.startswith(("gsd-cursor", "gsd-windsurf"))
 
 # --------------------------------------------------------------------------------------
 # Patches. Each is (id, op, anchor, payload): "replace" swaps anchor for payload, "append" adds
@@ -244,27 +263,6 @@ SKILL_PATCHES = {
     "gsd-execute-phase": [("no-todowrite", "replace",
                            "  - Agent\n  - TodoWrite\n  - AskUserQuestion\n",
                            "  - Agent\n  - AskUserQuestion\n")],
-    # gsd-graphify is not a skill forge ships, so the router must not point at it. The neighbouring
-    # rows are in the anchor and the payload because a payload that is a substring of upstream
-    # reads as applied.
-    "gsd-ns-context": [
-        ("no-graphify-description", "replace",
-         'description: "codebase intel | map graphify docs learnings mempalace"',
-         'description: "codebase intel | map docs learnings"'),
-        ("no-graphify-row", "replace",
-         "| Query mapped intelligence files | gsd-map-codebase --query |\n"
-         "| Generate a knowledge graph | gsd-graphify |\n"
-         "| Update project documentation | gsd-docs-update |\n",
-         "| Query mapped intelligence files | gsd-map-codebase --query |\n"
-         "| Update project documentation | gsd-docs-update |\n"),
-        # The MemPalace skills belong to a memory product forge does not run (Hindsight is its memory). The
-        # extract-learnings row is in the anchor and the payload so the payload is no substring of upstream.
-        ("no-mempalace-rows", "replace",
-         "| Extract learnings from a completed phase | gsd-extract-learnings |\n"
-         "| Recall prior decisions and patterns before planning | gsd-mempalace-recall |\n"
-         "| File a phase artifact into MemPalace | gsd-mempalace-capture |\n\n",
-         "| Extract learnings from a completed phase | gsd-extract-learnings |\n\n"),
-    ],
 }
 
 
@@ -429,7 +427,9 @@ def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None):
 
 
 def sync_skills(errors):
-    """forge/skills/gsd-* for every skill that HAS an upstream counterpart.
+    """forge/skills/gsd-* for EVERY upstream skill (gsd-core's whole set, Daniel 2026-10-23: no cap): the ones forge
+    already has are compared, the ones it has not are new and written whole. FORGE_AUTHORED names have no upstream file
+    and are never touched.
 
     Read-only unless --skills --apply, because these files are in git and a SessionStart that
     silently reverted a hand edit would be worse than the drift it fixes. Drift reported here is
@@ -439,13 +439,14 @@ def sync_skills(errors):
         lib.makedirs(FORGE_SKILLS)  # a checkout with no skills yet: nothing to list, nothing to fail on
     have_forge = sorted(d for d in listdir(FORGE_SKILLS)
                         if d.startswith("gsd-") and os.path.isdir(os.path.join(FORGE_SKILLS, d)))
-    shipped = [n for n in have_forge if n not in FORGE_AUTHORED]
-    changed, missing, drift, held, seen = 0, [], [], [], set()
+    upstream = sorted(d for d in listdir(staged) if d.startswith("gsd-") and os.path.exists(os.path.join(staged, d, "SKILL.md")))
+    # A forge skill with no staged file and no authorship is the error below. A name both authored and
+    # upstream would be overwritten, so authorship wins.
+    shipped = [n for n in upstream if n not in FORGE_AUTHORED]
+    missing = [n for n in have_forge if n not in FORGE_AUTHORED and n not in upstream]
+    changed, new, drift, held, seen = 0, [], [], [], set()
     for name in shipped:
         src = os.path.join(staged, name, "SKILL.md")
-        if not os.path.exists(src):
-            missing.append(name)
-            continue
         seen.add(name)
         n_errors = len(errors)
         want = want_text(src, name, SKILL_PATCHES.get(name, []), errors)
@@ -456,21 +457,17 @@ def sync_skills(errors):
         if lib.holds(dst, want):
             continue
         changed += 1
-        drift.append(name)
+        (drift if name in have_forge else new).append(name)
         if CTX.apply:
+            lib.makedirs(os.path.dirname(dst))
             lib.write_text(dst, want)
-    # A patch with no target, as in sync_tree. A shipped skill with no staged file is already an
+    # A patch with no target, as in sync_tree. A forge skill with no staged file is already an
     # error below ("skill without upstream counterpart"), so it is not reported twice.
     for name in sorted(set(SKILL_PATCHES) - seen - set(missing)):
-        where = ("forge does not ship it" if os.path.exists(os.path.join(staged, name, "SKILL.md"))
-                 else "it is not in the staged package")
-        errors.append("%s: %s, so patch '%s' applies to nothing -- re-key the patch or delete it"
-                      % (name, where, "', '".join(p[0] for p in SKILL_PATCHES[name])))
-    upstream_all = sorted(d for d in os.listdir(staged) if d.startswith("gsd-"))
-    not_shipped = [n for n in upstream_all if n not in have_forge]
+        errors.append("%s: it is not in the staged package, so patch '%s' applies to nothing -- re-key the patch or delete it"
+                      % (name, "', '".join(p[0] for p in SKILL_PATCHES[name])))
     print("== forge skills vs package ==")
-    print("   %d shipped here, %d forge-authored, %d upstream skills not shipped"
-          % (len(shipped), len(FORGE_AUTHORED), len(not_shipped)))
+    print("   %d shipped here (%d new), %d forge-authored" % (len(shipped), len(new), len(FORGE_AUTHORED)))
     for n in missing:
         print("   ! %s has no upstream counterpart -- declare it in FORGE_AUTHORED or it will "
               "never be regenerated" % n)
@@ -478,15 +475,15 @@ def sync_skills(errors):
     if held:
         print("   ! held back %d (a patch failed; the file in forge is kept): %s"
               % (len(held), ", ".join(held)))
+    if new:
+        shown = ", ".join(new[:12]) + (" …" if len(new) > 12 else "")
+        print("   %s %d new: %s" % ("wrote" if CTX.apply else "would write", len(new), shown))
     if drift:
         print("   %s %d: %s" % ("rewrote" if CTX.apply else "differ from the package",
                                 len(drift), ", ".join(drift)))
         if not CTX.apply:
             print("     (--skills --apply regenerates them; if a difference is a forge edit "
                   "worth keeping, encode it in SKILL_PATCHES first)")
-    if not_shipped:
-        shown = ", ".join(not_shipped[:12]) + (" …" if len(not_shipped) > 12 else "")
-        print("   upstream skills not shipped here (%d): %s" % (len(not_shipped), shown))
     return changed
 
 
@@ -607,6 +604,12 @@ def sync_defaults(errors):
         if os.path.isfile(dst) and read_bytes(dst) == read_bytes(src):
             print("   in sync (%s)" % lib.short(dst))
             return 0
+        if os.path.isfile(dst) and read(dst) in FORMER_DEFAULTS:
+            verb = "replaced forge's earlier text in" if CTX.apply else "would replace forge's earlier text in"
+            if CTX.apply:
+                lib.write_text(dst, read(src))
+            print("   %s %s (it capped GSD's UI phase; forge sets no default now)" % (verb, lib.short(dst)))
+            return 1
         print("   %s differs from %s -- yours (GSD's settings can write it), left alone; delete it "
               "to take forge's" % (lib.short(dst), lib.short(src)))
         return 0
@@ -657,6 +660,7 @@ def main():
                         only=lambda rel: rel.startswith("gsd-") and rel.endswith(".md"))
     changes += sync_tree(os.path.join(STAGE, "gsd-core"), GSD_DIR, ENGINE_PATCHES,
                          "GSD engine (~/.claude/gsd-core)", errors)
+    changes += sync_tree(os.path.join(STAGE, "hooks"), HOOKS_DIR, {}, "GSD hooks (~/.claude/hooks)", errors, only=hook_wanted)
     changes += sync_defaults(errors)
     if DO_SKILLS:
         changes += sync_skills(errors)
