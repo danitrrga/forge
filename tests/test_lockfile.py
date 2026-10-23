@@ -48,13 +48,13 @@ SHA_A, SHA_B = "a" * 40, "b" * 40
 # plugins: three installs of one plugin, listed so that the newest by lastUpdated is neither the first, the last
 # nor the highest version; one plugin with no sha; the plugins listed out of order.
 put(os.path.join(home, ".claude", "plugins", "installed_plugins.json"), json.dumps({"version": 2, "plugins": {
-    "zeta@market": [{"version": "9.0.0", "lastUpdated": "2026-01-01T00:00:00Z"}],
+    "zeta@market": [{"version": "9.0.0", "lastUpdated": "1999-01-01T00:00:00Z"}],
     "alpha@market": [
-        {"version": "2.0.0", "gitCommitSha": SHA_A, "lastUpdated": "2026-08-01T00:00:00Z"},
-        {"version": "1.5.0", "gitCommitSha": SHA_B, "lastUpdated": "2026-10-01T00:00:00Z"},
-        {"version": "1.0.0", "gitCommitSha": SHA_A, "lastUpdated": "2026-09-01T00:00:00Z"}],
-    "private@market": [{"version": "3.0.0", "lastUpdated": "2026-10-02T00:00:00Z"}],
-    "beta@market": [{"version": "0.1.0", "lastUpdated": "2026-10-02T00:00:00Z"}]}}))
+        {"version": "2.0.0", "gitCommitSha": SHA_A, "lastUpdated": "1999-08-01T00:00:00Z"},
+        {"version": "1.5.0", "gitCommitSha": SHA_B, "lastUpdated": "1999-10-01T00:00:00Z"},
+        {"version": "1.0.0", "gitCommitSha": SHA_A, "lastUpdated": "1999-09-01T00:00:00Z"}],
+    "private@market": [{"version": "3.0.0", "lastUpdated": "1999-10-02T00:00:00Z"}],
+    "beta@market": [{"version": "0.1.0", "lastUpdated": "1999-10-02T00:00:00Z"}]}}))
 # skills: the three NOTICE forms in the vendored set, and a skill with none (not third-party: left out)
 put(os.path.join(root, "skills", "one", "NOTICE.md"),
     "From https://github.com/o/r at commit %s, skills/one.\n\nUnchanged.\n" % SHA_A)

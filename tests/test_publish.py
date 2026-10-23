@@ -8,6 +8,7 @@ last case runs the list over it and over forge/publish.py).
 
 Red messages are quoted in the commit that added this file.
 """
+import difflib
 import os
 import shutil
 import subprocess
@@ -291,6 +292,23 @@ def private_cases():
     code, out = forge(root, "check-public", "--all")
     want("LICENSE with a public hit = exit", code, 1)
     has("LICENSE with a public hit", out, "LICENSE:2 [home path]")
+    # A skill-bench task holds dates as data (a calendar, a leap day): in its files a private pattern that matches a bare
+    # ISO date is not applied. Every other private pattern still is, and a date anywhere else is still refused.
+    task, day = "benchmarks/skill-bench/tasks/t-01/repo/cal.txt", j("2026-03", "-09")
+    for label, rel, line, hits in (
+            ("a date in a task file", task, day + " 09:00", False),
+            ("a private word in a task file", task, "secret-word on " + day, True),
+            ("a date outside the tasks", "forge/x.py", "# decided " + day, True),
+            ("a date in the benchmark's own docs", "benchmarks/skill-bench/SOURCES.md", "Researched " + day, True),
+            ("a date under a look-alike directory", "benchmarks/skill-bench/tasks-old/x.txt", day, True)):
+        root = toy("deny-dated")
+        write(root, "config/publish-deny.txt", "20\\d\\d-\\d\\d-\\d\\d\nsecret-word\n")
+        write(root, rel, line + "\n")
+        git_out(root, "add", rel)
+        code, out = forge(root, "check-public", "--all")
+        want("dated data, %s = exit" % label, code, 1 if hits else 0)
+        if hits:
+            has("dated data, %s" % label, out, rel + ":1 [private list]")
     # An allowed token is one exact string a project's file format requires (forge/publish.py PRIVATE_ALLOW):
     # it passes the private list where it stands alone, and the same word anywhere else is still refused.
     marker = j("LIFE", "OS-SYSTEM-POINTER")
@@ -388,6 +406,12 @@ def allowlist_cases():
     if not os.path.exists(ALLOWLIST):
         failures.append("publish/engine.gitignore does not exist")
         return
+    # The copy is what tests/sandbox.py's copy_engine filters by: a line the engine's .gitignore gained and the copy
+    # lacks leaves that file out of every engine sandbox (scripts/sync/materialise_skills.py once failed two suites so).
+    with open(ALLOWLIST, encoding="utf-8") as a, open(os.path.join(FORGE, ".gitignore"), encoding="utf-8") as b:
+        drift = [l for l in difflib.unified_diff(a.read().splitlines(), b.read().splitlines(), lineterm="", n=0)
+                 if l[:1] in "+-" and l[:3] not in ("+++", "---")]
+    want("publish/engine.gitignore is the engine's .gitignore, line for line (- copy, + .gitignore)", drift, [])
     code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-z"], FORGE)
     tracked = set(p for p in out.split("\0") if p)
     code, out = run(["git", "-C", FORGE, "ls-files", "-c", "-i", "-z", "--exclude-from=publish/engine.gitignore"], FORGE)
@@ -404,15 +428,19 @@ def allowlist_cases():
               "hooks/test_guard_mutants.py", "config/gsd/defaults.json", "scripts/sync/sync_skill_keep.py",
               "scripts/sync/test_sync_skill_keep.py", "scripts/sync/memory_doctor.py", "scripts/metrics/harness-metrics.mjs",
               "githooks/pre-commit", "githooks/commit-msg", "githooks/pre-push", "tests/sandbox.py",
-              "tests/test_publish.py", "tests/test_sync_agent_config.py", ".gitignore", "CLAUDE.md", "README.md", "AGENTS.md"]
+              "tests/test_publish.py", "tests/test_sync_agent_config.py", ".gitignore", "CLAUDE.md", "README.md", "AGENTS.md",
+              "scripts/sync/materialise_skills.py", "scripts/bench/skill_bench.py", "benchmarks/skill-bench/README.md",
+              "config/forge.lock.json"]
     want("tracked and ignored by the allowlist, of the private paths", sorted(p for p in private if p in tracked and p not in ignored), [])
     want("tracked and not ignored, of the engine paths", sorted(p for p in public if p in tracked and p in ignored), [])
     want("every named engine path is tracked", sorted(p for p in public if p not in tracked), [])
-    # docs/assets/ holds the README's images, which are public; the rest of docs/ is not.
+    # docs/assets/ holds the README's images and benchmarks/skill-bench/ the benchmark, which are public; the rest of
+    # docs/ and benchmarks/ is not. Of config/, gsd/ and the lock (the versions a release ships) are.
     want("no skill, doc, design file or profile in the engine",
          sorted(p for p in engine if (p.split("/")[0] in ("skills", "docs", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
-                                      and not p.startswith("docs/assets/"))
-                or p.startswith("config/profiles/") or (p.startswith("config/") and not p.startswith("config/gsd/"))), [])
+                                      and not p.startswith(("docs/assets/", "benchmarks/skill-bench/")))
+                or p.startswith("config/profiles/")
+                or (p.startswith("config/") and not p.startswith("config/gsd/") and p != "config/forge.lock.json")), [])
     # The private list runs over today's engine files: exit 0, no hit in any file. The gate's `public tree` row
     # holds the same state from the other side.
     if not os.path.exists(DENY):
@@ -423,7 +451,8 @@ def allowlist_cases():
     want("today's engine files with the private list: no hit", hits, [])
     want("today's engine files with the private list = exit", code, 0)
     leaked = sorted(set(l.split()[1].rsplit(":", 1)[0] for l in hits
-                        if l.split()[1].split("/")[0] in ("docs", "skills", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
+                        if (l.split()[1].split("/")[0] in ("docs", "skills", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
+                            and not l.split()[1].startswith(("docs/assets/", "benchmarks/skill-bench/")))
                         or l.split()[1].startswith("config/profiles/")))
     want("the control names nothing outside the engine", leaked, [])
 
@@ -561,7 +590,7 @@ def commit_cases():
     has("nothing to commit", out, "nothing to commit")
     code, out = forge(root, "commit")
     want("no message = exit", code, 2)
-    # No path and no --all must not sweep every change into a commit (the 31-file commit of 2026-10-22).
+    # No path and no --all must not sweep every change into a commit (a 31-file commit once did).
     # Red before the change: "no paths, no --all = exit: got 0, want 2".
     write(root, "forge/swept.py", "X = 2\n")
     e1, d1 = head(root), head(root, data=True)

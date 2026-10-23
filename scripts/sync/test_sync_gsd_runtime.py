@@ -656,7 +656,7 @@ def skills_no_dir(failures):
 
 
 def skills_all_shipped(failures):
-    """Every upstream skill is shipped, not a chosen subset (Daniel, 2026-10-23: "all the functionalities, no cap"):
+    """Every upstream skill is shipped, not a chosen subset ("all the functionalities, no cap"):
     forge has gsd-a and the staged package has gsd-a and gsd-b, so a dry-run names gsd-b as new and writes nothing, an
     apply writes it with the patches applied, and a forge-authored name is never taken for an upstream one. Seen
     failing on c2a741a, which listed gsd-b as "not shipped" and wrote nothing: "skills all: dry-run: changed 0 (want 1)
@@ -955,7 +955,7 @@ def real_package(failures):
 
 def defaults_uncapped(failures):
     """forge sets no GSD default: config/gsd/defaults.json is an empty object, so a new project gets GSD's own
-    (ui_phase and ui_safety_gate on, Daniel 2026-10-23: no cap), and a ~/.gsd/defaults.json that holds forge's
+    (ui_phase and ui_safety_gate on: no cap), and a ~/.gsd/defaults.json that holds forge's
     EARLIER text (the one that switched both off) is forge's own stale copy: replaced, dry-run and apply, where a
     file that differs from both is still the user's and left alone (defaults_copy). Seen failing on c2a741a:
     "defaults uncapped: shipped file is {'workflow': {'ui_phase': False, 'ui_safety_gate': False}}, want {}" and

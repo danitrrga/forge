@@ -41,6 +41,10 @@ PUBLIC_ASSETS = {
     "docs/assets/forge-banner.png": "992e30e69a0e3e5f88adb242aae844c111ce773f8b9654b1e77f449b92e26f78",
     "docs/assets/how-it-works.svg": "15be9dbe2b8716eb03910153eafb557da60cc9b2f2fa9653a96bba1dc4b250d9",
 }
+# Where dates are data (a skill-bench task's calendar, its leap day), not the record of a decision: in these files a
+# private pattern that matches a bare ISO date is not applied. Every other private pattern still is.
+DATED_DATA = ("benchmarks/skill-bench/tasks/",)
+SAMPLE_DATE = "-".join(("2000", "01", "31"))  # joined, so this line holds no date
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
 # example.com and example.org are IANA documentation names (RFC 2606); example.test sits under the .test TLD that RFC 6761 reserves
@@ -128,7 +132,7 @@ def load_deny(root):
 
 def scan(path, data, deny):
     """[(line or 0, rule, text)] for one file's bytes. LICENSE is exempt from the private list: it
-    must name a holder."""
+    must name a holder. A file under DATED_DATA is exempt from its date patterns only."""
     out = []
     if os.path.splitext(path)[1].lower() in ASSET_EXT and PUBLIC_ASSETS.get(path) != hashlib.sha256(data).hexdigest():
         out.append((0, "binary asset", os.path.splitext(path)[1].lower()))
@@ -137,6 +141,8 @@ def scan(path, data, deny):
     if b"\0" in data:
         return out
     private = None if path == "LICENSE" else deny
+    if private and path.startswith(DATED_DATA):
+        private = [(n, pat) for n, pat in private if not pat.search(SAMPLE_DATE)]
     for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
         for rule, text in public_hits(line):
             out.append((n, rule, text))

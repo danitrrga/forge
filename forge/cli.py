@@ -95,7 +95,7 @@ def skill_name_clashes(only=None):
 def nested_project_roots(only=None, profs=None):
     """A FAIL when a project with skills of its own lives inside the git repository of another profile. forge switches the
     enclosing project's neighbours' skills off (skills.neighbour_skills), Claude Code applies those settings inside the nested
-    directory too, and an inner "on" does not override an outer "off" (tested with claude -p on 2026-10-23), so the nested
+    directory too, and an inner "on" does not override an outer "off" (tested with claude -p), so the nested
     project's own skills never appear. The standard is one git repository per project. A nested project without skills of its
     own, one with its own repository, and one nested in a repository no profile owns are fine. Frozen profiles and profiles with
     no directory are not read, and a run that read no project at all is a FAIL (non-negotiable 7). With `only`, that project

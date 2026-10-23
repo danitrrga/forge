@@ -31,7 +31,7 @@ WHAT THIS REPLACES
   files forge patches. The `$HOME/.claude/...` spelling in those files is the installer's own
   output for a global install, not a hand edit.
 
-WHAT FORGE SYNCS (2026-10-23: the whole of gsd-core, no cap)
+WHAT FORGE SYNCS (the whole of gsd-core, no cap)
   Every agent, the whole engine, every skill (--skills) and every hook script (staged hooks/ to ~/.claude/hooks, but
   the two files forge keeps its own hardened version of): forge/hooks.py wires them (GSD_CORE_ROWS). forge sets no GSD
   default (config/gsd/defaults.md).
@@ -52,13 +52,13 @@ WHAT FORGE OWNS ON TOP
     symlink and its path check rejects anything outside ~/.claude/skills ("Path escapes allowed
     directory", measured).
   * (retired with gsd-core 1.18: the planner now has Edit, and the config skill names the right package.)
-  * (retired 2026-10-23: the graphify and MemPalace router rows are back, every upstream skill ships now.)
+  * (retired: the graphify and MemPalace router rows are back, every upstream skill ships now.)
   * update route -- the update skill is rewritten to run the procedure below instead of the
     installer, for reason 1 above.
 
   forge-authored skills (gsd-musk, gsd-cut-the-ceremony, gsd-boil-the-ocean) have
   no upstream counterpart. They are never generated and never touched here. gsd-sketch is
-  forge-authored too (2026-10-23): upstream ships one, forge replaced it with a thin wrapper that
+  forge-authored too: upstream ships one, forge replaced it with a thin wrapper that
   files the project's design skill under .planning/sketches/, so the package's copy is neither
   compared nor written.
 
@@ -126,7 +126,7 @@ FORGE_AUTHORED = {"gsd-musk", "gsd-cut-the-ceremony", "gsd-boil-the-ocean", "gsd
 # from there) and the scripts of the other runtimes the installer stages: not copied to ~/.claude/hooks.
 HOOKS_NOT_COPIED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js")
 
-# What config/gsd/defaults.json held before forge stopped capping GSD (2026-10-23). A ~/.gsd/defaults.json with
+# What config/gsd/defaults.json held before forge stopped capping GSD. A ~/.gsd/defaults.json with
 # exactly these bytes is forge's own stale copy, not the user's, and is replaced.
 FORMER_DEFAULTS = ('{\n  "workflow": {\n    "ui_phase": false,\n    "ui_safety_gate": false\n  }\n}\n',)
 
@@ -441,7 +441,7 @@ def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None):
 
 
 def sync_skills(errors):
-    """forge/skills/gsd-* for EVERY upstream skill (gsd-core's whole set, Daniel 2026-10-23: no cap): the ones forge
+    """forge/skills/gsd-* for EVERY upstream skill (gsd-core's whole set: no cap): the ones forge
     already has are compared, the ones it has not are new and written whole. FORGE_AUTHORED names have no upstream file
     and are never touched.
 
