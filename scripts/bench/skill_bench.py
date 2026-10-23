@@ -5,6 +5,8 @@
   skill_bench.py list     [--bench DIR]                                               # tasks per field and concept
   skill_bench.py run      --arm none --arm NAME=SKILLDIR ... [--tasks all|ids|field:ui] [--k 3] [--out DIR]
   skill_bench.py report   --out DIR [--base none]                                     # paired comparison of the arms
+  skill_bench.py calibrate --out DIR [--arm none]   # write <bench>/calibration.json: each task's baseline pass rate
+  skill_bench.py select   --tasks hard[:RATE]       # print the task ids a selector picks (hard = baseline rate <= RATE, default 0.7)
 
 A task is a directory benchmarks/skill-bench/tasks/<id>/ (the spec is benchmarks/skill-bench/README.md). It is only
 evidence if its oracle is proved able to fail and able to pass, so `validate` checks per task:
@@ -21,7 +23,9 @@ written: every run is on a temp copy. Exit 1 when anything above fails.
 .claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills or CLAUDE.md; only the login is shared) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
-INVALID: counted, never scored as a fail. `report` compares every arm with --base per task (the k trials averaged first):
+INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
+`--tasks hard` keeps those at or under 0.7; `report` prints how many tasks were saturated (baseline of 0.9 or more).
+`report` compares every arm with --base per task (the k trials averaged first):
 paired mean difference, 95% bootstrap CI over tasks, sign-flip permutation p, discordant counts, Wilson intervals per arm,
 and the token, cost and time deltas, as benchmarks/skill-bench/SOURCES.md recommends."""
 import argparse
@@ -347,20 +351,37 @@ def parse_arms(specs):
     return arms
 
 
+def calibration(bench):
+    p = os.path.join(bench, "calibration.json")
+    if not os.path.isfile(p):
+        sys.exit("! %s was never calibrated: run a no-skill baseline (run --arm none --k 3), then `calibrate --out <that run>`" % bench)
+    return read_json(p)
+
+
 def select_tasks(bench, selector):
+    """Task ids for a selector: comma-separated `all`, ids, `field:F`, `concept:C`, and `hard[:RATE]`, which keeps the tasks whose
+    calibrated baseline pass rate is at most RATE (default 0.7) and intersects with whatever the others picked."""
     concepts, ids = load(bench)
-    if selector == "all":
-        return ids
-    out = []
-    for part in selector.split(","):
-        if part.startswith(("field:", "concept:")):
+    parts = [x for x in selector.split(",") if x]
+    hard = [x for x in parts if x == "hard" or x.startswith("hard:")]
+    rest = [x for x in parts if x not in hard]
+    chosen = []
+    for part in rest or ["all"]:
+        if part == "all":
+            chosen += ids
+        elif part.startswith(("field:", "concept:")):
             key, _, val = part.partition(":")
-            out += [t for t in ids if read_json(os.path.join(bench, "tasks", t, "task.json")).get(key) == val]
+            chosen += [t for t in ids if read_json(os.path.join(bench, "tasks", t, "task.json")).get(key) == val]
         elif part in ids:
-            out.append(part)
+            chosen.append(part)
         else:
             sys.exit("! no task %r in %s" % (part, bench))
-    return list(dict.fromkeys(out))
+    chosen = list(dict.fromkeys(chosen))
+    if hard:
+        limit = float(hard[0].partition(":")[2] or 0.7)
+        rates = calibration(bench)["tasks"]
+        chosen = [t for t in chosen if t in rates and rates[t]["rate"] <= limit]
+    return chosen
 
 
 def agent_home(out):
@@ -451,7 +472,7 @@ def do_job(job, a):
         fh.write(stderr or "")
     msg, usage, cost, turns, called, err = parse_stream(stdout or "")
     res = {"task": task, "field": meta.get("field"), "concept": meta.get("concept"), "arm": arm, "trial": trial,
-           "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out, "skill_called": called,
+           "model": a.model, "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out, "skill_called": called,
            "tokens": sum(usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
            "cost_usd": cost, "turns": turns, "agent_error": err, "message_chars": len(msg), "checks": [], "passed": False, "invalid": False}
     checks, why = run_oracle(td, work, msg, a.oracle_timeout)
@@ -524,6 +545,10 @@ def cmd_report(a):
             "$%.2f" % mean([r["cost_usd"] for r in v if r["cost_usd"] is not None] or [0]) if v else "-",
             "%.0f" % mean([r["duration_s"] for r in v]) if v else "-",
             "%.0f%% of runs" % (100 * mean([1.0 if r["skill_called"] else 0.0 for r in v])) if v else "-"))
+    base_rates = {t: mean(v) for (t, ar), v in score.items() if ar == a.base}
+    sat = sorted(t for t, r in base_rates.items() if r >= 0.9)
+    print("  %d of %d tasks are saturated (base pass rate 0.9 or more: no room to improve)%s"
+          % (len(sat), len(base_rates), "" if len(sat) < len(base_rates) / 2 else "; most of this score cannot move"))
     rng = random.Random(20261023)
     for x in arms:
         if x == a.base:
@@ -560,6 +585,30 @@ def concepts_path(bench):
     """A bench's own concepts.json, else forge's: a project's .bench holds tasks only and shares the 27 concepts."""
     own = os.path.join(bench, "concepts.json")
     return own if os.path.isfile(own) else os.path.join(DEFAULT_BENCH, "concepts.json")
+
+
+def cmd_calibrate(a):
+    res = [r for r in load_results(a.out) if r["arm"] == a.arm and not r["invalid"]]
+    if not res:
+        sys.exit("! no valid results of arm %r under %s" % (a.arm, a.out))
+    tasks = {}
+    for r in res:
+        tasks.setdefault(r["task"], []).append(1.0 if r["passed"] else 0.0)
+    doc = {"arm": a.arm, "model": sorted({r.get("model") or "?" for r in res})[0], "date": time.strftime("%Y-%m-%d"),
+           "tasks": {t: {"rate": round(mean(v), 3), "n": len(v)} for t, v in sorted(tasks.items())}}
+    with open(os.path.join(a.bench, "calibration.json"), "w") as fh:
+        json.dump(doc, fh, indent=1)
+        fh.write("\n")
+    hard = [t for t, v in doc["tasks"].items() if v["rate"] <= 0.7]
+    print("calibrated %d tasks on arm %s (%s): %d hard (rate <= 0.7), %d saturated (>= 0.9)"
+          % (len(tasks), a.arm, doc["model"], len(hard), sum(1 for v in doc["tasks"].values() if v["rate"] >= 0.9)))
+    return 0
+
+
+def cmd_select(a):
+    for t in select_tasks(a.bench, a.tasks):
+        print(t)
+    return 0
 
 
 def load(bench):
@@ -634,6 +683,15 @@ def main():
     r.add_argument("--force-skill", action="store_true", help="tell the agent to use the arm's first skill (default: let it decide)")
     r.add_argument("--seed", type=int, default=1)
     r.set_defaults(fn=cmd_run)
+    c = sub.add_parser("calibrate")
+    c.add_argument("--bench", default=DEFAULT_BENCH)
+    c.add_argument("--out", required=True)
+    c.add_argument("--arm", default="none")
+    c.set_defaults(fn=cmd_calibrate)
+    sl = sub.add_parser("select")
+    sl.add_argument("--bench", default=DEFAULT_BENCH)
+    sl.add_argument("--tasks", default="all")
+    sl.set_defaults(fn=cmd_select)
     q = sub.add_parser("report")
     q.add_argument("--out", required=True)
     q.add_argument("--base", default="none")
