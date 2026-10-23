@@ -1,0 +1,9 @@
+{
+  "id": "tests-never-fails-02",
+  "field": "tests",
+  "concept": "tests.never-fails",
+  "difficulty": 3,
+  "prompt": "Nobody got a payment reminder last week. Not a single e-mail went out, and the tests were green the whole time. Why didn't they catch it? Fix it, and make the tests actually catch this kind of thing.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

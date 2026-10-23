@@ -1,0 +1,9 @@
+{
+  "id": "process-proportional-checks-02",
+  "field": "process",
+  "concept": "process.proportional-checks",
+  "difficulty": 2,
+  "prompt": "Make the corners on the primary buttons rounder, 8px instead of 4px. The secondary buttons stay as they are.",
+  "source": {"kind": "authored"},
+  "message_required": true
+}

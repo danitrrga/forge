@@ -1,0 +1,32 @@
+diff --git a/index.html b/index.html
+index 146e412..7a85aa3 100644
+--- a/index.html
++++ b/index.html
+@@ -5,15 +5,16 @@
+ <title>Ember Lights survey results</title>
+ <style>
+ body{color:#28010d;background-color:#cec9cb;font-family:system-ui,sans-serif;line-height:1.5}
+-.meta{color:#93788c;background-color:#cbd1cd}
++.meta{color:#644d61;background-color:#cbd1cd}
+ .tab{color:#46360a;background-color:#effbf2;padding:.4rem .8rem;display:inline-block}
+ .cta{color:#666658;background-color:#e6fdfb;padding:.6rem 1rem;border:0;border-radius:.4rem}
++a:focus-visible,.cta:focus-visible,[role=tab]:focus-visible{outline:3px solid #42270e;outline-offset:2px}
+ .big-head{color:#9e4b80;background-color:#ccedda;font-size:26px;font-weight:700}
+ </style>
+ </head>
+ <body>
+ <header>
+-<nav><a tabindex="2" href="#main">Skip to content</a> <a href="/about">About</a></nav>
++<nav><a href="#main">Skip to content</a> <a href="/about">About</a></nav>
+ <h1>Ember Lights survey results</h1>
+ </header>
+ <main id="main">
+@@ -44,7 +45,7 @@ body{color:#28010d;background-color:#cec9cb;font-family:system-ui,sans-serif;lin
+ <tr><th scope="row">Plus</th><td>Daily</td><td>Open</td></tr>
+ </table>
+ <p><a href="/start-trial">Start trial</a> <button class="cta" type="button">Notify me</button></p>
+-<p><span style="color:#827983">Free returns within thirty days.</span></p>
++<p><span style="color:#52310b">Free returns within thirty days.</span></p>
+ </main>
+ <footer>
+ <p><a href="/archive">Archive</a> <a href="/contact">Contact</a></p>

@@ -1,0 +1,3 @@
+- Does the reply say the free-shipping test could not fail because its assertions sit inside `try/except Exception: pass` (the AssertionError is swallowed)?
+- Does the reply point out that the heavy-parcel test compares `shipping_cost` with its own result, so it can never fail either?
+- Is the code fix the boundary (`>=` 5000, or equivalent), not a special case for 5000?

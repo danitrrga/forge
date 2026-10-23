@@ -1,0 +1,9 @@
+{
+ "id": "security-authz-02",
+ "field": "security",
+ "concept": "security.authz",
+ "difficulty": 2,
+ "prompt": "Ana was able to read one of Ben's private notes through `GET /docs/1/preview` while logged in as herself. Please fix it.",
+ "source": {"kind": "authored"},
+ "message_required": false
+}

@@ -1,0 +1,31 @@
+diff --git c/tools/deadcode.py i/tools/deadcode.py
+index ee4a2c4..76eb84e 100644
+--- c/tools/deadcode.py
++++ i/tools/deadcode.py
+@@ -1,8 +1,9 @@
+ """Dead-code check: top-level functions in billing/ that no application code refers to.
+ 
+ A function counts as used when its name appears as an identifier (a call, an attribute, an import) in billing/ or
+-scheduler.py; tests do not count. Names listed in tools/deadcode-allow.txt are not reported. Exit 1 if any is unused."""
++scheduler.py, or when a job in jobs.json targets it (scheduler.py calls those by name); tests do not count. Names listed in tools/deadcode-allow.txt are not reported. Exit 1 if any is unused."""
+ import ast
++import json
+ import os
+ import sys
+ 
+@@ -26,8 +27,14 @@ def allowed():
+         return {line.split("#")[0].strip() for line in fh if line.split("#")[0].strip()}
+ 
+ 
++def job_targets():
++    """Function names that scheduler.py resolves by name from jobs.json."""
++    with open(os.path.join(ROOT, "jobs.json")) as fh:
++        return {job["target"].split(":")[1] for job in json.load(fh).values()}
++
++
+ def main():
+-    defs, used = {}, set()
++    defs, used = {}, job_targets()
+     for path in py_files():
+         rel = os.path.relpath(path, ROOT)
+         with open(path) as fh:

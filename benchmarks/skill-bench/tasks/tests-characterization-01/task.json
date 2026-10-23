@@ -1,0 +1,9 @@
+{
+  "id": "tests-characterization-01",
+  "field": "tests",
+  "concept": "tests.characterization",
+  "difficulty": 3,
+  "prompt": "compute_total in billing.py is unreadable and I need to add a new discount code next week. Can you clean it up first? Checkout uses it in production, so it has to keep returning exactly what it returns today.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

@@ -1,0 +1,5 @@
+{
+  "password_reset": {"first_name": "Ana", "reset_url": "https://acme.example.test/r/7Hq2Lx9Pz"},
+  "welcome": {"first_name": "Ben", "login_url": "https://acme.example.test/login", "email": "ben@example.test"},
+  "receipt": {"first_name": "Ana", "order_id": "A-1042", "total": "EUR 21.99", "card_last4": "4242", "order_date": "2026-03-09"}
+}

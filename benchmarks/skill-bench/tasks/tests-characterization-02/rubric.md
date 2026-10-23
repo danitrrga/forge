@@ -1,0 +1,3 @@
+- Were tests pinning today's accept/reject behaviour written before (or alongside) the rewrite, rather than only after it?
+- Does the reply name the quirks it kept (two-digit years pivot at 50, American order when the middle number is above 12, dashes only in ISO order, None instead of an exception) instead of silently "fixing" any of them?
+- If the reply suggests changing a quirk, is it offered as a separate decision for the owner, not done?

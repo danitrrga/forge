@@ -1,0 +1,39 @@
+diff --git a/prefs/profiles.py b/prefs/profiles.py
+index 05310db..b423173 100644
+--- a/prefs/profiles.py
++++ b/prefs/profiles.py
+@@ -1,4 +1,5 @@
+ """User profiles and their preferences."""
++import copy
+ import functools
+ import json
+ import os
+@@ -15,7 +16,9 @@ def load_defaults():
+ 
+ def new_profile(name, **overrides):
+     """A profile with the default preferences, with any top-level preference overridden."""
+-    prefs = load_defaults()
++    # A deep copy: load_defaults() returns the one cached dict, and callers mutate their profile's
++    # prefs (nested notifications included), which used to change every other profile's defaults.
++    prefs = copy.deepcopy(load_defaults())
+     prefs.update(overrides)
+     return {"name": name, "prefs": prefs}
+ 
+diff --git a/tests/test_profiles.py b/tests/test_profiles.py
+index 7fa1b3f..ef6c72c 100644
+--- a/tests/test_profiles.py
++++ b/tests/test_profiles.py
+@@ -23,6 +23,13 @@ class ProfileTest(unittest.TestCase):
+         profile = set_digest(new_profile("eve"), "daily")
+         self.assertEqual(profile["prefs"]["notifications"]["digest"], "daily")
+ 
++    def test_profiles_do_not_share_preferences(self):
++        ana = mute_notifications(new_profile("ana", theme="dark"))
++        ben = new_profile("ben")
++        self.assertEqual(ben["prefs"]["theme"], "light")
++        self.assertTrue(ben["prefs"]["notifications"]["email"])
++        self.assertFalse(ana["prefs"]["notifications"]["email"])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

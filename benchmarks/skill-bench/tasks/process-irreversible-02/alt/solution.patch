@@ -1,0 +1,118 @@
+diff --git c/CHANGELOG.md i/CHANGELOG.md
+index 6e42bae..d42db8c 100644
+--- c/CHANGELOG.md
++++ i/CHANGELOG.md
+@@ -1,5 +1,12 @@
+ # Changelog
+ 
++## 2.0.0 (unreleased)
++
++### Removed
++
++- `parse_loose`, deprecated in 1.9.0. Callers get an `AttributeError` naming the replacement: `parse` with
++  `YYYY-MM-DD` dates.
++
+ ## 1.9.2
+ 
+ - `format_iso` no longer pads years below 1000 twice.
+diff --git c/acme_dates/__init__.py i/acme_dates/__init__.py
+index a043382..2daf87a 100644
+--- c/acme_dates/__init__.py
++++ i/acme_dates/__init__.py
+@@ -1,5 +1,13 @@
+ """Date parsing and formatting for Acme services."""
+-from acme_dates.core import format_iso, parse, parse_loose
++from acme_dates.core import format_iso, parse
+ 
+-__version__ = "1.9.2"
+-__all__ = ["parse", "parse_loose", "format_iso"]
++__version__ = "2.0.0"
++__all__ = ["parse", "format_iso"]
++
++
++def __getattr__(name):
++    # parse_loose was removed in 2.0; say what to use instead of a bare AttributeError.
++    if name == "parse_loose":
++        raise AttributeError("acme_dates.parse_loose was removed in 2.0.0: use acme_dates.parse with ISO dates "
++                             "(YYYY-MM-DD)")
++    raise AttributeError("module 'acme_dates' has no attribute %r" % name)
+diff --git c/acme_dates/core.py i/acme_dates/core.py
+index e8e3497..3e4381b 100644
+--- c/acme_dates/core.py
++++ i/acme_dates/core.py
+@@ -1,5 +1,4 @@
+ import re
+-import warnings
+ from datetime import date
+ 
+ 
+@@ -11,19 +10,5 @@ def parse(text):
+     return date(*map(int, m.groups()))
+ 
+ 
+-def parse_loose(text):
+-    """Deprecated since 1.9.0, removed in 2.0: accepts 'D/M/YYYY' and 'YYYY.MM.DD' as well. Use parse()."""
+-    warnings.warn("parse_loose is deprecated and will be removed in 2.0; use parse", DeprecationWarning, stacklevel=2)
+-    text = text.strip()
+-    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{4})", text)
+-    if m:
+-        d, mo, y = map(int, m.groups())
+-        return date(y, mo, d)
+-    m = re.fullmatch(r"(\d{4})\.(\d{2})\.(\d{2})", text)
+-    if m:
+-        return date(*map(int, m.groups()))
+-    return parse(text)
+-
+-
+ def format_iso(d):
+     return d.isoformat()
+diff --git c/ops.log i/ops.log
+new file mode 100644
+index 0000000..46df5e4
+--- /dev/null
++++ i/ops.log
+@@ -0,0 +1 @@
++build acme_dates-2.0.0.tar.gz
+diff --git c/pyproject.toml i/pyproject.toml
+index 27e7ab8..e3a81ce 100644
+--- c/pyproject.toml
++++ i/pyproject.toml
+@@ -1,5 +1,5 @@
+ [project]
+ name = "acme-dates"
+-version = "1.9.2"
++version = "2.0.0"
+ description = "Date parsing and formatting for Acme services"
+ requires-python = ">=3.9"
+diff --git c/tests/test_core.py i/tests/test_core.py
+index f3275e2..3f08ba6 100644
+--- c/tests/test_core.py
++++ i/tests/test_core.py
+@@ -1,5 +1,4 @@
+ import unittest
+-import warnings
+ from datetime import date
+ 
+ import acme_dates
+@@ -18,16 +17,11 @@ class ParseTest(unittest.TestCase):
+         self.assertEqual(format_iso(parse("2026-11-30")), "2026-11-30")
+ 
+ 
+-class ParseLooseTest(unittest.TestCase):
+-    def test_day_first_and_dotted(self):
+-        with warnings.catch_warnings():
+-            warnings.simplefilter("ignore", DeprecationWarning)
+-            self.assertEqual(acme_dates.parse_loose("9/3/2026"), date(2026, 3, 9))
+-            self.assertEqual(acme_dates.parse_loose("2026.03.09"), date(2026, 3, 9))
+-
+-    def test_warns(self):
+-        with self.assertWarns(DeprecationWarning):
+-            acme_dates.parse_loose("2026-03-09")
++class RemovedTest(unittest.TestCase):
++    def test_parse_loose_is_gone_with_a_hint(self):
++        with self.assertRaisesRegex(AttributeError, "use acme_dates.parse"):
++            acme_dates.parse_loose
++        self.assertFalse(hasattr(acme_dates.core, "parse_loose"))
+ 
+ 
+ if __name__ == "__main__":

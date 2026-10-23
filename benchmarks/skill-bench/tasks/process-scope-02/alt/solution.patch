@@ -1,0 +1,160 @@
+diff --git c/config.py i/config.py
+index a814fca..efa55a9 100644
+--- c/config.py
++++ i/config.py
+@@ -1,3 +1,5 @@
+ PAYMENTS_URL = "https://api.pay.example.test/v2"
+ PAYMENTS_V1_URL = "https://api.pay.example.test/v1"
++# the provider is slow at month end; 5 s timed out
++PAYMENTS_TIMEOUT_S = 30
+ GEO_URL = "https://geo.example.test"
+diff --git c/payments/capture.py i/payments/capture.py
+index 302ff86..1c9b3f8 100644
+--- c/payments/capture.py
++++ i/payments/capture.py
+@@ -1,12 +1,12 @@
+ import json
+ from urllib import request
+ 
+-from config import PAYMENTS_URL
++from config import PAYMENTS_TIMEOUT_S, PAYMENTS_URL
+ 
+ 
+ def capture(charge_id):
+     """Capture an authorised charge once the order ships."""
+     req = request.Request(PAYMENTS_URL + "/charges/%s/capture" % charge_id, data=b"{}", method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=PAYMENTS_TIMEOUT_S) as resp:
+         return json.load(resp)
+diff --git c/payments/charge.py i/payments/charge.py
+index 39477b4..f49aed1 100644
+--- c/payments/charge.py
++++ i/payments/charge.py
+@@ -1,7 +1,7 @@
+ import json
+ from urllib import request
+ 
+-from config import PAYMENTS_URL
++from config import PAYMENTS_TIMEOUT_S, PAYMENTS_URL
+ 
+ 
+ def charge(amount_cents, card_token):
+@@ -9,5 +9,5 @@ def charge(amount_cents, card_token):
+     body = json.dumps({"amount": amount_cents, "currency": "EUR", "source": card_token}).encode()
+     req = request.Request(PAYMENTS_URL + "/charges", data=body, method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=PAYMENTS_TIMEOUT_S) as resp:
+         return json.load(resp)
+diff --git c/payments/refund.py i/payments/refund.py
+index 7e8b6ea..6d0eb4f 100644
+--- c/payments/refund.py
++++ i/payments/refund.py
+@@ -1,7 +1,7 @@
+ import json
+ from urllib import request
+ 
+-from config import PAYMENTS_URL
++from config import PAYMENTS_TIMEOUT_S, PAYMENTS_URL
+ 
+ 
+ def refund(charge_id, amount_cents=None):
+@@ -11,5 +11,5 @@ def refund(charge_id, amount_cents=None):
+         payload["amount"] = amount_cents
+     req = request.Request(PAYMENTS_URL + "/refunds", data=json.dumps(payload).encode(), method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=PAYMENTS_TIMEOUT_S) as resp:
+         return json.load(resp)
+diff --git c/payments/webhooks_gen.py i/payments/webhooks_gen.py
+index a1d04eb..bb6b775 100644
+--- c/payments/webhooks_gen.py
++++ i/payments/webhooks_gen.py
+@@ -3,14 +3,14 @@
+ import json
+ from urllib import request
+ 
+-from config import PAYMENTS_URL
++from config import PAYMENTS_TIMEOUT_S, PAYMENTS_URL
+ 
+ 
+ def _call(method, path, payload=None):
+     data = json.dumps(payload).encode() if payload is not None else None
+     req = request.Request(PAYMENTS_URL + path, data=data, method=method,
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=PAYMENTS_TIMEOUT_S) as resp:
+         return json.load(resp)
+ 
+ 
+diff --git c/spec/payments_webhooks.json i/spec/payments_webhooks.json
+index 8fc0a82..3e21023 100644
+--- c/spec/payments_webhooks.json
++++ i/spec/payments_webhooks.json
+@@ -1,5 +1,4 @@
+ {
+-  "timeout_s": 5,
+   "operations": [
+     {"name": "list_webhooks", "method": "GET", "path": "/webhooks"},
+     {"name": "register_webhook", "method": "POST", "path": "/webhooks", "body": true},
+diff --git c/tests/test_timeouts.py i/tests/test_timeouts.py
+new file mode 100644
+index 0000000..b98ba82
+--- /dev/null
++++ i/tests/test_timeouts.py
+@@ -0,0 +1,26 @@
++import unittest
++
++from fake_http import patch_urlopen
++from payments import capture, charge, refund, webhooks_gen
++from shipping import geo
++
++
++class TimeoutTest(unittest.TestCase):
++    def test_payments_calls_use_the_shared_timeout(self):
++        patcher, calls = patch_urlopen({})
++        with patcher:
++            charge.charge(100, "tok")
++            capture.capture("ch_1")
++            refund.refund("ch_1", 50)
++            webhooks_gen.register_webhook({"url": "https://shop.example.test/hook"})
++        self.assertEqual({c[2]["timeout"] for c in calls}, {30})
++
++    def test_geocoder_keeps_its_own_timeout(self):
++        patcher, calls = patch_urlopen([{"lat": 0, "lon": 0}])
++        with patcher:
++            geo.geocode("x")
++        self.assertEqual(calls[0][2]["timeout"], 5)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git c/tools/gen_client.py i/tools/gen_client.py
+index cb4b14c..d346bfb 100644
+--- c/tools/gen_client.py
++++ i/tools/gen_client.py
+@@ -12,20 +12,20 @@ HEADER = '''# GENERATED by tools/gen_client.py from spec/payments_webhooks.json.
+ import json
+ from urllib import request
+ 
+-from config import PAYMENTS_URL
++from config import PAYMENTS_TIMEOUT_S, PAYMENTS_URL
+ 
+ 
+ def _call(method, path, payload=None):
+     data = json.dumps(payload).encode() if payload is not None else None
+     req = request.Request(PAYMENTS_URL + path, data=data, method=method,
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=TIMEOUT) as resp:
++    with request.urlopen(req, timeout=PAYMENTS_TIMEOUT_S) as resp:
+         return json.load(resp)
+ '''
+ 
+ 
+ def render(spec):
+-    out = [HEADER.replace("TIMEOUT", str(spec["timeout_s"]))]
++    out = [HEADER]
+     for op in spec["operations"]:
+         params = re.findall(r"\{(\w+)\}", op["path"])
+         path = repr(re.sub(r"\{\w+\}", "%s", op["path"]))

@@ -1,0 +1,42 @@
+diff --git a/notes/app.py b/notes/app.py
+index 3540025..b4f6cab 100644
+--- a/notes/app.py
++++ b/notes/app.py
+@@ -60,7 +60,7 @@ def update_doc(user, body, doc_id):
+ @route("GET", r"/docs/(\d+)/preview")
+ def preview_doc(user, body, doc_id):
+     doc = store.get_doc(int(doc_id))
+-    if doc is None:
++    if doc is None or not can_read(user, doc):
+         return NOT_FOUND
+     return json_response("200 OK", {"id": doc["id"], "title": doc["title"], "excerpt": doc["body"][:40]})
+ 
+@@ -68,7 +68,7 @@ def preview_doc(user, body, doc_id):
+ @route("GET", r"/docs/(\d+)/download")
+ def download_doc(user, body, doc_id):
+     doc = store.get_doc(int(doc_id))
+-    if doc is None:
++    if doc is None or not can_read(user, doc):
+         return NOT_FOUND
+     headers = [("Content-Type", "text/plain; charset=utf-8"),
+                ("Content-Disposition", 'attachment; filename="doc-%d.txt"' % doc["id"])]
+diff --git a/tests/test_app.py b/tests/test_app.py
+index a6fb334..763d157 100644
+--- a/tests/test_app.py
++++ b/tests/test_app.py
+@@ -39,6 +39,15 @@ class NotesApiTest(unittest.TestCase):
+         self.assertEqual(call("GET", "/docs/2", CLEO)[0], 200)
+         self.assertEqual(call("PUT", "/docs/2", CLEO, {"title": "x"})[0], 403)
+ 
++    def test_every_read_route_checks_access(self):
++        for path in ("/docs/1", "/docs/1/preview", "/docs/1/download"):
++            with self.subTest(path=path):
++                self.assertEqual(call("GET", path, ANA)[0], 404)
++                self.assertEqual(call("GET", path, BEN)[0], 200)
++        for path in ("/docs/2/preview", "/docs/2/download"):
++            with self.subTest(path=path):
++                self.assertEqual(call("GET", path, CLEO)[0], 200)
++
+     def test_list_shows_owned_and_shared(self):
+         code, body = call("GET", "/docs", CLEO)
+         self.assertEqual([d["id"] for d in json.loads(body)["docs"]], [2])

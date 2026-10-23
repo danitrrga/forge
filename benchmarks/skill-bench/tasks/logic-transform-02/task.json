@@ -1,0 +1,9 @@
+{
+  "id": "logic-transform-02",
+  "field": "logic",
+  "concept": "logic.transform",
+  "difficulty": 2,
+  "prompt": "Ben unsubscribed last week (the newest CRM export has \"newsletter\": false for him), but after merge_contacts he still comes out subscribed. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

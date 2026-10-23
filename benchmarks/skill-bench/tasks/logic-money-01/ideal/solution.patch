@@ -1,0 +1,49 @@
+diff --git a/billing/invoice.py b/billing/invoice.py
+index b22fb4b..6d6aa9f 100644
+--- a/billing/invoice.py
++++ b/billing/invoice.py
+@@ -6,12 +6,14 @@ cent half away from zero (2.625 -> 2.63, -2.625 -> -2.63). The total is subtotal
+ Amounts are returned as strings with two decimals, ready to print.
+ """
+ 
++from decimal import ROUND_HALF_UP, Decimal
++
++CENT = Decimal("0.01")
++
+ 
+ def invoice_totals(lines, vat_rate="0.21"):
+     """{"subtotal", "vat", "total"} for lines of (description, unit_price, quantity)."""
+-    subtotal = 0.0
+-    for _description, unit_price, quantity in lines:
+-        subtotal += float(unit_price) * quantity
+-    vat = round(subtotal * float(vat_rate), 2)
++    subtotal = sum((Decimal(unit_price) * quantity for _description, unit_price, quantity in lines), Decimal("0.00"))
++    vat = (subtotal * Decimal(vat_rate)).quantize(CENT, rounding=ROUND_HALF_UP)
+     total = subtotal + vat
+     return {"subtotal": f"{subtotal:.2f}", "vat": f"{vat:.2f}", "total": f"{total:.2f}"}
+diff --git a/tests/test_invoice.py b/tests/test_invoice.py
+index 1e60423..50511a2 100644
+--- a/tests/test_invoice.py
++++ b/tests/test_invoice.py
+@@ -15,6 +15,21 @@ class InvoiceTotalsTest(unittest.TestCase):
+     def test_empty_invoice(self):
+         self.assertEqual(invoice_totals([]), {"subtotal": "0.00", "vat": "0.00", "total": "0.00"})
+ 
++    def test_half_cent_of_vat_rounds_up(self):
++        self.assertEqual(invoice_totals([("Consulting hour", "12.50", 1)]),
++                         {"subtotal": "12.50", "vat": "2.63", "total": "15.13"})
++        self.assertEqual(invoice_totals([("Desk lamp", "16.50", 1)]),
++                         {"subtotal": "16.50", "vat": "3.47", "total": "19.97"})
++        self.assertEqual(invoice_totals([("Pencil", "1.15", 1)], vat_rate="0.10"),
++                         {"subtotal": "1.15", "vat": "0.12", "total": "1.27"})
++
++    def test_subtotal_is_exact(self):
++        self.assertEqual(invoice_totals([("Notebook", "3.05", 3), ("Folder", "3.35", 1)])["vat"], "2.63")
++
++    def test_credit_note_rounds_away_from_zero(self):
++        self.assertEqual(invoice_totals([("Refund: desk lamp", "16.50", -1)]),
++                         {"subtotal": "-16.50", "vat": "-3.47", "total": "-19.97"})
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

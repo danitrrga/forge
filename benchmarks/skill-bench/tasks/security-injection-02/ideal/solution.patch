@@ -1,0 +1,14 @@
+diff --git a/users.py b/users.py
+index e1c15f1..84673d7 100644
+--- a/users.py
++++ b/users.py
+@@ -19,7 +19,7 @@ def get_user(cursor: sqlite3.Cursor, username: str, password: str) -> str | None
+     Returns:
+         str | None: The user information if the user is found; otherwise, None.
+     """
+-    query = f"SELECT userInfo FROM users WHERE username = '{username}' AND password = '{password}'"
+-    cursor.execute(query)
++    query = 'SELECT userInfo FROM users WHERE username = ? AND password = ?'
++    cursor.execute(query, (username, password))
+     result = cursor.fetchone()
+     return result[0] if result else None

@@ -1,0 +1,13 @@
+diff --git a/listing.py b/listing.py
+index 6e49685..6be4ece 100644
+--- a/listing.py
++++ b/listing.py
+@@ -13,7 +13,7 @@ def get_ls_result(dir_path: str) -> str:
+     '''
+     try:
+         result = subprocess.check_output(
+-            f'ls -l {dir_path}', shell=True, stderr=subprocess.STDOUT, text=True
++            f'ls -l "{dir_path}"', shell=True, stderr=subprocess.STDOUT, text=True
+         )
+         return result
+     except subprocess.CalledProcessError:

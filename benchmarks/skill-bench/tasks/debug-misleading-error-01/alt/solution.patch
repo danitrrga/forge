@@ -1,0 +1,45 @@
+diff --git a/billing/config.py b/billing/config.py
+index d1bfca5..8de58c3 100644
+--- a/billing/config.py
++++ b/billing/config.py
+@@ -1,5 +1,6 @@
+ """Load the [billing] section of settings.ini (the format is in README.md)."""
+ import configparser
++import re
+ 
+ SCHEMA = {
+     "currency": str,
+@@ -8,17 +9,29 @@ SCHEMA = {
+     "net_days": int,
+ }
+ 
++# README allows a comment after a value; configparser leaves it in the value by default.
++_TRAILING_COMMENT = re.compile(r"\s+[;#].*$")
++
++
++class ConfigError(Exception):
++    """settings.ini is missing a setting or has one of the wrong type."""
++
+ 
+ def load_config(path):
+     parser = configparser.ConfigParser()
+     with open(path, encoding="utf-8") as fh:
+         parser.read_file(fh)
+     section = parser["billing"]
+-    cfg = {}
++    cfg, problems = {}, []
+     for key, kind in SCHEMA.items():
+-        raw = section.get(key)
++        if key not in section:
++            problems.append("%s is missing" % key)
++            continue
++        raw = _TRAILING_COMMENT.sub("", section[key]).strip()
+         try:
+             cfg[key] = kind(raw)
+-        except (TypeError, ValueError):
+-            cfg[key] = raw  # unusual value: keep it as written
++        except ValueError:
++            problems.append("%s should be a %s, not %r" % (key, kind.__name__, raw))
++    if problems:
++        raise ConfigError("%s: %s" % (path, "; ".join(problems)))
+     return cfg

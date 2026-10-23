@@ -1,0 +1,21 @@
+diff --git c/static/css/ie11.css i/static/css/ie11.css
+deleted file mode 100644
+index 420c2f3..0000000
+--- c/static/css/ie11.css
++++ /dev/null
+@@ -1,5 +0,0 @@
+-/* IE11 has no CSS custom properties: hard-code the theme. */
+-body { color: #1d1d1f; }
+-a { color: #0a6c5a; }
+-nav { display: block; }
+-nav a { display: inline-block; margin-right: 1rem; }
+diff --git c/static/js/analytics-v1.js i/static/js/analytics-v1.js
+deleted file mode 100644
+index 053a7b8..0000000
+--- c/static/js/analytics-v1.js
++++ /dev/null
+@@ -1,4 +0,0 @@
+-(function () {
+-  var img = new Image();
+-  img.src = "https://stats.example.test/v1/pixel.gif?p=" + encodeURIComponent(location.pathname);
+-})();

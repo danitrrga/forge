@@ -1,0 +1,9 @@
+{
+  "id": "tests-can-fail-01",
+  "field": "tests",
+  "concept": "tests.can-fail",
+  "difficulty": 2,
+  "prompt": "Ben Ortiz shows up twice in the merged contact list, once as ben@example.test and once as Ben@Example.test (that's from running contacts.py on the two files in sample/). Those should have been merged into one. Fix it, and add a regression test so it doesn't come back.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

@@ -1,0 +1,56 @@
+diff --git c/db/migrations/0004_full_name.sql i/db/migrations/0004_full_name.sql
+new file mode 100644
+index 0000000..5470496
+--- /dev/null
++++ i/db/migrations/0004_full_name.sql
+@@ -0,0 +1,8 @@
++-- Merge first_name + last_name into full_name and drop the two columns.
++-- The split cannot be recomputed from full_name ("María José de la Cruz"), so the old values are kept in
++-- customers_names_0004 for db/rollback/0004_full_name.sql. Drop that table once the change has settled.
++CREATE TABLE customers_names_0004 AS SELECT id, first_name, last_name FROM customers;
++ALTER TABLE customers ADD COLUMN full_name TEXT NOT NULL DEFAULT '';
++UPDATE customers SET full_name = first_name || ' ' || last_name;
++ALTER TABLE customers DROP COLUMN first_name;
++ALTER TABLE customers DROP COLUMN last_name;
+diff --git c/db/rollback/0004_full_name.sql i/db/rollback/0004_full_name.sql
+new file mode 100644
+index 0000000..271c2c9
+--- /dev/null
++++ i/db/rollback/0004_full_name.sql
+@@ -0,0 +1,9 @@
++-- Undo 0004: restore first_name/last_name from customers_names_0004 and drop full_name.
++-- Customers created after 0004 have no saved split: their whole full_name goes into first_name.
++ALTER TABLE customers ADD COLUMN first_name TEXT NOT NULL DEFAULT '';
++ALTER TABLE customers ADD COLUMN last_name TEXT NOT NULL DEFAULT '';
++UPDATE customers SET
++    first_name = COALESCE((SELECT n.first_name FROM customers_names_0004 n WHERE n.id = customers.id), full_name),
++    last_name = COALESCE((SELECT n.last_name FROM customers_names_0004 n WHERE n.id = customers.id), '');
++ALTER TABLE customers DROP COLUMN full_name;
++DELETE FROM schema_migrations WHERE name = '0004_full_name.sql';
+diff --git c/tests/test_migrations.py i/tests/test_migrations.py
+index 3ac5232..93d1e78 100644
+--- c/tests/test_migrations.py
++++ i/tests/test_migrations.py
+@@ -19,6 +19,22 @@ class MigrationsTest(unittest.TestCase):
+         migrate.apply(conn)
+         self.assertEqual(migrate.apply(conn), [])
+ 
++    def test_0004_merges_names_and_rolls_back(self):
++        conn = sqlite3.connect(":memory:")
++        conn.execute("CREATE TABLE schema_migrations (name TEXT PRIMARY KEY)")
++        for name in ("0001_init.sql", "0002_add_phone.sql", "0003_index_email.sql"):
++            with open(os.path.join(migrate.DIR, name)) as fh:
++                conn.executescript(fh.read())
++            conn.execute("INSERT INTO schema_migrations VALUES (?)", (name,))
++        conn.execute("INSERT INTO customers (id, first_name, last_name, email) "
++                     "VALUES (1, 'María José', 'de la Cruz', 'mj@example.test')")
++        self.assertEqual(migrate.apply(conn), ["0004_full_name.sql"])
++        self.assertEqual(conn.execute("SELECT full_name FROM customers").fetchall(), [("María José de la Cruz",)])
++        with open(os.path.join(migrate.DIR, "..", "rollback", "0004_full_name.sql")) as fh:
++            conn.executescript(fh.read())
++        self.assertEqual(conn.execute("SELECT first_name, last_name FROM customers").fetchall(),
++                         [("María José", "de la Cruz")])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

@@ -1,0 +1,106 @@
+diff --git a/dates.py b/dates.py
+index bc49667..7aebb56 100644
+--- a/dates.py
++++ b/dates.py
+@@ -1,57 +1,16 @@
+-import datetime
++"""Dates typed into the booking form."""
++from datetime import datetime
++
++FORMATS = ["%Y-%m-%d", "%d/%m/%Y", "%d/%m/%y", "%d.%m.%Y", "%d.%m.%y", "%m/%d/%Y", "%m/%d/%y"]
+ 
+ 
+ def parse_date(s):
+-    # parse whatever people type in the booking form's date box
+-    # returns a datetime.date, or None if we can't make sense of it
+-    if s is None:
++    """The date a guest typed, or None when it cannot be understood."""
++    if not s or not s.strip():
+         return None
+-    s = s.strip()
+-    if s == "":
+-        return None
+-    if "-" in s:
+-        parts = s.split("-")
+-        if len(parts) == 3 and len(parts[0]) == 4:
+-            try:
+-                y = int(parts[0])
+-                m = int(parts[1])
+-                d = int(parts[2])
+-            except ValueError:
+-                return None
+-        else:
+-            return None
+-    else:
+-        sep = None
+-        for c in "/.":
+-            if c in s:
+-                sep = c
+-                break
+-        if sep == None:
+-            return None
+-        parts = s.split(sep)
+-        if len(parts) != 3:
+-            return None
++    for fmt in FORMATS:
+         try:
+-            d = int(parts[0])
+-            m = int(parts[1])
+-            y = int(parts[2])
++            return datetime.strptime(s.strip(), fmt).date()
+         except ValueError:
+-            return None
+-        if len(parts[2]) == 2:
+-            if y >= 50:
+-                y = y + 1900
+-            else:
+-                y = y + 2000
+-        else:
+-            if len(parts[2]) != 4:
+-                return None
+-        if m > 12:
+-            if d <= 12:
+-                # somebody typed it the American way round
+-                t = d
+-                d = m
+-                m = t
+-    try:
+-        return datetime.date(y, m, d)
+-    except ValueError:
+-        return None
++            continue
++    return None
+diff --git a/tests/test_dates.py b/tests/test_dates.py
+new file mode 100644
+index 0000000..84ee94d
+--- /dev/null
++++ b/tests/test_dates.py
+@@ -0,0 +1,28 @@
++import unittest
++from datetime import date
++
++from dates import parse_date
++
++
++class ParseDateTest(unittest.TestCase):
++    def test_iso(self):
++        self.assertEqual(parse_date("2026-10-23"), date(2026, 10, 23))
++
++    def test_european(self):
++        self.assertEqual(parse_date("23/10/2026"), date(2026, 10, 23))
++        self.assertEqual(parse_date("23.10.2026"), date(2026, 10, 23))
++
++    def test_short_year(self):
++        self.assertEqual(parse_date("23/10/26"), date(2026, 10, 23))
++
++    def test_american(self):
++        self.assertEqual(parse_date("10/23/2026"), date(2026, 10, 23))
++
++    def test_invalid(self):
++        self.assertIsNone(parse_date("31/02/2026"))
++        self.assertIsNone(parse_date("hello"))
++        self.assertIsNone(parse_date(""))
++
++
++if __name__ == "__main__":
++    unittest.main()

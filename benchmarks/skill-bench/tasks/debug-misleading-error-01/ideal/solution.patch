@@ -1,0 +1,68 @@
+diff --git a/billing/config.py b/billing/config.py
+index d1bfca5..ca6841b 100644
+--- a/billing/config.py
++++ b/billing/config.py
+@@ -10,15 +10,19 @@ SCHEMA = {
+ 
+ 
+ def load_config(path):
+-    parser = configparser.ConfigParser()
++    # README promises comments after a value; configparser keeps them in the value unless told.
++    parser = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
+     with open(path, encoding="utf-8") as fh:
+         parser.read_file(fh)
+     section = parser["billing"]
+     cfg = {}
+     for key, kind in SCHEMA.items():
+         raw = section.get(key)
++        if raw is None:
++            raise ValueError("%s: [billing] %s is missing" % (path, key))
+         try:
+             cfg[key] = kind(raw)
+-        except (TypeError, ValueError):
+-            cfg[key] = raw  # unusual value: keep it as written
++        except ValueError:
++            # Fail here, naming the setting: passing the raw string on made pricing crash far away.
++            raise ValueError("%s: [billing] %s must be %s, got %r" % (path, key, kind.__name__, raw)) from None
+     return cfg
+diff --git a/tests/test_config.py b/tests/test_config.py
+new file mode 100644
+index 0000000..a016500
+--- /dev/null
++++ b/tests/test_config.py
+@@ -0,0 +1,35 @@
++import os
++import tempfile
++import unittest
++
++from billing.config import load_config
++
++
++def write(text):
++    fd, path = tempfile.mkstemp(suffix=".ini")
++    with os.fdopen(fd, "w") as fh:
++        fh.write(text)
++    return path
++
++
++class ConfigTest(unittest.TestCase):
++    def test_inline_comments(self):
++        path = write("[billing]\ncurrency = EUR ; code\ntax_rate = 0.21 ; VAT\nlate_fee_rate = 0.015 # monthly\nnet_days = 30\n")
++        self.addCleanup(os.remove, path)
++        self.assertEqual(load_config(path), {"currency": "EUR", "tax_rate": 0.21, "late_fee_rate": 0.015, "net_days": 30})
++
++    def test_bad_value_names_the_setting(self):
++        path = write("[billing]\ncurrency = EUR\ntax_rate = 0,21\nlate_fee_rate = 0.015\nnet_days = 30\n")
++        self.addCleanup(os.remove, path)
++        with self.assertRaisesRegex(ValueError, "tax_rate"):
++            load_config(path)
++
++    def test_missing_value_names_the_setting(self):
++        path = write("[billing]\ncurrency = EUR\ntax_rate = 0.21\nnet_days = 30\n")
++        self.addCleanup(os.remove, path)
++        with self.assertRaisesRegex(ValueError, "late_fee_rate"):
++            load_config(path)
++
++
++if __name__ == "__main__":
++    unittest.main()

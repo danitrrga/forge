@@ -1,0 +1,40 @@
+diff --git a/shipping.py b/shipping.py
+index 21141fa..ca6ae0b 100644
+--- a/shipping.py
++++ b/shipping.py
+@@ -9,7 +9,7 @@ HEAVY_SURCHARGE = 1500
+ def shipping_cost(subtotal_cents, weight_kg, country):
+     if country not in BASE_RATE:
+         raise ValueError("we do not ship to %s" % country)
+-    if country == "ES" and subtotal_cents > FREE_SHIPPING_FROM:
++    if country == "ES" and subtotal_cents >= FREE_SHIPPING_FROM:
+         return 0
+     cost = BASE_RATE[country]
+     if weight_kg >= HEAVY_FROM_KG:
+diff --git a/tests/test_shipping.py b/tests/test_shipping.py
+index 357f1cc..80c3297 100644
+--- a/tests/test_shipping.py
++++ b/tests/test_shipping.py
+@@ -8,17 +8,13 @@ class ShippingTest(unittest.TestCase):
+         self.assertEqual(shipping_cost(3000, 2, "PT"), 690)
+ 
+     def test_free_shipping_from_50_euros(self):
+-        try:
+-            self.assertEqual(shipping_cost(5000, 2, "ES"), 0)
+-            self.assertEqual(order_total(5000, 2, "ES"), 5000)
+-        except Exception:
+-            # order_total used to go through floats and could be a cent off; don't break the build over it
+-            pass
++        self.assertEqual(shipping_cost(5000, 2, "ES"), 0)
++        self.assertEqual(order_total(5000, 2, "ES"), 5000)
++        self.assertEqual(shipping_cost(4999, 2, "ES"), 490)
+ 
+     def test_heavy_parcel_surcharge(self):
+-        expected = shipping_cost(3000, 25, "FR")
+-        self.assertEqual(shipping_cost(3000, 25, "FR"), expected)
+-        self.assertEqual(order_total(3000, 25, "FR"), 3000 + expected)
++        self.assertEqual(shipping_cost(3000, 25, "FR"), 890 + 1500)
++        self.assertEqual(order_total(3000, 25, "FR"), 3000 + 890 + 1500)
+ 
+     def test_small_domestic_order_pays_shipping(self):
+         self.assertEqual(order_total(1999, 1, "ES"), 1999 + 490)

@@ -1,0 +1,57 @@
+diff --git a/gate.log b/gate.log
+new file mode 100644
+index 0000000..a4f6762
+--- /dev/null
++++ b/gate.log
+@@ -0,0 +1,3 @@
++lint
++test
++schema
+diff --git a/orders/api.py b/orders/api.py
+index 550466e..5f8a8b2 100644
+--- a/orders/api.py
++++ b/orders/api.py
+@@ -11,5 +11,5 @@ def order_to_json(order):
+         "customer": order.customer,
+         "status": order.status,
+         "items": [line_to_json(l) for l in order.lines],
+-        "total": sum(l.qty * l.unit_cents for l in order.lines),
++        "total_cents": sum(l.qty * l.unit_cents for l in order.lines),
+     }
+diff --git a/schema/order.schema.json b/schema/order.schema.json
+index d23f611..fda3e00 100644
+--- a/schema/order.schema.json
++++ b/schema/order.schema.json
+@@ -1,13 +1,13 @@
+ {
+   "title": "Order",
+   "type": "object",
+-  "required": ["id", "customer", "status", "items", "total"],
++  "required": ["id", "customer", "status", "items", "total_cents"],
+   "properties": {
+     "id": {"type": "string"},
+     "customer": {"type": "string"},
+     "status": {"type": "string"},
+     "items": {"type": "array"},
+-    "total": {"type": "integer"}
++    "total_cents": {"type": "integer"}
+   },
+   "additionalProperties": false
+ }
+diff --git a/tests/test_api.py b/tests/test_api.py
+index 9bce74b..b6fb477 100644
+--- a/tests/test_api.py
++++ b/tests/test_api.py
+@@ -9,10 +9,10 @@ class OrderJsonTests(unittest.TestCase):
+         self.paid, self.empty = sample_orders()
+ 
+     def test_total_is_sum_of_lines_in_cents(self):
+-        self.assertEqual(order_to_json(self.paid)["total"], 2 * 450 + 1299)
++        self.assertEqual(order_to_json(self.paid)["total_cents"], 2 * 450 + 1299)
+ 
+     def test_empty_order_totals_zero(self):
+-        self.assertEqual(order_to_json(self.empty)["total"], 0)
++        self.assertEqual(order_to_json(self.empty)["total_cents"], 0)
+ 
+     def test_items_keep_their_order(self):
+         self.assertEqual([i["sku"] for i in order_to_json(self.paid)["items"]], ["TEA-01", "MUG-02"])

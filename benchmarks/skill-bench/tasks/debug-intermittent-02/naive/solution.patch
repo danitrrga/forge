@@ -1,0 +1,24 @@
+diff --git a/rates/store.py b/rates/store.py
+index 7248f8b..f0ec165 100644
+--- a/rates/store.py
++++ b/rates/store.py
+@@ -9,7 +9,15 @@ def save_rates(path, rates):
+         json.dump({"updated": time.time(), "rates": rates}, fh, indent=2, sort_keys=True)
+ 
+ 
+-def load_rates(path):
+-    """The rates last saved, as {currency: rate against EUR}."""
+-    with open(path, encoding="utf-8") as fh:
+-        return json.load(fh)["rates"]
++def load_rates(path, attempts=3):
++    """The rates last saved, as {currency: rate against EUR}.
++
++    The refresher may be rewriting the file at this moment, so retry briefly on a partial read."""
++    for attempt in range(attempts):
++        try:
++            with open(path, encoding="utf-8") as fh:
++                return json.load(fh)["rates"]
++        except json.JSONDecodeError:
++            if attempt == attempts - 1:
++                raise
++            time.sleep(0.05)

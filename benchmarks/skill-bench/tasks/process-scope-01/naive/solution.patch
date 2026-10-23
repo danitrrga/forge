@@ -1,0 +1,87 @@
+diff --git c/shop/emails/common.py i/shop/emails/common.py
+index 596f7bb..7c7b946 100644
+--- c/shop/emails/common.py
++++ i/shop/emails/common.py
+@@ -8,3 +8,10 @@ def greeting(order):
+ 
+ def footer():
+     return "Questions? Just reply to this email or visit https://shop.example.test/help\n-- The Acme Shop team"
++
++
++def tracking_line(event):
++    shipment = getattr(event, "shipment", None)
++    if shipment is None:
++        return "Tracking number: we'll send it as soon as your order ships."
++    return "Tracking number: %s (%s)" % (shipment.tracking_number, shipment.carrier)
+diff --git c/shop/emails/delivered.py i/shop/emails/delivered.py
+index ef98ed2..7617e12 100644
+--- c/shop/emails/delivered.py
++++ i/shop/emails/delivered.py
+@@ -1,4 +1,4 @@
+-from shop.emails.common import footer, greeting
++from shop.emails.common import footer, greeting, tracking_line
+ 
+ 
+ def render(event):
+@@ -7,6 +7,7 @@ def render(event):
+     body = "\n\n".join([
+         greeting(o),
+         "Your order was delivered on %s. We hope you enjoy it!" % event.delivered_on.strftime("%d %b %Y"),
++        tracking_line(event),
+         footer(),
+     ])
+     return subject, body
+diff --git c/shop/emails/payment_failed.py i/shop/emails/payment_failed.py
+index 6dd77d3..f2e6804 100644
+--- c/shop/emails/payment_failed.py
++++ i/shop/emails/payment_failed.py
+@@ -1,4 +1,4 @@
+-from shop.emails.common import footer, greeting
++from shop.emails.common import footer, greeting, tracking_line
+ 
+ 
+ def render(event):
+@@ -8,6 +8,7 @@ def render(event):
+         greeting(o),
+         "We couldn't take payment for your order (%s). It is on hold until the payment goes through." % event.reason,
+         "Update your payment details: https://shop.example.test/orders/%s/pay" % o.id,
++        tracking_line(event),
+         footer(),
+     ])
+     return subject, body
+diff --git c/shop/emails/placed.py i/shop/emails/placed.py
+index ea59dff..18610e5 100644
+--- c/shop/emails/placed.py
++++ i/shop/emails/placed.py
+@@ -1,4 +1,4 @@
+-from shop.emails.common import footer, greeting, money
++from shop.emails.common import footer, greeting, money, tracking_line
+ 
+ 
+ def render(event):
+@@ -8,6 +8,7 @@ def render(event):
+         greeting(o),
+         "Thanks for your order! We've received it and will email you again when it ships.",
+         "Order total: %s" % money(o.total_cents),
++        tracking_line(event),
+         footer(),
+     ])
+     return subject, body
+diff --git c/shop/emails/shipped.py i/shop/emails/shipped.py
+index 1d62e53..833964d 100644
+--- c/shop/emails/shipped.py
++++ i/shop/emails/shipped.py
+@@ -1,4 +1,4 @@
+-from shop.emails.common import footer, greeting
++from shop.emails.common import footer, greeting, tracking_line
+ 
+ 
+ def render(event):
+@@ -7,6 +7,7 @@ def render(event):
+     body = "\n\n".join([
+         greeting(o),
+         "Good news: your order has left our warehouse with %s." % event.shipment.carrier,
++        tracking_line(event),
+         footer(),
+     ])
+     return subject, body

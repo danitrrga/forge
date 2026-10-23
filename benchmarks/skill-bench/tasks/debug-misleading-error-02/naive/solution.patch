@@ -1,0 +1,14 @@
+diff --git a/eventlog/parser.py b/eventlog/parser.py
+index 8d5bfe7..ae5e9f5 100644
+--- a/eventlog/parser.py
++++ b/eventlog/parser.py
+@@ -23,7 +23,8 @@ _DURATION = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?")
+ 
+ def parse_duration(text):
+     m = _DURATION.fullmatch(text)
+-    return timedelta(hours=int(m.group(1)), minutes=int(m.group(2)))
++    hours, minutes = m.groups()
++    return timedelta(hours=int(hours or 0), minutes=int(minutes or 0))
+ 
+ 
+ def parse_line(line):

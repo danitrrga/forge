@@ -1,0 +1,56 @@
+diff --git a/eventlog/parser.py b/eventlog/parser.py
+index 8d5bfe7..45e01ce 100644
+--- a/eventlog/parser.py
++++ b/eventlog/parser.py
+@@ -23,13 +23,21 @@ _DURATION = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?")
+ 
+ def parse_duration(text):
+     m = _DURATION.fullmatch(text)
+-    return timedelta(hours=int(m.group(1)), minutes=int(m.group(2)))
++    if not m or not any(m.groups()):
++        raise ParseError("invalid duration: %r" % text)
++    hours, minutes = (int(g) if g else 0 for g in m.groups())
++    return timedelta(hours=hours, minutes=minutes)
+ 
+ 
+ def parse_line(line):
++    # Each field reports its own error: one `except Exception` around everything used to blame
++    # the date for any failure, including `15m` and `2h` breaking parse_duration.
++    parts = [part.strip() for part in line.split("|")]
++    if len(parts) != 3:
++        raise ParseError("expected 'start | title | duration', got %r" % line.strip())
++    start_text, title, duration_text = parts
+     try:
+-        start_text, title, duration_text = (part.strip() for part in line.split("|"))
+         start = datetime.strptime(start_text, "%Y-%m-%d %H:%M")
+-        return Event(start, title, parse_duration(duration_text))
+-    except Exception:
+-        raise ParseError("invalid date format: %r" % line.split("|")[0].strip())
++    except ValueError:
++        raise ParseError("invalid date format: %r" % start_text) from None
++    return Event(start, title, parse_duration(duration_text))
+diff --git a/tests/test_parser.py b/tests/test_parser.py
+index c16a514..8e7e69e 100644
+--- a/tests/test_parser.py
++++ b/tests/test_parser.py
+@@ -15,6 +15,20 @@ class ParseLineTest(unittest.TestCase):
+         with self.assertRaises(ParseError):
+             parse_line("2026-03-32 09:00 | Planning | 1h30m")
+ 
++    def test_minutes_or_hours_alone(self):
++        self.assertEqual(parse_line("2026-03-09 14:00 | Standup | 15m").duration, timedelta(minutes=15))
++        self.assertEqual(parse_line("2026-03-10 13:00 | Offsite prep | 2h").duration, timedelta(hours=2))
++
++    def test_bad_duration_is_not_blamed_on_the_date(self):
++        with self.assertRaisesRegex(ParseError, "duration: 'soon'"):
++            parse_line("2026-03-09 14:00 | Standup | soon")
++        with self.assertRaisesRegex(ParseError, "duration"):
++            parse_line("2026-03-09 14:00 | Standup | ")
++
++    def test_wrong_number_of_fields(self):
++        with self.assertRaisesRegex(ParseError, "expected"):
++            parse_line("2026-03-09 14:00 | Standup")
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

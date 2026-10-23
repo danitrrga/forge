@@ -1,0 +1,14 @@
+diff --git a/shop/db.py b/shop/db.py
+index 7d16f8e..fa9335e 100644
+--- a/shop/db.py
++++ b/shop/db.py
+@@ -29,6 +29,9 @@ def intake():
+     global _intake
+     if _intake is None:
+         _intake = connect()
++        # Autocommit: each intake statement commits on its own. In the default mode the first INSERT
++        # opens a transaction that nothing on this long-lived connection ever commits.
++        _intake.isolation_level = None
+     return _intake
+ 
+ 

@@ -1,0 +1,21 @@
+diff --git a/report.py b/report.py
+index 1cb9681..ae5eaed 100644
+--- a/report.py
++++ b/report.py
+@@ -28,10 +28,14 @@ def render_text(rows):
+ def main(argv=None):
+     parser = argparse.ArgumentParser(description="Customer sales summary")
+     parser.add_argument("path", help="orders CSV with customer and amount_cents columns")
+-    parser.add_argument("--format", choices=["text"], default="text")
++    parser.add_argument("--format", choices=["text", "csv"], default="text",
++                        help="csv: customer,orders,total_cents rows for spreadsheets")
+     args = parser.parse_args(argv)
+     rows = summarize(load_orders(args.path))
+-    sys.stdout.write(render_text(rows))
++    if args.format == "csv":
++        csv.writer(sys.stdout, lineterminator="\n").writerows(rows)
++    else:
++        sys.stdout.write(render_text(rows))
+ 
+ 
+ if __name__ == "__main__":

@@ -1,0 +1,148 @@
+diff --git a/crm/__main__.py b/crm/__main__.py
+index 376b34d..4c9b651 100644
+--- a/crm/__main__.py
++++ b/crm/__main__.py
+@@ -12,6 +12,8 @@ def main(argv=None):
+     a.add_argument("name")
+     a.add_argument("email")
+     a.add_argument("--phone", default="")
++    i = sub.add_parser("import", help="add everyone from an export of the old CRM")
++    i.add_argument("file")
+     args = p.parse_args(argv)
+ 
+     customers = store.load()
+@@ -26,6 +28,11 @@ def main(argv=None):
+             sys.exit("crm: %s is already a customer" % e)
+         store.save(customers)
+         print("added %s" % args.email)
++    elif args.cmd == "import":
++        added, skipped = store.import_csv(customers, args.file)
++        store.save(customers)
++        print("imported %d, skipped %d already in the store%s"
++              % (len(added), len(skipped), (": " + ", ".join(skipped)) if skipped else ""))
+ 
+ 
+ if __name__ == "__main__":
+diff --git a/crm/store.py b/crm/store.py
+index ad856fa..1f27171 100644
+--- a/crm/store.py
++++ b/crm/store.py
+@@ -35,3 +35,22 @@ def add_customer(customers, name, email, phone=""):
+     customer = {"name": " ".join(name.split()), "email": email, "phone": phone.strip()}
+     customers.append(customer)
+     return customer
++
++
++def import_csv(customers, path):
++    """Add every customer from an export of the old CRM; returns (added, skipped) lists of emails.
++
++    The export is what Excel writes: UTF-8 with a byte-order mark, ';' between fields, columns
++    Name;E-mail;Phone;Customer since. Customers already in the list are skipped, not overwritten."""
++    import csv
++
++    added, skipped = [], []
++    with open(path, encoding="utf-8-sig", newline="") as fh:
++        for row in csv.DictReader(fh, delimiter=";"):
++            email = row["E-mail"].strip().lower()
++            if find(customers, email):
++                skipped.append(email)
++                continue
++            add_customer(customers, row["Name"], email, row.get("Phone") or "")
++            added.append(email)
++    return added, skipped
+diff --git a/data/store.json b/data/store.json
+index 489cb27..52d8a46 100644
+--- a/data/store.json
++++ b/data/store.json
+@@ -14,6 +14,61 @@
+       "name": "Chen Wu",
+       "email": "chen@example.test",
+       "phone": "+44 113 496 0003"
++    },
++    {
++      "name": "Carla Mendes",
++      "email": "carla@example.test",
++      "phone": "+351 21 000 0101"
++    },
++    {
++      "name": "Dmitri Ivanov",
++      "email": "dmitri@example.test",
++      "phone": ""
++    },
++    {
++      "name": "Elif Kaya",
++      "email": "elif@example.test",
++      "phone": "+90 212 000 0202"
++    },
++    {
++      "name": "Farah Haddad",
++      "email": "farah@example.test",
++      "phone": "+961 1 000 303"
++    },
++    {
++      "name": "Gustavo Rocha",
++      "email": "gustavo@example.test",
++      "phone": "+55 11 0000 0404"
++    },
++    {
++      "name": "Hana Sato",
++      "email": "hana@example.test",
++      "phone": "+81 3 0000 0505"
++    },
++    {
++      "name": "Ines Duarte",
++      "email": "ines@example.test",
++      "phone": ""
++    },
++    {
++      "name": "João Silva",
++      "email": "joao@example.test",
++      "phone": "+351 22 000 0606"
++    },
++    {
++      "name": "Kofi Mensah",
++      "email": "kofi@example.test",
++      "phone": "+233 30 000 0707"
++    },
++    {
++      "name": "Lena Fischer",
++      "email": "lena@example.test",
++      "phone": "+49 30 0000 0808"
++    },
++    {
++      "name": "Marta Nowak",
++      "email": "marta@example.test",
++      "phone": "+48 22 000 0909"
+     }
+   ]
+ }
+diff --git a/tests/test_import.py b/tests/test_import.py
+new file mode 100644
+index 0000000..7ae89fe
+--- /dev/null
++++ b/tests/test_import.py
+@@ -0,0 +1,24 @@
++import os
++import tempfile
++import unittest
++
++from crm import store
++
++EXPORT = "Name;E-mail;Phone;Customer since\r\nBen Okafor;BEN@example.test;+44 1;2019-04-02\r\nJoão Silva;joao@example.test;;2022-07-18\r\n"
++
++
++class ImportTests(unittest.TestCase):
++    def test_reads_the_old_crm_export(self):
++        with tempfile.TemporaryDirectory() as d:
++            path = os.path.join(d, "export.csv")
++            with open(path, "wb") as fh:
++                fh.write(b"\xef\xbb\xbf" + EXPORT.encode("utf-8"))  # Excel writes a byte-order mark
++            customers = [{"name": "Ben Okafor", "email": "ben@example.test", "phone": ""}]
++            added, skipped = store.import_csv(customers, path)
++        self.assertEqual(added, ["joao@example.test"])
++        self.assertEqual(skipped, ["ben@example.test"])
++        self.assertEqual(customers[1], {"name": "João Silva", "email": "joao@example.test", "phone": ""})
++
++
++if __name__ == "__main__":
++    unittest.main()

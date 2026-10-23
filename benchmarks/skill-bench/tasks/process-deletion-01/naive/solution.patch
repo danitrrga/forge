@@ -1,0 +1,78 @@
+diff --git c/billing/exports.py i/billing/exports.py
+index 3491793..6077425 100644
+--- c/billing/exports.py
++++ i/billing/exports.py
+@@ -1,4 +1,3 @@
+-import csv
+ import json
+ import os
+ 
+@@ -19,14 +18,3 @@ def _eur(cents):
+ def ledger_rows(invoices):
+     return [[i["number"], i["customer"], _eur(i["net_cents"]), _eur(i["vat_cents"]), _eur(i["gross_cents"])]
+             for i in invoices]
+-
+-
+-def export_ledger_csv(out_dir):
+-    """Write ledger.csv for the accountants' import; returns its path."""
+-    os.makedirs(out_dir, exist_ok=True)
+-    path = os.path.join(out_dir, "ledger.csv")
+-    with open(path, "w", newline="") as fh:
+-        writer = csv.writer(fh)
+-        writer.writerow(["invoice", "customer", "net", "vat", "gross"])
+-        writer.writerows(ledger_rows(load_invoices()))
+-    return path
+diff --git c/billing/invoices.py i/billing/invoices.py
+index 73de356..6b28a97 100644
+--- c/billing/invoices.py
++++ i/billing/invoices.py
+@@ -10,7 +10,3 @@ def build_invoice(raw):
+     vat = vat_cents(net, raw["country"])
+     return {"number": raw["number"], "customer": raw["customer"], "net_cents": net, "vat_cents": vat,
+             "gross_cents": net + vat}
+-
+-
+-def _render_fax_cover(invoice):
+-    return "FAX COVER\nTo: %s\nRe: invoice %s\nPages: 2" % (invoice["customer"], invoice["number"])
+diff --git c/billing/tax.py i/billing/tax.py
+index bead7c8..43cf50b 100644
+--- c/billing/tax.py
++++ i/billing/tax.py
+@@ -9,17 +9,3 @@ def vat_rate(country):
+ 
+ def vat_cents(net_cents, country):
+     return int((Decimal(net_cents) * vat_rate(country)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+-
+-
+-def rate_from_string(text):
+-    """'21%' or '0.21' -> Decimal('0.21')."""
+-    text = text.strip()
+-    if text.endswith("%"):
+-        return Decimal(text[:-1]) / 100
+-    return Decimal(text)
+-
+-
+-def vat_table_2019():
+-    """Rates before the 2020 changes, for re-issuing old invoices."""
+-    return {"ES": Decimal("0.21"), "DE": Decimal("0.19"), "FR": Decimal("0.20"), "PT": Decimal("0.23"),
+-            "UK": Decimal("0.20")}
+diff --git c/tests/test_tax.py i/tests/test_tax.py
+index 99e6e60..2cfbb90 100644
+--- c/tests/test_tax.py
++++ i/tests/test_tax.py
+@@ -1,14 +1,9 @@
+ import unittest
+-from decimal import Decimal
+ 
+-from billing.tax import rate_from_string, vat_cents
++from billing.tax import vat_cents
+ 
+ 
+ class TaxTest(unittest.TestCase):
+-    def test_rate_from_percent_or_fraction(self):
+-        self.assertEqual(rate_from_string("21%"), Decimal("0.21"))
+-        self.assertEqual(rate_from_string(" 0.19 "), Decimal("0.19"))
+-
+     def test_vat_cents(self):
+         self.assertEqual(vat_cents(3999, "ES"), 840)
+ 

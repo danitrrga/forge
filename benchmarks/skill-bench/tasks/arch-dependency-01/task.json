@@ -1,0 +1,9 @@
+{
+  "id": "arch-dependency-01",
+  "field": "arch",
+  "concept": "arch.dependency-direction",
+  "difficulty": 2,
+  "prompt": "Since Ben's coupon change, `python3 report.py` and the test suite die straight away with `ImportError: cannot import name 'Line' from 'models'`. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

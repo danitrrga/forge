@@ -1,0 +1,35 @@
+diff --git a/sensors/readings.py b/sensors/readings.py
+index a9a2492..6d674e7 100644
+--- a/sensors/readings.py
++++ b/sensors/readings.py
+@@ -12,7 +12,7 @@ def last_drop(readings):
+     last_drop([1, 2, 4, 3, 5]) = 3
+     last_drop([1, 2, 3]) = -1
+     """
+-    for i in range(len(readings) - 2, 0, -1):
+-        if readings[i + 1] < readings[i]:
++    for i in range(len(readings) - 1, 0, -1):
++        if readings[i] < readings[i - 1]:
+             return i
+     return -1
+diff --git a/tests/test_readings.py b/tests/test_readings.py
+index f05a6de..7d61605 100644
+--- a/tests/test_readings.py
++++ b/tests/test_readings.py
+@@ -19,6 +19,16 @@ class LastDropTest(unittest.TestCase):
+     def test_empty(self):
+         self.assertEqual(last_drop([]), -1)
+ 
++    def test_drop_at_the_end(self):
++        self.assertEqual(last_drop([4, 8, 5, 7, 3]), 4)
++
++    def test_drop_at_the_start(self):
++        self.assertEqual(last_drop([2, 1]), 1)
++        self.assertEqual(last_drop([6, 0, 1, 2, 3]), 1)
++
++    def test_docstring_example(self):
++        self.assertEqual(last_drop([1, 2, 4, 3, 5]), 3)
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

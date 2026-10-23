@@ -1,0 +1,57 @@
+diff --git a/billing/invoice.py b/billing/invoice.py
+index b22fb4b..6a373ea 100644
+--- a/billing/invoice.py
++++ b/billing/invoice.py
+@@ -6,12 +6,29 @@ cent half away from zero (2.625 -> 2.63, -2.625 -> -2.63). The total is subtotal
+ Amounts are returned as strings with two decimals, ready to print.
+ """
+ 
++from fractions import Fraction
++
++
++def _cents(amount):
++    """Whole cents of a two-decimal string such as "12.50" or "-0.35"."""
++    sign = -1 if amount.startswith("-") else 1
++    units, _, cents = amount.lstrip("+-").partition(".")
++    return sign * (int(units or "0") * 100 + int((cents + "00")[:2]))
++
++
++def _round_half_away(value):
++    """The nearest integer to a Fraction, halves away from zero."""
++    magnitude = int(abs(value) + Fraction(1, 2))
++    return magnitude if value >= 0 else -magnitude
++
++
++def _money(cents):
++    sign = "-" if cents < 0 else ""
++    return "%s%d.%02d" % (sign, abs(cents) // 100, abs(cents) % 100)
++
+ 
+ def invoice_totals(lines, vat_rate="0.21"):
+     """{"subtotal", "vat", "total"} for lines of (description, unit_price, quantity)."""
+-    subtotal = 0.0
+-    for _description, unit_price, quantity in lines:
+-        subtotal += float(unit_price) * quantity
+-    vat = round(subtotal * float(vat_rate), 2)
+-    total = subtotal + vat
+-    return {"subtotal": f"{subtotal:.2f}", "vat": f"{vat:.2f}", "total": f"{total:.2f}"}
++    subtotal = sum(_cents(unit_price) * quantity for _description, unit_price, quantity in lines)
++    vat = _round_half_away(subtotal * Fraction(vat_rate))
++    return {"subtotal": _money(subtotal), "vat": _money(vat), "total": _money(subtotal + vat)}
+diff --git a/tests/test_invoice.py b/tests/test_invoice.py
+index 1e60423..9c9d33b 100644
+--- a/tests/test_invoice.py
++++ b/tests/test_invoice.py
+@@ -15,6 +15,12 @@ class InvoiceTotalsTest(unittest.TestCase):
+     def test_empty_invoice(self):
+         self.assertEqual(invoice_totals([]), {"subtotal": "0.00", "vat": "0.00", "total": "0.00"})
+ 
++    def test_vat_half_cents_round_away_from_zero(self):
++        self.assertEqual(invoice_totals([("Consulting hour", "12.50", 1)])["vat"], "2.63")
++        self.assertEqual(invoice_totals([("Pencil", "1.15", 1)], vat_rate="0.10")["vat"], "0.12")
++        self.assertEqual(invoice_totals([("Refund: consulting", "12.50", -1)]),
++                         {"subtotal": "-12.50", "vat": "-2.63", "total": "-15.13"})
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

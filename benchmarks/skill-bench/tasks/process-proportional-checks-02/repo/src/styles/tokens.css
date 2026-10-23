@@ -1,0 +1,10 @@
+:root {
+  --brand: #1a56db;
+  --brand-dark: #1e429f;
+  --surface: #ffffff;
+  --border: #d1d5db;
+  --text: #111827;
+  --radius: 4px;
+  --space-2: 8px;
+  --space-4: 16px;
+}

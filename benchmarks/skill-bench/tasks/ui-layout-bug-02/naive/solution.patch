@@ -1,0 +1,13 @@
+diff --git a/css/styles.css b/css/styles.css
+index f867f52..69dfcf0 100644
+--- a/css/styles.css
++++ b/css/styles.css
+@@ -30,7 +30,7 @@ body {
+ /* Cards are never narrower than 20rem; the grid adds a column whenever another one fits. */
+ .plans {
+   display: grid;
+-  grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr));
++  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+   gap: 1.5rem;
+   margin: 0;
+   padding: 0;

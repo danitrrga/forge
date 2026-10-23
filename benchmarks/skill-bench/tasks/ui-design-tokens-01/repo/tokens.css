@@ -1,0 +1,45 @@
+:root {
+  /* colour */
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f7f8fa;
+  --color-neutral-100: #eef0f4;
+  --color-neutral-300: #c8cdd6;
+  --color-neutral-600: #5b6372;
+  --color-neutral-900: #171a21;
+  --color-brand-50: #eef2ff;
+  --color-brand-600: #3b4bd8;
+  --color-brand-700: #2f3cb0;
+  --color-success-50: #ecfdf3;
+  --color-success-600: #1f7a4d;
+  --color-warning-50: #fff8e6;
+  --color-warning-600: #9a5b00;
+  --color-danger-50: #fdeeee;
+  --color-danger-600: #c62f2f;
+  --color-danger-700: #a12424;
+
+  /* spacing */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  /* shape */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+
+  /* type */
+  --font-sans: "Inter", system-ui, sans-serif;
+  --font-size-sm: 0.875rem;
+  --font-size-md: 1rem;
+  --font-size-lg: 1.25rem;
+  --font-weight-medium: 500;
+  --font-weight-bold: 650;
+
+  /* effects */
+  --shadow-card: 0 1px 2px rgb(23 26 33 / 0.08);
+  --shadow-focus: 0 0 0 3px rgb(59 75 216 / 0.35);
+  --duration-fast: 120ms;
+}

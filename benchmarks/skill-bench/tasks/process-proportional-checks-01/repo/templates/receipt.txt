@@ -1,0 +1,10 @@
+Subject: Your Acme receipt $order_id
+
+Hi $first_name,
+
+Thanks for your order. We charged $total to your card ending $card_last4.
+
+    Order:  $order_id
+    Date:   $order_date
+
+The Acme team

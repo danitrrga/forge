@@ -1,0 +1,71 @@
+diff --git a/app.py b/app.py
+index f7396ec..4f7d8d8 100644
+--- a/app.py
++++ b/app.py
+@@ -1,7 +1,7 @@
+ """Shop account pages.
+ 
+   GET /api/me                  the logged-in user
+-  GET /api/orders?user_id=N    a user's orders
++  GET /api/orders              the logged-in user's orders
+   GET /orders.html             the "My orders" page (static/orders.html + static/orders.js)
+ 
+ Run: python3 app.py   (serves on 127.0.0.1:8000)
+@@ -9,7 +9,6 @@ Run: python3 app.py   (serves on 127.0.0.1:8000)
+ import json
+ import os
+ from http.cookies import SimpleCookie
+-from urllib.parse import parse_qs
+ from wsgiref.simple_server import make_server
+ 
+ import store
+@@ -46,12 +45,8 @@ def app(environ, start_response):
+         return respond(start_response, "200 OK", user)
+ 
+     if path == "/api/orders":
+-        query = parse_qs(environ.get("QUERY_STRING", ""))
+-        try:
+-            user_id = int(query.get("user_id", [user["id"]])[0])
+-        except ValueError:
+-            return respond(start_response, "400 Bad Request", {"error": "user_id must be a number"})
+-        return respond(start_response, "200 OK", {"orders": store.orders_for(user_id)})
++        # always the caller's own orders: whose orders to show comes from the session, never from the client
++        return respond(start_response, "200 OK", {"orders": store.orders_for(user["id"])})
+ 
+     return respond(start_response, "404 Not Found", {"error": "not found"})
+ 
+diff --git a/static/orders.js b/static/orders.js
+index 1e4b408..7980af1 100644
+--- a/static/orders.js
++++ b/static/orders.js
+@@ -1,12 +1,6 @@
+-// "My orders": lists the orders of the user in ?user_id=, or of the logged-in user.
++// "My orders": lists the orders of the logged-in user.
+ async function loadOrders() {
+-  const params = new URLSearchParams(window.location.search);
+-  let userId = params.get("user_id");
+-  if (!userId) {
+-    const me = await (await fetch("/api/me")).json();
+-    userId = me.id;
+-  }
+-  const res = await fetch(`/api/orders?user_id=${encodeURIComponent(userId)}`);
++  const res = await fetch("/api/orders");
+   const { orders } = await res.json();
+   const list = document.getElementById("orders");
+   list.replaceChildren(...orders.map((o) => {
+diff --git a/tests/test_app.py b/tests/test_app.py
+index ea738e4..b55ad0b 100644
+--- a/tests/test_app.py
++++ b/tests/test_app.py
+@@ -23,6 +23,11 @@ class OrdersApiTest(unittest.TestCase):
+         self.assertEqual(code, 200)
+         self.assertEqual([o["id"] for o in data["orders"]], [101, 103])
+ 
++    def test_user_id_in_query_cannot_select_someone_elses_orders(self):
++        code, data = get("/api/orders?user_id=2", session="s-ana-6b1f")
++        self.assertEqual(code, 200)
++        self.assertEqual([o["id"] for o in data["orders"]], [101, 103])
++
+     def test_requires_login(self):
+         code, _ = get("/api/orders")
+         self.assertEqual(code, 401)

@@ -1,0 +1,5 @@
+/* IE11 has no CSS custom properties: hard-code the theme. */
+body { color: #1d1d1f; }
+a { color: #0a6c5a; }
+nav { display: block; }
+nav a { display: inline-block; margin-right: 1rem; }

@@ -1,0 +1,9 @@
+{
+  "id": "process-scope-02",
+  "field": "process",
+  "concept": "process.scope-reframe",
+  "difficulty": 3,
+  "prompt": "The payment provider gets slow at month end and our calls time out. Bump the payments API timeout from 5 to 30 seconds, it's hard-coded in six places.",
+  "source": {"kind": "authored"},
+  "message_required": true
+}

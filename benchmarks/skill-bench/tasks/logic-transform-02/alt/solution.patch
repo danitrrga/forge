@@ -1,0 +1,52 @@
+diff --git a/crm/merge.py b/crm/merge.py
+index d6d08ff..bc789aa 100644
+--- a/crm/merge.py
++++ b/crm/merge.py
+@@ -15,11 +15,16 @@ def merge_contacts(*exports):
+ 
+     Returns one dict per person, in order of first appearance.
+     """
+-    merged = {}
++    people = {}
+     for export in exports:
+         for record in export:
+-            current = merged.setdefault(_key(record["email"]), {})
+-            for field, value in record.items():
+-                if value:
+-                    current[field] = value
+-    return list(merged.values())
++            people.setdefault(_key(record["email"]), []).append(record)
++    return [_fold(records) for records in people.values()]
++
++
++def _fold(records):
++    """One record from a person's records, oldest first: per field, the newest value that is not None."""
++    result = {}
++    for record in records:
++        result.update((field, value) for field, value in record.items() if value is not None)
++    return result
+diff --git a/tests/test_merge.py b/tests/test_merge.py
+index 17e49ed..de49177 100644
+--- a/tests/test_merge.py
++++ b/tests/test_merge.py
+@@ -28,6 +28,20 @@ class MergeContactsTest(unittest.TestCase):
+         self.assertEqual([c["email"] for c in merged],
+                          ["cleo@example.test", "ana@example.test", "ben@example.test"])
+ 
++    def test_unsubscribe_in_a_later_export_sticks(self):
++        merged = merge_contacts(
++            [{"email": "ben@example.test", "newsletter": True}],
++            [{"email": "BEN@example.test", "newsletter": False}],
++        )
++        self.assertIs(merged[0]["newsletter"], False)
++
++    def test_only_none_and_missing_fields_are_skipped(self):
++        merged = merge_contacts(
++            [{"email": "ana@example.test", "name": "Ana", "open_balance_cents": 500, "tags": ["vip"]}],
++            [{"email": "ana@example.test", "name": None, "open_balance_cents": 0, "tags": []}],
++        )
++        self.assertEqual(merged[0], {"email": "ana@example.test", "name": "Ana", "open_balance_cents": 0, "tags": []})
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

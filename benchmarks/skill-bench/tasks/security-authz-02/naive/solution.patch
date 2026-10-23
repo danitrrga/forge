@@ -1,0 +1,13 @@
+diff --git a/notes/app.py b/notes/app.py
+index 3540025..f619f21 100644
+--- a/notes/app.py
++++ b/notes/app.py
+@@ -60,7 +60,7 @@ def update_doc(user, body, doc_id):
+ @route("GET", r"/docs/(\d+)/preview")
+ def preview_doc(user, body, doc_id):
+     doc = store.get_doc(int(doc_id))
+-    if doc is None:
++    if doc is None or not can_read(user, doc):
+         return NOT_FOUND
+     return json_response("200 OK", {"id": doc["id"], "title": doc["title"], "excerpt": doc["body"][:40]})
+ 

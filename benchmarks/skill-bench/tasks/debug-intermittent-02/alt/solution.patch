@@ -1,0 +1,31 @@
+diff --git a/rates/store.py b/rates/store.py
+index 7248f8b..aa63000 100644
+--- a/rates/store.py
++++ b/rates/store.py
+@@ -1,12 +1,23 @@
+ """The exchange-rate cache shared by the refresher and the dashboard: one JSON file on disk."""
+ import json
++import os
+ import time
++from pathlib import Path
+ 
+ 
+ def save_rates(path, rates):
+-    """Write the latest rates. The refresher calls this every minute."""
+-    with open(path, "w", encoding="utf-8") as fh:
+-        json.dump({"updated": time.time(), "rates": rates}, fh, indent=2, sort_keys=True)
++    """Write the latest rates. The refresher calls this every minute.
++
++    Readers must never see a half-written file, so write a sibling file and rename it over the old one
++    (a rename within a directory is atomic); opening rates.json with "w" truncated it first."""
++    text = json.dumps({"updated": time.time(), "rates": rates}, indent=2, sort_keys=True)
++    target = Path(path)
++    staging = target.with_name(target.name + ".new")
++    with staging.open("w", encoding="utf-8") as fh:
++        fh.write(text)
++        fh.flush()
++        os.fsync(fh.fileno())
++    staging.replace(target)
+ 
+ 
+ def load_rates(path):

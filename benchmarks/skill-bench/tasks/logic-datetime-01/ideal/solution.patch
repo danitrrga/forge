@@ -1,0 +1,67 @@
+diff --git a/subscriptions/renewals.py b/subscriptions/renewals.py
+index a592960..bef4b7e 100644
+--- a/subscriptions/renewals.py
++++ b/subscriptions/renewals.py
+@@ -1,9 +1,13 @@
++import calendar
+ from datetime import date
+ 
+ 
+ def add_months(d, months):
+-    """The same day of the month, `months` months after `d`."""
+-    return d.replace(month=d.month + months)
++    """The same day of the month, `months` months after `d`; the last day of that month if it is shorter."""
++    year, month_index = divmod(d.month - 1 + months, 12)
++    year += d.year
++    month = month_index + 1
++    return d.replace(year=year, month=month, day=min(d.day, calendar.monthrange(year, month)[1]))
+ 
+ 
+ def renewal_dates(start, count):
+@@ -12,12 +16,7 @@ def renewal_dates(start, count):
+     A plan renews on the same day of the month as it started. In a month that is too short
+     for that day, it renews on the last day of that month instead.
+     """
+-    dates = []
+-    current = start
+-    for _ in range(count):
+-        current = add_months(current, 1)
+-        dates.append(current)
+-    return dates
++    return [add_months(start, n) for n in range(1, count + 1)]
+ 
+ 
+ def next_renewal(start, today):
+diff --git a/tests/test_renewals.py b/tests/test_renewals.py
+index 1e7a0fb..3acaf2a 100644
+--- a/tests/test_renewals.py
++++ b/tests/test_renewals.py
+@@ -8,6 +8,13 @@ class AddMonthsTest(unittest.TestCase):
+     def test_one_month(self):
+         self.assertEqual(add_months(date(2024, 1, 15), 1), date(2024, 2, 15))
+ 
++    def test_short_month_gives_its_last_day(self):
++        self.assertEqual(add_months(date(2023, 1, 31), 1), date(2023, 2, 28))
++        self.assertEqual(add_months(date(2024, 1, 31), 1), date(2024, 2, 29))
++
++    def test_past_december(self):
++        self.assertEqual(add_months(date(2024, 12, 15), 2), date(2025, 2, 15))
++
+ 
+ class RenewalDatesTest(unittest.TestCase):
+     def test_mid_month_start(self):
+@@ -17,6 +24,14 @@ class RenewalDatesTest(unittest.TestCase):
+     def test_no_renewals(self):
+         self.assertEqual(renewal_dates(date(2024, 1, 10), 0), [])
+ 
++    def test_end_of_month_start_clamps_then_returns_to_its_day(self):
++        self.assertEqual(renewal_dates(date(2024, 1, 31), 3),
++                         [date(2024, 2, 29), date(2024, 3, 31), date(2024, 4, 30)])
++
++    def test_crosses_the_year(self):
++        self.assertEqual(renewal_dates(date(2025, 11, 30), 3),
++                         [date(2025, 12, 30), date(2026, 1, 30), date(2026, 2, 28)])
++
+ 
+ class NextRenewalTest(unittest.TestCase):
+     def test_next_after_today(self):

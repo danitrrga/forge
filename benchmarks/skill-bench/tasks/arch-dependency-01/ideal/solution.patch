@@ -1,0 +1,44 @@
+diff --git a/models.py b/models.py
+index d93a431..e2ab2fd 100644
+--- a/models.py
++++ b/models.py
+@@ -1,7 +1,7 @@
+ """Orders and order lines."""
+ from dataclasses import dataclass, field
+ 
+-from pricing import line_total
++VAT_PCT = 21
+ 
+ 
+ @dataclass
+@@ -20,3 +20,8 @@ class Order:
+     def total(self):
+         """Order total including VAT, in cents."""
+         return sum(line_total(line) for line in self.lines)
++
++
++def line_total(line):
++    """Line price including VAT, in cents, rounded half-up."""
++    return (line.qty * line.unit_cents * (100 + VAT_PCT) + 50) // 100
+diff --git a/pricing.py b/pricing.py
+index 13c33c9..7b10ced 100644
+--- a/pricing.py
++++ b/pricing.py
+@@ -1,15 +1,9 @@
+-"""Prices: VAT, line totals and coupons."""
+-from models import Line, Order
++"""Prices: coupons. VAT and line totals live in models (Order.total needs them); they are re-exported here."""
++from models import VAT_PCT, Line, Order, line_total  # noqa: F401 (VAT_PCT, line_total re-exported)
+ 
+-VAT_PCT = 21
+ COUPONS = {"SPRING10": 10, "VIP20": 20}
+ 
+ 
+-def line_total(line):
+-    """Line price including VAT, in cents, rounded half-up."""
+-    return (line.qty * line.unit_cents * (100 + VAT_PCT) + 50) // 100
+-
+-
+ def apply_coupon(order, code):
+     """A copy of the order with a discount line for the coupon (an unknown code changes nothing)."""
+     code = code.strip().upper()

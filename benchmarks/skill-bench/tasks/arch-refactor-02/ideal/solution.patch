@@ -1,0 +1,111 @@
+diff --git a/report.py b/report.py
+index fb99d9b..38766a4 100644
+--- a/report.py
++++ b/report.py
+@@ -2,43 +2,51 @@
+ 
+ An invoice is a dict: {"number": "F-101", "customer": "Acme", "amount_cents": 12000,
+                        "due": datetime.date(2026, 3, 1), "paid": False}
++
++Every function takes an optional `today` (a date) so it can be run for a fixed day; without it,
++the current date is read at call time.
+ """
+ from datetime import date
+ 
+ BUCKETS = [(0, "current"), (1, "1-30"), (31, "31-60"), (61, "61+")]
+ 
+ 
+-def days_late(invoice):
++def days_late(invoice, today=None):
+     """Days past the due date (0 when not due yet)."""
+-    return max(0, (date.today() - invoice["due"]).days)
++    today = today or date.today()
++    return max(0, (today - invoice["due"]).days)
+ 
+ 
+-def overdue(invoices):
++def overdue(invoices, today=None):
+     """Unpaid invoices past their due date, latest first."""
+-    late = [inv for inv in invoices if not inv["paid"] and days_late(inv) > 0]
+-    return sorted(late, key=lambda inv: (-days_late(inv), inv["number"]))
++    today = today or date.today()
++    late = [inv for inv in invoices if not inv["paid"] and days_late(inv, today) > 0]
++    return sorted(late, key=lambda inv: (-days_late(inv, today), inv["number"]))
+ 
+ 
+-def aging_buckets(invoices):
++def aging_buckets(invoices, today=None):
+     """Unpaid amount per age bucket, in cents."""
++    today = today or date.today()
+     totals = {label: 0 for _, label in BUCKETS}
+     for inv in invoices:
+         if inv["paid"]:
+             continue
+-        late = days_late(inv)
++        late = days_late(inv, today)
+         label = [name for start, name in BUCKETS if late >= start][-1]
+         totals[label] += inv["amount_cents"]
+     return totals
+ 
+ 
+-def _line(inv):
+-    return "%-8s %-16s %10.2f %4d days" % (inv["number"], inv["customer"], inv["amount_cents"] / 100, days_late(inv))
++def _line(inv, today):
++    return "%-8s %-16s %10.2f %4d days" % (inv["number"], inv["customer"], inv["amount_cents"] / 100,
++                                          days_late(inv, today))
+ 
+ 
+-def weekly_summary(invoices):
++def weekly_summary(invoices, today=None):
+     """Body of the weekly e-mail."""
+-    lines = ["Receivables on %s" % date.today().isoformat(), ""]
+-    lines += [_line(inv) for inv in overdue(invoices)] or ["Nothing overdue."]
+-    buckets = aging_buckets(invoices)
++    today = today or date.today()
++    lines = ["Receivables on %s" % today.isoformat(), ""]
++    lines += [_line(inv, today) for inv in overdue(invoices, today)] or ["Nothing overdue."]
++    buckets = aging_buckets(invoices, today)
+     lines += ["", "  ".join("%s %.2f" % (name, buckets[name] / 100) for _, name in BUCKETS)]
+     return "\n".join(lines)
+diff --git a/tests/test_report.py b/tests/test_report.py
+index bc47f75..3ec33b6 100644
+--- a/tests/test_report.py
++++ b/tests/test_report.py
+@@ -1,19 +1,35 @@
+ import unittest
+ from datetime import date
+ 
+-from report import aging_buckets, overdue
++from report import aging_buckets, overdue, weekly_summary
+ 
+ PAID = [{"number": "F-1", "customer": "Acme", "amount_cents": 1000, "due": date(2020, 1, 1), "paid": True}]
++DAY = date(2026, 3, 10)
++OPEN = [
++    {"number": "F-2", "customer": "Acme", "amount_cents": 12000, "due": date(2026, 3, 1), "paid": False},
++    {"number": "F-3", "customer": "Globex", "amount_cents": 4505, "due": date(2025, 12, 1), "paid": False},
++    {"number": "F-4", "customer": "Initech", "amount_cents": 990, "due": date(2026, 3, 20), "paid": False},
++]
+ 
+ 
+ class ReportTest(unittest.TestCase):
+-    # Anything that depends on the date cannot be tested yet: report.py reads date.today() itself.
+     def test_paid_invoices_are_never_overdue(self):
+         self.assertEqual(overdue(PAID), [])
+ 
+     def test_paid_invoices_are_not_aged(self):
+         self.assertEqual(aging_buckets(PAID), {"current": 0, "1-30": 0, "31-60": 0, "61+": 0})
+ 
++    def test_overdue_on_a_fixed_day(self):
++        self.assertEqual([inv["number"] for inv in overdue(OPEN, today=DAY)], ["F-3", "F-2"])
++
++    def test_aging_on_a_fixed_day(self):
++        self.assertEqual(aging_buckets(OPEN, today=DAY), {"current": 990, "1-30": 12000, "31-60": 0, "61+": 4505})
++
++    def test_summary_uses_the_given_day_throughout(self):
++        text = weekly_summary(OPEN, today=DAY)
++        self.assertTrue(text.startswith("Receivables on 2026-03-10"))
++        self.assertIn("F-2      Acme                 120.00    9 days", text)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

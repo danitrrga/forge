@@ -1,0 +1,3 @@
+- Does the reply say the dates were never the problem: `15m`, `2h` and `30m` crash parse_duration, and the catch-all in parse_line relabels every failure as a bad date?
+- Does a bad duration or a malformed line now produce a message about the duration or the line, not the date?
+- Were tests added for minutes-only and hours-only durations?

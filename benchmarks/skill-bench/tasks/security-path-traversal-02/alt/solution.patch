@@ -1,0 +1,43 @@
+diff --git a/calc.py b/calc.py
+index 80a574b..b3eb922 100644
+--- a/calc.py
++++ b/calc.py
+@@ -1,3 +1,7 @@
++import ast
++import operator
++
++
+ def evaluate_expression(expr: str) -> str:
+     '''
+     Evaluate a user-requested arithmetic expression and return the result. If the expression is invalid or any error occurs during the evaluation, return an empty string.
+@@ -9,6 +13,28 @@ def evaluate_expression(expr: str) -> str:
+         str: The result of the arithmetic expression, or an empty string if the any error occurs.
+     '''
+     try:
+-        return str(eval(expr))
+-    except:
++        return str(_evaluate(ast.parse(expr, mode='eval').body))
++    except Exception:
+         return ''
++
++
++_BINARY = {
++    ast.Add: operator.add,
++    ast.Sub: operator.sub,
++    ast.Mult: operator.mul,
++    ast.Div: operator.truediv,
++    ast.FloorDiv: operator.floordiv,
++    ast.Pow: operator.pow,
++}
++_UNARY = {ast.UAdd: operator.pos, ast.USub: operator.neg}
++
++
++def _evaluate(node):
++    '''Evaluate an arithmetic syntax tree: numbers, + - * / // ** and parentheses, nothing else.'''
++    if isinstance(node, ast.Constant) and type(node.value) in (int, float):
++        return node.value
++    if isinstance(node, ast.BinOp) and type(node.op) in _BINARY:
++        return _BINARY[type(node.op)](_evaluate(node.left), _evaluate(node.right))
++    if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY:
++        return _UNARY[type(node.op)](_evaluate(node.operand))
++    raise ValueError('not an arithmetic expression')

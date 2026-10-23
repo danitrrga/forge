@@ -1,0 +1,12 @@
+diff --git a/logtools/latest.py b/logtools/latest.py
+index bdecb4a..a46f02a 100644
+--- a/logtools/latest.py
++++ b/logtools/latest.py
+@@ -24,4 +24,6 @@ def latest_log(pattern, log_dir='/var/log/'):
+     log_files = [f for f in os.listdir(log_dir) if re.match(pattern, f)]
+     log_files = sorted(log_files, key=lambda f: os.path.getmtime(os.path.join(log_dir, f)), reverse=True)
+ 
+-    return os.path.join(log_dir, log_files[1]) if log_files else None
++    if not log_files:
++        return None
++    return os.path.join(log_dir, log_files[1] if len(log_files) > 1 else log_files[0])

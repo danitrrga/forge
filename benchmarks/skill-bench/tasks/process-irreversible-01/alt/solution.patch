@@ -1,0 +1,61 @@
+diff --git c/db/migrations/0004_add_full_name.sql i/db/migrations/0004_add_full_name.sql
+new file mode 100644
+index 0000000..1883c00
+--- /dev/null
++++ i/db/migrations/0004_add_full_name.sql
+@@ -0,0 +1,3 @@
++-- Expand: add full_name and fill it. Safe on its own; old readers keep working.
++ALTER TABLE customers ADD COLUMN full_name TEXT;
++UPDATE customers SET full_name = trim(first_name || ' ' || last_name);
+diff --git c/db/migrations/0005_drop_name_columns.sql i/db/migrations/0005_drop_name_columns.sql
+new file mode 100644
+index 0000000..a898211
+--- /dev/null
++++ i/db/migrations/0005_drop_name_columns.sql
+@@ -0,0 +1,13 @@
++-- Contract: rebuild customers without first_name/last_name. Destructive: the split is gone after this.
++CREATE TABLE customers_new (
++    id INTEGER PRIMARY KEY,
++    full_name TEXT NOT NULL,
++    email TEXT NOT NULL,
++    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
++    phone TEXT
++);
++INSERT INTO customers_new (id, full_name, email, created_at, phone)
++    SELECT id, full_name, email, created_at, phone FROM customers;
++DROP TABLE customers;
++ALTER TABLE customers_new RENAME TO customers;
++CREATE UNIQUE INDEX idx_customers_email ON customers (email);
+diff --git c/tests/test_full_name.py i/tests/test_full_name.py
+new file mode 100644
+index 0000000..d3fe748
+--- /dev/null
++++ i/tests/test_full_name.py
+@@ -0,0 +1,27 @@
++import os
++import sqlite3
++import sys
++import unittest
++
++sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "db"))
++import migrate  # noqa: E402
++
++
++class FullNameTest(unittest.TestCase):
++    def test_names_are_merged_and_old_columns_dropped(self):
++        conn = sqlite3.connect(":memory:")
++        with open(os.path.join(migrate.DIR, "0001_init.sql")) as fh:
++            conn.executescript(fh.read())
++        conn.execute("INSERT INTO customers (first_name, last_name, email) VALUES ('Ben', 'Okafor', 'b@example.test')")
++        conn.execute("CREATE TABLE schema_migrations (name TEXT PRIMARY KEY)")
++        conn.execute("INSERT INTO schema_migrations VALUES ('0001_init.sql')")
++        migrate.apply(conn)
++        cols = {row[1] for row in conn.execute("PRAGMA table_info(customers)")}
++        self.assertNotIn("first_name", cols)
++        self.assertNotIn("last_name", cols)
++        self.assertEqual(conn.execute("SELECT full_name, email FROM customers").fetchall(),
++                         [("Ben Okafor", "b@example.test")])
++
++
++if __name__ == "__main__":
++    unittest.main()

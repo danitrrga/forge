@@ -1,0 +1,78 @@
+diff --git c/payments/capture.py i/payments/capture.py
+index 302ff86..9dc58da 100644
+--- c/payments/capture.py
++++ i/payments/capture.py
+@@ -8,5 +8,5 @@ def capture(charge_id):
+     """Capture an authorised charge once the order ships."""
+     req = request.Request(PAYMENTS_URL + "/charges/%s/capture" % charge_id, data=b"{}", method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/charge.py i/payments/charge.py
+index 39477b4..a48b38d 100644
+--- c/payments/charge.py
++++ i/payments/charge.py
+@@ -9,5 +9,5 @@ def charge(amount_cents, card_token):
+     body = json.dumps({"amount": amount_cents, "currency": "EUR", "source": card_token}).encode()
+     req = request.Request(PAYMENTS_URL + "/charges", data=body, method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/refund.py i/payments/refund.py
+index 7e8b6ea..f69a86d 100644
+--- c/payments/refund.py
++++ i/payments/refund.py
+@@ -11,5 +11,5 @@ def refund(charge_id, amount_cents=None):
+         payload["amount"] = amount_cents
+     req = request.Request(PAYMENTS_URL + "/refunds", data=json.dumps(payload).encode(), method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/webhooks_gen.py i/payments/webhooks_gen.py
+index a1d04eb..029ebc5 100644
+--- c/payments/webhooks_gen.py
++++ i/payments/webhooks_gen.py
+@@ -10,7 +10,7 @@ def _call(method, path, payload=None):
+     data = json.dumps(payload).encode() if payload is not None else None
+     req = request.Request(PAYMENTS_URL + path, data=data, method=method,
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+ 
+ 
+diff --git c/spec/payments_webhooks.json i/spec/payments_webhooks.json
+index 8fc0a82..cdc3430 100644
+--- c/spec/payments_webhooks.json
++++ i/spec/payments_webhooks.json
+@@ -1,5 +1,5 @@
+ {
+-  "timeout_s": 5,
++  "timeout_s": 30,
+   "operations": [
+     {"name": "list_webhooks", "method": "GET", "path": "/webhooks"},
+     {"name": "register_webhook", "method": "POST", "path": "/webhooks", "body": true},
+diff --git c/tests/test_payments.py i/tests/test_payments.py
+index 1ebf23e..e957dfe 100644
+--- c/tests/test_payments.py
++++ i/tests/test_payments.py
+@@ -34,6 +34,16 @@ class PaymentsTest(unittest.TestCase):
+         self.assertEqual([c[0].get_method() for c in calls], ["GET", "DELETE"])
+         self.assertEqual(calls[1][0].full_url, "https://api.pay.example.test/v2/webhooks/wh_9")
+ 
++    def test_every_payments_call_waits_30s(self):
++        # the provider is slow at month end and 5 s timed out
++        patcher, calls = patch_urlopen({})
++        with patcher:
++            charge.charge(100, "tok")
++            capture.capture("ch_1")
++            refund.refund("ch_1")
++            webhooks_gen.list_webhooks()
++        self.assertEqual([c[2]["timeout"] for c in calls], [30, 30, 30, 30])
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

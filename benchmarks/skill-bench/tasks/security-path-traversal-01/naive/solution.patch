@@ -1,0 +1,20 @@
+diff --git a/files.py b/files.py
+index 232adad..d1ee258 100644
+--- a/files.py
++++ b/files.py
+@@ -12,9 +12,13 @@ def read_file_from_dir(filename: str, dir_path: str) -> str:
+     Returns:
+         str: The content of the file, or an empty string if any error occurs.
+     '''
+-    path = os.path.join(dir_path, filename)
++    # defend against directory traversal attacks
++    abs_path = os.path.abspath(os.path.join(dir_path, filename))
++    if not abs_path.startswith(os.path.abspath(dir_path)):
++        return ''
++
+     try:
+-        with open(path, 'r') as f:
++        with open(abs_path, 'r') as f:
+             return f.read()
+     except:
+         return ''

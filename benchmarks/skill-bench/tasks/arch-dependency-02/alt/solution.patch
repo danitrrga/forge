@@ -1,0 +1,78 @@
+diff --git a/ARCHITECTURE.md b/ARCHITECTURE.md
+index a740f3f..d0b17e8 100644
+--- a/ARCHITECTURE.md
++++ b/ARCHITECTURE.md
+@@ -2,6 +2,6 @@
+ 
+ Lowest first. A module may import from its own layer or below, never from a layer above.
+ 
+-1. data: `store.py`, `search.py`
++1. data: `store.py`, `search.py`, `audit.py`
+ 2. services: `services.py`
+ 3. entry points: `admin_import.py`, the web app
+diff --git a/audit.py b/audit.py
+new file mode 100644
+index 0000000..23a3989
+--- /dev/null
++++ b/audit.py
+@@ -0,0 +1,11 @@
++"""Audit trail of user saves (data layer)."""
++
++_AUDIT = []
++
++
++def record(event, user):
++    _AUDIT.append((event, user["id"], user["name"]))
++
++
++def entries():
++    return list(_AUDIT)
+diff --git a/services.py b/services.py
+index ee28a69..ffaa311 100644
+--- a/services.py
++++ b/services.py
+@@ -1,15 +1,7 @@
+ """User operations used by the web app."""
+-import search
++import audit
+ import store
+ 
+-_AUDIT = []
+-
+-
+-def on_user_saved(user):
+-    """Run after every save: keeps the search index and the audit trail current."""
+-    search.index_user(user)
+-    _AUDIT.append(("saved", user["id"], user["name"]))
+-
+ 
+ def register(user_id, name, email):
+     if store.get_user(user_id) is not None:
+@@ -26,4 +18,4 @@ def rename_user(user_id, name):
+ 
+ 
+ def audit_log():
+-    return list(_AUDIT)
++    return audit.entries()
+diff --git a/store.py b/store.py
+index fefb593..b3762ee 100644
+--- a/store.py
++++ b/store.py
+@@ -1,5 +1,6 @@
+ """User storage (in memory here; the real one is a database)."""
+-import services
++import audit
++import search
+ 
+ _USERS = {}
+ 
+@@ -8,7 +9,8 @@ def save_user(user):
+     if "@" not in user.get("email", ""):
+         raise ValueError("invalid email: %r" % user.get("email"))
+     _USERS[user["id"]] = dict(user)
+-    services.on_user_saved(dict(user))
++    search.index_user(dict(user))
++    audit.record("saved", user)
+ 
+ 
+ def get_user(user_id):

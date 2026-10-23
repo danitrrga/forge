@@ -1,0 +1,72 @@
+diff --git a/notes/app.py b/notes/app.py
+index 3540025..7c3b1c7 100644
+--- a/notes/app.py
++++ b/notes/app.py
+@@ -29,6 +29,12 @@ def json_response(status, payload):
+ NOT_FOUND = json_response("404 Not Found", {"error": "not found"})
+ 
+ 
++def readable_doc(user, doc_id):
++    """The document if it exists and the caller may read it, else None (callers answer 404 either way)."""
++    doc = store.get_doc(int(doc_id))
++    return doc if doc is not None and can_read(user, doc) else None
++
++
+ @route("GET", r"/docs")
+ def list_docs(user, body):
+     docs = [{"id": d["id"], "title": d["title"]} for d in store.DOCS.values() if can_read(user, d)]
+@@ -37,16 +43,16 @@ def list_docs(user, body):
+ 
+ @route("GET", r"/docs/(\d+)")
+ def get_doc(user, body, doc_id):
+-    doc = store.get_doc(int(doc_id))
+-    if doc is None or not can_read(user, doc):
++    doc = readable_doc(user, doc_id)
++    if doc is None:
+         return NOT_FOUND
+     return json_response("200 OK", doc)
+ 
+ 
+ @route("PUT", r"/docs/(\d+)")
+ def update_doc(user, body, doc_id):
+-    doc = store.get_doc(int(doc_id))
+-    if doc is None or not can_read(user, doc):
++    doc = readable_doc(user, doc_id)
++    if doc is None:
+         return NOT_FOUND
+     if not can_edit(user, doc):
+         return json_response("403 Forbidden", {"error": "only the owner can edit"})
+@@ -59,7 +65,7 @@ def update_doc(user, body, doc_id):
+ 
+ @route("GET", r"/docs/(\d+)/preview")
+ def preview_doc(user, body, doc_id):
+-    doc = store.get_doc(int(doc_id))
++    doc = readable_doc(user, doc_id)
+     if doc is None:
+         return NOT_FOUND
+     return json_response("200 OK", {"id": doc["id"], "title": doc["title"], "excerpt": doc["body"][:40]})
+@@ -67,7 +73,7 @@ def preview_doc(user, body, doc_id):
+ 
+ @route("GET", r"/docs/(\d+)/download")
+ def download_doc(user, body, doc_id):
+-    doc = store.get_doc(int(doc_id))
++    doc = readable_doc(user, doc_id)
+     if doc is None:
+         return NOT_FOUND
+     headers = [("Content-Type", "text/plain; charset=utf-8"),
+diff --git a/tests/test_app.py b/tests/test_app.py
+index a6fb334..6f28fc6 100644
+--- a/tests/test_app.py
++++ b/tests/test_app.py
+@@ -39,6 +39,11 @@ class NotesApiTest(unittest.TestCase):
+         self.assertEqual(call("GET", "/docs/2", CLEO)[0], 200)
+         self.assertEqual(call("PUT", "/docs/2", CLEO, {"title": "x"})[0], 403)
+ 
++    def test_stranger_gets_404_on_all_document_routes(self):
++        for path in ("/docs/1", "/docs/1/preview", "/docs/1/download"):
++            with self.subTest(path=path):
++                self.assertEqual(call("GET", path, ANA)[0], 404)
++
+     def test_list_shows_owned_and_shared(self):
+         code, body = call("GET", "/docs", CLEO)
+         self.assertEqual([d["id"] for d in json.loads(body)["docs"]], [2])

@@ -1,0 +1,10 @@
+diff --git a/chatlog.py b/chatlog.py
+index 9e813bc..7405beb 100644
+--- a/chatlog.py
++++ b/chatlog.py
+@@ -11,4 +11,5 @@ def generate_receive_log(msg: str) -> str:
+     Returns:
+         str: The log entry for the received message.
+     '''
++    msg = msg.replace('\n', ' ')
+     return f'[{datetime.datetime.now().isoformat()}] Received: {msg}'

@@ -1,0 +1,8 @@
+{
+  "timeout_s": 5,
+  "operations": [
+    {"name": "list_webhooks", "method": "GET", "path": "/webhooks"},
+    {"name": "register_webhook", "method": "POST", "path": "/webhooks", "body": true},
+    {"name": "delete_webhook", "method": "DELETE", "path": "/webhooks/{webhook_id}"}
+  ]
+}

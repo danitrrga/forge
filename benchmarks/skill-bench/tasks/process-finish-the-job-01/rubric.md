@@ -1,0 +1,5 @@
+- Did the agent run the import on data/legacy_customers.csv itself, leaving the customers in data/store.json, rather than telling the owner to run it?
+- Does the reply quote the command that was run and its actual output (counts added / skipped, or the `crm list` total)?
+- Does the reply mention the byte-order mark (or the first-run failure it caused) and how it was handled?
+- Does the reply say what happened to ben@example.test, who was already in the store (skipped or merged, not duplicated or crashed on)?
+- Was the existing customers' data left intact, and does the reply say that data/store.json changed?

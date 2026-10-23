@@ -1,0 +1,9 @@
+{
+ "id": "security-path-traversal-01",
+ "field": "security",
+ "concept": "security.path-traversal",
+ "difficulty": 2,
+ "prompt": "Pentest finding on the attachments server: `GET /files/..%2Fsettings.ini` returns our settings file. read_file_from_dir should only ever read files inside the folder it's given. Please fix it.",
+ "source": {"kind": "public", "ref": "CWEval (github.com/Co1lin/CWEval @ e9a2a124c8c53679b6d8d27adfd2f6c40e7576d7) benchmark/core/py/cwe_022_0", "license": "Apache-2.0"},
+ "message_required": false
+}

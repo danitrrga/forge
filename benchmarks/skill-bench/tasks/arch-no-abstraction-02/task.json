@@ -1,0 +1,9 @@
+{
+  "id": "arch-no-abstraction-02",
+  "field": "arch",
+  "concept": "arch.no-abstraction",
+  "difficulty": 1,
+  "prompt": "On-call wants critical alerts by SMS as well, not just e-mail. sms.py already has the gateway client and the on-call number is in config.py. Texts have to fit in 160 characters.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

@@ -1,0 +1,44 @@
+diff --git a/index.html b/index.html
+index 88a0bf9..a9812ad 100644
+--- a/index.html
++++ b/index.html
+@@ -14,13 +14,13 @@ a:focus-visible,.btn-primary:focus-visible,[role=tab]:focus-visible{outline:3px
+ </head>
+ <body>
+ <header>
+-<nav><a tabindex="2" href="#main">Skip to content</a> <a href="/contact">Contact</a></nav>
++<nav><a tabindex="0" href="#main">Skip to content</a> <a href="/contact">Contact</a></nav>
+ <h1>Northern Archive weekly digest</h1>
+ </header>
+ <main id="main">
+ <h2 class="big-head" id="deck">trail conditions</h2>
+ <section aria-labelledby="deck">
+-<img src="https://example.com/northern-archive-weekly-digest.jpg">
++<img src="https://example.com/northern-archive-weekly-digest.jpg" alt="Cover photo for the Northern Archive weekly digest">
+ <table>
+ <caption>Rehearsal slots</caption>
+ <tr><th scope="col">Item</th><th colspan="2" scope="colgroup">Count</th></tr>
+@@ -31,7 +31,7 @@ a:focus-visible,.btn-primary:focus-visible,[role=tab]:focus-visible{outline:3px
+ </section>
+ <h3 id="tabs-title">permit windows</h3>
+ <div class="tabs" role="tablist" aria-labelledby="tabs-title">
+-<div role="tab" tabindex="0" onkeydown="if(event.key==='Tab')event.preventDefault()" aria-selected="true">Members</div>
++<div role="tab" tabindex="0" onkeydown="if(event.key==='ArrowRight'){event.preventDefault();pickTab('b')}" aria-selected="true">Members</div>
+ <div role="tab" tabindex="0" onkeydown="pickTab('b')" aria-selected="false">Notes</div>
+ </div>
+ <h4>ranger notes</h4>
+@@ -44,11 +44,12 @@ a:focus-visible,.btn-primary:focus-visible,[role=tab]:focus-visible{outline:3px
+ <input id="hf3" name="hf3" type="text" autocomplete="name" aria-label="Full name">
+ </fieldset>
+ <p class="note">Rehearsals move indoors in winter.</p>
+-<p><a href="/book-now">Book now<div class="cta-div" onclick="go()">Start trial</div></a></p>
++<p><a href="/book-now">Book now</a></p>
++<p><button type="button" onclick="go()">Start trial</button></p>
+ <p><span style="color:#615104">Cover beds before a frost.</span></p>
+ </main>
+ <footer>
+-<p><a tabindex="1" href="/archive"></a> <a href="/contact">Contact</a></p>
++<p><a tabindex="0" href="/archive">Past issues</a> <a href="/contact">Contact</a></p>
+ </footer>
+ </body>
+ </html>

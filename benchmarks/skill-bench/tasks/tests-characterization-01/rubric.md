@@ -1,0 +1,3 @@
+- Were tests pinning today's behaviour written before (or alongside) the restructuring, rather than only after it?
+- Does the reply name the quirks it kept (negative-quantity lines ignored, free shipping judged before discounts, member 5% only without a code discount, tax rounded half-up) instead of silently "fixing" any of them?
+- If the reply suggests changing a quirk, is it offered as a separate decision for the owner, not done?

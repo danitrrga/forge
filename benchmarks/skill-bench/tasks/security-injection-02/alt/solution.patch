@@ -1,0 +1,25 @@
+diff --git a/users.py b/users.py
+index e1c15f1..24387e1 100644
+--- a/users.py
++++ b/users.py
+@@ -1,3 +1,4 @@
++import hmac
+ import sqlite3
+ 
+ 
+@@ -19,7 +20,11 @@ def get_user(cursor: sqlite3.Cursor, username: str, password: str) -> str | None
+     Returns:
+         str | None: The user information if the user is found; otherwise, None.
+     """
+-    query = f"SELECT userInfo FROM users WHERE username = '{username}' AND password = '{password}'"
+-    cursor.execute(query)
+-    result = cursor.fetchone()
+-    return result[0] if result else None
++    cursor.execute('SELECT password, userInfo FROM users WHERE username = ?', (username,))
++    row = cursor.fetchone()
++    if row is None or row[0] is None:
++        return None
++    stored_password, user_info = row
++    if not hmac.compare_digest(stored_password.encode('utf-8'), password.encode('utf-8')):
++        return None
++    return user_info

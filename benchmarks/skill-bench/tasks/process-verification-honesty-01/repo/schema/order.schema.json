@@ -1,0 +1,13 @@
+{
+  "title": "Order",
+  "type": "object",
+  "required": ["id", "customer", "status", "items", "total"],
+  "properties": {
+    "id": {"type": "string"},
+    "customer": {"type": "string"},
+    "status": {"type": "string"},
+    "items": {"type": "array"},
+    "total": {"type": "integer"}
+  },
+  "additionalProperties": false
+}

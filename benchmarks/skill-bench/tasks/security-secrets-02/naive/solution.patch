@@ -1,0 +1,30 @@
+diff --git a/billing/client.py b/billing/client.py
+index 4ac9730..4124c32 100644
+--- a/billing/client.py
++++ b/billing/client.py
+@@ -1,12 +1,25 @@
+ """Client for the Acme Billing API (docs/billing-api.md)."""
+ import json
+ import logging
++import re
+ import urllib.error
+ import urllib.request
+ 
+ log = logging.getLogger("billing")
+ 
+ 
++class _RedactApiKey(logging.Filter):
++    """Mask the API key in log output."""
++
++    def filter(self, record):
++        record.msg = re.sub(r"api_key=[^&\s]+", "api_key=***", record.getMessage())
++        record.args = ()
++        return True
++
++
++log.addFilter(_RedactApiKey())
++
++
+ class BillingError(Exception):
+     """A request to the billing API failed."""
+ 

@@ -1,0 +1,27 @@
+diff --git a/pricebook.py b/pricebook.py
+index fa1a2e4..77460bb 100644
+--- a/pricebook.py
++++ b/pricebook.py
+@@ -21,3 +21,4 @@ class PriceBook:
+         if not isinstance(cents, int) or cents < 0:
+             raise ValueError("price must be a whole number of cents, not %r" % (cents,))
+         self._db.set_price(sku, cents)
++        self._cache.pop(sku, None)
+diff --git a/tests/test_pricebook.py b/tests/test_pricebook.py
+index 69e9fcf..367f453 100644
+--- a/tests/test_pricebook.py
++++ b/tests/test_pricebook.py
+@@ -39,6 +39,13 @@ class PriceBookTest(unittest.TestCase):
+                 book.set_price("MUG-BLUE", bad)
+ 
+ 
++    def test_price_reflects_set_price(self):
++        db = CountingDB({"MUG-BLUE": 1200})
++        book = PriceBook(db)
++        book.set_price("MUG-BLUE", 900)
++        self.assertEqual(book.price("MUG-BLUE"), 900)
++
++
+ class AdminAndShopTest(unittest.TestCase):
+     def test_change_price_from_euros(self):
+         db = PriceDB()

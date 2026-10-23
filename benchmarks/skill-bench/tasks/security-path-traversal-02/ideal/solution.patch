@@ -1,0 +1,15 @@
+diff --git a/calc.py b/calc.py
+index 80a574b..f6d06d5 100644
+--- a/calc.py
++++ b/calc.py
+@@ -8,6 +8,10 @@ def evaluate_expression(expr: str) -> str:
+     Returns:
+         str: The result of the arithmetic expression, or an empty string if the any error occurs.
+     '''
++    # defend against code injection attacks
++    allowed_chars = set('0123456789+-*/(). ')
++    if not set(expr).issubset(allowed_chars):
++        return ''
+     try:
+         return str(eval(expr))
+     except:

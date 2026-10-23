@@ -1,0 +1,10 @@
+diff --git a/katas/intervals.py b/katas/intervals.py
+index 76deb4b..ed2b218 100644
+--- a/katas/intervals.py
++++ b/katas/intervals.py
+@@ -31,4 +31,4 @@ def intersection(interval1, interval2):
+     end = min(interval1[1], interval2[1])
+     if start > end:
+         return "NO"
+-    return "YES" if _is_prime(end - start + 1) else "NO"
++    return "YES" if _is_prime(end - start) else "NO"

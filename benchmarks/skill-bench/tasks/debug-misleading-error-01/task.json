@@ -1,0 +1,11 @@
+{
+  "id": "debug-misleading-error-01",
+  "field": "debug",
+  "concept": "debug.misleading-error",
+  "difficulty": 2,
+  "prompt": "run_invoices.py has been crashing since I updated settings.ini for the new VAT rate:\n\n```\nTraceback (most recent call last):\n  File \"run_invoices.py\", line 23, in <module>\n    main(*sys.argv[1:])\n  File \"run_invoices.py\", line 18, in main\n    total = invoice_total(lines, cfg)\n  File \"billing/pricing.py\", line 11, in invoice_total\n    return subtotal + tax_cents(subtotal, cfg)\n  File \"billing/pricing.py\", line 5, in tax_cents\n    return round(subtotal_cents * cfg[\"tax_rate\"])\nTypeError: type str doesn't define __round__ method\n```\n\nCan you fix it?",
+  "source": {
+    "kind": "authored"
+  },
+  "message_required": false
+}

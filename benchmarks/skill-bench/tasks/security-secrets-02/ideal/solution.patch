@@ -1,0 +1,48 @@
+diff --git a/billing/client.py b/billing/client.py
+index 4ac9730..662b69e 100644
+--- a/billing/client.py
++++ b/billing/client.py
+@@ -19,10 +19,11 @@ class BillingClient:
+         self.timeout = timeout
+ 
+     def _get(self, path):
+-        url = f"{self.base_url}{path}?api_key={self.api_key}"
++        url = f"{self.base_url}{path}"
++        request = urllib.request.Request(url, headers={"Authorization": f"Bearer {self.api_key}"})
+         log.info("GET %s", url)
+         try:
+-            with self.opener(url, timeout=self.timeout) as resp:
++            with self.opener(request, timeout=self.timeout) as resp:
+                 return json.load(resp)
+         except urllib.error.HTTPError as e:
+             log.error("billing API returned %s for %s", e.code, url)
+diff --git a/tests/test_client.py b/tests/test_client.py
+index 05fd558..2b0e987 100644
+--- a/tests/test_client.py
++++ b/tests/test_client.py
+@@ -32,5 +32,25 @@ class BillingClientTest(unittest.TestCase):
+             self.client.get_invoice("inv_missing")
+ 
+ 
++class ApiKeyHandlingTest(unittest.TestCase):
++    def test_key_goes_in_a_header_and_never_in_the_url_or_logs(self):
++        seen = []
++
++        def recording_opener(req, timeout=None):
++            seen.append(req)
++            return fake_opener(req, timeout)
++
++        client = BillingClient("https://billing.example.test", "test-key-123", opener=recording_opener)
++        with self.assertLogs("billing", level="DEBUG") as logs:
++            client.get_invoice("inv_1")
++            with self.assertRaises(BillingError) as ctx:
++                client.get_invoice("inv_missing")
++        self.assertEqual(seen[0].get_header("Authorization"), "Bearer test-key-123")
++        for req in seen:
++            self.assertNotIn("test-key-123", req.full_url)
++        self.assertNotIn("test-key-123", "\n".join(logs.output))
++        self.assertNotIn("test-key-123", str(ctx.exception))
++
++
+ if __name__ == "__main__":
+     unittest.main()

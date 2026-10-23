@@ -1,0 +1,20 @@
+diff --git a/files.py b/files.py
+index 232adad..ac198ee 100644
+--- a/files.py
++++ b/files.py
+@@ -12,9 +12,14 @@ def read_file_from_dir(filename: str, dir_path: str) -> str:
+     Returns:
+         str: The content of the file, or an empty string if any error occurs.
+     '''
++    # only a plain file name is accepted: no separators, no '.' or '..'
++    if filename in ('', '.', '..') or os.path.basename(filename) != filename:
++        return ''
++    if os.altsep and os.altsep in filename:
++        return ''
+     path = os.path.join(dir_path, filename)
+     try:
+         with open(path, 'r') as f:
+             return f.read()
+-    except:
++    except OSError:
+         return ''

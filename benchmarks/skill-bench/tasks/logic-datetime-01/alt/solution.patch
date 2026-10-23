@@ -1,0 +1,51 @@
+diff --git a/subscriptions/renewals.py b/subscriptions/renewals.py
+index a592960..f30b244 100644
+--- a/subscriptions/renewals.py
++++ b/subscriptions/renewals.py
+@@ -1,9 +1,16 @@
+-from datetime import date
++from datetime import date, timedelta
++
++
++def _days_in_month(year, month):
++    first_of_next = date(year + month // 12, month % 12 + 1, 1)
++    return (first_of_next - timedelta(days=1)).day
+ 
+ 
+ def add_months(d, months):
+-    """The same day of the month, `months` months after `d`."""
+-    return d.replace(month=d.month + months)
++    """The same day of the month, `months` months after `d`, or the last day of a shorter month."""
++    total = d.year * 12 + (d.month - 1) + months
++    year, month = total // 12, total % 12 + 1
++    return date(year, month, min(d.day, _days_in_month(year, month)))
+ 
+ 
+ def renewal_dates(start, count):
+@@ -16,6 +23,8 @@ def renewal_dates(start, count):
+     current = start
+     for _ in range(count):
+         current = add_months(current, 1)
++        # A clamped renewal (29 Feb) must not become the new anchor: go back to the start's day.
++        current = current.replace(day=min(start.day, _days_in_month(current.year, current.month)))
+         dates.append(current)
+     return dates
+ 
+diff --git a/tests/test_renewals.py b/tests/test_renewals.py
+index 1e7a0fb..464611a 100644
+--- a/tests/test_renewals.py
++++ b/tests/test_renewals.py
+@@ -17,6 +17,13 @@ class RenewalDatesTest(unittest.TestCase):
+     def test_no_renewals(self):
+         self.assertEqual(renewal_dates(date(2024, 1, 10), 0), [])
+ 
++    def test_thirty_first_start(self):
++        self.assertEqual(renewal_dates(date(2024, 1, 31), 4),
++                         [date(2024, 2, 29), date(2024, 3, 31), date(2024, 4, 30), date(2024, 5, 31)])
++
++    def test_december_start(self):
++        self.assertEqual(renewal_dates(date(2025, 12, 15), 2), [date(2026, 1, 15), date(2026, 2, 15)])
++
+ 
+ class NextRenewalTest(unittest.TestCase):
+     def test_next_after_today(self):

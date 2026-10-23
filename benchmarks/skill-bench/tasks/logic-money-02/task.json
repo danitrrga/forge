@@ -1,0 +1,9 @@
+{
+  "id": "logic-money-02",
+  "field": "logic",
+  "concept": "logic.money",
+  "difficulty": 2,
+  "prompt": "Splitting 100.00 between Ana, Ben and Cleo gives 33.33 each, which only adds up to 99.99, so we're a cent short. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

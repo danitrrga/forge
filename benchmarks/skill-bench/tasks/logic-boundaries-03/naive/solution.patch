@@ -1,0 +1,11 @@
+diff --git a/sensors/readings.py b/sensors/readings.py
+index a9a2492..52b3031 100644
+--- a/sensors/readings.py
++++ b/sensors/readings.py
+@@ -14,5 +14,5 @@ def last_drop(readings):
+     """
+     for i in range(len(readings) - 2, 0, -1):
+         if readings[i + 1] < readings[i]:
+-            return i
++            return i + 1
+     return -1

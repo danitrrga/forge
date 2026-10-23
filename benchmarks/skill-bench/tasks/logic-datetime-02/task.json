@@ -1,0 +1,9 @@
+{
+  "id": "logic-datetime-02",
+  "field": "logic",
+  "concept": "logic.datetime",
+  "difficulty": 3,
+  "prompt": "Ben's night shift from 2026-03-28 22:00 to 2026-03-29 06:00 got paid as 8 hours, but the clocks went forward at 2:00 that night, so he only worked 7. I suspect anything in payroll/shifts.py that spans a clock change is off. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}
