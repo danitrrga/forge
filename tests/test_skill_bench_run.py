@@ -164,6 +164,27 @@ def main():
     want("report prints discordant counts", "6 better, 0 worse" in text, True)
     want("report prints the token delta", "tokens" in text.lower(), True)
 
+    # space: a finished run keeps result.json and a gzipped transcript, and drops its throwaway working copy
+    one = [os.path.join(r) for r, _, fs in os.walk(out) if "result.json" in fs][0]
+    want("space: the working copy is gone after scoring", os.path.exists(os.path.join(one, "work")), False)
+    want("space: the transcript is gzipped, the plain one removed",
+         (os.path.exists(os.path.join(one, "agent.jsonl.gz")), os.path.exists(os.path.join(one, "agent.jsonl"))), (True, False))
+    import gzip
+    want("space: the gzipped transcript still holds the result line", b'"type": "result"' in gzip.open(os.path.join(one, "agent.jsonl.gz")).read(), True)
+    out_keep = os.path.join(tmp, "runs-keep")
+    cli("run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", out_keep, "--k", "1", "--tasks", "t0",
+        "--arm", "none", "--keep-work", env=env)
+    kept = [r for r, _, fs in os.walk(out_keep) if "result.json" in fs][0]
+    want("--keep-work keeps the working copy", os.path.isdir(os.path.join(kept, "work")), True)
+    # the default output directory is durable (the XDG data dir), not the cache or /tmp, and report/calibrate find the latest run
+    xdg = os.path.join(tmp, "xdg")
+    env_x = dict(env, XDG_DATA_HOME=xdg)
+    code, text = cli("run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--k", "1", "--tasks", "t0", "--arm", "none", env=env_x)
+    runs_dir = os.path.join(xdg, "forge", "skill-bench", "runs")
+    want("default --out is under $XDG_DATA_HOME/forge/skill-bench/runs", (code, os.path.isdir(runs_dir) and len(os.listdir(runs_dir)) == 1), (0, True))
+    code, text = cli("report", "--base", "none", env=env_x)
+    want("report without --out reads the latest run", (code, "skill-bench report" in text), (0, True))
+
     # resume: a second run with the same --out does no new work
     code, text = cli("run", *common, "--arm", "none", "--arm", "good=" + good, "--arm", "idle=" + bad, env=env)
     want("resume: nothing to run the second time", "0 to run" in text and "36 already done" in text, True)
@@ -178,6 +199,29 @@ def main():
     code, text = cli("report", "--out", out2, "--base", "none")
     want("invalid runs are counted in the report", "2 invalid" in text, True)
     want("invalid runs are left out of the pass rate (good: 1 of 1 valid runs)", "good" in text and "1/1" in text, True)
+
+    # a job that cannot even start (no such agent binary) is an invalid run, not a crashed runner; the other jobs finish
+    out4 = os.path.join(tmp, "runs4")
+    code, text = cli("run", "--bench", bench, "--claude-bin", os.path.join(tmp, "no-such-claude"), "--sandbox", "none", "--out", out4,
+                     "--k", "1", "--tasks", "t0,t1", "--arm", "none", "--arm", "good=" + good, env=env)
+    r4 = [json.load(open(os.path.join(rr, f))) for rr, _, fs in os.walk(out4) for f in fs if f == "result.json"]
+    want("unstartable agent: exit 0, no traceback, every job recorded as invalid with a runner error",
+         (code, "Traceback" in text, len(r4), all(r["invalid"] and "runner error" in r.get("invalid_reason", "") for r in r4)), (0, False, 4, True))
+    # many workers on a machine with a login: the shared agent home is made once, no job loses a race for it
+    fake_home = os.path.join(tmp, "fakehome")
+    os.makedirs(os.path.join(fake_home, ".claude"))
+    put(os.path.join(fake_home, ".claude", ".credentials.json"), "{}")
+    out5 = os.path.join(tmp, "runs5")
+    bad5 = []
+    for i in range(4):
+        shutil_rm = __import__("shutil").rmtree
+        shutil_rm(out5, ignore_errors=True)
+        code, text = cli("run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", out5, "--k", "1", "--workers", "6",
+                         "--arm", "none", "--arm", "good=" + good, env=dict(env, HOME=fake_home))
+        n5 = len([1 for rr, _, fs in os.walk(out5) for f in fs if f == "result.json"])
+        if code != 0 or n5 != 12:
+            bad5.append((code, n5))
+    want("6 workers, 4 repeats: every run completes all 12 jobs (no credentials-link race)", bad5, [])
 
     # a run that exceeds --timeout is a fail, not a crash of the runner
     slow = skill(tmp, "slow", "slow")
