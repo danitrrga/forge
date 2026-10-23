@@ -23,6 +23,9 @@ config/forge.json skill_keep since T3 of docs/portable-design.md, and the gsd-* 
                          out is NO_GSD_BASELINE: registering a project is no longer what
                          decides whether it keeps up with GSD.
   2. EXTRAS           -- per-project additions beyond that baseline.
+  2c. GSD_EXCLUDE / GSD_OPT_IN -- the user's own trim of the gsd-* names (skill_keep.gsd_exclude: in no
+                         profile and not linked by relink_skills.py; gsd_opt_in: kept only by a profile whose
+                         EXTRAS row names it). Applied last to the gsd-* names, authoritative.
   3. COMMON_*         -- the capability baseline that belongs in EVERY project:
                          COMMON_SKILLS / COMMON_PERMISSIONS / COMMON_ENV, UNION-merged
                          into every profile except COMMON_EXCLUDE. Union (not replace) so
@@ -85,6 +88,10 @@ COMMON_ENV = {k: os.path.expanduser(v) for k, v in (SKILL_KEEP.get("common_env")
 COMMON_PLUGINS = SKILL_KEEP.get("common_plugins") or []
 COMMON_OPT_OUT = {fn: set(names) for fn, names in (SKILL_KEEP.get("common_opt_out") or {}).items()}
 COMMON_EXCLUDE = set(SKILL_KEEP.get("common_exclude") or [])
+# gsd_exclude: skills this user does not want at all (relink_skills.py also stops linking them).
+# gsd_opt_in: skills linked but in no baseline, kept only by a profile whose extras row names them.
+GSD_EXCLUDE = set(SKILL_KEEP.get("gsd_exclude") or [])
+GSD_OPT_IN = set(SKILL_KEEP.get("gsd_opt_in") or [])
 # The gsd-* baseline is the gsd integration's. Off, a profile keeps the gsd-* names it holds and none is added.
 TRACK_GSD = lib.on("gsd")
 
@@ -197,10 +204,43 @@ def installed_skills():
 
 
 def gsd_skills(installed):
-    skills = sorted(d for d in installed if d.startswith("gsd-"))
+    skills = sorted(d for d in installed if d.startswith("gsd-") and d not in GSD_EXCLUDE | GSD_OPT_IN)
     if not skills:
         sys.exit("! no gsd-* skills found in %s -- aborting (refusing to wipe keep-lists)" % GLOBAL_SKILLS)
     return skills
+
+
+def check_gsd_tables(installed):
+    """Exit 1 on a gsd_exclude / gsd_opt_in table that cannot mean what it says: a name that no skill
+    answers to (a typo trims nothing), a name in both tables, or an extras row asking for a skill the
+    user excluded. A name counts as existing when skills/ holds it, since an excluded skill is no
+    longer in the mirror."""
+    src = os.path.join(ROOT, "skills")
+    known = installed | (set(os.listdir(src)) if os.path.isdir(src) else set())
+    bad = []
+    for table, names in (("gsd_exclude", GSD_EXCLUDE), ("gsd_opt_in", GSD_OPT_IN)):
+        bad += ["skill_keep.%s names %s, which is in neither skills/ nor %s" % (table, n, GLOBAL_SKILLS)
+                for n in sorted(names - known)]
+    bad += ["skill_keep.gsd_exclude and skill_keep.gsd_opt_in both name %s" % n
+            for n in sorted(GSD_EXCLUDE & GSD_OPT_IN)]
+    bad += ["skill_keep.extras[%s] names %s, which skill_keep.gsd_exclude drops" % (fn, n)
+            for fn, names in sorted(EXTRAS.items()) for n in sorted(set(names) & GSD_EXCLUDE)]
+    if bad:
+        sys.exit("! config/forge.json:\n    " + "\n    ".join(bad))
+
+
+def apply_gsd_trim(fn, d):
+    """Authoritative, as strip_opted_out is for COMMON: an excluded name is removed from every
+    trimmed profile, an opt-in name from every profile whose extras row does not name it."""
+    cur = d.get("skills_keep")
+    if not isinstance(cur, list) or "*" in cur:
+        return []
+    own = set(EXTRAS.get(fn, []))
+    kept = [n for n in cur if n not in GSD_EXCLUDE and (n not in GSD_OPT_IN or n in own)]
+    if kept == cur:
+        return []
+    d["skills_keep"] = kept
+    return ["gsd trim -%s" % sorted(set(cur) - set(kept))]
 
 
 def check_declared(installed):
@@ -271,12 +311,13 @@ def audit_trim(profiles):
 
 def main():
     installed = installed_skills()
+    check_gsd_tables(installed)
     check_declared(installed)
     gsd = gsd_skills(installed) if TRACK_GSD else []
     print("MODE:", "APPLY" if APPLY else "DRY-RUN (pass --apply to write)")
-    print("gsd-* skills on disk: %d | COMMON: %d skills, %d perms, %d env, %d plugins | excluded: %d\n"
+    print("gsd-* skills on disk: %d | COMMON: %d skills, %d perms, %d env, %d plugins | excluded: %d | gsd excluded: %d, opt-in: %d\n"
           % (len(gsd), len(COMMON_SKILLS), len(COMMON_PERMISSIONS["allow"]),
-             len(COMMON_ENV), len(COMMON_PLUGINS), len(COMMON_EXCLUDE)))
+             len(COMMON_ENV), len(COMMON_PLUGINS), len(COMMON_EXCLUDE), len(GSD_EXCLUDE), len(GSD_OPT_IN)))
 
     for fn in EXTRAS:
         if not os.path.exists(os.path.join(PROF, fn)):
@@ -336,6 +377,9 @@ def main():
             if want != d["skills_keep"]:
                 notes.append("gsd baseline +%s" % sorted(set(want) - set(d["skills_keep"])))
                 d["skills_keep"] = want
+
+        # Layer 2c: the user's own trim of the gsd-* names (gsd_exclude, gsd_opt_in), after the union above
+        notes += apply_gsd_trim(fn, d)
 
         # Layer 3: the common capability baseline (union, every profile but COMMON_EXCLUDE)
         notes += apply_common(fn, d)

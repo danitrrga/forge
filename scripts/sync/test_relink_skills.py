@@ -27,8 +27,14 @@ before counting and printed nothing while the apply made every link; it must cou
 no directory. Seen failing on f62e1b6: "dry-run vs apply, fresh HOME: dry (0, 0), apply
 (8, 0)". A mirror path that is a regular file fails the apply's makedirs; the dry-run names the same
 failure rather than counting links it could never make ("dry exit 0, (0, 0), apply exit 1, (4, 0)"
-on f62e1b6, the dry-run silent)."""
+on f62e1b6, the dry-run silent).
+
+skill_keep.gsd_exclude: a listed skill is not linked and an earlier link into skills/ is pruned, in both mirrors,
+a real directory of that name is left alone. Seen failing before the change: "gsd_exclude: dry (3, 0), apply (3, 0),
+want both (3, 1)" and "claude links ['alpha', 'beta', 'delta', 'gamma'], beta still there True" (beta, listed, was
+linked and kept; the codex real directory beta was reported BLOCKED)."""
 import os
+import json
 import re
 import shutil
 import stat
@@ -223,10 +229,42 @@ def main():
                         "named %s: %s | %s" % (rc_dry, counts(dry), named[0], rc, counts(out), named[1],
                                                tail(dry, 1), tail(out, 1)))
 
+    # skill_keep.gsd_exclude: a name listed there is not linked, and a link into skills/ that an earlier run made
+    # is pruned, in both mirrors; a real directory of that name is left alone (the dry-run counts the same).
+    # claude mirror: all four linked already; codex mirror: beta is a real directory, the rest absent.
+    tmp = bare_root()
+    tmps.append(tmp)
+    cfg = os.path.join(tmp, "forge", "config", "forge.json")
+    with open(cfg) as f:
+        doc = json.load(f)
+    doc["skill_keep"]["gsd_exclude"] = ["beta"]
+    with open(cfg, "w") as f:
+        json.dump(doc, f)
+    mirror = os.path.join(tmp, "home", ".claude", "skills")
+    os.makedirs(mirror)
+    for n in SKILLS:
+        os.symlink(os.path.join(tmp, "forge", "skills", n), os.path.join(mirror, n))
+    cbeta = os.path.join(tmp, "home", ".codex", "skills", "beta")
+    os.makedirs(cbeta)
+    with open(os.path.join(cbeta, "SKILL.md"), "w") as f:
+        f.write("a real directory\n")
+    rc_dry, dry = run(tmp, "--dry-run")
+    kept_dry = os.path.islink(os.path.join(mirror, "beta"))
+    rc, out = run(tmp)
+    if (rc_dry, rc) != (0, 0) or counts(dry) != counts(out) or counts(out) != (3, 1) or not kept_dry:
+        failures.append("gsd_exclude: dry %s, apply %s, want both (3, 1); the dry-run kept the link %s: %s | %s"
+                        % (counts(dry), counts(out), kept_dry, tail(dry, 1), tail(out, 1)))
+    if (links(tmp, ".claude") != ["alpha", "delta", "gamma"] or os.path.lexists(os.path.join(mirror, "beta"))
+            or links(tmp, ".codex") != ["alpha", "delta", "gamma"]
+            or not os.path.isfile(os.path.join(cbeta, "SKILL.md"))):
+        failures.append("gsd_exclude: claude links %s, beta still there %s, codex links %s, codex real dir intact %s"
+                        % (links(tmp, ".claude"), os.path.lexists(os.path.join(mirror, "beta")),
+                           links(tmp, ".codex"), os.path.isfile(os.path.join(cbeta, "SKILL.md"))))
+
     failures += RULE
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 7 cases" % len(failures))
+    print("%d failure(s) over 8 cases" % len(failures))
     for t in tmps:  # writable again, so a kept dir can be removed too
         m = os.path.join(t, "home", ".claude", "skills")
         if os.path.isdir(m):
