@@ -43,7 +43,9 @@ PUBLIC_ASSETS = {
 }
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
-EMAIL_OK = ("example.com", "example.org")
+# example.com and example.org are IANA documentation names (RFC 2606); example.test sits under the .test TLD that RFC 6761 reserves
+# for tests and documentation. None of them can be a real address, which is why fixtures use them.
+EMAIL_OK = ("example.com", "example.org", "example.test")
 # The two public no-reply addresses, matched whole and nothing wider: the commit trailer's address and a
 # GitHub no-reply `<digits>+<name>@`. Any other name at those hosts is an address like any other.
 EMAIL_PUBLIC_RE = re.compile(r"noreply@anthropic\.com|[0-9]{1,20}\+[A-Za-z0-9-]{1,39}@users\.noreply\.github\.com",
