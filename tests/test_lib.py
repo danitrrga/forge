@@ -168,6 +168,12 @@ def profile_type_cases(tmp):
             ("command_guard 1", {"command_guard": 1}, "command_guard is not a boolean"),
             ("command_guard null", {"command_guard": None}, "command_guard is not a boolean"),
             ("command_guard \"true\"", {"command_guard": "true"}, "command_guard is not a boolean"),
+            # `ui` marks a project with a user interface (its pointer block then says where a visual choice goes). Red before:
+            # "profile_error(ui \"yes\") = None, want 'ui is not a boolean'" (and 1, null).
+            ("ui true", {"ui": True}, None),
+            ("ui \"yes\"", {"ui": "yes"}, "ui is not a boolean"),
+            ("ui 1", {"ui": 1}, "ui is not a boolean"),
+            ("ui null", {"ui": None}, "ui is not a boolean"),
             # Round 10: a worktree_guard object whose "on" is not a boolean read as off, the doctor PASSed.
             # Red before: "profile_error(worktree_guard.on "true") = None, want 'worktree_guard.on is not a
             # boolean'" (and 1, null); "profile_error(worktree_guard true, no project) = None, want 'project
