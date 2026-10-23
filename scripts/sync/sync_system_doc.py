@@ -65,7 +65,7 @@ POINTER = (
 
 
 def ui_paragraph(proj_dir, profs):
-    """The paragraph a project with a user interface (`"ui": true` in its profile) gets: a visual choice goes on a decision page,
+    """The paragraph a project with a user interface (`"ui": true` in its profile) gets: a visual choice goes on a verdict page,
     never into a chat question. Written only when this checkout has the tool that builds the page; a checkout without it has
     nothing to point at, and a pointer to a missing command is worse than none."""
     if not any(p.get("ui") is True and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir
@@ -75,9 +75,9 @@ def ui_paragraph(proj_dir, profs):
     if not os.path.isfile(os.path.join(ROOT, "scripts", "design", "design.py")):
         return ""
     return ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
-            "screenshots to accept) goes on a decision page, never into a chat question. If this file names a command for it, "
-            "use that; otherwise write `decisions.json` in a folder and run `python3 " + tool + " decide <folder>` (the format "
-            "is in `" + ROOT_FS + "/design/decide/README.md`), then end your message with the `xdg-open` line it prints.\n")
+            "screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
+            "use that; otherwise write `decisions.json` in a folder and run `python3 " + tool + " verdict <folder>` (the format "
+            "is in `" + ROOT_FS + "/design/verdict/README.md`), then end your message with the `xdg-open` line it prints.\n")
 
 
 def pointer(proj_dir, profs):

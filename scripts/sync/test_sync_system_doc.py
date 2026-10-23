@@ -302,16 +302,16 @@ def main():
     if rc or got != "# mine\n\n" + block + "\n" + NOTE:
         failures.append("one complete pair is replaced in place, the text around it kept: exit %d, got %r" % (rc, got))
 
-    # A UI project's pointer also says where a visual choice goes: on a decision page, never in chat. Only when the
+    # A UI project's pointer also says where a visual choice goes: on a verdict page, never in chat. Only when the
     # checkout has the tool (scripts/design/design.py); a plain project and a UI project without the tool get no paragraph.
-    # Red before the field existed: "ui project: block lacks the decision-page paragraph ('## Shared agent-config system' only)".
+    # Red before the field existed: "ui project: block lacks the verdict-page paragraph ('## Shared agent-config system' only)".
     for case, want_para in (("ui", True), ("ui-no-design", False), ("no-ui-with-design", False), ("plain", False)):
         t = world(case)
         rc, out = run(t, "--apply")
         got = text(os.path.join(projects(t), "toy", "CLAUDE.md")) or ""
-        has = "decision page" in got and ("%s/forge/scripts/design/design.py decide" % t).replace("\\", "/") in got
-        if rc or has != want_para or (want_para and not got.count("decision page") == 1):
-            failures.append("%s project: decision-page paragraph present %s (want %s), exit %d, block %r"
+        has = "verdict page" in got and ("%s/forge/scripts/design/design.py verdict" % t).replace("\\", "/") in got
+        if rc or has != want_para or (want_para and not got.count("verdict page") == 1):
+            failures.append("%s project: verdict-page paragraph present %s (want %s), exit %d, block %r"
                             % (case, has, want_para, rc, got[-300:]))
         agents = os.path.join(projects(t), "toy", "AGENTS.md")
         if want_para and text(agents) != got:
