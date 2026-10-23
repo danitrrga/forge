@@ -1,0 +1,90 @@
+diff --git a/shop/api.py b/shop/api.py
+index 7986b34..de2e121 100644
+--- a/shop/api.py
++++ b/shop/api.py
+@@ -7,6 +7,10 @@ BASE_URL = "https://orders.example.test"
+ TIMEOUT_S = 5
+ 
+ 
++class OrdersUnavailable(Exception):
++    """The orders service could not be reached or did not answer with the orders."""
++
++
+ def http_transport(method, path):
+     """(status, body) for one request to the orders service. Raises OSError when the service cannot be reached."""
+     req = urllib.request.Request(BASE_URL + path, method=method, headers={"Accept": "application/json"})
+@@ -18,12 +22,15 @@ def http_transport(method, path):
+ 
+ 
+ def fetch_orders(customer_id, transport=None):
+-    """The customer's orders, newest first, as dicts with id, placed_on, total and status."""
++    """The customer's orders, newest first, as dicts with id, placed_on, total and status.
++
++    Raises OrdersUnavailable when the service is down or answers with an error: an empty list always means the
++    customer has no orders."""
+     transport = transport or http_transport
+     try:
+         status, body = transport("GET", "/customers/%s/orders" % customer_id)
+-    except OSError:
+-        return []
++    except OSError as e:
++        raise OrdersUnavailable("orders service unreachable") from e
+     if status != 200:
+-        return []
++        raise OrdersUnavailable("orders service answered %s" % status)
+     return json.loads(body)["orders"]
+diff --git a/shop/views.py b/shop/views.py
+index 52310c5..b3f80ff 100644
+--- a/shop/views.py
++++ b/shop/views.py
+@@ -12,9 +12,14 @@ def _order_row(order):
+ 
+ def render_orders(customer_id, transport=None):
+     """The 'Your orders' section for one customer."""
+-    orders = api.fetch_orders(customer_id, transport)
+-    if not orders:
+-        body = '<p class="empty">You have no orders yet.</p>'
++    try:
++        orders = api.fetch_orders(customer_id, transport)
++    except api.OrdersUnavailable:
++        body = ('<p class="error" role="alert">We couldn\'t load your orders right now. '
++                'Please try again in a few minutes.</p>')
+     else:
+-        body = '<ul class="order-list">%s</ul>' % "".join(_order_row(o) for o in orders)
++        if not orders:
++            body = '<p class="empty">You have no orders yet.</p>'
++        else:
++            body = '<ul class="order-list">%s</ul>' % "".join(_order_row(o) for o in orders)
+     return '<section class="orders"><h1>Your orders</h1>%s</section>' % body
+diff --git a/tests/test_views.py b/tests/test_views.py
+index d8e1a27..38d9670 100644
+--- a/tests/test_views.py
++++ b/tests/test_views.py
+@@ -10,6 +10,10 @@ def transport_returning(status, payload):
+     return transport
+ 
+ 
++def transport_down(method, path):
++    raise ConnectionRefusedError("orders service down")
++
++
+ class RenderOrdersTest(unittest.TestCase):
+     def test_lists_orders(self):
+         html = render_orders("c-1", transport_returning(200, {"orders": [
+@@ -21,6 +25,16 @@ class RenderOrdersTest(unittest.TestCase):
+         html = render_orders("c-2", transport_returning(200, {"orders": []}))
+         self.assertIn("You have no orders yet.", html)
+ 
++    def test_unreachable_service_is_an_error_not_an_empty_list(self):
++        html = render_orders("c-3", transport_down)
++        self.assertIn('role="alert"', html)
++        self.assertNotIn("You have no orders yet.", html)
++
++    def test_service_error_status_is_an_error_not_an_empty_list(self):
++        html = render_orders("c-4", transport_returning(503, {"error": "maintenance"}))
++        self.assertIn('role="alert"', html)
++        self.assertNotIn("You have no orders yet.", html)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

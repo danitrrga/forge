@@ -1,0 +1,161 @@
+diff --git a/dates.py b/dates.py
+index bc49667..c02ce9b 100644
+--- a/dates.py
++++ b/dates.py
+@@ -1,57 +1,53 @@
++"""Dates typed into the booking form."""
+ import datetime
+ 
+ 
+ def parse_date(s):
+-    # parse whatever people type in the booking form's date box
+-    # returns a datetime.date, or None if we can't make sense of it
++    """The date a guest typed, or None when it cannot be understood.
++
++    Accepted: ISO (2026-10-23) and day first with / or . (23/10/2026, 23.10.26). Two-digit years 50-99 are
++    19xx and 00-49 are 20xx. A middle number above 12 is read the American way round (10/23/2026).
++    Dashes are only accepted in ISO order. Impossible dates give None.
++    """
+     if s is None:
+         return None
+     s = s.strip()
+-    if s == "":
++    fields = _iso_fields(s) if "-" in s else _day_first_fields(s)
++    if fields is None:
+         return None
+-    if "-" in s:
+-        parts = s.split("-")
+-        if len(parts) == 3 and len(parts[0]) == 4:
+-            try:
+-                y = int(parts[0])
+-                m = int(parts[1])
+-                d = int(parts[2])
+-            except ValueError:
+-                return None
+-        else:
+-            return None
+-    else:
+-        sep = None
+-        for c in "/.":
+-            if c in s:
+-                sep = c
+-                break
+-        if sep == None:
+-            return None
+-        parts = s.split(sep)
+-        if len(parts) != 3:
+-            return None
+-        try:
+-            d = int(parts[0])
+-            m = int(parts[1])
+-            y = int(parts[2])
+-        except ValueError:
+-            return None
+-        if len(parts[2]) == 2:
+-            if y >= 50:
+-                y = y + 1900
+-            else:
+-                y = y + 2000
+-        else:
+-            if len(parts[2]) != 4:
+-                return None
+-        if m > 12:
+-            if d <= 12:
+-                # somebody typed it the American way round
+-                t = d
+-                d = m
+-                m = t
+     try:
+-        return datetime.date(y, m, d)
++        return datetime.date(*fields)
+     except ValueError:
+         return None
++
++
++def _ints(parts):
++    try:
++        return [int(p) for p in parts]
++    except ValueError:
++        return None
++
++
++def _iso_fields(s):
++    parts = s.split("-")
++    if len(parts) != 3 or len(parts[0]) != 4:
++        return None
++    return _ints(parts)
++
++
++def _day_first_fields(s):
++    sep = "/" if "/" in s else "." if "." in s else None
++    if sep is None:
++        return None
++    parts = s.split(sep)
++    if len(parts) != 3 or len(parts[2]) not in (2, 4):
++        return None
++    nums = _ints(parts)
++    if nums is None:
++        return None
++    d, m, y = nums
++    if len(parts[2]) == 2:
++        y += 1900 if y >= 50 else 2000
++    if m > 12 and d <= 12:  # typed the American way round
++        d, m = m, d
++    return y, m, d
+diff --git a/tests/test_dates.py b/tests/test_dates.py
+new file mode 100644
+index 0000000..a549b44
+--- /dev/null
++++ b/tests/test_dates.py
+@@ -0,0 +1,51 @@
++"""Characterization tests for parse_date: what it accepts and rejects today, recorded before the rewrite.
++Some of these are odd (the 50 pivot, dashes only in ISO order); they are pinned because the booking form
++relies on the current behaviour, not because they are ideal."""
++import unittest
++from datetime import date
++
++from dates import parse_date
++
++
++class AcceptedTest(unittest.TestCase):
++    def test_iso(self):
++        self.assertEqual(parse_date("2026-10-23"), date(2026, 10, 23))
++        self.assertEqual(parse_date(" 2026-1-5 "), date(2026, 1, 5))
++
++    def test_day_first_with_slash_or_dot(self):
++        self.assertEqual(parse_date("23/10/2026"), date(2026, 10, 23))
++        self.assertEqual(parse_date("23.10.26"), date(2026, 10, 23))
++
++    def test_two_digit_years_pivot_at_50(self):
++        self.assertEqual(parse_date("1/2/49"), date(2049, 2, 1))
++        self.assertEqual(parse_date("1/2/50"), date(1950, 2, 1))
++        self.assertEqual(parse_date("1/2/68"), date(1968, 2, 1))
++
++    def test_american_order_when_the_middle_number_is_above_12(self):
++        self.assertEqual(parse_date("10/23/2026"), date(2026, 10, 23))
++        self.assertEqual(parse_date("10.23.26"), date(2026, 10, 23))
++
++    def test_spaces_inside_the_parts_are_tolerated(self):
++        self.assertEqual(parse_date("5/ 6/2026"), date(2026, 6, 5))
++
++
++class RejectedTest(unittest.TestCase):
++    def test_empty_and_none(self):
++        for s in (None, "", "   "):
++            self.assertIsNone(parse_date(s))
++
++    def test_dashes_only_in_iso_order(self):
++        self.assertIsNone(parse_date("23-10-2026"))
++        self.assertIsNone(parse_date("26-10-23"))
++
++    def test_impossible_dates_give_none(self):
++        for s in ("31/02/2026", "2026-02-30", "13/13/2026", "0/1/2026"):
++            self.assertIsNone(parse_date(s), s)
++
++    def test_malformed(self):
++        for s in ("abc", "23/10", "5/6/202", "23.10/2026", "1/a/2026", "5/6/ 2026"):
++            self.assertIsNone(parse_date(s), s)
++
++
++if __name__ == "__main__":
++    unittest.main()

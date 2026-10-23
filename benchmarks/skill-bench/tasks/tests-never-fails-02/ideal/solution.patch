@@ -1,0 +1,48 @@
+diff --git a/reminders.py b/reminders.py
+index 928613e..57c5853 100644
+--- a/reminders.py
++++ b/reminders.py
+@@ -18,7 +18,7 @@ def due_soon(invoices, today, days=REMIND_DAYS):
+     """Unpaid invoices due between today and `days` days from now (both included), soonest first."""
+     picked = []
+     for inv in invoices:
+-        if "paid_at" in inv:
++        if inv.get("paid_at"):
+             continue
+         left = days_until_due(inv, today)
+         if 0 <= left <= days:
+diff --git a/tests/test_reminders.py b/tests/test_reminders.py
+index 78de5c0..f2f1ffe 100644
+--- a/tests/test_reminders.py
++++ b/tests/test_reminders.py
+@@ -2,7 +2,6 @@ import unittest
+ from datetime import date
+ from unittest import mock
+ 
+-import reminders
+ from reminders import days_until_due, due_soon, reminder_text, send_reminders
+ 
+ TODAY = date(2026, 3, 10)
+@@ -17,9 +16,8 @@ INVOICES = [
+ 
+ class DueSoonTest(unittest.TestCase):
+     def test_picks_invoices_due_within_three_days(self):
+-        for inv in due_soon(INVOICES, TODAY):
+-            self.assertGreaterEqual(days_until_due(inv, TODAY), 0)
+-            self.assertLessEqual(days_until_due(inv, TODAY), 3)
++        # unpaid and due today..today+3: A-1 (+1) and A-2 (+3); not A-3 (+7), A-4 (paid), A-5 (overdue)
++        self.assertEqual([inv["number"] for inv in due_soon(INVOICES, TODAY)], ["A-1", "A-2"])
+ 
+     def test_skips_paid_invoices(self):
+         numbers = [inv["number"] for inv in due_soon(INVOICES, TODAY)]
+@@ -38,9 +36,7 @@ class ReminderTextTest(unittest.TestCase):
+ class SendRemindersTest(unittest.TestCase):
+     def test_sends_one_mail_per_due_invoice(self):
+         send = mock.Mock()
+-        # due_soon depends on the date; pin it so the test does not change from day to day
+-        with mock.patch.object(reminders, "due_soon", return_value=INVOICES[:2]):
+-            count = send_reminders(INVOICES, send, today=TODAY)
++        count = send_reminders(INVOICES, send, today=TODAY)
+         self.assertEqual(count, 2)
+         self.assertEqual([c.args[0] for c in send.call_args_list], ["ana@example.test", "ben@example.test"])
+ 

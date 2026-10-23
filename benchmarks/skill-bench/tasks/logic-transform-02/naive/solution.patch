@@ -1,0 +1,12 @@
+diff --git a/crm/merge.py b/crm/merge.py
+index d6d08ff..9b27b1a 100644
+--- a/crm/merge.py
++++ b/crm/merge.py
+@@ -20,6 +20,6 @@ def merge_contacts(*exports):
+         for record in export:
+             current = merged.setdefault(_key(record["email"]), {})
+             for field, value in record.items():
+-                if value:
++                if value or value is False:
+                     current[field] = value
+     return list(merged.values())

@@ -1,0 +1,2 @@
+- Does the reply explain that save_rates truncates rates.json before writing, so a dashboard read in that window gets an empty or partial file?
+- Is the fix on the writing side (replace the file atomically), not a retry, sleep or fallback in load_rates?

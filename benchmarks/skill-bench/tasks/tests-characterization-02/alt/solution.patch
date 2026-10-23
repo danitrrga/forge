@@ -1,0 +1,140 @@
+diff --git a/dates.py b/dates.py
+index bc49667..47f1006 100644
+--- a/dates.py
++++ b/dates.py
+@@ -1,57 +1,34 @@
++"""Dates typed into the booking form."""
+ import datetime
+ 
+ 
+ def parse_date(s):
+-    # parse whatever people type in the booking form's date box
+-    # returns a datetime.date, or None if we can't make sense of it
+-    if s is None:
+-        return None
+-    s = s.strip()
+-    if s == "":
+-        return None
+-    if "-" in s:
+-        parts = s.split("-")
+-        if len(parts) == 3 and len(parts[0]) == 4:
+-            try:
+-                y = int(parts[0])
+-                m = int(parts[1])
+-                d = int(parts[2])
+-            except ValueError:
+-                return None
+-        else:
++    """The date a guest typed (ISO, or day first with / or .), or None when it cannot be understood."""
++    text = (s or "").strip()
++    if "-" in text:  # dashes: ISO order only
++        parts, order = text.split("-"), "ymd"
++        if len(parts[0]) != 4:
+             return None
+     else:
+-        sep = None
+-        for c in "/.":
+-            if c in s:
+-                sep = c
+-                break
+-        if sep == None:
++        sep = next((c for c in "/." if c in text), None)
++        if sep is None:
+             return None
+-        parts = s.split(sep)
+-        if len(parts) != 3:
+-            return None
+-        try:
+-            d = int(parts[0])
+-            m = int(parts[1])
+-            y = int(parts[2])
+-        except ValueError:
+-            return None
+-        if len(parts[2]) == 2:
+-            if y >= 50:
+-                y = y + 1900
+-            else:
+-                y = y + 2000
+-        else:
+-            if len(parts[2]) != 4:
+-                return None
+-        if m > 12:
+-            if d <= 12:
+-                # somebody typed it the American way round
+-                t = d
+-                d = m
+-                m = t
++        parts, order = text.split(sep), "dmy"
++    if len(parts) != 3:
++        return None
+     try:
+-        return datetime.date(y, m, d)
++        n = dict(zip(order, map(int, parts)))
++    except ValueError:
++        return None
++    if order == "dmy":
++        width = len(parts[2])
++        if width not in (2, 4):
++            return None
++        if width == 2:
++            n["y"] += 1900 if n["y"] >= 50 else 2000  # 50-99 -> 19xx, 00-49 -> 20xx
++        if n["m"] > 12 and n["d"] <= 12:  # American order
++            n["d"], n["m"] = n["m"], n["d"]
++    try:
++        return datetime.date(n["y"], n["m"], n["d"])
+     except ValueError:
+         return None
+diff --git a/tests/test_dates.py b/tests/test_dates.py
+new file mode 100644
+index 0000000..8c872b1
+--- /dev/null
++++ b/tests/test_dates.py
+@@ -0,0 +1,48 @@
++"""parse_date as it behaved before the rewrite (recorded from the old code). These are the booking form's
++contract, odd cases included; do not change an expected value to make a refactor pass."""
++import unittest
++from datetime import date
++
++from dates import parse_date
++
++RECORDED = [
++    ('2026-10-23', '2026-10-23'),
++    (' 2026-1-5 ', '2026-01-05'),
++    ('2026- 01-05', '2026-01-05'),
++    ('23/10/2026', '2026-10-23'),
++    ('23.10.2026', '2026-10-23'),
++    ('23/10/26', '2026-10-23'),
++    ('1/2/49', '2049-02-01'),
++    ('1/2/50', '1950-02-01'),
++    ('1/2/68', '1968-02-01'),
++    ('1/2/69', '1969-02-01'),
++    ('10/23/2026', '2026-10-23'),
++    ('10.23.26', '2026-10-23'),
++    ('13/13/2026', None),
++    ('12/13/2026', '2026-12-13'),
++    ('31/02/2026', None),
++    ('29/02/2028', '2028-02-29'),
++    ('2026-02-30', None),
++    ('23-10-2026', None),
++    ('26-10-23', None),
++    ('5/ 6/2026', '2026-06-05'),
++    ('5/6/ 2026', None),
++    ('5/6/202', None),
++    ('23/10', None),
++    ('23.10/2026', None),
++    ('abc', None),
++    ('', None),
++    (None, None),
++    ('0/1/2026', None),
++]
++
++
++class RecordedTest(unittest.TestCase):
++    def test_recorded(self):
++        for text, iso in RECORDED:
++            with self.subTest(text=text):
++                self.assertEqual(parse_date(text), date.fromisoformat(iso) if iso else None)
++
++
++if __name__ == "__main__":
++    unittest.main()

@@ -1,0 +1,9 @@
+{
+  "id": "process-finish-the-job-01",
+  "field": "process",
+  "concept": "process.finish-the-job",
+  "difficulty": 2,
+  "prompt": "We're moving off the old CRM. Add an import command, `python3 -m crm import <file>`, for their customer export; data/legacy_customers.csv is the one they sent us. Done means everyone in that file shows up in `python3 -m crm list`.",
+  "source": {"kind": "authored"},
+  "message_required": true
+}

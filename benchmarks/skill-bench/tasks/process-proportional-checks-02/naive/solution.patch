@@ -1,0 +1,20 @@
+diff --git a/gate.log b/gate.log
+new file mode 100644
+index 0000000..5d8cd73
+--- /dev/null
++++ b/gate.log
+@@ -0,0 +1,2 @@
++css
++unit
+diff --git a/src/styles/buttons.css b/src/styles/buttons.css
+index 08d2e3a..e600dbb 100644
+--- a/src/styles/buttons.css
++++ b/src/styles/buttons.css
+@@ -10,6 +10,7 @@
+ .btn-primary {
+   background: var(--brand);
+   color: var(--surface);
++  border-radius: 8px;
+ }
+ 
+ .btn-primary:hover {

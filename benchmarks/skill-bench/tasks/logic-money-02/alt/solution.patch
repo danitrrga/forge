@@ -1,0 +1,47 @@
+diff --git a/tab/split.py b/tab/split.py
+index a338560..3978f9f 100644
+--- a/tab/split.py
++++ b/tab/split.py
+@@ -3,6 +3,10 @@
+ Amounts are strings with two decimals ("100.00"), and shares are returned the same way.
+ """
+ 
++from decimal import ROUND_DOWN, Decimal
++
++CENT = Decimal("0.01")
++
+ 
+ def split_evenly(total, people):
+     """Split `total` evenly between `people`, a list of distinct names.
+@@ -11,5 +15,12 @@ def split_evenly(total, people):
+     everyone pays the same, except that the cents left over go one each to the first people
+     in the list.
+     """
+-    share = round(float(total) / len(people), 2)
+-    return {person: f"{share:.2f}" for person in people}
++    amount = Decimal(total)
++    base = (amount / len(people)).quantize(CENT, rounding=ROUND_DOWN)
++    leftover = int((amount - base * len(people)) / CENT)
++    shares = {}
++    for person in people:
++        share = base + CENT if leftover > 0 else base
++        leftover -= 1
++        shares[person] = str(share)
++    return shares
+diff --git a/tests/test_split.py b/tests/test_split.py
+index 93f89dc..527092a 100644
+--- a/tests/test_split.py
++++ b/tests/test_split.py
+@@ -11,6 +11,12 @@ class SplitEvenlyTest(unittest.TestCase):
+     def test_one_person_pays_everything(self):
+         self.assertEqual(split_evenly("42.10", ["Ana"]), {"Ana": "42.10"})
+ 
++    def test_shares_add_up_to_the_total(self):
++        shares = split_evenly("100.00", ["Ana", "Ben", "Cleo"])
++        self.assertEqual(list(shares.values()), ["33.34", "33.33", "33.33"])
++        shares = split_evenly("19.99", ["Ana", "Ben", "Cleo"])
++        self.assertEqual(list(shares.values()), ["6.67", "6.66", "6.66"])
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

@@ -1,0 +1,51 @@
+diff --git a/services.py b/services.py
+index ee28a69..e22fbdd 100644
+--- a/services.py
++++ b/services.py
+@@ -6,7 +6,7 @@ _AUDIT = []
+ 
+ 
+ def on_user_saved(user):
+-    """Run after every save: keeps the search index and the audit trail current."""
++    """Keeps the search index and the audit trail current; call after saving."""
+     search.index_user(user)
+     _AUDIT.append(("saved", user["id"], user["name"]))
+ 
+@@ -14,7 +14,9 @@ def on_user_saved(user):
+ def register(user_id, name, email):
+     if store.get_user(user_id) is not None:
+         raise ValueError("user %s already exists" % user_id)
+-    store.save_user({"id": user_id, "name": name, "email": email})
++    user = {"id": user_id, "name": name, "email": email}
++    store.save_user(user)
++    on_user_saved(user)
+ 
+ 
+ def rename_user(user_id, name):
+@@ -23,6 +25,7 @@ def rename_user(user_id, name):
+         raise KeyError(user_id)
+     user["name"] = name
+     store.save_user(user)
++    on_user_saved(user)
+ 
+ 
+ def audit_log():
+diff --git a/store.py b/store.py
+index fefb593..39248d7 100644
+--- a/store.py
++++ b/store.py
+@@ -1,6 +1,4 @@
+ """User storage (in memory here; the real one is a database)."""
+-import services
+-
+ _USERS = {}
+ 
+ 
+@@ -8,7 +6,6 @@ def save_user(user):
+     if "@" not in user.get("email", ""):
+         raise ValueError("invalid email: %r" % user.get("email"))
+     _USERS[user["id"]] = dict(user)
+-    services.on_user_saved(dict(user))
+ 
+ 
+ def get_user(user_id):

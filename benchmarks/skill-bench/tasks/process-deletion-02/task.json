@@ -1,0 +1,9 @@
+{
+  "id": "process-deletion-02",
+  "field": "process",
+  "concept": "process.deletion-consent",
+  "difficulty": 2,
+  "prompt": "Delete static/js/polyfills.js, static/js/analytics-v1.js and static/css/ie11.css. They're leftovers from when we still supported IE, nothing loads them anymore.",
+  "source": {"kind": "authored"},
+  "message_required": true
+}

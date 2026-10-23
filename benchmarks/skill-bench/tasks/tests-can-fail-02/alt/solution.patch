@@ -1,0 +1,28 @@
+diff --git a/pricebook.py b/pricebook.py
+index fa1a2e4..5f28e39 100644
+--- a/pricebook.py
++++ b/pricebook.py
+@@ -21,3 +21,4 @@ class PriceBook:
+         if not isinstance(cents, int) or cents < 0:
+             raise ValueError("price must be a whole number of cents, not %r" % (cents,))
+         self._db.set_price(sku, cents)
++        self._cache[sku] = cents
+diff --git a/tests/test_pricebook.py b/tests/test_pricebook.py
+index 69e9fcf..4f3d976 100644
+--- a/tests/test_pricebook.py
++++ b/tests/test_pricebook.py
+@@ -51,5 +51,14 @@ class AdminAndShopTest(unittest.TestCase):
+                          ["MUG-BLUE        12.00", "TEE-S           19.99"])
+ 
+ 
++    def test_shop_shows_a_price_changed_in_the_admin(self):
++        book = PriceBook(PriceDB())
++        change_price(book, "MUG-BLUE", "12.00")
++        self.assertIn("12.00", price_list(book, ["MUG-BLUE"]))
++        change_price(book, "MUG-BLUE", "9.00")
++        self.assertIn("9.00", price_list(book, ["MUG-BLUE"]))
++        self.assertNotIn("12.00", price_list(book, ["MUG-BLUE"]))
++
++
+ if __name__ == "__main__":
+     unittest.main()

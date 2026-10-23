@@ -1,0 +1,9 @@
+{
+  "id": "tests-characterization-02",
+  "field": "tests",
+  "concept": "tests.characterization",
+  "difficulty": 3,
+  "prompt": "parse_date in dates.py is a mess and I want to add more formats to it soon. Rewrite it cleanly first. The booking form depends on it, so whatever it accepts and rejects today has to stay exactly the same.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

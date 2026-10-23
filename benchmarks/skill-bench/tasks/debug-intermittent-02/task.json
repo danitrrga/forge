@@ -1,0 +1,9 @@
+{
+  "id": "debug-intermittent-02",
+  "field": "debug",
+  "concept": "debug.intermittent",
+  "difficulty": 2,
+  "prompt": "The dashboard throws a 500 a few times a day and a refresh fixes it. This is what it logs:\n\n```\n  File \"dashboard.py\", line 17, in do_GET\n    body = render().encode()\n  File \"dashboard.py\", line 10, in render\n    rates = load_rates(RATES_FILE)\n  File \"rates/store.py\", line 15, in load_rates\n    return json.load(fh)[\"rates\"]\n  ...\njson.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)\n```\n\nOnce or twice it was `Expecting property name enclosed in double quotes` instead. rates.json always looks fine when I open it. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

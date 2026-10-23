@@ -1,0 +1,32 @@
+diff --git a/logtools/latest.py b/logtools/latest.py
+index bdecb4a..72d5a74 100644
+--- a/logtools/latest.py
++++ b/logtools/latest.py
+@@ -24,4 +24,4 @@ def latest_log(pattern, log_dir='/var/log/'):
+     log_files = [f for f in os.listdir(log_dir) if re.match(pattern, f)]
+     log_files = sorted(log_files, key=lambda f: os.path.getmtime(os.path.join(log_dir, f)), reverse=True)
+ 
+-    return os.path.join(log_dir, log_files[1]) if log_files else None
++    return os.path.join(log_dir, log_files[0]) if log_files else None
+diff --git a/tests/test_latest.py b/tests/test_latest.py
+index 41ff9c0..998ecc1 100644
+--- a/tests/test_latest.py
++++ b/tests/test_latest.py
+@@ -27,6 +27,17 @@ class LatestLogTest(unittest.TestCase):
+         self.touch("access.log.old", 200)
+         self.assertIsNone(latest_log(r'^access.log.[0-9]+$', self.dir))
+ 
++    def test_single_match_is_returned(self):
++        self.touch("error.log", 900)
++        self.touch("access.log.1", 100)
++        self.assertEqual(latest_log(r'^access.log.[0-9]+$', self.dir), os.path.join(self.dir, "access.log.1"))
++
++    def test_newest_of_several_matches(self):
++        self.touch("access.log.1", 100)
++        self.touch("access.log.2", 300)
++        self.touch("access.log.3", 200)
++        self.assertEqual(latest_log(r'^access.log.[0-9]+$', self.dir), os.path.join(self.dir, "access.log.2"))
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

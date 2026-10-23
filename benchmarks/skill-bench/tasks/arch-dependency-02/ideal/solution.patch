@@ -1,0 +1,46 @@
+diff --git a/services.py b/services.py
+index ee28a69..18a2621 100644
+--- a/services.py
++++ b/services.py
+@@ -11,6 +11,9 @@ def on_user_saved(user):
+     _AUDIT.append(("saved", user["id"], user["name"]))
+ 
+ 
++store.on_save(on_user_saved)
++
++
+ def register(user_id, name, email):
+     if store.get_user(user_id) is not None:
+         raise ValueError("user %s already exists" % user_id)
+diff --git a/store.py b/store.py
+index fefb593..8ba2eca 100644
+--- a/store.py
++++ b/store.py
+@@ -1,14 +1,24 @@
+-"""User storage (in memory here; the real one is a database)."""
+-import services
++"""User storage (in memory here; the real one is a database).
++
++The bottom layer: it imports nothing above it. Code that must react to a save (search index, audit trail)
++registers a callback with on_save().
++"""
+ 
+ _USERS = {}
++_ON_SAVE = []
++
++
++def on_save(callback):
++    """Call callback(user) after every successful save."""
++    _ON_SAVE.append(callback)
+ 
+ 
+ def save_user(user):
+     if "@" not in user.get("email", ""):
+         raise ValueError("invalid email: %r" % user.get("email"))
+     _USERS[user["id"]] = dict(user)
+-    services.on_user_saved(dict(user))
++    for callback in _ON_SAVE:
++        callback(dict(user))
+ 
+ 
+ def get_user(user_id):

@@ -1,0 +1,3 @@
+- Does the reply say the TypeError came from load_config handing on a raw string (the inline comment kept in the value, then the failed conversion swallowed), not from pricing?
+- Does it keep the comments in settings.ini working, as README.md promises, rather than deleting them?
+- Does a bad or missing setting now fail when the settings are loaded, with a message naming the setting?

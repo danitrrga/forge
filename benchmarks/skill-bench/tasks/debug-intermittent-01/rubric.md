@@ -1,0 +1,3 @@
+- Does the reply explain that every profile shares the one dict cached by load_defaults(), so a test that changes its profile changes the defaults seen by later tests?
+- Does it say the same leak happens between real users, not only between tests?
+- Is the fix in the code (a copy per profile, or no shared cached object) rather than resetting the cache in the tests?

@@ -1,0 +1,167 @@
+diff --git a/billing.py b/billing.py
+index ae2508a..5149c3a 100644
+--- a/billing.py
++++ b/billing.py
+@@ -1,47 +1,51 @@
+-# billing.py - order totals for the checkout (written 2019, "temporarily")
++"""Order totals for the checkout. All amounts are integer cents."""
++
++TAXED_COUNTRIES = ("ES", "PT", "FR")
++TAX_PCT = 21
+ 
+ 
+ def compute_total(lines, code=None, country="ES", member=False):
+-    # lines = list of (sku, qty, unit_cents)
+-    t = 0
+-    n = 0
+-    for l in lines:
+-        if l[1] > 0:
+-            t = t + l[1] * l[2]
+-            n = n + l[1]
+-        else:
+-            if l[1] < 0:
+-                pass  # returns go through refunds.py, not here
+-    d = 0
+-    if code != None:
+-        c = code.strip().upper()
+-        if c == "WELCOME10":
+-            if t >= 3000:
+-                d = t * 10 // 100
+-        elif c == "BULK":
+-            if n >= 10:
+-                d = t * 15 // 100
+-            else:
+-                if n >= 5:
+-                    d = t * 5 // 100
+-    if member:
+-        if d == 0:
+-            d = t * 5 // 100  # members get 5% unless a code already gave something
+-    s = 0
++    """lines: list of (sku, qty, unit_cents). Lines with qty <= 0 are ignored: returns go through refunds.py."""
++    sold = [(line[1], line[2]) for line in lines if line[1] > 0]
++    subtotal = sum(qty * unit for qty, unit in sold)
++    units = sum(qty for qty, _ in sold)
++    discount = _code_discount(code, subtotal, units)
++    if member and discount == 0:
++        discount = _pct(subtotal, 5)  # members get 5% unless a code already gave something
++    shipping = _shipping(country, subtotal)
++    tax = _tax(country, subtotal - discount)
++    return {"subtotal": subtotal, "discount": discount, "shipping": shipping, "tax": tax,
++            "total": subtotal - discount + shipping + tax}
++
++
++def _pct(amount, pct):
++    return amount * pct // 100  # discounts round down
++
++
++def _code_discount(code, subtotal, units):
++    if code is None:
++        return 0
++    code = code.strip().upper()
++    if code == "WELCOME10":
++        return _pct(subtotal, 10) if subtotal >= 3000 else 0
++    if code == "BULK":
++        if units >= 10:
++            return _pct(subtotal, 15)
++        if units >= 5:
++            return _pct(subtotal, 5)
++    return 0
++
++
++def _shipping(country, subtotal):
+     if country == "ES":
+-        if t < 5000:  # NB free shipping looks at the amount before discounts
+-            s = 490
+-    else:
+-        if country == "PT" or country == "FR":
+-            s = 890
+-        else:
+-            s = 1500
+-    taxable = t - d
+-    if country == "ES" or country == "PT" or country == "FR":
+-        x = taxable * 21
+-        tax = x // 100
+-        if x % 100 >= 50:
+-            tax = tax + 1
+-    else:
+-        tax = 0
+-    return {"subtotal": t, "discount": d, "shipping": s, "tax": tax, "total": t - d + s + tax}
++        return 0 if subtotal >= 5000 else 490  # free shipping looks at the amount before discounts
++    if country in ("PT", "FR"):
++        return 890
++    return 1500
++
++
++def _tax(country, taxable):
++    if country not in TAXED_COUNTRIES:
++        return 0
++    tax, rest = divmod(taxable * TAX_PCT, 100)
++    return tax + (1 if rest >= 50 else 0)  # rounded half-up
+diff --git a/tests/test_billing.py b/tests/test_billing.py
+new file mode 100644
+index 0000000..0cba2c6
+--- /dev/null
++++ b/tests/test_billing.py
+@@ -0,0 +1,62 @@
++"""Characterization tests: they pin what compute_total does today, quirks included, so the refactor
++cannot change it. Expected values were taken from the pre-refactor code."""
++import unittest
++
++from billing import compute_total
++
++
++def total(lines, **kw):
++    return compute_total(lines, **kw)
++
++
++class SubtotalTest(unittest.TestCase):
++    def test_plain_domestic_order(self):
++        self.assertEqual(total([("A", 2, 1000)]),
++                         {"subtotal": 2000, "discount": 0, "shipping": 490, "tax": 420, "total": 2910})
++
++    def test_negative_and_zero_quantities_are_ignored(self):
++        self.assertEqual(total([("A", 3, 1000), ("R", -1, 1000), ("Z", 0, 500)])["subtotal"], 3000)
++
++
++class DiscountTest(unittest.TestCase):
++    def test_welcome10_needs_30_euros_and_rounds_down(self):
++        self.assertEqual(total([("A", 1, 2999)], code="WELCOME10")["discount"], 0)
++        self.assertEqual(total([("A", 1, 3005)], code=" welcome10 ")["discount"], 300)
++
++    def test_bulk_counts_units(self):
++        self.assertEqual(total([("A", 4, 100)], code="BULK")["discount"], 0)
++        self.assertEqual(total([("A", 5, 100)], code="BULK")["discount"], 25)
++        self.assertEqual(total([("A", 9, 100), ("B", 1, 100)], code="bulk")["discount"], 150)
++
++    def test_unknown_code_gives_nothing(self):
++        self.assertEqual(total([("A", 1, 4000)], code="SAVE5")["discount"], 0)
++
++    def test_member_5_percent_only_without_a_code_discount(self):
++        self.assertEqual(total([("A", 1, 4000)], member=True)["discount"], 200)
++        self.assertEqual(total([("A", 1, 4000)], code="WELCOME10", member=True)["discount"], 400)
++        self.assertEqual(total([("A", 1, 2000)], code="WELCOME10", member=True)["discount"], 100)
++
++
++class ShippingTest(unittest.TestCase):
++    def test_free_domestic_shipping_looks_before_discounts(self):
++        # 52.00 minus WELCOME10 is 46.80, still free: the threshold uses the pre-discount amount
++        self.assertEqual(total([("A", 1, 5200)], code="WELCOME10")["shipping"], 0)
++        self.assertEqual(total([("A", 1, 4999)])["shipping"], 490)
++
++    def test_other_countries(self):
++        self.assertEqual(total([("A", 1, 9000)], country="PT")["shipping"], 890)
++        self.assertEqual(total([("A", 1, 9000)], country="DE")["shipping"], 1500)
++
++
++class TaxTest(unittest.TestCase):
++    def test_21_percent_rounded_half_up_on_the_discounted_amount(self):
++        self.assertEqual(total([("A", 1, 1050)])["tax"], 221)   # 220.50 -> 221
++        self.assertEqual(total([("A", 1, 1049)])["tax"], 220)   # 220.29 -> 220
++        self.assertEqual(total([("A", 1, 4000)], member=True)["tax"], 798)
++
++    def test_no_tax_outside_es_pt_fr(self):
++        self.assertEqual(total([("A", 1, 1000)], country="US")["tax"], 0)
++
++
++if __name__ == "__main__":
++    unittest.main()

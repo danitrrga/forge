@@ -1,0 +1,9 @@
+{
+  "id": "arch-dependency-02",
+  "field": "arch",
+  "concept": "arch.dependency-direction",
+  "difficulty": 3,
+  "prompt": "store.py imports services. That's backwards per ARCHITECTURE.md, and store and services now import each other, which is a circular import waiting to bite us. Can you untangle it? Callers shouldn't have to change, and the app has to behave exactly as it does now.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

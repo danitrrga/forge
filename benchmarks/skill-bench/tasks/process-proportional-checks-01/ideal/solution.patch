@@ -1,0 +1,22 @@
+diff --git a/gate.log b/gate.log
+new file mode 100644
+index 0000000..df1f0c8
+--- /dev/null
++++ b/gate.log
+@@ -0,0 +1,2 @@
++templates
++templates
+diff --git a/templates/password_reset.txt b/templates/password_reset.txt
+index 1e3ab4b..01dec66 100644
+--- a/templates/password_reset.txt
++++ b/templates/password_reset.txt
+@@ -3,7 +3,8 @@ Subject: Reset your Acme password
+ Hi $first_name,
+ 
+ Someone asked to reset the password for your Acme account. If that was
+-you, open the link below to pick a new password. It expires in 24 hours.
++you, open the link below to pick a new password. It expires in 30
++minutes.
+ 
+     $reset_url
+ 

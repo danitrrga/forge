@@ -1,0 +1,45 @@
+diff --git a/eventlog/parser.py b/eventlog/parser.py
+index 8d5bfe7..dde507c 100644
+--- a/eventlog/parser.py
++++ b/eventlog/parser.py
+@@ -18,18 +18,31 @@ class Event:
+     duration: timedelta
+ 
+ 
+-_DURATION = re.compile(r"(?:(\d+)h)?(?:(\d+)m)?")
++_PART = re.compile(r"(\d+)([hm])")
+ 
+ 
+ def parse_duration(text):
+-    m = _DURATION.fullmatch(text)
+-    return timedelta(hours=int(m.group(1)), minutes=int(m.group(2)))
++    """`45m`, `2h` or `1h30m` as a timedelta; ValueError for anything else."""
++    parts = _PART.findall(text)
++    units = [unit for _, unit in parts]
++    if "".join(n + u for n, u in parts) != text or units not in (["h"], ["m"], ["h", "m"]):
++        raise ValueError("expected a duration like 45m, 2h or 1h30m")
++    amount = {unit: int(n) for n, unit in parts}
++    return timedelta(hours=amount.get("h", 0), minutes=amount.get("m", 0))
++
++
++def _field(name, convert, text):
++    """convert(text), with a failure reported as a ParseError naming this field and its text."""
++    try:
++        return convert(text)
++    except ValueError as e:
++        raise ParseError("invalid %s %r: %s" % (name, text, e)) from None
+ 
+ 
+ def parse_line(line):
+-    try:
+-        start_text, title, duration_text = (part.strip() for part in line.split("|"))
+-        start = datetime.strptime(start_text, "%Y-%m-%d %H:%M")
+-        return Event(start, title, parse_duration(duration_text))
+-    except Exception:
+-        raise ParseError("invalid date format: %r" % line.split("|")[0].strip())
++    parts = [part.strip() for part in line.split("|")]
++    if len(parts) != 3:
++        raise ParseError("expected 3 fields (start | title | duration), found %d" % len(parts))
++    start_text, title, duration_text = parts
++    start = _field("start", lambda t: datetime.strptime(t, "%Y-%m-%d %H:%M"), start_text)
++    return Event(start, title, _field("duration", parse_duration, duration_text))

@@ -1,0 +1,9 @@
+{
+  "id": "debug-root-cause-01",
+  "field": "debug",
+  "concept": "debug.root-cause",
+  "difficulty": 1,
+  "prompt": "test_random_days keeps failing in CI, roughly one run in three, and then passes when I rerun the job. It's blocking merges. Can you sort it out?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

@@ -1,0 +1,11 @@
+{
+  "id": "ui-layout-bug-02",
+  "field": "ui",
+  "concept": "ui.layout-bug",
+  "difficulty": 2,
+  "prompt": "On small phones (320-360px wide) the pricing cards stick out past the right edge and the page scrolls sideways. It looks fine on my iPhone 15 and on desktop. Please fix it.",
+  "source": {
+    "kind": "authored"
+  },
+  "message_required": false
+}

@@ -1,0 +1,9 @@
+{
+  "id": "logic-datetime-01",
+  "field": "logic",
+  "concept": "logic.datetime",
+  "difficulty": 2,
+  "prompt": "Ana signed up on 31 January and renewal_dates(date(2024, 1, 31), 12) crashes with a ValueError about the day being out of range. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

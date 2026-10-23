@@ -1,0 +1,13 @@
+diff --git a/billing/config.py b/billing/config.py
+index d1bfca5..6c8677b 100644
+--- a/billing/config.py
++++ b/billing/config.py
+@@ -10,7 +10,7 @@ SCHEMA = {
+ 
+ 
+ def load_config(path):
+-    parser = configparser.ConfigParser()
++    parser = configparser.ConfigParser(inline_comment_prefixes=(";", "#"))
+     with open(path, encoding="utf-8") as fh:
+         parser.read_file(fh)
+     section = parser["billing"]

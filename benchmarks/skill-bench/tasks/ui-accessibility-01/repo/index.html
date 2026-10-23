@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Northern Archive weekly digest</title>
+<style>
+body{color:#60030f;background-color:#cbddcc;font-family:system-ui,sans-serif;line-height:1.5}
+.note{color:#011932;background-color:#cee6da}
+.tab{color:#6a504e;background-color:#dceedb;padding:.4rem .8rem;display:inline-block}
+.btn-primary{color:#2f4a3e;background-color:#f7cdf7;padding:.6rem 1rem;border:0;border-radius:.4rem}
+a:focus-visible,.btn-primary:focus-visible,[role=tab]:focus-visible{outline:3px solid #77282a;outline-offset:2px}
+.big-head{color:#4d689f;background-color:#d1dfc9;font-size:26px;font-weight:700}
+</style>
+</head>
+<body>
+<header>
+<nav><a tabindex="2" href="#main">Skip to content</a> <a href="/contact">Contact</a></nav>
+<h1>Northern Archive weekly digest</h1>
+</header>
+<main id="main">
+<h2 class="big-head" id="deck">trail conditions</h2>
+<section aria-labelledby="deck">
+<img src="https://example.com/northern-archive-weekly-digest.jpg">
+<table>
+<caption>Rehearsal slots</caption>
+<tr><th scope="col">Item</th><th colspan="2" scope="colgroup">Count</th></tr>
+<tr><th scope="row">Rush</th><td>Hourly</td><td>Full</td></tr>
+<tr><th scope="row">Basic</th><td>Monthly</td><td>Closed</td></tr>
+<tr><th scope="row">Trial</th><td>Once</td><td>Open</td></tr>
+</table>
+</section>
+<h3 id="tabs-title">permit windows</h3>
+<div class="tabs" role="tablist" aria-labelledby="tabs-title">
+<div role="tab" tabindex="0" onkeydown="if(event.key==='Tab')event.preventDefault()" aria-selected="true">Members</div>
+<div role="tab" tabindex="0" onkeydown="pickTab('b')" aria-selected="false">Notes</div>
+</div>
+<h4>ranger notes</h4>
+<fieldset>
+<legend>ranger notes</legend>
+<span id="l-a">Phone</span> <span id="l-b">number</span>
+<input id="hf1" name="hf1" type="tel" autocomplete="off" aria-labelledby="l-a l-b">
+<label for="hf2">City</label>
+<input id="hf2" name="hf2" type="text" autocomplete="city">
+<input id="hf3" name="hf3" type="text" autocomplete="name" aria-label="Full name">
+</fieldset>
+<p class="note">Rehearsals move indoors in winter.</p>
+<p><a href="/book-now">Book now<div class="cta-div" onclick="go()">Start trial</div></a></p>
+<p><span style="color:#615104">Cover beds before a frost.</span></p>
+</main>
+<footer>
+<p><a tabindex="1" href="/archive"></a> <a href="/contact">Contact</a></p>
+</footer>
+</body>
+</html>

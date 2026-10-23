@@ -1,0 +1,9 @@
+{
+  "id": "logic-money-01",
+  "field": "logic",
+  "concept": "logic.money",
+  "difficulty": 2,
+  "prompt": "An invoice with one consulting hour at 12.50 and 21% VAT shows VAT 2.62. 12.50 x 0.21 is 2.625, which should round up to 2.63. Can you fix it?",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

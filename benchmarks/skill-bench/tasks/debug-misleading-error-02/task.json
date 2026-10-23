@@ -1,0 +1,11 @@
+{
+  "id": "debug-misleading-error-02",
+  "field": "debug",
+  "concept": "debug.misleading-error",
+  "difficulty": 2,
+  "prompt": "Importing the calendar export complains about lines that look fine:\n\n```\n$ python3 import_events.py calendar.txt\n4 events, 4.5 hours\n  line 4: invalid date format: '2026-03-09 14:00'\n  line 6: invalid date format: '2026-03-10 13:00'\n  line 8: invalid date format: '2026-03-11 16:00'\n```\n\nThose dates are in exactly the same format as the others. Can you sort it out?",
+  "source": {
+    "kind": "authored"
+  },
+  "message_required": false
+}

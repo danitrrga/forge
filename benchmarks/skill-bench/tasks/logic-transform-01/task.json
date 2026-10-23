@@ -1,0 +1,13 @@
+{
+  "id": "logic-transform-01",
+  "field": "logic",
+  "concept": "logic.transform",
+  "difficulty": 2,
+  "prompt": "count_words(\"Joe can't tell between 'large' and large.\") gives me 'large': 1 and \"'large'\": 1 as two separate words. Quotes around a word shouldn't make it a different word. Can you fix it?",
+  "source": {
+    "kind": "public",
+    "ref": "Exercism word-count: exercism/python@6105f6d9d3ef66ce3d5c8f529d2882af3d76b706 exercises/practice/word-count (word_count_test.py run unchanged by the oracle; .meta/example.py is the ideal), cases from exercism/problem-specifications@650bebeb39ad40439175288042aece982b0a90a9 canonical-data.json. Adapted: placed in a small package; the buggy implementation is authored",
+    "license": "MIT"
+  },
+  "message_required": false
+}

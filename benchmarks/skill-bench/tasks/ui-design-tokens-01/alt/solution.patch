@@ -1,0 +1,34 @@
+diff --git a/components/button.css b/components/button.css
+index 6973393..d93ef33 100644
+--- a/components/button.css
++++ b/components/button.css
+@@ -40,3 +40,17 @@
+   padding: var(--space-1) var(--space-3);
+   font-size: var(--font-size-sm);
+ }
++
++
++/* Variants can also be picked with data-variant, e.g. <button class="btn" data-variant="danger">. */
++.btn[data-variant="danger"] {
++  background-color: var(--color-danger-600);
++  border-color: var(--color-danger-600);
++  color: var(--color-neutral-0);
++}
++
++.btn[data-variant="danger"]:hover,
++.btn[data-variant="danger"]:focus-visible {
++  background-color: var(--color-danger-700);
++  border-color: var(--color-danger-700);
++}
+diff --git a/pages/settings.html b/pages/settings.html
+index 0b22c14..90b9662 100644
+--- a/pages/settings.html
++++ b/pages/settings.html
+@@ -33,6 +33,7 @@
+     <h2 class="card__title" id="danger-title">Danger zone</h2>
+     <p class="card__text">Deleting the project removes its dashboards, data sources and history for everyone. This cannot be undone.</p>
+     <div class="card__actions">
++      <button class="btn" data-variant="danger" type="button">Delete project</button>
+     </div>
+   </section>
+ </main>

@@ -1,0 +1,53 @@
+diff --git a/payroll/shifts.py b/payroll/shifts.py
+index 90e4e7e..f65e102 100644
+--- a/payroll/shifts.py
++++ b/payroll/shifts.py
+@@ -1,4 +1,4 @@
+-from datetime import datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ from zoneinfo import ZoneInfo
+ 
+ SITE_TZ = ZoneInfo("Europe/Madrid")
+@@ -12,12 +12,15 @@ def parse_local(text):
+ 
+ def shift_hours(start, end):
+     """Hours actually worked between two site wall-clock times."""
+-    return (parse_local(end) - parse_local(start)).total_seconds() / 3600
++    # Aware datetimes that share a tzinfo subtract as wall-clock times; UTC gives the real elapsed time.
++    elapsed = parse_local(end).astimezone(timezone.utc) - parse_local(start).astimezone(timezone.utc)
++    return elapsed.total_seconds() / 3600
+ 
+ 
+ def shift_end(start, hours):
+     """The site wall-clock time at which a shift that starts at `start` ends after `hours` hours of work."""
+-    return (parse_local(start) + timedelta(hours=hours)).strftime(FMT)
++    end = parse_local(start).astimezone(timezone.utc) + timedelta(hours=hours)
++    return end.astimezone(SITE_TZ).strftime(FMT)
+ 
+ 
+ def week_hours(shifts):
+diff --git a/tests/test_shifts.py b/tests/test_shifts.py
+index 1c2640f..6e485dd 100644
+--- a/tests/test_shifts.py
++++ b/tests/test_shifts.py
+@@ -25,5 +25,20 @@ class WeekHoursTest(unittest.TestCase):
+                                      ("2026-06-11 09:00", "2026-06-11 13:30")]), 12.5)
+ 
+ 
++class ClockChangeTest(unittest.TestCase):
++    # Europe/Madrid, 2026: forward at 02:00 on 29 March, back at 03:00 on 25 October.
++    def test_hours_when_clocks_go_forward(self):
++        self.assertEqual(shift_hours("2026-03-28 22:00", "2026-03-29 06:00"), 7)
++
++    def test_hours_when_clocks_go_back(self):
++        self.assertEqual(shift_hours("2026-10-24 22:00", "2026-10-25 06:00"), 9)
++
++    def test_end_when_clocks_go_forward(self):
++        self.assertEqual(shift_end("2026-03-28 22:00", 8), "2026-03-29 07:00")
++
++    def test_end_when_clocks_go_back(self):
++        self.assertEqual(shift_end("2026-10-24 22:00", 8), "2026-10-25 05:00")
++
++
+ if __name__ == '__main__':
+     unittest.main()

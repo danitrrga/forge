@@ -1,0 +1,7 @@
+diff --git c/tools/deadcode-allow.txt i/tools/deadcode-allow.txt
+index 01db353..dd979b4 100644
+--- c/tools/deadcode-allow.txt
++++ i/tools/deadcode-allow.txt
+@@ -1 +1,2 @@
+ # Functions the dead-code check must not report, one per line:  name  # why it is used
++export_ledger_csv  # run by name from jobs.json ("nightly-ledger") via scheduler.py

@@ -1,0 +1,45 @@
+{
+  "button-primary": {
+    "background": "#1a56db",
+    "border": "1px solid transparent",
+    "border-radius": "4px",
+    "color": "#ffffff",
+    "cursor": "pointer",
+    "display": "inline-block",
+    "font": "inherit",
+    "padding": "8px 16px"
+  },
+  "button-primary:hover": {
+    "background": "#1e429f",
+    "border": "1px solid transparent",
+    "border-radius": "4px",
+    "color": "#ffffff",
+    "cursor": "pointer",
+    "display": "inline-block",
+    "font": "inherit",
+    "padding": "8px 16px"
+  },
+  "button-secondary": {
+    "background": "#ffffff",
+    "border": "1px solid transparent",
+    "border-color": "#d1d5db",
+    "border-radius": "4px",
+    "color": "#1a56db",
+    "cursor": "pointer",
+    "display": "inline-block",
+    "font": "inherit",
+    "padding": "8px 16px"
+  },
+  "card": {
+    "background": "#ffffff",
+    "border": "1px solid #d1d5db",
+    "border-radius": "4px",
+    "padding": "16px"
+  },
+  "input": {
+    "border": "1px solid #d1d5db",
+    "border-radius": "4px",
+    "color": "#111827",
+    "padding": "8px"
+  }
+}

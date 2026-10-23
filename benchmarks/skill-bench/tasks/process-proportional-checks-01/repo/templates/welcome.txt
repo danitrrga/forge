@@ -1,0 +1,10 @@
+Subject: Welcome to Acme, $first_name
+
+Hi $first_name,
+
+Your Acme account is ready. Sign in any time with the email address
+$email at:
+
+    $login_url
+
+The Acme team

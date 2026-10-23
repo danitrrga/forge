@@ -1,0 +1,48 @@
+diff --git c/static/css/ie11.css i/static/css/ie11.css
+deleted file mode 100644
+index 420c2f3..0000000
+--- c/static/css/ie11.css
++++ /dev/null
+@@ -1,5 +0,0 @@
+-/* IE11 has no CSS custom properties: hard-code the theme. */
+-body { color: #1d1d1f; }
+-a { color: #0a6c5a; }
+-nav { display: block; }
+-nav a { display: inline-block; margin-right: 1rem; }
+diff --git c/static/js/analytics-v1.js i/static/js/analytics-v1.js
+deleted file mode 100644
+index 053a7b8..0000000
+--- c/static/js/analytics-v1.js
++++ /dev/null
+@@ -1,4 +0,0 @@
+-(function () {
+-  var img = new Image();
+-  img.src = "https://stats.example.test/v1/pixel.gif?p=" + encodeURIComponent(location.pathname);
+-})();
+diff --git c/static/js/polyfills.js i/static/js/polyfills.js
+deleted file mode 100644
+index d3bfb46..0000000
+--- c/static/js/polyfills.js
++++ /dev/null
+@@ -1,21 +0,0 @@
+-// Shims for IE11, which lacks these.
+-if (!Array.prototype.includes) {
+-  Array.prototype.includes = function (x) {
+-    return this.indexOf(x) !== -1;
+-  };
+-}
+-
+-if (window.NodeList && !NodeList.prototype.forEach) {
+-  NodeList.prototype.forEach = Array.prototype.forEach;
+-}
+-
+-if (!String.prototype.startsWith) {
+-  String.prototype.startsWith = function (s, pos) {
+-    return this.substr(pos || 0, s.length) === s;
+-  };
+-}
+-
+-// Plain-data deep copy: a JSON round trip, so undefined and functions are dropped and Dates become ISO strings.
+-export function deepClone(value) {
+-  return JSON.parse(JSON.stringify(value));
+-}

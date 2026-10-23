@@ -1,0 +1,9 @@
+{
+  "id": "tests-can-fail-02",
+  "field": "tests",
+  "concept": "tests.can-fail",
+  "difficulty": 2,
+  "prompt": "Ana changed the price of the blue mug (MUG-BLUE) in the admin this morning, 12.00 down to 9.00, and the shop kept showing 12.00 until we restarted the app. Please fix it and add a regression test for it.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

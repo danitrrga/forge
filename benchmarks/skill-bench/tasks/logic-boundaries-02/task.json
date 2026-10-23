@@ -1,0 +1,13 @@
+{
+  "id": "logic-boundaries-02",
+  "field": "logic",
+  "concept": "logic.boundaries",
+  "difficulty": 1,
+  "prompt": "latest_log() blows up with an IndexError when there's only one matching log file in the directory. Can you fix that?",
+  "source": {
+    "kind": "public",
+    "ref": "nreHieW/over-editing@701ad34febd436729251826d5cbb16fca5e278da data/questions/corrupted_solutions_manual_easy_400.jsonl, row BigCodeBench/6 (mutate_list_indexing). Adapted: task_func renamed latest_log in a small package with a CLI; oracle runs the row's five tests unchanged plus the same contract on real files",
+    "license": "Apache-2.0"
+  },
+  "message_required": false
+}

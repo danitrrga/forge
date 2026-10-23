@@ -1,0 +1,13 @@
+diff --git a/textscore/weights.py b/textscore/weights.py
+index bf4a014..475732a 100644
+--- a/textscore/weights.py
++++ b/textscore/weights.py
+@@ -21,7 +21,7 @@ def heaviest_substring(text, weights):
+     max_weight = -math.inf
+     max_substr = ''
+     for start, end in combinations(range(len(text)), 2):
+-        substr = text[start:end]
++        substr = text[start:end + 1]
+         weight = sum(weights.get(c, 0) for c in substr)
+         if weight > max_weight:
+             max_weight = weight

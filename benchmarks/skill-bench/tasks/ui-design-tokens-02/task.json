@@ -1,0 +1,11 @@
+{
+  "id": "ui-design-tokens-02",
+  "field": "ui",
+  "concept": "ui.design-tokens",
+  "difficulty": 2,
+  "prompt": "Customers whose plan has expired don't notice it on the billing page. Add a warning at the top of the page that says when their plan expired, with a link to renew.",
+  "source": {
+    "kind": "authored"
+  },
+  "message_required": false
+}

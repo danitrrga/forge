@@ -1,0 +1,145 @@
+diff --git a/billing.py b/billing.py
+index ae2508a..c5bf1e7 100644
+--- a/billing.py
++++ b/billing.py
+@@ -1,47 +1,35 @@
+-# billing.py - order totals for the checkout (written 2019, "temporarily")
++"""Order totals for the checkout. All amounts are integer cents."""
++
++SHIPPING = {"ES": 490, "PT": 890, "FR": 890}
++OTHER_SHIPPING = 1500
++FREE_ES_SHIPPING_FROM = 5000  # compared with the subtotal BEFORE discounts
++TAXED = {"ES", "PT", "FR"}
++TAX_PCT = 21
++MEMBER_PCT = 5
++
++
++def _code_pct(code, subtotal, units):
++    code = (code or "").strip().upper()
++    if code == "WELCOME10" and subtotal >= 3000:
++        return 10
++    if code == "BULK":
++        return 15 if units >= 10 else 5 if units >= 5 else 0
++    return 0
+ 
+ 
+ def compute_total(lines, code=None, country="ES", member=False):
+-    # lines = list of (sku, qty, unit_cents)
+-    t = 0
+-    n = 0
+-    for l in lines:
+-        if l[1] > 0:
+-            t = t + l[1] * l[2]
+-            n = n + l[1]
+-        else:
+-            if l[1] < 0:
+-                pass  # returns go through refunds.py, not here
+-    d = 0
+-    if code != None:
+-        c = code.strip().upper()
+-        if c == "WELCOME10":
+-            if t >= 3000:
+-                d = t * 10 // 100
+-        elif c == "BULK":
+-            if n >= 10:
+-                d = t * 15 // 100
+-            else:
+-                if n >= 5:
+-                    d = t * 5 // 100
+-    if member:
+-        if d == 0:
+-            d = t * 5 // 100  # members get 5% unless a code already gave something
+-    s = 0
+-    if country == "ES":
+-        if t < 5000:  # NB free shipping looks at the amount before discounts
+-            s = 490
+-    else:
+-        if country == "PT" or country == "FR":
+-            s = 890
+-        else:
+-            s = 1500
+-    taxable = t - d
+-    if country == "ES" or country == "PT" or country == "FR":
+-        x = taxable * 21
+-        tax = x // 100
+-        if x % 100 >= 50:
+-            tax = tax + 1
+-    else:
+-        tax = 0
+-    return {"subtotal": t, "discount": d, "shipping": s, "tax": tax, "total": t - d + s + tax}
++    """lines: list of (sku, qty, unit_cents)."""
++    subtotal = units = 0
++    for line in lines:
++        qty, unit = line[1], line[2]
++        if qty > 0:  # negative lines are returns: refunds.py handles them
++            subtotal += qty * unit
++            units += qty
++    discount = subtotal * _code_pct(code, subtotal, units) // 100
++    if member and not discount:  # members get 5% unless a code already gave something
++        discount = subtotal * MEMBER_PCT // 100
++    free = country == "ES" and subtotal >= FREE_ES_SHIPPING_FROM
++    shipping = 0 if free else SHIPPING.get(country, OTHER_SHIPPING)
++    tax = ((subtotal - discount) * TAX_PCT + 50) // 100 if country in TAXED else 0  # half-up
++    return {"subtotal": subtotal, "discount": discount, "shipping": shipping, "tax": tax,
++            "total": subtotal - discount + shipping + tax}
+diff --git a/tests/test_billing.py b/tests/test_billing.py
+new file mode 100644
+index 0000000..7a0f0b7
+--- /dev/null
++++ b/tests/test_billing.py
+@@ -0,0 +1,55 @@
++"""compute_total as it behaved before the 2026 refactor, recorded from the old code. Do not edit an expected
++value to make a change pass: a difference here is a change in what customers pay."""
++import unittest
++
++from billing import compute_total
++
++RECORDED = [
++    ('plain domestic', [('A', 2, 1000)], {},
++     {'subtotal': 2000, 'discount': 0, 'shipping': 490, 'tax': 420, 'total': 2910}),
++    ('return line ignored', [('A', 3, 1000), ('R', -1, 1000)], {},
++     {'subtotal': 3000, 'discount': 0, 'shipping': 490, 'tax': 630, 'total': 4120}),
++    ('zero line ignored', [('A', 1, 1000), ('Z', 0, 700)], {},
++     {'subtotal': 1000, 'discount': 0, 'shipping': 490, 'tax': 210, 'total': 1700}),
++    ('welcome10 below 30', [('A', 1, 2999)], {'code': 'WELCOME10'},
++     {'subtotal': 2999, 'discount': 0, 'shipping': 490, 'tax': 630, 'total': 4119}),
++    ('welcome10 rounds down', [('A', 1, 3005)], {'code': ' welcome10 '},
++     {'subtotal': 3005, 'discount': 300, 'shipping': 490, 'tax': 568, 'total': 3763}),
++    ('bulk 4 units', [('A', 4, 100)], {'code': 'BULK'},
++     {'subtotal': 400, 'discount': 0, 'shipping': 490, 'tax': 84, 'total': 974}),
++    ('bulk 5 units', [('A', 5, 100)], {'code': 'BULK'},
++     {'subtotal': 500, 'discount': 25, 'shipping': 490, 'tax': 100, 'total': 1065}),
++    ('bulk 10 units over two lines', [('A', 9, 100), ('B', 1, 100)], {'code': 'bulk'},
++     {'subtotal': 1000, 'discount': 150, 'shipping': 490, 'tax': 179, 'total': 1519}),
++    ('member alone', [('A', 1, 4000)], {'member': True},
++     {'subtotal': 4000, 'discount': 200, 'shipping': 490, 'tax': 798, 'total': 5088}),
++    ('member with a code that applies', [('A', 1, 4000)], {'code': 'WELCOME10', 'member': True},
++     {'subtotal': 4000, 'discount': 400, 'shipping': 490, 'tax': 756, 'total': 4846}),
++    ('member with a code that does not', [('A', 1, 2000)], {'code': 'WELCOME10', 'member': True},
++     {'subtotal': 2000, 'discount': 100, 'shipping': 490, 'tax': 399, 'total': 2789}),
++    ('free shipping before discount', [('A', 1, 5200)], {'code': 'WELCOME10'},
++     {'subtotal': 5200, 'discount': 520, 'shipping': 0, 'tax': 983, 'total': 5663}),
++    ('just under free shipping', [('A', 1, 4999)], {},
++     {'subtotal': 4999, 'discount': 0, 'shipping': 490, 'tax': 1050, 'total': 6539}),
++    ('portugal', [('A', 1, 9000)], {'country': 'PT'},
++     {'subtotal': 9000, 'discount': 0, 'shipping': 890, 'tax': 1890, 'total': 11780}),
++    ('germany', [('A', 1, 1000)], {'country': 'DE'},
++     {'subtotal': 1000, 'discount': 0, 'shipping': 1500, 'tax': 0, 'total': 2500}),
++    ('tax half up', [('A', 1, 1050)], {'country': 'FR'},
++     {'subtotal': 1050, 'discount': 0, 'shipping': 890, 'tax': 221, 'total': 2161}),
++    ('tax below half', [('A', 1, 1049)], {},
++     {'subtotal': 1049, 'discount': 0, 'shipping': 490, 'tax': 220, 'total': 1759}),
++    ('empty cart', [], {},
++     {'subtotal': 0, 'discount': 0, 'shipping': 490, 'tax': 0, 'total': 490}),
++]
++
++
++class RecordedTotalsTest(unittest.TestCase):
++    def test_recorded_totals(self):
++        for name, lines, kwargs, expected in RECORDED:
++            with self.subTest(name):
++                self.assertEqual(compute_total(lines, **kwargs), expected)
++
++
++if __name__ == "__main__":
++    unittest.main()

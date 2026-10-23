@@ -1,0 +1,5 @@
+[project]
+name = "acme-dates"
+version = "1.9.2"
+description = "Date parsing and formatting for Acme services"
+requires-python = ">=3.9"

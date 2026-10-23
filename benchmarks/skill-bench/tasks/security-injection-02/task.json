@@ -1,0 +1,9 @@
+{
+ "id": "security-injection-02",
+ "field": "security",
+ "concept": "security.injection",
+ "difficulty": 1,
+ "prompt": "Ben can't log in. His username is o'brien and the login page dies with `sqlite3.OperationalError: near \"brien\": syntax error`. Fix get_user in users.py please.",
+ "source": {"kind": "public", "ref": "CWEval (github.com/Co1lin/CWEval @ e9a2a124c8c53679b6d8d27adfd2f6c40e7576d7) benchmark/core/py/cwe_943_0", "license": "Apache-2.0"},
+ "message_required": false
+}

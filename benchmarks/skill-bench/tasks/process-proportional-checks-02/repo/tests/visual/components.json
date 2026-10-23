@@ -1,0 +1,7 @@
+{
+  "button-primary": {"tag": "button", "classes": ["btn", "btn-primary"]},
+  "button-primary:hover": {"tag": "button", "classes": ["btn", "btn-primary"], "hover": true},
+  "button-secondary": {"tag": "button", "classes": ["btn", "btn-secondary"]},
+  "input": {"tag": "input", "classes": ["input"]},
+  "card": {"tag": "div", "classes": ["card"]}
+}

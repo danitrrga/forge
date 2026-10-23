@@ -1,0 +1,62 @@
+diff --git a/README.md b/README.md
+index 3f2adbc..e69de29 100644
+--- a/README.md
++++ b/README.md
+@@ -1,9 +0,0 @@
+-# acme orders
+-
+-Layers, lowest first: `models` (plain data) -> `pricing` -> `report`. A module only imports from
+-layers below it.
+-
+-```bash
+-python3 report.py
+-python3 -m unittest
+-```
+diff --git a/models.py b/models.py
+index d93a431..4c9f683 100644
+--- a/models.py
++++ b/models.py
+@@ -1,7 +1,7 @@
+ """Orders and order lines."""
+ from dataclasses import dataclass, field
+ 
+-from pricing import line_total
++from vat import line_total
+ 
+ 
+ @dataclass
+diff --git a/pricing.py b/pricing.py
+index 13c33c9..b0b50da 100644
+--- a/pricing.py
++++ b/pricing.py
+@@ -1,15 +1,10 @@
+ """Prices: VAT, line totals and coupons."""
+ from models import Line, Order
++from vat import VAT_PCT, line_total  # noqa: F401 (re-exported for callers)
+ 
+-VAT_PCT = 21
+ COUPONS = {"SPRING10": 10, "VIP20": 20}
+ 
+ 
+-def line_total(line):
+-    """Line price including VAT, in cents, rounded half-up."""
+-    return (line.qty * line.unit_cents * (100 + VAT_PCT) + 50) // 100
+-
+-
+ def apply_coupon(order, code):
+     """A copy of the order with a discount line for the coupon (an unknown code changes nothing)."""
+     code = code.strip().upper()
+diff --git a/vat.py b/vat.py
+new file mode 100644
+index 0000000..a3178f6
+--- /dev/null
++++ b/vat.py
+@@ -0,0 +1,8 @@
++"""VAT. The bottom layer: imports nothing from the project."""
++
++VAT_PCT = 21
++
++
++def line_total(line):
++    """Line price including VAT, in cents, rounded half-up."""
++    return (line.qty * line.unit_cents * (100 + VAT_PCT) + 50) // 100

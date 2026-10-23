@@ -1,0 +1,46 @@
+diff --git a/shop/orders.py b/shop/orders.py
+index 400e909..f3ca3d8 100644
+--- a/shop/orders.py
++++ b/shop/orders.py
+@@ -2,9 +2,12 @@ from shop import db
+ 
+ 
+ def add_order(customer, total_cents):
+-    cur = db.intake().execute(
+-        "INSERT INTO orders (customer, total_cents) VALUES (?, ?)", (customer, total_cents)
+-    )
++    # `with` commits: an uncommitted INSERT keeps the write lock on the long-lived intake
++    # connection, so every other connection's write fails with "database is locked".
++    with db.intake() as conn:
++        cur = conn.execute(
++            "INSERT INTO orders (customer, total_cents) VALUES (?, ?)", (customer, total_cents)
++        )
+     return cur.lastrowid
+ 
+ 
+diff --git a/tests/test_orders.py b/tests/test_orders.py
+index c559d3c..6a1bfba 100644
+--- a/tests/test_orders.py
++++ b/tests/test_orders.py
+@@ -1,4 +1,5 @@
+ import os
++import sqlite3
+ import tempfile
+ import unittest
+ 
+@@ -27,6 +28,15 @@ class OrdersTest(unittest.TestCase):
+         orders.mark_shipped(order_id)
+         self.assertEqual(orders.get_order(order_id)["status"], "shipped")
+ 
++    def test_new_order_is_committed(self):
++        order_id = orders.add_order("Ana", 1250)
++        other = sqlite3.connect(db.DB_PATH, timeout=0.1)
++        try:
++            row = other.execute("SELECT customer FROM orders WHERE id = ?", (order_id,)).fetchone()
++        finally:
++            other.close()
++        self.assertEqual(row, ("Ana",))
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

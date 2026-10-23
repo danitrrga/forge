@@ -1,0 +1,20 @@
+diff --git a/billing/invoice.py b/billing/invoice.py
+index b22fb4b..80efde1 100644
+--- a/billing/invoice.py
++++ b/billing/invoice.py
+@@ -6,12 +6,14 @@ cent half away from zero (2.625 -> 2.63, -2.625 -> -2.63). The total is subtotal
+ Amounts are returned as strings with two decimals, ready to print.
+ """
+ 
++from decimal import ROUND_HALF_UP, Decimal
++
+ 
+ def invoice_totals(lines, vat_rate="0.21"):
+     """{"subtotal", "vat", "total"} for lines of (description, unit_price, quantity)."""
+     subtotal = 0.0
+     for _description, unit_price, quantity in lines:
+         subtotal += float(unit_price) * quantity
+-    vat = round(subtotal * float(vat_rate), 2)
++    vat = float(Decimal(subtotal * float(vat_rate)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+     total = subtotal + vat
+     return {"subtotal": f"{subtotal:.2f}", "vat": f"{vat:.2f}", "total": f"{total:.2f}"}

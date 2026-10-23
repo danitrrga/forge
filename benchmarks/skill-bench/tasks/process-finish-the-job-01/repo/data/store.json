@@ -1,0 +1,19 @@
+{
+  "customers": [
+    {
+      "name": "Ana Lima",
+      "email": "ana@example.test",
+      "phone": "+44 113 496 0001"
+    },
+    {
+      "name": "Ben Okafor",
+      "email": "ben@example.test",
+      "phone": ""
+    },
+    {
+      "name": "Chen Wu",
+      "email": "chen@example.test",
+      "phone": "+44 113 496 0003"
+    }
+  ]
+}

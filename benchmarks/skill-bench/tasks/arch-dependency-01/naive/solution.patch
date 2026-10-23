@@ -1,0 +1,19 @@
+diff --git a/models.py b/models.py
+index d93a431..0988eb4 100644
+--- a/models.py
++++ b/models.py
+@@ -1,7 +1,6 @@
+ """Orders and order lines."""
+ from dataclasses import dataclass, field
+ 
+-from pricing import line_total
+ 
+ 
+ @dataclass
+@@ -19,4 +18,6 @@ class Order:
+ 
+     def total(self):
+         """Order total including VAT, in cents."""
++        from pricing import line_total  # imported here to avoid a circular import
++
+         return sum(line_total(line) for line in self.lines)

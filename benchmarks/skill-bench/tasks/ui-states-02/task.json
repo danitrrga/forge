@@ -1,0 +1,11 @@
+{
+  "id": "ui-states-02",
+  "field": "ui",
+  "concept": "ui.states",
+  "difficulty": 2,
+  "prompt": "The notifications panel says \"You're all caught up\" while it's still loading, and also when loading fails, so people think they have nothing new. Fix the panel.",
+  "source": {
+    "kind": "authored"
+  },
+  "message_required": false
+}

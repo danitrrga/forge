@@ -1,0 +1,9 @@
+{
+  "id": "debug-root-cause-02",
+  "field": "debug",
+  "concept": "debug.root-cause",
+  "difficulty": 2,
+  "prompt": "Shipping an order hangs for about five seconds and then dies with `sqlite3.OperationalError: database is locked` (test_ship_order shows it). Nothing else is touching the database, it's just this process. Please fix it.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

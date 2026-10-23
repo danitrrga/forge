@@ -1,0 +1,17 @@
+diff --git a/chatlog.py b/chatlog.py
+index 9e813bc..a8691ee 100644
+--- a/chatlog.py
++++ b/chatlog.py
+@@ -11,4 +11,11 @@ def generate_receive_log(msg: str) -> str:
+     Returns:
+         str: The log entry for the received message.
+     '''
+-    return f'[{datetime.datetime.now().isoformat()}] Received: {msg}'
++    return f'[{datetime.datetime.now().isoformat()}] Received: {msg.translate(_LINE_BREAK_ESCAPES)}'
++
++
++# every character str.splitlines() breaks on, written as a visible escape so one message stays one log line
++_LINE_BREAK_ESCAPES = {
++    ord(c): c.encode('unicode_escape').decode('ascii')
++    for c in '\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029'
++}

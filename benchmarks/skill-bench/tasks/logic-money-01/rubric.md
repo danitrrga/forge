@@ -1,0 +1,3 @@
+- Are amounts computed with Decimal (built from the price strings) or with integer cents, rather than with floats?
+- Is the result free of an epsilon or "add a tiny amount before rounding" workaround?
+- Is the rounding rule explicit in the code (ROUND_HALF_UP or an equivalent half-away-from-zero rule), not left to round()?

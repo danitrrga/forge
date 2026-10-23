@@ -1,0 +1,49 @@
+diff --git a/pages/billing.py b/pages/billing.py
+index b35171c..9fc9563 100644
+--- a/pages/billing.py
++++ b/pages/billing.py
+@@ -1,6 +1,6 @@
+ """The billing page."""
+ from ui import routes
+-from ui.components import badge, button, card, stat
++from ui.components import alert, badge, button, card, stat
+ 
+ 
+ def _day(d):
+@@ -26,4 +26,13 @@ def render(account, today):
+         '<p class="muted">Invoices are emailed to the account owner on the 1st of each month.</p>',
+         button("View invoices", href=routes.INVOICES, variant="secondary"),
+     )
+-    return '<main class="page"><h1 class="page__title">Billing %s</h1>%s%s</main>' % (status, plan, invoices)
++    notice = ""
++    if expired:
++        notice = alert(
++            "Your %s plan expired on %s. Renew it to keep access for your %d seats."
++            % (account["plan"], _day(account["plan_expires"]), account["seats"]),
++            tone="warning",
++            title="Your plan has expired",
++            action=("Renew plan", routes.RENEW),
++        )
++    return '<main class="page"><h1 class="page__title">Billing %s</h1>%s%s%s</main>' % (status, notice, plan, invoices)
+diff --git a/tests/test_billing.py b/tests/test_billing.py
+index 2721014..279d3ca 100644
+--- a/tests/test_billing.py
++++ b/tests/test_billing.py
+@@ -18,6 +18,17 @@ class BillingPageTest(unittest.TestCase):
+         html = billing.render(ACCOUNT, datetime.date(2026, 12, 2))
+         self.assertIn("Expired", html)
+ 
++    def test_expired_plan_warns_with_a_renew_link(self):
++        html = billing.render(ACCOUNT, datetime.date(2026, 12, 2))
++        self.assertIn("alert--warning", html)
++        self.assertIn("30 Nov 2026", html)
++        self.assertIn('href="/billing/renew"', html)
++        self.assertLess(html.index("alert--warning"), html.index('class="card"'))
++
++    def test_active_plan_has_no_warning(self):
++        html = billing.render(ACCOUNT, datetime.date(2026, 10, 23))
++        self.assertNotIn("alert", html)
++
+ 
+ if __name__ == "__main__":
+     unittest.main()

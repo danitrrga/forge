@@ -1,0 +1,9 @@
+{
+ "id": "security-authz-01",
+ "field": "security",
+ "concept": "security.authz",
+ "difficulty": 2,
+ "prompt": "Ben sent Ana a link to his orders page (`/orders.html?user_id=2`). She opened it while logged in as herself and saw all of Ben's orders. Please fix this.",
+ "source": {"kind": "authored"},
+ "message_required": false
+}

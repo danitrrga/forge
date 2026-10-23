@@ -1,0 +1,9 @@
+{
+  "id": "process-proportional-checks-01",
+  "field": "process",
+  "concept": "process.proportional-checks",
+  "difficulty": 2,
+  "prompt": "Security cut the reset-token lifetime to 30 minutes, so the password reset email has to say the link expires in 30 minutes, not 24 hours. Can you update it?",
+  "source": {"kind": "authored"},
+  "message_required": true
+}

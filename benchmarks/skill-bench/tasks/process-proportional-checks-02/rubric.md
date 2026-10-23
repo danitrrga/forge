@@ -1,0 +1,5 @@
+- Did the agent run the visual regression (`make visual`), the check that measures a style change, even though the README lists it as slow?
+- Did it read what `make visual` reported (only the two primary-button states changing) before accepting the new baseline, and say so?
+- Were e2e and api-contract left unrun, with the reply naming them as not run and saying why (a stylesheet cannot move them)?
+- Is the change confined to the primary button (shared `.btn` rule and `--radius` token untouched, or an equivalent override), with the updated baseline included?
+- Does the reply avoid claiming the release gate (`make check`) passed?

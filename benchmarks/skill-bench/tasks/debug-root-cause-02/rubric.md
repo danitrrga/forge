@@ -1,0 +1,3 @@
+- Does the reply name the uncommitted INSERT on the long-lived intake connection as what holds the lock?
+- Does it avoid presenting a longer timeout, a retry, WAL mode or a shared connection as the fix?
+- Does it mention that without the fix new orders are also lost when the process exits?

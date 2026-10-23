@@ -1,0 +1,38 @@
+diff --git a/crm/merge.py b/crm/merge.py
+index d6d08ff..ea036f1 100644
+--- a/crm/merge.py
++++ b/crm/merge.py
+@@ -20,6 +20,6 @@ def merge_contacts(*exports):
+         for record in export:
+             current = merged.setdefault(_key(record["email"]), {})
+             for field, value in record.items():
+-                if value:
++                if value is not None:
+                     current[field] = value
+     return list(merged.values())
+diff --git a/tests/test_merge.py b/tests/test_merge.py
+index 17e49ed..dea7497 100644
+--- a/tests/test_merge.py
++++ b/tests/test_merge.py
+@@ -28,6 +28,21 @@ class MergeContactsTest(unittest.TestCase):
+         self.assertEqual([c["email"] for c in merged],
+                          ["cleo@example.test", "ana@example.test", "ben@example.test"])
+ 
++    def test_false_zero_and_empty_from_a_later_export_win(self):
++        merged = merge_contacts(
++            [{"email": "ben@example.test", "newsletter": True, "open_balance_cents": 900, "phone": "600", "tags": ["vip"]}],
++            [{"email": "ben@example.test", "newsletter": False, "open_balance_cents": 0, "phone": "", "tags": []}],
++        )
++        self.assertEqual(merged, [{"email": "ben@example.test", "newsletter": False, "open_balance_cents": 0,
++                                   "phone": "", "tags": []}])
++
++    def test_none_or_missing_keeps_the_earlier_value(self):
++        merged = merge_contacts(
++            [{"email": "ana@example.test", "name": "Ana", "newsletter": False}],
++            [{"email": "ana@example.test", "name": None}],
++        )
++        self.assertEqual(merged, [{"email": "ana@example.test", "name": "Ana", "newsletter": False}])
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

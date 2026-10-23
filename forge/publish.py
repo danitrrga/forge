@@ -43,7 +43,9 @@ PUBLIC_ASSETS = {
 }
 # The one home name that is documentation, not a person.
 HOME_OK = {"user"}
-EMAIL_OK = ("example.com", "example.org")
+# example.com and example.org are IANA documentation names (RFC 2606); example.test sits under the .test TLD that RFC 6761 reserves
+# for tests and documentation. None of them can be a real address, which is why fixtures use them.
+EMAIL_OK = ("example.com", "example.org", "example.test")
 # The two public no-reply addresses, matched whole and nothing wider: the commit trailer's address and a
 # GitHub no-reply `<digits>+<name>@`. Any other name at those hosts is an address like any other.
 EMAIL_PUBLIC_RE = re.compile(r"noreply@anthropic\.com|[0-9]{1,20}\+[A-Za-z0-9-]{1,39}@users\.noreply\.github\.com",
@@ -55,7 +57,8 @@ PRIVATE_NETS = [ipaddress.IPv4Network(n) for n in ((10 << 24, 8), ((172 << 24) |
 # Every quantifier that can meet a long line is bounded: a minified file is one line of megabytes.
 # A user name starts with a letter, a digit or an underscore: `/home/.claude` is a toy path, not a person.
 HOME_RE = re.compile(r"/(?:home|Users)/([A-Za-z0-9_][A-Za-z0-9._-]{0,63})")
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24})")
+# The local part must hold a letter or digit: a bare "-" (a diff marker) before @functools.lru_cache is a decorator, not an address.
+EMAIL_RE = re.compile(r"(?=[A-Za-z0-9._%+-]{0,63}[A-Za-z0-9])[A-Za-z0-9._%+-]{1,64}@([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63}){0,8}\.[A-Za-z]{2,24})")
 IPV4_RE = re.compile(r"(?<![\w.])\d{1,3}(?:\.\d{1,3}){3}(?![\w]|\.\d)")
 TAILNET_RE = re.compile(r"[A-Za-z0-9.-]{0,253}\.ts\.net(?![A-Za-z0-9-])")
 KEY_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")

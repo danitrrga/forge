@@ -1,0 +1,13 @@
+{
+  "id": "ui-accessibility-01",
+  "field": "ui",
+  "concept": "ui.accessibility",
+  "difficulty": 2,
+  "prompt": "index.html fails our accessibility checks (keyboard, screen reader and contrast). Fix every defect you find: image text alternatives, input labels, text contrast (4.5:1, or 3:1 for large text), heading order, tab order, native buttons, page language, visible focus styles, link names and table headers. Keep all the visible text and elements, and don't delete or hide anything just to silence a check.",
+  "source": {
+    "kind": "public",
+    "ref": "github.com/pooriaarab/benchmark-accessibility-fix@b014a71a69f5e19c80c4c9f4bf95a416faeb88f1 data/tasks.jsonl row a11y-39",
+    "license": "MIT"
+  },
+  "message_required": false
+}

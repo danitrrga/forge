@@ -1,0 +1,9 @@
+{
+  "id": "tests-never-fails-01",
+  "field": "tests",
+  "concept": "tests.never-fails",
+  "difficulty": 2,
+  "prompt": "A customer paid 4.90 shipping on an order of exactly 50.00, and the site says shipping is free from 50 €. CI was green the whole time. How did the tests not catch this? Fix it, and make sure the tests would actually catch this kind of thing.",
+  "source": {"kind": "authored"},
+  "message_required": false
+}

@@ -1,0 +1,21 @@
+diff --git a/payroll/shifts.py b/payroll/shifts.py
+index 90e4e7e..3e3a029 100644
+--- a/payroll/shifts.py
++++ b/payroll/shifts.py
+@@ -1,4 +1,4 @@
+-from datetime import datetime, timedelta
++from datetime import datetime, timedelta, timezone
+ from zoneinfo import ZoneInfo
+ 
+ SITE_TZ = ZoneInfo("Europe/Madrid")
+@@ -12,7 +12,9 @@ def parse_local(text):
+ 
+ def shift_hours(start, end):
+     """Hours actually worked between two site wall-clock times."""
+-    return (parse_local(end) - parse_local(start)).total_seconds() / 3600
++    # Aware datetimes that share a tzinfo subtract as wall-clock times; UTC gives the real elapsed time.
++    elapsed = parse_local(end).astimezone(timezone.utc) - parse_local(start).astimezone(timezone.utc)
++    return elapsed.total_seconds() / 3600
+ 
+ 
+ def shift_end(start, hours):

@@ -1,0 +1,39 @@
+diff --git a/subtitles/wordcount.py b/subtitles/wordcount.py
+index 2bfd489..c5f4d5e 100644
+--- a/subtitles/wordcount.py
++++ b/subtitles/wordcount.py
+@@ -15,9 +15,12 @@ import re
+ from collections import Counter
+ 
+ 
++WORDS = re.compile("[a-z0-9]+(['][a-z]+)?")
++
++
+ def count_words(sentence):
+     """{word: count} for the subtitle line `sentence`, words lower-cased."""
+-    return dict(Counter(re.findall(r"[a-z0-9']+", sentence.lower())))
++    return dict(Counter(word.group(0) for word in WORDS.finditer(sentence.lower())))
+ 
+ 
+ def top_words(sentence, n=10):
+diff --git a/tests/test_wordcount.py b/tests/test_wordcount.py
+index 1ab5afe..11bf1f6 100644
+--- a/tests/test_wordcount.py
++++ b/tests/test_wordcount.py
+@@ -22,6 +22,16 @@ class CountWordsTest(unittest.TestCase):
+             {"first": 1, "don't": 2, "laugh": 1, "then": 1, "cry": 1},
+         )
+ 
++    def test_quotes_around_a_word_are_not_part_of_it(self):
++        self.assertEqual(
++            count_words("Joe can't tell between 'large' and large."),
++            {"joe": 1, "can't": 1, "tell": 1, "between": 1, "large": 2, "and": 1},
++        )
++        self.assertEqual(count_words("can, can't, 'can't'"), {"can": 1, "can't": 2})
++
++    def test_stray_apostrophes_are_not_words(self):
++        self.assertEqual(count_words("'You're getting it.'"), {"you're": 1, "getting": 1, "it": 1})
++
+ 
+ class TopWordsTest(unittest.TestCase):
+     def test_most_frequent_first(self):

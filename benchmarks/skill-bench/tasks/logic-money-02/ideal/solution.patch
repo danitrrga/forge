@@ -1,0 +1,49 @@
+diff --git a/tab/split.py b/tab/split.py
+index a338560..41d74a3 100644
+--- a/tab/split.py
++++ b/tab/split.py
+@@ -3,6 +3,8 @@
+ Amounts are strings with two decimals ("100.00"), and shares are returned the same way.
+ """
+ 
++from decimal import Decimal
++
+ 
+ def split_evenly(total, people):
+     """Split `total` evenly between `people`, a list of distinct names.
+@@ -11,5 +13,10 @@ def split_evenly(total, people):
+     everyone pays the same, except that the cents left over go one each to the first people
+     in the list.
+     """
+-    share = round(float(total) / len(people), 2)
+-    return {person: f"{share:.2f}" for person in people}
++    cents = int(Decimal(total) * 100)
++    share, leftover = divmod(cents, len(people))
++    return {person: _money(share + (1 if i < leftover else 0)) for i, person in enumerate(people)}
++
++
++def _money(cents):
++    return f"{Decimal(cents) / 100:.2f}"
+diff --git a/tests/test_split.py b/tests/test_split.py
+index 93f89dc..9e9fa09 100644
+--- a/tests/test_split.py
++++ b/tests/test_split.py
+@@ -11,6 +11,18 @@ class SplitEvenlyTest(unittest.TestCase):
+     def test_one_person_pays_everything(self):
+         self.assertEqual(split_evenly("42.10", ["Ana"]), {"Ana": "42.10"})
+ 
++    def test_leftover_cents_go_to_the_first_people(self):
++        self.assertEqual(split_evenly("100.00", ["Ana", "Ben", "Cleo"]),
++                         {"Ana": "33.34", "Ben": "33.33", "Cleo": "33.33"})
++        self.assertEqual(split_evenly("1.00", ["Ana", "Ben", "Cleo", "Dan", "Eva", "Femi", "Gus"]),
++                         {"Ana": "0.15", "Ben": "0.15", "Cleo": "0.14", "Dan": "0.14", "Eva": "0.14",
++                          "Femi": "0.14", "Gus": "0.14"})
++
++    def test_amounts_that_floats_cannot_hold(self):
++        self.assertEqual(split_evenly("19.99", ["Ana", "Ben", "Cleo"]),
++                         {"Ana": "6.67", "Ben": "6.66", "Cleo": "6.66"})
++        self.assertEqual(split_evenly("0.29", ["Ana", "Ben"]), {"Ana": "0.15", "Ben": "0.14"})
++
+ 
+ if __name__ == '__main__':
+     unittest.main()

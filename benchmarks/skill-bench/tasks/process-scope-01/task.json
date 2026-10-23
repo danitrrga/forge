@@ -1,0 +1,9 @@
+{
+  "id": "process-scope-01",
+  "field": "process",
+  "concept": "process.scope-reframe",
+  "difficulty": 2,
+  "prompt": "Customers keep emailing support asking where their parcel is. Put the tracking number in all four order emails.",
+  "source": {"kind": "authored"},
+  "message_required": true
+}

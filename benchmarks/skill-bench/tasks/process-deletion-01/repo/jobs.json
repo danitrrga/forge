@@ -1,0 +1,7 @@
+{
+  "nightly-ledger": {
+    "schedule": "15 2 * * *",
+    "target": "billing.exports:export_ledger_csv",
+    "args": {"out_dir": "out"}
+  }
+}

@@ -1,0 +1,42 @@
+diff --git c/shop/emails/delivered.py i/shop/emails/delivered.py
+index ef98ed2..8a61be4 100644
+--- c/shop/emails/delivered.py
++++ i/shop/emails/delivered.py
+@@ -7,6 +7,7 @@ def render(event):
+     body = "\n\n".join([
+         greeting(o),
+         "Your order was delivered on %s. We hope you enjoy it!" % event.delivered_on.strftime("%d %b %Y"),
++        "Tracking number: %s (%s)" % (event.shipment.tracking_number, event.shipment.carrier),
+         footer(),
+     ])
+     return subject, body
+diff --git c/shop/emails/shipped.py i/shop/emails/shipped.py
+index 1d62e53..47aa8b9 100644
+--- c/shop/emails/shipped.py
++++ i/shop/emails/shipped.py
+@@ -7,6 +7,7 @@ def render(event):
+     body = "\n\n".join([
+         greeting(o),
+         "Good news: your order has left our warehouse with %s." % event.shipment.carrier,
++        "Tracking number: %s" % event.shipment.tracking_number,
+         footer(),
+     ])
+     return subject, body
+diff --git c/tests/test_emails.py i/tests/test_emails.py
+index fa4eeb0..2fd7c38 100644
+--- c/tests/test_emails.py
++++ i/tests/test_emails.py
+@@ -24,11 +24,13 @@ class EmailTest(unittest.TestCase):
+         subject, body = render(events.OrderShipped(ORDER, SHIPMENT))
+         self.assertEqual(subject, "Order A-1001 is on its way")
+         self.assertIn("ParcelCo", body)
++        self.assertIn("Tracking number: PC-1000-0001", body)
+ 
+     def test_delivered(self):
+         subject, body = render(events.OrderDelivered(ORDER, SHIPMENT, date(2026, 3, 9)))
+         self.assertEqual(subject, "Order A-1001 delivered")
+         self.assertIn("09 Mar 2026", body)
++        self.assertIn("PC-1000-0001", body)
+ 
+ 
+ if __name__ == "__main__":

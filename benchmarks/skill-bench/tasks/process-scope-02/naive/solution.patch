@@ -1,0 +1,69 @@
+diff --git c/payments/capture.py i/payments/capture.py
+index 302ff86..9dc58da 100644
+--- c/payments/capture.py
++++ i/payments/capture.py
+@@ -8,5 +8,5 @@ def capture(charge_id):
+     """Capture an authorised charge once the order ships."""
+     req = request.Request(PAYMENTS_URL + "/charges/%s/capture" % charge_id, data=b"{}", method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/charge.py i/payments/charge.py
+index 39477b4..a48b38d 100644
+--- c/payments/charge.py
++++ i/payments/charge.py
+@@ -9,5 +9,5 @@ def charge(amount_cents, card_token):
+     body = json.dumps({"amount": amount_cents, "currency": "EUR", "source": card_token}).encode()
+     req = request.Request(PAYMENTS_URL + "/charges", data=body, method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/refund.py i/payments/refund.py
+index 7e8b6ea..f69a86d 100644
+--- c/payments/refund.py
++++ i/payments/refund.py
+@@ -11,5 +11,5 @@ def refund(charge_id, amount_cents=None):
+         payload["amount"] = amount_cents
+     req = request.Request(PAYMENTS_URL + "/refunds", data=json.dumps(payload).encode(), method="POST",
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/v1_compat.py i/payments/v1_compat.py
+index ca3ce48..7bfd95b 100644
+--- c/payments/v1_compat.py
++++ i/payments/v1_compat.py
+@@ -7,5 +7,5 @@ from config import PAYMENTS_V1_URL
+ 
+ def legacy_charge(amount_cents, card_token):
+     body = parse.urlencode({"amount": amount_cents, "card": card_token}).encode()
+-    with request.urlopen(PAYMENTS_V1_URL + "/charge", data=body, timeout=5) as resp:
++    with request.urlopen(PAYMENTS_V1_URL + "/charge", data=body, timeout=30) as resp:
+         return json.load(resp)
+diff --git c/payments/webhooks_gen.py i/payments/webhooks_gen.py
+index a1d04eb..029ebc5 100644
+--- c/payments/webhooks_gen.py
++++ i/payments/webhooks_gen.py
+@@ -10,7 +10,7 @@ def _call(method, path, payload=None):
+     data = json.dumps(payload).encode() if payload is not None else None
+     req = request.Request(PAYMENTS_URL + path, data=data, method=method,
+                           headers={"Content-Type": "application/json"})
+-    with request.urlopen(req, timeout=5) as resp:
++    with request.urlopen(req, timeout=30) as resp:
+         return json.load(resp)
+ 
+ 
+diff --git c/shipping/geo.py i/shipping/geo.py
+index 6799180..dfc1c0f 100644
+--- c/shipping/geo.py
++++ i/shipping/geo.py
+@@ -7,6 +7,6 @@ from config import GEO_URL
+ def geocode(address):
+     """(lat, lon) of a delivery address, for the courier's route."""
+     url = GEO_URL + "/search?" + parse.urlencode({"q": address, "limit": 1})
+-    with request.urlopen(url, timeout=5) as resp:
++    with request.urlopen(url, timeout=30) as resp:
+         hit = json.load(resp)[0]
+     return hit["lat"], hit["lon"]

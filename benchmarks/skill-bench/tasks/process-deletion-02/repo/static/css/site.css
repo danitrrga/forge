@@ -1,0 +1,5 @@
+:root { --ink: #1d1d1f; --accent: #0a6c5a; }
+body { margin: 0; font: 16px/1.5 system-ui, sans-serif; color: var(--ink); }
+nav { display: flex; gap: 1rem; padding: 1rem; }
+main { max-width: 60rem; margin: 0 auto; padding: 1rem; }
+a { color: var(--accent); }

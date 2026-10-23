@@ -1,0 +1,8 @@
+# start | title | duration
+2026-03-09 09:00 | Planning | 1h30m
+2026-03-09 11:00 | Design review | 1h15m
+2026-03-09 14:00 | Standup | 15m
+2026-03-10 10:00 | Customer call with Ana | 1h0m
+2026-03-10 13:00 | Offsite prep | 2h
+2026-03-11 09:30 | Retro | 0h45m
+2026-03-11 16:00 | 1:1 with Ben | 30m

@@ -1,0 +1,83 @@
+diff --git a/contacts.py b/contacts.py
+index 5c85edc..2479abf 100644
+--- a/contacts.py
++++ b/contacts.py
+@@ -20,20 +20,13 @@ def merge_contacts(rows):
+     The first row seen for an address is kept; later rows only fill in the fields that are
+     still empty on it. Returns the kept rows in first-seen order.
+     """
+-    by_email = {}
+-    merged = []
++    merged = {}
+     for row in rows:
+-        key = normalize_email(row["email"])
+-        if key in by_email:
+-            kept = by_email[key]
+-            for field, value in row.items():
+-                if value and not kept.get(field):
+-                    kept[field] = value
+-        else:
+-            kept = dict(row)
+-            by_email[row["email"]] = kept
+-            merged.append(kept)
+-    return merged
++        kept = merged.setdefault(normalize_email(row["email"]), dict(row))
++        for field, value in row.items():
++            if value and not kept.get(field):
++                kept[field] = value
++    return list(merged.values())
+ 
+ 
+ def load(path):
+diff --git a/tests/test_contacts.py b/tests/test_contacts.py
+index 8bd41e7..0ed7247 100644
+--- a/tests/test_contacts.py
++++ b/tests/test_contacts.py
+@@ -1,6 +1,9 @@
++import io
++import os
++import tempfile
+ import unittest
+ 
+-from contacts import merge_contacts
++from contacts import main, merge_contacts
+ 
+ 
+ def row(email, name="", phone="", company=""):
+@@ -13,10 +16,13 @@ class MergeContactsTest(unittest.TestCase):
+         self.assertEqual([r["name"] for r in merge_contacts(rows)], ["Ana", "Cy"])
+ 
+     def test_merges_same_email_ignoring_case(self):
+-        rows = [row("dee@example.test", "Dee"), row("DEE@example.test", "Dee R.")]
+-        merged = merge_contacts(rows)
+-        self.assertEqual(len(merged), 1)
+-        self.assertEqual(merged[0]["name"], "Dee")
++        # Either spelling may come first; it used to merge only when the first one was lower case.
++        for first, second in (("dee@example.test", "DEE@example.test"), ("DEE@example.test", " dee@example.test")):
++            with self.subTest(first=first):
++                merged = merge_contacts([row(first, "Dee"), row(second, "Dee R.")])
++                self.assertEqual(len(merged), 1)
++                self.assertEqual(merged[0]["name"], "Dee")
++
+ 
+     def test_later_rows_fill_empty_fields(self):
+         rows = [row("eve@example.test", "Eve"), row("eve@example.test", "", "555-0101", "Acme")]
+@@ -30,5 +36,18 @@ class MergeContactsTest(unittest.TestCase):
+         self.assertEqual((merged[0]["name"], merged[0]["phone"]), ("Fay", "555-0102"))
+ 
+ 
++class MainTest(unittest.TestCase):
++    def test_person_in_both_exports_is_written_once(self):
++        with tempfile.TemporaryDirectory() as d:
++            crm, news = os.path.join(d, "crm.csv"), os.path.join(d, "news.csv")
++            with open(crm, "w") as fh:
++                fh.write("email,name,phone,company\nBen@Example.test,Ben Ortiz,,Globex\n")
++            with open(news, "w") as fh:
++                fh.write("email,name,phone,company\nben@example.test,Ben Ortiz,555-0111,\n")
++            out = io.StringIO()
++            main([crm, news], out)
++        self.assertEqual(out.getvalue().splitlines()[1:], ["Ben@Example.test,Ben Ortiz,555-0111,Globex"])
++
++
+ if __name__ == "__main__":
+     unittest.main()

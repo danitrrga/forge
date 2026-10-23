@@ -1,0 +1,11 @@
+{
+  "id": "ui-layout-bug-01",
+  "field": "ui",
+  "concept": "ui.layout-bug",
+  "difficulty": 2,
+  "prompt": "On my phone the uploads page scrolls sideways when a file has a long name, and the download/delete buttons end up off the edge of the card. Can you fix it?",
+  "source": {
+    "kind": "authored"
+  },
+  "message_required": false
+}
