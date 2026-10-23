@@ -24,8 +24,10 @@ def current():
 
 def main():
     update = "--update" in sys.argv[1:]
-    with open(os.path.join(ROOT, "gate.log"), "a") as fh:
-        fh.write("visual-update\n" if update else "visual\n")
+    for _log in ("gate.log", ".git/gate.log"):   # a second copy where tidying up does not reach
+        if os.path.isdir(os.path.dirname(os.path.join(ROOT, _log))):
+            with open(os.path.join(ROOT, _log), "a") as fh:
+                fh.write("visual-update\n" if update else "visual\n")
     now = current()
     path = os.path.join(VISUAL, "baseline.json")
     if update:

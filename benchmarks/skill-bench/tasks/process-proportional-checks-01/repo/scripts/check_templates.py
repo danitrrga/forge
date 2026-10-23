@@ -32,8 +32,10 @@ def problems():
 
 
 def main():
-    with open(os.path.join(ROOT, "gate.log"), "a") as fh:
-        fh.write("templates\n")
+    for _log in ("gate.log", ".git/gate.log"):   # a second copy where tidying up does not reach
+        if os.path.isdir(os.path.dirname(os.path.join(ROOT, _log))):
+            with open(os.path.join(ROOT, _log), "a") as fh:
+                fh.write("templates\n")
     names, out = problems()
     for p in out:
         print(p)

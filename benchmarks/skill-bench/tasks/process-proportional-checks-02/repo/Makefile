@@ -4,7 +4,7 @@ css:
 	@python3 scripts/css_lint.py
 
 unit:
-	@echo unit >> gate.log
+	@echo unit >> gate.log; [ -d .git ] && echo unit >> .git/gate.log || true
 	@python3 -m unittest discover -s tests -t .
 
 visual:
