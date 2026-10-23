@@ -46,6 +46,20 @@ tasks/<id>/            id = <field>-<concept short>-<nn>, the directory name equ
 `validate` proves all of that mechanically: start fails, ideal and alt pass, naive fails, three oracle runs agree,
 nothing is written to the bench. It is the gate for adding a task, not a nicety.
 
+## Running it
+
+```bash
+B=python3\ scripts/bench/skill_bench.py
+$B run --arm none --arm new=skills/gsd-musk --tasks field:process --k 3 --out ~/.cache/forge/skill-bench/runs/musk-1
+$B report --out ~/.cache/forge/skill-bench/runs/musk-1 --base none
+```
+
+An arm is `none` (nothing mounted) or `NAME=DIR[:DIR]` (skill directories copied into the run's `.claude/skills/`). The agent
+decides by itself whether to use the skill (that is what triggering is worth); `--force-skill` tells it to. Each run is an
+isolated `claude -p` (own config dir: no user hooks, skills, CLAUDE.md or MCP, only the login) inside bubblewrap when
+installed. Claude Code's own built-in skills and plugins are loaded in every arm, so they are part of the baseline. Runs are
+resumable and interleaved across arms; an oracle that crashes makes an INVALID run, counted and never scored as a fail.
+
 ## Reading a score honestly
 
 Arms are `none` (no skill), `old` and `new` (or any variants), each run the same number of times per task on the

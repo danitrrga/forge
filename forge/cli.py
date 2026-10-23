@@ -92,6 +92,42 @@ def skill_name_clashes(only=None):
     return lib.Result("PASS", "skill names", "%s, none shares a global skill's name" % seen)
 
 
+def nested_project_roots(only=None, profs=None):
+    """A FAIL when a project with skills of its own lives inside the git repository of another profile. forge switches the
+    enclosing project's neighbours' skills off (skills.neighbour_skills), Claude Code applies those settings inside the nested
+    directory too, and an inner "on" does not override an outer "off" (tested with claude -p on 2026-10-23), so the nested
+    project's own skills never appear. The standard is one git repository per project. A nested project without skills of its
+    own, one with its own repository, and one nested in a repository no profile owns are fine. Frozen profiles and profiles with
+    no directory are not read, and a run that read no project at all is a FAIL (non-negotiable 7). With `only`, that project
+    alone."""
+    profs = lib.profiles() if profs is None else profs
+    bad, read, unread = [], 0, []
+    for name, prof in sorted(profs.items()):
+        if only not in (None, name) or prof.get("frozen"):
+            continue
+        pp = prof.get("project_path")
+        if not pp or not os.path.isdir(pp):
+            unread.append(name)
+            continue
+        read += 1
+        here = os.path.realpath(pp)
+        root = skills._repo_root(here)
+        if root is None or root == here:
+            continue
+        outer = [n for n, o in profs.items() if n != name and o.get("project_path") and os.path.isdir(o["project_path"])
+                 and here.startswith(os.path.realpath(o["project_path"]) + os.sep)
+                 and skills._repo_root(os.path.realpath(o["project_path"])) == root]
+        own = skills.skill_dirs(os.path.join(pp, ".claude", "skills"))
+        if outer and own:
+            bad.append("%s (%d skill(s) of its own) is inside %s's repository" % (name, len(own), ", ".join(sorted(outer))))
+    note = "; not read, no project_path or no such directory: %s" % ", ".join(sorted(unread)) if unread else ""
+    if not read:
+        return lib.Result("FAIL", "project roots", "no project read" + note)
+    if bad:
+        return lib.Result("FAIL", "project roots", "; ".join(bad) + note)
+    return lib.Result("PASS", "project roots", "read %d project(s), none hides its own skills behind an enclosing profile%s" % (read, note))
+
+
 def settings_forge_would_write(name, prof, registry):
     """The settings.local.json document the generator would write for `prof` (the dict forge/sync.py
     hands skills.write_settings_local, as if the profile were not frozen), or None when it would write
@@ -736,6 +772,7 @@ CHECKS = [
     ("skill refs", ["scripts/sync/verify_skill_refs.py"], "fix the profile's skills_keep"),
     ("skill keep", ["scripts/sync/sync_skill_keep.py", "--check"], "python3 scripts/sync/sync_skill_keep.py --apply"),
     ("skill names", skill_name_clashes, "rename the project skill, or delete it if it was meant to be the global one"),
+    ("project roots", nested_project_roots, "git init in the nested project's directory and ignore it from the outer repository: an outer profile's skill overrides switch the inner project's skills off, and an inner 'on' does not win (skills/new-project makes every project its own repository)"),
     ("frozen drift", frozen_drift, "forge writes nothing there, and Claude Code rewrites the file itself (approvals, permissions); lift `frozen` in the profile to bring it back to the generator's output"),
     ("instruction files", instruction_file_blocks, "forge never writes in a project: the change is in that project's repo"),
     ("command guard", command_guard_smoke, "forge sync --apply; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
@@ -807,6 +844,7 @@ def project_checks(name, prof, why):
         ("profile", lambda: lib.Result("PASS", "profile", "%s reads, every field well-typed%s" % (where, frozen)), ""),
         ("generated", lambda: generated_current(name, prof), "forge sync --apply --project " + name),
         ("skill names", lambda: skill_name_clashes(name), fix["skill names"]),
+        ("project roots", lambda: nested_project_roots(name), fix["project roots"]),
         ("instruction files", lambda: instruction_file_blocks(name), fix["instruction files"]),
         ("command guard", lambda: command_guard_smoke(name), fix["command guard"]),
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
