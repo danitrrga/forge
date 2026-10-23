@@ -104,7 +104,7 @@ gsd.CTX = gsd.lib.Ctx(True, None, True)
 
 REAL_PATCHES = {k: list(v) for k, v in gsd.SKILL_PATCHES.items()}  # the cases below replace gsd.SKILL_PATCHES
 
-PATHS = ("AGENTS_DIR", "GSD_DIR", "SKILLS_MIRROR", "FORGE_SKILLS", "BLOCKS", "STAGE_ROOT", "STAGE",
+PATHS = ("AGENTS_DIR", "GSD_DIR", "HOOKS_DIR", "SKILLS_MIRROR", "FORGE_SKILLS", "BLOCKS", "STAGE_ROOT", "STAGE",
          "STAMP", "NPM_STAMP", "GSD_DEFAULTS")
 
 
@@ -245,55 +245,6 @@ def skills_control(failures):
                         % (exc, errors, n, read(p)))
 
 
-NS_DESC = 'description: "codebase intel | map docs learnings"'
-NS_LAST = "| Extract learnings from a completed phase | gsd-extract-learnings |\n\n"
-NS_ROW = "| Query mapped intelligence files | gsd-map-codebase --query |\n"
-TOY_NS_CONTEXT = ("---\nname: gsd-ns-context\n" + NS_DESC + "\n---\n\n| Task | Skill |\n|---|---|\n" + NS_ROW
-                  + "| Update project documentation | gsd-docs-update |\n" + NS_LAST + "Invoke the matched skill.\n")
-
-
-def ns_context_setup(name):
-    """Upstream gsd-ns-context (gsd-core 1.18) is the patched text with the graphify description token, the
-    graphify row and the two MemPalace rows put back (measured against 1.18.0). The patched text is TOY_NS_CONTEXT,
-    which holds the four spots, never the real file: that one is data and changes with every regeneration (this
-    case once read it, and read the 1.42.3 text after the migration)."""
-    forge_text = TOY_NS_CONTEXT
-    staged = forge_text.replace(NS_DESC, 'description: "codebase intel | map graphify docs learnings mempalace"')
-    staged = staged.replace(NS_ROW, NS_ROW + "| Generate a knowledge graph | gsd-graphify |\n")
-    staged = staged.replace(NS_LAST, NS_LAST[:-1] + "| Recall prior decisions and patterns before planning | gsd-mempalace-recall |\n"
-                            "| File a phase artifact into MemPalace | gsd-mempalace-capture |\n\n")
-    d = case_dir(name)
-    gsd.STAGE = os.path.join(d, "stage", "cfg")
-    gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
-    write(os.path.join(gsd.STAGE, "skills", "gsd-ns-context", "SKILL.md"), staged)
-    p = os.path.join(gsd.FORGE_SKILLS, "gsd-ns-context", "SKILL.md")
-    write(p, forge_text)
-    return p, forge_text, staged
-
-
-def skills_ns_context(failures):
-    """gsd-ns-context is patched upstream text, not a forge-authored skill: the real patches turn
-    staged text into forge's file byte for byte (no drift), and with the second patch dropped the
-    drift is reported. Red messages are quoted in the commit body."""
-    if "gsd-ns-context" in gsd.FORGE_AUTHORED or len(gsd.FORGE_AUTHORED) != 3:
-        failures.append("skills: FORGE_AUTHORED is %s, want the three authored skills" % sorted(gsd.FORGE_AUTHORED))
-    p, forge_text, staged = ns_context_setup("skills-ns")
-    gsd.SKILL_PATCHES = {"gsd-ns-context": REAL_PATCHES.get("gsd-ns-context", [])}
-    errors = []
-    n, out, exc = call(gsd.sync_skills, errors)
-    if exc or errors or n != 0 or "1 shipped here, 3 forge-authored" not in out or "rewrote" in out \
-            or read(p) != forge_text:
-        failures.append("skills: gsd-ns-context patched: raised %s, errors %s, changed %s, output %r"
-                        % (exc, errors, n, out))
-    p, forge_text, staged = ns_context_setup("skills-ns-control")
-    gsd.SKILL_PATCHES = {"gsd-ns-context": REAL_PATCHES.get("gsd-ns-context", [])[:1]}
-    errors = []
-    n, out, exc = call(gsd.sync_skills, errors)
-    if exc or errors or n != 1 or "rewrote 1: gsd-ns-context" not in out:
-        failures.append("skills: gsd-ns-context without no-graphify-row: raised %s, errors %s, changed %s "
-                        "(want 1), no 'rewrote 1: gsd-ns-context' in %r" % (exc, errors, n, out))
-
-
 def tree_missing_target(failures):
     """A patch keyed to a file the package no longer stages, and one to a staged file the `only`
     filter excludes, each apply to nothing: both are errors. The intact patch beside them is not."""
@@ -314,9 +265,9 @@ def tree_missing_target(failures):
 
 
 def skills_missing_target(failures):
-    """gsd-gone: in SKILL_PATCHES, neither staged nor shipped. gsd-unshipped: staged, not in forge.
-    gsd-orphan: shipped, not staged -- already reported as a skill without upstream counterpart,
-    so exactly one error names it."""
+    """gsd-gone: in SKILL_PATCHES, neither staged nor shipped. gsd-unshipped: staged, not in forge yet: shipped
+    all the same (every upstream skill is), so its patch has a target and no error names it. gsd-orphan: shipped,
+    not staged -- already reported as a skill without upstream counterpart, so exactly one error names it."""
     skills_setup("skills-missing", "upstream OLD ANCHOR text\n", "stale\n")
     write(os.path.join(gsd.STAGE, "skills", "gsd-unshipped", "SKILL.md"), "OLD ANCHOR\n")
     write(os.path.join(gsd.FORGE_SKILLS, "gsd-orphan", "SKILL.md"), "OLD ANCHOR\n")
@@ -325,9 +276,9 @@ def skills_missing_target(failures):
     errors = []
     n, out, exc = call(gsd.sync_skills, errors)
     count = {k: sum(k in e for e in errors) for k in ("gsd-x", "gsd-gone", "gsd-unshipped", "gsd-orphan")}
-    if exc or count != {"gsd-x": 0, "gsd-gone": 1, "gsd-unshipped": 1, "gsd-orphan": 1}:
+    if exc or count != {"gsd-x": 0, "gsd-gone": 1, "gsd-unshipped": 0, "gsd-orphan": 1}:
         failures.append("skills: patches with no target file: raised %s, errors per skill %s, want "
-                        "gsd-x 0 and one each for the others: %s" % (exc, count, errors))
+                        "one each for gsd-gone and gsd-orphan, none for gsd-x and gsd-unshipped: %s" % (exc, count, errors))
 
 
 def write_bytes(p, data):
@@ -628,6 +579,7 @@ def defaults_gsd_reads(failures):
 
     def ui_flags(tag, with_file):
         src, dst = defaults_world(tag)
+        write(src, '{"workflow": {"ui_phase": false, "ui_safety_gate": false}}\n')
         if with_file:
             out, exc, errors = run_defaults(True)
             if exc or errors or not os.path.isfile(dst):
@@ -645,7 +597,7 @@ def defaults_gsd_reads(failures):
         wf = json.loads(read(cfg)).get("workflow", {})
         return (wf.get("ui_phase"), wf.get("ui_safety_gate"))
 
-    got = ui_flags("gsd-reads-with", True)
+    got = ui_flags("gsd-reads-with", True)  # with a toy file that caps both: the mechanism, not forge's choice
     if got != (False, False):
         failures.append("gsd reads: with the copy, (ui_phase, ui_safety_gate) = %s, want (False, False)" % (got,))
     got = ui_flags("gsd-reads-without", False)
@@ -657,10 +609,10 @@ def skills_no_dir(failures):
     """A stranger's checkout has no skills/ until something puts a skill there, and sync_skills
     listed it with os.listdir. Seen failing on a2e69f6: "skills no dir: apply: raised
     FileNotFoundError: [Errno 2] No such file or directory: '<toy>/skills-no-dir-apply/forge-skills'"
-    (and the same for the dry-run). Apply creates skills/; a dry-run does not. The staged package
-    is not read here, so the case has a gsd-x upstream skill that forge does not ship yet: the
-    run must list it as not shipped, never fail. Controls: skills_control above, with skills/
-    present, passes through the same code."""
+    (and the same for the dry-run). Apply creates skills/ and the skill; a dry-run creates neither and
+    says it would. The staged package is not read here, so the case has a gsd-x upstream skill that
+    forge has not written yet: every upstream skill is shipped, so it is new (one change), never an
+    error. Controls: skills_control above, with skills/ present, passes through the same code."""
     global DRY_OK
     for label, apply in (("apply", True), ("dry-run", False)):
         d = case_dir("skills-no-dir-" + label)
@@ -677,10 +629,40 @@ def skills_no_dir(failures):
             gsd.CTX = gsd.lib.Ctx(True, None, True)
             DRY_OK = False
         made = os.path.isdir(gsd.FORGE_SKILLS)
-        if exc or errors or n != 0 or made != apply or "1 upstream skills not shipped" not in out:
-            failures.append("skills no dir: %s: raised %s, errors %s, changed %s, skills/ made %s "
-                            "(want %s), output %r" % (label, exc, errors, n, made, apply, out))
+        wrote = read(os.path.join(gsd.FORGE_SKILLS, "gsd-x", "SKILL.md"))
+        if exc or errors or n != 1 or made != apply or wrote != ("upstream\n" if apply else None) or "1 new: gsd-x" not in out:
+            failures.append("skills no dir: %s: raised %s, errors %s, changed %s (want 1), skills/ made %s "
+                            "(want %s), skill written %r, output %r" % (label, exc, errors, n, made, apply, wrote, out))
 
+
+def skills_all_shipped(failures):
+    """Every upstream skill is shipped, not a chosen subset (Daniel, 2026-10-23: "all the functionalities, no cap"):
+    forge has gsd-a and the staged package has gsd-a and gsd-b, so a dry-run names gsd-b as new and writes nothing, an
+    apply writes it with the patches applied, and a forge-authored name is never taken for an upstream one. Seen
+    failing on c2a741a, which listed gsd-b as "not shipped" and wrote nothing: "skills all: dry-run: changed 0 (want 1)
+    ... 'upstream skills not shipped here (1): gsd-b'"."""
+    global DRY_OK
+    for label, apply in (("dry-run", False), ("apply", True)):
+        d = case_dir("skills-all-" + label)
+        gsd.STAGE = os.path.join(d, "stage", "cfg")
+        gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
+        write(os.path.join(gsd.STAGE, "skills", "gsd-a", "SKILL.md"), "a\n")
+        write(os.path.join(gsd.STAGE, "skills", "gsd-b", "SKILL.md"), "b OLD ANCHOR\n")
+        write(os.path.join(gsd.FORGE_SKILLS, "gsd-a", "SKILL.md"), "a\n")
+        gsd.SKILL_PATCHES = {"gsd-b": [("p-b", "replace", "OLD ANCHOR", "NEW PAYLOAD")]}
+        gsd.CTX = gsd.lib.Ctx(apply, None, True)
+        DRY_OK = not apply
+        try:
+            errors = []
+            n, out, exc = call(gsd.sync_skills, errors)
+        finally:
+            gsd.CTX = gsd.lib.Ctx(True, None, True)
+            DRY_OK = False
+        wrote = read(os.path.join(gsd.FORGE_SKILLS, "gsd-b", "SKILL.md"))
+        if (exc or errors or n != 1 or wrote != ("b NEW PAYLOAD\n" if apply else None) or "not shipped" in out
+                or "2 shipped here (1 new)" not in out):
+            failures.append("skills all: %s: raised %s, errors %s, changed %s (want 1), gsd-b %r, output %r"
+                            % (label, exc, errors, n, wrote, out))
 
 def update_text_names_no_machine(failures):
     """The gsd-update patch payload is written into skills/gsd-update/SKILL.md, which a stranger
@@ -888,11 +870,14 @@ def real_package(failures):
                     failures.append("real package: %s: patches %s change nothing, so they are retired or already upstream"
                                     % (name, [p[0] for p in plist]))
         failures += ["real package: " + e for e in errors]
-        router = gsd.apply_patches(gsd.normalize(read(os.path.join(gsd.STAGE, "skills", "gsd-ns-context", "SKILL.md"))),
-                                   "gsd-ns-context", REAL_PATCHES["gsd-ns-context"], [])
-        dangling = [n for n in ("gsd-graphify", "gsd-mempalace-recall", "gsd-mempalace-capture") if n in router]
+        names = {n for n in os.listdir(os.path.join(gsd.STAGE, "skills"))} | {f[:-3] for f in os.listdir(os.path.join(gsd.STAGE, "agents"))}
+        if "gsd-ns-context" in REAL_PATCHES:
+            failures.append("real package: gsd-ns-context is patched (%s), but every skill it routes to is shipped now"
+                            % [p[0] for p in REAL_PATCHES["gsd-ns-context"]])
+        router = read(os.path.join(gsd.STAGE, "skills", "gsd-ns-context", "SKILL.md"))
+        dangling = sorted(set(re.findall(r"\|\s*(gsd-[a-z0-9-]+)[^|]*\|\s*$", router, re.M)) - names)
         if dangling:
-            failures.append("real package: the patched gsd-ns-context still routes to %s, skills forge does not ship" % dangling)
+            failures.append("real package: gsd-ns-context routes to %s, which the package does not ship" % dangling)
         spec = importlib.util.spec_from_file_location("ponytail_subagent", os.path.join(FORGE, "hooks", "ponytail_subagent.py"))
         ponytail = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(ponytail)
@@ -905,12 +890,60 @@ def real_package(failures):
             setattr(gsd, n, v)
 
 
+def defaults_uncapped(failures):
+    """forge sets no GSD default: config/gsd/defaults.json is an empty object, so a new project gets GSD's own
+    (ui_phase and ui_safety_gate on, Daniel 2026-10-23: no cap), and a ~/.gsd/defaults.json that holds forge's
+    EARLIER text (the one that switched both off) is forge's own stale copy: replaced, dry-run and apply, where a
+    file that differs from both is still the user's and left alone (defaults_copy). Seen failing on c2a741a:
+    "defaults uncapped: shipped file is {'workflow': {'ui_phase': False, 'ui_safety_gate': False}}, want {}" and
+    "defaults uncapped: forge's earlier text, apply: ... 'differs from ... left alone'"."""
+    shipped = json.loads(read(os.path.join(FORGE, "config", "gsd", "defaults.json")))
+    if shipped != {}:
+        failures.append("defaults uncapped: shipped file is %r, want {}" % (shipped,))
+    for apply in (False, True):
+        src, dst = defaults_world("defaults-former-%s" % apply)
+        write(dst, gsd.FORMER_DEFAULTS[0])
+        out, exc, errors = run_defaults(apply)
+        got = read(dst)
+        if exc or errors or LAST_CHANGES[0] != 1 or "earlier text" not in out or got != (read(src) if apply else gsd.FORMER_DEFAULTS[0]):
+            failures.append("defaults uncapped: forge's earlier text, apply=%s: raised %s, errors %s, changes %s, file now %r: %s"
+                            % (apply, exc, errors, LAST_CHANGES[0], got, sandbox.tail(out, 2)))
+
+
+def hooks_tree(failures):
+    """The staged hooks go to ~/.claude/hooks (gsd-core's own place) except the two files forge keeps its own
+    version of (hooks/gsd-prompt-guard.js, hooks/gsd-read-injection-scanner.js, hardened, wired from forge's hooks/)
+    and the scripts of other runtimes; hooks/lib and the registry go with them, which the hooks require. Seen failing
+    on c2a741a: "hooks tree: wanted ... AttributeError: module 'sync_gsd_runtime' has no attribute 'hook_wanted'"."""
+    want = {"gsd-context-monitor.js": True, "gsd-workflow-guard.js": True, "gsd-session-state.sh": True,
+            "lib/hook-exit.js": True, "lib/injection-patterns.js": True, "managed-hooks-registry.cjs": True,
+            "gsd-prompt-guard.js": False, "gsd-read-injection-scanner.js": False, "gsd-cursor-stop.js": False,
+            "gsd-windsurf-pre-write.js": False}
+    try:
+        got = {rel: gsd.hook_wanted(rel) for rel in want}
+    except AttributeError as e:
+        failures.append("hooks tree: %s" % e)
+        return
+    if got != want:
+        failures.append("hooks tree: wanted %s, want %s" % ({k: v for k, v in got.items() if v != want[k]}, {k: v for k, v in want.items() if got[k] != v}))
+    d = case_dir("hooks-tree")
+    gsd.STAGE = os.path.join(d, "stage", "cfg")
+    gsd.HOOKS_DIR = os.path.join(d, "home", ".claude", "hooks")
+    for rel in ("gsd-context-monitor.js", "lib/hook-exit.js", "gsd-prompt-guard.js"):
+        write(os.path.join(gsd.STAGE, "hooks", rel), "staged %s\n" % rel)
+    errors = []
+    n, out, exc = call(lambda: gsd.sync_tree(os.path.join(gsd.STAGE, "hooks"), gsd.HOOKS_DIR, {}, "hooks", errors, only=gsd.hook_wanted))
+    if exc or errors or n != 2 or os.path.exists(os.path.join(gsd.HOOKS_DIR, "gsd-prompt-guard.js")):
+        failures.append("hooks tree: raised %s, errors %s, would change %s (want 2: the monitor and lib/hook-exit.js), forge-owned file copied %s"
+                        % (exc, errors, n, os.path.exists(os.path.join(gsd.HOOKS_DIR, "gsd-prompt-guard.js"))))
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
-             refs_no_dirs, refs_no_agents, npm_nag_throttle, skills_ns_context, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package)
+             refs_no_dirs, refs_no_agents, npm_nag_throttle, defaults_copy,
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, skills_all_shipped, defaults_uncapped, hooks_tree)
     for case in cases:
         case(failures)
     for msg in failures:

@@ -1199,9 +1199,10 @@ for label, prof, want, summary in (
 # it, omarchy_notify.py (a Claude-only row) in a Codex Notification event, and the PostToolUse and Stop
 # discipline entries, all left as they were; a second run says nothing. Red before, both agents:
 # "notes ['dropped 1 stale UserPromptSubmit gsd_output_discipline.py'], UserPromptSubmit still carries
-# ['python3 .../hooks/gsd_output_discipline.py'], PreCompact left ['python3 .../hooks/gsd_output_discipline.py',
+# ['python3 .../hooks/gsd_output_discipline.py'], SessionEnd left ['python3 .../hooks/gsd_output_discipline.py',
 # 'some-foreign-hook --flag']" (the UserPromptSubmit row still existed, so the stray copy was only a
-# duplicate; the PreCompact entry, on an event with no row, survived).
+# duplicate; the SessionEnd entry, on an event with no row, survived). The event was PreCompact until gsd-core's
+# context monitor got a row there (2026-10-23): a stray on an event WITH a row is the other case, tested above.
 GSD_CMD = "python3 %s/gsd_output_discipline.py" % hooks.HOOK_DIR
 for agent in (hooks.CLAUDE, hooks.CODEX):
     doc = {"hooks": {}}
@@ -1211,7 +1212,7 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
     stray = {"type": "command", "command": GSD_CMD, "timeout": 10}
     foreign = {"type": "command", "command": "some-foreign-hook --flag", "timeout": 5}
     doc["hooks"].setdefault("UserPromptSubmit", []).append({"hooks": [dict(stray)]})
-    doc["hooks"]["PreCompact"] = [{"hooks": [dict(stray), dict(foreign)]}]
+    doc["hooks"]["SessionEnd"] = [{"hooks": [dict(stray), dict(foreign)]}]
     if agent == hooks.CODEX:
         omarchy = {"type": "command", "command": "python3 /x/omarchy_notify.py", "timeout": 5}
         doc["hooks"]["Notification"] = [{"hooks": [dict(omarchy)]}]
@@ -1220,14 +1221,14 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
     again = attempt(hooks.reconcile, doc, agent)
     gsd_prompt = [c for c in cmds("UserPromptSubmit") if "gsd_output_discipline.py" in c]
     check(notes == ["dropped 1 gsd_output_discipline.py (UserPromptSubmit: no row on this event)",
-                    "dropped 1 gsd_output_discipline.py (PreCompact: no row on this event)"]
-          and gsd_prompt == [] and cmds("PreCompact") == ["some-foreign-hook --flag"]
+                    "dropped 1 gsd_output_discipline.py (SessionEnd: no row on this event)"]
+          and gsd_prompt == [] and cmds("SessionEnd") == ["some-foreign-hook --flag"]
           and doc["hooks"]["PostToolUse"] == keep_post and doc["hooks"]["Stop"] == keep_stop
           and (agent == hooks.CLAUDE or cmds("Notification") == ["python3 /x/omarchy_notify.py"])
           and again == [],
-          "%s: notes %r, UserPromptSubmit still carries %r, PreCompact left %r, PostToolUse kept %s, "
+          "%s: notes %r, UserPromptSubmit still carries %r, SessionEnd left %r, PostToolUse kept %s, "
           "Stop kept %s, Notification %r, second run %r"
-          % (agent, notes, gsd_prompt, cmds("PreCompact"), doc["hooks"]["PostToolUse"] == keep_post,
+          % (agent, notes, gsd_prompt, cmds("SessionEnd"), doc["hooks"]["PostToolUse"] == keep_post,
              doc["hooks"]["Stop"] == keep_stop, cmds("Notification"), again))
 
 # 29. Native deny rules for secret files (T3, docs/hooks-phase-design.md): write_user_settings unions

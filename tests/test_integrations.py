@@ -135,8 +135,12 @@ check("off integrations: the exact commands go, whatever the matcher and timeout
       "UserPromptSubmit %r, Stop %r, PostToolUse %r, notes %r" % (ups, stops, posts, notes))
 check("off integrations: a foreign `coding-agents` entry stays (nothing removes by marker)",
       (foreign, None, 30) in ups, "UserPromptSubmit %r" % (ups,))
+# gsd-core's own hooks (forge/hooks.py GSD_CORE_ROWS): wired from ~/.claude/hooks, with gsd on and gsd_patches true
+CORE_MARKERS = ["gsd-session-state.sh", "gsd-context-monitor.js", "gsd-graphify-update.sh", "gsd-phase-boundary.sh",
+                "gsd-workflow-guard.js", "gsd-worktree-path-guard.js", "gsd-agent-isolation-guard.js",
+                "gsd-write-guard.js", "gsd-validate-commit.sh", "gsd-config-reload.js"]
 off_markers = {"claude-hook.js", "coding-agents", "gsd_output_discipline.py", "gsd-prompt-guard.js",
-               "gsd-read-injection-scanner.js"}
+               "gsd-read-injection-scanner.js"} | set(CORE_MARKERS)
 written = sorted({r[3] for r in h.USER_HOOKS} & off_markers)
 check("off integrations: no row of an off integration is written", not written,
       "USER_HOOKS still holds the markers %r" % (written,))
@@ -160,7 +164,8 @@ check("integrations on: gsd and hindsight rows are in the table",
 check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
       getattr(h, "ROW_INTEGRATION", {}) == {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                                            "gsd_output_discipline.py": "gsd",
-                                           "coding-agents": "hindsight", "memory_doctor.py": "hindsight"},
+                                           "coding-agents": "hindsight", "memory_doctor.py": "hindsight",
+                                           **{m: "gsd" for m in CORE_MARKERS}},
       "ROW_INTEGRATION = %r" % (getattr(h, "ROW_INTEGRATION", None),))
 
 # 3. Rows that are not forge's come from `user_hooks`, appended after the code's, <ROOT> expanded.
@@ -200,7 +205,7 @@ check("no user_hooks: the code holds none of the rows that moved out",
       not [r for r in h.USER_HOOKS if r[3] in MOVED],
       "rows %r" % ([r[3] for r in h.USER_HOOKS if r[3] in MOVED],))
 
-# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 12 rows with every
+# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 25 rows with every
 # integration on, so 14 with the two that moved out of the code (the curfew and the injection audit,
 # here under toy names).
 two = [{"event": "UserPromptSubmit", "command": "python3 /opt/toy/prompt_guard.py", "timeout": 10,
@@ -216,8 +221,8 @@ check("a settings file with two user_hooks rows: the code's rows, then the two i
       "%d rows (code %d), last two %r" % (len(real), code_rows, real[-2:]))
 h = toy_settings(12, user_hooks=two, integrations={n: True for n in lib.INTEGRATIONS})
 real = [(r[0], r[3]) for r in h.USER_HOOKS]
-check("all integrations on and two user_hooks rows: 12 rows (the two Hindsight rows are written per project), the two after the code's",
-      len(real) == 12 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
+check("all integrations on and two user_hooks rows: 25 rows (12 and gsd-core's 13; the two Hindsight rows are written per project), the two after the code's",
+      len(real) == 25 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
       "%d rows, last two %r" % (len(real), real[-2:]))
 
 # 6. user_settings come from the file: its keys and nothing else.
@@ -315,7 +320,7 @@ check("write_user_settings settles (the second run is already current, no proxy 
 # true (absent is false). memory_doctor.py --hook follows hindsight. A stranger's GSD entries under the
 # same file names (GSD's own installer writes them into ~/.claude/settings.json, other commands) are
 # never replaced and never removed.
-GSD_ROWS = {"gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py"}
+GSD_ROWS = {"gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py"} | set(CORE_MARKERS)
 HOUSE_ROWS = {"ref_corpus_router.py", "omarchy_notify.py"}
 SIX = GSD_ROWS | HOUSE_ROWS | {"memory_doctor.py"}
 stranger = {"codex": False, "gsd": True, "hindsight": False}
@@ -374,10 +379,32 @@ want = [
 ]
 # The two Claude coding-agents rows are written per project (tests/test_hindsight_project_hooks.py);
 # the two Codex ones stay here.
-check("full config: today's rows, in today's order (six named, session sync, memory gate, then the two codex coding-agents rows)",
-      [g for g in got if g[1] not in ("forge session-start", "coding-agents")] == want
-      and [g[1] for g in got] == [w[1] for w in want[:6]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 2
-      and [g[4] for g in got if g[1] == "coding-agents"] == [("codex",)] * 2,
+# gsd-core's hooks (Daniel 2026-10-23, no cap on GSD): every hook its installer registers, less the two forge keeps its own
+# file of (above) and four it leaves out, each judged on its own: read-guard (Claude Code enforces read-before-edit itself),
+# secret-read-guard (a hard block on .env reads in every project, not gated to GSD ones: Daniel's call), check-update and
+# update-banner (forge update replaces them; the banner needs GSD's statusline). Claude only: Codex has none of them.
+CLAUDE_A = ("claude",)
+D = h.GSD_HOOK_DIR
+core = [
+    ("SessionStart", "gsd-session-state.sh", 10, None, CLAUDE_A, "bash %s/gsd-session-state.sh" % D),
+    ("PostToolUse", "gsd-context-monitor.js", 10, "Bash|Edit|Write|MultiEdit|Agent|Task", CLAUDE_A, "node %s/gsd-context-monitor.js" % D),
+    ("SubagentStop", "gsd-context-monitor.js", 10, None, CLAUDE_A, "node %s/gsd-context-monitor.js" % D),
+    ("Stop", "gsd-context-monitor.js", 10, None, CLAUDE_A, "node %s/gsd-context-monitor.js" % D),
+    ("PreCompact", "gsd-context-monitor.js", 10, None, CLAUDE_A, "node %s/gsd-context-monitor.js" % D),
+    ("PostToolUse", "gsd-graphify-update.sh", 5, "Bash", CLAUDE_A, "bash %s/gsd-graphify-update.sh" % D),
+    ("PostToolUse", "gsd-phase-boundary.sh", 5, "Write|Edit", CLAUDE_A, "bash %s/gsd-phase-boundary.sh" % D),
+    ("PreToolUse", "gsd-workflow-guard.js", 120, "Bash|Edit|Write|MultiEdit", CLAUDE_A, "node %s/gsd-workflow-guard.js" % D),
+    ("PreToolUse", "gsd-worktree-path-guard.js", 120, "Write|Edit|MultiEdit", CLAUDE_A, "node %s/gsd-worktree-path-guard.js" % D),
+    ("PreToolUse", "gsd-agent-isolation-guard.js", 120, "Agent|Task", CLAUDE_A, "node %s/gsd-agent-isolation-guard.js" % D),
+    ("PreToolUse", "gsd-write-guard.js", 120, "Write", CLAUDE_A, "node %s/gsd-write-guard.js" % D),
+    ("PreToolUse", "gsd-validate-commit.sh", 120, "Bash", CLAUDE_A, "bash %s/gsd-validate-commit.sh" % D),
+    ("FileChanged", "gsd-config-reload.js", 8, "config.json", CLAUDE_A, "node %s/gsd-config-reload.js" % D),
+]
+check("full config: today's rows, in today's order (six named, session sync, memory gate, the two codex coding-agents rows, then gsd-core's)",
+      [g for g in got if g[1] not in ("forge session-start", "coding-agents") and g[5] not in {c[5] for c in core}] == want
+      and [g[1] for g in got] == [w[1] for w in want[:6]] + ["forge session-start", "memory_doctor.py"] + ["coding-agents"] * 2 + [c[1] for c in core]
+      and [g[4] for g in got if g[1] == "coding-agents"] == [("codex",)] * 2
+      and [g for g in got if g[5] in {c[5] for c in core}] == core,
       "got %r" % (got,))
 
 # 11. An event list that forge's own removal empties goes with its key; one that was empty before, or
@@ -397,7 +424,7 @@ OFF = dict(ON, gsd=False)
 foreign_stop = "node /elsewhere/own-stop.js"
 os.makedirs(os.path.join(HOME, ".claude"), exist_ok=True)
 with open(os.path.join(HOME, ".claude", "settings.json"), "w", encoding="utf-8") as fh:
-    json.dump({"hooks": {"SubagentStop": [], "PreCompact": [{"hooks": []}], "Stop": [group(foreign_stop, 5)]}, "theme": "toy"}, fh)
+    json.dump({"hooks": {"SessionEnd": [], "PostCompact": [{"hooks": []}], "Stop": [group(foreign_stop, 5)]}, "theme": "toy"}, fh)
 h = toy_settings(30, integrations=ON)
 attempt(h.write_user_settings, ctx)
 on_doc = read_json_file(h.USER_SETTINGS)
@@ -409,10 +436,10 @@ h = toy_settings(31, integrations=OFF)
 line = attempt(h.write_user_settings, ctx)
 off_doc = read_json_file(h.USER_SETTINGS)
 check("on, apply, off, apply: no event key left empty by forge",
-      "PostToolUse" not in off_doc["hooks"] and empty_keys(off_doc) == ["SubagentStop"],
+      "PostToolUse" not in off_doc["hooks"] and empty_keys(off_doc) == ["SessionEnd"],
       "empty keys %r, events %r, line %r" % (empty_keys(off_doc), sorted(off_doc["hooks"]), line))
 check("on, apply, off, apply: the user's own empty list and empty group stay, a foreign entry keeps its event",
-      off_doc["hooks"].get("SubagentStop") == [] and off_doc["hooks"].get("PreCompact") == [{"hooks": []}]
+      off_doc["hooks"].get("SessionEnd") == [] and off_doc["hooks"].get("PostCompact") == [{"hooks": []}]
       and entries(off_doc, "Stop") == [(foreign_stop, None, 5)] and off_doc.get("theme") == "toy",
       "hooks %r" % (off_doc["hooks"],))
 lone = {"hooks": {"Stop": [], "PostToolUse": [{"hooks": []}]}}

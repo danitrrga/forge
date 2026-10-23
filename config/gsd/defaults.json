@@ -1,6 +1,1 @@
-{
-  "workflow": {
-    "ui_phase": false,
-    "ui_safety_gate": false
-  }
-}
+{}

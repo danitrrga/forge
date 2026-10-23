@@ -17,6 +17,8 @@ HOME = lib.HOME
 USER_SETTINGS = os.path.join(HOME, ".claude", "settings.json")
 CODEX_HOOKS = os.path.join(lib.CODEX_HOME, "hooks.json")
 HOOK_DIR = os.path.join(ROOT, "hooks")
+# Where scripts/sync/sync_gsd_runtime.py puts gsd-core's own hook scripts (gsd-core's place for them).
+GSD_HOOK_DIR = os.path.join(lib.HOME, ".claude", "hooks")
 SYNC_DIR = os.path.join(ROOT, "scripts", "sync")
 HINDSIGHT_DIST = os.path.join(HOME, ".hindsight", "coding-agents", "dist")
 CLAUDE, CODEX = "claude", "codex"
@@ -142,6 +144,31 @@ _CODE_ROWS = [
      "coding-agents", None, (CODEX,)),
 ]
 
+# gsd-core's own hooks, wired from GSD_HOOK_DIR (Daniel, 2026-10-23: GSD with no cap). Every hook its installer
+# registers in settings.json, less six: the two forge keeps its own, hardened files of (above), and four each judged
+# on its own -- read-guard (Claude Code enforces read-before-edit itself, so the advisory would be noise on every Edit),
+# secret-read-guard (a hard block on reading .env files in EVERY project, not gated to GSD ones), check-update and
+# update-banner (`forge update` is the update path, and the banner needs GSD's own statusline). Each of these is gated
+# by .planning/config.json or by the project being a GSD one (measured: ~22 ms for a node hook and 3 ms for a shell one,
+# silent outside a GSD project), so they cost nothing elsewhere. Claude only. (event, script, matcher, timeout).
+GSD_CORE_ROWS = [
+    ("SessionStart", "gsd-session-state.sh", None, 10),
+    ("PostToolUse", "gsd-context-monitor.js", "Bash|Edit|Write|MultiEdit|Agent|Task", 10),
+    ("SubagentStop", "gsd-context-monitor.js", None, 10),
+    ("Stop", "gsd-context-monitor.js", None, 10),
+    ("PreCompact", "gsd-context-monitor.js", None, 10),
+    ("PostToolUse", "gsd-graphify-update.sh", "Bash", 5),
+    ("PostToolUse", "gsd-phase-boundary.sh", "Write|Edit", 5),
+    ("PreToolUse", "gsd-workflow-guard.js", "Bash|Edit|Write|MultiEdit", 120),
+    ("PreToolUse", "gsd-worktree-path-guard.js", "Write|Edit|MultiEdit", 120),
+    ("PreToolUse", "gsd-agent-isolation-guard.js", "Agent|Task", 120),
+    ("PreToolUse", "gsd-write-guard.js", "Write", 120),
+    ("PreToolUse", "gsd-validate-commit.sh", "Bash", 120),
+    ("FileChanged", "gsd-config-reload.js", "config.json", 8),
+]
+_CODE_ROWS += [(event, "%s %s/%s" % ("bash" if script.endswith(".sh") else "node", GSD_HOOK_DIR, script), timeout, script, matcher, (CLAUDE,))
+               for event, script, matcher, timeout in GSD_CORE_ROWS]
+
 # Rows written per project, never at user scope: one project uses one memory system, so Hindsight's
 # Claude hooks go only into the .claude/settings.local.json of a profile that uses Hindsight (its
 # `servers` holds hindsight-coding-agents, SCOPES), through skills.write_settings_local, which owns
@@ -171,7 +198,9 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
 ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                    "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight", "memory_doctor.py": "hindsight"}
-ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py")
+ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py") + tuple(
+    dict.fromkeys(script for _, script, _, _ in GSD_CORE_ROWS))
+ROW_INTEGRATION.update({m: "gsd" for m in ROW_PATCHED})
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
 
 
