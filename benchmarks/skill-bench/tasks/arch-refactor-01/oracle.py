@@ -10,7 +10,8 @@ splitlines() and do not notice. The oracle:
                         row lists (commas, quotes, CR and LF in names, zero, negative and large amounts), and
                         backoffice.export writes the same bytes;
   duplication_removed   no non-trivial statement is repeated across the non-test code (the original repeats six),
-                        however the shared part is shaped.
+                        however the shared part is shaped, and the quote-doubling rule exists in one place only (a
+                        separate, differently written payouts implementation would otherwise slip through).
 """
 # ---- shared harness (identical in every tests-/arch- oracle by the same author) ----
 import ast
@@ -106,11 +107,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -152,6 +157,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -604,6 +612,13 @@ def repeated_statements(files):
     return {k: n for k, n in seen.items() if n > 1}
 
 
+def quote_doublings(files):
+    """Calls of .replace() or .sub() in the non-test code: hand-written CSV quoting doubles the quote with one of
+    them, so two or more mean the quoting rule lives in two places, however differently the copies are written."""
+    return sum(1 for src in files.values() for node in ast.walk(ast.parse(src))
+               if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr in ("replace", "sub"))
+
+
 def check(repo, message):
     try:
         return _check(repo)
@@ -645,10 +660,13 @@ def _check(repo):
 
     try:
         before = repeated_statements({k: v for k, v in ORIG.items() if not k.startswith("tests/")})
-        after = repeated_statements(py_files(repo))
-        add("duplication_removed", not after,
-            "repeated statements in the non-test code: %d (original %d)%s" % (
-                len(after), len(before), "; e.g. %s" % sorted(after)[0][:160] if after else ""))
+        files = py_files(repo)
+        after = repeated_statements(files)
+        quoting = quote_doublings(files)
+        add("duplication_removed", not after and quoting <= 1,
+            "repeated statements in the non-test code: %d (original %d)%s; replace()/sub() calls (CSV quoting): %d "
+            "(original %d)" % (len(after), len(before), "; e.g. %s" % sorted(after)[0][:160] if after else "",
+                               quoting, quote_doublings({k: v for k, v in ORIG.items() if not k.startswith("tests/")})))
     except SyntaxError as e:
         add("duplication_removed", False, "unparseable: %s" % e)
     return out

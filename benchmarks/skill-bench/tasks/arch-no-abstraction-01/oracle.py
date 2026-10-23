@@ -10,8 +10,8 @@ measures behaviour and size, not one implementation:
                       decimal form), with names containing commas and quotes intact; one header row allowed;
   no_framework        no new class hierarchy or abstract base, at most one new class at all, and at most
                       MAX_ADDED canonical lines of non-test code added (ast.unparse lines, docstrings and comments
-                      not counted; the reference answer adds about 10, a base class + two subclasses + a registry
-                      takes 30 or more).
+                      not counted; the reference answer adds 10, a hand-rolled quoting helper about 14, a decorator
+                      registry or a formats/ plugin package 20 or more, a base class + subclasses + registry 30+).
 """
 # ---- shared harness (identical in every tests-/arch- oracle by the same author) ----
 import ast
@@ -107,11 +107,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -153,6 +157,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -532,7 +539,7 @@ if __name__ == "__main__":
 ''',
 }
 
-MAX_ADDED = 22
+MAX_ADDED = 16
 DATA = ('customer,amount_cents\n"Acme, Inc.",125000\nGlobex,9990\n"Acme, Inc.",4550\n"Quote ""Q"" Ltd",250\n'
         'Globex,120000\nZoë Café,100\nBig Co,123456789\nInitech,100\n')
 

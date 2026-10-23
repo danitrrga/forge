@@ -104,11 +104,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -150,6 +154,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -538,6 +545,11 @@ EXTRA_MUTANTS = {  # not required to be killed; a test that kills one is not hol
     "surcharge on free orders too": mutate(REF, "        return 0\n",
                                            "        return HEAVY_SURCHARGE if weight_kg >= HEAVY_FROM_KG else 0\n"),
     "order_total ignores shipping": mutate(REF, "return subtotal_cents + shipping_cost(", "return subtotal_cents + 0 * shipping_cost("),
+    "every constant changed": mutate(mutate(mutate(mutate(REF, "FREE_SHIPPING_FROM = 5000", "FREE_SHIPPING_FROM = 5001"),
+                                                   'BASE_RATE = {"ES": 490, "PT": 690, "FR": 890}',
+                                                   'BASE_RATE = {"ES": 491, "PT": 691, "FR": 891}'),
+                                            "HEAVY_FROM_KG = 20", "HEAVY_FROM_KG = 21"),
+                                     "HEAVY_SURCHARGE = 1500", "HEAVY_SURCHARGE = 1501"),
 }
 VACUOUS = ["ShippingTest.test_free_shipping_from_50_euros", "ShippingTest.test_heavy_parcel_surcharge"]
 

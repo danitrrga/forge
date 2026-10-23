@@ -108,11 +108,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -154,6 +158,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -569,14 +576,14 @@ PROBE = r'''
 import datetime as dt, importlib.util, json, random
 RealDate, RealDT = dt.date, dt.datetime
 class FakeDate(RealDate):
-    now_ = RealDate(2031, 7, 15)
+    now_ = (2031, 7, 15)
     @classmethod
     def today(cls):
-        return cls.now_
+        return cls(*cls.now_)
 class FakeDateTime(RealDT):
     @classmethod
     def now(cls, tz=None):
-        return RealDT.combine(FakeDate.now_, dt.time(12, 0))
+        return cls(*FakeDate.now_, 12, 0)
     @classmethod
     def today(cls):
         return cls.now()
@@ -585,7 +592,10 @@ class FakeDateTime(RealDT):
         return cls.now()
 dt.date, dt.datetime = FakeDate, FakeDateTime
 def clock(d):
-    FakeDate.now_ = d
+    FakeDate.now_ = (d.year, d.month, d.day)
+# Every date the probe hands over is a FakeDate, the class the agent's module sees as `date`, so an
+# isinstance(today, date) guard in the agent's code holds.
+RealDate = FakeDate
 spec = importlib.util.spec_from_file_location("report_orig", "@ORIG@")
 orig = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(orig)

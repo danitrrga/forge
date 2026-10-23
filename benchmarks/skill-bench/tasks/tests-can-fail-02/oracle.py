@@ -8,7 +8,8 @@ tests on copies of the agent's tree with pricebook.py swapped:
   buggy   the original: at least one new or changed test must turn red;
   ref_a   invalidate the cached entry on set_price;
   ref_b   write-through: store the new price in the cache on set_price;
-and every new or changed test that is green on the agent's tree must be green on both references (a test of a
+  ref_c   ref_a with the cache attribute renamed (_cache -> _memo), so a test that reads the cache is caught;
+and every new or changed test that is green on the agent's tree must be green on all three references (a test of a
 name only the agent's code has is tolerated, just not counted as the regression test).
 """
 # ---- shared harness (identical in every tests-/arch- oracle by the same author) ----
@@ -105,11 +106,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -151,6 +156,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -595,6 +603,8 @@ BUGGY = ORIG["pricebook.py"]
 WRITE = "        self._db.set_price(sku, cents)\n"
 REF_A = mutate(BUGGY, WRITE, WRITE + "        self._cache.pop(sku, None)\n")
 REF_B = mutate(BUGGY, WRITE, WRITE + "        self._cache[sku] = cents\n")
+# ref_a with the cache under another private name: same behaviour, so a test reading _cache is caught
+REF_C = REF_A.replace("self._cache", "self._memo")
 
 PROBE = r'''
 import json
@@ -666,15 +676,16 @@ def _check(repo):
     buggy = run_tests(tree_copy(repo, {"pricebook.py": BUGGY}))
     ref_a = run_tests(tree_copy(repo, {"pricebook.py": REF_A}))
     ref_b = run_tests(tree_copy(repo, {"pricebook.py": REF_B}))
-    catches = [k for k in cand if red(get(buggy, k)) and green(get(ref_a, k)) and green(get(ref_b, k))]
+    ref_c = run_tests(tree_copy(repo, {"pricebook.py": REF_C}))
+    catches = [k for k in cand if red(get(buggy, k)) and all(green(get(r, k)) for r in (ref_a, ref_b, ref_c))]
     add("regression_test_fails_on_bug", catches,
-        "%d new or changed test(s); red on the buggy pricebook.py and green on both reference fixes: %s"
+        "%d new or changed test(s); red on the buggy pricebook.py and green on all three reference fixes: %s"
         % (len(cand), short(catches) or "none (each new test passes on the buggy code, or holds only for one fix)"))
 
-    coupled = sorted({k for k in cand for ref in (ref_a, ref_b) if not green(get(ref, k)) and not missing_name(get(ref, k))})
+    coupled = sorted({k for k in cand for ref in (ref_a, ref_b, ref_c) if not green(get(ref, k)) and not missing_name(get(ref, k))})
     ev = "new or changed tests that fail on a differently built correct fix: %s" % (short(coupled) or "none")
     if coupled:
-        r = get(ref_a, coupled[0]) if not green(get(ref_a, coupled[0])) else get(ref_b, coupled[0])
+        r = next(get(x, coupled[0]) for x in (ref_a, ref_b, ref_c) if not green(get(x, coupled[0])))
         ev += "; first: %s" % (r[:3] if r else "did not run")
     add("tests_assert_behaviour", not coupled, ev)
     return out

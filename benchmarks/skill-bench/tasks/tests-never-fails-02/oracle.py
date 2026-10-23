@@ -5,9 +5,9 @@ when unpaid), so nothing is ever due. The suite stayed green because test_picks_
 asserts inside a loop over the result (an empty result runs no assertion) and the only send_reminders test mocks
 due_soon away. The oracle judges the agent's final suite against code it holds itself:
   reference  reminders.py with the fix (paid means a truthy paid_at): the suite must be green on it;
-  mutants    the shipped bug; the 3-day window losing its last day; send_reminders ignoring the date it is given.
-             Each must turn at least one test red (a test counts only if it was green on the reference). The last
-             one survives every test that mocks due_soon away instead of pinning the date;
+  mutants    the shipped bug; the 3-day window losing its last day; send_reminders selecting with the day before
+             the one it is given. Each must turn at least one test red (a test counts only if it was green on the
+             reference). The last one survives every test that mocks due_soon away;
   nuke       every function returns one inert sentinel (empty when iterated): the loop test, if still present,
              must turn red on it, and no test may stay green on the nuke and on every mutant, required or extra.
 """
@@ -105,11 +105,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -151,6 +155,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -581,7 +588,9 @@ REF = mutate(ORIG[MODULE], 'if "paid_at" in inv:', 'if inv.get("paid_at"):')
 MUTANTS = {
     "the shipped bug (an invoice with any paid_at key counts as paid)": ORIG[MODULE],
     "window loses its last day (< instead of <=)": mutate(REF, "if 0 <= left <= days:", "if 0 <= left < days:"),
-    "send_reminders ignores the date it is given": mutate(REF, "today = today or date.today()", "today = date.today()"),
+    "send_reminders selects for the wrong day": mutate(mutate(REF, "from datetime import date\n", "from datetime import date, timedelta\n"),
+                                                     "for inv in due_soon(invoices, today):",
+                                                     "for inv in due_soon(invoices, today - timedelta(days=1)):"),
 }
 EXTRA_MUTANTS = {  # not required to be killed; a test that kills one is not hollow
     "paid invoices not skipped": mutate(REF, 'if inv.get("paid_at"):', "if False:"),
@@ -589,6 +598,7 @@ EXTRA_MUTANTS = {  # not required to be killed; a test that kills one is not hol
     "no upper bound on the window": mutate(REF, "if 0 <= left <= days:", "if 0 <= left:"),
     "unsorted result": mutate(REF, 'return sorted(picked, key=lambda inv: inv["due"])', "return picked"),
     "wrong day count in the text": mutate(REF, "left = days_until_due(invoice, today)", "left = days_until_due(invoice, today) + 1"),
+    "reminder window constant changed": mutate(REF, "REMIND_DAYS = 3", "REMIND_DAYS = 4"),
 }
 VACUOUS = ["DueSoonTest.test_picks_invoices_due_within_three_days"]
 

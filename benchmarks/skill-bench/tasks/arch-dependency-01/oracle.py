@@ -7,7 +7,9 @@ into a function, or `import models` with attribute access at call time. The orac
 standard-library ast, counting imports wherever they sit (only `if TYPE_CHECKING:` blocks are ignored):
   no_cycle          no import cycle among the project's modules;
   layering          models reaches neither pricing nor report, pricing does not reach report (README);
-  imports_cleanly   each of models, pricing, report imports first in a fresh interpreter, and report.py runs;
+  vat_defined_once  the VAT rate is written in exactly one place (no copy of the formula left behind);
+  imports_cleanly   each of models, pricing, report imports first in a fresh interpreter, Order.total() works with
+                    only models imported (no callback that pricing must register first), and report.py runs;
   callers_unchanged the names report.py and the tests use still import from where they did (models: Line,
                     Order; pricing: line_total, apply_coupon), and the original test file is green;
   same_behaviour    line totals, order totals, coupons and the printed report equal the pre-coupon-bug behaviour
@@ -107,11 +109,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -153,6 +159,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
@@ -622,12 +631,21 @@ def _check(repo):
         missing = [m for m in FORBIDDEN if m not in graph]
         add("layering", not wrong and not missing,
             "upward dependencies: %s%s" % ("; ".join(wrong) or "none", "; missing modules: %s" % missing if missing else ""))
+        vat = [(rel, node.lineno) for rel, src in py_files(repo).items() for node in ast.walk(ast.parse(src))
+               if isinstance(node, ast.Constant) and type(node.value) in (int, float) and node.value in (21, 121, 0.21, 1.21)]
+        add("vat_defined_once", len(vat) == 1,
+            "places the 21%% VAT rate is written: %s (moving line_total must not leave a second copy of the rule)" % vat)
 
     fails = []
     for first in ("models", "pricing", "report"):
         rc, _, err = run_py(repo, "import %s\n" % first)
         if rc:
             fails.append("import %s first: %s" % (first, (err.strip().splitlines() or ["?"])[-1][:150]))
+    rc, out_, err = run_py(repo, "from models import Line, Order\n"
+                                 "print(Order('A-1', 'Ana', [Line('X', 2, 1200), Line('Y', 1, 1999)]).total())\n")
+    if rc or out_.strip() != "5323":
+        fails.append("models alone (without pricing imported): Order.total() gave %s" % (
+            out_.strip() or (err.strip().splitlines() or ["?"])[-1][:150]))
     rc, _, err = run_py(repo, "import runpy\nrunpy.run_path('report.py', run_name='__main__')\n")
     if rc:
         fails.append("python3 report.py: %s" % (err.strip().splitlines() or ["?"])[-1][:150])

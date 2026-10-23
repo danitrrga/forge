@@ -1,8 +1,9 @@
 """Oracle for arch-no-abstraction-02: critical alerts also go out by SMS, e-mail is untouched, and the change stays
 small and direct: a second channel does not need a notification framework.
 
-"Not just e-mail" invites a Channel/Notifier base class with EmailChannel and SmsChannel, a routing table by
-severity, or a plugin list. There are two channels and one rule. The oracle measures behaviour and size:
+"Not just e-mail" invites a Channel/Notifier base class with EmailChannel and SmsChannel and a registry or plugin
+list. There are two channels and one rule. The oracle measures behaviour and size (a small dict from severity to
+the functions to call is within the size bound and accepted: it is direct code, not a framework):
   email_unchanged   for every alert (info, warning, critical, long titles) the e-mails sent equal the original's;
   sms_for_critical  each critical alert sends exactly one SMS, to config.ONCALL_PHONE, of at most 160 characters,
                     containing the start of the title; info and warning alerts send none;
@@ -104,11 +105,15 @@ for n, path in enumerate(files()):
         if not attr.startswith("test") or getattr(obj, "__module__", None) != name:
             continue
         if inspect.isfunction(obj):
-            req = [p for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
-            if req:
-                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(p.name for p in req), shash(obj)]
+            req = [p.name for p in inspect.signature(obj).parameters.values() if p.default is p.empty]
+            if [r for r in req if r != "tmp_path"]:
+                res[rel + "::" + attr] = ["error", "TypeError", "needs fixtures: " + ", ".join(req), shash(obj)]
             else:
-                run_case(rel + "::" + attr, unittest.FunctionTestCase(obj), shash(obj))
+                def call(obj=obj, req=req):
+                    import pathlib, tempfile
+                    with tempfile.TemporaryDirectory() as d:
+                        obj(**({"tmp_path": pathlib.Path(d)} if req else {}))
+                run_case(rel + "::" + attr, unittest.FunctionTestCase(call), shash(obj))
     for attr, obj in sorted(vars(mod).items()):
         if (attr.startswith("Test") and inspect.isclass(obj) and not issubclass(obj, unittest.TestCase)
                 and getattr(obj, "__module__", None) == name):
@@ -150,6 +155,9 @@ def tree_copy(src, overrides=None, remove=()):
             os.remove(p)
     for rel, text in (overrides or {}).items():
         p = os.path.join(dst, rel)
+        pkg = p[:-3] if p.endswith(".py") else None
+        if pkg and os.path.isdir(pkg):  # the agent turned the module into a package: it would shadow the swap
+            shutil.rmtree(pkg)
         os.makedirs(os.path.dirname(p) or dst, exist_ok=True)
         with open(p, "w", encoding="utf-8") as fh:
             fh.write(text)
