@@ -80,7 +80,7 @@ def run_oracle(task_dir, repo, message, timeout):
     """(results, error): the oracle's list of {id, passed, evidence} on a repo copy, or why it gave none."""
     meta = project_meta(task_dir)
     if meta is not None:
-        return run_checks(meta, repo, timeout)
+        return run_checks(meta, repo, timeout, task_dir)
     with tempfile.TemporaryDirectory() as t:
         runner, msg = os.path.join(t, "runner.py"), os.path.join(t, "message.txt")
         for p, text in ((runner, RUNNER), (msg, message)):
@@ -152,8 +152,12 @@ def _q(x):
     return shlex.quote(x)
 
 
-def run_checks(meta, repo, timeout):
-    """(results, None) for a project task: each check's shell command run in repo, exit status 0 = passed."""
+def run_checks(meta, repo, timeout, task_dir=None):
+    """(results, None) for a project task: each check's shell command run in repo, exit status 0 = passed. Files in the task's
+    overlay/ directory are copied over the tree first: the hidden tests that came with the merged fix, which the ideal diff leaves
+    out (a correct answer that did not add that very test would fail otherwise) and the agent never sees."""
+    if task_dir and os.path.isdir(os.path.join(task_dir, "overlay")):
+        shutil.copytree(os.path.join(task_dir, "overlay"), repo, dirs_exist_ok=True)
     res = []
     for c in meta.get("checks") or []:
         rc, out = sh(c["cmd"], repo, c.get("timeout", timeout))

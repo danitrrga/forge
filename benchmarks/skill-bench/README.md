@@ -46,6 +46,18 @@ tasks/<id>/            id = <field>-<concept short>-<nn>, the directory name equ
 `validate` proves all of that mechanically: start fails, ideal and alt pass, naive fails, three oracle runs agree,
 nothing is written to the bench. It is the gate for adding a task, not a nicety.
 
+## A project task
+
+A task captured from a project's own history lives in that project, at `<project>/.bench/tasks/<id>/`, and `--bench <project>/.bench`
+points the tool at it. It has no `repo/`: `task.json` has `source.kind: "project"`, `base.commit` (the commit before the work; the agent's
+tree is a `git archive` of it committed into a fresh repository, so the fix is not in any history it can read), `setup` (shell commands run
+once in that tree, e.g. an install) and `checks`: `{id, cmd, before: "fail"|"pass", timeout?}`, each a shell command whose exit status is
+the verdict, `fail` for a check the fix turns green and `pass` for one that must stay green. `ideal/solution.patch` is the merged diff of
+the source files, `naive/solution.patch` an attempt that was rejected (optional), and `overlay/` holds hidden test files: it is copied over
+the tree after the agent has finished and before the checks run, so a regression test that came with the fix is neither in the ideal diff
+(a correct answer that did not add that very test would fail it) nor visible to the agent. `validate` proves the same things as for a
+curated task: every check gives its declared verdict at base, at least one fails, the ideal diff passes all of them, the naive one does not.
+
 ## Running it
 
 ```bash

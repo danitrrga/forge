@@ -127,6 +127,22 @@ def main():
     want("materialize: an earlier capture in the base commit is not in the agent's tree",
          (err2, os.path.exists(os.path.join(d2, "repo", ".bench"))), (None, False))
 
+    # hidden tests: files in <task>/overlay/ are copied into the work tree after the agent has finished and before the checks
+    # run, so a regression test that came with the merged fix is not part of the ideal diff (a correct answer that did not
+    # happen to add that test would otherwise fail) and is not in the agent's tree either.
+    ro, obase, ofix = project(tmp, "overlayproj")
+    od = task(ro, obase, ofix, checks=[{"id": "hidden", "cmd": "python3 check_add.py", "before": "fail"}])
+    put(os.path.join(od, "overlay", "check_add.py"), "import calc\nassert calc.add(2, 3) == 5 and calc.add(-1, 1) == 0\n")
+    obench = os.path.join(ro, ".bench")
+    code, out = run(obench)
+    want("overlay: a check that runs a hidden test file validates (ideal passes it, base and naive fail it)",
+         (code, "proj-add-01: ok" in out), (0, True))
+    d3, err3 = sb.fresh(od, None)
+    want("overlay: the hidden test is not in the agent's tree", (err3, os.path.exists(os.path.join(d3, "repo", "check_add.py"))), (None, False))
+    put(os.path.join(od, "overlay", "check_add.py"), "import calc\nassert calc.add(2, 3) == 6\n")
+    code, out = run(obench)
+    want("overlay: a hidden test the ideal diff cannot satisfy is refused, naming the ideal", (code, "ideal" in out), (1, True))
+
     cases = [
         ("base commit that does not exist", dict(meta={"base": {"commit": "0" * 40}}), "base"),
         ("a fail-to-pass check that passes at base", dict(checks=[{"id": "adds", "cmd": "true", "before": "fail"}, {"id": "zero", "cmd": ZERO, "before": "fail"}]), "adds"),
