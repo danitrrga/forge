@@ -87,6 +87,11 @@ def world(case):
         sandbox.git(pp, "init", "-q")
         write(os.path.join(root, "config", "profiles", name + ".claude.json"),
               json.dumps(dict({"project": name, "project_path": pp}, **extra)))
+    if case in ("ui", "ui-no-design", "no-ui-with-design"):
+        write(os.path.join(root, "config", "profiles", "toy.claude.json"),
+              json.dumps(dict({"project": "toy", "project_path": os.path.join(projects, "toy")}, **({"ui": True} if case != "no-ui-with-design" else {}))))
+        if case != "ui-no-design":   # the tool the paragraph names exists in this checkout; a stranger's has none
+            write(os.path.join(root, "scripts", "design", "design.py"), "")
     write(os.path.join(projects, "portal", "CLAUDE.md"), "# portal, owned by its repo\n")
     # Its own .gitignore covers the doc, so unfrozen it WOULD get a copy: the freeze check can fail.
     write(os.path.join(projects, "portal", ".gitignore"), ".claude/AGENT-SYSTEM.md\n")
@@ -297,10 +302,25 @@ def main():
     if rc or got != "# mine\n\n" + block + "\n" + NOTE:
         failures.append("one complete pair is replaced in place, the text around it kept: exit %d, got %r" % (rc, got))
 
+    # A UI project's pointer also says where a visual choice goes: on a decision page, never in chat. Only when the
+    # checkout has the tool (scripts/design/design.py); a plain project and a UI project without the tool get no paragraph.
+    # Red before the field existed: "ui project: block lacks the decision-page paragraph ('## Shared agent-config system' only)".
+    for case, want_para in (("ui", True), ("ui-no-design", False), ("no-ui-with-design", False), ("plain", False)):
+        t = world(case)
+        rc, out = run(t, "--apply")
+        got = text(os.path.join(projects(t), "toy", "CLAUDE.md")) or ""
+        has = "decision page" in got and ("%s/forge/scripts/design/design.py decide" % t).replace("\\", "/") in got
+        if rc or has != want_para or (want_para and not got.count("decision page") == 1):
+            failures.append("%s project: decision-page paragraph present %s (want %s), exit %d, block %r"
+                            % (case, has, want_para, rc, got[-300:]))
+        agents = os.path.join(projects(t), "toy", "AGENTS.md")
+        if want_para and text(agents) != got:
+            failures.append("ui project: AGENTS.md does not read the same paragraph as CLAUDE.md")
+
     failures += RULE
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 14 cases" % len(failures))
+    print("%d failure(s) over 18 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 

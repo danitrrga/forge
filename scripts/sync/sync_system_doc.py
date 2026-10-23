@@ -64,6 +64,22 @@ POINTER = (
 )
 
 
+def ui_paragraph(proj_dir, profs):
+    """The paragraph a project with a user interface (`"ui": true` in its profile) gets: a visual choice goes on a decision page,
+    never into a chat question. Written only when this checkout has the tool that builds the page; a checkout without it has
+    nothing to point at, and a pointer to a missing command is worse than none."""
+    if not any(p.get("ui") is True and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir
+               for p in profs.values()):
+        return ""
+    tool = ROOT_FS + "/scripts/design/design.py"
+    if not os.path.isfile(os.path.join(ROOT, "scripts", "design", "design.py")):
+        return ""
+    return ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
+            "screenshots to accept) goes on a decision page, never into a chat question. If this file names a command for it, "
+            "use that; otherwise write `decisions.json` in a folder and run `python3 " + tool + " decide <folder>` (the format "
+            "is in `" + ROOT_FS + "/design/decide/README.md`), then end your message with the `xdg-open` line it prints.\n")
+
+
 def pointer(proj_dir, profs):
     """POINTER, plus a note when a frozen project lies below proj_dir. Claude Code loads a parent
     directory's CLAUDE.md in every session below it, so every session of a frozen project reads the dev
@@ -72,14 +88,16 @@ def pointer(proj_dir, profs):
     section 1.3 point 3; plan step 4)."""
     frozen = sorted(n for n, p in profs.items() if p.get("frozen") and p.get("project_path")
                     and os.path.normpath(p["project_path"]).startswith(proj_dir + os.sep))
+    ui = ui_paragraph(proj_dir, profs)
+    base = POINTER[:-len(END)] + ui + END if ui else POINTER
     if not frozen:
-        return POINTER
+        return base
     note = "".join(
         "**Not in `%s`, a frozen project:** forge writes nothing there, so its files are not "
         "regenerated at SessionStart and a `.claude/AGENT-SYSTEM.md` in it, if any, is a stale "
         "copy. Why, and how to lift it: `_frozen_doc` in `%s/config/profiles/%s.claude.json`.\n"
         % (os.path.normpath(profs[n]["project_path"]), ROOT_FS, n) for n in frozen)
-    return POINTER[:-len(END)] + "\n" + note + END
+    return base[:-len(END)] + "\n" + note + END
 
 
 def read_profiles():

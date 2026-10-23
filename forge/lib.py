@@ -120,7 +120,7 @@ PROFILE_FIELDS = {
     "servers": (list, str), "skills_keep": (list, str), "plugins_keep": (list, str),
     "mcpjson_approved": (list, str), "mcpjson_disabled": (list, str),
     "env": (dict, str), "permissions": dict, "hooks": dict,
-    "frozen": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,
+    "frozen": bool, "ui": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,
     "worktree_guard": frozenset({bool, dict}),
 }
 _TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object"}
