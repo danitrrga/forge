@@ -3,7 +3,7 @@
 
   skill_bench.py validate [--bench DIR] [--min-per-concept N] [--oracle-timeout S]   # prove every task can fail and pass
   skill_bench.py list     [--bench DIR]                                               # tasks per field and concept
-  skill_bench.py run      --arm none --arm NAME=SKILLDIR ... [--tasks all|ids|field:ui] [--k 3] [--out DIR]
+  skill_bench.py run      --arm none --arm NAME=SKILLDIR ... [--tasks all|ids|field:ui] [--k 3] [--out DIR] [--keep-work]
   skill_bench.py report   --out DIR [--base none]                                     # paired comparison of the arms
   skill_bench.py calibrate --out DIR [--arm none]   # write <bench>/calibration.json: each task's baseline pass rate
   skill_bench.py select   --tasks hard[:RATE]       # print the task ids a selector picks (hard = baseline rate <= RATE, default 0.7)
@@ -25,10 +25,13 @@ inside bubblewrap when available (home hidden, only the work dir writable), then
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
 INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
 `--tasks hard` keeps those at or under 0.7; `report` prints how many tasks were saturated (baseline of 0.9 or more).
+Space: runs go to $XDG_DATA_HOME/forge/skill-bench/runs/<timestamp> (durable, not /tmp); each finished run keeps result.json and a
+gzipped transcript and drops its working copy (--keep-work keeps it); report and calibrate read the latest run when --out is absent.
 `report` compares every arm with --base per task (the k trials averaged first):
 paired mean difference, 95% bootstrap CI over tasks, sign-flip permutation p, discordant counts, Wilson intervals per arm,
 and the token, cost and time deltas, as benchmarks/skill-bench/SOURCES.md recommends."""
 import argparse
+import gzip
 import json
 import math
 import os
@@ -50,6 +53,20 @@ ns = runpy.run_path(oracle)
 print("\\n" + json.dumps(ns["check"](repo, open(msg).read())))
 """
 KEYS = ("id", "field", "concept", "difficulty", "prompt", "source", "message_required")
+
+
+def data_dir():
+    """Durable home of run results: $XDG_DATA_HOME/forge/skill-bench (not the cache and never /tmp, which a reboot empties)."""
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return os.path.join(base, "forge", "skill-bench")
+
+
+def latest_run():
+    runs = os.path.join(data_dir(), "runs")
+    found = sorted(os.listdir(runs)) if os.path.isdir(runs) else []
+    if not found:
+        sys.exit("! no run under %s: pass --out" % runs)
+    return os.path.join(runs, found[-1])
 
 
 def read_json(path):
@@ -393,7 +410,10 @@ def agent_home(out):
     real = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
     link = os.path.join(d, ".credentials.json")
     if os.path.exists(real) and not os.path.lexists(link):
-        os.symlink(real, link)
+        try:
+            os.symlink(real, link)
+        except FileExistsError:   # another worker made it between the check and the call
+            pass
     return d
 
 
@@ -431,6 +451,22 @@ def parse_stream(text):
 
 
 def do_job(job, a):
+    """One job, never fatal: whatever goes wrong inside it becomes an INVALID result, so one crash cannot end the whole run."""
+    try:
+        return _do_job(job, a)
+    except Exception as e:   # noqa: BLE001
+        task, arm, _, trial = job
+        base = os.path.join(a.out, task, arm, str(trial))
+        os.makedirs(base, exist_ok=True)
+        res = {"task": task, "arm": arm, "trial": trial, "invalid": True, "passed": None, "started": time.time(),
+               "invalid_reason": "runner error: %s: %s" % (type(e).__name__, str(e)[:160]), "field": None, "concept": None,
+               "skill_called": False, "tokens": 0, "cost_usd": None, "duration_s": 0, "checks": []}
+        with open(os.path.join(base, "result.json"), "w") as fh:
+            json.dump(res, fh, indent=1)
+        return res
+
+
+def _do_job(job, a):
     task, arm, paths, trial = job
     base = os.path.join(a.out, task, arm, str(trial))
     shutil.rmtree(base, ignore_errors=True)
@@ -482,10 +518,20 @@ def do_job(job, a):
         res.update(checks=checks, passed=bool(checks) and all(c["passed"] for c in checks))
     with open(os.path.join(base, "result.json"), "w") as fh:
         json.dump(res, fh, indent=1)
+    if not a.keep_work:   # space: the scored working copy goes, the plain transcript is kept gzipped (about a tenth of its size)
+        shutil.rmtree(work, ignore_errors=True)
+        plain = os.path.join(base, "agent.jsonl")
+        if os.path.exists(plain):
+            with open(plain, "rb") as src, gzip.open(plain + ".gz", "wb") as dst:
+                shutil.copyfileobj(src, dst)
+            os.remove(plain)
     return res
 
 
 def cmd_run(a):
+    if not a.out:
+        a.out = os.path.join(data_dir(), "runs", time.strftime("%Y%m%d-%H%M%S"))
+        print("results go to %s" % a.out)
     tasks = select_tasks(a.bench, a.tasks)
     arms = parse_arms(a.arm or ["none"])
     rng = random.Random(a.seed)
@@ -497,6 +543,7 @@ def cmd_run(a):
     todo = [j for j in jobs if not os.path.exists(os.path.join(a.out, j[0], j[1], str(j[3]), "result.json"))]
     print("%d to run, %d already done (%d tasks x %d arms x k=%d)" % (len(todo), len(jobs) - len(todo), len(tasks), len(arms), a.k))
     os.makedirs(a.out, exist_ok=True)
+    agent_home(a.out)   # made once here: the workers share it
     done = 0
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
         for r in ex.map(lambda j: do_job(j, a), todo):
@@ -522,6 +569,7 @@ def mean(xs):
 
 
 def cmd_report(a):
+    a.out = a.out or latest_run()
     res = load_results(a.out)
     if not res:
         sys.exit("! no results under %s" % a.out)
@@ -588,6 +636,7 @@ def concepts_path(bench):
 
 
 def cmd_calibrate(a):
+    a.out = a.out or latest_run()
     res = [r for r in load_results(a.out) if r["arm"] == a.arm and not r["invalid"]]
     if not res:
         sys.exit("! no valid results of arm %r under %s" % (a.arm, a.out))
@@ -673,7 +722,8 @@ def main():
     r.add_argument("--arm", action="append")
     r.add_argument("--tasks", default="all")
     r.add_argument("--k", type=int, default=3)
-    r.add_argument("--out", required=True)
+    r.add_argument("--out", help="default: $XDG_DATA_HOME/forge/skill-bench/runs/<timestamp>")
+    r.add_argument("--keep-work", action="store_true", help="keep each run's working copy (default: dropped once scored, to save space)")
     r.add_argument("--model", default="sonnet")
     r.add_argument("--workers", type=int, default=3)
     r.add_argument("--timeout", type=int, default=900)
@@ -685,7 +735,7 @@ def main():
     r.set_defaults(fn=cmd_run)
     c = sub.add_parser("calibrate")
     c.add_argument("--bench", default=DEFAULT_BENCH)
-    c.add_argument("--out", required=True)
+    c.add_argument("--out", help="default: the latest run under the data dir")
     c.add_argument("--arm", default="none")
     c.set_defaults(fn=cmd_calibrate)
     sl = sub.add_parser("select")
@@ -693,7 +743,7 @@ def main():
     sl.add_argument("--tasks", default="all")
     sl.set_defaults(fn=cmd_select)
     q = sub.add_parser("report")
-    q.add_argument("--out", required=True)
+    q.add_argument("--out", help="default: the latest run under the data dir")
     q.add_argument("--base", default="none")
     q.add_argument("--bootstrap", type=int, default=10000)
     q.set_defaults(fn=cmd_report, bench=None)
