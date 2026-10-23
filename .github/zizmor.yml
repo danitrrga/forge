@@ -1,5 +1,4 @@
 # zizmor configuration: https://docs.zizmor.sh/configuration/
-# Copied from Kaneo (zizmor.yml, MIT): every action is pinned by commit hash.
 rules:
   unpinned-uses:
     config:
