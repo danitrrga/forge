@@ -47,8 +47,8 @@ and only for tools it found: manage Codex's config too, and install GSD. `--yes`
 It then writes your data into the checkout: `config/forge.json` (your switches), a profile for the checkout
 itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGENT-SYSTEM.md` and an empty
 `skills/`. With GSD on, it runs GSD's own installer (`pnpm dlx @opengsd/gsd-core@latest --claude --global`).
-Last, it runs `forge sync --apply --all`, which installs the SessionStart hook, and exits with `forge doctor`'s
-status.
+Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
+exits with `forge doctor`'s status.
 
 `forge add PATH [--name NAME] [--writes-tracked-files]` writes `config/profiles/NAME.claude.json` and runs
 `forge sync --apply --project NAME`. It refuses a path that is not a directory, a name already registered and
@@ -64,9 +64,10 @@ A profile, `config/profiles/<name>.claude.json`, holds a project's path, the MCP
 and their types are `PROFILE_FIELDS` in `forge/lib.py`, and `forge sync` names a field of the wrong type
 instead of guessing.
 
-The generator writes the per-project keys in `~/.claude.json`, each project's `.claude/settings.local.json`,
-the hook rows in `~/.claude/settings.json` (merged, never replaced), the links in `~/.claude/skills` and, with
-Codex on, `~/.codex/` and each project's `.codex/config.toml`. These files are generated and overwritten on
+`forge sync` writes the per-project keys in `~/.claude.json`, each project's `.claude/settings.local.json`,
+the hook rows in `~/.claude/settings.json` (merged, never replaced) and, with Codex on, `~/.codex/` and each
+project's `.codex/config.toml`. `forge skills` writes what belongs to the user rather than to a project: the
+online skills, the GSD runtime and the links in `~/.claude/skills`. These files are generated and overwritten on
 every run, so edit the profile, not them. The SessionStart hook runs `forge session-start`, which syncs only
 the project you opened, reports only what changed or failed, and always exits 0: a broken sync never blocks a
 session. A profile marked `frozen` gets nothing.
@@ -98,7 +99,30 @@ conflicts with them. `forge init --track` gives your data a second, local histor
 Third-party skills come from their own repositories, for example Anthropic's `skill-creator`,
 `kepano/obsidian-skills`, `pbakaus/impeccable` and `Panniantong/Agent-Reach`. The `gsd-*` skills are GSD's own,
 installed unpatched from its package when the `gsd` integration is on. forge does not touch them afterwards
-(`gsd_patches` in `config/forge.json` is false, which is what `forge init` writes).
+(`gsd_patches` in `config/forge.json` is false, which is what `forge init` writes). To trim them, name skills in
+`skill_keep.gsd_exclude` (no profile keeps them, and forge does not link them) or `skill_keep.gsd_opt_in` (kept
+only by a profile whose `skill_keep.extras` row names them); `forge doctor`'s `skill keep` row fails on a name
+no skill has, a name in both lists, or an excluded name in an `extras` row.
+
+## Measure a skill: skill-bench
+
+Does a skill make the agent better, and at what cost? `scripts/bench/skill_bench.py` answers with numbers. Each
+task in `benchmarks/skill-bench/tasks/` is a small repository, a prompt in the owner's voice and an oracle that
+scores the result, plus a correct answer, a second correct answer built differently and the plausible wrong one.
+`validate` proves every oracle can fail and can pass before any score is trusted.
+
+```sh
+python3 scripts/bench/skill_bench.py validate          # every task: the ideal and alt answers pass, the naive one fails
+python3 scripts/bench/skill_bench.py run --arm none --arm mine=skills/my-skill --k 3
+python3 scripts/bench/skill_bench.py report --base none # paired comparison, tokens and time per arm
+```
+
+Each run is `claude -p` in its own config directory (no user hooks, skills or `CLAUDE.md`), inside bubblewrap
+when installed. Results go to `$XDG_DATA_HOME/forge/skill-bench/runs/`. Every run records its model id and Claude
+Code version, and `report` refuses to compare arms that ran on different models. `calibrate` and `--tasks hard`
+keep only the tasks a model can still fail. A project can keep its own tasks, with hidden tests, in
+`.bench/tasks/`. The format and the statistics are in `benchmarks/skill-bench/README.md`, the sources and their
+licences in `SOURCES.md`.
 
 ## Safety
 
@@ -127,7 +151,7 @@ forge test [--mutants]                                      every tracked test_*
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
-forge commit -m MESSAGE (PATH... | --all)                        commit each changed path to the history that owns it
+forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
 forge check-public --all                                    personal data in the files the engine publishes
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
 forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)
@@ -136,6 +160,9 @@ forge uninstall [--integration N | --project N] [--apply]   take out what forge 
 Every command takes `--help`. A doctor check with nothing to look at (no skills, an integration that is off,
 no toolchain file) prints `SKIP ... NOT RUN, NOT ARMED`, which is neither a pass nor a failure. A check that is
 on and broken is a FAIL that names the fix. `forge doctor NAME` shows only the rows that concern one project.
+The `project roots` row fails a project that has skills of its own and sits inside another project's git
+repository: Claude Code applies the outer project's settings there too, and the outer "off" wins over the inner
+"on". The fix is one repository per project.
 
 `forge commit` stages each changed path in the history that owns it: a path the engine's `.gitignore` does not
 ignore goes to the engine history, every other path to your data history when you have one (`--track`).

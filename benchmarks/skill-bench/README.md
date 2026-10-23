@@ -62,8 +62,8 @@ curated task: every check gives its declared verdict at base, at least one fails
 
 ```bash
 B=python3\ scripts/bench/skill_bench.py
-$B run --arm none --arm new=skills/gsd-musk --tasks field:process --k 3 --out ~/.cache/forge/skill-bench/runs/musk-1
-$B report --out ~/.cache/forge/skill-bench/runs/musk-1 --base none
+$B run --arm none --arm new=skills/my-skill --tasks field:process --k 3   # --out DIR, or $XDG_DATA_HOME/forge/skill-bench/runs/<timestamp>
+$B report --base none                                                    # the latest run, or --out DIR
 ```
 
 An arm is `none` (nothing mounted) or `NAME=DIR[:DIR]` (skill directories copied into the run's `.claude/skills/`). The agent
