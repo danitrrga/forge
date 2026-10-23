@@ -60,6 +60,16 @@ isolated `claude -p` (own config dir: no user hooks, skills, CLAUDE.md or MCP, o
 installed. Claude Code's own built-in skills and plugins are loaded in every arm, so they are part of the baseline. Runs are
 resumable and interleaved across arms; an oracle that crashes makes an INVALID run, counted and never scored as a fail.
 
+## Which model is which
+
+`run` writes `<out>/run.json` first: the model alias (`--model`), the Claude Code version, `k`, the seed, the task list with a
+fingerprint of the task files, and each arm's skills by sha256 (over the sorted files, each as relative path, NUL, bytes, NUL).
+Every `result.json` also carries `model_id`, the exact id the CLI reported in its `init` event, because an alias such as `sonnet`
+moves when the vendor ships a new model. `report` prints the model id per arm and the CLI version, and refuses (exit 1) to compare
+arms that ran on different model ids unless `--allow-mixed-models`. A directory that already holds results is extended only by a run
+with the same alias and the same content behind every arm name; otherwise use a new `--out` or a new arm name. `calibration.json`
+records `model_ids` and `cli_version` too. A directory from before the manifest reports `(no run.json ...)`.
+
 ## Reading a score honestly
 
 Arms are `none` (no skill), `old` and `new` (or any variants), each run the same number of times per task on the

@@ -32,6 +32,7 @@ paired mean difference, 95% bootstrap CI over tasks, sign-flip permutation p, di
 and the token, cost and time deltas, as benchmarks/skill-bench/SOURCES.md recommends."""
 import argparse
 import gzip
+import hashlib
 import json
 import math
 import os
@@ -40,6 +41,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import platform
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -353,6 +355,56 @@ def bootstrap_ci(diffs, rng, reps=10000):
 
 # ----------------------------------------------------------------------------------------------------------------- run
 
+def tree_hash(d):
+    """sha256 over the sorted files of a directory, each as relative path, NUL, bytes, NUL: what an arm's skill is, exactly."""
+    h = hashlib.sha256()
+    for root, dirs, files in sorted(os.walk(d)):
+        dirs.sort()
+        for f in sorted(files):
+            full = os.path.join(root, f)
+            h.update(os.path.relpath(full, d).encode() + b"\0" + open(full, "rb").read() + b"\0")
+    return h.hexdigest()
+
+
+def cli_version(claude_bin):
+    try:
+        r = subprocess.run([claude_bin, "--version"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+        return (r.stdout.strip().splitlines() or ["unknown"])[0]
+    except (OSError, subprocess.TimeoutExpired):
+        return "unknown"
+
+
+def write_manifest(a, tasks, arms):
+    """<out>/run.json: which model, CLI, arms (by skill content hash) and tasks (by fingerprint) a run directory holds. A directory
+    already holding results is only extended by a run with the same model alias and the same content behind every arm name, so the
+    names in a report always mean the same thing."""
+    path = os.path.join(a.out, "run.json")
+    fp = hashlib.sha256()
+    for t in sorted(tasks):
+        fp.update(tree_hash(os.path.join(a.bench, "tasks", t)).encode())
+    new_arms = {n: {"skills": [{"dir": d, "sha256": tree_hash(d)} for d in ps]} for n, ps in arms}
+    ver = cli_version(a.claude_bin)
+    man = {"model_alias": a.model, "cli_version": ver, "k": a.k, "seed": a.seed, "sandbox": a.sandbox, "force_skill": a.force_skill,
+           "bench": a.bench, "tasks": sorted(tasks), "tasks_fingerprint": fp.hexdigest(), "arms": new_arms, "platform": sys.platform,
+           "started": time.strftime("%Y-%m-%dT%H:%M:%S"), "invocations": 1}
+    if os.path.isfile(path):
+        old = read_json(path)
+        if old.get("model_alias") != a.model:
+            sys.exit("! %s was started with model %r, this run asks for %r: use a new --out (a result file must mean one model)"
+                     % (a.out, old.get("model_alias"), a.model))
+        for n, v in new_arms.items():
+            if n in old.get("arms", {}) and old["arms"][n] != v:
+                sys.exit("! arm %r changed since %s was started (its skill content differs): use a new arm name or a new --out" % (n, a.out))
+        old["arms"].update(new_arms)
+        old["tasks"] = sorted(set(old.get("tasks", [])) | set(tasks))
+        old["invocations"] = old.get("invocations", 1) + 1
+        old["cli_versions"] = sorted(set(old.get("cli_versions", [old.get("cli_version")])) | {ver})
+        man = old
+    with open(path, "w") as fh:
+        json.dump(man, fh, indent=1)
+        fh.write("\n")
+
+
 def parse_arms(specs):
     """[(name, [skill dirs])] from --arm NAME or NAME=DIR[:DIR...]; `none` and a bare name mount nothing."""
     arms = []
@@ -433,13 +485,15 @@ def wrap(cmd, sandbox, work, home, claude_bin):
 
 
 def parse_stream(text):
-    """(final message, usage dict, cost, turns, skill_called, is_error) from claude's stream-json lines."""
-    msg, usage, cost, turns, called, err = "", {}, None, None, False, False
+    """(final message, usage dict, cost, turns, skill_called, is_error, model id) from claude's stream-json lines."""
+    msg, usage, cost, turns, called, err, model = "", {}, None, None, False, False, "unknown"
     for line in text.splitlines():
         try:
             ev = json.loads(line)
         except ValueError:
             continue
+        if ev.get("type") == "system" and ev.get("subtype") == "init" and ev.get("model"):
+            model = ev["model"]
         if ev.get("type") == "assistant":
             for c in (ev.get("message") or {}).get("content") or []:
                 if c.get("type") == "tool_use" and (c.get("name") == "Skill" or ".claude/skills/" in json.dumps(c.get("input", {}))):
@@ -447,7 +501,7 @@ def parse_stream(text):
         if ev.get("type") == "result":
             msg, usage = ev.get("result") or "", ev.get("usage") or {}
             cost, turns, err = ev.get("total_cost_usd"), ev.get("num_turns"), bool(ev.get("is_error"))
-    return msg, usage, cost, turns, called, err
+    return msg, usage, cost, turns, called, err, model
 
 
 def do_job(job, a):
@@ -506,9 +560,9 @@ def _do_job(job, a):
         fh.write(stdout or "")
     with open(os.path.join(base, "agent.err"), "w") as fh:
         fh.write(stderr or "")
-    msg, usage, cost, turns, called, err = parse_stream(stdout or "")
+    msg, usage, cost, turns, called, err, model_id = parse_stream(stdout or "")
     res = {"task": task, "field": meta.get("field"), "concept": meta.get("concept"), "arm": arm, "trial": trial,
-           "model": a.model, "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out, "skill_called": called,
+           "model": a.model, "model_id": model_id, "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out, "skill_called": called,
            "tokens": sum(usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
            "cost_usd": cost, "turns": turns, "agent_error": err, "message_chars": len(msg), "checks": [], "passed": False, "invalid": False}
     checks, why = run_oracle(td, work, msg, a.oracle_timeout)
@@ -543,6 +597,7 @@ def cmd_run(a):
     todo = [j for j in jobs if not os.path.exists(os.path.join(a.out, j[0], j[1], str(j[3]), "result.json"))]
     print("%d to run, %d already done (%d tasks x %d arms x k=%d)" % (len(todo), len(jobs) - len(todo), len(tasks), len(arms), a.k))
     os.makedirs(a.out, exist_ok=True)
+    write_manifest(a, tasks, arms)
     agent_home(a.out)   # made once here: the workers share it
     done = 0
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
@@ -581,8 +636,18 @@ def cmd_report(a):
         if not r["invalid"]:
             score.setdefault((r["task"], r["arm"]), []).append(1.0 if r["passed"] else 0.0)
     invalid = {x: sum(1 for r in res if r["arm"] == x and r["invalid"]) for x in arms}
+    man = read_json(os.path.join(a.out, "run.json")) if os.path.isfile(os.path.join(a.out, "run.json")) else {}
+    models = {x: sorted({r.get("model_id", "unknown") for r in res if r["arm"] == x}) for x in arms}
     print("skill-bench report: %d runs (%d invalid), %d tasks, arms %s, base %s"
           % (len(res), sum(invalid.values()), len({r["task"] for r in res}), ", ".join(arms), a.base))
+    print("  models: %s | alias %s | CLI %s%s" % ("; ".join("%s=%s" % (x, "+".join(models[x])) for x in arms), man.get("model_alias", "?"),
+                                                  ", ".join(man.get("cli_versions") or [man.get("cli_version", "?")]),
+                                                  "" if man else " (no run.json: this directory predates the manifest)"))
+    if len({tuple(v) for v in models.values()}) > 1:
+        print("! arms ran on different models: %s" % "; ".join("%s=%s" % (x, "+".join(models[x])) for x in arms))
+        if not a.allow_mixed_models:
+            print("  A difference between them would measure the model, not the skill. Re-run on one model, or pass --allow-mixed-models.")
+            return 1
     for x in arms:
         v = [r for r in res if r["arm"] == x and not r["invalid"]]
         k, n = sum(1 for r in v if r["passed"]), len(v)
@@ -643,7 +708,9 @@ def cmd_calibrate(a):
     tasks = {}
     for r in res:
         tasks.setdefault(r["task"], []).append(1.0 if r["passed"] else 0.0)
+    man = read_json(os.path.join(a.out, "run.json")) if os.path.isfile(os.path.join(a.out, "run.json")) else {}
     doc = {"arm": a.arm, "model": sorted({r.get("model") or "?" for r in res})[0], "date": time.strftime("%Y-%m-%d"),
+           "model_ids": sorted({r.get("model_id", "unknown") for r in res}), "cli_version": man.get("cli_version", "unknown"),
            "tasks": {t: {"rate": round(mean(v), 3), "n": len(v)} for t, v in sorted(tasks.items())}}
     with open(os.path.join(a.bench, "calibration.json"), "w") as fh:
         json.dump(doc, fh, indent=1)
@@ -746,6 +813,7 @@ def main():
     q.add_argument("--out", help="default: the latest run under the data dir")
     q.add_argument("--base", default="none")
     q.add_argument("--bootstrap", type=int, default=10000)
+    q.add_argument("--allow-mixed-models", action="store_true", help="compare arms that ran on different models (default: refused)")
     q.set_defaults(fn=cmd_report, bench=None)
     a = p.parse_args()
     if a.bench is not None:
