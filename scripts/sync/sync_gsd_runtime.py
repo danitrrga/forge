@@ -497,15 +497,18 @@ def check_skill_refs(errors):
 
     A directory that is not there counts as empty: a fresh HOME, or a dry-run before the mirror
     exists, once raised FileNotFoundError here."""
-    skills = set(d for d in listdir(SKILLS_MIRROR)
-                 if os.path.isdir(os.path.join(SKILLS_MIRROR, d)))
+    # The mirror, and forge's own skills/ it links from: a skill written a moment ago is only in the second
+    # until relink_skills runs, which is after this step in forge skills.
+    mirrored = set(d for d in listdir(SKILLS_MIRROR) if os.path.isdir(os.path.join(SKILLS_MIRROR, d)))
+    skills = mirrored | set(d for d in listdir(FORGE_SKILLS) if d.startswith("gsd-") and os.path.isdir(os.path.join(FORGE_SKILLS, d)))
     agents = set(f[:-3] for f in listdir(AGENTS_DIR) if f.endswith(".md"))
     dangling, missing_wf = [], []
     for name in sorted(skills):
         if not name.startswith("gsd-"):
             continue
-        p = os.path.join(SKILLS_MIRROR, name, "SKILL.md")
-        if not os.path.exists(p):
+        p = next((q for q in (os.path.join(SKILLS_MIRROR, name, "SKILL.md"), os.path.join(FORGE_SKILLS, name, "SKILL.md"))
+                  if os.path.exists(q)), None)
+        if p is None:
             continue
         body = read(p)
         for wf in set(re.findall(r"@\$HOME/\.claude/gsd-core/([A-Za-z0-9_./-]+\.md)", body)):
@@ -521,7 +524,7 @@ def check_skill_refs(errors):
     # An installer run against ~/.claude leaves REAL gsd-* directories next to forge's symlinks
     # (it installs 67 of them). Nothing else on this machine creates one, so a non-symlink here
     # is the fingerprint of the thing this whole script exists to prevent.
-    intruders = sorted(d for d in skills if d.startswith("gsd-")
+    intruders = sorted(d for d in mirrored if d.startswith("gsd-")
                        and not os.path.islink(os.path.join(SKILLS_MIRROR, d)))
     for d in intruders:
         errors.append("~/.claude/skills/%s is a real directory, not a symlink into forge -- the "

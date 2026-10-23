@@ -346,7 +346,8 @@ def refs_setup(name):
     d = case_dir(name)
     gsd.SKILLS_MIRROR = os.path.join(d, "home", ".claude", "skills")
     gsd.AGENTS_DIR = os.path.join(d, "home", ".claude", "agents")
-    gsd.GSD_DIR = os.path.join(d, "home", ".claude", "get-shit-done")
+    gsd.GSD_DIR = os.path.join(d, "home", ".claude", "gsd-core")
+    gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
     return d
 
 
@@ -373,6 +374,24 @@ def refs_no_agents(failures):
     dangling = [e for e in errors if "gsd-toy -> gsd-zz-toy-missing" in e]
     if exc or len(errors) != 1 or not dangling or "1 gsd-* skills, 0 agents installed" not in out:
         failures.append("refs: mirror without agents dir: raised %s, errors %s: %s" % (exc, errors, sandbox.tail(out, 2)))
+
+
+def refs_forge_only(failures):
+    """A skill forge has just written is not in the mirror until relink_skills runs, and the GSD step runs first on
+    a fresh apply (forge skills: online skills, gsd runtime, skill links): a routing row to it, and a skill that only
+    forge's skills/ holds, resolve from there. Seen failing on 3c608bc, whose first `forge skills --apply` of the 43
+    new skills exited 1: "refs: a skill only in forge's skills/: errors ['dangling reference: gsd-toy -> gsd-new']"."""
+    d = refs_setup("refs-forge-only")
+    real = os.path.join(gsd.FORGE_SKILLS, "gsd-toy")
+    write(os.path.join(real, "SKILL.md"), "| route | gsd-new |\n| route | gsd-zz-missing |\n")
+    write(os.path.join(gsd.FORGE_SKILLS, "gsd-new", "SKILL.md"), "no routes\n")
+    os.makedirs(gsd.SKILLS_MIRROR)
+    os.symlink(real, os.path.join(gsd.SKILLS_MIRROR, "gsd-toy"))
+    errors = []
+    _, out, exc = call(gsd.check_skill_refs, errors)
+    dangling = sorted(e for e in errors if e.startswith("dangling"))
+    if exc or dangling != ["dangling reference: gsd-toy -> gsd-zz-missing"]:
+        failures.append("refs: a skill only in forge's skills/: raised %s, errors %s (want only gsd-zz-missing dangling)" % (exc, errors))
 
 
 def npm_nag_throttle(failures):
@@ -942,7 +961,7 @@ def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
-             refs_no_dirs, refs_no_agents, npm_nag_throttle, defaults_copy,
+             refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
              defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, skills_all_shipped, defaults_uncapped, hooks_tree)
     for case in cases:
         case(failures)
