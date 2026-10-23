@@ -7,7 +7,7 @@ Mirrors (links):  ~/.claude/skills   (Claude Code)
                   frontmatter format, added so both agents see the identical skill set)
 
 Non-destructive & idempotent: only CREATES / REPOINTS symlinks and PRUNES
-dangling ones. Never deletes or overwrites real skill content. Safe to run on
+dangling ones and the links of skills named in skill_keep.gsd_exclude (config/forge.json). Never deletes or overwrites real skill content. Safe to run on
 every session start. Run manually after adding a skill:  python relink_skills.py
 
 Project-dependent technical skills do NOT live here — they belong in the
@@ -38,12 +38,18 @@ DUPES = {
 }
 
 
+def excluded():
+    """skill_keep.gsd_exclude in config/forge.json: skills that stay in skills/ but are not mirrored."""
+    return set((lib.settings().get("skill_keep") or {}).get("gsd_exclude") or [])
+
+
 def skill_names():
+    out = excluded()
     return [
         d for d in os.listdir(SRC)
         if os.path.isdir(os.path.join(SRC, d))
         and not d.startswith("_") and not d.startswith(".")
-        and d not in DUPES
+        and d not in DUPES and d not in out
     ]
 
 
@@ -97,6 +103,7 @@ def main():
         failed.append("%s (%s)" % (p, e.strerror or e))
 
     skipped_targets = []
+    out = excluded()
     # $CODEX_HOME/skills only while Codex is on (config/forge.json): off, it is not made or pruned.
     for t in TARGETS if lib.on("codex") else [x for x in TARGETS if x != CODEX_TARGET]:
         if os.path.islink(t):
@@ -164,7 +171,10 @@ def main():
             p = os.path.join(t, d)
             if d in repointed:
                 continue
-            if os.path.islink(p) and not os.path.exists(p):
+            # An excluded skill's link into SRC goes too; a real dir or a link elsewhere is not ours.
+            gone = (d in out and os.path.islink(p)
+                    and os.path.realpath(p) == os.path.realpath(os.path.join(SRC, d)))
+            if gone or (os.path.islink(p) and not os.path.exists(p)):
                 try:
                     if not dry:
                         lib.unlink(p)

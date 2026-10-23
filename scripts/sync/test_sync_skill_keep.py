@@ -41,6 +41,11 @@ False, False), want (1, True, False)", "~: expanded to the toy HOME = None, want
 (0, '0 profile(s) would change.')". With the file read, "stranger" then failed on "~ toy.claude.json
 perms +0": an empty table was a change forever. With TRACK_GSD = True patched in: both "gsd off"
 cases and "stranger: --check, exit and its profile line = (1, False, False), want (0, True, True)".
+
+skill_keep.gsd_exclude and gsd_opt_in. Seen failing before the change: "gsd trim: the excluded name is in no profile =
+[True, True], want [False, False]", "opt-in only where the extras row names it = [True, True], want [True, False]" and,
+for a typo in either table, a name in both and an excluded name in an extras row, "(1, False, False), want (1, True,
+False)" (exit 1 came from a pending change, not from a refusal: the check needs the '!' line naming skill_keep.gsd_).
 """
 import json
 import os
@@ -311,6 +316,37 @@ def main():
     for fn in (PLAIN_FILE, "zzz.claude.json"):
         want("gsd on (control): %s gets the baseline" % fn,
              len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5, True)
+
+    # skill_keep.gsd_exclude and gsd_opt_in. toy-0 is excluded: in no profile, extras or not, though it is installed
+    # (relink has not run in this world). toy-1 is opt-in: in the baseline of nobody, kept only by the profile whose
+    # extras row names it, and stripped from a union profile that holds it. The baseline is what is left.
+    def trim(sk):
+        sk["gsd_exclude"] = ["gsd-toy-0"]
+        sk["gsd_opt_in"] = ["gsd-toy-1"]
+        sk["extras"][PLAIN_FILE] = ["gsd-toy-1"]
+    holds = ["gsd-fast", "gsd-toy-0", "gsd-toy-1"]
+    root, env = world(tmp, "trim", dict({PLAIN_FILE: trimmed(skills_keep=holds), "zzz.claude.json": trimmed(skills_keep=holds)},
+                                        **OPT_OUT_PROFILES), trim)
+    want("gsd trim: --apply", run(root, env, "--apply")[0], 0)
+    plain, union_ = skills_of(root, PLAIN_FILE), skills_of(root, "zzz.claude.json")
+    want("gsd trim: the excluded name is in no profile", ["gsd-toy-0" in plain, "gsd-toy-0" in union_], [False, False])
+    want("gsd trim: opt-in only where the extras row names it", ["gsd-toy-1" in plain, "gsd-toy-1" in union_], [True, False])
+    want("gsd trim: the baseline is the rest", ["gsd-toy-2" in plain, "gsd-toy-2" in union_], [True, True])
+    want("gsd trim: --check after the apply", run(root, env, "--check"), (0, "0 profile(s) would change."))
+    # A name in a table that skills/ and the mirror both lack is a typo; a name in both tables, or in an extras row
+    # and excluded, is a contradiction. Each exits 1 and says which.
+    for label, edit, needle in (
+            ("a typo in gsd_exclude", lambda sk: sk.update({"gsd_exclude": ["gsd-no-such"]}), "gsd-no-such"),
+            ("a typo in gsd_opt_in", lambda sk: sk.update({"gsd_opt_in": ["gsd-no-such"]}), "gsd-no-such"),
+            ("a name in both tables", lambda sk: sk.update({"gsd_exclude": ["gsd-toy-0"], "gsd_opt_in": ["gsd-toy-0"]}), "gsd-toy-0"),
+            ("an excluded name in an extras row", lambda sk: (sk.update({"gsd_exclude": ["gsd-toy-0"]}),
+                                                             sk["extras"].update({PLAIN_FILE: ["gsd-toy-0"]})), "gsd-toy-0")):
+        root, env = world(tmp, "trim-bad-%d" % sum(map(ord, label)), dict({PLAIN_FILE: trimmed()}, **OPT_OUT_PROFILES), edit)
+        r = subprocess.run([sys.executable, SCRIPT, "--check"], cwd=root, env=env, capture_output=True, text=True)
+        # "! ... skill_keep.gsd_..." is the refusal itself: exit 1 alone is also what any pending change gives.
+        text = r.stdout + r.stderr
+        want("gsd trim: %s" % label, (r.returncode, "! " in text and "skill_keep.gsd_" in text and needle in text,
+                                      "Traceback" in r.stderr), (1, True, False))
 
     # A stranger's forge: examples/forge.json (every table empty, gsd off) and no ~/.claude/skills.
     with open(os.path.join(sandbox.FORGE, "examples", "forge.json"), encoding="utf-8") as fh:
