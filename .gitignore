@@ -48,6 +48,7 @@
 !/scripts/
 /scripts/*
 !/scripts/metrics/
+!/scripts/bench/
 !/scripts/sync/
 /scripts/sync/*
 !/scripts/sync/relink_skills.py
@@ -133,3 +134,9 @@ data/memory-lite/
 
 # Playwright MCP scratch output (screenshots, page snapshots) — never part of the repo.
 .playwright-mcp/
+
+# skill-bench: the benchmark is public (tasks, concepts, spec); its run artifacts are not.
+!/benchmarks/
+/benchmarks/*
+!/benchmarks/skill-bench/
+/benchmarks/skill-bench/runs/
