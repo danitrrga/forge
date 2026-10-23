@@ -12,6 +12,7 @@ git; `README.md` is the user guide.
 bin/forge            the one entry point
 forge/               the engine: lib, cli, sync, hooks, mcp, memory, skills, publish
 scripts/sync/        the generators, each derives its root from __file__; scripts/metrics/ harness metrics
+scripts/bench/       skill-bench, its tasks in benchmarks/skill-bench/ (the one public directory of benchmarks/)
 hooks/               the shared hooks that user-scope settings point at, with their tests
 config/gsd/          prose payloads of the GSD patches
 examples/            what `forge init` copies for a new user (forge.json, AGENT-SYSTEM.md, ...)
@@ -28,6 +29,7 @@ python3 bin/forge doctor        # one PASS/FAIL/SKIP line per check, exit 1 on a
 python3 bin/forge test          # every tracked test_*.py at nice 19; `--mutants` runs only the on-demand guard mutants
 python3 tests/test_<name>.py    # one suite: each is a plain script (no pytest) that prints its FAILs and exits 1 on any
 python3 bin/forge check-public --all   # personal data in the engine files
+python3 scripts/bench/skill_bench.py validate   # every skill-bench task: its oracle fails at base and on the naive answer, passes the ideal and alt ones
 ```
 
 Every generator is a dry-run until `--apply`. Dry-run first, `--apply` second, git commit between. Git is the
@@ -50,8 +52,10 @@ only rollback: a `.bak` file is written once, ever.
    nor a FAIL. A check that finds nothing to look at because the user switched that feature off is a SKIP with
    the same wording.
 5. **Nothing personal in an engine file.** Names, home paths, addresses and project names belong in the user's
-   `config/forge.json` and profiles, never in code, comments or tests. Fixtures use neutral names and the
-   documentation ranges `192.0.2.0/24` and `198.51.100.0/24`.
+   `config/forge.json` and profiles, never in code, comments or tests, and neither is the date of a decision.
+   Fixtures use neutral names, the documentation ranges `192.0.2.0/24` and `198.51.100.0/24`, and the
+   documentation addresses under `example.com`, `example.org` and `example.test` (`EMAIL_OK` in `forge/publish.py`).
+   A skill-bench task's dates are data: its files are exempt from the private list's date patterns only.
 6. **Generated files are never edited by hand:** `~/.claude.json`, any `.mcp.json`, a project's
    `.claude/settings.local.json`. Edit the source (`config/`, a profile, `forge/`) and run the generator.
 7. **Never read, print or copy a value from `credentials/`.** `config/secrets.json` links to it and the
