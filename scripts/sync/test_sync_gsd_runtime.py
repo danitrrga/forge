@@ -866,15 +866,29 @@ def real_package(failures):
     d = case_dir("real-package")
     saved = {n: getattr(gsd, n) for n in ("STAGE_ROOT", "STAGE", "STAMP", "BLOCKS")}
     gsd.BLOCKS = os.path.join(FORGE, "config", "gsd")  # the real prose payloads: the patches are the real ones
-    gsd.STAGE_ROOT = os.path.join(d, "stage-root")
+    gsd.STAGE_ROOT = os.path.join(gsd.HOME, ".cache", "forge", "gsd-stage")  # under HOME: the installer then writes `~/` and `$HOME/` forms
     gsd.STAGE, gsd.STAMP = os.path.join(gsd.STAGE_ROOT, "cfg"), os.path.join(gsd.STAGE_ROOT, "STAGED-VERSION")
     try:
         os.makedirs(gsd.STAGE_ROOT)
         guard_ok = os.path.realpath(gsd.STAGE).startswith(TOY + os.sep)
         if not guard_ok:
             sys.exit("FAIL harness: the staging dir is outside the toy root")
+        shutil.rmtree(gsd.STAGE_ROOT, ignore_errors=True)
+        os.makedirs(gsd.STAGE_ROOT)
         gsd.stage(pkg, gsd.package_version(pkg))
         errors = []
+        leaks = []
+        for base, _dirs, files in os.walk(gsd.STAGE):
+            for fn in files:
+                try:
+                    text = gsd.normalize(read(os.path.join(base, fn)))
+                except UnicodeDecodeError:
+                    continue
+                if "gsd-stage" in text:
+                    leaks.append(os.path.relpath(os.path.join(base, fn), gsd.STAGE))
+        if leaks:
+            failures.append("real package: %d staged file(s) still name the staging directory after normalising, e.g. %s"
+                            % (len(leaks), leaks[:3]))
         for kind, patches, base, path in (("agents", gsd.AGENT_PATCHES, "agents", "%s"), ("engine", gsd.ENGINE_PATCHES, "gsd-core", "%s"),
                                           ("skills", REAL_PATCHES, "skills", "%s/SKILL.md")):
             for name, plist in patches.items():
@@ -957,12 +971,48 @@ def hooks_tree(failures):
                         % (exc, errors, n, os.path.exists(os.path.join(gsd.HOOKS_DIR, "gsd-prompt-guard.js"))))
 
 
+def normalize_forms(failures):
+    """The installer writes the staging directory into the text in three spellings: `$HOME/<rel>`, `~/<rel>` (gsd-core's
+    @-references) and the absolute path; each goes back to the real config dir in its own spelling, and one left
+    over is an error, not a file that points into the cache. Seen failing on bb37a85, which knew two of the three:
+    "normalize forms: '@~/.cache/forge/gsd-stage/cfg/gsd-core/x.md' became itself, want '@~/.claude/gsd-core/x.md'"
+    (59 of 75 skills, 27 agents and 77 engine files on this machine carried it) and "leak: no error for a file that
+    still names the staging directory"."""
+    saved = gsd.STAGE
+    rel = os.path.join(".cache", "forge", "gsd-stage", "cfg")
+    gsd.STAGE = os.path.join(gsd.HOME, rel)
+    try:
+        for label, text, want in (
+                ("$HOME form", "@$HOME/%s/gsd-core/x.md" % rel, "@$HOME/.claude/gsd-core/x.md"),
+                ("~ form", "@~/%s/gsd-core/x.md" % rel, "@~/.claude/gsd-core/x.md"),
+                ("absolute form", "%s/gsd-core/x.md" % gsd.STAGE, "$HOME/.claude/gsd-core/x.md"),
+                ("bare directory, ~ form", "cd ~/%s" % rel, "cd ~/.claude"),
+                ("bare directory, $HOME form", "cd $HOME/%s" % rel, "cd $HOME/.claude")):
+            got = gsd.normalize(text)
+            if got != want:
+                failures.append("normalize forms: %s: %r became %r, want %r" % (label, text, got, want))
+        d = case_dir("normalize-leak")
+        src = os.path.join(d, "x.md")
+        write(src, "see ${HOMEDIR}/%s/gsd-core/x.md\n" % rel)  # a spelling the installer does not use, and no rule knows
+        errors = []
+        gsd.want_text(src, "x.md", [], errors)
+        if not any("staging directory" in e and "x.md" in e for e in errors):
+            failures.append("normalize forms: no error for a file that still names the staging directory: %s" % errors)
+        write(src, "see ~/.claude/gsd-core/x.md\n")
+        errors = []
+        gsd.want_text(src, "x.md", [], errors)
+        if errors:
+            failures.append("normalize forms: a clean file raised %s" % errors)
+    finally:
+        gsd.STAGE = saved
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, skills_all_shipped, defaults_uncapped, hooks_tree)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, normalize_forms, skills_all_shipped, defaults_uncapped, hooks_tree)
     for case in cases:
         case(failures)
     for msg in failures:
