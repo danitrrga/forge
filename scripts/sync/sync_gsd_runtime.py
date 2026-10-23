@@ -57,7 +57,10 @@ WHAT FORGE OWNS ON TOP
     installer, for reason 1 above.
 
   forge-authored skills (gsd-musk, gsd-cut-the-ceremony, gsd-boil-the-ocean) have
-  no upstream counterpart. They are never generated and never touched here.
+  no upstream counterpart. They are never generated and never touched here. gsd-sketch is
+  forge-authored too (2026-10-23): upstream ships one, forge replaced it with a thin wrapper that
+  files the project's design skill under .planning/sketches/, so the package's copy is neither
+  compared nor written.
 
 AN ANCHOR THAT NO LONGER MATCHES IS AN ERROR, NOT A SKIP. If upstream rewrites a patched
 paragraph, this exits 1 naming the patch, because silently dropping a fix is how the classifier
@@ -117,7 +120,7 @@ CHECK = "--check" in sys.argv
 DIFFERS = 2  # --check's exit code for a runtime that differs; 1 stays "something is wrong"
 
 # Skills forge authored itself -- no upstream file, never generated, never overwritten.
-FORGE_AUTHORED = {"gsd-musk", "gsd-cut-the-ceremony", "gsd-boil-the-ocean"}
+FORGE_AUTHORED = {"gsd-musk", "gsd-cut-the-ceremony", "gsd-boil-the-ocean", "gsd-sketch"}
 
 # The two hook files forge keeps its own version of (hooks/ of this checkout, hardened; forge/hooks.py wires them
 # from there) and the scripts of the other runtimes the installer stages: not copied to ~/.claude/hooks.

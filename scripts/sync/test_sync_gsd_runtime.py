@@ -102,6 +102,7 @@ gsd.FORGE_SKILLS = os.path.join(TOY, "forge-skills")
 gsd.BLOCKS = os.path.join(TOY, "blocks")
 gsd.CTX = gsd.lib.Ctx(True, None, True)
 
+REAL_AUTHORED = set(gsd.FORGE_AUTHORED)
 REAL_PATCHES = {k: list(v) for k, v in gsd.SKILL_PATCHES.items()}  # the cases below replace gsd.SKILL_PATCHES
 
 PATHS = ("AGENTS_DIR", "GSD_DIR", "HOOKS_DIR", "SKILLS_MIRROR", "FORGE_SKILLS", "BLOCKS", "STAGE_ROOT", "STAGE",
@@ -683,6 +684,35 @@ def skills_all_shipped(failures):
             failures.append("skills all: %s: raised %s, errors %s, changed %s (want 1), gsd-b %r, output %r"
                             % (label, exc, errors, n, wrote, out))
 
+def skills_authored_over_upstream(failures):
+    """A forge-authored skill that upstream ALSO ships (gsd-sketch is rewritten by forge; the package still has one) is neither
+    compared nor overwritten: forge's text stays, no drift line names it, and an apply leaves it as it was. Seen failing with the
+    authored name removed from the skip (the mutant in the commit message): "skills authored over upstream: apply: gsd-a is
+    'upstream text' (want forge's own), drift reported 1"."""
+    global DRY_OK
+    for label, apply in (("dry-run", False), ("apply", True)):
+        d = case_dir("skills-authored-" + label)
+        gsd.STAGE = os.path.join(d, "stage", "cfg")
+        gsd.FORGE_SKILLS = os.path.join(d, "forge-skills")
+        gsd.FORGE_AUTHORED = {"gsd-a"}
+        write(os.path.join(gsd.STAGE, "skills", "gsd-a", "SKILL.md"), "upstream text\n")
+        write(os.path.join(gsd.FORGE_SKILLS, "gsd-a", "SKILL.md"), "forge's own text\n")
+        gsd.SKILL_PATCHES = {}
+        gsd.CTX = gsd.lib.Ctx(apply, None, True)
+        DRY_OK = not apply
+        try:
+            errors = []
+            n, out, exc = call(gsd.sync_skills, errors)
+        finally:
+            gsd.CTX = gsd.lib.Ctx(True, None, True)
+            gsd.FORGE_AUTHORED = REAL_AUTHORED
+            DRY_OK = False
+        kept = read(os.path.join(gsd.FORGE_SKILLS, "gsd-a", "SKILL.md"))
+        if exc or errors or kept != "forge's own text\n" or "gsd-a" in out.split("forge skills vs package")[-1].split("\n", 2)[-1]:
+            failures.append("skills authored over upstream: %s: raised %s, errors %s, gsd-a is %r (want forge's own), output %r"
+                            % (label, exc, errors, kept, out))
+
+
 def update_text_names_no_machine(failures):
     """The gsd-update patch payload is written into skills/gsd-update/SKILL.md, which a stranger
     generates: it must not name the author's checkout. Seen failing on a2e69f6:
@@ -1012,7 +1042,7 @@ def main():
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, normalize_forms, skills_all_shipped, defaults_uncapped, hooks_tree)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree)
     for case in cases:
         case(failures)
     for msg in failures:
