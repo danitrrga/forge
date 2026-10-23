@@ -44,13 +44,13 @@ SYNC = [
     ("agent config", "scripts/sync/sync_agent_config.py", None, "--apply", []),
     ("system doc", "scripts/sync/sync_system_doc.py", None, "--apply", []),
 ]
-# forge skills: the user-scope steps, run on their own (docs/toolchain-design.md section 5). Skill links
-# first, because the project overrides are computed from them; the online skills before that, since the links
-# are made to what they write.
+# forge skills: the user-scope steps, run on their own (docs/toolchain-design.md section 5). The skill links come
+# last: they link what the two steps before them wrote, and the first apply of a newly shipped skill linked none of
+# it while the links ran first.
 SKILLS = [
     ("online skills", "scripts/sync/materialise_skills.py", None, "--apply", []),
-    ("skill links", "scripts/sync/relink_skills.py", "--dry-run", None, []),
     ("gsd runtime", "scripts/sync/sync_gsd_runtime.py", None, "--apply", ["--skills"]),
+    ("skill links", "scripts/sync/relink_skills.py", "--dry-run", None, []),
 ]
 # The integration (lib.INTEGRATIONS) a step belongs to, by name: with it off, the command says so and
 # does not run the step (docs/portable-design.md section 5).

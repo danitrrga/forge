@@ -72,10 +72,10 @@ check("forge sync --all runs agent config and system doc, in that order",
 code, out = forge("skills")
 steps = [l for l in out.splitlines() if l.startswith("== forge:")]
 check("forge skills (a dry-run) runs its three steps and exits 0",
-      code == 0 and steps == ["== forge: online skills ==", "== forge: skill links ==", "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)"],
+      code == 0 and steps == ["== forge: online skills ==", "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)", "== forge: skill links =="],
       "exit %d: %s" % (code, tail(out)))
 
-check("cli.SKILLS names online skills, skill links and gsd runtime", [s[0] for s in getattr(cli, "SKILLS", [])] == ["online skills", "skill links", "gsd runtime"],
+check("cli.SKILLS names online skills, gsd runtime and skill links, in that order", [s[0] for s in getattr(cli, "SKILLS", [])] == ["online skills", "gsd runtime", "skill links"],
       "%s" % [s[0] for s in getattr(cli, "SKILLS", [])])
 check("cli.SYNC names agent config and system doc", [s[0] for s in cli.SYNC] == ["agent config", "system doc"],
       "%s" % [s[0] for s in cli.SYNC])
