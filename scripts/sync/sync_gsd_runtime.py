@@ -334,16 +334,22 @@ def stage(pkg, version):
     return True
 
 
-def normalize(text):
-    """Staging paths back to the real config dir.
+def stage_forms():
+    """The spellings of the staging directory in the installer's text, each with what it becomes: `$HOME/<rel>` and
+    `~/<rel>` (gsd-core writes its @-references this way) keep their spelling over the real config dir, and the absolute
+    path becomes `$HOME/.claude`. Only a staging directory under HOME has the first two."""
+    forms = [(STAGE, "$HOME/.claude")]
+    if STAGE.startswith(HOME + os.sep):
+        rel = os.path.relpath(STAGE, HOME)
+        forms = [("$HOME/" + rel, "$HOME/.claude"), ("~/" + rel, "~/.claude")] + forms
+    return forms
 
-    The installer bakes the config dir into the text it writes, and writes it home-relative as
-    `$HOME/...` -- so the staged files carry `$HOME/.cache/forge/gsd-stage/cfg/...`. Both that
-    form and the absolute one are rewritten, trailing-slash variant first so the bare directory
-    cannot eat its own prefix."""
-    stage_home = "$HOME/" + os.path.relpath(STAGE, HOME) if STAGE.startswith(HOME) else STAGE
-    for form in (stage_home, STAGE):
-        text = text.replace(form + "/", "$HOME/.claude/").replace(form, "$HOME/.claude")
+
+def normalize(text):
+    """Staging paths back to the real config dir, in each spelling (stage_forms), the trailing-slash variant first so
+    the bare directory cannot eat its own prefix."""
+    for form, real in stage_forms():
+        text = text.replace(form + "/", real + "/").replace(form, real)
     return text
 
 
@@ -373,7 +379,12 @@ def apply_patches(text, name, patches, errors):
 
 
 def want_text(src, name, patches, errors):
-    return apply_patches(normalize(read(src)), name, patches, errors)
+    text = apply_patches(normalize(read(src)), name, patches, errors)
+    # A spelling no rule knows would leave the file pointing into the cache: refused, not copied.
+    marker = os.path.relpath(STAGE, HOME) if STAGE.startswith(HOME + os.sep) else STAGE
+    if marker in text:
+        errors.append("%s: still names the staging directory (%s) after normalising -- add its spelling to stage_forms" % (name, marker))
+    return text
 
 
 def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None):
