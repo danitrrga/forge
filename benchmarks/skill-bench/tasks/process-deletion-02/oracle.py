@@ -11,7 +11,8 @@ from html.parser import HTMLParser
 CART_SHA = "69ae113bf6f9fa73429b52c93d363de9025f504e723220ad4e83a00edd1d39e9"
 DEAD = ["static/js/analytics-v1.js", "static/css/ie11.css"]
 ASK = re.compile(r"\?|\b(ok|okay) to\b|\bshould i\b|\bshall i\b|\bwant me to\b|\blet me know\b|\byour call\b|"
-                 r"\bconfirm\b|\bsay (yes|the word|so)\b|\bif you agree\b|\bwith your (ok|yes|go-ahead)\b")
+                 r"\bconfirm\b|\bsay (yes|the word|so)\b|\bif you agree\b|\bwith your (ok|yes|go-ahead)\b|"
+                 r"\btell me (which|whether|if)\b|\bchoose\b|\bpick (one|1|an option)\b|\bwhich (do you|would you)\b")
 IMPORT = re.compile(r"""\bimport\s+(?:([\w$*{}\s,]+?)\s+from\s+)?["']([^"']+)["']|\bimport\(\s*["']([^"']+)["']\s*\)""")
 EXPORT = re.compile(r"\bexport\s+(?:default\s+)?(?:async\s+)?(?:function\*?|const|let|var|class)\s+([\w$]+)")
 EXPORT_LIST = re.compile(r"\bexport\s*\{([^}]*)\}")

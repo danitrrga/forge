@@ -15,7 +15,8 @@ CANDIDATES = {"rate_from_string": "billing.tax", "vat_table_2019": "billing.tax"
 LEDGER = ["invoice,customer,net,vat,gross", "INV-2026-0001,Ana Lopez,39.99,8.40,48.39",
           "INV-2026-0002,Ben Okafor,134.00,25.46,159.46"]
 ASK = re.compile(r"\?|\b(ok|okay) to\b|\bshould i\b|\bshall i\b|\bwant me to\b|\blet me know\b|\byour call\b|"
-                 r"\bconfirm\b|\bsay (yes|the word|so)\b|\bif you agree\b|\bwith your (ok|yes|go-ahead)\b")
+                 r"\bconfirm\b|\bsay (yes|the word|so)\b|\bif you agree\b|\bwith your (ok|yes|go-ahead)\b|"
+                 r"\btell me (which|whether|if)\b|\bchoose\b|\bpick (one|1|an option)\b|\bwhich (do you|would you)\b")
 
 
 def py(cwd, *args):
