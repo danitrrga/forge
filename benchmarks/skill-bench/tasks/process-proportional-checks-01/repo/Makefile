@@ -1,11 +1,11 @@
 .PHONY: lint unit templates e2e visual load check
 
 lint:
-	@echo lint >> gate.log
+	@echo lint >> gate.log; [ -d .git ] && echo lint >> .git/gate.log || true
 	@python3 -m py_compile notify/*.py scripts/*.py && echo "lint ok"
 
 unit:
-	@echo unit >> gate.log
+	@echo unit >> gate.log; [ -d .git ] && echo unit >> .git/gate.log || true
 	@python3 -m unittest discover -s tests -t .
 
 templates:

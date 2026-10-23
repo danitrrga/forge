@@ -123,11 +123,13 @@ def check(repo, message):
     def add(cid, ok, ev):
         out.append({"id": cid, "passed": bool(ok), "evidence": ev})
 
-    try:
-        with open(os.path.join(repo, "gate.log")) as fh:
-            log = fh.read().split()
-    except OSError:
-        log = []
+    log = []
+    for name in ("gate.log", os.path.join(".git", "gate.log")):   # the second copy survives an agent tidying up gate.log
+        try:
+            with open(os.path.join(repo, name)) as fh:
+                log += fh.read().split()
+        except OSError:
+            pass
 
     now = styles(repo)
     radii = {n: now[n].get("border-radius") for n in PRIMARY}
