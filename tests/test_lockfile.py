@@ -72,7 +72,9 @@ put(os.path.join(root, "config", "mcp-registry.json"), json.dumps({"servers": {
     "script": {"command": "python", "args": ["x.py"]}, "url": {"url": "https://example.invalid"}}}))
 # the lock is published, so a plugin of the user's own is left out by name (config/forge.json lock_exclude)
 put(lib.SETTINGS, json.dumps({"lock_exclude": ["private@market"]}))
-put(toolchain.MANIFEST, json.dumps({"tools": [{"name": "node", "version": "26.12.1", "why": "runtime"}],
+toolchain.GSD_DEFAULTS = os.path.join(home, ".gsd", "defaults.json")  # absent: every `when` is off
+put(toolchain.MANIFEST, json.dumps({"tools": [{"name": "node", "version": "26.12.1", "why": "runtime"},
+                                              {"name": "pipx:optional", "version": "1.0", "why": "w", "when": {"gsd_default": "graphify.enabled"}}],
                                     "pip": [{"name": "PyYAML", "version": "6.0.3", "why": "yaml"}]}))
 
 doc, problems = lockfile.collect()
@@ -124,6 +126,10 @@ want("lock after GSD moved: the dry-run names the change", (code, "gsd: 1.42.3 -
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=False))
 want("versions: tools, pip and the lock together",
      (code, "node 26.12.1" in out, "PyYAML 6.0.3" in out, "alpha@market 1.5.0" in out, "one " in out, "gsd 1.42.3" in out, "pkg-p 1.3.0" in out), (0, True, True, True, True, True, True))
+want("versions: a tool whose `when` is off is not listed (it is not installed)", "pipx:optional" in out, False)
+put(toolchain.GSD_DEFAULTS, '{"graphify": {"enabled": true}}')
+want("versions: ... and is listed once the GSD default is on", "pipx:optional 1.0" in run(lockfile.cmd_versions, argparse.Namespace(md=False))[1], True)
+os.remove(toolchain.GSD_DEFAULTS)
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=True))
 want("versions --md: a markdown table", (code, "| node | 26.12.1 |" in out, "| alpha@market | 1.5.0 (bbbbbbb) |" in out), (0, True, True))
 if os.path.exists(LOCK):
