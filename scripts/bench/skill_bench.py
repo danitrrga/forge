@@ -55,6 +55,9 @@ def read_json(path):
 
 def run_oracle(task_dir, repo, message, timeout):
     """(results, error): the oracle's list of {id, passed, evidence} on a repo copy, or why it gave none."""
+    meta = project_meta(task_dir)
+    if meta is not None:
+        return run_checks(meta, repo, timeout)
     with tempfile.TemporaryDirectory() as t:
         runner, msg = os.path.join(t, "runner.py"), os.path.join(t, "message.txt")
         for p, text in ((runner, RUNNER), (msg, message)):
@@ -75,11 +78,73 @@ def run_oracle(task_dir, repo, message, timeout):
     return res, None
 
 
+def project_meta(task_dir):
+    """task.json of a project task (source.kind == "project"), else None."""
+    try:
+        meta = read_json(os.path.join(task_dir, "task.json"))
+    except Exception:
+        return None
+    return meta if (meta.get("source") or {}).get("kind") == "project" else None
+
+
+def sh(cmd, cwd, timeout):
+    """(returncode, output tail) of a shell command; a timeout is returncode 124."""
+    try:
+        r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return 124, "timeout after %ss" % timeout
+    return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()[-300:]
+
+
+def materialize(task_dir, repo, setup_timeout=900):
+    """Fill repo with a task's starting tree and return an error string or None. A project task is a `git archive` of its base
+    commit (in the git repository that holds the bench) committed into a fresh repository, so the history, and with it the
+    merged fix, is not there to read; the bench itself is removed from the tree, then the setup commands run."""
+    meta = project_meta(task_dir)
+    if meta is None:
+        shutil.copytree(os.path.join(task_dir, "repo"), repo)
+        return None
+    bench = os.path.dirname(os.path.dirname(task_dir))
+    top = subprocess.run(["git", "-C", bench, "rev-parse", "--show-toplevel"], capture_output=True, text=True)
+    if top.returncode:
+        return "bench is not inside a git repository"
+    commit = (meta.get("base") or {}).get("commit", "")
+    os.makedirs(repo)
+    arc = subprocess.run("git -C %s archive %s | tar -x -C %s" % (_q(top.stdout.strip()), _q(commit), _q(repo)), shell=True,
+                         capture_output=True, text=True)
+    if arc.returncode or not os.listdir(repo):
+        return "base commit %s not found in %s" % (commit[:12] or "?", top.stdout.strip())
+    shutil.rmtree(os.path.join(repo, os.path.basename(bench)), ignore_errors=True)
+    for c in (["init", "-q"], ["add", "-A"], ["-c", "user.name=bench", "-c", "user.email=bench", "commit", "-qm", "start"]):
+        subprocess.run(["git", "-C", repo] + c, check=True, capture_output=True)
+    for cmd in meta.get("setup") or []:
+        rc, out = sh(cmd, repo, setup_timeout)
+        if rc:
+            return "setup failed (%s): %s" % (cmd, out[-120:])
+    return None
+
+
+def _q(x):
+    import shlex
+    return shlex.quote(x)
+
+
+def run_checks(meta, repo, timeout):
+    """(results, None) for a project task: each check's shell command run in repo, exit status 0 = passed."""
+    res = []
+    for c in meta.get("checks") or []:
+        rc, out = sh(c["cmd"], repo, c.get("timeout", timeout))
+        res.append({"id": c["id"], "passed": rc == 0, "evidence": out[-160:]})
+    return res, None
+
+
 def fresh(task_dir, patch_rel=None):
-    """A temp copy of the task's repo with patch_rel applied: (dir, error)."""
+    """A temp copy of the task's starting tree with patch_rel applied: (dir, error)."""
     d = tempfile.mkdtemp(prefix="skillbench-")
     repo = os.path.join(d, "repo")
-    shutil.copytree(os.path.join(task_dir, "repo"), repo)
+    err = materialize(task_dir, repo)
+    if err:
+        return d, err
     if patch_rel:
         r = subprocess.run(["git", "apply", "--whitespace=nowarn", os.path.join(task_dir, patch_rel)], cwd=repo,
                            capture_output=True, text=True)
@@ -102,9 +167,70 @@ def read_message(task_dir, name):
     return open(p, encoding="utf-8").read() if os.path.exists(p) else None
 
 
+def validate_project(bench, tid, concepts, timeout):
+    """(problems, n_checks) for a project task: see the module docstring."""
+    td = os.path.join(bench, "tasks", tid)
+    meta = project_meta(td)
+    bad = [("task.json lacks %s" % k) for k in KEYS + ("base", "checks") if k not in meta]
+    if meta.get("id") != tid:
+        bad.append("task.json id %r is not the directory name" % meta.get("id"))
+    c = concepts.get(meta.get("concept"))
+    if c is None:
+        bad.append("concept %r is not declared in concepts.json" % meta.get("concept"))
+    elif c.get("field") != meta.get("field"):
+        bad.append("field %r is not the field of concept %s" % (meta.get("field"), meta.get("concept")))
+    checks = meta.get("checks") or []
+    if not checks:
+        bad.append("zero checks: the task looks at nothing")
+    for c in checks:
+        if not (c.get("id") and c.get("cmd") and c.get("before") in ("fail", "pass")):
+            bad.append("check %r needs id, cmd and before (fail or pass)" % c.get("id"))
+    if len({c.get("id") for c in checks}) != len(checks):
+        bad.append("check ids are not unique")
+    if not os.path.exists(os.path.join(td, "ideal", "solution.patch")):
+        bad.append("ideal/solution.patch is missing")
+    if meta.get("message_required") and not os.path.exists(os.path.join(td, "ideal", "message.md")):
+        bad.append("ideal/message.md is missing (message_required)")
+    if bad:
+        return bad, 0
+    before = {c["id"]: c["before"] == "pass" for c in checks}
+    start, err = verdict(td, None, "", timeout)
+    if err:
+        return [("start: " + err)], 0
+    wrong = [r["id"] for r in start if r["passed"] != before[r["id"]]]
+    if wrong:
+        bad.append("at base these checks do not give their declared 'before' verdict: %s" % ", ".join(wrong))
+    if not any(not v for v in before.values()) or all(r["passed"] for r in start):
+        bad.append("no check fails at base: the task is already solved")
+    shape = lambda r: [(x["id"], bool(x["passed"])) for x in (r or [])]  # noqa: E731
+    if any(shape(verdict(td, None, "", timeout)[0]) != shape(start) for _ in range(2)):
+        bad.append("a check is nondeterministic: runs at base disagree")
+    runs = [verdict(td, "ideal/solution.patch", "", timeout) for _ in range(3)]
+    for res, err in runs[:1]:
+        if err:
+            bad.append("ideal: " + err)
+        elif not all(x["passed"] for x in res):
+            bad.append("ideal fails: %s" % ", ".join(x["id"] for x in res if not x["passed"]))
+    if not any(r[1] for r in runs) and len({tuple(shape(r[0])) for r in runs}) > 1:
+        bad.append("a check is nondeterministic: the ideal diff gives different verdicts on three runs")
+    for name, must_pass in (("alt", True), ("naive", False)):
+        if not os.path.exists(os.path.join(td, name, "solution.patch")):
+            continue
+        res, err = verdict(td, "%s/solution.patch" % name, "", timeout)
+        if err:
+            bad.append("%s: %s" % (name, err))
+        elif must_pass and not all(x["passed"] for x in res):
+            bad.append("alt fails: %s" % ", ".join(x["id"] for x in res if not x["passed"]))
+        elif not must_pass and all(x["passed"] for x in res):
+            bad.append("naive solution passes every check: the checks cannot tell a wrong answer from a right one")
+    return bad, len(checks)
+
+
 def validate_task(bench, tid, concepts, timeout):
     """(problems, n_checks) for one task."""
     td = os.path.join(bench, "tasks", tid)
+    if project_meta(td) is not None:
+        return validate_project(bench, tid, concepts, timeout)
     bad = []
     try:
         meta = read_json(os.path.join(td, "task.json"))
@@ -289,9 +415,16 @@ def do_job(job, a):
     shutil.rmtree(base, ignore_errors=True)
     work = os.path.join(base, "work")
     td = os.path.join(a.bench, "tasks", task)
-    shutil.copytree(os.path.join(td, "repo"), work)
-    for c in (["init", "-q"], ["add", "-A"], ["-c", "user.name=bench", "-c", "user.email=bench", "commit", "-qm", "start"]):
-        subprocess.run(["git", "-C", work] + c, check=True, capture_output=True)
+    err = materialize(td, work)
+    if err:
+        res = {"task": task, "arm": arm, "trial": trial, "invalid": True, "passed": None, "invalid_reason": err, "started": time.time(),
+               "field": None, "concept": None, "skill_called": False, "tokens": 0, "cost_usd": None, "duration_s": 0, "checks": []}
+        with open(os.path.join(base, "result.json"), "w") as fh:
+            json.dump(res, fh, indent=1)
+        return res
+    if project_meta(td) is None:
+        for c in (["init", "-q"], ["add", "-A"], ["-c", "user.name=bench", "-c", "user.email=bench", "commit", "-qm", "start"]):
+            subprocess.run(["git", "-C", work] + c, check=True, capture_output=True)
     for sd in paths:
         shutil.copytree(sd, os.path.join(work, ".claude", "skills", os.path.basename(sd.rstrip("/"))))
     meta = read_json(os.path.join(td, "task.json"))
@@ -423,8 +556,14 @@ def cmd_report(a):
     return 0
 
 
+def concepts_path(bench):
+    """A bench's own concepts.json, else forge's: a project's .bench holds tasks only and shares the 27 concepts."""
+    own = os.path.join(bench, "concepts.json")
+    return own if os.path.isfile(own) else os.path.join(DEFAULT_BENCH, "concepts.json")
+
+
 def load(bench):
-    concepts = read_json(os.path.join(bench, "concepts.json"))
+    concepts = read_json(concepts_path(bench))
     tdir = os.path.join(bench, "tasks")
     ids = sorted(d for d in os.listdir(tdir) if os.path.isdir(os.path.join(tdir, d))) if os.path.isdir(tdir) else []
     return concepts, ids
@@ -445,7 +584,8 @@ def cmd_validate(a):
                 print("  ! %s: %s" % (tid, b))
         else:
             print("  %s: ok (%d checks)" % (tid, n))
-    thin = {c: n for c, n in per_concept.items() if n < a.min_per_concept}
+    owns = os.path.isfile(os.path.join(a.bench, "concepts.json"))  # coverage is forge's bench's rule, not a project's
+    thin = {c: n for c, n in per_concept.items() if owns and n < a.min_per_concept}
     for c, n in sorted(thin.items()):
         problems += 1
         print("  ! coverage: %s has %d task(s), want at least %d" % (c, n, a.min_per_concept))
@@ -500,7 +640,9 @@ def main():
     q.add_argument("--bootstrap", type=int, default=10000)
     q.set_defaults(fn=cmd_report, bench=None)
     a = p.parse_args()
-    if a.bench is not None and not os.path.isfile(os.path.join(a.bench, "concepts.json")):
+    if a.bench is not None:
+        a.bench = os.path.abspath(a.bench)
+    if a.bench is not None and not os.path.isfile(concepts_path(a.bench)):
         sys.exit("! %s has no concepts.json" % a.bench)
     return a.fn(a)
 
