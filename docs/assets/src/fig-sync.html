@@ -2,20 +2,20 @@
 <html lang="en"><head><meta charset="utf-8"><title>what forge writes</title>
 <link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css"><script src="data.js"></script>
 <style>.stage{width:1280px;height:560px}
-.col{position:absolute;top:92px;font:600 12px/1 "Plex Sans";color:var(--ink2);letter-spacing:.02em}
+.col{position:absolute;top:92px;font:600 12px/1 var(--sub);color:var(--ink2);letter-spacing:.04em}
 .f{position:absolute;padding:12px 14px;height:64px}
 .f .p{font:500 13px/1 "Plex Mono";color:var(--ink)}
-.f .d{margin-top:9px;font:400 12.5px/1.3 "Plex Sans";color:var(--ink2);white-space:nowrap}
+.f .d{margin-top:9px;font:400 12.5px/1.3 var(--sub);color:var(--ink2);white-space:nowrap}
 .f .tag{position:absolute;right:10px;top:9px;height:20px;font-size:11px;padding:0 8px}
-.tag.g{background:#e0e0e0;color:#393939}.tag.p{background:#e8daff;color:#6929c4}
-.cmd{position:absolute;padding:14px 16px;background:var(--ink);color:#f4f4f4}
+.tag.g{background:var(--grayb);color:var(--grayt)}.tag.p{background:var(--purpleb);color:var(--purplet)}
+.cmd{position:absolute;padding:14px 16px;background:var(--inv);color:var(--inv-ink)}
 .cmd .p{font:500 15px/1 "Plex Mono"}
-.cmd .d{margin-top:10px;font:400 12.5px/1.45 "Plex Sans";color:#c6c6c6}
+.cmd .d{margin-top:10px;font:400 12.5px/1.45 var(--sub);color:var(--inv-ink2)}
 .title{position:absolute;left:64px;top:26px}
-.title b{display:block;font:600 22px/1 "Plex Sans"}
-.title span{display:block;margin-top:7px;font:400 14px/1 "Plex Sans";color:var(--ink2)}
-.doc{position:absolute;left:64px;right:64px;top:476px;height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--tile);border:1px solid var(--grid)}
-.doc b{font:600 14px/1 "Plex Mono"}.doc span{font:400 13px/1 "Plex Sans";color:var(--ink2)}
+.title b{display:block;font:600 22px/1 var(--display)}
+.title span{display:block;margin-top:9px;font:400 14px/1 var(--sub);color:var(--ink2)}
+.doc{position:absolute;left:64px;right:64px;top:476px;height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--tile);border:1px solid var(--rule)}
+.doc b{font:600 14px/1 "Plex Mono"}.doc span{font:400 13px/1 var(--sub);color:var(--ink2)}
 </style></head><body>
 <div class="stage grid64" style="background-position:-1px -1px">
   <div class="title"><b>What forge writes</b><span>You edit the sources. Every run rewrites the outputs, so a hand edit there is lost.</span></div>
@@ -24,7 +24,7 @@
   <div class="col" style="left:832px">FORGE WRITES</div>
   <div id="g"></div>
   <svg class="links" width="1280" height="560" viewBox="0 0 1280 560" id="links"></svg>
-  <div class="doc"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#24a148"/><path d="M6 10.2l2.6 2.6L14 7.4" stroke="#fff" stroke-width="1.8" fill="none"/></svg>
+  <div class="doc"><svg width="20" height="20" viewBox="0 0 20 20"><circle class="i-ok" cx="10" cy="10" r="9"/><path class="i-on" d="M6 10.2l2.6 2.6L14 7.4" stroke-width="1.8" fill="none"/></svg>
     <b>forge doctor</b><span>checks both sides: one PASS, FAIL or SKIP line per check, and the command that fixes a FAIL.</span></div>
 </div>
 <script>

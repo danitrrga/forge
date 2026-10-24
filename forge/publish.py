@@ -38,11 +38,15 @@ ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
 # sha256 of the bytes looked at. Only the extension rule is waived, and only for those exact bytes at that
 # path: a changed byte fails again until someone looks again, and an SVG is still read line by line.
 PUBLIC_ASSETS = {
-    "docs/assets/banner.png": "cb53a1eaf8aa564b52fc7ac89612bbb62d90bddc8293a27da2ae4df4ae451bf0",
-    "docs/assets/social-preview.png": "9af375da49ae7493032bfb6d5e614e47eac59796df2f50b164a70f76f5f065a1",
-    "docs/assets/fig-sync.png": "3294870f2756972495829aa1670699214c764dbafecddd394725ecc62bc2ceac",
-    "docs/assets/fig-trim.png": "be7b3fb8300174f6ce9366ba0066dd6cf48447b27b7e449401e277b89162300b",
-    "docs/assets/fig-bench.png": "c943ee79baec2dcb91fb337d23f9513c207aa6e0f3aa173af3cc2be51dedf53a",
+    "docs/assets/banner.png": "79349979f7f76ec917ba9516eca6278d3934da2755b036a4ff02a224ef3e6c7d",
+    "docs/assets/banner-dark.png": "d31cf2722bc2fb5d008b04f45e1ceb0ac20d9ea21f76b7245a24f95da5194eba",
+    "docs/assets/social-preview.png": "f900da5dedf10194596dfa68c290d9f11b141d34d3ce1c4419b956f71fe96248",
+    "docs/assets/fig-sync.png": "1702d23669adbeeea65d5fea678267517ac2b1791aab2bfefdb68ea52592b82c",
+    "docs/assets/fig-sync-dark.png": "a42466ed670c80536ed8accf7a55223cae1d92e81798abc49cd84ba29ede43a3",
+    "docs/assets/fig-trim.png": "70f93a112dcff6e39ae9e49417fbcda5056d5aa488d98a0a644d0c4bbcfbfc71",
+    "docs/assets/fig-trim-dark.png": "dd5336fef818c137779afe0cf53e80d920e0d0dc4c232971064c085bb98b7639",
+    "docs/assets/fig-bench.png": "bf13a486feb46be094110cc9d440defa1505f0c695ac5eb530a5ee1c8a2995e2",
+    "docs/assets/fig-bench-dark.png": "11dd7917e2f009bf418deaef3d56fa6b51d98b4d998a335e616bfec7fe2b24c8",
 }
 # Where dates are data (a skill-bench task's calendar, its leap day), not the record of a decision: in these files a
 # private pattern that matches a bare ISO date is not applied. Every other private pattern still is.

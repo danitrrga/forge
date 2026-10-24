@@ -1,5 +1,5 @@
 {
- "_doc": "The fonts the README images use, each an exact file of an OFL-licensed npm package, fetched from jsDelivr by build.py into ~/.cache/forge/readme-fonts and checked against its sha256 before any render. Changing a font means adding its pin here.",
+ "_doc": "The fonts the README images use, each an exact file of an OFL-licensed npm package, fetched from jsDelivr by build.py into ~/.cache/forge/readme-fonts and checked against its sha256 before any render. Changing a font means adding its pin here. A variable file pins a weight range; a stretch, when given, fixes its width axis (the browser clamps every request to it).",
  "fonts": [
   {
    "family": "Plex Mono",
@@ -34,36 +34,21 @@
    "sha256": "0d1f0b8d0722224e32e9f28261bdc86c79115be73444ae5eceb73976a1bcdf83"
   },
   {
-   "family": "Plex Sans",
-   "package": "@fontsource/ibm-plex-sans",
+   "family": "Inter",
+   "package": "@fontsource-variable/inter",
    "version": "5.3.0",
-   "file": "ibm-plex-sans-latin-300-normal.woff2",
-   "weight": 300,
-   "sha256": "c4557c8a3ca4284da9445c144dd302689b723a6b95e5e4e140211a6132d8e0be"
+   "file": "inter-latin-wght-normal.woff2",
+   "weight": "100 900",
+   "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
   },
   {
-   "family": "Plex Sans",
-   "package": "@fontsource/ibm-plex-sans",
+   "family": "Mona Sans",
+   "package": "@fontsource-variable/mona-sans",
    "version": "5.3.0",
-   "file": "ibm-plex-sans-latin-400-normal.woff2",
-   "weight": 400,
-   "sha256": "3b646991d30055a93a4ecc499713d4347953a74a947ecab435ab72070cbdab0e"
-  },
-  {
-   "family": "Plex Sans",
-   "package": "@fontsource/ibm-plex-sans",
-   "version": "5.3.0",
-   "file": "ibm-plex-sans-latin-500-normal.woff2",
-   "weight": 500,
-   "sha256": "0717336fb31fcdcde4b8deb3675bb4a0f7f6d484864afcd6751ac29975962203"
-  },
-  {
-   "family": "Plex Sans",
-   "package": "@fontsource/ibm-plex-sans",
-   "version": "5.3.0",
-   "file": "ibm-plex-sans-latin-600-normal.woff2",
-   "weight": 600,
-   "sha256": "8960851d691c054ed38e259bdcf1a6190d157b4203ed5bb32c632a863fb8ec2f"
+   "file": "mona-sans-latin-standard-normal.woff2",
+   "weight": "100 900",
+   "sha256": "5ea3740633e5ac7af56c13d7e8ec32bcae12e7723e53d34284469a8947ccb2f3",
+   "stretch": "125%"
   }
  ]
 }

@@ -6,7 +6,8 @@
 - every engine path the two files name in backticks (forge/, scripts/, hooks/, tests/, githooks/, examples/, bin/,
   benchmarks/skill-bench/, docs/assets/, .github/) exists in this checkout;
 - every UPPER_CASE name they put in backticks is assigned somewhere in the engine's Python;
-- every <img> in README.md points at a file that exists and carries alt text of at least 40 characters.
+- every <img> in README.md points at a file that exists and carries alt text of at least 40 characters, and every
+  <source srcset> (the dark-theme image of a <picture>) points at a file that exists.
 
 The paths of a user's data (config/forge.json, credentials/, skills/) are not engine files and are not checked.
 Controls (control_cases): a README with a made-up subcommand, a missing one, a dead path, an unknown constant and an
@@ -110,6 +111,8 @@ def check(readme, claude_md, subs, bench, exists, python_src, label=""):
     for src, alt in re.findall(r'<img src="([^"]+)" alt="([^"]*)"', readme):
         want(label + "image %s exists" % src, exists(src), True)
         want(label + "image %s has alt text of 40+ characters" % src, len(alt) >= 40, True)
+    for src in re.findall(r'<source [^>]*srcset="([^"]+)"', readme):
+        want(label + "dark-theme image %s exists" % src, exists(src), True)
     return failures[before:]
 
 
@@ -122,6 +125,9 @@ def control_cases(readme, claude_md, subs, bench, exists, python_src):
         ("a dead path", readme + "\n`forge/no_such_module.py`\n", claude_md, "engine paths named and missing"),
         ("an unknown constant", readme, claude_md + "\n`NO_SUCH_TABLE`\n", "constants named and never assigned"),
         ("an image with no alt text", readme + '\n<img src="docs/assets/none.png" alt="">\n', claude_md, "has alt text"),
+        ("a dark-theme image that is not there",
+         readme + '\n<source media="(prefers-color-scheme: dark)" srcset="docs/assets/none-dark.png">\n', claude_md,
+         "dark-theme image"),
         ("zero paths and constants", "## Commands\n\n```\n```\n", "", "read at least one path"))
     for name, r, c, needle in plants:
         got = check(r, c, subs, bench, exists, python_src, label="[control: %s] " % name)

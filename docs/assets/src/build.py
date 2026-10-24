@@ -2,7 +2,7 @@
 """Render the README images from their sources, the same way on any machine.
 
     python3 docs/assets/src/capture.py      # only when forge's output changed: rewrites transcript.json
-    python3 docs/assets/src/build.py        # every page in PAGES -> docs/assets/<name>.png
+    python3 docs/assets/src/build.py        # every page in PAGES -> docs/assets/<name>.png, and <name>-dark.png for THEMED
     python3 docs/assets/src/build.py --preview DIR   # the pages, fonts and data in DIR, to look at live
 
 Each page is plain HTML and CSS at a fixed size. The fonts are the exact files pinned in fonts.json, fetched once into
@@ -27,6 +27,14 @@ CHROMIUM = os.environ.get("CHROMIUM", "/usr/bin/chromium")
 # name: (width, height). The file is <name>.html beside this script and the image docs/assets/<name>.png.
 PAGES = {"banner": (1280, 640), "social-preview": (1200, 630), "fig-sync": (1280, 560), "fig-trim": (1280, 480), "fig-bench": (1280, 400)}
 SHARED = ("carbon.css",)
+# Pages the README shows, so each also renders on Carbon's dark theme as docs/assets/<name>-dark.png, for GitHub's
+# dark mode (<picture> with prefers-color-scheme). The social preview is one image: GitHub shows it on no theme.
+THEMED = ("banner", "fig-sync", "fig-trim", "fig-bench")
+
+
+def pages():
+    """[(image name, html file, (w, h))]: every page, then the dark copy of each themed one."""
+    return [(n, n + ".html", wh) for n, wh in PAGES.items()] + [(n + "-dark", n + "-dark.html", PAGES[n]) for n in THEMED]
 
 
 def fonts():
@@ -57,8 +65,9 @@ def stage(dst):
     css = []
     for p, path in fonts():
         shutil.copy(path, os.path.join(dst, "fonts", p["file"]))
-        css.append('@font-face{font-family:"%s";src:url("fonts/%s") format("woff2");font-weight:%d;font-style:normal;font-display:block}'
-                   % (p["family"], p["file"], p["weight"]))
+        stretch = ";font-stretch:%s" % p["stretch"] if "stretch" in p else ""
+        css.append('@font-face{font-family:"%s";src:url("fonts/%s") format("woff2");font-weight:%s;font-style:normal;font-display:block%s}'
+                   % (p["family"], p["file"], p["weight"], stretch))
     with open(os.path.join(dst, "fonts.css"), "w") as fh:
         fh.write("\n".join(css) + "\n")
     t = json.load(open(os.path.join(HERE, "transcript.json")))
@@ -66,6 +75,12 @@ def stage(dst):
         fh.write("window.FORGE = " + json.dumps(data(t), indent=1) + ";\n")
     for name in PAGES:
         shutil.copy(os.path.join(HERE, name + ".html"), dst)
+    for name in THEMED:
+        html = open(os.path.join(HERE, name + ".html")).read()
+        if html.count('<html lang="en">') != 1:
+            sys.exit("! %s.html: no single <html lang=\"en\"> to mark dark" % name)
+        with open(os.path.join(dst, name + "-dark.html"), "w") as fh:
+            fh.write(html.replace('<html lang="en">', '<html lang="en" data-theme="dark">'))
     for s in SHARED:
         shutil.copy(os.path.join(HERE, s), dst)
 
@@ -91,11 +106,11 @@ def data(t):
 
 def render(dst):
     from PIL import Image
-    for name, (w, h) in PAGES.items():
+    for name, page, (w, h) in pages():
         png = os.path.join(dst, name + ".raw.png")
         r = subprocess.run([CHROMIUM, "--headless=new", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
                             "--window-size=%d,%d" % (w, h), "--virtual-time-budget=4000", "--screenshot=" + png,
-                            "file://" + os.path.join(dst, name + ".html")], capture_output=True, text=True)
+                            "file://" + os.path.join(dst, page)], capture_output=True, text=True)
         if r.returncode or not os.path.exists(png):
             sys.exit("! chromium could not render %s: %s" % (name, r.stderr.strip()[-300:]))
         im = Image.open(png).convert("RGB")
@@ -114,7 +129,7 @@ def main():
     a = ap.parse_args()
     if a.preview:
         stage(a.preview)
-        print("staged %d page(s) in %s" % (len(PAGES), a.preview))
+        print("staged %d page(s) in %s" % (len(pages()), a.preview))
         return
     with tempfile.TemporaryDirectory(prefix="forge-assets-") as d:
         stage(d)
