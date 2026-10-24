@@ -1,0 +1,46 @@
+{
+ "_doc": "The fonts the README images use, each an exact file of an OFL-licensed npm package, fetched from jsDelivr by build.py into ~/.cache/forge/readme-fonts and checked against its sha256 before any render. Changing a font means adding its pin here. A variable file pins a weight range; a stretch, when given, is the width range the browser may use.",
+ "fonts": [
+  {
+   "family": "Inter",
+   "package": "@fontsource-variable/inter",
+   "version": "5.3.0",
+   "file": "inter-latin-wght-normal.woff2",
+   "weight": "100 900",
+   "sha256": "3100e775e8616cd2611beecfa23a4263d7037586789b43f035236a2e6fbd4c62"
+  },
+  {
+   "family": "Mona Sans",
+   "package": "@fontsource-variable/mona-sans",
+   "version": "5.3.0",
+   "file": "mona-sans-latin-standard-normal.woff2",
+   "weight": "200 900",
+   "sha256": "5ea3740633e5ac7af56c13d7e8ec32bcae12e7723e53d34284469a8947ccb2f3"
+  },
+  {
+   "family": "Martian Mono",
+   "package": "@fontsource-variable/martian-mono",
+   "version": "5.3.0",
+   "file": "martian-mono-latin-standard-normal.woff2",
+   "weight": "100 800",
+   "sha256": "f9c1655c2c9d1ed5bb8b301a57d1169a1123ffef1a588dc50a7a487810f7d732",
+   "stretch": "75% 112.5%"
+  },
+  {
+   "family": "Commit Mono",
+   "package": "@fontsource/commit-mono",
+   "version": "5.3.0",
+   "file": "commit-mono-latin-400-normal.woff2",
+   "weight": "400",
+   "sha256": "86132abb57fc615f2ab900cde4cd9d5796e9791daf1f85d79fc933aa50b3b15c"
+  },
+  {
+   "family": "Commit Mono",
+   "package": "@fontsource/commit-mono",
+   "version": "5.3.0",
+   "file": "commit-mono-latin-700-normal.woff2",
+   "weight": "700",
+   "sha256": "1b00600b728444492b0c4906cb85e0055b889ea32ea4fb29bf25cd90cd0365b4"
+  }
+ ]
+}

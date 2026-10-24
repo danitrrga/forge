@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>which skills each project loads</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="forge.css"><script src="data.js"></script>
+<style>.stage{width:1280px;height:480px}
+.file{position:absolute;width:432px}
+.file .h{display:flex;justify-content:space-between;padding-bottom:10px;border-bottom:1px solid var(--rule);font:400 13px/1 "Commit Mono";color:var(--ink2)}
+.file .code{padding-top:12px}
+.note{position:absolute;left:64px;width:600px;font:400 15px/1.5 "Inter";color:var(--ink2)}
+.note code{font-size:14px;color:var(--ink)}
+</style></head><body>
+<div class="stage">
+  <div class="title" style="position:absolute;left:64px;top:40px">Which skills each project loads<i></i></div>
+  <div class="sub" style="position:absolute;left:64px;top:82px">A profile with skills_keep loads only those; one without it loads every skill.</div>
+  <table class="grid" id="t" style="position:absolute;left:64px;top:148px"></table>
+  <div class="note" style="top:304px">With GSD on, <code>skill_keep.gsd_exclude</code> drops a <code>gsd-*</code> skill from every project, and <code>gsd_opt_in</code> keeps one only where an <code>extras</code> row names it.</div>
+  <div class="file" style="left:784px;top:148px"><div class="h"><span>config/profiles/api.claude.json</span><span>you write</span></div><div class="code" id="prof"></div></div>
+  <div class="file" style="left:784px;top:300px"><div class="h"><span>~/code/api/.claude/settings.local.json</span><span>forge writes</span></div><div class="code" id="set"></div></div>
+  <svg class="links" width="1280" height="480" viewBox="0 0 1280 480" id="links"></svg>
+</div>
+<script>
+const F=window.FORGE, M=F.matrix, esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const sk=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="skill");
+document.getElementById("t").innerHTML=`<tr><td class="cap">project</td><td class="cap">profile</td><td class="cap" colspan="2">skills it loads</td></tr>`+
+  M.rows.map(([n,v])=>`<tr><td class="p">${n}</td><td class="n">${n==="~/forge"?"forge":n.split("/").pop()}.claude.json</td>${sk.map(([c,i])=>`<td class="${v[i]?"":"off"}" ${v[i]?"":'id="off"'}>${c}</td>`).join("")}</tr>`).join("");
+// the keys the table follows from: the api profile's skills_keep, and the override forge wrote for the skill it leaves out
+const prof=F.files["config/profiles/api.claude.json"].trimEnd().split("\n"), a=prof.findIndex(l=>l.includes('"skills_keep"'));
+document.getElementById("prof").innerHTML=esc(prof.slice(a,a+3).join("\n")).replace('"skills_keep"','<span class="ko">"skills_keep"</span>');
+document.getElementById("set").innerHTML=esc(F.files["~/code/api/.claude/settings.local.json"].trimEnd()).replace(/"release": "off"/,'<span class="ko">"release": "off"</span>');
+document.fonts.ready.then(()=>{
+  const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg", add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e)};
+  const box=id=>document.getElementById(id).getBoundingClientRect();
+  const k=document.querySelector("#prof .ko").getBoundingClientRect(), o=document.querySelector("#set .ko").getBoundingClientRect(), c=box("off");
+  const yk=k.top+k.height/2, yo=o.top+o.height/2, yc=c.top+c.height/2, x=752;
+  add("path",{d:`M784 ${yk} H${x} V${yo} H784`}); add("path",{d:`M${c.right+8} ${yc} H${x}`,"stroke-dasharray":"3 4"});
+  [[784,yk],[784,yo],[c.right+8,yc]].forEach(([cx,cy])=>add("circle",{cx,cy,r:3}));
+});
+</script>
+</body></html>

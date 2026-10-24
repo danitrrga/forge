@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>skill-bench</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="forge.css">
+<style>.stage{width:1280px;height:400px}
+.s{position:absolute;top:140px;height:184px;padding:0 20px 0 0}
+.s+.s{border-left:1px solid var(--rule);padding-left:20px}
+.s .h{margin-top:12px;font:600 17px/1.2 "Inter";color:var(--ink)}
+.s .d{margin-top:10px;font:400 14px/1.45 "Inter";color:var(--ink2)}
+.s .code{margin-top:10px;font-size:14px;line-height:22px}
+</style></head><body>
+<div class="stage">
+  <div class="title" style="position:absolute;left:64px;top:40px">skill-bench: does a skill make the agent better?<i></i></div>
+  <div class="sub" style="position:absolute;left:64px;top:82px">Each task scores the result with an oracle, never an impression.</div>
+  <div class="s" style="left:64px;width:300px"><div class="cap">01 task</div><div class="h">logic-datetime-02</div>
+    <div class="d">&ldquo;&hellip;got paid as 8 hours, but the clocks went forward at 2:00 that night, so he only worked 7.&rdquo;</div>
+    <div class="code">repo/ + oracle.py, 8 checks</div></div>
+  <div class="s" style="left:364px;width:200px"><div class="cap">02 validate</div><div class="h">The oracle can fail</div>
+    <div class="code">ideal  <b>pass</b>
+alt    <b>pass</b>
+naive  <span class="ko">fail</span></div>
+    <div class="d">before any score is trusted.</div></div>
+  <div class="s" style="left:564px;width:264px"><div class="cap">03 arms &times; <span style="text-transform:none">k</span></div><div class="h">Same task, with and without</div>
+    <div class="code">none                  k=3
+mine=skills/my-skill  k=3</div></div>
+  <div class="s" style="left:828px;width:200px"><div class="cap">04 run</div><div class="h">claude -p</div>
+    <div class="d">in its own config dir: no user hooks, skills or CLAUDE.md. In bubblewrap when installed.</div></div>
+  <div class="s" style="left:1028px;width:188px"><div class="cap">05 report</div><div class="h">Paired, per task</div>
+    <div class="d">pass rate, tokens and time per arm; run.json records the model id.</div></div>
+  <div class="rule" style="left:64px;right:64px;top:340px;border-top-width:1px"></div>
+  <div class="d" style="position:absolute;left:64px;top:356px;font:400 15px/1.4 Inter;color:var(--ink2)">Arms run on different models are refused: <code class="m" style="color:var(--ink);font-size:14px">A difference between them would measure the model, not the skill.</code></div>
+</div>
+</body></html>

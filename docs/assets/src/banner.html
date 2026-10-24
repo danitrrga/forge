@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>forge banner</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="forge.css"><script src="data.js"></script><script src="field.js"></script>
+<style>.stage{width:1280px;height:640px}</style></head><body>
+<div class="stage">
+  <div class="field" id="field" style="left:0;top:0;width:672px;height:640px"></div>
+  <div class="rule" style="left:672px;top:0;bottom:0;border-left-width:1px"></div>
+  <div class="say" style="position:absolute;left:720px;right:56px;top:88px">One source of truth for the <em>Claude Code and Codex</em> setup of every project on your machine.</div>
+  <div class="cap" style="position:absolute;left:720px;top:330px">what each project gets</div>
+  <table class="grid" id="t" style="position:absolute;left:720px;top:350px"></table>
+  <div class="code" style="position:absolute;left:720px;top:500px" id="c1"></div>
+  <div class="code" style="position:absolute;left:720px;top:556px" id="c2"></div>
+</div>
+<script>
+const F=window.FORGE, M=F.matrix;
+drawField(document.getElementById("field"), {cols:84, rows:48, cw:8, rh:13.3333, word:true, width:0.84, baseline:0.62});
+const sk=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="skill"), sv=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="server");
+document.getElementById("t").innerHTML=`<tr><td></td><td class="cap">mcp server</td><td class="cap" colspan="2">skills</td></tr>`+
+  M.rows.map(([n,v])=>{const s=sv.filter(([c,i])=>v[i]).map(([c])=>c);
+  return `<tr><td class="p">${n}</td><td class="n">${s.length?s.join(" "):"none"}</td>${sk.map(([c,i])=>`<td class="${v[i]?"":"off"}">${c}</td>`).join("")}</tr>`}).join("");
+document.getElementById("c1").innerHTML="<b>$ forge sync --apply --all</b>\n  "+F.sync.find(l=>/change\(s\) applied/.test(l)).trim();
+document.getElementById("c2").innerHTML="<b>$ forge doctor</b>\n  "+F.doctor.find(l=>l.startsWith("SUMMARY:"));
+</script>
+</body></html>
