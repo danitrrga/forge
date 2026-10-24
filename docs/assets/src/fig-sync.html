@@ -39,10 +39,14 @@ put(512,sy,256,0,"cmd",`<div class="p">forge sync</div><div class="d">per projec
 put(512,ky,256,0,"cmd",`<div class="p">forge skills</div><div class="d">per user: online skills, the GSD runtime, the skill links.</div>`);
 const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
 const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e)};
-const L=(x1,y1,x2,y2,mid)=>{add("path",{d:`M${x1} ${y1} H${mid} V${y2} H${x2}`});add("circle",{cx:x1,cy:y1,r:3});add("circle",{cx:x2,cy:y2,r:3})};
+// every connector sits on a pixel centre (n + .5), so a 1 px line is one crisp pixel and two lines on one row are one line
+const P=v=>Math.round(v)+0.5;
+const L=(x1,y1,x2,y2,mid)=>{y1=P(y1);y2=P(y2);add("path",{d:y1===y2?`M${x1} ${y1} H${x2}`:`M${x1} ${y1} H${P(mid)} V${y2} H${x2}`});add("circle",{cx:x1,cy:y1,r:3});add("circle",{cx:x2,cy:y2,r:3})};
 document.fonts.ready.then(()=>{
-  const cmds=g.querySelectorAll(".cmd"), mid=e=>e.offsetTop+e.offsetHeight/2;
-  const cs=mid(cmds[0]), ck=mid(cmds[1]), ry=i=>Y+i*H+22;
+  const cmds=g.querySelectorAll(".cmd"), ry=i=>Y+i*H+22;
+  // each block is centred exactly on the row it serves: sync on the middle source row, skills on the last
+  cmds[0].style.top=(ry(1)-Math.round(cmds[0].offsetHeight/2))+"px"; cmds[1].style.top=(ry(3)-Math.round(cmds[1].offsetHeight/2))+"px";
+  const cs=ry(1), ck=ry(3);
   [0,1,2].forEach(i=>L(440,ry(i),512,cs,476)); L(440,ry(3),512,ck,476);
   [0,1,2].forEach(i=>L(768,cs,832,ry(i),800)); L(768,ck,832,ry(3),800);
 });

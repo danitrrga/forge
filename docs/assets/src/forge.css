@@ -42,5 +42,5 @@ table.grid tr:first-child td{border-top:0;height:26px}
 table.grid td.p{font-weight:700;color:var(--ink)}
 table.grid td.n{color:var(--ink2)}
 svg.links{position:absolute;inset:0;pointer-events:none}
-svg.links path{stroke:var(--ink2);fill:none;stroke-width:1.25}
+svg.links path{stroke:var(--ink2);fill:none;stroke-width:1;shape-rendering:crispEdges}
 svg.links circle{fill:var(--ink2)}
