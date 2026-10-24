@@ -7,6 +7,8 @@
   forge skills [--apply] the skill links (~/.claude/skills) and the GSD runtime, which belong to the machine, not to a project
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
                          with a project's name, only the checks that concern it, scoped to it
+  forge cli [NAME] [--probe]  which of Claude Code's own built-ins a project keeps or hides, and with --probe the
+                         live menu compared with forge's registry (runs `claude -p` once)
   forge test             run every test_*.py in the repo
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
@@ -33,9 +35,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
-from forge import lib, lockfile, mcp, owned, skills, toolchain
+from forge import cli_extras, lib, lockfile, mcp, owned, skills, toolchain
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -764,6 +767,66 @@ def doctor_extra_row():
     return out
 
 
+def cli_builtins_row():
+    """The `cli built-ins` row (forge/cli_extras.py): every profile that chooses among Claude Code's own
+    built-ins (skill_keep.cli_common in config/forge.json, or its own cli_keep) is compared with what the
+    generator would write (settings_forge_would_write), so a settings.local.json that was edited by hand or
+    never synced is a FAIL naming `python3 bin/forge sync --apply`. PASS says how many projects and registry
+    names it looked at; a frozen profile (forge writes nothing) and a project that cannot be read are named,
+    and looking at no project is a FAIL. A SKIP while no profile chooses. Then `claude --version` against
+    cli_extras.CAPTURED: a WARN naming `forge cli --probe`, or a SKIP line when claude is not on PATH. No model
+    call and no network: the version is the only process it starts."""
+    common, global_names = cli_extras.common_setting(), skills.global_skills()
+    chosen, refused = {}, []
+    for name, prof in sorted(lib.profiles().items()):
+        is_on, errors, _, _ = cli_extras.plan(prof, common, global_names)
+        if is_on:
+            chosen[name] = prof
+            refused += ["%s: %s" % (name, e) for e in errors]
+    if not chosen:
+        return lib.Result("SKIP", "cli built-ins", NOT_ARMED + "the built-ins choice is off: config/forge.json has no "
+                          "skill_keep.cli_common and no profile has cli_keep")
+    doc = lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json"), quiet=True)
+    registry = doc.get("servers") if isinstance(doc, dict) else None
+    if not isinstance(registry, dict):
+        return lib.Result("FAIL", "cli built-ins", "config/mcp-registry.json has no servers object, so nothing was compared")
+    stale, unread, frozen, looked = [], [], [], 0
+    for name, prof in chosen.items():
+        if prof.get("frozen"):
+            frozen.append(name)
+        elif not prof.get("project_path") or not os.path.isdir(prof["project_path"]):
+            unread.append(name)
+        else:
+            try:
+                wanted = settings_forge_would_write(name, prof, registry)
+            except lib.Unreadable:
+                unread.append(name)
+                continue
+            looked += 1
+            if wanted is not None:
+                stale.append(name)
+    notes = (["frozen, so forge writes nothing: %s" % ", ".join(frozen)] if frozen else []) + (
+        ["no project_path, no such directory or an unreadable settings file: %s" % ", ".join(unread)] if unread else [])
+    seen = "looked at %d project(s) against %d registry name(s)" % (looked, len(cli_extras.HIDEABLE))
+    if stale or refused or not looked:
+        said = (["settings.local.json is not what forge would write in %s -- python3 bin/forge sync --apply"
+                 % ", ".join(stale)] if stale else []) + refused + (
+            ["a check that saw nothing is not a pass"] if not looked else [])
+        level, detail = "FAIL", "; ".join(said + notes + [seen])
+    else:
+        level, detail = "PASS", "; ".join([seen + ", each settings.local.json is what forge would write"] + notes)
+    exe, version = cli_extras.claude_version()
+    if not exe:
+        return [lib.Result(level, "cli built-ins", detail), lib.Result(
+            "SKIP", "cli built-ins", NOT_ARMED + "claude is not on PATH, so its version was not compared with the registry's "
+            "(captured on %s)" % cli_extras.CAPTURED)]
+    if version == cli_extras.CAPTURED:
+        return lib.Result(level, "cli built-ins", "%s; claude %s is the version the registry was captured on" % (detail, version))
+    return [lib.Result(level, "cli built-ins", detail), lib.Result(
+        "WARN", "cli built-ins", "claude is %s, the registry was captured on %s: forge cli --probe NAME lists the menu "
+        "entries forge does not know" % (version or "a version forge could not read", cli_extras.CAPTURED))]
+
+
 # (name, command, fix). A command exits 0 when healthy. A callable returns a lib.Result instead,
 # which is how a check can be a WARN: a command's exit code is only ever PASS or FAIL
 # (hindsight_doctor exits with its failure count, argparse with 2). The fix is appended to the
@@ -786,6 +849,8 @@ CHECKS = [
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
+    # Its results carry their own fix (sync --apply, forge cli --probe), so the row's is empty.
+    ("cli built-ins", cli_builtins_row, ""),
 ]
 
 # What `forge sync --project NAME` (a dry-run) prints for a file its --apply would change: one
@@ -1167,6 +1232,96 @@ def cmd_doctor(a):
     return lib.report(results)
 
 
+# `forge cli --probe`: one cheap turn on the smallest model, only to read the init line it opens with.
+PROBE_ARGV = ["-p", "ok", "--model", "haiku", "--output-format", "stream-json", "--verbose", "--no-session-persistence",
+              "--max-turns", "1"]
+PROBE_TIMEOUT = 120
+
+
+def probe_init(exe, cwd):
+    """The first stream-json line of `claude -p` whose subtype is init, parsed, or None when it ends without one.
+    The pipe is closed and claude stopped as soon as that line is read, so the turn itself is not waited for."""
+    proc = subprocess.Popen([exe] + PROBE_ARGV, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.DEVNULL, text=True)
+    timer = threading.Timer(PROBE_TIMEOUT, proc.kill)
+    timer.start()
+    init = None
+    try:
+        for line in proc.stdout:
+            try:
+                doc = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(doc, dict) and doc.get("subtype") == "init":
+                init = doc
+                break
+    finally:
+        timer.cancel()
+        proc.stdout.close()
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+    return init
+
+
+def cmd_cli(a):
+    """forge cli [--probe] [NAME]: per registry name of forge/cli_extras.py, `kept` or `hidden` in the project and why
+    (cli_common, cli_keep, not kept), then how many always-on built-ins stay. With the feature off, one line that
+    says so. --probe also starts `claude -p` once in the project and names every entry of the live menu that
+    forge does not account for (`unknown: NAME`, exit 1; the count it looked at is always printed, and zero is a
+    failure); claude missing is NOT RUN, NOT ARMED and exit 0. NAME defaults to the project of the current
+    directory (CLAUDE_PROJECT_DIR first), as session-start finds it."""
+    skipped = []
+    profs = lib.profiles(skipped)
+    name = a.project or lib.resolve_project(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    if name not in profs:
+        why = {f[:-len(".claude.json")]: w for f, w in skipped}.get(name)
+        print("! forge cli: %s (known: %s)" % (
+            "profile %s cannot be read: %s" % (name, why) if why else
+            "unknown project: %s" % name if name else "this directory is in no project, name one", ", ".join(sorted(profs))))
+        return 1
+    prof = profs[name]
+    common = cli_extras.common_setting()
+    on, errors, rows = cli_extras.listing(prof, common, skills.global_skills())
+    if errors:
+        for e in errors:
+            print("! %s: %s" % (name, e))
+        return 1
+    if not on:
+        print("forge cli %s: the built-ins choice is off; turn it on with skill_keep.cli_common in config/forge.json or "
+              "cli_keep in the profile (README: Choose which built-ins a project shows)" % name)
+    for n, state, why in rows:
+        print("%-6s %s (%s)" % (state, n, why))
+    if on:
+        print("%d always-on built-in(s) stay in %s; they have no switch" % (len(cli_extras.ALWAYS), name))
+    if not a.probe:
+        return 0
+    exe, _ = cli_extras.claude_version()
+    if not exe:
+        print(NOT_ARMED + "claude is not on PATH")
+        return 0
+    cwd = prof.get("project_path")
+    if not cwd or not os.path.isdir(cwd):
+        print("! forge cli --probe: %s has no project_path directory to run claude in" % name)
+        return 1
+    init = probe_init(exe, cwd)
+    listed = init.get("slash_commands") if init else None
+    if not isinstance(listed, list) or not listed:
+        print("! forge cli --probe: %s listed 0 entries (slash_commands of claude's init line), and looking at nothing "
+              "is a failure" % ("claude's init line" if init else "claude printed no init line, so it"))
+        return 1
+    known = cli_extras.known_names(prof, skills.global_skills(), cli_extras.known_setting())
+    bad = cli_extras.unknown(listed, known)
+    for n in bad:
+        print("unknown: %s" % n)
+    print("forge cli --probe: looked at %d entries of claude's menu in %s, %d unknown%s" % (
+        len(listed), name, len(bad), " (add the ones you accept to skill_keep.cli_known in config/forge.json)" if bad else ""))
+    return 1 if bad else 0
+
+
 # Suites `forge test` does not run unless asked (`forge test --mutants`), each with why: the file, relative
 # to ROOT, and the reason. hooks/test_guard_mutants.py runs 326 mutants on max(2, cpu_count) workers, each a
 # test_guard_tool_use.py of about six cores: it once took a voice detector from 0.3 s to 50+ s.
@@ -1505,6 +1660,10 @@ def main(argv=None):
     d = sub.add_parser("doctor", help="what is broken")
     d.add_argument("project", nargs="?", help="this project only: each check scoped to it")
     d.set_defaults(fn=cmd_doctor)
+    c = sub.add_parser("cli", help="which of Claude Code's own built-ins a project keeps or hides")
+    c.add_argument("project", nargs="?", help="a profile name (default: the project of the current directory)")
+    c.add_argument("--probe", action="store_true", help="also run `claude -p` once and compare its menu with the registry")
+    c.set_defaults(fn=cmd_cli)
     m = sub.add_parser("metrics", help="a project's harness metrics, read from its Claude Code transcripts")
     m.add_argument("project", help="a profile name; its project_path is the repository and gives the transcript folder")
     m.add_argument("session", nargs="?", help="with --baseline: a session id (default: the newest)")

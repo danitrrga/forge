@@ -126,6 +126,12 @@ nothing. It works for trimmed and untrimmed profiles alike, and forge only ever 
 itself, so one you added by hand to `skillOverrides` stays. A name that is not in the registry, or that is also
 a global skill, is refused with a message.
 
+`forge cli [NAME]` shows the choice for a project, one `kept` or `hidden` line per registry name with the reason.
+`forge cli --probe [NAME]` also starts `claude -p` once in the project and names every entry of the live menu that
+forge does not account for (`unknown: NAME`, exit 1): that is how a new Claude Code built-in is noticed. A name you
+accept goes in `skill_keep.cli_known`. `forge doctor` has a `cli built-ins` row that checks each project's settings
+against the generator and warns when `claude --version` is not the version the registry was captured on.
+
 ## Measure a skill: skill-bench
 
 Does a skill make the agent better, and at what cost? `scripts/bench/skill_bench.py` answers with numbers. Each
@@ -170,6 +176,7 @@ forge add PATH [--name NAME] [--writes-tracked-files]       register a project a
 forge sync [--apply] [--project NAME | --all]               what would change (or change it), per project
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
+forge cli [NAME] [--probe]                                  which of Claude Code's own built-ins a project keeps or hides; --probe compares the live menu
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
