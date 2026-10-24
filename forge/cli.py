@@ -135,13 +135,13 @@ def settings_forge_would_write(name, prof, registry):
     a recorder for the call, so no byte reaches the project, no .bak and no ownership record either; the
     document is the last one recorded for a path other than the record's (owned.path()). The recorder is
     restored in a finally."""
-    from forge import hooks, owned  # not at import: hooks reads config/forge.json
+    from forge import cli_extras, hooks, owned  # not at import: hooks reads config/forge.json
     sel = [s for s in prof.get("servers", []) if s in registry]
     wanted, real = [], lib.write_json
     lib.write_json = lambda path, data, **kw: wanted.append((path, data))
     try:
         skills.write_settings_local(lib.Ctx(True, {name}, False), mcp.with_denied_tools(prof, sel, registry), None, None,
-                                    hooks.project_hooks(prof))
+                                    hooks.project_hooks(prof), cli_extras.common_setting())
     finally:
         lib.write_json = real
     docs = [data for path, data in wanted if path != owned.path()]
