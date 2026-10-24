@@ -1,43 +1,32 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>skill-bench</title>
-<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css">
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="forge.css">
 <style>.stage{width:1280px;height:400px}
-.title{position:absolute;left:64px;top:30px}
-.title b{display:block;font:600 22px/1 var(--display)}
-.title span{display:block;margin-top:9px;font:400 14px/1 var(--sub);color:var(--ink2)}
-.s{position:absolute;top:112px;height:208px;padding:14px 16px;background:var(--tile)}
-.s .n{font:600 11px/1 "Plex Mono";color:var(--node);letter-spacing:.04em}
-.s .h{margin-top:8px;font:600 15px/1.2 var(--display)}
-.s .p{margin-top:10px;font:400 12.5px/1.45 var(--sub);color:var(--ink2)}
-.s .c{margin-top:10px;font:400 12px/1.6 "Plex Mono";color:var(--ink)}
-.s .tag{height:20px;font-size:11px;padding:0 8px;margin:10px 4px 0 0}
-.tag.g{background:var(--greenb);color:var(--greent)}.tag.r{background:var(--redb);color:var(--redt)}
-.arm{display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid var(--rule);font:400 12px/1 "Plex Mono"}
-.warn{position:absolute;left:64px;right:64px;top:340px;display:flex;align-items:center;gap:12px;height:40px;padding:0 16px;background:var(--warnb);border:1px solid var(--warnl);border-left-width:3px;font:400 13px/1 var(--sub);color:var(--ink)}
-.warn code{font-size:12.5px}
+.s{position:absolute;top:140px;height:184px;padding:0 20px 0 0}
+.s+.s{border-left:1px solid var(--rule);padding-left:20px}
+.s .h{margin-top:12px;font:600 17px/1.2 "Inter";color:var(--ink)}
+.s .d{margin-top:10px;font:400 14px/1.45 "Inter";color:var(--ink2)}
+.s .code{margin-top:10px;font-size:14px;line-height:22px}
 </style></head><body>
-<div class="stage grid64" style="background-position:-1px -1px">
-  <div class="title"><b>skill-bench: does a skill make the agent better?</b><span>Each task scores the result with an oracle, never an impression.</span></div>
-  <div class="s" style="left:64px;width:288px"><div class="n">01 TASK</div><div class="h">logic-datetime-02</div>
-    <div class="p">&ldquo;&hellip;got paid as 8 hours, but the clocks went forward at 2:00 that night, so he only worked 7.&rdquo;</div>
-    <div class="c">repo/ &middot; oracle.py, 8 checks</div></div>
-  <div class="s" style="left:384px;width:192px"><div class="n">02 VALIDATE</div><div class="h">The oracle can fail</div>
-    <span class="tag g">ideal passes</span><span class="tag g">alt passes</span><span class="tag r">naive fails</span>
-    <div class="p">before any score is trusted.</div></div>
-  <div class="s" style="left:608px;width:224px"><div class="n">03 ARMS &times; k</div><div class="h">Same task, with and without</div>
-    <div class="c" style="margin-top:12px"><div class="arm"><span>none</span><span>k = 3</span></div><div class="arm"><span>mine=skills/my-skill</span><span>k = 3</span></div></div></div>
-  <div class="s" style="left:864px;width:160px"><div class="n">04 RUN</div><div class="h">claude -p</div>
-    <div class="p">its own config dir: no user hooks, skills or CLAUDE.md. In bubblewrap when installed.</div></div>
-  <div class="s" style="left:1056px;width:160px"><div class="n">05 REPORT</div><div class="h">Paired, per task</div>
-    <div class="p">pass rate, tokens and time per arm; run.json records the model id.</div></div>
-  <svg class="links" width="1280" height="400" viewBox="0 0 1280 400" id="links"></svg>
-  <div class="warn"><svg width="18" height="18" viewBox="0 0 20 20"><path d="M10 2l9 16H1z" fill="#f1c21b"/><path d="M10 8v4M10 14v1" stroke="#161616" stroke-width="1.8"/></svg>
-    <span>Arms on different models are refused: <code>A difference between them would measure the model, not the skill.</code></span></div>
+<div class="stage">
+  <div class="title" style="position:absolute;left:64px;top:40px">skill-bench: does a skill make the agent better?<i></i></div>
+  <div class="sub" style="position:absolute;left:64px;top:82px">Each task scores the result with an oracle, never an impression.</div>
+  <div class="s" style="left:64px;width:300px"><div class="cap">01 task</div><div class="h">logic-datetime-02</div>
+    <div class="d">&ldquo;&hellip;got paid as 8 hours, but the clocks went forward at 2:00 that night, so he only worked 7.&rdquo;</div>
+    <div class="code">repo/ + oracle.py, 8 checks</div></div>
+  <div class="s" style="left:364px;width:200px"><div class="cap">02 validate</div><div class="h">The oracle can fail</div>
+    <div class="code">ideal  <b>pass</b>
+alt    <b>pass</b>
+naive  <span class="ko">fail</span></div>
+    <div class="d">before any score is trusted.</div></div>
+  <div class="s" style="left:564px;width:264px"><div class="cap">03 arms &times; <span style="text-transform:none">k</span></div><div class="h">Same task, with and without</div>
+    <div class="code">none                  k=3
+mine=skills/my-skill  k=3</div></div>
+  <div class="s" style="left:828px;width:200px"><div class="cap">04 run</div><div class="h">claude -p</div>
+    <div class="d">in its own config dir: no user hooks, skills or CLAUDE.md. In bubblewrap when installed.</div></div>
+  <div class="s" style="left:1028px;width:188px"><div class="cap">05 report</div><div class="h">Paired, per task</div>
+    <div class="d">pass rate, tokens and time per arm; run.json records the model id.</div></div>
+  <div class="rule" style="left:64px;right:64px;top:340px;border-top-width:1px"></div>
+  <div class="d" style="position:absolute;left:64px;top:356px;font:400 15px/1.4 Inter;color:var(--ink2)">Arms run on different models are refused: <code class="m" style="color:var(--ink);font-size:14px">A difference between them would measure the model, not the skill.</code></div>
 </div>
-<script>
-const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
-const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
-[[352,384],[576,608],[832,864],[1024,1056]].forEach(([a,b])=>{add("path",{d:`M${a} 216 H${b}`,fill:"none",stroke:"#d02670","stroke-width":1.5});
-  add("circle",{cx:a,cy:216,r:3.5,fill:"#d02670"});add("circle",{cx:b,cy:216,r:3.5,fill:"#d02670"})});
-</script>
 </body></html>

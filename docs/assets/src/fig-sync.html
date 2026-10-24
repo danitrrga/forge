@@ -1,52 +1,50 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>what forge writes</title>
-<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css"><script src="data.js"></script>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="forge.css">
 <style>.stage{width:1280px;height:560px}
-.col{position:absolute;top:92px;font:600 12px/1 var(--sub);color:var(--ink2);letter-spacing:.04em}
-.f{position:absolute;padding:12px 14px;height:64px}
-.f .p{font:500 13px/1 "Plex Mono";color:var(--ink)}
-.f .d{margin-top:9px;font:400 12.5px/1.3 var(--sub);color:var(--ink2);white-space:nowrap}
-.f .tag{position:absolute;right:10px;top:9px;height:20px;font-size:11px;padding:0 8px}
-.tag.g{background:var(--grayb);color:var(--grayt)}.tag.p{background:var(--purpleb);color:var(--purplet)}
-.cmd{position:absolute;padding:14px 16px;background:var(--inv);color:var(--inv-ink)}
-.cmd .p{font:500 15px/1 "Plex Mono"}
-.cmd .d{margin-top:10px;font:400 12.5px/1.45 var(--sub);color:var(--inv-ink2)}
-.title{position:absolute;left:64px;top:26px}
-.title b{display:block;font:600 22px/1 var(--display)}
-.title span{display:block;margin-top:9px;font:400 14px/1 var(--sub);color:var(--ink2)}
-.doc{position:absolute;left:64px;right:64px;top:476px;height:52px;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--tile);border:1px solid var(--rule)}
-.doc b{font:600 14px/1 "Plex Mono"}.doc span{font:400 13px/1 var(--sub);color:var(--ink2)}
+.row{position:absolute;height:72px;border-top:1px solid var(--rule);padding-top:14px}
+.row .p{font:700 14px/1 "Commit Mono";color:var(--ink);font-variant-ligatures:none}
+.row .d{margin-top:10px;font:400 14px/1.3 "Inter";color:var(--ink2);white-space:nowrap}
+.row .t{position:absolute;right:20px;top:14px;font:400 13px/1 "Commit Mono";color:var(--ink2)}
+.cmd{position:absolute;padding:16px 18px;background:var(--ink);color:var(--ground)}
+.cmd .p{font:700 18px/1 "Commit Mono"}
+.cmd .d{margin-top:10px;font:400 14px/1.4 "Inter";color:color-mix(in oklch,var(--ground) 78%,var(--ink))}
 </style></head><body>
-<div class="stage grid64" style="background-position:-1px -1px">
-  <div class="title"><b>What forge writes</b><span>You edit the sources. Every run rewrites the outputs, so a hand edit there is lost.</span></div>
-  <div class="col" style="left:64px">YOU WRITE, IN THE CHECKOUT</div>
-  <div class="col" style="left:512px">FORGE RUNS</div>
-  <div class="col" style="left:832px">FORGE WRITES</div>
+<div class="stage">
+  <div class="title" style="position:absolute;left:64px;top:40px">What forge writes<i></i></div>
+  <div class="sub" style="position:absolute;left:64px;top:82px">You edit the sources. Every run rewrites the outputs, so a hand edit there is lost.</div>
+  <div class="cap" style="position:absolute;left:64px;top:132px">you write, in the checkout</div>
+  <div class="cap" style="position:absolute;left:512px;top:132px">forge runs</div>
+  <div class="cap" style="position:absolute;left:832px;top:132px">forge writes</div>
   <div id="g"></div>
   <svg class="links" width="1280" height="560" viewBox="0 0 1280 560" id="links"></svg>
-  <div class="doc"><svg width="20" height="20" viewBox="0 0 20 20"><circle class="i-ok" cx="10" cy="10" r="9"/><path class="i-on" d="M6 10.2l2.6 2.6L14 7.4" stroke-width="1.8" fill="none"/></svg>
-    <b>forge doctor</b><span>checks both sides: one PASS, FAIL or SKIP line per check, and the command that fixes a FAIL.</span></div>
+  <div class="rule" style="left:64px;right:64px;top:492px;border-top-width:1px"></div>
+  <div class="code" style="position:absolute;left:64px;top:508px"><b>forge doctor</b>  <span style="font-family:Inter">checks both sides: one PASS, FAIL or SKIP line per check, and the command that fixes a FAIL.</span></div>
 </div>
 <script>
-const g=document.getElementById("g"), tile=(x,y,w,html,cls)=>{const d=document.createElement("div");d.className=cls||"tile f";Object.assign(d.style,{left:x+"px",top:y+"px",width:w+"px"});d.innerHTML=html;g.appendChild(d);return d};
+const g=document.getElementById("g"), put=(x,y,w,h,cls,html)=>{const d=document.createElement("div");d.className=cls;Object.assign(d.style,{left:x+"px",top:y+"px",width:w+"px",height:h?h+"px":""});d.innerHTML=html;g.appendChild(d)};
+const Y=152, H=84;
 const S=[["config/profiles/&lt;name&gt;.claude.json","one per project: servers, skills, permissions, env",""],
          ["config/mcp-registry.json","one entry per MCP server, a secret as ${VAR}",""],
-         ["credentials/secrets.json","the only place real tokens live","<span class='tag g'>git-ignored</span>"],
-         ["skills/&lt;name&gt;/SKILL.md","your own skills","<span class='tag g'>git-ignored</span>"]];
-S.forEach(([p,d,t],i)=>tile(64,112+i*88,384,`<div class="p">${p}</div><div class="d">${d}</div>${t}`));
-tile(512,128,256,`<div class="p">forge sync</div><div class="d">per project. A SessionStart hook<br>runs it for the project you open.</div>`,"cmd");
-tile(512,320,256,`<div class="p">forge skills</div><div class="d">per user: online skills, the GSD<br>runtime, the skill links.</div>`,"cmd");
+         ["credentials/secrets.json","the only place real tokens live","git-ignored"],
+         ["skills/&lt;name&gt;/SKILL.md","your own skills","git-ignored"]];
 const O=[["&lt;project&gt;/.claude/settings.local.json","which skills and plugins load, permissions, env",""],
          ["~/.claude.json","each project's MCP servers, ${VAR} resolved",""],
-         ["&lt;project&gt;/.codex/config.toml","the same servers, for Codex","<span class='tag p'>Codex on</span>"],
+         ["&lt;project&gt;/.codex/config.toml","the same servers, for Codex","with Codex on"],
          ["~/.claude/skills/&lt;name&gt;","a link per skill into the checkout",""]];
-O.forEach(([p,d,t],i)=>tile(832,112+i*88,384,`<div class="p">${p}</div><div class="d">${d}</div>${t}`));
+S.forEach(([p,d,t],i)=>put(64,Y+i*H,384,72,"row",`<div class="p">${p}</div><div class="d">${d}</div>${t?`<div class="t">${t}</div>`:""}`));
+O.forEach(([p,d,t],i)=>put(832,Y+i*H,384,72,"row",`<div style="padding-left:16px"><div class="p">${p}</div><div class="d">${d}</div></div>${t?`<div class="t" style="right:0">${t}</div>`:""}`));
+const sy=Y+H+22-49, ky=Y+3*H+22-49;   // each block centred on the rows it serves
+put(512,sy,256,0,"cmd",`<div class="p">forge sync</div><div class="d">per project. A SessionStart hook runs it for the project you open.</div>`);
+put(512,ky,256,0,"cmd",`<div class="p">forge skills</div><div class="d">per user: online skills, the GSD runtime, the skill links.</div>`);
 const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
-const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
-const L=(x1,y1,x2,y2,mid)=>{add("path",{d:`M${x1} ${y1} H${mid} V${y2} H${x2}`,fill:"none",stroke:"#d02670","stroke-width":1.5});add("circle",{cx:x1,cy:y1,r:3.5,fill:"#d02670"});add("circle",{cx:x2,cy:y2,r:3.5,fill:"#d02670"})};
-// sources into sync (profiles, registry, secrets) and into skills (skills/)
-[0,1,2].forEach(i=>L(448,144+i*88,512,172,480)); L(448,144+3*88,512,364,480);
-// sync to the three project-side outputs, skills to the links
-[0,1,2].forEach(i=>L(768,172,832,144+i*88,800)); L(768,364,832,144+3*88,800);
+const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e)};
+const L=(x1,y1,x2,y2,mid)=>{add("path",{d:`M${x1} ${y1} H${mid} V${y2} H${x2}`});add("circle",{cx:x1,cy:y1,r:3});add("circle",{cx:x2,cy:y2,r:3})};
+document.fonts.ready.then(()=>{
+  const cmds=g.querySelectorAll(".cmd"), mid=e=>e.offsetTop+e.offsetHeight/2;
+  const cs=mid(cmds[0]), ck=mid(cmds[1]), ry=i=>Y+i*H+22;
+  [0,1,2].forEach(i=>L(440,ry(i),512,cs,476)); L(440,ry(3),512,ck,476);
+  [0,1,2].forEach(i=>L(768,cs,832,ry(i),800)); L(768,ck,832,ry(3),800);
+});
 </script>
 </body></html>

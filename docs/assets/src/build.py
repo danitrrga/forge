@@ -26,7 +26,7 @@ CACHE = os.path.join(os.path.expanduser("~"), ".cache", "forge", "readme-fonts")
 CHROMIUM = os.environ.get("CHROMIUM", "/usr/bin/chromium")
 # name: (width, height). The file is <name>.html beside this script and the image docs/assets/<name>.png.
 PAGES = {"banner": (1280, 640), "social-preview": (1200, 630), "fig-sync": (1280, 560), "fig-trim": (1280, 480), "fig-bench": (1280, 400)}
-SHARED = ("carbon.css",)
+SHARED = ("forge.css", "field.js")
 # Pages the README shows, so each also renders on Carbon's dark theme as docs/assets/<name>-dark.png, for GitHub's
 # dark mode (<picture> with prefers-color-scheme). The social preview is one image: GitHub shows it on no theme.
 THEMED = ("banner", "fig-sync", "fig-trim", "fig-bench")

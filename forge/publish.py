@@ -38,15 +38,15 @@ ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
 # sha256 of the bytes looked at. Only the extension rule is waived, and only for those exact bytes at that
 # path: a changed byte fails again until someone looks again, and an SVG is still read line by line.
 PUBLIC_ASSETS = {
-    "docs/assets/banner.png": "79349979f7f76ec917ba9516eca6278d3934da2755b036a4ff02a224ef3e6c7d",
-    "docs/assets/banner-dark.png": "d31cf2722bc2fb5d008b04f45e1ceb0ac20d9ea21f76b7245a24f95da5194eba",
-    "docs/assets/social-preview.png": "f900da5dedf10194596dfa68c290d9f11b141d34d3ce1c4419b956f71fe96248",
-    "docs/assets/fig-sync.png": "1702d23669adbeeea65d5fea678267517ac2b1791aab2bfefdb68ea52592b82c",
-    "docs/assets/fig-sync-dark.png": "a42466ed670c80536ed8accf7a55223cae1d92e81798abc49cd84ba29ede43a3",
-    "docs/assets/fig-trim.png": "70f93a112dcff6e39ae9e49417fbcda5056d5aa488d98a0a644d0c4bbcfbfc71",
-    "docs/assets/fig-trim-dark.png": "dd5336fef818c137779afe0cf53e80d920e0d0dc4c232971064c085bb98b7639",
-    "docs/assets/fig-bench.png": "bf13a486feb46be094110cc9d440defa1505f0c695ac5eb530a5ee1c8a2995e2",
-    "docs/assets/fig-bench-dark.png": "11dd7917e2f009bf418deaef3d56fa6b51d98b4d998a335e616bfec7fe2b24c8",
+    "docs/assets/banner.png": "2d41030c0b4da782a446eaca1a27056bb9222b89e3f829658376fe3a52c0c998",
+    "docs/assets/banner-dark.png": "a8cb60d242cfeb49af95f186003dfb01a38d5e0a0b5551fc54d25444a2ca5f25",
+    "docs/assets/social-preview.png": "212dc7ba8d3fc16fa4a69d03d7d5697fd6ef96211fbdcc2773345cb54e72a8b8",
+    "docs/assets/fig-sync.png": "74e8c661ab78412d3df65bea92f764adbc017c1adafcebff7a0c0e2a5905b25d",
+    "docs/assets/fig-sync-dark.png": "f0778093d1bfa81a9dca55f9dc29c5aff899dfe0e2d2806ce369ffe1c023f84b",
+    "docs/assets/fig-trim.png": "882268d0709c5f465e3e932e312e5024e8b9bcb4447d5cc05f5625003bc9e8ad",
+    "docs/assets/fig-trim-dark.png": "891f94f0192bc64234552bf4def41d1c750fe8b848cd359781a4c4c2b90ea9ba",
+    "docs/assets/fig-bench.png": "9c4dfecd2307dfd37f2bd87f08fef07368f5cc9f2c58b23ad520853d239a93e5",
+    "docs/assets/fig-bench-dark.png": "0c6552f887efd95af7b32aaa976ee805337eef27c9d1dc271a053fa51da0bee5",
 }
 # Where dates are data (a skill-bench task's calendar, its leap day), not the record of a decision: in these files a
 # private pattern that matches a bare ISO date is not applied. Every other private pattern still is.

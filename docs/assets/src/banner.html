@@ -1,55 +1,24 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>forge banner</title>
-<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css"><script src="data.js"></script>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="forge.css"><script src="data.js"></script><script src="field.js"></script>
 <style>.stage{width:1280px;height:640px}</style></head><body>
 <div class="stage">
-  <div class="bar"><span>forge writes every project's agent config from one checkout.</span><span>github.com/danitrrga/forge &rarr;</span></div>
-  <div class="grid64" style="position:absolute;left:0;right:0;top:32px;height:416px;background-position:-1px 15px"></div>
-  <div class="tile code" style="left:64px;top:88px;width:288px"><div class="hd"><span>config/profiles/api.claude.json</span></div><pre id="prof"></pre></div>
-  <div id="tiles"></div>
-  <div class="tile toast" style="left:960px;top:88px;width:256px">
-    <svg width="20" height="20" viewBox="0 0 20 20"><circle class="i-ok" cx="10" cy="10" r="9"/><path class="i-on" d="M6 10.2l2.6 2.6L14 7.4" stroke-width="1.8" fill="none"/></svg>
-    <div><b>forge doctor</b><span id="sum"></span></div>
-  </div>
-  <div class="tile toast" style="left:960px;top:216px;width:256px">
-    <svg class="i-ink" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke-width="1.4"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10 12h4"/></svg>
-    <div><b>forge sync --apply --all</b><span id="applied"></span></div>
-  </div>
-  <div class="tile" style="left:960px;top:312px;width:256px;height:80px" id="viz"></div>
-  <svg class="links" width="1280" height="640" viewBox="0 0 1280 640" id="links"></svg>
-  <div class="band" style="top:448px;bottom:0"><div class="name">forge</div>
-    <div class="r">One source of truth for the <b>Claude Code and Codex</b> setup of every project on your machine.</div></div>
+  <div class="field" id="field" style="left:0;top:0;width:672px;height:640px"></div>
+  <div class="rule" style="left:672px;top:0;bottom:0;border-left-width:1px"></div>
+  <div class="say" style="position:absolute;left:720px;right:56px;top:88px">One source of truth for the <em>Claude Code and Codex</em> setup of every project on your machine.</div>
+  <div class="cap" style="position:absolute;left:720px;top:330px">what each project gets</div>
+  <table class="grid" id="t" style="position:absolute;left:720px;top:350px"></table>
+  <div class="code" style="position:absolute;left:720px;top:500px" id="c1"></div>
+  <div class="code" style="position:absolute;left:720px;top:556px" id="c2"></div>
 </div>
 <script>
-const F=window.FORGE, M=F.matrix, esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
-// the profile exactly as forge add wrote it and the user edited it, with the two keys that do the work marked
-document.getElementById("prof").innerHTML=esc(F.files["config/profiles/api.claude.json"].trimEnd()).replace(/"(servers|skills_keep)"/g,'<span class="k">"$1"</span>');
-const sum=F.doctor.find(l=>l.startsWith("SUMMARY:"));document.getElementById("sum").innerHTML=sum.replace(" 0 warnings","<br>0 warnings");
-document.getElementById("applied").textContent=F.sync.find(l=>/change\(s\) applied/.test(l)).trim();
-const host=document.getElementById("tiles"), X=448, Y0=88, H=88, GAP=16, W=448;
-M.rows.forEach(([name,v],r)=>{
-  const servers=M.cols.filter((c,i)=>M.kinds[i]==="server"&&v[i]);
-  const skills=M.cols.map((c,i)=>[c,v[i]]).filter((_,i)=>M.kinds[i]==="skill");
-  const prof=name==="~/forge"?"forge":name.split("/").pop();
-  const el=document.createElement("div");el.className="tile proj";Object.assign(el.style,{left:X+"px",top:(Y0+r*(H+GAP))+"px",width:W+"px",height:H+"px"});
-  el.innerHTML=`<div class="t">${name}<small>${prof}.claude.json</small></div>
-   <div class="tags">${servers.length?servers.map(s=>`<span class="tag">${s}<span class="ai">MCP</span></span>`).join(""):`<span class="tag none">no MCP server</span>`}</div>
-   <div class="tgls">${skills.map(([s,on])=>`<span class="tgl ${on?"on":"off"}"><i></i>${s}</span>`).join("")}</div>`;
-  host.appendChild(el);
-});
-const vz=document.getElementById("viz");
-vz.innerHTML='<div class="h4" style="font-size:12px;padding:10px 12px 6px">Skills on, per project</div>'+M.rows.map(([n,v])=>{
-  const sk=v.filter((x,i)=>M.kinds[i]==="skill"),on=sk.filter(Boolean).length;
-  return `<div class="mono" style="display:grid;grid-template-columns:64px 1fr 44px;align-items:center;gap:6px;padding:0 12px;height:16px;font-size:11px;color:var(--ink2);white-space:nowrap"><span>${n.replace("~/code/","")}</span><i style="display:block;height:7px;background:linear-gradient(90deg,var(--viz) ${on/sk.length*100}%,var(--viz2) ${on/sk.length*100}%)"></i><span style="text-align:right">${on} of ${sk.length}</span></div>`}).join("");
-// magenta node connectors from the profile's two keys to what they produced in the api tile
-const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
-const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
-const lines=F.files["config/profiles/api.claude.json"].split("\n"),row=k=>lines.findIndex(l=>l.includes('"'+k+'"'));
-const keyY=[row("servers"),row("skills_keep")].map(i=>88+32+10+20*i+10);
-const tagY=Y0+11+14+10+11, tglY=Y0+11+14+10+22+10+8;
-[[keyY[0],tagY],[keyY[1],tglY]].forEach(([a,b],i)=>{
-  add("path",{d:`M352 ${a} H${400+i*16} V${b} H${X}`,fill:"none",stroke:"#d02670","stroke-width":1.5});
-  add("circle",{cx:352,cy:a,r:4,fill:"#d02670"});add("circle",{cx:X,cy:b,r:4,fill:"#d02670"});
-});
+const F=window.FORGE, M=F.matrix;
+drawField(document.getElementById("field"), {cols:84, rows:48, cw:8, rh:13.3333, word:true, width:0.84, baseline:0.62});
+const sk=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="skill"), sv=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="server");
+document.getElementById("t").innerHTML=`<tr><td></td><td class="cap">mcp server</td><td class="cap" colspan="2">skills</td></tr>`+
+  M.rows.map(([n,v])=>{const s=sv.filter(([c,i])=>v[i]).map(([c])=>c);
+  return `<tr><td class="p">${n}</td><td class="n">${s.length?s.join(" "):"none"}</td>${sk.map(([c,i])=>`<td class="${v[i]?"":"off"}">${c}</td>`).join("")}</tr>`}).join("");
+document.getElementById("c1").innerHTML="<b>$ forge sync --apply --all</b>\n  "+F.sync.find(l=>/change\(s\) applied/.test(l)).trim();
+document.getElementById("c2").innerHTML="<b>$ forge doctor</b>\n  "+F.doctor.find(l=>l.startsWith("SUMMARY:"));
 </script>
 </body></html>

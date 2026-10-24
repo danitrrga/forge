@@ -1,6 +1,6 @@
 # forge
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.png"><img src="docs/assets/banner.png" alt="forge: a project's profile, config/profiles/api.claude.json, asking for the playwright MCP server and the review skill, joined by connectors to the api project, which gets playwright and has review on and release off; the site and forge projects beside it with their own servers and skills; forge doctor reporting 9 passed, 0 warnings, 0 failures. One source of truth for the Claude Code and Codex setup of every project on your machine." width="100%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.png"><img src="docs/assets/banner.png" alt="forge: the word forge drawn as block letters on a grid of characters taken from the real profile files, beside the tagline One source of truth for the Claude Code and Codex setup of every project on your machine, and what each project gets: ~/code/api gets the playwright MCP server with review on and release off; ~/code/site gets docs with both skills; ~/forge has no MCP server and both skills. Below, forge sync --apply --all reports 2 change(s) applied and forge doctor reports 9 passed, 0 warnings, 0 failures." width="100%"></picture>
 
 **One source of truth for the Claude Code and Codex setup of every project on your machine.**
 

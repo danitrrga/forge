@@ -1,0 +1,46 @@
+/* The README images' one visual language: the name drawn in its own config characters, ink knockouts, hairlines,
+   and one pink cursor as the only accent. Tokens first; every page reads these and nothing else, so the dark copy
+   build.py renders (<html data-theme="dark">) only swaps the values. Type: Inter for statements, Commit Mono for
+   anything that is code or output, Martian Mono only as the character field (field.js draws the wordmark in Mona Sans). */
+:root{
+  --ground:oklch(96.5% 0.004 350); --ink:oklch(19% 0.01 350); --ink2:oklch(42% 0.012 350); --dim:oklch(89% 0.005 350);
+  --rule:oklch(84% 0.006 350); --pink:oklch(64% 0.19 352);
+}
+[data-theme=dark]{
+  --ground:oklch(14% 0.008 350); --ink:oklch(95% 0.006 350); --ink2:oklch(70% 0.012 350); --dim:oklch(22% 0.009 350);
+  --rule:oklch(30% 0.01 350); --pink:oklch(72% 0.17 352);
+}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--ground)}
+*{box-sizing:border-box}
+.stage{position:relative;overflow:hidden;background:var(--ground);color:var(--ink);font-family:"Inter"}
+.m,pre,code{font-family:"Commit Mono";font-variant-ligatures:none}
+pre{margin:0;white-space:pre}
+
+/* the character field and the wordmark knocked out of it (field.js fills it) */
+.field{position:absolute;display:grid;font:500 10.5px/13.3333px "Martian Mono";font-stretch:75%;font-variant-ligatures:none;color:var(--dim);overflow:hidden}
+.field span{text-align:center}
+.field b{background:var(--ink);color:var(--ground);font-weight:700;text-align:center}
+.field .cur{background:var(--pink);color:var(--pink)}
+
+/* statements and labels */
+.say{font:600 38px/1.14 "Inter";letter-spacing:-.022em;color:var(--ink)}
+.say em{font-style:normal;color:var(--pink)}
+.title{font:600 30px/1.1 "Inter";letter-spacing:-.02em;color:var(--ink)}
+.title i{display:inline-block;width:.42em;height:.62em;margin-left:.12em;background:var(--pink);vertical-align:-.02em}
+.sub{font:400 17px/1.45 "Inter";color:var(--ink2)}
+.cap{font:600 12px/1 "Commit Mono";letter-spacing:.08em;text-transform:uppercase;color:var(--ink2)}
+.rule{position:absolute;border:0 solid var(--rule)}
+
+/* code and output */
+.code{font:400 14px/22px "Commit Mono";color:var(--ink2);white-space:pre}
+.code b{color:var(--ink);font-weight:700}
+.ko{background:var(--ink);color:var(--ground);font-weight:700;padding:0 4px}
+.off{color:var(--ink2);text-decoration:line-through;text-decoration-color:var(--pink);text-decoration-thickness:2px}
+table.grid{border-collapse:collapse;font:400 14px/1 "Commit Mono";font-variant-ligatures:none}
+table.grid td{height:34px;padding:0 22px 0 0;white-space:nowrap;border-top:1px solid var(--rule)}
+table.grid tr:first-child td{border-top:0;height:26px}
+table.grid td.p{font-weight:700;color:var(--ink)}
+table.grid td.n{color:var(--ink2)}
+svg.links{position:absolute;inset:0;pointer-events:none}
+svg.links path{stroke:var(--ink2);fill:none;stroke-width:1.25}
+svg.links circle{fill:var(--ink2)}
