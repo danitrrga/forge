@@ -28,11 +28,14 @@ document.getElementById("prof").innerHTML=esc(prof.slice(a,a+3).join("\n")).repl
 document.getElementById("set").innerHTML=esc(F.files["~/code/api/.claude/settings.local.json"].trimEnd()).replace(/"release": "off"/,'<span class="ko">"release": "off"</span>');
 document.fonts.ready.then(()=>{
   const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg", add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e)};
-  const box=id=>document.getElementById(id).getBoundingClientRect();
+  const box=id=>document.getElementById(id).getBoundingClientRect(), P=v=>Math.round(v)+0.5;
+  // move the table so the struck release cell sits on the skills_keep line: the dashed lead then joins the bracket at its top
+  const t=document.getElementById("t"), k0=document.querySelector("#prof .ko").getBoundingClientRect(), c0=box("off");
+  t.style.top=(t.offsetTop+Math.round((k0.top+k0.height/2)-(c0.top+c0.height/2)))+"px";
   const k=document.querySelector("#prof .ko").getBoundingClientRect(), o=document.querySelector("#set .ko").getBoundingClientRect(), c=box("off");
-  const yk=k.top+k.height/2, yo=o.top+o.height/2, yc=c.top+c.height/2, x=752;
-  add("path",{d:`M784 ${yk} H${x} V${yo} H784`}); add("path",{d:`M${c.right+8} ${yc} H${x}`,"stroke-dasharray":"3 4"});
-  [[784,yk],[784,yo],[c.right+8,yc]].forEach(([cx,cy])=>add("circle",{cx,cy,r:3}));
+  const yk=P(k.top+k.height/2), yo=P(o.top+o.height/2), yc=yk, x=752.5;
+  add("path",{d:`M784 ${yk} H${x} V${yo} H784`}); add("path",{d:`M${Math.round(c.right)+8} ${yc} H${x}`,"stroke-dasharray":"3 4"});
+  [[784,yk],[784,yo],[Math.round(c.right)+8,yc]].forEach(([cx,cy])=>add("circle",{cx,cy,r:3}));
 });
 </script>
 </body></html>
