@@ -1,0 +1,43 @@
+/* The README images' one design system: IBM Carbon's visual language (the owner's library entry
+   carbon-design-system), in IBM Plex. Tokens first; every page reads these and nothing else. */
+:root{
+  --blue:#0f62fe; --ink:#161616; --ink2:#525252; --ink3:#6f6f6f; --field:#f4f4f4; --grid:#e0e0e0; --tile:#ffffff;
+  --band:#d0e2ff; --node:#d02670; --tagb:#d0e2ff; --tagt:#0043ce; --ok:#24a148; --off:#8d8d8d; --viz:#6929c4; --viz2:#e8daff;
+}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--field)}
+*{box-sizing:border-box}
+pre,code,.mono,.mono *{font-family:"Plex Mono";font-variant-ligatures:none;font-feature-settings:"calt" 0,"liga" 0}
+.stage{position:relative;overflow:hidden;font-family:"Plex Sans";color:var(--ink);background:var(--field)}
+.grid64{background-image:linear-gradient(var(--grid) 1px,transparent 1px),linear-gradient(90deg,var(--grid) 1px,transparent 1px);background-size:64px 64px}
+.bar{position:absolute;left:0;right:0;top:0;height:32px;background:var(--blue);color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 16px;font:600 13px/1 "Plex Sans"}
+.bar span:last-child{font-weight:400}
+.mast{position:absolute;left:0;right:0;height:48px;background:var(--ink);color:#f4f4f4;display:flex;align-items:center;padding:0 16px;gap:28px;font:600 14px/1 "Plex Sans"}
+.mast em{font-style:normal;font-weight:400;color:#c6c6c6;font-size:13px}
+.mast .r{margin-left:auto;display:flex;gap:20px}
+.tile{position:absolute;background:var(--tile)}
+.code .hd{height:32px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid var(--grid);font:400 12px/1 "Plex Mono";color:var(--ink2)}
+.code pre{margin:0;padding:10px 12px;font:400 13px/20px "Plex Mono";color:var(--ink)}
+.k{color:var(--node)}
+.proj{padding:11px 14px}
+.proj .t{display:flex;justify-content:space-between;align-items:baseline;font:600 14px/1 "Plex Sans"}
+.proj .t small{font:400 11px/1 "Plex Mono";color:var(--ink2)}
+.tags{display:flex;gap:6px;margin-top:10px;min-height:22px}
+.tag{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 9px;border-radius:12px;font:400 12px/1 "Plex Sans";background:var(--tagb);color:var(--tagt)}
+.tag.none{background:transparent;color:var(--ink3);padding:0}
+.ai{display:inline-grid;place-items:center;width:20px;height:14px;border:1px solid currentColor;font:600 8px/1 "Plex Sans";letter-spacing:.02em}
+.tgls{display:flex;gap:18px;margin-top:10px}
+.tgl{display:flex;align-items:center;gap:7px;font:400 12px/1 "Plex Mono";color:var(--ink)}
+.tgl i{position:relative;width:32px;height:16px;border-radius:8px;background:var(--off)}
+.tgl i:after{content:"";position:absolute;top:3px;left:3px;width:10px;height:10px;border-radius:50%;background:#fff}
+.tgl.on i{background:var(--ok)}.tgl.on i:after{left:19px}
+.tgl.off{color:var(--ink3)}
+.toast{display:flex;gap:12px;padding:14px 16px;border:1px solid var(--grid)}
+.toast svg{flex:none}
+.toast b{display:block;font:600 14px/1.2 "Plex Sans"}
+.toast span{display:block;margin-top:6px;font:400 12px/1.4 "Plex Mono";color:var(--ink2)}
+.band{position:absolute;left:0;right:0;background:var(--band);display:grid;grid-template-columns:320px 1fr;padding:0 64px;align-items:center}
+.band .r{font:300 34px/1.24 "Plex Sans";color:var(--ink)}
+.band .r b{font-weight:600}
+.lbl{font:400 12px/1 "Plex Sans";color:var(--ink2);letter-spacing:.01em}
+.h4{font:600 14px/1.2 "Plex Sans"}
+svg.links{position:absolute;inset:0;pointer-events:none}

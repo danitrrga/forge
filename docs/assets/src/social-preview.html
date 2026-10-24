@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>forge social preview</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css"><script src="data.js"></script>
+<style>.stage{width:1200px;height:630px}
+.band .name{font:600 72px/1 "Plex Sans";letter-spacing:-.02em}
+.band{grid-template-columns:300px 1fr}
+.band .r{font-size:32px}
+.proj .t{font-size:16px}.tag{font-size:13px}.tgl{font-size:13px}</style></head><body>
+<div class="stage">
+  <div class="bar"><span>One checkout. Every project's agent config.</span><span>github.com/danitrrga/forge &rarr;</span></div>
+  <div class="mast" style="top:32px">forge <em>Profiles</em><em>Sync</em><em>Skills</em><em>Doctor</em></div>
+  <div class="grid64" style="position:absolute;left:0;right:0;top:80px;height:270px;background-position:-1px 15px"></div>
+  <div id="tiles"></div>
+  <svg class="links" width="1200" height="630" viewBox="0 0 1200 630" id="links"></svg>
+  <div class="band" style="top:350px;bottom:0"><div class="name">forge</div>
+    <div class="r">One source of truth for the <b>Claude Code and Codex</b> setup of every project on your machine.</div></div>
+</div>
+<script>
+const F=window.FORGE, M=F.matrix, host=document.getElementById("tiles"), W=344, GAP=24, X0=64, Y=144, H=124;
+M.rows.forEach(([name,v],r)=>{
+  const servers=M.cols.filter((c,i)=>M.kinds[i]==="server"&&v[i]);
+  const skills=M.cols.map((c,i)=>[c,v[i]]).filter((_,i)=>M.kinds[i]==="skill");
+  const el=document.createElement("div");el.className="tile proj";Object.assign(el.style,{left:(X0+r*(W+GAP))+"px",top:Y+"px",width:W+"px",height:H+"px",padding:"18px 18px"});
+  el.innerHTML=`<div class="t">${name}<small>${name==="~/forge"?"forge":name.split("/").pop()}.claude.json</small></div>
+   <div class="tags" style="margin-top:16px">${servers.length?servers.map(s=>`<span class="tag">${s}<span class="ai">MCP</span></span>`).join(""):`<span class="tag none">no MCP server</span>`}</div>
+   <div class="tgls" style="margin-top:16px">${skills.map(([s,on])=>`<span class="tgl ${on?"on":"off"}"><i></i>${s}</span>`).join("")}</div>`;
+  host.appendChild(el);
+});
+const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
+const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
+// one bus over the three tiles: the same checkout writes all three
+add("path",{d:`M${X0+W/2} ${Y} V112 H${X0+2*(W+GAP)+W/2} V${Y}`,fill:"none",stroke:"#d02670","stroke-width":1.5});
+add("path",{d:`M${X0+(W+GAP)+W/2} 112 V${Y}`,fill:"none",stroke:"#d02670","stroke-width":1.5});
+[0,1,2].forEach(i=>add("circle",{cx:X0+i*(W+GAP)+W/2,cy:Y,r:4.5,fill:"#d02670"}));
+</script>
+</body></html>

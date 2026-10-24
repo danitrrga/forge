@@ -1,6 +1,6 @@
 # forge
 
-<img src="docs/assets/forge-banner.png" alt="forge: one source of truth for the Claude Code and Codex setup of every project, beside a terminal running forge doctor and forge sync --apply" width="100%">
+<img src="docs/assets/banner.png" alt="forge: a project's profile, config/profiles/api.claude.json, asking for the playwright MCP server and the review skill, joined by connectors to the api project, which gets playwright and has review on and release off; the site and forge projects beside it with their own servers and skills; forge doctor reporting 9 passed, 0 warnings, 0 failures. One source of truth for the Claude Code and Codex setup of every project on your machine." width="100%">
 
 **One source of truth for the Claude Code and Codex setup of every project on your machine.**
 
@@ -57,7 +57,7 @@ a name that is not kebab-case. By default forge writes no file git tracks in the
 
 ## How it works
 
-<img src="docs/assets/how-it-works.svg" alt="How forge works: the profiles, the MCP registry, the secrets file and skills/ feed forge sync, which a SessionStart hook runs for the project you open; it writes each project's .claude/settings.local.json, its MCP servers in ~/.claude.json, the user-scope hooks and skill links, and optionally the Codex config; forge doctor checks the result." width="100%">
+<img src="docs/assets/fig-sync.png" alt="What forge writes: the profiles, the MCP registry and the git-ignored secrets file feed forge sync, which a SessionStart hook runs for the project you open and which writes each project's .claude/settings.local.json, its MCP servers in ~/.claude.json and, with Codex on, its .codex/config.toml; skills/ feeds forge skills, which links each skill into ~/.claude/skills; forge doctor checks both sides." width="100%">
 
 A profile, `config/profiles/<name>.claude.json`, holds a project's path, the MCP servers it gets from
 `config/mcp-registry.json`, the skills and plugins it keeps, permissions, env and hooks. The accepted fields
@@ -104,12 +104,16 @@ installed unpatched from its package when the `gsd` integration is on. forge doe
 only by a profile whose `skill_keep.extras` row names them); `forge doctor`'s `skill keep` row fails on a name
 no skill has, a name in both lists, or an excluded name in an `extras` row.
 
+<img src="docs/assets/fig-trim.png" alt="Which skills each project loads: the api profile keeps only review, so forge writes release off into ~/code/api/.claude/settings.local.json; site and the forge checkout have no skills_keep and load both review and release." width="100%">
+
 ## Measure a skill: skill-bench
 
 Does a skill make the agent better, and at what cost? `scripts/bench/skill_bench.py` answers with numbers. Each
 task in `benchmarks/skill-bench/tasks/` is a small repository, a prompt in the owner's voice and an oracle that
 scores the result, plus a correct answer, a second correct answer built differently and the plausible wrong one.
 `validate` proves every oracle can fail and can pass before any score is trusted.
+
+<img src="docs/assets/fig-bench.png" alt="skill-bench in five steps: a task such as logic-datetime-02 with its repository and an oracle of 8 checks; validate, where the ideal and alternative answers pass and the naive one fails; the arms, no skill and your skill, k runs each; each run as claude -p in its own config directory; a paired report per task. Arms that ran on different models are refused." width="100%">
 
 ```sh
 python3 scripts/bench/skill_bench.py validate          # every task: the ideal and alt answers pass, the naive one fails

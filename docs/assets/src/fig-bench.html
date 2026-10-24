@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>skill-bench</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css">
+<style>.stage{width:1280px;height:400px}
+.title{position:absolute;left:64px;top:30px}
+.title b{display:block;font:600 22px/1 "Plex Sans"}
+.title span{display:block;margin-top:8px;font:400 14px/1 "Plex Sans";color:var(--ink2)}
+.s{position:absolute;top:112px;height:208px;padding:14px 16px;background:var(--tile)}
+.s .n{font:600 11px/1 "Plex Mono";color:var(--node);letter-spacing:.04em}
+.s .h{margin-top:8px;font:600 15px/1.2 "Plex Sans"}
+.s .p{margin-top:10px;font:400 12.5px/1.45 "Plex Sans";color:var(--ink2)}
+.s .c{margin-top:10px;font:400 12px/1.6 "Plex Mono";color:var(--ink)}
+.s .tag{height:20px;font-size:11px;padding:0 8px;margin:10px 4px 0 0}
+.tag.g{background:#defbe6;color:#0e6027}.tag.r{background:#fff1f1;color:#a2191f}
+.arm{display:flex;justify-content:space-between;padding:7px 0;border-top:1px solid var(--grid);font:400 12px/1 "Plex Mono"}
+.warn{position:absolute;left:64px;right:64px;top:340px;display:flex;align-items:center;gap:12px;height:40px;padding:0 16px;background:#fcf4d6;border:1px solid #f1c21b;font:400 13px/1 "Plex Sans";color:#161616}
+.warn code{font-size:12.5px}
+</style></head><body>
+<div class="stage grid64" style="background-position:-1px -1px">
+  <div class="title"><b>skill-bench: does a skill make the agent better?</b><span>Each task scores the result with an oracle, never an impression.</span></div>
+  <div class="s" style="left:64px;width:288px"><div class="n">01 TASK</div><div class="h">logic-datetime-02</div>
+    <div class="p">&ldquo;&hellip;got paid as 8 hours, but the clocks went forward at 2:00 that night, so he only worked 7.&rdquo;</div>
+    <div class="c">repo/ &middot; oracle.py, 8 checks</div></div>
+  <div class="s" style="left:384px;width:192px"><div class="n">02 VALIDATE</div><div class="h">The oracle can fail</div>
+    <span class="tag g">ideal passes</span><span class="tag g">alt passes</span><span class="tag r">naive fails</span>
+    <div class="p">before any score is trusted.</div></div>
+  <div class="s" style="left:608px;width:224px"><div class="n">03 ARMS &times; k</div><div class="h">Same task, with and without</div>
+    <div class="c" style="margin-top:12px"><div class="arm"><span>none</span><span>k = 3</span></div><div class="arm"><span>mine=skills/my-skill</span><span>k = 3</span></div></div></div>
+  <div class="s" style="left:864px;width:160px"><div class="n">04 RUN</div><div class="h">claude -p</div>
+    <div class="p">its own config dir: no user hooks, skills or CLAUDE.md. In bubblewrap when installed.</div></div>
+  <div class="s" style="left:1056px;width:160px"><div class="n">05 REPORT</div><div class="h">Paired, per task</div>
+    <div class="p">pass rate, tokens and time per arm; run.json records the model id.</div></div>
+  <svg class="links" width="1280" height="400" viewBox="0 0 1280 400" id="links"></svg>
+  <div class="warn"><svg width="18" height="18" viewBox="0 0 20 20"><path d="M10 2l9 16H1z" fill="#f1c21b"/><path d="M10 8v4M10 14v1" stroke="#161616" stroke-width="1.8"/></svg>
+    <span>Arms on different models are refused: <code>A difference between them would measure the model, not the skill.</code></span></div>
+</div>
+<script>
+const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
+const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
+[[352,384],[576,608],[832,864],[1024,1056]].forEach(([a,b])=>{add("path",{d:`M${a} 216 H${b}`,fill:"none",stroke:"#d02670","stroke-width":1.5});
+  add("circle",{cx:a,cy:216,r:3.5,fill:"#d02670"});add("circle",{cx:b,cy:216,r:3.5,fill:"#d02670"})});
+</script>
+</body></html>

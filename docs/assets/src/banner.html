@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>forge banner</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css"><script src="data.js"></script>
+<style>.stage{width:1280px;height:640px}</style></head><body>
+<div class="stage">
+  <div class="bar"><span>forge writes every project's agent config from one checkout.</span><span>github.com/danitrrga/forge &rarr;</span></div>
+  <div class="mast" style="top:32px">forge <em>Profiles</em><em>Sync</em><em>Skills</em><em>Doctor</em>
+    <div class="r"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="#f4f4f4" stroke-width="1.4"><rect x="2" y="3" width="14" height="12"/><path d="M5 7l2.5 2L5 11M9 11h4"/></svg>
+    <svg width="18" height="18" viewBox="0 0 18 18" fill="#f4f4f4"><rect x="2" y="2" width="3" height="3"/><rect x="7.5" y="2" width="3" height="3"/><rect x="13" y="2" width="3" height="3"/><rect x="2" y="7.5" width="3" height="3"/><rect x="7.5" y="7.5" width="3" height="3"/><rect x="13" y="7.5" width="3" height="3"/><rect x="2" y="13" width="3" height="3"/><rect x="7.5" y="13" width="3" height="3"/><rect x="13" y="13" width="3" height="3"/></svg></div>
+  </div>
+  <div class="grid64" style="position:absolute;left:0;right:0;top:80px;height:368px;background-position:-1px 15px"></div>
+  <div class="tile code" style="left:64px;top:112px;width:288px"><div class="hd"><span>config/profiles/api.claude.json</span></div><pre id="prof"></pre></div>
+  <div id="tiles"></div>
+  <div class="tile toast" style="left:960px;top:112px;width:256px">
+    <svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="9" fill="#24a148"/><path d="M6 10.2l2.6 2.6L14 7.4" stroke="#fff" stroke-width="1.8" fill="none"/></svg>
+    <div><b>forge doctor</b><span id="sum"></span></div>
+  </div>
+  <div class="tile toast" style="left:960px;top:240px;width:256px">
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#161616" stroke-width="1.4"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M6 8l2.5 2L6 12M10 12h4"/></svg>
+    <div><b>forge sync --apply --all</b><span id="applied"></span></div>
+  </div>
+  <div class="tile" style="left:960px;top:336px;width:256px;height:80px" id="viz"></div>
+  <svg class="links" width="1280" height="640" viewBox="0 0 1280 640" id="links"></svg>
+  <div class="band" style="top:448px;bottom:0"><div></div>
+    <div class="r">One source of truth for the <b>Claude Code and Codex</b> setup of every project on your machine.</div></div>
+</div>
+<script>
+const F=window.FORGE, M=F.matrix, esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+// the profile exactly as forge add wrote it and the user edited it, with the two keys that do the work marked
+document.getElementById("prof").innerHTML=esc(F.files["config/profiles/api.claude.json"].trimEnd()).replace(/"(servers|skills_keep)"/g,'<span class="k">"$1"</span>');
+const sum=F.doctor.find(l=>l.startsWith("SUMMARY:"));document.getElementById("sum").innerHTML=sum.replace(" 0 warnings","<br>0 warnings");
+document.getElementById("applied").textContent=F.sync.find(l=>/change\(s\) applied/.test(l)).trim();
+const host=document.getElementById("tiles"), X=448, Y0=112, H=88, GAP=16, W=448;
+M.rows.forEach(([name,v],r)=>{
+  const servers=M.cols.filter((c,i)=>M.kinds[i]==="server"&&v[i]);
+  const skills=M.cols.map((c,i)=>[c,v[i]]).filter((_,i)=>M.kinds[i]==="skill");
+  const prof=name==="~/forge"?"forge":name.split("/").pop();
+  const el=document.createElement("div");el.className="tile proj";Object.assign(el.style,{left:X+"px",top:(Y0+r*(H+GAP))+"px",width:W+"px",height:H+"px"});
+  el.innerHTML=`<div class="t">${name}<small>${prof}.claude.json</small></div>
+   <div class="tags">${servers.length?servers.map(s=>`<span class="tag">${s}<span class="ai">MCP</span></span>`).join(""):`<span class="tag none">no MCP server</span>`}</div>
+   <div class="tgls">${skills.map(([s,on])=>`<span class="tgl ${on?"on":"off"}"><i></i>${s}</span>`).join("")}</div>`;
+  host.appendChild(el);
+});
+const vz=document.getElementById("viz");
+vz.innerHTML='<div class="h4" style="font-size:12px;padding:10px 12px 6px">Skills on, per project</div>'+M.rows.map(([n,v])=>{
+  const sk=v.filter((x,i)=>M.kinds[i]==="skill"),on=sk.filter(Boolean).length;
+  return `<div class="mono" style="display:grid;grid-template-columns:64px 1fr 44px;align-items:center;gap:6px;padding:0 12px;height:16px;font-size:11px;color:#525252;white-space:nowrap"><span>${n.replace("~/code/","")}</span><i style="display:block;height:7px;background:linear-gradient(90deg,var(--viz) ${on/sk.length*100}%,var(--viz2) ${on/sk.length*100}%)"></i><span style="text-align:right">${on} of ${sk.length}</span></div>`}).join("");
+// magenta node connectors from the profile's two keys to what they produced in the api tile
+const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
+const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
+const lines=F.files["config/profiles/api.claude.json"].split("\n"),row=k=>lines.findIndex(l=>l.includes('"'+k+'"'));
+const keyY=[row("servers"),row("skills_keep")].map(i=>112+32+10+20*i+10);
+const tagY=Y0+11+14+10+11, tglY=Y0+11+14+10+22+10+8;
+[[keyY[0],tagY],[keyY[1],tglY]].forEach(([a,b],i)=>{
+  add("path",{d:`M352 ${a} H${400+i*16} V${b} H${X}`,fill:"none",stroke:"#d02670","stroke-width":1.5});
+  add("circle",{cx:352,cy:a,r:4,fill:"#d02670"});add("circle",{cx:X,cy:b,r:4,fill:"#d02670"});
+});
+</script>
+</body></html>

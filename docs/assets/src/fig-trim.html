@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>skill trim</title>
+<link rel="stylesheet" href="fonts.css"><link rel="stylesheet" href="carbon.css"><script src="data.js"></script>
+<style>.stage{width:1280px;height:480px}
+.title{position:absolute;left:64px;top:30px}
+.title b{display:block;font:600 22px/1 "Plex Sans"}
+.title span{display:block;margin-top:8px;font:400 14px/1 "Plex Sans";color:var(--ink2)}
+table{position:absolute;left:64px;top:112px;width:576px;border-collapse:collapse;background:var(--tile)}
+th{height:40px;padding:0 16px;text-align:left;font:600 13px/1 "Plex Sans";background:#e0e0e0}
+th small{display:block;margin-top:5px;font:400 11px/1 "Plex Mono";color:var(--ink2)}
+td{height:52px;padding:0 16px;border-top:1px solid var(--grid);font:400 13px/1 "Plex Mono"}
+td.n{font:500 13px/1 "Plex Mono"}
+.note{position:absolute;left:64px;top:340px;width:576px;display:flex;gap:12px;padding:14px 16px;background:var(--tile);border:1px solid var(--grid);font:400 13px/1.45 "Plex Sans";color:var(--ink2)}
+.note b{color:var(--ink);font-weight:600}.note code{font-size:12px;color:var(--ink)}
+</style></head><body>
+<div class="stage grid64" style="background-position:-1px -1px">
+  <div class="title"><b>Which skills each project loads</b><span>A profile with skills_keep loads only those; one without it loads every skill.</span></div>
+  <table id="t"></table>
+  <div class="note"><svg width="18" height="18" viewBox="0 0 20 20" style="flex:none;margin-top:1px"><circle cx="10" cy="10" r="9" fill="#0f62fe"/><path d="M10 9v5M10 6v.5" stroke="#fff" stroke-width="2"/></svg>
+    <div>With GSD on, <code>skill_keep.gsd_exclude</code> drops a <code>gsd-*</code> skill from every project and <code>gsd_opt_in</code> keeps one only where an <code>extras</code> row names it.</div></div>
+  <div class="tile code" style="left:768px;top:112px;width:448px"><div class="hd"><span>config/profiles/api.claude.json</span><span class="lbl">you write</span></div><pre id="prof"></pre></div>
+  <div class="tile code" style="left:768px;top:302px;width:448px"><div class="hd"><span>~/code/api/.claude/settings.local.json</span><span class="lbl">forge writes</span></div><pre id="set"></pre></div>
+  <svg class="links" width="1280" height="480" viewBox="0 0 1280 480" id="links"></svg>
+</div>
+<script>
+const F=window.FORGE, M=F.matrix, esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+const sk=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="skill");
+document.getElementById("t").innerHTML=`<tr><th>skill</th>${M.rows.map(([n])=>`<th>${n}<small>${n==="~/forge"?"forge":n.split("/").pop()}.claude.json</small></th>`).join("")}</tr>`+
+  sk.map(([c,i])=>`<tr><td class="n">${c}</td>${M.rows.map(([n,v])=>`<td><span class="tgl ${v[i]?"on":"off"}"><i></i>${v[i]?"on":"off"}</span></td>`).join("")}</tr>`).join("");
+// the keys the table follows from: the api profile's skills_keep, and the override forge wrote for the skill it leaves out
+const prof=F.files["config/profiles/api.claude.json"].trimEnd().split("\n"), a=prof.findIndex(l=>l.includes('"skills_keep"'));
+document.getElementById("prof").innerHTML=esc(prof.slice(a,a+3).join("\n")).replace('"skills_keep"','<span class="k">"skills_keep"</span>');
+document.getElementById("set").innerHTML=esc(F.files["~/code/api/.claude/settings.local.json"].trimEnd()).replace(/"release": "off"/,'<span class="k">"release": "off"</span>');
+const svg=document.getElementById("links"),NS="http://www.w3.org/2000/svg";
+const add=(n,a)=>{const e=document.createElementNS(NS,n);for(const k in a)e.setAttribute(k,a[k]);svg.appendChild(e);return e};
+const y1=112+32+10+10, y2=302+32+10+20*2+10, yr=112+40+52+26;
+add("path",{d:`M768 ${y1} H736 V${y2} H768`,fill:"none",stroke:"#d02670","stroke-width":1.5});
+add("path",{d:`M736 ${yr} H${64+576}`,fill:"none",stroke:"#d02670","stroke-width":1.5,"stroke-dasharray":"3 4"});
+[[768,y1],[768,y2],[640,yr]].forEach(([x,y])=>add("circle",{cx:x,cy:y,r:3.5,fill:"#d02670"}));
+</script>
+</body></html>

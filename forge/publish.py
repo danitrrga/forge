@@ -38,8 +38,11 @@ ASSET_EXT = {".woff", ".woff2", ".ttf", ".otf", ".eot", ".png", ".jpg", ".jpeg",
 # sha256 of the bytes looked at. Only the extension rule is waived, and only for those exact bytes at that
 # path: a changed byte fails again until someone looks again, and an SVG is still read line by line.
 PUBLIC_ASSETS = {
-    "docs/assets/forge-banner.png": "992e30e69a0e3e5f88adb242aae844c111ce773f8b9654b1e77f449b92e26f78",
-    "docs/assets/how-it-works.svg": "15be9dbe2b8716eb03910153eafb557da60cc9b2f2fa9653a96bba1dc4b250d9",
+    "docs/assets/banner.png": "cb53a1eaf8aa564b52fc7ac89612bbb62d90bddc8293a27da2ae4df4ae451bf0",
+    "docs/assets/social-preview.png": "9af375da49ae7493032bfb6d5e614e47eac59796df2f50b164a70f76f5f065a1",
+    "docs/assets/fig-sync.png": "3294870f2756972495829aa1670699214c764dbafecddd394725ecc62bc2ceac",
+    "docs/assets/fig-trim.png": "be7b3fb8300174f6ce9366ba0066dd6cf48447b27b7e449401e277b89162300b",
+    "docs/assets/fig-bench.png": "c943ee79baec2dcb91fb337d23f9513c207aa6e0f3aa173af3cc2be51dedf53a",
 }
 # Where dates are data (a skill-bench task's calendar, its leap day), not the record of a decision: in these files a
 # private pattern that matches a bare ISO date is not applied. Every other private pattern still is.
