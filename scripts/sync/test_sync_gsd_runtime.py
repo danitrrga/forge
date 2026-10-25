@@ -1331,12 +1331,103 @@ def quick_lean_review3(failures):
         failures.append("quick lean review3: the protected-branch guard (position %d) does not come before `git add` (position %d)" % (guard_at, add_at))
 
 
+def backlog_patches(failures):
+    """Two GSD patches make an agent use a project's `scripts/backlog/backlog.mjs` with no CLAUDE.md text, and both are
+    inert when the script is absent. ENGINE_PATCHES['workflows/add-backlog.md'] is a `replace` on `<process>`
+    (config/gsd/backlog-add.md) that sends `/gsd-capture --backlog` to `backlog.mjs add` and skips Steps 1 to 5;
+    SKILL_PATCHES['gsd-review-backlog'] (config/gsd/backlog-review.md) opens the skill's process with `backlog.mjs sync`.
+    Cases: (1) the add-backlog entry exists, its payload file names the script, `add`, `never hand-edit ROADMAP.md`, the
+    steps it skips and the absent-script fallback; (2) on a toy file the block lands before the first step and a second
+    application changes nothing; (3) on the real staged add-backlog.md (read only; NOT RUN, NOT ARMED without a staging)
+    the anchor occurs exactly once and the block lands between `<process>` and `## Step 1`; (4) the gsd-review-backlog
+    entry exists, its payload names `sync`, the `**Issue:**` line on promotion, the open GitHub issue on removal and the
+    absent-script fallback, and on the real staged skill the process opens with that block. Seen failing on 53d8b19 (the
+    master the work started from): "backlog patches: ENGINE_PATCHES has no entry for workflows/add-backlog.md (keys: [...])",
+    "backlog patches: toy: no patch to apply", "backlog patches: real staged add-backlog.md: no patch to apply" and
+    "backlog patches: SKILL_PATCHES has no entry for gsd-review-backlog (keys: [...])". Negative control (a backup copy of
+    sync_gsd_runtime.py with the add-backlog anchor changed to text that does not occur, restored from the backup): the
+    sync script exits 1 with "workflows/add-backlog.md: anchor for patch 'backlog-script-add' no longer matches upstream"."""
+    real_blocks = os.path.join(FORGE, "config", "gsd")
+    entries = gsd.ENGINE_PATCHES.get("workflows/add-backlog.md")
+    block = None
+    if not entries:
+        failures.append("backlog patches: ENGINE_PATCHES has no entry for workflows/add-backlog.md (keys: %s)" % list(gsd.ENGINE_PATCHES))
+        failures.append("backlog patches: toy: no patch to apply")
+        failures.append("backlog patches: real staged add-backlog.md: no patch to apply")
+    elif len(entries) != 1 or entries[0][1] != "replace" or entries[0][2] != "<process>" or not entries[0][3].startswith("file:"):
+        failures.append("backlog patches: want one `replace` anchored on '<process>' with a file: payload, got %s" % [(e[0], e[1], e[2]) for e in entries])
+    else:
+        block = read(os.path.join(real_blocks, entries[0][3][5:]))
+        if block is None:
+            failures.append("backlog patches: payload file %s does not exist" % entries[0][3][5:])
+    import pwd
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    if block is not None:
+        if not block.startswith("<process>\n"):
+            failures.append("backlog patches: the add payload must begin with the `<process>` line, begins %r" % block[:20])
+        gone = [m for m in ("scripts/backlog/backlog.mjs", " add ", "never hand-edit ROADMAP.md", "Steps 1 to 5", "Read ROADMAP.md",
+                            "Report", "--body-file", "non-zero", "does not exist", "as written") if m not in block]
+        if gone:
+            failures.append("backlog patches: the add block does not name %s" % gone)
+        saved = gsd.BLOCKS
+        gsd.BLOCKS = real_blocks
+        try:
+            toy = "<intro>\n\n<process>\n\n## Step 1: first\n\nbody\n\n</process>\n"
+            once = gsd.apply_patches(toy, "workflows/add-backlog.md", entries, errs := [])
+            twice = gsd.apply_patches(once, "workflows/add-backlog.md", entries, errs)
+            if errs or once.count(block) != 1 or once.index(block) > once.index("## Step 1") or not once.endswith(toy.split("<process>", 1)[1]):
+                failures.append("backlog patches: toy: errors %s, block count %d, block before the first step %s"
+                                % (errs, once.count(block), once.find(block) != -1 and once.index(block) < once.index("## Step 1")))
+            if twice != once:
+                failures.append("backlog patches: toy: a second application changed the text")
+            stage = os.path.join(home, ".cache", "forge", "gsd-stage", "cfg", "gsd-core", "workflows", "add-backlog.md")
+            if not os.path.isfile(stage):
+                print("SKIP backlog_patches real staged add-backlog.md: NOT RUN, NOT ARMED: no staging at %s" % stage)
+            else:
+                staged = read(stage)
+                got = gsd.apply_patches(staged, "workflows/add-backlog.md", entries, errs3 := [])
+                if staged.count("<process>") != 1 or errs3 or got == staged or not (staged.index("<process>") <= got.index(block) < got.index("## Step 1")):
+                    failures.append("backlog patches: real staged add-backlog.md: <process> occurs %d times (want 1), errors %s, changed %s"
+                                    % (staged.count("<process>"), errs3, got != staged))
+        finally:
+            gsd.BLOCKS = saved
+    skill = REAL_PATCHES.get("gsd-review-backlog")
+    if not skill:
+        failures.append("backlog patches: SKILL_PATCHES has no entry for gsd-review-backlog (keys: %s)" % sorted(REAL_PATCHES))
+        return
+    sblock = read(os.path.join(real_blocks, skill[0][3][5:])) if skill[0][3].startswith("file:") else skill[0][3]
+    if sblock is None:
+        failures.append("backlog patches: the review payload file %s does not exist" % skill[0][3][5:])
+        return
+    gone = [m for m in ("scripts/backlog/backlog.mjs sync", "**Issue:**", "stays open", "does not exist", "as written") if m not in sblock]
+    if gone:
+        failures.append("backlog patches: the review block does not name %s" % gone)
+    saved = gsd.BLOCKS
+    gsd.BLOCKS = real_blocks
+    try:
+        stage = os.path.join(home, ".cache", "forge", "gsd-stage", "cfg", "skills", "gsd-review-backlog", "SKILL.md")
+        if not os.path.isfile(stage):
+            print("SKIP backlog_patches real staged gsd-review-backlog: NOT RUN, NOT ARMED: no staging at %s" % stage)
+            return
+        staged = read(stage)
+        got = gsd.apply_patches(staged, "gsd-review-backlog", skill, errs := [])
+        again = gsd.apply_patches(got, "gsd-review-backlog", skill, errs)
+        body = sblock.split("<process>", 1)[-1].strip()
+        opens = "<process>" in got and got.split("<process>", 1)[1].lstrip().startswith(body)
+        if errs or staged.count("<process>") != 1 or not opens or "1. **List backlog items:**" not in got or again != got:
+            failures.append("backlog patches: real staged gsd-review-backlog: errors %s, <process> occurs %d times (want 1), "
+                            "process opens with the block %s, second application stable %s"
+                            % (errs, staged.count("<process>"), opens, again == got))
+    finally:
+        gsd.BLOCKS = saved
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review, quick_lean_review2, quick_lean_review3)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review, quick_lean_review2, quick_lean_review3, backlog_patches)
     for case in cases:
         case(failures)
     for msg in failures:
