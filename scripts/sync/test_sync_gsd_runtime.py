@@ -1229,19 +1229,19 @@ def quick_lean_review(failures):
         return
     flat = " ".join(block.split())
     need = ("quick_id from the directory name", "skip quick-tasks-append", "No `*-PLAN.md`", "do not run Step 7",
-            "{type} is feat, fix, refactor, docs, chore or test", "Run the check named in CLAUDE.md", "Status column",
+            "{type} is feat, fix, refactor, docs, chore or test", "the one CLAUDE.md or the project skills name", "Status column",
             "upstream's description of the full pipeline", "no planner or executor is spawned")
     gone = [m for m in need if m not in flat]
     if gone:
         failures.append("quick lean review: the block does not say %s" % gone)
     if "upstream lines 701" in block:
         failures.append("quick lean review: the block still cites 'upstream lines 701'")
-    # item 5 must not tell the agent to tick the checklist (that moved to item 6, after the commit step)
-    item5 = flat.split("7. **Step 6 (executor's commit)")[0].split("6. **Step 4.5")[-1]
-    if "Tick the PLAN.md checklist" in item5:
-        failures.append("quick lean review: the tick sentence is still in the do-the-task item instead of the commit item")
-    if "Tick the PLAN.md checklist" not in flat.split("7. **Step 6 (executor's commit)")[-1].split("8. **Step 6")[0]:
-        failures.append("quick lean review: the commit item does not tick the PLAN.md checklist")
+    # the tick belongs to the do-the-task item, as each step finishes (review3 moved it back from the commit item)
+    item6 = flat.split("7. **Step 6 (executor's commit)")[0].split("6. **Step 4.5")[-1]
+    if "Tick the PLAN.md checklist lines (item 5) as each step finishes" not in item6:
+        failures.append("quick lean review: the do-the-task item does not tick the PLAN.md checklist as each step finishes")
+    if "Tick the PLAN.md checklist" in flat.split("7. **Step 6 (executor's commit)")[-1].split("8. **Step 6")[0]:
+        failures.append("quick lean review: the tick sentence is still in the commit item")
 
 
 def quick_lean_review2(failures):
@@ -1270,7 +1270,7 @@ def quick_lean_review2(failures):
         return
     flat = " ".join(block.split())
     need = ("Skip Step 2.5", "git log --all -F --grep", "interrupted before", "first two hyphen-separated parts",
-            "do not commit", "git diff", "skip the commit and Step 7", "${quick_id}-PLAN.md", "Steps 4.5 to 6.5",
+            "do not commit", "git diff", "skip the commit", "${quick_id}-PLAN.md", "Steps 4.5 to 6.5",
             "success_criteria", "whole-word")
     gone = [m for m in need if m not in flat]
     if gone:
@@ -1292,12 +1292,51 @@ def quick_lean_review2(failures):
         failures.append("quick lean review2: gsd-quick patches left %s (errors %s, text changed %s)" % (left, errs, got != toy))
 
 
+def quick_lean_review3(failures):
+    """A third review of the lean block found seven defects, each one assertion here. (1) the lean commit is made in
+    the main thread and skipped the executor's step 0 guard (detached HEAD, protected or default branch, override
+    `git.allow_default_branch_commits`); the block now runs the executor's own check, `gsd_run query git.base-branch
+    --is-protected`, before `git add`. (2) a resume did not say that uncommitted changes are work already done, nor to
+    tick the checklist as each step finishes. (3) a resume that runs `quick-tasks-append` after a commit that is not
+    HEAD records the wrong hash (the command always reads HEAD). (4) a task that needs no file change skipped Step 7,
+    so it got no STATE row and no Last activity line; `quick-tasks-append` cannot take a commit (it reads HEAD, and
+    shows an em dash only when git fails), so the block now says such a task gets no row and still writes 7d.
+    (5) a stopped task left no trace: its SUMMARY now says `status: incomplete` (audit-open lists every status but
+    `complete`). (6) "the project's own check for it" became "the cheapest check that covers the change". (7) the block
+    now says it applies to run and resume only, and no longer says "print none of the per-flag banners". Seen failing
+    on 55a0abd: "quick lean review3: the block does not say
+    ['gsd_run query git.base-branch --is-protected', 'detached', 'Run `git status` and `git diff` first', 'equals HEAD',
+    'gets no STATE row', 'status: incomplete', 'cheapest check that covers the change', 'list and status never reach
+    it']", "quick lean review3: the block still has ['print none of the per-flag banners', "the project's own check for
+    it", 'skip the commit and Step 7']" and "quick lean review3: the protected-branch guard (position -1) does not come
+    before `git add` (position 3745)".
+    Negative control (a backup copy of config/gsd/quick-lean.md with the protected-branch sentence deleted, restored
+    from the backup): the first message names 'gsd_run query git.base-branch --is-protected'."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean review3: no payload file to read (quick_lean reports why)")
+        return
+    flat = " ".join(block.split())
+    need = ("gsd_run query git.base-branch --is-protected", "detached", "Run `git status` and `git diff` first", "equals HEAD",
+            "gets no STATE row", "status: incomplete", "cheapest check that covers the change", "list and status never reach it")
+    gone = [m for m in need if m not in flat]
+    if gone:
+        failures.append("quick lean review3: the block does not say %s" % gone)
+    old = [m for m in ("print none of the per-flag banners", "the project's own check for it", "skip the commit and Step 7") if m in flat]
+    if old:
+        failures.append("quick lean review3: the block still has %s" % old)
+    guard_at, add_at = flat.find("--is-protected"), flat.find("plain `git add")
+    if guard_at < 0 or add_at < 0 or guard_at > add_at:
+        failures.append("quick lean review3: the protected-branch guard (position %d) does not come before `git add` (position %d)" % (guard_at, add_at))
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review, quick_lean_review2)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review, quick_lean_review2, quick_lean_review3)
     for case in cases:
         case(failures)
     for msg in failures:
