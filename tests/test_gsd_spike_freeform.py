@@ -33,6 +33,16 @@ Second review (10 items), seen failing on 8b186d4 (23 failures), among them:
 Negative control for the second review: the sentence "write the line literally as `verdict: PENDING`, unquoted ..." removed
 from a backup copy of the payload makes "3 PENDING is written literally, since /gsd-next greps it: '`verdict: PENDING`'" fail;
 restored from the backup, 0 failures.
+Third review (8 items), seen failing on 5d4877f (15 failures), among them:
+  "5 ... the gsd_run preamble is re-run in the same Bash call as the config-get line and the commit: 'same Bash call'"
+  "1 COMMIT_DOCS fails closed: no gsd_run means stop and tell the owner: 'never assume true'"
+  "2 still split into 2-5 questions, only the table is withheld: '2-5 Given/When/Then'"
+  "2 the block does not say to withhold the whole decomposition: the block still says 'do not present the decomposition table'"
+  "3 success_criteria items apply only as the block allows: '`success_criteria`'"
+  "4 frontier lists the PENDING spikes first: 'First list every spike with `verdict: PENDING`'"
+  "5 skill entry: ... and names each skipped one in its inventory: \"In the spike workflow ..."
+Negative control for the third review: the sentence "if gsd_run is not found, stop and tell the owner, never assume true" removed
+from a backup copy of the payload makes "1 COMMIT_DOCS fails closed: ...: 'never assume true'" fail; restored from the backup.
 Negative control, on the finished code: the workflows/spike.md entry removed from a backup copy of
 sync_gsd_runtime.py makes case 1 fail with the message above (cases 2 and 3 with it); restored from the backup."""
 import importlib.util
@@ -123,13 +133,21 @@ else:
                           ("9 say how many experiments remain", "how many remain"),
                           ("5 COMMIT_DOCS: the config-get line of setup_directory, before each commit, in every mode",
                            "`config-get commit_docs`"),
-                          ("5 ... the only place COMMIT_DOCS is set", "the only place `COMMIT_DOCS` is set"),
+                          ("5 ... the gsd_run preamble is re-run in the same Bash call as the config-get line and the commit", "same Bash call"),
+                          ("1 COMMIT_DOCS fails closed: no gsd_run means stop and tell the owner", "never assume true"),
                           ("5 ... before each commit, in every mode", "before each commit, in every mode"),
                           ("3 PENDING is written literally, since /gsd-next greps it", "`verdict: PENDING`"),
                           ("3 PENDING answered: the README and MANIFEST row are updated and committed again",
                            "update the README and the MANIFEST row and commit again"),
                           ("2 WINNER is only a value of the report table", "WINNER is only a value of the report table"),
-                          ("6 order by risk silently", "Order by risk silently; do not present the decomposition table"),
+                          ("2 still split into 2-5 questions, only the table is withheld", "2-5 Given/When/Then"),
+                          ("2 ... only the table is withheld", "only the table (`decompose`) is withheld"),
+                          ("2 align: name the next experiment and end the turn", "name the next experiment in one or two sentences and end your turn"),
+                          ("3 success_criteria items apply only as the block allows", "`success_criteria`"),
+                          ("4 frontier lists the PENDING spikes first", "First list every spike with `verdict: PENDING`"),
+                          ("6 the frontier README stub is defined", "frontmatter with"),
+                          ("7 the loser of a comparison has a verdict", "the loser of a comparison is PARTIAL, or INVALIDATED if it failed"),
+                          ("8 a PENDING turn says how to run it and what to expect", "what to expect"),
                           ("6 research whenever an external library, API or service is involved", "Research whenever"),
                           ("6 prior-spike reuse stays visible", "name the prior spikes you reuse"),
                           ("2 steering: one question per real fork", "AskUserQuestion"),
@@ -154,6 +172,8 @@ else:
                           ("4 order: the commit is step i, not j", "steps g and j"),
                           ("5 'resolve it there' named no line", "resolve it there"),
                           ("6 the old decompose sentence", "without presenting its table"),
+                          ("2 align does not say to give the decomposition table", "give the table"),
+                          ("2 the block does not say to withhold the whole decomposition", "do not present the decomposition table"),
                           ("2 no 'carry on'", "carry on"), ("1 no 'Gates are guidance'", "Gates are guidance"),
                           ("1 no 'start it'", "start it"), ("2 no 'unless the owner redirects'", "unless the owner redirects")):
             want(n, needle not in block, "the block still says %r" % needle)
@@ -223,8 +243,12 @@ else:
              "the gates are guidance" not in new, repr(new))
         want("10 skill entry: scoped to the spike workflow", "spike workflow" in new, repr(new))
         want("10 skill entry: --wrap-up is excluded", "--wrap-up" in new, repr(new))
-        want("1 skill entry: --wrap-up skips the spikes whose verdict is PENDING (it sorts every spike into a final verdict)",
+        want("1 skill entry: --wrap-up skips the spikes whose verdict is PENDING",
              "PENDING" in new and "skip" in new, repr(new))
+        want("5 skill entry: --wrap-up includes only VALIDATED, PARTIAL and INVALIDATED spikes, therefore it skips PENDING ones",
+             "includes only VALIDATED, PARTIAL and INVALIDATED spikes, therefore it skips PENDING ones" in new, repr(new))
+        want("5 skill entry: ... and names each skipped one in its inventory", "names each skipped one in its inventory" in new, repr(new))
+        want("5 skill entry: the old clause 'sorts every spike into a final verdict' is gone", "sorts every spike" not in new, repr(new))
     if gates is not None and e2e is not None:
         both = [(a, b) for a, b in ((OLD, gates[3]), (OLD2, e2e[3]))]
         fx = "<process>\nParse.\n%s\n\n%s\n</process>\n" % (OLD2, OLD)
