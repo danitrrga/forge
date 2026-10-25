@@ -1714,6 +1714,43 @@ ROOTED = [
     ("grep -r foo ..", 2),
     ("grep -r foo ~", 2),
 ]
+# The backlog rule: `gh issue create` is refused in a project holding scripts/backlog/backlog.mjs (under
+# the project dir or the directory the call runs in), which opens the issue and the backlog item together.
+# (command, project, cwd, want rc). BL_WITH holds the script as a file, BL_WITHOUT does not, BL_DIRONLY has
+# a directory of that name, BL_ELSE is a project without it whose call runs inside BL_WITH.
+# Red before the rule, the 6 refused cases of the 20 (the 14 others pass without it, as they must): "backlog
+# 'gh issue create' in guard-test-backlog-with-... (project guard-test-backlog-with-...): wanted rc=2, got rc=0 ()".
+# Plain, --title/--body, command gh, env/sudo/time prefixes, nested bash -c and the cwd-only case fail alike.
+# A nudge, not a wall: `gh api` still creates an issue, and only Claude Code runs this guard.
+BL_WITH = sandbox.mkdtemp("guard-test-backlog-with-")
+BL_WITHOUT = sandbox.mkdtemp("guard-test-backlog-without-")
+BL_DIRONLY = sandbox.mkdtemp("guard-test-backlog-dir-")
+BL_ELSE = sandbox.mkdtemp("guard-test-backlog-else-")
+os.makedirs(os.path.join(BL_WITH, "scripts", "backlog"))
+open(os.path.join(BL_WITH, "scripts", "backlog", "backlog.mjs"), "w").close()
+os.makedirs(os.path.join(BL_DIRONLY, "scripts", "backlog", "backlog.mjs"))
+BACKLOG_CASES = [
+    ("gh issue create", BL_WITH, BL_WITH, 2),
+    ("gh issue create --title t --body b", BL_WITH, BL_WITH, 2),
+    ("command gh issue create --title t", BL_WITH, BL_WITH, 2),
+    ("GH_TOKEN=x sudo -E time gh issue create -t t", BL_WITH, BL_WITH, 2),
+    ("bash -c 'cd x; gh issue create --title t'", BL_WITH, BL_WITH, 2),
+    ("gh issue create --title t", BL_ELSE, BL_WITH, 2),
+    ("gh issue list", BL_WITH, BL_WITH, 0),
+    ("gh issue view 3", BL_WITH, BL_WITH, 0),
+    ("gh issue comment 3 --body done", BL_WITH, BL_WITH, 0),
+    ("gh issue close 3", BL_WITH, BL_WITH, 0),
+    ("gh issue edit 3 --title t", BL_WITH, BL_WITH, 0),
+    ("gh pr create --title t", BL_WITH, BL_WITH, 0),
+    ("gh api repos/o/r/issues -f title=t", BL_WITH, BL_WITH, 0),
+    ("echo gh issue create", BL_WITH, BL_WITH, 0),
+    ("grep 'gh issue create' notes.md", BL_WITH, BL_WITH, 0),
+    ("gh issue create --title t", BL_WITHOUT, BL_WITHOUT, 0),
+    ("gh issue create --title t", BL_DIRONLY, BL_DIRONLY, 0),
+    ("gh issue create -R other/repo --title t", BL_WITH, BL_WITH, 0),
+    ("gh issue create --title t --repo other/repo", BL_WITH, BL_WITH, 0),
+    ("gh issue create --repo=other/repo --title t", BL_WITH, BL_WITH, 0),
+]
 FORGE_FILE_CASES = [
     # 1. Red before: "Read <repo>/.env.sample: wanted rc=0 '', got rc=2 BLOCKED - protected
     #    file or directory".
@@ -2233,6 +2270,16 @@ def check(case):
         rc, err = run_tool("Bash", {"command": cmd}, {"CLAUDE_PROJECT_DIR": GF()}, cwd=GF())
         if rc != want:
             return "in the project %s, wanted rc=%s, got rc=%s (%s): %r" % (GF(), want, rc, err.strip()[16:90], cmd)
+    elif kind == "backlog":
+        _, cmd, project, cwd, want = case
+        rc, err = run_tool("Bash", {"command": cmd}, {"CLAUDE_PROJECT_DIR": project}, cwd=cwd)
+        if rc != want:
+            return "backlog %r in %s (project %s): wanted rc=%s, got rc=%s (%s)" % (
+                cmd, os.path.basename(cwd), os.path.basename(project), want, rc, err.strip()[16:90])
+        if rc == 2:
+            if "gh issue create is refused" not in err:
+                return "backlog %r blocked for the wrong reason: %s" % (cmd, err.strip()[16:90])
+            return bad_message(err)
     elif kind == "bypass-env":
         # The downstream project's guard turned itself off on GUARD_BYPASS=1; the core has no off
         # switch inside a session (the profile is the switch). Red on forge's old guard:
@@ -2256,6 +2303,7 @@ def main():
              + [("block", c, r) for c, r in FORGE_BLOCK] + [("allow", c) for c in FORGE_ALLOW]
              + [("file",) + fc for fc in FORGE_FILE_CASES] + [("malformed", m) for m in FORGE_MALFORMED]
              + [("bypass-env",)] + [("rooted",) + r for r in ROOTED]
+             + [("backlog",) + c for c in BACKLOG_CASES]
              + [("config",) + c for c in CONFIG_CASES])
     # test_guard_mutants.py only needs to know that a weakened guard fails at least one case,
     # so it sets GUARD_TEST_FAIL_FAST and the run stops at the first failure.

@@ -71,6 +71,8 @@ MUTANTS = {
     # Rules added after the independent review.
     "drop the lefthook bypass checks":
         ("            reason = hook_bypass(pcmd)\n            if reason:", "            reason = None\n            if reason:"),
+    "drop the backlog rule (gh issue create passes where backlog.mjs exists)":
+        ("            reason = issue_create_refusal(pcmd)\n            if reason:", "            reason = None\n            if reason:"),
     "drop git commit -n":
         ('        if re.match(r"^-[a-zA-Z]+$", a) and "n" in a[1:]:', "        if False:"),
     "drop .env.example exclusion (over-block)":

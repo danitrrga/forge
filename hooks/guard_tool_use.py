@@ -1903,6 +1903,35 @@ def commit_n(seg):
     return False
 
 
+BACKLOG_SCRIPT = os.path.join("scripts", "backlog", "backlog.mjs")
+
+
+def issue_create_refusal(pcmd):
+    """A refusal when pcmd runs `gh issue create` in a project that has scripts/backlog/backlog.mjs
+    (under PROJECT or the directory the call runs in): that script opens the issue and the backlog
+    item together, and plain `gh issue create` leaves the two out of step. Read like commit_n: any
+    wrapper prefix, `command gh`, nested shells. `-R/--repo` anywhere passes, it names another
+    repository. A nudge, not a wall: `gh api` still creates an issue, and only Claude Code runs this guard."""
+    if not any(os.path.isfile(os.path.join(d, BACKLOG_SCRIPT)) for d in (PROJECT, CWD[0])):
+        return None
+    for seg in pieces(pcmd):
+        if _creates_issue(seg):
+            return ("gh issue create is refused here: this project opens issues through its backlog script, "
+                    "which creates the issue and the backlog item together. Instead run: "
+                    'node scripts/backlog/backlog.mjs add "<title>" [--body-file FILE]')
+    return None
+
+
+def _creates_issue(seg):
+    words = strip_prefix(split_words(pipeline(seg)[0]) or [])
+    bodies = nested_bodies(words)
+    if bodies:
+        return any(_creates_issue(p) for a in bodies for p in pieces(a))
+    if len(words) < 3 or os.path.basename(words[0]) != "gh" or words[1:3] != ["issue", "create"]:
+        return False
+    return not any(a in ("-R", "--repo") or a.startswith(("-R", "--repo=")) for a in words[3:])
+
+
 # ------------------------------------------------------------------ per-project parameters
 #
 # `--project NAME` (the profile's `command_guard` line) reads <forge>/config/guard/NAME.json
@@ -2045,6 +2074,9 @@ def main(argv=None):
                      "transcript. Deleting or renaming one (rm, mv, git rm, git mv) is "
                      "the user's to run: ask them.")
             reason = hook_bypass(pcmd)
+            if reason:
+                deny(reason)
+            reason = issue_create_refusal(pcmd)
             if reason:
                 deny(reason)
             if KEYRING_DUMP.search(low) and not REDIRECT_TO_FILE.search(cmd):
