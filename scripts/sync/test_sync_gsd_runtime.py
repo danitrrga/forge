@@ -1152,12 +1152,68 @@ def quick_lean(failures):
         gsd.BLOCKS = saved
 
 
+def quick_lean_readers(failures):
+    """The lean path of quick_lean once wrote no PLAN.md, but the gsd-quick skill's `status <slug>` and `resume <slug>`
+    read the task description from it ("first non-empty line from PLAN.md after frontmatter", "description from PLAN.md"),
+    so a lean task was invisible to both, and its resume rule ("a quick directory that already has a PLAN.md runs the
+    full pipeline") would have sent a lean task into the heavy path once it had one. The block now writes a minimal
+    PLAN.md (frontmatter with `mode: lean`, the description alone on the first line after it, a short checklist) where
+    the planner would have, and the skill text that told the agent to spawn a planner and an executor and to "Preserve
+    all workflow gates" is replaced by a SKILL_PATCHES entry for gsd-quick. Cases: (a) the payload names the minimal
+    PLAN.md, the two readers (`status <slug>`, `resume <slug>`), the fields they read and the `mode: lean` marker, and
+    those fields exist in the real staged skill's STATUS and RESUME text (read only; NOT RUN, NOT ARMED without a
+    staging); (b) SKILL_PATCHES has a gsd-quick entry, and with it applied the two old sentences are gone, the text
+    changed and a second application changes nothing. Seen failing on the branch before the fix (bfbe9e6):
+    "quick lean readers: the block does not name ['minimal PLAN.md', '`status <slug>`', '`resume <slug>`',
+    'first non-empty line', 'after frontmatter', 'mode: lean']" and "quick lean readers: SKILL_PATCHES has no entry for
+    gsd-quick (keys: [...])". Negative control (a backup copy of config/gsd/quick-lean.md with the sentence that names
+    the minimal PLAN.md deleted, restored from the backup): case (a) fails with the first message."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean readers: no payload file to read (quick_lean reports why)")
+    else:
+        need = ("minimal PLAN.md", "`status <slug>`", "`resume <slug>`", "first non-empty line", "after frontmatter", "mode: lean")
+        gone = [m for m in need if m not in block]
+        if gone:
+            failures.append("quick lean readers: the block does not name %s" % gone)
+    import pwd
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    stage_skill = os.path.join(home, ".cache", "forge", "gsd-stage", "cfg", "skills", "gsd-quick", "SKILL.md")
+    staged = read(stage_skill) if os.path.isfile(stage_skill) else None
+    if staged is None:
+        print("SKIP quick_lean_readers real staged gsd-quick skill: NOT RUN, NOT ARMED: no staging at %s" % stage_skill)
+    else:
+        status_part = staged.split("## STATUS subcommand")[1].split("## RESUME subcommand")[0] if "## STATUS subcommand" in staged else ""
+        resume_part = staged.split("## RESUME subcommand")[1].split("## RUN subcommand")[0] if "## RESUME subcommand" in staged else ""
+        if "first non-empty line" not in status_part or "after frontmatter" not in status_part or "PLAN.md" not in resume_part:
+            failures.append("quick lean readers: the staged skill's STATUS/RESUME text no longer reads the description from PLAN.md "
+                            "as the block says (status has the fields %s, resume names PLAN.md %s)"
+                            % ("first non-empty line" in status_part and "after frontmatter" in status_part, "PLAN.md" in resume_part))
+    skill_entries = REAL_PATCHES.get("gsd-quick")
+    if not skill_entries:
+        failures.append("quick lean readers: SKILL_PATCHES has no entry for gsd-quick (keys: %s)" % sorted(REAL_PATCHES))
+        return
+    old = ("- Spawns gsd-planner (quick mode) + gsd-executor(s)", "Preserve all workflow gates")
+    toy = "\n".join(("intro", old[0], "mid", "Execute end-to-end.",
+                     "Preserve all workflow gates (validation, task description, planning, execution, state updates, commits).", "end"))
+    for label, text in (("toy", toy), ("real staged skill", staged)):
+        if text is None:
+            continue
+        got = gsd.apply_patches(text, "gsd-quick", skill_entries, errs := [])
+        again = gsd.apply_patches(got, "gsd-quick", skill_entries, errs)
+        left = [o for o in old if o in got]
+        if errs or left or got == text or again != got:
+            failures.append("quick lean readers: %s: errors %s, old sentences left %s, changed %s, second application stable %s"
+                            % (label, errs, left, got != text, again == got))
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers)
     for case in cases:
         case(failures)
     for msg in failures:
