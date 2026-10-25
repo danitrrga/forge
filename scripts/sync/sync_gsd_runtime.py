@@ -76,7 +76,7 @@ UPDATING GSD
 
 USAGE
   python3 scripts/sync/sync_gsd_runtime.py            # dry-run: agents + engine + checks
-  python3 scripts/sync/sync_gsd_runtime.py --apply    # write agents + engine (SessionStart does this)
+  python3 scripts/sync/sync_gsd_runtime.py --apply    # write agents + engine (`forge skills --apply` runs this)
   --skills        also compare (and with --apply, rewrite or create) forge/skills/gsd-*: every skill of the package
                   is shipped, the ones forge has not written yet are new
   --restage       force a fresh staging install even if the package version has not changed
@@ -111,7 +111,7 @@ STAMP = os.path.join(STAGE_ROOT, "STAGED-VERSION")
 NPM_STAMP = os.path.join(STAGE_ROOT, "NPM-CHECKED")
 GSD_DEFAULTS = os.path.join(HOME, ".gsd", "defaults.json")  # GSD's user-level defaults, a copy of BLOCKS/defaults.json
 
-# A SessionStart outside forge, or a refused --apply, leaves the user-scope files alone.
+# A run outside forge, or a refused --apply, leaves the user-scope files alone.
 CTX = lib.context(sys.argv[1:])
 DO_SKILLS = "--skills" in sys.argv
 RESTAGE = "--restage" in sys.argv
@@ -445,7 +445,7 @@ def sync_skills(errors):
     already has are compared, the ones it has not are new and written whole. FORGE_AUTHORED names have no upstream file
     and are never touched.
 
-    Read-only unless --skills --apply, because these files are in git and a SessionStart that
+    Read-only unless --skills --apply, because these files are in git and a run that
     silently reverted a hand edit would be worse than the drift it fixes. Drift reported here is
     the prompt to turn that edit into a patch above."""
     staged = os.path.join(STAGE, "skills")
@@ -570,13 +570,13 @@ def npm_nag(pkg_v):
 
     WHY AUTOMATIC. "Check for a new version" as a habit is a thing nobody does; the runtime sat
     on 1.42.3 with six agents missing for six weeks and the only reason anyone looked was a
-    stuck command. WHY THROTTLED AND SILENT. This runs at every SessionStart: a network call
-    per session is rude, and a line saying "you are up to date" every time is noise that gets
+    stuck command. WHY THROTTLED AND SILENT. This runs at every --apply: a network call
+    per run is rude, and a line saying "you are up to date" every time is noise that gets
     filtered out along with the line that matters. One check a day, 8 seconds, prints only when
     there is something to say, and any failure (offline, npm slow) is simply skipped.
 
     Apply only: the stamp is a write, and a dry-run writes nothing. The nag still comes once a
-    day, from the SessionStart --apply; --check-npm asks on demand."""
+    day, from an --apply (a session start only runs --check, which never calls it); --check-npm asks on demand."""
     if not CTX.apply:
         return
     import time
@@ -643,7 +643,7 @@ def main():
     if CHECK and CTX.apply:
         sys.exit("! --check reads only: drop --apply")
     if not CTX.globals:
-        return 0  # user-scope files; a SessionStart outside forge leaves them alone
+        return 0  # user-scope files; a run outside forge leaves them alone
     if lib.on("gsd") and not lib.gsd_patched():
         # A stranger gets GSD straight from its package, installed by forge init
         # through `pnpm dlx get-shit-done-cc`. The patches, the staging and the copy are forge's own
