@@ -117,9 +117,26 @@ def public_hits(line):
     return out
 
 
+def main_checkout(root):
+    """The main checkout of the repository `root` is a linked worktree of, else None."""
+    try:
+        r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+    except OSError:
+        return None
+    common = os.path.abspath(os.path.join(root, r.stdout.strip())) if r.returncode == 0 and r.stdout.strip() else ""
+    main = os.path.dirname(common)
+    if os.path.basename(common) != ".git" or os.path.realpath(main) == os.path.realpath(root):
+        return None
+    return main
+
+
 def load_deny(root):
-    """The private list as [(line number, compiled pattern)], None when the file is not there."""
+    """The private list as [(line number, compiled pattern)], None when the file is not there. A linked
+    worktree has no private files of its own, so it reads the main checkout's."""
     p = os.path.join(root, DENY)
+    if not os.path.exists(p):
+        main = main_checkout(root)
+        p = os.path.join(main, DENY) if main else p
     if not os.path.exists(p):
         return None
     pats = []
