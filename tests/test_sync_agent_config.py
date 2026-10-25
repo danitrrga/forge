@@ -1194,7 +1194,7 @@ for label, prof, want, summary in (
 # 28. reconcile() owns a marker's entries on EVERY event, per agent: an entry carrying the marker of one
 # of this agent's rows, on an event where none of this agent's rows with that marker lives, is dropped
 # with a note naming the event. Without it, deleting the UserPromptSubmit gsd_output_discipline.py row
-# (T1, docs/hooks-phase-design.md) leaves the old entry firing on every prompt forever, because
+# (T1, docs/archive/designs/hooks-phase-design.md) leaves the old entry firing on every prompt forever, because
 # reconcile never touched an event that has no row. Controls in the same case: a foreign entry beside
 # it, omarchy_notify.py (a Claude-only row) in a Codex Notification event, and the PostToolUse and Stop
 # discipline entries, all left as they were; a second run says nothing. Red before, both agents:
@@ -1231,7 +1231,7 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
           % (agent, notes, gsd_prompt, cmds("SessionEnd"), doc["hooks"]["PostToolUse"] == keep_post,
              doc["hooks"]["Stop"] == keep_stop, cmds("Notification"), again))
 
-# 29. Native deny rules for secret files (T3, docs/hooks-phase-design.md): write_user_settings unions
+# 29. Native deny rules for secret files (T3, docs/archive/designs/hooks-phase-design.md): write_user_settings unions
 # twenty-three Read rules (nine of forge's own, fourteen machine credential stores) into
 # ~/.claude/settings.json permissions.deny, in order, after whatever is there.
 # The design's six paths, the ~/.hindsight/ one as three rules, because T0 measured that

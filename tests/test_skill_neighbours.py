@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """skills.write_settings_local's `skillOverrides` list must switch off the project skills of an
-ancestor or nested profile in the same git repository (docs/skill-placement-design.md, batch B2).
+ancestor or nested profile in the same git repository (docs/archive/designs/skill-placement-design.md, batch B2).
 
 Claude Code loads `<ancestor>/.claude/skills` at startup (the walk up to the git root) and
 `<descendant>/.claude/skills` once a file under it is read, and `skillOverrides` is matched by
