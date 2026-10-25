@@ -1088,12 +1088,76 @@ def normalize_forms(failures):
         gsd.STAGE = saved
 
 
+def quick_lean(failures):
+    """`gsd-quick` means quick: ENGINE_PATCHES puts a short "forge lean path" block first in workflows/quick.md, a
+    `replace` on the exact `<purpose>` line (config/gsd/quick-lean.md), so an upstream rewrite of that line is an error,
+    not a silent skip. The block names the state GSD reads back and keeps it (the SUMMARY.md with `status: complete`
+    that audit-open scans, the STATE.md row through quick-tasks-append, the branching, the ROADMAP.md gate), turns the
+    subagent steps off by default, and leaves the four flags as the way back to the full pipeline. Cases: (1) the entry
+    exists, is a replace anchored on `<purpose>`, its payload file exists and names the kept state, the flags and every
+    step it overrides; (2) on a toy file whose first line is `<purpose>` the block lands first and a second application
+    changes nothing; (3) on the real staged quick.md (read only; NOT RUN, NOT ARMED when there is no staging) the
+    patch applies without an error and the block is the first thing in the file. Seen failing on a59e67d:
+    "quick lean: ENGINE_PATCHES has no entry for workflows/quick.md (keys: ['workflows/ingest-docs.md',
+    'references/mandatory-initial-read.md'])", and cases 2 and 3 with "quick lean: toy: no patch to apply" and
+    "quick lean: real staged quick.md: no patch to apply". Negative control (a backup copy of sync_gsd_runtime.py with
+    the ENGINE_PATCHES entry removed, restored from the backup): case 1 fails with the message above."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    if not entries:
+        failures.append("quick lean: ENGINE_PATCHES has no entry for workflows/quick.md (keys: %s)" % list(gsd.ENGINE_PATCHES))
+        failures.append("quick lean: toy: no patch to apply")
+        failures.append("quick lean: real staged quick.md: no patch to apply")
+        return
+    real_blocks = os.path.join(FORGE, "config", "gsd")
+    if len(entries) != 1 or entries[0][1] != "replace" or entries[0][2] != "<purpose>" or not entries[0][3].startswith("file:"):
+        failures.append("quick lean: want one `replace` anchored on '<purpose>' with a file: payload, got %s" % [(e[0], e[1], e[2]) for e in entries])
+        return
+    block = read(os.path.join(real_blocks, entries[0][3][5:]))
+    if block is None:
+        failures.append("quick lean: payload file %s does not exist" % entries[0][3][5:])
+        return
+    if not block.startswith("<purpose>\n") or not block.endswith("\n"):
+        failures.append("quick lean: the payload must begin with the `<purpose>` line and end with a newline, begins %r" % block[:20])
+    must = ("SUMMARY.md", "status: complete", "STATE.md", "Quick Tasks Completed", "quick-tasks-append", "roadmap_exists",
+            "--full", "--validate", "--discuss", "--research", "ROADMAP.md", "Step 2.5", "Step 5", "Step 6", "Step 6.25",
+            "Step 6.5", "Step 7", "Step 8", "no subagent")
+    gone = [m for m in must if m not in block]
+    if gone:
+        failures.append("quick lean: the block does not name %s" % gone)
+    saved = gsd.BLOCKS
+    gsd.BLOCKS = real_blocks
+    try:
+        patches = {"workflows/quick.md": entries}
+        toy = "<purpose>\nUpstream first sentence.\n</purpose>\n\n<process>\nrest\n</process>\n"
+        once = gsd.apply_patches(toy, "workflows/quick.md", entries, errs := [])
+        twice = gsd.apply_patches(once, "workflows/quick.md", entries, errs)
+        if errs or not once.startswith(block) or once.count(block) != 1 or not once.endswith(toy[len("<purpose>\n"):]):
+            failures.append("quick lean: toy: errors %s, block first %s, block count %d, rest of the file kept %s"
+                            % (errs, once.startswith(block), once.count(block), once.endswith(toy[len("<purpose>\n"):])))
+        if twice != once:
+            failures.append("quick lean: toy: a second application changed the text")
+        drift = gsd.apply_patches("<intro>\nupstream rewrote the first line\n", "workflows/quick.md", entries, errs2 := [])
+        if len(errs2) != 1 or drift != "<intro>\nupstream rewrote the first line\n":
+            failures.append("quick lean: toy: a missing anchor gave errors %s (want one) and text %r" % (errs2, drift))
+        import pwd
+        stage = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".cache", "forge", "gsd-stage", "cfg", "gsd-core", "workflows", "quick.md")
+        if not os.path.isfile(stage):
+            print("SKIP quick_lean real staged quick.md: NOT RUN, NOT ARMED: no staging at %s" % stage)
+            return
+        staged = read(stage)
+        got = gsd.apply_patches(staged, "workflows/quick.md", entries, errs3 := [])
+        if errs3 or not got.startswith(block) or got == staged or not got.endswith(staged[len("<purpose>\n"):]):
+            failures.append("quick lean: real staged quick.md: errors %s, block first %s, changed %s" % (errs3, got.startswith(block), got != staged))
+    finally:
+        gsd.BLOCKS = saved
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean)
     for case in cases:
         case(failures)
     for msg in failures:

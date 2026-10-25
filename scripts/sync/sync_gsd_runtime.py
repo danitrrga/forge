@@ -54,6 +54,9 @@ WHAT FORGE OWNS ON TOP
     directory", measured).
   * (retired with gsd-core 1.18: the planner now has Edit, and the config skill names the right package.)
   * (retired: the graphify and MemPalace router rows are back, every upstream skill ships now.)
+  * quick lean path -- config/gsd/quick-lean.md goes first in workflows/quick.md: with no flag the task is done in the main
+    thread (no planner, executor, checker or verifier subagent, no PLAN.md), and only the state GSD reads back is written
+    (the SUMMARY.md with `status: complete`, the STATE.md row, the commits). The four flags bring the full pipeline back.
   * update route -- the update skill is rewritten to run the procedure below instead of the
     installer, for reason 1 above.
 
@@ -239,6 +242,8 @@ ENGINE_PATCHES = {
         ("output-discipline", "append",
          "**CRITICAL: Mandatory Initial Read**", "file:output-discipline.md"),
     ],
+    # The anchor is the whole first line, so an upstream rewrite of it is an error, never a silent skip.
+    "workflows/quick.md": [("forge-lean-path", "replace", "<purpose>", "file:quick-lean.md")],
 }
 
 UPDATE_OLD = """<objective>
