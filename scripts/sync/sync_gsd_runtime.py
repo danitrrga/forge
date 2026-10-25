@@ -55,8 +55,10 @@ WHAT FORGE OWNS ON TOP
   * (retired with gsd-core 1.18: the planner now has Edit, and the config skill names the right package.)
   * (retired: the graphify and MemPalace router rows are back, every upstream skill ships now.)
   * quick lean path -- config/gsd/quick-lean.md goes first in workflows/quick.md: with no flag the task is done in the main
-    thread (no planner, executor, checker or verifier subagent, no PLAN.md), and only the state GSD reads back is written
-    (the SUMMARY.md with `status: complete`, the STATE.md row, the commits). The four flags bring the full pipeline back.
+    thread (no planner, executor, checker or verifier subagent), and only the state GSD reads back is written (a minimal
+    PLAN.md, which the gsd-quick skill's `status` and `resume` read, the SUMMARY.md with `status: complete`, the STATE.md
+    row, the commits). The four flags bring the full pipeline back. The gsd-quick skill's two sentences that told the
+    agent to spawn a planner and an executor and to preserve every gate are replaced to match (SKILL_PATCHES).
   * update route -- the update skill is rewritten to run the procedure below instead of the
     installer, for reason 1 above.
 
@@ -273,6 +275,18 @@ paragraph describes the upstream flow and is kept for reference only — do not 
 
 Original objective: check for GSD updates, install if available, and display what changed."""
 
+# The gsd-quick skill said the command spawns gsd-planner and gsd-executor and must "preserve all workflow gates"; the lean path
+# of config/gsd/quick-lean.md (ENGINE_PATCHES) spawns neither by default and keeps the state and commit gates.
+QUICK_SPAWN_OLD = "- Spawns gsd-planner (quick mode) + gsd-executor(s)"
+QUICK_SPAWN_NEW = ("- By default the main agent does the task itself, with no planner or executor subagent (the forge lean path at "
+                   "the top of the workflow); any of --full, --validate, --discuss, --research brings gsd-planner (quick mode) "
+                   "and gsd-executor(s) back")
+QUICK_GATES_OLD = "Preserve all workflow gates (validation, task description, planning, execution, state updates, commits)."
+QUICK_GATES_NEW = ("Follow the forge lean path at the top of the workflow when none of --full, --validate, --discuss, --research "
+                   "is given: it keeps the state and commit gates (ROADMAP.md check, a minimal PLAN.md, the SUMMARY.md with "
+                   "`status: complete`, the STATE.md row, the commits). With any of those flags, run every step and gate of "
+                   "the workflow as written.")
+
 SKILL_PATCHES = {
     "gsd-update": [("forge-update-route", "replace", UPDATE_OLD, UPDATE_NEW)],
     # Claude Code 2.1.268 stopped offering TodoWrite on current models unless
@@ -281,6 +295,8 @@ SKILL_PATCHES = {
     "gsd-execute-phase": [("no-todowrite", "replace",
                            "  - Agent\n  - TodoWrite\n  - AskUserQuestion\n",
                            "  - Agent\n  - AskUserQuestion\n")],
+    "gsd-quick": [("quick-lean-spawn", "replace", QUICK_SPAWN_OLD, QUICK_SPAWN_NEW),
+                  ("quick-lean-gates", "replace", QUICK_GATES_OLD, QUICK_GATES_NEW)],
 }
 
 
