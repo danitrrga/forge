@@ -1196,7 +1196,8 @@ def quick_lean_readers(failures):
         return
     old = ("- Spawns gsd-planner (quick mode) + gsd-executor(s)", "Preserve all workflow gates")
     toy = "\n".join(("intro", old[0], "mid", "Execute end-to-end.",
-                     "Preserve all workflow gates (validation, task description, planning, execution, state updates, commits).", "end"))
+                     "Preserve all workflow gates (validation, task description, planning, execution, state updates, commits).",
+                     gsd.QUICK_RESUME_OLD, gsd.QUICK_NOTE_OLD, "end"))
     for label, text in (("toy", toy), ("real staged skill", staged)):
         if text is None:
             continue
@@ -1227,7 +1228,7 @@ def quick_lean_review(failures):
         failures.append("quick lean review: no payload file to read (quick_lean reports why)")
         return
     flat = " ".join(block.split())
-    need = ("quick_id from the directory name", "skip quick-tasks-append", "no PLAN.md in the directory", "do not run Step 7",
+    need = ("quick_id from the directory name", "skip quick-tasks-append", "No `*-PLAN.md`", "do not run Step 7",
             "{type} is feat, fix, refactor, docs, chore or test", "Run the check named in CLAUDE.md", "Status column",
             "upstream's description of the full pipeline", "no planner or executor is spawned")
     gone = [m for m in need if m not in flat]
@@ -1236,11 +1237,59 @@ def quick_lean_review(failures):
     if "upstream lines 701" in block:
         failures.append("quick lean review: the block still cites 'upstream lines 701'")
     # item 5 must not tell the agent to tick the checklist (that moved to item 6, after the commit step)
-    item5 = flat.split("5a. **Where Step 5")[0].split("5. **The discussion")[-1]
+    item5 = flat.split("7. **Step 6 (executor's commit)")[0].split("6. **Step 4.5")[-1]
     if "Tick the PLAN.md checklist" in item5:
-        failures.append("quick lean review: the tick sentence is still in item 5 instead of item 6")
-    if "Tick the PLAN.md checklist" not in flat.split("6. **Step 6 (executor's commit)")[-1].split("7. **Step 6")[0]:
-        failures.append("quick lean review: item 6 does not tick the PLAN.md checklist")
+        failures.append("quick lean review: the tick sentence is still in the do-the-task item instead of the commit item")
+    if "Tick the PLAN.md checklist" not in flat.split("7. **Step 6 (executor's commit)")[-1].split("8. **Step 6")[0]:
+        failures.append("quick lean review: the commit item does not tick the PLAN.md checklist")
+
+
+def quick_lean_review2(failures):
+    """A second review of the lean block found nine defects, each one assertion here. (1) a resume said to ignore
+    `branch_name` and then to run Step 2.5, which only uses it; and "already committed" was a `{type}(id)` pattern, not
+    the quick id. (2) a resume of a directory with no PLAN.md, or with a PLAN.md lacking `mode: lean`, was sent to the
+    full pipeline, which has no resume logic and mints a new id. (3) the gsd-quick skill's RESUME section still said
+    "so the executor picks up where it left off", and its note read `YYYYMMDD-{slug}` where the directory is
+    `{quick_id}-{slug}`. (4) the minimal-plan item came after the do-the-task item. (5) item 5 did not say to stop
+    without committing when the check cannot pass, nor to read the diff. (6) a task that needs no file change had no
+    way out of the commit step. (7) the block named PLAN.md in places, not `${quick_id}-PLAN.md` (no assertion: item 5 already named it; the block now says it once). (8) the lead said "Steps 5 to
+    6.5" but the block also replaces Steps 4.5 and 4.75, and the file's success_criteria still describe the planner.
+    (9) the flag match said nothing about whole words. Seen failing on 8f21749 (all five messages, in this order):
+    "quick lean review2: the block does not say ['Skip Step 2.5', 'git log --all -F --grep', 'interrupted before',
+    'first two hyphen-separated parts', 'do not commit', 'git diff', 'skip the commit and Step 7',
+    'Steps 4.5 to 6.5', 'success_criteria', 'whole-word']", "quick lean review2: the block still
+    has ['no PLAN.md in the directory', 'already has a PLAN.md that lacks', 'Steps 5 to 6.5']", "quick lean review2:
+    the plan item (position 2720) comes after the do-the-task item (position 2280)" and "quick lean review2: gsd-quick
+    patches left ['so the executor picks up where it left off', 'YYYYMMDD-{slug}'] (errors [], text changed True)".
+    Negative control (a backup copy of config/gsd/quick-lean.md with the `Skip Step 2.5` sentence deleted, restored
+    from the backup): the first message names 'Skip Step 2.5'."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean review2: no payload file to read (quick_lean reports why)")
+        return
+    flat = " ".join(block.split())
+    need = ("Skip Step 2.5", "git log --all -F --grep", "interrupted before", "first two hyphen-separated parts",
+            "do not commit", "git diff", "skip the commit and Step 7", "${quick_id}-PLAN.md", "Steps 4.5 to 6.5",
+            "success_criteria", "whole-word")
+    gone = [m for m in need if m not in flat]
+    if gone:
+        failures.append("quick lean review2: the block does not say %s" % gone)
+    old = [m for m in ("no PLAN.md in the directory", "already has a PLAN.md that lacks", "Steps 5 to 6.5") if m in flat]
+    if old:
+        failures.append("quick lean review2: the block still has %s" % old)
+    plan_at, task_at = flat.find("Where Step 5 (planner) would write"), flat.find("Do the task yourself in this thread")
+    if plan_at < 0 or task_at < 0 or plan_at > task_at:
+        failures.append("quick lean review2: the plan item (position %d) comes after the do-the-task item (position %d)" % (plan_at, task_at))
+    skill_entries = REAL_PATCHES.get("gsd-quick") or []
+    olds = ("so the executor picks up where it left off", "YYYYMMDD-{slug}")
+    toy = (gsd.QUICK_SPAWN_OLD + "\n" + gsd.QUICK_GATES_OLD + "\n6. Proceed to execute the quick workflow with resume context, passing the slug and plan directory so the executor "
+           "picks up where it left off.\n- Each quick task gets a `YYYYMMDD-{slug}/` directory with PLAN.md and eventually SUMMARY.md\n")
+    # the toy holds both sentences verbatim: it keeps them only when a patch entry is missing or its anchor drifted
+    got = gsd.apply_patches(toy, "gsd-quick", skill_entries, errs := [])
+    left = [o for o in olds if o in got]
+    if errs or left or got == toy:
+        failures.append("quick lean review2: gsd-quick patches left %s (errors %s, text changed %s)" % (left, errs, got != toy))
 
 
 def main():
@@ -1248,7 +1297,7 @@ def main():
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review, quick_lean_review2)
     for case in cases:
         case(failures)
     for msg in failures:
