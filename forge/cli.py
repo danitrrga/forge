@@ -693,6 +693,41 @@ def codex_hooks_row():
     return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
 
 
+# How long the `gsd engine` row waits for `gsd-tools.cjs --help`, which prints its usage and returns in well under a second.
+GSD_ENGINE_TIMEOUT = 20
+GSD_ENGINE_FIX = "python3 bin/forge skills --apply"
+
+
+def gsd_engine_row():
+    """The `gsd engine` row: with the gsd integration on, `node <HOME>/.claude/gsd-core/bin/gsd-tools.cjs --help`
+    (it renders the usage and exits 0 without reading a project) must exit 0. Nothing else ran the installed
+    engine, and a gsd-tools.cjs that died on a missing required module was green in every other row. A non-zero
+    exit, a timeout or a missing gsd-core is a FAIL naming the fix, with the first error line of what node
+    printed. SKIP while gsd is off, and SKIP (NOT RUN, NOT ARMED) with no node on PATH, as neither looked at
+    the engine."""
+    if not lib.on("gsd"):
+        return lib.Result("SKIP", "gsd engine", NOT_ARMED + "gsd is off in config/forge.json")
+    script = os.path.join(lib.HOME, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
+    where = lib.short(script)
+    node = shutil.which("node")
+    if not node:
+        return lib.Result("SKIP", "gsd engine", NOT_ARMED + "node is not on PATH, so the engine was not run")
+    if not os.path.isfile(script):
+        return lib.Result("FAIL", "gsd engine", "gsd is on and %s is not there -- %s" % (where, GSD_ENGINE_FIX))
+    try:
+        r = subprocess.run([node, script, "--help"], capture_output=True, text=True, timeout=GSD_ENGINE_TIMEOUT,
+                           stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return lib.Result("FAIL", "gsd engine", "node %s --help did not return in %s s -- %s" % (where, GSD_ENGINE_TIMEOUT, GSD_ENGINE_FIX))
+    except OSError as e:
+        return lib.Result("FAIL", "gsd engine", "node %s --help could not start: %s -- %s" % (where, e, GSD_ENGINE_FIX))
+    if r.returncode == 0:
+        return lib.Result("PASS", "gsd engine", "node %s --help exited 0" % where)
+    lines = [l.strip() for l in (r.stderr or r.stdout).splitlines() if l.strip()]
+    first = next((l for l in lines if "Error" in l), lines[0] if lines else "no output")
+    return lib.Result("FAIL", "gsd engine", "node %s --help exited %d: %s -- %s" % (where, r.returncode, first, GSD_ENGINE_FIX))
+
+
 def _loaded(loaded, file, c):
     """The document owned.current wants for claim `c` of `file`, read into `loaded` the first time and reused:
     the parsed JSON for a key, item or hook claim, the text for an ignore line, None for a whole-file claim
@@ -784,6 +819,8 @@ CHECKS = [
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
+    # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
+    ("gsd engine", gsd_engine_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
 ]
