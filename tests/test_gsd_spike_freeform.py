@@ -16,6 +16,14 @@ Seen failing on a59e67d, before the patches existed:
   "4 skill entry: gsd-spike is not a key of SKILL_PATCHES (keys ['gsd-execute-phase', 'gsd-update'])"
 and, because the cases after them have nothing to apply, "2 fixture: no engine entry with a payload file to apply" and
 "3 staged spike.md: no engine entry with a payload file to apply".
+Review fixes, seen failing on bb680d0 (32 failures), among them:
+  "1 frontier: the owner picks, the turn ends: 'end your turn'"
+  "3 hands-on verdict stays PENDING for the owner: 'stays PENDING until he answers'"
+  "6 research criterion: 'external library, API or service'"
+  "2 no 'carry on': the block still says 'carry on'"
+  "10 skill entry: 'the gates are guidance' is gone (only the state and commit gates are named): \\"Run the spike yourself ..."
+Negative control for the review fixes: the frontier sentence removed from a backup copy of the payload makes
+"1 frontier: a line names 'Get Alignment and Execute'" and "1 frontier: that line has the owner pick, ..." fail; restored from the backup.
 Negative control, on the finished code: the workflows/spike.md entry removed from a backup copy of
 sync_gsd_runtime.py makes case 1 fail with the message above (cases 2 and 3 with it); restored from the backup."""
 import importlib.util
@@ -46,7 +54,8 @@ ANCHOR = "<purpose>"
 SENTENCE_START = "Preserve all workflow gates ("
 STAGE = os.path.join(REAL_HOME, ".cache", "forge", "gsd-stage", "cfg")
 # the workflow steps the block overrides: each must be named in it and must exist upstream
-STEPS = ("frontier_mode", "decompose", "align", "research", "build_spikes", "create_manifest")
+STEPS = ("frontier_mode", "decompose", "align", "research", "build_spikes", "create_manifest",
+         "setup_directory", "load_prior_context", "reground", "report", "update_conventions")
 
 
 def want(label, ok, detail=""):
@@ -89,6 +98,41 @@ else:
             want("1 payload: names %r" % needle, needle in block)
         for step in STEPS:
             want("1 payload: names the step `%s` it overrides" % step, "`%s`" % step in block)
+        # the review fixes, each a phrase that is present or absent (the numbers are the review's)
+        fline = next((ln for ln in block.splitlines() if "Get Alignment and Execute" in ln), "")
+        want("1 frontier: a line names 'Get Alignment and Execute'", bool(fline))
+        want("1 frontier: that line has the owner pick, the agent recommend one and end its turn",
+             "end your turn" in fline and "recommend one" in fline and "The owner picks" in fline, repr(fline[:120]))
+        for n, needle in (("2 steering: commit, then end the turn with the verdict", "commit, then end your turn"),
+                          ("2 steering: one question per real fork", "AskUserQuestion"),
+                          ("3 hands-on verdict stays PENDING for the owner", "stays PENDING until he answers"),
+                          ("3 ABANDONED", "ABANDONED"),
+                          ("4 verdict values as spike.md spells them", "VALIDATED, INVALIDATED, PARTIAL, WINNER"),
+                          ("4 MANIFEST verdict equals the README's", "Verdict column equal to the README's"),
+                          ("5 Investigation Trail", "Investigation Trail"),
+                          ("5 Results", "Results"),
+                          ("5 validates stays without decompose", "`validates`"),
+                          ("5 type stays without decompose", "`type`"),
+                          ("6 research criterion", "external library, API or service"),
+                          ("6 research skip criterion", "pure logic with no external dependencies"),
+                          ("7 risk ordering", "risk ordering"),
+                          ("7 load_prior_context", "`load_prior_context`"),
+                          ("7 reground", "`reground`"),
+                          ("8 COMMIT_DOCS from setup_directory", "`setup_directory`"),
+                          ("8 report and update_conventions end with the owner",
+                           "`report` and `update_conventions` run only when the owner says"),
+                          ("9 --wrap-up", "`--wrap-up`"),
+                          ("9 --quick", "`--quick` still skips `decompose` and `align`"),
+                          ("11 subagent rule is a safeguard", "safeguard")):
+            want(n + ": %r" % needle, needle in block)
+        for n, needle in (("2 no 'carry on'", "carry on"), ("1 no 'Gates are guidance'", "Gates are guidance"),
+                          ("1 no 'start it'", "start it"), ("2 no 'unless the owner redirects'", "unless the owner redirects")):
+            want(n, needle not in block, "the block still says %r" % needle)
+        # no verdict beyond those spike.md and spike-wrap-up.md use (plus PENDING and ABANDONED), on the verdict bullet
+        vline = block.split("The `verdict`", 1)[-1].split("\n", 1)[0]
+        want("4 the verdict bullet is there and names only VALIDATED, INVALIDATED, PARTIAL, WINNER, PENDING, ABANDONED",
+             "The `verdict`" in block and set(re.findall(r"\b[A-Z]{6,}\b", vline))
+             <= {"VALIDATED", "INVALIDATED", "PARTIAL", "WINNER", "PENDING", "ABANDONED"}, repr(vline[:80]))
 
 # 2. a small fixture: the block lands before the rest, a second application changes nothing, a rewritten first line errors
 FIXTURE = "<purpose>\nrest of the purpose\n</purpose>\n\n<process>\nbody\n</process>\n"
@@ -135,6 +179,10 @@ else:
     for needle in ("MANIFEST", "commit", "README", "subagent"):
         want("4 skill entry: the new sentence names %r" % needle, needle in new)
     want("4 skill entry: the new sentence drops the gate list", "risk ordering" not in new and "observability" not in new)
+    want("10 skill entry: 'the gates are guidance' is gone (only the state and commit gates are named)",
+         "the gates are guidance" not in new, repr(new))
+    want("10 skill entry: scoped to the spike workflow", "spike workflow" in new, repr(new))
+    want("10 skill entry: --wrap-up is excluded", "--wrap-up" in new, repr(new))
     fx = "<process>\nParse.\n\n%s\n</process>\n" % OLD
     out, errs = patched(fx, "gsd-spike", sk)
     want("4 skill fixture: no error and the sentence is gone", not errs and SENTENCE_START not in out, repr(errs))
