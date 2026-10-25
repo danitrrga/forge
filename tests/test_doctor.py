@@ -92,7 +92,7 @@ required "exit 2 without BLOCKED = ['PASS']"; frozen checked and "on": false wir
 = (['FAIL'], 'worktree guard frozen' / 'isoff')"; the probe run from the main checkout "a guarded profile,
 entry in order = (['FAIL'] ...)".
 
-8. `skill names` skips frozen profiles (docs/orchestration.md decided it; a frozen project's audit). Seen
+8. `skill names` skips frozen profiles (docs/archive/orchestration-history.md decided it; a frozen project's audit). Seen
 failing on the code before it, 6 cases: "a seeded clash = ('WARN', 'skill names', 'a:gsd-fast, b:design-taste,
 fz:gsd-fast'), want ('WARN', 'skill names', 'a:gsd-fast, b:design-taste')", "a frozen project, by name = ('WARN',
 'skill names'), want ('SKIP', 'skill names')", "only a frozen project = ('WARN', 'skill names'), want ('FAIL',
@@ -404,7 +404,7 @@ def clash_cases(tmp):
 
     seeded = clash_world(tmp, "seeded", {"a": ["gsd-fast", "mine"], "b": ["design-taste"], "z": ["unrelated"], "fz": ["gsd-fast"]},
                          ["gsd-fast", "design-taste", "other"], frozen=("fz",))
-    # A frozen project is skipped (docs/orchestration.md: a frozen project's own copies of a global
+    # A frozen project is skipped (docs/archive/orchestration-history.md: a frozen project's own copies of a global
     # skill stopped warning); its divergence is the frozen drift row's. fz holds gsd-fast and is not named.
     want("a seeded clash", clashes(seeded),
          ("WARN", "skill names", "a:gsd-fast, b:design-taste"))

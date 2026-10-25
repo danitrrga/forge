@@ -28,7 +28,7 @@ Negative controls, run every time, each in a world of its own:
   owned.json removed: the claim part says NOT RUN, NOT ARMED and the by-construction count is above 0;
   a world where nothing ran: a whole uninstall says nothing is left of forge, exit 0; --integration gsd there is
   still FAIL, looked at zero, exit 1.
-The round-11 findings (docs/audits/round-11.md) each have a world of their own below the main one, every comment
+The round-11 findings (docs/archive/audits/round-11.md) each have a world of their own below the main one, every comment
 quoting what was seen on 34c191b: 23 of 89 checks red on that code.
 
 Seen failing on 2af06d1 (this file as it is), 28 of 44 checks: "doctor right after the sync: PASS over every
@@ -313,7 +313,7 @@ check("apply: the output names GSD's removal command", "@opengsd/gsd-core" in ou
 check("apply: the output ends with the command that deletes the checkout, never run",
       "rm -rf %s" % w.root in out.strip().splitlines()[-1] and os.path.isdir(w.root), sandbox.tail(out, 2))
 
-# ---------------------------------------------------------------- round-11 findings (docs/audits/round-11.md)
+# ---------------------------------------------------------------- round-11 findings (docs/archive/audits/round-11.md)
 BEGIN_MARK = "<!-- BEGIN LIFEOS-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
 END_MARK = "<!-- END LIFEOS-SYSTEM-POINTER -->"
 

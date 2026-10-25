@@ -40,7 +40,7 @@ def neighbour_skills(ppath):
     descendant's, which a session meets once it reads a file under it. skillOverrides matches by
     name, project skills included, so these must be switched off too, or the outer project's skills reach
     the nested project and its skills reach the outer one. A profile in no repository (~/dev) or in another
-    repository is no neighbour, whatever its path says. docs/skill-placement-design.md, B2."""
+    repository is no neighbour, whatever its path says. docs/archive/designs/skill-placement-design.md, B2."""
     here = os.path.realpath(ppath)
     root = _repo_root(here)
     if root is None:
@@ -423,7 +423,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         # claude-mem store for days after its profile stopped declaring it (found in use).
         env_summary = ", env removed"
 
-    # hooks pass-through (T4 of docs/hooks-phase-design.md): one project's guard, audit and skill-tracking
+    # hooks pass-through (T4 of docs/archive/designs/hooks-phase-design.md): one project's guard, audit and skill-tracking
     # hooks were written by hand into this git-ignored file, so a fresh machine never got them, and
     # at user scope they would have run in every project. Appending only, like permissions: removing
     # an entry is a hand edit of profile and file. The file's own hooks (that project's two cache

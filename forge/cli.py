@@ -62,7 +62,7 @@ def skill_name_clashes(only=None):
     """A WARN when a project skill (<project_path>/.claude/skills/<name>) is named like a global
     skill, else a PASS saying how many project skills in how many projects it read. The global names
     are forge's skills/ plus ~/.claude/skills, because some global skills live only there (omarchy and
-    diagnose-crash link into /usr/share/omarchy). Frozen profiles are skipped (docs/orchestration.md,
+    diagnose-crash link into /usr/share/omarchy). Frozen profiles are skipped (docs/archive/orchestration-history.md,
     because a frozen project's own copies of a global skill kept warning); the frozen drift row reports a
     frozen project's divergence. By name a frozen project is a SKIP. The name is project:skill, in
     sorted order. A profile with no project_path, or whose directory is gone, is not read: a WARN naming it, and a FAIL when no project at all was read
@@ -1155,7 +1155,7 @@ def cmd_log(a):
 # What it wrote is not guessed from its text any more: session start reads each step's write log
 # (lib.record). One alternative per line, beside where it is printed and a sample of the text
 # (grep the text: line numbers move). What the generators print is an API the refactor keeps byte
-# for byte (docs/unify-split-design.md §2).
+# for byte (docs/archive/designs/unify-split-design.md §2).
 CHANGED = re.compile(r"""
       ^\s*!                       # a warning or failure: lib.read_json and forge/{sync,mcp,memory,
                                   # skills,hooks}.py; sync_gsd_runtime.py; sync_system_doc.py, whose

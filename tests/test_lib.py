@@ -921,7 +921,7 @@ def settings_cases(tmp):
 
 def main():
     # The world's forge.json is the toy all-on fixture, never this checkout's config/forge.json: a
-    # stranger's engine copy has none. Red there before (M1, docs/audits/portable-measure.md):
+    # stranger's engine copy has none. Red there before (M1, docs/archive/audits/portable-measure.md):
     # "FileNotFoundError: .../config/forge.json" from settings_cases' read of it.
     lib.SETTINGS = os.path.join(FIXTURES, "forge.json")
     lib.settings.cache_clear()

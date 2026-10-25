@@ -387,7 +387,7 @@ def write_text(path, text, mode=None, backup=False, fsync=False, check=None):
     the same crash/retry safety net as every JSON config, instead of the bare os.replace() it
     started with (an adversarial-testing haiku agent caught the gap: a cross-device or
     permission-denied os.replace() there left a `.tmp` file behind and crashed with no retry),
-    and moved here in S1 of docs/audits/simplify.md. The caller validates `text` (write_json
+    and moved here in S1 of docs/archive/audits/simplify.md. The caller validates `text` (write_json
     does); this only makes the write itself atomic.
 
     `mode` is applied to the temp file BEFORE the swap, never to the live file afterwards:

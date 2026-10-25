@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """A profile's `hooks` reach <project>/.claude/settings.local.json through skills.write_settings_local
-(T4 of docs/hooks-phase-design.md): the hooked app's guard, audit and skill-tracking hooks were written by
+(T4 of docs/archive/designs/hooks-phase-design.md): the hooked app's guard, audit and skill-tracking hooks were written by
 hand into a git-ignored file, so a fresh machine never got them. The merge only appends -- a
 hand-written hook is never removed -- and a second run leaves the file byte-identical.
 

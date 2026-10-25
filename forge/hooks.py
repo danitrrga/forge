@@ -307,7 +307,7 @@ HOOK_WARDS = {CLAUDE: ("claude-sessionstart-hook.js", "reap_claude_mem_worker.py
 # Files no Claude session should read, as native permission rules (settings.json permissions.deny),
 # so the refusal comes from the harness and not from a hook that can be skipped. Unioned in order
 # after whatever deny rules are already there, so one added by hand survives. A Read rule
-# refuses Edit, Grep and `cat` of the same path too (measured by T0, docs/hooks-phase-design.md);
+# refuses Edit, Grep and `cat` of the same path too (measured by T0, docs/archive/designs/hooks-phase-design.md);
 # the generators are unaffected, they read these files as subprocesses. `//` is an absolute path,
 # `~/` is HOME, and `*` does not cross a slash.
 # ~/.hindsight/ is three rules and not Read(~/.hindsight/*): T0 measured that the
