@@ -695,10 +695,41 @@ def hook_cases():
     has("pre-commit, bin/forge missing", out, "pre-commit: refused", "bin/forge")
 
 
+def worktree_cases():
+    """A linked worktree has no config/publish-deny.txt of its own (private files exist only in the main
+    checkout), so the list is read from the main checkout `git rev-parse --git-common-dir` names. Red before
+    the fallback: "private list, staged file in a linked worktree = exit = 0, want 1" and "output lacks
+    'a.txt:1 [private list]', got 'PASS check-public: 1 file(s) checked (public list)'"."""
+    word = j("secret", "-word")
+    for label, deny_in_main in (("main has a list", True), ("main has no list", False)):
+        main = toy("deny-main")
+        if deny_in_main:
+            write(main, "config/publish-deny.txt", word + "\n")
+        # the deny file stays untracked, as in the real checkout: the worktree must not get it from git
+        git_out(main, "add", "bin", "forge", "githooks")
+        git_out(main, "commit", "-q", "-m", "base")
+        tree = os.path.join(TMP, "linked-%d" % _n[0])
+        git_out(main, "worktree", "add", "-q", "-b", "wt", tree)
+        if os.path.exists(os.path.join(tree, "config", "publish-deny.txt")):
+            failures.append("worktree case: the linked worktree holds the deny file itself, the case proves nothing")
+        write(tree, "a.txt", "has a %s inside\n" % word)
+        git_out(tree, "add", "a.txt")
+        code, out = forge(tree, "check-public", "--staged")
+        if deny_in_main:
+            want("private list, staged file in a linked worktree = exit", code, 1)
+            has("private list in a linked worktree", out, "a.txt:1 [private list]", "1 pattern(s)")
+        else:
+            # no list anywhere: None as before, no crash, the public list alone
+            want("no list in the main checkout, linked worktree = exit", code, 0)
+            has("no list in the main checkout, linked worktree", out, "PASS check-public: 1 file(s) checked (public list)")
+            lacks("no list in the main checkout, linked worktree", out, "private list")
+
+
 def main():
     public_cases()
     pinned_asset_cases()
     private_cases()
+    worktree_cases()
     real_deny_cases()
     allowlist_cases()
     own_files_cases()
