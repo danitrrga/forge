@@ -317,6 +317,33 @@ def tree_crlf(failures):
         failures.append("crlf: runtime files not all LF text: %r" % got)
 
 
+def tree_blocked_path(failures):
+    """A user's own entry at a staged name is kept and reported, and the walk goes on: it was an
+    OSError out of sync_tree that stopped the later trees and the defaults step with no line saying why.
+    (a) a directory `a.cjs/` where the stage has a file a.cjs: lib.write_text raised "OSError: could not
+    atomically replace <dst>/a.cjs ... [Errno 21] Is a directory"; (b) a file `lib` where the stage has
+    lib/x.cjs: "FileExistsError: [Errno 17] File exists: '<dst>/lib'". In both, the user's entry must stay
+    byte for byte, the other staged files must land, and errors must name the blocked path."""
+    for name, blocked, mine in (("tree-blocked-dir", "a.cjs", "a.cjs"), ("tree-blocked-file", "lib", os.path.join("lib", "x.cjs"))):
+        d = case_dir(name)
+        src, dst = os.path.join(d, "stage"), os.path.join(d, "runtime")
+        for rel in (mine, "b.cjs", os.path.join("zz", "y.cjs")):
+            write(os.path.join(src, rel), "staged\n")
+        if name == "tree-blocked-dir":
+            write(os.path.join(dst, "a.cjs", "own.txt"), "the user's own\n")
+            keep = os.path.join(dst, "a.cjs", "own.txt")
+        else:
+            write(os.path.join(dst, "lib"), "the user's own\n")
+            keep = os.path.join(dst, "lib")
+        errors = []
+        n, out, exc = call(gsd.sync_tree, src, dst, {}, "toy", errors)
+        got = {rel: read(os.path.join(dst, rel)) for rel in ("b.cjs", os.path.join("zz", "y.cjs"))}
+        mine_line = [e for e in errors if e.startswith("toy %s: " % mine) and e.endswith("; the entry at that path is not ours, left as it is")]
+        if exc or n != 2 or set(got.values()) != {"staged\n"} or read(keep) != "the user's own\n" or len(errors) != 1 or len(mine_line) != 1:
+            failures.append("%s: raised %s, count %s (want 2), others %s, user's entry %r, errors %s"
+                            % (name, exc, n, got, read(keep), errors))
+
+
 def tree_not_utf8(failures):
     """A runtime file that is not UTF-8 is rewritten, not a UnicodeDecodeError out of the run."""
     d = case_dir("tree-not-utf8")
@@ -1064,7 +1091,7 @@ def normalize_forms(failures):
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
-             tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
+             tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
              defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree)
     for case in cases:
