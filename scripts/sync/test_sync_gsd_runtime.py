@@ -105,7 +105,7 @@ gsd.CTX = gsd.lib.Ctx(True, None, True)
 REAL_AUTHORED = set(gsd.FORGE_AUTHORED)
 REAL_PATCHES = {k: list(v) for k, v in gsd.SKILL_PATCHES.items()}  # the cases below replace gsd.SKILL_PATCHES
 
-PATHS = ("AGENTS_DIR", "GSD_DIR", "HOOKS_DIR", "SKILLS_MIRROR", "FORGE_SKILLS", "BLOCKS", "STAGE_ROOT", "STAGE",
+PATHS = ("AGENTS_DIR", "GSD_DIR", "SCRIPTS_DIR", "HOOKS_DIR", "SKILLS_MIRROR", "FORGE_SKILLS", "BLOCKS", "STAGE_ROOT", "STAGE",
          "STAMP", "NPM_STAMP", "GSD_DEFAULTS")
 
 
@@ -795,12 +795,14 @@ def check_mode(failures):
     DRY_OK = True
     gsd.subprocess, gsd.CTX, gsd.CHECK, gsd.AGENT_PATCHES, gsd.ENGINE_PATCHES = NoSubprocess(), gsd.lib.Ctx(False, None, True), True, {}, {}
     try:
-        for label, runtime_text, stamp, want in (("an in-sync runtime", "staged\n", "1.0.0\n", 0),
-                                                 ("a differing runtime file", "installed\n", "1.0.0\n", 2),
-                                                 ("a staging for another version", "staged\n", "0.9.0\n", 2)):
+        for label, runtime_text, stamp, want, scripts_in_runtime in (
+                ("an in-sync runtime", "staged\n", "1.0.0\n", 0, True),
+                ("a differing runtime file", "installed\n", "1.0.0\n", 2, True),
+                ("a staging for another version", "staged\n", "0.9.0\n", 2, True),
+                ("scripts staged but missing from the runtime", "staged\n", "1.0.0\n", 2, False)):
             d = case_dir("check-" + label.replace(" ", "-"))
             for n, v in (("AGENTS_DIR", "home/.claude/agents"), ("GSD_DIR", "home/.claude/get-shit-done"), ("STAGE_ROOT", "home/stage"),
-                         ("SKILLS_MIRROR", "home/.claude/skills"), ("BLOCKS", "blocks"), ("GSD_DEFAULTS", "home/.gsd/defaults.json")):
+                         ("SKILLS_MIRROR", "home/.claude/skills"), ("SCRIPTS_DIR", "home/.claude/scripts"), ("BLOCKS", "blocks"), ("GSD_DEFAULTS", "home/.gsd/defaults.json")):
                 setattr(gsd, n, os.path.join(d, v))
             gsd.STAGE, gsd.STAMP = os.path.join(gsd.STAGE_ROOT, "cfg"), os.path.join(gsd.STAGE_ROOT, "STAGED-VERSION")
             gsd.NPM_STAMP = os.path.join(gsd.STAGE_ROOT, "NPM-CHECKED")
@@ -813,6 +815,9 @@ def check_mode(failures):
             write(gsd.STAMP, stamp)
             write(os.path.join(gsd.AGENTS_DIR, "gsd-x.md"), runtime_text)
             write(os.path.join(gsd.GSD_DIR, "e.md"), "staged\n")
+            write(os.path.join(gsd.STAGE, "scripts", "fix-slash-commands.cjs"), "staged\n")
+            if scripts_in_runtime:
+                write(os.path.join(gsd.SCRIPTS_DIR, "fix-slash-commands.cjs"), "staged\n")
             write(os.path.join(gsd.BLOCKS, "defaults.json"), "{}\n")
             write(gsd.GSD_DEFAULTS, "{}\n")
             gsd.lib.SETTINGS = os.path.join(d, "forge.json")
@@ -835,6 +840,25 @@ def check_mode(failures):
         for n, v in paths.items():
             setattr(gsd, n, v)
         DRY_OK = False
+
+
+def scripts_beside_engine(failures):
+    """gsd-core 1.18's engine requires ../../../scripts/*.cjs from gsd-core/bin/lib, so the staged scripts/ must land in
+    ~/.claude/scripts, and the package's changeset/ release tooling must not. Seen failing before the sync existed:
+    `node ~/.claude/gsd-core/bin/gsd-tools.cjs` died with "Cannot find module '../../../scripts/fix-slash-commands.cjs'"."""
+    d = case_dir("scripts-beside-engine")
+    gsd.STAGE = os.path.join(d, "stage")
+    gsd.SCRIPTS_DIR = os.path.join(d, "home", ".claude", "scripts")
+    for rel in ("fix-slash-commands.cjs", os.path.join("lib", "cli-exit.cjs"), os.path.join("changeset", "x.md")):
+        write(os.path.join(gsd.STAGE, "scripts", rel), "staged\n")
+    errors = []
+    n, out, exc = call(lambda: gsd.sync_tree(os.path.join(gsd.STAGE, "scripts"), gsd.SCRIPTS_DIR, {}, "scripts", errors,
+                                              only=gsd.scripts_wanted))
+    landed = sorted(os.path.relpath(os.path.join(b, f), gsd.SCRIPTS_DIR)
+                    for b, _d, fs in os.walk(gsd.SCRIPTS_DIR) for f in fs) if os.path.isdir(gsd.SCRIPTS_DIR) else []
+    want = ["fix-slash-commands.cjs", os.path.join("lib", "cli-exit.cjs")]
+    if exc or errors or landed != sorted(want):
+        failures.append("scripts beside the engine: raised %s, errors %s, landed %s, want %s" % (exc, errors, landed, want))
 
 
 def package_location(failures):
@@ -1042,7 +1066,7 @@ def main():
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree)
     for case in cases:
         case(failures)
     for msg in failures:
