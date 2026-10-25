@@ -57,8 +57,9 @@ WHAT FORGE OWNS ON TOP
   * quick lean path -- config/gsd/quick-lean.md goes first in workflows/quick.md: with no flag the task is done in the main
     thread (no planner, executor, checker or verifier subagent), and only the state GSD reads back is written (a minimal
     PLAN.md, which the gsd-quick skill's `status` and `resume` read, the SUMMARY.md with `status: complete`, the STATE.md
-    row, the commits). The four flags bring the full pipeline back. The gsd-quick skill's two sentences that told the
-    agent to spawn a planner and an executor and to preserve every gate are replaced to match (SKILL_PATCHES).
+    row, the commits). The four flags bring the full pipeline back. The gsd-quick skill's sentences that told the
+    agent to spawn a planner and an executor, to preserve every gate, to resume through an executor and to look for a
+    YYYYMMDD directory are replaced to match (SKILL_PATCHES).
   * update route -- the update skill is rewritten to run the procedure below instead of the
     installer, for reason 1 above.
 
@@ -287,6 +288,19 @@ QUICK_GATES_NEW = ("Follow the forge lean path at the top of the workflow when n
                    "`status: complete`, the STATE.md row, the commits). With any of those flags, run every step and gate of "
                    "the workflow as written.")
 
+# The skill's RESUME step handed a lean task to "the executor" (the lean path has none) and its note named a directory
+# `YYYYMMDD-{slug}/`; the real shape is `{quick_id}-{slug}/` with quick_id `YYMMDD-xxx`, and the plan file is `{quick_id}-PLAN.md`.
+QUICK_RESUME_OLD = ("6. Proceed to execute the quick workflow with resume context, passing the slug and plan directory so the "
+                    "executor picks up where it left off.")
+QUICK_RESUME_NEW = ("6. Proceed to execute the quick workflow with resume context, passing the slug and the quick directory. "
+                    "The lean path (a `{quick_id}-PLAN.md` with `mode: lean`, or none yet) continues from the unticked lines of "
+                    "that PLAN.md checklist; the full pipeline runs only the steps whose artifacts are missing. Flags are not "
+                    "supported on resume (the sanitizer above turns `slug --full` into `slug--full`): the task keeps the mode "
+                    "it started with.")
+QUICK_NOTE_OLD = "- Each quick task gets a `YYYYMMDD-{slug}/` directory with PLAN.md and eventually SUMMARY.md"
+QUICK_NOTE_NEW = ("- Each quick task gets a `{quick_id}-{slug}/` directory (quick_id is `YYMMDD-xxx`) with `{quick_id}-PLAN.md` "
+                  "and eventually `{quick_id}-SUMMARY.md`")
+
 SKILL_PATCHES = {
     "gsd-update": [("forge-update-route", "replace", UPDATE_OLD, UPDATE_NEW)],
     # Claude Code 2.1.268 stopped offering TodoWrite on current models unless
@@ -296,7 +310,9 @@ SKILL_PATCHES = {
                            "  - Agent\n  - TodoWrite\n  - AskUserQuestion\n",
                            "  - Agent\n  - AskUserQuestion\n")],
     "gsd-quick": [("quick-lean-spawn", "replace", QUICK_SPAWN_OLD, QUICK_SPAWN_NEW),
-                  ("quick-lean-gates", "replace", QUICK_GATES_OLD, QUICK_GATES_NEW)],
+                  ("quick-lean-gates", "replace", QUICK_GATES_OLD, QUICK_GATES_NEW),
+                  ("quick-resume-text", "replace", QUICK_RESUME_OLD, QUICK_RESUME_NEW),
+                  ("quick-dir-shape", "replace", QUICK_NOTE_OLD, QUICK_NOTE_NEW)],
 }
 
 
