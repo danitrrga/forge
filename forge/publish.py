@@ -372,7 +372,10 @@ def route(paths, two):
 def commit_side(name, data, paths, msg):
     """Stage and commit `paths` in one history. (exit code, line to print)."""
     # -f on the data side: the engine's .gitignore, shared through the work tree, ignores these paths.
-    for argv in (["add", "-A"] + (["-f"] if data else []) + ["--"] + paths, ["commit", "-q", "-m", msg, "--only", "--"] + paths):
+    # A path already removed with `git rm` is gone from disk and index: `add` has nothing to match, `commit --only` takes it.
+    present = [p for p in paths if os.path.lexists(os.path.join(lib.ROOT, p))]
+    add = ["add", "-A"] + (["-f"] if data else []) + ["--"] + present
+    for argv in ([add] if present else []) + [["commit", "-q", "-m", msg, "--only", "--"] + paths]:
         r = run(history(data) + argv)
         if r.returncode:
             return 1, "forge commit: the %s commit failed:\n%s" % (name, (r.stdout + r.stderr).rstrip())
