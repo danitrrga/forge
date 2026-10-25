@@ -254,6 +254,9 @@ ENGINE_PATCHES = {
     ],
     # The anchor is the whole first line, so an upstream rewrite of it is an error, never a silent skip.
     "workflows/quick.md": [("forge-lean-path", "replace", "<purpose>", "file:quick-lean.md")],
+    # /gsd-capture --backlog uses a project's scripts/backlog/backlog.mjs when it has one (config/gsd/backlog-add.md); the block is
+    # inert without the script. `<process>` occurs once in the file, so an upstream rewrite is an error, not a silent skip.
+    "workflows/add-backlog.md": [("backlog-script-add", "replace", "<process>", "file:backlog-add.md")],
 }
 
 UPDATE_OLD = """<objective>
@@ -336,6 +339,8 @@ SKILL_PATCHES = {
                   ("quick-dir-shape", "replace", QUICK_NOTE_OLD, QUICK_NOTE_NEW)],
     "gsd-spike": [("spike-freeform", "replace", SPIKE_GATES_OLD, SPIKE_GATES_NEW),
                   ("spike-one-per-turn", "replace", SPIKE_E2E_OLD, SPIKE_E2E_NEW)],
+    # The review opens with `backlog.mjs sync` when the project has the script (config/gsd/backlog-review.md); inert without it.
+    "gsd-review-backlog": [("backlog-script-sync", "replace", "<process>", "file:backlog-review.md")],
 }
 
 
