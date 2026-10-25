@@ -428,9 +428,14 @@ def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None):
             if lib.holds(dst, want):  # byte for byte: a CRLF copy of the LF text is not in sync
                 same += 1
                 continue
-            (updated if os.path.exists(dst) else added).append(rel)
+            bucket = updated if os.path.exists(dst) else added
             if CTX.apply:
-                lib.write_text(dst, want)
+                try:
+                    lib.write_text(dst, want)
+                except OSError as e:  # FileExistsError too: a user's directory where a file goes, or a file where a directory goes
+                    errors.append("%s %s: %s; the entry at that path is not ours, left as it is" % (label, rel, e.strerror or e))
+                    continue
+            bucket.append(rel)
     for rel in sorted(set(patch_map) - seen):
         errors.append("%s: not in the staged package, so patch '%s' applies to nothing -- find "
                       "where upstream moved it and re-key the patch, or delete it"
