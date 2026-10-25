@@ -1088,12 +1088,255 @@ def normalize_forms(failures):
         gsd.STAGE = saved
 
 
+def quick_lean(failures):
+    """`gsd-quick` means quick: ENGINE_PATCHES puts a short "forge lean path" block first in workflows/quick.md, a
+    `replace` on the exact `<purpose>` line (config/gsd/quick-lean.md), so an upstream rewrite of that line is an error,
+    not a silent skip. The block names the state GSD reads back and keeps it (the SUMMARY.md with `status: complete`
+    that audit-open scans, the STATE.md row through quick-tasks-append, the branching, the ROADMAP.md gate), turns the
+    subagent steps off by default, and leaves the four flags as the way back to the full pipeline. Cases: (1) the entry
+    exists, is a replace anchored on `<purpose>`, its payload file exists and names the kept state, the flags and every
+    step it overrides; (2) on a toy file whose first line is `<purpose>` the block lands first and a second application
+    changes nothing; (3) on the real staged quick.md (read only; NOT RUN, NOT ARMED when there is no staging) the
+    patch applies without an error and the block is the first thing in the file. Seen failing on a59e67d:
+    "quick lean: ENGINE_PATCHES has no entry for workflows/quick.md (keys: ['workflows/ingest-docs.md',
+    'references/mandatory-initial-read.md'])", and cases 2 and 3 with "quick lean: toy: no patch to apply" and
+    "quick lean: real staged quick.md: no patch to apply". Negative control (a backup copy of sync_gsd_runtime.py with
+    the ENGINE_PATCHES entry removed, restored from the backup): case 1 fails with the message above."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    if not entries:
+        failures.append("quick lean: ENGINE_PATCHES has no entry for workflows/quick.md (keys: %s)" % list(gsd.ENGINE_PATCHES))
+        failures.append("quick lean: toy: no patch to apply")
+        failures.append("quick lean: real staged quick.md: no patch to apply")
+        return
+    real_blocks = os.path.join(FORGE, "config", "gsd")
+    if len(entries) != 1 or entries[0][1] != "replace" or entries[0][2] != "<purpose>" or not entries[0][3].startswith("file:"):
+        failures.append("quick lean: want one `replace` anchored on '<purpose>' with a file: payload, got %s" % [(e[0], e[1], e[2]) for e in entries])
+        return
+    block = read(os.path.join(real_blocks, entries[0][3][5:]))
+    if block is None:
+        failures.append("quick lean: payload file %s does not exist" % entries[0][3][5:])
+        return
+    if not block.startswith("<purpose>\n") or not block.endswith("\n"):
+        failures.append("quick lean: the payload must begin with the `<purpose>` line and end with a newline, begins %r" % block[:20])
+    must = ("SUMMARY.md", "status: complete", "STATE.md", "Quick Tasks Completed", "quick-tasks-append", "roadmap_exists",
+            "--full", "--validate", "--discuss", "--research", "ROADMAP.md", "Step 2.5", "Step 5", "Step 6", "Step 6.25",
+            "Step 6.5", "Step 7", "Step 8", "no subagent")
+    gone = [m for m in must if m not in block]
+    if gone:
+        failures.append("quick lean: the block does not name %s" % gone)
+    saved = gsd.BLOCKS
+    gsd.BLOCKS = real_blocks
+    try:
+        patches = {"workflows/quick.md": entries}
+        toy = "<purpose>\nUpstream first sentence.\n</purpose>\n\n<process>\nrest\n</process>\n"
+        once = gsd.apply_patches(toy, "workflows/quick.md", entries, errs := [])
+        twice = gsd.apply_patches(once, "workflows/quick.md", entries, errs)
+        if errs or not once.startswith(block) or once.count(block) != 1 or not once.endswith(toy[len("<purpose>\n"):]):
+            failures.append("quick lean: toy: errors %s, block first %s, block count %d, rest of the file kept %s"
+                            % (errs, once.startswith(block), once.count(block), once.endswith(toy[len("<purpose>\n"):])))
+        if twice != once:
+            failures.append("quick lean: toy: a second application changed the text")
+        drift = gsd.apply_patches("<intro>\nupstream rewrote the first line\n", "workflows/quick.md", entries, errs2 := [])
+        if len(errs2) != 1 or drift != "<intro>\nupstream rewrote the first line\n":
+            failures.append("quick lean: toy: a missing anchor gave errors %s (want one) and text %r" % (errs2, drift))
+        import pwd
+        stage = os.path.join(pwd.getpwuid(os.getuid()).pw_dir, ".cache", "forge", "gsd-stage", "cfg", "gsd-core", "workflows", "quick.md")
+        if not os.path.isfile(stage):
+            print("SKIP quick_lean real staged quick.md: NOT RUN, NOT ARMED: no staging at %s" % stage)
+            return
+        staged = read(stage)
+        got = gsd.apply_patches(staged, "workflows/quick.md", entries, errs3 := [])
+        if errs3 or not got.startswith(block) or got == staged or not got.endswith(staged[len("<purpose>\n"):]):
+            failures.append("quick lean: real staged quick.md: errors %s, block first %s, changed %s" % (errs3, got.startswith(block), got != staged))
+    finally:
+        gsd.BLOCKS = saved
+
+
+def quick_lean_readers(failures):
+    """The lean path of quick_lean once wrote no PLAN.md, but the gsd-quick skill's `status <slug>` and `resume <slug>`
+    read the task description from it ("first non-empty line from PLAN.md after frontmatter", "description from PLAN.md"),
+    so a lean task was invisible to both, and its resume rule ("a quick directory that already has a PLAN.md runs the
+    full pipeline") would have sent a lean task into the heavy path once it had one. The block now writes a minimal
+    PLAN.md (frontmatter with `mode: lean`, the description alone on the first line after it, a short checklist) where
+    the planner would have, and the skill text that told the agent to spawn a planner and an executor and to "Preserve
+    all workflow gates" is replaced by a SKILL_PATCHES entry for gsd-quick. Cases: (a) the payload names the minimal
+    PLAN.md, the two readers (`status <slug>`, `resume <slug>`), the fields they read and the `mode: lean` marker, and
+    those fields exist in the real staged skill's STATUS and RESUME text (read only; NOT RUN, NOT ARMED without a
+    staging); (b) SKILL_PATCHES has a gsd-quick entry, and with it applied the two old sentences are gone, the text
+    changed and a second application changes nothing. Seen failing on the branch before the fix (bfbe9e6):
+    "quick lean readers: the block does not name ['minimal PLAN.md', '`status <slug>`', '`resume <slug>`',
+    'first non-empty line', 'after frontmatter', 'mode: lean']" and "quick lean readers: SKILL_PATCHES has no entry for
+    gsd-quick (keys: [...])". Negative control (a backup copy of config/gsd/quick-lean.md with the sentence that names
+    the minimal PLAN.md deleted, restored from the backup): case (a) fails with the first message."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean readers: no payload file to read (quick_lean reports why)")
+    else:
+        need = ("minimal PLAN.md", "`status <slug>`", "`resume <slug>`", "first non-empty line", "after frontmatter", "mode: lean")
+        gone = [m for m in need if m not in block]
+        if gone:
+            failures.append("quick lean readers: the block does not name %s" % gone)
+    import pwd
+    home = pwd.getpwuid(os.getuid()).pw_dir
+    stage_skill = os.path.join(home, ".cache", "forge", "gsd-stage", "cfg", "skills", "gsd-quick", "SKILL.md")
+    staged = read(stage_skill) if os.path.isfile(stage_skill) else None
+    if staged is None:
+        print("SKIP quick_lean_readers real staged gsd-quick skill: NOT RUN, NOT ARMED: no staging at %s" % stage_skill)
+    else:
+        status_part = staged.split("## STATUS subcommand")[1].split("## RESUME subcommand")[0] if "## STATUS subcommand" in staged else ""
+        resume_part = staged.split("## RESUME subcommand")[1].split("## RUN subcommand")[0] if "## RESUME subcommand" in staged else ""
+        if "first non-empty line" not in status_part or "after frontmatter" not in status_part or "PLAN.md" not in resume_part:
+            failures.append("quick lean readers: the staged skill's STATUS/RESUME text no longer reads the description from PLAN.md "
+                            "as the block says (status has the fields %s, resume names PLAN.md %s)"
+                            % ("first non-empty line" in status_part and "after frontmatter" in status_part, "PLAN.md" in resume_part))
+    skill_entries = REAL_PATCHES.get("gsd-quick")
+    if not skill_entries:
+        failures.append("quick lean readers: SKILL_PATCHES has no entry for gsd-quick (keys: %s)" % sorted(REAL_PATCHES))
+        return
+    old = ("- Spawns gsd-planner (quick mode) + gsd-executor(s)", "Preserve all workflow gates")
+    toy = "\n".join(("intro", old[0], "mid", "Execute end-to-end.",
+                     "Preserve all workflow gates (validation, task description, planning, execution, state updates, commits).",
+                     gsd.QUICK_RESUME_OLD, gsd.QUICK_NOTE_OLD, "end"))
+    for label, text in (("toy", toy), ("real staged skill", staged)):
+        if text is None:
+            continue
+        got = gsd.apply_patches(text, "gsd-quick", skill_entries, errs := [])
+        again = gsd.apply_patches(got, "gsd-quick", skill_entries, errs)
+        left = [o for o in old if o in got]
+        if errs or left or got == text or again != got:
+            failures.append("quick lean readers: %s: errors %s, old sentences left %s, changed %s, second application stable %s"
+                            % (label, errs, left, got != text, again == got))
+
+
+def quick_lean_review(failures):
+    """An independent review found the lean block under-specified. Each assertion below is one finding: (1) a lean
+    `resume` was not defined (`init.quick` mints a new quick id, a null task_dir and a new branch, and Step 1 would read
+    `resume foo` as the description), (2) a failed or empty commit at item 6 let Step 7 record an unrelated HEAD,
+    (3) `{type}` was undefined, (4) the project's own check was not named, (5) Step 7c did not say what to pass for
+    --status, (6) the upstream <purpose> text that still follows the block says quick mode spawns a planner and
+    executors, (7) the block cited upstream line numbers that cannot be counted in the patched file. Seen failing on
+    the branch before the fix (4a6397b): "quick lean review: the block does not say ['quick_id from the directory name',
+    'skip quick-tasks-append', 'no PLAN.md in the directory', 'do not run Step 7', '{type} is feat, fix, refactor, docs,
+    chore or test', 'Run the check named in CLAUDE.md', 'Status column', 'upstream's description of the full pipeline',
+    'no planner or executor is spawned']" and "quick lean review: the block still cites 'upstream lines 701'". Negative
+    control (a backup copy of config/gsd/quick-lean.md with the failed-commit sentence deleted, restored from the
+    backup): the first message names 'do not run Step 7'."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean review: no payload file to read (quick_lean reports why)")
+        return
+    flat = " ".join(block.split())
+    need = ("quick_id from the directory name", "skip quick-tasks-append", "No `*-PLAN.md`", "do not run Step 7",
+            "{type} is feat, fix, refactor, docs, chore or test", "the one CLAUDE.md or the project skills name", "Status column",
+            "upstream's description of the full pipeline", "no planner or executor is spawned")
+    gone = [m for m in need if m not in flat]
+    if gone:
+        failures.append("quick lean review: the block does not say %s" % gone)
+    if "upstream lines 701" in block:
+        failures.append("quick lean review: the block still cites 'upstream lines 701'")
+    # the tick belongs to the do-the-task item, as each step finishes (review3 moved it back from the commit item)
+    item6 = flat.split("7. **Step 6 (executor's commit)")[0].split("6. **Step 4.5")[-1]
+    if "Tick the PLAN.md checklist lines (item 5) as each step finishes" not in item6:
+        failures.append("quick lean review: the do-the-task item does not tick the PLAN.md checklist as each step finishes")
+    if "Tick the PLAN.md checklist" in flat.split("7. **Step 6 (executor's commit)")[-1].split("8. **Step 6")[0]:
+        failures.append("quick lean review: the tick sentence is still in the commit item")
+
+
+def quick_lean_review2(failures):
+    """A second review of the lean block found nine defects, each one assertion here. (1) a resume said to ignore
+    `branch_name` and then to run Step 2.5, which only uses it; and "already committed" was a `{type}(id)` pattern, not
+    the quick id. (2) a resume of a directory with no PLAN.md, or with a PLAN.md lacking `mode: lean`, was sent to the
+    full pipeline, which has no resume logic and mints a new id. (3) the gsd-quick skill's RESUME section still said
+    "so the executor picks up where it left off", and its note read `YYYYMMDD-{slug}` where the directory is
+    `{quick_id}-{slug}`. (4) the minimal-plan item came after the do-the-task item. (5) item 5 did not say to stop
+    without committing when the check cannot pass, nor to read the diff. (6) a task that needs no file change had no
+    way out of the commit step. (7) the block named PLAN.md in places, not `${quick_id}-PLAN.md` (no assertion: item 5 already named it; the block now says it once). (8) the lead said "Steps 5 to
+    6.5" but the block also replaces Steps 4.5 and 4.75, and the file's success_criteria still describe the planner.
+    (9) the flag match said nothing about whole words. Seen failing on 8f21749 (all five messages, in this order):
+    "quick lean review2: the block does not say ['Skip Step 2.5', 'git log --all -F --grep', 'interrupted before',
+    'first two hyphen-separated parts', 'do not commit', 'git diff', 'skip the commit and Step 7',
+    'Steps 4.5 to 6.5', 'success_criteria', 'whole-word']", "quick lean review2: the block still
+    has ['no PLAN.md in the directory', 'already has a PLAN.md that lacks', 'Steps 5 to 6.5']", "quick lean review2:
+    the plan item (position 2720) comes after the do-the-task item (position 2280)" and "quick lean review2: gsd-quick
+    patches left ['so the executor picks up where it left off', 'YYYYMMDD-{slug}'] (errors [], text changed True)".
+    Negative control (a backup copy of config/gsd/quick-lean.md with the `Skip Step 2.5` sentence deleted, restored
+    from the backup): the first message names 'Skip Step 2.5'."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean review2: no payload file to read (quick_lean reports why)")
+        return
+    flat = " ".join(block.split())
+    need = ("Skip Step 2.5", "git log --all -F --grep", "interrupted before", "first two hyphen-separated parts",
+            "do not commit", "git diff", "skip the commit", "${quick_id}-PLAN.md", "Steps 4.5 to 6.5",
+            "success_criteria", "whole-word")
+    gone = [m for m in need if m not in flat]
+    if gone:
+        failures.append("quick lean review2: the block does not say %s" % gone)
+    old = [m for m in ("no PLAN.md in the directory", "already has a PLAN.md that lacks", "Steps 5 to 6.5") if m in flat]
+    if old:
+        failures.append("quick lean review2: the block still has %s" % old)
+    plan_at, task_at = flat.find("Where Step 5 (planner) would write"), flat.find("Do the task yourself in this thread")
+    if plan_at < 0 or task_at < 0 or plan_at > task_at:
+        failures.append("quick lean review2: the plan item (position %d) comes after the do-the-task item (position %d)" % (plan_at, task_at))
+    skill_entries = REAL_PATCHES.get("gsd-quick") or []
+    olds = ("so the executor picks up where it left off", "YYYYMMDD-{slug}")
+    toy = (gsd.QUICK_SPAWN_OLD + "\n" + gsd.QUICK_GATES_OLD + "\n6. Proceed to execute the quick workflow with resume context, passing the slug and plan directory so the executor "
+           "picks up where it left off.\n- Each quick task gets a `YYYYMMDD-{slug}/` directory with PLAN.md and eventually SUMMARY.md\n")
+    # the toy holds both sentences verbatim: it keeps them only when a patch entry is missing or its anchor drifted
+    got = gsd.apply_patches(toy, "gsd-quick", skill_entries, errs := [])
+    left = [o for o in olds if o in got]
+    if errs or left or got == toy:
+        failures.append("quick lean review2: gsd-quick patches left %s (errors %s, text changed %s)" % (left, errs, got != toy))
+
+
+def quick_lean_review3(failures):
+    """A third review of the lean block found seven defects, each one assertion here. (1) the lean commit is made in
+    the main thread and skipped the executor's step 0 guard (detached HEAD, protected or default branch, override
+    `git.allow_default_branch_commits`); the block now runs the executor's own check, `gsd_run query git.base-branch
+    --is-protected`, before `git add`. (2) a resume did not say that uncommitted changes are work already done, nor to
+    tick the checklist as each step finishes. (3) a resume that runs `quick-tasks-append` after a commit that is not
+    HEAD records the wrong hash (the command always reads HEAD). (4) a task that needs no file change skipped Step 7,
+    so it got no STATE row and no Last activity line; `quick-tasks-append` cannot take a commit (it reads HEAD, and
+    shows an em dash only when git fails), so the block now says such a task gets no row and still writes 7d.
+    (5) a stopped task left no trace: its SUMMARY now says `status: incomplete` (audit-open lists every status but
+    `complete`). (6) "the project's own check for it" became "the cheapest check that covers the change". (7) the block
+    now says it applies to run and resume only, and no longer says "print none of the per-flag banners". Seen failing
+    on 55a0abd: "quick lean review3: the block does not say
+    ['gsd_run query git.base-branch --is-protected', 'detached', 'Run `git status` and `git diff` first', 'equals HEAD',
+    'gets no STATE row', 'status: incomplete', 'cheapest check that covers the change', 'list and status never reach
+    it']", "quick lean review3: the block still has ['print none of the per-flag banners', "the project's own check for
+    it", 'skip the commit and Step 7']" and "quick lean review3: the protected-branch guard (position -1) does not come
+    before `git add` (position 3745)".
+    Negative control (a backup copy of config/gsd/quick-lean.md with the protected-branch sentence deleted, restored
+    from the backup): the first message names 'gsd_run query git.base-branch --is-protected'."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean review3: no payload file to read (quick_lean reports why)")
+        return
+    flat = " ".join(block.split())
+    need = ("gsd_run query git.base-branch --is-protected", "detached", "Run `git status` and `git diff` first", "equals HEAD",
+            "gets no STATE row", "status: incomplete", "cheapest check that covers the change", "list and status never reach it")
+    gone = [m for m in need if m not in flat]
+    if gone:
+        failures.append("quick lean review3: the block does not say %s" % gone)
+    old = [m for m in ("print none of the per-flag banners", "the project's own check for it", "skip the commit and Step 7") if m in flat]
+    if old:
+        failures.append("quick lean review3: the block still has %s" % old)
+    guard_at, add_at = flat.find("--is-protected"), flat.find("plain `git add")
+    if guard_at < 0 or add_at < 0 or guard_at > add_at:
+        failures.append("quick lean review3: the protected-branch guard (position %d) does not come before `git add` (position %d)" % (guard_at, add_at))
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review, quick_lean_review2, quick_lean_review3)
     for case in cases:
         case(failures)
     for msg in failures:
