@@ -741,11 +741,70 @@ def worktree_cases():
             lacks("no list in the main checkout, linked worktree", out, "private list")
 
 
+def worktree_layout_cases():
+    """The main checkout of a linked worktree is found from the common git dir's `core.worktree` when it is
+    set (a submodule), else from a common dir called `.git`. Red before core.worktree was read, quoted:
+    "submodule layout, linked worktree = exit = 0, want 1" and "output lacks '[private list]', got 'PASS
+    check-public: 1 file(s) checked (public list)'". A deny file that is not UTF-8 was exit 1 with a
+    UnicodeDecodeError traceback, one with `a{` and a 20-digit count exit 1 with an OverflowError traceback;
+    both want exit 2.
+    Not covered, because git cannot answer it: after `git init --separate-git-dir` neither the git dir nor its
+    config names the main tree (no core.worktree; `git worktree list` reports the git dir itself as the main
+    tree), so a linked worktree of such a checkout cannot find the main's list."""
+    word = j("secret", "-word")
+
+    def check_message(tree, text):
+        write(tree, "msg.txt", text + "\n")
+        return forge(tree, "check-public", "--message", os.path.join(tree, "msg.txt"))
+
+    def commit_base(main):
+        git_out(main, "add", "bin", "forge", "githooks")
+        git_out(main, "commit", "-q", "-m", "base")
+
+    # control: a plain checkout, git dir `.git` inside it
+    main = toy("plain-main")
+    write(main, "config/publish-deny.txt", word + "\n")
+    commit_base(main)
+    tree = os.path.join(TMP, "linked-%d" % _n[0])
+    git_out(main, "worktree", "add", "-q", "-b", "wt", tree)
+    code, out = check_message(tree, "a %s inside" % word)
+    want("plain layout, linked worktree = exit", code, 1)
+    has("plain layout, linked worktree", out, "[private list]")
+
+    # a submodule: its git dir is <super>/.git/modules/sub, named otherwise, and carries core.worktree
+    sub_src = toy("sub-src")
+    commit_base(sub_src)
+    sup = toy("super")
+    write(sup, "README", "x\n")
+    git_out(sup, "add", "README")
+    git_out(sup, "commit", "-q", "-m", "base")
+    git_out(sup, "-c", "protocol.file.allow=always", "submodule", "add", "-q", sub_src, "sub")
+    sub = os.path.join(sup, "sub")
+    write(sub, "config/publish-deny.txt", word + "\n")
+    tree = os.path.join(TMP, "linked-%d" % _n[0])
+    git_out(sub, "worktree", "add", "-q", "-b", "wt", tree)
+    code, out = check_message(tree, "a %s inside" % word)
+    want("submodule layout, linked worktree = exit", code, 1)
+    has("submodule layout, linked worktree", out, "[private list]")
+
+    # E1-3: an invalid list is exit 2 with the file named, never a traceback
+    for label, raw, needles in (("not UTF-8", b"ok\n\xff\xfe\n", ("publish-deny.txt",)),
+                                ("overflowing repeat count", b"a{99999999999999999999}\n", ("publish-deny.txt:1",))):
+        main = toy("bad-deny")
+        write(main, "config/publish-deny.txt", raw)
+        write(main, "msg.txt", "clean\n")
+        code, out = forge(main, "check-public", "--message", os.path.join(main, "msg.txt"))
+        want("deny file %s = exit" % label, code, 2)
+        has("deny file %s" % label, out, "forge check-public:", *needles)
+        lacks("deny file %s" % label, out, "Traceback")
+
+
 def main():
     public_cases()
     pinned_asset_cases()
     private_cases()
     worktree_cases()
+    worktree_layout_cases()
     real_deny_cases()
     allowlist_cases()
     own_files_cases()
