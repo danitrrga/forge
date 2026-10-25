@@ -118,16 +118,27 @@ def public_hits(line):
 
 
 def main_checkout(root):
-    """The main checkout of the repository `root` is a linked worktree of, else None."""
+    """The main working tree of the repository `root` is a linked worktree of, else None. The common git dir's
+    `core.worktree` names it when set (a submodule's git dir under .git/modules, a clone made with
+    --separate-git-dir); otherwise the parent of a common dir called `.git`. Git records nothing else: after
+    `git init --separate-git-dir` the main tree is known only to the `.git` file inside it, and `git worktree list`
+    then reports the git dir itself as the main tree, so that layout is not found (None)."""
     try:
         r = subprocess.run(["git", "-C", root, "rev-parse", "--git-common-dir"], capture_output=True, text=True)
+        common = os.path.abspath(os.path.join(root, r.stdout.strip())) if r.returncode == 0 and r.stdout.strip() else ""
+        wt = subprocess.run(["git", "config", "--file", os.path.join(common, "config"), "--get", "core.worktree"],
+                            capture_output=True, text=True) if common else None
     except OSError:
         return None
-    common = os.path.abspath(os.path.join(root, r.stdout.strip())) if r.returncode == 0 and r.stdout.strip() else ""
-    main = os.path.dirname(common)
-    if os.path.basename(common) != ".git" or os.path.realpath(main) == os.path.realpath(root):
+    if not common:
         return None
-    return main
+    if wt is not None and wt.returncode == 0 and wt.stdout.strip():
+        main = os.path.abspath(os.path.join(common, wt.stdout.strip()))
+    elif os.path.basename(common) == ".git":
+        main = os.path.dirname(common)
+    else:
+        return None
+    return None if os.path.realpath(main) == os.path.realpath(root) else main
 
 
 def load_deny(root):
@@ -140,15 +151,18 @@ def load_deny(root):
     if not os.path.exists(p):
         return None
     pats = []
-    with open(p, encoding="utf-8") as f:
-        for n, line in enumerate(f, 1):
-            line = line.strip()
-            if not line or line.startswith("#"):
-                continue
-            try:
-                pats.append((n, re.compile(line, re.IGNORECASE)))
-            except re.error as e:
-                raise CheckError("%s:%d: invalid pattern %r: %s" % (DENY, n, line, e))
+    try:
+        with open(p, encoding="utf-8") as f:
+            for n, line in enumerate(f, 1):
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    pats.append((n, re.compile(line, re.IGNORECASE)))
+                except (re.error, OverflowError) as e:
+                    raise CheckError("%s:%d: invalid pattern %r: %s" % (DENY, n, line, e))
+    except UnicodeDecodeError as e:
+        raise CheckError("%s is not UTF-8: %s" % (DENY, e))
     if not pats:
         raise CheckError("%s has no pattern: an empty list checks nothing" % DENY)
     return pats
