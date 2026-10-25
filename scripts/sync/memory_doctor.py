@@ -33,7 +33,7 @@ WHAT IT CHECKS, and why each one earns its place:
 
 claude-mem itself (thedotmack) was retired, and its per-store checks
 (store-*, claude-env, codex-mcp, codex-hook-env, capture-agrees, --mcp) went with it. Its
-stores stay on disk under data/memory/ as an archive.
+stores were moved out of the checkout to ~/archive/forge-claude-mem.
 
 THE KNOWN BACKLOG IS NOT NOISE. Some stores are empty today by history rather than by fault
 (once, nine). A gate that prints the same nine failures at every session start trains the
