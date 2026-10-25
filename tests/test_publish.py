@@ -616,6 +616,46 @@ def commit_cases():
     want("no paths, no --all = neither history moved", (head(root), head(root, data=True)), (e1, d1))
 
 
+# --- 5b. forge commit, edge cases found by attack round E1
+def commit_edge_cases():
+    # Red before the change, each message from the unfixed code:
+    #  E1-4: "tracked by both histories, then deleted: --all = exit: got 1, want 0" with "the engine commit failed:
+    #        error: pathspec 'config/p.json' did not match any file(s) known to git", and the data history keeps " D config/p.json".
+    #  E1-5 (git rm --cached, file on disk) and E1-6 (file replaced by a directory) are not fixed here: `commit --only`
+    #  re-adds a named path from disk, so it can take neither removal ("nothing to commit"; "unable to index file").
+    #  E1-7: "a typo in a named path = exit: got 0, want 2" (it printed "nothing to commit").
+    root = toy("edge", overlay=True)
+    write(root, "config/p.json", "{}\n")
+    write(root, "keep.txt", "k\n")
+    write(root, "notes.txt", "n\n")
+    want("edge: seed = exit", forge(root, "commit", "--all", "-m", "seed")[0], 0)
+    # E1-4: a path both histories track, then deleted. The ignore hint tells users to un-ignore it.
+    with open(os.path.join(root, ".gitignore"), "a") as f:
+        f.write("!/config/\n!/config/p.json\n")
+    write(root, "config/p.json", '{"a": 1}\n')
+    want("both histories: publish = exit", forge(root, "commit", "-m", "publish", "config/p.json", ".gitignore")[0], 0)
+    want("both histories: the engine took both files", files_of(root), [".gitignore", "config/p.json"])
+    os.remove(os.path.join(root, "config", "p.json"))
+    want("both histories: rm = exit", forge(root, "commit", "-m", "rm", "config/p.json")[0], 0)
+    code, out = forge(root, "commit", "--all", "-m", "again")
+    want("tracked by both histories, then deleted: --all = exit", code, 0)
+    lacks("tracked by both histories, then deleted", out, "failed")
+    want("tracked by both histories, then deleted: data status", dirty(root)[1], [])
+    # E1-7: a typo in a named path is an error; a clean tracked path stays "nothing to commit".
+    os.remove(os.path.join(root, "notes.txt"))
+    e0, d0 = head(root), head(root, data=True)
+    code, out = forge(root, "commit", "-m", "x", "notes.txy")
+    want("a typo in a named path = exit", code, 2)
+    has("a typo in a named path", out, "forge commit: notes.txy matches no file and no tracked path")
+    want("a typo in a named path: neither history moved", (head(root), head(root, data=True)), (e0, d0))
+    code, out = forge(root, "commit", "-m", "x", "notes.txt")
+    want("a real deletion named correctly = exit", code, 0)
+    want("a real deletion named correctly: files", files_of(root, data=True), ["notes.txt"])
+    code, out = forge(root, "commit", "-m", "x", "keep.txt")
+    want("a clean tracked path = exit", code, 0)
+    has("a clean tracked path", out, "nothing to commit")
+
+
 # --- 6. the hooks, only in toy repositories
 def hook_cases():
     real = os.path.join(FORGE, "githooks")
@@ -751,6 +791,7 @@ def main():
     own_files_cases()
     range_cases()
     commit_cases()
+    commit_edge_cases()
     hook_cases()
     for msg in failures:
         print("FAIL", msg)

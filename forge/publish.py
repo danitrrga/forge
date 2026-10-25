@@ -353,19 +353,21 @@ def route(paths, two):
     if not two:
         return {p for _, p in eng}, set(), set()
     tracked = set(nul_list(run(history(False) + ["ls-files", "-z"]).stdout))
-    cand, untracked = {p for _, p in eng}, set()
+    cand, untracked, gone = {p for _, p in eng}, set(), set()
     for xy, p in status_paths(True, paths):
         if p not in tracked:
             cand.add(p)
             if xy == "??":
                 untracked.add(p)
+            elif not os.path.lexists(os.path.join(lib.ROOT, p)):
+                gone.add(p)  # deleted, and only the data history tracks it: the engine has nothing to commit
     ordered = sorted(cand)
     if not ordered:
         return set(), set(), set()
     r = run(history(False, literal=False) + ["check-ignore", "--no-index", "-z", "--stdin"], "\0".join(ordered) + "\0")
     if r.returncode not in (0, 1):  # 1 is "none ignored"
         raise CheckError("git check-ignore failed: %s" % r.stderr.strip())
-    ignored = set(nul_list(r.stdout))
+    ignored = set(nul_list(r.stdout)) | gone
     return {p for p in ordered if p not in ignored}, {p for p in ordered if p in ignored}, untracked & ignored
 
 
@@ -395,6 +397,14 @@ def cmd_commit(a):
             return 2
         paths.append(rel)
     two = os.path.isdir(os.path.join(lib.ROOT, DATA_GIT))
+    # A path on disk, in an index or in a HEAD is a real one (a clean tracked path is "nothing to commit"); a typo is not.
+    for rel in paths:
+        if os.path.lexists(os.path.join(lib.ROOT, rel)) or any(
+                run(history(d) + argv + ["--", rel]).stdout.strip() for d in ((False, True) if two else (False,))
+                for argv in (["ls-files"], ["ls-tree", "HEAD"])):
+            continue
+        print("forge commit: %s matches no file and no tracked path" % rel, file=sys.stderr)
+        return 2
     try:
         eng, priv, fresh = route(paths, two)
     except CheckError as e:
