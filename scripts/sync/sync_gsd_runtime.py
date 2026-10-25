@@ -281,7 +281,12 @@ SPIKE_GATES_OLD = ("Preserve all workflow gates (prior spike check, decompositio
                    "assessment, verification, MANIFEST updates, commit patterns).")
 SPIKE_GATES_NEW = ("In the spike workflow (not `--wrap-up`), run the spike yourself in this conversation, without "
                    "subagents, and follow the forge free-form block at the top of the workflow: each spike's README "
-                   "verdict, the MANIFEST.md update and the commit stay mandatory.")
+                   "verdict, the MANIFEST.md update and the commit stay mandatory. `--wrap-up` sorts every spike into "
+                   "a final verdict, so it skips the spikes whose verdict is PENDING.")
+# The skill handed the whole idea to the workflow end-to-end; the block runs one experiment per turn.
+SPIKE_E2E_OLD = "pass all of the `<arguments>` block as the idea to the spike workflow end-to-end."
+SPIKE_E2E_NEW = ("pass all of the `<arguments>` block as the idea to the spike workflow, one experiment per turn, "
+                 "per the forge block.")
 
 SKILL_PATCHES = {
     "gsd-update": [("forge-update-route", "replace", UPDATE_OLD, UPDATE_NEW)],
@@ -291,7 +296,8 @@ SKILL_PATCHES = {
     "gsd-execute-phase": [("no-todowrite", "replace",
                            "  - Agent\n  - TodoWrite\n  - AskUserQuestion\n",
                            "  - Agent\n  - AskUserQuestion\n")],
-    "gsd-spike": [("spike-freeform", "replace", SPIKE_GATES_OLD, SPIKE_GATES_NEW)],
+    "gsd-spike": [("spike-freeform", "replace", SPIKE_GATES_OLD, SPIKE_GATES_NEW),
+                  ("spike-one-per-turn", "replace", SPIKE_E2E_OLD, SPIKE_E2E_NEW)],
 }
 
 
