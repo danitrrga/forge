@@ -168,6 +168,13 @@ The `project roots` row fails a project that has skills of its own and sits insi
 repository: Claude Code applies the outer project's settings there too, and the outer "off" wins over the inner
 "on". The fix is one repository per project.
 
+The `research expiry` row reads each project's `.planning/research/**/*.md` (only the first 20 lines of a file, none
+over 1 MB) and warns about the ones whose header says they are stale. A research file may carry `expires: YYYY-MM-DD`
+(bare, or inside `---` front matter; any case) and `volatility: high|medium|low`: the date is the last day the
+research stands, and the row names the file the day after. A file without the header is counted and never flagged; a
+date that is not YYYY-MM-DD is an `unreadable expiry`, also a warning. The fix is to re-check the research and move
+the date, or delete the file.
+
 `forge commit` stages each changed path in the history that owns it: a path the engine's `.gitignore` does not
 ignore goes to the engine history, every other path to your data history when you have one (`--track`).
 

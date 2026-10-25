@@ -25,6 +25,7 @@ that says which runs, in what order, and what "healthy" means.
 import argparse
 import contextlib
 import copy
+import datetime
 import json
 import os
 import re
@@ -728,6 +729,98 @@ def gsd_engine_row():
     return lib.Result("FAIL", "gsd engine", "node %s --help exited %d: %s -- %s" % (where, r.returncode, first, GSD_ENGINE_FIX))
 
 
+# The `research expiry` row: a research file under <project>/.planning/research/ may say, in its first
+# HEADER_LINES lines, when it must be re-checked (README.md, "research expiry").
+RESEARCH_DIR = os.path.join(".planning", "research")
+RESEARCH_HEADER_LINES = 20
+RESEARCH_MAX_BYTES = 1024 * 1024
+RESEARCH_NAMED = 10
+RESEARCH_FIX = "re-check the research and move its expires date, or delete it"
+EXPIRES_LINE = re.compile(r"^\s*expires\s*:\s*(.*?)\s*$", re.I)
+VOLATILITY_LINE = re.compile(r"^\s*volatility\s*:\s*(high|medium|low)\s*$", re.I)
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def today():
+    """The day the `research expiry` row compares with; a test replaces it."""
+    return datetime.date.today()
+
+
+def research_header(path):
+    """(expires, volatility, raw) of a research file's first RESEARCH_HEADER_LINES lines: `expires` a date, or
+    None with `raw` the text after `expires:` when it is not a YYYY-MM-DD date, or None with no `expires:` line
+    at all; `volatility` high, medium or low, lower-cased, or None. The first `expires:` line wins. Raises OSError."""
+    expires = volatility = raw = None
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        for _, line in zip(range(RESEARCH_HEADER_LINES), fh):
+            m = EXPIRES_LINE.match(line)
+            if m and raw is None:
+                raw = m.group(1).strip("'\"")
+                if ISO_DATE.fullmatch(raw):
+                    try:
+                        expires = datetime.date.fromisoformat(raw)
+                    except ValueError:
+                        pass
+            m = VOLATILITY_LINE.match(line)
+            if m and volatility is None:
+                volatility = m.group(1).lower()
+    return expires, volatility, raw
+
+
+def research_expiry(only=None):
+    """The `research expiry` row: every markdown file under <project_path>/.planning/research/ of each profile
+    (frozen ones too, since stale research is not forge drift; a path two profiles share is read once, by the
+    first) with an `expires: YYYY-MM-DD` line in its first 20 lines (a bare line, any case, or inside `---`
+    front matter; an optional `volatility: high|medium|low`). The date is the last day the research stands, so
+    a file is expired the day after, by today(). WARN names each expired file as `project/path (expired DATE,
+    volatility V)` and each malformed date as `(unreadable expiry: 'text')`, ten at most and then `and N more`;
+    a file with no header is only counted. A file over 1 MB and a link are skipped, and said. No research file
+    in the scope is a PASS that says so (zero is possible here). Reads only; with `only`, that project alone."""
+    seen, files, dated, skipped, projects = set(), 0, 0, 0, set()
+    expired, unreadable = [], []  # (project/relative path, text)
+    for name, prof in lib.profiles().items():
+        root = prof.get("project_path")
+        if only not in (None, name) or not root or not os.path.isdir(os.path.join(root, RESEARCH_DIR)):
+            continue
+        real = os.path.realpath(root)
+        if real in seen:
+            continue
+        seen.add(real)
+        for d, dirs, names in os.walk(os.path.join(root, RESEARCH_DIR)):
+            dirs.sort()
+            for n in sorted(names):
+                path = os.path.join(d, n)
+                if not n.lower().endswith(".md"):
+                    continue
+                label = "%s/%s" % (name, os.path.relpath(path, root).replace(os.sep, "/"))
+                try:
+                    if os.path.islink(path) or os.path.getsize(path) > RESEARCH_MAX_BYTES:
+                        skipped += 1
+                        continue
+                    expires, volatility, raw = research_header(path)
+                except OSError as e:
+                    files, projects = files + 1, projects | {name}
+                    unreadable.append((label, "could not be read: %s" % e.strerror))
+                    continue
+                files, projects = files + 1, projects | {name}
+                if raw is not None and expires is None:
+                    unreadable.append((label, "unreadable expiry: %r" % raw))
+                elif expires is not None:
+                    dated += 1
+                    if expires < today():
+                        expired.append((label, "expired %s%s" % (expires.isoformat(), ", volatility " + volatility if volatility else "")))
+    if not files and not skipped:
+        return lib.Result("PASS", "research expiry", "0 research file(s) in 0 project(s), no .planning/research/*.md to check")
+    seen_n = "%d research file(s) in %d project(s), %d with an expiry" % (files, len(projects), dated)
+    note = ", %d skipped (over 1 MB or a link)" % skipped if skipped else ""
+    if not (expired or unreadable):
+        return lib.Result("PASS", "research expiry", seen_n + ", none expired" + note)
+    named = ["%s (%s)" % row for row in sorted(expired) + sorted(unreadable)]
+    more = ["and %d more" % (len(named) - RESEARCH_NAMED)] if len(named) > RESEARCH_NAMED else []
+    return lib.Result("WARN", "research expiry", "; ".join(
+        ["%s, %d expired, %d unreadable expiry%s" % (seen_n, len(expired), len(unreadable), note)] + named[:RESEARCH_NAMED] + more))
+
+
 def _loaded(loaded, file, c):
     """The document owned.current wants for claim `c` of `file`, read into `loaded` the first time and reused:
     the parsed JSON for a key, item or hook claim, the text for an ignore line, None for a whole-file claim
@@ -821,6 +914,7 @@ CHECKS = [
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
     ("gsd engine", gsd_engine_row, ""),
+    ("research expiry", research_expiry, RESEARCH_FIX),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
 ]
@@ -886,6 +980,7 @@ def project_checks(name, prof, why):
         ("command guard", lambda: command_guard_smoke(name), fix["command guard"]),
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
         ("ponytail", lambda: ponytail_row(name), fix["ponytail"]),
+        ("research expiry", lambda: research_expiry(name), RESEARCH_FIX),
         ("memory", ["scripts/sync/memory_doctor.py", "--project", name],
          "python3 scripts/sync/memory_doctor.py --project %s --verbose" % name),
     ]

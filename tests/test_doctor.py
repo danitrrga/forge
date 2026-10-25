@@ -1157,7 +1157,7 @@ def project_cases(tmp):
     rows = rows_of(lines)
     levels = {k: v[0] for k, v in rows.items()}
     want("a healthy project's rows", levels, {"profile": "PASS", "generated": "PASS", "skill names": "PASS",
-                                              "project roots": "PASS", "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS",
+                                              "project roots": "PASS", "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS", "research expiry": "PASS",
                                               "memory": levels.get("memory", "(none)")})
     want("a healthy project's memory row", "memory" in rows, True)
     want("a healthy project has no hindsight row", "hindsight" in rows, False)
