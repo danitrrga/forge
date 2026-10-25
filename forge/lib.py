@@ -117,7 +117,7 @@ def profiles(skipped=None):
 # reading gets its row here.
 PROFILE_FIELDS = {
     "project": str, "project_path": str,
-    "servers": (list, str), "skills_keep": (list, str), "plugins_keep": (list, str),
+    "servers": (list, str), "skills_keep": (list, str), "plugins_keep": (list, str), "cli_keep": (list, str),
     "mcpjson_approved": (list, str), "mcpjson_disabled": (list, str),
     "env": (dict, str), "permissions": dict, "hooks": dict,
     "frozen": bool, "ui": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,

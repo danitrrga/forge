@@ -36,7 +36,7 @@ import contextlib
 import os
 import sys
 
-from forge import hooks, lib, mcp, memory, skills
+from forge import cli_extras, hooks, lib, mcp, memory, skills
 
 CFG = os.path.join(lib.ROOT, "config")
 
@@ -206,7 +206,7 @@ def _run(argv, rule):
         env_errors = []
         try:
             ov = skills.write_settings_local(ctx, mcp.with_denied_tools(prof, sel, registry), secrets, env_errors,
-                                            hooks.project_hooks(prof))
+                                            hooks.project_hooks(prof), cli_extras.common_setting())
         except lib.Unreadable as e:
             ov = _unreadable(e)
         if ov:
