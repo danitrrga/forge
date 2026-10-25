@@ -5,10 +5,9 @@ links; a profile trims them, and the plugins, per project in <project>/.claude/s
 (write_settings_local). A project's own .claude/skills are Claude Code's alone until they are
 linked into .agents/skills, the root Codex reads (mirror_for_codex)."""
 import functools
-import json
 import os
 
-from forge import cli_extras, lib, mcp, owned
+from forge import lib, mcp, owned
 
 
 def skill_dirs(path):
@@ -263,44 +262,7 @@ def _prune_hook(sl, c, slp_short):
     return 0
 
 
-def _merge_cli(sl, key, wanted, prev, written, errors, slp):
-    """The built-ins forge hides (forge/cli_extras.py) as single names inside sl[key] (skillOverrides or env),
-    for a file where forge does not own the whole key (an untrimmed profile, the skills_keep wildcard, a
-    profile with no env). A whole map left by a run that did own it (its claim of the key is in `prev`) goes
-    first, as it always did. Then each wanted name is set when the file has none, and claimed; a name the file
-    already has is the user's and left, unless forge's last run claimed it and it still holds what forge wrote.
-    A claimed name is `written`, so the next run can take it out again (_prune_cli)."""
-    if any(c["kind"] == "key" and c["at"] == [key] for c in prev):
-        sl.pop(key, None)
-    if not isinstance(sl.get(key, {}), dict):
-        if errors is not None:
-            errors.append("%s: %s is not an object, the cli built-ins are not merged" % (lib.short(slp), key))
-        return
-    mine = {(c["kind"], json.dumps(c["at"])): c for c in prev}
-    for name, value in wanted.items():
-        have = sl.get(key, {})
-        c = mine.get(("key", json.dumps([key, name])))
-        if name not in have:
-            sl.setdefault(key, {})[name] = value
-        elif not (c and have[name] == value and owned.removable(c, value)):
-            continue
-        written.append(("key", [key, name], value, None))
-
-
-def _prune_cli(sl, c):
-    """Take the one name claim `c` names out of skillOverrides or env, when it is still what forge wrote.
-    Returns 1 for a name removed, else 0. A map this run empties goes with it."""
-    key, name = c["at"]
-    have = sl.get(key)
-    if not isinstance(have, dict) or name not in have or not owned.removable(c, have[name]):
-        return 0
-    del have[name]
-    if not have:
-        del sl[key]
-    return 1
-
-
-def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(), cli_common=None):
+def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=()):
     """Owns <project>/.claude/settings.local.json: everything the profile says goes there, merged
     into the file. For a claude profile carrying `plugins_keep` and/or `skills_keep`, that is:
       * enabledPlugins -- full canonical map (kept=True, rest=False; whole-object,
@@ -326,11 +288,6 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         (forge.hooks.project_hooks: Hindsight's, for a profile that uses it), each owned by its
         exact command the same way: a wanted row ends as one entry, one not wanted goes. The
         callers pass them, so this module never reads config/forge.json.
-      * cli built-ins -- the entries Claude Code ships itself (forge/cli_extras.py): hidden unless the
-        caller's `cli_common` (config/forge.json skill_keep.cli_common; None, the key absent, is off) or the
-        profile's `cli_keep` keeps them: "off" in skillOverrides, DISABLE_*_COMMAND=1 in env. Owned name by
-        name (_merge_cli), so a hand-written entry is never touched. Both absent, nothing is written and
-        only what an earlier run wrote is taken out.
     Returns a one-line summary string, or None if the profile carries none of those keys and the
     file holds none of the three written only while declared (skillOverrides, enabledPlugins, env),
     which go when the profile stops declaring them.
@@ -352,10 +309,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     all_skills = "*" in skills_keep
     ppath = prof["project_path"]
     slp = os.path.join(ppath, ".claude", "settings.local.json")
-    cli_on, cli_errors, cli_over, cli_env = cli_extras.plan(prof, cli_common, global_skills())
-    if errors is not None:
-        errors.extend(cli_errors)
-    declared = (trim or cli_on or prof.get("permissions") or prof.get("env") or prof.get("hooks") or prof.get("command_guard")
+    declared = (trim or prof.get("permissions") or prof.get("env") or prof.get("hooks") or prof.get("command_guard")
                 or prof.get("worktree_guard") or prof.get("mcpjson_approved") is not None or prof.get("mcpjson_disabled") is not None
                 or prof.get("enableAllProjectMcpServers") is not None
                 or any(row[5] for row in project_hooks))
@@ -375,7 +329,6 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     proj_skills = set(skill_dirs(os.path.join(ppath, ".claude", "skills")))
     overrides = ({} if all_skills
                  else {s: "off" for s in sorted(on_machine - proj_skills - skills_keep)})
-    n_off = len(overrides)
 
     sl_before = lib.dumps(sl)
     written = []  # what this run writes into the file besides the profile's lists and hooks: _claims
@@ -394,14 +347,9 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         # the last trimmed run keeps every plugin it switched off, off.
         removed.append("enabledPlugins")
         pl_summary = "plugins untrimmed"
-    cli_prev = lambda key: any(c["kind"] == "key" and len(c["at"]) == 2 and c["at"][0] == key for c in prev)
     if trim and not all_skills:
-        overrides = dict(sorted(dict(overrides, **dict.fromkeys(cli_over, "off")).items()))
         sl["skillOverrides"] = overrides
         written.append(("key", ["skillOverrides"], overrides, None))
-        written += [("key", ["skillOverrides", n], "off", None) for n in cli_over]
-    elif cli_over or cli_prev("skillOverrides"):
-        _merge_cli(sl, "skillOverrides", dict.fromkeys(cli_over, "off"), prev, written, errors, slp)
     elif sl.pop("skillOverrides", None) is not None and not trim:
         # Under the wildcard, dropped silently as it always was: writing an empty map is harmless,
         # but a STALE one left from before would keep every skill off. Absent == all available.
@@ -468,13 +416,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         from_secrets = len(got)
         sl["env"] = {k: got.get(k, prof_env[k]) for k in sorted(prof_env) if k not in refs or k in got}
         env_summary = ", env %d%s" % (len(prof_env), " (%d from secrets)" % from_secrets if from_secrets else "")
-        ours = {k: v for k, v in cli_env.items() if k not in prof_env}  # the profile's own value of a variable wins
-        if ours:
-            sl["env"] = dict(sorted(dict(sl["env"], **ours).items()))
         written.append(("key", ["env"], sl["env"], None))  # only its digest is kept (owned.claim): it holds secrets
-        written += [("key", ["env", k], v, None) for k, v in ours.items()]
-    elif cli_env or cli_prev("env"):
-        _merge_cli(sl, "env", cli_env, prev, written, errors, slp)
     elif sl.pop("env", None) is not None:
         # The key is generator-owned in both directions: a profile with no env gets none. Only
         # overwriting when the profile had one left a project capturing into a retired
@@ -528,7 +470,6 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     # cannot tell its leftovers from the user's in-session approvals in the same lists, so only an element
     # it claimed (forge/owned.py) is ever removed, and only unchanged. A hook entry edited since stays and
     # is named. With no record nothing is stale. Runs after both merges, so a rule still declared stays.
-    # A built-in the feature stopped hiding goes the same way, name by name (_prune_cli).
     claim_prof = dict(prof, permissions={k: v for k, v in perms.items() if k not in unmerged}) if unmerged else prof
     now = _claims(claim_prof, written)
     slp_short = lib.short(slp)
@@ -538,8 +479,6 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
             pruned += _prune_item(sl, c)
         elif c["kind"] == "hook" and len(c["at"]) == 3 and c["at"][0] == "hooks":
             pruned += _prune_hook(sl, c, slp_short)
-        elif c["kind"] == "key" and len(c["at"]) == 2 and c["at"][0] in ("skillOverrides", "env"):
-            pruned += _prune_cli(sl, c)  # a built-in that is now kept, or the feature off
     pruned_summary = ", pruned %d" % pruned if pruned else ""
 
     # .mcp.json approval, owned by the profile when it declares `mcpjson_approved` (the list) or
@@ -583,14 +522,11 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     # what forge wrote; an edited or removed one is the user's and drops out.
     now += [c for c in owned.stale(prev, now) if c["kind"] == "key" and owned.unchanged(slp, c, sl)]
     skill_summary = ("%s, skills off %d, kept-global %s"
-                     % (pl_summary, n_off, "ALL (*)" if all_skills else len(skills_keep))
+                     % (pl_summary, len(overrides), "ALL (*)" if all_skills else len(skills_keep))
                      if trim else "untrimmed (pass-through only)")
     removed_summary = ", %s removed" % " and ".join(removed) if removed else ""
-    cli_summary = (", cli built-ins refused" if cli_errors else ", cli built-ins hidden %d" % (len(cli_over) + len(cli_env))
-                   if cli_on else "")
-    summary = "overrides -> %s (%s%s%s%s%s%s%s%s)" % (
-        slp_short, skill_summary, removed_summary, perm_summary, env_summary, hooks_summary, mcp_summary, pruned_summary,
-        cli_summary)
+    summary = "overrides -> %s (%s%s%s%s%s%s%s)" % (
+        slp_short, skill_summary, removed_summary, perm_summary, env_summary, hooks_summary, mcp_summary, pruned_summary)
     # The file carries resolved secrets from here on, so it is 0600 (mcp.loose_secrets, the rule
     # ~/.claude.json follows): set when written, and corrected when the content is current but the
     # mode is not, since Claude Code rewrites this file too.
