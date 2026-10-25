@@ -32,7 +32,8 @@ WHAT THIS REPLACES
   output for a global install, not a hand edit.
 
 WHAT FORGE SYNCS (the whole of gsd-core, no cap)
-  Every agent, the whole engine, every skill (--skills) and every hook script (staged hooks/ to ~/.claude/hooks, but
+  Every agent, the whole engine, the scripts it requires (staged scripts/ to ~/.claude/scripts, minus changeset/,
+  which is the package's own release tooling), every skill (--skills) and every hook script (staged hooks/ to ~/.claude/hooks, but
   the two files forge keeps its own hardened version of): forge/hooks.py wires them (GSD_CORE_ROWS). forge sets no GSD
   default (config/gsd/defaults.md).
 
@@ -99,6 +100,9 @@ HOME = lib.HOME
 AGENTS_DIR = os.path.join(HOME, ".claude", "agents")
 PACKAGE = "@opengsd/gsd-core"
 GSD_DIR = os.path.join(HOME, ".claude", "gsd-core")
+# The engine requires ../../../scripts/{fix-slash-commands,gen-capability-registry}.cjs from gsd-core/bin/lib, so
+# staged scripts/ sits beside gsd-core/ (gsd-core 1.18: without it gsd-tools.cjs dies with MODULE_NOT_FOUND).
+SCRIPTS_DIR = os.path.join(HOME, ".claude", "scripts")
 HOOKS_DIR = os.path.join(HOME, ".claude", "hooks")
 SKILLS_MIRROR = os.path.join(HOME, ".claude", "skills")
 FORGE_SKILLS = os.path.join(ROOT, "skills")
@@ -129,6 +133,12 @@ HOOKS_NOT_COPIED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js")
 # What config/gsd/defaults.json held before forge stopped capping GSD. A ~/.gsd/defaults.json with
 # exactly these bytes is forge's own stale copy, not the user's, and is replaced.
 FORMER_DEFAULTS = ('{\n  "workflow": {\n    "ui_phase": false,\n    "ui_safety_gate": false\n  }\n}\n',)
+
+
+def scripts_wanted(rel):
+    """Whether the staged scripts/<rel> is copied into ~/.claude/scripts: all of it but changeset/, the package's own
+    release tooling, which the engine never requires."""
+    return not rel.startswith("changeset" + os.sep)
 
 
 def hook_wanted(rel):
@@ -677,6 +687,8 @@ def main():
                         only=lambda rel: rel.startswith("gsd-") and rel.endswith(".md"))
     changes += sync_tree(os.path.join(STAGE, "gsd-core"), GSD_DIR, ENGINE_PATCHES,
                          "GSD engine (~/.claude/gsd-core)", errors)
+    changes += sync_tree(os.path.join(STAGE, "scripts"), SCRIPTS_DIR, {}, "GSD scripts (~/.claude/scripts)", errors,
+                         only=scripts_wanted)
     changes += sync_tree(os.path.join(STAGE, "hooks"), HOOKS_DIR, {}, "GSD hooks (~/.claude/hooks)", errors, only=hook_wanted)
     changes += sync_defaults(errors)
     if DO_SKILLS:
