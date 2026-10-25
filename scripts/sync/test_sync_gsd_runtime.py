@@ -1208,12 +1208,47 @@ def quick_lean_readers(failures):
                             % (label, errs, left, got != text, again == got))
 
 
+def quick_lean_review(failures):
+    """An independent review found the lean block under-specified. Each assertion below is one finding: (1) a lean
+    `resume` was not defined (`init.quick` mints a new quick id, a null task_dir and a new branch, and Step 1 would read
+    `resume foo` as the description), (2) a failed or empty commit at item 6 let Step 7 record an unrelated HEAD,
+    (3) `{type}` was undefined, (4) the project's own check was not named, (5) Step 7c did not say what to pass for
+    --status, (6) the upstream <purpose> text that still follows the block says quick mode spawns a planner and
+    executors, (7) the block cited upstream line numbers that cannot be counted in the patched file. Seen failing on
+    the branch before the fix (4a6397b): "quick lean review: the block does not say ['quick_id from the directory name',
+    'skip quick-tasks-append', 'no PLAN.md in the directory', 'do not run Step 7', '{type} is feat, fix, refactor, docs,
+    chore or test', 'Run the check named in CLAUDE.md', 'Status column', 'upstream's description of the full pipeline',
+    'no planner or executor is spawned']" and "quick lean review: the block still cites 'upstream lines 701'". Negative
+    control (a backup copy of config/gsd/quick-lean.md with the failed-commit sentence deleted, restored from the
+    backup): the first message names 'do not run Step 7'."""
+    entries = gsd.ENGINE_PATCHES.get("workflows/quick.md")
+    block = read(os.path.join(FORGE, "config", "gsd", entries[0][3][5:])) if entries and entries[0][3].startswith("file:") else None
+    if block is None:
+        failures.append("quick lean review: no payload file to read (quick_lean reports why)")
+        return
+    flat = " ".join(block.split())
+    need = ("quick_id from the directory name", "skip quick-tasks-append", "no PLAN.md in the directory", "do not run Step 7",
+            "{type} is feat, fix, refactor, docs, chore or test", "Run the check named in CLAUDE.md", "Status column",
+            "upstream's description of the full pipeline", "no planner or executor is spawned")
+    gone = [m for m in need if m not in flat]
+    if gone:
+        failures.append("quick lean review: the block does not say %s" % gone)
+    if "upstream lines 701" in block:
+        failures.append("quick lean review: the block still cites 'upstream lines 701'")
+    # item 5 must not tell the agent to tick the checklist (that moved to item 6, after the commit step)
+    item5 = flat.split("5a. **Where Step 5")[0].split("5. **The discussion")[-1]
+    if "Tick the PLAN.md checklist" in item5:
+        failures.append("quick lean review: the tick sentence is still in item 5 instead of item 6")
+    if "Tick the PLAN.md checklist" not in flat.split("6. **Step 6 (executor's commit)")[-1].split("7. **Step 6")[0]:
+        failures.append("quick lean review: item 6 does not tick the PLAN.md checklist")
+
+
 def main():
     failures = []
     cases = (tree_failed_anchor, tree_control, skills_failed_anchor, skills_control,
              tree_missing_target, skills_missing_target, tree_crlf, tree_blocked_path, tree_not_utf8, skills_crlf,
              refs_no_dirs, refs_no_agents, refs_forge_only, npm_nag_throttle, defaults_copy,
-             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers)
+             defaults_gsd_reads, skills_no_dir, update_text_names_no_machine, unpatched_main, check_mode, scripts_beside_engine, package_location, real_package, normalize_forms, skills_all_shipped, skills_authored_over_upstream, defaults_uncapped, hooks_tree, quick_lean, quick_lean_readers, quick_lean_review)
     for case in cases:
         case(failures)
     for msg in failures:
