@@ -52,6 +52,10 @@ WHAT FORGE OWNS ON TOP
     `agent_skills` injection cannot carry agent-reach either -- `global:agent-reach` resolves the
     symlink and its path check rejects anything outside ~/.claude/skills ("Path escapes allowed
     directory", measured).
+  * spike free-form -- workflows/spike.md gets the block of config/gsd/spike-freeform.md first, and the gsd-spike skill
+    loses its "Preserve all workflow gates" sentence: the main agent runs the experiments itself so the owner can steer,
+    the gates become guidance, and only the state other GSD commands read back (README verdicts, MANIFEST.md) and the
+    commit stay mandatory.
   * (retired with gsd-core 1.18: the planner now has Edit, and the config skill names the right package.)
   * (retired: the graphify and MemPalace router rows are back, every upstream skill ships now.)
   * update route -- the update skill is rewritten to run the procedure below instead of the
@@ -234,6 +238,9 @@ Per-spawn prompt fields:
 """
 
 ENGINE_PATCHES = {
+    # gsd-spike is free-form and run by the main agent so the owner can steer it: the block (config/gsd/spike-freeform.md) goes
+    # first in the workflow. The anchor is the whole first line of upstream's file, so a rewrite is an error, not a skip.
+    "workflows/spike.md": [("spike-freeform", "replace", "<purpose>", "file:spike-freeform.md")],
     "workflows/ingest-docs.md": [("classifier-hash-dispatch", "replace", INGEST_OLD, INGEST_NEW)],
     "references/mandatory-initial-read.md": [
         ("output-discipline", "append",
@@ -268,6 +275,14 @@ paragraph describes the upstream flow and is kept for reference only — do not 
 
 Original objective: check for GSD updates, install if available, and display what changed."""
 
+# The gsd-spike skill told the agent to keep every workflow gate; the free-form block (ENGINE_PATCHES) keeps two, the state
+# other GSD commands read back and the commit.
+SPIKE_GATES_OLD = ("Preserve all workflow gates (prior spike check, decomposition, research, risk ordering, observability "
+                   "assessment, verification, MANIFEST updates, commit patterns).")
+SPIKE_GATES_NEW = ("Run the spike yourself in this conversation, without subagents, and follow the forge free-form block "
+                   "at the top of the workflow: the gates are guidance except each spike's README verdict, the MANIFEST.md "
+                   "update and the commit.")
+
 SKILL_PATCHES = {
     "gsd-update": [("forge-update-route", "replace", UPDATE_OLD, UPDATE_NEW)],
     # Claude Code 2.1.268 stopped offering TodoWrite on current models unless
@@ -276,6 +291,7 @@ SKILL_PATCHES = {
     "gsd-execute-phase": [("no-todowrite", "replace",
                            "  - Agent\n  - TodoWrite\n  - AskUserQuestion\n",
                            "  - Agent\n  - AskUserQuestion\n")],
+    "gsd-spike": [("spike-freeform", "replace", SPIKE_GATES_OLD, SPIKE_GATES_NEW)],
 }
 
 
