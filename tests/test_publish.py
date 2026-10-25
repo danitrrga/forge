@@ -566,6 +566,22 @@ def commit_cases():
     code, out = forge(root, "commit", "-m", "deletions", "forge/extra.py", "notes.txt")
     want("deletions = exit", code, 0)
     want("deletions: files", (files_of(root), files_of(root, data=True)), (["forge/extra.py"], ["notes.txt"]))
+    # A path removed with `git rm` (the deletion already staged, the file gone from disk) is committed too.
+    # Red before the change: "git rm: engine = exit: got 1, want 0" with "fatal: pathspec 'forge/gone.py' did not
+    # match any files" (the plain `git add -A -- path` has nothing to match), and the same for the data history.
+    write(root, "forge/gone.py", "G = 1\n")
+    write(root, "gone.txt", "g\n")
+    want("git rm: seed = exit", forge(root, "commit", "-m", "to remove", "forge/gone.py", "gone.txt")[0], 0)
+    git_out(root, "rm", "-q", "--", "forge/gone.py")
+    git_out(root, "rm", "-q", "--", "gone.txt", data=True)
+    code, out = forge(root, "commit", "-m", "git rm engine", "forge/gone.py")
+    want("git rm: engine = exit", code, 0)
+    want("git rm: engine files", files_of(root), ["forge/gone.py"])
+    want("git rm: the removed engine file is gone from HEAD", g(root, "ls-tree", "-r", "--name-only", "HEAD")[1].split().count("forge/gone.py"), 0)
+    code, out = forge(root, "commit", "-m", "git rm data", "gone.txt")
+    want("git rm: data = exit", code, 0)
+    want("git rm: data files", files_of(root, data=True), ["gone.txt"])
+    want("git rm: the removed data file is gone from HEAD", g(root, "ls-tree", "-r", "--name-only", "HEAD", data=True)[1].split().count("gone.txt"), 0)
     # The git directories are never routed, even with no exclude line for them.
     root = toy("overlay-noexclude", overlay=True)
     write(root, ".forge-data.git/info/exclude", "/bin\n/forge\n/githooks\n/.gitignore\n")
