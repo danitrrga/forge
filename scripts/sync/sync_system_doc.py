@@ -67,10 +67,19 @@ POINTER = (
 def ui_paragraph(proj_dir, profs):
     """The paragraph a project with a user interface (`"ui": true` in its profile) gets: a visual choice goes on a verdict page,
     never into a chat question. Written only when this checkout has the tool that builds the page; a checkout without it has
-    nothing to point at, and a pointer to a missing command is worse than none."""
-    if not any(p.get("ui") is True and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir
-               for p in profs.values()):
+    nothing to point at, and a pointer to a missing command is worse than none. A profile that names its own `verdict_command`
+    gets a paragraph naming that command instead, and needs nothing from this checkout."""
+    mine = [p for p in profs.values()
+            if p.get("ui") is True and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir]
+    if not mine:
         return ""
+    own = next((p["verdict_command"] for p in mine
+                if isinstance(p.get("verdict_command"), str) and p["verdict_command"].strip()), None)
+    if own:
+        return ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
+                "screenshots to accept) goes on a verdict page, never into a chat question. In this project the command is `"
+                + own.strip() + "`: use it, not forge's `design.py verdict`; this file describes how it is used. End your "
+                "message with the `xdg-open` line it prints.\n")
     tool = ROOT_FS + "/scripts/design/design.py"
     if not os.path.isfile(os.path.join(ROOT, "scripts", "design", "design.py")):
         return ""

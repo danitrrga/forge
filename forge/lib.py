@@ -122,6 +122,7 @@ PROFILE_FIELDS = {
     "env": (dict, str), "permissions": dict, "hooks": dict,
     "frozen": bool, "ui": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,
     "worktree_guard": frozenset({bool, dict}),
+    "verdict_command": str,
 }
 _TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object"}
 
@@ -151,6 +152,9 @@ def profile_error(prof):
         if not isinstance(v, kind) or (item and not all(isinstance(x, item) for x in (
                 v.values() if isinstance(v, dict) else v))):
             return "%s is not a %s%s" % (field, _TYPE_NAMES[kind], " of %ss" % _TYPE_NAMES[item] if item else "")
+    # The command is written into the project's CLAUDE.md as an instruction: an empty one names nothing.
+    if "verdict_command" in prof and not prof["verdict_command"].strip():
+        return "verdict_command is empty"
     # `on` of a worktree_guard object is read as `is True`, so "true" or 1 would silently be off.
     wt = prof.get("worktree_guard")
     if isinstance(wt, dict) and "on" in wt and not isinstance(wt["on"], bool):

@@ -174,6 +174,15 @@ def profile_type_cases(tmp):
             ("ui \"yes\"", {"ui": "yes"}, "ui is not a boolean"),
             ("ui 1", {"ui": 1}, "ui is not a boolean"),
             ("ui null", {"ui": None}, "ui is not a boolean"),
+            # `verdict_command` is the command a ui project's pointer block names for a verdict page: a non-empty string.
+            # Red before the field existed: "profile_error(verdict_command 5) = None, want 'verdict_command is not a string'"
+            # (and null, ["x"]); "profile_error(verdict_command \"\") = None, want 'verdict_command is empty'" (and blank).
+            ("verdict_command set", {"verdict_command": "pnpm verdict <dir>"}, None),
+            ("verdict_command 5", {"verdict_command": 5}, "verdict_command is not a string"),
+            ("verdict_command null", {"verdict_command": None}, "verdict_command is not a string"),
+            ("verdict_command a list", {"verdict_command": ["x"]}, "verdict_command is not a string"),
+            ("verdict_command empty", {"verdict_command": ""}, "verdict_command is empty"),
+            ("verdict_command blank", {"verdict_command": "  "}, "verdict_command is empty"),
             # Round 10: a worktree_guard object whose "on" is not a boolean read as off, the doctor PASSed.
             # Red before: "profile_error(worktree_guard.on "true") = None, want 'worktree_guard.on is not a
             # boolean'" (and 1, null); "profile_error(worktree_guard true, no project) = None, want 'project
