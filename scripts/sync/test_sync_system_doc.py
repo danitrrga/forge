@@ -60,6 +60,8 @@ NOTE = "IMPORTANT USER NOTE: never commit the staging database.\n"
 # CLAUDE.md files whose BEGIN marker is not forge's block: quoted in prose, or an orphan on a line of its own.
 STRAY = {"stray-prose": "# app\n\nforge puts its block between %s markers.\n\n" % BEGIN + NOTE,
          "stray-orphan": "# app\n\n%s\n\n" % BEGIN + NOTE}
+VERDICT_CMD = "pnpm verdict <dir>"
+VERDICT_BAD = {"verdict-bad-int": 5, "verdict-bad-empty": "", "verdict-bad-blank": "  ", "verdict-bad-null": None}
 BAD = {"broken.claude.json": "{broken", "null.claude.json": "null", "list.claude.json": "[1]"}
 
 
@@ -87,10 +89,14 @@ def world(case):
         sandbox.git(pp, "init", "-q")
         write(os.path.join(root, "config", "profiles", name + ".claude.json"),
               json.dumps(dict({"project": name, "project_path": pp}, **extra)))
-    if case in ("ui", "ui-no-design", "no-ui-with-design"):
-        write(os.path.join(root, "config", "profiles", "toy.claude.json"),
-              json.dumps(dict({"project": "toy", "project_path": os.path.join(projects, "toy")}, **({"ui": True} if case != "no-ui-with-design" else {}))))
-        if case != "ui-no-design":   # the tool the paragraph names exists in this checkout; a stranger's has none
+    if case in ("ui", "ui-no-design", "no-ui-with-design") or case.startswith(("verdict", "no-ui-verdict")):
+        prof = {"project": "toy", "project_path": os.path.join(projects, "toy")}
+        if case != "no-ui-with-design" and not case.startswith("no-ui-verdict"):
+            prof["ui"] = True
+        if case.startswith(("verdict", "no-ui-verdict")):
+            prof["verdict_command"] = VERDICT_BAD.get(case, VERDICT_CMD)
+        write(os.path.join(root, "config", "profiles", "toy.claude.json"), json.dumps(prof))
+        if case not in ("ui-no-design", "verdict-no-design"):   # the tool the generic paragraph names exists in this checkout; a stranger's has none
             write(os.path.join(root, "scripts", "design", "design.py"), "")
     write(os.path.join(projects, "portal", "CLAUDE.md"), "# portal, owned by its repo\n")
     # Its own .gitignore covers the doc, so unfrozen it WOULD get a copy: the freeze check can fail.
@@ -128,6 +134,9 @@ def text(p):
             return f.read()
     except OSError:
         return None
+
+
+END_LINE = re.search(r'^END = "(.*)"$', open(os.path.join(sandbox.FORGE, "forge", "system_doc.py"), encoding="utf-8").read(), re.M).group(1)
 
 
 def toy_line(t, out):
@@ -317,10 +326,71 @@ def main():
         if want_para and text(agents) != got:
             failures.append("ui project: AGENTS.md does not read the same paragraph as CLAUDE.md")
 
+    # A profile's own `verdict_command` replaces the generic paragraph, and needs nothing from this checkout.
+    # Red on the unchanged code (messages in the PR): the "verdict" cases wrote the generic paragraph naming design.py and not the
+    # command, verdict-no-design wrote no paragraph at all, and a bad verdict_command was not an error.
+    generic = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, "
+               "changed screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
+               "use that; otherwise write `decisions.json` in a folder and run `python3 %(t)s/forge/scripts/design/design.py verdict <folder>` "
+               "(the format is in `%(t)s/forge/design/verdict/README.md`), then end your message with the `xdg-open` line it prints.\n")
+    own = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
+           "screenshots to accept) goes on a verdict page, never into a chat question. In this project the command is `pnpm verdict <dir>`: "
+           "use it, not forge's `design.py verdict`; this file describes how it is used. End your message with the `xdg-open` line it prints.\n")
+    t = world("ui")   # no verdict_command: the old paragraph, byte for byte
+    run(t, "--apply")
+    got = text(os.path.join(projects(t), "toy", "CLAUDE.md")) or ""
+    old = (generic % {"t": t}).replace("\\", "/")
+    if not got.endswith(old + END_LINE + "\n"):
+        failures.append("ui, no verdict_command: the paragraph is not the old one byte for byte: %r" % got[-700:])
+    for case in ("verdict", "verdict-no-design"):
+        t = world(case)
+        rc, out = run(t, "--apply")
+        got = text(os.path.join(projects(t), "toy", "CLAUDE.md")) or ""
+        if rc or not got.endswith(own + END_LINE + "\n") or got.count("verdict page") != 1:
+            failures.append("%s: ui + verdict_command: exit %d, the block does not end with the project's own paragraph: %r"
+                            % (case, rc, got[-700:]))
+        if "scripts/design" in got or "forge/" in got.split("## Shared agent-config system")[-1].split("**A UI change")[-1]:
+            failures.append("%s: the project's own paragraph names a forge path: %r" % (case, got[-700:]))
+        if text(os.path.join(projects(t), "toy", "AGENTS.md")) != got:
+            failures.append("%s: AGENTS.md does not read the same block as CLAUDE.md" % case)
+        rc, out = run(t, "--apply")
+        if rc or "0 change(s) applied." not in out:
+            failures.append("%s: a second --apply is not a no-op: exit %d, %s" % (case, rc, tail(out)))
+    t = world("no-ui-verdict")   # the paragraph is for ui projects only
+    rc, out = run(t, "--apply")
+    got = text(os.path.join(projects(t), "toy", "CLAUDE.md")) or ""
+    if rc or "A UI change" in got:
+        failures.append("verdict_command without ui: exit %d, a paragraph was written: %r" % (rc, got[-500:]))
+    # A block holding the generic paragraph is replaced in place once the profile gains the field, then stable.
+    t = world("ui")
+    run(t, "--apply")
+    toy_md = os.path.join(projects(t), "toy", "CLAUDE.md")
+    write(toy_md, "# mine\n\n" + (text(toy_md) or "") + "\n" + NOTE)
+    generic_block = text(toy_md)
+    old = (generic % {"t": t}).replace("\\", "/")
+    write(os.path.join(t, "forge", "config", "profiles", "toy.claude.json"), json.dumps(
+        {"project": "toy", "project_path": os.path.join(projects(t), "toy"), "ui": True, "verdict_command": VERDICT_CMD}))
+    rc, out = run(t, "--apply")
+    got = text(toy_md) or ""
+    if rc or got != generic_block.replace(old, own) or own not in got or not got.endswith(NOTE):
+        failures.append("an applied generic paragraph is not replaced in place by the project's own: exit %d, got %r" % (rc, got[-800:]))
+    rc, out = run(t, "--apply")
+    if rc or "0 change(s) applied." not in out or text(toy_md) != got:
+        failures.append("the second --apply after the replacement is not a no-op: exit %d, %s" % (rc, tail(out)))
+    # A bad verdict_command is that profile's error (lib.profile_error): named, the profile left out, no traceback.
+    for case, why in (("verdict-bad-int", "verdict_command is not a string"), ("verdict-bad-null", "verdict_command is not a string"),
+                      ("verdict-bad-empty", "verdict_command is empty"), ("verdict-bad-blank", "verdict_command is empty")):
+        t = world(case)
+        rc, out = run(t, "--apply")
+        got = text(os.path.join(projects(t), "toy", "CLAUDE.md"))
+        if why not in out or "Traceback" in out or not rc or got is not None:
+            failures.append("%s: want '%s', exit 1, no traceback, no CLAUDE.md for that profile: exit %d, CLAUDE.md %r, %s"
+                            % (case, why, rc, got and got[-200:], tail(out)))
+
     failures += RULE
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 18 cases" % len(failures))
+    print("%d failure(s) over 28 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 
