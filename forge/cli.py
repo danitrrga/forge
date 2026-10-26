@@ -694,6 +694,46 @@ def codex_hooks_row():
     return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
 
 
+def gsd_isolation_guard_row():
+    """The `gsd isolation guard` row: config/forge.json's `gsd_isolation_guard` switches off the one user-scope
+    row `gsd-agent-isolation-guard.js` (forge.hooks.ROW_OPTIONAL). A value that is not true or false is a
+    FAIL (forge reads it as true). SKIP (NOT RUN, NOT ARMED) while forge writes no GSD row at all (gsd off, or
+    gsd_patches not true) and while the key is false, the line naming how to turn it on. Otherwise the entry
+    with forge's exact command must be in ~/.claude/settings.json: PASS says it was there, a missing file, a
+    file that does not parse or an entry that is not in it is a FAIL naming `forge sync --apply`."""
+    from forge import hooks  # not at import: it reads config/forge.json
+    marker = hooks.ISOLATION_GUARD
+    key = hooks.ROW_OPTIONAL[marker]
+    value = lib.settings().get(key)
+    if key in lib.settings() and not isinstance(value, bool):
+        return lib.Result("FAIL", "gsd isolation guard", "%s is %s in config/forge.json, not true or false, so forge reads it as true -- "
+                          "set it to true or false" % (key, json.dumps(value)))
+    if not lib.on("gsd") or not lib.gsd_patched():
+        return lib.Result("SKIP", "gsd isolation guard", NOT_ARMED + "forge writes no GSD hook row (the gsd integration is off, "
+                          "or gsd_patches is not true, in config/forge.json), so %s was not looked at" % key)
+    if value is False:
+        return lib.Result("SKIP", "gsd isolation guard", NOT_ARMED + "%s is false in config/forge.json, so forge writes no %s row "
+                          "and takes its entry out; set it to true (or delete the key) and run forge sync --apply to wire it"
+                          % (key, marker))
+    row = next((r for r in hooks.USER_HOOKS if r[3] == marker), None)
+    where = lib.short(hooks.USER_SETTINGS)
+    if row is None:  # unreachable while the gates above agree with forge.hooks._row_on
+        return lib.Result("FAIL", "gsd isolation guard", "forge.hooks holds no %s row although %s is not false" % (marker, key))
+    try:
+        doc = lib.read_owned(hooks.USER_SETTINGS, None)
+    except lib.Unreadable as e:
+        return lib.Result("FAIL", "gsd isolation guard", "%s is unreadable, so %s was not looked for: %s" % (where, marker, e))
+    if doc is None:
+        return lib.Result("FAIL", "gsd isolation guard", "%s is not there, so the %s entry is missing -- forge sync --apply" % (where, marker))
+    entries, _ = lib.hook_entries(doc)
+    found = [e for e in entries if e[0] == row[0] and e[3].get("command") == row[1]]
+    if not found:
+        return lib.Result("FAIL", "gsd isolation guard", "%s holds no %s entry under %s with forge's command -- forge sync --apply "
+                          "(or set %s to false to leave it out)" % (where, marker, row[0], key))
+    return lib.Result("PASS", "gsd isolation guard", "%d %s entr%s under %s in %s" % (
+        len(found), marker, "y" if len(found) == 1 else "ies", row[0], where))
+
+
 # How long the `gsd engine` row waits for `gsd-tools.cjs --help`, which prints its usage and returns in well under a second.
 GSD_ENGINE_TIMEOUT = 20
 GSD_ENGINE_FIX = "python3 bin/forge skills --apply"
@@ -912,6 +952,8 @@ CHECKS = [
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
+    # Its failures and its SKIP carry their own fix, so the row's is empty.
+    ("gsd isolation guard", gsd_isolation_guard_row, ""),
     # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
     ("gsd engine", gsd_engine_row, ""),
     ("research expiry", research_expiry, RESEARCH_FIX),

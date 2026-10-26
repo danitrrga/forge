@@ -195,13 +195,18 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # file names are GSD's own hooks, which its installer writes with its own commands): they are written
 # only with `gsd_patches` true as well (lib.gsd_patched), and with it off they are not written and
 # not taken out either, an off row going only by forge's exact command and never by file name.
-# `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
+# `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE). `gsd_isolation_guard` is the one
+# gate that is on unless the JSON false: the key absent or any other value leaves its row written (forge
+# doctor's `gsd isolation guard` row FAILs on a value that is not a boolean), and false drops the row
+# ROW_OPTIONAL names, whose entry reconcile() then takes out by forge's exact command like any off row.
 ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                    "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight", "memory_doctor.py": "hindsight"}
 ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py") + tuple(
     dict.fromkeys(script for _, script, _, _ in GSD_CORE_ROWS))
 ROW_INTEGRATION.update({m: "gsd" for m in ROW_PATCHED})
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
+ISOLATION_GUARD = "gsd-agent-isolation-guard.js"
+ROW_OPTIONAL = {ISOLATION_GUARD: "gsd_isolation_guard"}  # marker -> the forge.json key that switches it off
 
 
 def _row_on(marker):
@@ -210,6 +215,8 @@ def _row_on(marker):
     if name and not lib.on(name):
         return False
     if marker in ROW_PATCHED and not lib.gsd_patched():
+        return False
+    if marker in ROW_OPTIONAL and lib.settings().get(ROW_OPTIONAL[marker]) is False:
         return False
     return not (marker in ROW_HOUSE and lib.settings().get("house_hooks") is not True)
 

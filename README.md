@@ -89,6 +89,11 @@ installed another way.
 | `gsd` | the `gsd-*` skills, agents and engine from `@opengsd/gsd-core`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
 
+With `gsd_patches` true, `"gsd_isolation_guard": false` in `config/forge.json` switches off the one GSD hook row
+`gsd-agent-isolation-guard.js`: the next `forge sync --apply` takes forge's entry out of `~/.claude/settings.json`
+(GSD's own entry for that file stays), and `forge doctor`'s `gsd isolation guard` row is a SKIP. A missing key or
+`true` writes it; any other value is read as `true` and the doctor row FAILs on it.
+
 ## Bring your own skills
 
 forge ships **no skills**. Put yours in `skills/<name>/SKILL.md` inside the checkout and run
