@@ -120,6 +120,11 @@ def main():
     want("old results: overhead shown as -", "overhead -" in old_l, True)
     want("delta block names cost per pass against the base", any("cost/pass" in l and "lean" in l and "-25%" in l for l in lines), True)
     want("delta block names turns", any(l.strip().startswith("turns") and "lean" in l for l in lines), True)
+    # the decision figure of a harness A/B: the per-task cost ratio against the base, with an interval over tasks and how many
+    # tasks cost more. Seen failing before it existed: no 'cost ratio' line in the report (want 1.50 [1.50, 1.50], 2 of 2 tasks).
+    ratio_l = next((l for l in lines if "cost ratio" in l and "lean" in l), "")
+    want("cost ratio line: lean costs 1.5x none on every task", ("1.50" in ratio_l, "[1.50, 1.50]" in ratio_l, "costlier on 2 of 2 tasks" in ratio_l), (True, True, True))
+    want("cost ratio: the old-format arm (cost 0.12 vs 0.10 and 0.10) is also priced", any("cost ratio" in l and "old" in l and "1.20" in l for l in lines), True)
 
     for msg in failures:
         print("FAIL", msg)

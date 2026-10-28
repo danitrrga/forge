@@ -783,6 +783,15 @@ def cmd_report(a):
             va, vb = fn(runs_x), fn(runs_b)
             if va is not None and vb:
                 print("  %-9s %s %.2f vs %s %.2f (%+.0f%%)" % (label, x, va, a.base, vb, 100 * (va - vb) / vb))
+        ratios = []   # the decision figure of a harness A/B: what each task costs under this arm, against the base, over tasks
+        for t in tasks:
+            cx, cb = (run_mean([r for r in res if r["arm"] == arm and r["task"] == t and not r["invalid"]], "cost_usd") for arm in (x, a.base))
+            if cx is not None and cb:
+                ratios.append(cx / cb)
+        if ratios:
+            rlo, rhi = bootstrap_ci(ratios, random.Random(20261029), a.bootstrap)
+            print("  cost ratio %s/%s %.2f (95%% CI [%.2f, %.2f]) | costlier on %d of %d tasks"
+                  % (x, a.base, mean(ratios), rlo, rhi, sum(r > 1 + 1e-9 for r in ratios), len(ratios)))
         fields = sorted({r["field"] for r in res})
         row = []
         for f in fields:
