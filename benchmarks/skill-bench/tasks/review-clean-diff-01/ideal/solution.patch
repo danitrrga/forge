@@ -1,0 +1,10 @@
+--- /dev/null
++++ b/REVIEW.md
+@@ -0,0 +1,7 @@
++# Review: shipping fee from weight
++
++The change replaces the flat 4.90 fee with `rates.fee_for(...)`. `fee_for` takes grams and the caller converts (`round(weight_kg * 1000)`, whole grams), so the units agree. The subtotal and rounding are unchanged.
++
++Nit, not blocking: the 1000 could be a named constant.
++
++VERDICT: approve

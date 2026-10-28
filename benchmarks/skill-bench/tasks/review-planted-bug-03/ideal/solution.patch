@@ -1,0 +1,11 @@
+--- /dev/null
++++ b/REVIEW.md
+@@ -0,0 +1,8 @@
++# Review: owners can administer
++
++Allowing the `owner` role as well as `admin` is the intent, but the membership test is wrong for how the roles are stored.
++
++- `roles.ADMIN_ROLES` is the **string** `"admin owner"`, not a tuple. `role in ADMIN_ROLES` is therefore a substring test: a user whose role is `"own"`, `"min"`, or the empty string (the default in `.get("role", "")`) passes `is_admin`. That is a privilege escalation.
++- Fix: make `ADMIN_ROLES` a tuple or set, e.g. `("admin", "owner")`.
++
++VERDICT: request changes

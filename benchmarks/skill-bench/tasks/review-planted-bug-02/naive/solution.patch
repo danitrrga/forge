@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/REVIEW.md
+@@ -0,0 +1,5 @@
++# Review
++
++A bounded retry with the final error re-raised: clear, small and sensible for a flaky gateway.
++
++VERDICT: approve

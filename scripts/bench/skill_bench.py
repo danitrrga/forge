@@ -809,7 +809,7 @@ def cmd_calibrate(a):
     for r in res:
         tasks.setdefault(r["task"], []).append(1.0 if r["passed"] else 0.0)
     man = read_json(os.path.join(a.out, "run.json")) if os.path.isfile(os.path.join(a.out, "run.json")) else {}
-    doc = {"arm": a.arm, "model": sorted({r.get("model") or "?" for r in res})[0], "date": time.strftime("%Y-%m-%d"),
+    doc = {"arm": a.arm, "model": sorted({r.get("model") or "?" for r in res})[0],
            "model_ids": sorted({r.get("model_id", "unknown") for r in res}), "cli_version": man.get("cli_version", "unknown"),
            "tasks": {t: {"rate": round(mean(v), 3), "n": len(v)} for t, v in sorted(tasks.items())}}
     with open(os.path.join(a.bench, "calibration.json"), "w") as fh:

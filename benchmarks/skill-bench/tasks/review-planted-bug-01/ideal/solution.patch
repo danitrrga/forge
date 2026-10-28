@@ -1,0 +1,12 @@
+--- /dev/null
++++ b/REVIEW.md
+@@ -0,0 +1,9 @@
++# Review: shipping fee from weight
++
++The change swaps the flat 4.90 fee for `rates.fee_for(...)`, which is the right idea, but it passes the wrong unit.
++
++- `orders.order_total` sums `weight_kg` and hands the result to `fee_for`. `rates.fee_for` takes **grams** (its docstring and `BANDS` say so), so a 1.2 kg parcel is looked up as 1.2 g and always lands in the cheapest 4.90 band. No parcel can reach the 12.00 band or the 18.00 rate above 10 kg.
++- Fix: pass `weight_kg * 1000`, or make `fee_for` take kilograms and change its bands.
++- No test covers a heavy parcel; one would have caught this.
++
++VERDICT: request changes

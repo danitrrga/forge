@@ -10,7 +10,7 @@ python3 scripts/bench/skill_bench.py list       # tasks per field and concept
 
 ## Concepts
 
-`concepts.json` declares 27 concepts in 7 fields (ui, logic, tests, debug, security, arch, process). Each has at
+`concepts.json` declares 29 concepts in 8 fields (ui, logic, tests, debug, security, arch, process, review). Each has at
 least two tasks (`validate --min-per-concept 2` fails otherwise), because one task can be passed by luck and the
 second is the only evidence the first was not luck. `pass_means` says in one sentence what nailing the concept is.
 
@@ -40,6 +40,11 @@ tasks/<id>/            id = <field>-<concept short>-<nn>, the directory name equ
 - **naive** exists to catch an oracle that cannot tell right from wrong: it must fail at least one check. It is the
   answer a hurried agent would plausibly give (the workaround, the over-broad change, the claim without the run).
 - **Start state**: the untouched repo must fail at least one check, so a task never rewards doing nothing.
+- **Review tasks** (field `review`) hand the agent a `change.diff` whose code is already applied and ask for a review written to
+  `REVIEW.md` ending in `VERDICT: approve` or `VERDICT: request changes`, plus a short reply. The oracle reads that line and, for a
+  planted defect, the facts that name it (a function, a unit), never a phrasing, and checks the code was left untouched. They come in
+  pairs sharing one diff: a planted defect that only shows against a contract in a file the diff does not touch, and a correct twin that
+  looks just as suspicious and must be approved, so neither "always approve" nor "always object" scores.
 - **Process tasks** (concept field `process`) are judged by what is left on disk and said: a log a Makefile target
   appends to, a file that must still exist, a script that must not have been run, the figures in the reply.
 

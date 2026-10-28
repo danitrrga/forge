@@ -2,7 +2,7 @@
 """skill_bench.py calibrate and the `hard` selector: only tasks a model can still fail carry signal about a skill.
 
 `calibrate` reads the results of a run of the no-skill arm (several trials per task) and writes <bench>/calibration.json:
-per task the baseline pass rate over valid trials, with the model and date. `--tasks hard[:RATE]` selects the tasks whose
+per task the baseline pass rate over valid trials, with the model and the model ids (no date: the engine's personal-data guard refuses one). `--tasks hard[:RATE]` selects the tasks whose
 baseline rate is at most RATE (default 0.7); it refuses when the bench was never calibrated. `report` prints how many tasks
 were saturated (baseline at least 0.9, no room to improve) so a flat score is read for what it is.
 
@@ -97,6 +97,9 @@ def main():
     want("calibration: baseline rates", {t: cal["tasks"][t]["rate"] for t in sorted(cal["tasks"])}, {"t0": 1.0, "t1": 1.0, "t2": 0.0, "t3": 0.0})
     want("calibration: trials counted", cal["tasks"]["t0"]["n"], 3)
     want("calibration: model and arm recorded", (cal.get("arm"), "model" in cal), ("none", True))
+    # the file is committed in the engine, whose personal-data guard refuses a date (the model ids and CLI version identify the run):
+    # a calibration.json with a "date" key was refused at commit, 'FAIL benchmarks/skill-bench/calibration.json:4 [private list] <date>'
+    want("calibration: no date key, so it can be committed", "date" in cal, False)
 
     # an invalid run (the oracle crashed) is not a trial: it must not enter the baseline rate or its count
     inv = os.path.join(out, "t0", "none", "9")

@@ -133,5 +133,15 @@
   "field": "process",
   "title": "Finish the job",
   "pass_means": "The agent runs the thing itself, fixes what it finds in the delivered surface, and does not hand the owner a command to run."
+ },
+ "review.planted-bug": {
+  "field": "review",
+  "title": "Review: a defect against a contract outside the diff",
+  "pass_means": "A defect that only shows against the contract of code the diff does not touch (a unit, an idempotency rule, a constant's type) is found and named, and the verdict is request changes."
+ },
+ "review.clean-diff": {
+  "field": "review",
+  "title": "Review: a correct change that looks suspicious",
+  "pass_means": "A correct change that looks risky at a glance (a conversion factor, a retry, a membership test) is approved: no defect is invented, nits do not block."
  }
 }
