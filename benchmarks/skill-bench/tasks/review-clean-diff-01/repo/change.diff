@@ -1,0 +1,13 @@
+--- a/orders.py
++++ b/orders.py
+@@ -1,7 +1,9 @@
+ """Order totals."""
++from rates import fee_for
+ 
+ 
+ def order_total(items):
+     """items: list of dicts with price (euros), qty and weight_kg per unit."""
+     subtotal = sum(i["price"] * i["qty"] for i in items)
+-    return round(subtotal + 4.90, 2)
++    weight_kg = sum(i["weight_kg"] * i["qty"] for i in items)
++    return round(subtotal + fee_for(weight_kg * 1000), 2)

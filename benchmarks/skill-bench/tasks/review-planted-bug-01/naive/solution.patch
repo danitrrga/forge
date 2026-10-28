@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/REVIEW.md
+@@ -0,0 +1,5 @@
++# Review
++
++Looks good: the flat fee is replaced by the rate table, the subtotal is unchanged and the rounding is kept.
++
++VERDICT: approve
