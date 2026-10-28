@@ -19,7 +19,8 @@ evidence if its oracle is proved able to fail and able to pass, so `validate` ch
 Per bench, every concept declared in concepts.json has at least --min-per-concept tasks. Nothing in the bench is
 written: every run is on a temp copy. Exit 1 when anything above fails.
 
-`run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's skill directories mounted under
+`run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's config overlays (a dir without a SKILL.md:
+CLAUDE.md, .claude/settings.json, agents, ...) copied over it before the start commit, the arm's skill directories mounted under
 .claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills or CLAUDE.md; only the login is shared) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
@@ -378,6 +379,16 @@ def cli_version(claude_bin):
         return "unknown"
 
 
+def arm_record(paths):
+    """An arm's content for run.json: its skills and, only when it has any, its config overlays, each by hash. An arm without an
+    overlay keeps the shape older run directories hold, so they stay valid."""
+    rec = {"skills": [{"dir": d, "sha256": tree_hash(d)} for d in paths if is_skill_dir(d)]}
+    config = [{"dir": d, "sha256": tree_hash(d)} for d in paths if not is_skill_dir(d)]
+    if config:
+        rec["config"] = config
+    return rec
+
+
 def write_manifest(a, tasks, arms):
     """<out>/run.json: which model, CLI, arms (by skill content hash) and tasks (by fingerprint) a run directory holds. A directory
     already holding results is only extended by a run with the same model alias and the same content behind every arm name, so the
@@ -386,7 +397,7 @@ def write_manifest(a, tasks, arms):
     fp = hashlib.sha256()
     for t in sorted(tasks):
         fp.update(tree_hash(os.path.join(a.bench, "tasks", t)).encode())
-    new_arms = {n: {"skills": [{"dir": d, "sha256": tree_hash(d)} for d in ps]} for n, ps in arms}
+    new_arms = {n: arm_record(ps) for n, ps in arms}
     ver = cli_version(a.claude_bin)
     man = {"model_alias": a.model, "cli_version": ver, "k": a.k, "seed": a.seed, "sandbox": a.sandbox, "force_skill": a.force_skill,
            "bench": a.bench, "tasks": sorted(tasks), "tasks_fingerprint": fp.hexdigest(), "arms": new_arms, "platform": sys.platform,
@@ -398,7 +409,7 @@ def write_manifest(a, tasks, arms):
                      % (a.out, old.get("model_alias"), a.model))
         for n, v in new_arms.items():
             if n in old.get("arms", {}) and old["arms"][n] != v:
-                sys.exit("! arm %r changed since %s was started (its skill content differs): use a new arm name or a new --out" % (n, a.out))
+                sys.exit("! arm %r changed since %s was started (its skill or config content differs): use a new arm name or a new --out" % (n, a.out))
         old["arms"].update(new_arms)
         old["tasks"] = sorted(set(old.get("tasks", [])) | set(tasks))
         old["invocations"] = old.get("invocations", 1) + 1
@@ -409,15 +420,23 @@ def write_manifest(a, tasks, arms):
         fh.write("\n")
 
 
+def is_skill_dir(d):
+    return os.path.isfile(os.path.join(d, "SKILL.md"))
+
+
 def parse_arms(specs):
-    """[(name, [skill dirs])] from --arm NAME or NAME=DIR[:DIR...]; `none` and a bare name mount nothing."""
+    """[(name, [dirs])] from --arm NAME or NAME=DIR[:DIR...]; `none` and a bare name mount nothing. A dir with a SKILL.md is a
+    skill (mounted under .claude/skills/); any other non-empty dir is a config overlay (CLAUDE.md, .claude/settings.json,
+    .claude/agents/, ...) whose files are copied over the run's work dir as part of the start state."""
     arms = []
     for spec in specs:
         name, _, dirs = spec.partition("=")
         paths = [d for d in dirs.split(":") if d]
         for d in paths:
-            if not os.path.isfile(os.path.join(d, "SKILL.md")):
-                sys.exit("! arm %s: %s has no SKILL.md" % (name, d))
+            if not os.path.isdir(d):
+                sys.exit("! arm %s: %s is not a directory" % (name, d))
+            if not is_skill_dir(d) and not os.listdir(d):
+                sys.exit("! arm %s: %s is empty (a skill needs a SKILL.md, a config overlay needs files)" % (name, d))
         arms.append((name, paths))
     if len({n for n, _ in arms}) != len(arms):
         sys.exit("! two arms share a name")
@@ -569,15 +588,23 @@ def _do_job(job, a):
         with open(os.path.join(base, "result.json"), "w") as fh:
             json.dump(res, fh, indent=1)
         return res
+    skills = [d for d in paths if is_skill_dir(d)]
+    overlays = [d for d in paths if not is_skill_dir(d)]
+    for od in overlays:   # the arm's config is part of the start state, like a project's tracked CLAUDE.md: committed below, not untracked
+        shutil.copytree(od, work, dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git"))
+    commit = ["-c", "user.name=bench", "-c", "user.email=bench", "commit", "-qm"]
     if project_meta(td) is None:
-        for c in (["init", "-q"], ["add", "-A"], ["-c", "user.name=bench", "-c", "user.email=bench", "commit", "-qm", "start"]):
+        for c in (["init", "-q"], ["add", "-A"], commit + ["start"]):
             subprocess.run(["git", "-C", work] + c, check=True, capture_output=True)
-    for sd in paths:
+    elif overlays:
+        for c in (["add", "-A"], commit[:-1] + ["--allow-empty", "-qm", "arm config"]):
+            subprocess.run(["git", "-C", work] + c, check=True, capture_output=True)
+    for sd in skills:
         shutil.copytree(sd, os.path.join(work, ".claude", "skills", os.path.basename(sd.rstrip("/"))))
     meta = read_json(os.path.join(td, "task.json"))
     prompt = meta["prompt"]
-    if a.force_skill and paths:
-        prompt = "Use the skill in .claude/skills/%s for this task.\n\n%s" % (os.path.basename(paths[0].rstrip("/")), prompt)
+    if a.force_skill and skills:
+        prompt = "Use the skill in .claude/skills/%s for this task.\n\n%s" % (os.path.basename(skills[0].rstrip("/")), prompt)
     home = agent_home(a.out)
     env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
     env["CLAUDE_CONFIG_DIR"] = home
