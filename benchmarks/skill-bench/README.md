@@ -87,3 +87,10 @@ records `model_ids` and `cli_version` too. A directory from before the manifest 
 Arms are `none` (no skill), `old` and `new` (or any variants), each run the same number of times per task on the
 same model. Report the pass rate per arm with a paired comparison over tasks, never a bare percentage, and report
 tokens and time next to it: a skill that adds 3 points for 60% more tokens is a trade, not a win.
+
+`report` prints, per arm: `cost/pass` (total cost over the runs that passed: what one correct answer costs), `turns/run`, and
+`overhead` (tokens of the first main-thread request, i.e. what the harness loads before any work). `tokens` and `turns` are
+cumulative over the whole run, subagents included: a run that spawns background subagents ends with several `result` events,
+each with a partial `usage` and all with the same cumulative `modelUsage`, which is what `tokens` is read from. Results written
+before that fix undercount such runs (`cost_usd` was always right), so do not compare `tokens` or `turns` across the two.
+`result.json` also records `cache_read_tokens`, `cache_write_tokens`, `tool_calls` and `tool_errors`.
