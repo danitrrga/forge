@@ -7,6 +7,9 @@ and the same cumulative `modelUsage`. `parse_stream` kept the last event's `usag
 the runs where a workflow fans out: the stream below is the shape of a real one (stored 444,285 tokens and 6 turns;
 the cumulative total is 1,602,373 tokens and the turns are 14 + 6). Cost was never affected (`total_cost_usd` is cumulative).
 
+A `system` event of subtype `permission_denied` carries `message` as a string; reading `message.content` on every event crashed on it
+(`AttributeError: 'str' object has no attribute 'get'`, seen in a real 156-run baseline as 1 invalid run).
+
 Controls, each seen failing before the fix: on the unchanged `parse_stream` this stream gives tokens 444285, want
 1602373, and turns 6, want 20 (checked by hand with the old tuple API); and with the `modelUsage` preference removed from
 the fixed code the same cases fail with `tokens = 444285` (mutation run, see the commit message). A report built from old
@@ -39,6 +42,8 @@ MODEL_USAGE = {"claude-test-1": {"inputTokens": 62, "outputTokens": 28828, "cach
 # the first main-thread request carries what the harness loads before any work: 2 + 15157 + 11549 = 26708
 STREAM = "\n".join([
     line(type="system", subtype="init", model="claude-test-1"),
+    # a real event whose `message` is a plain string, not an object: it crashed parse_stream, and the run was recorded as a runner error
+    line(type="system", subtype="permission_denied", message="Dangerous rm operation detected: a command was blocked."),
     line(type="assistant", parent_tool_use_id=None, message={"content": [{"type": "text", "text": "hi"}],
          "usage": {"input_tokens": 2, "cache_creation_input_tokens": 15157, "cache_read_input_tokens": 11549, "output_tokens": 16}}),
     line(type="assistant", parent_tool_use_id=None, message={"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "ls"}}],

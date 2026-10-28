@@ -507,13 +507,14 @@ def parse_stream(text):
         except ValueError:
             continue
         kind = ev.get("type")
-        content = (ev.get("message") or {}).get("content")
+        message = ev.get("message") if isinstance(ev.get("message"), dict) else {}   # a system event's `message` can be a plain string
+        content = message.get("content")
         content = content if isinstance(content, list) else []
         if kind == "system" and ev.get("subtype") == "init" and ev.get("model"):
             m["model"] = ev["model"]
         elif kind == "assistant":
-            if m["overhead_tokens"] is None and not ev.get("parent_tool_use_id") and (ev.get("message") or {}).get("usage"):
-                u = ev["message"]["usage"]
+            if m["overhead_tokens"] is None and not ev.get("parent_tool_use_id") and message.get("usage"):
+                u = message["usage"]
                 m["overhead_tokens"] = sum(u.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
             for c in content:
                 if c.get("type") == "tool_use":
