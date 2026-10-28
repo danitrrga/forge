@@ -29,7 +29,7 @@ Space: runs go to $XDG_DATA_HOME/forge/skill-bench/runs/<timestamp> (durable, no
 gzipped transcript and drops its working copy (--keep-work keeps it); report and calibrate read the latest run when --out is absent.
 `report` compares every arm with --base per task (the k trials averaged first):
 paired mean difference, 95% bootstrap CI over tasks, sign-flip permutation p, discordant counts, Wilson intervals per arm,
-and the token, cost and time deltas, as benchmarks/skill-bench/SOURCES.md recommends."""
+and the token, cost, cost-per-pass, turn, overhead and time deltas, as benchmarks/skill-bench/SOURCES.md recommends."""
 import argparse
 import gzip
 import hashlib
@@ -488,24 +488,56 @@ def wrap(cmd, sandbox, work, home, claude_bin):
             + binds + ["--unshare-pid", "--die-with-parent", "--chdir", work, "--"] + cmd)
 
 
+USAGE_KEYS = ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+
+
 def parse_stream(text):
-    """(final message, usage dict, cost, turns, skill_called, is_error, model id) from claude's stream-json lines."""
-    msg, usage, cost, turns, called, err, model = "", {}, None, None, False, False, "unknown"
+    """A run's figures from claude's stream-json lines, as a dict.
+
+    A run with background subagents ends with several `result` events: each carries a per-segment `usage`, and all carry
+    the same cumulative `modelUsage`. Tokens come from `modelUsage` when it is there (the last event's `usage` alone
+    undercounts), turns are summed over the events, cost is the cumulative figure. `overhead_tokens` is the first
+    main-thread request: what the harness loads before any work (None when the stream has no assistant event)."""
+    m = {"msg": "", "cost": None, "turns": None, "called": False, "err": False, "model": "unknown",
+         "overhead_tokens": None, "tool_calls": 0, "tool_errors": 0}
+    usage, cumulative = {}, None
     for line in text.splitlines():
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        if ev.get("type") == "system" and ev.get("subtype") == "init" and ev.get("model"):
-            model = ev["model"]
-        if ev.get("type") == "assistant":
-            for c in (ev.get("message") or {}).get("content") or []:
-                if c.get("type") == "tool_use" and (c.get("name") == "Skill" or ".claude/skills/" in json.dumps(c.get("input", {}))):
-                    called = True
-        if ev.get("type") == "result":
-            msg, usage = ev.get("result") or "", ev.get("usage") or {}
-            cost, turns, err = ev.get("total_cost_usd"), ev.get("num_turns"), bool(ev.get("is_error"))
-    return msg, usage, cost, turns, called, err, model
+        kind = ev.get("type")
+        message = ev.get("message") if isinstance(ev.get("message"), dict) else {}   # a system event's `message` can be a plain string
+        content = message.get("content")
+        content = content if isinstance(content, list) else []
+        if kind == "system" and ev.get("subtype") == "init" and ev.get("model"):
+            m["model"] = ev["model"]
+        elif kind == "assistant":
+            if m["overhead_tokens"] is None and not ev.get("parent_tool_use_id") and message.get("usage"):
+                u = message["usage"]
+                m["overhead_tokens"] = sum(u.get(k, 0) for k in ("input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"))
+            for c in content:
+                if c.get("type") == "tool_use":
+                    m["tool_calls"] += 1
+                    if c.get("name") == "Skill" or ".claude/skills/" in json.dumps(c.get("input", {})):
+                        m["called"] = True
+        elif kind == "user":
+            m["tool_errors"] += sum(1 for c in content if c.get("type") == "tool_result" and c.get("is_error"))
+        elif kind == "result":
+            m["msg"], usage = ev.get("result") or "", ev.get("usage") or {}
+            m["cost"], m["err"] = ev.get("total_cost_usd"), bool(ev.get("is_error"))
+            if ev.get("num_turns") is not None:
+                m["turns"] = (m["turns"] or 0) + ev["num_turns"]
+            cumulative = ev.get("modelUsage") or cumulative
+    if cumulative:
+        per = list(cumulative.values())
+        total = {k: sum(u.get(k, 0) for u in per) for k in ("inputTokens", "outputTokens", "cacheReadInputTokens", "cacheCreationInputTokens")}
+        m["cache_read_tokens"], m["cache_write_tokens"] = total["cacheReadInputTokens"], total["cacheCreationInputTokens"]
+        m["tokens"] = sum(total.values())
+    else:
+        m["cache_read_tokens"], m["cache_write_tokens"] = usage.get("cache_read_input_tokens", 0), usage.get("cache_creation_input_tokens", 0)
+        m["tokens"] = sum(usage.get(k, 0) for k in USAGE_KEYS)
+    return m
 
 
 def do_job(job, a):
@@ -564,11 +596,14 @@ def _do_job(job, a):
         fh.write(stdout or "")
     with open(os.path.join(base, "agent.err"), "w") as fh:
         fh.write(stderr or "")
-    msg, usage, cost, turns, called, err, model_id = parse_stream(stdout or "")
+    m = parse_stream(stdout or "")
+    msg = m["msg"]
     res = {"task": task, "field": meta.get("field"), "concept": meta.get("concept"), "arm": arm, "trial": trial,
-           "model": a.model, "model_id": model_id, "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out, "skill_called": called,
-           "tokens": sum(usage.get(k, 0) for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")),
-           "cost_usd": cost, "turns": turns, "agent_error": err, "message_chars": len(msg), "checks": [], "passed": False, "invalid": False}
+           "model": a.model, "model_id": m["model"], "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out,
+           "skill_called": m["called"], "tokens": m["tokens"], "cache_read_tokens": m["cache_read_tokens"],
+           "cache_write_tokens": m["cache_write_tokens"], "overhead_tokens": m["overhead_tokens"],
+           "tool_calls": m["tool_calls"], "tool_errors": m["tool_errors"],
+           "cost_usd": m["cost"], "turns": m["turns"], "agent_error": m["err"], "message_chars": len(msg), "checks": [], "passed": False, "invalid": False}
     checks, why = run_oracle(td, work, msg, a.oracle_timeout)
     if why:
         res.update(invalid=True, passed=None, invalid_reason=why)
@@ -627,6 +662,17 @@ def mean(xs):
     return sum(xs) / len(xs) if xs else None
 
 
+def run_mean(runs, key):
+    """Mean of a result.json field over the runs that have it (results from before a field existed lack it), or None."""
+    return mean([r[key] for r in runs if r.get(key) is not None])
+
+
+def cost_per_pass(runs):
+    """Total cost of the runs over the number that passed: what one correct answer costs. None without a pass or a cost."""
+    costs, passes = [r["cost_usd"] for r in runs if r.get("cost_usd") is not None], sum(1 for r in runs if r["passed"])
+    return sum(costs) / passes if costs and passes else None
+
+
 def cmd_report(a):
     a.out = a.out or latest_run()
     res = load_results(a.out)
@@ -656,11 +702,16 @@ def cmd_report(a):
         v = [r for r in res if r["arm"] == x and not r["invalid"]]
         k, n = sum(1 for r in v if r["passed"]), len(v)
         lo, hi = wilson(k, n)
-        print("  %-12s pass %d/%d%s | %d invalid | tokens/run %s | cost/run %s | s/run %s | skill called in %s" % (
+        def fmt(val, f):
+            return f % val if val is not None else "-"
+        print("  %-12s pass %d/%d%s | %d invalid | tokens/run %s | cost/run %s | cost/pass %s | s/run %s | turns/run %s | overhead %s | skill called in %s" % (
             x, k, n, " (%.2f-%.2f)" % (lo, hi) if n else "", invalid[x],
-            "%.0f" % mean([r["tokens"] for r in v]) if v else "-",
+            fmt(run_mean(v, "tokens"), "%.0f"),
             "$%.2f" % mean([r["cost_usd"] for r in v if r["cost_usd"] is not None] or [0]) if v else "-",
-            "%.0f" % mean([r["duration_s"] for r in v]) if v else "-",
+            fmt(cost_per_pass(v), "$%.2f"),
+            fmt(run_mean(v, "duration_s"), "%.0f"),
+            fmt(run_mean(v, "turns"), "%.1f"),
+            fmt(run_mean(v, "overhead_tokens"), "%.0f"),
             "%.0f%% of runs" % (100 * mean([1.0 if r["skill_called"] else 0.0 for r in v])) if v else "-"))
     base_rates = {t: mean(v) for (t, ar), v in score.items() if ar == a.base}
     sat = sorted(t for t, r in base_rates.items() if r >= 0.9)
@@ -680,13 +731,14 @@ def cmd_report(a):
         better, worse = sum(d > 1e-12 for d in diffs), sum(d < -1e-12 for d in diffs)
         print("\narm %s vs %s: n=%d tasks | diff %+.3f [95%% CI %+.3f, %+.3f] | p=%.4f | %d better, %d worse, %d same"
               % (x, a.base, len(tasks), mean(diffs), lo, hi, p, better, worse, len(diffs) - better - worse))
-        for label, key in (("tokens", "tokens"), ("cost", "cost_usd"), ("seconds", "duration_s")):
-            va = mean([r[key] for r in res if r["arm"] == x and not r["invalid"] and r[key] is not None] or [None]) if any(
-                r["arm"] == x and not r["invalid"] and r[key] is not None for r in res) else None
-            vb = mean([r[key] for r in res if r["arm"] == a.base and not r["invalid"] and r[key] is not None]) if any(
-                r["arm"] == a.base and not r["invalid"] and r[key] is not None for r in res) else None
+        runs_x = [r for r in res if r["arm"] == x and not r["invalid"]]
+        runs_b = [r for r in res if r["arm"] == a.base and not r["invalid"]]
+        for label, fn in (("tokens", lambda v: run_mean(v, "tokens")), ("cost", lambda v: run_mean(v, "cost_usd")),
+                          ("cost/pass", cost_per_pass), ("seconds", lambda v: run_mean(v, "duration_s")),
+                          ("turns", lambda v: run_mean(v, "turns")), ("overhead", lambda v: run_mean(v, "overhead_tokens"))):
+            va, vb = fn(runs_x), fn(runs_b)
             if va is not None and vb:
-                print("  %-7s %s %.2f vs %s %.2f (%+.0f%%)" % (label, x, va, a.base, vb, 100 * (va - vb) / vb))
+                print("  %-9s %s %.2f vs %s %.2f (%+.0f%%)" % (label, x, va, a.base, vb, 100 * (va - vb) / vb))
         fields = sorted({r["field"] for r in res})
         row = []
         for f in fields:
