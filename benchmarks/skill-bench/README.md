@@ -66,7 +66,14 @@ $B run --arm none --arm new=skills/my-skill --tasks field:process --k 3   # --ou
 $B report --base none                                                    # the latest run, or --out DIR
 ```
 
-An arm is `none` (nothing mounted) or `NAME=DIR[:DIR]` (skill directories copied into the run's `.claude/skills/`). The agent
+An arm is `none` (nothing mounted) or `NAME=DIR[:DIR]`. A DIR with a `SKILL.md` is a skill, copied into the run's `.claude/skills/`.
+Any other non-empty DIR is a **config overlay**: its files (`CLAUDE.md`, `.claude/settings.json` for hooks, permissions and env,
+.claude/agents/, any file) are copied over the work dir before the start commit, so they are part of the start state like a real
+project's tracked files (an overlay file replaces a task file of the same path). Skills and overlays can be mixed in one arm. This is
+how a whole harness config, not only a skill, is compared: one arm per config. Project scope is all that is needed: the run's own
+config dir stays stripped, and a CLAUDE.md, hook and agent in the work dir still take effect (checked on a real CLI: reply carried
+the CLAUDE.md marker, the hook ran, the agent was listed, none of it in an empty dir). MCP servers are not part of an overlay yet.
+`run.json` records an overlay's hash under `config`, so changing it under the same arm name is refused like a changed skill. The agent
 decides by itself whether to use the skill (that is what triggering is worth); `--force-skill` tells it to. Each run is an
 isolated `claude -p` (own config dir: no user hooks, skills, CLAUDE.md or MCP, only the login) inside bubblewrap when
 installed. Claude Code's own built-in skills and plugins are loaded in every arm, so they are part of the baseline. Runs are
