@@ -518,7 +518,7 @@ def parse_stream(text):
     undercounts), turns are summed over the events, cost is the cumulative figure. `overhead_tokens` is the first
     main-thread request: what the harness loads before any work (None when the stream has no assistant event)."""
     m = {"msg": "", "cost": None, "turns": None, "called": False, "err": False, "model": "unknown",
-         "overhead_tokens": None, "tool_calls": 0, "tool_errors": 0}
+         "overhead_tokens": None, "tool_calls": 0, "tool_errors": 0, "blocked": None}
     usage, cumulative = {}, None
     for line in text.splitlines():
         try:
@@ -531,6 +531,8 @@ def parse_stream(text):
         content = content if isinstance(content, list) else []
         if kind == "system" and ev.get("subtype") == "init" and ev.get("model"):
             m["model"] = ev["model"]
+        elif kind == "system" and (ev.get("prompt_submit_outcome") or {}).get("kind") == "blocked_by_hook":
+            m["blocked"] = " ".join(str(ev.get("content") or "").split())[:160]
         elif kind == "assistant":
             if m["overhead_tokens"] is None and not ev.get("parent_tool_use_id") and message.get("usage"):
                 u = message["usage"]
@@ -631,11 +633,16 @@ def _do_job(job, a):
            "cache_write_tokens": m["cache_write_tokens"], "overhead_tokens": m["overhead_tokens"],
            "tool_calls": m["tool_calls"], "tool_errors": m["tool_errors"],
            "cost_usd": m["cost"], "turns": m["turns"], "agent_error": m["err"], "message_chars": len(msg), "checks": [], "passed": False, "invalid": False}
-    checks, why = run_oracle(td, work, msg, a.oracle_timeout)
-    if why:
-        res.update(invalid=True, passed=None, invalid_reason=why)
+    not_run = ("prompt blocked by a hook: " + m["blocked"] if m["blocked"]
+               else "the agent did not run (no turns, no result)" if not timed_out and not m["turns"] else None)
+    if not_run:   # nothing was attempted: a fail here would be a false fail (a hook, a dead CLI), so it is invalid and a re-run redoes it
+        res.update(invalid=True, passed=None, invalid_reason=not_run, not_run=True)
     else:
-        res.update(checks=checks, passed=bool(checks) and all(c["passed"] for c in checks))
+        checks, why = run_oracle(td, work, msg, a.oracle_timeout)
+        if why:
+            res.update(invalid=True, passed=None, invalid_reason=why)
+        else:
+            res.update(checks=checks, passed=bool(checks) and all(c["passed"] for c in checks))
     with open(os.path.join(base, "result.json"), "w") as fh:
         json.dump(res, fh, indent=1)
     if not a.keep_work:   # space: the scored working copy goes, the plain transcript is kept gzipped (about a tenth of its size)
@@ -646,6 +653,16 @@ def _do_job(job, a):
                 shutil.copyfileobj(src, dst)
             os.remove(plain)
     return res
+
+
+def finished(result_path):
+    """A job with a result.json is done and skipped on a re-run, unless the agent never ran in it (a blocked prompt, a dead CLI)."""
+    if not os.path.exists(result_path):
+        return False
+    try:
+        return not read_json(result_path).get("not_run")
+    except ValueError:
+        return False
 
 
 def cmd_run(a):
@@ -660,7 +677,7 @@ def cmd_run(a):
         block = [(t, n, ps, trial) for t in tasks for n, ps in arms]
         rng.shuffle(block)
         jobs += block
-    todo = [j for j in jobs if not os.path.exists(os.path.join(a.out, j[0], j[1], str(j[3]), "result.json"))]
+    todo = [j for j in jobs if not finished(os.path.join(a.out, j[0], j[1], str(j[3]), "result.json"))]
     print("%d to run, %d already done (%d tasks x %d arms x k=%d)" % (len(todo), len(jobs) - len(todo), len(tasks), len(arms), a.k))
     os.makedirs(a.out, exist_ok=True)
     write_manifest(a, tasks, arms)
