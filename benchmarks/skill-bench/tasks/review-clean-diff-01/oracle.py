@@ -9,9 +9,9 @@ import os
 import re
 
 SRC = {
-    "change.diff": "c184e9497ede8d8fb6b14a00cdd7f4531647f833891567bd0ae0c91a2e32cb8d",
-    "orders.py": "093ffc06ae2b1bd80176137b04dd095d63557438d1bb66ee7ffcdfbb47dc8db7",
-    "rates.py": "8c58b327ab2770716a1cdd238ca415591961da8541774526acdc4b429b96db2f"
+    "change.diff": "7159944e49fd78371837b733fce01eeee9a89c248660dc0ad6fe32081211dabf",
+    "orders.py": "290da033ad9e60cd2420063c5bb225b034607df1aac85cf444e001796fdf79a0",
+    "rates.py": "e5227c8bc2b2019d789ccde262d4ef556e0d3dbbbef404a9086ff874618048b8"
 }
 VERDICT = re.compile(r"VERDICT:\s*(approve|request changes)", re.I)
 

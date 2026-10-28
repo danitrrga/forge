@@ -11,7 +11,7 @@ import re
 SRC = {
     "change.diff": "12769ed549614c70c64dd4c7f4ac6eff2e0bf3cd6d2191cde6f3a8a30b04c1ab",
     "orders.py": "02390483d37fb5a22bdd949bdf2d6fc7ed4fb3cf4645487eefc198ca10fd7609",
-    "rates.py": "8c58b327ab2770716a1cdd238ca415591961da8541774526acdc4b429b96db2f"
+    "rates.py": "e5227c8bc2b2019d789ccde262d4ef556e0d3dbbbef404a9086ff874618048b8"
 }
 VERDICT = re.compile(r"VERDICT:\s*(approve|request changes)", re.I)
 

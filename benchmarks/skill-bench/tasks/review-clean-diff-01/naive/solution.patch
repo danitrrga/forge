@@ -3,6 +3,6 @@
 @@ -0,0 +1,5 @@
 +# Review
 +
-+The magic number 1000 is unexplained and the float multiplication may give inexact grams. This needs rework before it ships.
++The magic number 1000 is unexplained. This needs rework before it ships.
 +
 +VERDICT: request changes
