@@ -77,7 +77,9 @@ the CLAUDE.md marker, the hook ran, the agent was listed, none of it in an empty
 decides by itself whether to use the skill (that is what triggering is worth); `--force-skill` tells it to. Each run is an
 isolated `claude -p` (own config dir: no user hooks, skills, CLAUDE.md or MCP, only the login) inside bubblewrap when
 installed. Claude Code's own built-in skills and plugins are loaded in every arm, so they are part of the baseline. Runs are
-resumable and interleaved across arms; an oracle that crashes makes an INVALID run, counted and never scored as a fail.
+resumable and interleaved across arms; an oracle that crashes makes an INVALID run, counted and never scored as a fail. So does a run in which the agent never ran
+(a prompt blocked by a hook, 0 turns, no result): it is marked `not_run`, left out of every score, and a re-run of the same `--out`
+redoes it. A run that times out is still a fail: the agent did run.
 
 ## Which model is which
 
