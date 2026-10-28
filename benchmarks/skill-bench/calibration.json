@@ -1,0 +1,242 @@
+{
+ "arm": "none",
+ "model": "sonnet",
+ "model_ids": [
+  "claude-sonnet-5-5"
+ ],
+ "cli_version": "2.1.308 (Claude Code)",
+ "tasks": {
+  "arch-dependency-01": {
+   "rate": 0.0,
+   "n": 3
+  },
+  "arch-dependency-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "arch-no-abstraction-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "arch-no-abstraction-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "arch-refactor-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "arch-refactor-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "debug-intermittent-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "debug-intermittent-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "debug-misleading-error-01": {
+   "rate": 0.667,
+   "n": 3
+  },
+  "debug-misleading-error-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "debug-root-cause-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "debug-root-cause-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-boundaries-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-boundaries-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-boundaries-03": {
+   "rate": 0.667,
+   "n": 3
+  },
+  "logic-boundaries-04": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-datetime-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-datetime-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-money-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-money-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-transform-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "logic-transform-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "process-finish-the-job-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "process-finish-the-job-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "process-proportional-checks-01": {
+   "rate": 0.333,
+   "n": 3
+  },
+  "process-proportional-checks-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "process-scope-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "process-scope-02": {
+   "rate": 0.0,
+   "n": 3
+  },
+  "process-verification-honesty-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "process-verification-honesty-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "review-clean-diff-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "review-clean-diff-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "review-clean-diff-03": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "review-planted-bug-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "review-planted-bug-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "review-planted-bug-03": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-authz-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-authz-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-injection-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-injection-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-path-traversal-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-path-traversal-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-secrets-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "security-secrets-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "tests-can-fail-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "tests-can-fail-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "tests-characterization-01": {
+   "rate": 0.667,
+   "n": 3
+  },
+  "tests-characterization-02": {
+   "rate": 0.667,
+   "n": 3
+  },
+  "tests-never-fails-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "tests-never-fails-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "ui-accessibility-01": {
+   "rate": 0.667,
+   "n": 3
+  },
+  "ui-accessibility-02": {
+   "rate": 0.333,
+   "n": 3
+  },
+  "ui-design-tokens-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "ui-design-tokens-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "ui-layout-bug-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "ui-layout-bug-02": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "ui-states-01": {
+   "rate": 1.0,
+   "n": 3
+  },
+  "ui-states-02": {
+   "rate": 1.0,
+   "n": 3
+  }
+ }
+}
