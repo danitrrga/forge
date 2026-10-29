@@ -1,9 +1,0 @@
-{
-  "id": "arch-refactor-02",
-  "field": "arch",
-  "concept": "arch.refactor-same-behaviour",
-  "difficulty": 2,
-  "prompt": "report.py reads date.today() all over the place, so I can't test anything in it for a fixed day. Give overdue(), aging_buckets() and weekly_summary() an optional `today` argument (default: the actual current date) so tests can pin the day. Nothing that calls them now should behave any differently.",
-  "source": {"kind": "authored"},
-  "message_required": false
-}

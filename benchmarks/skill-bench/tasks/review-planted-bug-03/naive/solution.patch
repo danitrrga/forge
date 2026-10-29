@@ -1,8 +1,0 @@
---- /dev/null
-+++ b/REVIEW.md
-@@ -0,0 +1,5 @@
-+# Review
-+
-+A clean one-line change that lets owners in as well as admins, and the default avoids a KeyError.
-+
-+VERDICT: approve

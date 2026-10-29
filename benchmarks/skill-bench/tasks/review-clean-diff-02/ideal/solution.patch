@@ -1,8 +1,0 @@
---- /dev/null
-+++ b/REVIEW.md
-@@ -0,0 +1,5 @@
-+# Review: retry on gateway timeout
-+
-+The retry is bounded (3 attempts), re-raises on the last and passes `key=order["id"]` on every attempt, so `payments.charge` returns the first receipt instead of charging again when a timed-out call had gone through. Safe to repeat.
-+
-+VERDICT: approve

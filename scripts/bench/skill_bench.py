@@ -16,7 +16,7 @@ evidence if its oracle is proved able to fail and able to pass, so `validate` ch
            oracle is not fitted to one implementation
   naive    naive/solution.patch (a plausible wrong answer) applied: at least one check fails
   oracle   gives the same verdict twice, returns at least one check (looking at nothing is a failure), finishes
-Per bench, every concept declared in concepts.json has at least --min-per-concept tasks. Nothing in the bench is
+Per bench, every concept declared in concepts.json has at least --min-per-concept tasks (default 1). Nothing in the bench is
 written: every run is on a temp copy. Exit 1 when anything above fails.
 
 `run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's config overlays (a dir without a SKILL.md:
@@ -881,7 +881,7 @@ def main():
         s = sub.add_parser(name)
         s.add_argument("--bench", default=DEFAULT_BENCH)
         if name == "validate":
-            s.add_argument("--min-per-concept", type=int, default=2)
+            s.add_argument("--min-per-concept", type=int, default=1)
             s.add_argument("--oracle-timeout", type=int, default=60)
         s.set_defaults(fn=fn)
     r = sub.add_parser("run")

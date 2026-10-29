@@ -1,3 +1,0 @@
-- Does the reply say the randomised test was catching a real bug (a booking inside an earlier, longer one shortens the merged range) rather than being flaky?
-- Is the randomised test left random (not pinned to a seed, skipped or retried) or, if a seed was pinned, is the reason given and the bug still fixed?
-- Was a deterministic regression test added for the nested case?

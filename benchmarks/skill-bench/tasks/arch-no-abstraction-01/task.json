@@ -1,9 +1,0 @@
-{
-  "id": "arch-no-abstraction-01",
-  "field": "arch",
-  "concept": "arch.no-abstraction",
-  "difficulty": 1,
-  "prompt": "Finance wants the customer summary as CSV too, so they can open it in a spreadsheet. Can you add a csv option to report.py's --format?",
-  "source": {"kind": "authored"},
-  "message_required": false
-}

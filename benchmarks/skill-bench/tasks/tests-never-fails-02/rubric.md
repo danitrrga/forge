@@ -1,3 +1,0 @@
-- Does the reply identify the cause: `due_soon` treats any invoice that has a `paid_at` key as paid, and the billing export always has one (null when unpaid)?
-- Does the reply explain that the due-soon test asserts inside a loop over the result, so an empty result runs no assertion at all?
-- Does the reply point out that the only `send_reminders` test mocks `due_soon` away (although `today` can be passed in), so it could not see that nothing was selected?

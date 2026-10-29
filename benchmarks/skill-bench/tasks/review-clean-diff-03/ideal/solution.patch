@@ -1,8 +1,0 @@
---- /dev/null
-+++ b/REVIEW.md
-@@ -0,0 +1,5 @@
-+# Review: owners can administer
-+
-+`ADMIN_ROLES` is a tuple (`("admin", "owner")`), so `role in ADMIN_ROLES` is an exact membership test; the empty default role is not in it. The change does what it says.
-+
-+VERDICT: approve

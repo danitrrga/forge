@@ -146,11 +146,14 @@ def main():
     code, out = run(b, "--oracle-timeout", "1")
     want("hanging oracle: exit 1 and timeout named", (code, "timeout" in out.lower()), (1, True))
 
+    # a task is admitted by calibration (it can fail on the bare model), not by pairing it with a twin: one task per concept is enough by
+    # default, and --min-per-concept 2 still demands a second. Seen failing before the default changed: 'a concept with one task: default
+    # passes = 1, want 0' (the shipped bench, after pruning the tasks no arm ever failed, has 8 one-task concepts).
     b = bench(tmp, "thin", tasks=("t1",))
     code, out = run(b)
-    want("a concept with one task: exit 1, coverage named", (code, "coverage" in out.lower() and "logic.arith" in out), (1, True))
-    code, out = run(b, "--min-per-concept", "1")
-    want("same bench with --min-per-concept 1", code, 0)
+    want("a concept with one task: default passes", code, 0)
+    code, out = run(b, "--min-per-concept", "2")
+    want("same bench with --min-per-concept 2: exit 1, coverage named", (code, "coverage" in out.lower() and "logic.arith" in out), (1, True))
 
     b = bench(tmp, "empty", tasks=("t1", "t2"), concepts={"logic.arith": {"field": "logic", "title": "x"}, "ui.none": {"field": "ui", "title": "y"}})
     code, out = run(b)
