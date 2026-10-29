@@ -1,8 +1,0 @@
---- /dev/null
-+++ b/REVIEW.md
-@@ -0,0 +1,5 @@
-+# Review
-+
-+The magic number 1000 is unexplained. This needs rework before it ships.
-+
-+VERDICT: request changes

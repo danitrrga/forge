@@ -1,8 +1,0 @@
---- /dev/null
-+++ b/REVIEW.md
-@@ -0,0 +1,5 @@
-+# Review
-+
-+Retrying a payment is dangerous: it can double charge a customer. Remove the retry or add confirmation.
-+
-+VERDICT: request changes

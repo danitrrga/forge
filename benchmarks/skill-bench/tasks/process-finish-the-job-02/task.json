@@ -1,9 +1,0 @@
-{
-  "id": "process-finish-the-job-02",
-  "field": "process",
-  "concept": "process.finish-the-job",
-  "difficulty": 3,
-  "prompt": "Add a per-region breakdown to the sales report: a table with each region's net total (sales minus refunds). Finance reconciles it, so the region totals have to add up to the grand total at the top.",
-  "source": {"kind": "authored"},
-  "message_required": true
-}

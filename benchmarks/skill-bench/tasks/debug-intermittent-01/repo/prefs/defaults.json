@@ -1,6 +1,0 @@
-{
-  "theme": "light",
-  "language": "en",
-  "timezone": "UTC",
-  "notifications": {"email": true, "push": true, "digest": "weekly"}
-}

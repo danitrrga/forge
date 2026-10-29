@@ -1,8 +1,0 @@
---- /dev/null
-+++ b/REVIEW.md
-@@ -0,0 +1,5 @@
-+# Review
-+
-+Using `in` for an authorisation check is risky (substring matches) and the empty-string default is suspicious. Rework.
-+
-+VERDICT: request changes
