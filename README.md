@@ -17,6 +17,7 @@ python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if 
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx decide --facts <file>    # the merge decision for the facts of a PR: merge, handover or pending, with the rule behind each reason
+python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; exit 0 green, 1 red, 2 cannot prove the commit
 ```
 
 `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
