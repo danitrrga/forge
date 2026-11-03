@@ -8,3 +8,4 @@ Files ported from it by part 2.4 (each carries a `copied-from:` header naming th
   lib/fwx/core/globs.py  from lib/globs.ts
   lib/fwx/core/trusted.py from lib/trusted-checks.ts
   lib/fwx/core/evidence.py from lib/evidence.ts
+  lib/fwx/core/decide.py  from lib/merge-decision.ts
