@@ -1,0 +1,26 @@
+#!/bin/sh
+# copied-from: forge githooks/pre-push @2c95776, adapted: forge is found through FORGE_ROOT or PATH,
+# and the check runs over this repo's root.
+# The personal-data check over the content and message of every commit about to be pushed. A
+# commit made with --no-verify is caught here. A new remote branch (all-zero remote sha) checks
+# every commit no remote branch has; a branch deletion is not checked.
+root=$(git rev-parse --show-toplevel) || exit 1
+# forge: $FORGE_ROOT/bin/forge when FORGE_ROOT is set, else the `forge` on PATH.
+if [ -n "${FORGE_ROOT:-}" ]; then
+    forge="$FORGE_ROOT/bin/forge"
+else
+    forge=$(command -v forge)
+fi
+if [ -z "$forge" ] || [ ! -x "$forge" ]; then
+    echo "pre-push: refused: forge not found; set FORGE_ROOT to the forge checkout or put its bin/forge on PATH" >&2
+    exit 1
+fi
+rc=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+    case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+    "$forge" check-public --root "$root" --range "$remote_sha..$local_sha" || rc=1
+done
+if [ "$rc" -ne 0 ]; then
+    echo "pre-push: refused: personal data in the commits being pushed, listed above" >&2
+fi
+exit "$rc"

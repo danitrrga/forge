@@ -1,0 +1,35 @@
+# copied-from: repo-kit/files/python-uv/.github/workflows/checks.yml @582258b
+# Adapted: the uv steps became `python3 bin/fwx test` (this repo has no pyproject.toml or uv.lock).
+name: Project checks
+
+# The project's own checks, called by ci.yml's `project` job. forge's repo kit wrote this file
+# once, as a starter; it is the project's from the first commit and the kit never updates it.
+# Add jobs here, not in ci.yml: every job in this file is already inside "All checks".
+#
+# Rules for this file: no trigger other than workflow_call and workflow_dispatch (a
+# pull_request or push trigger here would run every job twice), and no top-level
+# `concurrency` (ci.yml owns it). A job that needs a secret gets it named in ci.yml's `project`
+# job and declared under `workflow_call.secrets` here.
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # fwx test exits 1 when no test file ran and 77 when none failed but one could not run, so an
+      # empty or unarmed suite is red here, not falsely green.
+      - run: python3 bin/fwx test

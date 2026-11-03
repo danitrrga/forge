@@ -1,0 +1,19 @@
+#!/bin/sh
+# copied-from: forge githooks/commit-msg @2c95776, adapted: forge is found through FORGE_ROOT or PATH,
+# and the check runs over this repo's root.
+# The personal-data patterns over the commit message.
+root=$(git rev-parse --show-toplevel) || exit 1
+# forge: $FORGE_ROOT/bin/forge when FORGE_ROOT is set, else the `forge` on PATH.
+if [ -n "${FORGE_ROOT:-}" ]; then
+    forge="$FORGE_ROOT/bin/forge"
+else
+    forge=$(command -v forge)
+fi
+if [ -z "$forge" ] || [ ! -x "$forge" ]; then
+    echo "commit-msg: refused: forge not found; set FORGE_ROOT to the forge checkout or put its bin/forge on PATH" >&2
+    exit 1
+fi
+"$forge" check-public --root "$root" --message "$1" || {
+    echo "commit-msg: refused: personal data in the message, listed above; reword it" >&2
+    exit 1
+}

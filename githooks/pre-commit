@@ -1,0 +1,27 @@
+#!/bin/sh
+# copied-from: forge githooks/pre-commit @2c95776, adapted: forge is found through FORGE_ROOT or PATH,
+# and the check runs over this repo's root.
+# Refuses a staged path the .gitignore ignores (private data added with `git add -f`), then runs
+# the personal-data check over the staged files. Enabled per clone: git config core.hooksPath githooks
+root=$(git rev-parse --show-toplevel) || exit 1
+# forge: $FORGE_ROOT/bin/forge when FORGE_ROOT is set, else the `forge` on PATH.
+if [ -n "${FORGE_ROOT:-}" ]; then
+    forge="$FORGE_ROOT/bin/forge"
+else
+    forge=$(command -v forge)
+fi
+if [ -z "$forge" ] || [ ! -x "$forge" ]; then
+    echo "pre-commit: refused: forge not found; set FORGE_ROOT to the forge checkout or put its bin/forge on PATH" >&2
+    exit 1
+fi
+ignored=$(git diff --cached --name-only --diff-filter=ACMR -z | git check-ignore --no-index -z --stdin | tr '\0' '\n')
+if [ -n "$ignored" ]; then
+    echo "pre-commit: refused: staged path(s) ignored by .gitignore (private data added with -f):" >&2
+    printf '%s\n' "$ignored" | sed 's/^/  /' >&2
+    echo "  unstage with: git reset -q -- <path>" >&2
+    exit 1
+fi
+"$forge" check-public --root "$root" --staged || {
+    echo "pre-commit: refused: personal data in the staged files, listed above" >&2
+    exit 1
+}
