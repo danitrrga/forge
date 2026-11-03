@@ -2,7 +2,7 @@
 <!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/visual-parity.md @36885ea (the baseline is the spec and a run is not allowed to edit it; the anti-shortcut clauses) -->
 <!-- Differs from the referent: it demands a zero pixel difference on one migrated component; here agents explore a whole screen and a finding is a judgement of the owner's approved design, so a difference from the baseline is reported for the owner to decide, not failed. -->
 
-Version: 1
+Version: 2
 
 This playbook says what each node of the UI-walk stretch does, who does it and where it leads. The `ui-walk` workflow (`/fwx:ui-walk`) runs the walk; the orchestrator of the session reads this to fix, re-check and show the owner what the walk found.
 
@@ -31,7 +31,7 @@ This playbook says what each node of the UI-walk stretch does, who does it and w
 - **Stage:** ui-walk
 - **Writes:** fix.json, contradicted.json
 - **Invokes:** workflow ui-walk
-- **Does:** `fwx walk up` starts the app; the ui-verifier lists the screens the part changed; for each one a `breaker` tries to break it and a `critic` judges it as a designer, both through `fwx walk ab`; a verifier drops what does not reproduce, and `fwx walk findings` writes the confirmed and plausible ones to `fix.json` and the contradicted ones to `contradicted.json`. After the fixes the workflow runs again with `recheck` and only the verifiers, each finding with its screenshot after the fix.
+- **Does:** `fwx walk up` starts the app; the ui-verifier lists the screens the part changed and the screens that use what changed (a screen that imports a changed component or token), so that a shared change is walked where it lands; only the scope grows, and a difference from the baseline stays a finding for the owner to judge, not a failure; for each one a `breaker` tries to break it and a `critic` judges it as a designer, both through `fwx walk ab`; a verifier drops what does not reproduce, and `fwx walk findings` writes the confirmed and plausible ones to `fix.json` and the contradicted ones to `contradicted.json`. After the fixes the workflow runs again with `recheck` and only the verifiers, each finding with its screenshot after the fix.
 - **Exits:**
   - to p_REPORT: nothing more to fix
   - loop n_C8: findings: fixes, one commit each
@@ -41,5 +41,5 @@ This playbook says what each node of the UI-walk stretch does, who does it and w
 - **Stage:** phase-review
 - **Writes:** nothing
 - **Invokes:** command fwx walk review-answers
-- **Does:** In the review of the part the owner accepts or rejects each fix on the review page; `fwx walk review-answers` reads the answers. Each rejected fix is reverted with `fwx wave prepare --revert` and `/fwx:execute`, and the `decisions` agent adds a row to `decisions.tsv` keeping the screen as it was approved, so that the next walk reads it as baseline and does not propose the fix again.
+- **Does:** In the review of the part the owner accepts or rejects each fix on the review page; `fwx walk review-answers` reads the answers. Each rejected fix is reverted with `fwx wave prepare --revert` and `/fwx:execute`, and the `decisions` agent, the one writer of `decisions.tsv` (its file is listed by the discuss block of `session.md`, so this block lists none), adds a row there keeping the screen as it was approved, so that the next walk reads it as baseline and does not propose the fix again.
 - **Exits:** none

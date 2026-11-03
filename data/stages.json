@@ -7,7 +7,7 @@
       "premortem": ["planning", "discuss"],
       "planning": ["postmortem"],
       "postmortem": ["planning", "executing", "discuss"],
-      "executing": ["reviewing"],
+      "executing": ["reviewing", "phase-review"],
       "reviewing": ["executing", "ui-walk", "phase-review"],
       "ui-walk": ["phase-review", "discuss", "executing"],
       "phase-review": ["executing", "closed", "discuss"]

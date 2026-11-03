@@ -5,18 +5,21 @@
 
 # Session: the supervised workflow
 
-Version: 1
+Version: 2
 
 One supervised workflow carries every piece of work done with the owner in the chat. Its first step is fixed by the kind of work and its other steps switch on by condition; only the factory and the weekly improvement have workflows of their own. This file is the source of truth for it: every node of the owner's tree and every arrow out of it has a block below, with the rules of that step, and a change to the workflow changes its block in the same job.
+
+The playbooks are the spec the owner reads and the checker compares; the orchestrator works from the workflows (their prompts and scripts) and does not load the playbooks, and every question to the owner gives the options and what each one implies, with no recommendation.
 
 ## Rules for the whole workflow
 
 - Only the orchestrator talks with the owner. An agent that needs an answer returns the question and the orchestrator asks it; an agent that talks to the owner answers a question nobody framed.
-- Every agent starts from the same shared base context, which a hook hands it. Its brief adds its own part only and does not send it to read the shared documents again. The brief also carries the absolute paths of `context.md` and `decisions.tsv` and asks for a short return with a path (the orchestrator keeps its own context small so that it does not compact before the post-mortem).
+- Every agent starts from the same shared base context. That is a guideline (principles.md, rule 11) until the hook of part 2.5 hands it over; until then the brief does the job. Its brief adds its own part only and does not send it to read the shared documents again. The brief also carries the absolute paths of `context.md` and `decisions.tsv` and asks for a short return with a path (the orchestrator keeps its own context small so that it does not compact before the post-mortem).
 - No model is named in any text. The model of each launch comes from `fwx model <role> <size>`, and every launch states it. `fwx playbooks check` fails on a model name in any playbook.
 - A dead agent, an empty return or a missing file is a failure to report, never "no findings": a critic that did not run has not cleared the work.
 - One file has one writer, and the block that lists a file under Writes is that writer. The orchestrator writes `context.md`; the `decisions` agent alone writes `decisions.tsv` and every block that records an answer hands it to that agent; `audit.tsv` is written by the scripts, not by a block. `fwx playbooks check` fails when two blocks list the same file.
 - The orchestrator reads no long file or investigation by hand: an agent reads it and returns paths and counts. Before a heavy step and before a wave it looks at `fwx budget --json`; a tight week is a one-line warning, never a stop.
+- A node whose Who is `script` is run, not deliberated: the orchestrator runs its command or workflow and acts on what it prints, and does not ask itself the node's question (is there another wave, is this the owner's session, does the part touch UI). The code answers from data.
 - What goes back to the discuss goes back by one rule, given once at the discuss block.
 
 ### n_L1 · The owner opens a chat and writes to Claude
@@ -50,11 +53,11 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** -
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** The orchestrator classifies the request by what the reading found, not by how the message was worded: work on the project, improving the system, a trivial change, or resuming.
+- **Does:** The orchestrator classifies the request by what the reading found, not by how the message was worded: work on the project, improving the system, a trivial change, or resuming. A change is trivial only when the owner says so: it is something he will do by hand with the main agent without more machinery, and no size threshold is written, so the orchestrator never judges a change trivial on its own.
 - **Exits:**
   - to n_L4: work on the project
   - to n_CX_W: improve the system, or a new model comes out; it continues in the weekly improvement cycle
-  - to n_Z6: a trivial change
+  - to n_Z6: a trivial change, which the owner chose
   - to n_L3: resume
 
 ### n_L4 · Discuss
@@ -81,10 +84,17 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** -
 - **Writes:** nothing
 - **Invokes:** command fwx state resolve
-- **Does:** The orchestrator owns the resume point and reads the prior trail instead of redoing it: it resolves the phase, reads the last `stage` row of `audit.tsv`, the branch and worktree, what is already merged (`git log` against the default branch), `context.md`, `decisions.tsv`, the frontmatter of `plan.md` and the last `state.md`, and does not repeat anything done. A new session carries on this way because the plan, the discuss and the base context are all on disk. A job the factory handed back arrives here from the factory lane (`factory-return` reference of the session skill).
+- **Does:** The orchestrator owns the resume point and reads the prior trail instead of redoing it: it resolves the phase, reads the last `stage` row of `audit.tsv`, the branch and worktree, what is already merged (`git log` against the default branch), `context.md`, `decisions.tsv`, the frontmatter of `plan.md` and the last `state.md`, and does not repeat anything done. A new session carries on this way because the plan, the discuss and the base context are all on disk, so "continue" works from any stage, not only from the executors: the last `stage` row names the stage, and the work goes back to the step of that stage, one arrow each. A job the factory handed back arrives here from the factory lane (`factory-return` reference of the session skill).
 - **Exits:**
   - to n_L3a: handed back by the factory; it continues in the post-mortem of the plan, as a structural review of what is left
-  - to n_L3b: the owner says "continue"; it continues in the executors, on the part and branch the last stage row names
+  - to n_L3c: the owner says "continue" and the last stage row is `discuss`; it continues in the discuss, at the first check that says what is open
+  - to n_L3d: "continue" and the last row is `premortem`; it continues in the light pre-mortem
+  - to n_L3e: "continue" and the last row is `planning`; it continues in the planner's step
+  - to n_L3f: "continue" and the last row is `postmortem`; it continues in the strong post-mortem
+  - to n_L3b: "continue" and the last row is `executing`; it continues in the executors, on the part and branch the row names
+  - to n_L3g: "continue" and the last row is `reviewing`; it continues at the checks on the exact commit
+  - to n_L3h: "continue" and the last row is `ui-walk`; it continues in the UI walk
+  - to n_L3i: "continue" and the last row is `phase-review`; it continues in the owner's review of the part, with the report written again if it is missing
 
 ### n_L5 · The owner gives the final approval
 - **Who:** owner
@@ -209,7 +219,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** phase-review
 - **Writes:** nothing
 - **Invokes:** command fwx walk review-page
-- **Does:** A part can arrive here without a report, because it gave up (three rounds spent), its checks could not be proven or its diff edits the recipe, CI or a protected path. The orchestrator then presents the red evidence row with its commit, the rounds spent (`fwx rounds`) and the three outcomes below, so he can correct it, accept it as it is or say the intention was misread. When the review does not block, the next part starts and an objection that arrives later is recorded on the spot as a correction of that part. With UI walk fixes, each fix and each `CONTRADICTED` finding is one item on the verdict page, yes or no with a note, and each rejection is a decision the `decisions` agent records so the next walk does not propose it again; the rejected change is reverted. A correction is run again as a correction of the part, and `fwx rounds <part> --reset "<text>"` restarts the attempts (a correction by the owner is a fresh start).
+- **Does:** A part can arrive here without a report, because it gave up (three rounds spent), its checks could not be proven, its diff edits the recipe or CI, its diff touches a protected path (after the code and security review), or an executor asked a question or could not be launched. The orchestrator then presents the red evidence row with its commit, the rounds spent (`fwx rounds`) and the three outcomes below, so he can correct it, accept it as it is or say the intention was misread. When the review does not block, the next part starts and an objection that arrives later is recorded on the spot as a correction of that part. With UI walk fixes, each fix and each `CONTRADICTED` finding is one item on the verdict page, yes or no with a note, and each rejection is a decision the `decisions` agent records so the next walk does not propose it again; the rejected change is reverted. A correction is run again as a correction of the part, and `fwx rounds <part> --reset "<text>"` restarts the attempts (a correction by the owner is a fresh start).
 - **Exits:**
   - to n_L9: it is fine, or it does not block: a review blocks only if the part touches UI or the plan marks it
   - loop n_C5: he corrects, or rejects fixes: the attempts start again

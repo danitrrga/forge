@@ -100,6 +100,13 @@ n_CX_W	connector
 n_CX_IN	connector
 n_L3a	connector
 n_L3b	connector
+n_L3c	connector
+n_L3d	connector
+n_L3e	connector
+n_L3f	connector
+n_L3g	connector
+n_L3h	connector
+n_L3i	connector
 n_CX_F	connector
 n_CX_FIN	connector
 n_CX_OUT	connector

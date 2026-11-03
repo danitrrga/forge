@@ -5,9 +5,9 @@
 <!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/bug-fix.md @36885ea (the failing test first, in its own commit) -->
 <!-- Differs from the referents: one block per node of the tree, because `fwx playbooks check` compares them; cleanup never forces or deletes by hand (the referent prunes with `--force` after a human decision; here `fwx wave cleanup` removes only merged worktrees); the gate is a script, not the coordinator's judgment. -->
 
-Version: 1
+Version: 2
 
-This playbook says what each node of the execution stretch of the workflow does, who does it and where it leads. The `execute` workflow (`/fwx:execute`) runs it from the output of `fwx wave prepare`; the orchestrator reads it to know what a returned status means. The orchestrator writes no code: it acts on what the commands print.
+This playbook says what each node of the execution stretch of the workflow does, who does it and where it leads. The `execute` workflow (`/fwx:execute`) runs it from the output of `fwx wave prepare`; the orchestrator reads it to know what a returned status means. The orchestrator writes no code: it acts on what the commands print. The nodes whose Who is `script` (n_C6, n_C7, n_C8, n_C10) are run, not deliberated (the rule is in `session.md`).
 
 ## Standing rules
 
@@ -26,7 +26,7 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - A brief with an empty field is not launched: `fwx wave prepare` writes one brief per task and exits 2 naming the task and the field. Each brief carries the absolute paths of `context.md`, `decisions.tsv` and `plan.md`.
 - An agent that returns nothing, or without what its brief asks for, has not passed. The workflow relaunches it once without spending a round; a second miss is recorded as a gap and the run ends `failed`.
 - Ponytail runs when code is reviewed and never when it is executed. The reviewer definitions invoke it and the executor's does not.
-- After a crash or an exhausted quota the session resumes from disk: the owner says "continue", the orchestrator reads the last `stage` row and the phase branch, and `fwx wave prepare` lists in `done` every task whose `Fwx-Task` trailer the phase branch already holds. The factory resumes by stage from its tick (its own playbook).
+- After a crash or an exhausted quota the session resumes from disk: the owner says "continue", the orchestrator reads the last `stage` row, which may name any stage and not only `executing` (the exits of n_L3 in `session.md`), and the phase branch, and `fwx wave prepare` lists in `done` every task whose `Fwx-Task` trailer the phase branch already holds. The factory resumes by stage from its tick (its own playbook).
 
 ## Nodes
 
@@ -35,10 +35,12 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Stage:** executing
 - **Writes:** nothing
 - **Invokes:** command fwx capacity
-- **Does:** Each executor takes one task from the wave and starts by the kind the plan gives it. A bug starts with a test that reproduces it, in its own commit, and the executor quotes what the failing run says. A refactor starts with a characterization test that passes before anything moves, in its own commit, because a refactor has no failing test to write and a type check or lint does not pin behaviour. A feature starts with the tests its criteria list, failing, in their own commit. A UI task carries no test. Then the code, and the executor returns `done`, `wrong-base`, `question` or `failed`. `done` is integrated. `wrong-base` and `failed` leave their branch out of the merge and the task is fixed through `fwx wave fix-round`, which spends a round. `question` is not a failure: the orchestrator puts it to the owner, and the factory ends the job `needs-owner`. `fwx capacity --role executor --want N` says how many may start now and `allowed 0` ends the run as `failed` with the reason capacity; two tasks that write the same file never share a batch. When the executors of the wave have returned, `fwx wave integrate` merges their branches into the phase branch in order and runs `checks_quick`.
+- **Does:** Each executor takes one task from the wave and starts by the kind the plan gives it. A bug starts with a test that reproduces it, in its own commit, and the executor quotes what the failing run says. A refactor starts with a characterization test that passes before anything moves, in its own commit, because a refactor has no failing test to write and a type check or lint does not pin behaviour. A feature starts with the tests its criteria list, failing, in their own commit. A UI task carries no test. Then the code, and the executor returns `done`, `wrong-base`, `question` or `failed`. `done` is integrated. `wrong-base` and `failed` leave their branch out of the merge and the task is fixed through `fwx wave fix-round`, which spends a round. `question` is not a failure and spends no round: the session puts it to the owner at the review of the part, and the factory ends the job `needs-owner`. `fwx capacity --role executor --want N` says how many may start now, and `allowed 0` is an executor that cannot run: it leaves by the same exits, with the reason capacity; two tasks that write the same file never share a batch. When the executors of the wave have returned, `fwx wave integrate` merges their branches into the phase branch in order and runs `checks_quick`.
 - **Exits:**
   - to n_C6: the executors of the wave have returned and their branches merge
   - to n_C8: the branches conflict or the code does not build
+  - to n_L8: session: an executor asks a question, or the machine has no capacity to launch it
+  - to n_Z3: factory: an executor asks a question, or the machine has no capacity to launch it
 - **Why:** an executor's own report does not decide: the gate in the next nodes overwrites it.
 
 ### p_PAR · The parallel limit
@@ -64,16 +66,16 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Stage:** reviewing
 - **Writes:** audit.tsv
 - **Invokes:** command fwx verify
-- **Does:** `fwx verify --json` runs the project's recipe once on a clean tree and appends an `evidence` row with the SHA; exit 0 is a pass, 1 a failing check, 2 that it could not prove the commit. A diff that edits the checks recipe, CI or a protected path goes to the owner without spending a round, because it changes what counts as passing or touches what needs the owner's judgment: the session asks him, the factory ends `needs-owner`.
+- **Does:** `fwx verify --json` runs the project's recipe once on a clean tree and appends an `evidence` row with the SHA; exit 0 is a pass, 1 a failing check, 2 that it could not prove the commit. A diff that edits the checks recipe or CI goes to the owner without spending a round, because it changes what counts as passing: the session asks him, the factory ends `needs-owner`. A protected path does not stop here: the review of code and security runs first and the diff goes to the owner after it (n_C9).
 - **Exits:**
-  - to n_C9: the checks pass and the diff touches no recipe, CI or protected path
+  - to n_C9: the checks pass and the diff edits no recipe or CI
   - to n_C8: a check fails
-  - to n_Z3: factory: the diff edits the checks recipe, CI or a protected path
+  - to n_Z3: factory: the diff edits the checks recipe or CI
   - to n_Z4c: factory: the checks cannot run
-  - to n_L8: session: the diff edits the checks recipe, CI or a protected path
+  - to n_L8: session: the diff edits the checks recipe or CI
   - to n_C7F: session: the checks cannot run
 
-### n_C7F · The orchestrator tries to fix it: dirty tree, environment or a recipe that does not run
+### n_C7F · The orchestrator tries to fix it: dirty tree or environment
 - **Who:** orchestrator
 - **Stage:** reviewing
 - **Writes:** nothing
@@ -99,10 +101,12 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Stage:** reviewing
 - **Writes:** nothing
 - **Invokes:** skill ponytail:ponytail-review
-- **Does:** The reviewer, and the security-reviewer when the plan asks for it, read the diff without a worktree and the part's success criteria in `plan.md`; "no findings" is a valid result. The reviewer returns each criterion as met or not met with its evidence, and a criterion that is not met is a finding with that evidence. Each finding goes to one review-verifier, the cheap role, which sorts it into one of the four groups of the next block; only `fix` is fixed, one commit per finding with a `Fwx-Finding` trailer, merged with `fwx wave integrate --findings`, and the diff of the fix is reviewed again. A reviewer that returns `null` or an empty `looked_at` is relaunched once, and a second miss ends the run `failed`.
+- **Does:** The reviewer, and the security-reviewer when the plan asks for it, read the diff without a worktree and the part's success criteria in `plan.md`; "no findings" is a valid result. The reviewer runs the check of each criterion and cites what it printed (the command and its output, or file and line), and returns each criterion as met, not met or unproven: a criterion it could not run is unproven, never met, and a criterion that is not met or unproven is a finding with that evidence. Each finding goes to one review-verifier, the cheap role, which sorts it into one of the four groups of the next block; only `fix` is fixed, one commit per finding with a `Fwx-Finding` trailer, merged with `fwx wave integrate --findings`, and the diff of the fix is reviewed again. A diff that touches a protected path is reviewed like any other and, once no finding is left to fix, goes to the owner without spending a round: the session asks him, the factory ends `needs-owner`. A reviewer that returns `null` or an empty `looked_at` is relaunched once, and a second miss ends the run `failed`.
 - **Exits:**
   - loop n_C8: fix: launches the fix and spends a round
-  - to n_C10: no finding is left to fix
+  - to n_C10: no finding is left to fix and the diff touches no protected path
+  - to n_Z3: factory: no finding is left to fix and the diff touches a protected path
+  - to n_L8: session: no finding is left to fix and the diff touches a protected path
 - **Why:** the one who verifies a finding is not the one who reported it, and the verifier sees the finding and the diff, not the reporter's reasoning.
 
 ### p_GRP · The four groups of findings
