@@ -26,6 +26,17 @@ Controls, each run on a copy of lib/fwx/lint_models.py changed in one place (red
   - a call finder that finds no call (zero calls is not a pass):
       FAIL: good.js: agent() calls looked at (the nested one included, the comment and the string not): got 0, want 4
       FAIL: no_model.js: calls looked at: got 0, want 1
+
+2.5 U6 (agentType and fork). Red before the change, on the old lint: `python3 lib/fwx/lint_models.py
+tests/fixtures/lint/no_agent_type.js` and `.../fork.md` both printed `0 fault(s)` and exited 0; the suite stopped at
+  AttributeError: module 'fwx.lint_models' has no attribute 'lint_text'
+Controls (80 checks, each on a copy changed in one place, red seen, copy discarded):
+  - agentType never reported:
+      FAIL: no_agent_type.js: the call without agentType is reported at line 3: got [], want [3]
+      FAIL: agentType missing: got (1, []), want (1, ['agentType'])
+  - fork never matched (script keys and text pattern):
+      FAIL: fork.md: the fork launch is reported at line 3 only: got [], want [3]
+      FAIL: text: quoted value: got [], want [2]
 """
 import os
 import subprocess
@@ -63,12 +74,25 @@ calls, probs = lm.lint_js(fixture("var_opts.js"))
 s.eq("var_opts.js: calls looked at", calls, 1)
 s.eq("var_opts.js: opts passed as a variable is refused", lines(probs), [2])
 
+calls, probs = lm.lint_js(fixture("no_agent_type.js"))
+s.eq("no_agent_type.js: calls looked at", calls, 2)
+s.eq("no_agent_type.js: no model fault, the model is named", lines(probs), [])
+s.eq("no_agent_type.js: the call without agentType is reported at line 3", lines(probs, "agentType"), [3])
+s.eq("no_agent_type.js: says it would be workflow-subagent", [p[3] for p in probs],
+     ["agent() without agentType: it would be workflow-subagent"])
+s.eq("fork.md: the fork launch is reported at line 3 only", lines(lm.lint_text(fixture("fork.md")), "fork"), [3])
+
 s.eq("agent_with_model.md: reported at line 4", lines(lm.lint_md(fixture("agent_with_model.md"))), [4])
 
 # toy sources: one behaviour each
 def one(src):
     calls, probs = lm.lint_js(src)
-    return calls, [p[2] for p in probs]
+    return calls, [p[2] for p in probs if p[2] != "agentType"]
+
+
+def agt(src):
+    calls, probs = lm.lint_js(src)
+    return calls, [p[2] for p in probs if p[2] == "agentType"]
 
 
 s.eq("no second argument", one("agent('p')"), (1, ["model"]))
@@ -94,6 +118,32 @@ s.eq("a function declaration and a method named agent are not calls",
 s.eq("a member call is looked at", one("ctx.agent('p', { label: 'a' })"), (1, ["model"]))
 s.eq("an identifier that only contains the word is not a call", one("subagent('p')\nagents('p')\nagent_x('p')"), (0, []))
 
+# agentType: the same reading as model
+s.eq("agentType named", agt("agent('p', { model: 'm', agentType: 'fwx:reviewer' })"), (1, []))
+s.eq("agentType missing", agt("agent('p', { model: 'm' })"), (1, ["agentType"]))
+s.eq("agentType shorthand", agt("agent('p', { model: 'm', agentType })"), (1, []))
+s.eq("agentType quoted key", agt("agent('p', { model: 'm', 'agentType': 'x' })"), (1, []))
+s.eq("agentType: undefined is not named", agt("agent('p', { model: 'm', agentType: undefined })"), (1, ["agentType"]))
+s.eq("agentType in a nested object is not the call's", agt("agent('p', { model: 'm', cfg: { agentType: 'x' } })"), (1, ["agentType"]))
+s.eq("agentType only in a string value", agt("agent('p', { model: 'm', label: 'agentType: x' })"), (1, ["agentType"]))
+s.eq("a model fault does not hide a missing agentType", agt("agent('p', { label: 'a' })"), (1, ["agentType"]))
+s.eq("opts as a variable: the model fault says it, agentType is not reported twice", agt("agent('p', opts)"), (1, []))
+s.eq("a declaration is not a call, so no agentType fault", agt("function agent(a, b) { return 1 }"), (0, []))
+
+# fork: a launch of subagent_type fork, in scripts and in text
+fk = lambda src: [p[1] for p in lm.lint_js(src)[1] if p[2] == "fork"]
+s.eq("js: agentType 'fork'", fk("agent('p', { model: 'm', agentType: 'fork' })"), [1])
+s.eq("js: quoted key", fk("agent('p', {\n 'agentType': 'fork', model: 'm' })"), [2])
+s.eq("js: subagent_type", fk("const o = { subagent_type: \"fork\" }"), [1])
+s.eq("js: a longer name is not fork", fk("agent('p', { model: 'm', agentType: 'fork-reviewer' })"), [])
+s.eq("js: the word in a comment or a label is not a launch", fk("// agentType: 'fork'\nagent('p', { label: 'fork', model: 'm', agentType: 'x' })"), [])
+tx = lambda src: lines(lm.lint_text(src), "fork")
+s.eq("text: quoted value", tx("a\nsubagent_type: \"fork\"\n"), [2])
+s.eq("text: JSON form", tx("{\"subagent_type\": \"fork\", \"prompt\": 1}"), [1])
+s.eq("text: equals form and agentType", tx("subagent_type='fork'\nagentType = fork"), [1, 2])
+s.eq("text: unquoted", tx("use subagent_type: fork here"), [1])
+s.eq("text: other types and the bare word are not a launch", tx("subagent_type: forked\nsubagent_type: \"general-purpose\"\nfork it"), [])
+
 # a script that cannot be read is an error, not a pass
 for label, src in (("unterminated string", "const a = 'x\nagent('p')"), ("unterminated template", "const a = `x ${y"),
                    ("unterminated comment", "/* x"), ("unbalanced bracket", "agent('p', { model: 'a' )"),
@@ -115,12 +165,13 @@ def run(*args):
 
 
 tree = helpers.mkdtemp("fwx-lint-")
-helpers.write(tree, "workflows/ok.js", "agent('p', { model: 'sonnet' })\n")
+helpers.write(tree, "workflows/ok.js", "agent('p', { model: 'sonnet', agentType: 'fwx:reviewer' })\n")
 helpers.write(tree, "workflows/skip.txt", "agent('p')\n")
 helpers.write(tree, "agents/reviewer.md", "---\nname: reviewer\n---\nbody\n")
 helpers.write(tree, "tests/fixtures/bad.js", "agent('p')\n")
 rep = lm.lint_root(tree)
 s.eq("lint_root: workflows/*.js and agents/*.md only", (rep.js, rep.md, rep.calls, rep.problems), (1, 1, 1, []))
+s.eq("lint_root: no other text file in this tree", rep.text, 0)
 r = run("--root", tree)
 s.eq("cli: a clean tree exits 0", r.returncode, 0)
 s.ok("cli: says how much it looked at", "1 workflow file(s), 1 agent file(s), 1 agent() call(s)" in r.stdout, r.stdout)
@@ -143,6 +194,29 @@ s.eq("cli: the three bad fixtures exit 1", r.returncode, 1)
 s.ok("cli: one line per fault", all(x in r.stdout for x in ("no_model.js:3:", "var_opts.js:2:", "agent_with_model.md:4:")), r.stdout)
 r = run(os.path.join(FIX, "good.js"))
 s.eq("cli: the good fixture exits 0", r.returncode, 0)
+r = run(os.path.join(FIX, "no_agent_type.js"))
+s.eq("cli: the fixture without agentType exits 1", r.returncode, 1)
+s.ok("cli: names file:line and the message", os.path.join(FIX, "no_agent_type.js") + ":3: agent() without agentType: it would be workflow-subagent" in r.stdout, r.stdout)
+r = run(os.path.join(FIX, "fork.md"))
+s.eq("cli: the fork fixture exits 1", r.returncode, 1)
+s.ok("cli: names file:line and says why", os.path.join(FIX, "fork.md") + ":3:" in r.stdout and "fork" in r.stdout, r.stdout)
+
+# fork is looked for in workflows/, skills/, agents/ and playbooks/; skills and playbooks are walked
+ftree = helpers.mkdtemp("fwx-lint-fork-")
+helpers.write(ftree, "playbooks/deep/p.md", "# p\n\nsubagent_type: fork\n")
+helpers.write(ftree, "skills/s/SKILL.md", "subagent_type: \"fork\"\n")
+helpers.write(ftree, "agents/a.md", "---\nname: a\n---\nsubagent_type: fork\n")
+helpers.write(ftree, "workflows/w.md", "subagent_type: fork\n")
+helpers.write(ftree, "workflows/w.js", "agent('p', { model: 'm', agentType: 'fork' })\n")
+helpers.write(ftree, "templates/t.md", "subagent_type: fork\n")
+rep = lm.lint_root(ftree)
+s.eq("lint_root: a fork in each of the five places, none in templates/",
+     sorted(os.path.relpath(p[0], ftree) for p in rep.problems if p[2] == "fork"),
+     ["agents/a.md", "playbooks/deep/p.md", "skills/s/SKILL.md", "workflows/w.js", "workflows/w.md"])
+s.eq("lint_root: counts the text files it read", (rep.js, rep.md, rep.text), (1, 1, 3))
+r = run("--root", ftree)
+s.eq("cli: forks exit 1", r.returncode, 1)
+s.ok("cli: says how many text files", "3 other text file(s)" in r.stdout, r.stdout)
 
 # the framework repo itself: in phase 2 it may hold no workflow, and says so
 rep = lm.lint_root(helpers.ROOT)
