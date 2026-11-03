@@ -15,12 +15,31 @@ The rules are the table `decide_rules.json` (`rules`, in the order they are eval
 rule go is one line in `disabled`. `load_table` refuses a table that lacks a rule the code has, has one it has not, lists one
 twice or disables an unknown one, so a rule cannot vanish quietly from the file; `decide` evaluates the table it is given.
 
-This unit's 12 rules: `review-label` (the issue has the label `review`, in any case), `agent` (no assessment, or it recommends
+The 19 rules, in the order of the table. First, the 12 of marshal: `review-label` (the issue has the label `review`, in any case), `agent` (no assessment, or it recommends
 handing over, or it is not confident), `ci-failed` (a check of `pr.checks` is `failure`), `conflict` (`pr.mergeable` is false),
 `trusted-edit` (the PR edits what its checks run: `core.trusted`), `evidence-head` (no evidence, or evidence of another
 commit), `evidence-dirty`, `evidence-recipe` (the evidence did not run the recipe, or ran other commands), `evidence-failed`,
 `no-checks` (the effective recipe `project.checks` is empty), `review-findings` (`review.open_medium_high` above 0) and
-`still-running` (`pr.running`, `review.running` or a check `pending`: `pending`, no handover).
+`still-running` (`pr.running`, `review.running` or a check `pending`: `pending`, no handover). Then the 7 that U5b adds:
+
+- `type`: the work is a `feature` or `structural` change.
+- `ui`: `surfaces` has the mark `ui`. The rule reads no file name: the intake or the autonomous discuss marks the work by what
+  it is (it changes what is seen or how the interface is used), so a `.tsx` fixed for a typo merges and a `.css` that
+  restyles a screen, marked `ui`, goes to a person.
+- `hooks-settings`: a file under `hooks/`, `.claude/hooks/`, `githooks/`, `.githooks/`, `.husky/`, or `.claude/settings*.json`,
+  by `path` or `previous_path`.
+- `protected-paths`: a file, by `path` or `previous_path`, that matches a glob of `project.protected_paths` or of the table's
+  `default_protected_paths` (marshal's own list, `DEFAULT_PROTECTED_PATHS` of `ee22770^`).
+- `irreversible`: `pr.base` is one of `production.branches`, or a line a patch adds has a command of `production.commands` in
+  it (the command's words in order, split by any blanks, not inside a longer word or path). An entry `mcp__...` is a tool name
+  of the consent window and is never looked for in a patch. A file with no patch cannot be searched (GitHub gives none for a
+  large or binary file): a declared limit, as in `trusted_edits`.
+- `outside-plan`: a changed file, by `path` only, that no glob of `plan_files` covers, except what is under `.fwx/`; an empty
+  `plan_files` is a handover too, because nothing can be checked against it.
+- `weakened-assertions`: in a test file (`TEST_FILES`, by `path` or `previous_path`), a patch that removes more assertion lines
+  (`ASSERTION`) than it adds, or a test file with no patch to compare.
+
+`major-bump` and `max-size`, which marshal had, are not rules here.
 
 The checks of the facts are `success`, `failure` or `pending`, already translated from GitHub's conclusions by whoever makes
 the facts (`neutral`, `skipped` and a skipped review are `pending`; `cancelled` and `timed_out` are `failure`). A state
@@ -30,13 +49,15 @@ outside the three is refused, so one of GitHub's raw conclusions can never be re
 large or binary file; `trusted_edits` hands a package.json with none over). The facts are not changed.
 
 Pure: no clock (the 60-minute wait of a `pending` is the caller's), no network, no process, no files but the table.
-Imports only `fwx.core.evidence` and `fwx.core.trusted`.
+Imports `fwx.core.evidence`, `fwx.core.globs` and `fwx.core.trusted`, and from `fwx.state` only the constant `PLAN_DIR`.
 """
 import json
 import os
+import re
 
+from fwx import state
 from fwx.core import evidence as evidence_mod
-from fwx.core import trusted
+from fwx.core import globs, trusted
 
 TABLE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "decide_rules.json")
 MODES = ("off", "trial")
@@ -47,6 +68,18 @@ RECOMMENDATIONS = ("merge", "handover")
 CHECK_STATES = ("success", "failure", "pending")
 OUTCOMES = ("handover", "pending")
 REVIEW_LABEL = "review"
+MAX_NAMED = 5
+ASKED_TYPES = ("feature", "structural")
+# Hooks and settings, by glob; a row is one more place whose edit a person looks at.
+HOOKS_SETTINGS = ["hooks/**", ".claude/settings*.json", ".claude/hooks/**", "githooks/**", ".githooks/**", ".husky/**"]
+# What makes a file a test file, by glob; a new convention is a new row.
+TEST_FILES = ["**/test/**", "**/tests/**", "**/__tests__/**", "**/spec/**", "**/specs/**", "**/test_*", "**/*_test.*",
+              "**/*.test.*", "**/*.spec.*", "**/*_spec.*"]
+# What makes a line an assertion: assert and its relatives (unittest, testify, Rust), `expect(` (jest), `raises(` (pytest),
+# `.should` (chai), `t.Error`/`t.Fatal` (Go), and `.eq(` / `.ok(` (this repo's own tests/helpers.py Suite). A new framework is a
+# new alternative.
+ASSERTION = re.compile(r"\bassert\w*|\bexpect\s*\(|\braises\s*\(|\.should\b|\bt\.(?:Error|Fatal)f?\(|\.(?:eq|ok)\(")
+_PATCH_HEADER = re.compile(r"(?:---|\+\+\+) (?:a/|b/|/dev/null)")
 OFF_DECISION = {"decision": "handover", "would_merge": False, "reasons": []}
 
 
@@ -204,13 +237,35 @@ def _evidence(f):
     return evidence_mod.evidence_state(f["evidence"], f["pr"]["head_sha"], f["project"]["checks"])
 
 
-def _review_label(f):
+def _cut(names):
+    """The first MAX_NAMED names, with `...` when there are more."""
+    return ", ".join(names[:MAX_NAMED]) + (", ..." if len(names) > MAX_NAMED else "")
+
+
+def _touched(f):
+    """Every path the PR touches, the new name and the previous one of a rename, once each, in order."""
+    seen = []
+    for c in f["pr"]["changed_files"]:
+        for p in (c["path"], c.get("previous_path")):
+            if p and p not in seen:
+                seen.append(p)
+    return seen
+
+
+def _patch_lines(patch):
+    """(sign, text) of each line a patch adds or removes; the `--- a/x` and `+++ b/x` headers and the context are no line."""
+    for line in patch.split("\n"):
+        if line[:1] in ("+", "-") and not _PATCH_HEADER.match(line):
+            yield line[0], line[1:]
+
+
+def _review_label(f, table):
     if any(label.lower() == REVIEW_LABEL for label in f["labels"]):
         return ['the issue has the "%s" label, so a person always sees the merge' % REVIEW_LABEL]
     return []
 
 
-def _agent(f):
+def _agent(f, table):
     agent = f["agent"]
     if agent is None:
         return ["the agent reported no assessment"]
@@ -219,22 +274,22 @@ def _agent(f):
     return ["the agent %s" % " and ".join(said)] if said else []
 
 
-def _ci_failed(f):
+def _ci_failed(f, table):
     red = [c["name"] for c in f["pr"]["checks"] if c["state"] == "failure"]
     return ["a check failed on the latest commit: %s" % ", ".join(red)] if red else []
 
 
-def _conflict(f):
+def _conflict(f, table):
     if f["pr"]["mergeable"]:
         return []
     return ["the pull request conflicts with its base branch (%s)" % f["pr"]["base"]]
 
 
-def _trusted_edit(f):
+def _trusted_edit(f, table):
     return trusted.trusted_edits(f["pr"]["changed_files"], f["project"]["checks"])
 
 
-def _evidence_head(f):
+def _evidence_head(f, table):
     state, head = _evidence(f), _short(f["pr"]["head_sha"])
     if state["state"] == "missing":
         return ["no checks were run for %s" % head]
@@ -243,14 +298,14 @@ def _evidence_head(f):
     return []
 
 
-def _evidence_dirty(f):
+def _evidence_dirty(f, table):
     state = _evidence(f)
     if state["state"] == "dirty":
         return ["the checks ran at %s on a tree with uncommitted changes" % _short(state["sha"])]
     return []
 
 
-def _evidence_recipe(f):
+def _evidence_recipe(f, table):
     state = _evidence(f)
     if state["state"] == "incomplete":
         return ["the checks at %s didn't run %s" % (_short(state["sha"]), ", ".join(state["missing"]))]
@@ -260,23 +315,23 @@ def _evidence_recipe(f):
     return []
 
 
-def _evidence_failed(f):
+def _evidence_failed(f, table):
     state = _evidence(f)
     if state["state"] == "failed":
         return ["checks failed at %s: %s" % (_short(state["sha"]), ", ".join(state["failed"]))]
     return []
 
 
-def _no_checks(f):
+def _no_checks(f, table):
     return ["no checks are defined for this repo"] if _evidence(f)["state"] == "no_checks" else []
 
 
-def _review_findings(f):
+def _review_findings(f, table):
     n = f["review"]["open_medium_high"]
     return ["the review has %d unresolved medium or high finding%s" % (n, "" if n == 1 else "s")] if n > 0 else []
 
 
-def _still_running(f):
+def _still_running(f, table):
     waiting = []
     pending = [c["name"] for c in f["pr"]["checks"] if c["state"] == "pending"]
     if pending:
@@ -288,12 +343,107 @@ def _still_running(f):
     return ["waiting for %s" % ", ".join(waiting)] if waiting else []
 
 
+def _type(f, table):
+    if f["type"] in ASKED_TYPES:
+        return ["the work is a %s change, so a person decides" % f["type"]]
+    return []
+
+
+def _ui(f, table):
+    if "ui" in f["surfaces"]:
+        return ["the work changes what is seen or how the interface is used, so a person sees it"]
+    return []
+
+
+def _hooks_settings(f, table):
+    hit = [p for p in _touched(f) if globs.matches_any(p, HOOKS_SETTINGS)]
+    return ["it edits hooks or settings: %s" % _cut(hit)] if hit else []
+
+
+def _protected_paths(f, table):
+    protected = list(table["default_protected_paths"]) + f["project"]["protected_paths"]
+    hit = [p for p in _touched(f) if globs.matches_any(p, protected)]
+    return ["it touches protected paths: %s" % _cut(hit)] if hit else []
+
+
+def _production_pattern(command):
+    """The pattern of a command's words, in order, split by any blanks; not inside a longer word or path before it, and when
+    it ends in a word character, not at the start of a longer one."""
+    words = command.split()
+    tail = r"(?![\w-])" if re.match(r"\w", words[-1][-1]) else ""
+    return re.compile(r"(?<![\w./-])" + r"\s+".join(re.escape(w) for w in words) + tail)
+
+
+def _irreversible(f, table):
+    production = f["project"]["production"]
+    reasons = []
+    base = f["pr"]["base"]
+    if base and base in production["branches"]:
+        reasons.append("the pull request is for %s, a production branch" % base)
+    patterns = [(c.strip(), _production_pattern(c)) for c in production["commands"]
+                if c.strip() and not c.strip().startswith("mcp__")]
+    found = []
+    for c in f["pr"]["changed_files"]:
+        for sign, text in _patch_lines(c.get("patch") or ""):
+            if sign != "+":
+                continue
+            for command, pattern in patterns:
+                hit = "%s (%s)" % (command, c["path"])
+                if pattern.search(text) and hit not in found:
+                    found.append(hit)
+    if found:
+        reasons.append("it adds a production command: %s" % _cut(found))
+    return reasons
+
+
+def _outside_plan(f, table):
+    plan = f["plan_files"]
+    if not plan:
+        return ["the plan names no files, so nothing can be checked against it and a person looks"]
+    outside = []
+    for c in f["pr"]["changed_files"]:
+        p = c["path"]
+        if p.startswith(state.PLAN_DIR + "/") or globs.matches_any(p, plan) or p in outside:
+            continue
+        outside.append(p)
+    return ["it changes files outside the plan: %s" % _cut(outside)] if outside else []
+
+
+def _weakened_assertions(f, table):
+    weakened, blind = [], []
+    for c in f["pr"]["changed_files"]:
+        if not any(globs.matches_any(p, TEST_FILES) for p in (c["path"], c.get("previous_path") or "")):
+            continue
+        if not c.get("patch"):
+            blind.append(c["path"])
+            continue
+        count = {"+": 0, "-": 0}
+        for sign, text in _patch_lines(c["patch"]):
+            if ASSERTION.search(text):
+                count[sign] += 1
+        if count["-"] > count["+"]:
+            weakened.append("%s (-%d +%d)" % (c["path"], count["-"], count["+"]))
+    reasons = []
+    if weakened:
+        reasons.append("it removes more assertion lines than it adds in tests: %s" % _cut(weakened))
+    if blind:
+        reasons.append("it changes test files with no patch to compare: %s" % _cut(blind))
+    return reasons
+
+
 CHECKS = {
     "review-label": _review_label,
     "agent": _agent,
+    "type": _type,
+    "ui": _ui,
     "ci-failed": _ci_failed,
     "conflict": _conflict,
     "trusted-edit": _trusted_edit,
+    "hooks-settings": _hooks_settings,
+    "protected-paths": _protected_paths,
+    "irreversible": _irreversible,
+    "outside-plan": _outside_plan,
+    "weakened-assertions": _weakened_assertions,
     "evidence-head": _evidence_head,
     "evidence-dirty": _evidence_dirty,
     "evidence-recipe": _evidence_recipe,
@@ -315,9 +465,12 @@ def load_table(path=TABLE):
         raise TableError("cannot read the rule table %s: %s" % (path, e.strerror or e))
     except ValueError as e:
         raise TableError("the rule table %s is not JSON: %s" % (path, e))
-    if not isinstance(data, dict) or set(data) != {"rules", "disabled"} or not isinstance(data["rules"], list) \
-            or not isinstance(data["disabled"], list):
-        raise TableError("the rule table %s is {\"rules\": [...], \"disabled\": [...]}" % path)
+    if not isinstance(data, dict) or set(data) != {"rules", "disabled", "default_protected_paths"} \
+            or not isinstance(data["rules"], list) or not isinstance(data["disabled"], list):
+        raise TableError("the rule table %s is {\"rules\": [...], \"disabled\": [...], \"default_protected_paths\": [...]}" % path)
+    defaults = data["default_protected_paths"]
+    if not isinstance(defaults, list) or not all(isinstance(g, str) and g for g in defaults):
+        raise TableError("default_protected_paths of %s is a list of globs, got %r" % (path, defaults))
     seen = []
     for row in data["rules"]:
         if not isinstance(row, dict) or set(row) != {"id", "outcome"} or not isinstance(row["id"], str):
@@ -351,7 +504,7 @@ def decide(facts, table=None):
     for rule in table["rules"]:
         if rule["id"] in disabled:
             continue
-        found = ["%s: %s" % (rule["id"], text) for text in CHECKS[rule["id"]](facts)]
+        found = ["%s: %s" % (rule["id"], text) for text in CHECKS[rule["id"]](facts, table)]
         (reasons if rule["outcome"] == "handover" else waiting).extend(found)
     if reasons:
         return {"decision": "handover", "would_merge": False, "reasons": reasons}
