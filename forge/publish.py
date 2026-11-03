@@ -2,7 +2,9 @@
 
 `forge check-public` scans text for what must not be published. Four sources, one per
 git moment: the staged files (pre-commit), a commit message file (commit-msg), a range of
-commits (pre-push) and the whole engine tree (CI, the merge gate).
+commits (pre-push) and the whole engine tree (CI, the merge gate). With `--root DIR` the
+files and commits are those of another repository (`--all` is then every file it tracks, the
+engine's allowlist not applied) and the lists are still this checkout's two.
 
 Two lists run together:
   * the public list, below: home paths, email addresses, private IPv4 ranges, tailnet host
@@ -193,8 +195,9 @@ def scan(path, data, deny):
     return out
 
 
-def git(args, check=True, binary=False):
-    r = subprocess.run(["git", "-C", lib.ROOT] + args, capture_output=True, text=not binary)
+def git(args, check=True, binary=False, root=None):
+    """git in `root`, else in this checkout."""
+    r = subprocess.run(["git", "-C", root or lib.ROOT] + args, capture_output=True, text=not binary)
     if check and r.returncode:
         err = r.stderr if not binary else r.stderr.decode("utf-8", "replace")
         raise CheckError("git %s: %s" % (" ".join(args[:3]), err.strip()))
@@ -219,10 +222,13 @@ def nul_list(out):
     return [p for p in out.split("\0") if p]
 
 
-def engine_files():
+def engine_files(root=None):
     """The files check-public --all covers. With one history that holds everything (before the split),
-    the allowlist picks the engine's; with two, the engine history tracks the engine and nothing else."""
-    files = nul_list(git(["ls-files", "-c", "-z"]))
+    the allowlist picks the engine's; with two, the engine history tracks the engine and nothing else.
+    Another repository (`root`) has no allowlist of forge's: every file it tracks."""
+    files = nul_list(git(["ls-files", "-c", "-z"], root=root))
+    if root:
+        return files
     allow = os.path.join(lib.ROOT, ALLOWLIST)
     if os.path.exists(allow) and not os.path.isdir(os.path.join(lib.ROOT, DATA_GIT)):
         out = set(nul_list(git(["ls-files", "-c", "-i", "-z", "--exclude-from=" + allow])))
@@ -230,15 +236,15 @@ def engine_files():
     return files
 
 
-def source_staged():
+def source_staged(root=None):
     return [("", p, ("blob", sha)) for _, sha, p in raw_entries(git(["diff", "--cached", "--raw", "-z", "--no-renames",
-                                                                      "--diff-filter=ACMR"]))], 0
+                                                                      "--diff-filter=ACMR"], root=root))], 0
 
 
-def source_all():
+def source_all(root=None):
     items = []
-    for p in engine_files():
-        full = os.path.join(lib.ROOT, p)
+    for p in engine_files(root):
+        full = os.path.join(root or lib.ROOT, p)
         if os.path.islink(full):
             items.append(("", p, ("bytes", os.readlink(full).encode())))
         elif os.path.isfile(full):
@@ -246,16 +252,16 @@ def source_all():
     return items, 0
 
 
-def source_range(spec):
+def source_range(spec, root=None):
     m = re.match(r"^0+\.\.(.+)$", spec)
     args = [m.group(1), "--not", "--remotes"] if m else [spec]
-    revs = git(["rev-list", "--reverse"] + args).split()
+    revs = git(["rev-list", "--reverse"] + args, root=root).split()
     items = []
     for c in revs:
         tag = c[:7]
-        items.append((tag, "(message)", ("bytes", git(["log", "-1", "--format=%B", c], binary=True))))
+        items.append((tag, "(message)", ("bytes", git(["log", "-1", "--format=%B", c], binary=True, root=root))))
         for _, sha, p in raw_entries(git(["diff-tree", "-r", "--raw", "-z", "--no-renames", "--no-commit-id", "--root",
-                                          "--diff-filter=ACMR", c])):
+                                          "--diff-filter=ACMR", c], root=root)):
             items.append((tag, p, ("blob", sha)))
     return items, len(revs)
 
@@ -271,33 +277,37 @@ def source_message(path):
     return [("", "(message)", ("bytes", b"\n".join(lines)))], 0
 
 
-def read(src):
+def read(src, root=None):
     kind, v = src
     if kind == "bytes":
         return v
     if kind == "file":
         with open(v, "rb") as f:
             return f.read()
-    return git(["cat-file", "blob", v], binary=True)
+    return git(["cat-file", "blob", v], binary=True, root=root)
 
 
 def cmd_check_public(a):
     try:
+        # --root: another repository's files and commits, scanned with this checkout's two lists.
+        root = os.path.abspath(a.root) if a.root else None
+        if root and not os.path.isdir(root):
+            raise CheckError("--root %s is not a directory" % a.root)
         deny = load_deny(lib.ROOT)
         if a.staged:
-            items, ncommits = source_staged()
+            items, ncommits = source_staged(root)
         elif a.all:
-            items, ncommits = source_all()
+            items, ncommits = source_all(root)
         elif a.message:
             items, ncommits = source_message(a.message)
         else:
-            items, ncommits = source_range(a.range)
+            items, ncommits = source_range(a.range, root)
         cache, hits, bad_files = {}, [], set()
         for tag, path, src in items:
             key = (src[1], path) if src[0] == "blob" else None  # a range names one blob in many commits
             found = cache.get(key) if key else None
             if found is None:
-                found = scan(path, read(src), deny)
+                found = scan(path, read(src, root), deny)
                 if key:
                     cache[key] = found
             label = (tag + ":" if tag else "") + path
