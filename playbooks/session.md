@@ -7,15 +7,15 @@
 
 Version: 1
 
-One supervised workflow carries every piece of work done with the owner in the chat. Its first step is fixed by the kind of work and its other steps switch on by condition; only the factory, the trivial change and the weekly improvement have workflows of their own. This file is the source of truth for it: every node of the owner's tree and every arrow out of it has a block below, with the rules of that step, and a change to the workflow changes its block in the same job.
+One supervised workflow carries every piece of work done with the owner in the chat. Its first step is fixed by the kind of work and its other steps switch on by condition; only the factory and the weekly improvement have workflows of their own. This file is the source of truth for it: every node of the owner's tree and every arrow out of it has a block below, with the rules of that step, and a change to the workflow changes its block in the same job.
 
 ## Rules for the whole workflow
 
 - Only the orchestrator talks with the owner. An agent that needs an answer returns the question and the orchestrator asks it; an agent that talks to the owner answers a question nobody framed.
 - Every agent starts from the same shared base context, which a hook hands it. Its brief adds its own part only and does not send it to read the shared documents again. The brief also carries the absolute paths of `context.md` and `decisions.tsv` and asks for a short return with a path (the orchestrator keeps its own context small so that it does not compact before the post-mortem).
-- No model is named in any text. The model of each launch comes from `fwx model <role> <size>`, and every launch states it.
+- No model is named in any text. The model of each launch comes from `fwx model <role> <size>`, and every launch states it. `fwx playbooks check` fails on a model name in any playbook.
 - A dead agent, an empty return or a missing file is a failure to report, never "no findings": a critic that did not run has not cleared the work.
-- One file has one writer, and the block that lists a file under Writes is that writer. The orchestrator writes `context.md`; the `decisions` agent alone writes `decisions.tsv` and every block that records an answer hands it to that agent; `audit.tsv` is written by the scripts, not by a block.
+- One file has one writer, and the block that lists a file under Writes is that writer. The orchestrator writes `context.md`; the `decisions` agent alone writes `decisions.tsv` and every block that records an answer hands it to that agent; `audit.tsv` is written by the scripts, not by a block. `fwx playbooks check` fails when two blocks list the same file.
 - The orchestrator reads no long file or investigation by hand: an agent reads it and returns paths and counts. Before a heavy step and before a wave it looks at `fwx budget --json`; a tight week is a one-line warning, never a stop.
 - What goes back to the discuss goes back by one rule, given once at the discuss block.
 
@@ -24,7 +24,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** -
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** Every piece of work starts as a message in a chat; nothing is classified yet and no phase exists. The first reader is the orchestrator, who reads before it decides what the message is.
+- **Does:** Every piece of work starts as a message in a chat; nothing is classified yet and no phase exists.
 - **Exits:**
   - to n_GC_L: the message reaches the orchestrator
 
@@ -50,7 +50,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** -
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** The orchestrator classifies the request by what the reading found, not by how the message was worded: work on the project, improving the system, a trivial change, or resuming. A request that the reading showed to be larger than it looked is classified at its real size.
+- **Does:** The orchestrator classifies the request by what the reading found, not by how the message was worded: work on the project, improving the system, a trivial change, or resuming.
 - **Exits:**
   - to n_L4: work on the project
   - to n_CX_W: improve the system, or a new model comes out; it continues in the weekly improvement cycle
@@ -63,7 +63,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Writes:** decisions.tsv, research/, demo/
 - **Invokes:** skill fwx:discuss
 - **Does:** The orchestrator finds out what the owner wants, asking in numbered rounds, and decides UI by demos; the `decisions` agent writes each decision to `decisions.tsv`, a `researcher` writes each investigation to `research/`, and a `demo` agent writes the demo pages to `demo/`. A fact that can be looked up goes to a researcher without blocking the round. Whether the work is UI is judged by its nature (what a person sees or uses), not by file extension, and is recorded as an assumption the owner confirms at the approval. The orchestrator proposes the demo and the owner confirms: with a project command that starts the app with seeded data and captures it, the demo runs in the app, otherwise it is the discuss's HTML page, and a UI change always returns to that page. If the topic does not fit one session the orchestrator proposes splitting it into phases before planning. If the owner cancels, `fwx state cancel` deletes the phase folder.
-  Return to the discuss is one explicit edge, taken from the critique, from the review of a part and from the owner's review of the UI walk: the orchestrator proposes it in one line, the owner confirms, the `decisions` agent writes the changed decision (superseding the old row), `fwx stage <phase> discuss --why "<from where>: <reason>"` moves the stage, and the discuss opens at the first check that says what came back and why, with no new gather context.
+  Return to the discuss is one explicit edge, taken from the pre-mortem, from the owner's decision on the post-mortem, and from the owner's review of a part (UI walk fixes included): the orchestrator proposes it in one line, the owner confirms, the `decisions` agent writes the changed decision (superseding the old row), `fwx stage <phase> discuss --why "<from where>: <reason>"` moves the stage, and the discuss opens at the first check that says what came back and why, with no new gather context.
 - **Exits:**
   - to n_L5: every decision is recorded and the orchestrator gives the strong playback
 
@@ -120,7 +120,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** discuss
 - **Writes:** context.md
 - **Invokes:** nothing
-- **Does:** Runs once the owner has approved and has answered the factory question, before the pre-mortem. The orchestrator rewrites `context.md` with its sections (the intent, what success means in words, the surfaces, the approved UI, the research); the surfaces carry `ui` when the work is UI by its nature, not by file extension, so a typo in a component file does not carry it and a visible change in a plain script does. With `decisions.tsv` complete it hands the phase to the session. After this neither file changes except through the return to the discuss.
+- **Does:** Runs once the owner has approved and has answered the factory question, before the pre-mortem. The orchestrator rewrites `context.md` with its sections (the intent, what success means in words, the surfaces, the approved UI, the research); the surfaces carry `ui` by the rule at the discuss block. With `decisions.tsv` complete it hands the phase to the session. After this neither file changes except through the return to the discuss.
 - **Exits:** none
 
 ### n_C1 · Light pre-mortem
@@ -147,7 +147,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** postmortem
 - **Writes:** postmortem.md
 - **Invokes:** skill fwx:post-mortem
-- **Does:** A critic that did not write the plan: it asks whether the plan solves the problem and respects the size, how each criterion will be verified and measured and whether it can come out false, and whether every decision row the owner chose or approved is kept. What `fwx plan check` already checked is not repeated. A doubt is settled by running it; one it cannot settle is written down as unproven and is not an objection. It lists what the owner must provide before execution and what it looked at and found right. Verdict `ok`, `objections` or `back-to-discuss`, with evidence per finding.
+- **Does:** A critic that did not write the plan: it asks whether the plan solves the problem and respects the size, how each criterion will be verified and measured and whether it can come out false, and whether every decision row the owner chose or approved is kept. What `fwx plan check` already checked is not repeated. A doubt is settled by running it; one it cannot settle is written down as unproven and is not an objection. It lists what the owner must provide before execution and what it looked at and found right. Verdict `ok`, `objections` or `back-to-discuss`, with evidence per finding; `ok` with no findings is a valid result.
 - **Exits:**
   - to n_C4: the verdict is written
 
@@ -168,7 +168,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** postmortem
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** The orchestrator shows one message: size, parts and agents, the verdict and the numbered objections. The owner chooses: go ahead (execute in this session, or in a new one that continues from the files); accept the objections, which the `decisions` agent records and a new planner then plans against; or say the intention was misunderstood, which returns to the discuss.
+- **Does:** The orchestrator shows one message: size, parts and agents, the verdict and the numbered objections. The owner chooses: go ahead despite the objections (execute in this session, or in a new one that continues from the files); accept the objections, and a new planner plans against them; or say the intention was misunderstood, which returns to the discuss. The `decisions` agent records whichever of the three he chooses.
 - **Exits:**
   - to p_PREP: go ahead
   - loop n_C2: he accepts the objections: a new plan
@@ -197,7 +197,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** phase-review
 - **Writes:** nothing
 - **Invokes:** command fwx walk review-page
-- **Does:** The review blocks only when the part touches UI or the plan marks it; otherwise the next part starts and an objection that arrives later is recorded on the spot as a correction of that part. With UI walk fixes, each fix is one item on the verdict page, yes or no with a note, and each rejection is a decision the `decisions` agent records so the next walk does not propose it again; the rejected change is reverted. A correction is run again as a correction of the part, and `fwx rounds <part> --reset "<text>"` restarts the attempts (a correction by the owner is a fresh start).
+- **Does:** When the review does not block, the next part starts and an objection that arrives later is recorded on the spot as a correction of that part. With UI walk fixes, each fix is one item on the verdict page, yes or no with a note, and each rejection is a decision the `decisions` agent records so the next walk does not propose it again; the rejected change is reverted. A correction is run again as a correction of the part, and `fwx rounds <part> --reset "<text>"` restarts the attempts (a correction by the owner is a fresh start).
 - **Exits:**
   - to n_L9: it is fine, or it does not block: a review blocks only if the part touches UI or the plan marks it
   - loop n_C5: he corrects, or rejects fixes: the attempts start again
@@ -208,7 +208,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Stage:** phase-review
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** The orchestrator counts the parts of the plan. The phase is done when no part has a restart of its attempts after its last phase-review row. While parts remain it checks `fwx budget --json` and launches the next part.
+- **Does:** The orchestrator counts the parts of the plan. The phase is done when every part has been reviewed and the owner has asked for no correction since. While parts remain it checks `fwx budget --json` and launches the next part.
 - **Exits:**
   - loop n_C5: yes: the next part
   - to p_CLOSE: no
