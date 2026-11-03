@@ -1,22 +1,24 @@
 # Execute
 <!-- copied-from: marshal-factory playbooks/factory.md @999ad209598517a4c826073b5a0edc2a4097a4fa (the three rules of "Standing rules" named in the section below, each line as written there) -->
-<!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/orchestrate.md, worktree-cleanup.md and bug-fix.md @36885ea (the shape: one line saying who owns what, short steps, the units delegated with a complete brief) -->
+<!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/orchestrate.md @36885ea (the shape: one line saying who owns what, the units delegated with a complete brief) -->
+<!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/worktree-cleanup.md @36885ea (short numbered steps; cleanup that lists what it keeps) -->
+<!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/bug-fix.md @36885ea (the failing test first, in its own commit) -->
 <!-- Differs from the referents: one block per node of the tree, because `fwx playbooks check` compares them; cleanup never forces or deletes by hand (the referent prunes with `--force` after a human decision; here `fwx wave cleanup` removes only merged worktrees); the gate is a script, not the coordinator's judgment. -->
 
 Version: 1
 
-This playbook says what each node of the execution stretch of the workflow does, who does it and where it leads. The `execute` workflow (`/fwx:execute`) runs it from the output of `fwx wave prepare`; the orchestrator reads it to know what a returned status means. The orchestrator writes no code: executors do, each in a worktree of its own, and the orchestrator acts on what the commands print.
+This playbook says what each node of the execution stretch of the workflow does, who does it and where it leads. The `execute` workflow (`/fwx:execute`) runs it from the output of `fwx wave prepare`; the orchestrator reads it to know what a returned status means. The orchestrator writes no code: it acts on what the commands print.
 
 ## Standing rules
 
-Three rules are copied from marshal's factory playbook as written. Where they name `factory-verify` or `report_stage`, read `fwx verify` and the `failed` status that `execute` returns. The line under each rule names what enforces it here.
+Three rules are copied from the factory playbook as written. Where they name `factory-verify` or `report_stage`, read `fwx verify` and the `failed` status that `execute` returns. The line under each rule names what enforces it here.
 
 - **Clean up only what you started.** Other runs and the operator's own servers share this machine. Start a dev server on a free port, remember its PID, and stop that PID before the turn ends. Never `pkill` or `killall` by name, and never stop a process you did not start.
   Enforced by `fwx wave cleanup --run R`, which removes only the worktrees of its own run, lists in `leftover` the processes still inside them and kills none; the walk's browsers and app are closed by `fwx walk down`.
 - **Prove the commit you ship.** Before you report `pr`, run `factory-verify` in the worktree on the final pushed commit, with nothing uncommitted. In a sandbox it is on `PATH`; elsewhere run the command the `report_stage` reply for `verifying` names (`bun <factory root>/hooks/verify.ts`). It runs the repo's checks at `HEAD` and reports exit codes and output for that exact commit. The factory merges only a head whose checks passed there, and runs them itself when it can. Uncommitted changes make the run count for nothing. If you push again, run it again.
   Enforced by `fwx verify`, which runs the recipe on a clean tree at the exact commit, writes the `evidence` row with that SHA and exits 2 when it cannot prove the commit (dirty tree, moved HEAD); `fwx wave summary --run R` reports `gate: fail` unless the last evidence row is green for the head.
 - **Giving up means `failed`.** If you cannot finish (three fix rounds on the same failure, a broken toolchain, a dead end), call `report_stage` with `stage: "failed"` and the reason in `summary`, then end the turn.
-  Enforced by `fwx rounds` and `fwx wave fix-round`: the three rounds are counted per job, not per failure, because when different things keep failing the task is hard and needs the owner. `fix-round` is the one command that spends a round and exits 1 when three are spent; `execute` then returns `failed`.
+  Enforced by `fwx rounds` and `fwx wave fix-round`, which count the three rounds per job, not per failure: when different things keep failing the task is hard and needs the owner. Only `fix-round` spends a round, and if this failure is the round (verify wrote it) it spends no second; it exits 1 only when three were spent before this failure, and `execute` then returns `failed`.
 
 ## Rules of the stretch
 
@@ -62,7 +64,7 @@ Three rules are copied from marshal's factory playbook as written. Where they na
 - **Stage:** executing
 - **Writes:** audit.tsv
 - **Invokes:** command fwx verify
-- **Does:** `fwx verify --json` runs the project's recipe once on a clean tree and appends an `evidence` row with the SHA; exit 0 is a pass, 1 a failing check, 2 that it could not prove the commit. A diff that edits the checks recipe or CI stops at the owner without spending a round, because it changes what counts as passing; a diff on a protected path continues to the review and returns `needs-owner`, never `done`.
+- **Does:** `fwx verify --json` runs the project's recipe once on a clean tree and appends an `evidence` row with the SHA; exit 0 is a pass, 1 a failing check, 2 that it could not prove the commit. A diff that edits the checks recipe, CI or a protected path goes to the owner without spending a round, because it changes what counts as passing or touches what needs the owner's judgment: the session asks him, the factory ends `needs-owner`.
 - **Exits:**
   - to n_C9: the checks pass
   - to n_C8: a check fails
@@ -83,10 +85,10 @@ Three rules are copied from marshal's factory playbook as written. Where they na
 
 ### n_C8 · Are there fix attempts left? (3 per job)
 - **Who:** script fwx wave fix-round
-- **Stage:** -
+- **Stage:** executing
 - **Writes:** audit.tsv
 - **Invokes:** command fwx wave fix-round
-- **Does:** `fix-round` spends one of the job's three rounds with `fwx rounds --use`, unless the last row of `audit.tsv` is the red evidence of this head, which already counted as a round. A fixer receives the failure and its work returns through `fwx wave integrate`; a conflict goes to the executor's conflict resolver instead, on a new branch from the tip of the phase branch. The node has no stage of its own: the fix runs in the stage of the node that sent it here (executing, reviewing or ui-walk).
+- **Does:** `fix-round` spends one of the job's three rounds with `fwx rounds --use`, unless the last row of `audit.tsv` is the red evidence of this head: this failure is the round (verify wrote it), so no second is spent. It exits 1 only when three were spent before this failure. A fixer receives the failure and its work returns through `fwx wave integrate`; a conflict goes to the executor's conflict resolver instead, on a new branch from the tip of the phase branch.
 - **Exits:**
   - loop n_C5: attempts left, fix
   - to n_Z4c: 3 attempts spent, factory
@@ -97,7 +99,7 @@ Three rules are copied from marshal's factory playbook as written. Where they na
 - **Stage:** reviewing
 - **Writes:** nothing
 - **Invokes:** skill ponytail:ponytail-review
-- **Does:** The reviewer, and the security-reviewer when the plan asks for it or the diff touches a protected path, read the diff without a worktree; "no findings" is a valid result. Each finding goes to one review-verifier, the cheap role, which returns `fix`, `consider`, `note` or `dismiss`; only `fix` is fixed, one commit per finding with a `Fwx-Finding` trailer, merged with `fwx wave integrate --findings`, and the diff of the fix is reviewed again. A reviewer that returns `null` or an empty `looked_at` is relaunched once, and a second miss ends the run `failed`.
+- **Does:** The reviewer, and the security-reviewer when the plan asks for it, read the diff without a worktree; "no findings" is a valid result. Each finding goes to one review-verifier, the cheap role, which sorts it into one of the four groups of the next block; only `fix` is fixed, one commit per finding with a `Fwx-Finding` trailer, merged with `fwx wave integrate --findings`, and the diff of the fix is reviewed again. A reviewer that returns `null` or an empty `looked_at` is relaunched once, and a second miss ends the run `failed`.
 - **Exits:**
   - loop n_C8: fix: launches the fix and spends a round
   - to n_C10: no finding is left to fix
@@ -113,7 +115,7 @@ Three rules are copied from marshal's factory playbook as written. Where they na
 
 ### p_CLEAN · Clean worktrees and browsers
 - **Who:** script fwx wave cleanup
-- **Stage:** -
+- **Stage:** executing
 - **Writes:** nothing
 - **Invokes:** command fwx wave cleanup
 - **Does:** Runs in a `finally`, so also after a failure. `fwx wave cleanup --run R` removes the merged worktrees of the run with `git worktree remove` (no `--force`) and `git branch -d`, keeps and lists in `kept` any that is locked, dirty or unmerged, and lists in `leftover` the processes still inside a worktree of the run without killing them.
