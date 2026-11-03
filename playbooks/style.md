@@ -1,5 +1,5 @@
 <!-- referent: open-gsd/gsd-core gsd-core/references/ui-brand.md @1.18.0 (the npm package version; the package is published without a commit pin) -->
-<!-- Differs from the referent: the banner reads `### fwx ▸ <STAGE>` and its stage names are this repo's stages; colour per agent role and the `<role>:<id>` label are new; the spawn line keeps the referent's "runs in a subagent" phrase. -->
+<!-- Differs from the referent: banner is "### fwx ▸ <STAGE>" with this repo's stage names; colour per role and the "<role>:<id>" label are new (the referent has neither); progress word is "Units:", not "Tasks:"; no progress bar, "⚡" or "🎉" (a gauge is a fixed-width run); the checkpoint panel is one "→ Reply" line; the spawn line keeps "runs in a subagent". -->
 
 # Style: what the owner sees in the terminal
 
@@ -8,6 +8,8 @@ You own how every agent is coloured, labelled and announced. The owner reads the
 ## Colour per role
 
 Each agent definition carries a `color` field with one of the eight Claude Code colours. One colour per family, so the colour alone tells a family apart. Pink belongs to the talk family only: a pink row is an agent that is talking with the owner or waiting for his answer, so nothing else may use it.
+
+No check enforces these; they are a convention.
 
 | Family | Colour | Roles |
 |---|---|---|
@@ -28,9 +30,11 @@ A workflow's `agent()` call shows its colour only when it names the agent defini
 
 A workflow's `meta.phases` titles and its `phase()` calls use the stage name exactly as `data/stages.json` spells it (`executing`, `ui-walk`, `phase-review`), so the progress tree, `fwx stage` and the audit log show one name.
 
+No check enforces this; it is a convention.
+
 ## Labels
 
-An agent's label is `<role>:<id>`: the role key as in `ROLES`, then the plan unit it works on (`executor:u3`). A role with no unit uses the round (`post-mortem:r2`). Lower case, one colon, no spaces.
+An agent's label is `<role>:<id>`: the role key as in `ROLES`, then the plan unit it works on (`executor:u3`). A role with no unit uses the round (`post-mortem:r2`). The role is lower case and the id keeps its case (`planner:T3`); one colon, no spaces.
 
 ## `log()` lines
 
