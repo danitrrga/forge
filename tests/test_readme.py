@@ -163,7 +163,7 @@ block_line = re.search(r"^python3 bin/fwx help.*\n", real, re.M).group(0)
 control("an invented subcommand", real.replace(block_line, block_line + "python3 bin/fwx teleport\n", 1),
         "named but not in the code")
 control("a subcommand missing from the block", real.replace(block_line, "", 1), "missing from the README's code block")
-control("an invented subcommand in prose", real + "\nRun `fwx statusline` first.\n", "named but not in the code")
+control("an invented subcommand in prose", real + "\nRun `fwx teleport` first.\n", "named but not in the code")
 control("a dead path", real + "\nSee `lib/fwx/no_such_module.py`.\n", "paths named and missing")
 control("a constant that does not exist", real + "\nSet `NO_SUCH_TABLE`.\n", "never assigned")
 control("a README with no path", re.sub(r"`[^`\s]*/[^`\s]*`", "`x`", real), "read zero paths")

@@ -10,6 +10,8 @@ marketplace defined here) and the `fwx` command it ships.
 python3 bin/fwx test    # runs every tests/test_*.py and summarises them
 python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
+python3 bin/fwx statusline    # the status-bar line, and saves the session budget
+python3 bin/fwx budget    # context and quota left
 ```
 
 `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
