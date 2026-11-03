@@ -61,7 +61,7 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 
 ### n_C7 · Do the checks pass at the exact commit?
 - **Who:** script fwx verify
-- **Stage:** executing
+- **Stage:** reviewing
 - **Writes:** audit.tsv
 - **Invokes:** command fwx verify
 - **Does:** `fwx verify --json` runs the project's recipe once on a clean tree and appends an `evidence` row with the SHA; exit 0 is a pass, 1 a failing check, 2 that it could not prove the commit. A diff that edits the checks recipe, CI or a protected path goes to the owner without spending a round, because it changes what counts as passing or touches what needs the owner's judgment: the session asks him, the factory ends `needs-owner`.
@@ -75,7 +75,7 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 
 ### n_C7F · The orchestrator tries to fix it: dirty tree, environment or a recipe that does not run
 - **Who:** orchestrator
-- **Stage:** executing
+- **Stage:** reviewing
 - **Writes:** nothing
 - **Invokes:** nothing
 - **Does:** Read why `fwx verify` exited 2 and fix the cause (clean the tree, install the missing tool, repair the recipe command) without asking. No round is spent, because no code was judged; ask the owner only when the cause lies outside the project or needs a choice.
@@ -85,10 +85,10 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 
 ### n_C8 · Are there fix attempts left? (3 per job)
 - **Who:** script fwx wave fix-round
-- **Stage:** executing
+- **Stage:** -
 - **Writes:** audit.tsv
 - **Invokes:** command fwx wave fix-round
-- **Does:** `fix-round` spends one of the job's three rounds with `fwx rounds --use`, unless the last row of `audit.tsv` is the red evidence of this head: this failure is the round (verify wrote it), so no second is spent. It exits 1 only when three were spent before this failure. A fixer receives the failure and its work returns through `fwx wave integrate`; a conflict goes to the executor's conflict resolver instead, on a new branch from the tip of the phase branch.
+- **Does:** `fix-round` spends one of the job's three rounds with `fwx rounds --use`, unless the last row of `audit.tsv` is the red evidence of this head: this failure is the round (verify wrote it), so no second is spent. It exits 1 only when three were spent before this failure. A fixer receives the failure and its work returns through `fwx wave integrate`; a conflict goes to the executor's conflict resolver instead, on a new branch from the tip of the phase branch. The node has no stage of its own: it runs in the stage of the node that sent it here (executing, reviewing or ui-walk).
 - **Exits:**
   - loop n_C5: attempts left, fix
   - to n_Z4c: 3 attempts spent, factory
