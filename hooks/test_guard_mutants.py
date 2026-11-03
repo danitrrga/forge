@@ -512,6 +512,37 @@ MUTANTS = {
         # Rewritten in forge: the message says what to do instead.
         ('        deny("guard config: %s. Every call is refused until it is fixed; instead of retrying, "\n'
          '             "fix that file in forge or ask the user." % e)', "        return"),
+    # The consent window (1.1 U1a): the four named mutants first, then one per rule of the validator.
+    "consent: clave desconocida aceptada":
+        ('    unknown = sorted(set(obj) - set(allowed))\n    if unknown:', '    unknown = sorted(set(obj) - set(allowed))\n    if False:'),
+    "consent: config/gateway.json is not harness":
+        ('                   os.path.join(FORGE, "config", "gateway.json"), os.path.join(FORGE, "scripts", "consent"),\n', '                   os.path.join(FORGE, "scripts", "consent"),\n'),
+    "consent: scripts/consent is not harness":
+        ('                   os.path.join(FORGE, "config", "gateway.json"), os.path.join(FORGE, "scripts", "consent"),\n', '                   os.path.join(FORGE, "config", "gateway.json"),\n'),
+    "consent: adapter fuera de scripts/consent aceptado":
+        ('    if not real.startswith(folder + "/"):', "    if False:"),
+    "consent: the adapter's links and .. are not resolved":
+        ('    real = os.path.realpath(os.path.join(root, "scripts", "consent", "omarchy") if value == "omarchy"',
+         '    real = os.path.abspath(os.path.join(root, "scripts", "consent", "omarchy") if value == "omarchy"'),
+    "consent: the adapter folder matched by prefix (scripts/consent-evil passes)":
+        ('    if not real.startswith(folder + "/"):', "    if not real.startswith(folder):"),
+    "consent: timeout_s not checked":
+        ("        if isinstance(t, bool) or not isinstance(t, int) or t <= 0:", "        if False:"),
+    "consent: a rule's match not checked":
+        ('            if r["match"] not in CONSENT_MATCHES:', "            if False:"),
+    "consent: a rule without risks accepted":
+        ('            if not r["risks"]:', "            if False:"),
+    "consent: a repeated rule id accepted":
+        ('or r["id"] in seen:', ":"),
+    "consent: production's keys not checked":
+        ('        _only_keys("production", value, PRODUCTION_KEYS)', "        pass"),
+    "consent: production of the project's profile not checked":
+        ('        err = production_error(prof["production"])', "        err = None"),
+    "consent: the shallowest profile is the project's":
+        ("    return max(inside, key=lambda p: len(p[\"project_path\"])) if inside else None",
+         "    return min(inside, key=lambda p: len(p[\"project_path\"])) if inside else None"),
+    "consent: a bad configuration lets the call through":
+        ("        consent_error(str(e))\n    raw = sys.stdin.read()", "        return\n    raw = sys.stdin.read()"),
     # Round 9: a directory that holds a store (FORGE_BLOCK and FORGE_ALLOW 17).
     "directory operands: no command reads the directory it is given":
         ("if not hit and cmdname in DIR_READERS:", "if False:"),

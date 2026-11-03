@@ -25,6 +25,7 @@ does close, and the ones it does not are listed there too.
 Every check always ENFORCES. There is no off switch inside a tool call: the profile turns
 the guard off, and a command it refuses that the user wants run, the user runs himself.
 """
+import glob
 import io
 import json
 import os
@@ -1208,13 +1209,20 @@ HARNESS_DIRS = {os.path.join(PROJECT, d) for d in (".claude", ".gemini", ".git")
 # downstream agent could `sed -i` it. forge's live hooks/ and config/guard/ are found from this
 # file's own location, so a scratch copy of forge stays writable. ~/.codex/hooks.json is
 # Codex's ~/.claude/settings.json: forge writes the same user hooks into both (addition 6),
-# and a Bash rewrite of it would last until the next forge session regenerated it.
+# and a Bash rewrite of it would last until the next forge session regenerated it. The consent
+# window (--consent) runs in every session: config/gateway.json names the adapter it launches
+# and scripts/consent/ holds the adapters, so a Bash write to either would switch the window off.
 MACHINE_HARNESS = [os.path.join(FORGE, "hooks"), os.path.join(FORGE, "config", "guard"),
+                   os.path.join(FORGE, "config", "gateway.json"), os.path.join(FORGE, "scripts", "consent"),
                    os.path.join(HOME, ".codex", "hooks.json")]
 # The directories that hold it, counted as HARNESS_DIRS are: `rm -rf <forge>/config`.
 MACHINE_DIRS = {FORGE, os.path.join(FORGE, "config"), os.path.join(HOME, ".codex")}
 # A project's own harness paths, from its config file (harness_paths); set by main().
 PROJECT_HARNESS = []
+# Not here: gateway.json and consent. Every name added multiplies the alternatives of a glob target
+# (17 names a part, 19 would make `rm -rf a/*/*/*/x` 6859 of the 5000 the budget allows), so a glob
+# such as `config/gatew*` still reaches config/gateway.json unseen; a follow-up has to match globs
+# against MACHINE_HARNESS without adding names.
 # The names a glob in a target is matched against, without looking at the disk, so the
 # suite's empty scratch repo, CI and the live checkout all give the same answer.
 HARNESS_NAMES = (".claude", ".gemini", ".git", "hooks", "skills", "agents", "settings.json",
@@ -1951,7 +1959,7 @@ def project_config(argv):
     if not argv:
         return [], []
     if len(argv) != 2 or argv[0] != "--project":
-        raise ValueError("unknown arguments %r; the only ones are --project NAME" % argv)
+        raise ValueError("unknown arguments %r; the only ones are --project NAME, or --consent alone" % argv)
     name = argv[1]
     if not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$", name):
         raise ValueError("%r is not a project name" % name)
@@ -1993,6 +2001,164 @@ def project_config(argv):
     return secrets, harness
 
 
+# ------------------------------------------------------------------ the consent window
+#
+# `--consent` (the user-scope hook row, written when integrations.consent is on) runs only the consent
+# rules, never the core: it loads <forge>/config/gateway.json and the `production` of the profile of the
+# project the call runs in, validates both, and refuses EVERY call with CONSENT_ERROR when either is
+# invalid, as `--project` does for a bad config/guard/NAME.json. It never decides to ask a human on its
+# own authority from a half-read file. consent_config() and production_error() are the one definition of
+# what is valid: forge's lib.profile_error and `forge doctor` import them by path.
+CONSENT_TOP_KEYS = ("_doc", "consent", "notify")  # notify is the notice gateway's: not looked at here
+CONSENT_KEYS = ("adapter", "timeout_s", "rules")
+CONSENT_RULE_KEYS = ("id", "match", "label", "risks")
+CONSENT_MATCHES = ("production.branches", "production.commands")
+PRODUCTION_KEYS = ("branches", "commands")
+
+
+def _only_keys(where, obj, allowed):
+    unknown = sorted(set(obj) - set(allowed))
+    if unknown:
+        raise ValueError("%s has unknown key(s) %s; the keys are %s" % (where, unknown, sorted(allowed)))
+
+
+def _strings(where, items):
+    if not isinstance(items, list) or not all(isinstance(i, str) and i.strip() for i in items):
+        raise ValueError("%s is not a list of non-empty strings" % where)
+
+
+def production_error(value):
+    """None when `value` is a valid profile `production` ({"branches": [str], "commands": [str]}, both
+    optional, only those keys, every string non-empty), else what is wrong."""
+    try:
+        if not isinstance(value, dict):
+            raise ValueError('production is not an object {"branches": [...], "commands": [...]}')
+        _only_keys("production", value, PRODUCTION_KEYS)
+        for key in PRODUCTION_KEYS:
+            if key in value:
+                _strings("production.%s" % key, value[key])
+    except ValueError as e:
+        return str(e)
+    return None
+
+
+def consent_adapter(root, value):
+    """The adapter's real path. Only "omarchy" (scripts/consent/omarchy) or a path that, once its links
+    and `..` are resolved, lies inside <forge>/scripts/consent/ counts: Write and Edit do not pass through
+    the Bash guard, so any other path would let `adapter: /usr/bin/true` switch the window off."""
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("consent.adapter is not a non-empty string")
+    folder = os.path.realpath(os.path.join(root, "scripts", "consent"))
+    real = os.path.realpath(os.path.join(root, "scripts", "consent", "omarchy") if value == "omarchy"
+                            else os.path.join(root, value))
+    if not real.startswith(folder + "/"):
+        raise ValueError("consent.adapter outside scripts/consent: %r resolves to %s; use \"omarchy\" or a path "
+                         "inside %s" % (value, real, folder))
+    return real
+
+
+def consent_config(forge_root):
+    """The validated consent configuration of the forge at forge_root: {"adapter": real path, "timeout_s",
+    "rules", "notify", "profiles": [{"file", "project_path", "production"?}, ...]}. ValueError, with the
+    file in the message, when config/gateway.json is missing, unreadable or invalid. The profiles are only
+    loaded: a profile that does not parse is skipped, and its `production` is checked by production_error
+    for the project that uses it."""
+    root = os.path.realpath(forge_root)
+    path = os.path.join(root, "config", "gateway.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except Exception as e:
+        raise ValueError("%s cannot be read (%s)" % (path, e))
+    try:
+        if not isinstance(doc, dict):
+            raise ValueError("it is not a JSON object")
+        _only_keys("it", doc, CONSENT_TOP_KEYS)
+        c = doc.get("consent")
+        if not isinstance(c, dict):
+            raise ValueError("\"consent\" is missing or not an object")
+        _only_keys("consent", c, CONSENT_KEYS)
+        missing = [k for k in CONSENT_KEYS if k not in c]
+        if missing:
+            raise ValueError("consent lacks %s" % missing)
+        adapter = consent_adapter(root, c["adapter"])
+        t = c["timeout_s"]
+        if isinstance(t, bool) or not isinstance(t, int) or t <= 0:
+            raise ValueError("consent.timeout_s is not a positive integer: %r" % (t,))
+        rules = c["rules"]
+        if not isinstance(rules, list) or not rules:
+            raise ValueError("consent.rules is not a non-empty list")
+        seen = set()
+        for i, r in enumerate(rules):
+            where = "consent.rules[%d]" % i
+            if not isinstance(r, dict):
+                raise ValueError("%s is not an object" % where)
+            _only_keys(where, r, CONSENT_RULE_KEYS)
+            missing = [k for k in CONSENT_RULE_KEYS if k not in r]
+            if missing:
+                raise ValueError("%s lacks %s" % (where, missing))
+            if not isinstance(r["id"], str) or not r["id"].strip() or r["id"] in seen:
+                raise ValueError("%s.id is empty, not a string, or used by another rule: %r" % (where, r["id"]))
+            seen.add(r["id"])
+            if r["match"] not in CONSENT_MATCHES:
+                raise ValueError("%s.match %r is not one of %s" % (where, r["match"], list(CONSENT_MATCHES)))
+            if not isinstance(r["label"], str) or not r["label"].strip():
+                raise ValueError("%s.label is not a non-empty string" % where)
+            if not r["risks"]:
+                raise ValueError("%s.risks is an empty list: the window must say what can go wrong" % where)
+            _strings("%s.risks" % where, r["risks"])
+    except ValueError as e:
+        raise ValueError("%s: %s" % (path, e))
+    profiles = []
+    for f in sorted(glob.glob(os.path.join(root, "config", "profiles", "*.claude.json"))):
+        try:
+            with open(f, encoding="utf-8") as fh:
+                prof = json.load(fh)
+        except Exception:
+            continue
+        if isinstance(prof, dict) and isinstance(prof.get("project_path"), str) and prof["project_path"]:
+            entry = {"file": f, "project_path": os.path.realpath(prof["project_path"])}
+            if "production" in prof:
+                entry["production"] = prof["production"]
+            profiles.append(entry)
+    return {"adapter": adapter, "timeout_s": t, "rules": rules, "notify": doc.get("notify"), "profiles": profiles}
+
+
+def consent_profile(profiles, cwd):
+    """The profile of the project `cwd` is in: the one with the deepest project_path that contains it."""
+    cwd = os.path.realpath(cwd)
+    inside = [p for p in profiles if cwd == p["project_path"] or cwd.startswith(p["project_path"].rstrip("/") + "/")]
+    return max(inside, key=lambda p: len(p["project_path"])) if inside else None
+
+
+def consent_error(why):
+    """Refuses the call: stderr starts with CONSENT_ERROR, on one line, with the way back."""
+    sys.stderr.write("CONSENT_ERROR: %s. Every call is refused until it is fixed; instead of retrying or going "
+                     "around it, tell the user what you wanted to run. Fix: edit that file in forge (the Edit "
+                     "tool is free). To switch the window off: set integrations.consent to false in "
+                     "config/forge.json and run `forge sync --apply`, which removes the hook row.\n" % why)
+    sys.exit(2)
+
+
+def consent_main():
+    try:
+        cfg = consent_config(FORGE)
+    except ValueError as e:
+        consent_error(str(e))
+    raw = sys.stdin.read()
+    try:
+        payload = json.loads(raw) if raw else {}
+    except Exception:
+        payload = {}
+    cwd = payload.get("cwd") if isinstance(payload, dict) else None
+    prof = consent_profile(cfg["profiles"], cwd if isinstance(cwd, str) and cwd else PROJECT)
+    if prof and "production" in prof:
+        err = production_error(prof["production"])
+        if err:
+            consent_error("%s: %s" % (prof["file"], err))
+    # U1b and U1c: the rules, the request, the adapter and the log come here.
+
+
 SHELL_TOOLS = {"Bash", "run_shell_command", "shell"}
 FILE_TOOLS = {"Write", "Edit", "Read", "MultiEdit", "write_file", "replace", "read_file"}
 
@@ -2022,8 +2188,11 @@ def log_alert(severity, reason, detail):
 
 
 def main(argv=None):
+    args = sys.argv[1:] if argv is None else argv
+    if list(args) == ["--consent"]:
+        return consent_main()
     try:
-        secrets, PROJECT_HARNESS[:] = project_config(sys.argv[1:] if argv is None else argv)
+        secrets, PROJECT_HARNESS[:] = project_config(args)
     except ValueError as e:
         deny("guard config: %s. Every call is refused until it is fixed; instead of retrying, "
              "fix that file in forge or ask the user." % e)

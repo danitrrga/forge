@@ -558,6 +558,8 @@ KNOWN_GAPS = [
     # git commands that restore harness files without naming them, and a link to the repo.
     'git checkout db48fdda -- .',
     'ln -s $PWD /tmp/p && echo x > /tmp/p/.claude/hooks/guard_tool_use.py',
+    # A glob that names part of config/gateway.json or scripts/consent (see HARNESS_NAMES in the guard).
+    'echo x > %s' % GF('config', 'gatew*'),
     # forge: a quoted relative `.claude.json` is a suffix in forge's profile code, so
     # it needs `cd ~` first to be the store: the cd gap the owner accepted.
     "cd ~ && cat '.claude.json'",
@@ -1265,6 +1267,23 @@ FORGE_BLOCK = [
     ("jq .env cfg.json < .env.local", "credential store"),
     ("jq \".env\" cfg.json \"$(cat .env)\"", "credential store"),
     ("grep -n '\\.env' cfg.json < .env.local", "credential store"),
+    # 33. The consent window's configuration and adapter folder are harness (1.1 U1a): the hook row that
+    #     runs them is in every session, and `adapter` names an executable. Red before, against the guard
+    #     of ff74287: 11 of 11 "SHOULD BLOCK but rc=0: 'echo x > <forge>/config/gateway.json'" (and the
+    #     same for sed -i, cp, mv on it and on scripts/consent/omarchy, `rm -rf <forge>/scripts/consent`,
+    #     its `mv` and the `cd` form); the 6 ALLOW cases of this item passed already. A glob
+    #     (`config/gatew*`) is not covered: see the note under HARNESS_NAMES in the guard.
+    ("echo x > %s" % GF("config", "gateway.json"), "harness path"),
+    ("sed -i 's/120/9999/' %s" % GF("config", "gateway.json"), "harness path"),
+    ("cp /tmp/g.json %s" % GF("config", "gateway.json"), "harness path"),
+    ("mv /tmp/g.json %s" % GF("config", "gateway.json"), "harness path"),
+    ("echo x > %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("sed -i 's/exit 1/exit 0/' %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("cp /tmp/a.py %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("mv /tmp/a.py %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("rm -rf %s" % GF("scripts", "consent"), "harness path"),
+    ("mv %s /tmp/x" % GF("scripts", "consent"), "harness path"),
+    ("cd %s && echo x > config/gateway.json" % GF(), "harness path"),
 ]
 FORGE_ALLOW = [
     # 1. A downstream project's template is .env.sample, and 64 of its 200 credential-store refusals were
@@ -1703,6 +1722,14 @@ FORGE_ALLOW = [
     "jq 'del(.env) | walk(if type==\"string\" then \"<redacted>\" else . end)' .claude/settings.local.json",
     "jq '.env | keys' cfg.json",
     "grep -n '<.env>' notes.md",
+    # 33. Reading them is not a write, nor is writing next to them or a sibling file of the same
+    #     name stem (the folder test is on the path, not on its prefix).
+    "cat %s" % GF("config", "gateway.json"),
+    "cat %s; ls %s" % (GF("scripts", "consent", "omarchy"), GF("scripts", "consent")),
+    "echo x > %s" % GF("examples", "gateway.json"),
+    "echo x > %s" % GF("config", "gateway.json.example"),
+    "echo x > %s" % GF("scripts", "consent-notes.md"),
+    "echo x > /tmp/claude-1000/forge-copy/config/gateway.json",
 ]
 # (command, rc) run with the forge checkout as the project and as the directory.
 ROOTED = [
@@ -2031,6 +2058,279 @@ CONFIG_CASES = [
     (["--projekt", "fx"], "Bash", {"command": "git status"}, 2, "arguments"),
 ]
 
+# ------------------------------------------------------------------ consent window (--consent)
+#
+# `--consent` loads <forge>/config/gateway.json and the `production` of the profile of the project the call
+# runs in, validates both, and rejects every call with CONSENT_ERROR when either is invalid (1.1 U1a; the
+# rules themselves come with U1b and U1c). Each case builds a scratch forge with its own copy of the guard under
+# test, because the guard finds forge from its location. consent_config() and production_error() are
+# also called directly: they are the one definition the doctor row and lib.profile_error import.
+import copy
+
+
+def good_gateway():
+    return {"_doc": "fixture", "consent": {"adapter": "omarchy", "timeout_s": 120, "rules": [
+        {"id": "push-production", "match": "production.branches", "label": "Push to a production branch",
+         "risks": ["What is pushed goes live", "The deploy may run database migrations against real data"]},
+        {"id": "production-command", "match": "production.commands", "label": "Command that acts on production",
+         "risks": ["It acts on production or on a real account", "It may not be reversible"]}]}}
+
+
+def gw(**consent):
+    d = good_gateway()
+    d["consent"].update(consent)
+    return d
+
+
+def gw_rule(**rule):
+    d = good_gateway()
+    d["consent"]["rules"][0].update(rule)
+    return d
+
+
+def gw_drop(key):
+    d = good_gateway()
+    del d["consent"]["rules"][0][key]
+    return d
+
+
+_ADAPTER = "adapter outside scripts/consent"
+# (label, gateway.json as a function of the scratch forge: a dict, a str written as it is, or None for no
+# file; the text the error must contain, or None when it must be accepted). Run twice: through the function
+# and through `--consent`, so a validator that is right and a hook that does not call it both fail.
+# Red before, against ff74287 (no consent_config in the guard): 39 rows "consent_config missing from the guard"; with the production rows (12), the profile rows (9) and 3 of the 4 mode rows, 63 of 64 consent rows fail.
+# Control, a validator that accepts everything (consent_config returning without reading the file,
+# production_error returning None, `--consent` returning at once): 47 of the 64 consent rows fail, one line per
+# bad row ("unknown top-level key accepted: wanted an error containing 'unknown key'", "adapter /usr/bin/true
+# accepted: wanted an error containing 'adapter outside scripts/consent'", "the file is missing accepted:
+# wanted an error containing 'gateway.json'", "production a list accepted: ...", "the project's production
+# is invalid: wanted rc=2 'a.claude.json', got rc=0", "Read with a bad configuration: wanted rc=2
+# 'CONSENT_ERROR:', got rc=0", "the CONSENT_ERROR names no 'gateway.json': ''") and the 17 rows that expect acceptance pass.
+CONSENT_CONFIG = [
+    ("the plan's document", lambda f: good_gateway(), None),
+    ("notify present and not looked at", lambda f: dict(good_gateway(), notify={"command": 5, "x": [1]}), None),
+    ("adapter omarchy", lambda f: gw(adapter="omarchy"), None),
+    ("adapter scripts/consent/otro", lambda f: gw(adapter="scripts/consent/otro"), None),
+    ("adapter absolute inside scripts/consent", lambda f: gw(adapter=f + "/scripts/consent/otro"), None),
+    ("timeout_s 1", lambda f: gw(timeout_s=1), None),
+    ("unknown top-level key", lambda f: dict(good_gateway(), extra=1), "unknown key"),
+    ("unknown key in consent", lambda f: gw(extra=1), "unknown key"),
+    ("unknown key in a rule", lambda f: gw_rule(extra=1), "unknown key"),
+    ("consent missing", lambda f: {"notify": {}}, "consent"),
+    ("consent not an object", lambda f: {"consent": []}, "consent"),
+    ("match unknown", lambda f: gw_rule(match="production.tags"), "match"),
+    ("match missing", lambda f: gw_drop("match"), "match"),
+    ("timeout_s a string", lambda f: gw(timeout_s="120"), "timeout_s"),
+    ("timeout_s 0", lambda f: gw(timeout_s=0), "timeout_s"),
+    ("timeout_s negative", lambda f: gw(timeout_s=-5), "timeout_s"),
+    ("timeout_s 1.5", lambda f: gw(timeout_s=1.5), "timeout_s"),
+    ("timeout_s true", lambda f: gw(timeout_s=True), "timeout_s"),
+    ("rules empty", lambda f: gw(rules=[]), "rules"),
+    ("rules not a list", lambda f: gw(rules={}), "rules"),
+    ("risks empty list", lambda f: gw_rule(risks=[]), "risks"),
+    ("risks holds an empty string", lambda f: gw_rule(risks=["ok", ""]), "risks"),
+    ("risks not a list", lambda f: gw_rule(risks="It may fail"), "risks"),
+    ("label empty", lambda f: gw_rule(label=" "), "label"),
+    ("id empty", lambda f: gw_rule(id=""), "id"),
+    ("id repeated", lambda f: gw_rule(id="production-command"), "id"),
+    ("adapter /usr/bin/true", lambda f: gw(adapter="/usr/bin/true"), _ADAPTER),
+    ("adapter ~/x", lambda f: gw(adapter="~/x"), _ADAPTER),
+    ("adapter scripts/consent/../x", lambda f: gw(adapter="scripts/consent/../x"), _ADAPTER),
+    ("adapter an absolute path that climbs out", lambda f: gw(adapter=f + "/scripts/consent/../../hooks/guard_tool_use.py"), _ADAPTER),
+    ("adapter a symlink that leaves the folder", lambda f: gw(adapter="scripts/consent/link-out"), _ADAPTER),
+    ("adapter in a sibling folder with the same prefix", lambda f: gw(adapter="scripts/consent-evil/x"), _ADAPTER),
+    ("adapter the folder itself", lambda f: gw(adapter="scripts/consent"), _ADAPTER),
+    ("adapter absolute outside forge", lambda f: gw(adapter="/bin/sh"), _ADAPTER),
+    ("adapter empty", lambda f: gw(adapter=""), "adapter"),
+    ("adapter not a string", lambda f: gw(adapter=5), "adapter"),
+    ("the file does not parse", lambda f: '{"consent": [', "gateway.json"),
+    ("the file is not an object", lambda f: "[]", "gateway.json"),
+    ("the file is missing", lambda f: None, "gateway.json"),
+]
+
+# (label, value of a profile's `production`, the text the error must contain, or None when accepted).
+# Red before: 12 rows "production_error missing from the guard"; the accept-everything control is above.
+CONSENT_PRODUCTION = [
+    ("both lists", {"branches": ["main"], "commands": ["gh pr merge", "mcp__neon-x__run_sql"]}, None),
+    ("both lists empty", {"branches": [], "commands": []}, None),
+    ("only commands", {"commands": ["vercel deploy"]}, None),
+    ("unknown key", {"branches": [], "commands": [], "tags": []}, "unknown key"),
+    ("production a list", ["main"], "production"),
+    ("production a string", "main", "production"),
+    ("production null", None, "production"),
+    ("branches a string", {"branches": "main", "commands": []}, "branches"),
+    ("commands a string", {"branches": [], "commands": "gh pr merge"}, "commands"),
+    ("branches holds an empty string", {"branches": [""], "commands": []}, "branches"),
+    ("commands holds a blank string", {"branches": [], "commands": ["  "]}, "commands"),
+    ("commands holds a number", {"branches": [], "commands": [1]}, "commands"),
+]
+
+# Profiles of a scratch forge, each a function of the scratch forge: {name: profile}. A project_path of
+# "{f}/p/..." is made a directory. (label, profiles, cwd of the call, rc, text of the error)
+_PROD_BAD = {"branches": "main"}
+_PROD_OK = {"branches": ["main"], "commands": []}
+CONSENT_PROFILES = [
+    ("the project's production is invalid",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p/a", 2, "a.claude.json"),
+    ("the same, from a subdirectory of the project",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p/a/src", 2, "production"),
+    ("the project's production is valid",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_OK}}, "/p/a", 0, ""),
+    ("the project has no production",
+     lambda f: {"a": {"project_path": f + "/p/a"}}, "/p/a", 0, ""),
+    ("another project's production is invalid",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD},
+                "b": {"project_path": f + "/p/b", "production": _PROD_OK}}, "/p/b", 0, ""),
+    ("a directory no profile owns",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p", 0, ""),
+    ("the deepest profile is the project's: invalid parent, valid child",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD},
+                "c": {"project_path": f + "/p/a/c", "production": _PROD_OK}}, "/p/a/c", 0, ""),
+    ("the deepest profile is the project's: valid parent, invalid child",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_OK},
+                "c": {"project_path": f + "/p/a/c", "production": _PROD_BAD}}, "/p/a/c", 2, "c.claude.json"),
+    ("a sibling with the same name prefix is not the project",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p/ab", 0, ""),
+]
+# Control: a hook that does not check the profile (mutant "consent: production of the profile not checked")
+# fails the invalid rows with "wanted rc=2 'a.claude.json', got rc=0".
+
+
+def consent_forge(gateway, profiles=None, symlinks=True):
+    """A scratch forge: a copy of the guard under test at hooks/, config/gateway.json as `gateway` says (a
+    dict, text, or None for no file), config/profiles/<name>.claude.json, and scripts/consent/ with an adapter
+    and a symlink that leaves it. Returns (forge dir, the guard inside it)."""
+    d = sandbox.mkdtemp("guard-test-consent-")
+    guard = os.path.join(d, "hooks", "guard_tool_use.py")
+    os.makedirs(os.path.dirname(guard))
+    shutil.copyfile(GUARD, guard)
+    os.makedirs(os.path.join(d, "config", "profiles"))
+    os.makedirs(os.path.join(d, "scripts", "consent"))
+    os.makedirs(os.path.join(d, "scripts", "consent-evil"))
+    for sub in ("p/a/src", "p/a/c", "p/ab", "p/b"):
+        os.makedirs(os.path.join(d, sub))
+    open(os.path.join(d, "scripts", "consent", "otro"), "w").write("#!/bin/sh\n")
+    open(os.path.join(d, "scripts", "consent-evil", "x"), "w").write("#!/bin/sh\n")
+    if symlinks:
+        os.symlink("/usr/bin/true", os.path.join(d, "scripts", "consent", "link-out"))
+    if gateway is not None:
+        with open(os.path.join(d, "config", "gateway.json"), "w", encoding="utf-8") as fh:
+            fh.write(gateway if isinstance(gateway, str) else json.dumps(gateway))
+    for name, prof in (profiles or {}).items():
+        with open(os.path.join(d, "config", "profiles", name + ".claude.json"), "w", encoding="utf-8") as fh:
+            json.dump(dict(prof, project=name), fh)
+    return d, guard
+
+
+_CONSENT_MODULE = []
+
+
+def consent_module():
+    """The guard under test, loaded once, for the calls of its two importable functions."""
+    if not _CONSENT_MODULE:
+        spec = importlib.util.spec_from_file_location("guard_consent_under_test", GUARD)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CONSENT_MODULE.append(mod)
+    return _CONSENT_MODULE[0]
+
+
+def consent_config_row(label, doc_fn, want):
+    f, guard = consent_forge(None)
+    doc = doc_fn(f)
+    if doc is not None:
+        with open(os.path.join(f, "config", "gateway.json"), "w", encoding="utf-8") as fh:
+            fh.write(doc if isinstance(doc, str) else json.dumps(doc))
+    mod = consent_module()
+    if not hasattr(mod, "consent_config"):
+        return "consent_config missing from the guard"
+    try:
+        cfg, err = mod.consent_config(f), None
+    except ValueError as e:
+        cfg, err = None, str(e)
+    if want is None and err is not None:
+        return "%s refused by consent_config: %s" % (label, err[:160])
+    if want is not None:
+        if err is None:
+            return "%s accepted: wanted an error containing %r" % (label, want)
+        if want.lower() not in err.lower() or "gateway.json" not in err:
+            return "%s: wanted %r and the file name in the error, got %r" % (label, want, err[:160])
+    if want is None:
+        adapter = cfg.get("adapter") if isinstance(cfg, dict) else None
+        base = os.path.join(f, "scripts", "consent") + "/"
+        if not isinstance(adapter, str) or not adapter.startswith(base):
+            return "%s: consent_config gave the adapter %r, wanted a path under %s" % (label, adapter, base)
+    # Through the hook: a valid file lets a Bash call through, an invalid one refuses it with the file name.
+    rc, err = run_tool("Bash", {"command": "git status"}, None, guard, ["--consent"])
+    if want is None:
+        return None if rc == 0 else "%s: --consent refused a valid configuration (rc=%s %s)" % (label, rc, err.strip()[:120])
+    if rc != 2 or not err.startswith("CONSENT_ERROR:") or want.lower() not in err.lower() or "gateway.json" not in err:
+        return "%s: --consent wanted rc=2 'CONSENT_ERROR:' and %r, got rc=%s %s" % (label, want, rc, err.strip()[:120])
+    return bad_message(err)
+
+
+def consent_production_row(label, value, want):
+    mod = consent_module()
+    if not hasattr(mod, "production_error"):
+        return "production_error missing from the guard"
+    err = mod.production_error(value)
+    if want is None:
+        return None if err is None else "%s refused by production_error: %s" % (label, err[:160])
+    if err is None:
+        return "%s accepted: wanted an error containing %r" % (label, want)
+    if want.lower() not in err.lower():
+        return "%s: wanted %r in the error, got %r" % (label, want, err[:160])
+    return None
+
+
+def consent_profile_row(label, profiles_fn, cwd, want, why):
+    f, guard = consent_forge(good_gateway())
+    for name, prof in profiles_fn(f).items():
+        with open(os.path.join(f, "config", "profiles", name + ".claude.json"), "w", encoding="utf-8") as fh:
+            json.dump(dict(prof, project=name), fh)
+    rc, err = run_tool("Bash", {"command": "git status"}, {"CLAUDE_PROJECT_DIR": f}, guard, ["--consent"], cwd=f + cwd)
+    if rc != want or why.lower() not in err.lower() or (want == 2 and not err.startswith("CONSENT_ERROR:")):
+        return "%s: wanted rc=%s %r, got rc=%s %s" % (label, want, why, rc, err.strip()[:120])
+    return bad_message(err) if rc == 2 else None
+
+
+def consent_mode_row(name):
+    """The rest of `--consent`: what it refuses besides a bad configuration, and what it does not run."""
+    f, guard = consent_forge(good_gateway())
+    bad, bad_guard = consent_forge(gw(timeout_s=0))
+    if name == "core-not-run":
+        # Only the consent rules run in this mode (1.1 5.2): a core refusal is not its to give.
+        rc, err = run_tool("Bash", {"command": "cat .env.local"}, None, guard, ["--consent"])
+        return None if rc == 0 else "--consent ran the core: rc=%s %s" % (rc, err.strip()[:100])
+    if name == "exclusive":
+        for argv in (["--consent", "--project", "fx"], ["--project", "fx", "--consent"], ["--consent", "x"]):
+            rc, err = run_tool("Bash", {"command": "git status"}, None, guard, argv)
+            if rc != 2 or "arguments" not in err:
+                return "%s: wanted rc=2 'arguments', got rc=%s %s" % (" ".join(argv), rc, err.strip()[:100])
+        return None
+    if name == "every-call":
+        # A configuration that cannot be applied refuses every call, whatever the tool and whether or not
+        # there is a payload; the Edit tool is not routed here (the hook row's matcher is Bash|mcp__.*).
+        for tool, ti in (("Read", {"file_path": "/tmp/x"}), ("mcp__x__y", {}), (None, "")):
+            rc, err = (run_tool(tool, ti, None, bad_guard, ["--consent"]) if tool else
+                       run_payload(ti, None, bad_guard, ["--consent"]))
+            if rc != 2 or not err.startswith("CONSENT_ERROR:"):
+                return "%s with a bad configuration: wanted rc=2 'CONSENT_ERROR:', got rc=%s %s" % (tool, rc, err.strip()[:100])
+        return None
+    if name == "message":
+        # The refusal names the file, the fix and the way back (1.1 section 4), on one line.
+        rc, err = run_tool("Bash", {"command": "git status"}, None, bad_guard, ["--consent"])
+        for part in ("gateway.json", "integrations.consent", "forge sync --apply", "instead"):
+            if part not in err:
+                return "the CONSENT_ERROR names no %r: %r" % (part, err.strip()[:200])
+        return bad_message(err)
+    return "unknown mode row %s" % name
+
+
+CONSENT_MODE_ROWS = ["core-not-run", "exclusive", "every-call", "message"]
+CONSENT_CASES = ([("consent-config",) + c for c in CONSENT_CONFIG] + [("consent-production",) + c for c in CONSENT_PRODUCTION]
+                 + [("consent-profile",) + c for c in CONSENT_PROFILES] + [("consent-mode", n) for n in CONSENT_MODE_ROWS])
+
 # GUARD_TEST_INPROC=1 loads the guard once and calls its main() in this process instead
 # of starting a python per case. Only test_guard_mutants.py uses it: in the downstream project, 56
 # mutants times 311 subprocesses took 377 s on a CI runner. The ordinary run keeps the
@@ -2263,6 +2563,14 @@ def check(case):
                                                                rc, err.strip()[16:120])
         if rc == 2:
             return bad_message(err)
+    elif kind == "consent-config":
+        return consent_config_row(*case[1:])
+    elif kind == "consent-production":
+        return consent_production_row(*case[1:])
+    elif kind == "consent-profile":
+        return consent_profile_row(*case[1:])
+    elif kind == "consent-mode":
+        return consent_mode_row(case[1])
     elif kind == "rooted":
         # A command run in a project that IS the forge checkout, which holds config/ (item 3 of round 9b:
         # the project's own root stays readable, a directory a cd reached does not).
@@ -2304,7 +2612,7 @@ def main():
              + [("file",) + fc for fc in FORGE_FILE_CASES] + [("malformed", m) for m in FORGE_MALFORMED]
              + [("bypass-env",)] + [("rooted",) + r for r in ROOTED]
              + [("backlog",) + c for c in BACKLOG_CASES]
-             + [("config",) + c for c in CONFIG_CASES])
+             + [("config",) + c for c in CONFIG_CASES] + CONSENT_CASES)
     # test_guard_mutants.py only needs to know that a weakened guard fails at least one case,
     # so it sets GUARD_TEST_FAIL_FAST and the run stops at the first failure.
     fail_fast = os.environ.get("GUARD_TEST_FAIL_FAST") == "1"
@@ -2331,8 +2639,9 @@ def main():
             fails.append(f)
     print("guard cases: %d bash block, %d bash allow, %d file tools, %d malformed, 1 unwritable log"
           % (len(BASH_BLOCK), len(BASH_ALLOW), len(FILE_CASES), len(MALFORMED)))
-    print("forge additions: %d bash block, %d bash allow, %d file tools, %d malformed, 1 env bypass refused, %d config"
-          % (len(FORGE_BLOCK), len(FORGE_ALLOW), len(FORGE_FILE_CASES), len(FORGE_MALFORMED), len(CONFIG_CASES)))
+    print("forge additions: %d bash block, %d bash allow, %d file tools, %d malformed, 1 env bypass refused, %d config, %d consent"
+          % (len(FORGE_BLOCK), len(FORGE_ALLOW), len(FORGE_FILE_CASES), len(FORGE_MALFORMED), len(CONFIG_CASES),
+             len(CONSENT_CASES)))
     fails += budget_renews()
     print("timed cases: %d, each under %.1f s; the glob budget is renewed per call" % (len(FAST_CASES), FAST_LIMIT))
     print("known gaps, not asserted: %d" % len(KNOWN_GAPS))
