@@ -9,9 +9,10 @@ WHY THIS EXISTS
   gets disabled on the next /clear -- the flapping that silently killed GSD in one project.
 
   The fix is declarative: list the skills a project must keep in its profile's skills_keep.
-  GSD is the canonical plan/execute loop (CLAUDE.md) so EVERY dev project keeps all gsd-*.
-  This script regenerates those gsd-* lists from disk so new/removed gsd skills are picked
-  up automatically -- run it after GSD adds or drops a skill, then run sync_agent_config.py.
+  A project that follows GSD keeps all gsd-*; one listed in skill_keep.no_gsd_baseline keeps none
+  except the gsd-* names its extras row asks for. This script regenerates those gsd-* lists from
+  disk so new/removed gsd skills are picked up automatically -- run it after GSD adds or drops a
+  skill, then run sync_agent_config.py.
 
   Project-LOCAL skills (.claude/skills/<name>/) are auto-kept by sync_agent_config.py and
   must NOT be listed here. Only GLOBAL skills (~/.claude/skills) need an entry.
@@ -19,9 +20,14 @@ WHY THIS EXISTS
 THREE LAYERS (added for the agent-reach research stack; the tables named below are
 config/forge.json skill_keep since T3 of docs/portable-design.md, and the gsd-* layers need the gsd integration on)
   1. gsd-* baseline   -- regenerated from disk. Full replace for profiles listed in EXTRAS,
-                         union for every other trimmed profile. Now the only way
-                         out is NO_GSD_BASELINE: registering a project is no longer what
-                         decides whether it keeps up with GSD.
+                         union for every other trimmed profile. The only way out is
+                         NO_GSD_BASELINE (skill_keep.no_gsd_baseline): registering a project is no
+                         longer what decides whether it keeps up with GSD. A profile in that list
+                         follows no GSD: it ends with no gsd-* name but those its EXTRAS row names
+                         (a profile with a row is rebuilt without them, one without a row has them
+                         stripped, note "gsd off -[...]"), and leaving the list gives the baseline back
+                         on the next --apply. With the gsd integration off the list changes nothing:
+                         the profile keeps the names it holds.
   2. EXTRAS           -- per-project additions beyond that baseline.
   2c. GSD_EXCLUDE / GSD_OPT_IN -- the user's own trim of the gsd-* names (skill_keep.gsd_exclude: in no
                          profile and not linked by relink_skills.py; gsd_opt_in: kept only by a profile whose
@@ -92,7 +98,8 @@ COMMON_EXCLUDE = set(SKILL_KEEP.get("common_exclude") or [])
 # gsd_opt_in: skills linked but in no baseline, kept only by a profile whose extras row names them.
 GSD_EXCLUDE = set(SKILL_KEEP.get("gsd_exclude") or [])
 GSD_OPT_IN = set(SKILL_KEEP.get("gsd_opt_in") or [])
-# The gsd-* baseline is the gsd integration's. Off, a profile keeps the gsd-* names it holds and none is added.
+# The gsd-* baseline is the gsd integration's. Off, a profile keeps the gsd-* names it holds and none is added,
+# and NO_GSD_BASELINE strips nothing.
 TRACK_GSD = lib.on("gsd")
 
 
@@ -292,7 +299,8 @@ def audit_trim(profiles):
     does nothing". Nobody has ever wanted this state on purpose.
 
     NO GSD AT ALL: a trimmed profile that opted out of the baseline. Printed so the opt-out
-    stays a visible decision rather than a thing nobody remembers choosing."""
+    stays a visible decision rather than a thing nobody remembers choosing; with the gsd
+    integration on it says how many gsd-* skills the profile's extras row still gives it."""
     notes = []
     for fn, d in profiles.items():
         sk = d.get("skills_keep")
@@ -304,8 +312,12 @@ def audit_trim(profiles):
             continue
         if fn in NO_GSD_BASELINE:
             gsd_names = [s for s in sk if s.startswith("gsd-")]
-            notes.append("  note: %s does not track the GSD baseline (keeps %d gsd-* skills of "
-                         "its own choosing)." % (fn, len(gsd_names)))
+            if TRACK_GSD:
+                notes.append("  note: %s does not follow GSD (%d gsd-* skills, all named by its extras row)."
+                             % (fn, len(gsd_names)))
+            else:
+                notes.append("  note: %s does not track the GSD baseline (keeps %d gsd-* skills of "
+                             "its own choosing)." % (fn, len(gsd_names)))
     return notes
 
 
@@ -345,9 +357,12 @@ def main():
             # COMMON_SKILLS folded in HERE too -- this branch full-replaces skills_keep, so
             # leaving them to apply_common's union below would strip and re-add them every
             # run (a rewrite + churn on each invocation instead of a clean no-op).
-            if fn in NO_GSD_BASELINE or not TRACK_GSD:
-                # Profile curates its own gsd-* subset: keep what it declares, never top up.
+            if not TRACK_GSD:
+                # Integration off: keep the gsd-* names the profile declares, never top up.
                 base = [s for s in (d.get("skills_keep") or []) if s.startswith("gsd-")]
+            elif fn in NO_GSD_BASELINE:
+                # Follows no GSD: the row is a full replace, so the only gsd-* names left are the ones it names.
+                base = []
             else:
                 base = gsd
             want = base + sorted(EXTRAS[fn])
@@ -377,6 +392,15 @@ def main():
             if want != d["skills_keep"]:
                 notes.append("gsd baseline +%s" % sorted(set(want) - set(d["skills_keep"])))
                 d["skills_keep"] = want
+
+        # Layer 2b': a trimmed profile in NO_GSD_BASELINE with no extras row follows no GSD either: its gsd-*
+        # names are removed (the sibling of the full replace above, which gives a profile with a row none).
+        elif (TRACK_GSD and fn in NO_GSD_BASELINE and "skills_keep" in d
+              and "*" not in (d["skills_keep"] or [])):
+            kept = [n for n in d["skills_keep"] if not n.startswith("gsd-")]
+            if kept != d["skills_keep"]:
+                notes.append("gsd off -%s" % sorted(set(d["skills_keep"]) - set(kept)))
+                d["skills_keep"] = kept
 
         # Layer 2c: the user's own trim of the gsd-* names (gsd_exclude, gsd_opt_in), after the union above
         notes += apply_gsd_trim(fn, d)
