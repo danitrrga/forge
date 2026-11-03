@@ -1,0 +1,7 @@
+Sources of code ported into this repo.
+
+marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209598517a4c826073b5a0edc2a4097a4fa,
+used with the author's permission.
+
+Files ported from it by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
+  lib/fwx/core/keys.py   from lib/factory.ts
