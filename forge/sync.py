@@ -36,7 +36,7 @@ import contextlib
 import os
 import sys
 
-from forge import hooks, lib, mcp, memory, skills
+from forge import framework, hooks, lib, mcp, memory, skills
 
 CFG = os.path.join(lib.ROOT, "config")
 
@@ -204,15 +204,22 @@ def _run(argv, rule):
             print("   ! " + e)
 
         env_errors = []
+        # What the framework step wants of this project, decided first because settings.local.json carries part
+        # of it (the plugin's enabledPlugins entry, its marketplace, LINEAR_API_KEY); its own lines come after.
+        fw = framework.plan(prof, name)
+        settings_ok = True
         try:
-            ov = skills.write_settings_local(ctx, mcp.with_denied_tools(prof, sel, registry), secrets, env_errors,
-                                            hooks.project_hooks(prof))
+            ov = skills.write_settings_local(ctx, mcp.with_denied_tools(framework.with_env(prof, fw, secrets), sel, registry),
+                                            secrets, env_errors, hooks.project_hooks(prof), fw if fw.on else None)
         except lib.Unreadable as e:
-            ov = _unreadable(e)
+            ov, settings_ok = _unreadable(e), False
         if ov:
             print(ov)
         for e in env_errors:
             print("   ! " + e)
+        if settings_ok:
+            for line in framework.write(ctx, prof, fw, name, secrets):
+                print(line)
 
         if not errors and not lib.on("codex"):
             # Codex off (config/forge.json integrations.codex): no .codex/, no .agents/ links and

@@ -4,6 +4,7 @@ The global skills live in forge's skills/ and reach ~/.claude/skills through rel
 links; a profile trims them, and the plugins, per project in <project>/.claude/settings.local.json
 (write_settings_local). A project's own .claude/skills are Claude Code's alone until they are
 linked into .agents/skills, the root Codex reads (mirror_for_codex)."""
+import copy
 import functools
 import os
 
@@ -262,7 +263,23 @@ def _prune_hook(sl, c, slp_short):
     return 0
 
 
-def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=()):
+def _prune_marketplace(sl, c, slp_short):
+    """Take the marketplace declaration claim `c` names out of extraKnownMarketplaces, when unchanged; an edited one
+    stays and is named on one '  ! ' line. Returns 1 for one removed, else 0. An object this empties goes with it."""
+    _, key = c["at"]
+    have = sl.get("extraKnownMarketplaces")
+    if not isinstance(have, dict) or key not in have:
+        return 0
+    if not owned.removable(c, have[key]):
+        print("  ! %s: extraKnownMarketplaces.%s was edited by hand, left in place" % (slp_short, key))
+        return 0
+    del have[key]
+    if not have:
+        del sl["extraKnownMarketplaces"]
+    return 1
+
+
+def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(), framework=None):
     """Owns <project>/.claude/settings.local.json: everything the profile says goes there, merged
     into the file. For a claude profile carrying `plugins_keep` and/or `skills_keep`, that is:
       * enabledPlugins -- full canonical map (kept=True, rest=False; whole-object,
@@ -288,6 +305,10 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         (forge.hooks.project_hooks: Hindsight's, for a profile that uses it), each owned by its
         exact command the same way: a wanted row ends as one entry, one not wanted goes. The
         callers pass them, so this module never reads config/forge.json.
+      * framework -- the Plan of forge/framework.py when it is on (its `.plugin`, `.name` and `.source`): the
+        plugin is switched on in enabledPlugins and its marketplace declared under extraKnownMarketplaces, each
+        an owned claim of its own, so turning the framework off takes out the marketplace key (an edited one
+        stays and is named) while the whole enabledPlugins map goes by declaration as ever.
     Returns a one-line summary string, or None if the profile carries none of those keys and the
     file holds none of the three written only while declared (skillOverrides, enabledPlugins, env),
     which go when the profile stops declaring them.
@@ -339,14 +360,29 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
         enabled = {p: (p in keep) for p in universe}
         for p in keep:               # keep entries not in the current universe -> still enable
             enabled.setdefault(p, True)
+        if framework:
+            enabled[framework.plugin] = True
         sl["enabledPlugins"] = enabled
         written.append(("key", ["enabledPlugins"], enabled, None))
+        if framework:
+            written.append(("key", ["enabledPlugins", framework.plugin], True, None))
         pl_summary = "plugins %d/%d on" % (sum(1 for v in enabled.values() if v), len(enabled))
     elif sl.pop("enabledPlugins", None) is not None:
         # Written whole only while `plugins_keep` asks for it, like env: left behind, the map from
         # the last trimmed run keeps every plugin it switched off, off.
         removed.append("enabledPlugins")
         pl_summary = "plugins untrimmed"
+    market_summary = ""
+    if framework:
+        # The marketplace's declaration, in the form `claude plugin marketplace add --scope local` writes.
+        have = sl.get("extraKnownMarketplaces")
+        if have is None or isinstance(have, dict):
+            decl = {"source": copy.deepcopy(framework.source)}
+            sl.setdefault("extraKnownMarketplaces", {})[framework.name] = decl
+            written.append(("key", ["extraKnownMarketplaces", framework.name], decl, None))
+            market_summary = ", marketplace %s" % framework.name
+        elif errors is not None:
+            errors.append("%s: extraKnownMarketplaces is not an object, left alone" % lib.short(slp))
     if trim and not all_skills:
         sl["skillOverrides"] = overrides
         written.append(("key", ["skillOverrides"], overrides, None))
@@ -479,7 +515,9 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=())
             pruned += _prune_item(sl, c)
         elif c["kind"] == "hook" and len(c["at"]) == 3 and c["at"][0] == "hooks":
             pruned += _prune_hook(sl, c, slp_short)
-    pruned_summary = ", pruned %d" % pruned if pruned else ""
+        elif c["kind"] == "key" and len(c["at"]) == 2 and c["at"][0] == "extraKnownMarketplaces":
+            pruned += _prune_marketplace(sl, c, slp_short)
+    pruned_summary = (", pruned %d" % pruned if pruned else "") + market_summary
 
     # .mcp.json approval, owned by the profile when it declares `mcpjson_approved` (the list) or
     # `enableAllProjectMcpServers` (that key alone, with or without a list). Claude Code
