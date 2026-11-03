@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-// Copied from forge/hooks/gsd-read-injection-scanner.js (get-shit-done-cc 1.42.3, MIT)
-// at forge d5000cd, so a downstream project runs without forge or GSD.
+// forge's own read-injection scanner, derived from GSD's gsd-read-injection-scanner.js
+// (get-shit-done-cc 1.42.3, MIT; see NOTICE). It is a core forge hook row and runs with GSD off;
+// a downstream project runs a copy without forge or GSD.
 // Read Injection Scanner — PostToolUse hook (#2201)
 // Scans file content returned by the Read tool for prompt injection patterns.
 // Catches poisoned content at ingestion before it enters conversation context.

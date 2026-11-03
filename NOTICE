@@ -16,8 +16,8 @@ get-shit-done-cc (GSD, the package GSD Core continues)
   https://github.com/gsd-build/get-shit-done, MIT licence.
   Copyright (c) 2025 Lex Christopherson
 
-  - hooks/gsd-prompt-guard.js and hooks/gsd-read-injection-scanner.js are copies of the hooks of
-    get-shit-done-cc 1.42.3, with local edits.
+  - hooks/gsd-prompt-guard.js and hooks/read-injection-scanner.js are copies of the hooks of
+    get-shit-done-cc 1.42.3, with local edits (the scanner was gsd-read-injection-scanner.js there).
 
   The licence text of get-shit-done-cc follows. GSD Core's licence is the same MIT text with the
   copyright line above.
