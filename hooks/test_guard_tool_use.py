@@ -2338,7 +2338,7 @@ CONSENT_MODE_ROWS = ["core-not-run", "exclusive", "every-call", "message"]
 #
 # The adapter under test is always a fake: a shell script in the toy forge's scripts/consent/ that records what
 # it was given in $FAKE_OUT (its $1, the request, the modes of the file and of its directory, its pid, one line
-# per call) and exits as $FAKE_MODE says (yes: 0; no: 1; code7: 7; sleep: a child that sleeps 30 s, then 0). No real window is ever
+# per call) and exits as $FAKE_MODE says (yes: 0; no: 1; code3: 3 with a reason on stderr; code4: 4; code7: 7; sleep: a child that sleeps 30 s, then 0). No real window is ever
 # opened. XDG_RUNTIME_DIR and XDG_STATE_HOME point at temp dirs, so the real consent.log is never written.
 #
 # Red before, against the guard of U1b (9f5ac1f, a match exits 2 `CONSENT_ERROR: not wired yet`): 84 rows fail
@@ -2361,7 +2361,11 @@ fi
 case "$FAKE_MODE" in
   yes) exit 0 ;;
   sleep) sleep 30 & echo "$!" > "$FAKE_OUT/child-pid"; wait; exit 0 ;;
-  code7) exit 7 ;;
+  code7) echo "adapter broke" >&2; exit 7 ;;
+  code3) echo "no WAYLAND_DISPLAY: cannot open a window" >&2; echo "second line" >&2; exit 3 ;;
+  code3long) printf 'x%.0s' $(seq 1 300) >&2; echo >&2; exit 3 ;;
+  code3bare) exit 3 ;;
+  code4) exit 4 ;;
   *) exit 1 ;;
 esac
 """
@@ -2498,13 +2502,34 @@ def flow_yes(name):
 
 
 def flow_no(name):
-    r, _ = flow_call("no")
+    r, _ = flow_call("no")  # exit 1
     return _says(r, "CONSENT_DECLINED:") or _log_ok(r, "declined")
 
 
 def flow_other_exit(name):
+    """The adapter contract of scripts/consent/omarchy: 0 yes, 1 no, 3 it could not ask (reason on stderr), 4 nobody
+    answered in time. Any other exit is a broken adapter, not a no."""
     r, _ = flow_call("code7")
-    return _says(r, "CONSENT_DECLINED:") or _log_ok(r, "declined")
+    err = _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+    if err or "adapter broke" not in r.err or "7" not in r.err:
+        return err or "an exit 7 is an error that names the exit and the adapter's stderr: %r" % r.err.strip()[:200]
+    r, _ = flow_call("code3")
+    err = _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+    if err:
+        return "exit 3: " + err
+    if "no WAYLAND_DISPLAY: cannot open a window" not in r.err or "second line" in r.err:
+        return "exit 3: the message wants the first line of the adapter's stderr and only it: %r" % r.err.strip()[:300]
+    r, _ = flow_call("code3bare")
+    err = _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+    if err:
+        return "exit 3 with no stderr: " + err
+    r, _ = flow_call("code3long")
+    if "x" * 200 not in r.err or "x" * 201 in r.err:
+        return "exit 3: the reason is cut at 200 characters: %r" % r.err.strip()[:60]
+    r, _ = flow_call("code4")
+    if r.took > 8:
+        return "exit 4 took %.1f s" % r.took
+    return _says(r, "CONSENT_TIMEOUT:") or _log_ok(r, "timeout")
 
 
 def flow_timeout(name):

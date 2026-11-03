@@ -2681,21 +2681,27 @@ def consent_log(decision, digest, request, rule_ids):
     return None
 
 
-def consent_ask(adapter, path, timeout_s):
-    """Runs the adapter with the request's path as $1 and returns approved | declined | timeout. It may take
-    no more than timeout_s: past that it and everything it started are killed. OSError when it cannot start."""
-    proc = subprocess.Popen([adapter, path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL, start_new_session=True)
-    try:
-        code = proc.wait(timeout=timeout_s)
-    except subprocess.TimeoutExpired:
+def consent_ask(adapter, path, timeout_s, errpath):
+    """Runs the adapter with the request's path as $1 and returns (answer, reason). Its exit says: 0 approved, 1
+    declined, 4 timeout (nobody answered), anything else error, with the first line of its stderr (kept in
+    errpath, 200 characters) as the reason. It may take no more than timeout_s: past that it and everything it
+    started are killed and the answer is timeout. OSError when it cannot start."""
+    with open(errpath, "wb") as errfile:
+        proc = subprocess.Popen([adapter, path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                stderr=errfile, start_new_session=True)
         try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except OSError:
-            proc.kill()
-        proc.wait()
-        return "timeout"
-    return "approved" if code == 0 else "declined"
+            code = proc.wait(timeout=timeout_s)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            proc.wait()
+            return "timeout", ""
+    with open(errpath, "rb") as fh:
+        reason = _one_line(fh.read(4096).decode("utf-8", "replace").strip().split("\n")[0], CONSENT_COMMAND_LOG)
+    return {0: "approved", 1: "declined", 4: "timeout"}.get(code, "error"), (
+        "the adapter exited %s: %s" % (code, reason or "it gave no reason on stderr"))
 
 
 def consent_decide(cfg, payload, matches):
@@ -2722,14 +2728,14 @@ def consent_decide(cfg, payload, matches):
     if not runtime or not os.path.isabs(runtime) or not os.path.isdir(runtime):
         finish("error", "CONSENT_ERROR:", "XDG_RUNTIME_DIR is not set to a directory (%r), so the request has nowhere "
                "private to go" % runtime)
-    folder = answer = None
+    folder = answer = reason = None
     try:
         folder = tempfile.mkdtemp(prefix="forge-consent-", dir=runtime)  # mode 700
         path = os.path.join(folder, "request.json")
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
-        answer = consent_ask(adapter, path, cfg["timeout_s"])
+        answer, reason = consent_ask(adapter, path, cfg["timeout_s"], os.path.join(folder, "stderr"))
     except OSError as e:
         finish("error", "CONSENT_ERROR:", "the window could not be opened (%s: %s)" % (type(e).__name__, e))
     finally:
@@ -2739,6 +2745,8 @@ def consent_decide(cfg, payload, matches):
         finish("timeout", "CONSENT_TIMEOUT:", "no answer within %d s to %s" % (cfg["timeout_s"], request["what"]))
     if answer == "declined":
         finish("declined", "CONSENT_DECLINED:", "the user did not approve %s" % request["what"])
+    if answer == "error":
+        finish("error", "CONSENT_ERROR:", "the window could not ask: %s" % reason)
     finish("approved")
 
 

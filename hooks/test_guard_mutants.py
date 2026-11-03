@@ -581,9 +581,9 @@ MUTANTS = {
     "consent: desatendido abre ventana":
         ('    if os.environ.get("FORGE_CONSENT") == "unattended":', "    if False:"),
     "consent: una salida distinta de 0 se toma como sí":
-        ('    return "approved" if code == 0 else "declined"', '    return "approved"'),
+        ('    return {0: "approved", 1: "declined", 4: "timeout"}.get(code, "error"), (', '    return "approved", ('),
     "consent: el tope vencido se toma como sí":
-        ('        proc.wait()\n        return "timeout"', '        proc.wait()\n        return "approved"'),
+        ('            proc.wait()\n            return "timeout", ""', '            proc.wait()\n            return "approved", ""'),
     "consent: el registro no se escribe":
         ('            os.write(fd, line.encode("utf-8"))', "            pass"),
     "consent: the request is left on disk":
@@ -593,6 +593,10 @@ MUTANTS = {
     "consent: a missing adapter is taken as a yes":
         ('    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):\n        finish("error"',
          '    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):\n        return\n        finish("error"'),
+    "consent: adapter exit 3 taken as declined":
+        ('.get(code, "error"), (', '.get(code, "declined"), ('),
+    "consent: adapter stderr dropped":
+        ('        reason = _one_line(fh.read(4096).decode("utf-8", "replace").strip().split("\\n")[0], CONSENT_COMMAND_LOG)', '        reason = ""'),
     "consent: the adapter is left running after the cap":
         ("            os.killpg(proc.pid, signal.SIGKILL)", "            proc.kill()"),
     # Round 9: a directory that holds a store (FORGE_BLOCK and FORGE_ALLOW 17).
