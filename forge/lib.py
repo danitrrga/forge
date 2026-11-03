@@ -28,8 +28,10 @@ CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # The names `on()` accepts: what a stranger's forge may switch off (docs/portable-design.md section 5).
 # `consent` is the consent window (hooks/guard_tool_use.py --consent): absent counts as off, so adding it
-# leaves the generated output unchanged until config/forge.json turns it on.
-INTEGRATIONS = ("codex", "gsd", "hindsight", "consent")
+# leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` and `mempalace`
+# are the framework's: the first asks for the `agent-browser` tool in config/toolchain.json (a `when` of
+# {"integration": "agent_browser"}), the second has no check until the MemPalace part and is a SKIP either way.
+INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
 
 
 @functools.lru_cache(maxsize=None)
@@ -129,7 +131,14 @@ PROFILE_FIELDS = {
     # {"branches": [str], "commands": [str]}: what the consent window treats as production. The shape is the guard's
     # (production_error), asked from profile_error so there is one definition.
     "production": dict,
+    # The framework (2.2): `framework` is its level-1 switch, `factory` its mode, `factory_ui_bugs` sends mechanical UI
+    # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
+    "framework": bool, "factory": str, "factory_ui_bugs": bool,
+    "checks": (list, str), "protected_paths": (list, str),
 }
+# The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
+# that has a row there, so a field without its row is not checked at all.
+PROFILE_CHOICES = {"factory": ("off", "trial")}
 _TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object"}
 
 
@@ -169,6 +178,8 @@ def profile_error(prof):
         if not isinstance(v, kind) or (item and not all(isinstance(x, item) for x in (
                 v.values() if isinstance(v, dict) else v))):
             return "%s is not a %s%s" % (field, _TYPE_NAMES[kind], " of %ss" % _TYPE_NAMES[item] if item else "")
+        if field in PROFILE_CHOICES and v not in PROFILE_CHOICES[field]:
+            return "%s is not %s" % (field, " or ".join('"%s"' % c for c in PROFILE_CHOICES[field]))
     if "production" in prof:
         why = _production_error()(prof["production"])
         if why:

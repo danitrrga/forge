@@ -577,9 +577,19 @@ def _gsd_missing():
         % (tool, "node" if tool == "npm" else "pnpm"))
 
 
+def _agent_browser_missing():
+    return None if shutil.which("agent-browser") else (
+        "agent_browser is on in config/forge.json but agent-browser is not on PATH -- run `forge toolchain --fix`, then "
+        "open a new shell, or set integrations.agent_browser false")
+
+
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
                      "hindsight": (None, "no dependency checked here"),
-                     "consent": (None, "its own row, `consent`, looks at the adapter, the profiles and the hook")}
+                     "consent": (None, "its own row, `consent`, looks at the adapter, the profiles and the hook"),
+                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
+# An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
+# nothing. The value says when the check arrives (7.1 of the framework plan puts MemPalace's).
+INTEGRATION_PENDING = {"mempalace": "its check arrives with the MemPalace part"}
 
 
 def hook_scripts(command):
@@ -604,9 +614,15 @@ def integrations_row():
     nothing is a FAIL, never a pass (non-negotiable 7), unless nothing at all is configured (every
     integration off, no user_hooks row): a SKIP. The hook rows come through forge.hooks, so the
     command read is the one the generator writes: `<ROOT>` expanded, an `"on": false` row left out."""
-    out, checked, unread = [], 0, False
+    out, checked, unread, pending_on = [], 0, False, False
     for name in lib.INTEGRATIONS:
-        if not lib.on(name):
+        on = lib.on(name)
+        if name in INTEGRATION_PENDING:
+            pending_on = pending_on or on
+            out.append(lib.Result("SKIP", "integrations", "%s%s is %s in config/forge.json%s %s" % (
+                NOT_ARMED, name, "on" if on else "off", ", but" if on else ";", INTEGRATION_PENDING[name])))
+            continue
+        if not on:
             out.append(lib.Result("SKIP", "integrations", "%s%s is off in config/forge.json" % (NOT_ARMED, name)))
             continue
         need, why = INTEGRATION_NEEDS[name]
@@ -644,11 +660,14 @@ def integrations_row():
                                       ' -- restore it, or set "on": false on the row' % (marker, event, script)))
     if not checked and not rows and not unread:
         # Nothing is configured: every integration off and no user_hooks row at all. A stranger's legitimate zero.
-        out.append(lib.Result("SKIP", "integrations", NOT_ARMED + "every integration is off in config/forge.json "
-                              "and no user_hooks row is configured, so there is nothing to check"))
+        out.append(lib.Result("SKIP", "integrations", NOT_ARMED + (
+            "no integration with a check is on in config/forge.json" if pending_on else "every integration is off in config/forge.json")
+            + " and no user_hooks row is configured, so there is nothing to check"))
     elif not checked:
-        out.append(lib.Result("FAIL", "integrations", "checked 0: every integration is off in config/forge.json and no "
-                              "user_hooks row names a script, so this row proved nothing"))
+        out.append(lib.Result("FAIL", "integrations", "checked 0: %s and no "
+                              "user_hooks row names a script, so this row proved nothing" % (
+                                  "no integration with a check is on in config/forge.json" if pending_on
+                                  else "every integration is off in config/forge.json")))
     else:
         out.append(lib.Result("PASS", "integrations", "checked %d: %d integration(s) on, %d user_hooks script(s)"
                               % (checked, integrations, checked - integrations)))

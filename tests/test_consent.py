@@ -244,7 +244,7 @@ check("profile_error is silent about a profile without production", lib.profile_
 # ---------------------------------------------------------------- the example files and the README
 ex = load(os.path.join(REPO, "examples", "forge.json"))
 check('examples/forge.json has "consent": false next to the other integrations',
-      ex.get("integrations", {}).get("consent") is False and set(ex["integrations"]) == {"codex", "gsd", "hindsight", "consent"},
+      ex.get("integrations", {}).get("consent") is False and set(ex["integrations"]) == {"codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace"},
       ex.get("integrations"))
 check("examples/forge.json's _doc names consent", "consent" in ex.get("_doc", ""), "")
 
