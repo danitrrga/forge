@@ -28,6 +28,8 @@ Controls, each seen red on a copy of the repo with one thing changed (351 checks
       FAIL: session: premortem -> executing is forbidden: got True
   - the table drops ui-walk -> discuss (1 failed):
       FAIL: session: ui-walk -> discuss is allowed: got False
+  - the table lacks ui-walk -> executing (the walk's fixes go back to the executors; seen red on master, 1 failed):
+      FAIL: session: ui-walk -> executing is allowed: got False
   - the validator returns no problem for anything (12 failed):
       FAIL: validator: a machine missing: wanted 'factory' in []
   - the validator does not look for unreachable stages (1 failed):
@@ -63,7 +65,7 @@ SESSION = {
     "postmortem": ["planning", "executing", "discuss"],
     "executing": ["reviewing"],
     "reviewing": ["executing", "ui-walk", "phase-review"],
-    "ui-walk": ["phase-review", "discuss"],
+    "ui-walk": ["phase-review", "discuss", "executing"],
     "phase-review": ["executing", "closed", "discuss"],
 }
 FACTORY = {

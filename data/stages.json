@@ -9,7 +9,7 @@
       "postmortem": ["planning", "executing", "discuss"],
       "executing": ["reviewing"],
       "reviewing": ["executing", "ui-walk", "phase-review"],
-      "ui-walk": ["phase-review", "discuss"],
+      "ui-walk": ["phase-review", "discuss", "executing"],
       "phase-review": ["executing", "closed", "discuss"]
     }
   },
