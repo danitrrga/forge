@@ -5,8 +5,8 @@ COMMON_OPT_OUT used to name COMMON_SKILLS / COMMON_PLUGINS entries only, and che
 1 on anything else. It now also names COMMON_ENV keys: apply_common neither adds an opted-out key
 nor keeps one that is there, and check_declared accepts it.
 
-A profile in NO_GSD_BASELINE follows no GSD: with the gsd integration on it ends with no gsd-* name but those its
-extras row names, and with the integration off it keeps what it holds.
+With the gsd integration off no profile names a gsd-* skill and no extras row does either; on, every trimmed profile
+gets the baseline (there is no skill_keep.no_gsd_baseline any more).
 
 Two worlds. The mechanism runs on a copy of the script patched to carry a toy env key (TOY_KEY) and
 to opt one profile out of it, so it does not depend on what the real COMMON_ENV holds. The real
@@ -48,15 +48,18 @@ skill_keep.gsd_exclude and gsd_opt_in. Seen failing before the change: "gsd trim
 for a typo in either table, a name in both and an excluded name in an extras row, "(1, False, False), want (1, True,
 False)" (exit 1 came from a pending change, not from a refusal: the check needs the '!' line naming skill_keep.gsd_).
 
-no_gsd_baseline follows no GSD. Seen failing on ff74287 (the list meant "keep the gsd-* you have"): "real: the excluded
-profile is not topped up with gsd-* = ['gsd-fast'], want []" and, in the four-profile world (two listed profiles that
-hold the whole baseline, one listed with an extras row naming gsd-fast, one unlisted): "no_gsd_baseline: dry-run marks
-exactly the first two = (0, {... all four '='}), want (1, {LE: '~', LB: '~', LN: '=', OUT: '='})", "no_gsd_baseline: the
-bare profile line says gsd off = False, want True", "no_gsd_baseline: no gsd-* left in the first two = (['gsd-fast',
-'gsd-toy-0', ...], [...]), want ([], [])" and "no_gsd_baseline: the extras row's name is the only one kept =
-['gsd-fast', 'gsd-toy-1'], want ['gsd-fast']". The reversal and gsd-off worlds pass on both: they pin what must not
-change. Controls: with the strip branch (the new elif) disabled, the real: check and the bare-profile checks fail and the
-extras-row ones pass; with `base = []` reverted to the held names, the extras-row checks fail and the bare ones pass.
+gsd off strips every gsd-* name (this unit). Seen failing on d595a08 (gsd off left every held name, and an extras row
+naming a gsd-* skill that is no longer installed was the exit 1 of check_declared): "gsd off: --check, a gsd-* name in an
+extras row is not an exit 1 for a missing skill = (1, ['! declared skill(s) not installed in <home>/.claude/skills:']),
+want (1, [])", "gsd off: --apply = 1, want 0", "gsd off: plain.claude.json keeps its gsd-fast = True, want False" (the
+same for zzz and named, and "has no gsd-* name = ['gsd-fast'], want []"), "gsd off: the extras row keeps its non-gsd name
+= False, want True" and "gsd off: --check after the apply = (1, '    EXTRAS[named.claude.json] -> gsd-gone'), want (0,
+'0 profile(s) would change.')". The gsd back on and gsd on worlds pass on both: they pin the rollback and what gsd on
+still does. Controls, each on the fixed script: with the extras filter off (`if False:`) the first two and the last
+checks fail with that same `EXTRAS[named.claude.json] -> gsd-gone` and the held-name ones fail too (10 failures, the
+red above); with the strip of a profile that has no extras row disabled, "gsd off: zzz.claude.json keeps its gsd-fast =
+True, want False" fails alone (2); with the extras branch keeping the held gsd-* names, plain and named fail (4) and zzz
+passes.
 """
 import json
 import os
@@ -90,11 +93,10 @@ def load(path):
 
 def toy_declaration(sk):
     """The shape the real file declares, on toy names: KEY for every profile but the opted-out and the excluded
-    ones, no gsd top-up for the excluded one, and the plain one a full replace (an extras row)."""
+    ones, and the plain one a full replace (an extras row)."""
     sk["common_env"][KEY] = "sonnet"
     sk["common_opt_out"].update({TOY["optout"]: [KEY], TOY["quiet"]: [KEY]})
     sk["common_exclude"].append(TOY["excluded"])
-    sk["no_gsd_baseline"].append(TOY["excluded"])
     sk["extras"][TOY["plain"]] = []
 
 
@@ -105,10 +107,10 @@ def pinned_from(doc, profile_names):
     sk = doc.get("skill_keep") or {}
     optout = sk.get("common_opt_out") or {}
     outs = sorted(n for n, keys in optout.items() if KEY in keys)
-    excl = [n for n in (sk.get("common_exclude") or []) if n in (sk.get("no_gsd_baseline") or [])]
+    excl = list(sk.get("common_exclude") or [])
     taken = set(outs[:2] + excl[:1])
-    plain = [n for n in sorted(sk.get("extras") or {}) if n not in taken and n not in (sk.get("no_gsd_baseline") or [])]
-    plain2 = [n for n in profile_names if n not in taken and n not in (sk.get("no_gsd_baseline") or []) and n not in plain[:1]]
+    plain = [n for n in sorted(sk.get("extras") or {}) if n not in taken]
+    plain2 = [n for n in profile_names if n not in taken and n not in plain[:1]]
     if KEY not in (sk.get("common_env") or {}) or len(outs) < 2 or not excl or not plain or not plain2:
         return None
     return {"plain": plain[0], "plain2": plain2[0], "optout": outs[0], "quiet": outs[1], "excluded": excl[0]}
@@ -227,9 +229,9 @@ def main():
         print("NOT RUN: this machine's declaration (the tables the real: world pins are not in config/forge.json), "
               "so the real: world ran on the toy declaration of the same shape")
     want("real: --apply", run(root, env, "--apply")[0], 0)
-    # The excluded profile (a trimmed profile holding one installed gsd-* name, no extras row) is in
-    # NO_GSD_BASELINE, which means it follows no GSD: it loses that name; every other trimmed profile gets the baseline.
-    want("real: the excluded profile is not topped up with gsd-*", skills_of(root, EXCLUDED), [])
+    # With gsd on every trimmed profile gets the baseline, the common-excluded one too (COMMON_EXCLUDE is the common
+    # layer's own, and there is no other way out of the baseline).
+    want("real: the excluded profile is topped up with gsd-*", len(skills_of(root, EXCLUDED)) > 10, True)
     want("real: a plain profile is topped up with gsd-*", len(skills_of(root, PLAIN)) > 10, True)
     want("real: plain profile", env_of(root, PLAIN).get(KEY), "sonnet")
     want("real: another plain profile", env_of(root, PLAIN2).get(KEY), "sonnet")
@@ -308,74 +310,55 @@ def main():
     want("~: --apply", run(root, env, "--apply")[0], 0)
     want("~: expanded to the toy HOME", env_of(root, PLAIN_FILE).get("TOY_PATH"), os.path.join(env["HOME"], "toy"))
 
-    # The gsd baseline applies only with the gsd integration on: off, nothing is added to a profile and
-    # a gsd-* name it already holds is not stripped, in extras or out of it.
-    # the plain profile is in extras (a full replace) and zzz is not (a union).
+    # The gsd-* names belong to the gsd integration: off, no profile names one (a held name is stripped, none is added)
+    # and no extras row does either, so an extras row naming a gsd-* skill that is no longer installed (relink pruned
+    # it) is not the exit 1 that check_declared gives any other missing name. The plain profile is in extras (a full
+    # replace), zzz is not (a union), NAMED is in extras with a row that names gsd-fast and a gsd-* name that is not
+    # installed, and STAR keeps every skill.
+    NAMED, STAR = "named.claude.json", "star.claude.json"
     off = dict({PLAIN_FILE: trimmed(skills_keep=["gsd-fast", "defuddle"]),
-                "zzz.claude.json": trimmed(skills_keep=["gsd-fast", "defuddle"])}, **OPT_OUT_PROFILES)
-    root, env = world(tmp, "gsd-off", off, gsd=False)
+                "zzz.claude.json": trimmed(skills_keep=["gsd-fast", "defuddle"]),
+                NAMED: trimmed(skills_keep=["gsd-fast", "gsd-toy-1", "defuddle"]),
+                STAR: trimmed(skills_keep=["*"])}, **OPT_OUT_PROFILES)
+    named_row = lambda sk: sk["extras"].update({NAMED: ["gsd-fast", "gsd-gone", "summarize"]})
+    root, env = world(tmp, "gsd-off", off, named_row, gsd=False)
+    code, lines = run_full(root, env, "--check")
+    want("gsd off: --check, a gsd-* name in an extras row is not an exit 1 for a missing skill",
+         (code, [l for l in lines if "not installed" in l]), (1, []))
     want("gsd off: --apply", run(root, env, "--apply")[0], 0)
-    for fn in (PLAIN_FILE, "zzz.claude.json"):
+    for fn in (PLAIN_FILE, "zzz.claude.json", NAMED):
         got = skills_of(root, fn)
-        want("gsd off: %s keeps its gsd-fast" % fn, "gsd-fast" in got, True)
-        want("gsd off: %s gets no other gsd-* name" % fn, [n for n in got if n.startswith("gsd-") and n != "gsd-fast"], [])
+        want("gsd off: %s keeps its gsd-fast" % fn, "gsd-fast" in got, False)
+        want("gsd off: %s has no gsd-* name" % fn, [n for n in got if n.startswith("gsd-")], [])
     want("gsd off: the union keeps defuddle", "defuddle" in skills_of(root, "zzz.claude.json"), True)
+    want("gsd off: the extras row keeps its non-gsd name", "summarize" in skills_of(root, NAMED), True)
+    want("gsd off: the keep-all profile is untouched", skills_of(root, STAR)[0], "*")
     want("gsd off: --check after the apply", run(root, env, "--check"), (0, "0 profile(s) would change."))
-    root, env = world(tmp, "gsd-on", off)
-    run(root, env, "--apply")
-    for fn in (PLAIN_FILE, "zzz.claude.json"):
-        want("gsd on (control): %s gets the baseline" % fn,
-             len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5, True)
-
-    # no_gsd_baseline: a profile in the list follows no GSD. Four profiles at a steady state with the list lacking
-    # LE and LB (the migration: both hold the whole baseline), then the list gains them.
-    #   LE: extras row [], LB: no row, LN: row ["gsd-fast"] and listed from the start, OUT: not listed.
-    LE, LB, LN, OUT = ("listed-extras.claude.json", "listed-bare.claude.json", "listed-named.claude.json",
-                       "outside.claude.json")
-    mig = dict({fn: trimmed(skills_keep=["gsd-fast", "gsd-toy-1", "defuddle"]) for fn in (LE, LB, LN, OUT)}, **OPT_OUT_PROFILES)
-
-    def migration(sk):
-        sk["extras"].update({LE: [], LN: ["gsd-fast"]})
-        sk["no_gsd_baseline"].append(LN)   # listed from the start: already at its steady state
-    root, env = world(tmp, "nogsd", mig, migration)
-    want("no_gsd_baseline: steady state before the list", run(root, env, "--apply")[0], 0)
-    want("no_gsd_baseline: the unlisted profiles hold the baseline",
-         [len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5 for fn in (LE, LB, OUT)], [True, True, True])
-    want("no_gsd_baseline: steady state is clean", run(root, env, "--check"), (0, "0 profile(s) would change."))
+    # Reversible: the integration back on and one apply give the baseline back (the extras row's own gsd-fast with it).
     fjson = os.path.join(root, "config", "forge.json")
     doc = load(fjson)
-    doc["skill_keep"]["no_gsd_baseline"] += [LE, LB]
+    doc["integrations"]["gsd"] = True
     with open(fjson, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)
-    with open(os.path.join(root, "config", "profiles", OUT), "rb") as fh:
-        outside_before = fh.read()
+    want("gsd back on: --apply, gsd-gone is not installed so the extras row is refused (exit 1)", run(root, env, "--apply")[0], 1)
+    doc["skill_keep"]["extras"][NAMED] = ["gsd-fast", "summarize"]
+    with open(fjson, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh)
+    want("gsd back on: --apply", run(root, env, "--apply")[0], 0)
+    for fn in (PLAIN_FILE, "zzz.claude.json", NAMED):
+        want("gsd back on: %s has the baseline again" % fn,
+             len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5, True)
+    want("gsd back on: --check after the apply", run(root, env, "--check"), (0, "0 profile(s) would change."))
+    root, env = world(tmp, "gsd-on", off, lambda sk: sk["extras"].update({NAMED: ["gsd-fast", "summarize"]}))
+    run(root, env, "--apply")
+    for fn in (PLAIN_FILE, "zzz.claude.json", NAMED):
+        want("gsd on (control): %s gets the baseline" % fn,
+             len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5, True)
+    # gsd on, an extras row naming a gsd-* name that is not installed: still refused, as any missing name is.
+    root, env = world(tmp, "gsd-on-gone", off, named_row)
     code, lines = run_full(root, env, "--check")
-    marks = {fn: line_of(lines, fn)[:1] for fn in (LE, LB, LN, OUT)}
-    want("no_gsd_baseline: dry-run marks exactly the first two", (code, marks), (1, {LE: "~", LB: "~", LN: "=", OUT: "="}))
-    want("no_gsd_baseline: the bare profile line says gsd off", "gsd off -" in line_of(lines, LB), True)
-    want("no_gsd_baseline: --apply", run(root, env, "--apply")[0], 0)
-    gsd_of = lambda fn: [n for n in skills_of(root, fn) if n.startswith("gsd-")]
-    want("no_gsd_baseline: no gsd-* left in the first two", (gsd_of(LE), gsd_of(LB)), ([], []))
-    want("no_gsd_baseline: the extras row's name is the only one kept", gsd_of(LN), ["gsd-fast"])
-    want("no_gsd_baseline: a hand-added non-gsd name survives the strip", "defuddle" in skills_of(root, LB), True)
-    with open(os.path.join(root, "config", "profiles", OUT), "rb") as fh:
-        want("no_gsd_baseline: the unlisted profile is byte-identical", fh.read(), outside_before)
-    want("no_gsd_baseline: --check after the apply", run(root, env, "--check"), (0, "0 profile(s) would change."))
-    # Reversible (one line): out of the list, the next apply gives the baseline back, in extras or not.
-    doc["skill_keep"]["no_gsd_baseline"] = [n for n in doc["skill_keep"]["no_gsd_baseline"] if n not in (LE, LB)]
-    with open(fjson, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh)
-    want("no_gsd_baseline: --apply after leaving the list", run(root, env, "--apply")[0], 0)
-    want("no_gsd_baseline: the baseline is back",
-         [len(gsd_of(fn)) > 5 for fn in (LE, LB)], [True, True])
-    # gsd integration off: the list changes nothing, a listed profile keeps the names it holds.
-    root, env = world(tmp, "nogsd-off", mig, lambda sk: (migration(sk), sk["no_gsd_baseline"].extend([LE, LB])), gsd=False)
-    want("no_gsd_baseline, gsd off: --apply", run(root, env, "--apply")[0], 0)
-    want("no_gsd_baseline, gsd off: a listed profile keeps its names",
-         [n for n in skills_of(root, LB) if n.startswith("gsd-")], ["gsd-fast", "gsd-toy-1"])
-    want("no_gsd_baseline, gsd off: a listed profile with a row keeps its names",
-         [n for n in skills_of(root, LE) if n.startswith("gsd-")], ["gsd-fast", "gsd-toy-1"])
-    want("no_gsd_baseline, gsd off: --check after the apply", run(root, env, "--check"), (0, "0 profile(s) would change."))
+    want("gsd on (control): an extras row naming a missing gsd-* skill is refused",
+         (code, [l for l in lines if "EXTRAS[%s] -> gsd-gone" % NAMED in l] != []), (1, True))
 
     # skill_keep.gsd_exclude and gsd_opt_in. toy-0 is excluded: in no profile, extras or not, though it is installed
     # (relink has not run in this world). toy-1 is opt-in: in the baseline of nobody, kept only by the profile whose
@@ -420,7 +403,7 @@ def main():
 
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 13 worlds" % len(failures))
+    print("%d failure(s) over 12 worlds" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 
