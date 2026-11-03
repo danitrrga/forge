@@ -8,16 +8,21 @@ Seen red before lib/fwx/commands/linear.py existed (the file moved away), 76 che
 `fwx: unknown command: linear`:
   FAIL: list: exit 0: got 2, want 0
   FAIL: list --json is not JSON: Expecting value: line 1 column 1 (char 0)
-  FAIL: no key (unset): exit 77: got 2, want 77
   FAIL: fwx lists linear: stdout "usage: fwx <command> [args]\n\ncommands:\n  budget ..."
-Controls, each seen red (the first FAIL of the case it was made for); the run is 85 checks, the last 8 being these:
+Seen red for the second round (no key is exit 2 with `LINEAR_API_KEY is not set: <fix>`, and `create` puts only the labels
+an issue names, none by default: lateral bug issues carry no entry label), on the first version (exit 77, `factory` added
+to every issue), 78 checks, 6 failed:
+  FAIL: create two: no label unless the issue carries it: got [['lab-factory'], ['lab-factory', 'lab-mini-plan']], want [[], ['lab-mini-plan']]
+  FAIL: no key (unset): exit 2: got 77, want 2
+  FAIL: no key (unset): says LINEAR_API_KEY is not set, with the fix: stderr 'NOT RUN, NOT ARMED: no LINEAR_API_KEY\n ...
+Controls, each seen red (the first FAIL of the case it was made for); the run is 86 checks, the last 8 being these:
   behaviour
   - `--json` printing the text form:          FAIL: list --json is not JSON: Expecting value: line 1 column 1 (char 0)
   - a random comment id (the client):         FAIL: comment twice: one comment on the issue: got 2, want 1
   - create sending only the first issue:      FAIL: create two: two identifiers: got ['TOY-101'], want ['TOY-101', 'TOY-102']
-  - create without the factory label:         FAIL: create two: each issue carries factory: got [[], ['lab-mini-plan']], want [['lab-factory'], ['lab-factory', 'lab-mini-plan']]
+  - create adding factory to every issue:     FAIL: create two: no label unless the issue carries it: got [['lab-factory'], ['lab-factory', 'lab-mini-plan']], want [[], ['lab-mini-plan']]
   safety (PM I13)
-  - no key, the request made anyway:          FAIL: no key (unset): exit 77: got 0, want 77 (and "no request reached Linear: got 1, want 0")
+  - no key, the request made anyway:          FAIL: no key (unset): exit 2: got 0, want 2 (and "no request reached Linear: got 1, want 0")
   - an endpoint outside 127.0.0.1 accepted:   FAIL: endpoint localhost: exit 2: got 0, want 2 (and "no request reached it: got 1, want 0")
   - `--project` other than the configured one accepted: FAIL: --project other-project: exit 2: got 0, want 2
   - `label` on another project's issue sending its mutation: FAIL: label on another project's issue: exit 2: got 0, want 2 (and "no mutation: got 1, want 0")
@@ -284,7 +289,7 @@ def case_create(s, root, repo, bare):
     ids = [l.split()[0] for l in r.stdout.splitlines() if l.strip()]
     s.eq("create two: two identifiers", ids, ["TOY-101", "TOY-102"])
     sent = [m["variables"]["input"]["labelIds"] for m in f.mutations() if "issueCreate" in m["query"]]
-    s.eq("create two: each issue carries factory", sent, [["lab-factory"], ["lab-factory", "lab-mini-plan"]])
+    s.eq("create two: no label unless the issue carries it", sent, [[], ["lab-mini-plan"]])
     s.ok("create: the description is the template's, with the sections",
          f.issues.get("TOY-101", {}).get("description", "").startswith("## Context\n\nc1"),
          "got %r" % f.issues.get("TOY-101"))
@@ -294,6 +299,12 @@ def case_create(s, root, repo, bare):
          "exit %d, created %d, stdout %r" % (r.returncode, len(f.created), r.stdout))
     r = cli(root, repo, f, "create", "--template", "general", stdin=json.dumps({"title": "one", "context": "c", "expected": "e"}))
     s.ok("create one issue as an object", r.returncode == 0 and r.stdout.startswith("TOY-103"), "stdout %r" % r.stdout)
+    r = cli(root, repo, f, "create", "--template", "general",
+            stdin=json.dumps({"title": "entry", "context": "c", "expected": "e", "labels": ["factory", "needs-owner"]}))
+    sent = [m["variables"]["input"]["labelIds"] for m in f.mutations() if "issueCreate" in m["query"]][-1]
+    s.eq("create: the labels the issue names, by their Linear names", (r.returncode, sent),
+         (0, ["lab-factory", "lab-toy-needs-help"]))
+    n += 1
     for label, text in (("not JSON", "title: x"), ("empty", ""), ("a number", "3"),
                         ("an issue with no expected", json.dumps({"title": "t", "context": "c"}))):
         r = cli(root, repo, f, "create", "--template", "general", stdin=text)
@@ -329,11 +340,11 @@ def case_no_key(s, root, repo, bare):
     f.add_issue("TOY-1", labels=["factory"])
     for label, kw in (("unset", {"key": None}), ("empty", {"key": ""})):
         r = cli(root, repo, f, "list", "--label", "factory", **kw)
-        s.eq("no key (%s): exit 77" % label, r.returncode, 77)
-        s.ok("no key (%s): says NOT RUN, NOT ARMED and names the variable" % label,
-             r.stderr.startswith("NOT RUN, NOT ARMED: no LINEAR_API_KEY"), "stderr %r" % r.stderr)
+        s.eq("no key (%s): exit 2" % label, r.returncode, 2)
+        s.ok("no key (%s): says LINEAR_API_KEY is not set, with the fix" % label,
+             r.stderr.startswith("LINEAR_API_KEY is not set: ") and "forge" in r.stderr, "stderr %r" % r.stderr)
     r = cli(root, repo, f, "comment", "TOY-1", "--kind", "claim", stdin="x", key=None)
-    s.eq("no key, a write: exit 77", r.returncode, 77)
+    s.eq("no key, a write: exit 2", r.returncode, 2)
     s.eq("no key: no request reached Linear", len(f.requests), 0)
     f.close()
 
@@ -410,8 +421,10 @@ CONTROLS = [
              'cid = comment_id(ref["identifier"], kind, hashlib.sha256(body.encode("utf-8")).hexdigest(), str(time.time_ns()))')]}),
     ("create sending only the first issue", case_create, "create two: two identifiers",
      {CMD: [("client.create(template, items)", "client.create(template, items[:1])")]}),
-    ("create without the factory label", case_create, "create two: each issue carries factory",
-     {CMD: [('or "factory" in labels else ["factory"] + labels', 'or True else ["factory"] + labels')]}),
+    ("create adding factory to every issue", case_create, "create two: no label unless the issue carries it",
+     {CMD: [("        for got in client.create(template, items):",
+             '        for i in items:\n            i["labels"] = ["factory"] + [l for l in i.get("labels") or [] if l != "factory"]\n'
+             "        for got in client.create(template, items):")]}),
     ("no key, the request made anyway", case_no_key, "no key: no request reached Linear",
      {CMD: [("key = os.environ.get(KEY)\n", 'key = os.environ.get(KEY) or "anonymous"\n')]}),
     ("an endpoint outside 127.0.0.1 accepted", case_endpoint, "no request reached it",

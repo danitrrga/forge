@@ -4,16 +4,17 @@
   waiting [--json]              the issues waiting for the owner, and how many; --json is {"count": N, "issues": [...]}
   comment ISSUE --kind K        stdin is the body; the comment starts with `<!-- fwx:K -->`; a repeat creates nothing
   label ISSUE +L -L ...         add and remove neutral labels (never `factory` or `review` off, never a label that is not ours)
-  create --template T           stdin is JSON: one issue {title, context, expected, ...} or a list of them; `factory` is
-                                put on every issue, and the keys are the ones lib/fwx/linear.py lists in FIELDS plus
-                                `title` and `labels`
+  create --template T           stdin is JSON: one issue {title, context, expected, ...} or a list of them; the keys are
+                                the ones lib/fwx/linear.py lists in FIELDS plus `title` and `labels`, and an issue gets
+                                exactly the neutral labels it names (none if it names none: `factory` is set apart)
 
 The project is `project.linear_project` of .claude/fwx.json; `--project` is needed only without it, and with it must say
 the same. The key is `LINEAR_API_KEY` in the environment. `FWX_LINEAR_ENDPOINT` points the client at a fake server and
 is accepted only on 127.0.0.1 (the client refuses any other address, so the key never leaves for one).
 
 Exit 0 done, 2 usage or refusal (another project's issue, a label that is not ours, an unknown template, a project not
-named), 1 any other failure (Linear unreachable or refusing), 77 no `LINEAR_API_KEY`: `NOT RUN, NOT ARMED`, no request.
+named), 1 any other failure (Linear unreachable or refusing). Without `LINEAR_API_KEY`: `LINEAR_API_KEY is not set: <fix>`,
+exit 2, no request.
 """
 import json
 import os
@@ -28,7 +29,6 @@ USAGE = ("usage: fwx linear [--project NAME] list --label L [--json]\n"
          "       fwx linear [--project NAME] create --template T      (JSON on stdin: one issue or a list)\n")
 KEY = "LINEAR_API_KEY"
 ENDPOINT = "FWX_LINEAR_ENDPOINT"
-NO_KEY = 77
 REFUSED = ("forbidden", "usage", "no_template", "missing_label", "not_found")  # the request cannot be done: exit 2
 
 
@@ -131,9 +131,6 @@ def run(client, sub, args):
         items = [items] if isinstance(items, dict) else items
         if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
             raise Usage("create: stdin is an issue (an object) or a list of issues")
-        for i in items:  # every issue enters the factory: the label needs no flag
-            labels = i.get("labels") or []
-            i["labels"] = labels if not isinstance(labels, list) or "factory" in labels else ["factory"] + labels
         for got in client.create(template, items):
             print("%s  %s  %s" % (got["identifier"], got["url"], "created" if got["created"] else "already there"))
     else:
@@ -161,9 +158,10 @@ def main(argv):
         project = project_name(cfg, asked)
         key = os.environ.get(KEY)
         if not key:
-            sys.stderr.write("NOT RUN, NOT ARMED: no %s\n  forge puts it in the environment of a project with the framework; "
-                             "without forge, export your own personal API key as %s. Nothing was sent.\n" % (KEY, KEY))
-            return NO_KEY
+            sys.stderr.write("%s is not set: forge puts it in the environment of a project with the framework (run "
+                             "`forge sync`); without forge, export your own Linear personal API key as %s. Nothing was sent.\n"
+                             % (KEY, KEY))
+            return 2
         client = linear.Client(key, project, cfg, endpoint=os.environ.get(ENDPOINT) or linear.ENDPOINT)
         run(client, sub, args)
     except Usage as e:
