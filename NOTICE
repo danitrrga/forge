@@ -1,15 +1,41 @@
-Sources of code ported into this repo.
+Sources of text and code copied or ported into this repo. Each source is one entry (a block with no blank line inside); a file
+that carries a `copied-from: <source> <path> @<commit>` header needs the source and that commit in the same entry, and
+tests/test_notice.py fails when it does not. Sources a file only read for its shape carry a `referent:` header instead; those that
+also lent text are named below.
 
 marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209598517a4c826073b5a0edc2a4097a4fa,
 used with the author's permission.
+  Text copied by part 2.1, each line as written: playbooks/execute.md takes from its playbooks/factory.md the three rules
+  "Clean up only what you started", "Prove the commit you ship" and "Giving up means `failed`" of "Standing rules".
+  Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
+    lib/fwx/core/keys.py     from lib/factory.ts
+    lib/fwx/core/globs.py    from lib/globs.ts
+    lib/fwx/core/trusted.py  from lib/trusted-checks.ts
+    lib/fwx/core/evidence.py from lib/evidence.ts
+    lib/fwx/core/decide.py   from lib/merge-decision.ts
+    lib/fwx/core/gh.py       from lib/github/pulls.ts (upsertComment)
+    lib/fwx/core/verify.py   from hooks/verify.ts, lib/evidence.ts (runChecks, outputTail) and lib/recipe.ts (redact)
+    lib/fwx/linear.py        from lib/linear.ts
+    tests/test_linear.py     from scripts/linear-regressions.ts
+  Cases ported without a header: tests/test_keys.py, tests/test_decide.py, tests/test_evidence.py, tests/test_trusted.py and
+  tests/test_verify.py port cases of its job-key, merge-decision, evidence and trusted-edit regression scripts.
 
-Text copied from it by part 2.1, each line as written (the file carries a `copied-from:` header): playbooks/execute.md,
-the three rules "Clean up only what you started", "Prove the commit you ship" and "Giving up means `failed`" of
-"Standing rules" in playbooks/factory.md.
+forge, the engine that installs this plugin, commits 2c95776, 59597b2 and 582258b (MIT).
+  githooks/commit-msg, githooks/pre-commit, githooks/pre-push   from githooks/ @2c95776
+  tests/helpers.py                                              from tests/sandbox.py @2c95776
+  lib/fwx/config.py (main_checkout)                             from forge/publish.py @59597b2
+  tests/test_readme.py                                          from tests/test_readme.py @582258b
+  .github/ (workflows/ci.yml, workflows/checks.yml, zizmor.yml, dependabot.yml, PULL_REQUEST_TEMPLATE.md, ISSUE_TEMPLATE/ticket.yml)
+                                                                from repo-kit/files/ @582258b
 
-Files ported from it by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
-  lib/fwx/core/keys.py   from lib/factory.ts
-  lib/fwx/core/globs.py  from lib/globs.ts
-  lib/fwx/core/trusted.py from lib/trusted-checks.ts
-  lib/fwx/core/evidence.py from lib/evidence.ts
-  lib/fwx/core/decide.py  from lib/merge-decision.ts
+EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230 (MIT).
+  agents/decisions.md: the section "The settlement test" of skills/ce-plan/references/settled-decisions.md, word for word except
+  "the user" reads "the owner", "(below)" is dropped and the Directive bullet ends after "Not settled.".
+  playbooks/principles.md: the sentence on risk of rule 5 of skills/ce-plan/references/structure.md, quoted.
+
+mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
+  agents/decisions.md: the three ADR criteria of skills/engineering/domain-modeling/SKILL.md, as written there.
+
+pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
+  Read for the shape of playbooks/execute.md, playbooks/session.md, playbooks/ui-walk.md and playbooks/principles.md, and for the
+  rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
