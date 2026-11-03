@@ -5,3 +5,5 @@ used with the author's permission.
 
 Files ported from it by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
   lib/fwx/core/keys.py   from lib/factory.ts
+  lib/fwx/core/globs.py  from lib/globs.ts
+  lib/fwx/core/trusted.py from lib/trusted-checks.ts
