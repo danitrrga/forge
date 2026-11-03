@@ -6,7 +6,7 @@ holds `.fwx/`, with `/` turned into `__`. It is outside the work tree on purpose
 derived file would dirty it, and every worktree reads the same place. Its parts, in order: the mark (`# Base context · <sha8 of
 everything after this line>`), `data/context-map.md` whole, `## Goal` (Intent and What success means of `context.md`, each cut
 at 1000 units with a pointer), `## Files` (the absolute paths that exist), `## Decided` (the `decision` column of the `chosen`
-and `approved` rows of `decisions.tsv`, none of the open ones) and the `<!-- built ... -->` line the check compares.
+and `approved` rows of `decisions.tsv`, none of the open ones and none that a closed row superseded) and the `<!-- built ... -->` line the check compares.
 
 Every length is counted in UTF-16 code units (`units`): Claude Code persists an `additionalContext` of more than 10,000 of them
 instead of delivering it (measured), and a byte count would refuse a text of 6000 `é`. The cap here is 9000, a warning from 6000.
@@ -164,9 +164,12 @@ def _files(folder):
 
 
 def _decided(decisions_path):
+    rows = state.read_rows(decisions_path)
+    # a row that a closed row replaced is history, not a decision in force; a row an open one tried to replace stays
+    superseded = {r["supersedes"] for r in rows if r.get("support") in CLOSED and r.get("supersedes")}
     lines = []
-    for row in state.read_rows(decisions_path):
-        if row.get("support") in CLOSED and row.get("decision", "").strip():
+    for row in rows:
+        if row.get("support") in CLOSED and row.get("decision", "").strip() and row.get("id") not in superseded:
             lines.append("- " + cut(" ".join(row["decision"].split()), DECIDED_LINE))
     if not lines:
         return "## Decided\n(nothing closed yet)\n"

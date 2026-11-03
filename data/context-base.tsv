@@ -1,0 +1,29 @@
+agent_type	sections	why
+*	map	an agent of a project or of another plugin: not listed, so it gets the map
+fwx:planner	map+decided	builds from what is decided and must not decide it again
+fwx:executor	map+decided	builds from what is decided and must not decide it again
+fwx:pre-mortem	map	must not see the conclusions of the author
+fwx:post-mortem	map	must not see the conclusions of the author
+fwx:reviewer	map	must not see the conclusions of the author
+fwx:security-reviewer	map	must not see the conclusions of the author
+fwx:researcher	map	needs to know what resources there are
+fwx:state	map	needs to know what resources there are
+fwx:skill-proposer	map	needs to know what resources there are
+fwx:intake	map	needs to know what resources there are
+fwx:decisions	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:demo	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:vision	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:detector	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:classifier	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:ui-walker	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:ui-verifier	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:review-verifier	none	its brief says everything; it is narrow and sometimes many run at once
+fwx:analytics-verifier	none	its brief says everything; it is narrow and sometimes many run at once
+Explore	none	searches; a search with Haiku is launched as Explore, the hook cannot see the model
+claude-code-guide	none	answers about something else
+statusline-setup	none	answers about something else
+Plan	map	decides, so it needs the map
+general-purpose	map	does general work
+claude	map	does general work
+workflow-subagent	map	a Workflow agent with no agentType; a lint requires the agentType (U6)
+fork	none	already carries the orchestrator's conversation with its conclusions
