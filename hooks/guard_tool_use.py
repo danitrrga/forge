@@ -31,6 +31,8 @@ import json
 import os
 import re
 import shlex
+import signal
+import subprocess
 import sys
 
 # forge: this file lives in <forge>/hooks/, and its alert log in <forge>/logs/.
@@ -541,17 +543,23 @@ def git_subcommand(args):
 PIPE = re.compile(r"(?<!\|)\|(?!\|)")
 
 
-def split_unquoted(text, pattern):
-    """text cut at each match of pattern that lies outside quotes."""
-    spans, k, out, last = _quoted_spans(text), 0, [], 0
+def split_unquoted_seps(text, pattern):
+    """(text cut at each match of pattern that lies outside quotes, the matches it was cut at)."""
+    spans, k, out, seps, last = _quoted_spans(text), 0, [], [], 0
     for m in pattern.finditer(text):
         while k < len(spans) and spans[k][1] <= m.start():
             k += 1
         if k < len(spans) and spans[k][0] <= m.start():
             continue
         out.append(text[last:m.start()])
+        seps.append(m.group(0))
         last = m.end()
-    return out + [text[last:]]
+    return out + [text[last:]], seps
+
+
+def split_unquoted(text, pattern):
+    """text cut at each match of pattern that lies outside quotes."""
+    return split_unquoted_seps(text, pattern)[0]
 
 
 def pipeline(seg):
@@ -2131,6 +2139,453 @@ def consent_profile(profiles, cwd):
     return max(inside, key=lambda p: len(p["project_path"])) if inside else None
 
 
+# ------------------------------------------------------------------ what matches a consent rule (1.1 U1b)
+#
+# A Bash call matches when one of its commands is a `git push` to a production branch, or starts with an
+# entry of the project's `production.commands`; an MCP call matches when the tool is named by an entry.
+# The project of a command is the deepest profile that holds the directory it runs in (the payload's cwd,
+# moved by `cd`, `git -C`, `env -C`), or, for a worktree kept elsewhere, the profile of its main checkout.
+# A directory the guard cannot read (`cd $X`) is unknown, and an unknown directory fails closed: every
+# profile with a `production` is looked at. The commands come from the guard's own parsers (segments in
+# both cuts, prefixes, nested shells); only the directory walk is new, because the write check's walk
+# answers a different question. Nothing here opens a window: U1c does.
+# Not read, by design or for want of a parser (each one is a way past the window; none is asserted): a git alias
+# (`git config alias.p push`, then `git p origin main`: the cheap exit needs the word `push`), `--git-dir` and
+# `--work-tree` (the directory is the cwd's), a script that pushes inside (name it in production.commands, 1.1
+# section 8), and a Bash call whose text hides `push` behind a variable or a substitution.
+CONSENT_SHELLS = ("bash", "sh", "zsh", "dash", "ksh", "su")  # shells that run the body of a `-c`
+CONSENT_RUNNERS = ("bash", "sh", "zsh", "dash", "ksh", "source", ".")  # `bash X` runs X
+CONSENT_DEPTH = 6  # nested shells read; a body deeper than this is refused as unreadable
+CONSENT_DIRS = 16  # places a command may run in, before they are all "unknown"
+UNREADABLE_REFSPEC = re.compile(r"[$`*?\[]")
+GIT_CAP_S = 5
+CONSENT_GIT = {"dead": False}  # a git call that timed out: the rest of this hook call do not wait for git again
+CONSENT_RESOLVED = {}
+
+
+def consent_git(d, *args):
+    """The stdout of `git ARGS` run in d, or None when it fails, when d is unknown or missing, or when it
+    takes more than GIT_CAP_S seconds. After one timeout git is not called again during this hook call."""
+    if d is None or CONSENT_GIT["dead"]:
+        return None
+    try:
+        proc = subprocess.Popen(["git"] + list(args), cwd=d, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, text=True, start_new_session=True,
+                                env=dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_OPTIONAL_LOCKS="0"))
+    except (OSError, ValueError):
+        return None
+    try:
+        out, _ = proc.communicate(timeout=GIT_CAP_S)
+    except subprocess.TimeoutExpired:
+        CONSENT_GIT["dead"] = True
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)  # the group: a child of git would hold the pipe open
+        except OSError:
+            pass
+        proc.kill()
+        proc.communicate()
+        return None
+    return out.strip() if proc.returncode == 0 else None
+
+
+def _consent_unique(dirs):
+    out = list(dict.fromkeys(dirs))
+    return out if len(out) <= CONSENT_DIRS else [None]
+
+
+def _consent_dir(d, rel, env):
+    """The directory a command is in after moving from d by rel (a cd argument, `git -C`, `env -C`);
+    None when it cannot be read."""
+    if not rel:
+        return d
+    x = expand(rel, env)
+    if x is None or x == "-" or UNREADABLE_DIR.search(x):
+        return None
+    if os.path.isabs(x):
+        return os.path.normpath(x)
+    return os.path.normpath(os.path.join(d, x)) if d else None
+
+
+def consent_bodies(words):
+    """The command lines a shell in words runs: the argument of its `-c`, `eval`'s arguments joined, and
+    the quoted lines nested_bodies finds."""
+    name, out = os.path.basename(words[0]), []
+    if name == "eval" and len(words) > 1:
+        out.append(" ".join(words[1:]))
+    if name in CONSENT_SHELLS:
+        for i, a in enumerate(words[1:], 1):
+            if a.startswith("-") and not a.startswith("--") and "c" in a[1:] and i + 1 < len(words):
+                out.append(words[i + 1])
+                break
+    return out + [b for b in nested_bodies(words) if b not in out]
+
+
+def consent_commands(text, dirs, env=None, depth=0):
+    """Every command `text` runs, as (its words with the prefixes stripped, the directories it may run in,
+    the variables it sees); (None, dirs, env) stands for a nested body deeper than CONSENT_DEPTH. The
+    directories follow `cd` as the shell does: after `cd X &&` the command is in X, and after `cd X ;` it
+    may be in X or where it was, because a cd that fails changes nothing."""
+    text = re.sub(r"\\\r?\n", " ", text)
+    items, seen = [], set()
+    blind = (SEGMENT_SPLIT.split(text), SEGMENT_SPLIT.findall(text))
+    for (segs, seps), split_pipes in ((split_unquoted_seps(text, SEGMENT_SPLIT), pipeline), (blind, PIPE.split)):
+        _consent_walk(segs, seps, split_pipes, dirs, env or {"HOME": HOME}, depth, items, seen)
+    return items
+
+
+def _consent_walk(segs, seps, split_pipes, dirs, env, depth, items, seen):
+    dirs, env, groups = list(dirs), dict(env), []
+    for i, seg in enumerate(segs):
+        seg, opens, closes = group_marks(seg)
+        groups += [(kind, list(dirs), dict(env)) for kind in opens]
+        words = ungroup(split_words(seg) or [])
+        prev, nxt = (seps[i - 1].strip() if i else ""), (seps[i].strip() if i < len(seps) else "")
+        if len(dirs) == 1 and dirs[0]:
+            env["PWD"] = dirs[0]
+        else:
+            env.pop("PWD", None)
+        if len(words) == 1 and ASSIGNMENT.match(words[0]):
+            k, v = words[0].split("=", 1)
+            v = expand(v, env)
+            if v is not None:
+                env[k] = v
+        elif words and words[0] in ("cd", "pushd"):
+            args = [w for w in words[1:] if not w.startswith("-") or w == "-"]
+            moved = [_consent_dir(d, args[0] if args else "~", env) for d in dirs]
+            dirs = _consent_unique(moved if nxt == "&&" and prev != "||" else dirs + moved)
+        else:
+            for part in split_pipes(seg):
+                _consent_part(part, dirs, env, depth, items, seen)
+        for closer in closes:
+            if groups:
+                kind, saved_dirs, saved_env = groups.pop()
+                if kind == "(" and closer == ")":
+                    dirs, env = saved_dirs, saved_env
+
+
+def _consent_part(part, dirs, env, depth, items, seen):
+    assigns, words, _, chdir = command_words(ungroup(split_words(part) or []))
+    if not words:
+        return
+    inner = dict(env)
+    for k, v in assigns:
+        v = expand(v, env)
+        if v is not None:
+            inner[k] = v
+    where = _consent_unique([_consent_dir(d, chdir, inner) for d in dirs])
+    key = (tuple(words), tuple(where))
+    if key not in seen:
+        seen.add(key)
+        items.append((words, where, inner))
+    for body in consent_bodies(words):
+        if depth >= CONSENT_DEPTH:
+            items.append((None, where, inner))
+        else:
+            items.extend(consent_commands(body, where, inner, depth + 1))
+
+
+def _consent_entries(p):
+    """The strings of a profile's production.commands (a profile whose production is not valid has none:
+    the profile that is used is checked by production_error)."""
+    prod = p.get("production")
+    if isinstance(prod, dict) and isinstance(prod.get("commands"), list):
+        return [c for c in prod["commands"] if isinstance(c, str)]
+    return []
+
+
+def _consent_name(p):
+    return os.path.basename(p["file"])[:-len(".claude.json")]
+
+
+def _consent_resolve(cfg, d):
+    """The profiles with a `production` that a command run in d belongs to: the one that holds d, else the
+    one of the main checkout of the worktree d is in; with d unknown, all of them. ValueError when one of
+    them has an invalid production."""
+    if d in CONSENT_RESOLVED:
+        return CONSENT_RESOLVED[d]
+    if d is None:
+        found = [p for p in cfg["profiles"] if "production" in p]
+    else:
+        p = consent_profile(cfg["profiles"], d)
+        if p is None:
+            common = consent_git(d, "rev-parse", "--path-format=absolute", "--git-common-dir")
+            if common:
+                p = consent_profile(cfg["profiles"], os.path.dirname(common.rstrip("/")))
+        found = [p] if p else []
+    for p in found:
+        err = production_error(p["production"]) if "production" in p else None
+        if err:
+            raise ValueError("%s: %s" % (p["file"], err))
+    CONSENT_RESOLVED[d] = [p for p in found if "production" in p]
+    return CONSENT_RESOLVED[d]
+
+
+def consent_push_args(args):
+    """(remote or None, refspecs, flags) of the words after `git push`. The flags are the names of the
+    options that change what a push does: dry-run, all (also --mirror and --branches), tags, delete, force."""
+    flags, positional, i, only_positional, repo = set(), [], 0, False, None
+    while i < len(args):
+        a, i = args[i], i + 1
+        if only_positional or not a.startswith("-") or a == "-":
+            positional.append(a)
+        elif a == "--":
+            only_positional = True
+        elif a.startswith("--"):
+            name, eq, value = a.partition("=")
+            if name in ("--all", "--branches", "--mirror"):
+                flags.add("all")
+                if name == "--mirror":
+                    flags.add("mirror")
+            elif name == "--tags":
+                flags.add("tags")
+            elif name == "--delete":
+                flags.add("delete")
+            elif name == "--dry-run":
+                flags.add("dry-run")
+            elif name == "--force" or name.startswith("--force-with-lease") or name == "--force-if-includes":
+                flags.add("force")
+            elif name in ("--repo", "--receive-pack", "--exec", "--push-option", "--recurse-submodules"):
+                if not eq and i < len(args):
+                    value, i = args[i], i + 1
+                if name == "--repo":
+                    repo = value
+        else:
+            for j, c in enumerate(a[1:], 1):
+                if c == "f":
+                    flags.add("force")
+                elif c == "d":
+                    flags.add("delete")
+                elif c == "n":
+                    flags.add("dry-run")
+                elif c == "o":
+                    i += 0 if a[j + 1:] or i >= len(args) else 1
+                    break
+    if repo is None and positional:
+        repo, positional = positional[0], positional[1:]
+    specs, k = [], 0
+    while k < len(positional):
+        if positional[k] == "tag" and k + 1 < len(positional):  # `tag NAME` is refs/tags/NAME
+            flags.add("tags")
+            k += 2
+            continue
+        specs.append(positional[k])
+        k += 1
+    return repo, specs, flags
+
+
+def consent_push_line(d, remote, src, dst):
+    """What pushing src to remote/dst changes: the short sha of src and the commits the remote lacks."""
+    where, src = "%s/%s" % (remote, dst), (src[len("refs/heads/"):] if src.startswith("refs/heads/") else src)
+    ref = src if re.match(r"^[A-Za-z0-9_][A-Za-z0-9_./@^~{}-]*$", src or "") else None
+    pattern = "--remotes=%s" % remote if re.match(r"^[A-Za-z0-9_.-]+$", remote) else "--remotes"
+    sha = consent_git(d, "rev-parse", "--verify", "--short", ref) if ref else None
+    count = consent_git(d, "rev-list", "--count", ref, "--not", pattern) if ref else None
+    if sha is None or count is None or not count.isdigit():
+        return "push to %s: could not read what is pushed (git failed or took more than %d s); asking anyway" % (
+            where, GIT_CAP_S)
+    n = int(count)
+    if n == 0:
+        return "push to %s: %s (%s), nothing that %s lacks" % (where, src, sha, remote)
+    subjects = (consent_git(d, "log", "--format=%s", "-n", "5", ref, "--not", pattern) or "").splitlines()
+    text = "; ".join('"%s"' % s[:80] for s in subjects)
+    more = " and %d more" % (n - len(subjects)) if n > len(subjects) else ""
+    return "push to %s: %s (%s), %d commit(s) that %s lacks: %s%s" % (where, src, sha, n, remote, text, more)
+
+
+def consent_push(args, d, branches):
+    """(matches, changes) of `git push ARGS` run in directory d (None when unknown) against the production
+    `branches`. Not a match: --dry-run, a push of tags only, a push to any other branch. A match that cannot
+    be read to the end (a refspec with `$`, a backtick or a glob; git failing or taking more than GIT_CAP_S
+    seconds) is still a match, and says so."""
+    remote, specs, flags = consent_push_args(args)
+    if "dry-run" in flags:
+        return False, []
+    if "all" in flags:
+        rem = remote or "origin"
+        changes = ["%s pushes every local branch to %s, production branches included (%s)" % (
+            "--mirror" if "mirror" in flags else "--all", rem, ", ".join(branches))]
+        if "mirror" in flags:
+            changes.append("--mirror also deletes on %s every branch no local one matches, and overwrites the rest" % rem)
+        for b in branches:
+            if consent_git(d, "rev-parse", "--verify", "--quiet", "refs/heads/" + b) is not None:
+                changes.append(consent_push_line(d, rem, b, b))
+        return True, changes
+    if not specs:
+        if "tags" in flags:
+            return False, []
+        if consent_git(d, "config", "--get", "push.default") == "matching":
+            return True, ["push.default is matching: every branch the remote also has is pushed, %s included" % (
+                ", ".join(branches))]
+        up = consent_git(d, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{push}")
+        if up:
+            rem = remote or (up.split("/", 1)[0] if "/" in up else "origin")
+            dst = up[len(rem) + 1:] if up.startswith(rem + "/") else up.split("/", 1)[-1]
+        else:
+            cur = consent_git(d, "rev-parse", "--abbrev-ref", "HEAD")
+            if cur is None:
+                return True, ["could not read which branch a plain `git push` updates (git failed or took more "
+                              "than %d s); asking anyway" % GIT_CAP_S]
+            rem, dst = remote or "origin", cur
+        if dst not in branches:
+            return False, []
+        changes = [consent_push_line(d, rem, "HEAD", dst)]
+        return True, changes + (["--force: rewrites %s/%s" % (rem, dst)] if "force" in flags else [])
+    changes, rem = [], remote or "origin"
+    for s in specs:
+        plus, body = s.startswith("+"), s.lstrip("+")
+        if UNREADABLE_REFSPEC.search(body):
+            changes.append("refspec %r cannot be read before it runs; treated as a push to production (%s)" % (
+                s, ", ".join(branches)))
+            continue
+        src, _, dst = body.partition(":") if ":" in body else (body, "", body)
+        if "delete" in flags and ":" not in body:
+            src = ""
+        dst = dst or src
+        if ":" not in body and body in ("HEAD", "@") and "delete" not in flags:
+            cur = consent_git(d, "rev-parse", "--abbrev-ref", "HEAD")
+            if cur == "HEAD":
+                continue  # detached: git refuses the push
+            if cur is None:
+                changes.append("could not read the current branch for %r (git failed or took more than %d s); "
+                               "treated as a push to production (%s)" % (s, GIT_CAP_S, ", ".join(branches)))
+                continue
+            src, dst = "HEAD", cur
+        if dst.startswith("refs/heads/"):
+            dst = dst[len("refs/heads/"):]
+        if dst not in branches:
+            continue
+        if "delete" in flags or not src:
+            changes.append("delete %s/%s: the branch is removed from the remote" % (rem, dst))
+        else:
+            changes.append(consent_push_line(d, rem, src, dst))
+            if plus or "force" in flags:
+                changes.append("--force: rewrites %s/%s" % (rem, dst))
+    return bool(changes), changes
+
+
+def consent_program(words, d):
+    """(the command words with `bash X`/`source X` taken as X and a leading ./ dropped, the absolute path of
+    the program word when it is a path, else None) of a command run in d."""
+    w = list(words)
+    if os.path.basename(w[0]) in CONSENT_RUNNERS and len(w) > 1 and not w[1].startswith("-"):
+        w = w[1:]
+    while w[0].startswith("./"):
+        w[0] = w[0][2:]
+    path = w[0] if os.path.isabs(w[0]) else (os.path.join(d, w[0]) if d and "/" in w[0] else None)
+    return w, (os.path.normpath(path) if path else None)
+
+
+def consent_command_hit(words, d, project_path, entry):
+    """True when the words of entry begin the command `words` run in d: `bash X` and `source X` count as
+    X, `./X` as X, a path inside the project as the path from its root, and the path of a program
+    elsewhere (/usr/bin/gh) as its name."""
+    ew = split_words(entry) or entry.split()
+    if not ew or not words:
+        return False
+    w, path = consent_program(words, d)
+    names = {w[0]}
+    if d and "/" not in w[0] and not os.path.isabs(w[0]):
+        path = os.path.normpath(os.path.join(d, w[0]))  # `bash deploy.sh` from the directory that holds it
+    if path:
+        if project_path and (path == project_path or path.startswith(project_path.rstrip("/") + "/")):
+            names.add(os.path.relpath(path, project_path))
+        elif os.path.isabs(w[0]):
+            names.add(os.path.basename(w[0]))
+    efirst = ew[0]
+    while efirst.startswith("./"):
+        efirst = efirst[2:]
+    return efirst in names and ew[1:] == w[1:len(ew)]
+
+
+def consent_match(cfg, payload):
+    """The consent rules a tool call matches: a list of {"rule": the rule of gateway.json, "project": the
+    profile's name, "kind": push | command | mcp, "changes": [what it changes, one line each]}; [] when it
+    matches none. ValueError when the production of a profile it needs is invalid. The cheap exit comes first:
+    a Bash call with no `push` and no program of a production command in it, an MCP tool no profile names."""
+    tool, ti, profiles = payload.get("tool_name"), payload.get("tool_input"), cfg["profiles"]
+    ti = ti if isinstance(ti, dict) else {}
+    cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else PROJECT
+    rule_of = {}
+    for r in cfg["rules"]:
+        rule_of.setdefault(r["match"], r)
+    CONSENT_GIT["dead"] = False
+    CONSENT_RESOLVED.clear()
+    if not any("production" in p for p in profiles) or not isinstance(tool, str):
+        return []
+    if tool.startswith("mcp__"):
+        rule = rule_of.get("production.commands")
+        named = [p for p in profiles if tool in _consent_entries(p)]
+        if not rule or not named:
+            return []
+        mine = consent_profile(profiles, cwd)
+        prof = mine if mine in named else named[0]
+        problem = production_error(prof["production"])
+        if problem:
+            raise ValueError("%s: %s" % (prof["file"], problem))
+        changes = ["tool %s, project %s" % (tool, _consent_name(prof))]
+        for key in ("sql", "query"):
+            if isinstance(ti.get(key), str) and ti[key].strip():
+                lines = ti[key].splitlines()
+                changes += ["%s: %s" % (key, line) for line in lines[:10]]
+                if len(lines) > 10:
+                    changes.append("%s: ... and %d more lines" % (key, len(lines) - 10))
+        return [{"rule": rule, "project": _consent_name(prof), "kind": "mcp", "changes": changes}]
+    command = ti.get("command")
+    if tool not in SHELL_TOOLS or not isinstance(command, str) or not command.strip():
+        return []
+    needles = ["push"]
+    for p in profiles:
+        for e in _consent_entries(p):
+            ew = [] if e.startswith("mcp__") else (split_words(e) or e.split())
+            if ew:
+                needles.append(os.path.basename(ew[0]))
+    if not any(n in t for n in needles for t in (command, re.sub(r"['\"\\]", "", command))):
+        return []
+    push_rule, cmd_rule = rule_of.get("production.branches"), rule_of.get("production.commands")
+    matches, seen = [], set()
+
+    def add(rule, project, kind, changes):
+        key = (kind, rule["id"], project, tuple(changes))
+        if key not in seen:
+            seen.add(key)
+            matches.append({"rule": rule, "project": project, "kind": kind, "changes": changes})
+
+    for words, dirs, env in consent_commands(strip_prose(command), [os.path.realpath(cwd)]):
+        for d in dirs:
+            profs = _consent_resolve(cfg, d)
+            if words is None:
+                rule = cmd_rule or push_rule
+                if profs and rule:
+                    add(rule, "+".join(_consent_name(p) for p in profs), "command",
+                        ["the command nests shells more than %d deep, so it cannot be read; asking" % CONSENT_DEPTH])
+                continue
+            if os.path.basename(words[0]) == "git" and push_rule:
+                args = []
+                for a in words[1:]:
+                    e = expand(a, env) if a.startswith("~") or "$" in a else a
+                    args.append(a if e is None else e)  # a variable the guard cannot read stays `$X`: unreadable
+                where, rest = git_subcommand(args)
+                if rest and rest[0] == "push":
+                    wd = _consent_dir(d, where, env)
+                    pprofs = _consent_resolve(cfg, wd)
+                    branches = sorted({b for p in pprofs for b in p["production"].get("branches", [])})
+                    if branches:
+                        hit, changes = consent_push(rest[1:], wd, branches)
+                        if hit:
+                            add(push_rule, "+".join(_consent_name(p) for p in pprofs), "push", changes)
+            if cmd_rule:
+                # A script named by its absolute path belongs to the project that holds it, wherever it runs from.
+                script = consent_program(words, d)[1]
+                holders = _consent_resolve(cfg, os.path.dirname(script)) if script else []
+                for p in profs + [h for h in holders if h not in profs]:
+                    for entry in _consent_entries(p):
+                        if not entry.startswith("mcp__") and consent_command_hit(words, d, p["project_path"], entry):
+                            add(cmd_rule, _consent_name(p), "command",
+                                ["the command begins with `%s`, a production command of project %s" % (
+                                    entry, _consent_name(p))])
+    return matches
+
+
 def consent_error(why):
     """Refuses the call: stderr starts with CONSENT_ERROR, on one line, with the way back."""
     sys.stderr.write("CONSENT_ERROR: %s. Every call is refused until it is fixed; instead of retrying or going "
@@ -2156,7 +2611,22 @@ def consent_main():
         err = production_error(prof["production"])
         if err:
             consent_error("%s: %s" % (prof["file"], err))
-    # U1b and U1c: the rules, the request, the adapter and the log come here.
+    try:
+        matches = consent_match(cfg, payload) if isinstance(payload, dict) else []
+    except ValueError as e:
+        consent_error(str(e))
+    except Exception as e:  # a parser that fails on a call must not wave it through: onFailure would block it anyway
+        consent_error("the consent rules failed on this call (%s: %s)" % (type(e).__name__, e))
+    if matches:
+        # U1c replaces this: the request, the adapter, the answer and the log.
+        sys.stderr.write("CONSENT_ERROR: not wired yet: the call matches the rule %s of project %s. Do not retry or "
+                         "go around it; tell the user what you wanted to run.\n" % (
+                             ", ".join(sorted({m["rule"]["id"] for m in matches})),
+                             ", ".join(sorted({m["project"] for m in matches}))))
+        for m in matches:
+            for c in m["changes"]:
+                sys.stderr.write("  change: %s\n" % c)
+        sys.exit(2)
 
 
 SHELL_TOOLS = {"Bash", "run_shell_command", "shell"}

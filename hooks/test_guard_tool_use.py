@@ -31,6 +31,9 @@ import resource
 import shutil
 import subprocess
 import sys
+import threading
+import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 
 sys.dont_write_bytecode = True  # no guard .pyc under hooks/, whoever runs this
@@ -2328,8 +2331,264 @@ def consent_mode_row(name):
 
 
 CONSENT_MODE_ROWS = ["core-not-run", "exclusive", "every-call", "message"]
+
+# ------------------------------------------------------------------ which actions match a rule (1.1 U1b)
+#
+# Each row feeds one call to `--consent` of the guard under test, copied into a toy forge (consent_forge) whose
+# profile `toy` covers a toy world: repos a and b under one project root, a bare local remote (every real push
+# of this suite goes there and nowhere else), repo c and a worktree of a OUTSIDE the project root, and repo d
+# with push.default=matching. U1b opens no window: a call that matches exits 2 with `CONSENT_ERROR: not wired
+# yet` and one `  change:` line per entry of `changes`; one that does not match exits 0 and prints nothing.
+# git runs with no user or system config (GIT_CONFIG_GLOBAL), so the machine's own settings decide nothing.
+#
+# Red before, against the guard of U1a (10182c3: --consent validates and then lets every call through): all 68
+# rows that match fail, each as "<label>: wanted rc=2 'CONSENT_ERROR: not wired yet', got rc=0 ", and the 29 rows
+# that do not match pass.
+# Control, one named mutant per behaviour (test_guard_mutants.py, "consent: ..."): the seven the plan names, refspec
+# ignored, push without refspec ignored, --all ignored, unreadable refspec taken as not production, command
+# prefix that never matches, nested shells not read, MCP tool never compared, and one each for the destination
+# (not the source) deciding, --dry-run, tags only, --force, `cd`, `git -C`, a worktree elsewhere, the rule
+# being absent, the 5 s cap on git.
+CONSENT_PRODUCTION_TOY = {"branches": ["main"], "commands": ["gh pr merge", "infra/deploy.sh", "ssh deploy@host",
+                                                              "mcp__db-toy__execute_sql"]}
+_CONSENT_WORLD = []
+_CONSENT_WORLD_LOCK = threading.Lock()
+
+
+def consent_world():
+    """The toy world, built once: (a namespace with the scratch forge, its guard, the repos, the environment)."""
+    with _CONSENT_WORLD_LOCK:
+        if _CONSENT_WORLD:
+            return _CONSENT_WORLD[0]
+        root, outside = sandbox.mkdtemp("guard-test-world-"), sandbox.mkdtemp("guard-test-outside-")
+        remote = os.path.join(root, "remote.git")
+        a, b, d = (os.path.join(root, n) for n in ("a", "b", "d"))
+        c, wt = os.path.join(outside, "c"), os.path.join(outside, "wt")
+        sandbox.git(root, "init", "--bare", "-b", "main", remote)
+        for repo in (a, c):
+            os.makedirs(repo)
+            sandbox.git(repo, "init", "-b", "main")
+            sandbox.git(repo, "remote", "add", "origin", remote)
+        os.makedirs(os.path.join(root, "infra"))
+        open(os.path.join(root, "infra", "deploy.sh"), "w").write("echo deploy\n")
+        open(os.path.join(a, "f"), "w").write("0\n")
+        sandbox.git(a, "add", "f")
+        sandbox.git(a, "commit", "-m", "initial")
+        sandbox.git(a, "push", "-u", "origin", "main")
+        for n, msg in enumerate(("add login", "fix typo", "bump version"), 1):
+            open(os.path.join(a, "f"), "w").write("%d\n" % n)
+            sandbox.git(a, "commit", "-am", msg)
+        sandbox.git(root, "clone", remote, b)
+        sandbox.git(b, "checkout", "-b", "feature")
+        sandbox.git(root, "clone", remote, d)
+        sandbox.git(d, "config", "push.default", "matching")
+        sandbox.git(c, "commit", "--allow-empty", "-m", "c work")
+        sandbox.git(a, "worktree", "add", wt, "-b", "wt-branch")
+        forge, guard = consent_forge(good_gateway(), {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}},
+                                     symlinks=False)
+        w = types.SimpleNamespace(
+            forge=forge, guard=guard, root=root, outside=outside, a=a, b=b, c=c, d=d, wt=wt, remote=remote,
+            sha=sandbox.git(a, "rev-parse", "--short", "HEAD").strip(),
+            env={"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "CLAUDE_PROJECT_DIR": forge})
+        _CONSENT_WORLD.append(w)
+        return w
+
+
+def consent_match_row(label, tool, ti, cwd, want, env=None, within=None):
+    """One call to `--consent`. `want` None: exits 0 with no output. A list: exits 2 `CONSENT_ERROR: not wired
+    yet` and every string of the list is in the output (the `changes`). Everything is a function of the world."""
+    w = consent_world()
+    e = dict(w.env)
+    e.update(env(w) if env else {})
+    start = time.monotonic()
+    rc, err = run_tool(tool, ti(w) if callable(ti) else ti, e, w.guard, ["--consent"], cwd=cwd(w))
+    took = time.monotonic() - start
+    if within is not None and took > within:
+        return "%s: took %.1f s, wanted less than %s s (git is capped at 5 s and not asked again)" % (label, took, within)
+    if want is None:
+        return None if rc == 0 and not err else "%s: wanted rc=0 and no output, got rc=%s %s" % (label, rc, err.strip()[:200])
+    if rc != 2 or not err.startswith("CONSENT_ERROR: not wired yet"):
+        return "%s: wanted rc=2 'CONSENT_ERROR: not wired yet', got rc=%s %s" % (label, rc, err.strip()[:120])
+    for need in want(w):
+        if need not in err:
+            return "%s: the output lacks %r: %s" % (label, need, err.strip()[:600])
+    return None
+
+
+def consent_rule_row(label, keep, command, want):
+    """A gateway.json with only the rule whose `match` is `keep`: what the other rule would match no longer does
+    (removing a rule from the file switches that category off)."""
+    gate = good_gateway()
+    gate["consent"]["rules"] = [r for r in gate["consent"]["rules"] if r["match"] == keep]
+    root = sandbox.mkdtemp("guard-test-rules-")
+    f, guard = consent_forge(gate, {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
+    rc, err = run_tool("Bash", {"command": command}, {"CLAUDE_PROJECT_DIR": f}, guard, ["--consent"], cwd=root)
+    if rc != want or (want == 2 and not err.startswith("CONSENT_ERROR: not wired yet")):
+        return "%s: wanted rc=%s, got rc=%s %s" % (label, want, rc, err.strip()[:120])
+    return None
+
+
+CONSENT_RULES_ONLY = [
+    ("only the command rule: a push to main passes", "production.commands", "git push origin main", 0),
+    ("only the command rule: a production command matches", "production.commands", "gh pr merge 12", 2),
+    ("only the push rule: a production command passes", "production.branches", "gh pr merge 12", 0),
+    ("only the push rule: a push to main matches", "production.branches", "git push origin main", 2),
+]
+
+
+def _sh(cmd):
+    return lambda w: {"command": cmd(w) if callable(cmd) else cmd}
+
+
+A_ROOT, A_A, A_B, A_C, A_D, A_WT, A_OUT = (lambda w: w.root), (lambda w: w.a), (lambda w: w.b), (lambda w: w.c), (
+    lambda w: w.d), (lambda w: w.wt), (lambda w: w.outside)
+LOG3 = '"bump version"; "fix typo"; "add login"'
+_push_a = lambda w: ["push to origin/main: main (%s), 3 commit(s) that origin lacks: %s" % (w.sha, LOG3)]
+_push_head = lambda w: ["push to origin/main: HEAD (%s), 3 commit(s) that origin lacks: %s" % (w.sha, LOG3)]
+_cmd = lambda entry: (lambda w: ["the command begins with `%s`, a production command of project toy" % entry])
+_unreadable = lambda w: ["cannot be read before it runs; treated as a push to production (main)"]
+_sleepy_git = lambda w: {"PATH": _fake_git(w, "sleep 15") + os.pathsep + os.environ["PATH"]}
+_broken_git = lambda w: {"PATH": _fake_git(w, "exit 1") + os.pathsep + os.environ["PATH"]}
+
+
+def _fake_git(w, body):
+    d = os.path.join(w.outside, "fake-" + str(abs(hash(body))))
+    if not os.path.isdir(d):
+        os.makedirs(d)
+        with open(os.path.join(d, "git"), "w") as fh:
+            fh.write("#!/bin/sh\n%s\n" % body)
+        os.chmod(os.path.join(d, "git"), 0o755)
+    return d
+
+
+# (label, tool, tool_input or a function of the world, cwd as a function of the world, the strings the output must
+# hold or None for "does not match"[, a function of the world giving extra environment[, the seconds it may take]])
+CONSENT_MATCH = [
+    # ---- a push to a production branch
+    ("push explicit to main", "Bash", _sh("git push origin main"), A_A, _push_a),
+    ("push HEAD:main", "Bash", _sh("git push origin HEAD:main"), A_A, _push_head),
+    ("push main:main", "Bash", _sh("git push origin main:main"), A_A, _push_a),
+    ("push +main says it rewrites", "Bash", _sh("git push origin +main"), A_A,
+     lambda w: _push_a(w) + ["--force: rewrites origin/main"]),
+    ("push --force to main", "Bash", _sh("git push --force origin main"), A_A,
+     lambda w: _push_a(w) + ["--force: rewrites origin/main"]),
+    ("push --force-with-lease to main", "Bash", _sh("git push --force-with-lease origin main"), A_A,
+     lambda w: ["--force: rewrites origin/main"]),
+    ("push -fu to main", "Bash", _sh("git push -fu origin main"), A_A, lambda w: ["--force: rewrites origin/main"]),
+    ("push refs/heads/main, shown as main", "Bash", _sh("git push origin refs/heads/main"), A_A, _push_a),
+    ("push HEAD alone, on main", "Bash", _sh("git push origin HEAD"), A_A, _push_head),
+    ("push a topic to main, whatever the source", "Bash", _sh("git push origin feature:main"), A_B,
+     lambda w: ["push to origin/main: feature"]),
+    ("push with no refspec from main", "Bash", _sh("git push"), A_A, _push_head),
+    ("push origin with no refspec from main", "Bash", _sh("git push origin"), A_A, _push_head),
+    ("push --all", "Bash", _sh("git push --all"), A_A, lambda w: ["--all pushes every local branch to origin"]),
+    ("push --all from a feature branch", "Bash", _sh("git push --all origin"), A_B,
+     lambda w: ["--all pushes every local branch to origin, production branches included (main)",
+                "push to origin/main: main (%s), nothing that origin lacks" % sandbox.git(w.b, "rev-parse", "--short", "main").strip()]),
+    ("push --mirror from a feature branch", "Bash", _sh("git push --mirror origin"), A_B,
+     lambda w: ["--mirror pushes every local branch", "also deletes on origin"]),
+    ("push --branches from a feature branch", "Bash", _sh("git push --branches origin"), A_B,
+     lambda w: ["--all pushes every local branch to origin"]),
+    ("push --delete origin main", "Bash", _sh("git push --delete origin main"), A_A,
+     lambda w: ["delete origin/main: the branch is removed from the remote"]),
+    ("push origin --delete main", "Bash", _sh("git push origin --delete main"), A_A,
+     lambda w: ["delete origin/main"]),
+    ("push -d origin main", "Bash", _sh("git push -d origin main"), A_A, lambda w: ["delete origin/main"]),
+    ("push origin :main", "Bash", _sh("git push origin :main"), A_A, lambda w: ["delete origin/main"]),
+    ("push after options and a second refspec", "Bash", _sh("git push -u --no-verify origin feature main"), A_A, _push_a),
+    ("push with --repo", "Bash", _sh("git push --repo=origin main"), A_A, _push_a),
+    ("push via cd into the repo", "Bash", lambda w: {"command": "cd %s && git push origin main" % w.a}, A_OUT, _push_a),
+    ("push via cd, relative", "Bash", _sh("cd a && git push origin main"), A_ROOT, _push_a),
+    ("push via git -C", "Bash", lambda w: {"command": "git -C %s push origin main" % w.a}, A_OUT, _push_a),
+    ("push via git -C and -c", "Bash", lambda w: {"command": "git -c core.pager=cat -C %s push origin main" % w.a}, A_OUT, _push_a),
+    ("push after a cd that may fail", "Bash", _sh("cd /no/such/dir; git push origin main"), A_A, _push_a),
+    ("push in a subshell with a cd", "Bash", lambda w: {"command": "(cd %s && git push origin main)" % w.a}, A_OUT, _push_a),
+    ("push to a directory in a variable", "Bash", lambda w: {"command": "R=%s; cd $R && git push origin main" % w.a}, A_OUT, _push_a),
+    ("push to a directory nobody can read", "Bash", _sh("cd $(mktemp -d) && git push origin main"), A_OUT,
+     lambda w: ["push to origin/main"]),
+    ("push in bash -c", "Bash", _sh("bash -c 'git push origin main'"), A_A, _push_a),
+    ("push in sh -lc", "Bash", _sh("sh -lc 'git push origin main'"), A_A, _push_a),
+    ("push in bash -c after a cd", "Bash", lambda w: {"command": "cd %s && bash -c 'git push origin main'" % w.a}, A_OUT, _push_a),
+    ("push in a nested bash -c", "Bash", _sh("bash -c \"sh -c 'git push origin main'\""), A_A, _push_a),
+    ("push in eval", "Bash", _sh("eval git push origin main"), A_A, _push_a),
+    ("push in eval, quoted", "Bash", _sh("eval 'git push origin main'"), A_A, _push_a),
+    ("push behind sudo env timeout", "Bash", _sh("sudo env X=1 timeout 30 git push origin main"), A_A, _push_a),
+    ("push by its path", "Bash", _sh("/usr/bin/git push origin main"), A_A, _push_a),
+    ("push after a commit", "Bash", _sh("git commit -m 'x' ; git push origin main"), A_A, _push_a),
+    ("push after a comment's apostrophe", "Bash", _sh("echo it's; git push origin main"), A_A, _push_a),
+    ("push piped", "Bash", _sh("git push origin main 2>&1 | tail -3"), A_A, _push_a),
+    ("push in a heredoc run by bash", "Bash", _sh("bash <<'EOF'\ngit push origin main\nEOF"), A_A, _push_a),
+    ("push from a variable", "Bash", _sh("B=main; git push origin $B"), A_A, _push_a),
+    ("push whose refspec is a substitution", "Bash", _sh("git push origin $(echo main)"), A_A, _unreadable),
+    ("push whose refspec is a variable nobody set", "Bash", _sh('git push origin "$BRANCH"'), A_A, _unreadable),
+    ("push whose refspec is a backtick", "Bash", _sh("git push origin `echo main`"), A_A, _unreadable),
+    ("push whose refspec is a glob", "Bash", _sh("git push origin 'ma*'"), A_A, _unreadable),
+    ("push whose refspec is refs/heads/*", "Bash", _sh("git push origin 'refs/heads/*:refs/heads/*'"), A_A, _unreadable),
+    ("push from a worktree outside the project", "Bash", _sh("git push origin HEAD:main"), A_WT,
+     lambda w: ["push to origin/main: HEAD"]),
+    ("push with push.default matching", "Bash", _sh("git push"), A_D, lambda w: ["push.default is matching"]),
+    ("push when git is broken, still asks", "Bash", _sh("git push origin main"), A_A,
+     lambda w: ["push to origin/main: could not read what is pushed", "asking anyway"], _broken_git),
+    ("push with no refspec when git is broken, still asks", "Bash", _sh("git push"), A_A,
+     lambda w: ["could not read which branch a plain `git push` updates"], _broken_git),
+    ("push when git hangs, asks within 8 s", "Bash", _sh("git push origin main"), A_A,
+     lambda w: ["push to origin/main: could not read what is pushed", "asking anyway"], _sleepy_git, 8),
+    # ---- a command of production
+    ("command gh pr merge", "Bash", _sh("gh pr merge 12"), A_A, _cmd("gh pr merge")),
+    ("command gh pr merge, behind env and sudo", "Bash", _sh("sudo env GH_TOKEN=x gh pr merge 12 --squash"), A_A, _cmd("gh pr merge")),
+    ("command gh pr merge, by its path", "Bash", _sh("/usr/bin/gh pr merge 12"), A_A, _cmd("gh pr merge")),
+    ("command gh pr merge in a nested shell", "Bash", _sh("bash -c 'gh pr merge 12'"), A_A, _cmd("gh pr merge")),
+    ("command a script with bash", "Bash", _sh("bash infra/deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script with sh and options", "Bash", _sh("sh infra/deploy.sh --prod"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script as ./X", "Bash", _sh("./infra/deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script by its absolute path", "Bash", lambda w: {"command": "bash %s/infra/deploy.sh" % w.root}, A_OUT,
+     _cmd("infra/deploy.sh")),
+    ("command a script after cd", "Bash", _sh("cd infra && bash deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script sourced", "Bash", _sh("source infra/deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command ssh to the production host", "Bash", _sh("ssh deploy@host systemctl restart app"), A_ROOT, _cmd("ssh deploy@host")),
+    # ---- an MCP tool that writes to production
+    ("mcp execute_sql", "mcp__db-toy__execute_sql", {"sql": "DROP TABLE users;\nSELECT 1"}, A_ROOT,
+     lambda w: ["tool mcp__db-toy__execute_sql, project toy", "sql: DROP TABLE users;", "sql: SELECT 1"]),
+    ("mcp execute_sql from another project's directory", "mcp__db-toy__execute_sql", {"query": "delete from t"}, A_OUT,
+     lambda w: ["query: delete from t"]),
+    ("mcp execute_sql shows ten lines and the rest", "mcp__db-toy__execute_sql", {"sql": "\n".join("l%d" % i for i in range(12))},
+     A_ROOT, lambda w: ["sql: l9", "sql: ... and 2 more lines"]),
+    ("mcp without arguments", "mcp__db-toy__execute_sql", {}, A_ROOT, lambda w: ["tool mcp__db-toy__execute_sql"]),
+    # ---- what does not match
+    ("push to feature", "Bash", _sh("git push origin feature"), A_A, None),
+    ("push --force to feature", "Bash", _sh("git push --force origin feature"), A_A, None),
+    ("push main:feature", "Bash", _sh("git push origin main:feature"), A_A, None),
+    ("push HEAD from a feature branch", "Bash", _sh("git push origin HEAD"), A_B, None),
+    ("push with no refspec from a feature branch", "Bash", _sh("git push"), A_B, None),
+    ("push --tags", "Bash", _sh("git push --tags"), A_A, None),
+    ("push origin --tags", "Bash", _sh("git push origin --tags"), A_A, None),
+    ("push a tag by name", "Bash", _sh("git push origin tag v1.0"), A_A, None),
+    ("push a tag by refspec", "Bash", _sh("git push origin refs/tags/v1.0"), A_A, None),
+    ("push --dry-run to main", "Bash", _sh("git push --dry-run origin main"), A_A, None),
+    ("push -n to main", "Bash", _sh("git push -n origin main"), A_A, None),
+    ("push --dry-run --all", "Bash", _sh("git push --all --dry-run"), A_A, None),
+    ("pull of main", "Bash", _sh("git pull origin main"), A_A, None),
+    ("log of main", "Bash", _sh("git log main"), A_A, None),
+    ("echo of a push", "Bash", _sh('echo "git push origin main"'), A_A, None),
+    ("commit message that mentions a push", "Bash", _sh('git commit -m "docs: git push origin main is gated now"'), A_A, None),
+    ("commit message in a heredoc that mentions a push", "Bash",
+     _sh("git commit -F - <<'EOF'\nsubject\n\nafter this, git push origin main\nEOF"), A_A, None),
+    ("push to main in a project with no profile", "Bash", _sh("git push origin main"), A_C, None),
+    ("push via cd to a repo with no profile", "Bash", lambda w: {"command": "cd %s && git push origin main" % w.c}, A_A, None),
+    ("push after a cd that must succeed", "Bash", _sh("cd /no/such/dir && git push origin main"), A_A, None),
+    ("a gh command that is not production", "Bash", _sh("gh pr view 12"), A_A, None),
+    ("a script that is not production", "Bash", _sh("bash infra/other.sh"), A_ROOT, None),
+    ("a production command in a project with no profile", "Bash", _sh("gh pr merge 12"), A_C, None),
+    ("echo of a production command", "Bash", _sh("echo gh pr merge 12"), A_A, None),
+    ("ssh to another host", "Bash", _sh("ssh other@host ls"), A_ROOT, None),
+    ("a plain command", "Bash", _sh("ls -la"), A_A, None),
+    ("mcp read-only tool", "mcp__db-toy__list_tables", {}, A_ROOT, None),
+    ("mcp tool of another server", "mcp__other__execute_sql", {"sql": "x"}, A_ROOT, None),
+    ("an edit tool", "Edit", {"file_path": "/tmp/x"}, A_ROOT, None),
+]
 CONSENT_CASES = ([("consent-config",) + c for c in CONSENT_CONFIG] + [("consent-production",) + c for c in CONSENT_PRODUCTION]
-                 + [("consent-profile",) + c for c in CONSENT_PROFILES] + [("consent-mode", n) for n in CONSENT_MODE_ROWS])
+                 + [("consent-profile",) + c for c in CONSENT_PROFILES] + [("consent-mode", n) for n in CONSENT_MODE_ROWS]
+                 + [("consent-match",) + c for c in CONSENT_MATCH] + [("consent-rules",) + c for c in CONSENT_RULES_ONLY])
 
 # GUARD_TEST_INPROC=1 loads the guard once and calls its main() in this process instead
 # of starting a python per case. Only test_guard_mutants.py uses it: in the downstream project, 56
@@ -2571,6 +2830,10 @@ def check(case):
         return consent_profile_row(*case[1:])
     elif kind == "consent-mode":
         return consent_mode_row(case[1])
+    elif kind == "consent-match":
+        return consent_match_row(*case[1:])
+    elif kind == "consent-rules":
+        return consent_rule_row(*case[1:])
     elif kind == "rooted":
         # A command run in a project that IS the forge checkout, which holds config/ (item 3 of round 9b:
         # the project's own root stays readable, a directory a cd reached does not).

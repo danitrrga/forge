@@ -543,6 +543,40 @@ MUTANTS = {
          "    return min(inside, key=lambda p: len(p[\"project_path\"])) if inside else None"),
     "consent: a bad configuration lets the call through":
         ("        consent_error(str(e))\n    raw = sys.stdin.read()", "        return\n    raw = sys.stdin.read()"),
+    # The consent window (1.1 U1b): the seven the plan names, then one per behaviour of the matching.
+    "consent: refspec ignorado":
+        ("    for s in specs:\n        plus, body", "    for s in []:\n        plus, body"),
+    "consent: push sin refspec ignorado":
+        ('    if not specs:\n        if "tags" in flags:', '    if False:\n        if "tags" in flags:'),
+    "consent: --all ignorado":
+        ('    if "all" in flags:\n        rem = remote or "origin"', '    if False:\n        rem = remote or "origin"'),
+    "consent: refspec ilegible tratado como no producción":
+        ("        if UNREADABLE_REFSPEC.search(body):", "        if False:"),
+    "consent: prefijo de comando que nunca casa":
+        ("    return efirst in names and ew[1:] == w[1:len(ew)]", "    return False"),
+    "consent: shells anidados no mirados":
+        ("    for body in consent_bodies(words):\n        if depth >= CONSENT_DEPTH:", "    for body in []:\n        if depth >= CONSENT_DEPTH:"),
+    "consent: herramienta MCP nunca comparada":
+        ("        named = [p for p in profiles if tool in _consent_entries(p)]", "        named = []"),
+    "consent: the source of a refspec decides, not its destination":
+        ("        if dst not in branches:\n            continue", "        if src not in branches:\n            continue"),
+    "consent: --dry-run is a push":
+        ('    if "dry-run" in flags:\n        return False, []', '    if False:\n        return False, []'),
+    "consent: a push of tags only is a match":
+        ('        if "tags" in flags:\n            return False, []', '        if False:\n            return False, []'),
+    "consent: --force does not say it rewrites":
+        ('            if plus or "force" in flags:', "            if False:"),
+    "consent: a cd is not followed":
+        ('            moved = [_consent_dir(d, args[0] if args else "~", env) for d in dirs]', "            moved = list(dirs)"),
+    "consent: git -C is not followed":
+        ("                    wd = _consent_dir(d, where, env)", "                    wd = d"),
+    "consent: a worktree outside the project is not resolved":
+        ("            if common:\n                p = consent_profile", "            if False:\n                p = consent_profile"),
+    "consent: a rule missing from gateway.json still matches":
+        ('    push_rule, cmd_rule = rule_of.get("production.branches"), rule_of.get("production.commands")',
+         '    push_rule, cmd_rule = rule_of.get("production.branches") or cfg["rules"][0], rule_of.get("production.commands") or cfg["rules"][0]'),
+    "consent: git has no time cap":
+        ("proc.communicate(timeout=GIT_CAP_S)", "proc.communicate(timeout=None)"),
     # Round 9: a directory that holds a store (FORGE_BLOCK and FORGE_ALLOW 17).
     "directory operands: no command reads the directory it is given":
         ("if not hit and cmdname in DIR_READERS:", "if False:"),
