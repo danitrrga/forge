@@ -99,6 +99,43 @@ def stub_systemctl(bin_dir, log):
     return bin_dir
 
 
+CLAUDE_STUB = """#!%s
+import json, os, sys
+a = sys.argv[1:]
+with open(%r, "a") as f:
+    f.write(" ".join(a) + "\\n")
+if a[:3] == ["plugin", "marketplace", "add"] and len(a) > 3:
+    with open(os.path.join(a[3], ".claude-plugin", "marketplace.json")) as f:
+        name = json.load(f)["name"]
+    reg = os.path.join(os.environ["HOME"], ".claude", "plugins", "known_marketplaces.json")
+    os.makedirs(os.path.dirname(reg), exist_ok=True)
+    try:
+        with open(reg) as f:
+            doc = json.load(f)
+    except OSError:
+        doc = {}
+    doc[name] = {"source": {"source": "directory", "path": a[3]}}
+    with open(reg, "w") as f:
+        json.dump(doc, f)
+    sys.exit(0)
+sys.stderr.write("stub claude: not a command the toy world knows\\n")
+sys.exit(2)
+"""
+
+
+def stub_claude(bin_dir, log):
+    """A `claude` that only appends its argv to `log` and, for `plugin marketplace add PATH`, records PATH in the toy
+    HOME's known_marketplaces.json as the real one does: the framework step of the generator runs that command
+    while the registry lacks the marketplace, and the real claude would act on this machine. Any other
+    subcommand exits 2. Not on PATH ahead of the real one, a test would run the real claude."""
+    os.makedirs(bin_dir, exist_ok=True)
+    p = os.path.join(bin_dir, "claude")
+    with open(p, "w") as f:
+        f.write(CLAUDE_STUB % (sys.executable, log))
+    os.chmod(p, 0o755)
+    return bin_dir
+
+
 def unshare_ok(ns=UNSHARE):
     """(whether `ns` gives an empty network namespace, what the probe said). It proves a loopback
     listener the host holds unreachable from inside, not merely that unshare ran."""

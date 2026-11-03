@@ -122,6 +122,7 @@ class Sandbox:
         self.cjp = os.path.join(self.home, ".claude.json")
         self.settings = os.path.join(self.home, ".claude", "settings.json")
         self.log = os.path.join(self.root, "systemctl.log")
+        self.claude_log = os.path.join(self.root, "claude.log")
         self.outputs, self.manifests, self.portal_keys = {}, {}, {}
         self._copy(mutation)
         settings = os.path.join(self.forge, "config", "forge.json")
@@ -131,6 +132,7 @@ class Sandbox:
         doc["codex_harness"] = True
         write_json(settings, doc)
         self._profiles()
+        self._framework()
         self._secrets()
         git(self.forge, "init", "-q")
         git(self.forge, "add", "-A")
@@ -177,6 +179,24 @@ class Sandbox:
                 write(os.path.join(self.pp(name), ".gitignore"),
                       ".claude/settings.local.json\n.claude/AGENT-SYSTEM.md\n.codex/\n.agents/\n")
             self.profiles[name] = prof
+
+    def _framework(self):
+        """A profile with `framework: true` (config/profiles/fwx.claude.json on this machine) names a plugin source
+        in config/forge.json, `~/dev/Projects/.../plugins/fwx`, which `~` reads from the toy HOME: nothing there, so the
+        framework step printed "! framework -> ~/dev/.../marketplace.json does not exist" on every run, the second
+        --apply exited 1 ("a second --apply writes nothing ...: exit 1, lines [], changed []") and no run reached the
+        registration. The toy world gets a marketplace of its own and the generator its own `claude` (sandbox.stub_claude),
+        so what the machine's profiles say about the framework never decides what this world does."""
+        self.framework = any(prof.get("framework") is True for prof in self.profiles.values())
+        if not self.framework:
+            return
+        self.plugin_src = os.path.join(self.root, "plugin-src")
+        write_json(os.path.join(self.plugin_src, ".claude-plugin", "marketplace.json"),
+                   {"name": "toyfw", "plugins": [{"name": "toyfw", "source": "./"}]})
+        settings = os.path.join(self.forge, "config", "forge.json")
+        doc = read_json(settings)
+        doc["framework"] = dict(doc.get("framework") or {}, plugin_source={"source": "directory", "path": self.plugin_src})
+        write_json(settings, doc)
 
     def _secrets(self):
         names = set()
@@ -226,6 +246,7 @@ class Sandbox:
         write_json(os.path.join(h, ".hindsight", "coding-agents", ".install-origin.json"), {"commit": "63da8d7" + "0" * 33})
         os.makedirs(os.path.join(h, ".vscode", "extensions"))
         sandbox.stub_systemctl(os.path.join(self.root, "bin"), self.log)
+        sandbox.stub_claude(os.path.join(self.root, "bin"), self.claude_log)
         # A frozen project's stale state: an unfrozen run rewrites both, which is what makes the freeze checkable.
         write_json(os.path.join(pp(FROZEN), ".claude", "settings.local.json"),
                    {"enableAllProjectMcpServers": True, "env": {"STALE": "1"}})
@@ -357,6 +378,13 @@ def exercise(sb, check):
 
     calls = read(sb.log).splitlines() if os.path.exists(sb.log) else []
     check("systemctl is the logging stub, called only with --user", all(c.startswith("--user ") for c in calls), calls)
+    # The framework step registers the plugin's marketplace once per machine: the first --apply runs `claude plugin
+    # marketplace add`, the second finds it in the registry. Only the stub runs (it is first on the toy PATH), and a
+    # world without a framework profile never calls it.
+    cc = read(sb.claude_log).splitlines() if os.path.exists(sb.claude_log) else []
+    want_cc = ["plugin marketplace add %s --scope local" % sb.plugin_src] if sb.framework else []
+    check("claude is the logging stub, called once with the marketplace add over both --apply runs", cc == want_cc,
+          "%s, want %s" % (cc, want_cc))
 
     seed_local(APP)
     seed_local("forge")
