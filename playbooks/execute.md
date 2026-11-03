@@ -11,7 +11,7 @@ This playbook says what each node of the execution stretch of the workflow does,
 
 ## Standing rules
 
-Three rules are copied from the factory playbook as written. Where they name `factory-verify` or `report_stage`, read `fwx verify` and the `failed` status that `execute` returns. The line under each rule names what enforces it here.
+Three rules are copied from the factory playbook as written. Where they name `factory-verify` or `report_stage`, read `fwx verify` and the `failed` status that `execute` returns. The line under each rule names what enforces it here. The executor does not run the proof of the second rule: `fwx verify` runs it at n_C7 on the merged head, and an executor runs only the tests its task lists. The `bun` command, the sandbox sentence and `pr` in that rule have no counterpart here.
 
 - **Clean up only what you started.** Other runs and the operator's own servers share this machine. Start a dev server on a free port, remember its PID, and stop that PID before the turn ends. Never `pkill` or `killall` by name, and never stop a process you did not start.
   Enforced by `fwx wave cleanup --run R`, which removes only the worktrees of its own run, lists in `leftover` the processes still inside them and kills none; the walk's browsers and app are closed by `fwx walk down`.
@@ -35,7 +35,7 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Stage:** executing
 - **Writes:** nothing
 - **Invokes:** command fwx capacity
-- **Does:** Each executor takes one task from the wave, writes the failing test in its own commit, then the code (a UI task carries no test), and returns `done`, `wrong-base`, `question` or `failed`. `fwx capacity --role executor --want N` says how many may start now and `allowed 0` ends the run as `failed` with the reason capacity; two tasks that write the same file never share a batch. When the executors of the wave have returned, `fwx wave integrate` merges their branches into the phase branch in order and runs `checks_quick`.
+- **Does:** Each executor takes one task from the wave and starts by the kind the plan gives it. A bug starts with a test that reproduces it, in its own commit, and the executor quotes what the failing run says. A refactor starts with a characterization test that passes before anything moves, in its own commit, because a refactor has no failing test to write and a type check or lint does not pin behaviour. A feature starts with the tests its criteria list, failing, in their own commit. A UI task carries no test. Then the code, and the executor returns `done`, `wrong-base`, `question` or `failed`. `done` is integrated. `wrong-base` and `failed` leave their branch out of the merge and the task is fixed through `fwx wave fix-round`, which spends a round. `question` is not a failure: the orchestrator puts it to the owner, and the factory ends the job `needs-owner`. `fwx capacity --role executor --want N` says how many may start now and `allowed 0` ends the run as `failed` with the reason capacity; two tasks that write the same file never share a batch. When the executors of the wave have returned, `fwx wave integrate` merges their branches into the phase branch in order and runs `checks_quick`.
 - **Exits:**
   - to n_C6: the executors of the wave have returned and their branches merge
   - to n_C8: the branches conflict or the code does not build
@@ -66,7 +66,7 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Invokes:** command fwx verify
 - **Does:** `fwx verify --json` runs the project's recipe once on a clean tree and appends an `evidence` row with the SHA; exit 0 is a pass, 1 a failing check, 2 that it could not prove the commit. A diff that edits the checks recipe, CI or a protected path goes to the owner without spending a round, because it changes what counts as passing or touches what needs the owner's judgment: the session asks him, the factory ends `needs-owner`.
 - **Exits:**
-  - to n_C9: the checks pass
+  - to n_C9: the checks pass and the diff touches no recipe, CI or protected path
   - to n_C8: a check fails
   - to n_Z3: factory: the diff edits the checks recipe, CI or a protected path
   - to n_Z4c: factory: the checks cannot run
@@ -78,10 +78,10 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Stage:** reviewing
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** Read why `fwx verify` exited 2 and fix the cause (clean the tree, install the missing tool, repair the recipe command) without asking. No round is spent, because no code was judged; ask the owner only when the cause lies outside the project or needs a choice.
+- **Does:** Read why `fwx verify` exited 2 and fix the cause (clean the tree, install the missing tool) without asking. No round is spent, because no code was judged. A recipe command that does not run is not repaired here: the recipe is what decides that the work passes, so editing it is the owner's call, and it leaves by the second exit. The owner is also asked when the cause lies outside the project or needs a choice.
 - **Exits:**
   - loop n_C7: fixed, the checks run again
-  - to n_L8: it cannot be fixed
+  - to n_L8: it cannot be fixed, or the recipe command is what fails
 
 ### n_C8 · Are there fix attempts left? (3 per job)
 - **Who:** script fwx wave fix-round
@@ -99,7 +99,7 @@ Three rules are copied from the factory playbook as written. Where they name `fa
 - **Stage:** reviewing
 - **Writes:** nothing
 - **Invokes:** skill ponytail:ponytail-review
-- **Does:** The reviewer, and the security-reviewer when the plan asks for it, read the diff without a worktree; "no findings" is a valid result. Each finding goes to one review-verifier, the cheap role, which sorts it into one of the four groups of the next block; only `fix` is fixed, one commit per finding with a `Fwx-Finding` trailer, merged with `fwx wave integrate --findings`, and the diff of the fix is reviewed again. A reviewer that returns `null` or an empty `looked_at` is relaunched once, and a second miss ends the run `failed`.
+- **Does:** The reviewer, and the security-reviewer when the plan asks for it, read the diff without a worktree and the part's success criteria in `plan.md`; "no findings" is a valid result. The reviewer returns each criterion as met or not met with its evidence, and a criterion that is not met is a finding with that evidence. Each finding goes to one review-verifier, the cheap role, which sorts it into one of the four groups of the next block; only `fix` is fixed, one commit per finding with a `Fwx-Finding` trailer, merged with `fwx wave integrate --findings`, and the diff of the fix is reviewed again. A reviewer that returns `null` or an empty `looked_at` is relaunched once, and a second miss ends the run `failed`.
 - **Exits:**
   - loop n_C8: fix: launches the fix and spends a round
   - to n_C10: no finding is left to fix
