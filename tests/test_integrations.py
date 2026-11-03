@@ -165,6 +165,7 @@ check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
       getattr(h, "ROW_INTEGRATION", {}) == {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
                                            "gsd_output_discipline.py": "gsd",
                                            "coding-agents": "hindsight", "memory_doctor.py": "hindsight",
+                                           "guard_tool_use.py --consent": "consent",
                                            **{m: "gsd" for m in CORE_MARKERS}},
       "ROW_INTEGRATION = %r" % (getattr(h, "ROW_INTEGRATION", None),))
 
@@ -205,7 +206,7 @@ check("no user_hooks: the code holds none of the rows that moved out",
       not [r for r in h.USER_HOOKS if r[3] in MOVED],
       "rows %r" % ([r[3] for r in h.USER_HOOKS if r[3] in MOVED],))
 
-# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 25 rows with every
+# 5. Two user_hooks rows come after the code's rows, in file order. The code holds 26 rows with every
 # integration on, so 14 with the two that moved out of the code (the curfew and the injection audit,
 # here under toy names).
 two = [{"event": "UserPromptSubmit", "command": "python3 /opt/toy/prompt_guard.py", "timeout": 10,
@@ -221,8 +222,8 @@ check("a settings file with two user_hooks rows: the code's rows, then the two i
       "%d rows (code %d), last two %r" % (len(real), code_rows, real[-2:]))
 h = toy_settings(12, user_hooks=two, integrations={n: True for n in lib.INTEGRATIONS})
 real = [(r[0], r[3]) for r in h.USER_HOOKS]
-check("all integrations on and two user_hooks rows: 25 rows (12 and gsd-core's 13; the two Hindsight rows are written per project), the two after the code's",
-      len(real) == 25 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
+check("all integrations on and two user_hooks rows: 26 rows (13 and gsd-core's 13; the two Hindsight rows are written per project), the two after the code's",
+      len(real) == 26 and real[-2:] == [("UserPromptSubmit", "prompt_guard.py"), ("SessionStart", "toy_audit.py")],
       "%d rows, last two %r" % (len(real), real[-2:]))
 
 # 6. user_settings come from the file: its keys and nothing else.

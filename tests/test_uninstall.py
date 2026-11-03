@@ -524,7 +524,7 @@ check("an empty world, whole: exit 0, nothing left of forge -- exit %d: %s" % (c
       code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
 code, out = e.forge("uninstall", "--integration", "caveman")  # removed: no longer a choice. Red with "caveman" put back in lib.INTEGRATIONS: "exit 1: looked at 0 claim(s) and 0 item(s) forge made by construction | FAIL: looked at zero"
 check("--integration caveman: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
-      code == 2 and "invalid choice: 'caveman' (choose from 'codex', 'gsd', 'hindsight')" in out, out)
+      code == 2 and "invalid choice: 'caveman' (choose from 'codex', 'gsd', 'hindsight', 'consent')" in out, out)
 code, out = e.forge("uninstall", "--integration", "gsd")
 check("an empty world, --integration gsd: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 1 and "FAIL" in out and "looked at zero" in out, out)

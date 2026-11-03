@@ -912,10 +912,10 @@ def settings_cases(tmp):
         lib.SETTINGS = real
         lib.settings.cache_clear()
 
-    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight"))
+    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight", "consent"))
     ours = json.load(open(os.path.join(FIXTURES, "forge.json")))
     want("tests/fixtures/config/forge.json integrations, all on",
-         ours["integrations"], {n: True for n in lib.INTEGRATIONS})
+         ours["integrations"], {"codex": True, "gsd": True, "hindsight": True})  # consent is absent from the fixture: off
     theirs = json.load(open(os.path.join(REPO, "examples", "forge.json")))
     want("examples/forge.json integrations, all off", theirs["integrations"], {n: False for n in lib.INTEGRATIONS})
     for key, empty in (("user_settings", {}), ("user_hooks", []), ("instruction_files_skip", []),

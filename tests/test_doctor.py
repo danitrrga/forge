@@ -1323,6 +1323,7 @@ def integrations_cases(tmp):
     want("control: the same row naming a script that exists PASSes", got,
          [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: gsd is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: consent is off in config/forge.json"),
           ("PASS", "user_hooks row here.py (UserPromptSubmit): %s is there" % present),
           ("PASS", "checked 1: 0 integration(s) on, 1 user_hooks script(s)")])
     got = run("hook-off", OFF, [hook(missing, "gone.py", on=False), hook(present, "here.py")])
