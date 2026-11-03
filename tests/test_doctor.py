@@ -1324,6 +1324,8 @@ def integrations_cases(tmp):
          [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: gsd is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: consent is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: agent_browser is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: mempalace is off in config/forge.json; its check arrives with the MemPalace part"),
           ("PASS", "user_hooks row here.py (UserPromptSubmit): %s is there" % present),
           ("PASS", "checked 1: 0 integration(s) on, 1 user_hooks script(s)")])
     got = run("hook-off", OFF, [hook(missing, "gone.py", on=False), hook(present, "here.py")])

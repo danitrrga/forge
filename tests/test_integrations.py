@@ -493,6 +493,88 @@ skills._own_hook(sl, {}, lambda cmd: "guard.py" in (cmd or ""), "PreToolUse", {"
 check("project settings.local.json: an event emptied by the removal goes, an empty one of the user's stays",
       "PreToolUse" not in sl.get("hooks", {}) and sl.get("hooks", {}).get("Own") == [], "file %r" % (sl,))
 
+# 9. 2.2 U5a: the framework's two switches in the `integrations` row (forge/cli.py). Seen failing against the base
+# (lib.INTEGRATIONS without them), 8 of 52 checks red: every case read the row with no agent_browser and no mempalace
+# line, e.g. "agent_browser on, no agent-browser on PATH: a FAIL naming `forge toolchain --fix` and a new shell -- rows
+# [('SKIP', '... codex is off ...'), ..., ('SKIP', '... consent is off ...'), ('SKIP', 'NOT RUN, NOT ARMED: every integration
+# is off ...')]". Controls (each is a case here): a `need` that returns None for agent_browser turns the FAIL into a PASS;
+# without the pending case mempalace switched on is a PASS.
+from forge import cli  # noqa: E402
+FAKE_BIN = os.path.join(TOY, "fake-bin")
+os.makedirs(FAKE_BIN)
+EMPTY_BIN = os.path.join(TOY, "empty-bin")  # order 10: the fake directory alone on PATH, never with the system dirs behind it
+os.makedirs(EMPTY_BIN)
+with open(os.path.join(FAKE_BIN, "agent-browser"), "w") as fh:
+    fh.write("#!/bin/sh\n")
+os.chmod(os.path.join(FAKE_BIN, "agent-browser"), 0o755)
+REAL_PATH = os.environ.get("PATH", "")
+
+
+def int_row(path_dir, **on):
+    """The integrations row's lines as (level, detail), with PATH holding only `path_dir` and the switches `on`."""
+    toy_settings(20 + len(failures) + n_cases[0], integrations=dict({"codex": False, "gsd": False, "hindsight": False}, **on))
+    os.environ["PATH"] = path_dir
+    try:
+        got = attempt(cli.integrations_row)
+    finally:
+        os.environ["PATH"] = REAL_PATH
+    return [(r.level, r.detail) for r in got] if isinstance(got, list) else got
+
+
+def only(rows, needle):
+    return [r for r in rows if needle in r[1]] if isinstance(rows, list) else rows
+
+
+ABF = ("FAIL", "agent_browser is on in config/forge.json but agent-browser is not on PATH -- run `forge toolchain --fix`, then "
+       "open a new shell, or set integrations.agent_browser false")
+rows = int_row(EMPTY_BIN, agent_browser=True)
+check("agent_browser on, no agent-browser on PATH: a FAIL naming `forge toolchain --fix` and a new shell",
+      only(rows, "agent_browser") == [ABF], "rows %r" % (rows,))
+rows = int_row(EMPTY_BIN, agent_browser=False)
+check("agent_browser off: a SKIP, NOT RUN, NOT ARMED",
+      only(rows, "agent_browser") == [("SKIP", "NOT RUN, NOT ARMED: agent_browser is off in config/forge.json")], "rows %r" % (rows,))
+rows = int_row(FAKE_BIN, agent_browser=True)
+check("control: a fake agent-browser on PATH is a PASS", only(rows, "agent_browser") == [
+    ("PASS", "agent_browser is on, agent-browser found on PATH")], "rows %r" % (rows,))
+real_need = cli.INTEGRATION_NEEDS["agent_browser"] if "agent_browser" in cli.INTEGRATION_NEEDS else None
+cli.INTEGRATION_NEEDS["agent_browser"] = (lambda: None, "no dependency checked here")
+try:
+    rows = int_row(EMPTY_BIN, agent_browser=True)
+finally:
+    if real_need is None:
+        del cli.INTEGRATION_NEEDS["agent_browser"]
+    else:
+        cli.INTEGRATION_NEEDS["agent_browser"] = real_need
+check("negative control: a need that always returns None makes the missing binary a PASS (so the FAIL check can fail)",
+      only(rows, "agent_browser") == [("PASS", "agent_browser is on, no dependency checked here")], "rows %r" % (rows,))
+
+PENDING_ON = ("SKIP", "NOT RUN, NOT ARMED: mempalace is on in config/forge.json, but its check arrives with the MemPalace part")
+PENDING_OFF = ("SKIP", "NOT RUN, NOT ARMED: mempalace is off in config/forge.json; its check arrives with the MemPalace part")
+rows = int_row(EMPTY_BIN, mempalace=False)
+check("mempalace off: a SKIP that says its check arrives with the MemPalace part", only(rows, "mempalace") == [PENDING_OFF], "rows %r" % (rows,))
+rows = int_row(EMPTY_BIN, mempalace=True)
+check("mempalace on: still a SKIP, nothing is counted as checked, and the closing line does not claim every integration is off",
+      only(rows, "mempalace") == [PENDING_ON] and rows[-1] == (
+          "SKIP", "NOT RUN, NOT ARMED: no integration with a check is on in config/forge.json and no user_hooks row is configured, "
+          "so there is nothing to check"), "rows %r" % (rows,))
+real_pending, real_need = dict(cli.INTEGRATION_PENDING) if hasattr(cli, "INTEGRATION_PENDING") else {}, cli.INTEGRATION_NEEDS.get("mempalace")
+cli.INTEGRATION_PENDING = {}
+cli.INTEGRATION_NEEDS["mempalace"] = (None, "no dependency checked here")
+try:
+    rows = int_row(EMPTY_BIN, mempalace=True)
+finally:
+    cli.INTEGRATION_PENDING = real_pending
+    if real_need is None:
+        cli.INTEGRATION_NEEDS.pop("mempalace", None)
+    else:
+        cli.INTEGRATION_NEEDS["mempalace"] = real_need
+check("negative control: without the pending case mempalace on is a PASS",
+      only(rows, "mempalace") == [("PASS", "mempalace is on, no dependency checked here")], "rows %r" % (rows,))
+rows = int_row(EMPTY_BIN, agent_browser=True, mempalace=True)
+check("agent_browser and mempalace on, the binary missing: one FAIL, one SKIP, and the closing line counts the one checked",
+      [r[0] for r in only(rows, "agent_browser")] == ["FAIL"] and only(rows, "mempalace") == [PENDING_ON]
+      and rows[-1] == ("PASS", "checked 1: 1 integration(s) on, 0 user_hooks script(s)"), "rows %r" % (rows,))
+
 sandbox.cleanup(bool(failures))
 if failures:
     print("%d of %d checks failed" % (len(failures), n_cases[0]))
