@@ -578,7 +578,8 @@ def _gsd_missing():
 
 
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
-                     "hindsight": (None, "no dependency checked here")}
+                     "hindsight": (None, "no dependency checked here"),
+                     "consent": (None, "its own row, `consent`, looks at the adapter, the profiles and the hook")}
 
 
 def hook_scripts(command):
@@ -652,6 +653,120 @@ def integrations_row():
         out.append(lib.Result("PASS", "integrations", "checked %d: %d integration(s) on, %d user_hooks script(s)"
                               % (checked, integrations, checked - integrations)))
     return out
+
+
+# The `consent` row (1.1 U4). The hook row is written with "onFailure": "block", so an entry that is there but
+# whose command no longer starts (python moved by a mise upgrade, forge moved) leaves every session without Bash
+# and MCP: that the entry exists proves nothing, so the row runs the installed command on two payloads.
+CONSENT_MARKER = "guard_tool_use.py --consent"
+CONSENT_SMOKE_BENIGN = "git status"
+
+
+def _consent_guard():
+    """hooks/guard_tool_use.py of this checkout, loaded by path: it holds consent_config and production_error,
+    the one definition of what gateway.json and a profile's `production` may say."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("forge_consent_guard", os.path.join(lib.ROOT, "hooks", "guard_tool_use.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def consent_probe(command, cwd, payload_command, timeout, want_code, want_text=None):
+    """None when the installed hook `command` (shell=True, `timeout` seconds as the hook's cap, FORGE_CONSENT=unattended
+    so that no window ever opens, and a private XDG_STATE_HOME so that the probe leaves no line in the real consent
+    log) answers a Bash payload for `payload_command` with exit `want_code` (and `want_text` in stderr); else why not."""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": payload_command}, "cwd": cwd,
+                          "session_id": "forge-doctor", "hook_event_name": "PreToolUse"})
+    state = tempfile.mkdtemp(prefix="forge-consent-probe-")
+    try:
+        env = dict(os.environ, FORGE_CONSENT="unattended", XDG_STATE_HOME=state)
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        try:
+            r = subprocess.run(command, shell=True, input=payload, env=env, text=True, capture_output=True,
+                               timeout=timeout, cwd=cwd if os.path.isdir(cwd) else lib.ROOT)
+        except subprocess.TimeoutExpired:
+            return "`%s` did not answer in %d s" % (payload_command, timeout)
+    finally:
+        shutil.rmtree(state, ignore_errors=True)
+    last = (r.stderr.strip().splitlines() or [""])[-1]
+    if r.returncode != want_code:
+        return "`%s` exited %d, want %d%s" % (payload_command, r.returncode, want_code, (": " + last) if last else "")
+    if want_text and want_text not in r.stderr:
+        return "`%s` exited %d as wanted but its stderr has no %s%s" % (payload_command, r.returncode, want_text,
+                                                                        (": " + last) if last else "")
+    return None
+
+
+def consent_row():
+    """The `consent` row: SKIP (NOT RUN, NOT ARMED) while integrations.consent is off. On, the first problem found is
+    a FAIL that names its fix, in this order: config/gateway.json missing or invalid (the guard's consent_config);
+    the adapter missing or not executable, or the built-in one without `gum` or the Omarchy launcher; no profile
+    declares `production` (looking at zero is a failure: the window would never open); ~/.claude/settings.json
+    without the `--consent` entry or with it lacking "onFailure": "block"; consent.timeout_s not below the entry's
+    timeout; the smoke test, which runs the entry's exact command on `git status` (must exit 0) and on a push to
+    a production branch with no one to ask (must exit 2 with CONSENT_UNATTENDED:). The PASS says how much it looked at."""
+    from forge import hooks  # not at import: it reads config/forge.json
+    if not lib.on("consent"):
+        return lib.Result("SKIP", "consent", NOT_ARMED + "consent is off in config/forge.json, so the window was not looked at")
+    fail = lambda why: lib.Result("FAIL", "consent", why)
+    gateway = os.path.join(lib.ROOT, "config", "gateway.json")
+    try:
+        guard = _consent_guard()
+        cfg = guard.consent_config(lib.ROOT)
+    except Exception as e:
+        return fail("%s -- fix config/gateway.json (examples/gateway.json is the template: cp examples/gateway.json config/gateway.json), "
+                    "or set integrations.consent false and run forge sync --apply" % e)
+    adapter, limit = cfg["adapter"], cfg["timeout_s"]
+    if not os.path.isfile(adapter) or not os.access(adapter, os.X_OK):
+        return fail("the adapter %s is %s -- restore it (git checkout scripts/consent/) and chmod +x it, or point consent.adapter in %s at one that is"
+                    % (lib.short(adapter), "not executable" if os.path.isfile(adapter) else "not there", lib.short(gateway)))
+    if adapter == os.path.realpath(os.path.join(lib.ROOT, "scripts", "consent", "omarchy")):
+        for tool, fix in (("gum", "install gum (pacman -S gum)"), ("omarchy-launch-floating-terminal-with-presentation", "this is not an Omarchy session: use another adapter")):
+            if not shutil.which(tool):
+                return fail("the omarchy adapter needs `%s` on PATH and it is not there -- %s" % (tool, fix))
+    declared = [p for p in cfg["profiles"] if "production" in p]
+    if not declared:
+        return fail("no profile in config/profiles declares `production`, so no call would ever match and the window would never open -- "
+                    'add "production": {"branches": [...], "commands": [...]} to the profile of a project that deploys')
+    for p in declared:
+        why = guard.production_error(p["production"])
+        if why:
+            return fail("%s: %s -- fix the profile; the guard refuses every call from that project while it is invalid" % (lib.short(p["file"]), why))
+    where = lib.short(hooks.USER_SETTINGS)
+    try:
+        doc = lib.read_owned(hooks.USER_SETTINGS, None)
+    except lib.Unreadable as e:
+        return fail("%s is unreadable, so the --consent entry was not looked for: %s" % (where, e))
+    entries = [e for e in lib.hook_entries(doc)[0] if CONSENT_MARKER in str(e[3].get("command"))] if doc is not None else []
+    if not entries:
+        return fail("%s holds no `%s` entry, so the window is not wired -- forge sync --apply" % (where, CONSENT_MARKER))
+    for event, _, _, hook in entries:
+        if hook.get("onFailure") != "block":
+            return fail('the %s entry under %s has onFailure %s, want "block": a hook that hangs or breaks would let the call through '
+                        "-- forge sync --apply" % (CONSENT_MARKER, event, json.dumps(hook.get("onFailure"))))
+    command, cap = entries[0][3].get("command"), entries[0][3].get("timeout")
+    if isinstance(cap, bool) or not isinstance(cap, int) or limit >= cap:
+        return fail("consent.timeout_s is %d and the hook entry's timeout is %s: the adapter must give up before the hook is killed, so "
+                    "timeout_s must be below it -- lower timeout_s in %s, or forge sync --apply to restore the entry's 300"
+                    % (limit, json.dumps(cap), lib.short(gateway)))
+    branch_profile = next((p for p in declared if p["production"].get("branches")), None)
+    if branch_profile:
+        cwd, push = branch_profile["project_path"], "git push origin %s" % branch_profile["production"]["branches"][0]
+    else:  # production lists commands only: a command entry stands in for the push
+        stand_in = next(((p, c) for p in declared for c in p["production"].get("commands", []) if not c.startswith("mcp__")), None)
+        if not stand_in:
+            return fail("no profile's `production` lists a branch or a command the smoke test can send, so the --consent entry was not run -- "
+                        "list a branch in production.branches")
+        cwd, push = stand_in[0]["project_path"], stand_in[1]
+    for text, code, marker in ((CONSENT_SMOKE_BENIGN, 0, None), (push, 2, "CONSENT_UNATTENDED:")):
+        why = consent_probe(command, cwd, text, cap, code, marker)
+        if why:
+            return fail("the installed command `%s` fails its smoke test: %s -- forge sync --apply; if the entry is right, "
+                        "hooks/guard_tool_use.py --consent itself does not answer" % (command, why))
+    return lib.Result("PASS", "consent", "adapter %s, timeout_s %d below the hook's %d s, %d profile(s) with production, `%s` exits 0 and "
+                      "`%s` exits 2 with CONSENT_UNATTENDED: through `%s`" % (lib.short(adapter), limit, cap, len(declared),
+                                                                            CONSENT_SMOKE_BENIGN, push, command))
 
 
 def codex_hooks_row():
@@ -951,6 +1066,8 @@ CHECKS = [
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
+    # Its failures carry their own fix, so the row's is empty.
+    ("consent", consent_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     # Its failures and its SKIP carry their own fix, so the row's is empty.
     ("gsd isolation guard", gsd_isolation_guard_row, ""),
@@ -1540,6 +1657,7 @@ def init_write(integrations, track):
     profile.update(project="forge", project_path=lib.ROOT, writes_tracked_files=False)
     put(os.path.join(lib.PROFILES, "forge.claude.json"), lib.dumps(profile) + "\n")
     put(os.path.join(lib.ROOT, "config", "mcp-registry.json"), example_text("mcp-registry.json"))
+    put(os.path.join(lib.ROOT, "config", "gateway.json"), example_text("gateway.json"))
     secrets = os.path.join(lib.ROOT, "credentials", "secrets.json")
     os.makedirs(os.path.dirname(secrets), mode=0o700, exist_ok=True)
     put(secrets, "{}\n", mode=0o600)

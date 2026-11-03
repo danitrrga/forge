@@ -383,6 +383,9 @@ def main_world():
     want("config/secrets.json links to ../credentials/secrets.json", os.readlink(link) if os.path.islink(link) else None, "../credentials/secrets.json")
     doc = w.path("docs", "AGENT-SYSTEM.md")
     check("docs/AGENT-SYSTEM.md is the example", os.path.exists(doc) and open(doc).read() == open(w.path("examples", "AGENT-SYSTEM.md")).read())
+    # Red against init_write without the gateway put (1.1 U4): "config/gateway.json is the example".
+    gw = w.path("config", "gateway.json")
+    check("config/gateway.json is the example", os.path.exists(gw) and open(gw).read() == open(w.path("examples", "gateway.json")).read())
     want("no config/toolchain.json while gsd is off", os.path.exists(w.path("config", "toolchain.json")), False)
     want("an empty skills/ exists", os.listdir(w.path("skills")) if os.path.isdir(w.path("skills")) else None, [])
     want("git config core.hooksPath", git_out("-C", w.root, "config", "core.hooksPath").strip(), "githooks")
