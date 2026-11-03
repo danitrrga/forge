@@ -110,7 +110,8 @@ def _default_branch(ppath):
 def _document(prof, name, ppath):
     """The text of .claude/<plugin>.json as a dict: the profile's fields (a field it lacks is the default), the
     `framework` section of config/forge.json (a key it lacks is left out, so the plugin's own defaults apply), and
-    the integrations' switches."""
+    the integrations' switches. `project.linear_project` is the profile's `linear_project`, else the remote's name.
+    The file has no slot for a label a project's issues carry, so a profile can move the Linear project only."""
     section = lib.settings().get("framework")
     section = section if isinstance(section, dict) else {}
 
@@ -128,7 +129,7 @@ def _document(prof, name, ppath):
         "project": {
             "name": prof.get("project") or name,
             "main_checkout": os.path.realpath(ppath),
-            "linear_project": _remote_name(ppath),
+            "linear_project": prof.get("linear_project") or _remote_name(ppath),
             "default_branch": _default_branch(ppath),
             "factory_branch": "factory",
             "checks": list(prof.get("checks") or []),
