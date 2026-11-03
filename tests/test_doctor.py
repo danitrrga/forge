@@ -1516,10 +1516,18 @@ def skip_cases(tmp):
         want("session_wait with hindsight on", getattr(cli, "session_wait", lambda: "no cli.session_wait")(), wait)
         want("the unit comes from the config", getattr(cli, "memory_unit", lambda: "no cli.memory_unit")(), "toy-unit")
 
+        toolchain_row = lambda: lib.Result("PASS", "toolchain", "toy")
+
         def session(project):
             """What a session start in `project` prints, with the sync steps, lock and resolver stubbed out."""
-            saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock)
+            # toolchain.row reads machine state: the real config/toolchain.json against the real
+            # ~/.config/mise/conf.d/forge.toml. Under this toy settings file agent_browser is off, so the rendered
+            # file lacks agent-browser and differs from the machine's ("toolchain: 1 failing: file:mise"). Stubbed to
+            # a PASS like the sync steps; the row itself is test_toolchain.py's.
+            saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
+                     cli.toolchain.row)
             cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state = [], 0.3, 0.1, lambda: "activating"
+            cli.toolchain.row = toolchain_row
             lib.resolve_project, lib.profiles = (lambda path: project), (lambda skipped=None: {project: {}})
             lib.lock = lambda timeout=20: contextlib.nullcontext()
             out = io.StringIO()
@@ -1527,7 +1535,8 @@ def skip_cases(tmp):
                 with contextlib.redirect_stdout(out):
                     cli.cmd_session_start(None)
             finally:
-                cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock = saved
+                (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
+                 cli.toolchain.row) = saved
             return json.loads(out.getvalue())["systemMessage"] if out.getvalue().strip() else ""
         msg = session("toyproj")
         want("a session in the configured project waits", ("memory is starting (toy-unit: activating" in msg), True)
