@@ -43,6 +43,40 @@ Controls, each seen red on a copy of the repo with state.py changed in one place
     numeric order...: got ['v1', 'v10', 'v2']", "resolve without a binding returns the only open phase: got (None, [...])").
   - header and row in two os.write calls:
       FAIL: first write (header and row): os.write calls: got 2, want 1
+
+U3 (new_milestone, new_phase, new_subphase, cancel_phase, check_state, check_report; 236 checks). Seen red before the code
+existed, on state.py as of U1:
+  AttributeError: module 'fwx.state' has no attribute '_read_template'   (the test hooks that reader to learn which templates are copied)
+Controls, each seen red on a copy with state.py (or a template) changed in one place; first FAIL lines shown:
+  - mkdir with exist_ok=True: the second "a" would share 01-a; here the exclusive create of context.md stops it:
+      FileExistsError: [Errno 17] File exists: '<toy>/.fwx/milestones/v1/phases/01-a/context.md'
+  - no look at the numbers in use (the stale-listing case, another slug):
+      FAIL: new_phase: a stale listing (number 1 taken, slug differs) tries the next, never two phases with one number: got '02-a', want '03-a'
+  - cancel_phase deleting the parent:
+      FAIL: cancel_phase: neighbour phase 02-b missing
+  - cancel_phase without the premortem.md / plan.md refusal:
+      FAIL: cancel_phase refuses once premortem.md exists: returned None
+  - cancel_phase not unbinding sessions:
+      FAIL: cancel_phase unbinds the session that pointed to it, keeping its subproject: got ({'subproject': None, 'phase_dir': '.fwx/milestones/v1/phases/01-a'}, ...)
+  - cancel_phase accepting any folder: the run crashes (FileNotFoundError: '<tmp>' -> '<toy>/.fwx/milestones/v1/phases/20-link') after deleting src/01-x
+  - check_report without the sha search, and with the first evidence row instead of the last:
+      FAIL: check_report: a report without the evidence sha is an error (report without evidence sha passed): []
+      FAIL: check_report: the full sha of the last evidence row passes: got (['<tmp>/report-1.md does not cite the sha of the last evidence row (ffffffffffff)'], []), want ([], [])
+  - the length never warning / the length an error:
+      FAIL: check_state: 112 lines warns, no error: got ([], []), want ([], ['112 lines, target 100'])
+      FAIL: check_report: 41 lines is a warning, not an error: got (['41 lines, target 40'], []), want ([], ['41 lines, target 40'])
+  - the leading referent comment kept in a copy:
+      FAIL: a copied template loses its leading referent comment line (context.md): <!-- referent: none, own text: ...
+  - TSV headers not written at creation:
+      FAIL: new_phase: decisions.tsv holds exactly its header: got '', want 'date\tid\tdecision\t...'
+  - no PROJECT.md (FileNotFoundError, the test reads it), no fallback to the session's subproject
+    (FAIL: new_phase without --subproject keeps the session's subproject ...), session not bound
+    (FAIL: new_phase binds the session (from the environment): got None, ...), next number not highest + 1
+    ("got '06-n', want '08-n'"), subphase number taken like a phase's ("got ('03.1-a', '03.4-b'), want ('03.1-a', '03.2-b')"),
+    new_milestone overwriting (raised FileExistsError, not StateError), slug not validated (9 FAILs, "bad slug '': returned ...").
+  - templates: a trailing comma in plan.md's JSON ("FAIL: templates/phase/plan.md: frontmatter is JSON: templates/phase/plan.md:
+    frontmatter is not JSON"), a heading dropped from postmortem.md ("the section headings of 3.3, in order: got [...]"), a
+    copied template renamed (StateError: the template <tmp>/templates/phase/context.md cannot be read ...).
 """
 import json
 import os
@@ -417,5 +451,260 @@ state.write_session(cwd=rw, session="r1", subproject=None, phase_dir=a)
 os.rename(a, a + "-gone")
 r5 = state.resolve(cwd=rw, session="r1")
 s.eq("resolve: a session whose phase folder is gone falls back to the open phase", r5["phase_dir"], c)
+
+
+# ======================================================================================================================
+# U3: new_milestone, new_phase, new_subphase, cancel_phase, check_state, check_report
+# ======================================================================================================================
+TEMPLATES = os.path.join(helpers.ROOT, "templates")
+HEADERS = {"decisions.tsv": "\t".join(state.DECISION_COLUMNS) + "\n", "audit.tsv": "\t".join(state.AUDIT_COLUMNS) + "\n"}
+
+# ---- new_phase in an empty repo -------------------------------------------------------------------------------------
+read_templates = []
+_real_read_template = state._read_template
+state._read_template = lambda name: (read_templates.append(name), _real_read_template(name))[1]  # which templates are copied
+
+nm = helpers.toy_repo()
+nw = helpers.add_worktree(nm, "np")
+os.environ["CLAUDE_CODE_SESSION_ID"] = "np1"
+p1 = state.new_phase("a", cwd=nw)
+os.environ.pop("CLAUDE_CODE_SESSION_ID")
+fr = os.path.join(nm, ".fwx")
+s.eq("new_phase in an empty repo: the folder is <main>/.fwx/milestones/v1/phases/01-a", str(p1),
+     os.path.join(fr, "milestones", "v1", "phases", "01-a"))
+s.ok("new_phase: .fwx/PROJECT.md is created from the template", os.path.isfile(os.path.join(fr, "PROJECT.md")))
+s.ok("new_phase: milestones/v1/MILESTONE.md is created", os.path.isfile(os.path.join(fr, "milestones", "v1", "MILESTONE.md")))
+s.ok("new_phase: context.md is copied", os.path.isfile(os.path.join(str(p1), "context.md")))
+for f, head in HEADERS.items():
+    s.eq("new_phase: %s holds exactly its header" % f, read(os.path.join(str(p1), f)).decode(), head)
+s.ok("new_phase writes nothing in the worktree it was run from", not os.path.exists(os.path.join(nw, ".fwx")))
+s.eq("new_phase binds the session (from the environment)", state.read_session(cwd=nm, session="np1"),
+     {"subproject": None, "phase_dir": os.path.join(".fwx", "milestones", "v1", "phases", "01-a")})
+s.eq("new_phase: the second one is 02-b", os.path.basename(str(state.new_phase("b", cwd=nm))), "02-b")
+s.eq("new_phase without a session id binds nothing and is no error", state.read_session(cwd=nm, session="nobody"), None)
+s.eq("new_phase: the folder name of context.md is filled in", [l for l in read(os.path.join(str(p1), "context.md")).decode().splitlines() if l.startswith("# ")],
+     ["# Context: 01-a"])
+for f in ("context.md",):
+    first = read(os.path.join(str(p1), f)).decode().splitlines()[0]
+    s.ok("a copied template loses its leading referent comment line (%s)" % f, "referent" not in first and "copied-from" not in first, first)
+s.ok("PROJECT.md loses its leading referent comment line", "<!-- referent" not in read(os.path.join(fr, "PROJECT.md")).decode())
+
+# a number that is already taken is skipped, never shared. Two seams stand in for the two ways it happens: a listing gone
+# stale (`_next_number`), and a rival that creates the folder between the free-number look and the mkdir (`_number_taken`).
+real_next, real_taken = state._next_number, state._number_taken
+state._next_number = lambda parent, subphases=False: 1
+q = state.new_phase("a", cwd=nm)  # 01-a, 02-b exist: a different slug must not reuse number 02 either
+state._next_number = real_next
+s.eq("new_phase: a stale listing (number 1 taken, slug differs) tries the next, never two phases with one number",
+     os.path.basename(str(q)), "03-a")
+rm2 = helpers.toy_repo()
+r2a = state.new_phase("a", cwd=rm2)
+state._next_number, state._number_taken = (lambda parent, subphases=False: 1), (lambda parent, n, subphases=False: False)
+q2 = state.new_phase("a", cwd=rm2)  # same slug, same number, the free-number look fooled: only the mkdir can refuse
+state._next_number, state._number_taken = real_next, real_taken
+s.eq("new_phase: the same folder made twice is not shared, the second takes the next number (exist_ok would share 01-a)",
+     (os.path.basename(str(r2a)), os.path.basename(str(q2))), ("01-a", "02-a"))
+s.ok("new_phase: 01-a is untouched by the retries", os.path.isfile(os.path.join(str(p1), "context.md")))
+s.eq("new_phase: the folders in order", [os.path.basename(str(x)) for x in state.phases(fr, "v1")], ["01-a", "02-b", "03-a"])
+dm = state.new_phase("dec", cwd=nm)
+state.append_decision(os.path.join(str(dm), "decisions.tsv"), decision="d", why="w", support="chosen")
+s.eq("a decision appended to the new decisions.tsv: header once", read(os.path.join(str(dm), "decisions.tsv")).decode().count("date\tid"), 1)
+
+# a number gap: the next number follows the highest
+mk(fr, "milestones", "v1", "phases", "07-far")
+s.eq("new_phase: next is highest + 1", os.path.basename(str(state.new_phase("n", cwd=nm))), "08-n")
+mk(fr, "milestones", "v1", "phases", "12.2-conv")
+s.eq("new_phase: a converted NN.M phase counts by its NN", os.path.basename(str(state.new_phase("m", cwd=nm))), "13-m")
+
+# milestone and subproject choices
+s.eq("new_phase: an explicit milestone that exists", os.path.basename(os.path.dirname(os.path.dirname(str(
+    state.new_phase("x", milestone="v1", cwd=nm))))), "v1")
+refuses("new_phase: a milestone that does not exist", lambda: state.new_phase("x", milestone="v9", cwd=nm), "v9")
+refuses("new_phase: a bad milestone name", lambda: state.new_phase("x", milestone="../v1", cwd=nm))
+for bad in ("", "Has Space", "a/b", "..", "-x", "A", "a--b", "a_b"):
+    refuses("new_phase: bad slug %r" % bad, lambda bad=bad: state.new_phase(bad, cwd=nm))
+state.new_milestone(state.scope_root(fr), "v2")
+s.eq("new_phase goes to the current milestone: v2 now, numbering restarts", str(state.new_phase("f", cwd=nm)),
+     os.path.join(fr, "milestones", "v2", "phases", "01-f"))
+sp1 = state.new_phase("w", subproject="web", cwd=nm)
+s.eq("new_phase in a subproject", str(sp1), os.path.join(fr, "subprojects", "web", "milestones", "v1", "phases", "01-w"))
+s.ok("a subproject phase does not touch the root's numbering", os.path.basename(str(state.new_phase("g", cwd=nm))) == "02-g")
+refuses("new_phase: a subproject name that is a path", lambda: state.new_phase("x", subproject="../x", cwd=nm))
+state.write_session(cwd=nm, session="np2", subproject="web", phase_dir=None)
+s.eq("new_phase without --subproject keeps the session's subproject (never falls back to the flat root)",
+     str(state.new_phase("h", session="np2", cwd=nm)), os.path.join(fr, "subprojects", "web", "milestones", "v1", "phases", "02-h"))
+s.eq("... and binds the session to it", state.read_session(cwd=nm, session="np2")["subproject"], "web")
+
+# nothing half-made when a template is missing
+bm = helpers.toy_repo()
+real_tpl = state._TEMPLATES
+state._TEMPLATES = state.Path(helpers.mkdtemp("fwx-notpl-"))
+refuses("new_phase with the templates folder missing", lambda: state.new_phase("a", cwd=bm), "templates")
+state._TEMPLATES = real_tpl
+s.ok("... leaves nothing behind", not os.path.exists(os.path.join(bm, ".fwx")))
+
+# ---- new_milestone ----------------------------------------------------------------------------------------------------
+mm = helpers.toy_repo()
+mroot = state.scope_root(os.path.join(mm, ".fwx"))
+m1 = state.new_milestone(mroot)
+s.eq("new_milestone in an empty scope is v1", str(m1), os.path.join(mm, ".fwx", "milestones", "v1"))
+s.ok("new_milestone writes MILESTONE.md from the template", os.path.isfile(os.path.join(str(m1), "MILESTONE.md")))
+s.ok("MILESTONE.md carries its own name and loses the referent line", "# Milestone v1:" in read(os.path.join(str(m1), "MILESTONE.md")).decode()
+     and "<!-- referent" not in read(os.path.join(str(m1), "MILESTONE.md")).decode())
+mk(mm, ".fwx", "milestones", "v9")
+s.eq("new_milestone: the next one follows the highest (v9 -> v10)", os.path.basename(str(state.new_milestone(mroot))), "v10")
+s.eq("new_milestone with a name", os.path.basename(str(state.new_milestone(mroot, "v12"))), "v12")
+refuses("new_milestone that already exists", lambda: state.new_milestone(mroot, "v12"), "v12")
+refuses("new_milestone with a bad name", lambda: state.new_milestone(mroot, "release-1"))
+refuses("new_milestone outside .fwx", lambda: state.new_milestone(helpers.mkdtemp("fwx-outside-")))
+s.eq("new_milestone in a subproject scope", str(state.new_milestone(state.scope_root(os.path.join(mm, ".fwx"), "api"))),
+     os.path.join(mm, ".fwx", "subprojects", "api", "milestones", "v1"))
+
+# ---- new_subphase -----------------------------------------------------------------------------------------------------
+um = helpers.toy_repo()
+ux = mk(um, ".fwx", "milestones", "v1", "phases", "03-x")
+sa = state.new_subphase(ux, "a")
+sb = state.new_subphase(ux, "b")
+s.eq("new_subphase twice: 03.1-a and 03.2-b", (os.path.basename(str(sa)), os.path.basename(str(sb))), ("03.1-a", "03.2-b"))
+s.eq("subphases returns them in that order", [os.path.basename(str(x)) for x in state.subphases(ux)], ["03.1-a", "03.2-b"])
+s.ok("new_subphase copies plan.md", os.path.isfile(os.path.join(str(sa), "plan.md")))
+s.eq("new_subphase writes the audit.tsv header", read(os.path.join(str(sa), "audit.tsv")).decode(), HEADERS["audit.tsv"])
+s.ok("the subphase plan.md loses its referent comment line", "<!-- referent" not in read(os.path.join(str(sa), "plan.md")).decode())
+s.ok("new_subphase makes no decisions.tsv (it stays in the phase)", not os.path.exists(os.path.join(str(sa), "decisions.tsv")))
+for k in range(8):
+    state.new_subphase(ux, "s%d" % k)
+s.eq("new_subphase: the tenth is 03.10 and sorts after 03.2", [os.path.basename(str(x)) for x in state.subphases(ux)][-1], "03.10-s7")
+state._next_number = lambda parent, subphases=False: 1
+stale = state.new_subphase(ux, "a")  # 03.1-a exists, and 03.2-b: another slug must not reuse number 2 either
+state._next_number = real_next
+s.eq("new_subphase: a stale listing tries the next number", os.path.basename(str(stale)), "03.11-a")
+uy = mk(um, ".fwx", "milestones", "v1", "phases", "04-y")
+uy1 = state.new_subphase(uy, "a")
+state._next_number, state._number_taken = (lambda parent, subphases=False: 1), (lambda parent, n, subphases=False: False)
+uy2 = state.new_subphase(uy, "a")
+state._next_number, state._number_taken = real_next, real_taken
+s.eq("new_subphase: the same folder made twice is not shared (exist_ok would share 04.1-a)",
+     (os.path.basename(str(uy1)), os.path.basename(str(uy2))), ("04.1-a", "04.2-a"))
+refuses("new_subphase: a phase folder that does not exist", lambda: state.new_subphase(os.path.join(um, ".fwx", "milestones", "v1", "phases", "09-no"), "a"))
+refuses("new_subphase: a folder that is not a phase", lambda: state.new_subphase(mk(um, "elsewhere", "03-x"), "a"))
+refuses("new_subphase: inside a subphase", lambda: state.new_subphase(str(sa), "a"))
+refuses("new_subphase: a converted NN.M phase takes no subphases", lambda: state.new_subphase(mk(um, ".fwx", "milestones", "v1", "phases", "12.2-c"), "a"))
+refuses("new_subphase: a bad slug", lambda: state.new_subphase(ux, "Bad Slug"))
+
+# ---- cancel_phase -----------------------------------------------------------------------------------------------------
+cm = helpers.toy_repo()
+c1 = state.new_phase("a", cwd=cm)
+c2 = state.new_phase("b", cwd=cm)
+state.write_session(cwd=cm, session="c1", subproject=None, phase_dir=c1)
+state.write_session(cwd=cm, session="c2", subproject="web", phase_dir=c1)
+state.write_session(cwd=cm, session="c3", subproject=None, phase_dir=c2)
+mk(str(c1), "research")
+helpers.write(str(c1), "research/x.md", "notes\n")
+state.cancel_phase(c1)
+s.ok("cancel_phase deletes its folder", not os.path.exists(str(c1)))
+s.ok("cancel_phase: neighbour phase 02-b missing", os.path.isfile(os.path.join(str(c2), "context.md")))
+s.ok("cancel_phase: milestones/v1/phases still there", os.path.isdir(os.path.dirname(str(c2))))
+s.eq("cancel_phase unbinds the session that pointed to it, keeping its subproject",
+     (state.read_session(cwd=cm, session="c1"), state.read_session(cwd=cm, session="c2")),
+     ({"subproject": None, "phase_dir": None}, {"subproject": "web", "phase_dir": None}))
+s.eq("cancel_phase leaves a session on another phase alone", state.read_session(cwd=cm, session="c3")["phase_dir"],
+     os.path.join(".fwx", "milestones", "v1", "phases", "02-b"))
+for doc in ("premortem.md", "plan.md"):
+    d3 = state.new_phase("p" + doc[:2], cwd=cm)
+    helpers.write(str(d3), doc, "x\n")
+    refuses("cancel_phase refuses once %s exists" % doc, lambda d3=d3: state.cancel_phase(d3), doc)
+    s.ok("... and deletes nothing (%s)" % doc, os.path.isfile(os.path.join(str(d3), "context.md")) and os.path.isfile(os.path.join(str(d3), doc)))
+refuses("cancel_phase: a folder outside .fwx", lambda: state.cancel_phase(mk(cm, "src", "01-x")))
+refuses("cancel_phase: .fwx itself", lambda: state.cancel_phase(os.path.join(cm, ".fwx")))
+refuses("cancel_phase: a milestone folder", lambda: state.cancel_phase(os.path.join(cm, ".fwx", "milestones", "v1")))
+refuses("cancel_phase: a subphase folder", lambda: state.cancel_phase(str(state.new_subphase(c2, "z"))))
+refuses("cancel_phase: a folder that does not exist", lambda: state.cancel_phase(os.path.join(cm, ".fwx", "milestones", "v1", "phases", "09-no")))
+link = os.path.join(cm, ".fwx", "milestones", "v1", "phases", "20-link")
+os.symlink(helpers.mkdtemp("fwx-target-"), link)
+refuses("cancel_phase: a symlink is not followed", lambda: state.cancel_phase(link))
+cs = state.new_phase("w", subproject="web", cwd=cm)
+state.cancel_phase(cs)
+s.ok("cancel_phase works inside a subproject", not os.path.exists(str(cs)) and os.path.isdir(os.path.join(cm, ".fwx", "subprojects", "web")))
+
+# ---- check_state -------------------------------------------------------------------------------------------------------
+kd = helpers.mkdtemp("fwx-check-")
+helpers.write(kd, "state.md", "# State\n" + "line\n" * 99)  # 100 lines
+s.eq("check_state: 100 lines is on target", state.check_state(os.path.join(kd, "state.md")), ([], []))
+helpers.write(kd, "state.md", "# State\n" + "line\n" * 111)  # 112 lines
+s.eq("check_state: 112 lines warns, no error", state.check_state(os.path.join(kd, "state.md")), ([], ["112 lines, target 100"]))
+errs, _ = state.check_state(os.path.join(kd, "missing.md"))
+s.ok("check_state: a missing file is an error", len(errs) == 1 and "missing.md" in errs[0], str(errs))
+helpers.write(kd, "empty.md", "\n\n")
+s.ok("check_state: an empty state.md is an error", len(state.check_state(os.path.join(kd, "empty.md"))[0]) == 1)
+
+# ---- check_report ------------------------------------------------------------------------------------------------------
+rd = helpers.mkdtemp("fwx-report-")
+SHA = "0123456789abcdef0123456789abcdef01234567"
+state.append_audit(rd, "evidence", "old run", rc=0, sha="f" * 40)
+state.append_audit(rd, "evidence", "pytest -q", rc=0, sha=SHA)
+state.append_audit(rd, "round", "review")
+report = os.path.join(rd, "report-1.md")
+helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, pytest -q, exit 0.\n" % SHA)
+s.eq("check_report: the full sha of the last evidence row passes", state.check_report(report), ([], []))
+helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, pytest -q, exit 0.\n" % SHA[:7])
+s.eq("check_report: an abbreviated sha (7 chars) passes", state.check_report(report), ([], []))
+helpers.write(rd, "report-1.md", "# Report 1\n\n## Evidence\nCommit `%s`, an older run.\n" % ("f" * 40))
+errs, warns = state.check_report(report)
+s.ok("check_report: the sha of an older evidence row is not the last one (report without evidence sha passed)", len(errs) == 1 and "0123456" in errs[0], str(errs))
+helpers.write(rd, "report-1.md", "# Report 1\n\nDone.\n")
+errs, warns = state.check_report(report)
+s.ok("check_report: a report without the evidence sha is an error (report without evidence sha passed)", len(errs) == 1, str(errs))
+helpers.write(rd, "report-1.md", "# Report\n" + "Commit %s\n" % SHA + "line\n" * 39)  # 41 lines
+s.eq("check_report: 41 lines is a warning, not an error", state.check_report(report), ([], ["41 lines, target 40"]))
+helpers.write(rd, "report-1.md", "# Report\n" + "Commit %s\n" % SHA + "line\n" * 38)  # 40 lines
+s.eq("check_report: 40 lines is on target", state.check_report(report), ([], []))
+nr = helpers.mkdtemp("fwx-noaudit-")
+helpers.write(nr, "report-1.md", "# Report\nCommit %s\n" % SHA)
+s.ok("check_report: no audit.tsv, so no evidence to cite: an error", len(state.check_report(os.path.join(nr, "report-1.md"))[0]) == 1)
+state.append_audit(nr, "round", "review")
+s.ok("check_report: audit.tsv with no evidence row: an error", len(state.check_report(os.path.join(nr, "report-1.md"))[0]) == 1)
+s.ok("check_report: a missing report is an error", len(state.check_report(os.path.join(nr, "report-9.md"))[0]) == 1)
+state.append_audit(rd, "evidence", "later", rc=1, sha="b" * 40)
+helpers.write(rd, "report-1.md", "# Report\nCommit %s\n" % SHA)
+s.ok("check_report: a newer evidence row makes the old sha stale", len(state.check_report(report)[0]) == 1)
+
+# ---- the templates ------------------------------------------------------------------------------------------------------
+state._read_template = _real_read_template
+for name in sorted(set(read_templates)):
+    s.ok("the template %s that state.py copies exists in templates/" % name, os.path.isfile(os.path.join(TEMPLATES, name)), name)
+s.eq("the templates copied by new_phase, new_subphase and new_milestone", sorted(set(read_templates)),
+     ["MILESTONE.md", "PROJECT.md", "phase/context.md", "phase/plan.md"])
+SECTIONS = {"premortem.md": ["## Verdict", "## Failure reasons", "## Size"],
+            "plan.md": ["## Goal", "## Approach", "## Size"],
+            "postmortem.md": ["## Verdict", "## Findings", "## Criteria", "## Checked", "## Needs from the owner before executing",
+                              "## Not found wrong"]}
+
+
+def frontmatter(path):
+    """(the JSON between the two `---` lines of a template, the body) or (None, error)."""
+    text = read(path).decode()
+    lines = text.split("\n")
+    if lines[0] != "---" or "---" not in lines[1:]:
+        return None, "%s: no frontmatter between two --- lines" % rel(path, helpers.ROOT)
+    end = lines.index("---", 1)
+    try:
+        return json.loads("\n".join(lines[1:end])), "\n".join(lines[end + 1:])
+    except ValueError:
+        return None, "%s: frontmatter is not JSON" % rel(path, helpers.ROOT)
+
+
+for name, heads in SECTIONS.items():
+    path = os.path.join(TEMPLATES, "phase", name)
+    data, body = frontmatter(path)
+    s.ok("templates/phase/%s: frontmatter is JSON" % name, data is not None, body)
+    if data is not None:
+        s.ok("templates/phase/%s: the frontmatter is an object" % name, isinstance(data, dict))
+        found = [l for l in body.splitlines() if l.startswith("## ")]
+        s.eq("templates/phase/%s: the section headings of 3.3, in order" % name, found, heads)
+plan_fm = frontmatter(os.path.join(TEMPLATES, "phase", "plan.md"))[0] or {}
+s.ok("templates/phase/plan.md: every task carries `part`", plan_fm.get("tasks") and all("part" in t for t in plan_fm["tasks"]))
+bad = helpers.mkdtemp("fwx-badtpl-")
+helpers.write(bad, "plan.md", '---\n{"a": 1,}\n---\n## Goal\n')
+s.eq("control: a trailing comma in the frontmatter is caught", frontmatter(os.path.join(bad, "plan.md"))[1].endswith("frontmatter is not JSON"), True)
 
 s.done()

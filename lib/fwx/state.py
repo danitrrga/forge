@@ -1,5 +1,6 @@
-"""The state of `.fwx/`: where it is, its subproject, milestone, phase and subphase folders, the session file, and the
-TSV writers. The single writer of audit.tsv is `append_audit`; nothing else in the framework writes that file.
+"""The state of `.fwx/`: where it is, its subproject, milestone, phase and subphase folders, the session file, the
+TSV writers, and the making, cancelling and checking of those folders. The single writer of audit.tsv is
+`append_audit`; nothing else in the framework writes that file.
 
 referent: pstack plugins/pstack/skills/show-me-your-work/scripts/log.sh @36885ea, rules reimplemented in Python (tab,
 newline and CR become a space; a quote in front of a cell that starts with `= + - @ "`; one write per row), not copied.
@@ -20,6 +21,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -32,6 +34,8 @@ SUPPORT = ("chosen", "approved", "unexamined", "agent-assumption")
 AUDIT_COLUMNS = ("date", "kind", "sha", "detail", "rc")
 AUDIT_KINDS = ("evidence", "stage", "round")
 CLOSED_STAGES = ("closed", "cancelled")
+STATE_LINES = 100   # state.md: the length of GSD's template; over it only warns
+REPORT_LINES = 40   # a phase report: one terminal screen; over it only warns
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _MILESTONE = re.compile(r"v(\d+)\Z")
@@ -40,6 +44,12 @@ _SUBPHASE = re.compile(r"\d+\.\d+-.+\Z")  # NN.M-slug inside a phase
 _STAGE_WORD = re.compile(r"[a-z][a-z-]*(\s|\Z)")
 _SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _FORMULA = "=+-@\""
+_SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\Z")
+# `.fwx/[subprojects/<name>/]milestones/vN/phases/NN-slug`: the only folders cancel and new-subphase act on
+_PHASE_PATH = re.compile(r"(^|/)" + re.escape(PLAN_DIR) + r"/(subprojects/[^/]+/)?milestones/v\d+/phases/\d+(\.\d+)*-[^/]+\Z")
+_SCOPE_PATH = re.compile(r"(^|/)" + re.escape(PLAN_DIR) + r"(/subprojects/[^/]+)?\Z")
+_TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
+_TEMPLATE_NOTE = re.compile(r"<!-- (referent|copied-from)\b.*-->\s*\Z")
 
 
 class StateError(Exception):
@@ -175,10 +185,14 @@ def session_id(explicit=None):
     return sid
 
 
-def _sessions_dir(cwd):
+def sessions_dir(cwd=None):
+    """`<git-common-dir>/fwx/sessions`, the same folder from every worktree. Creates nothing."""
     config.main_checkout(cwd)  # ConfigError outside a repository, with its message
     r = _git(os.getcwd() if cwd is None else cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
     return os.path.join(r.stdout.strip(), "fwx", "sessions")
+
+
+_sessions_dir = sessions_dir  # the name `fwx statusline` and `fwx budget` import
 
 
 def read_session(cwd=None, session=None):
@@ -215,7 +229,10 @@ def write_session(cwd=None, session=None, *, subproject=None, phase_dir=None):
         if not full.startswith(str(root) + os.sep):
             raise StateError("%s is not inside %s" % (phase_dir, root))
         stored = os.path.relpath(full, str(root.parent))
-    d = _sessions_dir(cwd)
+    _put_session(_sessions_dir(cwd), sid, subproject, stored)
+
+
+def _put_session(d, sid, subproject, stored):
     os.makedirs(d, exist_ok=True)
     path = os.path.join(d, sid + ".json")
     tmp = "%s.%d.tmp" % (path, os.getpid())
@@ -360,3 +377,221 @@ def append_audit(dir, kind, detail="", rc="", sha=None, cwd=None):
     elif kind == "evidence" and (sha is None or not str(sha).strip()):
         raise StateError("an evidence row needs the sha it ran against")
     append_row(os.path.join(str(dir), "audit.tsv"), AUDIT_COLUMNS, [_now(), kind, "" if sha is None else sha, detail, rc])
+
+
+# ---- creating, cancelling and checking ----------------------------------------------------------------------------
+
+def _read_template(name):
+    """A template of `templates/` (`phase/plan.md`, ...) as text, without its leading `<!-- referent ...` or
+    `<!-- copied-from ...` line: that line says where the template came from, not what a real document says."""
+    path = _TEMPLATES / name
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as e:
+        raise StateError("the template %s cannot be read (%s): the framework's templates/ folder is incomplete" % (path, e.strerror))
+    return "".join(l for l in text.splitlines(True) if not _TEMPLATE_NOTE.match(l))
+
+
+def _check_slug(slug):
+    if not isinstance(slug, str) or not _SLUG.match(slug):
+        raise StateError("bad slug %r: lower-case letters and digits, words joined by single hyphens" % (slug,))
+
+
+def _new_tsv(path, columns):
+    """A TSV made with its header, so that a writer never has to. `x`: an existing file is an error, not overwritten."""
+    with open(str(path), "x", encoding="utf-8") as f:
+        f.write("\t".join(columns) + "\n")
+
+
+def _write_new(path, text):
+    with open(str(path), "x", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _numbers(parent, subphases):
+    """The numbers the folders of `parent` use: the first number of each `NN-slug` phase, the last of each `NN.M-slug`."""
+    found = _dirs(str(parent), _SUBPHASE if subphases else _PHASE)
+    return [int(re.match(r"\d+(\.\d+)*", n).group(0).split(".")[-1 if subphases else 0]) for n in found]
+
+
+def _next_number(parent, subphases=False):
+    """The number a new folder in `parent` takes first: the highest in use plus one. A seam: a test stands in for a
+    listing that went stale."""
+    return max(_numbers(parent, subphases), default=0) + 1
+
+
+def _number_taken(parent, n, subphases=False):
+    """Whether a folder in `parent` already uses the number n, whatever its slug (a seam, like `_next_number`)."""
+    return n in _numbers(parent, subphases)
+
+
+def _claim(parent, make_name, first, subphases=False):
+    """`os.mkdir` the first folder `make_name(n)`, n from `first` up, whose number is free. A number another writer took
+    since the listing is skipped by a fresh look, and one taken between that look and the mkdir makes the mkdir fail
+    (it creates or fails, it never shares): both move on to the next number."""
+    os.makedirs(str(parent), exist_ok=True)
+    for n in range(first, first + 1000):
+        if _number_taken(parent, n, subphases):
+            continue
+        d = Path(parent) / make_name(n)
+        try:
+            os.mkdir(str(d))
+            return d
+        except FileExistsError:
+            continue
+    raise StateError("no free number in %s after 1000 tries" % parent)
+
+
+def _check_scope(scope):
+    p = os.path.abspath(str(scope))
+    if not _SCOPE_PATH.search(p.replace(os.sep, "/")):
+        raise StateError("%s is not a scope: expected .fwx or .fwx/subprojects/<name>" % scope)
+    return Path(p)
+
+
+def _check_phase_dir(phase_dir, what):
+    """`phase_dir` as a Path, if it is an existing, non-linked phase folder of a `.fwx/` tree; else StateError."""
+    p = os.path.abspath(str(phase_dir))
+    if not _PHASE_PATH.search(p.replace(os.sep, "/")):
+        raise StateError("%s is not a phase folder (.fwx/milestones/vN/phases/NN-slug): %s refused" % (phase_dir, what))
+    if os.path.islink(p) or not os.path.isdir(p):
+        raise StateError("%s is not an existing phase folder: %s refused" % (phase_dir, what))
+    return Path(p)
+
+
+def new_milestone(scope, name=None):
+    """Make `<scope>/milestones/vN/` with its MILESTONE.md and return it. `name` is `vN`, default the next number after
+    the highest (v1 in an empty scope); one that exists is refused. `scope` is `.fwx` or `.fwx/subprojects/<name>`."""
+    scope = _check_scope(scope)
+    if name is not None and not _MILESTONE.match(name):
+        raise StateError("bad milestone name %r: vN" % (name,))
+    text = _read_template("MILESTONE.md")
+    if name is None:
+        name = "v%d" % (max((int(m[1:]) for m in milestones(scope)), default=0) + 1)
+    d = scope / "milestones" / name
+    os.makedirs(str(d.parent), exist_ok=True)
+    try:
+        os.mkdir(str(d))
+    except FileExistsError:
+        raise StateError("milestone %s already exists in %s" % (name, scope))
+    _write_new(d / "MILESTONE.md", text.replace("<vN>", name))
+    return d
+
+
+def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
+    """Make the next phase folder `NN-slug` of the scope's milestone, with `context.md` and the headers of
+    `decisions.tsv` and `audit.tsv`, and bind the session to it (when there is a session id). Returns the folder.
+    Missing pieces are made: `.fwx/` with PROJECT.md, the subproject folder, milestone v1. The scope is `subproject`, or
+    else the one the session is bound to, or else the root: a forgotten argument never drops a session out of its
+    subproject. `milestone` defaults to the highest and must exist."""
+    _check_slug(slug)
+    if milestone is not None and not _MILESTONE.match(milestone):
+        raise StateError("bad milestone name %r: vN" % (milestone,))
+    bound = read_session(cwd, session)
+    if subproject is None and bound:
+        subproject = bound["subproject"]
+    root = plan_root(cwd)
+    scope = scope_root(root, subproject)
+    texts = {n: _read_template(n) for n in ("PROJECT.md", "MILESTONE.md", "phase/context.md")}  # all of them, before any folder
+    if not root.exists():
+        os.makedirs(str(root))
+        _write_new(root / "PROJECT.md", texts["PROJECT.md"])
+    m = milestone or current_milestone(scope)
+    if m is None:
+        m = new_milestone(scope).name
+    elif not (scope / "milestones" / m).is_dir():
+        raise StateError("milestone %s does not exist in %s: `fwx state new-milestone` makes it" % (m, scope))
+    parent = scope / "milestones" / m / "phases"
+    d = _claim(parent, lambda n: "%02d-%s" % (n, slug), _next_number(parent))
+    _write_new(d / "context.md", texts["phase/context.md"].replace("<phase folder name>", d.name))
+    _new_tsv(d / "decisions.tsv", DECISION_COLUMNS)
+    _new_tsv(d / "audit.tsv", AUDIT_COLUMNS)
+    if session_id(session) is not None:
+        write_session(cwd, session, subproject=subproject, phase_dir=d)
+    return d
+
+
+def new_subphase(phase_dir, slug):
+    """Make `<phase>/<NN>.<M>-<slug>/` with the next M, a `plan.md` for its internal plans and the header of its
+    `audit.tsv`; returns it. Only a phase folder `NN-slug` takes subphases (not a converted `NN.M-slug`)."""
+    _check_slug(slug)
+    phase = _check_phase_dir(phase_dir, "new subphase")
+    nn = re.match(r"\d+", phase.name)
+    if not re.match(r"\d+-", phase.name):
+        raise StateError("%s is a converted NN.M phase: it takes no subphases" % phase)
+    text = _read_template("phase/plan.md")
+    d = _claim(phase, lambda m: "%s.%d-%s" % (nn.group(0), m, slug), _next_number(phase, True), True)
+    _write_new(d / "plan.md", text)
+    _new_tsv(d / "audit.tsv", AUDIT_COLUMNS)
+    return d
+
+
+def cancel_phase(phase_dir):
+    """Delete a phase folder whose discuss was cancelled, and nothing else, and unbind the sessions that pointed to it
+    (their subproject stays). Refused, with nothing deleted, when the folder is not a phase of a `.fwx/` tree, is a link,
+    or holds `premortem.md` or `plan.md`: the discuss closed, and the record is kept."""
+    phase = _check_phase_dir(phase_dir, "cancel")
+    for f in ("premortem.md", "plan.md"):
+        if (phase / f).exists():
+            raise StateError("%s holds %s: the discuss already closed, so the phase is kept, not cancelled" % (phase, f))
+    base = os.path.dirname(str(phase).replace(os.sep, "/").split("/" + PLAN_DIR + "/")[0] + "/" + PLAN_DIR)
+    stored = os.path.relpath(str(phase), base or os.sep)
+    sessions = sessions_dir(str(phase))
+    shutil.rmtree(str(phase))
+    try:
+        names = sorted(os.listdir(sessions))
+    except OSError:
+        return
+    for n in names:
+        if not n.endswith(".json") or n.endswith(".budget.json"):
+            continue
+        try:
+            with open(os.path.join(sessions, n), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("phase_dir") == stored:
+            _put_session(sessions, n[:-5], data.get("subproject"), None)
+
+
+def _length_warning(lines, target):
+    return ["%d lines, target %d" % (lines, target)] if lines > target else []
+
+
+def _read_text(path):
+    try:
+        with open(str(path), encoding="utf-8") as f:
+            return f.read(), None
+    except OSError as e:
+        return None, "%s cannot be read (%s)" % (path, e.strerror)
+
+
+def check_state(path):
+    """`(errors, warnings)` of a `state.md`: a file that is missing or empty is an error; more than STATE_LINES lines is
+    a warning only (short is wanted, but a long file is not refused)."""
+    text, err = _read_text(path)
+    if err:
+        return [err], []
+    if not text.strip():
+        return ["%s is empty" % path], []
+    return [], _length_warning(len(text.splitlines()), STATE_LINES)
+
+
+def check_report(path):
+    """`(errors, warnings)` of a phase report: an error when it does not cite the sha of the last `evidence` row of the
+    `audit.tsv` next to it (the full sha, or an abbreviation of 7 or more hex digits), or when that file has no such row;
+    more than REPORT_LINES lines is a warning only."""
+    text, err = _read_text(path)
+    if err:
+        return [err], []
+    rows = [r for r in read_rows(os.path.join(os.path.dirname(os.path.abspath(str(path))), "audit.tsv")) if r.get("kind") == "evidence"]
+    errors = []
+    if not rows:
+        errors.append("%s: audit.tsv has no evidence row, so the report has no evidence to cite" % path)
+    else:
+        sha = rows[-1].get("sha", "")
+        cited = bool(sha) and (sha in text or any(sha.lower().startswith(t.lower())
+                                                  for t in re.findall(r"\b[0-9A-Fa-f]{7,40}\b", text)))
+        if not cited:
+            errors.append("%s does not cite the sha of the last evidence row (%s)" % (path, sha[:12] or "empty"))
+    return errors, _length_warning(len(text.splitlines()), REPORT_LINES)
