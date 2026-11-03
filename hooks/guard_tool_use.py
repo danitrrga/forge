@@ -25,15 +25,19 @@ does close, and the ones it does not are listed there too.
 Every check always ENFORCES. There is no off switch inside a tool call: the profile turns
 the guard off, and a command it refuses that the user wants run, the user runs himself.
 """
+import datetime
 import glob
+import hashlib
 import io
 import json
 import os
 import re
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 
 # forge: this file lives in <forge>/hooks/, and its alert log in <forge>/logs/.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -2618,15 +2622,124 @@ def consent_main():
     except Exception as e:  # a parser that fails on a call must not wave it through: onFailure would block it anyway
         consent_error("the consent rules failed on this call (%s: %s)" % (type(e).__name__, e))
     if matches:
-        # U1c replaces this: the request, the adapter, the answer and the log.
-        sys.stderr.write("CONSENT_ERROR: not wired yet: the call matches the rule %s of project %s. Do not retry or "
-                         "go around it; tell the user what you wanted to run.\n" % (
-                             ", ".join(sorted({m["rule"]["id"] for m in matches})),
-                             ", ".join(sorted({m["project"] for m in matches}))))
-        for m in matches:
-            for c in m["changes"]:
-                sys.stderr.write("  change: %s\n" % c)
-        sys.exit(2)
+        consent_decide(cfg, payload, matches)
+
+
+# ------------------------------------------------------------------ the window itself (1.1 U1c)
+# A call that matches a rule is asked about: FORGE_CONSENT=unattended blocks it with no window; otherwise
+# the request is written, the adapter runs with a cap of consent.timeout_s and only its exit 0 lets the call
+# through. Every decision, and every failure to get one, is one line of consent.log and one stderr line that
+# says not to retry or go around it. The adapter is the only thing that talks to a person.
+CONSENT_COMMAND_LOG = 200  # characters of the command in the log line
+CONSENT_ARGS_CAP = 2000  # characters of an MCP tool's arguments in the request
+CONSENT_TELL = "Do not retry it or work around it; tell the user what you wanted to run: %s"
+
+
+def _one_line(text, cap=None):
+    text = re.sub(r"\s+", " ", text)
+    return text if cap is None else text[:cap]
+
+
+def consent_request(payload, matches):
+    """The request of section 4: {project, cwd, session_id, command, what, changes, risks, requested_at}."""
+    tool, ti = payload.get("tool_name"), payload.get("tool_input")
+    ti = ti if isinstance(ti, dict) else {}
+    uniq = lambda seq: list(dict.fromkeys(seq))
+    what = " + ".join(uniq(m["rule"]["label"] for m in matches))
+    if tool.startswith("mcp__"):
+        command = "%s %s" % (tool, json.dumps(ti, ensure_ascii=False, default=str)[:CONSENT_ARGS_CAP])
+    else:
+        command = ti["command"]
+        if isinstance(ti.get("description"), str) and ti["description"].strip():
+            what += ": " + ti["description"].strip()
+    cwd, sid = payload.get("cwd"), payload.get("session_id")
+    return {"project": " + ".join(uniq(m["project"] for m in matches)),
+            "cwd": cwd if isinstance(cwd, str) and cwd else PROJECT,
+            "session_id": sid if isinstance(sid, str) else "",
+            "command": command, "what": what,
+            "changes": uniq(c for m in matches for c in m["changes"]),
+            "risks": uniq(r for m in matches for r in m["rule"]["risks"]),
+            "requested_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+
+
+def consent_log(decision, digest, request, rule_ids):
+    """One TSV line: date, decision, sha256[:12] of the request, project, rule ids, command[:200]. Returns None,
+    or the reason it could not be written."""
+    base = os.environ.get("XDG_STATE_HOME")
+    base = base if base and os.path.isabs(base) else os.path.join(HOME, ".local", "state")
+    fields = [request["requested_at"], decision, digest, request["project"], rule_ids]
+    line = "\t".join([_one_line(f) for f in fields] + [_one_line(request["command"], CONSENT_COMMAND_LOG)]) + "\n"
+    try:
+        os.makedirs(os.path.join(base, "forge"), exist_ok=True)
+        fd = os.open(os.path.join(base, "forge", "consent.log"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            os.write(fd, line.encode("utf-8"))
+        finally:
+            os.close(fd)
+    except OSError as e:
+        return "%s: %s" % (type(e).__name__, e)
+    return None
+
+
+def consent_ask(adapter, path, timeout_s):
+    """Runs the adapter with the request's path as $1 and returns approved | declined | timeout. It may take
+    no more than timeout_s: past that it and everything it started are killed. OSError when it cannot start."""
+    proc = subprocess.Popen([adapter, path], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+    try:
+        code = proc.wait(timeout=timeout_s)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            proc.kill()
+        proc.wait()
+        return "timeout"
+    return "approved" if code == 0 else "declined"
+
+
+def consent_decide(cfg, payload, matches):
+    request = consent_request(payload, matches)
+    text = json.dumps(request, ensure_ascii=False, indent=2) + "\n"
+    digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+    rule_ids = "+".join(dict.fromkeys(m["rule"]["id"] for m in matches))
+
+    def finish(decision, prefix=None, why=""):
+        failed = consent_log(decision, digest, request, rule_ids)
+        if prefix:
+            sys.stderr.write("%s %s. %s\n" % (prefix, why, CONSENT_TELL % _one_line(request["command"], CONSENT_COMMAND_LOG)))
+        if failed:  # the answer stands: the user said it, and a full disk is not a reason to overrule them
+            sys.stderr.write("consent.log could not be written (%s)\n" % failed)
+        if prefix:
+            sys.exit(2)
+
+    if os.environ.get("FORGE_CONSENT") == "unattended":
+        finish("unattended", "CONSENT_UNATTENDED:", "%s needs the user's approval and nobody is here to give it" % request["what"])
+    adapter, runtime = cfg["adapter"], os.environ.get("XDG_RUNTIME_DIR")
+    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):
+        finish("error", "CONSENT_ERROR:", "the adapter %s does not exist or is not executable; fix consent.adapter in "
+               "config/gateway.json" % adapter)
+    if not runtime or not os.path.isabs(runtime) or not os.path.isdir(runtime):
+        finish("error", "CONSENT_ERROR:", "XDG_RUNTIME_DIR is not set to a directory (%r), so the request has nowhere "
+               "private to go" % runtime)
+    folder = answer = None
+    try:
+        folder = tempfile.mkdtemp(prefix="forge-consent-", dir=runtime)  # mode 700
+        path = os.path.join(folder, "request.json")
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        answer = consent_ask(adapter, path, cfg["timeout_s"])
+    except OSError as e:
+        finish("error", "CONSENT_ERROR:", "the window could not be opened (%s: %s)" % (type(e).__name__, e))
+    finally:
+        if folder:
+            shutil.rmtree(folder, ignore_errors=True)
+    if answer == "timeout":
+        finish("timeout", "CONSENT_TIMEOUT:", "no answer within %d s to %s" % (cfg["timeout_s"], request["what"]))
+    if answer == "declined":
+        finish("declined", "CONSENT_DECLINED:", "the user did not approve %s" % request["what"])
+    finish("approved")
 
 
 SHELL_TOOLS = {"Bash", "run_shell_command", "shell"}

@@ -23,10 +23,12 @@ The ALLOW half is the negative control that matters most: a guard that blocks
 everything is not a guard, it is an outage, and over-blocking is what taught an
 earlier session to split file names to get past it.
 """
+import hashlib
 import importlib.util
 import io
 import json
 import os
+import re
 import resource
 import shutil
 import subprocess
@@ -2332,13 +2334,323 @@ def consent_mode_row(name):
 
 CONSENT_MODE_ROWS = ["core-not-run", "exclusive", "every-call", "message"]
 
+# ------------------------------------------------------------------ the window (1.1 U1c)
+#
+# The adapter under test is always a fake: a shell script in the toy forge's scripts/consent/ that records what
+# it was given in $FAKE_OUT (its $1, the request, the modes of the file and of its directory, its pid, one line
+# per call) and exits as $FAKE_MODE says (yes: 0; no: 1; code7: 7; sleep: a child that sleeps 30 s, then 0). No real window is ever
+# opened. XDG_RUNTIME_DIR and XDG_STATE_HOME point at temp dirs, so the real consent.log is never written.
+#
+# Red before, against the guard of U1b (9f5ac1f, a match exits 2 `CONSENT_ERROR: not wired yet`): 84 rows fail
+# (68 match rows, 2 rule rows, 14 of the 15 flow rows; the 15th, a call that matches nothing, passes), each as "<label>: wanted rc=2 'CONSENT_DECLINED:' after one adapter call, got rc=2 CONSENT_ERROR:
+# not wired yet: the call matches the rule ... (adapter calls: 0)", and the CONSENT_FLOW rows (the request, yes,
+# no, timeout, missing adapter, unattended, the log) fail on the same output. The rows that do not match pass.
+# Control, one named mutant per behaviour (test_guard_mutants.py, "consent: ..."): the four the plan names
+# (unattended opens a window, an exit other than 0 taken as a yes, an expired cap taken as a yes, the log not
+# written), and one each for the request left on disk, the request readable by others, a missing adapter taken as a
+# yes, and the adapter left running after the cap.
+FAKE_ADAPTER = """#!/bin/sh
+if [ -n "$FAKE_OUT" ]; then
+  echo "$$" > "$FAKE_OUT/pid"
+  echo "$1" > "$FAKE_OUT/arg1"
+  stat -c %a "$1" > "$FAKE_OUT/file-mode"
+  stat -c %a "$(dirname "$1")" > "$FAKE_OUT/dir-mode"
+  cp "$1" "$FAKE_OUT/request.json"
+  echo call >> "$FAKE_OUT/calls"
+fi
+case "$FAKE_MODE" in
+  yes) exit 0 ;;
+  sleep) sleep 30 & echo "$!" > "$FAKE_OUT/child-pid"; wait; exit 0 ;;
+  code7) exit 7 ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+def install_fake(forge, name="fake", mode=0o755):
+    p = os.path.join(forge, "scripts", "consent", name)
+    with open(p, "w") as fh:
+        fh.write(FAKE_ADAPTER)
+    os.chmod(p, mode)
+
+
+def consent_call(guard, tool, ti, cwd, mode, env=None, payload=None, state=None, runtime=None):
+    """One `--consent` call with the fake adapter answering `mode`. Returns a namespace: rc, err, took, out (the
+    directory the fake records in), runtime and state (the XDG dirs), calls (how many times it ran), request (the
+    request it was handed, {} when never called) and the log lines."""
+    out, rt, st = (sandbox.mkdtemp("guard-test-%s-" % n) for n in ("fake", "runtime", "state"))
+    e = {"FAKE_OUT": out, "FAKE_MODE": mode, "XDG_RUNTIME_DIR": runtime or rt, "XDG_STATE_HOME": state or st}
+    e.update(env or {})
+    start = time.monotonic()
+    rc, err = run_payload(json.dumps(dict({"tool_name": tool, "tool_input": ti, "cwd": cwd}, **(payload or {}))),
+                          e, guard, ["--consent"])
+    took = time.monotonic() - start
+
+    def read(name):
+        p = os.path.join(out, name)
+        return open(p).read() if os.path.exists(p) else ""
+    try:
+        request = json.loads(read("request.json"))
+    except ValueError:
+        request = {}
+    log = os.path.join(state or st, "forge", "consent.log")
+    lines = open(log).read().splitlines() if os.path.exists(log) else []
+    return types.SimpleNamespace(rc=rc, err=err, took=took, out=out, runtime=rt, state=st, read=read, request=request,
+                                 calls=len(read("calls").splitlines()), log=lines)
+
+
+def flow_forge(adapter="scripts/consent/fake", timeout_s=120, fake=True, fake_mode=0o755):
+    """A toy forge for the flow: project `toy` rooted at a temp dir, whose production commands include `gh pr merge`
+    and the MCP tool mcp__db-toy__execute_sql. Returns (guard, project root, forge)."""
+    root = sandbox.mkdtemp("guard-test-flow-")
+    f, guard = consent_forge(gw(adapter=adapter, timeout_s=timeout_s),
+                             {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
+    if fake:
+        install_fake(f, mode=fake_mode)
+    return guard, root, f
+
+
+def flow_call(mode, command="gh pr merge 12", forge=None, env=None, **kw):
+    guard, root, f = forge or flow_forge()
+    e = {"CLAUDE_PROJECT_DIR": f}
+    e.update(env or {})
+    return consent_call(guard, "Bash", {"command": command, "description": "merge the pr"}, root, mode, e,
+                        payload={"session_id": "sess-1"}, **kw), root
+
+
+def _says(r, prefix, command="gh pr merge 12"):
+    """The message of a block: one line, starts with `prefix`, says not to retry or work around it, and to tell
+    the user what was wanted (the command itself)."""
+    if r.rc != 2 or not r.err.startswith(prefix) or r.err.strip().count("\n"):
+        return "wanted rc=2 and one line starting %r, got rc=%s %r" % (prefix, r.rc, r.err.strip()[:160])
+    for part in ("Do not retry it", "work around it", "tell the user what you wanted to run", command):
+        if part not in r.err:
+            return "%s lacks %r: %r" % (prefix, part, r.err.strip()[:200])
+    return None
+
+
+def _log_ok(r, decision, root_cmd="gh pr merge 12", rule="production-command", sha=None):
+    if len(r.log) != 1:
+        return "wanted one log line, got %d: %r" % (len(r.log), r.log)
+    cols = r.log[0].split("\t")
+    if len(cols) != 6:
+        return "the log line has %d columns, wanted 6: %r" % (len(cols), r.log[0])
+    when, got, digest, project, rules, cmd = cols
+    if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", when):
+        return "the log date is not ISO 8601 UTC: %r" % when
+    if got != decision:
+        return "the log decision is %r, wanted %r" % (got, decision)
+    if not re.match(r"^[0-9a-f]{12}$", digest) or (sha and digest != sha):
+        return "the log hash is %r, wanted %s" % (digest, sha or "12 hex digits")
+    if project != "toy" or rules != rule or cmd != root_cmd[:200]:
+        return "the log names project %r rule %r command %r, wanted toy %r %r" % (project, rules, cmd, rule, root_cmd[:200])
+    return None
+
+
+def flow_request(name):
+    r, root = flow_call("yes")
+    want = {"project", "cwd", "session_id", "command", "what", "changes", "risks", "requested_at"}
+    if r.rc != 0 or set(r.request) != want:
+        return "rc=%s, the request has the keys %s, wanted exactly %s" % (r.rc, sorted(r.request), sorted(want))
+    q = r.request
+    if (q["project"], q["cwd"], q["session_id"], q["command"]) != ("toy", root, "sess-1", "gh pr merge 12"):
+        return "project/cwd/session_id/command are %r" % [q[k] for k in ("project", "cwd", "session_id", "command")]
+    if q["what"] != "Command that acts on production: merge the pr":
+        return "what is %r, wanted the rule's label and the call's description" % q["what"]
+    if q["changes"] != ["the command begins with `gh pr merge`, a production command of project toy"]:
+        return "changes is %r" % q["changes"]
+    if q["risks"] != ["It acts on production or on a real account", "It may not be reversible"]:
+        return "risks is %r, wanted the rule's" % q["risks"]
+    if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", q["requested_at"]):
+        return "requested_at is %r, wanted ISO 8601 UTC" % q["requested_at"]
+    arg1 = r.read("arg1").strip()
+    if os.path.dirname(os.path.dirname(arg1)) != r.runtime:
+        return "$1 is %s, wanted a file in a directory under XDG_RUNTIME_DIR %s" % (arg1, r.runtime)
+    if r.read("file-mode").strip() != "600" or r.read("dir-mode").strip() != "700":
+        return "the request is mode %s in a directory of mode %s, wanted 600 in 700" % (
+            r.read("file-mode").strip(), r.read("dir-mode").strip())
+    if os.listdir(r.runtime):
+        return "the request was left in XDG_RUNTIME_DIR: %s" % os.listdir(r.runtime)
+    return None
+
+
+def flow_mcp(name):
+    guard, root, f = flow_forge()
+    big = "select 1; " * 400
+    r = consent_call(guard, "mcp__db-toy__execute_sql", {"sql": big}, root, "yes", {"CLAUDE_PROJECT_DIR": f})
+    q = r.request
+    tool = "mcp__db-toy__execute_sql"
+    if r.rc != 0 or not q:
+        return "wanted rc=0 after a call of the adapter, got rc=%s %s" % (r.rc, r.err.strip()[:120])
+    if not q["command"].startswith(tool + " ") or not 1900 < len(q["command"]) - len(tool) - 1 <= 2000:
+        return "command is %d characters starting %r, wanted the tool and its arguments cut at 2000" % (
+            len(q["command"]), q["command"][:40])
+    if q["what"] != "Command that acts on production" or not any(c.startswith("sql: ") for c in q["changes"]):
+        return "what is %r, changes %r" % (q["what"], q["changes"][:2])
+    return None
+
+
+def flow_yes(name):
+    r, _ = flow_call("yes")
+    if r.rc != 0 or r.err.strip():
+        return "yes: wanted rc=0 and no output, got rc=%s %s" % (r.rc, r.err.strip()[:120])
+    return _log_ok(r, "approved")
+
+
+def flow_no(name):
+    r, _ = flow_call("no")
+    return _says(r, "CONSENT_DECLINED:") or _log_ok(r, "declined")
+
+
+def flow_other_exit(name):
+    r, _ = flow_call("code7")
+    return _says(r, "CONSENT_DECLINED:") or _log_ok(r, "declined")
+
+
+def flow_timeout(name):
+    r, _ = flow_call("sleep", forge=flow_forge(timeout_s=1))
+    if r.took > 8:
+        return "the adapter sleeps 30 s and timeout_s is 1: the hook took %.1f s" % r.took
+    err = _says(r, "CONSENT_TIMEOUT:") or _log_ok(r, "timeout")
+    if err:
+        return err
+    for name in ("pid", "child-pid"):
+        pid = int(r.read(name) or 0)
+        for _ in range(20):  # a killed process is a zombie until its parent, or init, reaps it
+            try:
+                alive = open("/proc/%d/stat" % pid).read().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                alive = False
+            if not alive:
+                break
+            time.sleep(0.1)
+        else:
+            return "the adapter's %s %d is still running after the cap" % (name, pid)
+    return None
+
+
+def flow_missing(name):
+    r, _ = flow_call("yes", forge=flow_forge(adapter="scripts/consent/nope", fake=False))
+    return _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+
+
+def flow_not_executable(name):
+    r, _ = flow_call("yes", forge=flow_forge(fake_mode=0o644))
+    if r.calls:
+        return "an adapter that is not executable was run"
+    return _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+
+
+def flow_no_runtime_dir(name):
+    r, _ = flow_call("yes", env={"XDG_RUNTIME_DIR": "/nonexistent/runtime"})
+    if r.calls:
+        return "the adapter ran with no directory for the request"
+    return _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+
+
+def flow_unattended(name):
+    r, _ = flow_call("yes", env={"FORGE_CONSENT": "unattended"})
+    if r.calls:
+        return "unattended: the adapter was called (%d times)" % r.calls
+    if os.listdir(r.runtime):
+        return "unattended: a request was written: %s" % os.listdir(r.runtime)
+    return _says(r, "CONSENT_UNATTENDED:") or _log_ok(r, "unattended")
+
+
+def flow_attended_values(name):
+    for value in ("", "attended", "UNATTENDED"):
+        r, _ = flow_call("no", env={"FORGE_CONSENT": value})
+        if r.calls != 1 or not r.err.startswith("CONSENT_DECLINED:"):
+            return "FORGE_CONSENT=%r is not unattended: wanted the window (1 call, DECLINED), got %d calls %r" % (
+                value, r.calls, r.err.strip()[:80])
+    return None
+
+
+def flow_no_match(name):
+    for env in ({}, {"FORGE_CONSENT": "unattended"}):
+        r, _ = flow_call("yes", "ls -la && gh pr view 12", env=env)
+        if r.rc != 0 or r.err or r.calls or r.log or os.listdir(r.runtime):
+            return "an action that matches no rule (env %s): rc=%s %r, adapter calls %d, log %r" % (
+                env, r.rc, r.err[:80], r.calls, r.log)
+    return None
+
+
+def flow_log(name):
+    """One line per decision, appended: two calls, two lines, the directory made when missing; a command of 300
+    characters with a tab and a newline is cut at 200 and stays on one line of six columns; the hash is the
+    sha256 of the request the adapter was handed."""
+    guard, root, f = flow_forge()
+    st = sandbox.mkdtemp("guard-test-state-")
+    cmd = "gh pr merge 12\t--x\n" + "y" * 300
+    r1, _ = flow_call("yes", cmd, forge=(guard, root, f), state=st)
+    r2, _ = flow_call("no", "gh pr merge 13", forge=(guard, root, f), state=st)
+    if len(r2.log) != 2 or [x.split("\t")[1] for x in r2.log] != ["approved", "declined"]:
+        return "two decisions: wanted the log lines approved, declined, got %r" % r2.log
+    cols = r2.log[0].split("\t")
+    if len(cols) != 6 or cols[5] != cmd.replace("\t", " ").replace("\n", " ")[:200]:
+        return "the log line is %d columns, command %r" % (len(cols), cols[-1][:60])
+    want = hashlib.sha256(r1.read("request.json").encode()).hexdigest()[:12]
+    if cols[2] != want:
+        return "the log hash is %s, the sha256[:12] of the request is %s" % (cols[2], want)
+    return None
+
+
+def flow_log_unwritable(name):
+    """A log that cannot be written does not change the answer: the user said yes (or no) and that stands."""
+    blocker = os.path.join(sandbox.mkdtemp("guard-test-blocker-"), "file")
+    open(blocker, "w").close()
+    r, _ = flow_call("yes", env={"XDG_STATE_HOME": blocker})
+    if r.rc != 0:
+        return "yes with an unwritable log: wanted rc=0, got rc=%s %s" % (r.rc, r.err.strip()[:120])
+    r, _ = flow_call("no", env={"XDG_STATE_HOME": blocker})
+    first, _, warning = r.err.partition("\n")
+    r.err = first + "\n"
+    if "consent.log could not be written" not in warning:
+        return "an unwritable log is not mentioned: %r" % warning
+    return _says(r, "CONSENT_DECLINED:")
+
+
+def flow_two_rules(name):
+    """A push to main and a production command in one call is one window, one log line, both rules named."""
+    w = consent_world()
+    e = dict(w.env)
+    r = consent_call(w.guard, "Bash", {"command": "git push origin main && gh pr merge 12", "description": "ship it"},
+                     w.a, "yes", e)
+    q = r.request
+    if r.rc != 0 or r.calls != 1:
+        return "wanted one adapter call and rc=0, got %d calls rc=%s %s" % (r.calls, r.rc, r.err.strip()[:100])
+    if "Push to a production branch" not in q["what"] or "Command that acts on production" not in q["what"]:
+        return "what names %r, wanted both labels" % q["what"]
+    if not any(c.startswith("push to origin/main") for c in q["changes"]) or not any("gh pr merge" in c for c in q["changes"]):
+        return "changes %r lack one of the two matches" % q["changes"]
+    if len(q["risks"]) != len(set(q["risks"])) or len(q["risks"]) != 4:
+        return "risks %r: wanted the four of both rules, no repeats" % q["risks"]
+    if len(r.log) != 1 or r.log[0].split("\t")[4] != "push-production+production-command":
+        return "log %r: wanted one line naming both rules" % r.log
+    return None
+
+
+CONSENT_FLOW = {"request": flow_request, "mcp": flow_mcp, "yes": flow_yes, "no": flow_no, "other-exit": flow_other_exit,
+                "timeout": flow_timeout, "missing": flow_missing, "not-executable": flow_not_executable,
+                "no-runtime-dir": flow_no_runtime_dir, "unattended": flow_unattended,
+                "attended-values": flow_attended_values, "no-match": flow_no_match, "log": flow_log,
+                "log-unwritable": flow_log_unwritable, "two-rules": flow_two_rules}
+
+
+def consent_flow_row(name):
+    err = CONSENT_FLOW[name](name)
+    return "flow %s: %s" % (name, err) if err else None
+
+
 # ------------------------------------------------------------------ which actions match a rule (1.1 U1b)
 #
 # Each row feeds one call to `--consent` of the guard under test, copied into a toy forge (consent_forge) whose
 # profile `toy` covers a toy world: repos a and b under one project root, a bare local remote (every real push
 # of this suite goes there and nowhere else), repo c and a worktree of a OUTSIDE the project root, and repo d
-# with push.default=matching. U1b opens no window: a call that matches exits 2 with `CONSENT_ERROR: not wired
-# yet` and one `  change:` line per entry of `changes`; one that does not match exits 0 and prints nothing.
+# with push.default=matching. A call that matches reaches the fake adapter (U1c; U1b printed `CONSENT_ERROR: not
+# wired yet` and one `  change:` line per entry instead) and the row reads `changes` from the request the adapter was
+# handed; here the adapter answers no, so a match exits 2 `CONSENT_DECLINED:`. One that does not match exits 0, prints
+# nothing and never calls the adapter.
 # git runs with no user or system config (GIT_CONFIG_GLOBAL), so the machine's own settings decide nothing.
 #
 # Red before, against the guard of U1a (10182c3: --consent validates and then lets every call through): all 68
@@ -2384,8 +2696,9 @@ def consent_world():
         sandbox.git(d, "config", "push.default", "matching")
         sandbox.git(c, "commit", "--allow-empty", "-m", "c work")
         sandbox.git(a, "worktree", "add", wt, "-b", "wt-branch")
-        forge, guard = consent_forge(good_gateway(), {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}},
-                                     symlinks=False)
+        forge, guard = consent_forge(gw(adapter="scripts/consent/fake"),
+                                     {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
+        install_fake(forge)
         w = types.SimpleNamespace(
             forge=forge, guard=guard, root=root, outside=outside, a=a, b=b, c=c, d=d, wt=wt, remote=remote,
             sha=sandbox.git(a, "rev-parse", "--short", "HEAD").strip(),
@@ -2395,36 +2708,41 @@ def consent_world():
 
 
 def consent_match_row(label, tool, ti, cwd, want, env=None, within=None):
-    """One call to `--consent`. `want` None: exits 0 with no output. A list: exits 2 `CONSENT_ERROR: not wired
-    yet` and every string of the list is in the output (the `changes`). Everything is a function of the world."""
+    """One call to `--consent`, with the fake adapter answering no. `want` None: exits 0, no output, the adapter
+    is not called. A list: exits 2 `CONSENT_DECLINED:`, the adapter was called once, and every string of the list
+    is in the `changes` of the request it was handed. Everything is a function of the world."""
     w = consent_world()
     e = dict(w.env)
     e.update(env(w) if env else {})
-    start = time.monotonic()
-    rc, err = run_tool(tool, ti(w) if callable(ti) else ti, e, w.guard, ["--consent"], cwd=cwd(w))
-    took = time.monotonic() - start
-    if within is not None and took > within:
-        return "%s: took %.1f s, wanted less than %s s (git is capped at 5 s and not asked again)" % (label, took, within)
+    r = consent_call(w.guard, tool, ti(w) if callable(ti) else ti, cwd(w), "no", e)
+    if within is not None and r.took > within:
+        return "%s: took %.1f s, wanted less than %s s (git is capped at 5 s and not asked again)" % (label, r.took, within)
     if want is None:
-        return None if rc == 0 and not err else "%s: wanted rc=0 and no output, got rc=%s %s" % (label, rc, err.strip()[:200])
-    if rc != 2 or not err.startswith("CONSENT_ERROR: not wired yet"):
-        return "%s: wanted rc=2 'CONSENT_ERROR: not wired yet', got rc=%s %s" % (label, rc, err.strip()[:120])
+        if r.rc == 0 and not r.err and r.calls == 0:
+            return None
+        return "%s: wanted rc=0, no output and no adapter call, got rc=%s %s (adapter calls: %d)" % (
+            label, r.rc, r.err.strip()[:200], r.calls)
+    if r.rc != 2 or not r.err.startswith("CONSENT_DECLINED:") or r.calls != 1:
+        return "%s: wanted rc=2 'CONSENT_DECLINED:' after one adapter call, got rc=%s %s (adapter calls: %d)" % (
+            label, r.rc, r.err.strip()[:120], r.calls)
+    got = "\n".join(r.request.get("changes", []))
     for need in want(w):
-        if need not in err:
-            return "%s: the output lacks %r: %s" % (label, need, err.strip()[:600])
+        if need not in got:
+            return "%s: the changes of the request lack %r: %s" % (label, need, got[:600])
     return None
 
 
 def consent_rule_row(label, keep, command, want):
     """A gateway.json with only the rule whose `match` is `keep`: what the other rule would match no longer does
     (removing a rule from the file switches that category off)."""
-    gate = good_gateway()
+    gate = gw(adapter="scripts/consent/fake")
     gate["consent"]["rules"] = [r for r in gate["consent"]["rules"] if r["match"] == keep]
     root = sandbox.mkdtemp("guard-test-rules-")
     f, guard = consent_forge(gate, {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
-    rc, err = run_tool("Bash", {"command": command}, {"CLAUDE_PROJECT_DIR": f}, guard, ["--consent"], cwd=root)
-    if rc != want or (want == 2 and not err.startswith("CONSENT_ERROR: not wired yet")):
-        return "%s: wanted rc=%s, got rc=%s %s" % (label, want, rc, err.strip()[:120])
+    install_fake(f)
+    r = consent_call(guard, "Bash", {"command": command}, root, "no", {"CLAUDE_PROJECT_DIR": f})
+    if r.rc != want or (want == 2 and not r.err.startswith("CONSENT_DECLINED:")):
+        return "%s: wanted rc=%s, got rc=%s %s" % (label, want, r.rc, r.err.strip()[:120])
     return None
 
 
@@ -2588,7 +2906,8 @@ CONSENT_MATCH = [
 ]
 CONSENT_CASES = ([("consent-config",) + c for c in CONSENT_CONFIG] + [("consent-production",) + c for c in CONSENT_PRODUCTION]
                  + [("consent-profile",) + c for c in CONSENT_PROFILES] + [("consent-mode", n) for n in CONSENT_MODE_ROWS]
-                 + [("consent-match",) + c for c in CONSENT_MATCH] + [("consent-rules",) + c for c in CONSENT_RULES_ONLY])
+                 + [("consent-match",) + c for c in CONSENT_MATCH] + [("consent-rules",) + c for c in CONSENT_RULES_ONLY]
+                 + [("consent-flow", n) for n in CONSENT_FLOW])
 
 # GUARD_TEST_INPROC=1 loads the guard once and calls its main() in this process instead
 # of starting a python per case. Only test_guard_mutants.py uses it: in the downstream project, 56
@@ -2832,6 +3151,8 @@ def check(case):
         return consent_mode_row(case[1])
     elif kind == "consent-match":
         return consent_match_row(*case[1:])
+    elif kind == "consent-flow":
+        return consent_flow_row(case[1])
     elif kind == "consent-rules":
         return consent_rule_row(*case[1:])
     elif kind == "rooted":

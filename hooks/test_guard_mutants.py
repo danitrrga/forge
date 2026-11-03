@@ -577,6 +577,24 @@ MUTANTS = {
          '    push_rule, cmd_rule = rule_of.get("production.branches") or cfg["rules"][0], rule_of.get("production.commands") or cfg["rules"][0]'),
     "consent: git has no time cap":
         ("proc.communicate(timeout=GIT_CAP_S)", "proc.communicate(timeout=None)"),
+    # The consent window (1.1 U1c): the four the plan names, then one per behaviour of the request and the cap.
+    "consent: desatendido abre ventana":
+        ('    if os.environ.get("FORGE_CONSENT") == "unattended":', "    if False:"),
+    "consent: una salida distinta de 0 se toma como sí":
+        ('    return "approved" if code == 0 else "declined"', '    return "approved"'),
+    "consent: el tope vencido se toma como sí":
+        ('        proc.wait()\n        return "timeout"', '        proc.wait()\n        return "approved"'),
+    "consent: el registro no se escribe":
+        ('            os.write(fd, line.encode("utf-8"))', "            pass"),
+    "consent: the request is left on disk":
+        ("            shutil.rmtree(folder, ignore_errors=True)", "            pass"),
+    "consent: the request is readable by others":
+        ("os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)", "os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)"),
+    "consent: a missing adapter is taken as a yes":
+        ('    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):\n        finish("error"',
+         '    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):\n        return\n        finish("error"'),
+    "consent: the adapter is left running after the cap":
+        ("            os.killpg(proc.pid, signal.SIGKILL)", "            proc.kill()"),
     # Round 9: a directory that holds a store (FORGE_BLOCK and FORGE_ALLOW 17).
     "directory operands: no command reads the directory it is given":
         ("if not hit and cmdname in DIR_READERS:", "if False:"),
