@@ -512,6 +512,93 @@ MUTANTS = {
         # Rewritten in forge: the message says what to do instead.
         ('        deny("guard config: %s. Every call is refused until it is fixed; instead of retrying, "\n'
          '             "fix that file in forge or ask the user." % e)', "        return"),
+    # The consent window (1.1 U1a): the four named mutants first, then one per rule of the validator.
+    "consent: clave desconocida aceptada":
+        ('    unknown = sorted(set(obj) - set(allowed))\n    if unknown:', '    unknown = sorted(set(obj) - set(allowed))\n    if False:'),
+    "consent: config/gateway.json is not harness":
+        ('                   os.path.join(FORGE, "config", "gateway.json"), os.path.join(FORGE, "scripts", "consent"),\n', '                   os.path.join(FORGE, "scripts", "consent"),\n'),
+    "consent: scripts/consent is not harness":
+        ('                   os.path.join(FORGE, "config", "gateway.json"), os.path.join(FORGE, "scripts", "consent"),\n', '                   os.path.join(FORGE, "config", "gateway.json"),\n'),
+    "consent: adapter fuera de scripts/consent aceptado":
+        ('    if not real.startswith(folder + "/"):', "    if False:"),
+    "consent: the adapter's links and .. are not resolved":
+        ('    real = os.path.realpath(os.path.join(root, "scripts", "consent", "omarchy") if value == "omarchy"',
+         '    real = os.path.abspath(os.path.join(root, "scripts", "consent", "omarchy") if value == "omarchy"'),
+    "consent: the adapter folder matched by prefix (scripts/consent-evil passes)":
+        ('    if not real.startswith(folder + "/"):', "    if not real.startswith(folder):"),
+    "consent: timeout_s not checked":
+        ("        if isinstance(t, bool) or not isinstance(t, int) or t <= 0:", "        if False:"),
+    "consent: a rule's match not checked":
+        ('            if r["match"] not in CONSENT_MATCHES:', "            if False:"),
+    "consent: a rule without risks accepted":
+        ('            if not r["risks"]:', "            if False:"),
+    "consent: a repeated rule id accepted":
+        ('or r["id"] in seen:', ":"),
+    "consent: production's keys not checked":
+        ('        _only_keys("production", value, PRODUCTION_KEYS)', "        pass"),
+    "consent: production of the project's profile not checked":
+        ('        err = production_error(prof["production"])', "        err = None"),
+    "consent: the shallowest profile is the project's":
+        ("    return max(inside, key=lambda p: len(p[\"project_path\"])) if inside else None",
+         "    return min(inside, key=lambda p: len(p[\"project_path\"])) if inside else None"),
+    "consent: a bad configuration lets the call through":
+        ("        consent_error(str(e))\n    raw = sys.stdin.read()", "        return\n    raw = sys.stdin.read()"),
+    # The consent window (1.1 U1b): the seven the plan names, then one per behaviour of the matching.
+    "consent: refspec ignorado":
+        ("    for s in specs:\n        plus, body", "    for s in []:\n        plus, body"),
+    "consent: push sin refspec ignorado":
+        ('    if not specs:\n        if "tags" in flags:', '    if False:\n        if "tags" in flags:'),
+    "consent: --all ignorado":
+        ('    if "all" in flags:\n        rem = remote or "origin"', '    if False:\n        rem = remote or "origin"'),
+    "consent: refspec ilegible tratado como no producción":
+        ("        if UNREADABLE_REFSPEC.search(body):", "        if False:"),
+    "consent: prefijo de comando que nunca casa":
+        ("    return efirst in names and ew[1:] == w[1:len(ew)]", "    return False"),
+    "consent: shells anidados no mirados":
+        ("    for body in consent_bodies(words):\n        if depth >= CONSENT_DEPTH:", "    for body in []:\n        if depth >= CONSENT_DEPTH:"),
+    "consent: herramienta MCP nunca comparada":
+        ("        named = [p for p in profiles if tool in _consent_entries(p)]", "        named = []"),
+    "consent: the source of a refspec decides, not its destination":
+        ("        if dst not in branches:\n            continue", "        if src not in branches:\n            continue"),
+    "consent: --dry-run is a push":
+        ('    if "dry-run" in flags:\n        return False, []', '    if False:\n        return False, []'),
+    "consent: a push of tags only is a match":
+        ('        if "tags" in flags:\n            return False, []', '        if False:\n            return False, []'),
+    "consent: --force does not say it rewrites":
+        ('            if plus or "force" in flags:', "            if False:"),
+    "consent: a cd is not followed":
+        ('            moved = [_consent_dir(d, args[0] if args else "~", env) for d in dirs]', "            moved = list(dirs)"),
+    "consent: git -C is not followed":
+        ("                    wd = _consent_dir(d, where, env)", "                    wd = d"),
+    "consent: a worktree outside the project is not resolved":
+        ("            if common:\n                p = consent_profile", "            if False:\n                p = consent_profile"),
+    "consent: a rule missing from gateway.json still matches":
+        ('    push_rule, cmd_rule = rule_of.get("production.branches"), rule_of.get("production.commands")',
+         '    push_rule, cmd_rule = rule_of.get("production.branches") or cfg["rules"][0], rule_of.get("production.commands") or cfg["rules"][0]'),
+    "consent: git has no time cap":
+        ("proc.communicate(timeout=GIT_CAP_S)", "proc.communicate(timeout=None)"),
+    # The consent window (1.1 U1c): the four the plan names, then one per behaviour of the request and the cap.
+    "consent: desatendido abre ventana":
+        ('    if os.environ.get("FORGE_CONSENT") == "unattended":', "    if False:"),
+    "consent: una salida distinta de 0 se toma como sí":
+        ('    return {0: "approved", 1: "declined", 4: "timeout"}.get(code, "error"), (', '    return "approved", ('),
+    "consent: el tope vencido se toma como sí":
+        ('            proc.wait()\n            return "timeout", ""', '            proc.wait()\n            return "approved", ""'),
+    "consent: el registro no se escribe":
+        ('            os.write(fd, line.encode("utf-8"))', "            pass"),
+    "consent: the request is left on disk":
+        ("            shutil.rmtree(folder, ignore_errors=True)", "            pass"),
+    "consent: the request is readable by others":
+        ("os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)", "os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)"),
+    "consent: a missing adapter is taken as a yes":
+        ('    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):\n        finish("error"',
+         '    if not (os.path.isfile(adapter) and os.access(adapter, os.X_OK)):\n        return\n        finish("error"'),
+    "consent: adapter exit 3 taken as declined":
+        ('.get(code, "error"), (', '.get(code, "declined"), ('),
+    "consent: adapter stderr dropped":
+        ('        reason = _one_line(fh.read(4096).decode("utf-8", "replace").strip().split("\\n")[0], CONSENT_COMMAND_LOG)', '        reason = ""'),
+    "consent: the adapter is left running after the cap":
+        ("            os.killpg(proc.pid, signal.SIGKILL)", "            proc.kill()"),
     # Round 9: a directory that holds a store (FORGE_BLOCK and FORGE_ALLOW 17).
     "directory operands: no command reads the directory it is given":
         ("if not hit and cmdname in DIR_READERS:", "if False:"),

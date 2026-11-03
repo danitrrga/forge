@@ -55,7 +55,7 @@ from forge import cli, lib, toolchain  # noqa: E402  (pure functions and two pat
 failures, notrun, n_checks = [], [], [0]
 GIT_ENV = dict(os.environ, **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
-INTEGRATIONS = ("codex", "gsd", "hindsight")
+INTEGRATIONS = ("codex", "gsd", "hindsight", "consent")
 # What `forge add` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # profile with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
@@ -275,7 +275,7 @@ def choice_cases():
     for flag, with_names, without_names in (("--with", ["caveman"], []), ("--without", [], ["caveman"])):
         got, why, q = run(True, with_names, without_names, both)
         want("init_choices %s caveman is refused as an unknown integration" % flag, (got, why),
-             (None, "unknown integration 'caveman' (one of codex, gsd, hindsight)"))
+             (None, "unknown integration 'caveman' (one of codex, gsd, hindsight, consent)"))
     got, why, q = run(True, ["hindsight"], ["hindsight"], both)
     check("init_choices a name in both lists is refused", got is None and "hindsight" in (why or ""), "got %r, %r" % (got, why))
 
@@ -352,7 +352,7 @@ def main_world():
     # nothing. Red with "caveman" put back in lib.INTEGRATIONS: "init --with caveman is refused as an unknown integration, exit 1, nothing written -- exit 1: ! forge init: failed -- doctor (exit 1) | ..." (init ran and wrote config/forge.json).
     code, out = w.forge("init", "--yes", "--with", "caveman")
     check("init --with caveman is refused as an unknown integration, exit 1, nothing written",
-          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, gsd, hindsight)" in out
+          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, gsd, hindsight, consent)" in out
           and not os.path.exists(w.path("config", "forge.json")), "exit %d: %s" % (code, tail(out, 3)))
     code, out = w.forge("init", "--yes", "--without", "codex,gsd")
     check("init --yes --without codex,gsd exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
@@ -383,6 +383,9 @@ def main_world():
     want("config/secrets.json links to ../credentials/secrets.json", os.readlink(link) if os.path.islink(link) else None, "../credentials/secrets.json")
     doc = w.path("docs", "AGENT-SYSTEM.md")
     check("docs/AGENT-SYSTEM.md is the example", os.path.exists(doc) and open(doc).read() == open(w.path("examples", "AGENT-SYSTEM.md")).read())
+    # Red against init_write without the gateway put (1.1 U4): "config/gateway.json is the example".
+    gw = w.path("config", "gateway.json")
+    check("config/gateway.json is the example", os.path.exists(gw) and open(gw).read() == open(w.path("examples", "gateway.json")).read())
     want("no config/toolchain.json while gsd is off", os.path.exists(w.path("config", "toolchain.json")), False)
     want("an empty skills/ exists", os.listdir(w.path("skills")) if os.path.isdir(w.path("skills")) else None, [])
     want("git config core.hooksPath", git_out("-C", w.root, "config", "core.hooksPath").strip(), "githooks")

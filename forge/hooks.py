@@ -116,6 +116,19 @@ _CODE_ROWS = [
     ("Notification", "python3 %s/omarchy_notify.py" % HOOK_DIR, 10,
      "omarchy_notify.py", None, (CLAUDE,)),
 
+    # The consent window (hooks/guard_tool_use.py --consent): a push to a production branch, a command or an MCP
+    # tool that acts on production waits for the user's yes in a window of its own. User scope because it must hold
+    # in every session whatever the project and the rest of the guard (`--project`) is not wired there; the mode
+    # runs only the consent rules, so a project with command_guard runs both entries without a second window.
+    # The timeout is the hook's cap, above the adapter's own (config/gateway.json consent.timeout_s, which the hook
+    # enforces): a person is waited for, and the adapter is killed before the hook is. `onFailure: "block"` (ROW_ON_FAILURE)
+    # makes a hook that hangs, breaks or has no Python deny, not allow (measured: without it a timed-out PreToolUse
+    # hook lets the call through). Written only with integrations.consent true (ROW_INTEGRATION); with it off
+    # reconcile() takes the entry out by exact command, and forge sync never reads gateway.json, so a broken
+    # gateway.json cannot stop that rollback.
+    ("PreToolUse", "python3 %s/guard_tool_use.py --consent" % HOOK_DIR, 300,
+     "guard_tool_use.py --consent", "Bash|mcp__.*", (CLAUDE,)),
+
     # Session sync. A session brings its OWN project's generated config up to date and nothing
     # else; a forge session also the user-scope files (forge/lib.py context). Once
     # four generators sat in forge's and a sibling project's settings, ran in parallel
@@ -203,11 +216,15 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # gate that is on unless the JSON false: the key absent or any other value leaves its row written (forge
 # doctor's `gsd isolation guard` row FAILs on a value that is not a boolean), and false drops the row
 # ROW_OPTIONAL names, whose entry reconcile() then takes out by forge's exact command like any off row.
-ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight", "memory_doctor.py": "hindsight"}
+ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight",
+                   "memory_doctor.py": "hindsight", "guard_tool_use.py --consent": "consent"}
 ROW_PATCHED = ("gsd-prompt-guard.js", "gsd_output_discipline.py") + tuple(
     dict.fromkeys(script for _, script, _, _ in GSD_CORE_ROWS))
 ROW_INTEGRATION.update({m: "gsd" for m in ROW_PATCHED})
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
+# marker -> the `onFailure` value of the row's entries. reconcile() writes it and compares it, so an entry that is
+# right but for it is repaired and not kept for ever; a row not listed is compared as before (command, timeout, matcher).
+ROW_ON_FAILURE = {"guard_tool_use.py --consent": "block"}
 ISOLATION_GUARD = "gsd-agent-isolation-guard.js"
 ROW_OPTIONAL = {ISOLATION_GUARD: "gsd_isolation_guard"}  # marker -> the forge.json key that switches it off
 
@@ -434,7 +451,7 @@ def reconcile(doc, agent):
     """Make doc["hooks"] carry exactly one conforming entry per USER_HOOKS row for `agent`.
 
     Per row and event: an entry is OURS when its command contains the row's marker. The first
-    one whose command, timeout and group matcher all match is kept untouched and every other
+    one whose command, timeout, group matcher and `onFailure` (ROW_ON_FAILURE) all match is kept untouched and every other
     one of ours is dropped (a relocated script, a changed timeout, a duplicate); with none
     conforming, all of ours go and one fresh group is appended. Entries without a marker are
     never touched. Returns one note per change; no notes means the document is unchanged.
@@ -519,7 +536,8 @@ def reconcile(doc, agent):
                 if marker not in h.get("command", ""):
                     continue
                 if (keep is None and h["command"] == cmd and h.get("timeout") == timeout
-                        and g.get("matcher") == matcher):
+                        and g.get("matcher") == matcher
+                        and (marker not in ROW_ON_FAILURE or h.get("onFailure") == ROW_ON_FAILURE[marker])):
                     keep = h
                     continue
                 g["hooks"].remove(h)
@@ -528,7 +546,10 @@ def reconcile(doc, agent):
 
         label = "%s %s%s" % (event, marker, " [%s]" % matcher if matcher else "")
         if keep is None:
-            grupo = {"hooks": [{"type": "command", "command": cmd, "timeout": timeout}]}
+            entry = {"type": "command", "command": cmd, "timeout": timeout}
+            if marker in ROW_ON_FAILURE:
+                entry["onFailure"] = ROW_ON_FAILURE[marker]
+            grupo = {"hooks": [entry]}
             if matcher:
                 grupo["matcher"] = matcher
             groups.append(grupo)

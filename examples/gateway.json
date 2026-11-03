@@ -1,0 +1,21 @@
+{
+  "_doc": "The consent window's rules (integrations.consent in config/forge.json; hooks/guard_tool_use.py --consent reads this file on every call, forge sync never does). adapter: \"omarchy\", or a path inside scripts/consent/ of this checkout; anything else is refused, because Write and Edit do not pass through the Bash guard and an arbitrary path would switch the window off. timeout_s: how long the adapter may wait for a person before the call is denied. rules: match is \"production.branches\" (a git push to a branch a profile lists) or \"production.commands\" (a command prefix or an exact MCP tool name a profile lists); risks are shown in the window and cannot be empty. Unknown keys are an error. With this file broken every Bash and MCP call is refused: set integrations.consent to false in config/forge.json and run forge sync --apply to take the hook row out.",
+  "consent": {
+    "adapter": "omarchy",
+    "timeout_s": 120,
+    "rules": [
+      {
+        "id": "push-production",
+        "match": "production.branches",
+        "label": "Push to a production branch",
+        "risks": ["What is pushed goes live", "The deploy may run database migrations against real data"]
+      },
+      {
+        "id": "production-command",
+        "match": "production.commands",
+        "label": "Command that acts on production",
+        "risks": ["It acts on production or on a real account", "It may not be reversible"]
+      }
+    ]
+  }
+}
