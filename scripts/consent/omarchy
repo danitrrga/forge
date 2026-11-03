@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The consent window's adapter for Omarchy: shows the user what is about to run in a floating terminal and asks yes/no.
 
-    omarchy REQUEST.json            ask; exit 0 only on yes, 1 on no, 4 when nobody answered in time,
+    omarchy REQUEST.json            ask; exit 0 only on yes, 1 on no, 4 when nobody answered in time (the viewer's `timeout`),
                                     3 when it cannot ask at all (no screen, gum, launcher or config), at once
     omarchy --show REQUEST RESULT   the viewer, run inside the window by the launcher (UI, not for callers)
 
@@ -78,6 +78,8 @@ def ask(request_path):
             except OSError:
                 answer = None
             if answer is not None and answer != "":
+                if answer == "timeout":
+                    fail(4, "the window gave up waiting for an answer (timeout_s %d)" % limit)
                 return 0 if answer == "yes" else 1
             rc = launcher.poll()
             if rc not in (None, 0):
@@ -152,8 +154,13 @@ def show(request_path, result_path):
     out.append("  Asked in %s; the answer is No after %d s." % (safe(req.get("cwd", "?")), wait))
     print("\n".join(out) + "\n")
     sys.stdout.flush()
+    asked = time.monotonic()
     rc = subprocess.call(["gum", "confirm", "--default=false", "--timeout=%ds" % wait, "Run it?"])
-    write_result(result_path, "yes" if rc == 0 else "no")
+    # gum confirm swallows its own deadline and returns the default, so an unanswered window exits 1, the same as a
+    # real No (gum v2.0.2 confirm/command.go; its StatusTimeout 124 is never returned there). A 1 that came only
+    # after the whole --timeout is nobody answering: it must reach the adapter as `timeout` (exit 4), not `no`.
+    timed_out = rc == 124 or (rc == 1 and time.monotonic() - asked >= wait)
+    write_result(result_path, "yes" if rc == 0 else "timeout" if timed_out else "no")
     sys.exit(130)  # the launcher closes the window on 130 without waiting for a key
 
 

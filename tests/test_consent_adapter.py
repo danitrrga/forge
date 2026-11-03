@@ -10,11 +10,19 @@ fakes on PATH, and the adapter is copied into a toy forge root whose config/gate
   (a) a launcher that never answers: the adapter exits non-zero (4) before timeout_s, and its launcher is gone
   (b) the launcher writes yes: exit 0          (c) it writes no: exit 1; anything but yes (garbage) is not 0 either
   (d) no WAYLAND_DISPLAY / no gum / no launcher / unreadable gateway.json: exit 3 at once (under 1 s), reason on stderr
-  (e) the viewer: gum confirm is asked with --default=false and a --timeout; gum 0 -> yes, gum 1 / timeout (124) /
-      anything else -> no, exit 130; control characters in the request are shown escaped, never raw
+  (e) the viewer: gum confirm is asked with --default=false and a --timeout; gum 0 -> yes, gum 124 -> timeout,
+      gum 1 / anything else -> no, exit 130; control characters in the request are shown escaped, never raw
+  (f) nobody answers: gum confirm returns its default (exit 1, like a real No) after the whole --timeout, which is
+      shorter than the adapter's deadline; the viewer must write `timeout` and the adapter exit 4, not 1 (declined)
 
 Seen failing before the adapter existed (the test run on the tree without scripts/consent/omarchy):
   FAIL adapter exists -- adapter missing: .../scripts/consent/omarchy   (1 FAIL, rc=1)
+Seen failing before the timeout fix (live: blocked after 116.8 s as `declined`; here the fake gum, timeout_s 4):
+  FAIL f: gum timing out unanswered (exit 1 after its --timeout) writes timeout -- result='no' rc=130
+  FAIL f: nobody answers the window: the adapter exits 4 (timeout), not 1 (declined) -- rc=1 after 1.1 s, stderr=''
+  FAIL f: a timeout answer in the result file: exit 4 -- rc=1 after 0.1 s   (and "e: gum exit 124 writes timeout")
+Control of (f), asserted in this file: the viewer's `timed_out = ...` line replaced by `timed_out = False` (a viewer
+that writes no on timeout again) gives exit 1 in case (f), so the check can fail.
 Negative controls, each a one-line mutation of the finished adapter (FAIL counts of this file):
   answer == "yes" -> always 0 (3): "c: no: exit 1 -- rc=0 after 0.2 s"
   WAYLAND_DISPLAY check removed (2): "d: no WAYLAND_DISPLAY: exit 3 ... -- rc=4 after 2.05 s"
@@ -56,14 +64,26 @@ request, result = argv[i + 1], argv[i + 2]
 open(request).read()
 open(os.environ["FAKE_LOG"], "a").write("launched pid=%d\\n" % os.getpid())
 answer = os.environ["FAKE_ANSWER"]
-if answer == "never":
+if answer == "viewer":
+    import subprocess
+    subprocess.call(argv)
+elif answer == "never":
     time.sleep(8)
 else:
     open(result, "w").write(answer)
 """
-GUM = """#!/bin/sh
-echo "$@" >> "$FAKE_LOG"
-exit "${FAKE_GUM_RC:-0}"
+# The fake gum logs its arguments and exits FAKE_GUM_RC. With FAKE_GUM_TIMEOUT set it behaves as `gum confirm
+# --timeout=Ns --default=false` does when nobody answers (charmbracelet/gum v2.0.2, confirm/command.go): it waits
+# the whole --timeout, swallows the context deadline and returns the default, so it exits 1 -- the exit of a real
+# "No". (Its StatusTimeout 124 exists in internal/exit but confirm never returns it.)
+GUM = """#!/usr/bin/env python3
+import os, sys, time
+open(os.environ["FAKE_LOG"], "a").write(" ".join(sys.argv[1:]) + "\\n")
+if os.environ.get("FAKE_GUM_TIMEOUT"):
+    wait = [float(a.split("=")[1].rstrip("s")) for a in sys.argv if a.startswith("--timeout=")][0]
+    time.sleep(wait)
+    sys.exit(1)
+sys.exit(int(os.environ.get("FAKE_GUM_RC", "0")))
 """
 
 
@@ -108,10 +128,11 @@ def request(tmp, **over):
     return p
 
 
-def run(adapter, req, tmp, answer="never", wayland="wayland-0", launcher=True, gum=True, limit=12):
+def run(adapter, req, tmp, answer="never", wayland="wayland-0", launcher=True, gum=True, limit=12, extra=None):
     """-> (rc, seconds, stderr); rc None when the harness had to kill it after `limit` seconds."""
     env = {"PATH": fakebin(tmp, launcher, gum), "FAKE_ANSWER": answer,
            "FAKE_LOG": os.path.join(tmp, "log"), "XDG_RUNTIME_DIR": tmp, "HOME": tmp}
+    env.update(extra or {})
     if wayland:
         env["WAYLAND_DISPLAY"] = wayland
     t0 = time.monotonic()
@@ -154,6 +175,12 @@ def case_a(adapter, tmp):
     """-> (rc, seconds, stderr, ok): ok when the adapter exited non-zero before timeout_s=4."""
     rc, secs, err = run(adapter, request(tmp), tmp, limit=6)
     return rc, secs, err, rc is not None and rc != 0 and secs < 4
+
+
+def case_f(adapter, tmp):
+    """-> (rc, seconds, stderr): the whole chain with the real viewer and a gum that times out unanswered
+    (timeout_s 4 -> gum waits 1 s, the adapter 2 s)."""
+    return run(adapter, request(tmp), tmp, answer="viewer", limit=8, extra={"FAKE_GUM_TIMEOUT": "1"})
 
 
 def main():
@@ -221,7 +248,7 @@ def main():
         rc, secs, err = run(world(t), os.path.join(t, "nope.json"), t, limit=6)
         need(rc == 3 and secs < 1, "d: a request file that is not there: exit 3", "rc=%s %r" % (rc, err[:200]))
         # (e) the viewer, with a fake gum; stdin is not a tty here, so no input is drained
-        for gum_rc, want in ((0, "yes"), (1, "no"), (124, "no"), (130, "no"), (2, "no")):
+        for gum_rc, want in ((0, "yes"), (1, "no"), (124, "timeout"), (130, "no"), (2, "no")):
             t = tmpdir()
             adapter = world(t)
             req, res = request(t, command="echo \x1b[2J\x1b]0;pwned\x07 hi"), os.path.join(t, "res")
@@ -240,6 +267,46 @@ def main():
                 need("echo" in p.stdout and "Push to a production branch" in p.stdout
                      and "What is pushed goes live" in p.stdout and "abc123" in p.stdout,
                      "e: what, command, changes and risks are on screen", p.stdout[:300])
+        # (f) nobody answers the window: gum gives up first (exit 1, as for a real No) and the answer is a timeout
+        t = tmpdir()
+        adapter = world(t)
+        req, res = request(t), os.path.join(t, "res")
+        env = {"PATH": fakebin(t), "FAKE_LOG": os.path.join(t, "log"), "FAKE_GUM_TIMEOUT": "1"}
+        p = subprocess.run([sys.executable, "-I", adapter, "--show", req, res], env=env, capture_output=True,
+                           text=True, timeout=10, stdin=subprocess.DEVNULL)
+        got = open(res).read() if os.path.exists(res) else None
+        need(got == "timeout" and p.returncode == 130, "f: gum timing out unanswered (exit 1 after its --timeout) writes timeout",
+             "result=%r rc=%s" % (got, p.returncode))
+        t = tmpdir()
+        rc, secs, err = case_f(world(t), t)
+        need(rc == 4 and secs < 4, "f: nobody answers the window: the adapter exits 4 (timeout), not 1 (declined)",
+             "rc=%s after %.1f s, stderr=%r" % (rc, secs, err.strip()[:200]))
+        reap(t)
+        t = tmpdir()
+        rc, secs, err = run(world(t), request(t), t, answer="timeout", limit=6)
+        need(rc == 4 and secs < 3, "f: a timeout answer in the result file: exit 4", "rc=%s after %.1f s" % (rc, secs))
+        reap(t)
+        t = tmpdir()
+        rc, secs, err = run(world(t), request(t), t, answer="viewer", limit=6, extra={"FAKE_GUM_RC": "1"})
+        need(rc == 1 and secs < 3, "f: a real No (gum exits 1 at once) through the viewer stays exit 1",
+             "rc=%s after %.1f s" % (rc, secs))
+        reap(t)
+        t = tmpdir()
+        rc, secs, err = run(world(t), request(t), t, answer="viewer", limit=6, extra={"FAKE_GUM_RC": "0"})
+        need(rc == 0 and secs < 3, "f: a yes (gum exits 0) through the viewer stays exit 0", "rc=%s after %.1f s" % (rc, secs))
+        reap(t)
+
+        # control: a viewer that writes no on a timeout again turns case (f) red
+        t = tmpdir()
+        mutant = world(t)
+        needle = "timed_out = rc == 124 or (rc == 1 and time.monotonic() - asked >= wait)"
+        need(needle in src, "control: the timeout test is where the control expects it", needle)
+        with open(mutant, "w") as f:
+            f.write(src.replace(needle, "timed_out = False"))
+        rc3, secs3, _ = case_f(mutant, t)
+        need(rc3 == 1, "control: a viewer that writes no on timeout makes case (f) red (exit 1, declined)",
+             "rc=%s after %.1f s" % (rc3, secs3))
+        reap(t)
     finally:
         for d in tmps:
             reap(d)
