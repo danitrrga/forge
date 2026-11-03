@@ -50,6 +50,7 @@
 !/scripts/metrics/
 !/scripts/bench/
 !/scripts/sync/
+!/scripts/consent/
 /scripts/sync/*
 !/scripts/sync/relink_skills.py
 !/scripts/sync/materialise_skills.py

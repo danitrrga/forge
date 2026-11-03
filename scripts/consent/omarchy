@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""The consent window's adapter for Omarchy: shows the user what is about to run in a floating terminal and asks yes/no.
+
+    omarchy REQUEST.json            ask; exit 0 only on yes, 1 on no, 4 when nobody answered in time,
+                                    3 when it cannot ask at all (no screen, gum, launcher or config), at once
+    omarchy --show REQUEST RESULT   the viewer, run inside the window by the launcher (UI, not for callers)
+
+The hook (hooks/guard_tool_use.py --consent) writes REQUEST (mode 600, in a private directory) and denies on any
+exit but 0. The wait is bounded here by timeout_s of <forge>/config/gateway.json, below the hook's own cap, so a
+forgotten window denies the call instead of hanging the session. The pattern is ~/.local/bin/consent-run: a private
+copy of what is shown, default No. Python standard library only."""
+import json
+import os
+import shlex
+import shutil
+import signal
+import subprocess
+import sys
+import tempfile
+import time
+
+LAUNCHER = "omarchy-launch-floating-terminal-with-presentation"
+ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+DRAIN_S = 1.5   # input discarded before the question: a "y" typed into the previous window must not approve
+GUM_MARGIN_S = 5  # gum gives up this long before the adapter does; the adapter stops waiting 2 s before timeout_s
+WAIT_MARGIN_S = 2
+
+
+def fail(code, msg):
+    print("omarchy consent adapter: " + msg, file=sys.stderr)
+    sys.exit(code)
+
+
+def timeout_s():
+    path = os.path.join(ROOT, "config", "gateway.json")
+    try:
+        with open(path) as f:
+            value = json.load(f)["consent"]["timeout_s"]
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        fail(3, "cannot read consent.timeout_s from %s (%s: %s)" % (path, type(e).__name__, e))
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        fail(3, "consent.timeout_s in %s must be a positive integer, got %r" % (path, value))
+    return value
+
+
+def ask(request_path):
+    # Checks first, all of them instant: nothing is waited for when the window cannot open.
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        fail(3, "no WAYLAND_DISPLAY: there is no screen to ask on")
+    for tool in ("gum", LAUNCHER):
+        if not shutil.which(tool):
+            fail(3, "%s is not on PATH" % tool)
+    if not os.path.isfile(request_path):
+        fail(3, "request file not found: %s" % request_path)
+    limit = timeout_s()
+    started = time.monotonic()
+    deadline = started + max(limit - WAIT_MARGIN_S, 1)
+
+    def on_term(signum, frame):
+        sys.exit(128 + signum)
+    signal.signal(signal.SIGTERM, on_term)
+
+    work = tempfile.mkdtemp(prefix="forge-consent-", dir=os.environ.get("XDG_RUNTIME_DIR") or None)
+    launcher = None
+    try:
+        os.chmod(work, 0o700)
+        shown = os.path.join(work, "request.json")  # what is shown is a copy; the window and the answer agree
+        shutil.copyfile(request_path, shown)
+        os.chmod(shown, 0o600)
+        result = os.path.join(work, "result")
+        viewer = " ".join(shlex.quote(a) for a in (sys.executable, os.path.realpath(__file__), "--show", shown, result))
+        launcher = subprocess.Popen([LAUNCHER, viewer], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                    stderr=subprocess.DEVNULL, start_new_session=True)
+        while time.monotonic() < deadline:
+            try:
+                with open(result) as f:
+                    answer = f.read().strip()
+            except OSError:
+                answer = None
+            if answer is not None and answer != "":
+                return 0 if answer == "yes" else 1
+            rc = launcher.poll()
+            if rc not in (None, 0):
+                fail(3, "%s exited %d before the window opened" % (LAUNCHER, rc))
+            time.sleep(0.1)
+        fail(4, "no answer within %d s (timeout_s %d)" % (deadline - started, limit))
+    finally:
+        if launcher is not None and launcher.poll() is None:
+            try:
+                os.killpg(launcher.pid, signal.SIGKILL)
+            except OSError:
+                pass
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def safe(value):
+    """Text from a request, made printable: an escape sequence in a command must not repaint the screen."""
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+    return "".join(c if c in "\n\t" or (c.isprintable() and c != "\x7f") else "\\x%02x" % ord(c) if ord(c) < 256
+                   else "\\u%04x" % ord(c) for c in text)
+
+
+def lines(value):
+    if value in (None, "", []):
+        return []
+    if isinstance(value, (list, tuple)):
+        return [safe(v) for v in value]
+    return safe(value).split("\n")
+
+
+def drain_input(seconds):
+    if not sys.stdin.isatty():
+        return
+    import termios
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        termios.tcflush(sys.stdin.fileno(), termios.TCIFLUSH)
+        time.sleep(0.05)
+
+
+def write_result(path, word):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(word)
+    os.replace(tmp, path)
+
+
+def show(request_path, result_path):
+    try:
+        with open(request_path) as f:
+            req = json.load(f)
+        if not isinstance(req, dict):
+            raise ValueError("not an object")
+    except (OSError, ValueError) as e:
+        print("\n  Cannot read the request (%s). Nothing will run." % e)
+        write_result(result_path, "no")
+        sys.exit(130)
+    try:
+        wait = max(timeout_s() - GUM_MARGIN_S, 1)
+    except SystemExit:
+        wait = 1
+    drain_input(DRAIN_S)
+    rule = "  " + "-" * 40
+    out = ["", "  Consent: %s" % safe(req.get("project", "?")), "", "  What", "    " + "\n    ".join(lines(req.get("what")) or ["?"]),
+           "", "  Command (exact)", rule]
+    out += ["  | " + l for l in lines(req.get("command")) or ["?"]]
+    out += [rule, ""]
+    if lines(req.get("changes")):
+        out += ["  Changes"] + ["    - " + l for l in lines(req.get("changes"))] + [""]
+    if lines(req.get("risks")):
+        out += ["  Risks"] + ["    - " + l for l in lines(req.get("risks"))] + [""]
+    out.append("  Asked in %s; the answer is No after %d s." % (safe(req.get("cwd", "?")), wait))
+    print("\n".join(out) + "\n")
+    sys.stdout.flush()
+    rc = subprocess.call(["gum", "confirm", "--default=false", "--timeout=%ds" % wait, "Run it?"])
+    write_result(result_path, "yes" if rc == 0 else "no")
+    sys.exit(130)  # the launcher closes the window on 130 without waiting for a key
+
+
+def main(argv):
+    if len(argv) == 4 and argv[1] == "--show":
+        show(argv[2], argv[3])
+    elif len(argv) == 2 and not argv[1].startswith("-"):
+        sys.exit(ask(argv[1]))
+    else:
+        fail(3, "usage: omarchy REQUEST.json")
+
+
+if __name__ == "__main__":
+    main(sys.argv)
