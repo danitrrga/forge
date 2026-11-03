@@ -32,8 +32,9 @@ commit), `evidence-dirty`, `evidence-recipe` (the evidence did not run the recip
   `default_protected_paths` (marshal's own list, `DEFAULT_PROTECTED_PATHS` of `ee22770^`).
 - `irreversible`: `pr.base` is one of `production.branches`, or a line a patch adds has a command of `production.commands` in
   it (the command's words in order, split by any blanks, not inside a longer word or path). An entry `mcp__...` is a tool name
-  of the consent window and is never looked for in a patch. A file with no patch cannot be searched (GitHub gives none for a
-  large or binary file): a declared limit, as in `trusted_edits`.
+  of the consent window and is never looked for in a patch. A file with no patch (GitHub gives none for a large or binary
+  file) cannot be shown safe, so it fires the rule too, naming the file ("no patch to inspect"): it fails closed. That holds
+  while there is a command to look for; with none (or only `mcp__` names) a patch hides nothing.
 - `outside-plan`: a changed file, by `path` only, that no glob of `plan_files` covers, except what is under `.fwx/`; an empty
   `plan_files` is a handover too, because nothing can be checked against it.
 - `weakened-assertions`: in a test file (`TEST_FILES`, by `path` or `previous_path`), a patch that removes more assertion lines
@@ -382,8 +383,11 @@ def _irreversible(f, table):
         reasons.append("the pull request is for %s, a production branch" % base)
     patterns = [(c.strip(), _production_pattern(c)) for c in production["commands"]
                 if c.strip() and not c.strip().startswith("mcp__")]
-    found = []
+    found, blind = [], []
     for c in f["pr"]["changed_files"]:
+        if patterns and not c.get("patch"):
+            blind.append(c["path"])
+            continue
         for sign, text in _patch_lines(c.get("patch") or ""):
             if sign != "+":
                 continue
@@ -393,6 +397,8 @@ def _irreversible(f, table):
                     found.append(hit)
     if found:
         reasons.append("it adds a production command: %s" % _cut(found))
+    if blind:
+        reasons.append("no patch to inspect for a production command in: %s" % _cut(blind))
     return reasons
 
 

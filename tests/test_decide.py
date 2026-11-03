@@ -126,7 +126,9 @@ U5b controls (each seen red on a copy of the repo with one thing changed; 1 to 3
       FAIL: the engine's rule table cannot be loaded: .../decide_rules.json has no row for the rule(s) irreversible (to let one go,
         put it in disabled)
       FAIL: rule protected-paths catches its case alone and releases it when disabled: ... (10 FAIL lines)
-(391 checks on the good code.)
+  - `irreversible` that skips a file with no patch (it must fail closed):
+      FAIL: a changed file with no patch cannot be shown safe: it fails closed: []
+(394 checks on the good code.)
 """
 import ast
 import copy
@@ -471,8 +473,13 @@ s.ok("irreversible: `main` is not `maintenance`", merges(put(prod(facts(), ["mai
 CMDS = ["vercel deploy", "terraform apply", "mcp__neon__run_sql", ""]
 
 
+def with_cmds(commands):
+    """The base PR with production commands to search for, and a patch on its own file (a file with no patch fires)."""
+    return put(prod(facts(), [], commands), "pr.changed_files.0.patch", patch_of("+x = 1"))
+
+
 def adds(*body, path="scripts/ship.sh"):
-    return edit(prod(facts(), [], CMDS), path, patch=patch_of(*body))
+    return edit(with_cmds(CMDS), path, patch=patch_of(*body))
 
 
 f = adds("+vercel deploy --prod")
@@ -486,7 +493,13 @@ for why, line in (("a removed line", "-vercel deploy --prod"), ("a context line"
                   ("a command at the end of a longer word", "+prevercel deploy"), ("a path that ends in the command", "+cp x /bin/vercel deploy"),
                   ("a different command", "+vercel dev"), ("a tool name in a patch (the consent window's)", "+mcp__neon__run_sql(drop)")):
     s.ok("irreversible: %s is no reason" % why, merges(adds(line)), repr(reasons_of(adds(line))))
-s.ok("irreversible: a file with no patch is not searched", merges(edit(prod(facts(), [], CMDS), "scripts/big.sh")), "")
+f = edit(with_cmds(CMDS), "assets/big.bin")
+only(f, "irreversible", "a changed file with no patch cannot be shown safe: it fails closed")
+s.ok("irreversible: the no-patch reason names the file and says there is no patch to inspect",
+     "assets/big.bin" in first(f) and "no patch to inspect" in first(f), first(f))
+only(edit(with_cmds(CMDS), "scripts/x.sh", patch=""), "irreversible", "an empty patch is no patch")
+s.ok("irreversible: with nothing to search for (no commands, or only mcp__ names) a file with no patch is no reason",
+     merges(edit(prod(facts(), [], []), "assets/big.bin")) and merges(edit(prod(facts(), [], ["mcp__neon__run_sql"]), "assets/big.bin")), "")
 s.ok("irreversible: an empty entry in commands matches nothing", merges(edit(prod(facts(), [], [""]), "a.sh", patch=patch_of("+x"))), "")
 f = put(adds("+vercel deploy"), "pr.base", "main")
 put(f, "project.production.branches", ["main"])
