@@ -16,15 +16,16 @@ field absent it writes nothing and takes out only what it wrote itself.
     without the marketplace at that path gets one `claude plugin marketplace add <path> --scope local`, run from the
     project's folder; a second apply makes no call, a dry-run none, and no `claude` on PATH is a `!` line.
   * `forge uninstall --project` takes the file and the keys out.
-  * examples/forge.json's `framework.models` equal the framework repo's config.py DEFAULTS (FRAMEWORK_REPO; without
-    it this file ends NOT RUN, NOT ARMED and exits 77, after every other case ran).
+  * examples/forge.json's `framework.models` equal the framework repo's config.py DEFAULTS. The comparison runs over a
+    toy repo in the temp world (equal, and one alias changed as its control); with FRAMEWORK_REPO set it also runs
+    against the real repo, an extra and never a condition: the suite runs every check without it.
 
 Everything runs in-process against a toy HOME, a toy forge.json and toy profiles. `claude` is a fake on PATH: PATH is
 the fake directory alone (python3 and git linked into it), never the system's behind it, so the real `claude` is
 unreachable (the first check proves it).
 
-Seen failing on 530fc79 (master: no framework step; this file as it is, run in a plain copy of that commit): 54 of 118
-checks red, the other 64 are controls that pass there (a profile with `false` or no field writes nothing, a dry-run
+Seen failing on 530fc79 (master: no framework step; this file as it is, run in a plain copy of that commit): 54 of 121
+checks red, the other 67 are controls that pass there (a profile with `false` or no field writes nothing, a dry-run
 writes nothing, every error writes nothing, uninstall of a project with nothing written). First messages:
   true: "true: .claude/toyfw.json is written -- exists False"
   true: "settings: enabledPlugins toyfw@toyfw is on -- None -- {'keep@toy': True}"
@@ -33,7 +34,7 @@ writes nothing, every error writes nothing, uninstall of a project with nothing 
   errors: "no plugins_keep: a `!` line that names plugins_keep -- [] -- MODE: APPLY ..." (exit 0)
   uninstall: "uninstall: setup, the file is there -- " (nothing was ever written to take out)
   branch B: "branch B: two applies make one `marketplace add` -- calls 0 -- []"
-With FRAMEWORK_REPO set there is one more check (119): the models comparison.
+With FRAMEWORK_REPO set there is one more check: the real repo's models comparison.
 Negative controls on the finished code, each mutation put back from a copy, the checks that went red (17 mutations, each
 red): fixed plugin name "fwx" (36: the first case, `.claude/toyfw.json` missing); `linear` not copied (1: "linear.labels is
 empty"); the plugins_keep error removed (2: it writes `.claude/toyfw.json`); `claude` called on every apply (2: "calls 2");
@@ -133,6 +134,8 @@ def plugin_dir(name=NAME, listed=NAME, marketplace=True):
         with open(os.path.join(d, ".claude-plugin", "marketplace.json"), "w") as f:
             json.dump({"name": name, "owner": {"name": "toy"},
                        "plugins": [] if listed is None else [{"name": listed, "source": "./"}]}, f)
+        with open(os.path.join(d, ".claude-plugin", "plugin.json"), "w") as f:
+            json.dump({"name": name, "version": "0.0.1", "description": "toy"}, f)
     return d
 
 
@@ -648,26 +651,52 @@ check("true -> false: the machine's registry entry is left (it is shared by ever
       n_after_on == 1 and len(calls()) == 1 and os.path.exists(REGISTRY_FILE) and NAME in load(REGISTRY_FILE), calls())
 os.remove(os.path.join(BIN, "claude"))
 
-# --------------------------------------------------------------------------- 7. the model seed, the last case (m15)
-repo = os.environ.get("FRAMEWORK_REPO")
-not_armed = None
-if not repo:
-    not_armed = "FRAMEWORK_REPO is not set: examples/forge.json's framework.models were not compared with the framework repo's DEFAULTS"
-else:
-    import glob
-    import importlib.util
+# --------------------------------------------------------------------------- 7. the model seed (m15)
+import glob  # noqa: E402
+import importlib.util  # noqa: E402
+
+
+def seed_diff(repo):
+    """(why it cannot be compared, or None; the roles whose models differ): examples/forge.json's framework.models
+    against the DEFAULTS["models"] of the single lib/<package>/config.py of the framework repo at `repo`."""
     cfgs = glob.glob(os.path.join(repo, "lib", "*", "config.py"))
     if len(cfgs) != 1:
-        not_armed = "FRAMEWORK_REPO %s has no single lib/<package>/config.py (found %d)" % (repo, len(cfgs))
-    else:
-        spec = importlib.util.spec_from_file_location("framework_config_under_test", cfgs[0])
-        mod = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(mod)
-        seed = load(os.path.join(sandbox.FORGE, "examples", "forge.json"))["framework"]["models"]
-        check("m15: examples/forge.json's framework.models equal the framework's DEFAULTS (%d roles)" % len(mod.DEFAULTS["models"]),
-              seed == mod.DEFAULTS["models"] and len(seed) > 0,
-              {r: (seed.get(r), mod.DEFAULTS["models"].get(r)) for r in set(seed) | set(mod.DEFAULTS["models"])
-               if seed.get(r) != mod.DEFAULTS["models"].get(r)})
+        return "%s has no single lib/<package>/config.py (found %d)" % (repo, len(cfgs)), None
+    spec = importlib.util.spec_from_file_location("framework_config_under_test_%d" % n_checks[0], cfgs[0])
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    seed = load(os.path.join(sandbox.FORGE, "examples", "forge.json"))["framework"]["models"]
+    want = mod.DEFAULTS["models"]
+    return None, {r: (seed.get(r), want.get(r)) for r in set(seed) | set(want) if seed.get(r) != want.get(r)}
+
+
+def toy_repo(models):
+    """A toy framework repo in the temp world whose config.py holds DEFAULTS = {"models": models}."""
+    d = os.path.join(TOY, "toyrepo%d" % n_checks[0])
+    os.makedirs(os.path.join(d, "lib", "toyfw"))
+    with open(os.path.join(d, "lib", "toyfw", "config.py"), "w") as f:
+        f.write("DEFAULTS = {\"models\": %r}\n" % (models,))
+    return d
+
+
+# Without the real repo the comparison runs against a toy one: the same models as the seed (equal), and one alias
+# changed (the control: it must be found). This proves the comparison, not the real DEFAULTS.
+toy_seed = load(os.path.join(sandbox.FORGE, "examples", "forge.json"))["framework"]["models"]
+why, diff = seed_diff(toy_repo(toy_seed))
+check("m15 (toy repo): equal models compare equal, over %d roles" % len(toy_seed), why is None and diff == {} and len(toy_seed) > 0, (why, diff))
+changed = json.loads(json.dumps(toy_seed))
+role = sorted(changed)[0]
+changed[role]["small"] = "haiku" if changed[role]["small"] != "haiku" else "sonnet"
+why, diff = seed_diff(toy_repo(changed))
+check("m15 control (toy repo): one alias changed is found, naming its role", why is None and list(diff) == [role], (why, diff))
+why, diff = seed_diff(os.path.join(TOY, "no-such-repo"))
+check("m15 control: a repo without config.py cannot be compared, and says so", why is not None and diff is None, (why, diff))
+
+# The real repo, when FRAMEWORK_REPO names it: an extra run, never a condition of the suite.
+repo = os.environ.get("FRAMEWORK_REPO")
+if repo:
+    why, diff = seed_diff(repo)
+    check("m15: examples/forge.json's framework.models equal the framework repo's DEFAULTS", why is None and diff == {}, (why, diff))
 
 sandbox.cleanup(bool(failures))
 for f in failures:
@@ -675,6 +704,3 @@ for f in failures:
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
 if failures:
     sys.exit(1)
-if not_armed:
-    print("NOT RUN: " + not_armed)
-    sys.exit(77)
