@@ -316,8 +316,8 @@ per = {}
 for pb in real.values():
     per[pb] = per.get(pb, 0) + 1
 s.eq("scope.tsv rows per playbook", per,
-     {"session": 22, "execute": 10, "ui-walk": 3, "factory": 18, "improve": 23, "engine-review": 1,
+     {"session": 23, "execute": 10, "ui-walk": 3, "factory": 18, "improve": 23, "engine-review": 1,
       "project-config": 1, "connector": 8})
-s.eq("scope.tsv holds every node and connector of the real tree", len(real), 86)
+s.eq("scope.tsv holds every node and connector of the real tree", len(real), 87)
 
 s.done()

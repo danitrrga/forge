@@ -73,7 +73,8 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Writes:** nothing
 - **Invokes:** nothing
 - **Does:** Claude alone does it, with no workflow, no phase and no agent; the discuss workflow does not run for a change this small. The orchestrator may say the factory could take it and ask the owner, who decides.
-- **Exits:** none
+- **Exits:**
+  - sometimes n_CX_F: the change passes the closed list of the factory and the owner accepts the offer; otherwise it ends here
 
 ### n_L3 · Resume work left half done
 - **Who:** orchestrator
@@ -92,8 +93,18 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Invokes:** nothing
 - **Does:** The orchestrator gives the strong playback once the decisions are back: what will be built and what it bets on, whole again after every correction, and the discuss does not end because the questions ran out. The owner corrects, asks for more research, splits the topic, or approves.
 - **Exits:**
-  - to n_L6: he approves
+  - to n_DEMO: he approves
   - loop n_L4: he corrects, asks for more research, or splits the topic into phases
+
+### n_DEMO · Demo in the app after the discuss
+- **Who:** orchestrator
+- **Stage:** discuss
+- **Writes:** nothing
+- **Invokes:** nothing
+- **Does:** Runs only when the work is UI and the project's profile has a command that starts the app with seeded data and captures it (the orchestrator proposes it and the owner confirms); otherwise the step is skipped and the discuss's HTML page stands. A `demo` agent runs that command on the phase's `demo/` folder, which the discuss block writes, checks that it leaves no process alive and hands back the `xdg-open` line of the captures, never opening a browser itself. The framework does not create that command in a project. A UI change found here goes back to the discuss's demos, and the strong playback is given again before the next approval.
+- **Exits:**
+  - to n_L6: the demo is fine, or the step was skipped for lack of UI or of a command
+  - loop n_L4: the owner wants a UI change
 
 ### n_L6 · Is it a bug or on the closed list of mechanical changes?
 - **Who:** orchestrator
@@ -103,7 +114,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Does:** The orchestrator applies the closed list in the factory-issue rule: a bug, or a change the list names as mechanical, can be offered to the factory; anything else stays in the session. It decides by what the work is, not by how small it looks.
 - **Exits:**
   - to n_L7: yes: it is offered to the factory
-  - to n_C1: no: it stays in his session
+  - to p_FREEZE: no: it stays in his session
 
 ### n_L7 · The owner decides whether to hand it to the factory
 - **Who:** owner
@@ -113,15 +124,16 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Does:** The orchestrator offers the factory as one issue or several. On yes, the factory-issue skill files them with the factory label, deletes the phase and the session stops; the work continues in the factory lane. On no, the discuss continues in this session.
 - **Exits:**
   - to n_CX_F: yes: issues with the label factory
-  - to n_C1: no
+  - to p_FREEZE: no
 
 ### p_FREEZE · Freeze the discuss
 - **Who:** orchestrator
 - **Stage:** discuss
 - **Writes:** context.md
 - **Invokes:** nothing
-- **Does:** Runs once the owner has approved and has answered the factory question, before the pre-mortem. The orchestrator rewrites `context.md` with its sections (the intent, what success means in words, the surfaces, the approved UI, the research); the surfaces carry `ui` by the rule at the discuss block. With `decisions.tsv` complete it hands the phase to the session. After this neither file changes except through the return to the discuss.
-- **Exits:** none
+- **Does:** Runs once the owner has approved, the demo in the app is done and he has answered the factory question, before the pre-mortem. The orchestrator rewrites `context.md` with its sections (the intent, what success means in words, the surfaces, the approved UI, the research); the surfaces carry `ui` by the rule at the discuss block. With `decisions.tsv` complete it hands the phase to the session. After this neither file changes except through the return to the discuss.
+- **Exits:**
+  - to n_C1: the discuss is frozen and the phase goes to the session
 
 ### n_C1 · Light pre-mortem
 - **Who:** agent pre-mortem
@@ -160,7 +172,7 @@ One supervised workflow carries every piece of work done with the owner in the c
 - **Exits:**
   - to n_P4: yes, there are objections and it is the owner's session
   - to p_PREP: no objections; factory: the check of the plan's scope runs here too (the plan's files stay out of hooks, settings and CI)
-  - to n_Z3: factory: it is the second round of critique, or the plan touches hooks, settings or CI
+  - to n_Z3: factory: it is the second round of critique, or the plan touches hooks, settings, CI or UI
   - loop n_C2: factory: there are objections in the first round, and the planner attends them
 
 ### n_P4 · The owner decides on the objections
