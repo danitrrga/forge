@@ -12,6 +12,7 @@ python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
 python3 bin/fwx budget    # context and quota left
+python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 ```
 
 `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
