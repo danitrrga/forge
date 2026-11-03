@@ -6,7 +6,7 @@ COMMON_OPT_OUT used to name COMMON_SKILLS / COMMON_PLUGINS entries only, and che
 nor keeps one that is there, and check_declared accepts it.
 
 With the gsd integration off no profile names a gsd-* skill and no extras row does either; on, every trimmed profile
-gets the baseline (there is no skill_keep.no_gsd_baseline any more).
+gets the baseline (there is no per-profile opt-out any more).
 
 Two worlds. The mechanism runs on a copy of the script patched to carry a toy env key (TOY_KEY) and
 to opt one profile out of it, so it does not depend on what the real COMMON_ENV holds. The real
