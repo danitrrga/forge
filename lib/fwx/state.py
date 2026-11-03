@@ -1,8 +1,8 @@
 """The state of `.fwx/`: where it is, its subproject, milestone, phase and subphase folders, the session file, and the
 TSV writers. The single writer of audit.tsv is `append_audit`; nothing else in the framework writes that file.
 
-copied-from: pstack show-me-your-work/scripts/log.sh @36885ea (MIT), adapted: the cell-cleaning rules (tab, newline and
-CR become a space; a quote in front of a cell that starts with `= + - @ "`) and the one-write row, in Python.
+referent: pstack plugins/pstack/skills/show-me-your-work/scripts/log.sh @36885ea, rules reimplemented in Python (tab,
+newline and CR become a space; a quote in front of a cell that starts with `= + - @ "`; one write per row), not copied.
 
 Every path resolves against the main checkout (config.main_checkout), never against the folder the caller stands in:
 a linked worktree has none of the ignored files. The one exception is `plan_root` in a repository whose default
