@@ -12,6 +12,7 @@ python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
 python3 bin/fwx budget    # context and quota left
+python3 bin/fwx state resolve    # the session's phase; `state --help` lists the rest
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
 ```
