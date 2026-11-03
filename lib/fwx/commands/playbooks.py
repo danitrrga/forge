@@ -1,4 +1,11 @@
-"""Playbook tools: `fwx playbooks tree` prints the workflow tree, one node per line with its exits.
+"""Playbook tools: `fwx playbooks tree` prints the workflow tree; `fwx playbooks check` checks the playbooks against it.
+
+`fwx playbooks check [--tree PATH] [--only NAME]` reads every playbook (lib/fwx/playbooks.py says what it checks) and
+prints its problems, one per line, then how many blocks and arrows it compared. Exit 0 clean, 1 with any problem, 77 when
+what could run passed but no tree was given or no playbook has nodes yet (neither green nor red), 2 for a usage error or
+a file that cannot be read. The tree is PATH, else `paths.tree` of the configuration, also from a worktree.
+
+`fwx playbooks tree` prints the workflow tree, one node per line with its exits.
 
 `fwx playbooks tree [--tree PATH] [--scope NAME]` reads the Excalidraw tree (PATH, else `paths.tree` of the
 configuration) and prints `id | kind | scope | text` per node, its exits indented under it as `kind id «label»`, and
@@ -8,19 +15,20 @@ usage error, a tree or scope file that cannot be read (or whose scope file is wr
 """
 import sys
 
-from fwx import config, tree
+from fwx import config, playbooks, tree
 
-USAGE = "usage: fwx playbooks tree [--tree PATH] [--scope NAME]\n"
+USAGE = ("usage: fwx playbooks tree [--tree PATH] [--scope NAME]\n"
+         "       fwx playbooks check [--tree PATH] [--only NAME]\n")
 NO_TREE = ("fwx playbooks tree: no tree path: pass --tree PATH, or set `paths.tree` in .claude/fwx.json "
            "(the setup tool writes it)\n")
 
 
-def _options(argv):
-    """{flag: value} for --tree and --scope; None on a usage error."""
+def _options(argv, flags=("--tree", "--scope")):
+    """{flag: value} for the flags given; None on a usage error."""
     opts, args = {}, list(argv)
     while args:
         flag = args.pop(0)
-        if flag not in ("--tree", "--scope") or flag in opts or not args or args[0].startswith("-"):
+        if flag not in flags or flag in opts or not args or args[0].startswith("-"):
             return None
         opts[flag] = args.pop(0)
     return opts
@@ -66,8 +74,30 @@ def _tree_command(argv):
     return 0
 
 
+def _check_command(argv):
+    opts = _options(argv, ("--tree", "--only"))
+    if opts is None:
+        sys.stderr.write(USAGE)
+        return 2
+    path, only = opts.get("--tree"), opts.get("--only")
+    if only is not None and only not in playbooks.NAMES:
+        sys.stderr.write("fwx playbooks check: unknown playbook %r (playbooks: %s)\n" % (only, ", ".join(playbooks.NAMES)))
+        return 2
+    try:
+        if path is None:
+            path = (config.load().get("paths") or {}).get("tree")
+        report = playbooks.check(tree_path=path or None, only=only)
+    except (config.ConfigError, tree.TreeError) as e:
+        sys.stderr.write("fwx playbooks check: %s\n" % e)
+        return 2
+    print("\n".join(report.lines()))
+    return report.exit_code
+
+
 def main(argv):
     if argv and argv[0] == "tree":
         return _tree_command(argv[1:])
+    if argv and argv[0] == "check":
+        return _check_command(argv[1:])
     sys.stderr.write(USAGE)
     return 2
