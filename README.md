@@ -9,12 +9,35 @@ marketplace defined here) and the `fwx` command it ships.
 ```
 python3 bin/fwx test    # runs every tests/test_*.py and summarises them
 python3 bin/fwx help    # lists the commands
+python3 bin/fwx model executor normal    # the model for a role and size
 ```
 
 `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
 when every file passed, 1 when one failed or when there is no test file, and 77 when none failed but one could not
 run (a missing tool, key or network). A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
+
+## Configuration
+
+The plugin reads one file, `.claude/fwx.json` of the project's main checkout, and only through `lib/fwx/config.py`.
+From a worktree or any subfolder it finds the main checkout's file through git's common directory. A setup tool
+(forge) generates it and it is never edited by hand there. Without such a tool, write it by hand to the schema:
+
+```json
+{ "schema": 1,
+  "models": { "executor": { "small": "haiku", "normal": "sonnet", "big": "sonnet" } },
+  "rounds": 3,
+  "linear": { "labels": { "needs-owner": "your-label-for-it" } } }
+```
+
+Keys you leave out keep the defaults in `DEFAULTS` (`config.py`), so a file may hold only what you change; a `models`
+entry may name one role and one size. `schema` must be 1. A model is an alias (`sonnet`, `opus`, `haiku`, `fable`),
+never a full model id, and the roles and sizes are the `ROLES` and `SIZES` of `config.py`. A bad file is an error that names the
+fix. With no file, the defaults apply and one line on stderr says so.
+
+`fwx model <role> <size>` prints the model for a role and size and exits 2 on an unknown role or size, naming the valid
+ones. `linear.labels` maps a label's neutral name in this repository to the name it has in your Linear workspace; a
+name with no entry is used as it is.
 
 ## Install
 
