@@ -5,6 +5,7 @@ import contextlib
 import copy
 import fcntl
 import functools
+import importlib.util
 import json
 import os
 import pwd
@@ -26,7 +27,9 @@ PROFILES = os.path.join(ROOT, "config", "profiles")
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # The names `on()` accepts: what a stranger's forge may switch off (docs/portable-design.md section 5).
-INTEGRATIONS = ("codex", "gsd", "hindsight")
+# `consent` is the consent window (hooks/guard_tool_use.py --consent): absent counts as off, so adding it
+# leaves the generated output unchanged until config/forge.json turns it on.
+INTEGRATIONS = ("codex", "gsd", "hindsight", "consent")
 
 
 @functools.lru_cache(maxsize=None)
@@ -123,6 +126,9 @@ PROFILE_FIELDS = {
     "frozen": bool, "ui": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,
     "worktree_guard": frozenset({bool, dict}),
     "verdict_command": str,
+    # {"branches": [str], "commands": [str]}: what the consent window treats as production. The shape is the guard's
+    # (production_error), asked from profile_error so there is one definition.
+    "production": dict,
 }
 _TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object"}
 
@@ -133,6 +139,17 @@ def worktree_guard_on(prof):
     object with "on": false declares where the project's worktrees live without the guard."""
     v = prof.get("worktree_guard")
     return v is True or (isinstance(v, dict) and v.get("on", True) is True)
+
+
+@functools.lru_cache(maxsize=None)
+def _production_error():
+    """production_error of hooks/guard_tool_use.py, the one definition of a valid `production` (the guard reads
+    the same field at run time). Loaded by path and not imported by name: hooks/ is not a package, and the module
+    is read only when a profile carries the field."""
+    spec = importlib.util.spec_from_file_location("forge_guard_tool_use", os.path.join(ROOT, "hooks", "guard_tool_use.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.production_error
 
 
 def profile_error(prof):
@@ -152,6 +169,10 @@ def profile_error(prof):
         if not isinstance(v, kind) or (item and not all(isinstance(x, item) for x in (
                 v.values() if isinstance(v, dict) else v))):
             return "%s is not a %s%s" % (field, _TYPE_NAMES[kind], " of %ss" % _TYPE_NAMES[item] if item else "")
+    if "production" in prof:
+        why = _production_error()(prof["production"])
+        if why:
+            return why
     # The command is written into the project's CLAUDE.md as an instruction: an empty one names nothing.
     if "verdict_command" in prof and not prof["verdict_command"].strip():
         return "verdict_command is empty"
