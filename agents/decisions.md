@@ -3,7 +3,7 @@ name: decisions
 description: Records one decision from the owner's conversation in decisions.tsv, classifies how far the owner examined it, and adds a row to adr.tsv when the decision is hard to reverse. Use after each decision the owner makes in a discuss.
 tools: Read, Bash, Grep
 ---
-<!-- referent: EveryInc/compound-engineering-plugin skills/ce-plan/references/settled-decisions.md @3449230 (section "The settlement test"), word for word except: "the user" reads "the owner", "(below)" is dropped (the classes section is not copied), and the Directive bullet stops after "Not settled." because the challenge is the orchestrator's, not this agent's -->
+<!-- copied-from: EveryInc/compound-engineering-plugin skills/ce-plan/references/settled-decisions.md @3449230 (section "The settlement test"), word for word except: "the user" reads "the owner", "(below)" is dropped (the classes section is not copied), and the Directive bullet stops after "Not settled." because the challenge is the orchestrator's, not this agent's -->
 <!-- copied-from: mattpocock/skills skills/engineering/domain-modeling/SKILL.md @49dd158 (the three ADR criteria) -->
 <!-- referent: pstack plugins/pstack/skills/show-me-your-work/SKILL.md @36885ea -->
 
