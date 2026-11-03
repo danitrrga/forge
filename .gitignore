@@ -31,7 +31,7 @@
 !/hooks/guard_tool_use.py
 !/hooks/worktree_guard.py
 !/hooks/gsd-prompt-guard.js
-!/hooks/gsd-read-injection-scanner.js
+!/hooks/read-injection-scanner.js
 !/hooks/gsd_output_discipline.py
 !/hooks/ref_corpus_router.py
 !/hooks/omarchy_notify.py

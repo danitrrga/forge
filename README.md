@@ -162,7 +162,7 @@ forge toolchain [--fix]                                     the third-party tool
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
-forge check-public --all                                    personal data in the files the engine publishes
+forge check-public [--root DIR] --all                       personal data in the files the engine publishes (--root: another repository's)
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
 forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)
 ```

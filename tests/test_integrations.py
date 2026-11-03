@@ -113,6 +113,9 @@ def group(cmd, timeout=None, matcher=None):
     return dict({"matcher": matcher} if matcher else {}, hooks=[h])
 
 
+SCAN_MARKER = "hooks/read-injection-scanner.js"
+
+
 def commands(rows):
     return [r[1] for r in rows]
 
@@ -139,11 +142,21 @@ check("off integrations: a foreign `coding-agents` entry stays (nothing removes 
 CORE_MARKERS = ["gsd-session-state.sh", "gsd-context-monitor.js", "gsd-graphify-update.sh", "gsd-phase-boundary.sh",
                 "gsd-workflow-guard.js", "gsd-worktree-path-guard.js", "gsd-agent-isolation-guard.js",
                 "gsd-write-guard.js", "gsd-validate-commit.sh", "gsd-config-reload.js"]
-off_markers = {"claude-hook.js", "coding-agents", "gsd_output_discipline.py", "gsd-prompt-guard.js",
-               "gsd-read-injection-scanner.js"} | set(CORE_MARKERS)
+off_markers = {"claude-hook.js", "coding-agents", "gsd_output_discipline.py", "gsd-prompt-guard.js"} | set(CORE_MARKERS)
 written = sorted({r[3] for r in h.USER_HOOKS} & off_markers)
 check("off integrations: no row of an off integration is written", not written,
       "USER_HOOKS still holds the markers %r" % (written,))
+# U1 of 8.2: the read-injection scanner is forge's own core row, not GSD's. Seen red against master (d595a08, where the
+# row was gated by `gsd`), before hooks.py and the git mv:
+#   gsd off: read-injection-scanner row missing -- USER_HOOKS commands [...no hooks/read-injection-scanner.js...]
+scan_rows = [r for r in h.USER_HOOKS if r[1] == "node %s/read-injection-scanner.js" % h.HOOK_DIR]
+check("gsd off: read-injection-scanner row missing",
+      len(scan_rows) == 1 and scan_rows[0][0] == "PostToolUse" and scan_rows[0][2] == 10 and scan_rows[0][4] == "Read"
+      and scan_rows[0][5] == h.BOTH and os.path.isfile(os.path.join(h.HOOK_DIR, "read-injection-scanner.js")),
+      "USER_HOOKS commands %r" % (commands(h.USER_HOOKS),))
+check("gsd off: no row names GSD's own gsd-read-injection-scanner.js any more",
+      not [r for r in h.USER_HOOKS + h.OFF_HOOKS if "gsd-read-injection-scanner" in r[1]],
+      "rows %r" % ([r[1] for r in h.USER_HOOKS + h.OFF_HOOKS if "gsd-read-injection-scanner" in r[1]],))
 check("off integrations: forge's other rows still are (omarchy, session sync), the memory gate follows hindsight",
       {"omarchy_notify.py", "forge session-start"} <= {r[3] for r in h.USER_HOOKS}
       and "memory_doctor.py" not in {r[3] for r in h.USER_HOOKS},
@@ -159,10 +172,10 @@ check("off integrations: the codex rows go from codex's file too",
 h = toy_settings(2)
 markers = [r[3] for r in h.USER_HOOKS]
 check("integrations on: gsd and hindsight rows are in the table",
-      {"gsd-prompt-guard.js", "gsd_output_discipline.py", "coding-agents"} <= set(markers),
+      {"gsd-prompt-guard.js", "gsd_output_discipline.py", "coding-agents", SCAN_MARKER} <= set(markers),
       "markers %r" % (markers,))
 check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
-      getattr(h, "ROW_INTEGRATION", {}) == {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
+      getattr(h, "ROW_INTEGRATION", {}) == {"gsd-prompt-guard.js": "gsd",
                                            "gsd_output_discipline.py": "gsd",
                                            "coding-agents": "hindsight", "memory_doctor.py": "hindsight",
                                            "guard_tool_use.py --consent": "consent",
@@ -321,9 +334,9 @@ check("write_user_settings settles (the second run is already current, no proxy 
 # true (absent is false). memory_doctor.py --hook follows hindsight. A stranger's GSD entries under the
 # same file names (GSD's own installer writes them into ~/.claude/settings.json, other commands) are
 # never replaced and never removed.
-GSD_ROWS = {"gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py"} | set(CORE_MARKERS)
+GSD_ROWS = {"gsd-prompt-guard.js", "gsd_output_discipline.py"} | set(CORE_MARKERS)
 HOUSE_ROWS = {"ref_corpus_router.py", "omarchy_notify.py"}
-SIX = GSD_ROWS | HOUSE_ROWS | {"memory_doctor.py"}
+SIX = GSD_ROWS | HOUSE_ROWS | {"memory_doctor.py"}  # the scanner is a core row (SCAN_MARKER), written in every config
 stranger = {"codex": False, "gsd": True, "hindsight": False}
 h = toy_settings(20, integrations=stranger, gsd_patches=False, house_hooks=None)
 check("stranger (gsd on, gsd_patches false, no house_hooks, hindsight off): none of the six rows is written",
@@ -334,13 +347,15 @@ doc = {"hooks": {"PreToolUse": [group(own, 5, "Write|Edit")], "PostToolUse": [gr
 cdoc = {"hooks": {"PreToolUse": [group(own, 5, "Write|Edit")]}}
 attempt(h.reconcile, doc, h.CLAUDE)
 attempt(h.drop_codex_entries, cdoc)
-check("stranger: GSD's own gsd-prompt-guard.js and scanner entries stay as they are",
-      entries(doc, "PreToolUse") == [(own, "Write|Edit", 5)] and entries(doc, "PostToolUse") == [(scan, "Read", 5)],
+check("stranger: GSD's own gsd-prompt-guard.js and scanner entries stay as they are, forge's scanner row is added beside",
+      entries(doc, "PreToolUse") == [(own, "Write|Edit", 5)]
+      and entries(doc, "PostToolUse") == [(scan, "Read", 5), ("node %s/read-injection-scanner.js" % h.HOOK_DIR, "Read", 10)],
       "PreToolUse %r, PostToolUse %r" % (entries(doc, "PreToolUse"), entries(doc, "PostToolUse")))
 check("stranger: codex's file keeps the GSD entry too", entries(cdoc, "PreToolUse") == [(own, "Write|Edit", 5)],
       "%r" % (entries(cdoc, "PreToolUse"),))
-check("stranger: no forge row of the six lands in the file",
-      not [c for ev in doc["hooks"] for c, _, _ in entries(doc, ev) if h.HOOK_DIR in c or "memory_doctor" in c],
+check("stranger: no forge row of the six lands in the file (the core scanner row does)",
+      not [c for ev in doc["hooks"] for c, _, _ in entries(doc, ev)
+           if (h.HOOK_DIR in c and "read-injection-scanner" not in c) or "memory_doctor" in c],
       "commands %r" % (sorted({c for ev in doc["hooks"] for c, _, _ in entries(doc, ev)}),))
 # forge's own copy written by an earlier run (gsd_patches was true) goes by its exact command; GSD's stays.
 fg = "node %s/gsd-prompt-guard.js" % h.HOOK_DIR
@@ -372,7 +387,7 @@ BOTH_A = ("claude", "codex")
 want = [
     ("UserPromptSubmit", "ref_corpus_router.py", 10, None, BOTH_A, "python3 <R>/hooks/ref_corpus_router.py"),
     ("PreToolUse", "gsd-prompt-guard.js", 10, "Write|Edit", BOTH_A, "node <R>/hooks/gsd-prompt-guard.js"),
-    ("PostToolUse", "gsd-read-injection-scanner.js", 10, "Read", BOTH_A, "node <R>/hooks/gsd-read-injection-scanner.js"),
+    ("PostToolUse", SCAN_MARKER, 10, "Read", BOTH_A, "node <R>/hooks/read-injection-scanner.js"),
     ("PostToolUse", "gsd_output_discipline.py", 10, "Write|Edit", BOTH_A, "python3 <R>/hooks/gsd_output_discipline.py"),
     ("Stop", "gsd_output_discipline.py", 10, None, BOTH_A, "python3 <R>/hooks/gsd_output_discipline.py"),
     ("Notification", "omarchy_notify.py", 10, None, ("claude",), "python3 <R>/hooks/omarchy_notify.py"),
@@ -437,16 +452,17 @@ h = toy_settings(31, integrations=OFF)
 line = attempt(h.write_user_settings, ctx)
 off_doc = read_json_file(h.USER_SETTINGS)
 check("on, apply, off, apply: no event key left empty by forge",
-      "PostToolUse" not in off_doc["hooks"] and empty_keys(off_doc) == ["SessionEnd"],
+      [c for c, _, _ in entries(off_doc, "PostToolUse")] == ["node %s/read-injection-scanner.js" % h.HOOK_DIR]  # the core scanner row stays
+      and empty_keys(off_doc) == ["SessionEnd"],
       "empty keys %r, events %r, line %r" % (empty_keys(off_doc), sorted(off_doc["hooks"]), line))
 check("on, apply, off, apply: the user's own empty list and empty group stay, a foreign entry keeps its event",
       off_doc["hooks"].get("SessionEnd") == [] and off_doc["hooks"].get("PostCompact") == [{"hooks": []}]
       and entries(off_doc, "Stop") == [(foreign_stop, None, 5)] and off_doc.get("theme") == "toy",
       "hooks %r" % (off_doc["hooks"],))
-lone = {"hooks": {"Stop": [], "PostToolUse": [{"hooks": []}]}}
+lone = {"hooks": {"Stop": [], "SubagentStop": [{"hooks": []}]}}
 attempt(h.reconcile, lone, h.CLAUDE)
 check("off from the start: a list that was already empty, and an empty group, are not touched",
-      lone["hooks"].get("Stop") == [] and lone["hooks"].get("PostToolUse") == [{"hooks": []}],
+      lone["hooks"].get("Stop") == [] and lone["hooks"].get("SubagentStop") == [{"hooks": []}],
       "hooks %r" % (lone["hooks"],))
 beside = {"hooks": {"Stop": [{"hooks": []}, group("python3 %s/gsd_output_discipline.py" % h.HOOK_DIR, 10)]}}
 attempt(h.reconcile, beside, h.CLAUDE)

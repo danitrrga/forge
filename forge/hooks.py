@@ -56,8 +56,10 @@ _CODE_ROWS = [
     ("UserPromptSubmit", "python3 %s/ref_corpus_router.py" % HOOK_DIR, 10,
      "ref_corpus_router.py", None, BOTH),
 
-    # GSD prompt-injection guards, which shipped installed but unwired. one project
-    # reads a 32 MB third-party corpus under ref/, routed into context automatically
+    # Prompt-injection guards, which shipped installed but unwired. The write guard is GSD's
+    # and follows the `gsd` integration; the read scanner is forge's own (derived from GSD's,
+    # MIT, see NOTICE) and a core row, so it protects every project with `gsd` off too.
+    # one project reads a 32 MB third-party corpus under ref/, routed into context automatically
     # -- someone else's repository entering an agent's context is the exact threat
     # these were written for, and CLAUDE.md had a "prompt-injection posture" heading with no
     # mechanism under it. Segner: a "never do this" needs a deterministic hook,
@@ -73,8 +75,10 @@ _CODE_ROWS = [
     # the workflow gets disabled the first time it is wrong, and then guards nothing.
     ("PreToolUse", "node %s/gsd-prompt-guard.js" % HOOK_DIR, 10,
      "gsd-prompt-guard.js", "Write|Edit", BOTH),
-    ("PostToolUse", "node %s/gsd-read-injection-scanner.js" % HOOK_DIR, 10,
-     "gsd-read-injection-scanner.js", "Read", BOTH),
+    # The marker carries "hooks/" so it does not match GSD's own gsd-read-injection-scanner.js entry,
+    # which GSD's installer may have written into ~/.claude/settings.json (reconcile matches by marker).
+    ("PostToolUse", "node %s/read-injection-scanner.js" % HOOK_DIR, 10,
+     "hooks/read-injection-scanner.js", "Read", BOTH),
 
     # GSD output discipline: names the thing, and cuts repetition. The two rules live in
     # ~/.claude/gsd-core/references/mandatory-initial-read.md, imported by the five GSD
@@ -212,10 +216,9 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # gate that is on unless the JSON false: the key absent or any other value leaves its row written (forge
 # doctor's `gsd isolation guard` row FAILs on a value that is not a boolean), and false drops the row
 # ROW_OPTIONAL names, whose entry reconcile() then takes out by forge's exact command like any off row.
-ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd-read-injection-scanner.js": "gsd",
-                   "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight", "memory_doctor.py": "hindsight",
-                   "guard_tool_use.py --consent": "consent"}
-ROW_PATCHED = ("gsd-prompt-guard.js", "gsd-read-injection-scanner.js", "gsd_output_discipline.py") + tuple(
+ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight",
+                   "memory_doctor.py": "hindsight", "guard_tool_use.py --consent": "consent"}
+ROW_PATCHED = ("gsd-prompt-guard.js", "gsd_output_discipline.py") + tuple(
     dict.fromkeys(script for _, script, _, _ in GSD_CORE_ROWS))
 ROW_INTEGRATION.update({m: "gsd" for m in ROW_PATCHED})
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")

@@ -36,6 +36,14 @@ that differs ignored "pin installed, another version active = (exit, level, inst
    forge's, and the recheck is the verdict, not the installers' exit codes. A refused write
    (lib.may_write) leaves the files and still installs.
 5. The `toolchain` row of forge doctor: the check without --fix, how many it looked at, the fix named.
+
+The suite never reads a checkout's config/forge.json: `toy_settings` points lib.SETTINGS at the fixture's file
+with GSD on (a missing config/toolchain.json is a FAIL) and `gsd_off_cases` at the same file with GSD off (the
+row is a SKIP `NOT RUN, NOT ARMED`). Seen failing on a toy copy of the fixture with GSD off standing in for the
+machine's file, before the change: "FAIL no file = (exit, levels) = (0, []), want (1, ['FAIL'])", "FAIL row, no
+file = (exit, level, installs) = (0, [''], []), want (1, ['FAIL'], [])", "FAIL row, no file: names the fix =
+False, want True"; and the SKIP case with `_gsd_pinned` forced True: "FAIL row, GSD off and no file = (exit,
+one line) = (1, 1), want (0, 1)".
 """
 import contextlib
 import io
@@ -571,25 +579,44 @@ def row_cases(tmp):
     want("row, mise ls fails = (exit, level)", (code, lines[0][:4]), (1, "FAIL"))
 
 
-def toy_settings(tmp):
-    """On a checkout with no config/forge.json (a pure engine clone) the "no file" cases read no settings, so
-    GSD reads as off and a missing config/toolchain.json is a SKIP, not the FAIL they expect. The toy file is
-    the fixture's with GSD patched on, which is the machine this suite is written for; where the checkout has
-    its own file it is read as before."""
-    if os.path.exists(lib.SETTINGS):
-        return
+def toy_settings(tmp, gsd=True):
+    """Points lib.SETTINGS at a toy forge.json under `tmp`, whatever the checkout holds, and returns what
+    restores the real path and the settings cache. The toy file is the fixture's with GSD patched `gsd` (on by
+    default, the machine this suite is written for): a missing config/toolchain.json is then a FAIL. A checkout
+    with its own config/forge.json used to be read as it stood, so switching GSD off there turned the three
+    "no file" cases into a SKIP and failed them (`no file = (exit, levels) = (0, []), want (1, ['FAIL'])`)."""
     with open(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "forge.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
-    doc["integrations"]["gsd"], doc["gsd_patches"] = True, True
+    doc["integrations"]["gsd"], doc["gsd_patches"] = gsd, gsd
+    real = lib.SETTINGS
     lib.SETTINGS = os.path.join(tmp, "forge.json")
     with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)
     lib.settings.cache_clear()
 
+    def restore():
+        lib.SETTINGS = real
+        lib.settings.cache_clear()
+    return restore
+
+
+def gsd_off_cases(tmp):
+    """With GSD off no config/toolchain.json is a SKIP `NOT RUN, NOT ARMED`, not a FAIL: nothing is pinned."""
+    os.makedirs(os.path.join(tmp, "gsd-off"), exist_ok=True)
+    restore = toy_settings(os.path.join(tmp, "gsd-off"), gsd=False)
+    try:
+        w = World(os.path.join(tmp, "gsd-off-world"), None, ALL_TOOLS, ALL_PIP)
+        code, out = w.run("doctor", only_row="toolchain")
+        rows = [" ".join(l.split()) for l in out if l[:4] in ("PASS", "WARN", "FAIL", "SKIP")]
+        want("row, GSD off and no file = (exit, one line)", (code, len(rows)), (0, 1))
+        want("row, GSD off and no file: SKIP NOT RUN, NOT ARMED", rows[0].startswith("SKIP toolchain NOT RUN, NOT ARMED: "), True)
+    finally:
+        restore()
+
 
 def main():
     tmp = sandbox.mkdtemp("toolchain-test-")
-    toy_settings(tmp)
+    restore = toy_settings(tmp)
     file_cases(FIXTURE, "the fixture's")
     if os.path.exists(REAL):
         file_cases(REAL, "this machine's")
@@ -597,6 +624,8 @@ def main():
     check_cases(tmp)
     when_cases(tmp)
     row_cases(tmp)
+    gsd_off_cases(tmp)
+    restore()
     for msg in failures:
         print("FAIL", msg)
     print("%d failure(s)" % len(failures))
