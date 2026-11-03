@@ -401,6 +401,22 @@ d4 = load(fwfile(pp4)) or {}
 check("defaults: without a remote, linear_project is the folder's name",
       d4.get("project", {}).get("linear_project") == os.path.basename(pp4), d4.get("project"))
 
+# A profile's `linear_project` overrides the remote's name (a repository whose issues live in another Linear project).
+pp4b = project()
+w4b = World()
+w4b.put(profile(pp4b, name="shared", linear_project="Other Project"))
+w4b.run()
+d4b = load(fwfile(pp4b)) or {}
+check("linear_project in the profile overrides the remote's name",
+      d4b.get("project", {}).get("linear_project") == "Other Project", d4b.get("project", {}).get("linear_project"))
+check("linear_project in the profile: the other fields are as without it",
+      {k: v for k, v in d4b.get("project", {}).items() if k != "linear_project"} ==
+      {k: v for k, v in proj.items() if k not in ("linear_project", "name", "main_checkout")} | {
+          "name": "shared", "main_checkout": os.path.realpath(pp4b)}, d4b.get("project"))
+for bad in (5, "", "  "):
+    why = lib.profile_error(profile(pp4b, linear_project=bad))
+    check("linear_project %r is refused by profile_error" % (bad,), bool(why) and "linear_project" in why, why)
+
 # no `framework.linear` -> {"labels": {}}; no framework.models etc. -> the file still has the schema's tables.
 fw_bare = {k: v for k, v in FW.items() if k in ("plugin_source",)}
 forge_json(fw=fw_bare)

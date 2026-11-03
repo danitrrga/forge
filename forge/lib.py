@@ -135,6 +135,8 @@ PROFILE_FIELDS = {
     # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
     "framework": bool, "factory": str, "factory_ui_bugs": bool,
     "checks": (list, str), "protected_paths": (list, str),
+    # The Linear project the framework files issues in, when it is not the repository's name (the default).
+    "linear_project": str,
 }
 # The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
 # that has a row there, so a field without its row is not checked at all.
@@ -187,6 +189,9 @@ def profile_error(prof):
     # The command is written into the project's CLAUDE.md as an instruction: an empty one names nothing.
     if "verdict_command" in prof and not prof["verdict_command"].strip():
         return "verdict_command is empty"
+    # An empty name would be written to the framework's file as the project, and Linear would match none.
+    if "linear_project" in prof and not prof["linear_project"].strip():
+        return "linear_project is empty"
     # `on` of a worktree_guard object is read as `is True`, so "true" or 1 would silently be off.
     wt = prof.get("worktree_guard")
     if isinstance(wt, dict) and "on" in wt and not isinstance(wt["on"], bool):
