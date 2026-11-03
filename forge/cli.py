@@ -15,7 +15,7 @@
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, then a note if the GSD runtime or the toolchain is off;
                          silent unless it wrote or has one
-  forge check-public     --staged | --all | --range A..B | --message FILE: personal data that must not be published
+  forge check-public     [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
   forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
@@ -1711,6 +1711,7 @@ def main(argv=None):
     mode.add_argument("--all", action="store_true", help="every engine file (CI, the gate)")
     mode.add_argument("--range", help="the commits in A..B, messages and content (pre-push)")
     mode.add_argument("--message", help="a commit message file (commit-msg)")
+    c.add_argument("--root", help="scan this other git repository instead of the checkout (its tracked files, forge's lists)")
     c.set_defaults(fn=lambda a: _publish().cmd_check_public(a))
     c = sub.add_parser("commit", help="commit each changed path to the history that owns it")
     c.add_argument("-m", "--message", required=True)
