@@ -4,14 +4,14 @@ description: Launches a fresh planner agent on a finished discuss, checks the pl
 user-invocable: false
 ---
 <!-- referent: pstack plugins/pstack/skills/thermos/SKILL.md @36885ea -->
-<!-- Differs from the referent: one agent, run in the foreground because the check needs its file; the agent reads its own brief, so the brief never enters this conversation; the model comes from the fwx configuration; the plan is checked by script and its errors go back to the agent once. -->
+<!-- Differs from the referent: one agent, waited for; it reads its own brief; its model comes from the fwx configuration; a script checks the plan and its errors go back once. -->
 
-You run the planning step of one phase and hand back its status. The session reads the plan the owner sees, writes the stages and talks with the owner; you do none of these, and you never open `plan.md`, so it stays out of this conversation.
+You run the planning step of one phase and hand back its status. You never open `plan.md`, so it stays out of this conversation.
 
-You are given the phase folder, the language of the conversation, and whether anyone can answer (`--unattended` when nobody can; then write English).
+You are given the phase folder, the language of the conversation, and whether anyone can answer (`--unattended` when nobody can; then English).
 
-1. Run `fwx plan brief <dir> plan --head`. It prints `{agent, model, round}`. On exit 1 the phase is not ready (no `planning` stage row, no `context.md`, or no `premortem.md` after a pre-mortem): return its message and stop.
-2. Launch `agent` as the subagent type given, in the foreground because step 3 needs the file it writes, with exactly that `model` (the owner chose it for this step in the fwx configuration, so it holds over any default of yours), and the prompt "Run `fwx plan brief <dir> plan` and follow it." plus `--unattended` if it applies, "Write in <language>." and "The template of `plan.md` is ${CLAUDE_PLUGIN_ROOT}/templates/phase/plan.md." Every path in the brief is absolute, so the agent needs nothing else from you. If the launch fails or the agent returns an error, launch it once more the same way.
-3. Run `fwx plan check <dir>`. On exit 1 with `plan.md: file: missing` among the errors the agent left no plan: launch it once more as in step 2 and run the check again. On any other exit 1, send its output to the same agent with SendMessage, once, saying these are the errors to fix before it replies as before.
+1. Run `fwx plan brief <dir> plan --head`: it prints `{agent, model, round}`. On exit 1 (phase not ready) or 2 (folder or configuration unusable) return its message and stop.
+2. Launch the `Agent` tool with that `agent` as `subagent_type` and exactly that `model`: the owner chose it in the fwx configuration, so it holds over any default of yours. The prompt is "Run `fwx plan brief <dir> plan` and follow it." with `--unattended` added if it applies, then "Write in <language>." A launch returns at once: wait for the agent's completion notice before step 3. If the launch fails or the agent returns an error, launch it once more the same way.
+3. Run `fwx plan check <dir>`. On exit 1 with `plan.md: file: missing`, launch once more as in step 2 and check again. On any other exit 1, `SendMessage` its output to the same agent, once, as the errors to fix before it replies as before, and wait for its notice.
 4. Run `fwx plan status <dir> plan`, with `--unattended` if it applies.
-5. Reply with what the planner returned and, as your last line, the line `fwx plan status` printed, unchanged. A `failed` status is returned as it is, with its reason.
+5. Reply with what the planner returned and, last, the line `fwx plan status` printed, unchanged; a `failed` status goes back with its reason.

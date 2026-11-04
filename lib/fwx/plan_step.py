@@ -175,6 +175,8 @@ def _step_files(d, step, paths):
         out.append("- postmortem.md (the last round): %s" % paths["postmortem"])
     if step == "postmortem" and _exists(paths["postmortem"]):
         out.append("- postmortem.md (the previous round, to be replaced): %s" % paths["postmortem"])
+    if step == "plan":  # the planner has no plugin-root variable: the plan format comes with its brief (3.3 U4)
+        out.append("- plan.md template: %s" % (state._TEMPLATES / "phase" / "plan.md"))
     return out
 
 

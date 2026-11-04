@@ -12,6 +12,9 @@ Seen red with plan_step.py written but `fwx plan` knowing only `check` (362 of 4
   FAIL: status premortem missing (): exit: got 2, want 0
   FAIL: status premortem missing (): status: got None, want 'failed')
 
+Added by 3.3 U4 (a U2 file), seen red against plan_step.py before the change:
+  FAIL: brief plan: names the plan template of the plugin: <the brief>
+
 Controls, each seen red on a copy of the repo with one thing changed (FAIL lines quoted):
   - a `status` without the cap on unattended rounds (the control the plan names: it would let the factory loop a third time):
       FAIL: status postmortem unattended objections round 2: status: got 'done', want 'needs-owner'
@@ -301,6 +304,11 @@ s.ok("brief premortem: no earlier result listed", "premortem.md:" not in t and "
 t = brief("plan files", repo, ph, "plan").stdout
 s.ok("brief plan: lists premortem.md", "- premortem.md: %s" % os.path.join(ph, "premortem.md") in t, t)
 s.ok("brief plan: lists the last postmortem.md", os.path.join(ph, "postmortem.md") in t, t)
+# the plan template (3.3 U4): only the planner's brief names it, as an absolute path of the plugin that exists
+tpl = os.path.join(ROOT, "templates", "phase", "plan.md")
+s.ok("brief plan: names the plan template of the plugin", "- plan.md template: %s" % tpl in t and os.path.isfile(tpl), t)
+for step in ("premortem", "postmortem"):
+    s.ok("brief %s: does not name the plan template" % step, "template" not in brief("%s template" % step, repo, ph, step).stdout)
 t = brief("postmortem files", repo, ph, "postmortem").stdout
 for name in ("premortem.md", "plan.md", "postmortem.md"):
     s.ok("brief postmortem: lists %s" % name, "- %s" % name in t or os.path.join(ph, name) in t, t)
