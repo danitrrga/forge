@@ -39,3 +39,25 @@ mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/execute.md, playbooks/session.md, playbooks/ui-walk.md and playbooks/principles.md, and for the
   rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
+
+EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230705a5 (MIT).
+  Text copied by part 3.1: skills/discuss/references/rounds.md takes line 27 of skills/ce-brainstorm/references/interaction-rules.md (its
+  list number dropped), line 13 of approaches.md and line 78 of dialogue.md. skills/discuss/references/playback.md takes lines 31, 33,
+  35, 36, 38, 42 and 92 of synthesis-summary.md (line 92 without one example and its last three words) and line 87 of dialogue.md ("Phase
+  1.3" and "Phase 2.5" read "the playback", one clause and one example dropped, "NOT" in lower case). The agents and skills of
+  parts U3 to U5 of 3.1 copy more, each file naming its lines in its own header.
+
+mattpocock/skills, https://github.com/mattpocock/skills, commit 4ae2317ddb22 (MIT).
+  Text copied by part 3.1: skills/discuss/references/rounds.md takes lines 8, 26 and 28 of skills/productivity/grilling/SKILL.md ("Work
+  the tree" reads "Work the decision tree") and adapts the round format of its lines 10-22. Read for shape by the skills of 3.1 U4 and U5
+  (skills/engineering/to-tickets/SKILL.md, grilling).
+
+humanlayer/humanlayer, https://github.com/humanlayer/humanlayer, commit 316e74ef9af0 (Apache-2.0), Copyright 2025-2026 QueryTale, Inc.
+d/b/a HumanLayer. The licence is at https://www.apache.org/licenses/LICENSE-2.0 and in apps/riptide-rpi-claude-plugin/LICENSE of the commit.
+  Text copied by part 3.1: skills/discuss/references/rounds.md takes two sentences of line 16 of
+  apps/riptide-rpi-claude-plugin/skills/create-prd/SKILL.md. Changes: "leave the document alone" reads "leave the decision log alone" and
+  the example in brackets after "ask a clarifying question of their own" is dropped. The rest of that file is this repo's own text.
+
+pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea631d2 (MIT).
+  Read by part 3.1 for the shape of the agents researcher and demo and of the skill discuss; single lines it copies are named in the
+  header of the file that copies them.
