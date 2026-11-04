@@ -34,6 +34,13 @@ writes nothing, every error writes nothing, uninstall of a project with nothing 
   errors: "no plugins_keep: a `!` line that names plugins_keep -- [] -- MODE: APPLY ..." (exit 0)
   uninstall: "uninstall: setup, the file is there -- " (nothing was ever written to take out)
   branch B: "branch B: two applies make one `marketplace add` -- calls 0 -- []"
+3.6 U3b (section 7: worktree.baseRef and the profile fields checks_quick, app_run, default_branch_protected, ui_image).
+Seen failing on 57655b6 (master, this file as it is): 32 of 186 checks red. First messages:
+  baseRef: "baseRef: a `true` profile gets worktree.baseRef \"head\" -- worktree None -- None"
+  profile_error: "profile_error rejects ui_image without dockerfile, naming dockerfile -- None -- None" (the bad profile passes: no row)
+  fields: "fields: default_branch_protected true reaches project.default_branch_protected -- missing from fwx.json"
+Negative controls, each mutation put back: baseRef never pruned (2 red); an edited baseRef removed anyway (1); baseRef not claimed (3);
+`..` allowed in dockerfile (2); unknown keys of app_run/ui_image allowed (2); default_branch_protected always false (1).
 With FRAMEWORK_REPO set there is one more check: the real repo's models comparison.
 Negative controls on the finished code, each mutation put back from a copy, the checks that went red (17 mutations, each
 red): fixed plugin name "fwx" (36: the first case, `.claude/toyfw.json` missing); `linear` not copied (1: "linear.labels is
@@ -713,6 +720,138 @@ repo = os.environ.get("FRAMEWORK_REPO")
 if repo:
     why, diff = seed_diff(repo)
     check("m15: examples/forge.json's framework.models equal the framework repo's DEFAULTS", why is None and diff == {}, (why, diff))
+
+# ------------------------------------------------------------------ 7. 3.6 U3b: baseRef and the four profile fields
+forge_json(integrations=INTEGRATIONS_ON)
+plugin_dir()
+
+
+def worktree_of(p):
+    return (load(slp(p)) or {}).get("worktree")
+
+
+def base_claims(p):
+    return [c for c in claims_of(slp(p)) if c["at"][:1] == ["worktree"]]
+
+
+# baseRef: a `true` profile gets it, a `false` one nothing, true -> false takes it out, a foreign worktree key stays.
+ppb = project()
+wb = World()
+wb.put(profile(ppb, name="baseref"))
+code, out = wb.run(apply=False)
+check("baseRef: a dry-run writes nothing", not os.path.exists(slp(ppb)) and "baseRef" in out, out)
+code, out = wb.run()
+check("baseRef: a `true` profile gets worktree.baseRef \"head\" -- worktree %s" % worktree_of(ppb),
+      worktree_of(ppb) == {"baseRef": "head"}, worktree_of(ppb))
+check("baseRef: the summary line names it", any("worktree.baseRef" in l for l in out.splitlines() if "overrides ->" in l), out)
+check("baseRef: it is an owned key claim", [c["kind"] for c in base_claims(ppb)] == ["key"] and base_claims(ppb)[0]["at"] == ["worktree", "baseRef"],
+      base_claims(ppb))
+before = raw(slp(ppb))
+code, out = wb.run()
+check("baseRef: a second apply leaves the file byte-identical", raw(slp(ppb)) == before and code == 0, out)
+s = load(slp(ppb))
+s.setdefault("worktree", {})["symlinkDirectories"] = ["node_modules"]
+lib.write_json(slp(ppb), s)
+wb.put(profile(ppb, name="baseref", framework=False))
+code, out = wb.run()
+check("baseRef: true -> false takes baseRef out and leaves the foreign worktree key -- worktree %s" % worktree_of(ppb),
+      code == 0 and worktree_of(ppb) == {"symlinkDirectories": ["node_modules"]} and not base_claims(ppb), (code, out))
+wb.put(profile(ppb, name="baseref"))
+wb.run()
+check("baseRef: back to true, it is there again", (worktree_of(ppb) or {}).get("baseRef") == "head", worktree_of(ppb))
+ppo = project()
+wo = World()
+wo.put(profile(ppo, name="baserefoff", framework=False))
+wo.run()
+check("baseRef: a `false` profile gets no worktree key", "worktree" not in (load(slp(ppo)) or {}), load(slp(ppo)))
+ppa = project()
+wa = World()
+wa.put(profile(ppa, name="baserefabsent", framework="DROP"))
+wa.run()
+check("baseRef: a profile without the field gets no worktree key", "worktree" not in (load(slp(ppa)) or {}), load(slp(ppa)))
+pph = project()
+wh = World()
+wh.put(profile(pph, name="basereftwo"))
+wh.run()
+s = load(slp(pph))
+s.setdefault("worktree", {})["baseRef"] = "fresh"
+lib.write_json(slp(pph), s)
+wh.put(profile(pph, name="basereftwo", framework=False))
+code, out = wh.run()
+check("baseRef: edited by hand, it stays and one `!` line names it, exit 1",
+      worktree_of(pph) == {"baseRef": "fresh"} and code == 1
+      and len([l for l in bang(out) if "worktree.baseRef" in l and "left" in l]) == 1, (worktree_of(pph), code, bang(out)))
+ppn = project()
+wn = World()
+wn.put(profile(ppn, name="baserefshape"))
+wn.run()
+s = load(slp(ppn))
+s["worktree"] = "by hand"
+lib.write_json(slp(ppn), s)
+code, out = wn.run()
+check("baseRef: a worktree that is not an object is left alone and named, not crashed on -- %s" % bang(out),
+      load(slp(ppn)).get("worktree") == "by hand" and any("worktree is not an object" in l for l in out.splitlines()), (code, out))
+
+# profile_error: the four fields, each bad shape rejected and each good one accepted (a control that the rows do not reject all).
+GOOD_APP = {"up": "make up", "run": "", "down": "make down", "url": "http://localhost:3000"}
+GOOD_IMG = {"dockerfile": "Dockerfile.ui", "expect": "Sign in"}
+for label, field, value in (("checks_quick list", "checks_quick", ["pnpm tsc", "pnpm lint"]), ("checks_quick empty", "checks_quick", []),
+                            ("default_branch_protected true", "default_branch_protected", True),
+                            ("default_branch_protected false", "default_branch_protected", False),
+                            ("app_run", "app_run", GOOD_APP),
+                            ("app_run with login and container", "app_run", dict(GOOD_APP, login="make login", container=True)),
+                            ("ui_image", "ui_image", GOOD_IMG),
+                            ("ui_image in a subfolder", "ui_image", dict(GOOD_IMG, dockerfile="ui/Dockerfile"))):
+    why = lib.profile_error({"project": "x", "project_path": "/x", field: value})
+    check("profile_error accepts %s -- %s" % (label, why), why is None, why)
+for label, field, value, word in (
+        ("checks_quick as a string", "checks_quick", "pnpm tsc", "checks_quick"),
+        ("checks_quick with a non-string", "checks_quick", ["pnpm tsc", 3], "checks_quick"),
+        ("default_branch_protected \"yes\"", "default_branch_protected", "yes", "default_branch_protected"),
+        ("app_run as a string", "app_run", "make up", "app_run"),
+        ("app_run without url", "app_run", {k: v for k, v in GOOD_APP.items() if k != "url"}, "url"),
+        ("app_run without up", "app_run", {k: v for k, v in GOOD_APP.items() if k != "up"}, "up"),
+        ("app_run without run", "app_run", {k: v for k, v in GOOD_APP.items() if k != "run"}, "run"),
+        ("app_run without down", "app_run", {k: v for k, v in GOOD_APP.items() if k != "down"}, "down"),
+        ("app_run with a numeric url", "app_run", dict(GOOD_APP, url=3000), "url"),
+        ("app_run with login as a bool", "app_run", dict(GOOD_APP, login=True), "login"),
+        ("app_run with container \"yes\"", "app_run", dict(GOOD_APP, container="yes"), "container"),
+        ("app_run with a key it has no slot for", "app_run", dict(GOOD_APP, extra="x"), "extra"),
+        ("ui_image as a string", "ui_image", "Dockerfile", "ui_image"),
+        ("ui_image without dockerfile", "ui_image", {"expect": "Sign in"}, "dockerfile"),
+        ("ui_image without expect", "ui_image", {"dockerfile": "Dockerfile.ui"}, "expect"),
+        ("ui_image with an empty expect", "ui_image", dict(GOOD_IMG, expect=""), "expect"),
+        ("ui_image with an empty dockerfile", "ui_image", dict(GOOD_IMG, dockerfile=""), "dockerfile"),
+        ("ui_image with dockerfile ../x", "ui_image", dict(GOOD_IMG, dockerfile="../x"), "dockerfile"),
+        ("ui_image with dockerfile a/../../x", "ui_image", dict(GOOD_IMG, dockerfile="a/../../x"), "dockerfile"),
+        ("ui_image with an absolute dockerfile", "ui_image", dict(GOOD_IMG, dockerfile="/etc/passwd"), "dockerfile"),
+        ("ui_image with a key it has no slot for", "ui_image", dict(GOOD_IMG, extra="x"), "extra")):
+    why = lib.profile_error({"project": "x", "project_path": "/x", field: value})
+    check("profile_error rejects %s, naming %s -- %s" % (label, word, why), why is not None and word in why, why)
+bad = World()
+ppbad = project()
+bad.put(profile(ppbad, name="badimg", ui_image={"expect": "Sign in"}))
+code, out = bad.run()
+check("a profile with a bad ui_image: the run says so and writes no framework file -- exit %d" % code,
+      code != 0 and "ui_image" in out and not os.path.exists(fwfile(ppbad)), out)
+
+# The two fields reach .claude/fwx.json; absent they are false and null.
+ppf = project()
+wf = World()
+wf.put(profile(ppf, name="fields", default_branch_protected=True, ui_image=GOOD_IMG, app_run=GOOD_APP, checks_quick=["pnpm tsc"]))
+code, out = wf.run()
+pf = (load(fwfile(ppf)) or {}).get("project", {})
+check("fields: default_branch_protected true reaches project.default_branch_protected -- %s" % pf.get("default_branch_protected", "missing from fwx.json"),
+      pf.get("default_branch_protected") is True, pf)
+check("fields: ui_image reaches project.ui_image", pf.get("ui_image") == GOOD_IMG, pf.get("ui_image"))
+check("fields: app_run and checks_quick still reach the file", pf.get("app_run") == GOOD_APP and pf.get("checks_quick") == ["pnpm tsc"], pf)
+ppd = project()
+wd = World()
+wd.put(profile(ppd, name="defaults"))
+wd.run()
+pd = (load(fwfile(ppd)) or {}).get("project", {})
+check("fields: without them, project.default_branch_protected is false and project.ui_image null -- %s" % {k: pd.get(k, "missing") for k in ("default_branch_protected", "ui_image")},
+      pd.get("default_branch_protected") is False and "ui_image" in pd and pd["ui_image"] is None, pd)
 
 sandbox.cleanup(bool(failures))
 for f in failures:

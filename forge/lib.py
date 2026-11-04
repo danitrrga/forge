@@ -137,7 +137,16 @@ PROFILE_FIELDS = {
     "checks": (list, str), "protected_paths": (list, str),
     # The Linear project the framework files issues in, when it is not the repository's name (the default).
     "linear_project": str,
+    # Fields the framework's plugin reads from .claude/fwx.json (forge/framework.py writes them): `checks_quick` the
+    # build commands `fwx wave` runs, `app_run` how the UI walk starts the app, `default_branch_protected` where
+    # `.fwx/` lives, `ui_image` the factory's UI image. The shapes of the two objects are in APP_RUN_KEYS and
+    # UI_IMAGE_KEYS, checked by _object_error.
+    "checks_quick": (list, str), "app_run": dict, "default_branch_protected": bool, "ui_image": dict,
 }
+# The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4.
+APP_RUN_KEYS = (("up", str, True, False), ("run", str, True, True), ("down", str, True, False), ("url", str, True, False),
+                ("login", str, False, False), ("container", bool, False, True))
+UI_IMAGE_KEYS = (("dockerfile", str, True, False), ("expect", str, True, False))
 # The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
 # that has a row there, so a field without its row is not checked at all.
 PROFILE_CHOICES = {"factory": ("off", "trial")}
@@ -161,6 +170,25 @@ def _production_error():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod.production_error
+
+
+def _object_error(field, obj, keys):
+    """None when the object `obj` of profile field `field` has exactly the `keys` rows' shape, else why not."""
+    known = {k for k, *_ in keys}
+    for key, kind, required, may_be_empty in keys:
+        if key not in obj:
+            if required:
+                return "%s.%s is missing" % (field, key)
+            continue
+        v = obj[key]
+        if not isinstance(v, kind):
+            return "%s.%s is not a %s" % (field, key, _TYPE_NAMES[kind])
+        if kind is str and not may_be_empty and not v.strip():
+            return "%s.%s is empty" % (field, key)
+    extra = sorted(set(obj) - known)
+    if extra:
+        return "%s.%s is not a key of %s (known: %s)" % (field, extra[0], field, ", ".join(sorted(known)))
+    return None
 
 
 def profile_error(prof):
@@ -192,6 +220,16 @@ def profile_error(prof):
     # An empty name would be written to the framework's file as the project, and Linear would match none.
     if "linear_project" in prof and not prof["linear_project"].strip():
         return "linear_project is empty"
+    for field, keys in (("app_run", APP_RUN_KEYS), ("ui_image", UI_IMAGE_KEYS)):
+        if field in prof:
+            why = _object_error(field, prof[field], keys)
+            if why:
+                return why
+    # The Dockerfile lives in config/factory-images/<project>/ of forge: a name inside it, never a way out.
+    if "ui_image" in prof:
+        name = prof["ui_image"]["dockerfile"]
+        if os.path.isabs(name) or ".." in name.replace("\\", "/").split("/"):
+            return "ui_image.dockerfile is not a relative name without .."
     # `on` of a worktree_guard object is read as `is True`, so "true" or 1 would silently be off.
     wt = prof.get("worktree_guard")
     if isinstance(wt, dict) and "on" in wt and not isinstance(wt["on"], bool):
