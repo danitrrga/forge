@@ -7,6 +7,10 @@ marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad20959851
 used with the author's permission.
   Text copied by part 2.1, each line as written: playbooks/execute.md takes from its playbooks/factory.md the three rules
   "Clean up only what you started", "Prove the commit you ship" and "Giving up means `failed`" of "Standing rules".
+  Text copied by agents/executor.md: line 18 of playbooks/factory.md, the rule "Clean up only what you started." and the three
+  sentences after it, word for word. Read for the same agent: lines 43-47 (the resolution of a merge conflict) and line 65 (the
+  question when no test can express the bug), in words of its own.
+  Read for workflows/execute.js: playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
   Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
     lib/fwx/core/keys.py     from lib/factory.ts
     lib/fwx/core/globs.py    from lib/globs.ts
@@ -45,6 +49,9 @@ mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/execute.md, playbooks/session.md, playbooks/ui-walk.md and playbooks/principles.md, and for the
   rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
+  Text copied by data/executor-brief.md: the nine fields of the brief in the order of playbooks/orchestrate.md lines 40-53 ("The brief"), the
+  TIMEBOX clause "on expiry, return partial findings and stop rather than run on" and the FORBIDDEN list "no PR retargets or merges, no
+  rebase, no force-push, no fixes outside scope", word for word; "paths it may not" in SCOPE, the same words.
   Read for agents/pre-mortem.md: the voice of skills/interrogate/references/reviewer-prompt.md and the filters of its lead-judgment.md
   ("no findings" is valid; a risk nobody can reach is dropped; another split of the work is not a finding), in words of its own.
   Text copied by agents/planner.md: line 25 of skills/tdd/SKILL.md word for word (the two sentences on a bad test); the first
@@ -53,7 +60,21 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   agents/post-mortem.md: the sentence "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21,
   word for word. Read for the same agent: the voice of skills/interrogate/references/reviewer-prompt.md, the filters of its
   lead-judgment.md and the ladder of proof of skills/blast-radius/SKILL.md, in words of its own.
+  agents/executor.md: "Workers never rebase and never retarget or merge PRs." of playbooks/orchestrate.md line 84, "Red is a colour,
+  not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, "Don't tweak a test's expected values just to get a pass."
+  of skills/babysit/SKILL.md line 53 and "Type check and lint are not a pin." of playbooks/refactoring.md line 9, each word for word.
+  Read for the same agent: line 18 of playbooks/autopilot-full.md and steps 1-4 of skills/tdd/SKILL.md, in words of its own.
+  agents/reviewer.md: "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, word for word.
+  Read for the same agent: skills/interrogate/references/reviewer-prompt.md, its lead-judgment.md and line 20 of
+  playbooks/autopilot-full.md, in words of its own.
+  agents/review-verifier.md: "Trace the call site." of skills/interrogate/references/lead-judgment.md line 11, word for word. Read for
+  the same agent: the four groups of skills/interrogate/SKILL.md (lines 52-58), in words of its own.
+  Text quoted in a comment of workflows/execute.js: "After a second miss, record a gap. A gap does not count as a pass" of skills/swarm/SKILL.md
+  (Phase C), word for word. Read for the same file: playbooks/orchestrate.md (the brief per worker; "Never resume-chain a brief. Respawn fresh
+  with consolidated scope"; "A worker may self-report. A verifier overrides it on the same key"), in words of its own.
   Read for the shape of skills/pre-mortem/SKILL.md, skills/plan/SKILL.md and skills/post-mortem/SKILL.md: skills/thermos/SKILL.md.
+  Text copied by playbooks/execute.md: the sentence "Never reaches the human: ..." of playbooks/orchestrate.md line 110 ("Rules of the
+  stretch"), word for word.
 
 open-gsd/gsd-core, https://github.com/open-gsd/gsd-core, commit 35f5a452239b897b8d6352c973e1e4efd683370f (tag v1.18.0, the version
 of the npm package it was read from; MIT).

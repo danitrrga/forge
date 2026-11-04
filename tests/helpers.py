@@ -1,5 +1,5 @@
 """What the tests share: git that ignores the machine's settings and the caller's GIT_* variables,
-toy repos and worktrees, temp dirs that do not outlive a passing run, and `Suite`, which counts
+toy repos and worktrees, temp dirs that do not outlive the run, pass or fail, and `Suite`, which counts
 what a test looked at.
 
 copied-from: forge tests/sandbox.py @2c95776, adapted (git(), mkdtemp(), cleanup(); the rest is new)
@@ -9,6 +9,7 @@ The name does not match test_*.py, so `fwx test` never runs it; the tests import
 import atexit
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -41,27 +42,71 @@ def git(cwd, *args):
     return r.stdout
 
 
+KEEP_ENV = "FWX_TEST_KEEP"
+
+
+def keeping():
+    """Whether the run was asked to keep its temp dirs for a look: FWX_TEST_KEEP=1 in the environment. Off by default:
+    /tmp is RAM on this machine, so a failing run must not leave its toy repos there."""
+    return os.environ.get(KEEP_ENV) == "1"
+
+
 def mkdtemp(prefix):
-    """A temp dir that cleanup() removes after a passing run, or keeps and names after a failing one."""
+    """A temp dir removed when the process ends however it ends (cleanup(), a failing check, an uncaught exception,
+    sys.exit, SIGTERM), unless FWX_TEST_KEEP=1. SIGKILL and os._exit skip it."""
     d = os.path.realpath(tempfile.mkdtemp(prefix=prefix))
     _made.append(d)
     return d
 
 
-def cleanup(failed, label="kept:"):
-    if failed:
+def rmtree(d):
+    """shutil.rmtree that also removes a tree holding a directory without write permission."""
+    def writable(func, p, exc):
+        try:
+            os.chmod(os.path.dirname(p), 0o700)
+            os.chmod(p, 0o700)
+            func(p)
+        except OSError:
+            pass
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(d, onexc=lambda func, p, exc: writable(func, p, exc))
+    else:
+        shutil.rmtree(d, onerror=writable)
+
+
+def remove(d):
+    """Remove one dir mkdtemp made now, for a test that makes many (the peak in /tmp is what fills the RAM); kept with
+    FWX_TEST_KEEP=1."""
+    if not keeping():
+        rmtree(d)
+        if d in _made:
+            _made.remove(d)
+
+
+def cleanup(failed=False, label="kept:"):
+    """Remove every dir mkdtemp made so far. With FWX_TEST_KEEP=1 they are printed instead, so they can be looked at.
+    `failed` is accepted for the callers that pass it and changes nothing: a failing run cleans too."""
+    if keeping():
         if _made:
             print(label, " ".join(_made))
     else:
         for d in _made:
-            shutil.rmtree(d, ignore_errors=True)
+            rmtree(d)
     del _made[:]
 
 
 @atexit.register
-def _unfinished():  # a test that crashed before done(): kept, and said so
+def _unfinished():  # a test that crashed or exited before cleanup()
     if _made:
-        print("kept (the run did not finish):", " ".join(_made))
+        cleanup(True, "kept (the run did not finish):")
+
+
+def _on_sigterm(signum, frame):
+    sys.exit(128 + signum)  # a SystemExit, so atexit runs: a timeout's `kill` must not leave the toy repos behind
+
+
+if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 def write(root, rel, text, mode=None):

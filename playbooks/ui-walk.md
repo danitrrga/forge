@@ -12,7 +12,7 @@ This playbook says what each node of the UI-walk stretch does, who does it and w
 - A walk that does not find its planted fault does not count. `fwx walk arm-control` plants one on a screen no walker is told about, a judge reads whether it was found, and the workflow returns `control.found`; `false` or `null` says first that the run proves nothing. Guideline: the session reads that field before it trusts an empty result.
 - The baseline is the approved demo and the rows of `decisions.tsv`. A walker or verifier never edits them or the planted control to make a finding go away; a finding that contradicts the baseline is marked `CONTRADICTED`, is not fixed and goes to the owner's review of the part.
 - At the end no browser is left running. `fwx walk down` closes the walk's browsers and app in a `finally`, counts the processes it looked at and exits 1 if one is left; the workflow ends `failed` then.
-- The walk finds and the session fixes: a fix is `fwx wave prepare --fix <fix.json>` followed by `/fwx:execute`, one commit per finding, and one `fix.json` run spends one round, however many findings it holds (`fwx wave fix-round` at n_C8 spends it).
+- The walk finds and the session fixes: a fix is `fwx wave prepare --fix <fix.json>` followed by `/fwx:execute`, one commit per finding. The run spends a round only when it fails, and then one per failure however many findings it holds (`fwx wave fix-round` at n_C8).
 
 ## Nodes
 
