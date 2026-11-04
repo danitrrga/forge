@@ -360,7 +360,7 @@ def case_dispatch(R, S):
     sc = Scene()
     for sub in ("integrate", "fix-round", "revert", "cleanup", "summary"):
         r = R(sc.cwd, "wave", sub, env=sc.env)
-        S.eq("wave %s: not built yet, exit 2" % sub, (r.returncode, "not built yet" in r.stderr, r.stdout), (2, True, ""))
+        S.eq("wave %s: built in U3, no options is a usage error" % sub, (r.returncode, "usage: fwx wave %s" % sub in r.stderr, r.stdout), (2, True, ""))
     for argv in ([], ["bogus"]):
         r = R(sc.cwd, "wave", *argv, env=sc.env)
         S.ok("wave %s: usage, exit 2" % (argv or "(none)"), r.returncode == 2 and "usage: fwx wave" in r.stderr, r.stderr)

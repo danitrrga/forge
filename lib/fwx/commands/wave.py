@@ -1,4 +1,5 @@
-"""Prepare a part for `execute` and check an executor's base: fwx wave prepare|check-base ...
+"""Prepare a part for `execute`, check an executor's base, and join, fix, undo and clean up its waves:
+fwx wave prepare|check-base|integrate|fix-round|revert|cleanup|summary ...
 
 `prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
 [--control-findings F]` validates the part `D` from the integration checkout (the current folder, on branch `W`) and prints
@@ -10,26 +11,56 @@ anything that must stop the run before it starts, with the reason on stderr and 
 (the one at `P`, when given) whose HEAD is `<sha>`, 42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
 worktree: <path>` on stderr), 2 for a usage error. `<sha>` is 7 to 40 hex digits.
 
-`integrate`, `fix-round`, `revert`, `cleanup` and `summary` are not built yet (3.4 U3): exit 2.
+The rest is 3.4 U3 (execute/integrate.py and execute/cleanup.py say what each does); each prints its result as one JSON
+object on stdout and also writes it, with the exit code and its arguments, to `<git-common-dir>/fwx/runs/<run>/<n>-<step>.json`
+(`n` counts the run's files; `prepare` and `check-base` write none, and neither does a call that stops on a usage error or on
+something that must stop it before it starts, exit 2 with a reason on stderr):
+  integrate --part-dir D --run R --branches B... [--findings IDS] [--final]
+      exit 0 merged and green, 1 a conflict or a red check, 2 refused (a live agent holds a branch, the commits are not one per
+      finding, the checkout is dirty, a usage error), 77 NOT RUN, NOT ARMED: no /proc (a lock cannot be read)
+  fix-round --part-dir D --why TEXT [--run R]     (a file in the run only with --run; the factory's job has none)
+      exit 0 the failure may be fixed (a round spent, or the evidence already counted), 1 the
+      rounds are spent and nothing was spent now, 2 usage
+  revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
+  cleanup --run R     exit 0; 77 without /proc. It reads the branches `integrate` named from the run's files
+  summary --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given
 """
 import json
 import os
+import re
 import sys
 
 from fwx import config, plan_step, state
-from fwx.execute import base, prepare as prep
+from fwx.execute import base, cleanup, integrate, prepare as prep
 
 PREPARE_USAGE = ("usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F]\n")
 CHECK_USAGE = "usage: fwx wave check-base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
-NOT_BUILT = ("integrate", "fix-round", "revert", "cleanup", "summary")
+USAGES = {
+    "integrate": "usage: fwx wave integrate --part-dir D --run R --branches B... [--findings IDS] [--final]\n",
+    "fix-round": "usage: fwx wave fix-round --part-dir D --why TEXT [--run R]\n",
+    "revert": "usage: fwx wave revert --part-dir D --run R --findings IDS\n",
+    "cleanup": "usage: fwx wave cleanup --run R\n",
+    "summary": "usage: fwx wave summary --run R [--part-dir D]\n",
+}
+_RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
 
-def _parse(argv, flags, valued):
-    """({name: value or True}, [positionals]) or None for an option nobody knows or a valued one with no value."""
+def _parse(argv, flags, valued, many=()):
+    """({name: value or True}, [positionals]) or None for an option nobody knows or a valued one with no value. An option of
+    `many` takes every word up to the next option (a list)."""
     got, pos, i = {}, [], 0
     while i < len(argv):
         a = argv[i]
+        if a in many:
+            j = i + 1
+            while j < len(argv) and not argv[j].startswith("-"):
+                j += 1
+            if j == i + 1:
+                return None
+            got[a] = argv[i + 1:j]
+            i = j
+            continue
         if a in valued:
             if i + 1 >= len(argv):
                 return None
@@ -84,13 +115,121 @@ def do_check_base(argv):
     return code
 
 
+def _ids(text):
+    return [i.strip() for i in text.split(",") if i.strip()]
+
+
+def _record(top, run, step, args, result, code):
+    """Write the call's result to <git-common-dir>/fwx/runs/<run>/<n>-<step>.json and return the path."""
+    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        raise base.WaveError("cannot find the git common dir of %s" % top)
+    folder = os.path.join(common, "fwx", "runs", run)
+    os.makedirs(folder, exist_ok=True)
+    n = 1 + max([int(m.group(1)) for m in (re.match(r"(\d+)-", f) for f in os.listdir(folder)) if m], default=0)
+    path = os.path.join(folder, "%d-%s.json" % (n, step))
+    try:
+        with open(path, "x", encoding="utf-8") as f:
+            json.dump({"step": step, "exit": code, "args": args, "result": result}, f, indent=1)
+            f.write("\n")
+    except OSError as e:
+        raise base.WaveError("cannot write %s: %s" % (path, e))
+    return path
+
+
+def _part_of(top, run):
+    """The part folder the run's own files name (the newest call that had one), or None."""
+    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    folder = os.path.join(common or "", "fwx", "runs", run)
+    names = sorted((f for f in os.listdir(folder) if re.match(r"\d+-", f)), key=lambda f: int(f.split("-")[0]), reverse=True) \
+        if os.path.isdir(folder) else []
+    for name in names:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if rec.get("args", {}).get("part_dir"):
+            return rec["args"]["part_dir"]
+    return None
+
+
+def _recorded_branches(top, run):
+    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    folder = os.path.join(common or "", "fwx", "runs", run)
+    found = set()
+    for name in os.listdir(folder) if os.path.isdir(folder) else []:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if rec.get("step") == "integrate":
+            found.update(rec.get("args", {}).get("branches") or [])
+    return found
+
+
+def do_step(step, argv):
+    """integrate, fix-round, revert, cleanup and summary: parse, run, print the JSON, record it."""
+    flags = ("--final",) if step == "integrate" else ()
+    valued = {"integrate": ("--part-dir", "--run", "--findings"), "fix-round": ("--part-dir", "--why", "--run"),
+              "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir")}[step]
+    parsed = _parse(argv, flags, valued, many=("--branches",) if step == "integrate" else ())
+    need = {"integrate": ("--part-dir", "--run", "--branches"), "fix-round": ("--part-dir", "--why"),
+            "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",)}[step]
+    if parsed is None or parsed[1] or any(k not in parsed[0] for k in need) \
+            or ("--run" in parsed[0] and not _RUN_NAME.match(parsed[0]["--run"])) \
+            or ("--findings" in parsed[0] and not _ids(parsed[0]["--findings"])):
+        sys.stderr.write(USAGES[step])
+        return 2
+    got = parsed[0]
+    run, part = got.get("--run"), got.get("--part-dir")
+    findings = _ids(got["--findings"]) if "--findings" in got else []
+
+    def say(line):
+        sys.stderr.write("fwx wave %s: %s\n" % (step, line))
+    try:
+        top = base.toplevel(os.getcwd())
+        if top is None:
+            raise base.WaveError("not inside a git repository: %s" % os.getcwd())
+        if step == "integrate":
+            args = {"part_dir": part, "run": run, "branches": got["--branches"], "findings": findings, "final": "--final" in got}
+            code, result = integrate.integrate(".", part, run, got["--branches"], findings, "--final" in got, say)
+        elif step == "fix-round":
+            args = {"part_dir": part, "why": got["--why"]}
+            code, result = integrate.fix_round(".", part, got["--why"])
+            sys.stderr.write("rounds %s\n" % result["rounds"])
+        elif step == "revert":
+            args = {"part_dir": part, "run": run, "findings": findings}
+            code, result = integrate.revert(".", part, findings)
+        elif step == "cleanup":
+            args = {"run": run}
+            result = cleanup.cleanup(".", run, _recorded_branches(top, run))
+            code = 0
+        else:
+            part = part or _part_of(top, run)
+            args = {"run": run, "part_dir": part}
+            code, result = integrate.summary(".", part)
+            if part is None:
+                say("no --part-dir and no call of run %s names one: gate none" % run)
+        if run:
+            _record(top, run, step, args, result, code)
+    except cleanup.NoProc as e:
+        sys.stderr.write("%s\n" % e)
+        return 77
+    except (base.WaveError, config.ConfigError, state.StateError) as e:
+        sys.stderr.write("fwx wave %s: %s\n" % (step, e))
+        return 2
+    print(json.dumps(result))
+    return code
+
+
 def main(argv):
     if argv and argv[0] == "prepare":
         return do_prepare(argv[1:])
     if argv and argv[0] == "check-base":
         return do_check_base(argv[1:])
-    if argv and argv[0] in NOT_BUILT:
-        sys.stderr.write("fwx wave %s: not built yet (3.4 U3)\n" % argv[0])
-        return 2
-    sys.stderr.write("usage: fwx wave <prepare|check-base|%s> ...\n" % "|".join(NOT_BUILT))
+    if argv and argv[0] in USAGES:
+        return do_step(argv[0], argv[1:])
+    sys.stderr.write("usage: fwx wave <prepare|check-base|%s> ...\n" % "|".join(USAGES))
     return 2
