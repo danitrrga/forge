@@ -460,7 +460,7 @@ def case_cleanup_scratch(R, S):
     """3.4 U8 fix: the reviewers are not isolated, so their scratch folder (`fwx wave scratch`) is in the integration checkout:
     `cleanup` removes the one of its own run, the folder of another run stays, and the checkout stays clean."""
     sc = Scene()
-    other_run = "01-alpha-deadbee-1"
+    other_run = "01-alpha-%s-2" % sc.base[:7]
     mine = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", sc.run, "r1")
     theirs = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", other_run, "r1")
     for run in (sc.run, other_run):
@@ -469,10 +469,14 @@ def case_cleanup_scratch(R, S):
         helpers.write(os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", run, "r1"), "report.json", "{}\n")
     v = ok_json(S, "cleanup, scratch of the run", sc.call(R, "cleanup", "--run", sc.run))
     S.eq("cleanup: the run's scratch folder is removed and listed", (v.get("scratch"), exists(mine)), ([os.path.dirname(mine)], False))
-    S.ok("cleanup: another run's scratch folder and the ignore file stay", exists(os.path.join(theirs, "report.json")) and exists(os.path.join(os.path.dirname(os.path.dirname(mine)), ".gitignore")))
+    S.ok("cleanup: another run's scratch folder and the ignore file stay while it is there", exists(os.path.join(theirs, "report.json")) and exists(os.path.join(os.path.dirname(os.path.dirname(mine)), ".gitignore")))
     S.eq("cleanup: the checkout is clean", helpers.git(sc.cwd, "status", "--porcelain"), "")
     v = ok_json(S, "cleanup, a second time", sc.call(R, "cleanup", "--run", sc.run))
     S.eq("cleanup: nothing more to remove", v.get("scratch"), [])
+    # the last run's folder goes and takes `.fwx-agent/` with its ignore file: nothing is left in the checkout
+    ok_json(S, "cleanup, the other run", sc.call(R, "cleanup", "--run", other_run))
+    S.eq("cleanup: with no run's folder left, `.fwx-agent/` and its .gitignore are gone too", exists(os.path.join(os.path.realpath(sc.cwd), ".fwx-agent")), False)
+    S.eq("cleanup: and the checkout is still clean", helpers.git(sc.cwd, "status", "--porcelain", "--ignored"), "")
     sc.stop()
 
 
@@ -615,6 +619,7 @@ MUTANTS = [
     ("cleanup keeps a stale-locked worktree", case_cleanup, C, LIVE, 'return "live"', "kept a stale-locked worktree"),
     ("cleanup without /proc runs on", case_cleanup_no_proc, C, "if not os.path.isdir(PROC):", "if False:", "cleanup, no /proc: exit"),
     ("cleanup keeps the run's scratch", case_cleanup_scratch, C, "    scratch = _scratch(top, run)", "    scratch = []", "the run's scratch folder is removed and listed"),
+    ("cleanup leaves the ignore file", case_cleanup_scratch, C, "            os.rmdir(root)", "            pass", "`.fwx-agent/` and its .gitignore are gone too"),
     ("summary ignores the exit of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if sha == head and not why else "fail"',
      "red evidence: gate"),
     ("summary ignores the sha of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if rc == "0" and not why else "fail"',

@@ -906,6 +906,9 @@ def agent_problems(texts):
     # a task executor reads a brief file; the fixer and the conflict resolver have none, their prompt is the brief
     if "no brief file" not in texts.get("executor", ""):
         found.append("executor: does not say that the fixer and the resolver have no brief file")
+    # an isolated agent's Bash refuses compound commands and heredocs (measured, 3.4 U8 fix): the executor is told what to do instead
+    if "plain, separate commands" not in texts.get("executor", ""):
+        found.append("executor: is not told that an isolated agent's Bash refuses joined commands and heredocs (plain, separate commands, Write for files)")
     v = texts.get("review-verifier", "")
     if "structured output" not in v:
         found.append("review-verifier: does not say it answers through the structured output")
@@ -924,6 +927,8 @@ def check_agents(s):
     s.ok("agents: control, the old wording is found", len(agent_problems(old)) >= 3, repr(agent_problems(old)))
     s.ok("agents: control, a reviewer not told to put the criterion's id in a finding is found",
          any("criterion it marks" in p for p in agent_problems({**texts, "reviewer": texts["reviewer"].replace("must contain the criterion's `id`", "names the fault")})), "")
+    s.ok("agents: control, an executor not told to run plain, separate commands is found",
+         any("plain, separate" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("plain, separate commands", "commands")})), "")
     s.ok("agents: control, an executor that knows no promptless fixer is found",
          any("executor" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("no brief file", "no file")})), "")
     # what the script gives each one, so the agent files cannot drift from it

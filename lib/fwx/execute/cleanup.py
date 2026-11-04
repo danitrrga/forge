@@ -168,6 +168,13 @@ def _scratch(top, run):
     if not os.path.isdir(folder):
         return []
     shutil.rmtree(folder, ignore_errors=True)
+    root = os.path.dirname(folder)
+    try:
+        if os.listdir(root) == [".gitignore"]:  # no other run's folder: leave nothing behind
+            os.remove(os.path.join(root, ".gitignore"))
+            os.rmdir(root)
+    except OSError:
+        pass
     return [] if os.path.exists(folder) else [folder]
 
 
