@@ -28,6 +28,8 @@ controls that pass there (a false profile gets nothing, a dry-run writes nothing
   NOT RUN: "no list: one NOT RUN, NOT ARMED line -- []"
   lint: "lint Bash(*): a `!` line naming the list, exit 1 -- []" (exit 0: the broad rule is written)
   unit table: "permission_errors exists -- AttributeError: module 'forge.framework' has no attribute 'permission_errors'"
+permissions.additionalDirectories is a union in forge/skills.py (was an overwrite): against the overwrite, 4 of 104 checks red
+("dirs union: a hand-added dir survives the framework turning on -- ['<main checkout>']"; the design dirs of the profile stayed).
 Negative controls on the finished code, each mutation put back from a copy, the checks that went red (17 mutations, each red):
 no lint at all (crash: the file did not finish); a lint error that does not stop the profile (20: "nothing written for the profile");
 rules not passed to settings.local.json (11); main checkout not passed (5); no `+` lines (3); no NOT RUN line (1); no production
@@ -311,6 +313,39 @@ ws = World(LIST)
 ws.put(profile(pds, "dirsoff", framework=False, permissions={"additionalDirectories": ["/tmp/own-dir"]}))
 ws.run()
 check("dirs: a false profile keeps only its own -- %s" % perms_of(pds), (perms_of(pds) or {}).get("additionalDirectories") == ["/tmp/own-dir"], perms_of(pds))
+
+# The design set's directories are in the profile's own list (another forge step), a hand-added one is in the file: the
+# main checkout is added to both, nothing is wiped, and framework off takes out only the main checkout.
+DESIGN = ["/tmp/forge-toy/design", "/tmp/forge-toy/skills/design-taste"]
+pdu = project()
+wu = World(LIST)
+wu.put(profile(pdu, "dirsunion", permissions={"additionalDirectories": DESIGN}))
+wu.run()
+s = load(slp(pdu))
+s["permissions"]["additionalDirectories"].append("/tmp/hand-added")
+lib.write_json(slp(pdu), s)
+code, out = wu.run()
+want = DESIGN + [os.path.realpath(pdu)]
+got = (perms_of(pdu) or {}).get("additionalDirectories") or []
+check("dirs union: the design dirs, the main checkout and the hand-added dir all stay after --apply -- %s" % got,
+      code == 0 and set(got) == set(want + ["/tmp/hand-added"]) and len(got) == 4, (code, got))
+wu.put(profile(pdu, "dirsunion", permissions={"additionalDirectories": DESIGN}, framework=False))
+code, out = wu.run()
+got = (perms_of(pdu) or {}).get("additionalDirectories") or []
+check("dirs union: framework off removes only the main checkout -- %s" % got, set(got) == set(DESIGN + ["/tmp/hand-added"]) and len(got) == 3, (code, got))
+# a hand-added dir in a file whose profile declares none, then the framework turns on
+pdh = project()
+wh2 = World(LIST)
+wh2.put(profile(pdh, "dirshand", framework=False))
+wh2.run()
+lib.write_json(slp(pdh), {"permissions": {"additionalDirectories": ["/tmp/hand-added"]}})
+wh2.put(profile(pdh, "dirshand"))
+wh2.run()
+got = (perms_of(pdh) or {}).get("additionalDirectories") or []
+check("dirs union: a hand-added dir survives the framework turning on -- %s" % got, got == ["/tmp/hand-added", os.path.realpath(pdh)], got)
+wh2.put(profile(pdh, "dirshand", framework=False))
+wh2.run()
+check("dirs union: and off again leaves only it -- %s" % (perms_of(pdh) or {}), (perms_of(pdh) or {}).get("additionalDirectories") == ["/tmp/hand-added"], perms_of(pdh))
 
 # ------------------------------------------------------------------------------------------ 3. no list file
 ppn = project()
