@@ -39,8 +39,10 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import sandbox  # noqa: E402
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 ADAPTER = os.path.join(os.path.dirname(HERE), "scripts", "consent", "omarchy")
@@ -192,7 +194,7 @@ def main():
     tmps = []
 
     def tmpdir():
-        d = tempfile.mkdtemp(prefix="consent-adapter-")
+        d = sandbox.mkdtemp("consent-adapter-")  # removed at exit too, whatever raises below
         tmps.append(d)
         return d
 

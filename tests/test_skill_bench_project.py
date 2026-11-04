@@ -110,6 +110,7 @@ def main():
     want("materialize: the tree is the base state", open(os.path.join(tree, "calc.py")).read().count("a - b"), 2)
     want("materialize: one commit and the fix is not in history",
          (git(tree, "rev-list", "--count", "HEAD"), fix in subprocess.run(["git", "-C", tree, "log", "--all", "--format=%H"], capture_output=True, text=True).stdout), ("1", False))
+    sandbox.rmtree(d)  # fresh() made it in the temp dir, outside tmp: three of these were left per run
 
     # a base commit that already holds an earlier capture (.bench with another task's ideal diff) must not show it to the agent
     rl = os.path.join(tmp, "leaky")
@@ -126,6 +127,7 @@ def main():
     d2, err2 = sb.fresh(os.path.join(rl, ".bench", "tasks", "proj-add-01"), None)
     want("materialize: an earlier capture in the base commit is not in the agent's tree",
          (err2, os.path.exists(os.path.join(d2, "repo", ".bench"))), (None, False))
+    sandbox.rmtree(d2)
 
     # hidden tests: files in <task>/overlay/ are copied into the work tree after the agent has finished and before the checks
     # run, so a regression test that came with the merged fix is not part of the ideal diff (a correct answer that did not
@@ -139,6 +141,7 @@ def main():
          (code, "proj-add-01: ok" in out), (0, True))
     d3, err3 = sb.fresh(od, None)
     want("overlay: the hidden test is not in the agent's tree", (err3, os.path.exists(os.path.join(d3, "repo", "check_add.py"))), (None, False))
+    sandbox.rmtree(d3)
     put(os.path.join(od, "overlay", "check_add.py"), "import calc\nassert calc.add(2, 3) == 6\n")
     code, out = run(obench)
     want("overlay: a hidden test the ideal diff cannot satisfy is refused, naming the ideal", (code, "ideal" in out), (1, True))
