@@ -1066,6 +1066,99 @@ def doctor_extra_row():
     return out
 
 
+# How long the `context base` row waits for one `fwx context-base` call. The audit reads subagent transcripts, which are
+# megabytes, and a check with --hook-command runs the hook once.
+CONTEXT_BASE_TIMEOUT = 120
+CONTEXT_BASE_HOOK = "subagent_context.py"
+CONTEXT_BASE_LAST = "3"  # sessions the audit reads: enough to see a regression, few enough to be quick
+
+
+def _fwx_context_base(fwx, args):
+    """(exit code or None on a timeout, stdout lines, stderr lines) of `python3 <fwx> context-base ARGS`."""
+    try:
+        r = subprocess.run([sys.executable, fwx, "context-base"] + args, cwd=lib.ROOT, text=True, capture_output=True,
+                           stdin=subprocess.DEVNULL, timeout=CONTEXT_BASE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, [], []
+    return r.returncode, r.stdout.strip().splitlines(), r.stderr.strip().splitlines()
+
+
+def _context_base_target(label, fwx, steps):
+    """One result for one target. `steps` is [(kind, args)], each run through fwx: any exit but 0 and 77 is a FAIL that
+    quotes what fwx printed (every FAIL line of an audit, so the agent and its type are there) and the command that
+    reproduces it; 77 is NOT RUN, NOT ARMED; 0 is a PASS with fwx's last line. A target any of whose steps failed is a FAIL
+    whatever the others did; one with only 77s is a SKIP; one with a 0 and a 77 is a PASS that says which step did not run."""
+    failed, unarmed, passed = [], [], []
+    for kind, args in steps:
+        code, out, err = _fwx_context_base(fwx, args)
+        last = out[-1] if out else (err[-1] if err else "")
+        if code == 0:
+            passed.append("%s: %s" % (kind, last))
+        elif code == lib.NOT_RUN:
+            unarmed.append((kind, last[len(NOT_ARMED):] if last.startswith(NOT_ARMED) else last))
+        else:
+            fails = [l for l in out if l.startswith("FAIL ")]
+            said = fails[:5] + (["+%d more FAIL line(s)" % (len(fails) - 5)] if len(fails) > 5 else []) + (
+                [last] if last and last not in fails[:5] else []) + err[:5]
+            why = "did not answer in %d s" % CONTEXT_BASE_TIMEOUT if code is None else "exit %d" % code
+            failed.append("%s %s (%s) -- %s" % (kind, why, " | ".join(said) or "no output",
+                                               shlex.join(["python3", fwx, "context-base"] + args)))
+    if failed:
+        return lib.Result("FAIL", "context base", "%s: %s" % (label, "; ".join(failed)))
+    if not passed:
+        return lib.Result("SKIP", "context base", "%s%s: %s" % (NOT_ARMED, label, "; ".join("%s: %s" % u for u in unarmed)))
+    return lib.Result("PASS", "context base", "%s: %s" % (label, "; ".join(passed + ["%s: %s%s" % (k, NOT_ARMED, t) for k, t in unarmed])))
+
+
+def context_base_row():
+    """The `context base` row (2.5): did every subagent get the base context it should? Targets, one result each:
+    every entry of ~/.claude/settings.json whose command runs `subagent_context.py --file F [--source S]`, and every
+    profile with `framework: true`. For an entry, `fwx context-base check --file F --source S --hook-command CMD` (the
+    file is sealed and current, the hook answers a general-purpose agent and not an Explore one) and `audit --project
+    <this checkout> --last 3 --file F` (the subagent transcripts of the last three sessions here); for a profile,
+    `check --project P` and `audit --project P --last 3`. fwx is `bin/fwx` of framework.plugin_source.path. Exit 0 is a
+    PASS, 77 a SKIP, anything else a FAIL naming the command to run by hand. No fwx, or nothing to look at: a SKIP, NOT RUN,
+    NOT ARMED. The audit reads transcripts written before the hook existed, so it FAILs until three newer sessions with
+    subagents have passed; that is the row working, not a reason to weaken it."""
+    from forge import framework, hooks  # not at import: hooks reads config/forge.json
+    src, why = framework._source()
+    fwx = os.path.join(src["path"], "bin", "fwx") if src else None
+    if not fwx or not os.path.isfile(fwx):
+        return lib.Result("SKIP", "context base", NOT_ARMED + "no bin/fwx to run (%s), so no subagent's base context was looked at"
+                          % (why or "%s is not there" % lib.short(fwx)))
+    where = lib.short(hooks.USER_SETTINGS)
+    try:
+        doc = lib.read_owned(hooks.USER_SETTINGS, None)
+    except lib.Unreadable as e:
+        return lib.Result("FAIL", "context base", "%s is unreadable, so its %s entries were not looked for: %s" % (where, CONTEXT_BASE_HOOK, e))
+    out = []
+    for event, _, _, hook in (lib.hook_entries(doc)[0] if doc is not None else []):
+        command = hook.get("command")
+        if not isinstance(command, str) or CONTEXT_BASE_HOOK not in command:
+            continue
+        try:
+            words = shlex.split(command)
+        except ValueError as e:
+            out.append(lib.Result("FAIL", "context base", "the %s entry under %s in %s does not parse (%s) -- fix the entry, or forge sync --apply"
+                                  % (CONTEXT_BASE_HOOK, event, where, e)))
+            continue
+        opts = {w: words[i + 1] for i, w in enumerate(words[:-1]) if w in ("--file", "--source")}
+        if "--file" not in opts:
+            out.append(lib.Result("FAIL", "context base", "the %s entry under %s in %s has no --file, so there is no base to check -- "
+                                  "forge sync --apply, or add --file F to the entry" % (CONTEXT_BASE_HOOK, event, where)))
+            continue
+        check = ["check", "--file", opts["--file"]] + (["--source", opts["--source"]] if "--source" in opts else []) + ["--hook-command", command]
+        audit = ["audit", "--project", lib.ROOT, "--last", CONTEXT_BASE_LAST, "--file", opts["--file"]]
+        out.append(_context_base_target("hook %s" % lib.short(opts["--file"]), fwx, [("check", check), ("audit", audit)]))
+    for name, prof in sorted(lib.profiles().items()):
+        if prof.get("framework") is True and prof.get("project_path"):
+            project = prof["project_path"]
+            out.append(_context_base_target("profile %s" % name, fwx, [
+                ("check", ["check", "--project", project]), ("audit", ["audit", "--project", project, "--last", CONTEXT_BASE_LAST])]))
+    return out or lib.Result("SKIP", "context base", NOT_ARMED + "no %s entry in %s and no profile with framework true, so no subagent's base "
+                             "context was looked at" % (CONTEXT_BASE_HOOK, where))
+
+
 # (name, command, fix). A command exits 0 when healthy. A callable returns a lib.Result instead,
 # which is how a check can be a WARN: a command's exit code is only ever PASS or FAIL
 # (hindsight_doctor exits with its failure count, argparse with 2). The fix is appended to the
@@ -1093,6 +1186,8 @@ CHECKS = [
     # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
     ("gsd engine", gsd_engine_row, ""),
     ("research expiry", research_expiry, RESEARCH_FIX),
+    # Its failures carry the command that reproduces them, so the row's fix is empty.
+    ("context base", context_base_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
 ]
