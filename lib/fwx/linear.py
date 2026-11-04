@@ -54,7 +54,7 @@ NAME = re.compile(r"[a-z][a-z0-9-]*\Z")
 NOT_FOUND = re.compile(r"(Could not find referenced|Entity not found)")
 
 ISSUE_FIELDS = ("identifier title description updatedAt state { name type } labels { nodes { name } } "
-                "project { name } assignee { name email }")
+                "project { name } assignee { name email } url")
 Q_PROJECT = ("query($name: String!) { projects(filter: { name: { eq: $name } }) "
              "{ nodes { id name teams { nodes { id key } } } } }")
 Q_REF = "query($id: String!) { issue(id: $id) { id identifier project { name } } }"
@@ -262,7 +262,7 @@ class Client:
                 "state": {"name": _dig(node, "state", "name"), "type": _dig(node, "state", "type")},
                 "labels": [config.label_from_linear(self.cfg, l["name"]) for l in _dig(node, "labels", "nodes")],
                 "project": (node.get("project") or {}).get("name"), "updatedAt": _dig(node, "updatedAt"),
-                "assignee": self._assignee(_dig(node, "assignee"))}
+                "assignee": self._assignee(_dig(node, "assignee")), "url": _dig(node, "url")}
 
     @staticmethod
     def _assignee(node):
