@@ -1,4 +1,4 @@
-"""Build, seal and check the base-context file every agent of a phase is handed: fwx context-base build|seal|check.
+"""Build, seal, check and audit the base-context file every agent of a phase is handed: fwx context-base build|seal|check|audit.
 
   build <dir> [--map F]      write the base of a phase, subphase or job folder (`<git-common-dir>/fwx/context-base/<phase>.md`)
                              when it changed; prints `wrote <path> <n> units (map <m>, goal <g>, decided <d>)`, or `unchanged ...`
@@ -8,18 +8,28 @@
                              (stage, context.md, decisions.tsv, the map or --source moved on) or names an `fwx` command that
                              does not exist; --hook-command runs CMD with a toy SubagentStart input and wants the base for
                              general-purpose and nothing for Explore; always prints how much it looked at
+  audit (--session ID | --project P [--last N]) [--projects-dir D] [--file F]
+                             read the subagent transcripts of a session (or of the N newest sessions of a project that have
+                             any, default 1) and say which agent did not get the base its type should get: one line
+                             `FAIL <agent_id> <type>: <verdict>` per failure (missing, over-cap, wrong, double), `WARN` for a
+                             stale one, and `audited <n> subagent(s) in <s> session(s): <ok> ok, <w> stale, <k> not armed`.
+                             What is owed comes from data/context-base.tsv and from the base file of today: --file F, else the
+                             open phase of the session's cwd (of P); with neither, an agent that got nothing is `not armed`.
+                             --projects-dir defaults to ${CLAUDE_CONFIG_DIR:-~/.claude}/projects. Exit 1 on any FAIL.
 
 Lengths are UTF-16 units, cap 9000 (lib/fwx/context_base.py says why). --map points at another map than data/context-map.md.
-Exit 0 ok, 1 refused or failed, 2 usage or an unusable folder, 77 `NOT RUN, NOT ARMED: no open phase` (--project, nothing to look at).
+Exit 0 ok, 1 refused or failed, 2 usage or an unusable folder, 77 `NOT RUN, NOT ARMED` (check --project: no open phase; audit: no
+subagent transcript found).
 """
 import os
 import sys
 
-from fwx import config, context_base as cb, state
+from fwx import config, context_audit as ca, context_base as cb, state
 
 USAGE = ("usage: fwx context-base build <dir> [--map F]\n"
          "       fwx context-base seal <file> [--source F]\n"
-         "       fwx context-base check (<dir> | --file F | --project P) [--source F] [--map F] [--hook-command CMD]\n")
+         "       fwx context-base check (<dir> | --file F | --project P) [--source F] [--map F] [--hook-command CMD]\n"
+         "       fwx context-base audit (--session ID | --project P [--last N]) [--projects-dir D] [--file F]\n")
 NOT_RUN = "NOT RUN, NOT ARMED"
 
 
@@ -104,11 +114,34 @@ def _check(args):
     return 1 if problems else 0
 
 
+def _audit(args):
+    got = _options(args, ("--session", "--project", "--last", "--projects-dir", "--file"))
+    if got is None or got[0]:
+        return _usage()
+    opts = got[1]
+    if ("--session" in opts) == ("--project" in opts):
+        return _usage("exactly one of --session or --project")
+    if "--last" in opts and "--project" not in opts:
+        return _usage("--last goes with --project")
+    last = opts.get("--last", "1")
+    if not last.isdigit() or int(last) < 1:
+        return _usage("--last wants a number of sessions, 1 or more")
+    try:
+        sessions = ca.find_sessions(ca.projects_dir(opts.get("--projects-dir")), session=opts.get("--session"),
+                                    project=opts.get("--project"), last=int(last))
+        lines, rc = ca.report(ca.audit(sessions, file=opts.get("--file"), project=opts.get("--project")))
+    except ca.AuditError as e:
+        sys.stderr.write("fwx context-base: %s\n" % e)
+        return 2
+    print("\n".join(lines))
+    return rc
+
+
 def main(argv):
-    if not argv or argv[0] not in ("build", "seal", "check"):
+    if not argv or argv[0] not in ("build", "seal", "check", "audit"):
         return _usage()
     try:
-        return {"build": _build, "seal": _seal, "check": _check}[argv[0]](list(argv[1:]))
+        return {"build": _build, "seal": _seal, "check": _check, "audit": _audit}[argv[0]](list(argv[1:]))
     except cb.ContextBaseError as e:
         sys.stderr.write("context-base: %s\n" % e)
         return 1 if argv[0] == "build" and "over the cap" in str(e) else 2
