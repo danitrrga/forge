@@ -102,7 +102,9 @@ def _phase_name(folder):
     root = os.path.realpath(str(state.plan_root(folder)))
     if not folder.startswith(root + os.sep):
         raise ContextBaseError("%s is not inside the .fwx folder of its repository" % folder)
-    return os.path.relpath(folder, os.path.dirname(root)).replace(os.sep, "__")
+    rel = os.path.relpath(folder, os.path.dirname(root))
+    # `.fwx/...` would name a hidden file: drop that one leading dot (every folder starts with the same `.fwx`, so names stay unique)
+    return rel[1:].replace(os.sep, "__") if rel.startswith(".") else rel.replace(os.sep, "__")
 
 
 def base_path(folder):

@@ -11,7 +11,7 @@ import os
 import re
 import sys
 
-from fwx import config, state
+from fwx import config, context_base, state
 
 SUB_OF_PATH = re.compile(r"/" + re.escape(state.PLAN_DIR) + r"/subprojects/([^/]+)/")
 
@@ -105,7 +105,12 @@ def cmd_use(a):
 # ---- making and cancelling --------------------------------------------------------------------------------------
 
 def cmd_new_phase(a):
-    print(state.new_phase(a.slug, subproject=a.subproject, milestone=a.milestone, session=a.session))
+    folder = state.new_phase(a.slug, subproject=a.subproject, milestone=a.milestone, session=a.session)
+    try:  # the phase is made: a base that cannot be built is a line on stderr, never another exit code
+        context_base.refresh(folder)
+    except Exception as e:
+        sys.stderr.write("fwx state new-phase: context-base: %s\n" % e)
+    print(folder)
     return 0
 
 

@@ -48,6 +48,9 @@ Controls, each seen red on a copy of the repo with one thing changed (first FAIL
   - `build` rewrites a file that did not change:
       FAIL: a second build says `unchanged`: wrote ...
       FAIL: a second build changes nothing: modification time kept: got ..., want ...
+
+The base file's name does not start with a dot (2.5 U4; seen red on the old `_phase_name`, 104 checks):
+  FAIL: the file name does not start with a dot (a hidden file is easy to miss): .fwx__milestones__v1__phases__01-alpha.md
 """
 import json
 import os
@@ -124,8 +127,11 @@ base = base_of(d)
 s.ok("the file is the one path() names", bool(m) and m.group(2) == base, "%s vs %s" % (m and m.group(2), base))
 text = read(base) if os.path.exists(base) else ""
 common = helpers.git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
-s.eq("the file lives in <git-common-dir>/fwx/context-base/<phase path with / as __>.md", base,
-     os.path.join(common, "fwx", "context-base", os.path.relpath(d, repo).replace(os.sep, "__") + ".md"))
+s.eq("the file lives in <git-common-dir>/fwx/context-base/<phase path, its leading dot dropped, / as __>.md", base,
+     os.path.join(common, "fwx", "context-base", os.path.relpath(d, repo).lstrip(".").replace(os.sep, "__") + ".md"))
+s.ok("the file name does not start with a dot (a hidden file is easy to miss)", not os.path.basename(base).startswith("."),
+     os.path.basename(base))
+s.ok("the name still tells the folder apart: a sibling phase gets another file", base_of(phase(repo=repo)[1]) != base)
 s.ok("it is inside the git dir, so `git status` stays clean", base.startswith(common + os.sep) and not helpers.git(repo, "status", "--porcelain").count("context-base"))
 first = text.split("\n", 1)[0]
 rest = text.split("\n", 1)[1] if "\n" in text else ""
