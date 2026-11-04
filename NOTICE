@@ -32,6 +32,12 @@ EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engin
   agents/decisions.md: the section "The settlement test" of skills/ce-plan/references/settled-decisions.md, word for word except
   "the user" reads "the owner", "(below)" is dropped and the Directive bullet ends after "Not settled.".
   playbooks/principles.md: the sentence on risk of rule 5 of skills/ce-plan/references/structure.md, quoted.
+  agents/planner.md: lines 46-57 of skills/ce-plan/references/structure.md word for word (the units block); lines 137 and 143-152
+  of the same file adapted (the rule on what is built, what goes to `not_built` and what goes to `later`). Its shape is read from
+  skills/ce-plan/SKILL.md.
+  agents/post-mortem.md: the two questions on success criteria (line 51) of skills/ce-doc-review/references/personas/adversarial-document-reviewer.md,
+  word for word. Read for the same agent: what a plan critic looks at in that file and in scope-guardian-reviewer.md (unrequested
+  mechanisms), in words of its own.
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
   agents/decisions.md: the three ADR criteria of skills/engineering/domain-modeling/SKILL.md, as written there.
@@ -39,6 +45,24 @@ mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/execute.md, playbooks/session.md, playbooks/ui-walk.md and playbooks/principles.md, and for the
   rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
+  Read for agents/pre-mortem.md: the voice of skills/interrogate/references/reviewer-prompt.md and the filters of its lead-judgment.md
+  ("no findings" is valid; a risk nobody can reach is dropped; another split of the work is not a finding), in words of its own.
+  Text copied by agents/planner.md: line 25 of skills/tdd/SKILL.md word for word (the two sentences on a bad test); the first
+  sentence of playbooks/multi-phase-plan.md line 5 word for word, and lines 9 and 12-13 of it, line 18 of skills/figure-it-out/SKILL.md
+  and line 9 of playbooks/refactoring.md adapted.
+  agents/post-mortem.md: the sentence "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21,
+  word for word. Read for the same agent: the voice of skills/interrogate/references/reviewer-prompt.md, the filters of its
+  lead-judgment.md and the ladder of proof of skills/blast-radius/SKILL.md, in words of its own.
+  Read for the shape of skills/pre-mortem/SKILL.md, skills/plan/SKILL.md and skills/post-mortem/SKILL.md: skills/thermos/SKILL.md.
+
+open-gsd/gsd-core, https://github.com/open-gsd/gsd-core, commit 35f5a452239b897b8d6352c973e1e4efd683370f (tag v1.18.0, the version
+of the npm package it was read from; MIT).
+  agents/pre-mortem.md: the phrase "assume it has already failed" of gsd-core/references/thinking-models-planning.md line 15,
+  word for word.
+  agents/planner.md: lines 10-11 of gsd-core/references/failing-direction.md word for word (the sentence on a command with no
+  failing direction); line 358 of agents/gsd-plan-checker.md adapted (a criterion the owner can observe, not an implementation detail).
+  agents/post-mortem.md: read for the classification of every finding as blocker, warning or info, each with evidence
+  (agents/gsd-plan-checker.md lines 41-47), and for its point that a complete plan can still miss the goal, in words of its own.
 
 EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230705a5 (MIT).
   Text copied by part 3.1, in every line "user" reading "owner" (as in agents/decisions.md). skills/discuss/references/rounds.md takes line

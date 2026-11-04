@@ -52,7 +52,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
 
-FWX_STEP = re.compile(r"^\s*-\s+run:\s+python3 bin/fwx test\s*$")
+FWX_STEP = re.compile(r"^\s*-\s+run:\s+python3 bin/fwx test(\s+--expect-not-run[= ]\S+)*\s*$")
 UV = re.compile(r"\buv\b")
 KIT_CHECKS = """name: Project checks
 on:

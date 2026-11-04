@@ -15,6 +15,7 @@ python3 bin/fwx budget    # context and quota left
 python3 bin/fwx state resolve    # the session's phase; `state --help` lists the rest
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
+python3 bin/fwx plan check <dir>    # the structure of a phase's plan.md (and each subphase's), premortem.md and postmortem.md; exit 1 on an error; --json
 python3 bin/fwx context-base build <dir>    # the base-context file every agent of a phase starts with; `seal` marks a hand-written one, `check` fails on one over the cap, edited or stale
 python3 bin/fwx discuss start --json    # what the discuss opens with: the configuration, the phases, the models and what waits in Linear; read-only
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
@@ -26,7 +27,9 @@ python3 bin/fwx playbooks check    # each playbook against the tree and the bloc
 
 `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
 when every file passed, 1 when one failed or when there is no test file, and 77 when none failed but one could not
-run (a missing tool, key or network). A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
+run (a missing tool, key or network). `--expect-not-run PATH[,PATH...]` declares tests that cannot run where it is
+called (CI): each prints `EXPECTED NOT RUN: PATH: <reason>` and no longer makes the exit 77; an undeclared one still
+does, a declared one that fails is still 1, and a run where nothing passed or a declared path is no test file is 1. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
 ## Configuration
