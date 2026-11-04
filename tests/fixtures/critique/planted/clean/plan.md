@@ -3,7 +3,8 @@
   "size": {"tag": "small", "parts": 1, "agents": 1},
   "criteria": [
     {"id": "C1", "text": "`calc.py` evaluates an expression with the four operations, brackets and a leading minus, and prints sums as a person writes them.", "measure": "`python3 tests/test_calc.py` exits 0, and `python3 calc.py \"0.1 + 0.2\"` prints 0.3."},
-    {"id": "C2", "text": "A division by zero prints a message and stops with exit code 1, with no traceback.", "measure": "`python3 calc.py \"1 / 0\"; echo $?` prints the message on stderr and then 1."}
+    {"id": "C2", "text": "A division by zero prints a message and stops with exit code 1, with no traceback.", "measure": "`python3 calc.py \"1 / 0\"; echo $?` prints the message on stderr and then 1."},
+    {"id": "C3", "text": "With no argument, `calc.py` reads one expression per line, prints each result, and stops at an empty line.", "measure": "`printf '2 + 3\n4 * 5\n\n' | python3 calc.py` prints 5 and then 20 and exits 0."}
   ],
   "tasks": [
     {

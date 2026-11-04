@@ -1,0 +1,5 @@
+date	id	decision	why	rejected	support	source	supersedes
+day-1	D1	A Reset button on the tally page that puts the total back to zero.	The owner starts a new count by hand today and wants one press.	resetting only from the command line	chosen	turn 1	
+day-1	D2	Reset removes every stored entry, not only the number on screen.	A total that comes back after a reload is not a reset.	clearing the display only	chosen	turn 2	
+day-1	D3	The button resets at once, with no confirmation.	The owner wants one press and nothing in the way.	a confirmation panel; a ten-second undo	chosen	turn 3	
+day-1	D4	The design in `demo/reset.html`: Reset beside Add in the warning colour; the panel asks "Set the total back to zero? This removes every entry." with Cancel and Reset.	The owner opened the page and approved it.		approved	turn 4	
