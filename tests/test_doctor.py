@@ -986,6 +986,10 @@ def project_world(tmp):
     root, home = os.path.join(base, "forge"), os.path.join(base, "home")
     sandbox.copy_engine(root)
     sandbox.seed(root)
+    # 3.6 U2c: the generator lists the entries git tracks in the checkout (forge/sync.py forge_deny), and a copy has no history
+    # of its own: without this index every toy project would get the `!` line "tracks no entry to protect" and nothing written.
+    sandbox.git(root, "init", "-q")
+    sandbox.git(root, "add", "-A")
     profiles = os.path.join(root, "config", "profiles")
     for f in os.listdir(profiles):
         os.remove(os.path.join(profiles, f))
