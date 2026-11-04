@@ -28,6 +28,8 @@ Writes are atomic (temp -> replace) with a one-time .bak backup. Idempotent.
 Invariants (from a split-brain bug):
   * Claude project key is ALWAYS the forward-slash path; never create a backslash dup.
   * Never emit a server whose secret resolves empty -> abort that server, warn loudly.
+  * The agents of a project never write in forge: every profile but forge's own gets `permissions.deny` rules
+    (Edit and Write) on the top-level entries of this checkout, `plugins/` left out (forge_deny).
   * claude-mem-lite's store dir is DERIVED from the project name -- see forge/memory.py.
     claude-mem itself (thedotmack) was retired; RETIRED_MEMORY refuses a profile
     that still grants it.
@@ -39,6 +41,61 @@ import sys
 from forge import framework, hooks, lib, mcp, memory, skills
 
 CFG = os.path.join(lib.ROOT, "config")
+
+# The agents of a project do not write in forge (3.6 U2c): a problem with forge is fixed through the `forge` CLI or filed
+# as an issue, never by a session of a project, which lacks forge's context and tools. A `deny` beats every `allow`, and a
+# permission pattern cannot leave a folder out of itself (measured, tests/test_forge_write_deny.py), so the exception for
+# `plugins/` (the plugin repos live there and their sessions write in their own folder) is one pair of rules per
+# other top-level entry of the checkout, listed on every sync, which runs at the start of each project's session.
+FORGE_PROFILE = "forge"
+FORGE_DENY_KEEP = ("plugins",)
+FORGE_DENY_TOOLS = ("Edit", "Write")
+FORGE_DENY_WHY = "agents of a project do not write in forge"
+
+
+def forge_deny(name, prof):
+    """(rules, error) for the profile `name`: `Edit` and `Write` `deny` rules on each top-level entry of the checkout
+    (`lib.ROOT`, read at call time, never written in the engine) but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
+    directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own profile (by name, or whose project is
+    the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout that cannot be listed or has nothing to deny."""
+    root = os.path.realpath(lib.ROOT)
+    ppath = prof.get("project_path") or ""
+    if name == FORGE_PROFILE or os.path.realpath(ppath) == root or not os.path.isdir(ppath):
+        # a project folder that is not there gets nothing: writing the file would make the folder and hide the `!` line
+        # the codex step prints for it
+        return [], None
+    try:
+        entries = sorted(e for e in os.listdir(root) if e not in FORGE_DENY_KEEP)
+    except OSError as e:
+        entries, why = [], "cannot be listed (%s)" % e
+    else:
+        why = "has no entry to protect"
+    if not entries:
+        return [], "   ! forge write deny -> the checkout %s %s -- nothing written for this project" % (root, why)
+    rules = []
+    for e in entries:
+        tail = "/**" if os.path.isdir(os.path.join(root, e)) else ""
+        rules += ["%s(/%s/%s%s)" % (t, root, e, tail) for t in FORGE_DENY_TOOLS]
+    return rules, None
+
+
+def with_forge_deny(prof, rules):
+    """`prof` with `rules` added to its `permissions.deny`, after what the profile declares itself (as framework.with_permissions
+    does for allow, so forge/skills.py claims them item by item); `prof` itself with nothing to add."""
+    if not rules:
+        return prof
+    cur = dict(prof.get("permissions") or {})
+    have = cur.get("deny")
+    cur["deny"] = list(dict.fromkeys((have if isinstance(have, list) else []) + rules))
+    return dict(prof, permissions=cur)
+
+
+def _deny_lines(prof, rules):
+    """The `+ deny` lines for the rules the project's settings.local.json does not hold yet."""
+    cur = lib.read_json(os.path.join(prof["project_path"], ".claude", "settings.local.json"), quiet=True)
+    cur = cur.get("permissions") if isinstance(cur, dict) else None
+    have = cur.get("deny") if isinstance(cur, dict) and isinstance(cur.get("deny"), list) else []
+    return ["  + deny %s  (%s)" % (r, FORGE_DENY_WHY) for r in rules if r not in have]
 
 
 def _unreadable(e, what="not written"):
@@ -207,6 +264,12 @@ def _run(argv, rule):
             print("\n".join(fp.errors) + "\n")
             continue
 
+        denied, deny_error = forge_deny(name, prof)
+        if deny_error:
+            print(deny_error + "\n")
+            continue
+        deny_lines = _deny_lines(prof, denied)
+
         cj.project(prof, sel, registry, secrets, errors)
         for e in errors:
             print("   ! " + e)
@@ -217,7 +280,7 @@ def _run(argv, rule):
         settings_ok = True
         try:
             ov = skills.write_settings_local(
-                ctx, mcp.with_denied_tools(framework.with_permissions(framework.with_env(prof, fw, secrets), fp), sel, registry),
+                ctx, with_forge_deny(mcp.with_denied_tools(framework.with_permissions(framework.with_env(prof, fw, secrets), fp), sel, registry), denied),
                 secrets, env_errors, hooks.project_hooks(prof), fw if fw.on else None)
         except lib.Unreadable as e:
             ov, settings_ok = _unreadable(e), False
@@ -226,7 +289,7 @@ def _run(argv, rule):
         for e in env_errors:
             print("   ! " + e)
         if settings_ok:
-            for line in fp.lines:
+            for line in (*fp.lines, *deny_lines):
                 print(line)
             for line in framework.write(ctx, prof, fw, name, secrets):
                 print(line)

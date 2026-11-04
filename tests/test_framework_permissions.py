@@ -264,8 +264,9 @@ for label, over in (("false", {"framework": False}), ("no field", {"framework": 
     wo = World(LIST)
     wo.put(profile(ppo, "off" + label.replace(" ", ""), **over))
     code, out = wo.run()
-    check("%s profile: no permissions key written -- %s" % (label, perms_of(ppo)), perms_of(ppo) is None and "+ allow" not in out
-          and "permissions ->" not in out, (perms_of(ppo), out))
+    # 3.6 U2c: the `deny` rules on forge (forge/sync.py forge_deny) go into every profile's file; nothing of the framework does.
+    check("%s profile: no framework permissions written -- %s" % (label, sorted(perms_of(ppo) or {})), sorted(perms_of(ppo) or {}) == ["deny"]
+          and "+ allow" not in out and "permissions ->" not in out and "additionalDirectories" not in out, (perms_of(ppo), out))
 
 # true -> false: only the list's rules go; a rule put by hand stays.
 ppt = project()
