@@ -73,7 +73,7 @@ BASE_SETTINGS = os.path.join(TOY, "forge-base.json")
 with open(BASE_SETTINGS, "w", encoding="utf-8") as fh:
     json.dump({"integrations": {k: False for k in lib.INTEGRATIONS}}, fh)
 lib.SETTINGS = BASE_SETTINGS
-from forge import owned, sync  # noqa: E402
+from forge import memory, owned, sync  # noqa: E402
 
 assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
 lib.may_write = lambda: (True, "")  # this checkout may be a linked worktree, which never writes
@@ -125,7 +125,7 @@ def toy_root(entries=("hooks/guard.py", "skills/x/SKILL.md", "plugins/toy/probe.
             _git(root, "add", *data, data=True)
             _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "data", data=True)
     make(untracked)
-    TRACKED[root] = {}
+    TRACKED[root] = {"data": True}  # data/ is denied before the generator made it (forge/sync.py FORGE_DENY_MADE)
     for always in (".git", ".forge-data.git", "credentials", "data"):  # the untracked entries that always matter, when the checkout has them
         if os.path.isdir(os.path.join(root, always)):
             TRACKED[root][always] = True
@@ -282,8 +282,8 @@ forge_json()
 # ------------------------------------------------------------------------------------------ 1. a project gets the rules
 ROOT1 = toy_root()
 WANT1 = rules_for(ROOT1)
-check("fixture: the hand-written expectation is 14 rules (5 tracked entries but plugins and design, plus the untracked .git and credentials, Edit and Write) -- %d" % len(WANT1),
-      len(WANT1) == 14 and "Edit(/%s/credentials/**)" % ROOT1 in WANT1 and "Write(/%s/.git/**)" % ROOT1 in WANT1, WANT1)
+check("fixture: the hand-written expectation is 16 rules (5 tracked entries but plugins and design, plus the untracked .git, credentials and data, Edit and Write) -- %d" % len(WANT1),
+      len(WANT1) == 16 and "Edit(/%s/credentials/**)" % ROOT1 in WANT1 and "Write(/%s/.git/**)" % ROOT1 in WANT1, WANT1)
 check("fixture: logs/ is on disk, untracked", os.path.isdir(os.path.join(ROOT1, "logs")) and "logs" not in TRACKED[ROOT1], TRACKED[ROOT1])
 pp = project()
 w = World()
@@ -422,8 +422,9 @@ check("no history: the file is left as it was -- %s" % deny_of(ppm), set(WANT1) 
 # only exempt entries tracked: the always-denied `.git` is all there is to deny
 ROOTP = toy_root(("plugins/a/b.txt", "design/x.md"), untracked=())
 code, out = wm.run(root=ROOTP)
-check("only exempt entries tracked: just the rules of .git -- %s" % [r for r in deny_of(ppm) or [] if ROOTP in r],
-      [r for r in deny_of(ppm) or [] if ROOTP in r] == rules_for(ROOTP) == ["Edit(/%s/.git/**)" % ROOTP, "Write(/%s/.git/**)" % ROOTP], (deny_of(ppm), out))
+check("only exempt entries tracked: just the rules of .git and data -- %s" % [r for r in deny_of(ppm) or [] if ROOTP in r],
+      [r for r in deny_of(ppm) or [] if ROOTP in r] == rules_for(ROOTP) == ["Edit(/%s/.git/**)" % ROOTP, "Write(/%s/.git/**)" % ROOTP,
+                                                                                         "Edit(/%s/data/**)" % ROOTP, "Write(/%s/data/**)" % ROOTP], (deny_of(ppm), out))
 
 # ------------------------------------------------------------------------------------------ 4. beside the framework step
 sandbox_cfg = World()
@@ -458,6 +459,35 @@ check("framework on: the deny rules are written too -- %s" % pf.get("deny"), pf.
 before = raw(slp(ppf2))
 code, out = sandbox_cfg.run(root=ROOT1)
 check("framework on: a second apply is byte-identical -- %s" % [l for l in out.splitlines() if l.startswith("  + ")], raw(slp(ppf2)) == before, out)
+
+# ------------------------------------------------------------------------------------------ 5. a second apply writes nothing
+# The first --apply of a profile that uses claude-mem-lite creates data/memory-lite/<store> in the checkout (memory.derive_lite_env),
+# a checkout that had no data/ before. A profile run earlier in the same apply (here `a5`, no lite) read the checkout before that, so
+# its first apply wrote no rule for data/ and the second one added them: a rewrite of settings.local.json and owned.json on the next session start (the fixture of tests/test_sync_fixture.py on
+# the installed checkout: "a second --apply writes nothing (no write lines, every mtime unchanged): exit 0, lines [], changed
+# ['home/.local/state/forge', 'home/.local/state/forge/owned.json', ...]"). data/ is now denied whether or not it exists yet.
+# Red on master (584fb80): "second apply: byte-identical and no `+ deny` -- ['  + deny Edit(//.../data/**)  (agents of a project do not write in forge)', ...]".
+ROOT5 = toy_root()
+check("idempotent: the toy checkout has no data/ before the first apply", not os.path.exists(os.path.join(ROOT5, "data")), os.listdir(ROOT5))
+pp5 = project()
+w5 = World()
+pp5a = project()
+w5.put(profile(pp5a, "a5"))  # profiles run in file order: a5 before memapp5
+w5.put(profile(pp5, "memapp5", plugins_keep=[memory.LITE_PLUGIN]))
+real_lite = memory.LITE_ROOT
+memory.LITE_ROOT = os.path.join(ROOT5, "data", "memory-lite")
+try:
+    code, out = w5.run(root=ROOT5)
+    first, first_owned, first_deny = raw(slp(pp5a)), claims_of(pp5a), deny_of(pp5a)
+    code2, out2 = w5.run(root=ROOT5)
+finally:
+    memory.LITE_ROOT = real_lite
+check("idempotent: the first apply made data/ in the checkout (the control: this is what moved the rules) -- %s" % os.listdir(ROOT5),
+      os.path.isdir(os.path.join(ROOT5, "data", "memory-lite", "memapp5")), os.listdir(ROOT5))
+check("idempotent: data/ is denied from the first apply -- %s" % first_deny,
+      "Edit(/%s/data/**)" % ROOT5 in (first_deny or []) and "Write(/%s/data/**)" % ROOT5 in (first_deny or []), first_deny)
+check("second apply: byte-identical and no `+ deny` -- %s" % plus_deny(out2),
+      code == 0 and code2 == 0 and raw(slp(pp5a)) == first and not plus_deny(out2) and claims_of(pp5a) == first_owned, (out, out2))
 
 sandbox.cleanup(bool(failures))
 for f in failures:

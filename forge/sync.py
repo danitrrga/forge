@@ -59,6 +59,10 @@ FORGE_DENY_WHY = "agents of a project do not write in forge"
 DATA_GIT = ".forge-data.git"  # the private data history over the same work tree (forge/publish.py)
 # Untracked, so git does not list them, yet always denied when the checkout has them: both histories, the secrets, the memory stores.
 FORGE_DENY_ALWAYS = (".git", DATA_GIT, "credentials", "data")
+# `data/` is made by the generator itself (memory.derive_lite_env, the first project that uses claude-mem-lite), in the middle of a
+# run: a checkout without it would give the profiles read before that no rule for it and the next run one more, a rewrite of every
+# settings.local.json. So it is denied whether or not it is there yet, as a directory.
+FORGE_DENY_MADE = ("data",)
 
 
 def _tracked_entries(root):
@@ -84,7 +88,7 @@ def _tracked_entries(root):
 
 def forge_deny(name, prof):
     """(rules, error) for the profile `name`: `Edit` and `Write` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
-    read at call time, never written in the engine) tracks in git, plus those of FORGE_DENY_ALWAYS it has, but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
+    read at call time, never written in the engine) tracks in git, plus those of FORGE_DENY_ALWAYS it has (FORGE_DENY_MADE ones even before they exist), but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
     directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own profile (by name, or whose project is
     the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout whose
     history cannot be read or has nothing to deny."""
@@ -96,8 +100,8 @@ def forge_deny(name, prof):
         return [], None
     tracked, why = _tracked_entries(root)
     for e in FORGE_DENY_ALWAYS:
-        if os.path.lexists(os.path.join(root, e)):
-            tracked.setdefault(e, os.path.isdir(os.path.join(root, e)))
+        if e in FORGE_DENY_MADE or os.path.lexists(os.path.join(root, e)):
+            tracked.setdefault(e, e in FORGE_DENY_MADE or os.path.isdir(os.path.join(root, e)))
     entries = sorted(e for e in tracked if e not in FORGE_DENY_KEEP)
     if why or not entries:
         return [], "   ! forge write deny -> the checkout %s %s -- nothing written for this project" % (
