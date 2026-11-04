@@ -1091,15 +1091,16 @@ def _context_base_target(label, fwx, steps):
     failed, unarmed, passed = [], [], []
     for kind, args in steps:
         code, out, err = _fwx_context_base(fwx, args)
-        last = out[-1] if out else (err[-1] if err else "")
+        # fwx's summary (`audited ...`, `checked ...`) is the line to quote; the audit prints it first, its FAIL lines after
+        last = next((l for l in out if l.startswith(("audited ", "checked "))), out[-1] if out else (err[-1] if err else ""))
         if code == 0:
             passed.append("%s: %s" % (kind, last))
         elif code == lib.NOT_RUN:
             unarmed.append((kind, last[len(NOT_ARMED):] if last.startswith(NOT_ARMED) else last))
         else:
             fails = [l for l in out if l.startswith("FAIL ")]
-            said = fails[:5] + (["+%d more FAIL line(s)" % (len(fails) - 5)] if len(fails) > 5 else []) + (
-                [last] if last and last not in fails[:5] else []) + err[:5]
+            said = ([last] if last and last not in fails else []) + fails[:5] + (
+                ["+%d more FAIL line(s)" % (len(fails) - 5)] if len(fails) > 5 else []) + err[:5]
             why = "did not answer in %d s" % CONTEXT_BASE_TIMEOUT if code is None else "exit %d" % code
             failed.append("%s %s (%s) -- %s" % (kind, why, " | ".join(said) or "no output",
                                                shlex.join(["python3", fwx, "context-base"] + args)))

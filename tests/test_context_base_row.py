@@ -11,10 +11,10 @@ A toy world per case: a toy forge root, HOME with a settings.json, profiles, a f
 points at a toy plugin directory whose `bin/fwx` is a fake (a python script that logs its argv and answers from a plan
 file), and a PATH holding only the fake's directory with python3 linked in (standing order 10: no real program behind it).
 
-Seen failing, before the row existed (54 cases then, 39 failures, exit 1): every row case came back CRASH with AttributeError:
+Seen failing, before the row existed (54 cases then, 39 failures, exit 1; 59 cases now): every row case came back CRASH with AttributeError:
 module 'forge.cli' has no attribute 'context_base_row'; "the row is registered" listed CHECKS without it.
 Negative control (a copy of the checkout with the row mutated, this file run against it): with `elif code == lib.NOT_RUN:`
-made `elif code != 0 and code is not None:` every non-zero exit of fwx falls to the 77 branch, and 11 of the 56 cases went
+made `elif code != 0 and code is not None:` every non-zero exit of fwx falls to the 77 branch, and 11 of the 56 cases went (before the summary-first case)
 red, among them "FAIL swallowed as SKIP: every step of the target exits 1: SKIP, want FAIL", "exit 1 of a hook check is a
 FAIL: PASS, want FAIL" and "exit 2 (usage) is a FAIL, not swallowed: PASS, want FAIL"."""
 import json
@@ -189,6 +189,13 @@ r = one("exit 1 of the audit is a FAIL", rows(), "FAIL")
 check("the audit's FAIL names each agent and its type",
       all(w in r.detail for w in ("a1b2c3", "general-purpose", "missing", "d4e5f6", "Plan", "wrong")), r)
 check("the audit's FAIL names the reproducing command", "/bin/fwx context-base audit --project" in r.detail and "--last 3" in r.detail, r)
+
+# the audit prints its summary first and its FAIL lines after: the summary is quoted whatever its place, and the FAIL lines are capped
+world(plan=[{"match": "audit", "rc": 1, "out": "audited 7 subagent(s) in 3 session(s): 0 ok, 0 stale, 0 not armed\n" +
+             "".join("FAIL id%d general-purpose: missing\n" % i for i in range(7))}])
+r = one("an audit with the summary first and 7 FAIL lines", rows(), "FAIL")
+check("the summary is quoted, five FAIL lines and the count of the rest",
+      "audited 7 subagent(s)" in r.detail and "id4 " in r.detail and "id5 " not in r.detail and "+2 more FAIL line(s)" in r.detail, r)
 
 world(plan=[{"match": "check", "rc": 77, "out": "NOT RUN, NOT ARMED: no open phase\n"}, {"match": "audit", "rc": 77, "out": "NOT RUN, NOT ARMED: no subagent transcript\n"}])
 r = one("both exit 77", rows(), "SKIP")
