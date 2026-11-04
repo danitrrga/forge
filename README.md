@@ -26,7 +26,9 @@ python3 bin/fwx playbooks check    # each playbook against the tree and the bloc
 
 `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
 when every file passed, 1 when one failed or when there is no test file, and 77 when none failed but one could not
-run (a missing tool, key or network). A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
+run (a missing tool, key or network). `--expect-not-run PATH[,PATH...]` declares tests that cannot run where it is
+called (CI): each prints `EXPECTED NOT RUN: PATH: <reason>` and no longer makes the exit 77; an undeclared one still
+does, a declared one that fails is still 1, and a run where nothing passed or a declared path is no test file is 1. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
 ## Configuration
