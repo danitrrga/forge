@@ -7,12 +7,22 @@ exits 1 on any; one that cannot run (a tool, a key or the network is missing) pr
 Exit 0 when every file passed. Exit 1 when one failed, or when there was no test file at all
 (looking at zero is a failure). Exit 77 when none failed but one did not run: neither green nor red,
 because a CI job that skips its tests would otherwise end green. Whoever wants 0 lets them run.
+
+`--expect-not-run PATH[,PATH...]` (repeatable, also `--expect-not-run=PATH`) declares tests that cannot run
+where this is called from (CI has no key, no private tree). A declared test that exits 77 prints
+`EXPECTED NOT RUN: PATH: reason` and no longer turns the exit to 77; an undeclared 77 still does. A declared test that
+runs counts as any other, so a failing one is still 1. The declaration widens nothing else: a run in which no
+test passed is 1 (everything declared away proves nothing), and so is a declared path that is no test file (a typo
+would silently un-declare it). Why a flag and not a list file: the reason sits beside the command in the workflow,
+and there is no second file to forget. Exit 2 on a usage error.
 """
 import os
 import subprocess
 import sys
 
 NOT_RUN = "NOT RUN, NOT ARMED"
+EXPECTED = "EXPECTED NOT RUN"
+USAGE = "usage: fwx test [--expect-not-run PATH[,PATH...]]\n"
 
 
 def clean_env():
@@ -36,20 +46,54 @@ def reason(output):
     return last.split(NOT_RUN + ":", 1)[1].strip() if (NOT_RUN + ":") in last else "no reason printed"
 
 
+def declared(argv):
+    """The set of declared paths, or None on a usage error."""
+    out = set()
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--expect-not-run":
+            i += 1
+            if i >= len(argv):
+                return None
+            value = argv[i]
+        elif a.startswith("--expect-not-run="):
+            value = a.split("=", 1)[1]
+        else:
+            return None
+        names = [n.strip() for n in value.split(",")]
+        if not all(names):
+            return None
+        out.update(names)
+        i += 1
+    return out
+
+
 def main(argv):
+    expect = declared(argv)
+    if expect is None:
+        sys.stderr.write(USAGE)
+        return 2
     env = clean_env()
     top = subprocess.run(["git", "rev-parse", "--show-toplevel"], env=env, capture_output=True, text=True)
     if top.returncode:
         sys.stderr.write("fwx test: not inside a git repository\n")
         return 1
     root = top.stdout.strip()
-    passed = failed = not_run = 0
-    for rel in test_files(root, env):
+    passed = failed = not_run = expected = 0
+    files = test_files(root, env)
+    unknown = sorted(expect - set(files))
+    for rel in unknown:
+        sys.stderr.write("fwx test: --expect-not-run names %s, which is no tests/test_*.py file\n" % rel)
+    for rel in files:
         r = subprocess.run([sys.executable, rel], cwd=root, env=env, stdin=subprocess.DEVNULL,
                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         if r.returncode == 0:
             passed += 1
             print("PASS  " + rel)
+        elif r.returncode == 77 and rel in expect:
+            expected += 1
+            print("%s: %s: %s" % (EXPECTED, rel, reason(r.stdout)))
         elif r.returncode == 77:
             not_run += 1
             print("%s: %s: %s" % (NOT_RUN, rel, reason(r.stdout)))
@@ -58,8 +102,9 @@ def main(argv):
             print("FAIL  %s (exit %d)" % (rel, r.returncode))
             for line in r.stdout.splitlines():
                 print("    " + line)
-    total = passed + failed + not_run
-    print("%d test file(s): %d passed, %d failed, %d not run" % (total, passed, failed, not_run))
-    if failed or total == 0:
+    total = passed + failed + not_run + expected
+    print("%d test file(s): %d passed, %d failed, %d not run%s"
+          % (total, passed, failed, not_run, ", %d expected not run" % expected if expected else ""))
+    if failed or total == 0 or unknown or (expect and passed == 0):
         return 1
     return 77 if not_run else 0

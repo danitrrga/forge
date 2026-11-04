@@ -31,5 +31,10 @@ jobs:
         with:
           persist-credentials: false
       # fwx test exits 1 when no test file ran and 77 when none failed but one could not run, so an
-      # empty or unarmed suite is red here, not falsely green.
-      - run: python3 bin/fwx test
+      # empty or unarmed suite is red here, not falsely green. The two tests below can never run in
+      # CI, and are declared so: each prints `EXPECTED NOT RUN` with its reason and does not turn the
+      # exit to 77. Any other test that cannot run is still 77, so still red.
+      #   tests/test_linear_live.py: asks the real Linear API and has no LINEAR_API_KEY here (a secret
+      #     this job is not given).
+      #   tests/test_playbooks_tree.py: reads the private workflow tree, which is not in this repo.
+      - run: python3 bin/fwx test --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py
