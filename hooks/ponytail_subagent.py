@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""SubagentStart: give Ponytail's ruleset to the GSD agents that execute, debug or review code, and to no other.
+"""SubagentStart: give Ponytail's ruleset to the GSD agents that execute, debug or review code, to the framework's
+two reviewers (`fwx:reviewer`, `fwx:security-reviewer`), and to no other.
 UserPromptSubmit: remember a manual `/ponytail` change for the rest of that session, and only that session.
 
 Ponytail (the `ponytail@ponytail` Claude Code plugin) writes the smallest change, which is what a dense
@@ -7,6 +8,10 @@ plan, a bug or a review wants, and what a discussion, a plan or a design from sc
 SubagentStart hook injects only while the session's mode is on, so the main thread and the subagents
 are always on together. This hook breaks that tie: a project that wires it starts its sessions with
 `PONYTAIL_DEFAULT_MODE=off` and still gets the ruleset in the agents of AGENTS, whatever the mode.
+
+The framework's agents are named `<plugin>:<agent>`: a workflow's `agentType: 'fwx:reviewer'` reaches this hook as
+`agent_type` `fwx:reviewer`, and without `agentType` it is `workflow-subagent`, which gets nothing. Ponytail is for
+reviewing, so `fwx:executor` and `fwx:review-verifier` are not listed. The `gsd-*` names stay until GSD is removed.
 
 The list is an allowlist checked here, not a hook matcher, so a missing or unknown agent_type gets
 nothing. The text is Ponytail's own, built by the installed plugin's hooks/ponytail-instructions.js:
@@ -24,7 +29,8 @@ import json, os, re, subprocess, sys, time
 PLUGIN = "ponytail@ponytail"
 LEVEL = "full"
 AGENTS = {"gsd-executor", "gsd-debugger", "gsd-code-fixer", "gsd-code-reviewer", "gsd-verifier",
-          "gsd-security-auditor", "gsd-nyquist-auditor", "gsd-integration-checker"}
+          "gsd-security-auditor", "gsd-nyquist-auditor", "gsd-integration-checker",
+          "fwx:reviewer", "fwx:security-reviewer"}
 BUILD = "process.stdout.write(require(process.argv[1]).getPonytailInstructions(process.argv[2]))"
 LEVELS = ("off", "lite", "full", "ultra")
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
