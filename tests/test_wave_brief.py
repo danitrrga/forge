@@ -99,9 +99,9 @@ def child(root, code):
 
 def module_facts(extra=""):
     """Python source that makes `facts`, a valid task's facts over files that exist, then runs `extra`."""
-    return ("import json, os, tempfile\n"
+    return ("import json, os\n"
             "from fwx.execute import brief\n"
-            "d = tempfile.mkdtemp()\n"
+            "d = %r\n" % helpers.mkdtemp("fwx-facts-") +
             "paths = {k: os.path.join(d, k + '.x') for k in ('context', 'decisions', 'plan')}\n"
             "for p in paths.values(): open(p, 'w').write('x')\n"
             "task = {'id': 'T2', 'type': 'feature', 'size': 'normal', 'ui': False, 'wave': 1, 'files': ['src/a.py'],\n"

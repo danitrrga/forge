@@ -147,24 +147,27 @@ def run_capped(script, scenario, seconds=25):
     """run_workflow, but a script that never ends (a mutant that loops on a scenario that always answers) is killed after
     `seconds`: the stub writes its record at every launch, so what ran is still there, with a note in its error."""
     work = helpers.mkdtemp("fwx-exrun-")
-    sc, out = os.path.join(work, "scenario.json"), os.path.join(work, "record.json")
-    with open(sc, "w", encoding="utf-8") as f:
-        json.dump(scenario, f)
     try:
-        r = subprocess.run(["node", os.path.join(ROOT, "tests", "workflow_stub.mjs"), script, sc, out], capture_output=True, text=True,
-                           stdin=subprocess.DEVNULL, timeout=seconds)
-        rc, err = r.returncode, r.stderr.strip()
-    except subprocess.TimeoutExpired:
-        rc, err = 124, "killed after %d s: the script did not end" % seconds
-    rec = None
-    if os.path.exists(out):
+        sc, out = os.path.join(work, "scenario.json"), os.path.join(work, "record.json")
+        with open(sc, "w", encoding="utf-8") as f:
+            json.dump(scenario, f)
         try:
-            with open(out, encoding="utf-8") as f:
-                rec = json.load(f)
-        except ValueError:  # killed in the middle of a write
-            rec, err = None, err + " (the record was cut off)"
-        if rec is not None and rc == 124:
-            rec["error"] = rec.get("error") or {"message": err, "stage": "run"}
+            r = subprocess.run(["node", os.path.join(ROOT, "tests", "workflow_stub.mjs"), script, sc, out], capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=seconds)
+            rc, err = r.returncode, r.stderr.strip()
+        except subprocess.TimeoutExpired:
+            rc, err = 124, "killed after %d s: the script did not end" % seconds
+        rec = None
+        if os.path.exists(out):
+            try:
+                with open(out, encoding="utf-8") as f:
+                    rec = json.load(f)
+            except ValueError:  # killed in the middle of a write
+                rec, err = None, err + " (the record was cut off)"
+            if rec is not None and rc == 124:
+                rec["error"] = rec.get("error") or {"message": err, "stage": "run"}
+    finally:
+        helpers.remove(work)  # hundreds of runs per suite: not all of them in /tmp at once
     return rc, rec, err
 
 
@@ -800,9 +803,12 @@ def check_controls(s):
         m = mutate(src, old, new)
         if not s.ok("control %s: the anchor is in the script exactly once" % name, m is not None):
             continue
-        path = helpers.write(helpers.mkdtemp("fwx-exmut-"), "execute.js", m)
-        sub = helpers.Suite()
-        check_all(path, sub)
+        mdir = helpers.mkdtemp("fwx-exmut-")
+        try:
+            sub = helpers.Suite()
+            check_all(helpers.write(mdir, "execute.js", m), sub)
+        finally:
+            helpers.remove(mdir)
         s.ok("control %s: red with %r" % (name, want), any(f.startswith(want) for f in sub.fails), "got %r" % (sub.fails[:2],))
     good = helpers.Suite()
     check_all(SCRIPT, good)
