@@ -782,7 +782,8 @@ def check_gate_entry_and_stage(script, s):
     # without `from`, finished tasks are still nothing to execute, and the reason says how to go on
     rec, err = go(script, args_over=lambda a: a.update(done=["T1", "T2", "T3"]))
     rec = finish(s, "all done, no from", rec, err)
-    s.ok("all done without `from`: needs-owner, and the reason names `--from gate`", result(rec).get("status") == "needs-owner" and "--from gate" in str(result(rec).get("reason")),
+    s.ok("all done without `from`: needs-owner, and the reason is the whole command that goes on (the orchestrator loads no playbook)",
+         result(rec).get("status") == "needs-owner" and "fwx wave prepare --part-dir '/work/.fwx/phases/01-toy' --plane session --branch 'phase-01' --from gate" in str(result(rec).get("reason")),
          repr(result(rec).get("reason")))
 
 
@@ -800,6 +801,12 @@ def agent_problems(texts):
     for name in ("reviewer", "security-reviewer"):
         if "reviewed <report path>" not in texts.get(name, ""):
             found.append("%s: lost its one-line reply (`reviewed <report path> ...`)" % name)
+    # readReview rejects a report where no finding contains the id of a criterion whose `met` is `no`
+    if "must contain the criterion's `id`" not in texts.get("reviewer", ""):
+        found.append("reviewer: is not told that a finding must contain the id of each criterion it marks `no` (the script rejects the report)")
+    # a task executor reads a brief file; the fixer and the conflict resolver have none, their prompt is the brief
+    if "no brief file" not in texts.get("executor", ""):
+        found.append("executor: does not say that the fixer and the resolver have no brief file")
     v = texts.get("review-verifier", "")
     if "structured output" not in v:
         found.append("review-verifier: does not say it answers through the structured output")
@@ -810,12 +817,16 @@ def agent_problems(texts):
 
 def check_agents(s):
     texts = {}
-    for name in ("reviewer", "security-reviewer", "review-verifier"):
+    for name in ("reviewer", "security-reviewer", "review-verifier", "executor"):
         with open(os.path.join(ROOT, "agents", name + ".md"), encoding="utf-8") as f:
             texts[name] = f.read()
     s.eq("agents: reviewer, security-reviewer and review-verifier say what the script does (agents/*.md vs workflows/execute.js)", agent_problems(texts), [])
     old = {n: t.replace("Your prompt is your brief", "Your prompt names a brief file") for n, t in texts.items()}
     s.ok("agents: control, the old wording is found", len(agent_problems(old)) >= 3, repr(agent_problems(old)))
+    s.ok("agents: control, a reviewer not told to put the criterion's id in a finding is found",
+         any("criterion it marks" in p for p in agent_problems({**texts, "reviewer": texts["reviewer"].replace("must contain the criterion's `id`", "names the fault")})), "")
+    s.ok("agents: control, an executor that knows no promptless fixer is found",
+         any("executor" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("no brief file", "no file")})), "")
     # what the script gives each one, so the agent files cannot drift from it
     rec, err = go(SCRIPT, answers_over={"security-reviewer:r1": review_line("r1", "security-reviewer"), "executor:runner-report-r1-sec": review_report(criteria=[])},
                   args_over=lambda a: a.update(security={"needed": True, "why": "x"}))
@@ -896,6 +907,7 @@ MUTANTS = [
     ("a criterion no needs no finding", "if (c.met === 'no' && !rep.findings.some", "if (false && !rep.findings.some", "FAIL: criterion no that no finding names"),
     ("control findings ignored", "if (tag === 'r1') (A.control_findings || []).forEach(take)", "", "FAIL: control findings"),
     ("the whole part is reviewed again", "    from = before\n", "    from = A.base\n", "FAIL: fix: the second review is of the fix's diff"),
+    ("all done, the reason is no command", "' --from gate`, then execute again'", "' gate`'", "FAIL: all done without `from`: needs-owner, and the reason is the whole command"),
     ("the gate runs in executing", "    if (o.final) enter('reviewing')\n", "", "FAIL: stage: the wave merge runs in executing, the gate"),
     ("a fix after a red gate stays in reviewing", "    if (o.final) enter('executing')\n", "", "FAIL: stage: a red gate sends the fix"),
     ("a review fix is made in reviewing", "    enter('executing')\n    const mine", "    const mine", "FAIL: stage: a review fix is made"),

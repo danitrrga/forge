@@ -42,6 +42,7 @@ Imports the standard library, fwx.plan, plan_step, state, config, core.evidence,
 import json
 import os
 import re
+import shlex
 
 from fwx import config, plan, plan_step, state
 from fwx.core import evidence, rounds, verify
@@ -308,6 +309,9 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         raise RedBase({"status": "needs-owner", "reason": reason, "phase_dir": phase, "rounds": "%d/%d" % (used, cap)},
                       "\n".join("--- %s\n%s" % (r["cmd"], verify.tail(r["output"])) for r in red))
     _write(made, folder, gating)
+    if not gating and not revert and not fixing and tasks and len(_done(top, branch, name, tasks)) == len(tasks):
+        say("every task is already on %s: `execute` has nothing to run; to run the gate and the review on it: "
+            "fwx wave prepare --part-dir %s --plane %s --branch %s --from gate" % (branch, shlex.quote(part_dir), plane, shlex.quote(branch)))
     clashes = plan._clashes("plan.md", data)
     waves = []
     for n in sorted({t["wave"] for t in tasks}):

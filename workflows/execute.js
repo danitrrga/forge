@@ -498,7 +498,8 @@ async function main() {
   } else {
     const todo = A.waves.filter((w) => w.tasks.some((t) => !done.has(t.id)))
     if (todo.length === 0) {
-      stop('needs-owner', 'every task of the part is already on the phase branch: there is nothing to execute (to run the gate and the review on it, `fwx wave prepare --from gate`)')
+      stop('needs-owner', 'every task of the part is already on the phase branch: there is nothing to execute. To run the gate and the review on it: `fwx wave prepare --part-dir ' +
+        sh(A.part_dir) + ' --plane ' + A.plane + ' --branch ' + sh(A.branch) + ' --from gate`, then execute again')
     }
     for (let i = 0; i < todo.length; i++) {
       const branches = await runWave(todo[i])

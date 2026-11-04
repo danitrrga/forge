@@ -356,6 +356,11 @@ def case_from_gate(R, S):
     part = Scene(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])])
     part.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: %s-%s-1" % (PHASE, PHASE, part.head()[:7]))
     refused(S, "from gate, a task not done", part, part.prepare(R, "--from", "gate"), "T2")
+    alld = Scene(tasks=[task("T1", 1, ["src/a.py"])])
+    alld.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: %s-%s-1" % (PHASE, PHASE, alld.head()[:7]))
+    r = alld.prepare(R)
+    S.ok("all done without --from: prepare still exits 0 and says on stderr what goes on (the orchestrator loads no playbook): exit %d, stderr %r" % (r.returncode, r.stderr[:200]),
+         r.returncode == 0 and "wave prepare --part-dir %s --plane session --branch phase --from gate" % alld.part in r.stderr)
     nrun = Scene(tasks=[task("T1", 1, ["src/a.py"])])
     nrun.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1" % PHASE)
     refused(S, "from gate, no Fwx-Run on the branch", nrun, nrun.prepare(R, "--from", "gate"), "Fwx-Run")
@@ -430,6 +435,8 @@ MUTANTS = [
     ("from gate, the head as the base", case_from_gate, P, "base = _part_base(top, branch, name)", "base = verify.head(top)", "the base is where the part's first run started"),
     ("from gate runs the base", case_from_gate, P, "red = None if gating else _base_is_green(", "red = _base_is_green(", "from gate: exit"),
     ("from gate with a task not done", case_from_gate, P, "        if todo:\n", "        if False:\n", "from gate, a task not done"),
+    ("all done, no hint", case_from_gate, P, "    if not gating and not revert and not fixing and tasks and len(_done(top, branch, name, tasks)) == len(tasks):",
+     "    if False:", "all done without --from: prepare still exits 0 and says on stderr"),
     ("check-base by merge-base", case_check_base, B, "if not head.startswith(sha):",
      'if git(top, "merge-base", "--is-ancestor", sha, "HEAD").returncode:', "an ancestor of HEAD is another base"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
