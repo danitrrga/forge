@@ -1,0 +1,47 @@
+id	role	contexts	command	expect
+D1	orchestrator	main-step,agent	fwx discuss start	allow
+D2	orchestrator	main-step,agent	fwx state new-phase p1	allow
+D3	orchestrator	main-step,agent	fwx state decision p1 --text probe	allow
+D4	orchestrator	main-step,agent	python3 tools/verdict.py verdict wait .fwx/p1	allow
+D5	orchestrator	main-step,agent	python3 tools/verdict.py verdict .fwx/p1 --serve	allow
+O1	orchestrator	main-step	fwx stage .fwx/p1 premortem --why probe	allow
+O2	orchestrator	main-step	fwx verify	allow
+O3	orchestrator	main-step	fwx rounds .fwx/p1	allow
+O4	orchestrator	main-step	fwx capacity --role executor --want 2	allow
+O5	orchestrator	main-step	fwx linear waiting --json	allow
+O6	orchestrator	main-step	fwx linear create --template bug --title probe	allow
+O7	orchestrator	main-step	fwx linear comment DTC-1 --kind result	allow
+O8	orchestrator	main-step	python3 bin/forge commit -m probe .fwx	allow
+O9	orchestrator	main-step	git add .fwx && git commit -m probe	allow
+O10	orchestrator	main-step	@Workflow probe	allow
+O11	orchestrator	main-asked,main-step	git branch fwx/p1	allow
+O12	orchestrator	main-asked,main-step	git push -u origin fwx/p1	allow
+O13	orchestrator	main-asked,main-step	gh pr create --base master --title probe --body probe	allow
+O14	orchestrator	main-asked,main-step	gh pr edit 1 --body probe	allow
+O15	orchestrator	main-step	fwx wave prepare p1	allow
+O16	orchestrator	main-step	git worktree remove {wt} && git branch -D fwx/own	allow
+X1	executor	workflow	git log --oneline -1	allow
+X2	executor	workflow	@Edit src/probe.txt	allow
+X3	executor	workflow	python3 tests/test_probe.py	allow
+X4	executor	workflow	fwx test	allow
+X5	executor	workflow	git commit -am probe	allow
+RV1	reviewer	workflow	git diff master...HEAD	allow
+RV2	review-verifier	workflow	python3 tests/test_probe.py	allow
+S1	state	agent	@Write {repo}/.fwx/p1/state.md	allow
+S2	state	agent	fwx state check report {repo}/.fwx/p1/state.md	allow
+W1	ui-walker	workflow	fwx walk up --project probe	allow
+W2	ui-walker	workflow	fwx screenshot --out shot.png	allow
+W3	ui-walker	workflow	git -C {repo} diff	allow
+W4	ui-walker	workflow	pnpm rig up --name w && pnpm rig seed --name w	allow
+W5	ui-verifier	workflow	docker ps	allow
+W5b	ui-verifier	workflow	nsenter --target 1 --net ip addr	allow
+W6	ui-walker	workflow	agent-browser open http://127.0.0.1:5173	allow
+W6b	ui-walker	workflow	npx --no-install @playwright/cli --version	allow
+C1	executor	workflow	gh pr merge 12 --merge	deny
+C2	executor	workflow	git push origin HEAD:master	deny
+C3	executor	workflow@forge	@Edit hooks/guard_tool_use.py	deny
+C4	executor	workflow	git push --force origin master	deny
+V1	all	all	git status	allow
+V2	all	all	cd {repo}/src && sed -n 1,5p probe.txt	allow
+K1	deny-control	all	probe-deny-control	deny/rule
+A1	executor	workflow-def	@Read NOTE.txt	allow
