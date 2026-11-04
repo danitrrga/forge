@@ -15,6 +15,12 @@ without it (158 checks, 7 failed):
   FAIL: issue: assignee: got 'MISSING', want {'name': 'Toy Owner', 'email': 'owner@example.test'}
   FAIL: issue: unassigned is None: got 'MISSING', want None
   FAIL: waiting: the assignee, name only when there is no email: got 'MISSING', want {'name': 'Toy Reviewer', 'email': None}
+Seen red for `url` (3.1 U1: the discuss lists what waits for the owner with each issue's link; the fake server already
+served `url`), on the client before `ISSUE_FIELDS` and `_shape` carried it (161 checks, 4 failed):
+  FAIL: issues: the shape: got ['assignee', ..., 'updatedAt'], want [..., 'updatedAt', 'url']
+  FAIL: issues: the url of each issue: got [('TOY-1', 'MISSING'), ('TOY-2', 'MISSING')], want [('TOY-1', 'https://linear.example.test/TOY-1'), ...]
+  FAIL: issue: url: got 'MISSING', want 'https://linear.example.test/TOY-1'
+  FAIL: waiting: the url the owner opens: got 'MISSING', want 'https://linear.example.test/TOY-3'
 Controls seen red, each on a copy of linear.py (or of a data file) changed in one place, the first FAIL (or the
 exception, when the bad version cannot even finish the case) shown; 158 checks each:
   retry and transport
@@ -523,7 +529,9 @@ one = {r["identifier"]: r for r in rows}["TOY-1"]
 s.eq("issues: a completed issue keeps its state type (the claimer excludes it)", one["state"],
      {"name": "Done", "type": "completed"})
 s.eq("issues: the shape", sorted(one), ["assignee", "description", "identifier", "labels", "project", "state",
-                                         "title", "updatedAt"])
+                                         "title", "updatedAt", "url"])
+s.eq("issues: the url of each issue", sorted((r["identifier"], r.get("url", "MISSING")) for r in rows),
+     [("TOY-1", "https://linear.example.test/TOY-1"), ("TOY-2", "https://linear.example.test/TOY-2")])
 s.eq("issues: no comments", [("comments" in r) for r in rows], [False, False])
 s.eq("issues: the values", (one["description"], one["project"], one["labels"], one["updatedAt"] == f.issues["TOY-1"]["updatedAt"]),
      ("what is wrong", "toy-project", ["factory"], True))
@@ -554,6 +562,7 @@ del warns[:]
 iss = c.issue("TOY-1")
 s.eq("issue: description and state", (iss["description"], iss["state"]), ("what is wrong", {"name": "Done", "type": "completed"}))
 s.eq("issue: assignee", iss.get("assignee", "MISSING"), OWNER)
+s.eq("issue: url", iss.get("url", "MISSING"), "https://linear.example.test/TOY-1")
 s.eq("issue: project, labels", (iss["project"], iss["labels"]), ("toy-project", ["factory"]))
 s.eq("issue: who wrote each comment and which are ours", [(x["author"], x["own"]) for x in iss["comments"]],
      [("Toy Person", False), ("Toy Bot", True), (None, False), ("Toy Person", False)])
@@ -581,6 +590,7 @@ s.eq("waiting: the issues that wait", sorted(r["identifier"] for r in rows), ["T
 byid = {r["identifier"]: r for r in rows}
 s.eq("waiting: labels under neutral names", byid["TOY-3"]["labels"], ["needs-owner"])
 s.eq("waiting: updatedAt to group by age", byid["TOY-3"]["updatedAt"], f.issues["TOY-3"]["updatedAt"])
+s.eq("waiting: the url the owner opens", byid["TOY-3"].get("url", "MISSING"), "https://linear.example.test/TOY-3")
 s.eq("waiting: the assignee, name only when there is no email", byid["TOY-5"].get("assignee", "MISSING"),
      {"name": "Toy Reviewer", "email": None})
 s.eq("waiting: not one with only factory or Bug", [i for i in ("TOY-1", "TOY-6") if i in byid], [])
