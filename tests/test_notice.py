@@ -2,7 +2,7 @@
 """NOTICE against the files that say where their text came from (I12), and every text file against the header that says
 whether it came from anywhere (I15).
 
-A `copied-from: <source> <path> @<commit>` header in the first 10 lines of any file needs that source and that commit in
+A `copied-from: <source> <path> @<commit>` header in the first 10 lines of any file (10 after the frontmatter, when it has one) needs that source and that commit in
 one entry of NOTICE (an entry is a block with no blank line inside; a full hash matches its short form). Anything
 that follows the commit is free. A `<source> <path>` with no space (`repo-kit/files/x.yml`) names the source by its first
 folder. `copied-from: none ...` says the file copies nothing. Every agents/*.md, skills/*/SKILL.md,
@@ -60,9 +60,23 @@ def in_entry(block, source, commit):
 
 
 def read_head(path):
+    """The first HEAD_LINES lines after a frontmatter block (the block's own lines come back blank, so the numbers stay
+    the file's): an agent's frontmatter takes 6 lines of the 10, and an agent with seven copied sentences has seven headers."""
     try:
         with open(path, encoding="utf-8") as fh:
-            return [next(fh, "").rstrip("\n") for _ in range(HEAD_LINES)]
+            first = next(fh, "").rstrip("\n")
+            head = [first]
+            if first.strip() == "---":
+                head = [""]
+                for line in fh:
+                    head.append("")
+                    if line.strip() == "---":
+                        break
+                    if len(head) > 40:  # a frontmatter that never closes is not one
+                        return None
+                head += [next(fh, "").rstrip("\n") for _ in range(HEAD_LINES)]
+                return head
+            return head + [next(fh, "").rstrip("\n") for _ in range(HEAD_LINES - 1)]
     except (OSError, UnicodeDecodeError):
         return None
 
