@@ -10,6 +10,7 @@ used with the author's permission.
   Text copied by agents/executor.md: line 18 of playbooks/factory.md, the rule "Clean up only what you started." and the three
   sentences after it, word for word. Read for the same agent: lines 43-47 (the resolution of a merge conflict) and line 65 (the
   question when no test can express the bug), in words of its own.
+  Read for workflows/execute.js: playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
   Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
     lib/fwx/core/keys.py     from lib/factory.ts
     lib/fwx/core/globs.py    from lib/globs.ts
@@ -68,6 +69,9 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   playbooks/autopilot-full.md, in words of its own.
   agents/review-verifier.md: "Trace the call site." of skills/interrogate/references/lead-judgment.md line 11, word for word. Read for
   the same agent: the four groups of skills/interrogate/SKILL.md (lines 52-58), in words of its own.
+  Text quoted in a comment of workflows/execute.js: "After a second miss, record a gap. A gap does not count as a pass" of skills/swarm/SKILL.md
+  (Phase C), word for word. Read for the same file: playbooks/orchestrate.md (the brief per worker; "Never resume-chain a brief. Respawn fresh
+  with consolidated scope"; "A worker may self-report. A verifier overrides it on the same key"), in words of its own.
   Read for the shape of skills/pre-mortem/SKILL.md, skills/plan/SKILL.md and skills/post-mortem/SKILL.md: skills/thermos/SKILL.md.
 
 open-gsd/gsd-core, https://github.com/open-gsd/gsd-core, commit 35f5a452239b897b8d6352c973e1e4efd683370f (tag v1.18.0, the version
