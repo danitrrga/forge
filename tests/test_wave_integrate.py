@@ -15,6 +15,10 @@ Seen red before the code existed (python3 tests/test_wave_integrate.py, first li
 Red before `integrate --final` took no branch (3.4 align):
   FAIL: integrate --final with no branch: exit: got (2, 'usage: fwx wave integrate --part-dir D --run R --branches B... [--final]'), want (0, '')
 
+Red before `summary` looked at the run's own gate (3.4 U8 fix, F3: `summary --run <earlier failed run>` said `pass`):
+  FAIL: summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got 'pass': got ('pass', 0), want ('fail', 1)
+  FAIL: summary, the run's own last gate is red, later green evidence: gate got 'pass': got ('pass', 0), want ('fail', 1)
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each `old` must be in
 its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (138 checks, 170 with the controls).
 The first FAIL line of each mutant, seen red:
@@ -452,6 +456,26 @@ def case_cleanup(R, S):
     sz.stop()
 
 
+def case_cleanup_scratch(R, S):
+    """3.4 U8 fix: the reviewers are not isolated, so their scratch folder (`fwx wave scratch`) is in the integration checkout:
+    `cleanup` removes the one of its own run, the folder of another run stays, and the checkout stays clean."""
+    sc = Scene()
+    other_run = "01-alpha-deadbee-1"
+    mine = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", sc.run, "r1")
+    theirs = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", other_run, "r1")
+    for run in (sc.run, other_run):
+        r = sc.call(R, "scratch", run, "r1")
+        S.eq("cleanup scratch, setup: scratch for %s" % run, r.returncode, 0)
+        helpers.write(os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", run, "r1"), "report.json", "{}\n")
+    v = ok_json(S, "cleanup, scratch of the run", sc.call(R, "cleanup", "--run", sc.run))
+    S.eq("cleanup: the run's scratch folder is removed and listed", (v.get("scratch"), exists(mine)), ([os.path.dirname(mine)], False))
+    S.ok("cleanup: another run's scratch folder and the ignore file stay", exists(os.path.join(theirs, "report.json")) and exists(os.path.join(os.path.dirname(os.path.dirname(mine)), ".gitignore")))
+    S.eq("cleanup: the checkout is clean", helpers.git(sc.cwd, "status", "--porcelain"), "")
+    v = ok_json(S, "cleanup, a second time", sc.call(R, "cleanup", "--run", sc.run))
+    S.eq("cleanup: nothing more to remove", v.get("scratch"), [])
+    sc.stop()
+
+
 def case_cleanup_no_proc(R, S):
     """Without /proc cleanup says NOT RUN, NOT ARMED and exits 77: through the tree's own lib, with PROC pointed nowhere."""
     sc = Scene()
@@ -503,13 +527,42 @@ def case_summary(R, S):
     # the part found from the run's own files, as the session calls it (`summary --run R`)
     sf = Scene()
     b = sf.agent("one", [("src/a.py", "a1\n", None)])
-    ok_json(S, "summary, setup: integrate", sf.integrate(R, b))
-    sf.evidence(0)
+    ok_json(S, "summary, setup: integrate", sf.integrate(R, b, extra=("--final",)))
     r = summ(R, sf)
     S.eq("summary, from the run files: gate: got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), r.returncode), ("pass", 0))
     S.eq("summary: its call is the second file of the run", sf.step_files(), ["1-integrate.json", "2-summary.json"])
     r = summ(R, Scene())
     S.eq("summary, a run with no files and no --part-dir: gate none, exit 2", ((J(r) or {}).get("gate"), r.returncode), ("none", 2))
+
+    # 3.4 U8 fix, F3: the gate of an earlier run that never reached it does not pass because a later run's evidence is green on HEAD
+    se = Scene()
+    b = se.agent("one", [("src/a.py", "a1\n", None)])
+    ok_json(S, "summary, an earlier run: its merge, no gate", se.integrate(R, b))
+    se.evidence(0)  # another run's gate, green on this head
+    r = summ(R, se)
+    v = J(r) or {}
+    S.eq("summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got %r" % v.get("gate"), (v.get("gate"), r.returncode), ("fail", 1))
+    S.ok("summary: it says which run and why", se.run in v.get("why", "") and "gate" in v.get("why", ""), repr(v.get("why")))
+    sk = Scene(checks=["exit 1"])
+    b = sk.agent("one", [("src/a.py", "a1\n", None)])
+    ok_json(S, "summary, a run whose last gate is red", sk.integrate(R, b, extra=("--final",)), code=1)
+    sk.evidence(0)  # a later hand fix, green on the head, is not this run's gate
+    r = summ(R, sk)
+    S.eq("summary, the run's own last gate is red, later green evidence: gate got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), r.returncode), ("fail", 1))
+    sw = Scene()
+    b = sw.agent("one", [("src/a.py", "a1\n", None)])
+    ok_json(S, "summary, the wave merge", sw.integrate(R, b))
+    ok_json(S, "summary, then the gate on the head (the re-entry)", sw.call(R, "integrate", "--part-dir", sw.part, "--run", sw.run, "--final"))
+    r = summ(R, sw)
+    S.eq("summary, control: the same run once its own gate passed: gate got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), (J(r) or {}).get("why")), ("pass", ""))
+    sv = Scene()  # a run of `--revert` merges nothing: the gate is `fwx verify` on the head the revert made
+    helpers.write(sv.cwd, "src/a.py", "a1\n")
+    helpers.git(sv.cwd, "add", "-A")
+    helpers.git(sv.cwd, "commit", "-q", "-m", "fix a\n\nFwx-Finding: F1\nFwx-Run: %s-%s-0" % ("01-alpha", sv.base[:7]))
+    ok_json(S, "summary, a revert-only run: its revert", sv.call(R, "revert", "--part-dir", sv.part, "--run", sv.run, "--findings", "F1"))
+    sv.evidence(0)
+    r = summ(R, sv)
+    S.eq("summary, a run that only reverted: the evidence of the head decides, gate got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), r.returncode), ("pass", 0))
 
 
 def case_step_files(R, S):
@@ -535,7 +588,7 @@ def case_step_files(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_no_proc, case_summary,
+         case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
          case_step_files]
 
 I = "lib/fwx/execute/integrate.py"
@@ -561,10 +614,13 @@ MUTANTS = [
      "removed a worktree of another run"),
     ("cleanup keeps a stale-locked worktree", case_cleanup, C, LIVE, 'return "live"', "kept a stale-locked worktree"),
     ("cleanup without /proc runs on", case_cleanup_no_proc, C, "if not os.path.isdir(PROC):", "if False:", "cleanup, no /proc: exit"),
-    ("summary ignores the exit of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head else "fail"', 'gate = "pass" if sha == head else "fail"',
+    ("cleanup keeps the run's scratch", case_cleanup_scratch, C, "    scratch = _scratch(top, run)", "    scratch = []", "the run's scratch folder is removed and listed"),
+    ("summary ignores the exit of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if sha == head and not why else "fail"',
      "red evidence: gate"),
-    ("summary ignores the sha of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head else "fail"', 'gate = "pass" if rc == "0" else "fail"',
+    ("summary ignores the sha of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if rc == "0" and not why else "fail"',
      "evidence of another sha: gate"),
+    ("summary takes any run's gate", case_summary, I, "why = _own_gate(run, steps) if run else None", "why = None", "an earlier run that never ran the gate"),
+    ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),
     ("step files all numbered 0", case_step_files, W, "n = 1 + max(", "n = 0 * max(", "step files: one per call, numbered"),
 ]

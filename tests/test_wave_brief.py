@@ -14,6 +14,11 @@ Seen red before the code existed (python3 tests/test_wave_brief.py, `brief` was 
   FAIL: module: the empty SCOPE is named (prepare exit 0 with an empty SCOPE): None   (cannot import name 'brief' from 'fwx.execute')
   FAIL: fix: fix.brief is a file: None
 
+Red before the 3.4 U8 fix (the brief held the prepare-time sha, wrong for every later wave, and a report path under `.git`):
+  FAIL: briefs: the base is the prompt's BASE line, and no sha is in the brief (a later wave starts from a later head: 3.4 U8 fix, F1): ...
+  FAIL: briefs: SCOPE gives the scratch folder (`fwx wave scratch <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2): ...
+  FAIL: briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply: Write it as JSON to <repo>/.git/fwx/runs/01-alpha-97f1a0d-1/reports/T1.json, with Bash (a heredoc)...
+
 Controls: each case also runs on a copy of bin/, lib/, data/ and templates/ with one line of the code changed (`MUTANTS`, each
 line in its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first. The first FAIL line of each,
 seen red:
@@ -24,7 +29,7 @@ seen red:
   briefs written before the base is run:  FAIL: refused: a red base writes no brief
   task id not checked:                    FAIL: refused: a task id that cannot name a file: exit: got 0, want 2
   fields out of order:                    FAIL: briefs: the nine fields in the order of the template: got ['GOAL', 'SCOPE', 'CONTEXT', 'VERIFY', 'ACCEPT
-  trailers dropped:                       FAIL: briefs: SCOPE lists its file, absolute run, base and both trailers: You may write only these files, in y
+  trailers dropped:                       FAIL: briefs: SCOPE lists its file, the run and both trailers: You may write only these files, in y
   big task at 40 minutes:                 FAIL: briefs: T2 TIMEBOX is 60 minutes: 40 minutes: a guide, since nothing cuts an agent off; on expiry, retur
   every wave runs beside it:              FAIL: briefs: SCOPE says nothing of wave 2's files (they run later): You may write only these files, in your o
   no referent in the header:              FAIL: template: the header names its referent (orchestrate.md @36885ea): <!-- copied-from: none plugins/pstack
@@ -126,11 +131,14 @@ def case_briefs(R, S):
     S.ok("briefs: GOAL names the task, the part and the path of plan.md",
          "T1" in f1.get("GOAL", "") and sc.name in f1.get("GOAL", "") and os.path.join(sc.part, "plan.md") in f1.get("GOAL", ""), f1.get("GOAL", "")[:200])
     scope = f1.get("SCOPE", "")
-    S.ok("briefs: SCOPE lists its file, absolute run, base and both trailers",
-         "src/a.py" in scope and run in scope and base in scope and "Fwx-Task: %s/T1" % PHASE in scope and "Fwx-Run: %s" % run in scope, scope)
+    S.ok("briefs: SCOPE lists its file, the run and both trailers",
+         "src/a.py" in scope and run in scope and "Fwx-Task: %s/T1" % PHASE in scope and "Fwx-Run: %s" % run in scope, scope)
+    S.ok("briefs: the base is the prompt's BASE line, and no sha is in the brief (a later wave starts from a later head: 3.4 U8 fix, F1)",
+         "`BASE` line of your prompt" in scope and "fwx wave check-base" in scope and not re.search(r"\b[0-9a-f]{40}\b", t1) and base not in t1, scope)
     S.ok("briefs: SCOPE names the other task of the wave, as a path it may not write", "src/b.py" in scope and "may not" in scope.lower(), scope)
     S.ok("briefs: SCOPE says nothing of wave 2's files (they run later)", "README" not in scope, scope)
-    S.ok("briefs: SCOPE names TMPDIR under the run, absolute", os.path.join(folder, "tmp", "T1") in scope, scope)
+    S.ok("briefs: SCOPE gives the scratch folder (`fwx wave scratch <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2)",
+         "fwx wave scratch %s T1" % run in scope and "`tmp/`" in scope and "TMPDIR" in scope and ".git/" not in t1 and os.path.join(folder, "tmp") not in t1, scope)
     ctx = f1.get("CONTEXT", "")
     for name in ("context.md", "decisions.tsv", "plan.md"):
         S.ok("briefs: CONTEXT has the absolute path of %s" % name,
@@ -146,11 +154,11 @@ def case_briefs(R, S):
     S.ok("briefs: FORBIDDEN has the four bans and .fwx/",
          all(w in forb for w in ("no PR retargets or merges", "no rebase", "no force-push", "no fixes outside scope", ".fwx/")), forb)
     rep = f1.get("REPORT", "")
-    S.ok("briefs: REPORT names the file, the fields and the one-line reply",
-         os.path.join(folder, "reports", "T1.json") in rep and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
+    S.ok("briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply",
+         "`report.json` in your scratch folder" in rep and os.path.join(folder, "reports") not in t1 and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
                                                                                         "question", "outside", "could_not_run", "reason"))
          and "<status> <report path> commits=<n>" in rep, rep)
-    S.ok("briefs: REPORT says Bash writes it (Write is refused outside the worktree)", "Bash" in rep, rep)
+    S.ok("briefs: REPORT says the Write tool is enough (the folder is in the worktree: no heredoc, Write is not refused there)", "Write tool" in rep and "heredoc" not in rep, rep)
     S.ok("briefs: STANDING names agents/executor.md of the plugin", os.path.join(ROOT, "agents", "executor.md") in f1.get("STANDING", ""), f1.get("STANDING", ""))
     S.ok("briefs: no model name (they come from `fwx model`)", not re.search(r"sonnet|opus|haiku|fable", t1, re.I), t1[:200])
     S.ok("briefs: no placeholder left", re.search(r"\$[a-z_]+", t1) is None, t1)
@@ -317,7 +325,11 @@ MUTANTS = [
     ("task id not checked", case_refused, P, 'if not brief.ID.match(t["id"]):', "if False:", "a task id that cannot name a file: exit"),
     ("fields out of order", case_briefs, T, "## ACCEPTANCE\n$acceptance\n\n## VERIFY\n", "## VERIFY\n$verify\n\n## ACCEPTANCE\n$acceptance\n\n## OLD\n",
      "the nine fields in the order of the template"),
-    ("trailers dropped", case_briefs, T, "\n$trailers", "", "SCOPE lists its file, absolute run, base and both trailers"),
+    ("trailers dropped", case_briefs, T, "\n$trailers", "", "SCOPE lists its file, the run and both trailers"),
+    ("a sha back in the brief", case_briefs, T, "Base: the `BASE` line of your prompt,", "Base: 0123456789abcdef0123456789abcdef01234567 (the `BASE` line of your prompt),",
+     "no sha is in the brief"),
+    ("report back under .git", case_briefs, T, "Write it as JSON to `report.json` in your scratch folder (the Write tool is enough).",
+     "Write it as JSON to .git/fwx/reports/T1.json, with a heredoc.", "REPORT names report.json in the scratch folder"),
     ("big task at 40 minutes", case_briefs, B, '"big": 60', '"big": 40', "T2 TIMEBOX is 60 minutes"),
     ("every wave runs beside it", case_briefs, P, 'brief.task_facts(t, [x for x in data["tasks"] if x["wave"] == t["wave"]], ctx)',
      'brief.task_facts(t, data["tasks"], ctx)', "SCOPE says nothing of wave 2's files"),

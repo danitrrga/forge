@@ -12,6 +12,9 @@ into the checks once every task is on the phase branch (the tree's n_C7F loops t
 (the one at `P`, when given) whose HEAD is `<sha>`, 42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
 worktree: <path>` on stderr), 2 for a usage error. `<sha>` is 7 to 40 hex digits.
 
+`scratch <run> <unit>` makes the folder an agent writes its report and its TMPDIR in, inside its own worktree and ignored by git, and
+prints its path (execute/base.py says why it is not under `.git`): exit 0, 2 for a usage error or outside a repository.
+
 The rest is 3.4 U3 (execute/integrate.py and execute/cleanup.py say what each does); each prints its result as one JSON
 object on stdout and also writes it, with the exit code and its arguments, to `<git-common-dir>/fwx/runs/<run>/<n>-<step>.json`
 (`n` counts the run's files; `prepare` and `check-base` write none, and neither does a call that stops on a usage error or on
@@ -25,7 +28,9 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
       rounds are spent and nothing was spent now, 2 usage
   revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
   cleanup --run R     exit 0; 77 without /proc. It reads the branches `integrate` named from the run's files
-  summary --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given
+  summary --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
+      that merged branches passes only when its own last `integrate --final` was green (`why` says when it was not): the evidence
+      row is the part's, so another run's green gate on the same head is not this run's
 """
 import json
 import os
@@ -38,6 +43,7 @@ from fwx.execute import base, cleanup, integrate, prepare as prep
 PREPARE_USAGE = ("usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
 CHECK_USAGE = "usage: fwx wave check-base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
+SCRATCH_USAGE = "usage: fwx wave scratch <run> <unit>   (each one folder name: letters, digits, `.`, `_`, `-`)\n"
 USAGES = {
     "integrate": "usage: fwx wave integrate --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]\n",
     "fix-round": "usage: fwx wave fix-round --part-dir D --why TEXT [--run R]\n",
@@ -117,6 +123,19 @@ def do_check_base(argv):
     return code
 
 
+def do_scratch(argv):
+    parsed = _parse(argv, (), ())
+    if parsed is None or len(parsed[1]) != 2 or not all(base.NAME.match(w) for w in parsed[1]):
+        sys.stderr.write(SCRATCH_USAGE)
+        return 2
+    try:
+        print(base.scratch(os.getcwd(), *parsed[1]))
+    except base.WaveError as e:
+        sys.stderr.write("fwx wave scratch: %s\n" % e)
+        return 2
+    return 0
+
+
 def _ids(text):
     return [i.strip() for i in text.split(",") if i.strip()]
 
@@ -139,33 +158,34 @@ def _record(top, run, step, args, result, code):
     return path
 
 
-def _part_of(top, run):
-    """The part folder the run's own files name (the newest call that had one), or None."""
+def _steps(top, run):
+    """The calls the run's own files record, oldest first: [{step, exit, args, result}]; a file that cannot be read is left out."""
     common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
     folder = os.path.join(common or "", "fwx", "runs", run)
-    names = sorted((f for f in os.listdir(folder) if re.match(r"\d+-", f)), key=lambda f: int(f.split("-")[0]), reverse=True) \
-        if os.path.isdir(folder) else []
+    names = sorted((f for f in os.listdir(folder) if re.match(r"\d+-", f)), key=lambda f: int(f.split("-")[0])) if os.path.isdir(folder) else []
+    found = []
     for name in names:
         try:
             with open(os.path.join(folder, name), encoding="utf-8") as f:
                 rec = json.load(f)
         except (OSError, ValueError):
             continue
+        if isinstance(rec, dict):
+            found.append(rec)
+    return found
+
+
+def _part_of(top, run):
+    """The part folder the run's own files name (the newest call that had one), or None."""
+    for rec in reversed(_steps(top, run)):
         if rec.get("args", {}).get("part_dir"):
             return rec["args"]["part_dir"]
     return None
 
 
 def _recorded_branches(top, run):
-    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    folder = os.path.join(common or "", "fwx", "runs", run)
     found = set()
-    for name in os.listdir(folder) if os.path.isdir(folder) else []:
-        try:
-            with open(os.path.join(folder, name), encoding="utf-8") as f:
-                rec = json.load(f)
-        except (OSError, ValueError):
-            continue
+    for rec in _steps(top, run):
         if rec.get("step") == "integrate":
             found.update(rec.get("args", {}).get("branches") or [])
     return found
@@ -212,7 +232,7 @@ def do_step(step, argv):
         else:
             part = part or _part_of(top, run)
             args = {"run": run, "part_dir": part}
-            code, result = integrate.summary(".", part)
+            code, result = integrate.summary(".", part, run, _steps(top, run))
             if part is None:
                 say("no --part-dir and no call of run %s names one: gate none" % run)
         if run:
@@ -232,7 +252,9 @@ def main(argv):
         return do_prepare(argv[1:])
     if argv and argv[0] == "check-base":
         return do_check_base(argv[1:])
+    if argv and argv[0] == "scratch":
+        return do_scratch(argv[1:])
     if argv and argv[0] in USAGES:
         return do_step(argv[0], argv[1:])
-    sys.stderr.write("usage: fwx wave <prepare|check-base|%s> ...\n" % "|".join(USAGES))
+    sys.stderr.write("usage: fwx wave <prepare|check-base|scratch|%s> ...\n" % "|".join(USAGES))
     return 2

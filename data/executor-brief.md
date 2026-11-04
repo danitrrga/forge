@@ -7,15 +7,15 @@
 $goal
 
 ## SCOPE
-You may write only these files, in your own worktree (your starting directory, made from the base below):
+You may write only these files, in your own worktree (your starting directory):
 $files
-You may not write any other path, except your TMPDIR and your report. The files of the tasks that run beside yours: $may_not
+You may not write any other path, except your scratch folder. The files of the tasks that run beside yours: $may_not
 Run: $run
-Base: $base (your first step is `fwx wave check-base $base`).
+Base: the `BASE` line of your prompt, the tip of the phase branch when your wave launched (it differs from wave to wave). Your first step is `fwx wave check-base` with that sha.
 Your branch is the one your worktree starts on; the report names it.
 Every commit ends with these trailers, given with `git commit --trailer`:
 $trailers
-Your TMPDIR is $tmpdir
+Your scratch folder is the one `fwx wave scratch $run $unit` prints: a folder of your own worktree that git ignores, never under `.git`. Your TMPDIR is its `tmp/` folder.
 
 ## CONTEXT
 $context
@@ -36,8 +36,8 @@ $minutes minutes: a guide, since nothing cuts an agent off; on expiry, return pa
 What you see outside your files goes in `outside` of your report, not in a commit.
 
 ## REPORT
-Write it as JSON to $report, with Bash (a heredoc): Write is refused outside your worktree. Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`.
-Your whole reply is one line: `<status> <report path> commits=<n>`.
+Write it as JSON to `report.json` in your scratch folder (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`.
+Your whole reply is one line: `<status> <report path> commits=<n>`, the report path in full.
 
 ## STANDING
 Your standing orders are your agent definition, $standing; they hold beside everything above.

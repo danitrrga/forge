@@ -6,6 +6,11 @@ can write there, so one writer per worktree is not assumed) must stop before it 
 never the merge-base: a worktree that is ahead of the base is not on it. `sha` is 7 to 40 hex digits, never a name that
 git resolves (`HEAD` would always match).
 
+`scratch(cwd, run, unit)` makes the folder where an agent writes its report and its TMPDIR: `<worktree>/.fwx-agent/<run>/<unit>/`
+(and its `tmp/`), inside the worktree the agent starts in, with a `.gitignore` of `*` beside it so that git sees none of it, the
+`.gitignore` included. Nothing is written under `.git`: Claude Code asks permission for it as a sensitive path under
+`acceptEdits`, and refuses an isolated agent's write outside its worktree. The ignore file is written once and never rewritten.
+
 Imports only the standard library.
 """
 import os
@@ -14,6 +19,8 @@ import subprocess
 
 WRONG_BASE = 42  # the exit of check-base for "do not start"
 SHA = re.compile(r"[0-9a-f]{7,40}\Z")
+AGENT_DIR = ".fwx-agent"
+NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")  # a run or a unit: one folder name, never a path
 
 
 class WaveError(Exception):
@@ -58,3 +65,24 @@ def check_base(sha, cwd, worktree=None):
     if not head.startswith(sha):
         return WRONG_BASE, "wrong base: HEAD %s, expected %s" % (head or "none", sha)
     return 0, ""
+
+
+def scratch(cwd, run, unit):
+    """The folder `<worktree>/.fwx-agent/<run>/<unit>` (made, with its `tmp/`) of the worktree `cwd` is in."""
+    for what, name in (("run", run), ("unit", unit)):
+        if not NAME.match(name):
+            raise WaveError("the %s %r cannot name a folder" % (what, name))
+    top = toplevel(cwd)
+    if top is None:
+        raise WaveError("not inside a git repository: %s" % cwd)
+    root = os.path.join(os.path.realpath(top), AGENT_DIR)
+    folder = os.path.join(root, run, unit)
+    try:
+        os.makedirs(os.path.join(folder, "tmp"), exist_ok=True)
+        ignore = os.path.join(root, ".gitignore")
+        if not os.path.exists(ignore):
+            with open(ignore, "w", encoding="utf-8") as f:
+                f.write("*\n")
+    except OSError as e:
+        raise WaveError("cannot make %s: %s" % (folder, e))
+    return folder

@@ -16,12 +16,17 @@ commits that are not merged and one whose lock could not be cleared stay, in `ke
 is inside a worktree of the run (a runaway shell of an agent was the largest thing left running); none is killed. The phase
 branch, the main checkout and a worktree of another run are never candidates.
 
+The folder `fwx wave scratch <run> <unit>` makes in the checkout (`<top>/.fwx-agent/<run>/`, where the reviewers, which have no
+worktree of their own, write) is removed with the run's worktrees: it is git-ignored, so nothing else would ever clear it. The
+folders of other runs and the ignore file stay; `scratch` in the result lists what was removed.
+
 Imports the standard library and execute.base.
 """
 import os
 import re
+import shutil
 
-from fwx.execute.base import WaveError, git, out
+from fwx.execute.base import AGENT_DIR, WaveError, git, out
 
 PROC = "/proc"
 _LOCK = re.compile(r"\(pid (\d+) start (\d+)\)\s*\Z")
@@ -157,8 +162,17 @@ def leftover(paths):
     return found
 
 
+def _scratch(top, run):
+    """Remove `<top>/.fwx-agent/<run>`; the list of the folders removed (empty when there was none or it could not go)."""
+    folder = os.path.join(top, AGENT_DIR, run)
+    if not os.path.isdir(folder):
+        return []
+    shutil.rmtree(folder, ignore_errors=True)
+    return [] if os.path.exists(folder) else [folder]
+
+
 def cleanup(cwd, run, recorded=()):
-    """`{removed, kept, leftover}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch)."""
+    """`{removed, kept, leftover, scratch}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch)."""
     _need_proc()
     top = out(cwd, "rev-parse", "--show-toplevel")
     if top is None:
@@ -171,7 +185,8 @@ def cleanup(cwd, run, recorded=()):
     every = worktrees(top)
     mine = [w for w in every[1:] if w["path"] != top and w["branch"] and w["branch"] != phase
             and of_run(top, base, run, w["branch"], set(recorded))]
-    result = {"removed": [], "kept": [], "leftover": leftover([w["path"] for w in mine])}
+    scratch = _scratch(top, run)
+    result = {"removed": [], "kept": [], "leftover": leftover([w["path"] for w in mine]), "scratch": scratch}
     for w in mine:
         item = {"worktree": w["path"], "branch": w["branch"]}
         state, was_stale = lock_state(w), False

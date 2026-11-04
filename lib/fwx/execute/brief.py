@@ -9,9 +9,12 @@ Where a brief and the base-context file meet (2.5 U9): `shared_context(paths)` i
 agent of the phase reads (`context.md`, `decisions.tsv`, `plan.md`). When the briefs rely on the base file, that function is
 what changes; nothing else here spells those names, and the template does not.
 
-A run's files live in `<git-common-dir>/fwx/runs/<run>/`: `briefs/<task>.md` (written by `put`), `reports/<task>.json` and
-`tmp/<task>/` (where the executor writes, never in the repo). The fixer's brief is `briefs/_fix.md`: no task id can start
-with an underscore (`ID`), so the name cannot clash.
+A run's briefs live in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md` (written by `put`); the fixer's is `_fix.md`: no task
+id can start with an underscore (`ID`), so the name cannot clash. What an agent writes is not there: its report and its TMPDIR
+are in a folder of its own worktree that git ignores, made by `fwx wave scratch <run> <unit>` (execute/base.py), because Claude
+Code asks permission for anything under `.git` and refuses an isolated agent's write outside its worktree. The brief does not
+hold the base sha either: a later wave's worktrees start from the head after the earlier waves merged, so the workflow gives it
+in the prompt when the wave launches.
 
 Imports the standard library and fwx.plan (the fields of a plan's test).
 """
@@ -29,6 +32,7 @@ FIELDS = ("GOAL", "SCOPE", "CONTEXT", "ACCEPTANCE", "VERIFY", "TIMEBOX", "FORBID
 TIMEBOX = {"small": 20, "normal": 40, "big": 60}
 ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")  # what may name a file: a task id, a finding id, a run
 FIX = "_fix"
+FIX_UNIT = "fix"  # the fixer's scratch folder and report: a task may be called `fix`, but never in the fixer's worktree
 TESTS_OF_FINDINGS = "the test files that cover each finding, new or existing"
 NO_TEST = "none: a UI task carries no test; the owner walks it"
 SEVERITY = ("low", "medium", "high")
@@ -52,13 +56,13 @@ def _context(paths, previous):
 
 def _common(name, ident, part, ctx, size, files):
     folder = ctx["folder"]
-    return dict({"name": name, "id": ident, "part": part, "size": size, "run": ctx["run"], "base": ctx["base"], "plan": ctx["paths"]["plan"],
-                 "files": list(files), "tmpdir": os.path.join(folder, "tmp", ident), "report": os.path.join(folder, "reports", ident + ".json"),
-                 "brief": os.path.join(folder, "briefs", ident + ".md")}, **_context(ctx["paths"], ctx.get("previous")))
+    return dict({"name": name, "id": ident, "unit": FIX_UNIT if ident == FIX else ident, "part": part, "size": size, "run": ctx["run"],
+                 "plan": ctx["paths"]["plan"], "files": list(files), "brief": os.path.join(folder, "briefs", ident + ".md")},
+                **_context(ctx["paths"], ctx.get("previous")))
 
 
 def task_facts(task, wave_tasks, ctx):
-    """The facts of one task. `wave_tasks` are the tasks of its wave (those that run beside it); `ctx` is {run, base, part, paths:
+    """The facts of one task. `wave_tasks` are the tasks of its wave (those that run beside it); `ctx` is {run, part, paths:
     {context, decisions, plan}, folder, previous?}."""
     others = sorted({plan._norm(f) for t in wave_tasks if t["id"] != task["id"] for f in t["files"]} - {plan._norm(f) for f in task["files"]})
     facts = _common("task %s" % task["id"], task["id"], ctx["part"], ctx, task["size"], [plan._norm(f) for f in task["files"]])
@@ -134,12 +138,11 @@ def render(facts):
         "goal": _goal(facts),
         "files": "\n".join("- %s" % f for f in facts["files"]),
         "may_not": ", ".join(facts["others"]) if facts["others"] else "none (no other task runs with this one)",
-        "run": facts["run"], "base": facts["base"], "trailers": "\n".join("- " + t for t in facts["trailers"]),
-        "tmpdir": facts["tmpdir"],
+        "run": facts["run"], "unit": facts["unit"], "trailers": "\n".join("- " + t for t in facts["trailers"]),
         "context": "\n".join(facts["context"]),
         "acceptance": "\n".join(_acceptance(facts)) or NO_TEST,
         "verify": "\n".join(_verify(facts)) or NO_TEST,
-        "minutes": TIMEBOX[facts["size"]], "report": facts["report"], "standing": str(STANDING),
+        "minutes": TIMEBOX[facts["size"]], "standing": str(STANDING),
     }
     return string.Template(_template()).substitute(slots)
 

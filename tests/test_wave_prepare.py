@@ -14,6 +14,11 @@ Red before `--from gate` existed (3.4 align):
   FAIL: from gate: exit: got (2, 'usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] [--control-findings F]'), want (0, '')
   FAIL: run_dir: a normal run has from null and run_dir above its briefs: got (None, '.../.git/fwx/runs/01-alpha-b93c090-1'), want (None, None)
 
+Red before `fwx wave scratch` existed (3.4 U8 fix, F2; `case_scratch`):
+  FAIL: scratch: exit, stderr: got (2, 'usage: fwx wave <prepare|check-base|integrate|fix-round|revert|cleanup|summary> ...\n'), want (0, '')
+  FAIL: scratch: with a report and a TMPDIR file in it the worktree is clean: got '?? .fwx-agent/\n', want ''
+Controls added: the folder not ignored, the folder under `.git`.
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
 be in the file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (188 checks). The first FAIL
 line of each, seen red:
@@ -334,7 +339,7 @@ def case_fix_options(R, S):
 
 def case_from_gate(R, S):
     """3.4 align: `--from gate` re-enters the execution at the gate (the tree's n_C7F loops back to n_C7) once every task is on the
-    phase branch: no briefs, no base check, the part's own base, and a run folder with `reports/` for the reviewers."""
+    phase branch: no briefs, no base check, the part's own base, and a run folder of its own."""
     sc = Scene(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])], recipe=["false"])
     base0 = sc.head()
     run0 = "%s-%s-1" % (PHASE, base0[:7])
@@ -347,12 +352,13 @@ def case_from_gate(R, S):
          a.get("base"), base0)
     S.eq("from gate: the run id is the part's, the next number", a.get("run"), "%s-%s-2" % (PHASE, base0[:7]))
     S.ok("from gate: no brief for any task, no fix", all(t.get("brief") is None for w in a.get("waves") or [] for t in w["tasks"]) and a.get("fix") is None, repr(a.get("waves")))
-    folder = a.get("run_dir") or ""
-    S.ok("from gate: run_dir is the run's folder and holds reports/", folder.endswith(os.path.join("fwx", "runs", a.get("run") or "?")) and os.path.isdir(os.path.join(folder, "reports")), folder)
+    folder = os.path.join(sc.repo, ".git", "fwx", "runs", a.get("run") or "?")
+    S.ok("from gate: the run's folder is made, so the next run of the base gets the next number, and it holds no reports/ (an agent writes in its own worktree, 3.4 U8 fix)",
+         os.path.isdir(folder) and not os.path.exists(os.path.join(folder, "reports")) and "run_dir" not in a, folder)
     plain = Scene()
-    a2 = ok_args(S, "run_dir", plain.prepare(R))
-    S.eq("run_dir: a normal run has from null and run_dir above its briefs", (a2.get("from"), os.path.dirname(os.path.dirname(((a2["waves"][0]["tasks"][0]).get("brief")) or ""))),
-         (None, a2.get("run_dir")))
+    a2 = ok_args(S, "plain", plain.prepare(R))
+    S.eq("a normal run has from null, and no run_dir or reports/ either", (a2.get("from"), "run_dir" in a2, os.path.exists(os.path.join(plain.repo, ".git", "fwx", "runs", a2.get("run") or "?", "reports"))),
+         (None, False, False))
     part = Scene(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])])
     part.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: %s-%s-1" % (PHASE, PHASE, part.head()[:7]))
     refused(S, "from gate, a task not done", part, part.prepare(R, "--from", "gate"), "T2")
@@ -396,9 +402,51 @@ def case_check_base(R, S):
     S.eq("check-base: outside git fails closed", (r.returncode, "not a linked worktree: %s" % outside in r.stderr), (42, True))
 
 
+def case_scratch(R, S):
+    """3.4 U8 fix, F2: an agent writes its report and its TMPDIR in `<worktree>/.fwx-agent/<run>/<unit>/`, a folder of its own
+    worktree that git ignores (it holds its own `.gitignore`), never under `.git`: Claude Code asks permission for `.git` and
+    refuses an isolated agent's write outside its worktree. `fwx wave scratch RUN UNIT` makes it and prints it."""
+    sc = Scene()
+    run = "%s-%s-1" % (PHASE, sc.head()[:7])
+    sc2 = lambda *a, cwd=None: R(cwd or sc.cwd, "wave", "scratch", *a, env=sc.env)  # noqa: E731
+    r = sc2(run, "T1")
+    want = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", run, "T1")
+    S.eq("scratch: exit, stderr", (r.returncode, r.stderr), (0, ""))
+    S.eq("scratch: it prints the folder, inside the worktree", r.stdout.strip(), want)
+    S.ok("scratch: its tmp/ is made", os.path.isdir(os.path.join(want, "tmp")), want)
+    helpers.write(want, "report.json", '{"status": "done"}\n')
+    helpers.write(want, "tmp/scratch.txt", "x\n")
+    S.eq("scratch: with a report and a TMPDIR file in it the worktree is clean", helpers.git(sc.cwd, "status", "--porcelain"), "")
+    helpers.git(sc.cwd, "add", "-A")
+    S.eq("scratch: `git add -A` stages none of it", helpers.git(sc.cwd, "diff", "--cached", "--name-only"), "")
+    common = os.path.realpath(helpers.git(sc.cwd, "rev-parse", "--path-format=absolute", "--git-common-dir").strip())
+    S.ok("scratch: nothing is written under .git", not os.path.exists(os.path.join(common, "fwx")) and not any(
+        ".fwx-agent" in d for _, ds, fs in os.walk(common) for d in ds + fs), common)
+    r = sc2(run, "T1")
+    S.eq("scratch: a second call keeps the report", (r.returncode, open(os.path.join(want, "report.json")).read()), (0, '{"status": "done"}\n'))
+    S.ok("scratch: another unit is another folder", sc2(run, "T2").stdout.strip() == os.path.join(os.path.dirname(want), "T2"))
+    # control of the check above: the same file in a folder that git does not ignore is seen
+    helpers.write(sc.cwd, "plain/report.json", "{}\n")
+    S.ok("scratch: control, a report in a folder git does not ignore shows in status", "plain/" in helpers.git(sc.cwd, "status", "--porcelain"))
+    os.remove(os.path.join(sc.cwd, "plain", "report.json"))
+    # the worktree of a finished executor goes with its report in it, never forced
+    other = helpers.add_worktree(sc.repo, "other")
+    o = sc2(run, "T3", cwd=other).stdout.strip() or os.path.join(other, "no-scratch-made")
+    helpers.write(o, "report.json", "{}\n")
+    r = subprocess.run(["git", "-C", sc.repo, "worktree", "remove", other], capture_output=True, text=True)
+    S.eq("scratch: `git worktree remove` (no --force) removes a worktree that holds its report", (r.returncode, os.path.exists(other)), (0, False))
+    for label, argv in (("no unit", [run]), ("a run with a slash", ["a/b", "T1"]), ("a unit that climbs", [run, ".."]), ("a unit with a slash", [run, "a/b"]),
+                        ("an empty unit", [run, ""]), ("a third word", [run, "T1", "x"])):
+        r = sc2(*argv)
+        S.eq("scratch: %s: usage error, nothing printed" % label, (r.returncode, r.stdout, "usage: fwx wave scratch" in r.stderr), (2, "", True))
+    outside = helpers.mkdtemp("fwx-nogit-")
+    r = sc2(run, "T1", cwd=outside)
+    S.eq("scratch: outside a repository: exit 2, nothing made", (r.returncode, r.stdout, os.listdir(outside)), (2, "", []))
+
+
 def case_dispatch(R, S):
     sc = Scene()
-    for sub in ("integrate", "fix-round", "revert", "cleanup", "summary"):
+    for sub in ("integrate", "fix-round", "revert", "cleanup", "summary", "scratch"):
         r = R(sc.cwd, "wave", sub, env=sc.env)
         S.eq("wave %s: built in U3, no options is a usage error" % sub, (r.returncode, "usage: fwx wave %s" % sub in r.stderr, r.stdout), (2, True, ""))
     for argv in ([], ["bogus"]):
@@ -412,7 +460,7 @@ def case_dispatch(R, S):
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_dispatch]
+         case_scratch, case_dispatch]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
@@ -439,6 +487,9 @@ MUTANTS = [
      "    if False:", "all done without --from: prepare still exits 0 and says on stderr"),
     ("check-base by merge-base", case_check_base, B, "if not head.startswith(sha):",
      'if git(top, "merge-base", "--is-ancestor", sha, "HEAD").returncode:', "an ancestor of HEAD is another base"),
+    ("scratch folder not ignored", case_scratch, B, 'f.write("*\\n")', 'f.write("\\n")', "scratch: with a report and a TMPDIR file in it the worktree is clean"),
+    ("scratch under .git", case_scratch, B, 'root = os.path.join(os.path.realpath(top), AGENT_DIR)', 'root = os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), AGENT_DIR)',
+     "scratch: it prints the folder, inside the worktree"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
 ]
 

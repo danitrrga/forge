@@ -28,10 +28,9 @@ and with `--fix` or `--revert`. It launches nothing, so it writes no brief and d
 red or not), and `base` is where the part's first run started (the oldest `Fwx-Run: <part>-<sha7>-<n>` of the phase branch), not
 the head: the review and the trusted-edit report diff from it. The run id continues that numbering. The result has `from: "gate"`.
 
-`run_dir` is the folder of the run (`<git-common-dir>/fwx/runs/<run>`); `reports/` in it exists when the run launches an agent.
-
 The briefs (3.4 U9, execute/brief.py): one file per task in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md`, its path in
-`waves[].tasks[].brief`, and the folder `reports/` beside it. They are built, and checked, before the base is run: a field that
+`waves[].tasks[].brief`. They hold no base sha (a later wave starts from a later head: the workflow names it in the prompt) and
+no path for a report: an agent writes in the folder `fwx wave scratch` makes in its own worktree. They are built, and checked, before the base is run: a field that
 is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
 so a refusal and a red base leave nothing behind. With `--fix` the one brief is the fixer's (`fix.brief`) and the tasks of the
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
@@ -223,12 +222,13 @@ def _base_is_green(top, base, recipe, folders, say):
     return [r for r in results if r["rc"] != 0] or None
 
 
-def _write(made, folder, reports):
-    """The briefs of a run and the folder its reports go to: what `prepare` writes, once everything else has passed."""
-    if not made and not reports:
+def _write(made, folder, claim):
+    """The briefs of a run: what `prepare` writes, once everything else has passed. With `claim` the run's folder is made even
+    with no brief (a `--from gate` run launches none), so that the next run of the base gets the next number."""
+    if not made and not claim:
         return
     try:
-        os.makedirs(os.path.join(folder, "reports"), exist_ok=True)
+        os.makedirs(folder, exist_ok=True)
         for facts, text in made.values():
             brief.put(facts["brief"], text)
     except OSError as e:
@@ -297,7 +297,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     size = data["size"]["tag"]
     common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
     folder = brief.folder_of(common, run)
-    ctx = {"run": run, "base": base, "part": name, "folder": folder,
+    ctx = {"run": run, "part": name, "folder": folder,
            "paths": {"context": str(state.phase_paths(phase)["context"]), "decisions": str(state.phase_paths(phase)["decisions"]),
                      "plan": str(paths["plan"])}}
     quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
@@ -338,6 +338,5 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         "fix": dict(fixing, brief=made[brief.FIX][0]["brief"] if brief.FIX in made else None) if fixing else None,
         "revert": revert or [],
         "from": start,
-        "run_dir": folder,
         "control_findings": controls,
     }

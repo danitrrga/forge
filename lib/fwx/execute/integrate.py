@@ -232,25 +232,44 @@ def revert(cwd, part_dir, ids):
     return (0 if result["ok"] else 1), result
 
 
-def summary(cwd, part_dir):
-    """(exit code, result): {gate, head, evidence_line, rounds}. `pass` when the last evidence row of the part is green and is
-    HEAD's; `fail` when it is red or another commit's (exit 1); `none` with no evidence row or no part (exit 2)."""
+def _own_gate(run, steps):
+    """None when the run's own calls allow a pass, else why not. A run that merged branches passes only through its own gate: its
+    last `integrate --final` is green. The evidence row of the part is shared by every run, so without this an earlier run that
+    stopped short (a wave failed, the rounds ran out) reported `pass` as soon as a later run, or a hand fix, made the head green.
+    A run with no `integrate` (a `--revert` run, whose gate is `fwx verify` on the head) is left to the evidence row."""
+    merges = [r for r in steps if r.get("step") == "integrate"]
+    if not merges:
+        return None
+    finals = [r for r in merges if r.get("args", {}).get("final")]
+    if not finals:
+        return "run %s merged branches and never ran the gate: no `integrate --final` among its calls" % run
+    last = finals[-1]
+    if last.get("exit") != 0 or (last.get("result", {}).get("verify") or {}).get("rc") != 0:
+        return "the last gate of run %s was red or did not run (`integrate --final` exit %s)" % (run, last.get("exit"))
+    return None
+
+
+def summary(cwd, part_dir, run=None, steps=()):
+    """(exit code, result): {gate, head, evidence_line, rounds, why}. `pass` when the last evidence row of the part is green and is
+    HEAD's, and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
+    commit's, or the run did not pass its gate (exit 1, `why` says it); `none` with no evidence row or no part (exit 2)."""
     top = _top(cwd)
     head = verify.head(top)
     if not part_dir:
-        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": None}
+        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}
     rows = state.read_rows(state.phase_paths(part_dir)["audit"])
     cap = rounds.cap(part_dir)
     used = "%d/%d" % (rounds.count(rows), cap)
     seen = [r for r in rows if r.get("kind") == "evidence"]
     if not seen:
-        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": used}
+        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": used, "why": ""}
     last = seen[-1]
     rc, sha = last.get("rc", "").strip(), last.get("sha", "")
-    gate = "pass" if rc == "0" and sha == head else "fail"
+    why = _own_gate(run, steps) if run else None
+    gate = "pass" if rc == "0" and sha == head and not why else "fail"
     try:
         commands = json.loads(last.get("detail", ""))["commands"]
         line = verify.evidence_line(sha, commands)
     except (ValueError, KeyError, TypeError):
         line = "evidence %s rc=%s" % (sha, rc)
-    return (0 if gate == "pass" else 1), {"gate": gate, "head": head, "evidence_line": line, "rounds": used}
+    return (0 if gate == "pass" else 1), {"gate": gate, "head": head, "evidence_line": line, "rounds": used, "why": why or ""}
