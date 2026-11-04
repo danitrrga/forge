@@ -44,4 +44,4 @@ objections: one criterion cannot come out false.
 - warning criterion C2 must be able to fail / evidence: plan.md C2, "reads well", has no measure / owner: planner / hint: name a command and its output
 ```
 
-Then run `fwx plan check` on the phase folder once and fix any error it names about `postmortem.md`. Reply with the verdict, the path and any claim you could not run, in under 100 words.
+Then run `fwx plan check` on the phase folder once and fix any error it names about `postmortem.md`. Your whole reply is one line, `<verdict> <path> blockers=<n> warnings=<n> unproven=<n>` and nothing after it: the findings and the claims you could not run are in the file.

@@ -25,7 +25,7 @@ Drop everything else. A detail the planner can settle with an obvious choice is 
 
 - `ok`: no failure reason left.
 - `objections`: failure reasons a planner can absorb, such as a row to confirm or a claim to check first.
-- `back-to-discuss`: the plan would build something other than what the owner meant; say which words and row disagree.
+- `back-to-discuss`: the plan would build something other than what the owner meant, or the ask is missing or reversed (a question taken as a decision); say which words and row disagree. Rows that add work on top of the ask are `objections`: the planner cuts them.
 
 ## Write
 
@@ -45,4 +45,4 @@ objections: one row rests on an unchecked claim.
 small, 1 part.
 ```
 
-With `ok`, `## Failure reasons` holds `None.`. Then run `fwx plan check` on the phase folder once and fix any error it names about `premortem.md`; the missing `plan.md` it reports is expected. Name any claim you could not read or run.
+With `ok`, `## Failure reasons` holds `None.`. Then run `fwx plan check` on the phase folder once and fix any error it names about `premortem.md`; the missing `plan.md` it reports is expected. A claim you could not read or run goes in a closing `## Unproven` section, `None.` if there is none. Your whole reply is one line, `<verdict> <path> reasons=<n> unproven=<n>` and nothing after it: everything else is in the file.
