@@ -1,6 +1,6 @@
 """What the tests that build their own world share: a copy of this checkout or a few of its
-files, a toy HOME's pieces, an empty network namespace, and temp dirs that do not outlive a
-passing run. Each helper is the strongest of the copies the suites used to carry.
+files, a toy HOME's pieces, an empty network namespace, and temp dirs that do not outlive the run.
+Each helper is the strongest of the copies the suites used to carry.
 
 The name does not match `*test_*.py`, so `forge test` never runs it; the suites import it.
 A suite under skills/ is also reached through the ~/.claude/skills links, so it finds this file
@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import socket
 import stat
 import subprocess
@@ -49,31 +50,70 @@ def git(cwd, *args):
                           env=dict(os.environ, **GIT_ENV), capture_output=True, text=True, check=True).stdout
 
 
+KEEP_ENV = "FORGE_TEST_KEEP"
+
+
+def keeping():
+    """Whether the run was asked to keep its temp dirs for a look: FORGE_TEST_KEEP=1 in the environment. Off
+    by default: /tmp is RAM on this machine, and a test that leaves a folder there, passing or failing, is a bug
+    in that test (ORDERS 14). Before this, a failing run kept every dir it made (14 `forge-s0-*` of ~115 MB per
+    failing test_sync_fixture run, 71 of them at once) and a crashed or killed run kept them without a word."""
+    return os.environ.get(KEEP_ENV) == "1"
+
+
 def mkdtemp(prefix):
-    """A temp dir that cleanup() removes after a passing run, or keeps and names after a failing one.
-    Until a fix test_rotate_secret.py left 14 per run and test_security_audit.py 13, never
+    """A temp dir removed when the process ends however it ends (cleanup(), a normal exit, an uncaught exception,
+    sys.exit, SIGTERM), unless FORGE_TEST_KEEP=1. SIGKILL and os._exit skip it: a caller that must os._exit calls
+    cleanup() first. Until a fix test_rotate_secret.py left 14 per run and test_security_audit.py 13, never
     removed: one day /tmp held 642 rotate-test-* dirs, each a partial forge checkout."""
     d = os.path.realpath(tempfile.mkdtemp(prefix=prefix))
     _made.append(d)
     return d
 
 
-def cleanup(failed, label="kept:"):
-    """Remove every mkdtemp() dir, or, when the run failed, print them so they can be looked at.
-    A dir the test made read-only is its own to restore first."""
-    if failed:
+def rmtree(d):
+    """shutil.rmtree that also removes what a test made read-only (a 0500 directory refuses its own files'
+    removal) and a dir that is already gone."""
+    def writable(func, p, exc):
+        if isinstance(exc, FileNotFoundError):
+            return
+        os.chmod(os.path.dirname(p), 0o700)
+        os.chmod(p, 0o700)
+        func(p)
+    if sys.version_info >= (3, 12):  # onerror is deprecated there
+        shutil.rmtree(d, onexc=writable)
+    else:
+        shutil.rmtree(d, onerror=lambda f, p, e: writable(f, p, e[1]))
+
+
+def cleanup(failed=False, label="kept:"):
+    """Remove every mkdtemp() dir, whether the run passed or not (`failed` is accepted for the callers that
+    pass it and changes nothing). With FORGE_TEST_KEEP=1 they are printed instead, so they can be looked at.
+    Pops each dir, so a thread that made one meanwhile (the guard suite's pool) is not skipped."""
+    if keeping():
         if _made:
             print(label, " ".join(_made))
-    else:
-        for d in _made:
-            shutil.rmtree(d)
-    del _made[:]
+        del _made[:]
+        return
+    while _made:
+        rmtree(_made.pop())
 
 
 @atexit.register
-def _unfinished():  # a suite that crashed before cleanup(): kept, and said so
+def _unfinished():  # a suite that crashed or exited before cleanup()
     if _made:
-        print("kept (the run did not finish):", " ".join(_made))
+        if keeping():
+            print("kept (the run did not finish):", " ".join(_made))
+            return
+        cleanup()
+
+
+def _on_sigterm(signum, frame):
+    sys.exit(128 + signum)  # a SystemExit, so atexit runs: a timeout's `kill` must not leave the world behind
+
+
+if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
+    signal.signal(signal.SIGTERM, _on_sigterm)
 
 
 def bare_env(home, tmp, bin_dir=None, **extra):

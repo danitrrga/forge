@@ -77,11 +77,12 @@ def read_json(path):
         return json.load(fh)
 
 
-def run_oracle(task_dir, repo, message, timeout):
-    """(results, error): the oracle's list of {id, passed, evidence} on a repo copy, or why it gave none."""
+def run_oracle(task_dir, repo, message, timeout, env=None):
+    """(results, error): the oracle's list of {id, passed, evidence} on a repo copy, or why it gave none. `env` is the
+    environment of what runs (None: this process's)."""
     meta = project_meta(task_dir)
     if meta is not None:
-        return run_checks(meta, repo, timeout, task_dir)
+        return run_checks(meta, repo, timeout, task_dir, env)
     with tempfile.TemporaryDirectory() as t:
         runner, msg = os.path.join(t, "runner.py"), os.path.join(t, "message.txt")
         for p, text in ((runner, RUNNER), (msg, message)):
@@ -89,7 +90,7 @@ def run_oracle(task_dir, repo, message, timeout):
                 fh.write(text)
         try:
             r = subprocess.run([sys.executable, "-I", runner, os.path.join(task_dir, "oracle.py"), repo, msg],
-                               cwd=repo, capture_output=True, text=True, timeout=timeout)
+                               cwd=repo, capture_output=True, text=True, timeout=timeout, env=env)
         except subprocess.TimeoutExpired:
             return None, "oracle timeout after %ss" % timeout
     if r.returncode:
@@ -111,10 +112,10 @@ def project_meta(task_dir):
     return meta if (meta.get("source") or {}).get("kind") == "project" else None
 
 
-def sh(cmd, cwd, timeout):
+def sh(cmd, cwd, timeout, env=None):
     """(returncode, output tail) of a shell command; a timeout is returncode 124."""
     try:
-        r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(cmd, shell=True, cwd=cwd, capture_output=True, text=True, timeout=timeout, env=env)
     except subprocess.TimeoutExpired:
         return 124, "timeout after %ss" % timeout
     return r.returncode, ((r.stdout or "") + (r.stderr or "")).strip()[-300:]
@@ -153,7 +154,7 @@ def _q(x):
     return shlex.quote(x)
 
 
-def run_checks(meta, repo, timeout, task_dir=None):
+def run_checks(meta, repo, timeout, task_dir=None, env=None):
     """(results, None) for a project task: each check's shell command run in repo, exit status 0 = passed. Files in the task's
     overlay/ directory are copied over the tree first: the hidden tests that came with the merged fix, which the ideal diff leaves
     out (a correct answer that did not add that very test would fail otherwise) and the agent never sees."""
@@ -161,7 +162,7 @@ def run_checks(meta, repo, timeout, task_dir=None):
         shutil.copytree(os.path.join(task_dir, "overlay"), repo, dirs_exist_ok=True)
     res = []
     for c in meta.get("checks") or []:
-        rc, out = sh(c["cmd"], repo, c.get("timeout", timeout))
+        rc, out = sh(c["cmd"], repo, c.get("timeout", timeout), env)
         res.append({"id": c["id"], "passed": rc == 0, "evidence": out[-160:]})
     return res, None
 
@@ -170,14 +171,18 @@ def fresh(task_dir, patch_rel=None):
     """A temp copy of the task's starting tree with patch_rel applied: (dir, error)."""
     d = tempfile.mkdtemp(prefix="skillbench-")
     repo = os.path.join(d, "repo")
-    err = materialize(task_dir, repo)
-    if err:
-        return d, err
-    if patch_rel:
-        r = subprocess.run(["git", "apply", "--whitespace=nowarn", os.path.join(task_dir, patch_rel)], cwd=repo,
-                           capture_output=True, text=True)
-        if r.returncode:
-            return d, "%s does not apply: %s" % (patch_rel, (r.stderr.strip().splitlines() or ["?"])[0])
+    try:
+        err = materialize(task_dir, repo)
+        if err:
+            return d, err
+        if patch_rel:
+            r = subprocess.run(["git", "apply", "--whitespace=nowarn", os.path.join(task_dir, patch_rel)], cwd=repo,
+                               capture_output=True, text=True)
+            if r.returncode:
+                return d, "%s does not apply: %s" % (patch_rel, (r.stderr.strip().splitlines() or ["?"])[0])
+    except BaseException:  # the caller gets no dir to remove from an exception
+        shutil.rmtree(d, ignore_errors=True)
+        raise
     return d, None
 
 
@@ -185,7 +190,11 @@ def verdict(task_dir, patch_rel, message, timeout):
     """(results, error) for the task's repo with patch_rel (or nothing) applied."""
     d, err = fresh(task_dir, patch_rel)
     try:
-        return (None, err) if err else run_oracle(task_dir, os.path.join(d, "repo"), message, timeout)
+        # Whatever the oracle or the task's own code makes in a temp dir (two tasks' do, a dir each per run) goes in
+        # d/tmp and leaves with d: /tmp is RAM, and nothing the bench runs may leave a folder there.
+        os.makedirs(os.path.join(d, "tmp"))
+        env = dict(os.environ, TMPDIR=os.path.join(d, "tmp"))
+        return (None, err) if err else run_oracle(task_dir, os.path.join(d, "repo"), message, timeout, env)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 

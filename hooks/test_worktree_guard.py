@@ -41,14 +41,15 @@ import shutil
 import statistics
 import subprocess
 import sys
-import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "tests"))
+import sandbox  # noqa: E402
 HOOK = os.environ.get("WORKTREE_GUARD_UNDER_TEST") or os.path.join(HERE, "worktree_guard.py")
 
-BASE = os.path.realpath(tempfile.mkdtemp(prefix="wtguard-"))
+BASE = sandbox.mkdtemp("wtguard-")
 MAIN = os.path.join(BASE, "main")
 WT = os.path.join(MAIN, ".claude", "worktrees", "agent-a")
 WT_B = os.path.join(MAIN, ".claude", "worktrees", "agent-b")

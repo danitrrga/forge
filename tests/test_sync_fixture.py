@@ -45,7 +45,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -117,7 +116,7 @@ def changed(a, b):
 
 class Sandbox:
     def __init__(self, mutation=None):
-        self.root = os.path.realpath(tempfile.mkdtemp(prefix="forge-s0-"))
+        self.root = sandbox.mkdtemp("forge-s0-")  # removed at exit however the run ends, unless FORGE_TEST_KEEP=1 or --keep
         self.forge, self.home, self.projects = (os.path.join(self.root, d) for d in ("forge", "home", "projects"))
         self.cjp = os.path.join(self.home, ".claude.json")
         self.settings = os.path.join(self.home, ".claude", "settings.json")
@@ -614,6 +613,8 @@ def load_dump(d):
 
 def main(argv):
     t0 = time.time()
+    if "--keep" in argv:
+        os.environ[sandbox.KEEP_ENV] = "1"
     os.umask(0o022)  # file modes are in the manifest
     results = []
 
@@ -666,12 +667,8 @@ def main(argv):
     for level, name, detail in results:
         print("%-5s %s%s" % (level, name, (": " + str(detail)) if detail else ""))
     failures = sum(1 for r in results if r[0] == "FAIL")
-    keep = "--keep" in argv or failures
-    for s in sandboxes:
-        if keep:
-            print("sandbox kept:", s.root)
-        else:
-            shutil.rmtree(s.root)
+    # Every sandbox is gone, passing or failing (~115 MB each, 14 per failing run, in RAM): `--keep` or FORGE_TEST_KEEP=1 names them.
+    sandbox.cleanup(failures, "sandbox kept:")
     print("runtime %.1fs" % (time.time() - t0))
     print("%d failure(s) over %d cases (%d expected failure(s))"
           % (failures, len(results), sum(1 for r in results if r[0] == "XFAIL")))

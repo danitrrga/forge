@@ -26,6 +26,8 @@ const script = resolve(process.argv[2] ?? join(here, "harness-metrics.mjs"));
 const TRANSCRIPT_NAME = "-toy-world-projects-harness-fixture";
 
 const root = mkdtempSync(join(tmpdir(), "harness-metrics-test-"));
+// Removed however the run ends (an exception below, process.exit): /tmp is RAM, a failing run leaves nothing there.
+process.on("exit", () => rmSync(root, { recursive: true, force: true }));
 
 // ---------- a real repo with three commits ----------
 
