@@ -94,3 +94,4 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea631d2 (MI
   Read by part 3.1 for the shape of the agents researcher and demo and of the skill discuss; single lines it copies are named in the
   header of the file that copies them. agents/demo.md takes line 7 of plugins/pstack/skills/poteto-mode/playbooks/prototype.md as
   written, except that its last sentence "Route to Feature." reads "Return the missing question instead of writing figures."
+  skills/discuss/references/reentry.md takes line 3 of plugins/pstack/skills/poteto-mode/playbooks/session-pickup.md as written.
