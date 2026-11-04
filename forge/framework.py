@@ -141,6 +141,8 @@ def _document(prof, name, ppath):
             "checks_quick": list(prof.get("checks_quick") or []),
             "app_run": copy.deepcopy(prof.get("app_run")),
             "surface_context": copy.deepcopy(prof.get("surface_context") or {}),
+            "default_branch_protected": prof.get("default_branch_protected") is True,
+            "ui_image": copy.deepcopy(prof.get("ui_image")),
         },
         "factory": factory,
         "weekly": table("weekly"),
