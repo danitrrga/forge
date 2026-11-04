@@ -34,7 +34,7 @@
       "type": "feature",
       "wave": 1,
       "files": [
-        "calc/core.py",
+        "calc.py",
         "tests/test_core.py"
       ],
       "depends_on": [],
@@ -54,7 +54,7 @@
       "type": "feature",
       "wave": 2,
       "files": [
-        "calc/plugins.py",
+        "calc_plugins.py",
         "tests/test_plugins.py"
       ],
       "depends_on": [
@@ -76,7 +76,7 @@
       "type": "feature",
       "wave": 2,
       "files": [
-        "calc/config.py",
+        "calc_config.py",
         "tests/test_config.py"
       ],
       "depends_on": [
@@ -98,7 +98,7 @@
       "type": "feature",
       "wave": 2,
       "files": [
-        "calc/history.py",
+        "calc_history.py",
         "tests/test_history.py"
       ],
       "depends_on": [
@@ -120,7 +120,7 @@
       "type": "feature",
       "wave": 3,
       "files": [
-        "calc/cli.py",
+        "calc.py",
         "tests/test_cli.py"
       ],
       "depends_on": [
@@ -165,7 +165,7 @@
       "type": "feature",
       "wave": 3,
       "files": [
-        "calc/replay.py",
+        "calc_replay.py",
         "tests/test_replay.py"
       ],
       "depends_on": [
@@ -187,7 +187,7 @@
       "type": "feature",
       "wave": 4,
       "files": [
-        "calc/cli.py",
+        "calc.py",
         "tests/test_cli_history.py"
       ],
       "depends_on": [
@@ -243,4 +243,4 @@ A terminal calculator that evaluates expressions, with a plugin system for new o
 T1 is the evaluator (D1, D3). T5 is the command line: an expression as the argument or one per line (D2), division by zero reported with exit code 1 (D3). The results are exact decimals (D4), through the same parser in T1. T2 and T6 make operators loadable from a folder, T3 reads the settings, T4, T7 and T8 keep a history and replay it, and T9 writes the README. Waves: T1 first; the plugin loader, the settings and the history store in one wave, as they share no file; then the command line, the example plugin and the replay; the history subcommand and the README last.
 
 ## Size
-Small at the pre-mortem, nine tasks in the plan. The calculator was asked for as one small file; this plan makes it a package of eight modules because three things are built in as well. A plugin system, so that the next operator is a file in `plugins/` and not an edit to the evaluator. A settings file, `calc.toml`, for the number of places and the output format, so that nobody edits constants. A history file with a `calc history` command, so that a calculation can be replayed after the session ends. They make the work larger than a small plan allows, but each is a module of its own, built in one wave, so the plan is no slower than a small one would be.
+Small at the pre-mortem, nine tasks in the plan. The calculator was asked for as one small file; this plan keeps `calc.py` and adds four more modules because three things are built in as well. A plugin system, so that the next operator is a file in `plugins/` and not an edit to the evaluator. A settings file, `calc.toml`, for the number of places and the output format, so that nobody edits constants. A history file with a `calc history` command, so that a calculation can be replayed after the session ends. They make the work larger than a small plan allows, but each is a module of its own, built in one wave, so the plan is no slower than a small one would be.
