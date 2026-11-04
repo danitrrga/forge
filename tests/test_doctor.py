@@ -1516,18 +1516,21 @@ def skip_cases(tmp):
         want("session_wait with hindsight on", getattr(cli, "session_wait", lambda: "no cli.session_wait")(), wait)
         want("the unit comes from the config", getattr(cli, "memory_unit", lambda: "no cli.memory_unit")(), "toy-unit")
 
-        toolchain_row = lambda: lib.Result("PASS", "toolchain", "toy")
+        # Forced to FAIL, whatever the machine says: a session that still reaches toolchain.row (through
+        # cli.check_and_tell) prints "toolchain: 1 failing: ..." and "another project is not special" fails. With
+        # check_and_tell stubbed below nothing reaches it, so the want() stays '' on a green and a red machine alike.
+        toolchain_row = lambda: lib.Result("FAIL", "toolchain", "1 failing: file:mise (forced by the test)")
 
         def session(project):
-            """What a session start in `project` prints, with the sync steps, lock and resolver stubbed out."""
-            # toolchain.row reads machine state: the real config/toolchain.json against the real
-            # ~/.config/mise/conf.d/forge.toml. Under this toy settings file agent_browser is off, so the rendered
-            # file lacks agent-browser and differs from the machine's ("toolchain: 1 failing: file:mise"). Stubbed to
-            # a PASS like the sync steps; the row itself is test_toolchain.py's.
+            """What a session start in `project` prints, with the sync steps, lock, resolver and machine check stubbed out."""
+            # cli.check_and_tell reads machine state: the GSD runtime and the real config/toolchain.json against the
+            # real ~/.config/mise/conf.d/forge.toml ("toolchain: 1 failing: file:mise" when they differ). It is
+            # stubbed whole, like the sync steps; the row itself is test_toolchain.py's. toolchain.row is also forced
+            # to FAIL as a tripwire: if the stub stops covering it, "another project is not special" goes red.
             saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
-                     cli.toolchain.row)
+                     cli.toolchain.row, cli.check_and_tell)
             cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state = [], 0.3, 0.1, lambda: "activating"
-            cli.toolchain.row = toolchain_row
+            cli.toolchain.row, cli.check_and_tell = toolchain_row, lambda: []
             lib.resolve_project, lib.profiles = (lambda path: project), (lambda skipped=None: {project: {}})
             lib.lock = lambda timeout=20: contextlib.nullcontext()
             out = io.StringIO()
@@ -1536,7 +1539,7 @@ def skip_cases(tmp):
                     cli.cmd_session_start(None)
             finally:
                 (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
-                 cli.toolchain.row) = saved
+                 cli.toolchain.row, cli.check_and_tell) = saved
             return json.loads(out.getvalue())["systemMessage"] if out.getvalue().strip() else ""
         msg = session("toyproj")
         want("a session in the configured project waits", ("memory is starting (toy-unit: activating" in msg), True)
