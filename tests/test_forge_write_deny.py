@@ -26,6 +26,8 @@ The matcher below (`denied`) is that measured behaviour: a directory rule matche
 
 Second round (the `design/` exception and tracked-only enumeration), seen failing on b33d656: "design repo write denied -- <root>/design/taste/entries/a.md
 matches [...]" and "untracked entry: no rule for logs/ -- [...]".
+Third round (the untracked entries that always matter, `.git`, `.forge-data.git`, `credentials`, `data`, are denied when the checkout has them),
+seen failing on acae9d7: "always-denied: credentials/ and .git/ have rules -- [...]".
 Seen failing on master (40d20f1), this file as it is: every check about a rule red, e.g.
   "deny rules missing after --apply -- None"
   "dry-run: `+ deny Edit(//.../hooks/**)  (agents of a project do not write in forge)` is printed -- []"
@@ -90,7 +92,7 @@ WHY = "(agents of a project do not write in forge)"
 _r = [0]
 
 
-TRACKED = {}  # root -> {top-level entry tracked by git there: whether it is a directory}
+TRACKED = {}  # root -> {top-level entry that is denied there (tracked, or one of the always-denied untracked): whether it is a directory}
 
 
 def _git(root, *args, data=False):
@@ -99,7 +101,7 @@ def _git(root, *args, data=False):
 
 
 def toy_root(entries=("hooks/guard.py", "skills/x/SKILL.md", "plugins/toy/probe.txt", "design/taste/entries/a.md", ".claude/worktrees/w/f.txt",
-                      "README.md", "bin/forge"), data=(), untracked=("logs/run.log",), repo=True):
+                      "README.md", "bin/forge"), data=(), untracked=("logs/run.log", "credentials/secrets.json"), repo=True):
     """A toy forge checkout: the `entries` tracked by its `.git`, the `data` ones by a `.forge-data.git` over the same work tree, and the
     `untracked` files left out of both. `repo=False`: no git at all."""
     _r[0] += 1
@@ -124,6 +126,9 @@ def toy_root(entries=("hooks/guard.py", "skills/x/SKILL.md", "plugins/toy/probe.
             _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "data", data=True)
     make(untracked)
     TRACKED[root] = {}
+    for always in (".git", ".forge-data.git", "credentials", "data"):  # the untracked entries that always matter, when the checkout has them
+        if os.path.isdir(os.path.join(root, always)):
+            TRACKED[root][always] = True
     for rel in tuple(entries) + tuple(data):
         top = rel.split("/")[0]
         TRACKED[root][top] = TRACKED[root].get(top, False) or "/" in rel
@@ -277,7 +282,8 @@ forge_json()
 # ------------------------------------------------------------------------------------------ 1. a project gets the rules
 ROOT1 = toy_root()
 WANT1 = rules_for(ROOT1)
-check("fixture: the hand-written expectation is 10 rules (5 tracked entries but plugins and design, Edit and Write) -- %d" % len(WANT1), len(WANT1) == 10, WANT1)
+check("fixture: the hand-written expectation is 14 rules (5 tracked entries but plugins and design, plus the untracked .git and credentials, Edit and Write) -- %d" % len(WANT1),
+      len(WANT1) == 14 and "Edit(/%s/credentials/**)" % ROOT1 in WANT1 and "Write(/%s/.git/**)" % ROOT1 in WANT1, WANT1)
 check("fixture: logs/ is on disk, untracked", os.path.isdir(os.path.join(ROOT1, "logs")) and "logs" not in TRACKED[ROOT1], TRACKED[ROOT1])
 pp = project()
 w = World()
@@ -312,6 +318,11 @@ for rel, want in (("hooks/guard.py", True), ("hooks/new/deep/file.py", True), ("
 os.makedirs(os.path.join(ROOT1, ".playwright-mcp"))
 before = raw(slp(pp))
 code, out = w.run(root=ROOT1)
+check("always-denied: credentials/ and .git/ have rules, untracked as they are -- %s" % [r for r in deny_of(pp) or [] if "credentials" in r or "/.git/" in r],
+      all(r in (deny_of(pp) or []) for r in ("Edit(/%s/credentials/**)" % ROOT1, "Write(/%s/credentials/**)" % ROOT1, "Edit(/%s/.git/**)" % ROOT1,
+                                              "Write(/%s/.git/**)" % ROOT1)), deny_of(pp))
+check("always-denied: a file under credentials/ and under .git/ is denied", bool(denied(deny_of(pp) or [], os.path.join(ROOT1, "credentials/secrets.json")))
+      and bool(denied(deny_of(pp) or [], os.path.join(ROOT1, ".git/config"))), deny_of(pp))
 check("untracked entry: no rule for logs/ or .playwright-mcp/ -- %s" % [r for r in deny_of(pp) or [] if "/logs" in r or "playwright" in r],
       not any("/logs" in r or "playwright" in r for r in deny_of(pp) or []) and raw(slp(pp)) == before and not plus_deny(out), (deny_of(pp), out))
 check("control: the matcher sees a file outside the checkout as not denied", not denied(deny_of(pp) or [], os.path.join(pp, "src", "a.py")), deny_of(pp))
@@ -319,7 +330,7 @@ check("control: the matcher denies a file the whole-checkout rule covers (it can
       bool(denied(["Edit(/%s/**)" % ROOT1], os.path.join(ROOT1, "plugins/toy/probe.txt"))), "")
 
 # the rule is not a fixed path: another root, other rules, none naming the first; and never this checkout's own path.
-ROOT2 = toy_root(("docs/a.md", "plugins/p/q.txt", "Makefile"), data=("config/c.json", "docs/b.md"))
+ROOT2 = toy_root(("docs/a.md", "plugins/p/q.txt", "Makefile"), data=("config/c.json", "docs/b.md"), untracked=("data/mem.db", "logs/x"))
 # run from a folder inside the checkout: `git ls-files` lists what is below the current directory, and the data history (a
 # work tree with no folder of its own) listed nothing of the entries above it. Red without `cwd=root`: "data history: ..."
 here = os.getcwd()
@@ -331,6 +342,8 @@ finally:
 WANT2 = rules_for(ROOT2)
 check("data history: its top-level entries are covered too (config/, and docs/ once) -- %s" % WANT2,
       "Edit(/%s/config/**)" % ROOT2 in WANT2 and sum(r.startswith("Edit(") and "/docs/" in r for r in WANT2) == 1, WANT2)
+check("always-denied: data/ and .forge-data.git/ have rules, logs/ none -- %s" % WANT2,
+      all("Edit(/%s/%s/**)" % (ROOT2, n) in WANT2 for n in ("data", ".forge-data.git", ".git")) and not any("/logs" in r for r in WANT2), WANT2)
 check("forge path hard-coded -- %s" % deny_of(pp), deny_of(pp) == WANT2 and not any(ROOT1 in r for r in deny_of(pp) or []), deny_of(pp))
 check("forge path hard-coded: no rule names the real checkout -- %s" % [r for r in deny_of(pp) or [] if REAL_ROOT in r],
       not any(REAL_ROOT in r for r in deny_of(pp) or []), deny_of(pp))
@@ -406,10 +419,11 @@ ROOT0 = toy_root(("README.md",), repo=False)
 code, out = wm.run(root=ROOT0)
 check("no history: one `!` line naming the deny step, exit 1 -- %s" % bang(out), code == 1 and any("forge write deny" in l for l in bang(out)), out)
 check("no history: the file is left as it was -- %s" % deny_of(ppm), set(WANT1) <= set(deny_of(ppm) or []), deny_of(ppm))
-# only exempt entries tracked: nothing to protect, the same `!` line (looking at zero is a failure)
-ROOTP = toy_root(("plugins/a/b.txt", "design/x.md"))
+# only exempt entries tracked: the always-denied `.git` is all there is to deny
+ROOTP = toy_root(("plugins/a/b.txt", "design/x.md"), untracked=())
 code, out = wm.run(root=ROOTP)
-check("only exempt entries: one `!` line, exit 1 -- %s" % bang(out), code == 1 and any("forge write deny" in l for l in bang(out)), out)
+check("only exempt entries tracked: just the rules of .git -- %s" % [r for r in deny_of(ppm) or [] if ROOTP in r],
+      [r for r in deny_of(ppm) or [] if ROOTP in r] == rules_for(ROOTP) == ["Edit(/%s/.git/**)" % ROOTP, "Write(/%s/.git/**)" % ROOTP], (deny_of(ppm), out))
 
 # ------------------------------------------------------------------------------------------ 4. beside the framework step
 sandbox_cfg = World()
