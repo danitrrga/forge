@@ -199,18 +199,26 @@ def _run(argv, rule):
             print()
             continue
 
+        # What the framework step wants of this project, decided before anything is written: a permissions list that
+        # fails its lint writes nothing for the profile (framework.permissions), as the memory invariant above.
+        fw = framework.plan(prof, name)
+        fp = framework.permissions(prof, fw, os.path.join(CFG, framework.PERMISSIONS_FILE))
+        if fp.errors:
+            print("\n".join(fp.errors) + "\n")
+            continue
+
         cj.project(prof, sel, registry, secrets, errors)
         for e in errors:
             print("   ! " + e)
 
         env_errors = []
-        # What the framework step wants of this project, decided first because settings.local.json carries part
-        # of it (the plugin's enabledPlugins entry, its marketplace, LINEAR_API_KEY); its own lines come after.
-        fw = framework.plan(prof, name)
+        # settings.local.json carries part of what the framework wants (the plugin's enabledPlugins entry, its
+        # marketplace, LINEAR_API_KEY, its permissions); the framework's own lines come after.
         settings_ok = True
         try:
-            ov = skills.write_settings_local(ctx, mcp.with_denied_tools(framework.with_env(prof, fw, secrets), sel, registry),
-                                            secrets, env_errors, hooks.project_hooks(prof), fw if fw.on else None)
+            ov = skills.write_settings_local(
+                ctx, mcp.with_denied_tools(framework.with_permissions(framework.with_env(prof, fw, secrets), fp), sel, registry),
+                secrets, env_errors, hooks.project_hooks(prof), fw if fw.on else None)
         except lib.Unreadable as e:
             ov, settings_ok = _unreadable(e), False
         if ov:
@@ -218,6 +226,8 @@ def _run(argv, rule):
         for e in env_errors:
             print("   ! " + e)
         if settings_ok:
+            for line in fp.lines:
+                print(line)
             for line in framework.write(ctx, prof, fw, name, secrets):
                 print(line)
 

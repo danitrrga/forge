@@ -442,7 +442,11 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
                         continue
                     cur[k] = list(dict.fromkeys((cur.get(k) or []) + list(perms[k])))
             for k, v in perms.items():
-                if k not in ("allow", "deny", "ask"):
+                if k == "additionalDirectories" and isinstance(v, list) and isinstance(cur.get(k) or [], list):
+                    # Union, like allow/deny/ask: a directory added by hand, or by another forge step that
+                    # claimed it, stays; claimed element by element (_claims), so only forge's own go when stale.
+                    cur[k] = list(dict.fromkeys((cur.get(k) or []) + v))
+                elif k not in ("allow", "deny", "ask"):
                     cur[k] = v
                     if k != "additionalDirectories":  # a list, claimed element by element (_claims)
                         written.append(("key", ["permissions", k], v, None))

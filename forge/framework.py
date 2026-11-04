@@ -8,6 +8,15 @@ What a `true` profile gets, all of it per project and none of it at user scope:
   * in settings.local.json, `enabledPlugins["<plugin>@<plugin>"] = true` and `extraKnownMarketplaces.<plugin>`
     (written by skills.write_settings_local, which this module feeds through a Plan), both owned claims; and
     `env.LINEAR_API_KEY` when config/secrets.json has the secret, else one line that is not a `!`.
+  * in settings.local.json, `permissions.allow` gets the `allow` rules of config/framework-permissions.json (3.6, schema 1:
+    narrow rules measured as denied by the auto-mode classifier, each with the roles that use it), and
+    `permissions.additionalDirectories` the main checkout, so a session in a linked worktree may reach it. Both go in
+    as the profile's own permissions do (with_permissions), so forge/skills.py claims them item by item, writes them and
+    takes them out when the profile turns the framework off; a rule put by hand stays. The list is linted first
+    (permission_errors): a rule that is too broad, one that overlaps an `only_daniel` prefix or a `production.commands`
+    of the profile, a role that is not a key of `framework.models`, or a file that is not schema 1 is one `!` line and
+    nothing is written for that profile. Without the file the step prints `NOT RUN, NOT ARMED` and writes only the
+    main checkout.
   * on --apply, one `claude plugin marketplace add <path> --scope local` per machine, run from the project's
     folder, while ~/.claude/plugins/known_marketplaces.json does not hold the marketplace at that path. Declaring
     the marketplace in settings.local.json alone does not load the plugin (measured on 2.1.308: the registry
@@ -45,6 +54,12 @@ LINEAR_KEY = "LINEAR_API_KEY"
 INTEGRATIONS = ("consent", "notifications", "agent_browser", "mempalace")
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 ADD_TIMEOUT = 120
+PERMISSIONS_FILE = "framework-permissions.json"
+PERMISSIONS_SCHEMA = 1
+# A command that runs whatever follows it: `Bash(<one of these>:*)` allows any program or package script.
+RUNNERS = frozenset("""python python3 node nodejs deno bun ruby perl php lua bash sh zsh fish dash env sudo xargs eval exec
+                       npm npx pnpm pnpx yarn pip pip3 pipx uv uvx poetry cargo gem bundle composer mise""".split())
+RULE = re.compile(r"^([A-Za-z0-9_.*-]+)(?:\((.*)\))?$", re.S)
 
 # `on` False and `error` None is a profile that does not use the framework; `error` set is one that cannot be served.
 Plan = collections.namedtuple("Plan", "on error name plugin source path file doc")
@@ -183,6 +198,149 @@ def with_env(prof, p, secrets):
     if not p.on or not secrets.get(LINEAR_KEY):
         return prof
     return dict(prof, env=dict(prof.get("env") or {}, **{LINEAR_KEY: "${%s}" % LINEAR_KEY}))
+
+
+# What the permissions step does for one profile, decided without writing: the rules to add as (rule, roles), the
+# directories to add, the lines to print once settings.local.json is written, and the `!` lines of a list that failed
+# the lint (then nothing is written for the profile).
+Perms = collections.namedtuple("Perms", "rules dirs lines errors")
+NO_PERMS = Perms((), (), (), ())
+
+
+def _norm(rule):
+    """The literal head of a rule, to compare prefixes: `Bash(git push origin fwx/*)` -> `Bash(git push origin fwx/`,
+    `Bash(git:*)` -> `Bash(git`."""
+    s = rule[:-1] if rule.endswith(")") else rule
+    for tail in (":*", "*"):
+        if s.endswith(tail):
+            return s[:-len(tail)]
+    return s
+
+
+def _broad(rule):
+    """Why `rule` is too broad (or not a rule), or None: a tool without specifier, a `*` or empty specifier (so `Agent`,
+    `Monitor` and `Workflow` need a name), a bare MCP server, an interpreter or package manager followed only by a
+    wildcard. A bare `mcp__<server>__<tool>` names one tool and is narrow."""
+    m = RULE.match(rule)
+    if not m:
+        return "is not a permission rule (`Tool` or `Tool(specifier)`)"
+    tool, spec = m.groups()
+    if spec is None:
+        if tool.startswith("mcp__") and tool.count("__") >= 2 and "*" not in tool:
+            return None
+        return "has no specifier, so it allows every use of %s" % tool
+    if spec.strip() in ("", "*", ":*"):
+        return "allows every use of %s: the specifier is empty or `*`" % tool
+    if tool == "Bash":
+        body = spec.strip()
+        wild = body.endswith("*")
+        body = _norm("Bash(" + body)[len("Bash("):].strip()
+        if wild and body in RUNNERS:
+            return "allows any `%s` command (an interpreter or package manager followed only by a wildcard)" % body
+    return None
+
+
+def permission_errors(doc, roles, production):
+    """The errors of a framework-permissions list, as text, [] when it is clean (3.6 Appendix C): `doc` is the parsed
+    file, `roles` the keys of `framework.models`, `production` the profile's `production.commands`. Shape (schema 1,
+    `allow` a list of rows with a `rule` string and non-empty `roles`), then per rule: too broad, overlapping an
+    `only_daniel` prefix or a production command (one is a prefix of the other), a role that is not in `roles`."""
+    if not isinstance(doc, dict):
+        return ["the list is not a JSON object"]
+    errs = []
+    if doc.get("schema") != PERMISSIONS_SCHEMA:
+        errs.append("schema is %r, not %d" % (doc.get("schema"), PERMISSIONS_SCHEMA))
+    if not isinstance(doc.get("allow"), list):
+        return errs + ["allow is not a list"]
+    for key in ("not_allowed", "only_daniel"):
+        if key in doc and not (isinstance(doc[key], list) and all(isinstance(r, dict) for r in doc[key])):
+            errs.append("%s is not a list of objects" % key)
+    prefixes = []
+    for r in doc.get("only_daniel") if isinstance(doc.get("only_daniel"), list) else ():
+        if isinstance(r, dict) and isinstance(r.get("prefix"), str) and r["prefix"].strip():
+            prefixes.append(r["prefix"])
+        else:
+            errs.append("an only_daniel row has no `prefix` string")
+    for i, r in enumerate(doc["allow"]):
+        rule = r.get("rule") if isinstance(r, dict) else None
+        if not isinstance(rule, str) or not rule.strip():
+            errs.append("allow[%d] has no `rule` string" % i)
+            continue
+        why = _broad(rule)
+        if why:
+            errs.append("`%s` %s" % (rule, why))
+            continue
+        head = _norm(rule)
+        for pre in prefixes:
+            if head.startswith(pre) or pre.startswith(head):
+                errs.append("`%s` overlaps the only_daniel prefix `%s`" % (rule, pre))
+        if rule.startswith("Bash("):
+            body = head[len("Bash("):]
+            for cmd in production:
+                if isinstance(cmd, str) and cmd and (body.startswith(cmd) or cmd.startswith(body)):
+                    errs.append("`%s` overlaps the production command `%s` of the profile" % (rule, cmd))
+        have = r.get("roles")
+        if not (isinstance(have, list) and have and all(isinstance(x, str) for x in have)):
+            errs.append("`%s` has no `roles` (a non-empty list of keys of framework.models)" % rule)
+        else:
+            for role in have:
+                if role not in roles:
+                    errs.append("`%s` names the role `%s`, which is not a key of framework.models" % (rule, role))
+    return errs
+
+
+def permissions(prof, p, path):
+    """The permissions step for this profile: the main checkout always (a session in a linked worktree reaches the
+    main checkout through `permissions.additionalDirectories`), and the `allow` rules of the list at `path`. The
+    list missing is one NOT RUN, NOT ARMED line; a list that fails permission_errors (or does not parse) is the
+    `!` lines of `errors`, and the caller writes nothing for the profile. `lines` are the `+ allow` and
+    `+ additionalDirectories` lines for what the file does not hold yet, printed once settings.local.json is written."""
+    if not p.on:
+        return NO_PERMS
+    main = os.path.realpath(prof["project_path"])
+    cur = lib.read_json(os.path.join(prof["project_path"], ".claude", "settings.local.json"), quiet=True)
+    cur = cur.get("permissions") if isinstance(cur, dict) else None
+    cur = cur if isinstance(cur, dict) else {}
+    have_allow = cur.get("allow") if isinstance(cur.get("allow"), list) else []
+    have_dirs = cur.get("additionalDirectories") if isinstance(cur.get("additionalDirectories"), list) else []
+    lines = []
+    rules = {}
+    try:
+        with open(path, encoding="utf-8") as fh:
+            doc = json.load(fh)
+    except FileNotFoundError:
+        doc = None
+        lines.append("   framework permissions -> NOT RUN, NOT ARMED: config/%s missing" % PERMISSIONS_FILE)
+    except (OSError, ValueError) as e:
+        return NO_PERMS._replace(errors=("   ! framework permissions -> config/%s cannot be read (%s) -- nothing written for this project"
+                                         % (PERMISSIONS_FILE, e),))
+    if doc is not None:
+        section = lib.settings().get("framework")
+        models = section.get("models") if isinstance(section, dict) else None
+        production = (prof.get("production") or {}).get("commands") or []
+        errs = permission_errors(doc, set(models) if isinstance(models, dict) else set(), production)
+        if errs:
+            return NO_PERMS._replace(errors=tuple("   ! framework permissions -> config/%s: %s -- nothing written for this project"
+                                                  % (PERMISSIONS_FILE, e) for e in errs))
+        for r in doc["allow"]:
+            rules.setdefault(r["rule"], list(dict.fromkeys(rules.get(r["rule"], []) + r["roles"])))
+    out = [("  + allow %s  (framework: %s)" % (rule, ", ".join(roles))) for rule, roles in rules.items() if rule not in have_allow]
+    if main not in have_dirs:
+        out.append("  + additionalDirectories %s  (framework: the main checkout, for a session in a linked worktree)" % main)
+    return Perms(tuple(rules.items()), (main,), tuple(lines + out), ())
+
+
+def with_permissions(prof, perms):
+    """`prof` with the step's rules added to its `permissions.allow` and its directories to
+    `permissions.additionalDirectories`, after what the profile declares itself; `prof` itself with nothing to add."""
+    if not perms.rules and not perms.dirs:
+        return prof
+    cur = dict(prof.get("permissions") or {})
+    for key, add in (("allow", [r for r, _ in perms.rules]), ("additionalDirectories", list(perms.dirs))):
+        if add:
+            have = cur.get(key)
+            cur[key] = list(dict.fromkeys((have if isinstance(have, list) else []) + add))
+    return dict(prof, permissions=cur)
 
 
 def _registered(p):
