@@ -15,6 +15,7 @@ python3 bin/fwx budget    # context and quota left
 python3 bin/fwx state resolve    # the session's phase; `state --help` lists the rest
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
+python3 bin/fwx plan check <dir>    # the structure of a phase's plan.md (and each subphase's), premortem.md and postmortem.md; exit 1 on an error; --json
 python3 bin/fwx context-base build <dir>    # the base-context file every agent of a phase starts with; `seal` marks a hand-written one, `check` fails on one over the cap, edited or stale
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx decide --facts <file>    # the merge decision for the facts of a PR: merge, handover or pending, with the rule behind each reason
