@@ -15,7 +15,7 @@ Base: the `BASE` line of your prompt, the tip of the phase branch when your wave
 Your branch is the one your worktree starts on; the report names it.
 Every commit ends with these trailers, given with `git commit --trailer`:
 $trailers
-Your scratch folder is the one `fwx wave scratch $run $unit` prints: a folder of your own worktree that git ignores, never under `.git`. Your TMPDIR is its `tmp/` folder.
+Your scratch folder is the one `fwx wave scratch $run $unit` prints: a folder of your own worktree that git ignores, never under `.git`. Your TMPDIR is `tmp/` inside it.
 
 ## CONTEXT
 $context
@@ -36,7 +36,7 @@ $minutes minutes: a guide, since nothing cuts an agent off; on expiry, return pa
 What you see outside your files goes in `outside` of your report, not in a commit.
 
 ## REPORT
-Write it as JSON to `report.json` in your scratch folder (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`.
+Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`.
 Your whole reply is one line: `<status> <report path> commits=<n>`, the report path in full.
 
 ## STANDING

@@ -138,7 +138,7 @@ def case_briefs(R, S):
     S.ok("briefs: SCOPE names the other task of the wave, as a path it may not write", "src/b.py" in scope and "may not" in scope.lower(), scope)
     S.ok("briefs: SCOPE says nothing of wave 2's files (they run later)", "README" not in scope, scope)
     S.ok("briefs: SCOPE gives the scratch folder (`fwx wave scratch <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2)",
-         "fwx wave scratch %s T1" % run in scope and "`tmp/`" in scope and "TMPDIR" in scope and ".git/" not in t1 and os.path.join(folder, "tmp") not in t1, scope)
+         "fwx wave scratch %s T1" % run in scope and "`tmp/` inside it" in scope and "TMPDIR" in scope and ".git/" not in t1 and os.path.join(folder, "tmp") not in t1, scope)
     ctx = f1.get("CONTEXT", "")
     for name in ("context.md", "decisions.tsv", "plan.md"):
         S.ok("briefs: CONTEXT has the absolute path of %s" % name,
@@ -155,7 +155,7 @@ def case_briefs(R, S):
          all(w in forb for w in ("no PR retargets or merges", "no rebase", "no force-push", "no fixes outside scope", ".fwx/")), forb)
     rep = f1.get("REPORT", "")
     S.ok("briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply",
-         "`report.json` in your scratch folder" in rep and os.path.join(folder, "reports") not in t1 and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
+         "`report.json` directly in your scratch folder, not in its `tmp/`" in rep and os.path.join(folder, "reports") not in t1 and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
                                                                                         "question", "outside", "could_not_run", "reason"))
          and "<status> <report path> commits=<n>" in rep, rep)
     S.ok("briefs: REPORT says the Write tool is enough (the folder is in the worktree: no heredoc, Write is not refused there)", "Write tool" in rep and "heredoc" not in rep, rep)
@@ -328,7 +328,7 @@ MUTANTS = [
     ("trailers dropped", case_briefs, T, "\n$trailers", "", "SCOPE lists its file, the run and both trailers"),
     ("a sha back in the brief", case_briefs, T, "Base: the `BASE` line of your prompt,", "Base: 0123456789abcdef0123456789abcdef01234567 (the `BASE` line of your prompt),",
      "no sha is in the brief"),
-    ("report back under .git", case_briefs, T, "Write it as JSON to `report.json` in your scratch folder (the Write tool is enough).",
+    ("report back under .git", case_briefs, T, "Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough).",
      "Write it as JSON to .git/fwx/reports/T1.json, with a heredoc.", "REPORT names report.json in the scratch folder"),
     ("big task at 40 minutes", case_briefs, B, '"big": 60', '"big": 40', "T2 TIMEBOX is 60 minutes"),
     ("every wave runs beside it", case_briefs, P, 'brief.task_facts(t, [x for x in data["tasks"] if x["wave"] == t["wave"]], ctx)',

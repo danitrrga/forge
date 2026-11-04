@@ -43,6 +43,9 @@ its report under `.git` with `acceptEdits`); `check_wave_base` and `check_scratc
   FAIL: scratch: the resolver is given no path under .git and none in the old reports/ or tmp/ of the run (it wrote the report there, and was refused): You are the conflict resolver ...
   FAIL: executor a report in the run folder under .git, where agents no longer write once: relaunched once: got 1, want 2
   (the brief's side is in tests/test_wave_brief.py, `fwx wave scratch` in tests/test_wave_prepare.py)
+The live rerun then found a reviewer that wrote `report.json` in `tmp/` of its folder (the prompt said "in it" after naming `tmp/`);
+the wording check above is "report.json directly in that folder, not in tmp/", red on the first wording:
+  FAIL: scratch: the reviewer is told to run `fwx wave scratch ... r1` and to use its tmp/ and report.json: ...
 Controls added: a report outside a scratch folder, of another unit or with `..` in its path accepted; a later wave checking prepare's
 base; a fixer told to write under .git again.
 
@@ -748,7 +751,7 @@ def check_scratch(script, s):
     def told(name, launch, unit):
         p = launch["prompt"]
         s.ok("scratch: %s is told to run `fwx wave scratch %s %s` and to use its tmp/ and report.json" % (name, run, unit),
-             "`fwx wave scratch %s %s`" % (run, unit) in p and "tmp/" in p and "report.json" in p, p[-420:])
+             "`fwx wave scratch %s %s`" % (run, unit) in p and "tmp/ inside that folder" in p and "report.json directly in that folder, not in tmp/" in p, p[-420:])
         s.ok("scratch: %s is given no path under .git and none in the old reports/ or tmp/ of the run (it wrote the report there, and was refused)" % name,
              ".git" not in p and "/reports/" not in p and RUN_DIR not in p, p)
     conflict = integ("h1", ["wt-t1"], ok=False, conflict={"branch": "wt-t2", "files": ["a.py"]})
@@ -930,7 +933,7 @@ def check_agents(s):
     for label in ("reviewer:r1", "security-reviewer:r1"):
         p = (launched(rec, label) or Launches())[0]["prompt"]
         s.ok("agents: %s gets its brief in the prompt: range, intent files, its scratch folder for TMPDIR and report, no file to open" % label,
-             all(x in p for x in ("DIFF:", "INTENT:", "Your TMPDIR is its tmp/", "fwx wave scratch %s %s" % (os.path.basename(RUN_DIR), "r1" if label.startswith("reviewer") else "r1-sec")))
+             all(x in p for x in ("DIFF:", "INTENT:", "Your TMPDIR is tmp/ inside that folder", "fwx wave scratch %s %s" % (os.path.basename(RUN_DIR), "r1" if label.startswith("reviewer") else "r1-sec")))
              and "brief file" not in p.replace("no brief file", ""), p[:300])
 
 

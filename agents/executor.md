@@ -15,7 +15,7 @@ You are one executor on one task. Your prompt names a brief file: read it first.
 
 ## Before anything else
 
-Run `fwx wave check-base <the BASE sha of your prompt>`. Then run `fwx wave scratch <run> <unit>` (the brief or the prompt gives both): it prints a folder of your own worktree that git ignores, your report goes to `report.json` in it and your `TMPDIR` is its `tmp/`. On exit 42 of the base check stop there, with nothing else touched: write the report with `status: wrong-base` and what it printed, and reply. Otherwise export `TMPDIR` in every shell.
+Run `fwx wave check-base <the BASE sha of your prompt>`. Then run `fwx wave scratch <run> <unit>` (the brief or the prompt gives both): it prints a folder of your own worktree that git ignores, your report goes to `report.json` directly in it and your `TMPDIR` is `tmp/` inside it. On exit 42 of the base check stop there, with nothing else touched: write the report with `status: wrong-base` and what it printed, and reply. Otherwise export `TMPDIR` in every shell.
 
 ## Where you write
 
@@ -43,4 +43,4 @@ Your branch starts at the tip of the phase branch and the brief names the branch
 
 ## Report
 
-Write JSON to `report.json` in your scratch folder (the Write tool is enough): `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`. `status` is `done`, `wrong-base`, `question` or `failed`. `red.message` is the failure's text, quoted. `outside` lists what you saw outside your task, each with file, line and a sentence. `could_not_run` lists what you did not run and why. If you cannot finish, commit what is sound, return `failed` and say why in `reason`. Your whole reply is one line, `<status> <report path> commits=<n>`, the path in full, and nothing after it.
+Write JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough): `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`. `status` is `done`, `wrong-base`, `question` or `failed`. `red.message` is the failure's text, quoted. `outside` lists what you saw outside your task, each with file, line and a sentence. `could_not_run` lists what you did not run and why. If you cannot finish, commit what is sound, return `failed` and say why in `reason`. Your whole reply is one line, `<status> <report path> commits=<n>`, the path in full, and nothing after it.
