@@ -48,6 +48,9 @@ mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/execute.md, playbooks/session.md, playbooks/ui-walk.md and playbooks/principles.md, and for the
   rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
+  Text copied by data/executor-brief.md: the nine fields of the brief in the order of playbooks/orchestrate.md lines 40-53 ("The brief"), the
+  TIMEBOX clause "on expiry, return partial findings and stop rather than run on" and the FORBIDDEN list "no PR retargets or merges, no
+  rebase, no force-push, no fixes outside scope", word for word; "paths it may not" in SCOPE, the same words.
   Read for agents/pre-mortem.md: the voice of skills/interrogate/references/reviewer-prompt.md and the filters of its lead-judgment.md
   ("no findings" is valid; a risk nobody can reach is dropped; another split of the work is not a finding), in words of its own.
   Text copied by agents/planner.md: line 25 of skills/tdd/SKILL.md word for word (the two sentences on a bad test); the first

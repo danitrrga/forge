@@ -2,7 +2,7 @@
 
 `prepare(cwd, ...)` works on the integration checkout `cwd` is in (the session's worktree, on the phase branch) and returns
 the args dict; it raises WaveError (exit 2) for anything that must stop the run before it starts, and RedBase (exit 1) when
-the base fails its own checks. It writes nothing: no audit row, no folder.
+the base fails its own checks. It writes no audit row; the only files are the briefs (below), written last.
 
 The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.md` and `decisions.tsv` of the phase that
 holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`). Refused with
@@ -20,10 +20,16 @@ holds a green `evidence` row for the base sha. A red check is RedBase: needs-own
 What else it works out: the run id `<part>-<sha7>-<n>` (n counts the runs of that base already made in the git common
 dir); the tasks already done (a commit reachable from the phase branch whose trailer says `Fwx-Task: <part>/<task>`); each
 wave's `serial` and `plan_failures` for tasks of one wave that write the same path or one inside the other (plan._clashes,
-which `load_plan` leaves to its caller); and a model for every role, from the configuration. The brief of each task is `None`
-until 3.4 U9 writes it.
+which `load_plan` leaves to its caller); and a model for every role, from the configuration.
 
-Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base.
+The briefs (3.4 U9, execute/brief.py): one file per task in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md`, its path in
+`waves[].tasks[].brief`, and the folder `reports/` beside it. They are built, and checked, before the base is run: a field that
+is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
+so a refusal and a red base leave nothing behind. With `--fix` the one brief is the fixer's (`fix.brief`) and the tasks of the
+plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
+shape of plan C.5 (execute/brief.py `finding_problems`), `--revert` a list of finding ids; anything else is refused.
+
+Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base and execute.brief.
 """
 import json
 import os
@@ -31,6 +37,7 @@ import re
 
 from fwx import config, plan, plan_step, state
 from fwx.core import evidence, rounds, verify
+from fwx.execute import brief
 from fwx.execute.base import WaveError, git, out, toplevel
 
 PLANES = ("session", "factory")
@@ -131,7 +138,42 @@ def _findings(path, flag):
         raise WaveError("%s %s cannot be read as a JSON list of findings (%s)" % (flag, path, e))
     if not isinstance(data, list):
         raise WaveError("%s %s is not a JSON list of findings" % (flag, path))
+    problems = brief.finding_problems(data)
+    if problems:
+        raise WaveError("%s %s: %s" % (flag, path, "; ".join(problems)))
     return data
+
+
+def _revert_ids(ids):
+    """The finding ids `--revert` names, or None; an empty list or an id that cannot be a trailer value is refused."""
+    if ids is None:
+        return None
+    bad = [i for i in ids if not brief.ID.match(i)]
+    if not ids or bad:
+        raise WaveError("--revert %s: %s" % (",".join(ids), "no finding named" if not ids else "%s cannot be a finding id" % ", ".join(map(repr, bad))))
+    return ids
+
+
+def _briefs(data, ctx, fix, size, quick, launching):
+    """{task id or brief.FIX: (facts, text)} for what the run launches, or {} when it launches no executor (`--revert`). Every
+    task of the part is checked, so one with an empty field stops the run before any file is written (WaveError, exit 2)."""
+    found, problems = {}, []
+    if not launching:
+        return found
+    if fix:
+        facts = brief.fix_facts(fix["findings"], fix["source"], data["tasks"], quick, size, ctx)
+        found[brief.FIX] = facts
+    else:
+        for t in data["tasks"]:
+            if not brief.ID.match(t["id"]):
+                problems.append("task %s: the id cannot name a file (letters, digits, `.`, `_` and `-`, starting with a letter or digit)" % t["id"])
+                continue
+            found[t["id"]] = brief.task_facts(t, [x for x in data["tasks"] if x["wave"] == t["wave"]], ctx)
+    for facts in found.values():
+        problems += brief.missing(facts)
+    if problems:
+        raise WaveError("a brief with an empty field is not launched:\n  " + "\n  ".join(problems))
+    return {k: (facts, brief.render(facts)) for k, facts in found.items()}
 
 
 def _model(cfg, role, size):
@@ -150,6 +192,18 @@ def _base_is_green(top, base, recipe, folders, say):
                 return None
     results = [verify.run_check(c, top) for c in recipe]
     return [r for r in results if r["rc"] != 0] or None
+
+
+def _write(made, folder):
+    """The briefs of a run and the folder its reports go to: what `prepare` writes, once everything else has passed."""
+    if not made:
+        return
+    try:
+        os.makedirs(os.path.join(folder, "reports"), exist_ok=True)
+        for facts, text in made.values():
+            brief.put(facts["brief"], text)
+    except OSError as e:
+        raise WaveError("cannot write the briefs of the run in %s: %s" % (folder, e))
 
 
 def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=None, revert=None, control_findings=None,
@@ -185,6 +239,9 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         raise WaveError(str(e))
     if dirty:
         raise WaveError("the integration checkout %s has uncommitted changes: commit or stash them first" % top)
+    revert = _revert_ids(revert)
+    fixing = {"source": fix, "findings": _findings(fix, "--fix")} if fix else None
+    controls = _findings(control_findings, "--control-findings") if control_findings else []
     value = _base_ref(top, main, environ)
     if value != "head":
         raise WaveError("worktree.baseRef is %s, not head: without it an agent's worktree starts from origin/<default branch>, "
@@ -195,24 +252,34 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         raise WaveError("no checks defined: `project.checks` in %s is empty and package.json has no test, lint, typecheck or build "
                         "script, so the base cannot be shown green" % os.path.join(main, config.FILE))
     base = verify.head(top)
+    name = os.path.basename(part)
+    run = _run_id(top, name, base)
+    size = data["size"]["tag"]
+    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    folder = brief.folder_of(common, run)
+    ctx = {"run": run, "base": base, "part": name, "folder": folder,
+           "paths": {"context": str(state.phase_paths(phase)["context"]), "decisions": str(state.phase_paths(phase)["decisions"]),
+                     "plan": str(paths["plan"])}}
+    quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
+    made = _briefs(data, ctx, fixing, size, quick, revert is None)
     red = _base_is_green(top, base, recipe, {part, phase}, say)
     if red:
         used, cap = rounds.count(state.read_rows(paths["audit"])), rounds.cap(top)
         reason = "base %s is red: %s" % (base[:8], ", ".join("%s=%s" % (r["cmd"], "none" if r["rc"] is None else r["rc"]) for r in red))
         raise RedBase({"status": "needs-owner", "reason": reason, "phase_dir": phase, "rounds": "%d/%d" % (used, cap)},
                       "\n".join("--- %s\n%s" % (r["cmd"], verify.tail(r["output"])) for r in red))
-    name = os.path.basename(part)
+    _write(made, folder)
     clashes = plan._clashes("plan.md", data)
     waves = []
     for n in sorted({t["wave"] for t in tasks}):
         serial = any(c["wave"] == n for c in clashes)
         waves.append({"n": n, "serial": serial,
-                      "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"], "brief": None,
+                      "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"],
+                                 "brief": made[t["id"]][0]["brief"] if t["id"] in made else None,
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
-    size = data["size"]["tag"]
     why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
     return {
-        "run": _run_id(top, name, base), "plane": plane, "unattended": plane == "factory" or unattended,
+        "run": run, "plane": plane, "unattended": plane == "factory" or unattended,
         "part_dir": part, "phase_dir": phase, "checkout": top, "branch": branch, "base": base, "isolation": "native",
         "paths": {"context": str(state.phase_paths(phase)["context"]), "decisions": str(state.phase_paths(phase)["decisions"]),
                   "plan": str(paths["plan"]), "postmortem": str(paths["postmortem"]), "config": os.path.join(main, config.FILE)},
@@ -225,7 +292,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
             {"wave": c["wave"], "tasks": c["tasks"], "files": [c["file"]]} for c in clashes],
         "security": {"needed": bool(why), "why": " and ".join(why) or "not asked for"},
         "criteria": data["criteria"],
-        "fix": {"source": fix, "findings": _findings(fix, "--fix")} if fix else None,
+        "fix": dict(fixing, brief=made[brief.FIX][0]["brief"] if brief.FIX in made else None) if fixing else None,
         "revert": revert or [],
-        "control_findings": _findings(control_findings, "--control-findings") if control_findings else [],
+        "control_findings": controls,
     }

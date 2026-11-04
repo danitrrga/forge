@@ -323,7 +323,7 @@ def case_fix_options(R, S):
     findings = [{"id": "F1", "file": "src/a.py", "line": 1, "claim": "c", "evidence": "e", "severity": "low"}]
     helpers.write(os.path.dirname(f), "f.json", json.dumps(findings))
     a = ok_args(S, "options", sc.prepare(R, "--fix", f, "--revert", "F1,F2", "--control-findings", f))
-    S.eq("options: fix", a.get("fix"), {"source": f, "findings": findings})
+    S.eq("options: fix (with --revert nothing is launched, so fix.brief is None: 3.4 U9)", a.get("fix"), {"source": f, "findings": findings, "brief": None})
     S.eq("options: revert, control findings", (a.get("revert"), a.get("control_findings")), (["F1", "F2"], findings))
     refused(S, "--fix with a file that is not there", sc, sc.prepare(R, "--fix", f + ".none"), "--fix")
 
