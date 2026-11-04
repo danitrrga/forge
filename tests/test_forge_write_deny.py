@@ -2,10 +2,14 @@
 """The generator denies a project's agents the right to write in forge (forge/sync.py `forge_deny`, `with_forge_deny`), 3.6 U2c.
 
 For every profile except forge's own, `forge sync` writes into the project's settings.local.json `permissions.deny` one `Edit` and
-one `Write` rule per top-level entry of the checkout (`lib.ROOT`) except `plugins`: `<Tool>(//<root>/<dir>/**)` for a directory,
+one `Write` rule per top-level entry of the checkout (`lib.ROOT`) that git tracks (the engine's history and the data history,
+`git ls-files`; an untracked folder such as `logs/` comes and goes and would rewrite every project's file on each sync) except
+`plugins` and `design`: `<Tool>(//<root>/<dir>/**)` for a directory,
 `<Tool>(//<root>/<file>)` for a file, and the dry-run prints `  + deny <rule>  (agents of a project do not write in forge)` for each
-rule the file does not hold yet. `plugins/` is left out because the plugin repos (`plugins/fwx`) live there and their sessions write
-in their own folder. The rules go in as the profile's own `deny` does (union, one owned item claim each), so a rule put by hand
+rule the file does not hold yet. `plugins/` is left out because the plugin repos (`plugins/fwx`) live
+there and their sessions write in their own folder, `design/` because the taste library stays shared (design-taste's `analyse`
+edits `design/taste/entries/*.md` from any project). A new tracked top-level entry is covered at the next sync, which runs at
+the start of each project's session. The rules go in as the profile's own `deny` does (union, one owned item claim each), so a rule put by hand
 stays, and what forge wrote goes when the entry or the rule stops being wanted.
 
 Why one pair per entry and not one pair on the whole checkout: a `deny` beats any `allow`, and the permission pattern has no way to
@@ -20,6 +24,8 @@ leave a folder out of itself. Measured on Claude Code 2.1.308 with scripts/bench
     plugins/toy/probe.txt allowed. With the `Edit` rules alone Write was denied too (the Write rules are kept: the unit says both).
 The matcher below (`denied`) is that measured behaviour: a directory rule matches what is below it, a file rule that file.
 
+Second round (the `design/` exception and tracked-only enumeration), seen failing on b33d656: "design repo write denied -- <root>/design/taste/entries/a.md
+matches [...]" and "untracked entry: no rule for logs/ -- [...]".
 Seen failing on master (40d20f1), this file as it is: every check about a rule red, e.g.
   "deny rules missing after --apply -- None"
   "dry-run: `+ deny Edit(//.../hooks/**)  (agents of a project do not write in forge)` is printed -- []"
@@ -39,6 +45,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -83,25 +90,54 @@ WHY = "(agents of a project do not write in forge)"
 _r = [0]
 
 
-def toy_root(entries=("hooks/guard.py", "skills/x/SKILL.md", "plugins/toy/probe.txt", ".claude/worktrees/w/f.txt", "README.md", "bin/forge")):
-    """A toy forge checkout: the given files, each in its own top-level entry; a file at the top is a file entry."""
+TRACKED = {}  # root -> {top-level entry tracked by git there: whether it is a directory}
+
+
+def _git(root, *args, data=False):
+    argv = ["git"] + (["--git-dir", os.path.join(root, ".forge-data.git"), "--work-tree", root] if data else ["-C", root]) + list(args)
+    return subprocess.run(argv, env=dict(os.environ, **sandbox.GIT_ENV), capture_output=True, text=True, check=True).stdout
+
+
+def toy_root(entries=("hooks/guard.py", "skills/x/SKILL.md", "plugins/toy/probe.txt", "design/taste/entries/a.md", ".claude/worktrees/w/f.txt",
+                      "README.md", "bin/forge"), data=(), untracked=("logs/run.log",), repo=True):
+    """A toy forge checkout: the `entries` tracked by its `.git`, the `data` ones by a `.forge-data.git` over the same work tree, and the
+    `untracked` files left out of both. `repo=False`: no git at all."""
     _r[0] += 1
     root = os.path.join(TOY, "forgeroot%d" % _r[0])
-    for rel in entries:
-        os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
-        with open(os.path.join(root, rel), "w") as f:
-            f.write("x\n")
-    return os.path.realpath(root)
+
+    def make(rels):
+        for rel in rels:
+            os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
+            with open(os.path.join(root, rel), "w") as f:
+                f.write("x\n")
+    make(entries)
+    root = os.path.realpath(root)
+    if repo:
+        sandbox.git(root, "init", "-q", "-b", "main")
+        sandbox.git(root, "add", "-A")
+        sandbox.git(root, "commit", "-qm", "engine")
+        if data:
+            subprocess.run(["git", "init", "-q", "--bare", "-b", "main", os.path.join(root, ".forge-data.git")], check=True, capture_output=True,
+                           env=dict(os.environ, **sandbox.GIT_ENV))
+            make(data)
+            _git(root, "add", *data, data=True)
+            _git(root, "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "data", data=True)
+    make(untracked)
+    TRACKED[root] = {}
+    for rel in tuple(entries) + tuple(data):
+        top = rel.split("/")[0]
+        TRACKED[root][top] = TRACKED[root].get(top, False) or "/" in rel
+    return root
 
 
-def rules_for(root, skip=("plugins",)):
-    """The rules the unit means for `root`, written out by hand (never by the code under test): per top-level entry but the skipped
+def rules_for(root, skip=("plugins", "design")):
+    """The rules the unit means for `root`, written out by hand (never by the code under test): per tracked top-level entry but the skipped
     ones, Edit then Write, `//` and the absolute path; a directory ends in `/**`."""
     out = []
-    for e in sorted(os.listdir(root)):
+    for e in sorted(TRACKED[root]):
         if e in skip:
             continue
-        tail = "/**" if os.path.isdir(os.path.join(root, e)) else ""
+        tail = "/**" if TRACKED[root][e] else ""
         out += ["%s(/%s/%s%s)" % (t, root, e, tail) for t in ("Edit", "Write")]
     return out
 
@@ -241,7 +277,8 @@ forge_json()
 # ------------------------------------------------------------------------------------------ 1. a project gets the rules
 ROOT1 = toy_root()
 WANT1 = rules_for(ROOT1)
-check("fixture: the hand-written expectation is 10 rules (5 entries but plugins, Edit and Write) -- %d" % len(WANT1), len(WANT1) == 10, WANT1)
+check("fixture: the hand-written expectation is 10 rules (5 tracked entries but plugins and design, Edit and Write) -- %d" % len(WANT1), len(WANT1) == 10, WANT1)
+check("fixture: logs/ is on disk, untracked", os.path.isdir(os.path.join(ROOT1, "logs")) and "logs" not in TRACKED[ROOT1], TRACKED[ROOT1])
 pp = project()
 w = World()
 w.put(profile(pp, "app"))
@@ -259,23 +296,41 @@ before = raw(slp(pp))
 code, out = w.run(root=ROOT1)
 check("second apply: byte-identical and no `+ deny` -- %s" % plus_deny(out), raw(slp(pp)) == before and not plus_deny(out) and code == 0, out)
 
-# what the rules cover, by the measured semantics: the plugin repos are not denied, the rest of the checkout is.
+# what the rules cover, by the measured semantics: the plugin repos and the design library are not denied, the rest of the checkout is.
 for rel, want in (("hooks/guard.py", True), ("hooks/new/deep/file.py", True), ("skills/x/SKILL.md", True), ("README.md", True),
                   ("bin/forge", True), (".claude/worktrees/w/f.txt", True), ("plugins/toy/probe.txt", False),
-                  ("plugins/other/deep/f.py", False)):
+                  ("plugins/other/deep/f.py", False), ("design/taste/entries/a.md", False), ("design/taste/entries/new.md", False),
+                  ("design/other/x.py", False)):
     hit = denied(deny_of(pp) or [], os.path.join(ROOT1, rel))
     if want:
         check("%s is denied -- %s" % (rel, hit), bool(hit), deny_of(pp))
+    elif rel.startswith("design/"):
+        check("design repo write denied -- %s/%s matches %s" % (ROOT1, rel, hit), not hit, deny_of(pp))
     else:
         check("plugin repo write denied -- %s/%s matches %s" % (ROOT1, rel, hit), not hit, deny_of(pp))
+# an untracked top-level folder adds no rule (logs/ comes and goes); creating one more changes nothing in the file
+os.makedirs(os.path.join(ROOT1, ".playwright-mcp"))
+before = raw(slp(pp))
+code, out = w.run(root=ROOT1)
+check("untracked entry: no rule for logs/ or .playwright-mcp/ -- %s" % [r for r in deny_of(pp) or [] if "/logs" in r or "playwright" in r],
+      not any("/logs" in r or "playwright" in r for r in deny_of(pp) or []) and raw(slp(pp)) == before and not plus_deny(out), (deny_of(pp), out))
 check("control: the matcher sees a file outside the checkout as not denied", not denied(deny_of(pp) or [], os.path.join(pp, "src", "a.py")), deny_of(pp))
 check("control: the matcher denies a file the whole-checkout rule covers (it can fail)",
       bool(denied(["Edit(/%s/**)" % ROOT1], os.path.join(ROOT1, "plugins/toy/probe.txt"))), "")
 
 # the rule is not a fixed path: another root, other rules, none naming the first; and never this checkout's own path.
-ROOT2 = toy_root(("docs/a.md", "plugins/p/q.txt", "Makefile"))
-code, out = w.run(root=ROOT2)
+ROOT2 = toy_root(("docs/a.md", "plugins/p/q.txt", "Makefile"), data=("config/c.json", "docs/b.md"))
+# run from a folder inside the checkout: `git ls-files` lists what is below the current directory, and the data history (a
+# work tree with no folder of its own) listed nothing of the entries above it. Red without `cwd=root`: "data history: ..."
+here = os.getcwd()
+os.chdir(os.path.join(ROOT2, "config"))
+try:
+    code, out = w.run(root=ROOT2)
+finally:
+    os.chdir(here)
 WANT2 = rules_for(ROOT2)
+check("data history: its top-level entries are covered too (config/, and docs/ once) -- %s" % WANT2,
+      "Edit(/%s/config/**)" % ROOT2 in WANT2 and sum(r.startswith("Edit(") and "/docs/" in r for r in WANT2) == 1, WANT2)
 check("forge path hard-coded -- %s" % deny_of(pp), deny_of(pp) == WANT2 and not any(ROOT1 in r for r in deny_of(pp) or []), deny_of(pp))
 check("forge path hard-coded: no rule names the real checkout -- %s" % [r for r in deny_of(pp) or [] if REAL_ROOT in r],
       not any(REAL_ROOT in r for r in deny_of(pp) or []), deny_of(pp))
@@ -330,7 +385,7 @@ check("union: allow and additionalDirectories are not disturbed -- %s" % perms_o
       (perms_of(ppm) or {}).get("allow") == ["Bash(ls:*)", "Bash(git status:*)"]
       and (perms_of(ppm) or {}).get("additionalDirectories") == ["/by/hand", "/design/one"], perms_of(ppm))
 # one entry of the checkout goes away: only its two rules go
-shutil.rmtree(os.path.join(ROOT1, "skills"))
+sandbox.git(ROOT1, "rm", "-rq", "skills")
 code, out = wm.run(root=ROOT1)
 d = deny_of(ppm) or []
 gone = [r for r in WANT1 if "/skills/" in r]
@@ -339,16 +394,22 @@ check("entry removed: its two rules go and the others stay -- %s" % [r for r in 
 check("entry removed: the hand-set rule and the profile's own stay", HAND in d and "Edit(//somewhere/else/**)" in d, d)
 # the entry comes back: the rules come back
 wm.put(profile(ppm, "mixed", permissions={"allow": ["Bash(git status:*)"], "deny": ["Edit(//somewhere/else/**)"]}))
-os.makedirs(os.path.join(ROOT1, "skills", "x"))
+os.makedirs(os.path.join(ROOT1, "skills", "x"), exist_ok=True)
+with open(os.path.join(ROOT1, "skills", "x", "SKILL.md"), "w") as f:
+    f.write("x\n")
+sandbox.git(ROOT1, "add", "skills")
 code, out = wm.run(root=ROOT1)
 d = deny_of(ppm) or []
 check("rules back after the entry returns -- %s" % len(d), set(WANT1) <= set(d), d)
-real_listing = os.listdir
-sync.os.listdir = lambda p: [] if os.path.realpath(p) == ROOT1 else real_listing(p)  # the root cannot be looked at: zero entries
-code, out = wm.run(root=ROOT1)
-sync.os.listdir = real_listing
-check("zero entries: one `!` line naming the deny step, exit 1 -- %s" % bang(out), code == 1 and any("forge write deny" in l for l in bang(out)), out)
-check("zero entries: the file is left as it was -- %s" % deny_of(ppm), set(WANT1) <= set(deny_of(ppm) or []), deny_of(ppm))
+# the checkout cannot be listed (no git history there): a `!` line, exit 1, the file as it was
+ROOT0 = toy_root(("README.md",), repo=False)
+code, out = wm.run(root=ROOT0)
+check("no history: one `!` line naming the deny step, exit 1 -- %s" % bang(out), code == 1 and any("forge write deny" in l for l in bang(out)), out)
+check("no history: the file is left as it was -- %s" % deny_of(ppm), set(WANT1) <= set(deny_of(ppm) or []), deny_of(ppm))
+# only exempt entries tracked: nothing to protect, the same `!` line (looking at zero is a failure)
+ROOTP = toy_root(("plugins/a/b.txt", "design/x.md"))
+code, out = wm.run(root=ROOTP)
+check("only exempt entries: one `!` line, exit 1 -- %s" % bang(out), code == 1 and any("forge write deny" in l for l in bang(out)), out)
 
 # ------------------------------------------------------------------------------------------ 4. beside the framework step
 sandbox_cfg = World()

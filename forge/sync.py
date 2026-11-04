@@ -29,13 +29,14 @@ Invariants (from a split-brain bug):
   * Claude project key is ALWAYS the forward-slash path; never create a backslash dup.
   * Never emit a server whose secret resolves empty -> abort that server, warn loudly.
   * The agents of a project never write in forge: every profile but forge's own gets `permissions.deny` rules
-    (Edit and Write) on the top-level entries of this checkout, `plugins/` left out (forge_deny).
+    (Edit and Write) on the top-level entries git tracks in this checkout, `plugins/` and `design/` left out (forge_deny).
   * claude-mem-lite's store dir is DERIVED from the project name -- see forge/memory.py.
     claude-mem itself (thedotmack) was retired; RETIRED_MEMORY refuses a profile
     that still grants it.
 """
 import contextlib
 import os
+import subprocess
 import sys
 
 from forge import framework, hooks, lib, mcp, memory, skills
@@ -44,37 +45,60 @@ CFG = os.path.join(lib.ROOT, "config")
 
 # The agents of a project do not write in forge (3.6 U2c): a problem with forge is fixed through the `forge` CLI or filed
 # as an issue, never by a session of a project, which lacks forge's context and tools. A `deny` beats every `allow`, and a
-# permission pattern cannot leave a folder out of itself (measured, tests/test_forge_write_deny.py), so the exception for
-# `plugins/` (the plugin repos live there and their sessions write in their own folder) is one pair of rules per
-# other top-level entry of the checkout, listed on every sync, which runs at the start of each project's session.
+# permission pattern cannot leave a folder out of itself (measured, tests/test_forge_write_deny.py), so the exceptions are
+# one pair of rules per top-level entry of the checkout that git tracks, the exempt ones left out: `plugins/` (the plugin
+# repos live there and their sessions write in their own folder) and `design/` (the taste library stays shared:
+# design-taste's `analyse` edits `design/taste/entries/*.md` from any project). Tracked, not on disk: `logs/` and the like
+# come and go and would rewrite every project's file on each sync. A new tracked entry is covered at the next sync, which
+# runs at the start of each project's session.
 FORGE_PROFILE = "forge"
-FORGE_DENY_KEEP = ("plugins",)
+FORGE_DENY_KEEP = ("plugins", "design")
 FORGE_DENY_TOOLS = ("Edit", "Write")
 FORGE_DENY_WHY = "agents of a project do not write in forge"
+DATA_GIT = ".forge-data.git"  # the private data history over the same work tree (forge/publish.py)
+
+
+def _tracked_entries(root):
+    """({top-level entry: whether it is a directory}, error) of what git tracks in `root`: the engine's history and, when it has
+    one, the data history. An entry is a directory when some tracked path is below it."""
+    heads = [["git", "-C", root]]
+    if os.path.isdir(os.path.join(root, DATA_GIT)):
+        heads.append(["git", "--git-dir", os.path.join(root, DATA_GIT), "--work-tree", root])
+    out = {}
+    for head in heads:
+        try:
+            # cwd=root: `ls-files` lists what is under the current directory, and the data history names no folder of its own
+            r = subprocess.run(head + ["ls-files", "-z"], cwd=root, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {}, "git ls-files failed (%s)" % e
+        if r.returncode:
+            return {}, "git ls-files exited %d (%s)" % (r.returncode, r.stderr.strip()[:120])
+        for path in filter(None, r.stdout.split("\0")):
+            top, _, rest = path.partition("/")
+            out[top] = out.get(top, False) or bool(rest)
+    return out, None
 
 
 def forge_deny(name, prof):
-    """(rules, error) for the profile `name`: `Edit` and `Write` `deny` rules on each top-level entry of the checkout
-    (`lib.ROOT`, read at call time, never written in the engine) but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
+    """(rules, error) for the profile `name`: `Edit` and `Write` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
+    read at call time, never written in the engine) tracks in git but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
     directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own profile (by name, or whose project is
-    the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout that cannot be listed or has nothing to deny."""
+    the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout whose
+    history cannot be read or has nothing to deny."""
     root = os.path.realpath(lib.ROOT)
     ppath = prof.get("project_path") or ""
     if name == FORGE_PROFILE or os.path.realpath(ppath) == root or not os.path.isdir(ppath):
         # a project folder that is not there gets nothing: writing the file would make the folder and hide the `!` line
         # the codex step prints for it
         return [], None
-    try:
-        entries = sorted(e for e in os.listdir(root) if e not in FORGE_DENY_KEEP)
-    except OSError as e:
-        entries, why = [], "cannot be listed (%s)" % e
-    else:
-        why = "has no entry to protect"
+    tracked, why = _tracked_entries(root)
+    entries = sorted(e for e in tracked if e not in FORGE_DENY_KEEP)
     if not entries:
-        return [], "   ! forge write deny -> the checkout %s %s -- nothing written for this project" % (root, why)
+        return [], "   ! forge write deny -> the checkout %s %s -- nothing written for this project" % (
+            root, why or "tracks no entry to protect")
     rules = []
     for e in entries:
-        tail = "/**" if os.path.isdir(os.path.join(root, e)) else ""
+        tail = "/**" if tracked[e] else ""
         rules += ["%s(/%s/%s%s)" % (t, root, e, tail) for t in FORGE_DENY_TOOLS]
     return rules, None
 
