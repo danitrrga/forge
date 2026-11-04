@@ -500,4 +500,6 @@ def check_phase(dir):
                 warnings.append("plan.md: %s: %s, but premortem.md says %s" % (field, mine, theirs))
     if isinstance(seen.get("plan.md"), dict):
         _cited(dir, [_read_text(os.path.join(dir, rel)) for rel in seen], warnings)
+    from fwx import plan_form  # here, not at the top: plan_form imports this module
+    plan_form.check(dir, seen, out)
     return out

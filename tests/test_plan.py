@@ -54,6 +54,13 @@ except ImportError as e:
     sys.exit(1)
 
 BODY = "## Goal\nBuild it.\n\n## Approach\nT1 and T2 first, T3 after; carries out D1.\n\n## Size\nNormal.\n"
+# what U8's form check wants of the other plan files (headings, no ids a subphase's plan does not define)
+SBODY = "## Goal\nBuild it.\n\n## Approach\nCarries out D1.\n\n## Size\nNormal.\n"
+TBODY = "## Goal\nBuild it.\n\n## Approach\nT1, then T2; carries out D1.\n\n## Size\nNormal.\n"
+PREB = "## Verdict\nok\n\n## Failure reasons\nNone.\n\n## Size\nNormal.\n"
+POSTB = ("## Verdict\nok\n\n## Findings\nNone.\n\n## Criteria\nC1.\n\n## Checked\nAll.\n\n"
+         "## Needs from the owner before executing\nNone\n\n## Not found wrong\nNothing.\n")
+REPO = helpers.toy_repo({"README": "toy\n", ".claude/fwx.json": '{"schema": 1}'})  # a phase is in a repository with its configuration
 
 
 def test(run="python3 t.py"):
@@ -82,9 +89,13 @@ def fm_text(fm):
     return "---\n" + json.dumps(fm, indent=1) + "\n---\n"
 
 
+_made = [0]
+
+
 def phase(fm=None, body=BODY, raw=None, extra=None):
     """A phase folder with plan.md (frontmatter `fm`, or the text `raw`) and decisions.tsv with D1 chosen."""
-    d = helpers.mkdtemp("fwx-plan-")
+    _made[0] += 1
+    d = os.path.join(REPO, ".fwx", "p%d" % _made[0])
     helpers.write(d, "plan.md", raw if raw is not None else fm_text(fm if fm is not None else base()) + body)
     helpers.write(d, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n"
                   "day-1\tD1\tuse a\tbecause\t\tchosen\tturn 1\t\n")
@@ -226,7 +237,7 @@ s.eq("load_plan does not look at clashes", plan.load_plan(os.path.join(mutated(l
 # ---- premortem.md and postmortem.md
 PRE = {"verdict": "ok", "size_tag": "normal", "parts": 1, "round": 1}
 POST = {"verdict": "ok", "security_review": False, "round": 1}
-good = phase(extra={"premortem.md": fm_text(PRE) + "## Verdict\nok\n", "postmortem.md": fm_text(POST) + "## Verdict\nok\n"})
+good = phase(extra={"premortem.md": fm_text(PRE) + PREB, "postmortem.md": fm_text(POST) + POSTB})
 case("a valid premortem and postmortem", good, exact=(0, 0))
 s.eq("load_premortem", plan.load_premortem(os.path.join(good, "premortem.md")), PRE)
 s.eq("load_postmortem", plan.load_postmortem(os.path.join(good, "postmortem.md")), POST)
@@ -252,9 +263,9 @@ five = lambda f: (f["size"].update(tag="small", agents=1), f.update(tasks=[
      "tests": [], "size": "small", "ui": False} for i in range(1, 6)]))
 case("more tasks than the band", mutated(five), warnings=["plan.md: tasks: 5 tasks, the small band is 4"], exact=(0, 1))
 case("a plan at its band is fine", mutated(lambda f: (five(f), f["tasks"].pop())), exact=(0, 0))
-case("size.tag differs from the premortem", phase(extra={"premortem.md": fm_text(dict(PRE, size_tag="small"))}),
+case("size.tag differs from the premortem", phase(extra={"premortem.md": fm_text(dict(PRE, size_tag="small")) + PREB}),
      warnings=["plan.md: size.tag: normal, but premortem.md says small"], exact=(0, 1))
-case("size.parts differs from the premortem", phase(extra={"premortem.md": fm_text(dict(PRE, parts=2))}),
+case("size.parts differs from the premortem", phase(extra={"premortem.md": fm_text(dict(PRE, parts=2)) + PREB}),
      warnings=["plan.md: size.parts: 1, but premortem.md says 2"], exact=(0, 1))
 case("size.agents is not the widest wave", mutated(lambda f: f["size"].update(agents=3)),
      warnings=["plan.md: size.agents: 3, but the widest wave has 2 task(s)"], exact=(0, 1))
@@ -279,8 +290,8 @@ top = lambda: {"size": {"tag": "normal", "parts": 2, "agents": 1}, "criteria": b
                           "tests": [], "size": "small", "ui": False},
                          {"id": "T2", "part": 2, "subphase": "01.2-b", "type": "feature", "wave": 2, "files": ["b.py"], "depends_on": ["T1"],
                           "tests": [], "size": "small", "ui": False}]}
-subs = lambda: {"01.1-a/plan.md": fm_text(SUB(1, 1)) + BODY, "01.2-b/plan.md": fm_text(SUB(2, 2)) + BODY}
-parts = phase(top(), extra=subs())
+subs = lambda: {"01.1-a/plan.md": fm_text(SUB(1, 1)) + SBODY, "01.2-b/plan.md": fm_text(SUB(2, 2)) + SBODY}
+parts = phase(top(), body=TBODY, extra=subs())
 r = case("two subphases", parts, exact=(0, 0))
 s.eq("two subphases: counts", (r["plans"], r["tasks"], r["waves"], r["parts"]), (3, 4, 4, 2))
 s.ok("two subphases: the count line", "checked 3 plan file(s): 4 tasks, 4 waves, 2 parts; 0 errors, 0 warnings" in cli(parts).stdout)

@@ -73,13 +73,15 @@ def good_plan(tasks=None):
 
 def premortem(verdict="ok", rnd=1, size="small", parts=1):
     return front({"verdict": verdict, "size_tag": size, "parts": parts, "round": rnd},
-                 "## Verdict\n%s\n\n## Failure reasons\nNone.\n\n## Size\n%s.\n" % (verdict, size))
+                 "## Verdict\n%s\n\n## Failure reasons\n%s\n\n## Size\n%s.\n"
+                 % (verdict, "- the owner meant something else" if verdict != "ok" else "None.", size))  # U8: the reasons match the verdict
 
 
 def postmortem(verdict="ok", rnd=1, needs="None"):
     return front({"verdict": verdict, "security_review": False, "round": rnd},
-                 "## Verdict\n%s\n\n## Findings\nNone.\n\n## Criteria\nC1 holds.\n\n## Checked\nAll.\n\n"
-                 "## Needs from the owner before executing\n%s\n\n## Not found wrong\nNothing.\n" % (verdict, needs))
+                 "## Verdict\n%s\n\n## Findings\n%s\n\n## Criteria\nC1 holds.\n\n## Checked\nAll.\n\n"
+                 "## Needs from the owner before executing\n%s\n\n## Not found wrong\nNothing.\n"
+                 % (verdict, "- blocker C1 must hold / evidence: a.py:1" if verdict == "objections" else "None.", needs))  # U8: the findings match the verdict
 
 
 DECISIONS = ("date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n"
