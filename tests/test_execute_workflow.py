@@ -29,6 +29,13 @@ be in the script exactly once), and must go red with the text given. The first F
   and 21 more rows of MUTANTS, each seen red with the text in its fourth column. A mutant that makes the script loop (capacity 0)
   is cut off by `run_capped` after 25 s.
 
+Red before 3.4 align (the gate's stage, the re-entry at the gate, the agents' wording; first lines of this file on the old script):
+  FAIL: stage: the wave merge runs in executing, the gate (last wave's --final integrate) in reviewing (gate ran in executing): got ['executing', 'executing'], want ['executing', 'reviewing']
+  FAIL: stage: a review fix is made in executing and gated and reviewed in reviewing (n_C9 to n_C8 to n_C5 to n_C7): got ('reviewing', 'reviewing', 'reviewing'), want ('executing', 'reviewing', 'reviewing')
+  FAIL: from gate: the gate, then the review: done (a second run of finished tasks returned needs-owner): got ('needs-owner', 'every task of the part is already on the phase branch: there is nothing to execute'), want ('done', '')
+  FAIL: agents: reviewer, security-reviewer and review-verifier say what the script does (agents/*.md vs workflows/execute.js): got ['reviewer: names a brief file, the script gives the brief in the prompt', ...
+  and one MUTANTS row each for the stage of the gate, of the fix after a red gate, of a review fix, the re-entry and `--branches` left empty.
+
 Settled here (3.4 U5b), and why each is in the script and not in a CLI:
   - finding ids repeat across rounds (a reviewer numbers F1, F2 each time, and `integrate --findings` and `revert` match by id):
     the script prefixes every finding with its review pass, `r1-F1`, `r2-F1`, before it goes to the verifier, the fixer or
@@ -712,6 +719,113 @@ def check_args_fix_and_revert(script, s):
     s.ok("a revert that conflicts: the reason names the finding", "r2-F1" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
 
 
+def check_gate_entry_and_stage(script, s):
+    """3.4 align: the gate is the tree's n_C7 and runs in stage `reviewing`; `args.from == "gate"` re-enters there (n_C7F loops back)."""
+    def stage_of(rec, label, nth):
+        return (launched(rec, label) or Launches())[nth].get("phase")
+    rec, err = go(script)
+    rec = finish(s, "stage green", rec, err)
+    s.eq("stage: the wave merge runs in executing, the gate (last wave's --final integrate) in reviewing (gate ran in executing)",
+         [stage_of(rec, "executor:runner-integrate", 0), stage_of(rec, "executor:runner-integrate", 1)], ["executing", "reviewing"])
+    s.eq("stage: one entry into each stage", rec.get("phases"), ["executing", "reviewing"])
+
+    fixed = {"executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"], rc=1), final("h3", ["wt-fix"])]},
+             "executor:runner-fix-round": R({"ok": True, "spent": False, "rounds": "1/3", "why": "w"}),
+             "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix")}
+    rec, err = go(script, answers_over=fixed)
+    rec = finish(s, "stage gate red", rec, err)
+    s.eq("stage: a red gate sends the fix to executing (n_C8 to n_C5) and the gate again to reviewing",
+         (stage_of(rec, "executor:fix-", 0), stage_of(rec, "executor:runner-integrate", 2)), ("executing", "reviewing"))
+    s.eq("stage: gate red, phases", rec.get("phases"), ["executing", "reviewing", "executing", "reviewing"])
+
+    rec, err = go(script, base={**green(), **{
+        "reviewer:r1": review_line("r1", findings=1), "executor:runner-report-r1": review_report([finding("F1", "high")]),
+        "review-verifier:r1": verdicts(("r1-F1", "fix", "high", "check")),
+        "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"}),
+        "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix"),
+        "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"]), final("h3", ["wt-fix"])]},
+        "executor:runner-commits": R("c0ffee0 r1-F1\n"),
+        "reviewer:r2": review_line("r2"), "executor:runner-report-r2": review_report()}})
+    rec = finish(s, "stage review fix", rec, err)
+    s.eq("stage: a review fix is made in executing and gated and reviewed in reviewing (n_C9 to n_C8 to n_C5 to n_C7)",
+         (stage_of(rec, "executor:fix-", 0), stage_of(rec, "executor:runner-integrate", 2), stage_of(rec, "reviewer:", 1)), ("executing", "reviewing", "reviewing"))
+
+    # re-entry at the gate: every task is on the phase branch, `from` is "gate"
+    def gate_entry(a):
+        a["done"] = ["T1", "T2", "T3"]
+        a["from"] = "gate"
+    entry = {"executor:runner-integrate": {"$seq": [final("h2", [])]}, "executor:runner-capacity": cap(3, 1)}
+    rec, err = go(script, args_over=gate_entry, answers_over=entry)
+    rec = finish(s, "from gate", rec, err)
+    s.eq("from gate: the gate, then the review: done (a second run of finished tasks returned needs-owner)", (result(rec).get("status"), result(rec).get("reason")), ("done", ""))
+    ints = runner(rec, "integrate")
+    s.ok("from gate: one integrate, with --final and no --branches", len(ints) == 1 and "--final" in ints[0]["prompt"] and "--branches" not in ints[0]["prompt"],
+         repr([i["prompt"][-200:] for i in ints]))
+    s.eq("from gate: no executor, no fixer; one reviewer", (list(workers(rec)), len(launched(rec, "reviewer:"))), ([], 1))
+    s.eq("from gate: the gate and the review run in reviewing, the reviewed range starts at the part's base",
+         (rec.get("phases"), HEAD0 in launched(rec, "reviewer:")[0]["prompt"]), (["reviewing"], True))
+    s.eq("from gate: cleanup is last", last(rec), "executor:runner-cleanup")
+    s.eq("from gate: no capacity asked", list(runner(rec, "capacity")), [])
+
+    rec, err = go(script, args_over=gate_entry, answers_over={**entry, "executor:runner-integrate": {"$seq": [final("h2", [], rc=1), final("h3", ["wt-fix"])]},
+                                                                "executor:runner-fix-round": R({"ok": True, "spent": False, "rounds": "1/3", "why": "w"}),
+                                                                "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix")})
+    rec = finish(s, "from gate red", rec, err)
+    s.eq("from gate: a red gate is fixed like any other (a fixer, the gate again, then the review)",
+         (len(launched(rec, "executor:fix-")), len(runner(rec, "integrate")), result(rec).get("status")), (1, 2, "done"))
+
+    rec, err = go(script, args_over=gate_entry, answers_over={"executor:runner-integrate": {"$seq": [final("h2", [], protected=["config/forge.json"], trusted=["ci.yml"])]}})
+    rec = finish(s, "from gate trusted", rec, err)
+    s.eq("from gate: a diff that edits the checks is for the owner here too, no review", (result(rec).get("status"), "ci.yml" in str(result(rec).get("reason")), list(launched(rec, "reviewer:"))),
+         ("needs-owner", True, []))
+
+    # without `from`, finished tasks are still nothing to execute, and the reason says how to go on
+    rec, err = go(script, args_over=lambda a: a.update(done=["T1", "T2", "T3"]))
+    rec = finish(s, "all done, no from", rec, err)
+    s.ok("all done without `from`: needs-owner, and the reason names `--from gate`", result(rec).get("status") == "needs-owner" and "--from gate" in str(result(rec).get("reason")),
+         repr(result(rec).get("reason")))
+
+
+def agent_problems(texts):
+    """What an agent file says about its input and its output, against what the script does: the reviewers get their brief inline
+    and write a report file named in the prompt (one reply line), the verifier gets its brief inline and answers through the
+    structured output (no file, no reply line)."""
+    found = []
+    for name in ("reviewer", "security-reviewer", "review-verifier"):
+        text = texts.get(name, "")
+        if re.search(r"brief file", text) and not re.search(r"no brief file", text):
+            found.append("%s: names a brief file, the script gives the brief in the prompt" % name)
+        if "Your prompt is your brief" not in text:
+            found.append("%s: does not say its prompt is its brief" % name)
+    for name in ("reviewer", "security-reviewer"):
+        if "reviewed <report path>" not in texts.get(name, ""):
+            found.append("%s: lost its one-line reply (`reviewed <report path> ...`)" % name)
+    v = texts.get("review-verifier", "")
+    if "structured output" not in v:
+        found.append("review-verifier: does not say it answers through the structured output")
+    if re.search(r"verified <|report path|file your report", v):
+        found.append("review-verifier: still writes a report file and replies with a line, the script reads neither")
+    return found
+
+
+def check_agents(s):
+    texts = {}
+    for name in ("reviewer", "security-reviewer", "review-verifier"):
+        with open(os.path.join(ROOT, "agents", name + ".md"), encoding="utf-8") as f:
+            texts[name] = f.read()
+    s.eq("agents: reviewer, security-reviewer and review-verifier say what the script does (agents/*.md vs workflows/execute.js)", agent_problems(texts), [])
+    old = {n: t.replace("Your prompt is your brief", "Your prompt names a brief file") for n, t in texts.items()}
+    s.ok("agents: control, the old wording is found", len(agent_problems(old)) >= 3, repr(agent_problems(old)))
+    # what the script gives each one, so the agent files cannot drift from it
+    rec, err = go(SCRIPT, answers_over={"security-reviewer:r1": review_line("r1", "security-reviewer"), "executor:runner-report-r1-sec": review_report(criteria=[])},
+                  args_over=lambda a: a.update(security={"needed": True, "why": "x"}))
+    rec = finish(s, "agents: prompts", rec, err)
+    for label in ("reviewer:r1", "security-reviewer:r1"):
+        p = (launched(rec, label) or Launches())[0]["prompt"]
+        s.ok("agents: %s gets its brief in the prompt: range, intent files, TMPDIR and report path, no file to open" % label,
+             all(x in p for x in ("DIFF:", "INTENT:", "TMPDIR is", "/reports/r1-")) and "brief file" not in p.replace("no brief file", ""), p[:300])
+
+
 def check_lint_and_shape(s):
     r = subprocess.run([sys.executable, "-I", os.path.join(ROOT, "lib", "fwx", "lint_models.py"), SCRIPT], capture_output=True, text=True)
     s.eq("lint: the script passes the model lint", r.returncode, 0)
@@ -738,6 +852,7 @@ def check_all(script, s):
     check_review(script, s)
     check_fix(script, s)
     check_args_fix_and_revert(script, s)
+    check_gate_entry_and_stage(script, s)
 
 
 # (what is wrong with the script, text in it, text instead, the check that must go red). Each anchor is in the script exactly once.
@@ -781,6 +896,12 @@ MUTANTS = [
     ("a criterion no needs no finding", "if (c.met === 'no' && !rep.findings.some", "if (false && !rep.findings.some", "FAIL: criterion no that no finding names"),
     ("control findings ignored", "if (tag === 'r1') (A.control_findings || []).forEach(take)", "", "FAIL: control findings"),
     ("the whole part is reviewed again", "    from = before\n", "    from = A.base\n", "FAIL: fix: the second review is of the fix's diff"),
+    ("the gate runs in executing", "    if (o.final) enter('reviewing')\n", "", "FAIL: stage: the wave merge runs in executing, the gate"),
+    ("a fix after a red gate stays in reviewing", "    if (o.final) enter('executing')\n", "", "FAIL: stage: a red gate sends the fix"),
+    ("a review fix is made in reviewing", "    enter('executing')\n    const mine", "    const mine", "FAIL: stage: a review fix is made"),
+    ("from gate ignored", "  if (A.from === 'gate') {\n", "  if (false) {\n", "FAIL: from gate: the gate, then the review"),
+    ("no branch still passes --branches", "(pending.length ? ' --branches ' + pending.map(sh).join(' ') : '')", "' --branches ' + pending.map(sh).join(' ')",
+     "FAIL: from gate: one integrate, with --final and no --branches"),
     ("unproven rejected as malformed", "['yes', 'no', 'unproven'].includes(c.met)", "['yes', 'no'].includes(c.met)", "FAIL: criterion unproven"),
 ]
 
@@ -821,6 +942,7 @@ def main():
         s.not_run("node is not on PATH")
     check_all(SCRIPT, s)
     check_lint_and_shape(s)
+    check_agents(s)
     if not os.environ.get("FWX_EXEC_NESTED"):
         check_controls(s)
     s.done()

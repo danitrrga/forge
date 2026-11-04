@@ -312,8 +312,8 @@ MUTANTS = [
     ("empty fields not refused", case_refused, P, "        problems += brief.missing(facts)", "        problems += []",
      "a feature task with no tests: exit"),
     ("context file not looked for", case_refused, B, "if not os.path.exists(p)]", "if False]", "a CONTEXT file that is not there: exit"),
-    ("briefs written before the base is run", case_refused, P, "    red = _base_is_green(top, base, recipe, {part, phase}, say)",
-     "    _write(made, folder)\n    red = _base_is_green(top, base, recipe, {part, phase}, say)", "a red base writes no brief"),
+    ("briefs written before the base is run", case_refused, P, "    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)",
+     "    _write(made, folder, False)\n    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)", "a red base writes no brief"),
     ("task id not checked", case_refused, P, 'if not brief.ID.match(t["id"]):', "if False:", "a task id that cannot name a file: exit"),
     ("fields out of order", case_briefs, T, "## ACCEPTANCE\n$acceptance\n\n## VERIFY\n", "## VERIFY\n$verify\n\n## ACCEPTANCE\n$acceptance\n\n## OLD\n",
      "the nine fields in the order of the template"),
@@ -333,7 +333,7 @@ MUTANTS = [
     ("the plan's tasks briefed under --fix", case_fix, P, "    if fix:\n        facts = brief.fix_facts", "    if False:\n        facts = brief.fix_facts",
      "the plan's tasks get no brief"),
     ("revert ids not checked", case_revert, P, "    if not ids or bad:", "    if False:", "an id with a space: exit"),
-    ("revert launches", case_revert, P, "size, quick, revert is None)", "size, quick, True)", "nothing is launched, so no brief is written"),
+    ("revert launches", case_revert, P, "size, quick, revert is None and not gating)", "size, quick, True)", "nothing is launched, so no brief is written"),
 ]
 
 if __name__ == "__main__":

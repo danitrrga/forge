@@ -66,8 +66,7 @@ const sh = (x) => "'" + String(x).replace(/'/g, "'\\''") + "'"
 const inCheckout = (cmd) => 'cd ' + sh(A.checkout) + ' && ' + cmd
 const lastLine = (v) => String(v).trim().split('\n').pop().trim()
 const oneLine = (v, n) => String(v).replace(/\s+/g, ' ').trim().slice(0, n)
-const firstBrief = (A.fix && A.fix.brief) || (A.waves.flatMap((w) => w.tasks).find((t) => t.brief) || {}).brief
-const RUNDIR = firstBrief ? firstBrief.replace(/\/[^/]*\/[^/]*$/, '') : null
+const RUNDIR = A.run_dir || null
 
 let chain = Promise.resolve()
 function exclusive(fn) {
@@ -292,7 +291,9 @@ async function integrate(branches, o) {
   let pending = branches.slice()
   let withFindings = o.findings || null
   for (;;) {
-    const cmd = 'fwx wave integrate --part-dir ' + sh(A.part_dir) + ' --run ' + sh(RUN) + ' --branches ' + pending.map(sh).join(' ') +
+    // the gate is n_C7, stage reviewing; the fixes that a red gate sends back (n_C8 to n_C5) are made in executing
+    if (o.final) enter('reviewing')
+    const cmd = 'fwx wave integrate --part-dir ' + sh(A.part_dir) + ' --run ' + sh(RUN) + (pending.length ? ' --branches ' + pending.map(sh).join(' ') : '') +
       (withFindings ? ' --findings ' + sh(withFindings.join(',')) : '') + (o.final ? ' --final' : '')
     const r = await run('integrate', cmd)
     if (r.head) st.head = r.head
@@ -325,6 +326,7 @@ async function integrate(branches, o) {
     }
     const fr = await fixRound(text)
     if (fr.end) stop(fr.end[0], fr.end[1])
+    if (o.final) enter('executing')
     pending = pending.filter((b) => !(r.merged || []).includes(b))
     if (kind === 'conflict') {
       const mine = await resolverJob(r.conflict, r.head)
@@ -470,7 +472,7 @@ async function recordFixed(fix, from, to) {
 
 // ---- the flow ----------------------------------------------------------------------------------------------------------------------
 async function main() {
-  enter('executing')
+  if (A.from !== 'gate') enter('executing')
   if (A.revert && A.revert.length) {
     // Code that was already reviewed comes back: no review. `integrate` needs a branch, so the gate on the new head is `fwx verify`.
     const r = await run('revert', 'fwx wave revert --part-dir ' + sh(A.part_dir) + ' --run ' + sh(RUN) + ' --findings ' + sh(A.revert.join(',')))
@@ -482,7 +484,11 @@ async function main() {
     if (g.rc !== 0) stop('failed', 'the gate failed after the revert: ' + st.evidence)
     return
   }
-  if (A.fix) {
+  if (A.from === 'gate') {
+    // n_C7F loops back to n_C7: every task is on the phase branch and the gate or the review has not passed, so there is nothing
+    // to merge. `integrate --final` with no branch runs checks_quick, the gate and the trusted-edit and protected-path reports.
+    await integrate([], { final: true })
+  } else if (A.fix) {
     const ids = A.fix.findings.map((f) => f.id)
     await capacity(1)
     const r = await job({ id: 'fix', label: 'executor:fix', model: A.models.fixer, trailer: null,
@@ -491,14 +497,15 @@ async function main() {
     await integrate([r.report.branch], { final: true, findings: ids, fixFindings: A.fix.findings })
   } else {
     const todo = A.waves.filter((w) => w.tasks.some((t) => !done.has(t.id)))
-    if (todo.length === 0) stop('needs-owner', 'every task of the part is already on the phase branch: there is nothing to execute')
+    if (todo.length === 0) {
+      stop('needs-owner', 'every task of the part is already on the phase branch: there is nothing to execute (to run the gate and the review on it, `fwx wave prepare --from gate`)')
+    }
     for (let i = 0; i < todo.length; i++) {
       const branches = await runWave(todo[i])
       await integrate(branches, { final: i === todo.length - 1 })
       log('executing: wave ' + todo[i].n + ' merged, ' + branches.length + ' branch(es)' + (i === todo.length - 1 ? ', the gate ran' : '') + '; ' + (todo.length - 1 - i) + ' wave(s) left')
     }
   }
-  enter('reviewing')
   let from = A.base
   for (;;) {
     const fix = await reviewPass(from, st.head)
@@ -507,6 +514,7 @@ async function main() {
     const fr = await fixRound('review findings to fix: ' + ids.join(', '))
     if (fr.end) stop(fr.end[0], fr.end[1])
     const before = st.head
+    enter('executing')
     const mine = await fixerJob({ findings: fix, head: st.head })
     await integrate([mine], { final: true, findings: ids, fixFindings: fix })
     await recordFixed(fix, before, st.head)

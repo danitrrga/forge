@@ -12,6 +12,9 @@ Seen red before the code existed (python3 tests/test_wave_integrate.py, first li
   FAIL: integrate, two clean branches: stdout is JSON: got <not JSON: ''>, want an object
   FAIL: integrate: ok, merged in order: got (None, None), want (True, ['worktree-agent-one', 'worktree-agent-two'])
 
+Red before `integrate --final` took no branch (3.4 align):
+  FAIL: integrate --final with no branch: exit: got (2, 'usage: fwx wave integrate --part-dir D --run R --branches B... [--final]'), want (0, '')
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each `old` must be in
 its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (138 checks, 170 with the controls).
 The first FAIL line of each mutant, seen red:
@@ -328,6 +331,24 @@ def case_integrate_final(R, S):
     sr.stop()
 
 
+def case_integrate_gate_only(R, S):
+    """3.4 align: `integrate --final` with no branch runs the gate on the head as it is (the re-entry at n_C7 once the tasks are
+    merged), and reports the trusted edits and protected paths of everything since the run's base."""
+    sc = Scene(protected=["src/secret/**"])
+    b1 = sc.agent("one", [(".github/workflows/ci.yml", "name: x\n", None), ("src/secret/k.py", "k\n", None)])
+    ok_json(S, "gate only, the merge before", sc.integrate(R, b1))
+    r = sc.call(R, "integrate", "--part-dir", sc.part, "--run", sc.run, "--final")
+    v = ok_json(S, "integrate --final with no branch", r)
+    S.eq("gate only: ok, nothing merged, verify ran green on the head", (v.get("ok"), v.get("merged"), v.get("verify", {}).get("ran"), v.get("verify", {}).get("rc")), (True, [], True, 0))
+    S.eq("gate only: the head is unchanged", v.get("head"), sc.head())
+    S.ok("gate only: a workflow edit since the base is a trusted edit", bool(v.get("trusted")), repr(v.get("trusted")))
+    S.eq("gate only: protected paths since the base", sorted(v.get("protected") or []), [".github/workflows/ci.yml", "src/secret/k.py"])
+    S.eq("gate only: the evidence row is the head's", [(r.get("kind"), r.get("rc"), r.get("sha")) for r in sc.audit()], [("evidence", "0", sc.head())])
+    r = sc.call(R, "integrate", "--part-dir", sc.part, "--run", sc.run)
+    S.eq("no branch and no --final: usage, exit %d" % r.returncode, (r.returncode, "usage: fwx wave integrate" in r.stderr, r.stdout), (2, True, ""))
+    sc.stop()
+
+
 # ---------------------------------------------------------------------------------------------------- fix-round
 
 def fix(R, sc, why="the wave would not merge"):
@@ -514,7 +535,7 @@ def case_step_files(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_final, case_fix_round, case_cleanup, case_cleanup_no_proc, case_summary,
+         case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_no_proc, case_summary,
          case_step_files]
 
 I = "lib/fwx/execute/integrate.py"
@@ -527,6 +548,8 @@ MUTANTS = [
     ("liveness reads only `locked`", case_integrate_lock, C, LIVE, 'return "live"', "refused a stale lock"),
     ("liveness never sees a live agent", case_integrate_lock, C, LIVE, 'return "stale"', "merged a locked worktree"),
     ("a commit may carry two findings", case_integrate_findings, I, "if len(ids) > 1:", "if False:", "one commit for two findings: refused"),
+    ("integrate --final needs a branch", case_integrate_gate_only, W, '(() if parsed and "--final" in parsed[0] else ("--branches",))', '("--branches",)',
+     "integrate --final with no branch: exit"),
     ("fix-round never spends", case_fix_round, I, 'rounds.record(part_dir, "use", why)', "pass", "a conflict with nothing counted: rounds 0/3"),
     ("fix-round spends on a counted failure", case_fix_round, I, "if not counted:", "if True:", "red evidence of HEAD: rounds 2/3"),
     ("fix-round decides by the counter after", case_fix_round, I, "before = rounds.count(rows[:-1]) if counted else rounds.count(rows)",

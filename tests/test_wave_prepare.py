@@ -10,6 +10,10 @@ Seen red before the code existed (python3 tests/test_wave_prepare.py, first line
   FAIL: prepare, the base case: stdout is the args: got <not JSON: ''>, want an object
   FAIL: args: run: got None, want '01-alpha-fe27f07-1'
 
+Red before `--from gate` existed (3.4 align):
+  FAIL: from gate: exit: got (2, 'usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] [--control-findings F]'), want (0, '')
+  FAIL: run_dir: a normal run has from null and run_dir above its briefs: got (None, '.../.git/fwx/runs/01-alpha-b93c090-1'), want (None, None)
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
 be in the file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (188 checks). The first FAIL
 line of each, seen red:
@@ -328,6 +332,37 @@ def case_fix_options(R, S):
     refused(S, "--fix with a file that is not there", sc, sc.prepare(R, "--fix", f + ".none"), "--fix")
 
 
+def case_from_gate(R, S):
+    """3.4 align: `--from gate` re-enters the execution at the gate (the tree's n_C7F loops back to n_C7) once every task is on the
+    phase branch: no briefs, no base check, the part's own base, and a run folder with `reports/` for the reviewers."""
+    sc = Scene(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])], recipe=["false"])
+    base0 = sc.head()
+    run0 = "%s-%s-1" % (PHASE, base0[:7])
+    os.makedirs(os.path.join(sc.repo, ".git", "fwx", "runs", run0))  # the folder the first run's prepare made
+    sc.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: %s" % (PHASE, run0))
+    sc.commit("two.txt", "feat: two\n\nFwx-Task: %s/T2\nFwx-Run: %s" % (PHASE, run0))
+    a = ok_args(S, "from gate", sc.prepare(R, "--from", "gate"))
+    S.eq("from gate: from, done", (a.get("from"), a.get("done")), ("gate", ["T1", "T2"]))
+    S.eq("from gate: the base is where the part's first run started, not the head (the review and the trusted-edit report diff from it)",
+         a.get("base"), base0)
+    S.eq("from gate: the run id is the part's, the next number", a.get("run"), "%s-%s-2" % (PHASE, base0[:7]))
+    S.ok("from gate: no brief for any task, no fix", all(t.get("brief") is None for w in a.get("waves") or [] for t in w["tasks"]) and a.get("fix") is None, repr(a.get("waves")))
+    folder = a.get("run_dir") or ""
+    S.ok("from gate: run_dir is the run's folder and holds reports/", folder.endswith(os.path.join("fwx", "runs", a.get("run") or "?")) and os.path.isdir(os.path.join(folder, "reports")), folder)
+    plain = Scene()
+    a2 = ok_args(S, "run_dir", plain.prepare(R))
+    S.eq("run_dir: a normal run has from null and run_dir above its briefs", (a2.get("from"), os.path.dirname(os.path.dirname(((a2["waves"][0]["tasks"][0]).get("brief")) or ""))),
+         (None, a2.get("run_dir")))
+    part = Scene(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])])
+    part.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: %s-%s-1" % (PHASE, PHASE, part.head()[:7]))
+    refused(S, "from gate, a task not done", part, part.prepare(R, "--from", "gate"), "T2")
+    nrun = Scene(tasks=[task("T1", 1, ["src/a.py"])])
+    nrun.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1" % PHASE)
+    refused(S, "from gate, no Fwx-Run on the branch", nrun, nrun.prepare(R, "--from", "gate"), "Fwx-Run")
+    for extra, needle in ((("--from", "elsewhere"), "--from"), (("--from", "gate", "--revert", "F1"), "--from gate"), (("--from", "gate", "--fix", "/nonexistent"), "--from gate")):
+        refused(S, "from gate with %s" % " ".join(extra), sc, sc.prepare(R, *extra), needle)
+
+
 def case_check_base(R, S):
     sc = Scene()
     base = sc.head()
@@ -371,7 +406,7 @@ def case_dispatch(R, S):
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
-         case_unattended, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_check_base,
+         case_unattended, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
          case_dispatch]
 
 # ---------------------------------------------------------------------------------------------------- the controls
@@ -392,6 +427,9 @@ MUTANTS = [
     ("checks from the checkout", case_worktree_checks, P, "return config.load(top)",
      'return dict(config.DEFAULTS, project=dict(config.DEFAULTS["project"], checks=[]))', "from a worktree: exit: got (2,"),
     ("subphase as a phase", case_subphase, P, "if _is_subphase(part) else part", "if False else part", "subphase: context.md is the parent's"),
+    ("from gate, the head as the base", case_from_gate, P, "base = _part_base(top, branch, name)", "base = verify.head(top)", "the base is where the part's first run started"),
+    ("from gate runs the base", case_from_gate, P, "red = None if gating else _base_is_green(", "red = _base_is_green(", "from gate: exit"),
+    ("from gate with a task not done", case_from_gate, P, "        if todo:\n", "        if False:\n", "from gate, a task not done"),
     ("check-base by merge-base", case_check_base, B, "if not head.startswith(sha):",
      'if git(top, "merge-base", "--is-ancestor", sha, "HEAD").returncode:', "an ancestor of HEAD is another base"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),

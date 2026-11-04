@@ -2,10 +2,11 @@
 fwx wave prepare|check-base|integrate|fix-round|revert|cleanup|summary ...
 
 `prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
-[--control-findings F]` validates the part `D` from the integration checkout (the current folder, on branch `W`) and prints
+[--control-findings F] [--from gate]` validates the part `D` from the integration checkout (the current folder, on branch `W`) and prints
 the `args` of `execute` as one JSON object (execute/prepare.py says what it checks and what it leaves out). Exit 0, 1 when
 the base fails its own checks (a needs-owner JSON line on stdout, `rounds <used>/<cap>` on stderr, no round spent), 2 for
-anything that must stop the run before it starts, with the reason on stderr and nothing written.
+anything that must stop the run before it starts, with the reason on stderr and nothing written. `--from gate` is the way back
+into the checks once every task is on the phase branch (the tree's n_C7F loops to n_C7): execute/prepare.py says what it changes.
 
 `check-base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
 (the one at `P`, when given) whose HEAD is `<sha>`, 42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
@@ -15,7 +16,8 @@ The rest is 3.4 U3 (execute/integrate.py and execute/cleanup.py say what each do
 object on stdout and also writes it, with the exit code and its arguments, to `<git-common-dir>/fwx/runs/<run>/<n>-<step>.json`
 (`n` counts the run's files; `prepare` and `check-base` write none, and neither does a call that stops on a usage error or on
 something that must stop it before it starts, exit 2 with a reason on stderr):
-  integrate --part-dir D --run R --branches B... [--findings IDS] [--final]
+  integrate --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]
+      with no branch (only with --final) nothing is merged and the gate runs on the head as it is;
       exit 0 merged and green, 1 a conflict or a red check, 2 refused (a live agent holds a branch, the commits are not one per
       finding, the checkout is dirty, a usage error), 77 NOT RUN, NOT ARMED: no /proc (a lock cannot be read)
   fix-round --part-dir D --why TEXT [--run R]     (a file in the run only with --run; the factory's job has none)
@@ -34,10 +36,10 @@ from fwx import config, plan_step, state
 from fwx.execute import base, cleanup, integrate, prepare as prep
 
 PREPARE_USAGE = ("usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] "
-                 "[--fix F] [--revert IDS] [--control-findings F]\n")
+                 "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
 CHECK_USAGE = "usage: fwx wave check-base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
 USAGES = {
-    "integrate": "usage: fwx wave integrate --part-dir D --run R --branches B... [--findings IDS] [--final]\n",
+    "integrate": "usage: fwx wave integrate --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]\n",
     "fix-round": "usage: fwx wave fix-round --part-dir D --why TEXT [--run R]\n",
     "revert": "usage: fwx wave revert --part-dir D --run R --findings IDS\n",
     "cleanup": "usage: fwx wave cleanup --run R\n",
@@ -78,7 +80,7 @@ def _parse(argv, flags, valued, many=()):
 
 
 def do_prepare(argv):
-    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings"))
+    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from"))
     if parsed is None or parsed[1] or any(k not in parsed[0] for k in ("--part-dir", "--plane", "--branch")):
         sys.stderr.write(PREPARE_USAGE)
         return 2
@@ -89,7 +91,7 @@ def do_prepare(argv):
         sys.stderr.write("fwx wave prepare: %s\n" % line)
     try:
         args = prep.prepare(".", got["--part-dir"], got["--plane"], got["--branch"], "--unattended" in got, "--security" in got,
-                            got.get("--fix"), revert, got.get("--control-findings"), say=say)
+                            got.get("--fix"), revert, got.get("--control-findings"), got.get("--from"), say=say)
     except prep.RedBase as e:
         print(json.dumps(e.status))
         sys.stderr.write("fwx wave prepare: %s\n%s\nrounds %s\n" % (e, e.shown, e.status["rounds"]))
@@ -175,7 +177,7 @@ def do_step(step, argv):
     valued = {"integrate": ("--part-dir", "--run", "--findings"), "fix-round": ("--part-dir", "--why", "--run"),
               "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir")}[step]
     parsed = _parse(argv, flags, valued, many=("--branches",) if step == "integrate" else ())
-    need = {"integrate": ("--part-dir", "--run", "--branches"), "fix-round": ("--part-dir", "--why"),
+    need = {"integrate": ("--part-dir", "--run") + (() if parsed and "--final" in parsed[0] else ("--branches",)), "fix-round": ("--part-dir", "--why"),
             "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",)}[step]
     if parsed is None or parsed[1] or any(k not in parsed[0] for k in need) \
             or ("--run" in parsed[0] and not _RUN_NAME.match(parsed[0]["--run"])) \
@@ -193,8 +195,9 @@ def do_step(step, argv):
         if top is None:
             raise base.WaveError("not inside a git repository: %s" % os.getcwd())
         if step == "integrate":
-            args = {"part_dir": part, "run": run, "branches": got["--branches"], "findings": findings, "final": "--final" in got}
-            code, result = integrate.integrate(".", part, run, got["--branches"], findings, "--final" in got, say)
+            branches = got.get("--branches", [])
+            args = {"part_dir": part, "run": run, "branches": branches, "findings": findings, "final": "--final" in got}
+            code, result = integrate.integrate(".", part, run, branches, findings, "--final" in got, say)
         elif step == "fix-round":
             args = {"part_dir": part, "why": got["--why"]}
             code, result = integrate.fix_round(".", part, got["--why"])

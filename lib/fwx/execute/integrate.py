@@ -11,7 +11,8 @@ given. It refuses (exit 2, nothing merged) a checkout with uncommitted changes, 
 it aborts that merge and stops (the earlier ones stay). Then it runs `project.checks_quick` in the checkout, removes the
 worktrees of the branches it merged (only unlocked, clean ones: a stale lock is `cleanup`'s), and, with `final` and everything
 green, runs the gate (`core.verify`) and reports the trusted edits and the protected paths of `<base>..HEAD`, `base` being the
-sha in the run id. It reports; it spends no round.
+sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
+is (the re-entry of `prepare --from gate`).
 
 `fix_round(cwd, part_dir, why)` decides whether a failure may be fixed and spends the round for it. If the last audit row is
 the red evidence of the checkout's HEAD, `verify` already made that failure a round and nothing more is spent. A failure is

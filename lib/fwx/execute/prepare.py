@@ -22,6 +22,14 @@ dir); the tasks already done (a commit reachable from the phase branch whose tra
 wave's `serial` and `plan_failures` for tasks of one wave that write the same path or one inside the other (plan._clashes,
 which `load_plan` leaves to its caller); and a model for every role, from the configuration.
 
+`--from gate` (3.4 align) is the way back into the checks once every task is on the phase branch: the tree's n_C7F, where the
+owner fixed what kept the gate from running, loops to n_C7 and then to the review. Refused (exit 2) unless every task is done,
+and with `--fix` or `--revert`. It launches nothing, so it writes no brief and does not run the base (the gate judges the head,
+red or not), and `base` is where the part's first run started (the oldest `Fwx-Run: <part>-<sha7>-<n>` of the phase branch), not
+the head: the review and the trusted-edit report diff from it. The run id continues that numbering. The result has `from: "gate"`.
+
+`run_dir` is the folder of the run (`<git-common-dir>/fwx/runs/<run>`); `reports/` in it exists when the run launches an agent.
+
 The briefs (3.4 U9, execute/brief.py): one file per task in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md`, its path in
 `waves[].tasks[].brief`, and the folder `reports/` beside it. They are built, and checked, before the base is run: a field that
 is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
@@ -41,6 +49,7 @@ from fwx.execute import brief
 from fwx.execute.base import WaveError, git, out, toplevel
 
 PLANES = ("session", "factory")
+STARTS = ("gate",)
 _PHASE_NAME = re.compile(r"\d+(\.\d+)*-.+\Z")
 
 
@@ -122,6 +131,25 @@ def _done(top, branch, part_name, tasks):
     return [t["id"] for t in tasks if "%s/%s" % (part_name, t["id"]) in found]
 
 
+def _part_base(top, branch, part_name):
+    """Where the part's first run started: the oldest base among the `Fwx-Run: <part>-<sha7>-<n>` trailers of `branch`."""
+    ref = "refs/heads/" + branch
+    r = git(top, "log", ref, "--format=%(trailers:key=Fwx-Run,valueonly,unfold)")
+    if r.returncode:
+        raise WaveError("git log %s failed: %s" % (branch, r.stderr.strip()))
+    mine = re.compile(re.escape(part_name) + r"-([0-9a-f]{7})-\d+\Z")
+    bases = {}
+    for line in r.stdout.splitlines():
+        m = mine.match(line.strip())
+        sha = m and out(top, "rev-parse", "--verify", "--quiet", m.group(1) + "^{commit}")
+        if sha and git(top, "merge-base", "--is-ancestor", sha, ref).returncode == 0:
+            bases[sha] = int(out(top, "rev-list", "--count", sha) or 0)
+    if not bases:
+        raise WaveError("--from gate: no commit of %s carries `Fwx-Run: %s-<sha>-<n>`, so there is no telling where the part's work started"
+                        % (branch, part_name))
+    return min(bases, key=bases.get)
+
+
 def _run_id(top, part_name, base):
     common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
     prefix = "%s-%s-" % (part_name, base[:7])
@@ -194,9 +222,9 @@ def _base_is_green(top, base, recipe, folders, say):
     return [r for r in results if r["rc"] != 0] or None
 
 
-def _write(made, folder):
+def _write(made, folder, reports):
     """The briefs of a run and the folder its reports go to: what `prepare` writes, once everything else has passed."""
-    if not made:
+    if not made and not reports:
         return
     try:
         os.makedirs(os.path.join(folder, "reports"), exist_ok=True)
@@ -207,10 +235,14 @@ def _write(made, folder):
 
 
 def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=None, revert=None, control_findings=None,
-            environ=None, say=lambda line: None):
+            start=None, environ=None, say=lambda line: None):
     environ = os.environ if environ is None else environ
     if plane not in PLANES:
         raise WaveError("--plane is %r, not one of %s" % (plane, ", ".join(PLANES)))
+    if start is not None and start not in STARTS:
+        raise WaveError("--from is %r, not one of %s" % (start, ", ".join(STARTS)))
+    if start and (fix or revert is not None):
+        raise WaveError("--from %s runs no fixer and reverts nothing: it cannot go with --fix or --revert" % start)
     top = toplevel(cwd)
     if top is None:
         raise WaveError("not inside a git repository: %s" % cwd)
@@ -251,8 +283,15 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     if not recipe:
         raise WaveError("no checks defined: `project.checks` in %s is empty and package.json has no test, lint, typecheck or build "
                         "script, so the base cannot be shown green" % os.path.join(main, config.FILE))
-    base = verify.head(top)
     name = os.path.basename(part)
+    gating = start == "gate"
+    if gating:
+        todo = [t["id"] for t in tasks if t["id"] not in _done(top, branch, name, tasks)]
+        if todo:
+            raise WaveError("--from gate needs every task on %s, and %s is not: run the waves first" % (branch, ", ".join(todo)))
+        base = _part_base(top, branch, name)
+    else:
+        base = verify.head(top)
     run = _run_id(top, name, base)
     size = data["size"]["tag"]
     common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
@@ -261,14 +300,14 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
            "paths": {"context": str(state.phase_paths(phase)["context"]), "decisions": str(state.phase_paths(phase)["decisions"]),
                      "plan": str(paths["plan"])}}
     quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
-    made = _briefs(data, ctx, fixing, size, quick, revert is None)
-    red = _base_is_green(top, base, recipe, {part, phase}, say)
+    made = _briefs(data, ctx, fixing, size, quick, revert is None and not gating)
+    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)
     if red:
         used, cap = rounds.count(state.read_rows(paths["audit"])), rounds.cap(top)
         reason = "base %s is red: %s" % (base[:8], ", ".join("%s=%s" % (r["cmd"], "none" if r["rc"] is None else r["rc"]) for r in red))
         raise RedBase({"status": "needs-owner", "reason": reason, "phase_dir": phase, "rounds": "%d/%d" % (used, cap)},
                       "\n".join("--- %s\n%s" % (r["cmd"], verify.tail(r["output"])) for r in red))
-    _write(made, folder)
+    _write(made, folder, gating)
     clashes = plan._clashes("plan.md", data)
     waves = []
     for n in sorted({t["wave"] for t in tasks}):
@@ -294,5 +333,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         "criteria": data["criteria"],
         "fix": dict(fixing, brief=made[brief.FIX][0]["brief"] if brief.FIX in made else None) if fixing else None,
         "revert": revert or [],
+        "from": start,
+        "run_dir": folder,
         "control_findings": controls,
     }
