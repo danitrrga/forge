@@ -10,9 +10,17 @@ python3 scripts/bench/skill_bench.py list       # tasks per field and concept
 
 ## Concepts
 
-`concepts.json` declares 29 concepts in 8 fields (ui, logic, tests, debug, security, arch, process, review). Each has at
-least two tasks (`validate --min-per-concept 2` fails otherwise), because one task can be passed by luck and the
-second is the only evidence the first was not luck. `pass_means` says in one sentence what nailing the concept is.
+`concepts.json` declares 16 concepts in 8 fields (ui, logic, tests, debug, security, arch, process, review), each with at least one
+task (`validate --min-per-concept N` demands more). A task is admitted by calibration, not by pairing it with a twin: it must be able
+to fail on the bare model. `pass_means` says in one sentence what nailing the concept is.
+
+## What is in the bench, and why only this
+
+24 tasks. 16 are the ones that failed at least once in 945 valid runs of 13 run directories across every arm tried (bare, GSD, ponytail,
+pstack variants): the only tasks that can show a difference between configs. 8 are a smoke set, the cheapest task per field that never
+failed, kept only to catch a config that breaks everything; they are excluded from effect estimates. The other 38 tasks never failed in
+any run and were removed (git history keeps them). Re-run `calibrate` when the model changes: a task that has become saturated moves
+out, one that has become hard moves in.
 
 ## A task
 

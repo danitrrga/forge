@@ -1,9 +1,0 @@
-{
-  "id": "arch-refactor-01",
-  "field": "arch",
-  "concept": "arch.refactor-same-behaviour",
-  "difficulty": 2,
-  "prompt": "sales_csv, refunds_csv and payouts_csv in reports.py are the same code pasted three times. Pull it together so there's one place to change the CSV format. Finance imports these files every night, so the output must not change.",
-  "source": {"kind": "authored"},
-  "message_required": false
-}
