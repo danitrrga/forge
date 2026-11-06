@@ -108,3 +108,28 @@ cumulative over the whole run, subagents included: a run that spawns background 
 each with a partial `usage` and all with the same cumulative `modelUsage`, which is what `tokens` is read from. Results written
 before that fix undercount such runs (`cost_usd` was always right), so do not compare `tokens` or `turns` across the two.
 `result.json` also records `cache_read_tokens`, `cache_write_tokens`, `tool_calls` and `tool_errors`.
+
+## Comparing two harness configs (the cheap A/B)
+
+An arm folder (see "Running it") is a whole config, so one arm per config answers "did this change make the harness cheaper, and did it
+break anything?". Run the calibrated hard tier, the tasks a model can still fail (`calibration.json`, tasks at or under 0.7):
+
+```bash
+python3 scripts/bench/skill_bench.py run --arm none --arm NAME=DIR --tasks hard --k 3 --sandbox none --out OUT
+python3 scripts/bench/skill_bench.py report --out OUT --base none
+```
+
+`--sandbox none` is needed while a system-wide hook that fails closed blocks every prompt inside bubblewrap (that run would be INVALID,
+`not_run`, never a fail); the calibrated tier holds no task that baits a destructive action. About 54 runs, $5 and 10 minutes for two arms at
+k=3. Read it in this order:
+
+1. `cost ratio` (per-task cost of the arm over the base, interval over tasks, tasks that cost more) and `overhead` (tokens before any
+   work: deterministic, spread of a few hundred between runs) are the figures that move with a harness change.
+2. `diff` is a guard only. Nine tasks give an interval of about +-0.17 on the pass difference, so "no change" means "not larger than
+   that". Each task's calibrated rate comes from k=3 and is itself noisy (a task at 2 of 3 came out 1 of 3 and 3 of 3 in later runs).
+3. Decide the rule before running (SOURCES.md), e.g. which cost ratio and which pass drop count as a trade worth making.
+
+Worked example (a config arm holding only the owner's 8.1 KB global CLAUDE.md, against bare Claude Code, Sonnet): pass 13/27 for each
+arm, `diff` +0.000 [-0.148, +0.185]; `cost ratio` 1.17 [1.11, 1.22], costlier on 8 of 9 tasks; `overhead` 25.5k against 22.3k tokens.
+The file alone costs about 17% per run on these short tasks and shows no effect on pass rate that nine tasks could see. It says nothing
+about long sessions, hooks, skills or MCP, which are further arms. Re-run `calibrate` when the model changes.
