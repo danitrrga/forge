@@ -21,6 +21,8 @@ Targets written:
   ~/.codex/hooks.json  (the same hooks, for Codex, with codex_harness true; false takes forge's out; $CODEX_HOME when set)
   ~/.hindsight/coding-agent.json  (rendered from config/hindsight-coding-agents.json)
   data/memory-lite/<project>  (each project's claude-mem-lite store directory)
+  ~/.claude/plugins/known_marketplaces.json  (one `claude plugin marketplace add` per config/forge.json `local_plugins` folder the
+    registry lacks, run in a temporary folder; nothing with the key empty or missing, and a registration is never removed)
 
 Default = DRY RUN (prints what would change). Pass --apply to write.
 Writes are atomic (temp -> replace) with a one-time .bak backup. Idempotent.
@@ -39,7 +41,7 @@ import os
 import subprocess
 import sys
 
-from forge import framework, hooks, lib, mcp, memory, skills
+from forge import framework, hooks, lib, marketplace, mcp, memory, skills
 
 CFG = os.path.join(lib.ROOT, "config")
 
@@ -381,6 +383,15 @@ def _run(argv, rule):
             # runtime check, so a missing canonical file is not an error either.
             print(hooks._not_run("hindsight config and runtime check", "hindsight"))
         print()
+
+        # The machine's marketplace registry (config/forge.json `local_plugins`): after everything else, so a run with the key
+        # off prints what it always printed. Silent when every folder is registered.
+        local = marketplace.local_step(ctx)
+        if local:
+            print("== local plugins (machine registry) ==")
+            for line in local:
+                print(line)
+            print()
     else:
         print("== user-scope files: not this run's scope (%s) ==\n" % ("project " + ", ".join(sorted(ctx.only)) if ctx.only else "no project"))
 

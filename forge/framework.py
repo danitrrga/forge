@@ -42,18 +42,13 @@ import collections
 import json
 import os
 import re
-import shlex
-import shutil
-import subprocess
 
-from forge import lib, owned
+from forge import lib, marketplace, owned
 
 PART = "framework"
 LINEAR_KEY = "LINEAR_API_KEY"
 # The four integrations the plugin's file reports (§ the file's `integrations`); a name forge has no switch for yet is false.
 INTEGRATIONS = ("consent", "notifications", "agent_browser", "mempalace")
-NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-ADD_TIMEOUT = 120
 PERMISSIONS_FILE = "framework-permissions.json"
 PERMISSIONS_SCHEMA = 1
 # A command that runs whatever follows it: `Bash(<one of these>:*)` allows any program or package script.
@@ -89,21 +84,7 @@ def _source():
 
 def _name(path):
     """(the plugin's name, why not): the marketplace's `name`, which the marketplace must list as a plugin too."""
-    mf = os.path.join(path, ".claude-plugin", "marketplace.json")
-    try:
-        with open(mf, encoding="utf-8") as fh:
-            doc = json.load(fh)
-    except FileNotFoundError:
-        return None, "%s does not exist: the plugin source is not a marketplace" % lib.short(mf)
-    except (OSError, ValueError) as e:
-        return None, "%s cannot be read (%s)" % (lib.short(mf), e)
-    name = doc.get("name") if isinstance(doc, dict) else None
-    if not isinstance(name, str) or not NAME.match(name):
-        return None, "%s has no `name` that is a plain identifier (letters, digits, . _ -)" % lib.short(mf)
-    listed = doc.get("plugins")
-    if not (isinstance(listed, list) and any(isinstance(p, dict) and p.get("name") == name for p in listed)):
-        return None, "%s lists no plugin called %s, its own name" % (lib.short(mf), name)
-    return name, None
+    return marketplace.plugin_name(path)
 
 
 def _remote_name(ppath):
@@ -345,32 +326,13 @@ def with_permissions(prof, perms):
 
 def _registered(p):
     """Whether the machine's marketplace registry already holds this plugin's marketplace at its path."""
-    reg = lib.read_json(os.path.join(lib.HOME, ".claude", "plugins", "known_marketplaces.json"), quiet=True)
-    entry = reg.get(p.name) if isinstance(reg, dict) else None
-    src = entry.get("source") if isinstance(entry, dict) else None
-    return isinstance(src, dict) and isinstance(src.get("path"), str) and os.path.normpath(src["path"]) == p.path
+    return marketplace.registered(p.name, p.path)
 
 
 def _register(ctx, p, ppath):
-    """The branch-B line: `claude plugin marketplace add` once while the machine's registry lacks the marketplace."""
-    if _registered(p):
-        return []
-    cmd = ["claude", "plugin", "marketplace", "add", p.path, "--scope", "local"]
-    text = " ".join(shlex.quote(a) for a in cmd)
-    if not ctx.apply:
-        return ["   framework -> would run `%s` in %s: the marketplace is not in the machine's registry" % (text, lib.short(ppath))]
-    exe = shutil.which("claude")
-    fix = "run `%s` in %s" % (text, lib.short(ppath))
-    if exe is None:
-        return ["   ! framework -> `claude` is not on PATH, so the marketplace is not registered on this machine: " + fix]
-    try:
-        r = subprocess.run([exe] + cmd[1:], cwd=ppath, capture_output=True, text=True, timeout=ADD_TIMEOUT)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return ["   ! framework -> `%s` did not finish (%s): %s" % (text, type(e).__name__, fix)]
-    if r.returncode:
-        last = (r.stderr.strip() or r.stdout.strip()).splitlines()[-1:] or ["no output"]
-        return ["   ! framework -> `%s` exited %d (%s): %s" % (text, r.returncode, last[0][:200], fix)]
-    return ["   framework -> registered the marketplace on this machine: `%s`" % text]
+    """The branch-B line: `claude plugin marketplace add` once while the machine's registry lacks the marketplace,
+    run in the project's folder (forge/marketplace.py is the shared code)."""
+    return marketplace.register(ctx.apply, "framework", p.name, p.path, ppath)
 
 
 def _write_file(ctx, prof, p, name):

@@ -1160,6 +1160,13 @@ def context_base_row():
                              "context was looked at" % (CONTEXT_BASE_HOOK, where))
 
 
+def local_plugins_row():
+    """The `local plugins` row: every folder of config/forge.json `local_plugins` is registered in the machine's marketplace
+    registry at its path (forge/marketplace.py); a SKIP, NOT RUN, NOT ARMED, with the key empty or missing."""
+    from forge import marketplace
+    return marketplace.row()
+
+
 # (name, command, fix). A command exits 0 when healthy. A callable returns a lib.Result instead,
 # which is how a check can be a WARN: a command's exit code is only ever PASS or FAIL
 # (hindsight_doctor exits with its failure count, argparse with 2). The fix is appended to the
@@ -1191,6 +1198,8 @@ CHECKS = [
     ("context base", context_base_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
+    # Its failures carry their own fix (python3 bin/forge sync --apply), so the row's is empty.
+    ("local plugins", local_plugins_row, ""),
 ]
 
 # What `forge sync --project NAME` (a dry-run) prints for a file its --apply would change: one
