@@ -73,6 +73,14 @@ WHAT FORGE OWNS ON TOP
   files the project's design skill under .planning/sketches/, so the package's copy is neither
   compared nor written.
 
+OWNED FILES (a fork, where a patch would only keep upstream's text)
+  An agent or engine file forge rewrites whole lives at config/gsd/fork/agents/<file> or config/gsd/fork/gsd-core/<rel>
+  and lands in place of the package's file, with no patch applied (sync_tree, `tree=`). config/gsd/fork/LOCK.json holds the
+  package version and the sha256 of the upstream file each copy was cut from. A package update that changes such a file is
+  an error naming it, not a silent skip: the copy keeps being written, and the owner reads what upstream changed (`npm pack
+  @opengsd/gsd-core@<locked version>` gives the old text), merges what is worth keeping, then runs --relock. A patch keyed
+  to an owned file is an error. Upstream's engine code (gsd-tools, the state schema, the templates) stays upstream's.
+
 AN ANCHOR THAT NO LONGER MATCHES IS AN ERROR, NOT A SKIP. If upstream rewrites a patched
 paragraph, this exits 1 naming the patch, because silently dropping a fix is how the classifier
 bug would have come back unnoticed. The file that patch belongs to is not written: the patched
@@ -90,6 +98,8 @@ USAGE
   python3 scripts/sync/sync_gsd_runtime.py --apply    # write agents + engine (`forge skills --apply` runs this)
   --skills        also compare (and with --apply, rewrite or create) forge/skills/gsd-*: every skill of the package
                   is shipped, the ones forge has not written yet are new
+  --relock        rewrite config/gsd/fork/LOCK.json from the staged package (dry-run unless --apply); drift of an owned
+                  file is not an error in this run
   --restage       force a fresh staging install even if the package version has not changed
   --check         read-only, for session start: no restage, no write; exit 0 when the runtime is what
                   --apply would write, 2 when it differs (a file, or a staging made for another package
@@ -97,6 +107,8 @@ USAGE
   --check-npm     ask npm right now (with --apply a throttled check runs on its own, once a day,
                   and says nothing unless a newer version exists)
 """
+import hashlib
+import json
 import os
 import re
 import shutil
@@ -117,6 +129,7 @@ HOOKS_DIR = os.path.join(HOME, ".claude", "hooks")
 SKILLS_MIRROR = os.path.join(HOME, ".claude", "skills")
 FORGE_SKILLS = os.path.join(ROOT, "skills")
 BLOCKS = os.path.join(ROOT, "config", "gsd")
+FORK = os.path.join(BLOCKS, "fork")  # forge's own copies of upstream files, one subdirectory per synced tree, and LOCK.json
 # Outside the repo on purpose: a staging install is megabytes of generated files with no business
 # in git, and state/ here is tracked.
 STAGE_ROOT = os.path.join(HOME, ".cache", "forge", "gsd-stage")
@@ -130,6 +143,8 @@ CTX = lib.context(sys.argv[1:])
 DO_SKILLS = "--skills" in sys.argv
 RESTAGE = "--restage" in sys.argv
 CHECK_NPM = "--check-npm" in sys.argv
+RELOCK = "--relock" in sys.argv
+UPSTREAM_HASHES = {}  # "tree/rel" -> sha256 of the normalised staged text, for each owned file the package ships (sync_tree fills it)
 CHECK = "--check" in sys.argv
 DIFFERS = 2  # --check's exit code for a runtime that differs; 1 stays "something is wrong"
 
@@ -465,7 +480,52 @@ def want_text(src, name, patches, errors):
     return text
 
 
-def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None):
+def sha256(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def fork_owned(tree):
+    """{rel: path} of forge's own copies under config/gsd/fork/<tree>: the files that land in place of upstream's."""
+    out, root = {}, os.path.join(FORK, tree)
+    for base, _dirs, files in os.walk(root):
+        for fn in files:
+            out[os.path.relpath(os.path.join(base, fn), root)] = os.path.join(base, fn)
+    return out
+
+
+def fork_lock(errors):
+    """The sha256 of the upstream text each owned file was cut from, {"tree/rel": hex}; an unreadable lock is an error."""
+    try:
+        return json.loads(read(os.path.join(FORK, "LOCK.json")))["files"]
+    except FileNotFoundError:
+        return {}
+    except (ValueError, KeyError, TypeError) as e:
+        errors.append("config/gsd/fork/LOCK.json is not a lock file (%s) -- rebuild it with --relock" % e)
+        return {}
+
+
+def fork_lock_version():
+    try:
+        return json.loads(read(os.path.join(FORK, "LOCK.json")))["package"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return "?"
+
+
+def write_lock(version):
+    """--relock: the lock becomes the hashes of the staged files of every owned file the package ships. The owner has read
+    what upstream changed; a lock written blind would turn the drift check into a rubber stamp."""
+    text = json.dumps({"package": version, "files": dict(sorted(UPSTREAM_HASHES.items()))}, indent=2) + "\n"
+    dst = os.path.join(FORK, "LOCK.json")
+    if lib.holds(dst, text):
+        print("   lock already current (%d owned file(s))" % len(UPSTREAM_HASHES))
+    elif CTX.apply:
+        lib.write_text(dst, text)
+        print("   wrote config/gsd/fork/LOCK.json: package %s, %d owned file(s)" % (version, len(UPSTREAM_HASHES)))
+    else:
+        print("   would write config/gsd/fork/LOCK.json: package %s, %d owned file(s)" % (version, len(UPSTREAM_HASHES)))
+
+
+def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None, tree=None):
     """Copy every staged file into place, patched. Never prunes: the runtime carries files the
     package does not ship (bin/shared), and deleting what we did not create is not this script's
     job.
@@ -476,31 +536,68 @@ def sync_tree(src_dir, dst_dir, patch_map, label, errors, only=None):
 
     A patch keyed to a file this walk never reaches (gone from the package, renamed, or excluded
     by `only`) applies to nothing, which is the unmatched-anchor case one level up: an error.
-    It was once dropped and the run exited 0."""
+    It was once dropped and the run exited 0.
+
+    `tree` names the subdirectory of config/gsd/fork/ whose files are forge's own copies: each lands in place of the
+    package's file, with no patch applied. The lock says which upstream text a copy was cut from; a package whose file
+    differs is an error (the copy is still written, so the runtime stays what forge meant), and so is an owned file the
+    lock does not know, until --relock. A patch on an owned file is ambiguous: an error, nothing written for it. An owned
+    file with no upstream counterpart and no lock entry is forge's own and written; one the lock knows that the package
+    no longer ships is an error."""
     added, updated, held, same, seen = [], [], [], 0, set()
+    owned = fork_owned(tree) if tree else {}
+    lock = fork_lock(errors) if owned else {}
+
+    def place(rel, want):
+        nonlocal same
+        dst = os.path.join(dst_dir, rel)
+        if lib.holds(dst, want):  # byte for byte: a CRLF copy of the LF text is not in sync
+            same += 1
+            return
+        bucket = updated if os.path.exists(dst) else added
+        if CTX.apply:
+            try:
+                lib.write_text(dst, want)
+            except OSError as e:  # FileExistsError too: a user's directory where a file goes, or a file where a directory goes
+                errors.append("%s %s: %s; the entry at that path is not ours, left as it is" % (label, rel, e.strerror or e))
+                return
+        bucket.append(rel)
+
     for base, _dirs, files in os.walk(src_dir):
         for fn in sorted(files):
             rel = os.path.relpath(os.path.join(base, fn), src_dir)
             if only and not only(rel):
                 continue
             seen.add(rel)
+            if rel in owned:
+                if rel in patch_map:
+                    errors.append("%s: forge owns this file and a patch is keyed to it too -- drop one of them" % rel)
+                    held.append(rel)
+                    continue
+                key = tree + "/" + rel
+                UPSTREAM_HASHES[key] = sha256(normalize(read(os.path.join(src_dir, rel))))
+                if not RELOCK and key not in lock:
+                    errors.append("%s: forge owns this file but the lock has no upstream hash for it -- run --relock after "
+                                  "reading what upstream has" % key)
+                elif not RELOCK and lock[key] != UPSTREAM_HASHES[key]:
+                    errors.append("%s: the package's file is not the text forge's copy was cut from (package %s) -- read "
+                                  "what upstream changed, merge what is worth keeping into forge's copy, then --relock"
+                                  % (key, fork_lock_version()))
+                place(rel, read(owned[rel]))
+                continue
             n_errors = len(errors)
             want = want_text(os.path.join(src_dir, rel), rel, patch_map.get(rel, []), errors)
             if len(errors) > n_errors:
                 held.append(rel)
                 continue
-            dst = os.path.join(dst_dir, rel)
-            if lib.holds(dst, want):  # byte for byte: a CRLF copy of the LF text is not in sync
-                same += 1
-                continue
-            bucket = updated if os.path.exists(dst) else added
-            if CTX.apply:
-                try:
-                    lib.write_text(dst, want)
-                except OSError as e:  # FileExistsError too: a user's directory where a file goes, or a file where a directory goes
-                    errors.append("%s %s: %s; the entry at that path is not ours, left as it is" % (label, rel, e.strerror or e))
-                    continue
-            bucket.append(rel)
+            place(rel, want)
+    for rel in sorted(set(owned) - seen):
+        if only and not only(rel):
+            continue
+        if tree + "/" + rel in lock:
+            errors.append("%s/%s: forge forked this file and the package no longer ships it -- decide whether forge's copy "
+                          "still has a place, then --relock" % (tree, rel))
+        place(rel, read(owned[rel]))
     for rel in sorted(set(patch_map) - seen):
         errors.append("%s: not in the staged package, so patch '%s' applies to nothing -- find "
                       "where upstream moved it and re-key the patch, or delete it"
@@ -754,12 +851,15 @@ def main():
     errors = []
     changes = sync_tree(os.path.join(STAGE, "agents"), AGENTS_DIR, AGENT_PATCHES,
                         "GSD agents (~/.claude/agents)", errors,
-                        only=lambda rel: rel.startswith("gsd-") and rel.endswith(".md"))
+                        only=lambda rel: rel.startswith("gsd-") and rel.endswith(".md"), tree="agents")
     changes += sync_tree(os.path.join(STAGE, "gsd-core"), GSD_DIR, ENGINE_PATCHES,
-                         "GSD engine (~/.claude/gsd-core)", errors)
+                         "GSD engine (~/.claude/gsd-core)", errors, tree="gsd-core")
     changes += sync_tree(os.path.join(STAGE, "scripts"), SCRIPTS_DIR, {}, "GSD scripts (~/.claude/scripts)", errors,
                          only=scripts_wanted)
     changes += sync_tree(os.path.join(STAGE, "hooks"), HOOKS_DIR, {}, "GSD hooks (~/.claude/hooks)", errors, only=hook_wanted)
+    if RELOCK:
+        print("== fork lock ==")
+        write_lock(pkg_v)
     changes += sync_defaults(errors)
     if DO_SKILLS:
         changes += sync_skills(errors)
