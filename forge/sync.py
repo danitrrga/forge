@@ -56,7 +56,9 @@ CFG = os.path.join(lib.ROOT, "config")
 # runs at the start of each project's session.
 FORGE_PROFILE = "forge"
 FORGE_DENY_KEEP = ("plugins", "design")
-FORGE_DENY_TOOLS = ("Edit", "Write")
+# `Edit` alone: an Edit rule covers every built-in file-writing tool, and Claude Code 2.1.308 prints a warning at each session start for a
+# `Write` rule ("never matches, use Edit"); with the Edit rules alone Write was denied too (tests/test_forge_write_deny.py).
+FORGE_DENY_TOOLS = ("Edit",)
 FORGE_DENY_WHY = "agents of a project do not write in forge"
 DATA_GIT = ".forge-data.git"  # the private data history over the same work tree (forge/publish.py)
 # Untracked, so git does not list them, yet always denied when the checkout has them: both histories, the secrets, the memory stores.
@@ -89,7 +91,7 @@ def _tracked_entries(root):
 
 
 def forge_deny(name, prof):
-    """(rules, error) for the profile `name`: `Edit` and `Write` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
+    """(rules, error) for the profile `name`: `Edit` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
     read at call time, never written in the engine) tracks in git, plus those of FORGE_DENY_ALWAYS it has (FORGE_DENY_MADE ones even before they exist), but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
     directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own profile (by name, or whose project is
     the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout whose
