@@ -12,6 +12,12 @@ Red before the script existed (python3 tests/test_ui_walk_workflow.py, first lin
   FAIL: green: status: got None, want 'done'
   FAIL: not armed: status: got None, want 'done'
 
+Red before `sizeQuota` (3.5 U3d; the quota stayed what `up` said for one tramo):
+  FAIL: green: the quota is sized to the tramos: capacity is asked after the tramos are known and before the control and any walker: ['executor:runner-up', 'ui-verifier:tramos', 'executor:runner-arm-control', ...]
+  FAIL: quota from the second ask: the walkers of the tramos run at once: [('ui-walker:T1-breaker', 7, 8), ('ui-walker:T1-critic', 9, 10), ...]
+  FAIL: capacity ask rc 1: the quota stays what `up` allowed (3) and it is logged: ['ui-walk: ui-walker:T2-critic waits in the queue (quota 3, ...
+  (the first two also in recheck: no capacity ask before the verifiers)
+
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
 once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
@@ -28,6 +34,8 @@ once; the first matching FAIL line of each, seen red):
   Firefox critic for all:    FAIL: green: five walkers: a breaker and a critic per tramo, one more critic for Firefox: got [..., 'ui-walker:T1-firefox', ...]
   walkers told of the control: FAIL: green: no walker is told about the control: [...]
   recheck overwrites fix.json: FAIL: recheck: nothing overwrites fix.json (no `findings`), and the browsers are closed: [..., 'executor:runner-findings', ...]
+  the walk keeps the quota `up` gave: FAIL: quota from the second ask: the walkers of the tramos run at once: [('ui-walker:T1-breaker', 7, 12), ...]
+  a capacity that gives no answer drops the quota: FAIL: capacity ask rc 1: the quota stays what `up` allowed (3) and it is logged: [...]
   a raw tramo id in a path:  FAIL: unsafe tramo id: no launch or command carries the raw id: ['ui-walker:../x y-breaker', ...]
 """
 import collections
@@ -82,6 +90,7 @@ def green():
     return {
         "executor:runner-up": R(UP),
         "ui-verifier:tramos": json.dumps(TRAMOS),
+        "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": 4}),
         "executor:runner-arm-control": R({"screen": APP + "/settings", "path": "/settings", "kind": "hierarchy"}),
         "ui-walker:T1-breaker": "0 blocker, 1 minor\n%s/findings-w1.md\nthe save bar clips" % RUN_DIR,
         "ui-walker:T1-critic": "0 blocker, 0 minor\n%s/findings-w2.md\nnone" % RUN_DIR,
@@ -146,6 +155,10 @@ def check_green(script, s):
     s.eq("green: meta phases are the stage name", [p.get("title") for p in (rec.get("meta") or {}).get("phases", [])], ["ui-walk"])
     ls = labels(rec)
     s.eq("green: the app comes up first, then the tramos", ls[:2], ["executor:runner-up", "ui-verifier:tramos"])
+    s.ok("green: the quota is sized to the tramos: capacity is asked after the tramos are known and before the control and any walker",
+         at(ls, "ui-verifier:tramos") < at(ls, "executor:runner-capacity") < at(ls, "executor:runner-arm-control"), repr(ls))
+    s.ok("green: capacity is asked for the run and the number of tramos (2)", "fwx walk capacity --run '%s' --tramos 2" % RUN_DIR in runner(rec, "capacity")[0]["prompt"],
+         runner(rec, "capacity")[0]["prompt"][-300:])
     s.ok("green: the control is armed before any walker", at(ls, "executor:runner-arm-control") < min([at(ls, l) for l in ls if l.startswith("ui-walker:")] or [BIG]),
          repr(ls))
     s.eq("green: the close is findings, screenshot, coverage, down, in that order, and last", ls[-4:],
@@ -268,10 +281,11 @@ def check_control(script, s):
 
 
 def check_quota(script, s):
-    def cap(n):
+    def cap(n, up_n=None):
+        """`up` allows `up_n` (it was asked for one tramo), the second ask for the real tramos allows `n`."""
         up = json.loads(json.dumps(UP))
-        up["capacity"]["allowed"] = n
-        return {"executor:runner-up": R(up)}
+        up["capacity"]["allowed"] = n if up_n is None else up_n
+        return {"executor:runner-up": R(up), "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": n})}
     rec, err = go(script, answers_over=cap(1))
     rec = finish(s, "quota 1", rec, err)
     w = walkers(rec)
@@ -283,7 +297,27 @@ def check_quota(script, s):
     rec = finish(s, "quota 5", rec, err)
     w = walkers(rec)
     s.ok("quota 5: the walkers of the two tramos run at once", any(overlap(a, b) for i, a in enumerate(w) for b in w[i + 1:]), repr([(x["label"], x["start"], x["end"]) for x in w]))
-    rec, err = go(script, answers_over={"executor:runner-up": R(dict(UP, capacity={"role": "ui-walker", "want": 2, "allowed": 0}))})
+    # `up` is run before the tramos are known, so its capacity is for one tramo (a quota of 2 at most): the quota is the second ask's.
+    # Red before the second ask (a quota that stayed at what `up` said, 1, with the second ask allowing 5):
+    #   FAIL: quota from the second ask: the walkers of the tramos run at once: [('ui-walker:T1-breaker', 7, 12), ('ui-walker:T1-critic', 8, 13), ...]
+    rec, err = go(script, answers_over=cap(5, up_n=1))
+    rec = finish(s, "quota from the second ask", rec, err)
+    w = walkers(rec)
+    s.ok("quota from the second ask: the walkers of the tramos run at once", any(overlap(a, b) for i, a in enumerate(w) for b in w[i + 1:]), repr([(x["label"], x["start"], x["end"]) for x in w]))
+    s.ok("quota from the second ask: more than the 2 `up` would have allowed run at once", max(sum(1 for b in w if overlap(a, b)) + 1 for a in w) > 2,
+         repr([(x["label"], x["start"], x["end"]) for x in w]))
+    # a second ask that does not answer leaves the quota `up` gave, said
+    for what, ans in (("rc 1", R("", 1)), ("no answer", None), ("not JSON", R("nope"))):
+        over = cap(1, up_n=3)
+        over["executor:runner-capacity"] = ans
+        rec, err = go(script, answers_over=over)
+        rec = finish(s, "capacity ask %s" % what, rec, err)
+        w = walkers(rec)
+        s.ok("capacity ask %s: the quota stays what `up` allowed (3) and it is logged" % what,
+             any("capacity" in l and "quota of 3" in l for l in rec["logs"]) and any(overlap(a, b) for i, a in enumerate(w) for b in w[i + 1:]) and len(w) == 5,
+             repr(rec["logs"][-4:]))
+    rec, err = go(script, answers_over={"executor:runner-up": R(dict(UP, capacity={"role": "ui-walker", "want": 2, "allowed": 0})),
+                                        "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": 0})})
     rec = finish(s, "quota 0", rec, err)
     s.eq("quota 0: a quota of 0 is read as 1, with a log line", (len(walkers(rec)), any("quota" in l for l in rec["logs"])), (5, True))
 
@@ -337,6 +371,8 @@ def check_recheck(script, s):
     s.ok("recheck: no breaker or critic launched (critic launched in recheck)", walkers(rec) == [], repr([l for l in ls if l.startswith("ui-walker")]))
     s.ok("recheck: no tramos agent, no control, no judge", not any(l in ls for l in ("ui-verifier:tramos", "executor:runner-arm-control", "ui-verifier:control")), repr(ls))
     s.ok("recheck: one verifier per tramo of the fix.json", "ui-verifier:T1" in ls and "ui-verifier:T2" in ls, repr(ls))
+    s.ok("recheck: capacity is asked for the 2 tramos of the fix.json, before their verifiers", "fwx walk capacity --run '%s' --tramos 2" % RUN_DIR in runner(rec, "capacity")[0]["prompt"]
+         and at(ls, "executor:runner-capacity") < at(ls, "ui-verifier:T1"), repr(ls))
     s.eq("recheck: the fix.json is read by a runner from the run's folder", "cat -- '%s/fix.json'" % RUN_DIR in runner(rec, "read-fix")[0]["prompt"], True)
     p = launched(rec, "ui-verifier:T1")[0]["prompt"]
     s.ok("recheck: the verifier is told it is a recheck and given its findings", "recheck" in p.lower() and "T1-1" in p and "T2-1" not in p, p[:500])
@@ -350,6 +386,16 @@ def check_recheck(script, s):
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
     s.eq("recheck: the up was run on the work branch's checkout", "fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
+    # `uniqueIds` appends `.x` to an id the run already used (T1-1 twice): the finding still belongs to its tramo (3.5 U3d). Against the
+    # grouping as first written (`id.replace(/-\d+$/, '')`; the `.x` was left in the tramo id, so the verifier was `ui-verifier:T1-1.x`):
+    #   FAIL: recheck suffixed ids: one verifier per tramo, the suffixed ids with their tramo: got ['ui-verifier:T1-1.x', 'ui-verifier:T2-2.x.x'], want ['ui-verifier:T1', 'ui-verifier:T2']
+    sfx = [dict(fixes[0], id="T1-1.x"), dict(fixes[1], id="T2-2.x.x")]
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R(json.dumps(sfx))})
+    rec = finish(s, "recheck suffixed ids", rec, err, allow_unanswered=True)
+    s.eq("recheck suffixed ids: one verifier per tramo, the suffixed ids with their tramo", sorted(set(l for l in labels(rec) if l.startswith("ui-verifier:"))),
+         ["ui-verifier:T1", "ui-verifier:T2"])
+    s.ok("recheck suffixed ids: each verifier is given its own finding", "T1-1.x" in launched(rec, "ui-verifier:T1")[0]["prompt"] and "T2-2.x.x" in launched(rec, "ui-verifier:T2")[0]["prompt"]
+         and "T2-2.x.x" not in launched(rec, "ui-verifier:T1")[0]["prompt"], repr([l["prompt"][-200:] for l in launched(rec, "ui-verifier:T")]))
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R("[]")})
     rec = finish(s, "recheck empty", rec, err)
     s.eq("recheck empty: a fix.json with nothing in it is failed, and the browsers closed", (result(rec).get("status"), "executor:runner-down" in labels(rec)), ("failed", True))
@@ -450,6 +496,11 @@ MUTANTS = [
     ("a judgement still there counted as other", "if (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE') rc.still += 1", "if (f.verdict === 'CONFIRMED') rc.still += 1",
      "FAIL: recheck: a judgement finding still there"),
     ("the walkers are not told the run", "`fwx walk ab --run ' + st.runDir + ' ' + job.session", "`fwx walk ab ' + job.session", "FAIL: green: every walker command names the run"),
+    ("the walk keeps the quota `up` gave", "const tramos = await getTramos()\n  await sizeQuota(tramos.length)\n", "const tramos = await getTramos()\n",
+     "FAIL: quota from the second ask: the walkers of the tramos run at once"),
+    ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
+    ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
+    ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("a tramo id used raw", "const safe = (id, i) =>", "const safe = (id, i) => id ||", "FAIL: unsafe tramo id"),
 ]
 
