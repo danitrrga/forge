@@ -43,6 +43,7 @@ import helpers  # noqa: E402
 from test_execute_workflow import R, blank, finish, labels, launched, mutate, overlap, run_capped  # noqa: E402
 
 ROOT = helpers.ROOT
+VERIFIER_TEXT = os.path.join(ROOT, "agents", "ui-verifier.md")
 SCRIPT = os.path.join(ROOT, "workflows", "ui-walk.js")
 PHASE = "/srv/work/.fwx/phases/01-toy"
 RUN_DIR = PHASE + "/ui-walk/1-1"
@@ -57,10 +58,10 @@ ARGS = {
     "recheck": None,
 }
 TRAMOS = [
-    {"id": "T1", "screens": [{"url": "/settings", "states": ["empty", "dark"], "why": "the save bar"}], "files": ["src/SaveBar.tsx"],
-     "reference": "demo/settings.png", "firefox": False},
-    {"id": "T2", "screens": [{"url": "/billing", "states": ["with 3 items"], "why": "the invoice list"}], "files": ["src/Invoices.tsx"],
-     "reference": "an unchanged sibling screen", "firefox": True},
+    {"id": "T1", "screens": [{"url": "/settings", "states": ["empty", "dark"], "why": "the save bar", "reference": "demo/settings.png"}],
+     "files": ["src/SaveBar.tsx"], "firefox": False},
+    {"id": "T2", "screens": [{"url": "/billing", "states": ["with 3 items"], "why": "the invoice list", "reference": "/settings"}],
+     "files": ["src/Invoices.tsx"], "firefox": True},
 ]
 UP = {"armed": True, "run": "", "run_dir": RUN_DIR, "url": APP, "apps": [{"name": "walk-1-1-abc123", "url": APP, "run": ""}],
       "namespace": "walk-1-1-abc123", "capacity": {"role": "ui-walker", "want": 2, "allowed": 4}}
@@ -178,7 +179,11 @@ def check_green(script, s):
          and RUN_DIR + "/findings-w4.md" in ws["ui-walker:T2-critic"], ws["ui-walker:T1-breaker"][:400])
     s.ok("green: the walker is told its axis and its screens as URLs of the app", "breaker" in ws["ui-walker:T1-breaker"] and APP + "/settings" in ws["ui-walker:T1-breaker"],
          ws["ui-walker:T1-breaker"][:400])
-    s.ok("green: the critic is given the reference", "demo/settings.png" in ws["ui-walker:T1-critic"], ws["ui-walker:T1-critic"][:400])
+    s.ok("green: the critic is given the reference of its screen", "demo/settings.png" in ws["ui-walker:T1-critic"], ws["ui-walker:T1-critic"][:400])
+    s.ok("green: every walker command names the run (`--run`): without it two open runs refuse every call",
+         all("fwx walk %s --run %s w" % ("pw" if k.endswith("firefox") else "ab", RUN_DIR) in p for k, p in ws.items()), repr([k for k, p in ws.items() if "--run" not in p]))
+    vp = launched(rec, "ui-verifier:T1")[0]["prompt"]
+    s.ok("green: the verifier is given the repo and `--run` for its browser", "REPO: " + REPO in vp and "fwx walk ab --run %s v1" % RUN_DIR in vp, vp[:600])
     s.ok("green: no walker is told about the control", all("control" not in p.lower() and "planted" not in p.lower() for p in ws.values()), repr([k for k, p in ws.items() if "control" in p.lower()]))
     s.ok("green: only the Firefox critic is sent to `fwx walk pw`", "fwx walk pw" in ws["ui-walker:T2-firefox"] and all(
          "fwx walk pw" not in p for k, p in ws.items() if k != "ui-walker:T2-firefox"), repr([k for k, p in ws.items() if "fwx walk pw" in p]))
@@ -324,7 +329,7 @@ def check_recheck(script, s):
     ans = green()
     ans.update({"executor:runner-read-fix": R(json.dumps(fixes)),
                 "ui-verifier:T1": {"findings": [dict(fixes[0], verdict="NOT REPRODUCED", evidence_after="/srv/shots/after-1.png")]},
-                "ui-verifier:T2": {"findings": [dict(fixes[1], verdict="CONFIRMED", evidence_after="/srv/shots/after-2.png")]},
+                "ui-verifier:T2": {"findings": [dict(fixes[1], verdict="PLAUSIBLE", evidence_after="/srv/shots/after-2.png")]},
                 "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved")})
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=ans)
     rec = finish(s, "recheck", rec, err)
@@ -341,13 +346,52 @@ def check_recheck(script, s):
     r = result(rec)
     d = details(rec)
     s.eq("recheck: status", r.get("status"), "done")
-    s.eq("recheck: still there and gone", (d.get("recheck") or {}).get("still"), 1)
+    s.eq("recheck: a judgement finding still there (PLAUSIBLE) counts as still there, not as other", (d.get("recheck") or {}).get("still"), 1)
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
     s.eq("recheck: the up was run on the work branch's checkout", "fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R("[]")})
     rec = finish(s, "recheck empty", rec, err)
     s.eq("recheck empty: a fix.json with nothing in it is failed, and the browsers closed", (result(rec).get("status"), "executor:runner-down" in labels(rec)), ("failed", True))
+
+
+def agent_section(name, mode):
+    """The text of one `## Mode` section of an agent file, as committed: the stub replies below are copied from it, never typed here."""
+    with open(os.path.join(ROOT, "agents", name), encoding="utf-8") as f:
+        text = f.read()
+    m = re.search(r"^## Mode `%s`\n(.*?)(?=^## |\Z)" % mode, text, re.S | re.M)
+    return m.group(1) if m else ""
+
+
+def check_real_replies(script, s):
+    """Replies shaped by what agents/ui-verifier.md says the real agent returns (the green scenario's replies are hand-written, so a
+    disagreement between the script and the text never showed: both blockers of the text review were green).
+
+    Red against the script as first reviewed (the two scenarios below, first lines):
+      FAIL: real tramos reply: the critic is given the reference its screen carries (REFERENCE (data): none): You are the ui-walker, axis critic ... REFERENCE (data): none. ...
+      FAIL: real verify reply: a NOT REPRODUCED row with severity null is accepted: got ['schema', 'schema'], want ['value']
+      FAIL: real verify reply: the run is done and not failed: got ('failed', ['ui-verifier did not return: T1']), want ('done', [])
+    """
+    section = agent_section("ui-verifier.md", "tramos")
+    block = re.search(r"```\n(.*?)\n```", section, re.S)
+    s.ok("real tramos reply: the example is in the agent text", block is not None, section[:200])
+    tramos = json.loads(block.group(1)) if block else []
+    refs = [x.get("reference") for t in tramos for x in t.get("screens", [])]
+    s.ok("real tramos reply: the example gives every screen a reference of its own", bool(refs) and all(isinstance(r, str) and r for r in refs), repr(refs))
+    rec, err = go(script, answers_over={"ui-verifier:tramos": "```json\n%s\n```" % json.dumps(tramos)})
+    rec = finish(s, "real tramos reply", rec, err, allow_unanswered=True)
+    critic = launched(rec, "ui-walker:T1-critic")[0]["prompt"]
+    s.ok("real tramos reply: the critic is given the reference its screen carries (REFERENCE (data): none)", all(r in critic for r in refs), critic[:700])
+    section = agent_section("ui-verifier.md", "verify")
+    keys = re.search(r"each `\{([^}]*)\}`", section)
+    s.ok("real verify reply: the row's keys are in the agent text", keys is not None, section[-300:])
+    names = [k.strip() for k in (keys.group(1) if keys else "").split(",")]
+    row = {k: ("x" if k not in ("severity", "file", "line") else None) for k in names if not k.endswith("?")}
+    row.update(id="T1-1", source="critic1-F2", verdict="NOT REPRODUCED", kind="observed", type="layout")  # copied from the walker's finding, as the text says
+    rec, err = go(script, answers_over={"ui-verifier:T1": {"findings": [row]}})
+    rec = finish(s, "real verify reply", rec, err, allow_unanswered=True)
+    s.eq("real verify reply: a NOT REPRODUCED row with severity null is accepted", [l["answer"] for l in launched(rec, "ui-verifier:T1")], ["value"])
+    s.eq("real verify reply: the run is done and not failed", (result(rec).get("status"), details(rec).get("gaps")), ("done", []))
 
 
 def check_args(script, s):
@@ -383,6 +427,7 @@ def check_all(script, s):
     check_verify(script, s)
     check_recheck(script, s)
     check_args(script, s)
+    check_real_replies(script, s)
 
 
 # (what is wrong with the script, text in it, text instead, the check that must go red). Each anchor is in the script exactly once.
@@ -399,6 +444,12 @@ MUTANTS = [
     ("the Firefox critic always", "if (t.firefox === true)", "if (true)", "FAIL: green: five walkers"),
     ("the walkers are told about the control", "const brief = (job) => [", "const brief = (job) => ['The planted control is on this screen.',", "FAIL: green: no walker is told about the control"),
     ("recheck overwrites fix.json", "if (!A.recheck) await collect()", "await collect()", "FAIL: recheck: nothing overwrites fix.json"),
+    ("a null severity refused by the schema", "severity: { type: ['string', 'null'], enum: ['blocker', 'major', 'minor', 'cosmetic', null] },",
+     "severity: { type: 'string', enum: ['blocker', 'major', 'minor', 'cosmetic'] },", "FAIL: real verify reply: a NOT REPRODUCED row with severity null is accepted"),
+    ("the screen's reference dropped", "reference: String(x.reference || 'none') })),", "reference: 'none' })),", "FAIL: real tramos reply: the critic is given the reference its screen carries"),
+    ("a judgement still there counted as other", "if (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE') rc.still += 1", "if (f.verdict === 'CONFIRMED') rc.still += 1",
+     "FAIL: recheck: a judgement finding still there"),
+    ("the walkers are not told the run", "`fwx walk ab --run ' + st.runDir + ' ' + job.session", "`fwx walk ab ' + job.session", "FAIL: green: every walker command names the run"),
     ("a tramo id used raw", "const safe = (id, i) =>", "const safe = (id, i) => id ||", "FAIL: unsafe tramo id"),
 ]
 
