@@ -25,6 +25,7 @@ python3 bin/fwx wave prepare --part-dir <dir> --plane session --branch <phase br
 python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; exit 0 green, 1 red, 2 cannot prove the commit
 python3 bin/fwx playbooks tree    # the workflow tree (an Excalidraw file): each node and its exits; --tree PATH, --scope NAME
 python3 bin/fwx walk up --dir <phase dir> --part N --round R    # UI walk: starts the seeded local app (`up`), drives browsers with guards (`ab`, `pw`), plants the control (`arm-control`), merges findings (`findings`), builds and reads the review (`review-page`, `review-answers`) and closes with a process count (`down`, `sweep`); NOT RUN, NOT ARMED without `app_run` or `agent_browser`
+python3 bin/fwx screenshot --run <run dir> [--screens JSON] [--out DIR]    # one 1440-wide capture per walked screen, through `walk ab` and its guards, no model; one line each, exit 1 naming the missing ones
 python3 bin/fwx playbooks check    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
 ```
 
