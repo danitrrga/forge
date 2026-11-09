@@ -155,6 +155,11 @@ def check_green(script, s):
     s.eq("green: meta phases are the stage name", [p.get("title") for p in (rec.get("meta") or {}).get("phases", [])], ["ui-walk"])
     ls = labels(rec)
     s.eq("green: the app comes up first, then the tramos", ls[:2], ["executor:runner-up", "ui-verifier:tramos"])
+    s.ok("green: the runner is told to keep stderr in a mktemp file it removes, never a fixed /tmp name (3.5 acceptance D9)",
+         all("mktemp" in l["prompt"] and "never a fixed name in /tmp" in l["prompt"] for l in runner(rec, "up")), runner(rec, "up")[0]["prompt"][-300:])
+    s.ok("green: the verifier is told a screenshot with no path lands in the run's captures folder and a /tmp path is refused (D8)",
+         all("no path saves into the run's captures folder" in l["prompt"] and "A path in /tmp is refused" in l["prompt"] for l in launched(rec, "ui-verifier:T1")),
+         (launched(rec, "ui-verifier:T1") or [{"prompt": ""}])[0]["prompt"][-400:])
     s.ok("green: the quota is sized to the tramos: capacity is asked after the tramos are known and before the control and any walker",
          at(ls, "ui-verifier:tramos") < at(ls, "executor:runner-capacity") < at(ls, "executor:runner-arm-control"), repr(ls))
     s.ok("green: capacity is asked for the run and the number of tramos (2)", "fwx walk capacity --run '%s' --tramos 2" % RUN_DIR in runner(rec, "capacity")[0]["prompt"],
@@ -501,6 +506,8 @@ MUTANTS = [
     ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
     ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
+    ("the runner may name its stderr file", "never a fixed name in /tmp. ", "", "FAIL: green: the runner is told to keep stderr in a mktemp file"),
+    ("the verifier is not told where captures go", "A path in /tmp is refused.", "", "FAIL: green: the verifier is told a screenshot with no path lands"),
     ("a tramo id used raw", "const safe = (id, i) =>", "const safe = (id, i) => id ||", "FAIL: unsafe tramo id"),
 ]
 

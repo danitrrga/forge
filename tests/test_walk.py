@@ -681,6 +681,68 @@ def case_pw(R, S):
         sc.stop()
 
 
+def case_hygiene(R, S):
+    """3.5 acceptance, second pass, D8 and D9: what a walk leaves behind, and where its captures go. A toy HOME (Scene.home) holds
+    agent-browser's namespaces folder, so nothing reads the real one.
+    Red before the change (python3 tests/test_walk.py, the code of f8a3082):
+      FAIL: hygiene pw: the config's outputDir is the run's captures folder: got None, want '.../fwx/walks/<ns>/shots'
+      FAIL: hygiene pw: a later call runs in the captures folder, not in the project: got '<repo>', want '<shots>'
+      FAIL: hygiene capture path: ab screenshot /tmp/v1b.png: exit: got 0, want 2   (and the same for pw --filename and --filename=)
+      FAIL: hygiene down: the target files of the namespace are gone: got ['a.target', 'b.target'], want []"""
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "hygiene")
+        if not o:
+            return
+        rd = o["run_dir"]
+        run = jfile(os.path.join(rd, "run.json"))
+        ns, shots = run["namespace"], run["shots"]
+        # D9: Playwright's CLI keeps its files in the captures folder (outputDir), and runs there
+        sc.clear()
+        S.eq("hygiene pw: open exit", sc.walk(R, "pw", "--run", rd, "w1", "open", sc.url).returncode, 0)
+        argv = sc.calls("npx")[-1]["argv"]
+        S.eq("hygiene pw: the config's outputDir is the run's captures folder", (jfile(argv[-1]) or {}).get("outputDir"), shots)
+        sc.clear()
+        sc.walk(R, "pw", "--run", rd, "w1", "snapshot")
+        S.eq("hygiene pw: a later call runs in the captures folder, not in the project", os.path.realpath(sc.calls("npx")[-1]["cwd"]), os.path.realpath(shots))
+        # D8: no capture goes to a temp folder
+        for label, tool, args in (("ab screenshot /tmp/v1b.png", "ab", ["screenshot", "/tmp/v1b.png"]),
+                                  ("ab screenshot @e1 /tmp/v1b.png", "ab", ["screenshot", "@e1", "/tmp/v1b.png"]),
+                                  ("ab screenshot /dev/shm/v.png", "ab", ["screenshot", "/dev/shm/v.png"]),
+                                  ("pw screenshot --filename /tmp/v1b.png", "pw", ["screenshot", "--filename", "/tmp/v1b.png"]),
+                                  ("pw screenshot --filename=/tmp/v1b.png", "pw", ["screenshot", "--filename=/tmp/v1b.png"])):
+            sc.clear()
+            r = sc.walk(R, tool, "--run", rd, "w1", *args)
+            S.ok("hygiene capture path: %s: exit 2, nothing run, says where the capture goes" % label,
+                 r.returncode == 2 and sc.calls() == [] and "temp folder" in r.stderr and shots in r.stderr, "rc %d %s calls %s" % (r.returncode, r.stderr, sc.calls()))
+        for label, tool, args in (("ab screenshot (no path)", "ab", ["screenshot"]),
+                                  ("ab screenshot @e1 in the captures folder", "ab", ["screenshot", "@e1", os.path.join(shots, "a.png")]),
+                                  ("ab screenshot in the walker's scratch folder", "ab", ["screenshot", os.path.join(rd, "w1-scratch", "a.png")]),
+                                  ("ab screenshot a path outside any temp folder", "ab", ["screenshot", os.path.join(sc.repo, "docs", "a.png")]),
+                                  ("ab fill with a /tmp word (typed text, not a path)", "ab", ["fill", "@e1", "/tmp/v1b.png"]),
+                                  ("pw screenshot (no filename)", "pw", ["screenshot"]),
+                                  ("pw screenshot --filename in the captures folder", "pw", ["screenshot", "--filename", os.path.join(shots, "a.png")]),
+                                  ("pw screenshot --filename relative", "pw", ["screenshot", "--filename", "a.png"])):
+            sc.clear()
+            r = sc.walk(R, tool, "--run", rd, "w1", *args)
+            S.ok("hygiene capture path: %s: runs" % label, r.returncode == 0 and len(sc.calls()) >= 1, "rc %d %s" % (r.returncode, r.stderr))
+        # D9: down removes the *.target files of this namespace only
+        base = os.path.join(sc.home, ".agent-browser", "namespaces")
+        mine, other = os.path.join(base, ns, "run"), os.path.join(base, "another-walk", "run")
+        for d, names in ((mine, ("a.target", "b.target")), (other, ("c.target",))):
+            os.makedirs(d)
+            for n in names:
+                open(os.path.join(d, n), "w").close()
+        r = sc.walk(R, "down", "--run", rd)
+        S.eq("hygiene down: exit", r.returncode, 0)
+        S.eq("hygiene down: the target files of the namespace are gone", sorted(os.listdir(mine)) if os.path.isdir(mine) else [], [])
+        S.eq("hygiene down: another walk's target file stays", os.listdir(other), ["c.target"])
+        steps = (jfile(os.path.join(rd, "down.json")) or {}).get("steps", [])
+        S.eq("hygiene down: down.json says how many it removed", [x.get("removed") for x in steps if "target" in x.get("step", "")], [2])
+    finally:
+        sc.stop()
+
+
 def case_arm_control(R, S):
     sc = Scene()
     try:
@@ -1175,7 +1237,7 @@ def case_usage(R, S):
     S.ok("`fwx help` lists walk", "walk" in h.stdout, h.stdout)
 
 
-CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_arm_control, case_down_count,
+CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage]
 
@@ -1265,6 +1327,19 @@ MUTANTS = [
      "capacity resize: run.json carries the new answer"),
     ("capacity resize: container quota past the apps", case_capacity_resize, 'cap["allowed"] = min(cap["allowed"], len(run["apps"]))', "pass",
      "capacity resize: container: the quota never passes the apps"),
+    ("8 temp capture path allowed", case_hygiene, 'return temp_path_problem(args, run, pw, run["shots"] if pw else run["repo"])', "return None",
+     "hygiene capture path: ab screenshot /tmp/v1b.png: exit 2"),
+    ("8 run folder not exempt", case_hygiene, 'if not (inside(full, run["run_dir"]) or inside(full, run["shots"])) and any(', "if any(",
+     "hygiene capture path: ab screenshot @e1 in the captures folder: runs"),
+    ("8 every path is a temp path", case_hygiene, 'and any(inside(full, d) for d in temps):', "and True:",
+     "hygiene capture path: ab screenshot a path outside any temp folder: runs"),
+    ("8 fill words read as paths", case_hygiene, 'elif words[:1] == ["screenshot"]:', "elif words[:1]:",
+     "hygiene capture path: ab fill with a /tmp word"),
+    ("9 pw outputDir missing", case_hygiene, '"outputDir": run["shots"],', '"x": 0,', "hygiene pw: the config's outputDir"),
+    ("9 pw runs in the project", case_hygiene, 'run["repo"] if prefix else run["shots"])', 'run["repo"])', "hygiene pw: a later call runs in the captures folder"),
+    ("9 target files kept", case_hygiene, '"removed": drop_targets(ns)', '"removed": 0', "hygiene down: the target files of the namespace are gone"),
+    ("9 every namespace's targets", case_hygiene, 'os.path.join(socket_dir(), "namespaces", ns, "run")', 'os.path.join(socket_dir(), "namespaces", "*", "run")',
+     "hygiene down: another walk's target file stays"),
     ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),
 ]
 

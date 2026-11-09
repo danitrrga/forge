@@ -123,6 +123,7 @@ OWN_FLAGS = ("--namespace", "--session", "--idle-timeout", "--screenshot-dir", "
 # upgrade "Upgrade to the latest version", doctor "Diagnose install; auto-clean stale files", profiles "List available Chrome profiles".
 # Only the command word (the first one that is not a flag) is looked at, so `fill @e1 inspect` still types a word.
 REFUSED_COMMANDS = ("inspect", "stream", "dashboard", "mcp", "plugin", "install", "upgrade", "doctor", "profiles")
+TEMP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")  # RAM or scratch, outside the run; where the verifier's rechecks once landed (3.5 acceptance, D8)
 URL_WORDS = ("open", "goto", "navigate", "pushstate", "read")  # `read <url>` fetches from the CLI process, outside --allowed-domains
 SET_VIEWPORT = ["set", "viewport", "%d" % VIEWPORT[0], "%d" % VIEWPORT[1], "%g" % SCALE]  # `set viewport <w> <h> [scale]` (agent-browser set --help)
 SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
@@ -588,6 +589,28 @@ def refusal(args, run, pw=False):
         h = host_of(u)
         if h not in run["hosts"]:
             return "%s: host %r is not the app's (%s)" % (u, h, ", ".join(run["hosts"]))
+    return temp_path_problem(args, run, pw, run["shots"] if pw else run["repo"])
+
+
+def temp_path_problem(args, run, pw, cwd):
+    """Why a capture path is refused, or None: `screenshot [<selector>] [<path>]` (ab) and `--filename <path>` (pw) may not name a file in a
+    temp folder unless it is inside the run's folder or its captures folder. With no path the capture lands in `run["shots"]`."""
+    words = positional(args)
+    paths = []
+    if pw:
+        for i, a in enumerate(args):
+            if a == "--filename" and i + 1 < len(args):
+                paths.append(args[i + 1])
+            elif a.startswith("--filename="):
+                paths.append(a.split("=", 1)[1])
+    elif words[:1] == ["screenshot"]:
+        paths = [w for w in words[1:] if w.lower().endswith(IMAGES) or w.startswith(("/", "./", "../", "~"))]
+    temps = {os.path.realpath(d) for d in TEMP_DIRS + (os.environ.get("TMPDIR") or "/tmp",)}
+    for p in paths:
+        full = os.path.realpath(os.path.join(cwd, os.path.expanduser(p)))
+        if not (inside(full, run["run_dir"]) or inside(full, run["shots"])) and any(inside(full, d) for d in temps):
+            return ("%s is in a temp folder: leave the path out and the capture is saved in %s (its path is printed), or name a file inside %s"
+                    % (p, run["shots"], run["run_dir"]))
     return None
 
 
@@ -720,7 +743,8 @@ def pw_browsers():
 
 def pw_config(run):
     path = os.path.join(run["run_dir"], "pw.config.json")
-    write_json(path, {"browser": {"browserName": "firefox", "launchOptions": {"headless": True},
+    write_json(path, {"outputDir": run["shots"],  # without it Playwright's CLI writes `.playwright-cli/` in the working folder (the project)
+                      "browser": {"browserName": "firefox", "launchOptions": {"headless": True},
                                   "contextOptions": {"viewport": {"width": VIEWPORT[0], "height": VIEWPORT[1]}, "deviceScaleFactor": SCALE}}})
     return path
 
@@ -743,7 +767,10 @@ def cmd_pw(argv):
         args = args + ["--browser", "firefox", "--config", pw_config(run)]
         touch(marker(run, "pw", session))
     prefix = shlex.split(app["run"]) if launch else []
-    return execute(prefix + pw_argv(run, session, args), clean_env(), run["repo"])
+    os.makedirs(run["shots"], exist_ok=True)
+    # The rig prefix keeps the repo as its folder (a prefix may be relative to it); the other calls run in the captures folder, so a
+    # relative `--filename` lands there and nothing reaches the project (D9).
+    return execute(prefix + pw_argv(run, session, args), clean_env(), run["repo"] if prefix else run["shots"])
 
 
 # ---------------------------------------------------------------------------------------------------------- arm-control
@@ -1025,6 +1052,25 @@ def close_containers(names):
     return {"looked": len(have), "removed": removed, "left": None if after is None else [n for n in names if n in after]}
 
 
+def drop_targets(ns):
+    """Remove the `*.target` files agent-browser leaves in `<socket dir>/namespaces/<ns>/run/` after a close (3.5 acceptance, D9), and the
+    folders that this empties; only this namespace's, so another walk's files are never read. How many files went."""
+    folder = os.path.join(socket_dir(), "namespaces", ns, "run")
+    gone = 0
+    for p in glob.glob(os.path.join(folder, "*.target")):
+        try:
+            os.remove(p)
+            gone += 1
+        except OSError:
+            pass
+    for d in (folder, os.path.dirname(folder)):
+        try:
+            os.rmdir(d)
+        except OSError:
+            break
+    return gone
+
+
 def do_down(run):
     rd, ns = run["run_dir"], run["namespace"]
     steps, repo = [], run["repo"]
@@ -1043,6 +1089,7 @@ def do_down(run):
             steps.append({"step": "pw close %s" % session, "rc": rc})
         except FileNotFoundError:
             steps.append({"step": "pw close %s" % session, "rc": None, "note": "npx is not on the PATH"})
+    steps.append({"step": "remove agent-browser *.target files", "rc": 0, "removed": drop_targets(ns)})
     ok = True
     for a in run["apps"]:
         cmd = a["down"]
