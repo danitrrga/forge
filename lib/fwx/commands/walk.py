@@ -44,7 +44,11 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       It also removes the `*.target` files agent-browser leaves in `<socket dir>/namespaces/<namespace>/run/` (that namespace's only).
   selftest [--dir D] [--repo P] [--image-id ID] [--json]
       Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
-      `agent-browser` opens the URL with the demo session and the snapshot has an element, a capture comes out (a PNG, not the
+      `agent-browser` opens the URL with the demo session and the snapshot has an element (`open` returns before a cold dev server has
+      drawn the app, so the snapshot is asked again every 0.5 s until it has one, for at most `app_run.ready_timeout_s` seconds, default 30;
+      the optional `app_run.ready` is a text only the logged-in app shows in its snapshot, e.g. a nav label: a snapshot with elements but
+      without it, such as the login screen's skeleton, fails; both keys are read from the project's configuration, not from --app, and
+      not in the factory), a capture comes out (a PNG, not the
       `about:blank` one at that size), `down` leaves 0 processes. Each check says how many things it looked at; looking at 0 is a
       failure, and a check whose predecessor failed is "not reached". The run folder is `<D>/ui-walk/1-1/` (D defaults to
       `<git-common-dir>/fwx/selftest`); `selftest.json` there is `{image_id?, passed, checks: [{name, looked_at, ok, detail}]}`.
@@ -1186,6 +1190,8 @@ def cmd_sweep(argv):
 
 # ------------------------------------------------------------------------------------------------------------------ selftest
 CHECKS = ("up", "app answers", "snapshot", "capture", "down")
+SETTLE_S = 30  # how long the snapshot check waits for the app to draw (`app_run.ready_timeout_s`)
+SETTLE_POLL_S = 0.5
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 PROBE = """import sys, urllib.error, urllib.request
 LOCAL = ("localhost", "127.0.0.1", "::1")
@@ -1251,6 +1257,34 @@ def browser_call(run, args):
     return r.returncode, r.stdout, r.stderr
 
 
+def count_elements(snapshot):
+    """How many rows of an agent-browser snapshot carry an element ref."""
+    return sum(1 for line in snapshot.splitlines() if re.search(r"\bref=e\d+\b|@e\d+", line))
+
+
+def ready_config(run):
+    """(ready text or None, seconds to wait, None) from `app_run.ready` and `app_run.ready_timeout_s` of the project's configuration, or
+    (None, 0, why) when a key has the wrong type. The factory's app is the image's: no key there."""
+    app = {} if run["factory"] else (config.load(run["repo"])["project"].get("app_run") or {})
+    ready, limit = app.get("ready"), app.get("ready_timeout_s", SETTLE_S)
+    if ready is not None and (not isinstance(ready, str) or not ready.strip()):
+        return None, 0, "app_run.ready is %r, not null or the text the logged-in app shows" % (ready,)
+    if isinstance(limit, bool) or not isinstance(limit, (int, float)) or limit <= 0:
+        return None, 0, "app_run.ready_timeout_s is %r, not a number of seconds above 0" % (limit,)
+    return ready, limit, None
+
+
+def settle(run, ready, limit):
+    """(rc, stdout, stderr) of the last `snapshot` once the page has settled: `open` returns before a cold dev server has drawn the app, so the
+    snapshot is asked again every SETTLE_POLL_S until it has an element and, with `ready`, that text; or `limit` seconds have passed."""
+    end = time.monotonic() + limit
+    while True:  # settle
+        rc, out, err = browser_call(run, ["snapshot"])
+        if rc or (count_elements(out) > 0 and (not ready or ready in out)) or time.monotonic() >= end:
+            return rc, out, err
+        time.sleep(SETTLE_POLL_S)
+
+
 def browser_checks(run, rec):
     """The snapshot and capture checks. The blank reference is the first screenshot of the fresh browser (about:blank, which `ab`
     would refuse to open): same session, same size as the page's. A missing agent-browser (rc 77) stops the selftest, NOT RUN."""
@@ -1259,10 +1293,15 @@ def browser_checks(run, rec):
         rec("snapshot", 0, "no demo session: %s holds no cookie (the app's up must leave one there)" % state, False)
         rec("capture", 0, "not reached: no demo session", False)
         return
+    ready, limit, bad = ready_config(run)
+    if bad:
+        rec("snapshot", 0, bad, False)
+        rec("capture", 0, "not reached: " + bad, False)
+        return
     blank, page = os.path.join(rd, "selftest-blank.png"), os.path.join(rd, "selftest-page.png")
     got, why = {}, None
     for name, args in (("blank", ["screenshot", blank]), ("open", ["open", url]), ("snapshot", ["snapshot"]), ("page", ["screenshot", page])):
-        rc, out, err = browser_call(run, args)
+        rc, out, err = settle(run, ready, limit) if name == "snapshot" else browser_call(run, args)
         if rc == 77:
             raise Stop(err.strip() or "NOT RUN, NOT ARMED: agent-browser missing", 2)
         if rc:
@@ -1273,8 +1312,13 @@ def browser_checks(run, rec):
         rec("snapshot", 0, why, False)
         rec("capture", 0, "not reached: " + why, False)
         return
-    n = sum(1 for line in got["snapshot"].splitlines() if re.search(r"\bref=e\d+\b|@e\d+", line))
-    rec("snapshot", n, "%d element(s) in the snapshot of %s" % (n, url) if n else "empty snapshot: %s opened with the demo session shows no element" % url, n > 0)
+    n = count_elements(got["snapshot"])
+    if n and ready and ready not in got["snapshot"]:
+        rec("snapshot", n, "ready marker %r is not in the snapshot of %s after %g s: %d element(s), but not the logged-in app (the login screen, "
+            "or the app has not drawn)" % (ready, url, limit, n), False)
+    else:
+        rec("snapshot", n, "%d element(s) in the snapshot of %s" % (n, url) if n else
+            "empty snapshot: %s opened with the demo session shows no element after %g s" % (url, limit), n > 0)
     if "page" not in got:
         rec("capture", 0, why, False)
         return
