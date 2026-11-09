@@ -66,6 +66,12 @@ if cmd == "open":
 elif cmd == "close":
     if os.path.exists(state):
         os.remove(state)
+elif cmd == "snapshot" and int(os.environ.get("FAKE_AB_EMPTY_FIRST", "0")) > (int(open(state + ".n").read()) if os.path.exists(state + ".n") else 0):
+    # a cold dev server: the first N snapshots of the run see a blank page, or FAKE_AB_FIRST_FILE (the login skeleton the app shows first)
+    if os.environ.get("FAKE_AB_FIRST_FILE"):
+        sys.stdout.write(open(os.environ["FAKE_AB_FIRST_FILE"]).read())
+    seen = int(open(state + ".n").read()) if os.path.exists(state + ".n") else 0
+    open(state + ".n", "w").write(str(seen + 1))
 elif cmd == "snapshot" and os.environ.get("FAKE_AB_SNAPSHOT"):
     sys.stdout.write(open(os.environ["FAKE_AB_SNAPSHOT"]).read())
 elif cmd == "snapshot":
@@ -122,19 +128,21 @@ if os.environ.get("FAKE_LEAK"):
 class Scene(W.Scene):
     """test_walk's Scene with the toy app serving a steerable status, and the smarter agent-browser."""
 
-    def __init__(self, exe=None, config=None, **kw):
+    def __init__(self, exe=None, config=None, app_run=None, **kw):
         W.Scene.__init__(self, **kw)
         helpers.write(self.repo, "up.py", UP)
         helpers.write(self.repo, "srv.py", SRV)
         W.script(os.path.join(self.bin, "agent-browser"), FAKE_AB % {"py": PY})
         self.leak = os.path.join(self.state, "leak.pids")
         self.env.update({"FAKE_AB_STATE": os.path.join(self.state, "opened"), "FAKE_SLEEP": SLEEP})
-        if exe is not None or config:
+        if exe is not None or config or app_run:
             path = os.path.join(self.repo, ".claude", "fwx.json")
             cfg = json.load(open(path))
             cfg["walk"] = dict(config or {})
             if exe is not None:
                 cfg["walk"]["browser_executable"] = exe
+            if app_run:
+                cfg["project"]["app_run"].update(app_run)
             helpers.write(self.repo, ".claude/fwx.json", json.dumps(cfg))
 
     def selftest(self, R, *extra, env=None, use_dir=True):
@@ -220,7 +228,7 @@ def case_red_app(R, S):
 
 
 def case_red_snapshot(R, S):
-    sc = Scene()
+    sc = Scene(app_run={"ready_timeout_s": 1})  # the wait for the page is bounded by it: a page that never shows an element fails after 1 s
     try:
         r, o = sc.selftest(R, "--json", env={"FAKE_AB_ELEMENTS": "0"})
         cs = red_case(S, "empty snapshot", r, o, sc, "snapshot", "empty snapshot")
@@ -368,6 +376,74 @@ def case_clean_browser(R, S):
 FIXTURES = os.path.join(ROOT, "tests", "fixtures", "walk")
 
 
+LOGIN_SKELETON = """- heading "Welcome back" [level=1, ref=e1]
+- textbox "Email" [ref=e2]
+- textbox "Password" [ref=e3]
+- button "Sign in" [ref=e4]
+"""
+APP_SNAPSHOT = LOGIN_SKELETON.replace("Welcome back", "Dashboard") + '- link "Pipeline" [ref=e5]\n'
+
+
+def case_cold_start(R, S):
+    """3.5 U3f (acceptance D7): `open` returns before a cold dev server has drawn the app, and the first snapshot is blank. The selftest waits
+    (it polls the snapshot until it has an element, bounded by app_run.ready_timeout_s, default 30 s) before judging.
+
+    Red before the wait existed (python3 tests/test_walk_selftest.py, FAKE_AB_EMPTY_FIRST=2):
+      FAIL: cold start, blank twice: exit: got 1, want 0
+      (stderr: FAIL snapshot: empty snapshot: http://127.0.0.1:... opened with the demo session shows no element)
+    """
+    sc = Scene()
+    try:
+        r, o = sc.selftest(R, "--json", env={"FAKE_AB_EMPTY_FIRST": "2"})
+        S.eq("cold start, blank twice: exit", r.returncode, 0)
+        S.eq("cold start, blank twice: the check counts the elements of the snapshot that had some", by_name(o).get("snapshot", {}).get("looked_at"), 3)
+        snaps = [c["argv"] for c in sc.calls("agent-browser") if "snapshot" in c["argv"]]
+        S.eq("cold start, blank twice: it asked three times", len(snaps), 3)
+    finally:
+        sc.stop()
+
+
+def case_login_skeleton(R, S):
+    """3.5 U3f (acceptance D7): the snapshot of the login screen has elements too, so "has an element" cannot tell it from the app. With
+    `app_run.ready` set (a text that only the logged-in app shows in its snapshot) the check fails on the skeleton, naming the marker, and
+    passes on the app; unset, today's behaviour (any element) stays.
+
+    Red before `ready` existed (the skeleton passed): FAIL: login skeleton, ready set: exit: got 0, want 1
+    """
+    snap = os.path.join(helpers.mkdtemp("fwx-walk-snap-"), "snap.txt")
+    for label, text, ready, want in (("login skeleton, ready set", LOGIN_SKELETON, "Dashboard", 1), ("app, ready set", APP_SNAPSHOT, "Dashboard", 0),
+                                     ("login skeleton, ready unset", LOGIN_SKELETON, None, 0)):
+        open(snap, "w").write(text)
+        sc = Scene(app_run={"ready": ready, "ready_timeout_s": 1} if ready else {"ready_timeout_s": 1})
+        try:
+            r, o = sc.selftest(R, "--json", env={"FAKE_AB_SNAPSHOT": snap})
+            S.eq("%s: exit" % label, r.returncode, want)
+            if want:
+                red_case(S, label, r, o, sc, "snapshot", "ready marker 'Dashboard' is not in the snapshot")
+                S.ok("%s: it says how long it waited and how many elements it saw" % label,
+                     "1 s" in by_name(o)["snapshot"]["detail"] and "4 element(s)" in by_name(o)["snapshot"]["detail"], str(by_name(o)["snapshot"]))
+        finally:
+            sc.stop()
+    # the login skeleton first, the app a moment later: the wait for the marker, not only for an element, turns it into a pass
+    first = os.path.join(os.path.dirname(snap), "first.txt")
+    open(first, "w").write(LOGIN_SKELETON)
+    open(snap, "w").write(APP_SNAPSHOT)
+    sc = Scene(app_run={"ready": "Dashboard", "ready_timeout_s": 10})
+    try:
+        r, o = sc.selftest(R, "--json", env={"FAKE_AB_SNAPSHOT": snap, "FAKE_AB_FIRST_FILE": first, "FAKE_AB_EMPTY_FIRST": "2"})
+        S.eq("skeleton then app, ready set: exit", r.returncode, 0)
+        S.eq("skeleton then app, ready set: it asked three times", len([c for c in sc.calls("agent-browser") if "snapshot" in c["argv"]]), 3)
+        S.eq("skeleton then app, ready set: the check counts the app's 5 elements", by_name(o).get("snapshot", {}).get("looked_at"), 5)
+    finally:
+        sc.stop()
+    sc = Scene(app_run={"ready": 5})
+    try:
+        r, o = sc.selftest(R, "--json")
+        S.ok("ready of the wrong type: the snapshot check says app_run.ready is not text", r.returncode == 1 and "app_run.ready" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
+    finally:
+        sc.stop()
+
+
 def case_real_snapshot(R, S):
     """The selftest counts the elements of what `agent-browser` really prints (3.5 U3d). The two fixtures are real output of agent-browser 0.41.1
     (headless Chromium, `open` then `snapshot` and `snapshot -i`) on a static page of a heading, a link, a text field, a button and a select
@@ -388,7 +464,7 @@ def case_real_snapshot(R, S):
             sc.stop()
 
 
-CASES = [case_green, case_red_app, case_red_snapshot, case_real_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser]
+CASES = [case_green, case_red_app, case_red_snapshot, case_cold_start, case_login_skeleton, case_real_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser]
 
 WALK = "lib/fwx/commands/walk.py"
 CONFIG = "lib/fwx/config.py"
@@ -397,7 +473,11 @@ MUTANTS = [
     ("app answers: any status", case_red_app, WALK, 'if got != "200":', "if False:", "app not answering: exit: got 0, want 1"),
     ("app answers: probe outside the prefix", case_prefix, WALK, 'argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, url]',
      'argv = [sys.executable, "-c", PROBE, url]', "prefix: the probe of the url ran through the rig prefix"),
-    ("snapshot: empty counted as one", case_red_snapshot, WALK, "n = sum(1 for line in got", "n = 1 + sum(1 for line in got", "empty snapshot: exit: got 0, want 1"),
+    ("snapshot: empty counted as one", case_red_snapshot, WALK, "return sum(1 for line", "return 1 + sum(1 for line", "empty snapshot: exit: got 0, want 1"),
+    ("snapshot: no wait for the page", case_cold_start, WALK, "while True:  # settle", "while False:  # settle", "cold start, blank twice: exit"),
+    ("snapshot: ready marker unchecked", case_login_skeleton, WALK, 'if n and ready and ready not in got["snapshot"]:', "if False:", "login skeleton, ready set: exit"),
+    ("snapshot: wait for the marker dropped", case_login_skeleton, WALK, "(not ready or ready in out)", "(not ready or True)", "skeleton then app, ready set: exit"),
+    ("snapshot: ready type unchecked", case_login_skeleton, WALK, "not isinstance(ready, str)", "False", "ready of the wrong type"),
     ("snapshot: only a bare [ref=eN] counts", case_real_snapshot, WALK, 're.search(r"\\bref=e\\d+\\b|@e\\d+", line)', 're.search(r"\\[ref=e\\d+\\]|@e\\d+", line)',
      "the selftest counts the 7 elements"),
     ("capture: blank not compared", case_red_blank, WALK, "elif b[2] == p[2]:", "elif False:", "screenshot blank: exit: got 0, want 1"),
