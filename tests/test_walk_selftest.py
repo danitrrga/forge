@@ -186,9 +186,9 @@ def case_green(R, S):
             os.path.join(sc.repo, "down-ran")))
         S.ok("selftest green: nothing answers at the url after it", not W._answers(sc.port))
         calls = [c["argv"] for c in sc.calls("agent-browser")]
-        words = [next((a for a in c if a in ("screenshot", "open", "snapshot", "close", "cookies")), "?") for c in calls]
+        words = [next((a for a in c if a in ("screenshot", "open", "snapshot", "close", "cookies", "viewport")), "?") for c in calls]
         S.eq("selftest green: the blank reference is taken before the page is opened", words,
-             ["cookies", "screenshot", "open", "snapshot", "screenshot", "close"])
+             ["cookies", "viewport", "screenshot", "open", "snapshot", "screenshot", "close"])
         S.ok("selftest green: the demo session was set (a cookie call)", any(c[-6:-3] == ["cookies", "set", "sess"] for c in calls), str(calls))
         # without --json: lines, and no image id when none is given; the default folder is under the git common dir
         r, _ = sc.selftest(R, use_dir=False)
