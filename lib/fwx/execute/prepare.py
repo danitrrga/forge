@@ -34,7 +34,7 @@ no path for a report: an agent writes in the folder `fwx wave scratch` makes in 
 is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
 so a refusal and a red base leave nothing behind. With `--fix` the one brief is the fixer's (`fix.brief`) and the tasks of the
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
-shape of plan C.5 (execute/brief.py `finding_problems`), `--revert` a list of finding ids; anything else is refused.
+shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's fix.json (`normalize`), `--revert` a list of finding ids; anything else is refused.
 
 Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base and execute.brief.
 """
@@ -169,7 +169,7 @@ def _findings(path, flag):
     problems = brief.finding_problems(data)
     if problems:
         raise WaveError("%s %s: %s" % (flag, path, "; ".join(problems)))
-    return data
+    return brief.normalize(data)
 
 
 def _revert_ids(ids):

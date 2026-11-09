@@ -296,6 +296,52 @@ def case_fix(R, S):
     S.eq("fix: --control-findings alone keeps the plan's briefs", all(isinstance(t["brief"], str) for t in tasks_of(ok).values()), True)
 
 
+# The shape `fwx walk findings` writes into fix.json (3.5 acceptance, second pass, D5): the verifier's row, with `line: null`.
+WALK = {"id": "T1-7", "source": "w1-F2", "verdict": "CONFIRMED", "severity": "medium", "file": "src/a.py", "line": None,
+        "claim": "ArrowRight steps the month and drops keyboard focus.", "evidence": "Tab x3, ArrowRight: activeElement BODY. screenshot-1.png",
+        "screen": "?view=calendar", "steps": "Open calendar, Tab 3 times, press ArrowRight", "expected": "Keyboard user keeps a visible focus",
+        "type": "unclear", "kind": "observed", "why": "Month stepped and focus lost."}
+
+
+def case_fix_walk(R, S):
+    """D5: the file `fwx walk findings` writes is the one `prepare --fix` takes, and the review page keeps reading the full file.
+    Red before the change, with WALK fed to `--fix` (python3 tests/test_wave_brief.py):
+      FAIL: fix walk: the walk's fix.json: exit: got (2, "fwx wave prepare: --fix <file>: finding 1 has the key 'expected', which is not one of id, file, line, claim, evidence, severity; finding 1 has the key 'kind', ..."), want (0, '')
+      FAIL: fix walk: a walk finding with file null: says the file, the id and what to do: ... finding 2: file is not a non-empty string ... (refused for its keys, not named for its file)"""
+    sc = wp.Scene(tasks=[wp.task("T1", 1, ["src/a.py"]), wp.task("T2", 2, ["src/b.py"])])
+    f = findings_file([WALK, dict(WALK, id="T1-8", file="src/b.py", line=12, evidence=["one.png", "two.png"])])
+    r = sc.prepare(R, "--fix", f)
+    S.eq("fix walk: the walk's fix.json: exit", (r.returncode, r.stderr.strip()[:200] if r.returncode else ""), (0, ""))
+    a = wp.args_of(r) or {}
+    fx = a.get("fix") or {}
+    got = fx.get("findings") or [{}, {}]
+    S.eq("fix walk: source is the walk's file itself (the review page reads its full rows)", fx.get("source"), f)
+    S.eq("fix walk: the findings reach the brief in plan C.5's keys", sorted(got[0]), sorted(("id", "file", "line", "claim", "evidence", "severity")))
+    S.eq("fix walk: a null line stays null, an integer stays", (got[0].get("line"), got[1].get("line")), (None, 12))
+    S.ok("fix walk: the claim carries what was expected and the steps", "keeps a visible focus" in got[0].get("claim", "") and "press ArrowRight" in got[0].get("claim", ""),
+         repr(got[0].get("claim")))
+    S.ok("fix walk: a list of evidence is one string", got[1].get("evidence") == "one.png two.png", repr(got[1].get("evidence")))
+    path = fx.get("brief")
+    text = read(path) if isinstance(path, str) and os.path.isfile(path) else ""
+    fields, _ = sections(text)
+    S.ok("fix walk: ACCEPTANCE names the file with no line, never 'None'", "(src/a.py, medium)" in fields.get("ACCEPTANCE", "") and "None" not in fields.get("ACCEPTANCE", ""),
+         fields.get("ACCEPTANCE", ""))
+    S.ok("fix walk: ACCEPTANCE gives the line when there is one", "(src/b.py:12, medium)" in fields.get("ACCEPTANCE", ""), fields.get("ACCEPTANCE", ""))
+    S.ok("fix walk: SCOPE has the files of the findings", "src/a.py" in fields.get("SCOPE", "") and "src/b.py" in fields.get("SCOPE", ""), fields.get("SCOPE", ""))
+    runs = sorted(os.listdir(runs_dir(sc)))
+    bad = findings_file([WALK, dict(WALK, id="T1-10", file=None)])
+    r = sc.prepare(R, "--fix", bad)
+    S.eq("fix walk: a walk finding with file null: exit", r.returncode, 2)
+    S.ok("fix walk: a walk finding with file null: says the file, the id and what to do",
+         "--fix" in r.stderr and "finding 2" in r.stderr and "T1-10" in r.stderr and "file is null" in r.stderr and "drop" in r.stderr, r.stderr)
+    S.eq("fix walk: nothing written for a refused file", sorted(os.listdir(runs_dir(sc))), runs)
+    plain = findings_file([dict(FINDING, line=None)])
+    r = sc.prepare(R, "--fix", plain)
+    S.ok("fix walk: a hand-written finding (no walk key) still needs an integer line", r.returncode == 2 and "line" in r.stderr, r.stderr)
+    r = sc.prepare(R, "--fix", findings_file([dict(WALK, fix="x")]))
+    S.ok("fix walk: an unknown key on a walk finding is still refused", r.returncode == 2 and "'fix'" in r.stderr, r.stderr)
+
+
 def case_revert(R, S):
     sc = wp.Scene()
     a = wp.ok_args(S, "revert", sc.prepare(R, "--revert", "F1,F2"))
@@ -313,7 +359,7 @@ def case_revert(R, S):
 B = "lib/fwx/execute/brief.py"
 P = "lib/fwx/execute/prepare.py"
 T = "data/executor-brief.md"
-CASES = [case_briefs, case_template, case_refused, case_ui, case_module, case_fix, case_revert]
+CASES = [case_briefs, case_template, case_refused, case_ui, case_module, case_fix, case_fix_walk, case_revert]
 MUTANTS = [
     ("SCOPE not checked", case_module, B, '    if not facts["files"]:', "    if False:", "the empty SCOPE is named"),
     ("UI task refused", case_ui, B, '    if not facts["ui"]:', "    if True:", "ui task refused"),
@@ -341,6 +387,11 @@ MUTANTS = [
     ("previous report left out", case_module, B, '(["- The report of the previous attempt, read it before anything else: %s" % previous] if previous else [])', "[]",
      "a relaunch puts the previous report in CONTEXT"),
     ("severity not checked", case_fix, B, 'if f.get("severity") not in SEVERITY:', "if False:", "a severity that is not low, medium or high: exit"),
+    ("walk rows not normalized", case_fix_walk, P, "    return brief.normalize(data)", "    return data", "the findings reach the brief in plan C.5's keys"),
+    ("null file allowed", case_fix_walk, B, 'if walk and f.get("file") is None:\n            found.append', 'if False:\n            found.append',
+     "a walk finding with file null: exit"),
+    ("walk keys allowed on any finding", case_fix_walk, B, "def is_walk(f):\n    return isinstance(f, dict) and bool(set(f) & set(WALK_KEYS))",
+     "def is_walk(f):\n    return isinstance(f, dict)", "a hand-written finding (no walk key) still needs an integer line"),
     ("a repeated finding id allowed", case_fix, B, 'elif f["id"] in seen:', "elif False:", "a repeated id in --control-findings: exit"),
     ("the plan's tasks briefed under --fix", case_fix, P, "    if fix:\n        facts = brief.fix_facts", "    if False:\n        facts = brief.fix_facts",
      "the plan's tasks get no brief"),
