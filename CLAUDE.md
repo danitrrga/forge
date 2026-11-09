@@ -91,7 +91,7 @@ zizmor) into that one check; add a job to `checks.yml`, never to `ci.yml`. Every
 CodeRabbit reviews every non-draft PR (`.coderabbit.yaml`); its approval is required only on a security-relevant PR (the risky
 paths of `.coderabbit.yaml`, or the label `security`): the status `CodeRabbit approval` (`coderabbit-gate.yml`) stays pending there
 until it approves the head commit. Re-trigger with `@coderabbitai review` (`full review` after a failed one; it gets about one
-review an hour on the OSS tier, and a rate-limited push gets no review). On a Dependabot PR the owner's approval releases the gate.
+review an hour on the OSS tier, and a rate-limited push gets no review). On a Dependabot PR the owner's approval releases the gate. A security PR CodeRabbit never approves (the owner cannot approve their own PR) is merged by the owner with GitHub's admin bypass, only through a PR; agents never do (`gh pr merge --admin` is denied).
 Work in a git worktree, since only the installed checkout writes (rule 1).
 `githooks/ci-local` runs the same checks on this machine in seconds (control: a planted AWS key in a commit makes
 its gitleaks step, and so the script, fail); use it when Actions minutes are out.
