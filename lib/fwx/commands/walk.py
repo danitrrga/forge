@@ -1222,7 +1222,7 @@ def browser_checks(run, rec):
         rec("snapshot", 0, why, False)
         rec("capture", 0, "not reached: " + why, False)
         return
-    n = sum(1 for line in got["snapshot"].splitlines() if re.search(r"\[ref=e\d+\]|@e\d+", line))
+    n = sum(1 for line in got["snapshot"].splitlines() if re.search(r"\bref=e\d+\b|@e\d+", line))
     rec("snapshot", n, "%d element(s) in the snapshot of %s" % (n, url) if n else "empty snapshot: %s opened with the demo session shows no element" % url, n > 0)
     if "page" not in got:
         rec("capture", 0, why, False)

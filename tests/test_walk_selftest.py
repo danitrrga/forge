@@ -18,6 +18,7 @@ its file exactly once) and must fail with the text shown; the good code passes f
   app answers any status:        FAIL: app not answering: exit: got 0, want 1
   probe outside the rig prefix:  FAIL: prefix: the probe of the url ran through the rig prefix: [['run', '--', 'agent-browser', ...]]
   empty snapshot counted as one: FAIL: empty snapshot: exit: got 0, want 1
+  only a bare [ref=eN] counts:   FAIL: real snapshot, agent-browser-snapshot.txt: the selftest counts the 7 elements: got 4, want 7
   blank not compared:            FAIL: screenshot blank: exit: got 0, want 1
   blank taken after open:        FAIL: selftest green: the blank reference is taken before the page is opened: got ['cookies', 'open', 'screenshot', ...]
   down's left not counted:       FAIL: process left: stderr names the check and says '1 process left': fwx walk selftest: FAIL down: down failed:
@@ -65,6 +66,8 @@ if cmd == "open":
 elif cmd == "close":
     if os.path.exists(state):
         os.remove(state)
+elif cmd == "snapshot" and os.environ.get("FAKE_AB_SNAPSHOT"):
+    sys.stdout.write(open(os.environ["FAKE_AB_SNAPSHOT"]).read())
 elif cmd == "snapshot":
     for k in range(int(os.environ.get("FAKE_AB_ELEMENTS", "3"))):
         print('- button "Item %%d" [ref=e%%d]' %% (k, k + 1))
@@ -362,7 +365,30 @@ def case_clean_browser(R, S):
         sc.stop()
 
 
-CASES = [case_green, case_red_app, case_red_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser]
+FIXTURES = os.path.join(ROOT, "tests", "fixtures", "walk")
+
+
+def case_real_snapshot(R, S):
+    """The selftest counts the elements of what `agent-browser` really prints (3.5 U3d). The two fixtures are real output of agent-browser 0.41.1
+    (headless Chromium, `open` then `snapshot` and `snapshot -i`) on a static page of a heading, a link, a text field, a button and a select
+    (7 elements; the plain snapshot adds navigation, label and popup rows without a ref). Elements with an attribute carry it inside the same
+    brackets as the ref (`[level=1, ref=e1]`, `[expanded=false, ref=e4]`, `[selected, ref=e6]`).
+
+    Red against the pattern as first written, `\\[ref=e\\d+\\]|@e\\d+`, which only matches a bare `[ref=eN]` (4 of the 7):
+      FAIL: real snapshot, agent-browser-snapshot.txt: the selftest counts the 7 elements: got 4, want 7
+      FAIL: real snapshot, agent-browser-snapshot-i.txt: the selftest counts the 7 elements: got 4, want 7
+    """
+    for name in ("agent-browser-snapshot.txt", "agent-browser-snapshot-i.txt"):
+        sc = Scene()
+        try:
+            r, o = sc.selftest(R, "--json", env={"FAKE_AB_SNAPSHOT": os.path.join(FIXTURES, name)})
+            S.eq("real snapshot, %s: the selftest counts the 7 elements" % name, by_name(o).get("snapshot", {}).get("looked_at"), 7)
+            S.eq("real snapshot, %s: exit" % name, r.returncode, 0)
+        finally:
+            sc.stop()
+
+
+CASES = [case_green, case_red_app, case_red_snapshot, case_real_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser]
 
 WALK = "lib/fwx/commands/walk.py"
 CONFIG = "lib/fwx/config.py"
@@ -372,6 +398,8 @@ MUTANTS = [
     ("app answers: probe outside the prefix", case_prefix, WALK, 'argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, url]',
      'argv = [sys.executable, "-c", PROBE, url]', "prefix: the probe of the url ran through the rig prefix"),
     ("snapshot: empty counted as one", case_red_snapshot, WALK, "n = sum(1 for line in got", "n = 1 + sum(1 for line in got", "empty snapshot: exit: got 0, want 1"),
+    ("snapshot: only a bare [ref=eN] counts", case_real_snapshot, WALK, 're.search(r"\\bref=e\\d+\\b|@e\\d+", line)', 're.search(r"\\[ref=e\\d+\\]|@e\\d+", line)',
+     "the selftest counts the 7 elements"),
     ("capture: blank not compared", case_red_blank, WALK, "elif b[2] == p[2]:", "elif False:", "screenshot blank: exit: got 0, want 1"),
     ("capture: blank taken after open", case_green, WALK, '(("blank", ["screenshot", blank]), ("open", ["open", url]),',
      '(("open", ["open", url]), ("blank", ["screenshot", blank]),', "selftest green: the blank reference is taken before the page is opened"),

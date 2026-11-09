@@ -1,0 +1,7 @@
+- heading "Settings" [level=1, ref=e1]
+- link "Billing" [ref=e5]
+- textbox "Name" [ref=e2]
+- button "Save" [ref=e3]
+- combobox "Theme" [expanded=false, ref=e4]: Light
+  - option "Light" [selected, ref=e6]
+  - option "Dark" [ref=e7]
