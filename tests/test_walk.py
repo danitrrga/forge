@@ -403,17 +403,18 @@ def case_ab_session(R, S):
         recs = sc.calls()
         progs = [c["prog"] for c in recs]
         S.eq("ab session: only the call that launches the daemon goes through the rig prefix", progs,
-             ["fakerig", "agent-browser", "agent-browser", "agent-browser"])
+             ["fakerig", "agent-browser", "agent-browser", "agent-browser", "agent-browser"])
         ab_calls = [c for c in recs if c["prog"] == "agent-browser"]
         S.eq("ab session: the first call is a cookie of the demo session, with the app's url", ab_calls[0]["argv"][-6:],
              ["cookies", "set", "sess", "s3cret", "--url", sc.url])
         S.eq("ab session: the second cookie follows", ab_calls[1]["argv"][-6:], ["cookies", "set", "last", "pwd", "--url", sc.url])
+        S.eq("ab session: then the viewport, then the user's command", ab_calls[2]["argv"][-5:], ["set", "viewport", "1309", "818", "1.1"])
         S.ok("ab session: --init-script rides on the launch only", "--init-script" in ab_calls[0]["argv"] and all(
             "--init-script" not in c["argv"] for c in ab_calls[1:]), str([c["argv"] for c in ab_calls]))
         S.eq("ab session: the user's command last", ab_calls[-1]["argv"][-2:], ["open", sc.url + "/board"])
         sock = os.path.join(sc.home, ".agent-browser")
         S.eq("ab session: the calls after the launch find the daemon through the socket dir",
-             [c["env"].get("AGENT_BROWSER_SOCKET_DIR") for c in ab_calls], [None, sock, sock])
+             [c["env"].get("AGENT_BROWSER_SOCKET_DIR") for c in ab_calls], [None, sock, sock, sock])
         sc.clear()
         sc.walk(R, "ab", "--run", rd, "w1", "snapshot", "-i")
         recs = sc.calls()
@@ -440,6 +441,92 @@ def case_ab_session(R, S):
         sc.stop()
 
 
+REFUSED_COMMANDS = ("inspect", "stream", "dashboard", "mcp", "plugin", "install", "upgrade", "doctor", "profiles")
+
+
+def case_ab_commands(R, S):
+    """`ab` refuses the agent-browser commands that open a window or a listener or reach outside the session (3.5 U3b).
+
+    Seen red before the refusal existed (`ab inspect` and `ab stream enable` were passed to the binary):
+      FAIL: ab commands: inspect: exit 2 naming the word: rc 0:
+      FAIL: ab commands: stream enable: exit 2 naming the word: rc 0:
+      FAIL: ab commands: nothing refused reached the binary: got [{'prog': 'agent-browser', ...
+    """
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "ab commands")
+        if not o:
+            return
+        rd = o["run_dir"]
+        sc.clear()
+        for args in (["inspect"], ["stream", "enable"], ["stream", "enable", "--port", "9999"], ["--json", "stream", "status"], ["dashboard", "start"],
+                     ["mcp"], ["plugin", "add", "x"], ["install"], ["upgrade"], ["doctor", "--fix"], ["profiles"]):
+            r = sc.walk(R, "ab", "--run", rd, "w1", *args)
+            word = [a for a in args if not a.startswith("-")][0]
+            S.ok("ab commands: %s: exit 2 naming the word" % " ".join(args),
+                 r.returncode == 2 and "fwx walk ab: refused" in r.stderr and word in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        r = sc.walk(R, "ab", "--run", rd, "w1", "read", "https://a.example.test/x")
+        S.ok("ab commands: read <url> outside the app: refused (the CLI fetches it, not the browser)", r.returncode == 2, "rc %d: %s" % (r.returncode, r.stderr))
+        S.eq("ab commands: nothing refused reached the binary", sc.calls(), [])
+        # the words a walker needs, and a refused word typed as text, still go through
+        for args in (["snapshot"], ["screenshot"], ["console"], ["errors"], ["get", "text", "h1"], ["wait", "10"], ["fill", "@e1", "inspect"],
+                     ["type", "@e1", "stream"], ["eval", "1+1"], ["record", "start", os.path.join(rd, "c.webm")], ["read"]):
+            sc.clear()
+            r = sc.walk(R, "ab", "--run", rd, "w1", *args)
+            S.ok("ab commands: %s: still accepted" % " ".join(args), r.returncode == 0 and sc.calls("agent-browser")
+                 and sc.calls("agent-browser")[-1]["argv"][-len(args):] == list(args), "rc %d: %s" % (r.returncode, r.stderr))
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_ab_viewport(R, S):
+    """The first call of a session sets the viewport the `pw` path uses, once (3.5 U3b).
+
+    Seen red before the code existed (`ab` passed only cookies and the user's command to the binary):
+      FAIL: ab viewport: the first open sets the viewport once: got 0, want 1
+      FAIL: ab viewport: it comes before the user's command: ...
+    """
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "ab viewport")
+        if not o:
+            return
+        rd = o["run_dir"]
+
+        def sized(calls):
+            return [c["argv"][c["argv"].index("viewport") - (c["argv"][c["argv"].index("viewport") - 1] == "set"):]
+                    for c in calls if "viewport" in c["argv"]]
+        sc.clear()
+        r = sc.walk(R, "ab", "--run", rd, "w1", "open", sc.url + "/a")
+        calls = sc.calls("agent-browser")
+        S.eq("ab viewport: first open exit", r.returncode, 0)
+        S.eq("ab viewport: the first open sets the viewport once, with the pw size and scale", sized(calls), [["set", "viewport", "1309", "818", "1.1"]])
+        S.eq("ab viewport: it comes before the user's command, which is last", [c["argv"][-1] for c in calls][-1], sc.url + "/a")
+        S.ok("ab viewport: it carries the session", all("w1" in c["argv"] for c in calls), str([c["argv"] for c in calls]))
+        sc.clear()
+        sc.walk(R, "ab", "--run", rd, "w1", "open", sc.url + "/b")
+        S.eq("ab viewport: a second open of the same session does not repeat it", sized(sc.calls("agent-browser")), [])
+        sc.clear()
+        r = sc.walk(R, "ab", "--run", rd, "w1", "viewport", "1440", "900")
+        S.eq("ab viewport: an explicit viewport is passed through untouched", [c["argv"][-3:] for c in sc.calls("agent-browser")],
+             [["viewport", "1440", "900"]])
+        # a session whose first call is the caller's own viewport keeps only that one
+        sc.clear()
+        sc.walk(R, "ab", "--run", rd, "w2", "viewport", "1440", "900")
+        S.eq("ab viewport: a first call that is a viewport is not preceded by ours", sized(sc.calls("agent-browser")), [["viewport", "1440", "900"]])
+        sc.clear()
+        sc.walk(R, "ab", "--run", rd, "w3", "set", "viewport", "800", "600")
+        S.eq("ab viewport: `set viewport` as the first call likewise", sized(sc.calls("agent-browser")), [["set", "viewport", "800", "600"]])
+        # another session sizes on its own
+        sc.clear()
+        sc.walk(R, "ab", "--run", rd, "w4", "open", sc.url + "/c")
+        S.eq("ab viewport: another session is sized on its own", len(sized(sc.calls("agent-browser"))), 1)
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
 def case_run_empty(R, S):
     """Control 6."""
     sc = Scene(prefix="")
@@ -453,7 +540,7 @@ def case_run_empty(R, S):
         sc.clear()
         r = sc.walk(R, "ab", "--run", rd, "w1", "snapshot")
         calls = sc.calls()
-        S.eq('run "": ab was called', [c["prog"] for c in calls], ["agent-browser"] * 3)
+        S.eq('run "": ab was called', [c["prog"] for c in calls], ["agent-browser"] * 4)
         S.eq('run "": ab runs in the repo', {c["cwd"] for c in calls}, {sc.repo})
         S.ok('run "": no socket dir without a prefix', all("AGENT_BROWSER_SOCKET_DIR" not in c["env"] for c in calls), str(calls))
         sc.walk(R, "down", "--run", rd)
@@ -953,7 +1040,7 @@ def case_usage(R, S):
     S.ok("`fwx help` lists walk", "walk" in h.stdout, h.stdout)
 
 
-CASES = [case_url_guard, case_probe, case_up, case_ab_guard, case_ab_session, case_run_empty, case_pw, case_arm_control, case_down_count,
+CASES = [case_url_guard, case_probe, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_arm_control, case_down_count,
          case_off, case_container, case_capacity_missing, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage]
 
@@ -981,8 +1068,8 @@ MUTANTS = [
     ("4 left does not fail down", case_down_count, "return res, 0 if ok and not left else 1", "return res, 0 if ok else 1",
      "down: a process with the run's mark in its environment: exit: got 0, want 1"),
     ("5 switch ignored", case_off, 'if not cfg["integrations"].get("agent_browser"):', "if False:", "switch off: exit and JSON"),
-    ("6 run '' as a prefix", case_run_empty, 'prefix = shlex.split(app["run"])\n    words = positional(args)[:2]',
-     'prefix = [app["run"]]\n    words = positional(args)[:2]', 'run "": ab was called'),
+    ("6 run '' as a prefix", case_run_empty, 'prefix = shlex.split(app["run"])\n    for i, (a, quiet)',
+     'prefix = [app["run"]]\n    for i, (a, quiet)', 'run "": ab was called'),
     ("6 run '' as absent", case_run_empty, '"run": apps[0]["run"], "hosts"', '"run": apps[0]["run"] or None, "hosts"', 'run "": run is the empty string'),
     ("7 one app for two walkers", case_container, 'names = [ns + "-w%d" % k for k in range(1, cap["allowed"] + 1)] if container else [ns]',
      'names = [ns + "-w1"] if container else [ns]', "container: 1 app for 2 walkers: got 1, want 2"),
@@ -1019,6 +1106,11 @@ MUTANTS = [
      "ab session: the first call is a cookie of the demo session"),
     ("ab: no init script", case_ab_session, "if os.path.isfile(ctl):", "if False:", "ab session: --init-script rides on the launch only"),
     ("ab: close keeps the session", case_ab_session, 'if "close" in words:', "if False:", "ab session: after close the next call launches again"),
+    ("ab: commands refused", case_ab_commands, 'REFUSED_COMMANDS = (', 'REFUSED_COMMANDS = () and (', "ab commands: inspect: exit 2 naming the word"),
+    ("ab: no viewport", case_ab_viewport, "if sized_first:", "if False:", "ab viewport: the first open sets the viewport once"),
+    ("ab: viewport on every call", case_ab_viewport, "if sized_first:", "if True:", "ab viewport: a second open of the same session does not repeat it"),
+    ("ab: viewport over the caller's", case_ab_viewport, "sized_first = fresh and not own_size", "sized_first = fresh",
+     "ab viewport: a first call that is a viewport is not preceded by ours"),
     ("pw: not offline", case_pw, '"npx", "--offline", "--no-install", ', '"npx", "--no-install", ', "pw: offline, no install, the pinned CLI"),
     ("pw: no Firefox check", case_pw, "if not os.path.isdir(os.path.join(pw_browsers(), PW_FIREFOX)):", "if False:", "pw: no Firefox"),
     ("arm-control: any screen", case_arm_control, 'if host_of(screen) not in run["hosts"]:', "if False:", "arm-control: a screen outside the app is refused"),

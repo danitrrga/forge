@@ -53,9 +53,11 @@ What the guards of `ab`/`pw` do not see: a URL the page's own code builds when i
 code of a `batch` (refused) or read from stdin (refused). `--allowed-domains` (the app's host) covers them in the browser; in the
 factory the container's network does. `ab` refuses `connect`, `auth`, `batch` and `chat` when they are one of the first two words
 (`fill @e1 connect` types a word), and the flags in REFUSED_FLAGS, EXTRA_REFUSED_FLAGS and OWN_FLAGS (set by this command, never by the
-caller), `--state` outside the run's folder, and any URL that is not the app's host in `open`, `goto`, `navigate`, `pushstate`, `tab new`
+caller), the commands in REFUSED_COMMANDS (they open a window or a listener or reach outside the session), `--state` outside the run's
+folder, and any URL that is not the app's host in `open`, `goto`, `navigate`, `pushstate`, `tab new`
 and in the code of `eval`. Every accepted call carries the namespace, the session, the idle timeout, the screenshots folder and
-`--args --font-render-hinting=none`. AGENT_BROWSER_* variables of the caller are dropped.
+`--args --font-render-hinting=none`. The first call of a session also sets the viewport the `pw` path uses (`set viewport 1309 818 1.1`)
+before the caller's command; a `viewport` of the caller's own wins. AGENT_BROWSER_* variables of the caller are dropped.
 
 Measured by 3.5 U1 (framework-discuss/plan/3.5-review/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
 and `state load` are rejected under `--allowed-domains`); only the command that launches the daemon goes through `run`, the others
@@ -111,7 +113,15 @@ REFUSED_WORDS = ("connect", "auth", "batch", "chat")
 REFUSED_FLAGS = ("--cdp", "--auto-connect", "--profile", "--headed")
 EXTRA_REFUSED_FLAGS = ("-p", "--provider", "--proxy", "--restore", "--session-name", "--extension", "--allow-file-access", "--config", "--browser")
 OWN_FLAGS = ("--namespace", "--session", "--idle-timeout", "--screenshot-dir", "--args", "--allowed-domains", "--init-script", "--executable-path")
-URL_WORDS = ("open", "goto", "navigate", "pushstate")
+# Commands that open a window or a listener on the host or reach outside the session, each with the line of `agent-browser --help`:
+# inspect "Open Chrome DevTools for the active page", stream "Start runtime WebSocket streaming for this session" (a port on the host),
+# dashboard "Start the dashboard server (default port: 4848)", mcp "Start an MCP stdio server exposing agent-browser tools",
+# plugin "Add a plugin from npm or GitHub" / "Run a command.run or custom plugin request", install "Install browser binaries",
+# upgrade "Upgrade to the latest version", doctor "Diagnose install; auto-clean stale files", profiles "List available Chrome profiles".
+# Only the command word (the first one that is not a flag) is looked at, so `fill @e1 inspect` still types a word.
+REFUSED_COMMANDS = ("inspect", "stream", "dashboard", "mcp", "plugin", "install", "upgrade", "doctor", "profiles")
+URL_WORDS = ("open", "goto", "navigate", "pushstate", "read")  # `read <url>` fetches from the CLI process, outside --allowed-domains
+SET_VIEWPORT = ["set", "viewport", "%d" % VIEWPORT[0], "%d" % VIEWPORT[1], "%g" % SCALE]  # `set viewport <w> <h> [scale]` (agent-browser set --help)
 SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 URL_IN_CODE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"`)\\<>]+")
 USAGES = {
@@ -511,6 +521,8 @@ def refusal(args, run, pw=False):
     """Why a call of `ab` or `pw` is refused, or None. The words are looked for among the first two non-flag words only."""
     words = positional(args)
     head = words[:2]
+    if head[:1] and head[0] in REFUSED_COMMANDS:
+        return "`%s` is refused: it opens a window or a listener on the host, or reaches outside the session" % head[0]
     for w in head:
         if w in REFUSED_WORDS or (pw and w == "attach"):
             return "`%s` is refused: the walk only drives the browser it launched, in the run's namespace" % w
@@ -649,13 +661,19 @@ def cmd_ab(argv):
     if fresh:
         for name, value in cookies_of(app["state"]):
             steps.append((common + ["cookies", "set", name, value, "--url", app["url"]], True))
+    # The size the `pw` path uses, applied before the session's first command (the first `open` then loads at it, and the launch
+    # step is whatever comes first); a caller's own `viewport` later wins, and a first call that is one is not preceded by ours.
+    words = positional(args)[:2]
+    own_size = words[:1] == ["viewport"] or words[:2] == ["set", "viewport"] or words[:1] == ["close"]
+    sized_first = fresh and not own_size
+    if sized_first:
+        steps.append((common + SET_VIEWPORT, True))
     steps.append((common + args, False))
     if fresh:
         ctl = os.path.join(run["run_dir"], "control.json")
         if os.path.isfile(ctl):
             steps[0] = (steps[0][0][:len(common)] + ["--init-script", read_json(ctl, "control.json")["script"]] + steps[0][0][len(common):], steps[0][1])
     prefix = shlex.split(app["run"])
-    words = positional(args)[:2]
     for i, (a, quiet) in enumerate(steps):
         launch = fresh and i == 0
         env = clean_env({"AGENT_BROWSER_SOCKET_DIR": socket_dir()} if prefix and not launch else None)
