@@ -386,6 +386,16 @@ def check_recheck(script, s):
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
     s.eq("recheck: the up was run on the work branch's checkout", "fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
+    # `uniqueIds` appends `.x` to an id the run already used (T1-1 twice): the finding still belongs to its tramo (3.5 U3d). Against the
+    # grouping as first written (`id.replace(/-\d+$/, '')`; the `.x` was left in the tramo id, so the verifier was `ui-verifier:T1-1.x`):
+    #   FAIL: recheck suffixed ids: one verifier per tramo, the suffixed ids with their tramo: got ['ui-verifier:T1-1.x', 'ui-verifier:T2-2.x.x'], want ['ui-verifier:T1', 'ui-verifier:T2']
+    sfx = [dict(fixes[0], id="T1-1.x"), dict(fixes[1], id="T2-2.x.x")]
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R(json.dumps(sfx))})
+    rec = finish(s, "recheck suffixed ids", rec, err, allow_unanswered=True)
+    s.eq("recheck suffixed ids: one verifier per tramo, the suffixed ids with their tramo", sorted(set(l for l in labels(rec) if l.startswith("ui-verifier:"))),
+         ["ui-verifier:T1", "ui-verifier:T2"])
+    s.ok("recheck suffixed ids: each verifier is given its own finding", "T1-1.x" in launched(rec, "ui-verifier:T1")[0]["prompt"] and "T2-2.x.x" in launched(rec, "ui-verifier:T2")[0]["prompt"]
+         and "T2-2.x.x" not in launched(rec, "ui-verifier:T1")[0]["prompt"], repr([l["prompt"][-200:] for l in launched(rec, "ui-verifier:T")]))
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R("[]")})
     rec = finish(s, "recheck empty", rec, err)
     s.eq("recheck empty: a fix.json with nothing in it is failed, and the browsers closed", (result(rec).get("status"), "executor:runner-down" in labels(rec)), ("failed", True))
@@ -490,6 +500,7 @@ MUTANTS = [
      "FAIL: quota from the second ask: the walkers of the tramos run at once"),
     ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
     ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
+    ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("a tramo id used raw", "const safe = (id, i) =>", "const safe = (id, i) => id ||", "FAIL: unsafe tramo id"),
 ]
 
