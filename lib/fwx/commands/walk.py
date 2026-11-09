@@ -41,6 +41,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   down --run R         `close --all` of the run's namespace, the app's `down` (per app; the image's in the factory; with `container`
       `docker rm -f` by exact name), then a count of the processes whose environment or command line carries the namespace:
       `down.json` says how many it looked at and what is left; exit 1 if anything is, or a `down` or a container failed.
+      It also removes the `*.target` files agent-browser leaves in `<socket dir>/namespaces/<namespace>/run/` (that namespace's only).
   selftest [--dir D] [--repo P] [--image-id ID] [--json]
       Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
       `agent-browser` opens the URL with the demo session and the snapshot has an element, a capture comes out (a PNG, not the
@@ -61,6 +62,9 @@ folder, and any URL that is not the app's host in `open`, `goto`, `navigate`, `p
 and in the code of `eval`. Every accepted call carries the namespace, the session, the idle timeout, the screenshots folder and
 `--args --font-render-hinting=none`. The first call of a session also sets the viewport the `pw` path uses (`set viewport 1309 818 1.1`)
 before the caller's command; a `viewport` of the caller's own wins. AGENT_BROWSER_* variables of the caller are dropped.
+A capture path (`ab screenshot [<selector>] <path>`, `pw ... --filename <path>`) in /tmp, /var/tmp, /dev/shm or $TMPDIR is refused unless it is inside
+the run's folder or its captures folder; with no path the capture lands in the captures folder and its path is printed. `pw` sets Playwright's
+`outputDir` to the captures folder (so no `.playwright-cli/` reaches the project) and runs in it, except for the call that goes through a rig prefix.
 
 Measured by 3.5 U1 (framework-discuss/plan/3.5-review/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
 and `state load` are rejected under `--allowed-domains`); only the command that launches the daemon goes through `run`, the others

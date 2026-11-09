@@ -718,7 +718,7 @@ def case_hygiene(R, S):
         for label, tool, args in (("ab screenshot (no path)", "ab", ["screenshot"]),
                                   ("ab screenshot @e1 in the captures folder", "ab", ["screenshot", "@e1", os.path.join(shots, "a.png")]),
                                   ("ab screenshot in the walker's scratch folder", "ab", ["screenshot", os.path.join(rd, "w1-scratch", "a.png")]),
-                                  ("ab screenshot a path outside any temp folder", "ab", ["screenshot", os.path.join(sc.repo, "docs", "a.png")]),
+                                  ("ab screenshot a path outside any temp folder", "ab", ["screenshot", "/srv/profile/a.png"]),  # not the toy repo: it is itself under /tmp
                                   ("ab fill with a /tmp word (typed text, not a path)", "ab", ["fill", "@e1", "/tmp/v1b.png"]),
                                   ("pw screenshot (no filename)", "pw", ["screenshot"]),
                                   ("pw screenshot --filename in the captures folder", "pw", ["screenshot", "--filename", os.path.join(shots, "a.png")]),
