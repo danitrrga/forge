@@ -78,6 +78,14 @@
 # The lock records the versions a release ships (forge lock); the engine publishes it.
 !/config/forge.lock.json
 
+# plugins/: fwx, the agentic-workflow framework, is part of the engine; every other plugin
+# (a separate repo of its own, e.g. cache-tax) stays private. fwx's local-only paths are
+# ignored: its project state (.fwx/); its own .gitignore already ignores .claude/ and __pycache__/.
+!/plugins/
+/plugins/*
+!/plugins/fwx/
+/plugins/fwx/.fwx/
+
 # The private history lives here, in the same folder.
 /.forge-data.git
 

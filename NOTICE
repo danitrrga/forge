@@ -1,5 +1,5 @@
 forge
-Copyright (c) 2026 danitrrga, MIT licence (see LICENSE).
+Copyright 2026 danitrrga, Apache License 2.0 (see LICENSE). This covers the whole repository, plugins/fwx included.
 
 This product includes software from other projects, under their own licences.
 
@@ -43,3 +43,18 @@ get-shit-done-cc (GSD, the package GSD Core continues)
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+fwx (plugins/fwx)
+  The agentic-workflow framework, imported with its history into this repository and licensed with it (Apache License 2.0).
+  Before the import it was a repository of its own whose files that carry a `copied-from:` header were taken from the projects
+  below. plugins/fwx/NOTICE lists, file by file, what each one copied or read; plugins/fwx/tests/test_notice.py checks every
+  `copied-from:` header against it. It is part of this notice and stays where it is.
+
+  - marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209498517a4c826073b5a0edc2a4097a4fa, used with
+    the author's permission.
+  - EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, MIT licence.
+  - mattpocock/skills, https://github.com/mattpocock/skills, MIT licence.
+  - pstack, https://github.com/michael-denyer/pstack-claude, MIT licence.
+  - open-gsd/gsd-core, https://github.com/open-gsd/gsd-core, MIT licence.
+  - humanlayer/humanlayer, https://github.com/humanlayer/humanlayer, Apache License 2.0, Copyright 2025-2026 QueryTale, Inc.
+    d/b/a HumanLayer.
