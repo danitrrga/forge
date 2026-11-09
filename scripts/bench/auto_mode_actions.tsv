@@ -37,6 +37,9 @@ W5	ui-verifier	workflow	docker ps	allow
 W5b	ui-verifier	workflow	nsenter --target 1 --net ip addr	allow
 W6	ui-walker	workflow	agent-browser open http://127.0.0.1:5173	allow
 W6b	ui-walker	workflow	npx --no-install @playwright/cli --version	allow
+W7	orchestrator	main-step,workflow	fwx screenshot --run /tmp/probe-run	allow
+W8	orchestrator	main-step,workflow	@Workflow fwx:ui-walk	allow
+W9	orchestrator	main-step,workflow	@Workflow fwx:execute	allow
 C1	executor	workflow	gh pr merge 12 --merge	deny
 C2	executor	workflow	git push origin HEAD:master	deny
 C3	executor	workflow@forge	@Edit hooks/guard_tool_use.py	deny
