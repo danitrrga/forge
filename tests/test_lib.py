@@ -819,12 +819,12 @@ def cli_test_cases(tmp):
               "FAIL" in out, "PASS  test_guard_mutants.py" in out,
               "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, False, True))
         # fwx's suite (plugins/fwx/tests) has its own runner, `fwx test`, with its own exit codes (77, --expect-not-run)
-        # and about three minutes of work: `forge test` does not run it and says so in one SKIP line, never a PASS and
+        # and minutes of work: `forge test` does not run it and says so in one SKIP line, never a PASS and
         # not in the summary's counts. Its toys exit 1, so a run of them would be a FAIL.
         lib.ROOT = toy("fwx-owned", ["test_ok.py", ("plugins/fwx/tests/test_a.py", 1), ("plugins/fwx/tests/test_b.py", 1)])
         rc, out = forge_test()
         want("forge test leaves plugins/fwx to `fwx test` and says so",
-             (rc, "SKIP  plugins/fwx" in out and "2 test file(s)" in out and "bin/fwx test" in out, "FAIL" in out,
+             (rc, "SKIP  plugins/fwx" in out and "2 tracked test_*.py file(s)" in out and "bin/fwx test" in out, "FAIL" in out,
               "PASS  test_a.py" in out, "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, False, True))
         lib.ROOT = toy("fwx-none", ["test_ok.py"])
         rc, out = forge_test()

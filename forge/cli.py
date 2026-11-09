@@ -1613,7 +1613,7 @@ def cmd_test(a):
     # The pathspec's leading * also matches a prefix (contest_helper.py), so the basename is checked here.
     found = sorted(f for f in listed if not f.startswith("benchmarks/")
                    and os.path.basename(f).startswith("test_") and f.endswith(".py"))
-    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its three minutes
+    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its minutes of work
     # are its own, and CI runs it as a job of its own.
     fwx_owned = [f for f in found if f.startswith(FWX_PREFIX)]
     files = [f for f in found if f not in fwx_owned]
@@ -1622,7 +1622,7 @@ def cmd_test(a):
     mutants = getattr(a, "mutants", False)
     results = []
     if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
-        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d test file(s) with their own runner: run "
+        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) with their own runner: run "
                                   "`python3 %sbin/fwx test`" % (len(fwx_owned), FWX_PREFIX)))
     for f in files:
         if f in ON_DEMAND:

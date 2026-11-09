@@ -85,6 +85,20 @@ case("GIT_DIR in the caller's environment", {"tests/test_ok.py": OK}, 0,
      "2 test file(s): 2 passed, 0 failed, 0 not run",
      env={"GIT_DIR": os.path.join(other, ".git"), "GIT_INDEX_FILE": os.path.join(other, ".git", "index")})
 
+# A folder of a bigger repository (fwx lives in plugins/fwx of forge): the tests are the ones of the folder it is run from,
+# not those of the repository's top level. Seen red before `test_files` and the run were rooted at the working folder
+# (`git rev-parse --show-toplevel`), on forge's checkout:
+#   FAIL: a folder of a bigger repo: exit code: got 1, want 0
+#   FAIL: a folder of a bigger repo: summary: got '1 test file(s): 0 passed, 1 failed, 0 not run', want '1 test file(s): 1 passed, 0 failed, 0 not run'
+#   FAIL: a folder of a bigger repo: its own test ran, the top level's did not: FAIL  tests/test_decoy.py (exit 1)
+parent = helpers.toy_repo({"tests/test_decoy.py": BAD, "sub/tests/test_ok.py": OK})
+r = helpers.fwx(os.path.join(parent, "sub"), "test")
+s.eq("a folder of a bigger repo: exit code", r.returncode, 0)
+out = r.stdout.splitlines()
+s.eq("a folder of a bigger repo: summary", out[-1] if out else "", "1 test file(s): 1 passed, 0 failed, 0 not run")
+s.ok("a folder of a bigger repo: its own test ran, the top level's did not",
+     "PASS  tests/test_ok.py" in r.stdout and "test_decoy" not in r.stdout, r.stdout + r.stderr)
+
 # --expect-not-run: a test the caller declares cannot run here (CI has no key, no private tree).
 NO_BAD = {k: v for k, v in FILES.items() if k != "tests/test_bad.py"}
 r = case("declared skip", NO_BAD, 0, "3 test file(s): 2 passed, 0 failed, 0 not run, 1 expected not run",

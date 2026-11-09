@@ -35,7 +35,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tests/test_fresh_install.py
 
-  # fwx, the framework imported under plugins/fwx, has its own runner and its own suite (56 test files, about three minutes);
+  # fwx, the framework imported under plugins/fwx, has its own runner and its own suite (43 test files, about six minutes);
   # `forge test` leaves them to it, so this job is where they run in CI. `fwx test` exits 1 when no test file
   # ran and 77 when none failed but one could not run, so an empty or unarmed suite is red here, not falsely
   # green. The two tests below can never run in CI, and are declared so: each prints `EXPECTED NOT RUN` with

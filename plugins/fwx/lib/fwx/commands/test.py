@@ -1,4 +1,4 @@
-"""Run every tests/test_*.py of the repo and summarise: PASS, FAIL, or NOT RUN, NOT ARMED.
+"""Run every tests/test_*.py of the working folder and summarise: PASS, FAIL, or NOT RUN, NOT ARMED.
 
 The repo's checks recipe. Each test is a plain script that runs itself, prints its FAIL lines and
 exits 1 on any; one that cannot run (a tool, a key or the network is missing) prints
@@ -75,11 +75,12 @@ def main(argv):
         sys.stderr.write(USAGE)
         return 2
     env = clean_env()
-    top = subprocess.run(["git", "rev-parse", "--show-toplevel"], env=env, capture_output=True, text=True)
-    if top.returncode:
+    # The folder it is run from, not the repository's top level: this plugin is a folder of a bigger repository
+    # (forge's plugins/fwx), and the top level's tests are not its own. `git ls-files` run there lists only that folder.
+    root = os.getcwd()
+    if subprocess.run(["git", "-C", root, "rev-parse", "--git-dir"], env=env, capture_output=True).returncode:
         sys.stderr.write("fwx test: not inside a git repository\n")
         return 1
-    root = top.stdout.strip()
     passed = failed = not_run = expected = 0
     files = test_files(root, env)
     unknown = sorted(expect - set(files))
