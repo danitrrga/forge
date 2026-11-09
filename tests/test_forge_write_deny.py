@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """The generator denies a project's agents the right to write in forge (forge/sync.py `forge_deny`, `with_forge_deny`), 3.6 U2c.
 
-For every profile except forge's own, `forge sync` writes into the project's settings.local.json `permissions.deny` one `Edit` and
-one `Write` rule per top-level entry of the checkout (`lib.ROOT`) that git tracks (the engine's history and the data history,
+For every profile except forge's own, `forge sync` writes into the project's settings.local.json `permissions.deny` one `Edit` rule
+per top-level entry of the checkout (`lib.ROOT`) that git tracks (the engine's history and the data history,
 `git ls-files`; an untracked folder such as `logs/` comes and goes and would rewrite every project's file on each sync) except
 `plugins` and `design`: `<Tool>(//<root>/<dir>/**)` for a directory,
 `<Tool>(//<root>/<file>)` for a file, and the dry-run prints `  + deny <rule>  (agents of a project do not write in forge)` for each
@@ -21,7 +21,7 @@ leave a folder out of itself. Measured on Claude Code 2.1.308 with scripts/bench
   * the same with `Edit(//<repo>/!plugins/**)`, and with a second deny `Edit(!//<repo>/plugins/**)`: the first matches nothing (all
     four allowed), the second changes nothing (all four denied). No negation.
   * one `Edit`+`Write` pair per top-level entry but `plugins`: hooks/ and README.md denied, Write of hooks/new.txt denied, Edit of
-    plugins/toy/probe.txt allowed. With the `Edit` rules alone Write was denied too (the Write rules are kept: the unit says both).
+    plugins/toy/probe.txt allowed. With the `Edit` rules alone Write was denied too; the Write rules were dropped once Claude Code 2.1.308 warned `Write(...) never matches` on each.
 The matcher below (`denied`) is that measured behaviour: a directory rule matches what is below it, a file rule that file.
 
 Second round (the `design/` exception and tracked-only enumeration), seen failing on b33d656: "design repo write denied -- <root>/design/taste/entries/a.md
@@ -137,13 +137,13 @@ def toy_root(entries=("hooks/guard.py", "skills/x/SKILL.md", "plugins/toy/probe.
 
 def rules_for(root, skip=("plugins", "design")):
     """The rules the unit means for `root`, written out by hand (never by the code under test): per tracked top-level entry but the skipped
-    ones, Edit then Write, `//` and the absolute path; a directory ends in `/**`."""
+    ones, an Edit rule (it covers Write too), `//` and the absolute path; a directory ends in `/**`."""
     out = []
     for e in sorted(TRACKED[root]):
         if e in skip:
             continue
         tail = "/**" if TRACKED[root][e] else ""
-        out += ["%s(/%s/%s%s)" % (t, root, e, tail) for t in ("Edit", "Write")]
+        out += ["%s(/%s/%s%s)" % (t, root, e, tail) for t in ("Edit",)]
     return out
 
 
@@ -282,8 +282,8 @@ forge_json()
 # ------------------------------------------------------------------------------------------ 1. a project gets the rules
 ROOT1 = toy_root()
 WANT1 = rules_for(ROOT1)
-check("fixture: the hand-written expectation is 16 rules (5 tracked entries but plugins and design, plus the untracked .git, credentials and data, Edit and Write) -- %d" % len(WANT1),
-      len(WANT1) == 16 and "Edit(/%s/credentials/**)" % ROOT1 in WANT1 and "Write(/%s/.git/**)" % ROOT1 in WANT1, WANT1)
+check("fixture: the hand-written expectation is 8 rules (5 tracked entries but plugins and design, plus the untracked .git, credentials and data, Edit only) -- %d" % len(WANT1),
+      len(WANT1) == 8 and "Edit(/%s/credentials/**)" % ROOT1 in WANT1 and not any(r.startswith("Write(") for r in WANT1), WANT1)
 check("fixture: logs/ is on disk, untracked", os.path.isdir(os.path.join(ROOT1, "logs")) and "logs" not in TRACKED[ROOT1], TRACKED[ROOT1])
 pp = project()
 w = World()
@@ -319,8 +319,9 @@ os.makedirs(os.path.join(ROOT1, ".playwright-mcp"))
 before = raw(slp(pp))
 code, out = w.run(root=ROOT1)
 check("always-denied: credentials/ and .git/ have rules, untracked as they are -- %s" % [r for r in deny_of(pp) or [] if "credentials" in r or "/.git/" in r],
-      all(r in (deny_of(pp) or []) for r in ("Edit(/%s/credentials/**)" % ROOT1, "Write(/%s/credentials/**)" % ROOT1, "Edit(/%s/.git/**)" % ROOT1,
-                                              "Write(/%s/.git/**)" % ROOT1)), deny_of(pp))
+      all(r in (deny_of(pp) or []) for r in ("Edit(/%s/credentials/**)" % ROOT1, "Edit(/%s/.git/**)" % ROOT1)), deny_of(pp))
+check("no Write rule is generated: Claude Code 2.1.308 warns `Write(...) never matches` on each, Edit covers Write -- %s" % [r for r in deny_of(pp) or [] if r.startswith("Write(")][:2],
+      not any(r.startswith("Write(") for r in deny_of(pp) or []), deny_of(pp))
 check("always-denied: a file under credentials/ and under .git/ is denied", bool(denied(deny_of(pp) or [], os.path.join(ROOT1, "credentials/secrets.json")))
       and bool(denied(deny_of(pp) or [], os.path.join(ROOT1, ".git/config"))), deny_of(pp))
 check("untracked entry: no rule for logs/ or .playwright-mcp/ -- %s" % [r for r in deny_of(pp) or [] if "/logs" in r or "playwright" in r],
@@ -397,13 +398,13 @@ check("union: the hand-set rule, the profile's own and the generated ones are al
 check("union: allow and additionalDirectories are not disturbed -- %s" % perms_of(ppm),
       (perms_of(ppm) or {}).get("allow") == ["Bash(ls:*)", "Bash(git status:*)"]
       and (perms_of(ppm) or {}).get("additionalDirectories") == ["/by/hand", "/design/one"], perms_of(ppm))
-# one entry of the checkout goes away: only its two rules go
+# one entry of the checkout goes away: only its rule goes
 sandbox.git(ROOT1, "rm", "-rq", "skills")
 code, out = wm.run(root=ROOT1)
 d = deny_of(ppm) or []
 gone = [r for r in WANT1 if "/skills/" in r]
-check("entry removed: its two rules go and the others stay -- %s" % [r for r in WANT1 if r in d and "/skills/" in r],
-      len(gone) == 2 and not any(r in d for r in gone) and all(r in d for r in WANT1 if r not in gone), d)
+check("entry removed: its rule goes and the others stay -- %s" % [r for r in WANT1 if r in d and "/skills/" in r],
+      len(gone) == 1 and not any(r in d for r in gone) and all(r in d for r in WANT1 if r not in gone), d)
 check("entry removed: the hand-set rule and the profile's own stay", HAND in d and "Edit(//somewhere/else/**)" in d, d)
 # the entry comes back: the rules come back
 wm.put(profile(ppm, "mixed", permissions={"allow": ["Bash(git status:*)"], "deny": ["Edit(//somewhere/else/**)"]}))
@@ -423,8 +424,7 @@ check("no history: the file is left as it was -- %s" % deny_of(ppm), set(WANT1) 
 ROOTP = toy_root(("plugins/a/b.txt", "design/x.md"), untracked=())
 code, out = wm.run(root=ROOTP)
 check("only exempt entries tracked: just the rules of .git and data -- %s" % [r for r in deny_of(ppm) or [] if ROOTP in r],
-      [r for r in deny_of(ppm) or [] if ROOTP in r] == rules_for(ROOTP) == ["Edit(/%s/.git/**)" % ROOTP, "Write(/%s/.git/**)" % ROOTP,
-                                                                                         "Edit(/%s/data/**)" % ROOTP, "Write(/%s/data/**)" % ROOTP], (deny_of(ppm), out))
+      [r for r in deny_of(ppm) or [] if ROOTP in r] == rules_for(ROOTP) == ["Edit(/%s/.git/**)" % ROOTP, "Edit(/%s/data/**)" % ROOTP], (deny_of(ppm), out))
 
 # ------------------------------------------------------------------------------------------ 4. beside the framework step
 sandbox_cfg = World()
@@ -485,9 +485,23 @@ finally:
 check("idempotent: the first apply made data/ in the checkout (the control: this is what moved the rules) -- %s" % os.listdir(ROOT5),
       os.path.isdir(os.path.join(ROOT5, "data", "memory-lite", "memapp5")), os.listdir(ROOT5))
 check("idempotent: data/ is denied from the first apply -- %s" % first_deny,
-      "Edit(/%s/data/**)" % ROOT5 in (first_deny or []) and "Write(/%s/data/**)" % ROOT5 in (first_deny or []), first_deny)
+      "Edit(/%s/data/**)" % ROOT5 in (first_deny or []), first_deny)
 check("second apply: byte-identical and no `+ deny` -- %s" % plus_deny(out2),
       code == 0 and code2 == 0 and raw(slp(pp5a)) == first and not plus_deny(out2) and claims_of(pp5a) == first_owned, (out, out2))
+
+# a project whose file was written when forge still made Write rules: the next apply takes the Write rules out and keeps the Edit ones
+ppo = project()
+wo = World()
+wo.put(profile(ppo, "old"))
+sync.FORGE_DENY_TOOLS = ("Edit", "Write")
+try:
+    wo.run(root=ROOT1)
+finally:
+    sync.FORGE_DENY_TOOLS = ("Edit",)
+seeded = deny_of(ppo) or []
+code, out = wo.run(root=ROOT1)
+check("migration: seeded with Write rules (%d), the next apply leaves only the Edit ones -- %s" % (sum(r.startswith("Write(") for r in seeded), deny_of(ppo)),
+      any(r.startswith("Write(") for r in seeded) and code == 0 and deny_of(ppo) == WANT1, (seeded, deny_of(ppo), out))
 
 sandbox.cleanup(bool(failures))
 for f in failures:

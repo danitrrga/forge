@@ -446,8 +446,8 @@ def main_world():
     want("the project's untracked files are the pinned set (%d)" % len(DEMO_UNTRACKED), fresh, DEMO_UNTRACKED)
     sl = read_json(os.path.join(w.demo, ".claude", "settings.local.json")) or {}
     deny = (sl.get("permissions") or {}).get("deny") or []
-    want("the demo's settings.local.json holds only permissions.deny, of Edit and Write rules under the toy forge",
-         (sorted(sl), sorted(sl.get("permissions") or {}), bool(deny) and all(r.startswith(("Edit(//", "Write(//")) and w.root in r for r in deny)),
+    want("the demo's settings.local.json holds only permissions.deny, of Edit rules under the toy forge",
+         (sorted(sl), sorted(sl.get("permissions") or {}), bool(deny) and all(r.startswith("Edit(//") and w.root in r for r in deny)),
          (["permissions"], ["deny"], True))
     keys = (read_json(os.path.join(w.home, ".claude.json")) or {}).get("projects", {})
     check("forge add put the project's key in the world's ~/.claude.json", w.demo in keys, "keys: %s" % sorted(keys))
