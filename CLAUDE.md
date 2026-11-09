@@ -87,7 +87,12 @@ The default branch takes changes by pull request only: work on a branch (`feat/.
 open a PR from the PR template, and merge when `All checks` is green. `.github/workflows/ci.yml` (from
 `repo-kit/`) aggregates the engine's own checks in `checks.yml`, a secrets scan and a workflow audit (actionlint,
 zizmor) into that one check; add a job to `checks.yml`, never to `ci.yml`. Every action is pinned by commit hash
-(`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --apply` puts the same rule on GitHub.
+(`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --coderabbit --apply` puts the same rule on GitHub.
+CodeRabbit reviews every non-draft PR (`.coderabbit.yaml`) and its approval is required, with the `CodeRabbit` check: it requests
+changes on findings and approves once they are resolved and the merge risk is within the limit (lower on the risky paths).
+Re-trigger with `@coderabbitai review` (`full review` after a failed one). Dependabot PRs get no CodeRabbit review: the owner approves them. Nobody can force
+the approval of their own PR, so a PR it withholds changes the code, or the owner edits the ruleset. A push CodeRabbit
+rate-limits (about one review an hour on the OSS tier) passes its check with no approval: wait, then `@coderabbitai review`.
 Work in a git worktree, since only the installed checkout writes (rule 1).
 `githooks/ci-local` runs the same checks on this machine in seconds (control: a planted AWS key in a commit makes
 its gitleaks step, and so the script, fail); use it when Actions minutes are out.
