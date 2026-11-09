@@ -1586,6 +1586,7 @@ def cmd_doctor(a):
 # to ROOT, and the reason. hooks/test_guard_mutants.py runs 326 mutants on max(2, cpu_count) workers, each a
 # test_guard_tool_use.py of about six cores: it once took a voice detector from 0.3 s to 50+ s.
 ON_DEMAND = {"hooks/test_guard_mutants.py": "326 mutants on every core, minutes of full CPU; it stalls the machine"}
+FWX_PREFIX = "plugins/fwx/"
 
 
 def cmd_test(a):
@@ -1610,12 +1611,19 @@ def cmd_test(a):
                 r.returncode, r.stderr.strip() or "(no stderr)"))])
         listed.update(r.stdout.split("\0"))
     # The pathspec's leading * also matches a prefix (contest_helper.py), so the basename is checked here.
-    files = sorted(f for f in listed if not f.startswith("benchmarks/")
+    found = sorted(f for f in listed if not f.startswith("benchmarks/")
                    and os.path.basename(f).startswith("test_") and f.endswith(".py"))
+    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its minutes of work
+    # are its own, and CI runs it as a job of its own.
+    fwx_owned = [f for f in found if f.startswith(FWX_PREFIX)]
+    files = [f for f in found if f not in fwx_owned]
     if not files:
         return lib.report([lib.Result("FAIL", "git ls-files", "no tests found in %s" % lib.ROOT)])
     mutants = getattr(a, "mutants", False)
     results = []
+    if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
+        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) with their own runner: run "
+                                  "`python3 %sbin/fwx test`" % (len(fwx_owned), FWX_PREFIX)))
     for f in files:
         if f in ON_DEMAND:
             if not mutants:  # said, never a PASS, and not counted in the summary (non-negotiable 7)

@@ -1,0 +1,36 @@
+{
+  "disabled": [],
+  "default_protected_paths": [
+    "drizzle/**",
+    "**/migrations/**",
+    "**/auth/**",
+    "**/permissions/**",
+    "**/billing/**",
+    "**/payments/**",
+    ".github/**",
+    "vercel.json",
+    "vercel.ts",
+    "**/.env*"
+  ],
+  "rules": [
+    {"id": "review-label", "outcome": "handover"},
+    {"id": "agent", "outcome": "handover"},
+    {"id": "type", "outcome": "handover"},
+    {"id": "ui", "outcome": "handover"},
+    {"id": "ci-failed", "outcome": "handover"},
+    {"id": "conflict", "outcome": "handover"},
+    {"id": "trusted-edit", "outcome": "handover"},
+    {"id": "hooks-settings", "outcome": "handover"},
+    {"id": "protected-paths", "outcome": "handover"},
+    {"id": "irreversible", "outcome": "handover"},
+    {"id": "outside-plan", "outcome": "handover"},
+    {"id": "weakened-assertions", "outcome": "handover"},
+    {"id": "evidence-head", "outcome": "handover"},
+    {"id": "evidence-dirty", "outcome": "handover"},
+    {"id": "evidence-recipe", "outcome": "handover"},
+    {"id": "evidence-failed", "outcome": "handover"},
+    {"id": "no-checks", "outcome": "handover"},
+    {"id": "review-findings", "outcome": "handover"},
+    {"id": "still-running", "outcome": "pending"}
+  ]
+}

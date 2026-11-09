@@ -1,0 +1,8 @@
+name	set_by	meaning	client_removable
+factory	owner, or a rule of the owner (a dependency bot)	The issue enters the factory: only this label makes an issue eligible to be claimed	no
+review	owner, or a rule of the owner	A person always sees the merge of this work	no
+factory-review	factory	A pull request is waiting for the owner	yes
+factory-failed	factory	The factory gave up on this issue after its attempts	yes
+needs-owner	factory or session	Returned to the owner: ambiguous, a feature, structural, critiques or rounds used up, or a consent is needed	yes
+mini-plan	autonomous discuss	The autonomous discuss decided a mini plan is enough	yes
+full-plan	autonomous discuss	The autonomous discuss decided the work needs a full plan	yes

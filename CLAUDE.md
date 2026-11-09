@@ -16,6 +16,8 @@ scripts/bench/       skill-bench, its tasks in benchmarks/skill-bench/ (the one 
 hooks/               the shared hooks that user-scope settings point at, with their tests
 config/gsd/          prose payloads of the GSD patches
 examples/            what `forge init` copies for a new user (forge.json, AGENT-SYSTEM.md, ...)
+plugins/fwx/         the agentic-workflow framework (a Claude Code plugin and the `fwx` CLI), with its own README and runner:
+                     `python3 plugins/fwx/bin/fwx test`; `forge test` skips its suite, CI runs it as the `fwx` job
 githooks/            the personal-data guard, enabled with `core.hooksPath githooks`
 tests/               the suites; tests/sandbox.py builds a toy world
 ```
@@ -89,7 +91,7 @@ open a PR from the PR template, and merge when `All checks` is green. `.github/w
 zizmor) into that one check; add a job to `checks.yml`, never to `ci.yml`. Every action is pinned by commit hash
 (`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --apply` puts the same rule on GitHub.
 Work in a git worktree, since only the installed checkout writes (rule 1).
-`githooks/ci-local` runs the same checks on this machine in seconds (control: a planted AWS key in a commit makes
+`githooks/ci-local` runs the same checks on this machine (fwx's suite takes about six minutes, the rest seconds) (control: a planted AWS key in a commit makes
 its gitleaks step, and so the script, fail); use it when Actions minutes are out.
 
 ## Where things go
@@ -98,4 +100,4 @@ its gitleaks step, and so the script, fail); use it when Actions minutes are out
 - A new profile field gets a row in `lib.PROFILE_FIELDS`, so `profile_error` checks its type once.
 - A new hook row goes in `forge/hooks.py`; a row that belongs to an integration is also listed in
   `ROW_INTEGRATION`.
-- A skill is never part of the engine. Skills live in the user's `skills/<name>/SKILL.md`.
+- A skill is never part of the engine. Skills live in the user's `skills/<name>/SKILL.md`. (The skills under `plugins/fwx/skills/` belong to that plugin, not to the user's `skills/`.)

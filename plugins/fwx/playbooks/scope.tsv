@@ -1,0 +1,113 @@
+# Which playbook describes each node and connector of the tree: `id<TAB>playbook`, one row per node.
+# The id is the Excalidraw element id (`fwx playbooks tree` lists them). The tree is the owner's drawing and
+# carries no assignment, so it lives here. Whoever changes a node changes its row and its block in the same job.
+
+# session: supervised session lane, entry 1, and the shared plan nodes
+n_L1	session
+p_PERFIL	session
+n_GC_L	session
+n_L2	session
+n_L4	session
+n_Z6	session
+n_L3	session
+n_L5	session
+n_DEMO	session
+n_L6	session
+n_L7	session
+p_FREEZE	session
+n_C1	session
+n_C2	session
+n_C3	session
+n_C4	session
+n_P4	session
+p_PREP	session
+p_REPORT	session
+n_L8	session
+n_L9	session
+p_CLOSE	session
+n_L10	session
+
+# execute: waves of executors, the checks at the exact commit, the fix attempts and the review
+n_C5	execute
+p_PAR	execute
+n_C6	execute
+n_C7	execute
+n_C8	execute
+n_C7F	execute
+n_C9	execute
+p_GRP	execute
+p_CLEAN	execute
+n_C10	execute
+
+# ui-walk: the UI branch of a part
+n_C11	ui-walk
+n_C12	ui-walk
+p_REJ	ui-walk
+
+# factory: entry 2: the factory lane, written by part 5.1
+n_R1	factory
+p_ORCA	factory
+n_GC_R	factory
+n_R2	factory
+p_UNATT	factory
+n_R3	factory
+n_R4	factory
+n_R5	factory
+n_R6	factory
+p_EVAL	factory
+n_R7	factory
+n_R8	factory
+p_HAND	factory
+n_R9	factory
+n_Z5	factory
+n_WATCH	factory
+n_Z3	factory
+n_Z4c	factory
+
+# improve: the weekly improvement cycle, written by part 6.2
+n_W1	improve
+p_WK	improve
+n_W2	improve
+n_W3	improve
+n_W4	improve
+n_HARN	improve
+n_BMEM	improve
+n_BCLAUDE	improve
+n_BSKILL	improve
+n_BWORK	improve
+n_BHOOK	improve
+n_BTOOL	improve
+n_GC_W	improve
+n_MU1	improve
+n_MU2	improve
+n_MU3	improve
+n_MU4	improve
+n_MU5	improve
+n_MUSYN	improve
+n_BLOCKS	improve
+n_M18	improve
+n_WOUT	improve
+n_CONS	improve
+
+# engine-review: the engine workflow, written by part 6.2
+n_ER	engine-review
+
+# project-config: the project configuration workflow, written by part 6.2
+n_PC	project-config
+
+# connector: nodes whose text starts with an arrow: no block, a legal destination of an exit
+n_CX_W	connector
+n_CX_IN	connector
+n_L3a	connector
+n_L3b	connector
+n_L3c	connector
+n_L3d	connector
+n_L3e	connector
+n_L3f	connector
+n_L3g	connector
+n_L3h	connector
+n_L3i	connector
+n_CX_F	connector
+n_CX_FIN	connector
+n_CX_OUT	connector
+n_CX_WIN	connector
