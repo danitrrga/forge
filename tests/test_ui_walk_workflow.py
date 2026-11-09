@@ -13,12 +13,22 @@ Red before the script existed (python3 tests/test_ui_walk_workflow.py, first lin
   FAIL: not armed: status: got None, want 'done'
 
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
-once; the first FAIL line of each, seen red):
+once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
-      FAIL: breaker null: walk down not called after a walker returned nothing
+      FAIL: breaker null: walk down not called after a walker returned nothing: ['ui-verifier:T1', 'ui-verifier:T2', 'executor:runner-save-T1', ...]
   the `recheck` branch removed (scenario 2: recheck with a fix.json):
-      FAIL: recheck: no breaker or critic launched (critic launched in recheck)
-  and one MUTANTS row each for the other behaviours; each carries the text it went red with in its last column.
+      FAIL: recheck: no breaker or critic launched (critic launched in recheck): ['ui-walker:T1-breaker', 'ui-walker:T1-critic', ...]
+  not armed carries on:      FAIL: not armed: status: got 'failed', want 'done'
+  walkers not capped:        FAIL: quota 1: no two walkers at once: [('ui-walker:T1-breaker', 7, 12), ('ui-walker:T1-critic', 8, 13), ...]
+  control armed too late:    FAIL: green: the control is armed before any walker: ['executor:runner-up', 'ui-verifier:tramos', 'ui-walker:T1-breaker', ...]
+  a missing walker no gap:   FAIL: breaker null: failed, naming the walker: got ('done', False), want ('failed', True)
+  a missed control counts:   FAIL: control missed: the reason says first that the run does not count: 'Run: the walkers did not find the fault planted on /settings.'
+  an unwalked control judged: FAIL: control not walked: no judge launched, and the reason says the run does not count: ([..., 'ui-verifier:control', ...], ...)
+  a down that exits 1 is done: FAIL: down fails: status failed, and the reason says browsers may be left: got ('done', False), want ('failed', True)
+  Firefox critic for all:    FAIL: green: five walkers: a breaker and a critic per tramo, one more critic for Firefox: got [..., 'ui-walker:T1-firefox', ...]
+  walkers told of the control: FAIL: green: no walker is told about the control: [...]
+  recheck overwrites fix.json: FAIL: recheck: nothing overwrites fix.json (no `findings`), and the browsers are closed: [..., 'executor:runner-findings', ...]
+  a raw tramo id in a path:  FAIL: unsafe tramo id: no launch or command carries the raw id: ['ui-walker:../x y-breaker', ...]
 """
 import collections
 import json
@@ -379,7 +389,7 @@ def check_all(script, s):
 MUTANTS = [
     ("the finally removed", "  } finally {\n    await closeRun()\n  }", "  } catch (e0) {\n    throw e0\n  }\n  await closeRun()", "FAIL: breaker null: walk down not called after a walker returned nothing"),
     ("the recheck branch removed", "if (A.recheck) {", "if (false) {", "FAIL: recheck: no breaker or critic launched (critic launched in recheck)"),
-    ("not armed carries on", "if (up.armed !== true) {", "if (false) {", "FAIL: not armed: nothing else launched"),
+    ("not armed carries on", "if (up.armed !== true) {", "if (false) {", "FAIL: not armed: status"),
     ("the walkers are not capped", "const SLOTS = () => quota", "const SLOTS = () => 99", "FAIL: quota 1: no two walkers at once"),
     ("the control is armed after the walkers", "await armControl(tramos)", "/* armed later */", "FAIL: green: the control is armed before any walker"),
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
