@@ -22,6 +22,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       added to every call as `--executable-path`, so a wrapper around the system browser (an extension) never reaches the walk. Set
       and the file missing: `NOT RUN, NOT ARMED: browser_executable <path> missing`, exit 0, `{"armed": false}`. Unset: nothing
       changes. Ignored in the factory (the image's own browser).
+  capacity --run R --tramos T       `fwx capacity` asked again for 2 x T walkers, for a caller that learns the number of tramos only after
+      `up` (the ui-walk workflow: `up` runs first, the tramos come from an agent): prints the capacity object and rewrites `capacity` in
+      `run.json`. With `container` the quota never passes the apps `up` already started.
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
       `--run` is a run folder or a namespace; without it, the repository's only open run.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
@@ -128,6 +131,7 @@ USAGES = {
     "up": "usage: fwx walk up --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]",
     "ab": "usage: fwx walk ab [--run R] <session> <agent-browser args...>",
     "pw": "usage: fwx walk pw [--run R] <session> <playwright-cli args...>",
+    "capacity": "usage: fwx walk capacity --run R --tramos T",
     "arm-control": "usage: fwx walk arm-control --run R --screen URL",
     "findings": "usage: fwx walk findings --run R",
     "review-page": "usage: fwx walk review-page --run R --fixed FILE",
@@ -494,6 +498,26 @@ def cmd_up(argv):
     write_json(os.path.join(walks, "walk.json"), {"run_dir": run_dir, "namespace": ns, "repo": repo, "owner_pid": owner,
                                                   "owner_start": start, "started": started_at, "closed": None})
     say({k: run[k] for k in ("armed", "run", "run_dir", "url", "apps", "namespace", "capacity")})
+    return 0
+
+
+def cmd_capacity(argv):
+    o, _ = opts("capacity", argv, ("--run", "--tramos"))
+    if "--run" not in o or "--tramos" not in o:
+        raise usage("capacity")
+    try:
+        tramos = int(o["--tramos"])
+        assert tramos >= 1
+    except (ValueError, AssertionError):
+        raise usage("capacity", "--tramos is a whole number of 1 or more")
+    rd = run_dir_of(o["--run"])
+    run = read_json(os.path.join(rd, "run.json"), "run.json")
+    cap = capacity(run["repo"], tramos * 2, run["container"])
+    if run["container"]:
+        cap["allowed"] = min(cap["allowed"], len(run["apps"]))
+    run["capacity"] = cap
+    write_json(os.path.join(rd, "run.json"), run)
+    say(cap)
     return 0
 
 
@@ -1290,7 +1314,7 @@ def selftest_report(checks, o, result_file, as_json):
     return 0 if res["passed"] else 1
 
 
-COMMANDS = {"up": cmd_up, "ab": cmd_ab, "pw": cmd_pw, "arm-control": cmd_arm_control, "findings": cmd_findings,
+COMMANDS = {"up": cmd_up, "capacity": cmd_capacity, "ab": cmd_ab, "pw": cmd_pw, "arm-control": cmd_arm_control, "findings": cmd_findings,
             "review-page": cmd_review_page, "review-answers": cmd_review_answers, "down": cmd_down, "sweep": cmd_sweep,
             "selftest": cmd_selftest}
 
