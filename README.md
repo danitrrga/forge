@@ -25,6 +25,7 @@ python3 bin/fwx wave prepare --part-dir <dir> --plane session --branch <phase br
 python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; exit 0 green, 1 red, 2 cannot prove the commit
 python3 bin/fwx playbooks tree    # the workflow tree (an Excalidraw file): each node and its exits; --tree PATH, --scope NAME
 python3 bin/fwx walk up --dir <phase dir> --part N --round R    # UI walk: starts the seeded local app (`up`), drives browsers with guards (`ab`, `pw`), plants the control (`arm-control`), merges findings (`findings`), builds and reads the review (`review-page`, `review-answers`) and closes with a process count (`down`, `sweep`); NOT RUN, NOT ARMED without `app_run` or `agent_browser`
+python3 bin/fwx walk selftest [--json]    # proves the walk environment works, on the host or inside an image: `up`, the app answers 200, `agent-browser` opens it with the demo session, a non-blank capture, `down` leaves 0 processes; exit 0 all pass, 1 a check failed, 2 NOT RUN, NOT ARMED
 python3 bin/fwx screenshot --run <run dir> [--screens JSON] [--out DIR]    # one 1440-wide capture per walked screen, through `walk ab` and its guards, no model; one line each, exit 1 naming the missing ones
 python3 bin/fwx playbooks check    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
 ```
@@ -57,6 +58,11 @@ fix. With no file, the defaults apply and one line on stderr says so.
 `fwx model <role> <size>` prints the model for a role and size and exits 2 on an unknown role or size, naming the valid
 ones. `linear.labels` maps a label's neutral name in this repository to the name it has in your Linear workspace; a
 name with no entry is used as it is.
+
+`walk.browser_executable` (default `null`) is the path of the browser the UI walk uses instead of the one `agent-browser`
+finds, for a machine where that one goes through a wrapper (an extension, a window flag): `fwx walk ab` then adds
+`--executable-path <path>` to every call. If the file is not there, `fwx walk up` is `NOT RUN, NOT ARMED` (exit 0, `armed: false`).
+It is ignored inside the factory image, which has its own browser.
 
 ## Install
 

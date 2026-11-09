@@ -1,4 +1,4 @@
-"""The UI walk's app, browsers, planted control, findings file, review and close: fwx walk up|ab|pw|arm-control|findings|review-page|review-answers|down|sweep ...
+"""The UI walk's app, browsers, planted control, findings file, review and close: fwx walk up|ab|pw|arm-control|findings|review-page|review-answers|down|sweep|selftest ...
 
 Everything the walk does with the app and the browsers is code here, never a prompt. Each subcommand but `ab` and `pw` (which
 hand the program's own output through) prints one JSON object and leaves it in the run's folder. Exit 0 done, 1 something failed
@@ -18,6 +18,10 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       once per walker with FWX_WALK_NAME=<namespace>-w<k> (and `{name}` in `up`, `run`, `down` and `url`), and session `w<k>` of `ab`
       uses app k. With FWX_FACTORY_CONTAINER=1 the image's `up` and `down` (FACTORY_UI_DIR) run and `app_run` is not read; the URL
       is the last line of its output, `{"url": ...}`.
+      Config key `walk.browser_executable` (read here through config.py, kept in run.json): the path of the browser `ab` must use,
+      added to every call as `--executable-path`, so a wrapper around the system browser (an extension) never reaches the walk. Set
+      and the file missing: `NOT RUN, NOT ARMED: browser_executable <path> missing`, exit 0, `{"armed": false}`. Unset: nothing
+      changes. Ignored in the factory (the image's own browser).
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
       `--run` is a run folder or a namespace; without it, the repository's only open run.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
@@ -34,6 +38,14 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   down --run R         `close --all` of the run's namespace, the app's `down` (per app; the image's in the factory; with `container`
       `docker rm -f` by exact name), then a count of the processes whose environment or command line carries the namespace:
       `down.json` says how many it looked at and what is left; exit 1 if anything is, or a `down` or a container failed.
+  selftest [--dir D] [--repo P] [--image-id ID] [--json]
+      Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
+      `agent-browser` opens the URL with the demo session and the snapshot has an element, a capture comes out (a PNG, not the
+      `about:blank` one at that size), `down` leaves 0 processes. Each check says how many things it looked at; looking at 0 is a
+      failure, and a check whose predecessor failed is "not reached". The run folder is `<D>/ui-walk/1-1/` (D defaults to
+      `<git-common-dir>/fwx/selftest`); `selftest.json` there is `{image_id?, passed, checks: [{name, looked_at, ok, detail}]}`.
+      Exit 0 all pass, 1 a check failed (named on stderr), 2 `NOT RUN, NOT ARMED` (no `app_run`, agent_browser off, no
+      agent-browser): 2 is not green. `down` always runs once `up` armed. With FWX_FACTORY_CONTAINER=1 the image's scripts are the app.
   sweep        `down` of every open run of `<git-common-dir>/fwx/walks/` whose owner process is gone. The owner is the
       `claude` process above `up` (FWX_WALK_OWNER_PID overrides); with no owner found the run is swept after STALE_H hours.
 
@@ -48,18 +60,21 @@ and in the code of `eval`. Every accepted call carries the namespace, the sessio
 Measured by 3.5 U1 (framework-discuss/plan/3.5-review/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
 and `state load` are rejected under `--allowed-domains`); only the command that launches the daemon goes through `run`, the others
 find it with AGENT_BROWSER_SOCKET_DIR; Playwright's CLI inside the rig is `npx --offline --no-install`; the browser is
-/usr/bin/google-chrome-stable through Omarchy's wrapper (it loads an extension and passes --ozone-platform=wayland), which `ab` does
-not work around.
+/usr/bin/google-chrome-stable through Omarchy's wrapper (it loads an extension and passes --ozone-platform=wayland); the key
+`walk.browser_executable` (above) is how a machine points `ab` at a clean browser instead.
 """
 import base64
+import contextlib
 import datetime
 import glob
 import hashlib
+import io
 import json
 import os
 import re
 import shlex
 import shutil
+import struct
 import subprocess
 import sys
 import time
@@ -109,6 +124,7 @@ USAGES = {
     "review-answers": "usage: fwx walk review-answers --run R FILE",
     "down": "usage: fwx walk down --run R",
     "sweep": "usage: fwx walk sweep",
+    "selftest": "usage: fwx walk selftest [--dir D] [--repo P] [--image-id ID] [--json]",
 }
 
 
@@ -394,6 +410,9 @@ def cmd_up(argv):
     app = app_spec(o, cfg, factory)
     if app is None:
         return not_armed("no app_run in the project's configuration and no --app")
+    exe = None if factory else cfg["walk"]["browser_executable"]
+    if exe and not os.path.isfile(exe):
+        return not_armed("browser_executable %s missing" % exe)
     run_dir = os.path.join(os.path.abspath(o["--dir"]), "ui-walk", "%d-%d" % (part, rnd))
     ns = namespace_of(run_dir, part, rnd)
     container = bool(app.get("container"))
@@ -453,7 +472,7 @@ def cmd_up(argv):
     owner, start = find_owner()
     started_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     run = {"armed": True, "namespace": ns, "run_dir": run_dir, "repo": repo, "part": part, "round": rnd, "factory": factory,
-           "container": container, "url": apps[0]["url"], "run": apps[0]["run"], "hosts": hosts,
+           "container": container, "url": apps[0]["url"], "run": apps[0]["run"], "hosts": hosts, "browser_executable": exe,
            "shots": os.path.join(walks, "shots"), "capacity": cap, "started": started_at,
            "apps": [{k: v for k, v in a.items() if k != "log_dir"} for a in apps]}
     os.makedirs(run["shots"], exist_ok=True)
@@ -624,6 +643,8 @@ def cmd_ab(argv):
     fresh = not alive(mark)
     common = ["--namespace", run["namespace"], "--session", session, "--idle-timeout", IDLE_TIMEOUT, "--screenshot-dir", run["shots"],
               "--args", FONT_ARGS, "--allowed-domains", ",".join(run["hosts"])]
+    if run.get("browser_executable"):
+        common += ["--executable-path", run["browser_executable"]]
     steps = []
     if fresh:
         for name, value in cookies_of(app["state"]):
@@ -1066,8 +1087,185 @@ def cmd_sweep(argv):
     return 1 if failed else 0
 
 
+# ------------------------------------------------------------------------------------------------------------------ selftest
+CHECKS = ("up", "app answers", "snapshot", "capture", "down")
+PNG_SIG = b"\x89PNG\r\n\x1a\n"
+PROBE = """import sys, urllib.error, urllib.request
+LOCAL = ("localhost", "127.0.0.1", "::1")
+
+
+class Local(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        host = urllib.request.urlparse(newurl).hostname or ""
+        return super().redirect_request(req, fp, code, msg, headers, newurl) if host in LOCAL or host.endswith(".localhost") else None
+
+
+try:
+    print(urllib.request.build_opener(urllib.request.ProxyHandler({}), Local).open(sys.argv[1], timeout=10).status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except Exception as e:
+    print("error: %s" % e)
+"""
+
+
+def png_of(path):
+    """((width, height, sha256), None) of a PNG file; (None, why) for a missing, empty or non-PNG one."""
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+    except OSError as e:
+        return None, "screenshot is missing (%s)" % e.strerror
+    if not data:
+        return None, "screenshot is empty"
+    if len(data) < 24 or data[:8] != PNG_SIG or data[12:16] != b"IHDR":
+        return None, "screenshot is not a PNG"
+    w, h = struct.unpack(">II", data[16:24])
+    return (w, h, hashlib.sha256(data).hexdigest()), None
+
+
+def probe_apps(run):
+    """(apps looked at, [what is wrong]): each app is asked for its url from inside its network (`app_run.run`), and must answer 200."""
+    bad = []
+    for a in run["apps"]:
+        prefix = shlex.split(a["run"])
+        argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, a["url"]]
+        try:
+            r = subprocess.run(argv, cwd=run["repo"], env=clean_env(), capture_output=True, text=True, timeout=60)
+            got = (r.stdout.strip().splitlines() or ["no answer"])[-1]
+        except FileNotFoundError:
+            got = "%s is not on the PATH" % argv[0]
+        except subprocess.TimeoutExpired:
+            got = "timed out"
+        if got != "200":
+            bad.append("app not answering: GET %s gave %s" % (a["url"], got))
+    return len(run["apps"]), bad
+
+
+def browser_call(run, args):
+    """(rc, stdout, stderr) of `fwx walk ab` on session w1 of the run: the guards and the demo session are the walk's own."""
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "walk", "ab", "--run", run["run_dir"], "w1"] + args,
+                       cwd=run["repo"], env=clean_env(), capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr
+
+
+def browser_checks(run, rec):
+    """The snapshot and capture checks. The blank reference is the first screenshot of the fresh browser (about:blank, which `ab`
+    would refuse to open): same session, same size as the page's. A missing agent-browser (rc 77) stops the selftest, NOT RUN."""
+    rd, url, state = run["run_dir"], run["url"], run["apps"][0]["state"]
+    if not cookies_of(state):
+        rec("snapshot", 0, "no demo session: %s holds no cookie (the app's up must leave one there)" % state, False)
+        rec("capture", 0, "not reached: no demo session", False)
+        return
+    blank, page = os.path.join(rd, "selftest-blank.png"), os.path.join(rd, "selftest-page.png")
+    got, why = {}, None
+    for name, args in (("blank", ["screenshot", blank]), ("open", ["open", url]), ("snapshot", ["snapshot"]), ("page", ["screenshot", page])):
+        rc, out, err = browser_call(run, args)
+        if rc == 77:
+            raise Stop(err.strip() or "NOT RUN, NOT ARMED: agent-browser missing", 2)
+        if rc:
+            why = "agent-browser %s exited %d: %s" % (args[0], rc, (err.strip().splitlines() or ["no output"])[-1][:200])
+            break
+        got[name] = out
+    if "snapshot" not in got:
+        rec("snapshot", 0, why, False)
+        rec("capture", 0, "not reached: " + why, False)
+        return
+    n = sum(1 for line in got["snapshot"].splitlines() if re.search(r"\[ref=e\d+\]|@e\d+", line))
+    rec("snapshot", n, "%d element(s) in the snapshot of %s" % (n, url) if n else "empty snapshot: %s opened with the demo session shows no element" % url, n > 0)
+    if "page" not in got:
+        rec("capture", 0, why, False)
+        return
+    (b, why_b), (p, why_p) = png_of(blank), png_of(page)
+    if why_p:
+        rec("capture", 1, why_p, False)
+    elif why_b:
+        rec("capture", 1, "the about:blank reference: " + why_b, False)
+    elif b[:2] != p[:2]:
+        rec("capture", 2, "the screenshot is %dx%d and the blank one %dx%d: not comparable" % (p[0], p[1], b[0], b[1]), False)
+    elif b[2] == p[2]:
+        rec("capture", 2, "screenshot is blank: identical to the about:blank one at %dx%d" % (p[0], p[1]), False)
+    else:
+        rec("capture", 2, "a %dx%d PNG, different from the about:blank one" % (p[0], p[1]), True)
+
+
+def cmd_selftest(argv):
+    as_json = "--json" in argv
+    o, _ = opts("selftest", [a for a in argv if a != "--json"], ("--dir", "--repo", "--image-id"))
+    repo = o.get("--repo") or base.toplevel(os.getcwd())
+    if not repo or not os.path.isdir(repo):
+        raise Stop("no repository: --repo %r, and the current folder is in none" % o.get("--repo"))
+    repo = os.path.realpath(repo)
+    folder = os.path.abspath(o.get("--dir") or os.path.join(common_dir(repo), "fwx", "selftest"))
+    result_file = os.path.join(folder, "ui-walk", "1-1", "selftest.json")
+    if os.path.exists(result_file):
+        os.remove(result_file)  # a result of an earlier run must never stand for this one
+    checks = {}
+
+    def rec(name, looked, detail, ok):
+        checks[name] = {"name": name, "looked_at": looked, "ok": bool(ok) and looked > 0, "detail": detail}
+
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(buf):
+            cmd_up(["--dir", folder, "--part", "1", "--round", "1", "--repo", repo])
+    except Stop as e:
+        if e.code == 77:
+            raise Stop(str(e), 2)
+        rec("up", 0, str(e).splitlines()[0][:300], False)
+        return selftest_report(checks, o, result_file, as_json)
+    armed = json.loads(buf.getvalue().strip().splitlines()[-1])
+    if not armed.get("armed"):
+        return 2  # `up` said why on stderr: NOT RUN, NOT ARMED, and 2 is not green
+    run = load_run(armed["run_dir"])
+    rec("up", len(run["apps"]), "armed, url %s" % run["url"], bool(run["url"]))
+    try:
+        looked, bad = probe_apps(run)
+        rec("app answers", looked, "; ".join(bad) if bad else "%d app(s) answered 200 from inside their network" % looked, not bad)
+        if bad:
+            for name in ("snapshot", "capture"):
+                rec(name, 0, "not reached: the app is not answering", False)
+        else:
+            browser_checks(run, rec)
+    finally:
+        try:
+            res, code = do_down(run)
+            left = len(res["left"])
+            if left:
+                detail = "%d process%s left%s" % (left, "" if left == 1 else "es", "".join("; pid %d: %s" % (p["pid"], p["cmd"][:80]) for p in res["left"]))
+            elif code:
+                detail = "down failed: " + "; ".join("%s exited %s" % (s_["step"], s_["rc"]) for s_ in res["steps"] if s_["rc"])
+            else:
+                detail = "looked at %d processes, 0 left" % res["looked"]
+            rec("down", res["looked"], detail, not left and not code)
+            if not left and not code:
+                mark_closed(run)
+        except Stop as e:
+            rec("down", 0, str(e), False)
+    return selftest_report(checks, o, result_file, as_json)
+
+
+def selftest_report(checks, o, result_file, as_json):
+    full = [checks.get(n) or {"name": n, "looked_at": 0, "ok": False, "detail": "not reached: up did not arm"} for n in CHECKS]
+    res = {"passed": all(c["ok"] for c in full), "checks": full}
+    image = o.get("--image-id") or os.environ.get("FWX_IMAGE_ID")
+    if image:
+        res = dict({"image_id": image}, **res)
+    write_json(result_file, res)
+    if as_json:
+        say(res)
+    else:
+        for c in full:
+            sys.stdout.write("%s %s (looked at %d): %s\n" % ("PASS" if c["ok"] else "FAIL", c["name"], c["looked_at"], c["detail"]))
+    for c in full:
+        if not c["ok"]:
+            sys.stderr.write("fwx walk selftest: FAIL %s: %s\n" % (c["name"], c["detail"]))
+    return 0 if res["passed"] else 1
+
+
 COMMANDS = {"up": cmd_up, "ab": cmd_ab, "pw": cmd_pw, "arm-control": cmd_arm_control, "findings": cmd_findings,
-            "review-page": cmd_review_page, "review-answers": cmd_review_answers, "down": cmd_down, "sweep": cmd_sweep}
+            "review-page": cmd_review_page, "review-answers": cmd_review_answers, "down": cmd_down, "sweep": cmd_sweep,
+            "selftest": cmd_selftest}
 
 
 def main(argv):
