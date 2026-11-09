@@ -1,0 +1,4 @@
+# gitleaks findings that are not secrets, one fingerprint (commit:file:rule:line) each.
+# fwx history, imported into this repository: the fixture of a test that proves `redact` hides a value named like a
+# credential (`env = {"MY_API_KEY": "abcd1234efgh"}`), not a credential.
+aca68c115eafe082d7bf38244491c970a012f2b9:tests/test_verify.py:generic-api-key:340
