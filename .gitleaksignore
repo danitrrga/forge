@@ -1,0 +1,6 @@
+# gitleaks findings that are not secrets, one fingerprint (commit:file:rule:line) each.
+# fwx history, imported into this repository: a fixed dummy value under a credential-like name in the redact test of
+# tests/test_verify.py. It proves `redact` hides such a value; it is not a credential.
+aca68c115eafe082d7bf38244491c970a012f2b9:tests/test_verify.py:generic-api-key:340
+# The first attempt (PR 97, closed) quoted the fixture in this file's comment; its commit is still a ref on GitHub.
+229f1c9dadc230bb30acf838239f52cf9f240e8a:.gitleaksignore:generic-api-key:3
