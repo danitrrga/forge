@@ -100,7 +100,7 @@ FONT_ARGS = "--font-render-hinting=none"  # U1: changes no capture; the spec kee
 PW_VERSION = "0.1.23"  # @playwright/cli, with Firefox 158 = firefox-1569 (probe.md step 10)
 PW_FIREFOX = "firefox-1569"
 UP_TIMEOUT_S = 900
-WAIT_URL_S = 120
+WAIT_URL_S = int(os.environ.get("FWX_WALK_WAIT_S") or 120)
 DRAIN_S = 3  # how long `down` waits for processes to exit after the close
 STALE_H = 12
 WEBP = ("fps=12,scale=640:-1", "60")  # 640 px, 12 fps, quality 60: 13 KB for the 5 s clip of U1
@@ -307,8 +307,12 @@ class Quiet(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def answering(url):
-    """Whether anything answers at the URL: any HTTP response counts, a refused connection or a timeout does not."""
+def answering(url, run="", cwd=None):
+    """Whether anything answers at the URL, asked from where the app lives: through its `run` prefix when it has one (an app in a
+    private network is not visible from the host, and a server of the host's own on that port is not the app), from the host when
+    `run` is empty. Any HTTP response counts, a refused connection or a timeout does not."""
+    if run:
+        return ask(url, run, cwd).isdigit()
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), Quiet)
     try:
         opener.open(url, timeout=1.0).close()
@@ -319,10 +323,10 @@ def answering(url):
         return False
 
 
-def wait_for(url):
+def wait_for(url, run="", cwd=None):
     end = time.monotonic() + WAIT_URL_S
     while time.monotonic() < end:
-        if answering(url):
+        if answering(url, run, cwd):
             return True
         time.sleep(0.5)
     return False
@@ -443,7 +447,7 @@ def cmd_up(argv):
     if len({a["url"] for a in apps if a["url"]}) < len([a for a in apps if a["url"]]):
         raise Stop("the apps share the url %s: put {name} in app_run.url" % apps[0]["url"])
     for a in apps:
-        if a["url"] and answering(a["url"]):
+        if a["url"] and answering(a["url"], a["run"], repo):
             raise Stop("%s is already answering before up: another app (or a run that was not closed) is there" % a["url"])
     os.makedirs(run_dir, exist_ok=True)
     for stale in ("down.json", "run.json"):
@@ -469,7 +473,7 @@ def cmd_up(argv):
                     raise Stop("the image's up printed no {\"url\": ...} on its last line: %s" % tail(log, 3), 1)
                 if not local_host(a["url"]):
                     raise Stop("app url %s is not local (localhost, 127.0.0.1, ::1, *.localhost)" % a["url"])
-            if not wait_for(a["url"]):
+            if not wait_for(a["url"], a["run"], repo):
                 raise Stop("nothing answered at %s within %d s after up" % (a["url"], WAIT_URL_S), 1)
     except Stop:
         stop_apps(started, repo, env_base)
@@ -1142,19 +1146,24 @@ def png_of(path):
     return (w, h, hashlib.sha256(data).hexdigest()), None
 
 
+def ask(url, run, cwd):
+    """What GET `url` gives (a status code, or a reason), asked from inside the app's network: the probe runs through the `run` prefix."""
+    prefix = shlex.split(run)
+    argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, url]
+    try:
+        r = subprocess.run(argv, cwd=cwd, env=clean_env(), capture_output=True, text=True, timeout=60)
+        return (r.stdout.strip().splitlines() or ["no answer"])[-1]
+    except FileNotFoundError:
+        return "%s is not on the PATH" % argv[0]
+    except subprocess.TimeoutExpired:
+        return "timed out"
+
+
 def probe_apps(run):
     """(apps looked at, [what is wrong]): each app is asked for its url from inside its network (`app_run.run`), and must answer 200."""
     bad = []
     for a in run["apps"]:
-        prefix = shlex.split(a["run"])
-        argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, a["url"]]
-        try:
-            r = subprocess.run(argv, cwd=run["repo"], env=clean_env(), capture_output=True, text=True, timeout=60)
-            got = (r.stdout.strip().splitlines() or ["no answer"])[-1]
-        except FileNotFoundError:
-            got = "%s is not on the PATH" % argv[0]
-        except subprocess.TimeoutExpired:
-            got = "timed out"
+        got = ask(a["url"], a["run"], run["repo"])
         if got != "200":
             bad.append("app not answering: GET %s gave %s" % (a["url"], got))
     return len(run["apps"]), bad

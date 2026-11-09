@@ -283,6 +283,97 @@ def case_probe(R, S):
         sc.stop()
 
 
+NS = """#!%(py)s
+import os, sys
+mode = os.environ["FAKE_NS"]
+with open(os.path.join(os.environ["FAKE_NS_DIR"], "calls"), "a") as f:
+    f.write(" ".join(sys.argv[1:5] + sys.argv[-1:]) + "\\n")
+print("200" if mode == "always" or (mode == "after" and os.path.exists("up-ran")) else "error: refused")
+"""
+
+
+def case_run_prefix(R, S):
+    """An app brought up through a `run` prefix lives where the prefix says (a private network), so `up` asks from there, never from
+    the host. `fakens run --` stands for the prefix: it answers the probe from FAKE_NS (none: nothing answers there, always: the app is
+    there, after: the app answers once `up` has run). Seen red on the code that asked from the host (FWX_WALK_WAIT_S=6 keeps the wait short):
+      FAIL: run prefix: a host server the prefix cannot see: up armed: rc 2: fwx walk up: http://127.0.0.1:N is already answering before up: another app (or a run that was not closed) is there
+      FAIL: run prefix: the app answers inside the prefix only after up: up armed: rc 1: fwx walk up: nothing answered at http://127.0.0.1:N within 6 s after up
+      FAIL: run prefix: an app already answering inside the prefix: exit: got 1, want 2   (the host saw nothing, so the guard never bit)"""
+    def scene(mode):
+        sc = Scene(prefix="fakens run --")
+        script(os.path.join(sc.bin, "fakens"), NS % {"py": PY})
+        sc.env.update(FAKE_NS=mode, FAKE_NS_DIR=sc.state, FWX_WALK_WAIT_S="6")
+        return sc
+    nothing_up = "python3 -c \"open('up-ran', 'w').close()\""
+    # a host server on the app's port that the prefix cannot see: not the app, so up arms (the pre-up check asks inside the prefix)
+    sc = scene("none")
+    srv = subprocess.Popen([PY, "-m", "http.server", str(sc.port), "--bind", "127.0.0.1"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, cwd=sc.state)
+    try:
+        for _ in range(50):
+            c = socket.socket()
+            ok = c.connect_ex(("127.0.0.1", sc.port)) == 0
+            c.close()
+            if ok:
+                break
+            time.sleep(0.1)
+        app = json.dumps({"up": "python3 up.py %d %s" % (sc.port, sc.pidfile), "run": "fakens run --", "down": "true", "url": sc.url})
+        # nothing answers inside the prefix, and up leaves nothing that answers there: the post-up wait must time out, not take the host server
+        r, o = sc.up(R, "--app", app)
+        S.ok("run prefix: a host server the prefix cannot see: up ran", os.path.exists(os.path.join(sc.repo, "up-ran")), "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("run prefix: a host server is not the app: the wait asks inside the prefix too (exit 1, nothing answered)",
+             r.returncode == 1 and "nothing answered at %s" % sc.url in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+    finally:
+        srv.terminate()
+        srv.wait()
+        sc.stop()
+    sc = scene("after")
+    srv = subprocess.Popen([PY, "-m", "http.server", str(sc.port), "--bind", "127.0.0.1"], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, cwd=sc.state)
+    try:
+        for _ in range(50):
+            c = socket.socket()
+            ok = c.connect_ex(("127.0.0.1", sc.port)) == 0
+            c.close()
+            if ok:
+                break
+            time.sleep(0.1)
+        app = json.dumps({"up": nothing_up, "run": "fakens run --", "down": "true", "url": sc.url})
+        r, o = sc.up(R, "--app", app)
+        S.ok("run prefix: a host server the prefix cannot see: up armed", r.returncode == 0 and o and o.get("armed") is True,
+             "rc %d: %s %s" % (r.returncode, r.stdout, r.stderr))
+        got = open(os.path.join(sc.state, "calls")).read().splitlines() if os.path.exists(os.path.join(sc.state, "calls")) else []
+        S.ok("run prefix: the probe went through the prefix, asking for the app's url, before and after up",
+             [ln.split()[-1] for ln in got] == [sc.url] * 2 and all(ln.startswith("run -- python3 -c ") for ln in got), str(got)[:300])
+        if o and o.get("run_dir"):
+            sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        srv.terminate()
+        srv.wait()
+        sc.stop()
+    # the host port is free and the app answers inside the prefix only after up: up waits and arms
+    sc = scene("after")
+    try:
+        app = json.dumps({"up": nothing_up, "run": "fakens run --", "down": "true", "url": sc.url})
+        r, o = sc.up(R, "--app", app)
+        S.ok("run prefix: the app answers inside the prefix only after up: up armed", r.returncode == 0 and o and o.get("armed") is True,
+             "rc %d: %s %s" % (r.returncode, r.stdout, r.stderr))
+        if o and o.get("run_dir"):
+            sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        sc.stop()
+    # the guard still bites: something already answers inside the prefix's network
+    sc = scene("always")
+    try:
+        app = json.dumps({"up": nothing_up, "run": "fakens run --", "down": "true", "url": sc.url})
+        r, o = sc.up(R, "--app", app)
+        S.eq("run prefix: an app already answering inside the prefix: exit", r.returncode, 2)
+        S.ok("run prefix: an app already answering inside the prefix: says so", "already answering before up" in r.stderr and sc.url in r.stderr, r.stderr)
+        S.ok("run prefix: an app already answering inside the prefix: up was not run", not os.path.exists(os.path.join(sc.repo, "up-ran")))
+    finally:
+        sc.stop()
+
+
 def armed(sc, R, S, label, **kw):
     r, o = sc.up(R, **kw)
     if not S.ok("%s: up armed" % label, r.returncode == 0 and o and o.get("armed") is True, "rc %d: %s %s" % (r.returncode, r.stdout, r.stderr)):
@@ -1040,7 +1131,7 @@ def case_usage(R, S):
     S.ok("`fwx help` lists walk", "walk" in h.stdout, h.stdout)
 
 
-CASES = [case_url_guard, case_probe, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_arm_control, case_down_count,
+CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_arm_control, case_down_count,
          case_off, case_container, case_capacity_missing, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage]
 
@@ -1049,7 +1140,13 @@ W = "lib/fwx/commands/walk.py"
 # has gone is an error, never a silent pass. The first eleven are the unit's controls, in its order.
 MUTANTS = [
     ("1 url guard", case_url_guard, 'if a["url"] and not local_host(a["url"]):', "if False:", "url guard: up with https://app.example.test: exit: got 1, want 2"),
-    ("2 probe", case_probe, 'if a["url"] and answering(a["url"]):', "if False:", "probe: a server already answering: exit: got 1, want 2"),
+    ("2 probe", case_probe, 'if a["url"] and answering(a["url"], a["run"], repo):', "if False:", "probe: a server already answering: exit: got 1, want 2"),
+    ("2 pre-up asked from the host", case_run_prefix, 'if a["url"] and answering(a["url"], a["run"], repo):', 'if a["url"] and answering(a["url"]):',
+     "run prefix: a host server the prefix cannot see: up armed"),
+    ("2 post-up asked from the host", case_run_prefix, 'if not wait_for(a["url"], a["run"], repo):', 'if not wait_for(a["url"]):',
+     "run prefix: the app answers inside the prefix only after up: up armed"),
+    ("2 guard off inside the prefix", case_run_prefix, 'if a["url"] and answering(a["url"], a["run"], repo):', "if False:",
+     "run prefix: an app already answering inside the prefix: exit: got 0, want 2"),
     ("3 refused flags", case_ab_guard, 'REFUSED_FLAGS = ("--cdp", "--auto-connect", "--profile", "--headed")', "REFUSED_FLAGS = ()",
      "ab guard: --cdp 9222 snapshot: exit"),
     ("3 refused words", case_ab_guard, 'REFUSED_WORDS = ("connect", "auth", "batch", "chat")', "REFUSED_WORDS = ()", "ab guard: connect 9222: exit"),
