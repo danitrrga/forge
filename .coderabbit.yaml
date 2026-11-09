@@ -1,10 +1,12 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
-# CodeRabbit reviews every PR to the default branch, and its approval is required to merge
-# (repo-kit's `ruleset --coderabbit`: one approval, stale approvals dismissed, the `CodeRabbit`
-# check required). Strictness follows risk, not a repo-wide dial: `reviews.profile` is one value
-# for the whole repo, so the dial that varies per PR is the approval limit below, and the review
-# text per path is `path_instructions`.
+# CodeRabbit reviews and comments on every PR to the default branch. Its approval is required only
+# where a PR is security-relevant: the paths under `overrides` below (kept equal to RISKY in
+# .github/scripts/coderabbit_gate.py by tests/test_coderabbit_gate.py) or the `security` label. The
+# status `CodeRabbit approval` (.github/workflows/coderabbit-gate.yml, required by repo-kit's
+# `ruleset --coderabbit`) is pending on those until CodeRabbit approves the head commit, and green at
+# once on every other PR. Strictness follows risk: `reviews.profile` is one value for the whole repo,
+# so what varies per PR is the approval limit below and the review text per path (`path_instructions`).
 #
 # CodeRabbit never writes to the repo: every finishing touch that commits or opens a PR is off.
 language: en-US
@@ -49,8 +51,8 @@ reviews:
     drafts: false
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 0
-    # Dependabot's PRs get no review and no request-changes the gate could hold forever; they
-    # still need one approval from the owner, who is not their author.
+    # Dependabot's PRs get no review, so the gate could never be released by CodeRabbit on one that
+    # touches .github/: there the owner's approval releases it (the gate script).
     ignore_usernames:
       - "dependabot[bot]"
 
