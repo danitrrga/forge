@@ -185,6 +185,22 @@ async function withSlot(tag, fn) {
   }
 }
 
+// `up` runs before the tramos are known, so it asked capacity for one tramo (a quota of 2 at most). Once they are, ask again for them
+// (`fwx walk capacity`, which keeps the browser's memory figure and the container rule) and take that answer; when it gives none, the
+// quota `up` gave stays. Called before any walker holds a slot.
+async function sizeQuota(tramos) {
+  const v = await must('capacity', 'fwx walk capacity --run ' + sh(st.runDir) + ' --tramos ' + tramos, true)
+  const c = v && v.rc === 0 ? parseAny(v.stdout) : null
+  const allowed = c && typeof c === 'object' ? c.allowed : null
+  if (!Number.isInteger(allowed)) {
+    log(PHASE + ': capacity for ' + tramos + ' tramo(s) gave no answer' + (v ? ' (exit ' + v.rc + ')' : '') + ': the quota of ' + quota + ' that `up` allowed stays')
+    return
+  }
+  quota = allowed >= 1 ? allowed : 1
+  if (quota !== allowed) log(PHASE + ': capacity allowed ' + allowed + ' for ' + tramos + ' tramo(s): a quota of 1')
+  st.sem.free = SLOTS()
+}
+
 // ---- tramos ---------------------------------------------------------------------------------------------------------------------
 const abs = (u) => {
   const s = String(u)
@@ -389,6 +405,7 @@ async function recheckRun() {
     }
     return { tramo: t, items: groups[id] }
   })
+  await sizeQuota(tramos.length)
   st.tramos = tramos.map((x) => x.tramo)
   log(PHASE + ': recheck of ' + list.length + ' finding(s) in ' + tramos.length + ' tramo(s), verifiers only; no walker, no control')
   st.fixFile = A.recheck
@@ -409,6 +426,7 @@ async function recheckRun() {
 
 async function walkRun(up) {
   const tramos = await getTramos()
+  await sizeQuota(tramos.length)
   st.tramos = tramos
   st.jobs = makeJobs(tramos)
   const verifiers = tramos.length
