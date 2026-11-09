@@ -5,7 +5,7 @@
 **One source of truth for the Claude Code and Codex setup of every project on your machine.**
 
 [![ci](https://github.com/danitrrga/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/danitrrga/forge/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Every project you work on with an agent grows its own skills, MCP servers, hooks and permissions. Copy them
 by hand and they drift: one project has the new server, another still has the old token, a third lost a hook
@@ -24,6 +24,9 @@ session starts.
   per check, exit 1 on a FAIL.
 - **Optional integrations that switch off cleanly.** Codex, GSD and Hindsight are each one switch.
   Turning one off removes only the entries forge wrote.
+- **An agentic workflow that forge installs.** `plugins/fwx` is a Claude Code plugin that runs a project through discuss,
+  plan, worktree execution, review and close, and a factory that takes labelled Linear issues. One profile field, `framework`,
+  turns it on (see [The agentic workflow](#the-agentic-workflow-fwx)).
 - **A personal-data guard.** `forge check-public` and the git hooks refuse a commit that carries a home path,
   an email address, a private IP or a private key, so your own config never leaks into a public repository.
 
@@ -114,6 +117,45 @@ no skill has, a name in both lists, or an excluded name in an `extras` row.
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-trim-dark.png"><img src="docs/assets/fig-trim.png" alt="Which skills each project loads: the api profile keeps only review, so forge writes release off into ~/code/api/.claude/settings.local.json; site and the forge checkout have no skills_keep and load both review and release." width="100%"></picture>
 
+## The agentic workflow: fwx
+
+forge also ships an agentic workflow, **fwx**, in `plugins/fwx/`: a Claude Code plugin with a command line, `plugins/fwx/bin/fwx`,
+built to replace the GSD integration. forge installs and configures it per project, the way it does everything else. A
+project turns it on with `"framework": true` in its profile; `forge sync --apply` then enables the plugin in that project,
+writes the one file the plugin reads, `.claude/fwx.json` (models per role, round cap, Linear labels, checks), and takes it all
+out again when the field goes back to `false`. fwx lives in this repository, with its full history, so its changes are
+reviewed in the same pull requests as the engine's.
+
+It has two entries into one workflow tree (`plugins/fwx/playbooks/`, the spec the checker compares the playbooks against):
+
+- **A supervised session.** You open a chat, and the work goes through discuss (questions with options, no
+  recommendation), pre-mortem, plan, post-mortem on the plan, execution in git worktrees, review, a UI walk when the part
+  touches UI, a report and the close. Only the orchestrator talks to you; every other agent gets the same shared base
+  context and returns a short answer with a path.
+- **The factory.** It takes a Linear issue labelled `factory` and runs the same steps with nobody watching; in the trial
+  mode it never merges. Only work that passes a closed list of mechanical changes is offered to it.
+
+Every deciding step is a command, not a judgement of the model: the merge decision (`fwx decide`), the gate that runs the
+project's checks on a clean tree at the exact commit (`fwx verify`), the cap of fix rounds (`fwx rounds`), how many agents of a
+role may start (`fwx capacity`), and the model of each launch (`fwx model <role> <size>`, from the project's file, never from
+the prose). A check is seen to fail before it is trusted, and a check that could not run says `NOT RUN, NOT ARMED`, never PASS.
+
+What exists today, and what does not:
+
+- **Built and in this repository:** the discuss, pre-mortem, plan and post-mortem skills and agents; the `execute`
+  workflow (waves of executors in worktrees, up to three fix rounds, the gate, reviewers and a verifier); the project's state
+  under `.fwx/`; the Linear client and the `factory-issue` skill that offers work to the factory; the merge decision; the
+  statusline and budget commands; and forge's framework step that installs it.
+- **In progress, not on the default branch yet:** the glue that carries a session from discuss to close, and the UI walk.
+- **Not built:** the factory's unattended runner, the weekly improvement cycle, and the memory part.
+
+```sh
+python3 plugins/fwx/bin/fwx --help              # every command, one line each
+python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test leaves it to this; CI runs it as the fwx job)
+```
+
+`plugins/fwx/README.md` has the command list, the configuration file and the install steps.
+
 ## Measure a skill: skill-bench
 
 Does a skill make the agent better, and at what cost? `scripts/bench/skill_bench.py` answers with numbers. Each
@@ -159,7 +201,7 @@ forge sync [--apply] [--project NAME | --all]               what would change (o
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
-forge test [--mutants]                                      every tracked test_*.py, at nice 19
+forge test [--mutants]                                      every tracked test_*.py, at nice 19 (plugins/fwx has its own runner, `fwx test`)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
@@ -220,13 +262,14 @@ forge is a per-machine registry. If you want configuration that travels with eac
 
 ```sh
 python3 bin/forge test                    # every test, in sandboxes that never touch your HOME
+python3 plugins/fwx/bin/fwx test           # only when you touched plugins/fwx: its suite has its own runner
 python3 bin/forge check-public --all      # no personal data in the engine
 git config core.hooksPath githooks        # run the personal-data guard on every commit and push
 ```
 
-`forge init` sets `core.hooksPath` for you. CI runs `check-public` and a fresh-install test on every push and
+`forge init` sets `core.hooksPath` for you. CI runs `check-public`, a fresh-install test and fwx's suite on every push and
 pull request.
 
 ## License
 
-MIT, see [`LICENSE`](LICENSE). Third-party notices are in [`NOTICE`](NOTICE).
+Apache License 2.0, see [`LICENSE`](LICENSE), for the whole repository including `plugins/fwx`. Third-party notices are in [`NOTICE`](NOTICE).

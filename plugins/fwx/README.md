@@ -1,10 +1,13 @@
 # fwx
 
 fwx is a Claude Code plugin and command line for running a software project in structured steps: a plan, waves of
-agents that carry it out, and the checks that gate each wave. This repository is the plugin (`fwx@fwx`, with its
-marketplace defined here) and the `fwx` command it ships.
+agents that carry it out, and the checks that gate each wave. This folder, `plugins/fwx/` of the forge repository, is the
+plugin (`fwx@fwx`, with its marketplace defined here) and the `fwx` command it ships. It was a repository of its own and
+moved into forge with its history, so forge's pull requests review it; forge's README describes the workflow as a whole.
 
 ## Use
+
+Run these from this folder:
 
 ```
 python3 bin/fwx test    # runs every tests/test_*.py and summarises them
@@ -63,6 +66,9 @@ A setup tool such as forge installs and configures the plugin. By hand, add this
 
 ## Contributing
 
-`git config core.hooksPath githooks` turns on the three hooks (pre-commit, commit-msg, pre-push). They call forge's
-personal-data guard, `forge check-public`, and find forge through `FORGE_ROOT` (the forge checkout) or, failing that,
-`forge` on `PATH`; with neither they refuse. Tests are plain scripts, run with `python3 bin/fwx test`.
+Work happens in forge's repository, and forge's hooks (`git config core.hooksPath githooks` at its root) run its
+personal-data guard, `forge check-public`, over every commit, message and push, this folder included. The three hooks
+in this folder's `githooks/` are the form for a checkout that has only this folder: they call the same guard and find
+forge through `FORGE_ROOT` (the forge checkout) or, failing that, `forge` on `PATH`; with neither they refuse; forge's
+own hooks are the ones in force in a forge checkout. Tests are plain scripts, run with `python3 bin/fwx test` from this folder
+(`forge test` leaves them to it and says so; CI runs them as the `fwx` job of forge's `checks.yml`).
