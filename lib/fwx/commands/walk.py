@@ -43,7 +43,11 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `down.json` says how many it looked at and what is left; exit 1 if anything is, or a `down` or a container failed.
   selftest [--dir D] [--repo P] [--image-id ID] [--json]
       Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
-      `agent-browser` opens the URL with the demo session and the snapshot has an element, a capture comes out (a PNG, not the
+      `agent-browser` opens the URL with the demo session and the snapshot has an element (`open` returns before a cold dev server has
+      drawn the app, so the snapshot is asked again every 0.5 s until it has one, for at most `app_run.ready_timeout_s` seconds, default 30;
+      the optional `app_run.ready` is a text only the logged-in app shows in its snapshot, e.g. a nav label: a snapshot with elements but
+      without it, such as the login screen's skeleton, fails; both keys are read from the project's configuration, not from --app, and
+      not in the factory), a capture comes out (a PNG, not the
       `about:blank` one at that size), `down` leaves 0 processes. Each check says how many things it looked at; looking at 0 is a
       failure, and a check whose predecessor failed is "not reached". The run folder is `<D>/ui-walk/1-1/` (D defaults to
       `<git-common-dir>/fwx/selftest`); `selftest.json` there is `{image_id?, passed, checks: [{name, looked_at, ok, detail}]}`.
