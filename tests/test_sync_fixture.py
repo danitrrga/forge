@@ -132,6 +132,7 @@ class Sandbox:
         write_json(settings, doc)
         self._profiles()
         self._framework()
+        self._local_plugins()
         self._secrets()
         git(self.forge, "init", "-q")
         git(self.forge, "add", "-A")
@@ -195,6 +196,20 @@ class Sandbox:
         settings = os.path.join(self.forge, "config", "forge.json")
         doc = read_json(settings)
         doc["framework"] = dict(doc.get("framework") or {}, plugin_source={"source": "directory", "path": self.plugin_src})
+        write_json(settings, doc)
+
+    def _local_plugins(self):
+        """config/forge.json `local_plugins` of this machine names forge-owned plugin folders as `~/dev/Projects/.../plugins/<name>`,
+        which `~` reads from the toy HOME: nothing there, so the local_plugins step printed "! local plugin -> local_plugins[0]
+        ~/dev/Projects/forge/plugins/<name> is not a directory" on every run (the second session start was not quiet, the second
+        --apply and the forge session exited 1). Same cure as _framework: the toy world gets a marketplace of its own and the
+        key is set to it, whatever the copied forge.json holds, so the step runs here for real instead of reading this machine."""
+        self.local_src = os.path.join(self.root, "local-src")
+        write_json(os.path.join(self.local_src, ".claude-plugin", "marketplace.json"),
+                   {"name": "toylocal", "plugins": [{"name": "toylocal", "source": "./"}]})
+        settings = os.path.join(self.forge, "config", "forge.json")
+        doc = read_json(settings)
+        doc["local_plugins"] = [self.local_src]
         write_json(settings, doc)
 
     def _secrets(self):
@@ -381,8 +396,8 @@ def exercise(sb, check):
     # marketplace add`, the second finds it in the registry. Only the stub runs (it is first on the toy PATH), and a
     # world without a framework profile never calls it.
     cc = read(sb.claude_log).splitlines() if os.path.exists(sb.claude_log) else []
-    want_cc = ["plugin marketplace add %s --scope local" % sb.plugin_src] if sb.framework else []
-    check("claude is the logging stub, called once with the marketplace add over both --apply runs", cc == want_cc,
+    want_cc = ["plugin marketplace add %s --scope local" % d for d in ([sb.plugin_src] if sb.framework else []) + [sb.local_src]]
+    check("claude is the logging stub, called once per marketplace (framework, local plugin) over both --apply runs", cc == want_cc,
           "%s, want %s" % (cc, want_cc))
 
     seed_local(APP)
@@ -515,9 +530,13 @@ def unlogged(sb, before, after, logged):
 
 def changed_by_forge(before, after):
     """changed(), less npm's own debug logs (~/.npm/_logs, from `npm root -g`) and the state and cache
-    mise makes on its first run in a fresh HOME (session start's checks run `mise ls` and `mise where`): theirs, not forge's."""
+    mise makes on its first run in a fresh HOME (session start's checks run `mise ls` and `mise where`): theirs, not forge's.
+    Also the machine's marketplace registry and its directory: forge's `claude plugin marketplace add` (the local_plugins
+    step) makes them, `claude` writes the file and not forge's write log (and the session note does not carry the step's
+    "registered the marketplace" line), so session_cases checks the registry's content instead."""
     return [p for p in changed(before, after) if not under(p, "home/.npm") and not under(p, "home/.local/state/mise")
-            and not under(p, "home/.cache/mise") and p != "home/.cache"]  # the directory mise made for its cache
+            and not under(p, "home/.cache/mise") and p != "home/.cache"  # the directory mise made for its cache
+            and p not in ("home/.claude/plugins", "home/.claude/plugins/known_marketplaces.json")]
 
 
 def session_cases(sb, check):
@@ -542,6 +561,11 @@ def session_cases(sb, check):
         check("a %s session start logs every path it changes, none outside the sandbox" % proj,
               code == 0 and logged and not missing and not outside(logged),
               "exit %d, %d logged, unlogged %s, outside %s" % (code, len(logged), missing[:8], outside(logged)))
+        if proj == "forge":
+            reg = os.path.join(sb.home, ".claude", "plugins", "known_marketplaces.json")
+            held = read_json(reg).get("toylocal", {}).get("source", {}).get("path") if os.path.exists(reg) else None
+            check("the forge session start registered the local plugin's marketplace in the toy registry", held == sb.local_src,
+                  "registry holds %r, want %r" % (held, sb.local_src))
         kept = [l for l, _ in stale[proj] if os.path.lexists(l) or l not in logged]
         check("a %s session start removes the stale links seeded for it, and logs each" % proj, not kept,
               "kept or unlogged %s" % [sb.norm(l) for l in kept])
