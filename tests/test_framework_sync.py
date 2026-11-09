@@ -435,6 +435,20 @@ d5 = load(fwfile(pp5)) or {}
 check("no framework.linear: linear is {\"labels\": {}}", d5.get("linear") == {"labels": {}}, d5.get("linear"))
 check("a bare framework section: the tables are there and empty (the plugin lays its defaults under them)",
       all(isinstance(d5.get(k), dict) for k in ("factory", "weekly", "models", "limits", "paths")), sorted(d5))
+# walk: a `walk` table in the section reaches the file as it is; a section without one leaves the key out (so the
+# plugin's defaults apply, as for rounds). Seen failing before the change, 1 of 189 checks:
+# `FAIL walk: framework.walk.browser_executable reaches fwx.json -- walk is missing from fwx.json -- None`.
+WALK = {"browser_executable": "/srv/browsers/chrome-headless-shell"}
+forge_json(fw=dict(FW, walk=WALK))
+pp5w = project()
+w5w = World()
+w5w.put(profile(pp5w, name="walk"))
+w5w.run()
+d5w = load(fwfile(pp5w)) or {}
+check("walk: framework.walk.browser_executable reaches fwx.json -- walk is %s" % d5w.get("walk", "missing from fwx.json"),
+      (d5w.get("walk") or {}).get("browser_executable") == WALK["browser_executable"], d5w.get("walk"))
+check("walk: no `walk` key in the section means no `walk` key in the file (bare section) -- %s" % d5.get("walk", "absent"),
+      "walk" not in d5 and "walk" not in doc, (d5.get("walk"), doc.get("walk")))
 forge_json(integrations=INTEGRATIONS_ON)
 
 # ------------------------------------------------------------------------------- 2. false: both directions
