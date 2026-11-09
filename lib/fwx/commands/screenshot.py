@@ -20,6 +20,7 @@ browser (`agent-browser` missing).
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -97,14 +98,16 @@ def parse(argv):
     return got
 
 
-def capture(run_dir, session, sc, dest, state):
-    """None when the PNG is at `dest`, else why not. `state` is what the session already has: its size and its theme."""
+def capture(run_dir, session, sc, dest, state, stage=None):
+    """None when the PNG is at `dest`, else why not. `state` is what the session already has: its size and its theme. The browser
+    writes to `stage` (a name in the run's captures folder, since `fwx walk ab` refuses a path in /tmp) and the file is moved to `dest`."""
+    stage = stage or dest
     steps = []
     if not state["sized"]:
         steps.append(["viewport", str(WIDTH), str(HEIGHT)])
     if sc["theme"] != state["theme"]:
         steps.append(["media", sc["theme"]])
-    steps += [["open", sc["url"]], ["screenshot", dest]]
+    steps += [["open", sc["url"]], ["screenshot", stage]]
     for args in steps:
         state["launched"] = True
         why = step(run_dir, session, args)
@@ -114,8 +117,10 @@ def capture(run_dir, session, sc, dest, state):
             state["sized"] = True
         elif args[0] == "media":
             state["theme"] = sc["theme"]
-    if not os.path.isfile(dest) or not os.path.getsize(dest):
+    if not os.path.isfile(stage) or not os.path.getsize(stage):
         return "no file written"
+    if stage != dest:
+        shutil.move(stage, dest)
     return None
 
 
@@ -135,7 +140,10 @@ def cmd(argv):
             dest = os.path.join(out, "%02d-%s-%s-%d.png" % (i, slug(sc["url"]), sc["theme"], WIDTH))
             if os.path.lexists(dest):
                 os.remove(dest)
-            why = capture(run_dir, session, sc, dest, state)
+            stage = os.path.join(run["shots"], "stage-%s" % os.path.basename(dest))
+            if os.path.lexists(stage):
+                os.remove(stage)
+            why = capture(run_dir, session, sc, dest, state, stage if os.path.dirname(dest) != run["shots"] else None)
             tag = "%s theme=%s width=%d" % (sc["url"], sc["theme"], WIDTH)
             if why:
                 miss.append(sc["url"])

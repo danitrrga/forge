@@ -215,7 +215,7 @@ CASES = [case_all_captured, case_one_fails, case_from_run, case_guards]
 MUTANTS = [
     ("ignores errors", case_one_fails, "            if why:\n                miss.append", "            if False:\n                miss.append",
      "one screen fails: exit: got 0, want 1"),
-    ("trusts the exit code, not the file", case_one_fails, "if not os.path.isfile(dest) or not os.path.getsize(dest):", "if False:",
+    ("trusts the exit code, not the file", case_one_fails, "if not os.path.isfile(stage) or not os.path.getsize(stage):", "if False:",
      "no file: exit 1 naming /ghost"),
     ("keeps the old file", case_one_fails, "            if os.path.lexists(dest):\n                os.remove(dest)\n", "",
      "stale: an old PNG at the same name is not taken for a new capture"),
