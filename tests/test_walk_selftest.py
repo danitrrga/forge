@@ -282,13 +282,14 @@ def case_not_armed(R, S):
 
 
 def case_prefix(R, S):
-    """The app answers over the app's network: the probe goes through `app_run.run`."""
+    """The app answers over the app's network: the probe goes through `app_run.run`. Three probes of the url: `up` asks before it starts the
+    app (nothing there), once after (the app answers) and the selftest's own check "app answers"; before 3.5 U3c only the last went through the prefix."""
     sc = Scene(prefix="fakerig run --")
     try:
         r, o = sc.selftest(R, "--json")
         S.ok("prefix: green", r.returncode == 0 and (o or {}).get("passed") is True, "rc %d %s" % (r.returncode, r.stderr))
         probes = [c for c in sc.calls("fakerig") if "-c" in c["argv"] and sc.url in c["argv"]]
-        S.ok("prefix: the probe of the url ran through the rig prefix", len(probes) == 1, str([c["argv"][:4] for c in sc.calls("fakerig")]))
+        S.ok("prefix: the probe of the url ran through the rig prefix", len(probes) == 3, str([c["argv"][:4] for c in sc.calls("fakerig")]))
     finally:
         sc.stop()
 
@@ -368,8 +369,8 @@ CONFIG = "lib/fwx/config.py"
 # (name, case, file, old text, new text, the FAIL text it must produce); each `old` is in its file exactly once.
 MUTANTS = [
     ("app answers: any status", case_red_app, WALK, 'if got != "200":', "if False:", "app not answering: exit: got 0, want 1"),
-    ("app answers: probe outside the prefix", case_prefix, WALK, 'argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, a["url"]]',
-     'argv = [sys.executable, "-c", PROBE, a["url"]]', "prefix: the probe of the url ran through the rig prefix"),
+    ("app answers: probe outside the prefix", case_prefix, WALK, 'argv = prefix + ["python3" if prefix else sys.executable, "-c", PROBE, url]',
+     'argv = [sys.executable, "-c", PROBE, url]', "prefix: the probe of the url ran through the rig prefix"),
     ("snapshot: empty counted as one", case_red_snapshot, WALK, "n = sum(1 for line in got", "n = 1 + sum(1 for line in got", "empty snapshot: exit: got 0, want 1"),
     ("capture: blank not compared", case_red_blank, WALK, "elif b[2] == p[2]:", "elif False:", "screenshot blank: exit: got 0, want 1"),
     ("capture: blank taken after open", case_green, WALK, '(("blank", ["screenshot", blank]), ("open", ["open", url]),',
