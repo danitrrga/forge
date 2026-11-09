@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tally: reset (approved design)</title>
+<style>
+  body { font-family: sans-serif; max-width: 20rem; margin: 3rem auto; }
+  #total { font-size: 3rem; margin: 0 0 1rem; }
+  input { width: 6rem; }
+  .row { display: flex; gap: 0.5rem; align-items: center; }
+  button { padding: 0.35rem 0.8rem; }
+  #reset { background: #fff3cd; border: 1px solid #b58105; color: #5c4400; }
+  #confirm { margin-top: 1.5rem; padding: 1rem; border: 1px solid #b58105; background: #fffaf0; }
+  #confirm p { margin: 0 0 0.75rem; }
+  #confirm .actions { display: flex; gap: 0.5rem; }
+  #confirm-reset { background: #b58105; border: 1px solid #5c4400; color: #fff; }
+</style>
+</head>
+<body>
+<h1>Tally</h1>
+<p id="total">14</p>
+<div class="row">
+  <input id="amount" type="number" step="any" value="1" aria-label="Amount">
+  <button id="add" type="button">Add</button>
+  <button id="reset" type="button">Reset</button>
+</div>
+<!-- the panel as it looks after pressing Reset -->
+<div id="confirm" role="alertdialog" aria-labelledby="confirm-text">
+  <p id="confirm-text">Set the total back to zero? This removes every entry.</p>
+  <div class="actions">
+    <button id="confirm-cancel" type="button">Cancel</button>
+    <button id="confirm-reset" type="button">Reset</button>
+  </div>
+</div>
+</body>
+</html>

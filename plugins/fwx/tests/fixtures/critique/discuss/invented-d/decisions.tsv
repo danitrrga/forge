@@ -1,0 +1,4 @@
+date	id	decision	why	rejected	support	source	supersedes
+day-1	D1	Fix the total so that it counts every entry.	The owner adds amounts and reads the sum; a missing last entry is the bug.		chosen	turn 1	
+day-1	D2	A tally with no entries yet prints a total of 0 and does not fail.	The first thing the owner does with a new tally is look at the total.		approved	turn 2	
+day-1	D3	D2 needs no code change: total() already treats a missing store as an empty tally.	The agent read tally.py while looking for the cause of the bug.		agent-assumption	agent, from reading tally.py	

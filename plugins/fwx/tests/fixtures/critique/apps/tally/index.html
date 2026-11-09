@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Tally</title>
+<style>
+  body { font-family: sans-serif; max-width: 20rem; margin: 3rem auto; }
+  #total { font-size: 3rem; margin: 0 0 1rem; }
+  input { width: 6rem; }
+</style>
+</head>
+<body>
+<h1>Tally</h1>
+<p id="total">0</p>
+<form id="add-form">
+  <input id="amount" type="number" step="any" value="1" aria-label="Amount">
+  <button id="add" type="submit">Add</button>
+</form>
+<script>
+  var KEY = "tally-entries";
+  var entries = JSON.parse(localStorage.getItem(KEY) || "[]");
+
+  function render() {
+    var sum = 0;
+    for (var i = 0; i < entries.length; i++) sum += entries[i];
+    document.getElementById("total").textContent = sum;
+  }
+
+  document.getElementById("add-form").addEventListener("submit", function (e) {
+    e.preventDefault();
+    var amount = parseFloat(document.getElementById("amount").value);
+    if (isNaN(amount)) return;
+    entries.push(amount);
+    localStorage.setItem(KEY, JSON.stringify(entries));
+    render();
+  });
+
+  render();
+</script>
+</body>
+</html>
