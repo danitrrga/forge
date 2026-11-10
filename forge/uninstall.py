@@ -383,13 +383,13 @@ def _project_files(run, pp):
         text = None if os.path.islink(md) else run.text(md)
     except lib.Unreadable:
         text = None
-    if text is not None and (system_doc.BEGIN in text or system_doc.END in text):
+    if text is not None and system_doc.has_marker(text):
         n += 1
         if system_doc.marker_error(text):  # forge writes exactly one pair
             run.say("  ! %s: the markers are not one BEGIN then one END, left in place" % lib.short(md))
         else:
-            b, e = text.find(system_doc.BEGIN), text.find(system_doc.END)
-            head, tail = text[:b].rstrip("\n"), text[e + len(system_doc.END):].lstrip("\n")
+            b, e = system_doc.block_span(text)[:2]
+            head, tail = text[:b].rstrip("\n"), text[e:].lstrip("\n")
             new = head + ("\n\n" if head and tail else "\n" if head else "") + tail
             run.set_text(md, new)
             run.say("   %s -> %s the pointer block%s" % (lib.short(md), run.verb("remove"),

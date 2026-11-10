@@ -80,8 +80,7 @@ KEY_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 # longer word or name), before the private list runs; the same word anywhere else is still a hit, and the
 # public list never sees this. Not a place for a name or a date: those are renamed or removed.
 PRIVATE_ALLOW = {
-    "LIFEOS-SYSTEM-POINTER": "the begin and end marker written into every managed CLAUDE.md; "
-                             "renaming it rewrites every project's file",
+    "LIFEOS-SYSTEM-POINTER": "the old begin and end marker, still read to migrate files written before the rename",
 }
 ALLOW_RE = re.compile("(?<![\\w-])(?:%s)(?![\\w-])" % "|".join(re.escape(t) for t in PRIVATE_ALLOW))
 
