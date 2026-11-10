@@ -89,7 +89,11 @@ The default branch takes changes by pull request only: work on a branch (`feat/.
 open a PR from the PR template, and merge when `All checks` is green. `.github/workflows/ci.yml` (from
 `repo-kit/`) aggregates the engine's own checks in `checks.yml`, a secrets scan and a workflow audit (actionlint,
 zizmor) into that one check; add a job to `checks.yml`, never to `ci.yml`. Every action is pinned by commit hash
-(`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --apply` puts the same rule on GitHub.
+(`zizmor.yml` enforces it). `repo-kit/kit.py ruleset --repo danitrrga/forge --coderabbit --apply` puts the same rule on GitHub.
+CodeRabbit reviews every non-draft PR (`.coderabbit.yaml`); its approval is required only on a security-relevant PR (the risky
+paths of `.coderabbit.yaml`, or the label `security`): the status `CodeRabbit approval` (`coderabbit-gate.yml`) stays pending there
+until it approves the head commit. Re-trigger with `@coderabbitai review` (`full review` after a failed one; it gets about one
+review an hour on the OSS tier, and a rate-limited push gets no review). On a Dependabot PR the owner's approval releases the gate. A security PR CodeRabbit never approves (the owner cannot approve their own PR) is merged by the owner with GitHub's admin bypass, only through a PR; agents never do (`gh pr merge --admin` is denied).
 Work in a git worktree, since only the installed checkout writes (rule 1).
 `githooks/ci-local` runs the same checks on this machine (fwx's suite takes about six minutes, the rest seconds) (control: a planted AWS key in a commit makes
 its gitleaks step, and so the script, fail); use it when Actions minutes are out.
