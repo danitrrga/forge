@@ -42,6 +42,12 @@ Seen failing on 57655b6 (master, this file as it is): 32 of 186 checks red. Firs
 Negative controls, each mutation put back: baseRef never pruned (2 red); an edited baseRef removed anyway (1); baseRef not claimed (3);
 `..` allowed in dockerfile (2); unknown keys of app_run/ui_image allowed (2); default_branch_protected always false (1).
 With FRAMEWORK_REPO set there is one more check: the real repo's models comparison.
+app_run.ready / ready_timeout_s (the keys the plugin's walk selftest reads). Seen failing on dacc4e9 (master, this file as it is): 5 of 204
+checks red, first message: "profile_error accepts app_run with ready -- app_run.ready is not a key of app_run (known: container, down,
+login, run, up, url)"; the others: ready_timeout_s 45 and 12.5, both keys together, and "fields: app_run.ready and ready_timeout_s reach
+project.app_run unchanged -- missing from fwx.json". The rejection rows already passed there (the unknown-key error names the key), so
+they are controls on the finished code, each mutation put back: positivity check dropped (3 red: ready_timeout_s 0, 0.0, -1); bool
+allowed (1: "rejects app_run with ready_timeout_s true"); finiteness dropped (1: infinity); `ready` may be empty (2: empty, blank).
 Negative controls on the finished code, each mutation put back from a copy, the checks that went red (17 mutations, each
 red): fixed plugin name "fwx" (36: the first case, `.claude/toyfw.json` missing); `linear` not copied (1: "linear.labels is
 empty"); the plugins_keep error removed (2: it writes `.claude/toyfw.json`); `claude` called on every apply (2: "calls 2");
@@ -814,6 +820,10 @@ for label, field, value in (("checks_quick list", "checks_quick", ["pnpm tsc", "
                             ("default_branch_protected false", "default_branch_protected", False),
                             ("app_run", "app_run", GOOD_APP),
                             ("app_run with login and container", "app_run", dict(GOOD_APP, login="make login", container=True)),
+                            ("app_run with ready", "app_run", dict(GOOD_APP, ready="Dashboard")),
+                            ("app_run with ready_timeout_s 45", "app_run", dict(GOOD_APP, ready_timeout_s=45)),
+                            ("app_run with ready_timeout_s 12.5", "app_run", dict(GOOD_APP, ready_timeout_s=12.5)),
+                            ("app_run with ready and ready_timeout_s", "app_run", dict(GOOD_APP, ready="Dashboard", ready_timeout_s=45)),
                             ("ui_image", "ui_image", GOOD_IMG),
                             ("ui_image in a subfolder", "ui_image", dict(GOOD_IMG, dockerfile="ui/Dockerfile"))):
     why = lib.profile_error({"project": "x", "project_path": "/x", field: value})
@@ -831,6 +841,15 @@ for label, field, value, word in (
         ("app_run with login as a bool", "app_run", dict(GOOD_APP, login=True), "login"),
         ("app_run with container \"yes\"", "app_run", dict(GOOD_APP, container="yes"), "container"),
         ("app_run with a key it has no slot for", "app_run", dict(GOOD_APP, extra="x"), "extra"),
+        ("app_run with an empty ready", "app_run", dict(GOOD_APP, ready=""), "ready"),
+        ("app_run with a blank ready", "app_run", dict(GOOD_APP, ready="  "), "ready"),
+        ("app_run with a numeric ready", "app_run", dict(GOOD_APP, ready=3), "ready"),
+        ("app_run with ready_timeout_s true", "app_run", dict(GOOD_APP, ready_timeout_s=True), "ready_timeout_s"),
+        ("app_run with ready_timeout_s 0", "app_run", dict(GOOD_APP, ready_timeout_s=0), "ready_timeout_s"),
+        ("app_run with ready_timeout_s 0.0", "app_run", dict(GOOD_APP, ready_timeout_s=0.0), "ready_timeout_s"),
+        ("app_run with ready_timeout_s -1", "app_run", dict(GOOD_APP, ready_timeout_s=-1), "ready_timeout_s"),
+        ("app_run with ready_timeout_s \"30\"", "app_run", dict(GOOD_APP, ready_timeout_s="30"), "ready_timeout_s"),
+        ("app_run with ready_timeout_s infinity", "app_run", dict(GOOD_APP, ready_timeout_s=float("inf")), "ready_timeout_s"),
         ("ui_image as a string", "ui_image", "Dockerfile", "ui_image"),
         ("ui_image without dockerfile", "ui_image", {"expect": "Sign in"}, "dockerfile"),
         ("ui_image without expect", "ui_image", {"dockerfile": "Dockerfile.ui"}, "expect"),
@@ -859,6 +878,14 @@ check("fields: default_branch_protected true reaches project.default_branch_prot
       pf.get("default_branch_protected") is True, pf)
 check("fields: ui_image reaches project.ui_image", pf.get("ui_image") == GOOD_IMG, pf.get("ui_image"))
 check("fields: app_run and checks_quick still reach the file", pf.get("app_run") == GOOD_APP and pf.get("checks_quick") == ["pnpm tsc"], pf)
+ppr = project()
+wr = World()
+READY_APP = dict(GOOD_APP, ready="Dashboard", ready_timeout_s=12.5)
+wr.put(profile(ppr, name="readyapp", app_run=READY_APP))
+code, out = wr.run()
+pr = (load(fwfile(ppr)) or {}).get("project", {})
+check("fields: app_run.ready and ready_timeout_s reach project.app_run unchanged -- %s" % pr.get("app_run", "missing from fwx.json"),
+      pr.get("app_run") == READY_APP, pr.get("app_run"))
 ppd = project()
 wd = World()
 wd.put(profile(ppd, name="defaults"))
