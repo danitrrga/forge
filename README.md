@@ -2,16 +2,22 @@
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.png"><img src="docs/assets/banner.png" alt="forge: the word forge drawn as block letters on a grid of characters taken from the real profile files, beside the tagline One source of truth for the Claude Code and Codex setup of every project on your machine, and what each project gets: ~/code/api gets the playwright MCP server with review on and release off; ~/code/site gets docs with both skills; ~/forge has no MCP server and both skills. Below, forge sync --apply --all reports 2 change(s) applied and forge doctor reports 9 passed, 0 warnings, 0 failures." width="100%"></picture>
 
-**One source of truth for the Claude Code and Codex setup of every project on your machine.**
+**An agentic development platform for Claude Code: it sets up every project from one checkout (skills, MCP servers, hooks, profiles) and takes each change from discuss to plan, parallel worktree execution, review and UI walk.**
 
 [![ci](https://github.com/danitrrga/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/danitrrga/forge/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-Every project you work on with an agent grows its own skills, MCP servers, hooks and permissions. Copy them
-by hand and they drift: one project has the new server, another still has the old token, a third lost a hook
-months ago. forge keeps all of it in one checkout. Each project gets a small profile, one generator writes
-every project's files from it, and a SessionStart hook brings the project you open up to date before the
-session starts.
+forge does two jobs, and they are one product.
+
+**It sets up the agents of every project.** Every project you work on with an agent grows its own skills, MCP servers,
+hooks and permissions. Copy them by hand and they drift: one project has the new server, another still has the old
+token, a third lost a hook months ago. forge keeps all of it in one checkout. Each project gets a small profile, one
+generator writes every project's files from it, and a SessionStart hook brings the project you open up to date before
+the session starts.
+
+**It runs the work with them.** fwx, forge's agentic workflow, takes a change from discuss to plan, runs it in parallel
+git worktrees, reviews it and walks the finished UI. It is the part of forge this README leads with:
+[The agentic workflow](#the-agentic-workflow).
 
 ## Why forge
 
@@ -24,11 +30,133 @@ session starts.
   per check, exit 1 on a FAIL.
 - **Optional integrations that switch off cleanly.** Codex, GSD and Hindsight are each one switch.
   Turning one off removes only the entries forge wrote.
-- **An agentic workflow that forge installs.** `plugins/fwx` is a Claude Code plugin that runs a project through discuss,
-  plan, worktree execution, review and close, and a factory that takes labelled Linear issues. One profile field, `framework`,
-  turns it on (see [The agentic workflow](#the-agentic-workflow-fwx)).
+- **An agentic workflow that forge installs and configures.** `plugins/fwx` is a Claude Code plugin that takes work
+  from discuss to plan, parallel worktree execution, review and UI walk. One profile field, `framework`, turns it on
+  (see [The agentic workflow](#the-agentic-workflow)).
 - **A personal-data guard.** `forge check-public` and the git hooks refuse a commit that carries a home path,
   an email address, a private IP or a private key, so your own config never leaks into a public repository.
+
+## The agentic workflow
+
+fwx lives in `plugins/fwx/`: a Claude Code plugin with a command line, `plugins/fwx/bin/fwx`. It is how forge runs
+work, not only how it sets it up. forge installs and configures it per project: `"framework": true` in a profile, then
+`forge sync --apply` enables the plugin there and writes the one file it reads, `.claude/fwx.json` (models per role,
+round cap, limits, Linear labels, checks). Set the field back to `false` and forge takes it all out again. fwx
+replaces the GSD integration, and its changes are reviewed in the same pull requests as the engine's.
+
+<picture><img src="plugins/fwx/docs/workflow-tree.svg" alt="The full workflow tree: every step of a supervised session, the factory and the weekly improvement, and every exit of each step." width="100%"></picture>
+
+That is the full workflow, every step and every exit. An interactive version is coming.
+
+Each item below says whether it is **built** (on the default branch), **on a branch** (written, not merged) or
+**planned**. A plan is never described as shipped. [What exists today](#what-exists-today) names the command or file
+behind every "built".
+
+### Two ways in, one tree, and a loop
+
+- **A supervised session.** You open a chat. The work goes through discuss, pre-mortem, plan, post-mortem on the plan,
+  execution in git worktrees, review, a UI walk when the part touches UI, a report and the close. The orchestrator is
+  the only agent that talks to you. Every other agent starts from the same base context and returns a short answer
+  with a path. Built up to review; the UI walk and the glue that carries a session from discuss to close are on
+  branches.
+- **The factory.** It takes a Linear issue labelled `factory` and runs the same steps with nobody watching, each job in
+  its own container. Only work on a closed list of mechanical changes is offered to it, every change gets three
+  attempts, and in the trial mode it never merges. Afterwards it merges into an integration branch, never into your
+  main branch, and you pass that on when you choose. Planned; the pieces around it are built (the stage machine, the
+  Linear client, the skill that offers it work, the merge decision).
+- **The weekly improvement.** Once a week an agent reads the transcripts of the week and proposes changes to the
+  system. It applies Musk's algorithm in series, one agent per step: question the requirement, delete, simplify,
+  accelerate, automate, in that order and never faster before the earlier steps are done. Each proposal names the layer
+  its fix goes in (the next section) and a reviewer lowers it to the highest layer that works. Planned.
+
+### The opinions behind it
+
+1. **Fix it in code first.** The order of fixes is: code (make the mistake impossible: one owner for each piece of
+   state, one way to do each task, a generated list instead of a copied one), then a static check (lint, test, CI, with
+   a failure message that says what to use instead), then prose, then a skill. Prose is only for judgment, because
+   nothing fails when an agent skips it. A skill is added only when the mistake has happened twice and no layer above
+   covers it. This is the inverted pyramid that Lauren Tan, who wrote pstack, describes. A rule without exceptions
+   names what enforces it; without an enforcer it is written as a guideline. Built as the rules in
+   `plugins/fwx/playbooks/principles.md`; each proposal's `layer` field of the weekly improvement is planned.
+2. **Every deciding step is a command, not the model's judgement.** Whether to merge is `fwx decide`. Whether the work
+   is good is `fwx verify`, which runs the project's checks on a clean tree at the exact commit. How many fix rounds a
+   job may spend is `fwx rounds`. How many agents of a role may start is `fwx capacity`, from the configured cap and the
+   free memory. Which model a launch uses is `fwx model <role> <size>`, read from the project's file, never from a
+   prompt. Which stage may follow which is `fwx stage`, from a table. The orchestrator runs the command and acts on
+   what it prints; it does not ask itself the question. Built.
+3. **A check is seen to fail before it is trusted.** A test is written first and run against the current code, and the
+   failure message is kept. A check that looked at zero things fails. A check that could not run prints
+   `NOT RUN, NOT ARMED` and is neither a pass nor a fail; a skipped, neutral or cancelled result from an outside check is
+   not green either. The reason: CodeRabbit reports success when it skips a review, and a CI job that times out ends as
+   cancelled, not failed. Built: this is the rule of forge's own test suite, and `fwx test` exits 77 for a run where a
+   test could not run.
+4. **Two critiques of every plan.** A pre-mortem comes before the plan: small, fast and cheap, it stops you planning
+   work you did not ask for. A post-mortem comes after: much harder, and it asks how each requirement of the plan will be
+   verified. An objection is a claim to judge, not something to build: it is checked against the code before the plan
+   changes (Every's rule: risk has no natural limit, any design has one more way to fail). A script checks the plan's
+   structure first (`fwx plan check`). Built.
+5. **You are asked only what is yours.** A question to you is about taste or direction. It comes with the options and
+   what each one implies, and with no recommendation, so you decide without pressure. What the system can settle alone
+   it settles, notes and goes on. Built in the discuss skill.
+6. **Whoever checks did not make it.** Reviewers, a verifier that re-checks each finding, and a security reviewer are
+   agents other than the executors, and they may find nothing. A dead agent, an empty return or a missing file is a
+   failure to report, never "no findings". Built in the `execute` workflow.
+7. **Every agent starts from the same base context.** Once the problem is stated, one text, built once per phase and
+   capped in size, says what the codebase holds, what you want and how the machinery fits. A `SubagentStart` hook hands
+   it to every agent that is launched, by agent type, so a prompt carries only its own part and agents do not each read
+   the same documents. Built (`fwx context-base`, `plugins/fwx/hooks/subagent_context.py`).
+8. **Delete before adding.** What always loads costs the most: a study of repository context files (arXiv 2602.11988)
+   found that they tend to lower task success and raise cost. The improvement pass deletes before it simplifies and simplifies before it
+   automates. The orchestrator also keeps its own context small by delegating: if it compacts before the post-mortem,
+   it delegated too little, and that is a signal. Guideline for now.
+9. **Clean by construction.** What the system creates (temporary files, worktrees, toy repositories) it removes
+   itself, also when it fails. Anything worth keeping is versioned, never left in a temp directory, and nothing assumes
+   an operating system. Built as tests (`plugins/fwx/tests/test_temp_cleanup.py`).
+
+### The UI walk
+
+Many cheap agents tour the running app with seeded demo data, try to break every component they can reach, and judge
+the screens as a designer would. They do not measure, because taste is not a measurement: what a walker finds is a
+finding for you, and a difference from the approved design is reported, not failed. Two details come from experience.
+In an earlier trial of this idea the walkers missed a fault that had been planted as a control, so a walk plants one
+on a screen no walker is told about, and a walk that does not find it proves nothing and says so. And the walk touches
+only a local app with demo data and a demo account: its browser tool refuses any other address. The walk finds; the
+session fixes, one commit per finding. The playbook is on the default branch (`plugins/fwx/playbooks/ui-walk.md`). The
+workflow, the `fwx walk` command and the walker agents are on the branch `feat/3.5-ui-walk`, not merged.
+
+### Borrowed on purpose
+
+Most of the design is copied from people who do this well, kept short, and every playbook, skill and workflow names its
+source in a `referent:` line.
+
+- **pstack** (Lauren Tan): the layers of a fix, the shape of the playbooks, a plan as a list of boxes, the rule that
+  an agent's own report does not count when a verifier disagrees.
+- **marshal**: the factory, with a label that opts work in and three fix rounds per job.
+- **Every's compound engineering**: the brainstorm that the discuss follows, risk as a claim to judge.
+- **Matt Pocock**: grilling for the discuss and ticket-writing for the factory's issues; his sandcastle was studied for
+  running agents in containers.
+- **GSD**: what fwx replaces, and where its phases and waves come from.
+- **Elon Musk**: the five-step algorithm of the weekly improvement.
+
+### What exists today
+
+- **Built, on the default branch:** the discuss, pre-mortem, plan and post-mortem skills and agents; the `execute`
+  workflow (waves of executors in worktrees, up to three fix rounds per job, the gate, reviewers, the verifier, the
+  security reviewer); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
+  client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline and budget
+  commands; the playbooks of the session and of the UI walk; and forge's framework step that installs all of it.
+- **On a branch, not merged:** the session skill that carries a work item from discuss to close
+  (`feat/3.2-session`), and the UI walk (`feat/3.5-ui-walk`).
+- **Planned, not built:** the factory's unattended runner, the weekly improvement, memory, and an interactive version of
+  the tree.
+
+```sh
+python3 plugins/fwx/bin/fwx --help              # every command, one line each
+python3 plugins/fwx/bin/fwx playbooks tree      # the workflow tree: each node and its exits
+python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test leaves it to this; CI runs it as the fwx job)
+```
+
+`plugins/fwx/README.md` has the command list, the configuration file and the install steps.
 
 ## Quickstart
 
@@ -116,45 +244,6 @@ only by a profile whose `skill_keep.extras` row names them); `forge doctor`'s `s
 no skill has, a name in both lists, or an excluded name in an `extras` row.
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-trim-dark.png"><img src="docs/assets/fig-trim.png" alt="Which skills each project loads: the api profile keeps only review, so forge writes release off into ~/code/api/.claude/settings.local.json; site and the forge checkout have no skills_keep and load both review and release." width="100%"></picture>
-
-## The agentic workflow: fwx
-
-forge also ships an agentic workflow, **fwx**, in `plugins/fwx/`: a Claude Code plugin with a command line, `plugins/fwx/bin/fwx`,
-built to replace the GSD integration. forge installs and configures it per project, the way it does everything else. A
-project turns it on with `"framework": true` in its profile; `forge sync --apply` then enables the plugin in that project,
-writes the one file the plugin reads, `.claude/fwx.json` (models per role, round cap, Linear labels, checks), and takes it all
-out again when the field goes back to `false`. fwx lives in this repository, with its full history, so its changes are
-reviewed in the same pull requests as the engine's.
-
-It has two entries into one workflow tree (`plugins/fwx/playbooks/`, the spec the checker compares the playbooks against):
-
-- **A supervised session.** You open a chat, and the work goes through discuss (questions with options, no
-  recommendation), pre-mortem, plan, post-mortem on the plan, execution in git worktrees, review, a UI walk when the part
-  touches UI, a report and the close. Only the orchestrator talks to you; every other agent gets the same shared base
-  context and returns a short answer with a path.
-- **The factory.** It takes a Linear issue labelled `factory` and runs the same steps with nobody watching; in the trial
-  mode it never merges. Only work that passes a closed list of mechanical changes is offered to it.
-
-Every deciding step is a command, not a judgement of the model: the merge decision (`fwx decide`), the gate that runs the
-project's checks on a clean tree at the exact commit (`fwx verify`), the cap of fix rounds (`fwx rounds`), how many agents of a
-role may start (`fwx capacity`), and the model of each launch (`fwx model <role> <size>`, from the project's file, never from
-the prose). A check is seen to fail before it is trusted, and a check that could not run says `NOT RUN, NOT ARMED`, never PASS.
-
-What exists today, and what does not:
-
-- **Built and in this repository:** the discuss, pre-mortem, plan and post-mortem skills and agents; the `execute`
-  workflow (waves of executors in worktrees, up to three fix rounds, the gate, reviewers and a verifier); the project's state
-  under `.fwx/`; the Linear client and the `factory-issue` skill that offers work to the factory; the merge decision; the
-  statusline and budget commands; and forge's framework step that installs it.
-- **In progress, not on the default branch yet:** the glue that carries a session from discuss to close, and the UI walk.
-- **Not built:** the factory's unattended runner, the weekly improvement cycle, and the memory part.
-
-```sh
-python3 plugins/fwx/bin/fwx --help              # every command, one line each
-python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test leaves it to this; CI runs it as the fwx job)
-```
-
-`plugins/fwx/README.md` has the command list, the configuration file and the install steps.
 
 ## Measure a skill: skill-bench
 
