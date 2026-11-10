@@ -115,15 +115,16 @@ An arm folder (see "Running it") is a whole config, so one arm per config answer
 break anything?". Run the calibrated hard tier, the tasks a model can still fail (`calibration.json`, tasks at or under 0.7):
 
 ```bash
-python3 scripts/bench/skill_bench.py run --arm none --arm NAME=DIR --tasks hard --k 3 --out OUT
+python3 scripts/bench/skill_bench.py run --arm none --arm NAME=DIR --tasks hard --k 3 --sandbox bwrap --out OUT
 python3 scripts/bench/skill_bench.py report --out OUT --base none
 ```
 
-The default sandbox (`auto`: bubblewrap when installed) stays on. The run gives Claude `--permission-mode bypassPermissions`, so
-without the sandbox the agent runs commands with the host's full access. Only if a system-wide hook that fails closed blocks every
-prompt inside bubblewrap (that run would be INVALID, `not_run`, never a fail) add `--sandbox none`, and only in a disposable,
-isolated environment (a throwaway VM or container with no credentials and nothing worth keeping), never on a working machine. The
-calibrated tier holds no task that baits a destructive action, which limits the risk and does not remove it. About 54 runs, $5 and
+`--sandbox bwrap` fails closed: without bubblewrap (`command -v bwrap`) the run exits before any job starts. Do not use the default
+`auto` for this recipe: it falls back to no sandbox when `bwrap` is missing (`wrap()` in `scripts/bench/skill_bench.py`), and the run gives
+Claude `--permission-mode bypassPermissions`, so the agent would run commands with the host's full access. Only if a system-wide hook that
+fails closed blocks every prompt inside bubblewrap (that run would be INVALID, `not_run`, never a fail) use `--sandbox none`, and only in
+a disposable, isolated environment (a throwaway VM or container with no credentials and nothing worth keeping), never on a working
+machine. The calibrated tier holds no task that baits a destructive action, which limits the risk and does not remove it. About 54 runs, $5 and
 10 minutes for two arms at k=3. Read it in this order:
 
 1. `cost ratio` (per-task cost of the arm over the base, interval over tasks, tasks that cost more) and `overhead` (tokens before any

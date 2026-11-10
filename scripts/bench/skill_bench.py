@@ -675,6 +675,8 @@ def finished(result_path):
 
 
 def cmd_run(a):
+    if a.sandbox == "bwrap" and not shutil.which("bwrap"):   # `auto` falls back to no sandbox (wrap); `bwrap` must fail closed
+        sys.exit("bwrap not found on PATH: --sandbox bwrap refuses to run the agent unsandboxed (bypassPermissions). Install bubblewrap.")
     if not a.out:
         a.out = os.path.join(data_dir(), "runs", time.strftime("%Y%m%d-%H%M%S"))
         print("results go to %s" % a.out)
