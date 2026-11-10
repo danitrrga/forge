@@ -203,6 +203,7 @@ forge doctor [NAME]                                         one line per check; 
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19 (plugins/fwx has its own runner, `fwx test`)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
+forge launch NAME [ARGS...]                                 claude started with the environment a launcher of config/forge.json declares
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
@@ -217,6 +218,12 @@ on and broken is a FAIL that names the fix. `forge doctor NAME` shows only the r
 The `project roots` row fails a project that has skills of its own and sits inside another project's git
 repository: Claude Code applies the outer project's settings there too, and the outer "off" wins over the inner
 "on". The fix is one repository per project.
+
+`forge launch NAME [ARGS...]` starts `claude` with the environment of the launcher NAME, declared in
+`config/forge.json` as `"launchers": {"orq": {"env": {"CACHE_TAX_AUTOWARM": "on"}}}`: one kind of session carries a
+variable and the others do not. It replaces itself with `claude`, passes every argument after NAME untouched
+(`forge launch orq --model opus -c`), and lists the launchers when given no name. An unknown name or a malformed
+table exits 2; no `claude` on PATH exits 127.
 
 The `research expiry` row reads each project's `.planning/research/**/*.md` (only the first 20 lines of a file, none
 over 1 MB) and warns about the ones whose header says they are stale. A research file may carry `expires: YYYY-MM-DD`
