@@ -15,7 +15,7 @@
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, then a note if the GSD runtime or the toolchain is off;
                          silent unless it wrote or has one
-  forge check-public     --staged | --all | --range A..B | --message FILE: personal data that must not be published
+  forge check-public     [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
   forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
@@ -577,8 +577,19 @@ def _gsd_missing():
         % (tool, "node" if tool == "npm" else "pnpm"))
 
 
+def _agent_browser_missing():
+    return None if shutil.which("agent-browser") else (
+        "agent_browser is on in config/forge.json but agent-browser is not on PATH -- run `forge toolchain --fix`, then "
+        "open a new shell, or set integrations.agent_browser false")
+
+
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
-                     "hindsight": (None, "no dependency checked here")}
+                     "hindsight": (None, "no dependency checked here"),
+                     "consent": (None, "its own row, `consent`, looks at the adapter, the profiles and the hook"),
+                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
+# An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
+# nothing. The value says when the check arrives (7.1 of the framework plan puts MemPalace's).
+INTEGRATION_PENDING = {"mempalace": "its check arrives with the MemPalace part"}
 
 
 def hook_scripts(command):
@@ -603,9 +614,15 @@ def integrations_row():
     nothing is a FAIL, never a pass (non-negotiable 7), unless nothing at all is configured (every
     integration off, no user_hooks row): a SKIP. The hook rows come through forge.hooks, so the
     command read is the one the generator writes: `<ROOT>` expanded, an `"on": false` row left out."""
-    out, checked, unread = [], 0, False
+    out, checked, unread, pending_on = [], 0, False, False
     for name in lib.INTEGRATIONS:
-        if not lib.on(name):
+        on = lib.on(name)
+        if name in INTEGRATION_PENDING:
+            pending_on = pending_on or on
+            out.append(lib.Result("SKIP", "integrations", "%s%s is %s in config/forge.json%s %s" % (
+                NOT_ARMED, name, "on" if on else "off", ", but" if on else ";", INTEGRATION_PENDING[name])))
+            continue
+        if not on:
             out.append(lib.Result("SKIP", "integrations", "%s%s is off in config/forge.json" % (NOT_ARMED, name)))
             continue
         need, why = INTEGRATION_NEEDS[name]
@@ -643,15 +660,132 @@ def integrations_row():
                                       ' -- restore it, or set "on": false on the row' % (marker, event, script)))
     if not checked and not rows and not unread:
         # Nothing is configured: every integration off and no user_hooks row at all. A stranger's legitimate zero.
-        out.append(lib.Result("SKIP", "integrations", NOT_ARMED + "every integration is off in config/forge.json "
-                              "and no user_hooks row is configured, so there is nothing to check"))
+        out.append(lib.Result("SKIP", "integrations", NOT_ARMED + (
+            "no integration with a check is on in config/forge.json" if pending_on else "every integration is off in config/forge.json")
+            + " and no user_hooks row is configured, so there is nothing to check"))
     elif not checked:
-        out.append(lib.Result("FAIL", "integrations", "checked 0: every integration is off in config/forge.json and no "
-                              "user_hooks row names a script, so this row proved nothing"))
+        out.append(lib.Result("FAIL", "integrations", "checked 0: %s and no "
+                              "user_hooks row names a script, so this row proved nothing" % (
+                                  "no integration with a check is on in config/forge.json" if pending_on
+                                  else "every integration is off in config/forge.json")))
     else:
         out.append(lib.Result("PASS", "integrations", "checked %d: %d integration(s) on, %d user_hooks script(s)"
                               % (checked, integrations, checked - integrations)))
     return out
+
+
+# The `consent` row (1.1 U4). The hook row is written with "onFailure": "block", so an entry that is there but
+# whose command no longer starts (python moved by a mise upgrade, forge moved) leaves every session without Bash
+# and MCP: that the entry exists proves nothing, so the row runs the installed command on two payloads.
+CONSENT_MARKER = "guard_tool_use.py --consent"
+CONSENT_SMOKE_BENIGN = "git status"
+
+
+def _consent_guard():
+    """hooks/guard_tool_use.py of this checkout, loaded by path: it holds consent_config and production_error,
+    the one definition of what gateway.json and a profile's `production` may say."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("forge_consent_guard", os.path.join(lib.ROOT, "hooks", "guard_tool_use.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def consent_probe(command, cwd, payload_command, timeout, want_code, want_text=None):
+    """None when the installed hook `command` (shell=True, `timeout` seconds as the hook's cap, FORGE_CONSENT=unattended
+    so that no window ever opens, and a private XDG_STATE_HOME so that the probe leaves no line in the real consent
+    log) answers a Bash payload for `payload_command` with exit `want_code` (and `want_text` in stderr); else why not."""
+    payload = json.dumps({"tool_name": "Bash", "tool_input": {"command": payload_command}, "cwd": cwd,
+                          "session_id": "forge-doctor", "hook_event_name": "PreToolUse"})
+    state = tempfile.mkdtemp(prefix="forge-consent-probe-")
+    try:
+        env = dict(os.environ, FORGE_CONSENT="unattended", XDG_STATE_HOME=state)
+        env.pop("CLAUDE_PROJECT_DIR", None)
+        try:
+            r = subprocess.run(command, shell=True, input=payload, env=env, text=True, capture_output=True,
+                               timeout=timeout, cwd=cwd if os.path.isdir(cwd) else lib.ROOT)
+        except subprocess.TimeoutExpired:
+            return "`%s` did not answer in %d s" % (payload_command, timeout)
+    finally:
+        shutil.rmtree(state, ignore_errors=True)
+    last = (r.stderr.strip().splitlines() or [""])[-1]
+    if r.returncode != want_code:
+        return "`%s` exited %d, want %d%s" % (payload_command, r.returncode, want_code, (": " + last) if last else "")
+    if want_text and want_text not in r.stderr:
+        return "`%s` exited %d as wanted but its stderr has no %s%s" % (payload_command, r.returncode, want_text,
+                                                                        (": " + last) if last else "")
+    return None
+
+
+def consent_row():
+    """The `consent` row: SKIP (NOT RUN, NOT ARMED) while integrations.consent is off. On, the first problem found is
+    a FAIL that names its fix, in this order: config/gateway.json missing or invalid (the guard's consent_config);
+    the adapter missing or not executable, or the built-in one without `gum` or the Omarchy launcher; no profile
+    declares `production` (looking at zero is a failure: the window would never open); ~/.claude/settings.json
+    without the `--consent` entry or with it lacking "onFailure": "block"; consent.timeout_s not below the entry's
+    timeout; the smoke test, which runs the entry's exact command on `git status` (must exit 0) and on a push to
+    a production branch with no one to ask (must exit 2 with CONSENT_UNATTENDED:). The PASS says how much it looked at."""
+    from forge import hooks  # not at import: it reads config/forge.json
+    if not lib.on("consent"):
+        return lib.Result("SKIP", "consent", NOT_ARMED + "consent is off in config/forge.json, so the window was not looked at")
+    fail = lambda why: lib.Result("FAIL", "consent", why)
+    gateway = os.path.join(lib.ROOT, "config", "gateway.json")
+    try:
+        guard = _consent_guard()
+        cfg = guard.consent_config(lib.ROOT)
+    except Exception as e:
+        return fail("%s -- fix config/gateway.json (examples/gateway.json is the template: cp examples/gateway.json config/gateway.json), "
+                    "or set integrations.consent false and run forge sync --apply" % e)
+    adapter, limit = cfg["adapter"], cfg["timeout_s"]
+    if not os.path.isfile(adapter) or not os.access(adapter, os.X_OK):
+        return fail("the adapter %s is %s -- restore it (git checkout scripts/consent/) and chmod +x it, or point consent.adapter in %s at one that is"
+                    % (lib.short(adapter), "not executable" if os.path.isfile(adapter) else "not there", lib.short(gateway)))
+    if adapter == os.path.realpath(os.path.join(lib.ROOT, "scripts", "consent", "omarchy")):
+        for tool, fix in (("gum", "install gum (pacman -S gum)"), ("omarchy-launch-floating-terminal-with-presentation", "this is not an Omarchy session: use another adapter")):
+            if not shutil.which(tool):
+                return fail("the omarchy adapter needs `%s` on PATH and it is not there -- %s" % (tool, fix))
+    declared = [p for p in cfg["profiles"] if "production" in p]
+    if not declared:
+        return fail("no profile in config/profiles declares `production`, so no call would ever match and the window would never open -- "
+                    'add "production": {"branches": [...], "commands": [...]} to the profile of a project that deploys')
+    for p in declared:
+        why = guard.production_error(p["production"])
+        if why:
+            return fail("%s: %s -- fix the profile; the guard refuses every call from that project while it is invalid" % (lib.short(p["file"]), why))
+    where = lib.short(hooks.USER_SETTINGS)
+    try:
+        doc = lib.read_owned(hooks.USER_SETTINGS, None)
+    except lib.Unreadable as e:
+        return fail("%s is unreadable, so the --consent entry was not looked for: %s" % (where, e))
+    entries = [e for e in lib.hook_entries(doc)[0] if CONSENT_MARKER in str(e[3].get("command"))] if doc is not None else []
+    if not entries:
+        return fail("%s holds no `%s` entry, so the window is not wired -- forge sync --apply" % (where, CONSENT_MARKER))
+    for event, _, _, hook in entries:
+        if hook.get("onFailure") != "block":
+            return fail('the %s entry under %s has onFailure %s, want "block": a hook that hangs or breaks would let the call through '
+                        "-- forge sync --apply" % (CONSENT_MARKER, event, json.dumps(hook.get("onFailure"))))
+    command, cap = entries[0][3].get("command"), entries[0][3].get("timeout")
+    if isinstance(cap, bool) or not isinstance(cap, int) or limit >= cap:
+        return fail("consent.timeout_s is %d and the hook entry's timeout is %s: the adapter must give up before the hook is killed, so "
+                    "timeout_s must be below it -- lower timeout_s in %s, or forge sync --apply to restore the entry's 300"
+                    % (limit, json.dumps(cap), lib.short(gateway)))
+    branch_profile = next((p for p in declared if p["production"].get("branches")), None)
+    if branch_profile:
+        cwd, push = branch_profile["project_path"], "git push origin %s" % branch_profile["production"]["branches"][0]
+    else:  # production lists commands only: a command entry stands in for the push
+        stand_in = next(((p, c) for p in declared for c in p["production"].get("commands", []) if not c.startswith("mcp__")), None)
+        if not stand_in:
+            return fail("no profile's `production` lists a branch or a command the smoke test can send, so the --consent entry was not run -- "
+                        "list a branch in production.branches")
+        cwd, push = stand_in[0]["project_path"], stand_in[1]
+    for text, code, marker in ((CONSENT_SMOKE_BENIGN, 0, None), (push, 2, "CONSENT_UNATTENDED:")):
+        why = consent_probe(command, cwd, text, cap, code, marker)
+        if why:
+            return fail("the installed command `%s` fails its smoke test: %s -- forge sync --apply; if the entry is right, "
+                        "hooks/guard_tool_use.py --consent itself does not answer" % (command, why))
+    return lib.Result("PASS", "consent", "adapter %s, timeout_s %d below the hook's %d s, %d profile(s) with production, `%s` exits 0 and "
+                      "`%s` exits 2 with CONSENT_UNATTENDED: through `%s`" % (lib.short(adapter), limit, cap, len(declared),
+                                                                            CONSENT_SMOKE_BENIGN, push, command))
 
 
 def codex_hooks_row():
@@ -932,6 +1066,107 @@ def doctor_extra_row():
     return out
 
 
+# How long the `context base` row waits for one `fwx context-base` call. The audit reads subagent transcripts, which are
+# megabytes, and a check with --hook-command runs the hook once.
+CONTEXT_BASE_TIMEOUT = 120
+CONTEXT_BASE_HOOK = "subagent_context.py"
+CONTEXT_BASE_LAST = "3"  # sessions the audit reads: enough to see a regression, few enough to be quick
+
+
+def _fwx_context_base(fwx, args):
+    """(exit code or None on a timeout, stdout lines, stderr lines) of `python3 <fwx> context-base ARGS`."""
+    try:
+        r = subprocess.run([sys.executable, fwx, "context-base"] + args, cwd=lib.ROOT, text=True, capture_output=True,
+                           stdin=subprocess.DEVNULL, timeout=CONTEXT_BASE_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return None, [], []
+    return r.returncode, r.stdout.strip().splitlines(), r.stderr.strip().splitlines()
+
+
+def _context_base_target(label, fwx, steps):
+    """One result for one target. `steps` is [(kind, args)], each run through fwx: any exit but 0 and 77 is a FAIL that
+    quotes what fwx printed (every FAIL line of an audit, so the agent and its type are there) and the command that
+    reproduces it; 77 is NOT RUN, NOT ARMED; 0 is a PASS with fwx's last line. A target any of whose steps failed is a FAIL
+    whatever the others did; one with only 77s is a SKIP; one with a 0 and a 77 is a PASS that says which step did not run."""
+    failed, unarmed, passed = [], [], []
+    for kind, args in steps:
+        code, out, err = _fwx_context_base(fwx, args)
+        # fwx's summary (`audited ...`, `checked ...`) is the line to quote; the audit prints it first, its FAIL lines after
+        last = next((l for l in out if l.startswith(("audited ", "checked "))), out[-1] if out else (err[-1] if err else ""))
+        if code == 0:
+            passed.append("%s: %s" % (kind, last))
+        elif code == lib.NOT_RUN:
+            unarmed.append((kind, last[len(NOT_ARMED):] if last.startswith(NOT_ARMED) else last))
+        else:
+            fails = [l for l in out if l.startswith("FAIL ")]
+            said = ([last] if last and last not in fails else []) + fails[:5] + (
+                ["+%d more FAIL line(s)" % (len(fails) - 5)] if len(fails) > 5 else []) + err[:5]
+            why = "did not answer in %d s" % CONTEXT_BASE_TIMEOUT if code is None else "exit %d" % code
+            failed.append("%s %s (%s) -- %s" % (kind, why, " | ".join(said) or "no output",
+                                               shlex.join(["python3", fwx, "context-base"] + args)))
+    if failed:
+        return lib.Result("FAIL", "context base", "%s: %s" % (label, "; ".join(failed)))
+    if not passed:
+        return lib.Result("SKIP", "context base", "%s%s: %s" % (NOT_ARMED, label, "; ".join("%s: %s" % u for u in unarmed)))
+    return lib.Result("PASS", "context base", "%s: %s" % (label, "; ".join(passed + ["%s: %s%s" % (k, NOT_ARMED, t) for k, t in unarmed])))
+
+
+def context_base_row():
+    """The `context base` row (2.5): did every subagent get the base context it should? Targets, one result each:
+    every entry of ~/.claude/settings.json whose command runs `subagent_context.py --file F [--source S]`, and every
+    profile with `framework: true`. For an entry, `fwx context-base check --file F --source S --hook-command CMD` (the
+    file is sealed and current, the hook answers a general-purpose agent and not an Explore one) and `audit --project
+    <this checkout> --last 3 --file F` (the subagent transcripts of the last three sessions here); for a profile,
+    `check --project P` and `audit --project P --last 3`. fwx is `bin/fwx` of framework.plugin_source.path. Exit 0 is a
+    PASS, 77 a SKIP, anything else a FAIL naming the command to run by hand. No fwx, or nothing to look at: a SKIP, NOT RUN,
+    NOT ARMED. The audit reads transcripts written before the hook existed, so it FAILs until three newer sessions with
+    subagents have passed; that is the row working, not a reason to weaken it."""
+    from forge import framework, hooks  # not at import: hooks reads config/forge.json
+    src, why = framework._source()
+    fwx = os.path.join(src["path"], "bin", "fwx") if src else None
+    if not fwx or not os.path.isfile(fwx):
+        return lib.Result("SKIP", "context base", NOT_ARMED + "no bin/fwx to run (%s), so no subagent's base context was looked at"
+                          % (why or "%s is not there" % lib.short(fwx)))
+    where = lib.short(hooks.USER_SETTINGS)
+    try:
+        doc = lib.read_owned(hooks.USER_SETTINGS, None)
+    except lib.Unreadable as e:
+        return lib.Result("FAIL", "context base", "%s is unreadable, so its %s entries were not looked for: %s" % (where, CONTEXT_BASE_HOOK, e))
+    out = []
+    for event, _, _, hook in (lib.hook_entries(doc)[0] if doc is not None else []):
+        command = hook.get("command")
+        if not isinstance(command, str) or CONTEXT_BASE_HOOK not in command:
+            continue
+        try:
+            words = shlex.split(command)
+        except ValueError as e:
+            out.append(lib.Result("FAIL", "context base", "the %s entry under %s in %s does not parse (%s) -- fix the entry, or forge sync --apply"
+                                  % (CONTEXT_BASE_HOOK, event, where, e)))
+            continue
+        opts = {w: words[i + 1] for i, w in enumerate(words[:-1]) if w in ("--file", "--source")}
+        if "--file" not in opts:
+            out.append(lib.Result("FAIL", "context base", "the %s entry under %s in %s has no --file, so there is no base to check -- "
+                                  "forge sync --apply, or add --file F to the entry" % (CONTEXT_BASE_HOOK, event, where)))
+            continue
+        check = ["check", "--file", opts["--file"]] + (["--source", opts["--source"]] if "--source" in opts else []) + ["--hook-command", command]
+        audit = ["audit", "--project", lib.ROOT, "--last", CONTEXT_BASE_LAST, "--file", opts["--file"]]
+        out.append(_context_base_target("hook %s" % lib.short(opts["--file"]), fwx, [("check", check), ("audit", audit)]))
+    for name, prof in sorted(lib.profiles().items()):
+        if prof.get("framework") is True and prof.get("project_path"):
+            project = prof["project_path"]
+            out.append(_context_base_target("profile %s" % name, fwx, [
+                ("check", ["check", "--project", project]), ("audit", ["audit", "--project", project, "--last", CONTEXT_BASE_LAST])]))
+    return out or lib.Result("SKIP", "context base", NOT_ARMED + "no %s entry in %s and no profile with framework true, so no subagent's base "
+                             "context was looked at" % (CONTEXT_BASE_HOOK, where))
+
+
+def local_plugins_row():
+    """The `local plugins` row: every folder of config/forge.json `local_plugins` is registered in the machine's marketplace
+    registry at its path (forge/marketplace.py); a SKIP, NOT RUN, NOT ARMED, with the key empty or missing."""
+    from forge import marketplace
+    return marketplace.row()
+
+
 # (name, command, fix). A command exits 0 when healthy. A callable returns a lib.Result instead,
 # which is how a check can be a WARN: a command's exit code is only ever PASS or FAIL
 # (hindsight_doctor exits with its failure count, argparse with 2). The fix is appended to the
@@ -951,14 +1186,20 @@ CHECKS = [
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
     # Its failures carry their own fix, so the row's is empty.
     ("integrations", integrations_row, ""),
+    # Its failures carry their own fix, so the row's is empty.
+    ("consent", consent_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     # Its failures and its SKIP carry their own fix, so the row's is empty.
     ("gsd isolation guard", gsd_isolation_guard_row, ""),
     # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
     ("gsd engine", gsd_engine_row, ""),
     ("research expiry", research_expiry, RESEARCH_FIX),
+    # Its failures carry the command that reproduces them, so the row's fix is empty.
+    ("context base", context_base_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
+    # Its failures carry their own fix (python3 bin/forge sync --apply), so the row's is empty.
+    ("local plugins", local_plugins_row, ""),
 ]
 
 # What `forge sync --project NAME` (a dry-run) prints for a file its --apply would change: one
@@ -1345,6 +1586,7 @@ def cmd_doctor(a):
 # to ROOT, and the reason. hooks/test_guard_mutants.py runs 326 mutants on max(2, cpu_count) workers, each a
 # test_guard_tool_use.py of about six cores: it once took a voice detector from 0.3 s to 50+ s.
 ON_DEMAND = {"hooks/test_guard_mutants.py": "326 mutants on every core, minutes of full CPU; it stalls the machine"}
+FWX_PREFIX = "plugins/fwx/"
 
 
 def cmd_test(a):
@@ -1369,12 +1611,19 @@ def cmd_test(a):
                 r.returncode, r.stderr.strip() or "(no stderr)"))])
         listed.update(r.stdout.split("\0"))
     # The pathspec's leading * also matches a prefix (contest_helper.py), so the basename is checked here.
-    files = sorted(f for f in listed if not f.startswith("benchmarks/")
+    found = sorted(f for f in listed if not f.startswith("benchmarks/")
                    and os.path.basename(f).startswith("test_") and f.endswith(".py"))
+    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its minutes of work
+    # are its own, and CI runs it as a job of its own.
+    fwx_owned = [f for f in found if f.startswith(FWX_PREFIX)]
+    files = [f for f in found if f not in fwx_owned]
     if not files:
         return lib.report([lib.Result("FAIL", "git ls-files", "no tests found in %s" % lib.ROOT)])
     mutants = getattr(a, "mutants", False)
     results = []
+    if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
+        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) with their own runner: run "
+                                  "`python3 %sbin/fwx test`" % (len(fwx_owned), FWX_PREFIX)))
     for f in files:
         if f in ON_DEMAND:
             if not mutants:  # said, never a PASS, and not counted in the summary (non-negotiable 7)
@@ -1540,6 +1789,7 @@ def init_write(integrations, track):
     profile.update(project="forge", project_path=lib.ROOT, writes_tracked_files=False)
     put(os.path.join(lib.PROFILES, "forge.claude.json"), lib.dumps(profile) + "\n")
     put(os.path.join(lib.ROOT, "config", "mcp-registry.json"), example_text("mcp-registry.json"))
+    put(os.path.join(lib.ROOT, "config", "gateway.json"), example_text("gateway.json"))
     secrets = os.path.join(lib.ROOT, "credentials", "secrets.json")
     os.makedirs(os.path.dirname(secrets), mode=0o700, exist_ok=True)
     put(secrets, "{}\n", mode=0o600)
@@ -1711,6 +1961,7 @@ def main(argv=None):
     mode.add_argument("--all", action="store_true", help="every engine file (CI, the gate)")
     mode.add_argument("--range", help="the commits in A..B, messages and content (pre-push)")
     mode.add_argument("--message", help="a commit message file (commit-msg)")
+    c.add_argument("--root", help="scan this other git repository instead of the checkout (its tracked files, forge's lists)")
     c.set_defaults(fn=lambda a: _publish().cmd_check_public(a))
     c = sub.add_parser("commit", help="commit each changed path to the history that owns it")
     c.add_argument("-m", "--message", required=True)

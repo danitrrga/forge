@@ -53,15 +53,19 @@ sys.path.insert(0, sandbox.FORGE)
 from forge import cli, lib, toolchain  # noqa: E402  (pure functions and two path constants only: nothing here writes through them)
 
 failures, notrun, n_checks = [], [], [0]
-GIT_ENV = dict(os.environ, **sandbox.GIT_ENV)
+# XDG_CONFIG_HOME an empty directory: git reads $XDG_CONFIG_HOME/git/ignore whatever GIT_CONFIG_GLOBAL says, and a developer's own global
+# ignore of `.claude/settings.local.json` hid a file from `git status` here while CI listed it (3.6 U2c: ci-local passed, CI failed).
+GIT_ENV = dict(os.environ, XDG_CONFIG_HOME=sandbox.mkdtemp("fresh-install-xdg-"), **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
-INTEGRATIONS = ("codex", "gsd", "hindsight")
+INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
 # What `forge add` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # profile with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
 # repo-owned project only where the repo's own ignore rules already cover it (it prints SKIP-doc, and that is
 # not a pending write). The one thing add does for such a project is its key in ~/.claude.json.
-DEMO_UNTRACKED = set()
+# 3.6 U2c: the one exception is .claude/settings.local.json, which holds only the `permissions.deny` rules that keep a project's agents
+# out of forge (every profile but forge's own gets them, a fresh install's demo project included); the test below pins its keys.
+DEMO_UNTRACKED = {".claude/settings.local.json"}
 REAL_HOME = pwd.getpwuid(os.getuid()).pw_dir
 ASK_CODEX = "Codex found: manage its config too? [Y/n]"
 ASK_GSD = "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx @opengsd/gsd-core)? [Y/n]"
@@ -275,7 +279,7 @@ def choice_cases():
     for flag, with_names, without_names in (("--with", ["caveman"], []), ("--without", [], ["caveman"])):
         got, why, q = run(True, with_names, without_names, both)
         want("init_choices %s caveman is refused as an unknown integration" % flag, (got, why),
-             (None, "unknown integration 'caveman' (one of codex, gsd, hindsight)"))
+             (None, "unknown integration 'caveman' (one of codex, gsd, hindsight, consent, agent_browser, mempalace)"))
     got, why, q = run(True, ["hindsight"], ["hindsight"], both)
     check("init_choices a name in both lists is refused", got is None and "hindsight" in (why or ""), "got %r, %r" % (got, why))
 
@@ -352,7 +356,7 @@ def main_world():
     # nothing. Red with "caveman" put back in lib.INTEGRATIONS: "init --with caveman is refused as an unknown integration, exit 1, nothing written -- exit 1: ! forge init: failed -- doctor (exit 1) | ..." (init ran and wrote config/forge.json).
     code, out = w.forge("init", "--yes", "--with", "caveman")
     check("init --with caveman is refused as an unknown integration, exit 1, nothing written",
-          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, gsd, hindsight)" in out
+          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, gsd, hindsight, consent, agent_browser, mempalace)" in out
           and not os.path.exists(w.path("config", "forge.json")), "exit %d: %s" % (code, tail(out, 3)))
     code, out = w.forge("init", "--yes", "--without", "codex,gsd")
     check("init --yes --without codex,gsd exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
@@ -383,6 +387,9 @@ def main_world():
     want("config/secrets.json links to ../credentials/secrets.json", os.readlink(link) if os.path.islink(link) else None, "../credentials/secrets.json")
     doc = w.path("docs", "AGENT-SYSTEM.md")
     check("docs/AGENT-SYSTEM.md is the example", os.path.exists(doc) and open(doc).read() == open(w.path("examples", "AGENT-SYSTEM.md")).read())
+    # Red against init_write without the gateway put (1.1 U4): "config/gateway.json is the example".
+    gw = w.path("config", "gateway.json")
+    check("config/gateway.json is the example", os.path.exists(gw) and open(gw).read() == open(w.path("examples", "gateway.json")).read())
     want("no config/toolchain.json while gsd is off", os.path.exists(w.path("config", "toolchain.json")), False)
     want("an empty skills/ exists", os.listdir(w.path("skills")) if os.path.isdir(w.path("skills")) else None, [])
     want("git config core.hooksPath", git_out("-C", w.root, "config", "core.hooksPath").strip(), "githooks")
@@ -437,6 +444,11 @@ def main_world():
     fresh, others = untracked_files(w.demo)
     want("forge add leaves the project's tracked files alone (git status)", others, [])
     want("the project's untracked files are the pinned set (%d)" % len(DEMO_UNTRACKED), fresh, DEMO_UNTRACKED)
+    sl = read_json(os.path.join(w.demo, ".claude", "settings.local.json")) or {}
+    deny = (sl.get("permissions") or {}).get("deny") or []
+    want("the demo's settings.local.json holds only permissions.deny, of Edit rules under the toy forge",
+         (sorted(sl), sorted(sl.get("permissions") or {}), bool(deny) and all(r.startswith("Edit(//") and w.root in r for r in deny)),
+         (["permissions"], ["deny"], True))
     keys = (read_json(os.path.join(w.home, ".claude.json")) or {}).get("projects", {})
     check("forge add put the project's key in the world's ~/.claude.json", w.demo in keys, "keys: %s" % sorted(keys))
     check("the add output names the profile it wrote", "config/profiles/demo.claude.json" in out, tail(out))

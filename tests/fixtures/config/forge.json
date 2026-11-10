@@ -19,7 +19,6 @@
     "extras": {
       "app.claude.json": []
     },
-    "no_gsd_baseline": [],
     "common_skills": ["toy-common"],
     "common_permissions": {
       "allow": []

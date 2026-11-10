@@ -7,7 +7,8 @@ Mirrors (links):  ~/.claude/skills   (Claude Code)
                   frontmatter format, added so both agents see the identical skill set)
 
 Non-destructive & idempotent: only CREATES / REPOINTS symlinks and PRUNES
-dangling ones and the links of skills named in skill_keep.gsd_exclude (config/forge.json). Never deletes or overwrites real skill content. Safe to run on
+dangling ones, the links of skills named in skill_keep.gsd_exclude (config/forge.json) and, with
+integrations.gsd off, the links of every gsd-* skill. Never deletes or overwrites real skill content. Safe to run on
 every session start. Run manually after adding a skill:  python relink_skills.py
 
 Project-dependent technical skills do NOT live here — they belong in the
@@ -39,8 +40,13 @@ DUPES = {
 
 
 def excluded():
-    """skill_keep.gsd_exclude in config/forge.json: skills that stay in skills/ but are not mirrored."""
-    return set((lib.settings().get("skill_keep") or {}).get("gsd_exclude") or [])
+    """Skills that stay in skills/ but are not mirrored: skill_keep.gsd_exclude in config/forge.json, and, with
+    integrations.gsd off, every gsd-* skill of skills/ (the integration's skills go with it, and the links an
+    earlier run made are pruned)."""
+    out = set((lib.settings().get("skill_keep") or {}).get("gsd_exclude") or [])
+    if not lib.on("gsd") and os.path.isdir(SRC):
+        out |= {d for d in os.listdir(SRC) if d.startswith("gsd-") and os.path.isdir(os.path.join(SRC, d))}
+    return out
 
 
 def skill_names():

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Cases for the read-injection-scanner.cjs PostToolUse hook.
+// Cases for the read-injection-scanner.js PostToolUse hook.
 //
 // The independent review (harness-security.md, blocker B1) found that
 // the day-2 "fix" of this hook was proved with a payload shape Claude Code never
@@ -7,14 +7,14 @@
 // under `tool_response.file.content` (confirmed against this project's own
 // transcripts), so the scanner exited 0 silently on every real Read. This suite's
 // first case is built in that real shape and is the one that matters: without the
-// fix in read-injection-scanner.cjs it fails.
+// fix in read-injection-scanner.js it fails.
 //
 // The break-it round on PR #23 found that no fixture exercised several
 // pattern lines, so a pattern could be dead and every case still pass. PATTERN_CASES now
 // holds one firing text per pattern, and the run fails when a pattern in the scanner's
 // source is reported by none of them.
 //
-// Run: node .claude/hooks/test_read_injection_scanner.mjs
+// Run: node hooks/test_read_injection_scanner.mjs
 // SCANNER_UNDER_TEST=<path> runs the cases against another copy of the hook.
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -22,7 +22,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const SCANNER = process.env.SCANNER_UNDER_TEST || path.join(HERE, 'read-injection-scanner.cjs');
+const SCANNER = process.env.SCANNER_UNDER_TEST || path.join(HERE, 'read-injection-scanner.js');
 const PROJECT = '/repo';
 
 const INJECTED_TEXT =

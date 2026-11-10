@@ -996,9 +996,10 @@ def real_package(failures):
         ponytail = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(ponytail)
         agents = {f[:-3] for f in os.listdir(os.path.join(gsd.STAGE, "agents")) if f.endswith(".md")}
-        if not ponytail.AGENTS or ponytail.AGENTS - agents:
+        gsd_names = {a for a in ponytail.AGENTS if a.startswith("gsd-")}  # the framework's `fwx:` agents are not GSD's
+        if not gsd_names or gsd_names - agents:
             failures.append("real package: Ponytail's agents %s are not all staged agents (missing %s)"
-                            % (sorted(ponytail.AGENTS), sorted(ponytail.AGENTS - agents)))
+                            % (sorted(gsd_names), sorted(gsd_names - agents)))
     finally:
         for n, v in saved.items():
             setattr(gsd, n, v)

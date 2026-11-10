@@ -1,0 +1,46 @@
+name: CodeRabbit gate
+
+# Makes CodeRabbit's approval required only where a PR is security-relevant (the paths in
+# .github/scripts/coderabbit_gate.py, or the `security` label); every other PR gets the status at once.
+# It posts the commit status `CodeRabbit approval` on the PR's head commit, which the ruleset requires
+# by name. It is a separate workflow, not a job of ci.yml, so it also runs when a review is submitted:
+# CodeRabbit's approval arrives after CI has finished. No secret beyond the run's own token, no
+# pull_request_target, and nothing from the PR is executed with more than read access to the repo.
+# A PR that edits this workflow is judged by its own copy: .github/** is a risky path, so the review
+# of that change is the control.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
+  pull_request_review:
+    types: [submitted, dismissed]
+
+# A new event for the same PR replaces the run in flight: the latest state is the one that counts.
+concurrency:
+  group: coderabbit-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions: {}
+
+jobs:
+  gate:
+    name: Gate (CodeRabbit approval)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: step-security/harden-runner@dc2769abcc0fcfbadfc1df54081c1608579ef6b2 # v2.22.2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: CodeRabbit approval status
+        run: python3 .github/scripts/coderabbit_gate.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}

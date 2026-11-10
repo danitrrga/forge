@@ -515,6 +515,80 @@ def range_cases():
     want("a missing message file = exit", code, 2)
 
 
+# --- 4b. --root: the guard scans another repository, with forge's two lists
+# Red against master, before `--root` existed (every case below): "forge: error: unrecognized arguments: --root"
+# (argparse, exit 2), so the planted home path was never reported and "clean repository = exit" read 2, not 0.
+# Controls seen to fail on a mutant of the fix: with the allowlist applied to the other repository, "--root --all, the
+# engine's allowlist not applied = exit = 0, want 1"; with the missing-directory check removed, "--root, a missing
+# directory with --message = exit = 1, want 2".
+def root_cases():
+    word = j("zq", "xv-private")
+    fg = toy("root-forge")
+    write(fg, "config/publish-deny.txt", word + "\n")
+    # The engine's allowlist hides src/ from the engine's own --all; it must not hide the other repository's src/.
+    write(fg, "publish/engine.gitignore", "/src/\n")
+    other = os.path.join(TMP, "root-other-%d" % _n[0])
+    os.makedirs(other)
+    git_out(other, "init", "-q")
+    # The other repository's own lists are not forge's: its deny file and its allowlist do nothing.
+    write(other, "config/publish-deny.txt", "own-secret\n")
+    write(other, "publish/engine.gitignore", "/src/\n")
+    write(other, "src/a.txt", "fine\n" + "path " + HOME_DIR + "alice/x\n")
+    write(other, "src/b.txt", "the " + word.upper() + " word\n")
+    write(other, "src/c.txt", "own-secret in the other repo's file\n")
+    write(other, "untracked.txt", "path " + HOME_DIR + "bob/x\n")
+    git_out(other, "add", "src/a.txt", "src/b.txt", "src/c.txt", "config/publish-deny.txt", "publish/engine.gitignore")
+    code, out = forge(fg, "check-public", "--root", other, "--staged")
+    want("--root --staged, a planted home path = exit", code, 1)
+    has("--root --staged", out, "FAIL src/a.txt:2 [home path]", "FAIL src/b.txt:1 [private list]", "5 file(s) checked",
+        "private list, 1 pattern(s)")
+    lacks("--root --staged", out, "src/c.txt", "untracked.txt")
+    code, out = forge(fg, "check-public", "--root", other, "--all")
+    want("--root --all, the engine's allowlist not applied = exit", code, 1)
+    has("--root --all", out, "src/a.txt:2 [home path]", "src/b.txt:1 [private list]", "5 file(s) checked")
+    lacks("--root --all", out, "src/c.txt", "untracked.txt")
+    # --range and --message: the commits of the other repository, the message file anywhere.
+    git_out(other, "rm", "-q", "--cached", "src/c.txt")
+    commit_files(other, "feat: a for bob@" + j("acme", ".io"), "src/a.txt", "src/b.txt")
+    code, out = forge(fg, "check-public", "--root", other, "--range", "0" * 40 + ".." + head(other))
+    want("--root --range = exit", code, 1)
+    has("--root --range", out, ":src/a.txt:2 [home path]", ":(message):1 [email]", "1 commit(s)")
+    mf = os.path.join(TMP, "root-msg")
+    for label, text, rc in (("a clean message", "feat: x\n", 0), ("a message with the private word", "feat: " + word + "\n", 1),
+                            ("a message with an address", "feat: bob@" + j("acme", ".io") + "\n", 1)):
+        open(mf, "w").write(text)
+        code, out = forge(fg, "check-public", "--root", other, "--message", mf)
+        want("--root --message, %s = exit" % label, code, rc)
+    # Controls: a clean repository passes and says how many files it looked at; an empty one is "0 file(s) checked", exit 1.
+    clean = os.path.join(TMP, "root-clean-%d" % _n[0])
+    os.makedirs(clean)
+    git_out(clean, "init", "-q")
+    write(clean, "a.txt", "clean\n")
+    write(clean, "src/b.txt", "clean\n")
+    git_out(clean, "add", "a.txt", "src/b.txt")
+    for flag in ("--staged", "--all"):
+        code, out = forge(fg, "check-public", "--root", clean, flag)
+        want("--root, a clean repository %s = exit" % flag, code, 0)
+        has("--root, a clean repository %s" % flag, out, "PASS check-public: 2 file(s) checked", "private list, 1 pattern(s)")
+    empty = os.path.join(TMP, "root-empty-%d" % _n[0])
+    os.makedirs(empty)
+    git_out(empty, "init", "-q")
+    code, out = forge(fg, "check-public", "--root", empty, "--all")
+    want("--root, an empty repository --all = exit", code, 1)
+    has("--root, an empty repository --all", out, "FAIL check-public: 0 file(s) checked")
+    # Not a repository, or no such directory: the check could not run.
+    notrepo = os.path.join(TMP, "root-notrepo")
+    os.makedirs(notrepo)
+    for label, d in (("a directory that is no repository", notrepo), ("a missing directory", os.path.join(TMP, "root-missing"))):
+        code, out = forge(fg, "check-public", "--root", d, "--all")
+        want("--root, %s = exit" % label, code, 2)
+        has("--root, %s" % label, out, "forge check-public:")
+        lacks("--root, %s" % label, out, "Traceback")
+    code, out = forge(fg, "check-public", "--root", os.path.join(TMP, "root-missing"), "--message", mf)
+    want("--root, a missing directory with --message = exit", code, 2)
+    has("--root, a missing directory with --message", out, "forge check-public: --root")
+
+
 # --- 5. forge commit
 def commit_cases():
     root = toy("overlay", overlay=True)
@@ -849,6 +923,7 @@ def main():
     allowlist_cases()
     own_files_cases()
     range_cases()
+    root_cases()
     commit_cases()
     commit_edge_cases()
     hook_cases()

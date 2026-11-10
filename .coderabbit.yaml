@@ -1,0 +1,111 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+#
+# CodeRabbit reviews and comments on every PR to the default branch. Its approval is required only
+# where a PR is security-relevant: the paths under `overrides` below (kept equal to RISKY in
+# .github/scripts/coderabbit_gate.py by tests/test_coderabbit_gate.py) or the `security` label. The
+# status `CodeRabbit approval` (.github/workflows/coderabbit-gate.yml, required by repo-kit's
+# `ruleset --coderabbit`) is pending on those until CodeRabbit approves the head commit, and green at
+# once on every other PR. Strictness follows risk: `reviews.profile` is one value for the whole repo,
+# so what varies per PR is the approval limit below and the review text per path (`path_instructions`).
+#
+# CodeRabbit never writes to the repo: every finishing touch that commits or opens a PR is off.
+language: en-US
+
+reviews:
+  profile: chill
+
+  # Findings that need action request changes; CodeRabbit approves when its threads are resolved,
+  # the latest commit is reviewed and its risk is within the limit. (`request_changes_workflow` is
+  # the legacy name of `auto_approvals.enabled`; setting both is a config error.)
+  auto_approvals:
+    enabled: true
+    # Above this merge risk CodeRabbit withholds its approval, and only a change that lowers the
+    # risk gets it back. The riskiest paths get a lower limit.
+    max_merge_risk: moderate
+    # The PR author cannot force `@coderabbitai approve`: in this repo the author is the owner,
+    # and an agent session posts as the owner too.
+    allow_author_approval: false
+    overrides:
+      - paths:
+          - ".coderabbit.yaml"
+          - ".gitignore"
+          - ".github/**"
+          - "githooks/**"
+          - "hooks/**"
+          - "scripts/{consent,sync}/**"
+          - "forge/{hooks,sync,skills,framework,mcp,marketplace,owned,uninstall,publish}.py"
+        max_merge_risk: low
+
+  merge_risk_instructions: |
+    These paths are high risk when a change weakens them: hooks/, githooks/, .github/, scripts/consent/,
+    forge/hooks.py, forge/sync.py, forge/skills.py, forge/framework.py, forge/mcp.py, and any code that
+    writes a settings file, a permission rule or an MCP server definition. A guard that fails open,
+    a permission that widens, a CI step that gains a secret or loses its pin, or a personal name, home
+    path or address in an engine file is high or critical.
+    Docs-only and test-only changes are low risk, unless they remove a check or its negative control.
+
+  # Automatic review of non-draft PRs to the default branch (the defaults, stated). Reviews are
+  # never paused after N commits: a paused review leaves the required check green with no review.
+  auto_review:
+    enabled: true
+    drafts: false
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 0
+    # Dependabot's PRs get no review, so the gate could never be released by CodeRabbit on one that
+    # touches .github/: there the owner's approval releases it (the gate script).
+    ignore_usernames:
+      - "dependabot[bot]"
+
+  # A failed review blocks the required check instead of passing it.
+  fail_commit_status: true
+
+  path_instructions:
+    - path: "**"
+      instructions: |
+        Nothing personal in an engine file (CLAUDE.md, rule 5): flag a person's name, a home path
+        (/home/<user>), an email address outside example.com/example.org/example.test, an IP outside
+        192.0.2.0/24 and 198.51.100.0/24, a project's name, or the date of a decision, in code,
+        comments, tests, docs and fixtures. Flag a value read from or copied out of credentials/.
+    - path: "{hooks,githooks}/**"
+      instructions: |
+        Security guards. Treat a path where the guard allows by default, swallows an exception, or
+        skips on a missing input as a defect. A changed rule needs a test that fails without it
+        (CLAUDE.md, rule 3); say so when the negative control is missing.
+    - path: ".github/**"
+      instructions: |
+        CI is the merge gate. Every action pinned by commit hash, least-privilege `permissions`, no
+        `pull_request_target` with a checkout of the PR head, no secret passed to a PR job, no
+        `${{ github.event.* }}` inside a `run:`. A job added outside checks.yml (and so outside the
+        `All checks` aggregate) never gates anything.
+    - path: "{forge/{hooks,sync,skills,framework,mcp,marketplace,owned,uninstall}.py,scripts/{consent,sync}/**}"
+      instructions: |
+        Writes settings, permissions, hooks or MCP definitions on the machine. Check that a dry-run
+        stays the default, that only the installed checkout writes, that a rule is never widened
+        silently, that generated files are not hand-edited, and that the change is tested in a toy
+        world (tests/sandbox.py), never against the real HOME.
+    - path: "tests/**"
+      instructions: |
+        A test never seen to fail is not evidence (CLAUDE.md, rule 3). Flag a new check with no
+        negative control, a check that passes when it looked at zero things, and a test that leaves
+        a temp dir behind.
+
+  # forge does not write a docstring on every function, so the built-in coverage check (default
+  # `warning` mode, threshold 80, failed on a real PR) is off: it must not hold a merge by itself.
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+
+  # Nothing that commits, pushes or opens a PR on its own. Each is off; the commands are removed.
+  finishing_touches:
+    docstrings:
+      enabled: false
+    unit_tests:
+      enabled: false
+    simplify:
+      enabled: false
+    autofix:
+      enabled: false
+    fix_ci:
+      enabled: false
+    resolve_merge_conflict:
+      enabled: false

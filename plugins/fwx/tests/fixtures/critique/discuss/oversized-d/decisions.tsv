@@ -1,0 +1,8 @@
+date	id	decision	why	rejected	support	source	supersedes
+day-1	D1	One file, `calc.py`, standard library only, run as `python3 calc.py`.	The owner wants nothing to install and uses a hosted shell.	a web page; a package with dependencies	chosen	turn 1	
+day-1	D2	One expression as the argument, or, with no argument, one expression per line until an empty line.	Covers a quick one-off and a short session without building a full REPL.	a REPL with variables and history	chosen	turn 2	
+day-1	D3	The four operations, brackets and a minus sign in front of a number. Division by zero prints a message and exits 1.	That is the whole of what the owner asked for.	powers, functions, constants	chosen	turn 3	
+day-1	D4	`0.1 + 0.2` prints `0.3`, not `0.30000000000000004`.	The owner reads the result as a person does.	plain floats with the default repr	approved	turn 4	
+day-1	D5	A plugin system: every operation is a plugin module loaded from a plugins folder.	So operations can be added later without touching calc.py.	one file with the operations inside	agent-assumption	agent	
+day-1	D6	A settings file `~/.calcrc` for precision, angle units and the prompt text.	Every user wants a different setup.	fixed defaults	agent-assumption	agent	
+day-1	D7	Every expression and its result is kept in a history database.	A history is expected from any calculator.	no history	agent-assumption	agent	

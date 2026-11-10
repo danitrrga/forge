@@ -986,6 +986,10 @@ def project_world(tmp):
     root, home = os.path.join(base, "forge"), os.path.join(base, "home")
     sandbox.copy_engine(root)
     sandbox.seed(root)
+    # 3.6 U2c: the generator lists the entries git tracks in the checkout (forge/sync.py forge_deny), and a copy has no history
+    # of its own: without this index every toy project would get the `!` line "tracks no entry to protect" and nothing written.
+    sandbox.git(root, "init", "-q")
+    sandbox.git(root, "add", "-A")
     profiles = os.path.join(root, "config", "profiles")
     for f in os.listdir(profiles):
         os.remove(os.path.join(profiles, f))
@@ -1323,6 +1327,9 @@ def integrations_cases(tmp):
     want("control: the same row naming a script that exists PASSes", got,
          [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: gsd is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: consent is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: agent_browser is off in config/forge.json"),
+          ("SKIP", "NOT RUN, NOT ARMED: mempalace is off in config/forge.json; its check arrives with the MemPalace part"),
           ("PASS", "user_hooks row here.py (UserPromptSubmit): %s is there" % present),
           ("PASS", "checked 1: 0 integration(s) on, 1 user_hooks script(s)")])
     got = run("hook-off", OFF, [hook(missing, "gone.py", on=False), hook(present, "here.py")])
@@ -1513,10 +1520,21 @@ def skip_cases(tmp):
         want("session_wait with hindsight on", getattr(cli, "session_wait", lambda: "no cli.session_wait")(), wait)
         want("the unit comes from the config", getattr(cli, "memory_unit", lambda: "no cli.memory_unit")(), "toy-unit")
 
+        # Forced to FAIL, whatever the machine says: a session that still reaches toolchain.row (through
+        # cli.check_and_tell) prints "toolchain: 1 failing: ..." and "another project is not special" fails. With
+        # check_and_tell stubbed below nothing reaches it, so the want() stays '' on a green and a red machine alike.
+        toolchain_row = lambda: lib.Result("FAIL", "toolchain", "1 failing: file:mise (forced by the test)")
+
         def session(project):
-            """What a session start in `project` prints, with the sync steps, lock and resolver stubbed out."""
-            saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock)
+            """What a session start in `project` prints, with the sync steps, lock, resolver and machine check stubbed out."""
+            # cli.check_and_tell reads machine state: the GSD runtime and the real config/toolchain.json against the
+            # real ~/.config/mise/conf.d/forge.toml ("toolchain: 1 failing: file:mise" when they differ). It is
+            # stubbed whole, like the sync steps; the row itself is test_toolchain.py's. toolchain.row is also forced
+            # to FAIL as a tripwire: if the stub stops covering it, "another project is not special" goes red.
+            saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
+                     cli.toolchain.row, cli.check_and_tell)
             cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state = [], 0.3, 0.1, lambda: "activating"
+            cli.toolchain.row, cli.check_and_tell = toolchain_row, lambda: []
             lib.resolve_project, lib.profiles = (lambda path: project), (lambda skipped=None: {project: {}})
             lib.lock = lambda timeout=20: contextlib.nullcontext()
             out = io.StringIO()
@@ -1524,7 +1542,8 @@ def skip_cases(tmp):
                 with contextlib.redirect_stdout(out):
                     cli.cmd_session_start(None)
             finally:
-                cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock = saved
+                (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
+                 cli.toolchain.row, cli.check_and_tell) = saved
             return json.loads(out.getvalue())["systemMessage"] if out.getvalue().strip() else ""
         msg = session("toyproj")
         want("a session in the configured project waits", ("memory is starting (toy-unit: activating" in msg), True)

@@ -876,10 +876,10 @@ for i, (sub, apply) in enumerate(((".agents", True), (".agents", False), (os.pat
 STALE = {"skillOverrides": {"gsd-x": "off"}, "enabledPlugins": {"p@x": False}, "env": {"OLD": "1"},
          "permissions": {"allow": ["Bash(ls:*)"]}}
 for label, prof, keys, said in (
-        ("a bare profile", {}, ["permissions"], "enabledPlugins and skillOverrides removed, env removed"),
+        ("a bare profile", {}, ["permissions"], "enabledPlugins and skillOverrides removed, perms allow 1, env removed"),
         ("a profile with env", {"env": {"K": "v"}}, ["env", "permissions"], "enabledPlugins and skillOverrides removed"),
         ("a profile trimming skills only", {"skills_keep": []}, ["permissions", "skillOverrides"],
-         "plugins untrimmed, skills off 0, kept-global 0, enabledPlugins removed, env removed")):
+         "plugins untrimmed, skills off 0, kept-global 0, enabledPlugins removed, perms allow 1, env removed")):
     reset_home()
     name = "untrim-" + label.split()[-1]
     d = os.path.join(TOY, name, "projects", "a")
@@ -888,12 +888,15 @@ for label, prof, keys, said in (
     code, out, _ = case(name, {"a": prof})
     doc = json.loads(read(slp))
     line = [l for l in out.splitlines() if "overrides ->" in l]
-    check(code == 0 and sorted(doc) == keys and doc["permissions"] == STALE["permissions"]
+    # 3.6 U2c: every project but forge's own also gets the `deny` rules on forge, so a bare profile is no longer left alone and
+    # its permissions are the stale allow plus that one key (the run said "perms allow 1" where it said nothing before).
+    perms = doc["permissions"]
+    check(code == 0 and sorted(doc) == keys and perms.get("allow") == STALE["permissions"]["allow"] and sorted(perms) == ["allow", "deny"]
           and doc.get("env", {"K": "v"}) == {"K": "v"} and len(line) == 1 and said in line[0],
           "%s over a trimmed settings.local.json: exit %r, keys %r, overrides lines %r" % (label, code, sorted(doc), line))
     code, out, _ = case(name + "-again", {"a": dict(prof, project_path=d)})
     line = [l for l in out.splitlines() if "overrides ->" in l]
-    check(code == 0 and json.loads(read(slp)) == doc and (line == [] if not prof else "(already current)" in line[0]),
+    check(code == 0 and json.loads(read(slp)) == doc and (len(line) == 1 and "(already current)" in line[0]),
           "%s, second run: exit %r, overrides lines %r" % (label, code, line))
 
 # 21. A profile with no env still gives Codex MCPORTER_CONFIG, under this HOME: the value was the

@@ -1,8 +1,11 @@
 """hooks/ponytail_subagent.py against a toy Ponytail install: the eight GSD agents that execute, debug
-or review get the ruleset, every other agent gets nothing, a broken install is a visible error, and a
+or review and the framework's two reviewers (fwx:reviewer, fwx:security-reviewer) get the ruleset, every
+other agent gets nothing (fwx:executor, fwx:review-verifier and workflow-subagent included), a broken install is a visible error, and a
 manual /ponytail change holds for its own session and no other.
 
-Seen to fail first: before the hook existed every case failed ("can't open file .../ponytail_subagent.py",
+Seen to fail first for the framework's reviewers (3.4 U6), on the hook as it was: "fwx:reviewer: want the full
+ruleset, got exit 0, stdout ''" and the same for fwx:security-reviewer, 2 of 40 cases failed; the OFF names
+already passed, as they must. Earlier: before the hook existed every case failed ("can't open file .../ponytail_subagent.py",
 17 of 17), and with the allowlist check removed 7 failed, from "gsd-planner: want no output, got the
 ruleset" to "(empty agent_type): want no output, got the ruleset".
 The per-session cases (SEQUENCES) were added before the UserPromptSubmit half: 7 of 32 failed on the hook
@@ -11,21 +14,27 @@ without it ("off: (silent, executor, planner, a new session) = (True, 'full', '-
 ... (True, 'ultra', '-', 'full'), want (True, '-', '-', 'full')"; a bare /ponytail always full, "lite then
 bare: ... 'full' ... want ... 'lite'".
 """
-import json, os, shutil, subprocess, sys, tempfile
+import json, os, subprocess, sys
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "tests"))
+import sandbox  # noqa: E402
 
 HOOK = os.path.join(os.path.dirname(os.path.realpath(__file__)), "ponytail_subagent.py")
 ON = ["gsd-executor", "gsd-debugger", "gsd-code-fixer", "gsd-code-reviewer", "gsd-verifier",
-      "gsd-security-auditor", "gsd-nyquist-auditor", "gsd-integration-checker"]
-OFF = ["gsd-planner", "gsd-phase-researcher", "general-purpose", "Explore", "gsd-executor-x", "x-gsd-executor", ""]
+      "gsd-security-auditor", "gsd-nyquist-auditor", "gsd-integration-checker",
+      "fwx:reviewer", "fwx:security-reviewer"]
+# The framework's executor and review-verifier never get it (ponytail only when reviewing), and neither does a
+# framework agent launched without agentType, which reaches the hook as "workflow-subagent".
+OFF = ["gsd-planner", "gsd-phase-researcher", "general-purpose", "Explore", "gsd-executor-x", "x-gsd-executor", "",
+       "fwx:executor", "fwx:review-verifier", "workflow-subagent", "fwx:reviewer-x", "x-fwx:reviewer", "reviewer"]
 # The toy plugin's builder answers like Ponytail's: the header, then the level it was asked for.
 STUB = "exports.getPonytailInstructions = m => 'PONYTAIL MODE ACTIVE — level: ' + m + '\\n\\nrules';\n"
 
-fails, made = [], []
+fails = []
 
 
 def toy(with_plugin=True):
-    cfg = tempfile.mkdtemp(prefix="ponytail-toy-")
-    made.append(cfg)
+    cfg = sandbox.mkdtemp("ponytail-toy-")
     plug = os.path.join(cfg, "plugins", "cache", "ponytail", "1.0.0")
     os.makedirs(os.path.join(plug, "hooks"))
     with open(os.path.join(plug, "hooks", "ponytail-instructions.js"), "w") as fh:
@@ -132,8 +141,7 @@ stray = [os.path.join(dp, f) for dp, _, fs in os.walk(cfg) for f in fs if "escap
 if stray or level(cfg, "../../escape") != "full":
     fails.append("session id ../../escape: want nothing written and full, got %s and %s" % (stray, level(cfg, "../../escape")))
 
-for d in made:
-    shutil.rmtree(d, ignore_errors=True)
+sandbox.cleanup(fails)
 for f in fails:
     print("FAIL", f)
 print("%d case(s), %d failed" % (checked, len(fails)))

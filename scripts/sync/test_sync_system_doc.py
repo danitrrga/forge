@@ -332,7 +332,8 @@ def main():
     generic = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, "
                "changed screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
                "use that; otherwise write `decisions.json` in a folder and run `python3 %(t)s/forge/scripts/design/design.py verdict <folder>` "
-               "(the format is in `%(t)s/forge/design/verdict/README.md`), then end your message with the `xdg-open` line it prints.\n")
+               "(the format is in `%(t)s/forge/design/verdict/README.md`), then end your message with the `xdg-open` line it prints."
+               " For a live back-and-forth (the owner clicks rows and notes single elements, your replies appear in the page) add `--serve`; the README says how to read the answers and reply.\n")
     own = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
            "screenshots to accept) goes on a verdict page, never into a chat question. In this project the command is `pnpm verdict <dir>`: "
            "use it, not forge's `design.py verdict`; this file describes how it is used. End your message with the `xdg-open` line it prints.\n")

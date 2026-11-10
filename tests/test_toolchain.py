@@ -36,6 +36,14 @@ that differs ignored "pin installed, another version active = (exit, level, inst
    forge's, and the recheck is the verdict, not the installers' exit codes. A refused write
    (lib.may_write) leaves the files and still installs.
 5. The `toolchain` row of forge doctor: the check without --fix, how many it looked at, the fix named.
+
+The suite never reads a checkout's config/forge.json: `toy_settings` points lib.SETTINGS at the fixture's file
+with GSD on (a missing config/toolchain.json is a FAIL) and `gsd_off_cases` at the same file with GSD off (the
+row is a SKIP `NOT RUN, NOT ARMED`). Seen failing on a toy copy of the fixture with GSD off standing in for the
+machine's file, before the change: "FAIL no file = (exit, levels) = (0, []), want (1, ['FAIL'])", "FAIL row, no
+file = (exit, level, installs) = (0, [''], []), want (1, ['FAIL'], [])", "FAIL row, no file: names the fix =
+False, want True"; and the SKIP case with `_gsd_pinned` forced True: "FAIL row, GSD off and no file = (exit,
+one line) = (1, 1), want (0, 1)".
 """
 import contextlib
 import io
@@ -317,7 +325,7 @@ def when_cases(tmp):
     w = world(DOC_G, ALL_TOOLS, ALL_PIP, gsd_defaults={})
     code, lines = w.run("doctor", only_row="toolchain")
     want("when off: the doctor row says how many it looked at and what is off",
-         (code, any(l.startswith("PASS") and "3 tool(s), 2 pip package(s), 2 file(s), 1 off by a GSD default: pipx:graphifyy" in l for l in lines)), (0, True))
+         (code, any(l.startswith("PASS") and "3 tool(s), 2 pip package(s), 2 file(s), 1 off by their `when`: pipx:graphifyy" in l for l in lines)), (0, True))
 
     # on and missing: a FAIL naming the pin, --fix installs it with the rest in one call and writes it to the file
     w = world(DOC_G, ALL_TOOLS, ALL_PIP, files=None, gsd_defaults=GRAPH_ON)
@@ -340,6 +348,66 @@ def when_cases(tmp):
         w = world(dict(DOC_G, tools=DOC["tools"] + [dict(GRAPH, when=bad)]), ALL_TOOLS, ALL_PIP, gsd_defaults=GRAPH_ON)
         code, lines = w.run("toolchain")
         want("when: a bad when %r = (exit, a FAIL naming `when`)" % (bad,), (code, any(l.startswith("FAIL") and "when" in l for l in lines)), (1, True))
+
+
+AB = {"name": "aqua:toy-org/toy-browser", "version": "0.1.0", "why": "w", "when": {"integration": "agent_browser"}}
+DOC_AB = {"tools": DOC["tools"] + [AB], "pip": DOC["pip"]}
+
+
+def integration_when_cases(tmp):
+    """2.2 U5a: a tool with `when: {"integration": "agent_browser"}` is asked for, written to mise's file and installed
+    only while that integration is on in config/forge.json; off, it is a SKIP `NOT RUN, NOT ARMED`, never in the file,
+    never installed. Seen failing against the base (`_entry_error` knew only gsd_default, so the manifest was refused and
+    every case read a FAIL `toolchain`), 10 of the suite's cases red: "integration when, off: exit 0, a SKIP that says
+    NOT RUN, NOT ARMED and names the integration = (1, False, False, False), want (0, True, True, True)", "integration
+    when, on: --fix installs it = (1, []), want (0, ['mise install aqua:toy-org/toy-browser@0.1.0'])", and the renamed
+    doctor row text "when off: the doctor row says ... = (0, False), want (0, True)". Control: the same world with the
+    integration on installs the tool, so the off cases are able to fail."""
+    n = [0]
+
+    def run(doc, integrations_on, *argv, tool_have=None, only_row=None, **k):
+        n[0] += 1
+        base = os.path.join(tmp, "iw%d" % n[0])
+        os.makedirs(base)
+        restore = toy_settings(base, agent_browser=integrations_on)
+        try:
+            w = World(os.path.join(base, "world"), doc, dict(ALL_TOOLS, **(tool_have or {})), ALL_PIP, **k)
+            code, lines = w.run(*argv, only_row=only_row)
+            return w, code, lines
+        finally:
+            restore()
+
+    name = AB["name"]
+    w, code, lines = run(DOC_AB, False, "toolchain")
+    got = line_of(lines, name)
+    want("integration when, off: exit 0, a SKIP that says NOT RUN, NOT ARMED and names the integration",
+         (code, got.startswith("SKIP"), "NOT RUN, NOT ARMED" in got, "agent_browser" in got), (0, True, True, True))
+    want("integration when, off: the rest passes and mise's file lacks the tool",
+         (levels(lines), "toy-browser" in (w.read(w.mise_file) or "")), (ALL, False))
+    w, code, lines = run(DOC_AB, False, "toolchain", "--fix")
+    want("integration when, off: --fix installs nothing", (code, w.installs()), (0, []))
+
+    w, code, lines = run(DOC_AB, True, "toolchain", files=None)
+    want("integration when, on and missing: a FAIL naming the pin",
+         (code, levels(lines).get(name), line_of(lines, name).endswith("missing, pinned 0.1.0")), (1, "FAIL", True))
+    w, code, lines = run(DOC_AB, True, "toolchain", "--fix", files=None)
+    want("integration when, on: --fix installs it", (code, w.installs()), (0, ["mise install aqua:toy-org/toy-browser@0.1.0"]))
+    want("integration when, on: the file holds it", '"aqua:toy-org/toy-browser" = "0.1.0"' in (w.read(w.mise_file) or ""), True)
+    w, code, lines = run(DOC_AB, True, "toolchain", tool_have={name: "0.1.0"})
+    want("integration when, on and installed: PASS", (code, levels(lines).get(name)), (0, "PASS"))
+    w, code, lines = run(DOC_AB, False, "toolchain", "--fix", tool_have={name: "0.1.0"}, files="current")
+    want("integration when, off but installed: --fix removes nothing",
+         (code, [c for c in open(w.log) if "uninstall" in c or " rm " in c]), (0, []))
+    w, code, lines = run(DOC_AB, False, "doctor", only_row="toolchain")
+    want("integration when, off: the doctor row names what is off",
+         (code, any(l.startswith("PASS") and "1 off by their `when`: " + name in l for l in lines)), (0, True))
+
+    # a `when` that names no integration, or both kinds at once, is a manifest error, named
+    for bad in ({"integration": "nosuch"}, {"integration": ""}, {"integration": 5},
+                {"integration": "agent_browser", "gsd_default": "a"}):
+        w, code, lines = run(dict(DOC_AB, tools=DOC["tools"] + [dict(AB, when=bad)]), True, "toolchain")
+        want("integration when: a bad when %r = (exit, a FAIL naming `when`)" % (bad,),
+             (code, any(l.startswith("FAIL") and "when" in l for l in lines)), (1, True))
 
 
 def check_cases(tmp):
@@ -571,32 +639,55 @@ def row_cases(tmp):
     want("row, mise ls fails = (exit, level)", (code, lines[0][:4]), (1, "FAIL"))
 
 
-def toy_settings(tmp):
-    """On a checkout with no config/forge.json (a pure engine clone) the "no file" cases read no settings, so
-    GSD reads as off and a missing config/toolchain.json is a SKIP, not the FAIL they expect. The toy file is
-    the fixture's with GSD patched on, which is the machine this suite is written for; where the checkout has
-    its own file it is read as before."""
-    if os.path.exists(lib.SETTINGS):
-        return
+def toy_settings(tmp, gsd=True, agent_browser=False):
+    """Points lib.SETTINGS at a toy forge.json under `tmp`, whatever the checkout holds, and returns what
+    restores the real path and the settings cache. The toy file is the fixture's with GSD patched `gsd` (on by
+    default, the machine this suite is written for): a missing config/toolchain.json is then a FAIL. A checkout
+    with its own config/forge.json used to be read as it stood, so switching GSD off there turned the three
+    "no file" cases into a SKIP and failed them (`no file = (exit, levels) = (0, []), want (1, ['FAIL'])`)."""
     with open(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "forge.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
-    doc["integrations"]["gsd"], doc["gsd_patches"] = True, True
+    doc["integrations"]["gsd"], doc["gsd_patches"] = gsd, gsd
+    doc["integrations"]["agent_browser"] = agent_browser
+    real = lib.SETTINGS
     lib.SETTINGS = os.path.join(tmp, "forge.json")
     with open(lib.SETTINGS, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)
     lib.settings.cache_clear()
 
+    def restore():
+        lib.SETTINGS = real
+        lib.settings.cache_clear()
+    return restore
+
+
+def gsd_off_cases(tmp):
+    """With GSD off no config/toolchain.json is a SKIP `NOT RUN, NOT ARMED`, not a FAIL: nothing is pinned."""
+    os.makedirs(os.path.join(tmp, "gsd-off"), exist_ok=True)
+    restore = toy_settings(os.path.join(tmp, "gsd-off"), gsd=False)
+    try:
+        w = World(os.path.join(tmp, "gsd-off-world"), None, ALL_TOOLS, ALL_PIP)
+        code, out = w.run("doctor", only_row="toolchain")
+        rows = [" ".join(l.split()) for l in out if l[:4] in ("PASS", "WARN", "FAIL", "SKIP")]
+        want("row, GSD off and no file = (exit, one line)", (code, len(rows)), (0, 1))
+        want("row, GSD off and no file: SKIP NOT RUN, NOT ARMED", rows[0].startswith("SKIP toolchain NOT RUN, NOT ARMED: "), True)
+    finally:
+        restore()
+
 
 def main():
     tmp = sandbox.mkdtemp("toolchain-test-")
-    toy_settings(tmp)
+    restore = toy_settings(tmp)
     file_cases(FIXTURE, "the fixture's")
     if os.path.exists(REAL):
         file_cases(REAL, "this machine's")
     render_cases()
     check_cases(tmp)
     when_cases(tmp)
+    integration_when_cases(tmp)
     row_cases(tmp)
+    gsd_off_cases(tmp)
+    restore()
     for msg in failures:
         print("FAIL", msg)
     print("%d failure(s)" % len(failures))

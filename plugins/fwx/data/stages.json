@@ -1,0 +1,35 @@
+{
+  "session": {
+    "start": "discuss",
+    "terminal": ["closed", "cancelled"],
+    "transitions": {
+      "discuss": ["premortem", "cancelled"],
+      "premortem": ["planning", "discuss"],
+      "planning": ["postmortem"],
+      "postmortem": ["planning", "executing", "discuss"],
+      "executing": ["reviewing", "phase-review"],
+      "reviewing": ["executing", "ui-walk", "phase-review"],
+      "ui-walk": ["phase-review", "discuss", "executing"],
+      "phase-review": ["executing", "closed", "discuss"]
+    }
+  },
+  "factory": {
+    "start": "claimed",
+    "terminal": ["done"],
+    "transitions": {
+      "claimed": ["intake", "failed", "needs-owner"],
+      "intake": ["discuss", "needs-owner", "failed"],
+      "discuss": ["premortem", "planning", "needs-owner", "failed"],
+      "premortem": ["planning", "discuss", "failed", "needs-owner"],
+      "planning": ["postmortem", "failed", "needs-owner"],
+      "postmortem": ["planning", "executing", "discuss", "failed", "needs-owner"],
+      "executing": ["pr", "failed", "needs-owner"],
+      "pr": ["babysit", "failed", "needs-owner"],
+      "babysit": ["deciding", "executing", "failed", "needs-owner"],
+      "deciding": ["handover", "babysit", "failed", "needs-owner"],
+      "handover": ["done", "executing", "failed", "needs-owner"],
+      "failed": ["claimed"],
+      "needs-owner": ["claimed"]
+    }
+  }
+}

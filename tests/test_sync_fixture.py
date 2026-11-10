@@ -45,7 +45,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -117,11 +116,12 @@ def changed(a, b):
 
 class Sandbox:
     def __init__(self, mutation=None):
-        self.root = os.path.realpath(tempfile.mkdtemp(prefix="forge-s0-"))
+        self.root = sandbox.mkdtemp("forge-s0-")  # removed at exit however the run ends, unless FORGE_TEST_KEEP=1 or --keep
         self.forge, self.home, self.projects = (os.path.join(self.root, d) for d in ("forge", "home", "projects"))
         self.cjp = os.path.join(self.home, ".claude.json")
         self.settings = os.path.join(self.home, ".claude", "settings.json")
         self.log = os.path.join(self.root, "systemctl.log")
+        self.claude_log = os.path.join(self.root, "claude.log")
         self.outputs, self.manifests, self.portal_keys = {}, {}, {}
         self._copy(mutation)
         settings = os.path.join(self.forge, "config", "forge.json")
@@ -131,6 +131,8 @@ class Sandbox:
         doc["codex_harness"] = True
         write_json(settings, doc)
         self._profiles()
+        self._framework()
+        self._local_plugins()
         self._secrets()
         git(self.forge, "init", "-q")
         git(self.forge, "add", "-A")
@@ -177,6 +179,38 @@ class Sandbox:
                 write(os.path.join(self.pp(name), ".gitignore"),
                       ".claude/settings.local.json\n.claude/AGENT-SYSTEM.md\n.codex/\n.agents/\n")
             self.profiles[name] = prof
+
+    def _framework(self):
+        """A profile with `framework: true` (config/profiles/fwx.claude.json on this machine) names a plugin source
+        in config/forge.json, `~/dev/Projects/.../plugins/fwx`, which `~` reads from the toy HOME: nothing there, so the
+        framework step printed "! framework -> ~/dev/.../marketplace.json does not exist" on every run, the second
+        --apply exited 1 ("a second --apply writes nothing ...: exit 1, lines [], changed []") and no run reached the
+        registration. The toy world gets a marketplace of its own and the generator its own `claude` (sandbox.stub_claude),
+        so what the machine's profiles say about the framework never decides what this world does."""
+        self.framework = any(prof.get("framework") is True for prof in self.profiles.values())
+        if not self.framework:
+            return
+        self.plugin_src = os.path.join(self.root, "plugin-src")
+        write_json(os.path.join(self.plugin_src, ".claude-plugin", "marketplace.json"),
+                   {"name": "toyfw", "plugins": [{"name": "toyfw", "source": "./"}]})
+        settings = os.path.join(self.forge, "config", "forge.json")
+        doc = read_json(settings)
+        doc["framework"] = dict(doc.get("framework") or {}, plugin_source={"source": "directory", "path": self.plugin_src})
+        write_json(settings, doc)
+
+    def _local_plugins(self):
+        """config/forge.json `local_plugins` of this machine names forge-owned plugin folders as `~/dev/Projects/.../plugins/<name>`,
+        which `~` reads from the toy HOME: nothing there, so the local_plugins step printed "! local plugin -> local_plugins[0]
+        ~/dev/Projects/forge/plugins/<name> is not a directory" on every run (the second session start was not quiet, the second
+        --apply and the forge session exited 1). Same cure as _framework: the toy world gets a marketplace of its own and the
+        key is set to it, whatever the copied forge.json holds, so the step runs here for real instead of reading this machine."""
+        self.local_src = os.path.join(self.root, "local-src")
+        write_json(os.path.join(self.local_src, ".claude-plugin", "marketplace.json"),
+                   {"name": "toylocal", "plugins": [{"name": "toylocal", "source": "./"}]})
+        settings = os.path.join(self.forge, "config", "forge.json")
+        doc = read_json(settings)
+        doc["local_plugins"] = [self.local_src]
+        write_json(settings, doc)
 
     def _secrets(self):
         names = set()
@@ -226,6 +260,7 @@ class Sandbox:
         write_json(os.path.join(h, ".hindsight", "coding-agents", ".install-origin.json"), {"commit": "63da8d7" + "0" * 33})
         os.makedirs(os.path.join(h, ".vscode", "extensions"))
         sandbox.stub_systemctl(os.path.join(self.root, "bin"), self.log)
+        sandbox.stub_claude(os.path.join(self.root, "bin"), self.claude_log)
         # A frozen project's stale state: an unfrozen run rewrites both, which is what makes the freeze checkable.
         write_json(os.path.join(pp(FROZEN), ".claude", "settings.local.json"),
                    {"enableAllProjectMcpServers": True, "env": {"STALE": "1"}})
@@ -357,6 +392,13 @@ def exercise(sb, check):
 
     calls = read(sb.log).splitlines() if os.path.exists(sb.log) else []
     check("systemctl is the logging stub, called only with --user", all(c.startswith("--user ") for c in calls), calls)
+    # The framework step registers the plugin's marketplace once per machine: the first --apply runs `claude plugin
+    # marketplace add`, the second finds it in the registry. Only the stub runs (it is first on the toy PATH), and a
+    # world without a framework profile never calls it.
+    cc = read(sb.claude_log).splitlines() if os.path.exists(sb.claude_log) else []
+    want_cc = ["plugin marketplace add %s --scope local" % d for d in ([sb.plugin_src] if sb.framework else []) + [sb.local_src]]
+    check("claude is the logging stub, called once per marketplace (framework, local plugin) over both --apply runs", cc == want_cc,
+          "%s, want %s" % (cc, want_cc))
 
     seed_local(APP)
     seed_local("forge")
@@ -488,9 +530,13 @@ def unlogged(sb, before, after, logged):
 
 def changed_by_forge(before, after):
     """changed(), less npm's own debug logs (~/.npm/_logs, from `npm root -g`) and the state and cache
-    mise makes on its first run in a fresh HOME (session start's checks run `mise ls` and `mise where`): theirs, not forge's."""
+    mise makes on its first run in a fresh HOME (session start's checks run `mise ls` and `mise where`): theirs, not forge's.
+    Also the machine's marketplace registry and its directory: forge's `claude plugin marketplace add` (the local_plugins
+    step) makes them, `claude` writes the file and not forge's write log (and the session note does not carry the step's
+    "registered the marketplace" line), so session_cases checks the registry's content instead."""
     return [p for p in changed(before, after) if not under(p, "home/.npm") and not under(p, "home/.local/state/mise")
-            and not under(p, "home/.cache/mise") and p != "home/.cache"]  # the directory mise made for its cache
+            and not under(p, "home/.cache/mise") and p != "home/.cache"  # the directory mise made for its cache
+            and p not in ("home/.claude/plugins", "home/.claude/plugins/known_marketplaces.json")]
 
 
 def session_cases(sb, check):
@@ -515,6 +561,11 @@ def session_cases(sb, check):
         check("a %s session start logs every path it changes, none outside the sandbox" % proj,
               code == 0 and logged and not missing and not outside(logged),
               "exit %d, %d logged, unlogged %s, outside %s" % (code, len(logged), missing[:8], outside(logged)))
+        if proj == "forge":
+            reg = os.path.join(sb.home, ".claude", "plugins", "known_marketplaces.json")
+            held = read_json(reg).get("toylocal", {}).get("source", {}).get("path") if os.path.exists(reg) else None
+            check("the forge session start registered the local plugin's marketplace in the toy registry", held == sb.local_src,
+                  "registry holds %r, want %r" % (held, sb.local_src))
         kept = [l for l, _ in stale[proj] if os.path.lexists(l) or l not in logged]
         check("a %s session start removes the stale links seeded for it, and logs each" % proj, not kept,
               "kept or unlogged %s" % [sb.norm(l) for l in kept])
@@ -586,6 +637,8 @@ def load_dump(d):
 
 def main(argv):
     t0 = time.time()
+    if "--keep" in argv:
+        os.environ[sandbox.KEEP_ENV] = "1"
     os.umask(0o022)  # file modes are in the manifest
     results = []
 
@@ -638,12 +691,8 @@ def main(argv):
     for level, name, detail in results:
         print("%-5s %s%s" % (level, name, (": " + str(detail)) if detail else ""))
     failures = sum(1 for r in results if r[0] == "FAIL")
-    keep = "--keep" in argv or failures
-    for s in sandboxes:
-        if keep:
-            print("sandbox kept:", s.root)
-        else:
-            shutil.rmtree(s.root)
+    # Every sandbox is gone, passing or failing (~115 MB each, 14 per failing run, in RAM): `--keep` or FORGE_TEST_KEEP=1 names them.
+    sandbox.cleanup(failures, "sandbox kept:")
     print("runtime %.1fs" % (time.time() - t0))
     print("%d failure(s) over %d cases (%d expected failure(s))"
           % (failures, len(results), sum(1 for r in results if r[0] == "XFAIL")))

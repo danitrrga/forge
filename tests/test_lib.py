@@ -198,8 +198,36 @@ def profile_type_cases(tmp):
             ("worktree_guard {}, no project", {"worktree_guard": {}}, "project is missing, and worktree_guard is on (its command names the project)"),
             ("worktree_guard on, project \"\"", {"project": "", "worktree_guard": True}, "project is missing, and worktree_guard is on (its command names the project)"),
             ("guards off, no project", {"command_guard": False, "worktree_guard": {"on": False}}, None),
-            ("a guard on, project named", {"project": "x", "command_guard": True, "worktree_guard": True}, None)):
+            ("a guard on, project named", {"project": "x", "command_guard": True, "worktree_guard": True}, None),
+            # 2.2 U5a: the framework's profile fields. Red before they had a row: "profile_error(framework \"true\") = None,
+            # want 'framework is not a boolean'", the same for factory "auto" (want 'factory is not "off" or "trial"') and
+            # checks "pnpm test" (want 'checks is not a list of strings'); a bool, "off", "trial" and lists pass.
+            ("framework true", {"framework": True}, None),
+            ("framework \"true\"", {"framework": "true"}, "framework is not a boolean"),
+            ("framework 1", {"framework": 1}, "framework is not a boolean"),
+            ("factory off", {"factory": "off"}, None),
+            ("factory trial", {"factory": "trial"}, None),
+            ("factory \"auto\"", {"factory": "auto"}, 'factory is not "off" or "trial"'),
+            ("factory \"merge-branch\"", {"factory": "merge-branch"}, 'factory is not "off" or "trial"'),
+            ("factory true", {"factory": True}, "factory is not a string"),
+            ("factory_ui_bugs true", {"factory_ui_bugs": True}, None),
+            ("factory_ui_bugs \"yes\"", {"factory_ui_bugs": "yes"}, "factory_ui_bugs is not a boolean"),
+            ("checks a list", {"checks": ["pnpm test", "pnpm lint"]}, None),
+            ("checks \"pnpm test\"", {"checks": "pnpm test"}, "checks is not a list of strings"),
+            ("checks [5]", {"checks": [5]}, "checks is not a list of strings"),
+            ("protected_paths a list", {"protected_paths": ["db/migrations/**"]}, None),
+            ("protected_paths \"db/**\"", {"protected_paths": "db/**"}, "protected_paths is not a list of strings"),
+            ("protected_paths [null]", {"protected_paths": [None]}, "protected_paths is not a list of strings")):
         want("profile_error(%s)" % label, raised(lambda: lib.profile_error(prof)), expected)
+    # Control (2.2 U5a): the factory row is what rejects "auto". With the row taken out of PROFILE_FIELDS the same profile
+    # passes ("profile_error(factory \"auto\", no factory row) = None"), so the check above is able to fail.
+    saved_fields = dict(lib.PROFILE_FIELDS)
+    lib.PROFILE_FIELDS.pop("factory", None)
+    try:
+        want("control: profile_error(factory \"auto\") with no factory row", raised(lambda: lib.profile_error({"factory": "auto"})), None)
+    finally:
+        lib.PROFILE_FIELDS.clear()
+        lib.PROFILE_FIELDS.update(saved_fields)
 
     # profiles() leaves out a profile of the wrong shape and names it in `skipped`, as it does an
     # unreadable one, so every caller is protected and not only forge/sync.py. Red before:
@@ -790,6 +818,17 @@ def cli_test_cases(tmp):
              (rc, "SKIP  test_guard_mutants.py" in out and "NOT RUN" in out and "forge test --mutants" in out,
               "FAIL" in out, "PASS  test_guard_mutants.py" in out,
               "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, False, True))
+        # fwx's suite (plugins/fwx/tests) has its own runner, `fwx test`, with its own exit codes (77, --expect-not-run)
+        # and minutes of work: `forge test` does not run it and says so in one SKIP line, never a PASS and
+        # not in the summary's counts. Its toys exit 1, so a run of them would be a FAIL.
+        lib.ROOT = toy("fwx-owned", ["test_ok.py", ("plugins/fwx/tests/test_a.py", 1), ("plugins/fwx/tests/test_b.py", 1)])
+        rc, out = forge_test()
+        want("forge test leaves plugins/fwx to `fwx test` and says so",
+             (rc, "SKIP  plugins/fwx" in out and "2 tracked test_*.py file(s)" in out and "bin/fwx test" in out, "FAIL" in out,
+              "PASS  test_a.py" in out, "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, False, True))
+        lib.ROOT = toy("fwx-none", ["test_ok.py"])
+        rc, out = forge_test()
+        want("control: no plugins/fwx tests, no fwx line", (rc, "plugins/fwx" in out), (0, False))
         # --mutants runs only the on-demand suites: test_bad.py (exit 1) is not run, the mutant toy is.
         lib.ROOT = toy("ondemand-only", [("test_bad.py", 1), ("hooks/test_guard_mutants.py", 0)])
         with contextlib.redirect_stdout(io.StringIO()) as o:
@@ -912,16 +951,38 @@ def settings_cases(tmp):
         lib.SETTINGS = real
         lib.settings.cache_clear()
 
-    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight"))
+    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace"))
     ours = json.load(open(os.path.join(FIXTURES, "forge.json")))
     want("tests/fixtures/config/forge.json integrations, all on",
-         ours["integrations"], {n: True for n in lib.INTEGRATIONS})
+         ours["integrations"], {"codex": True, "gsd": True, "hindsight": True})  # consent is absent from the fixture: off
     theirs = json.load(open(os.path.join(REPO, "examples", "forge.json")))
     want("examples/forge.json integrations, all off", theirs["integrations"], {n: False for n in lib.INTEGRATIONS})
     for key, empty in (("user_settings", {}), ("user_hooks", []), ("instruction_files_skip", []),
                        ("doctor_extra", [])):
         want("examples/forge.json %s" % key, theirs.get(key), empty)
     want("examples/forge.json has no session_wait", "session_wait" in theirs, False)
+    # 2.2 U5a: the framework section is the seed of the model table and nothing of anyone's machine. Red before:
+    # "examples/forge.json framework = None, want a table".
+    fw = theirs.get("framework")
+    want("examples/forge.json has a framework section", isinstance(fw, dict), True)
+    fw = fw if isinstance(fw, dict) else {}
+    seed = {r: {z: "sonnet" for z in ("small", "normal", "big")} for r in (
+        "orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem", "planner", "post-mortem", "executor",
+        "reviewer", "review-verifier", "security-reviewer", "ui-walker", "ui-verifier", "skill-proposer",
+        "factory-orchestrator", "intake", "classifier", "detector", "analytics-verifier", "vision")}
+    seed["planner"] = {z: "opus" for z in seed["planner"]}
+    seed["detector"] = {z: "haiku" for z in seed["detector"]}
+    seed["ui-walker"]["small"] = "haiku"
+    seed["analytics-verifier"]["big"] = "opus"
+    want("examples/forge.json framework.models is the seed of the model table", fw.get("models"), seed)
+    want("examples/forge.json framework.plugin_source is a documentation value",
+         fw.get("plugin_source"), {"source": "git", "url": "https://example.org/fwx.git"})
+    want("examples/forge.json framework.linear.labels is empty", fw.get("linear"), {"labels": {}})
+    want("examples/forge.json framework: limits off, rounds 3, unattended critique rounds 2, paths empty",
+         (fw.get("limits"), fw.get("rounds"), fw.get("critique_rounds_unattended"), fw.get("paths")),
+         ({"on": False, "per_project": {}, "ram_min_free_gb": 0}, 3, 2, {}))
+    want("examples/forge.json framework.factory and weekly", (fw.get("factory"), fw.get("weekly")),
+         ({"watchdog_nudge_min": 30, "watchdog_fail_min": 30, "cost_warn_x_median": 3}, {"on": True, "min_sessions": 5}))
     want("examples/forge.json skill_keep tables are empty",
          {k: v for k, v in theirs.get("skill_keep", {}).items()
           if not k.startswith("_") and any(v.values() if isinstance(v, dict) else v)}, {})

@@ -13,8 +13,10 @@
 !/README.md
 !/LICENSE
 !/NOTICE
+!/.gitleaksignore
 !/CLAUDE.md
 !/AGENTS.md
+!/.coderabbit.yaml
 
 # Whole directories.
 !/bin/
@@ -31,7 +33,7 @@
 !/hooks/guard_tool_use.py
 !/hooks/worktree_guard.py
 !/hooks/gsd-prompt-guard.js
-!/hooks/gsd-read-injection-scanner.js
+!/hooks/read-injection-scanner.js
 !/hooks/gsd_output_discipline.py
 !/hooks/ref_corpus_router.py
 !/hooks/omarchy_notify.py
@@ -50,6 +52,7 @@
 !/scripts/metrics/
 !/scripts/bench/
 !/scripts/sync/
+!/scripts/consent/
 /scripts/sync/*
 !/scripts/sync/relink_skills.py
 !/scripts/sync/materialise_skills.py
@@ -76,6 +79,14 @@
 !/config/gsd/
 # The lock records the versions a release ships (forge lock); the engine publishes it.
 !/config/forge.lock.json
+
+# plugins/: fwx, the agentic-workflow framework, is part of the engine; every other plugin
+# (a separate repo of its own, e.g. cache-tax) stays private. fwx's local-only paths are
+# ignored: its project state (.fwx/); its own .gitignore already ignores .claude/ and __pycache__/.
+!/plugins/
+/plugins/*
+!/plugins/fwx/
+/plugins/fwx/.fwx/
 
 # The private history lives here, in the same folder.
 /.forge-data.git
