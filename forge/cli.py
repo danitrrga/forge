@@ -10,6 +10,7 @@
   forge test             run every test_*.py in the repo
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
+  forge launch NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill, GSD and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
@@ -36,7 +37,7 @@ import sys
 import tempfile
 import time
 
-from forge import lib, lockfile, mcp, owned, skills, toolchain
+from forge import launch, lib, lockfile, mcp, owned, skills, toolchain
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1944,6 +1945,10 @@ def main(argv=None):
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
     t.set_defaults(fn=toolchain.cmd)
+    t = sub.add_parser("launch", help="start claude with the environment a named launcher of config/forge.json declares")
+    t.add_argument("name", nargs="?", help="a key of `launchers`; none lists them")
+    t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
+    t.set_defaults(fn=launch.cmd)
     t = sub.add_parser("lock", help="record the plugin, outside-skill, GSD and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
     t.set_defaults(fn=lockfile.cmd_lock)
