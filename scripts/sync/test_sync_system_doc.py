@@ -311,6 +311,43 @@ def main():
     if rc or got != "# mine\n\n" + block + "\n" + NOTE:
         failures.append("one complete pair is replaced in place, the text around it kept: exit %d, got %r" % (rc, got))
 
+    # The pointer block was fenced by LIFEOS-SYSTEM-POINTER before it was renamed FORGE-SYSTEM-POINTER. A file that
+    # still carries the old pair gets it replaced by the new pair on the next sync: one block, the user's text outside
+    # untouched, and the sync after that writes nothing. A file with one old and one new block is an error, named,
+    # left byte-identical. Red before the migration (old markers unknown, the block appended beside them):
+    # "old marker pair migrated: exit 0, got '# mine\n\n<!-- BEGIN LIFEOS-SYSTEM-POINTER ...' (two blocks)".
+    _src = open(os.path.join(sandbox.FORGE, "forge", "system_doc.py"), encoding="utf-8").read()
+    OLD_B, OLD_E = (re.search(r'^%s = "(.*)"$' % n, _src, re.M).group(1) for n in ("OLD_BEGIN", "OLD_END"))
+    t = world("plain")
+    toy = os.path.join(projects(t), "toy", "CLAUDE.md")
+    run(t, "--apply")
+    block = text(toy)
+    old_block = block.replace(BEGIN, OLD_B).replace(END_LINE, OLD_E).replace("Shared agent-config system", "Old title")
+    if OLD_B == BEGIN or OLD_E == END_LINE or BEGIN not in block:
+        failures.append("old marker control: the old markers equal the new, or the block lacks BEGIN")
+    write(toy, "# mine\n\n" + old_block + "\n" + NOTE)
+    rc, out = run(t, "--apply")
+    got = text(toy)
+    if rc or got != "# mine\n\n" + block + "\n" + NOTE or OLD_B in (got or ""):
+        failures.append("old marker pair migrated: exit %d, got %r" % (rc, got))
+    rc, out = run(t, "--apply")
+    if rc or "0 change(s) applied." not in out or text(toy) != got:
+        failures.append("the sync after the migration is not a no-op: exit %d, %s" % (rc, tail(out)))
+    mixed = "# mine\n\n" + old_block + "\n" + NOTE + "\n" + block
+    write(toy, mixed)
+    rc, out = run(t, "--apply")
+    named = [l for l in out.splitlines() if l.startswith("  !") and "CLAUDE.md" in l]
+    if text(toy) != mixed or not named or not rc:
+        failures.append("one old and one new block: file unchanged %s, '  ! ' line naming CLAUDE.md %s, exit %d"
+                        % (text(toy) == mixed, bool(named), rc))
+    t = world("plain")
+    toy = os.path.join(projects(t), "toy", "AGENTS.md")
+    write(toy, "%s\nold copy\n%s\n" % (OLD_B, OLD_E))
+    write(os.path.join(projects(t), "toy", "CLAUDE.md"), "# mine\n")
+    rc, out = run(t, "--apply")
+    if rc or not os.path.islink(toy):
+        failures.append("an AGENTS.md holding the old pair is forge-owned and becomes the link: exit %d, link %s" % (rc, os.path.islink(toy)))
+
     # A UI project's pointer also says where a visual choice goes: on a verdict page, never in chat. Only when the
     # checkout has the tool (scripts/design/design.py); a plain project and a UI project without the tool get no paragraph.
     # Red before the field existed: "ui project: block lacks the verdict-page paragraph ('## Shared agent-config system' only)".

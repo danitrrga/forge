@@ -52,7 +52,7 @@ import sandbox  # noqa: E402
 TOP = sandbox.mkdtemp("uninstall-test-")
 os.environ["HOME"] = os.path.join(TOP, "nohome")  # before the import: nothing here may see the real HOME
 sys.path.insert(0, sandbox.FORGE)
-from forge import owned  # noqa: E402  (owned.current only: it reads the files a claim names)
+from forge import owned, system_doc  # noqa: E402  (owned.current only: it reads the files a claim names)
 
 failures, n_checks = [], [0]
 USER_HOOK = "node /opt/toy/mine.js"
@@ -314,8 +314,8 @@ check("apply: the output ends with the command that deletes the checkout, never 
       "rm -rf %s" % w.root in out.strip().splitlines()[-1] and os.path.isdir(w.root), sandbox.tail(out, 2))
 
 # ---------------------------------------------------------------- round-11 findings (docs/archive/audits/round-11.md)
-BEGIN_MARK = "<!-- BEGIN LIFEOS-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
-END_MARK = "<!-- END LIFEOS-SYSTEM-POINTER -->"
+BEGIN_MARK = "<!-- BEGIN FORGE-SYSTEM-POINTER (managed by sync_system_doc.py) -->"
+END_MARK = "<!-- END FORGE-SYSTEM-POINTER -->"
 
 
 def settings_rows(w, event="SessionStart"):
@@ -429,6 +429,29 @@ twice = "%s\n\nMY NOTES\n\n%s\n" % (block, block)
 write(md, twice)
 code, out = w.forge("uninstall", "--apply")
 check("a block pasted twice: CLAUDE.md untouched and named -- %r" % read(md)[:120], read(md) == twice and bang_lines(out, "CLAUDE.md"), out)
+
+# A pointer block fenced by the old LIFEOS-SYSTEM-POINTER pair (written before the rename to FORGE-SYSTEM-POINTER) is
+# removed like the new one, the user's text kept; an old and a new block in one file is left and named.
+# Red before uninstall knew the old pair: the old block stayed in CLAUDE.md.
+w = World("oldmarkers")
+md = os.path.join(w.app, "CLAUDE.md")
+synced = read(md)
+block = synced[synced.index(BEGIN_MARK):synced.index(END_MARK) + len(END_MARK)]
+OLD_BEGIN, OLD_END = system_doc.OLD_BEGIN, system_doc.OLD_END
+old_block = block.replace(BEGIN_MARK, OLD_BEGIN).replace(END_MARK, OLD_END)
+check("control: the old block differs from the new", old_block != block and OLD_BEGIN in old_block and BEGIN_MARK not in old_block)
+write(md, "# app\n\nMY NOTES\n\n%s\n" % old_block)
+code, out = w.forge("uninstall", "--apply")
+check("old markers: the block goes, the user's text stays -- %r" % read(md)[:120],
+      read(md) == "# app\n\nMY NOTES\n", out)
+w = World("oldmarkers-mixed")
+md = os.path.join(w.app, "CLAUDE.md")
+synced = read(md)
+block = synced[synced.index(BEGIN_MARK):synced.index(END_MARK) + len(END_MARK)]
+mixed = "%s\n\nMY NOTES\n\n%s\n" % (block.replace(BEGIN_MARK, OLD_BEGIN).replace(END_MARK, OLD_END), block)
+write(md, mixed)
+code, out = w.forge("uninstall", "--apply")
+check("one old and one new block: CLAUDE.md untouched and named -- %r" % read(md)[:120], read(md) == mixed and bang_lines(out, "CLAUDE.md"), out)
 
 # F9: the canonical docs/AGENT-SYSTEM.md is missing. Red on 34c191b: 'Traceback ... FileNotFoundError' in both runs.
 w = World("nodoc")
