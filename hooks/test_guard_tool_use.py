@@ -23,14 +23,19 @@ The ALLOW half is the negative control that matters most: a guard that blocks
 everything is not a guard, it is an outage, and over-blocking is what taught an
 earlier session to split file names to get past it.
 """
+import hashlib
 import importlib.util
 import io
 import json
 import os
+import re
 import resource
 import shutil
 import subprocess
 import sys
+import threading
+import time
+import types
 from concurrent.futures import ThreadPoolExecutor
 
 sys.dont_write_bytecode = True  # no guard .pyc under hooks/, whoever runs this
@@ -558,6 +563,8 @@ KNOWN_GAPS = [
     # git commands that restore harness files without naming them, and a link to the repo.
     'git checkout db48fdda -- .',
     'ln -s $PWD /tmp/p && echo x > /tmp/p/.claude/hooks/guard_tool_use.py',
+    # A glob that names part of config/gateway.json or scripts/consent (see HARNESS_NAMES in the guard).
+    'echo x > %s' % GF('config', 'gatew*'),
     # forge: a quoted relative `.claude.json` is a suffix in forge's profile code, so
     # it needs `cd ~` first to be the store: the cd gap the owner accepted.
     "cd ~ && cat '.claude.json'",
@@ -1265,6 +1272,23 @@ FORGE_BLOCK = [
     ("jq .env cfg.json < .env.local", "credential store"),
     ("jq \".env\" cfg.json \"$(cat .env)\"", "credential store"),
     ("grep -n '\\.env' cfg.json < .env.local", "credential store"),
+    # 33. The consent window's configuration and adapter folder are harness (1.1 U1a): the hook row that
+    #     runs them is in every session, and `adapter` names an executable. Red before, against the guard
+    #     of ff74287: 11 of 11 "SHOULD BLOCK but rc=0: 'echo x > <forge>/config/gateway.json'" (and the
+    #     same for sed -i, cp, mv on it and on scripts/consent/omarchy, `rm -rf <forge>/scripts/consent`,
+    #     its `mv` and the `cd` form); the 6 ALLOW cases of this item passed already. A glob
+    #     (`config/gatew*`) is not covered: see the note under HARNESS_NAMES in the guard.
+    ("echo x > %s" % GF("config", "gateway.json"), "harness path"),
+    ("sed -i 's/120/9999/' %s" % GF("config", "gateway.json"), "harness path"),
+    ("cp /tmp/g.json %s" % GF("config", "gateway.json"), "harness path"),
+    ("mv /tmp/g.json %s" % GF("config", "gateway.json"), "harness path"),
+    ("echo x > %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("sed -i 's/exit 1/exit 0/' %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("cp /tmp/a.py %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("mv /tmp/a.py %s" % GF("scripts", "consent", "omarchy"), "harness path"),
+    ("rm -rf %s" % GF("scripts", "consent"), "harness path"),
+    ("mv %s /tmp/x" % GF("scripts", "consent"), "harness path"),
+    ("cd %s && echo x > config/gateway.json" % GF(), "harness path"),
 ]
 FORGE_ALLOW = [
     # 1. A downstream project's template is .env.sample, and 64 of its 200 credential-store refusals were
@@ -1703,6 +1727,14 @@ FORGE_ALLOW = [
     "jq 'del(.env) | walk(if type==\"string\" then \"<redacted>\" else . end)' .claude/settings.local.json",
     "jq '.env | keys' cfg.json",
     "grep -n '<.env>' notes.md",
+    # 33. Reading them is not a write, nor is writing next to them or a sibling file of the same
+    #     name stem (the folder test is on the path, not on its prefix).
+    "cat %s" % GF("config", "gateway.json"),
+    "cat %s; ls %s" % (GF("scripts", "consent", "omarchy"), GF("scripts", "consent")),
+    "echo x > %s" % GF("examples", "gateway.json"),
+    "echo x > %s" % GF("config", "gateway.json.example"),
+    "echo x > %s" % GF("scripts", "consent-notes.md"),
+    "echo x > /tmp/claude-1000/forge-copy/config/gateway.json",
 ]
 # (command, rc) run with the forge checkout as the project and as the directory.
 ROOTED = [
@@ -2031,6 +2063,877 @@ CONFIG_CASES = [
     (["--projekt", "fx"], "Bash", {"command": "git status"}, 2, "arguments"),
 ]
 
+# ------------------------------------------------------------------ consent window (--consent)
+#
+# `--consent` loads <forge>/config/gateway.json and the `production` of the profile of the project the call
+# runs in, validates both, and rejects every call with CONSENT_ERROR when either is invalid (1.1 U1a; the
+# rules themselves come with U1b and U1c). Each case builds a scratch forge with its own copy of the guard under
+# test, because the guard finds forge from its location. consent_config() and production_error() are
+# also called directly: they are the one definition the doctor row and lib.profile_error import.
+import copy
+
+
+def good_gateway():
+    return {"_doc": "fixture", "consent": {"adapter": "omarchy", "timeout_s": 120, "rules": [
+        {"id": "push-production", "match": "production.branches", "label": "Push to a production branch",
+         "risks": ["What is pushed goes live", "The deploy may run database migrations against real data"]},
+        {"id": "production-command", "match": "production.commands", "label": "Command that acts on production",
+         "risks": ["It acts on production or on a real account", "It may not be reversible"]}]}}
+
+
+def gw(**consent):
+    d = good_gateway()
+    d["consent"].update(consent)
+    return d
+
+
+def gw_rule(**rule):
+    d = good_gateway()
+    d["consent"]["rules"][0].update(rule)
+    return d
+
+
+def gw_drop(key):
+    d = good_gateway()
+    del d["consent"]["rules"][0][key]
+    return d
+
+
+_ADAPTER = "adapter outside scripts/consent"
+# (label, gateway.json as a function of the scratch forge: a dict, a str written as it is, or None for no
+# file; the text the error must contain, or None when it must be accepted). Run twice: through the function
+# and through `--consent`, so a validator that is right and a hook that does not call it both fail.
+# Red before, against ff74287 (no consent_config in the guard): 39 rows "consent_config missing from the guard"; with the production rows (12), the profile rows (9) and 3 of the 4 mode rows, 63 of 64 consent rows fail.
+# Control, a validator that accepts everything (consent_config returning without reading the file,
+# production_error returning None, `--consent` returning at once): 47 of the 64 consent rows fail, one line per
+# bad row ("unknown top-level key accepted: wanted an error containing 'unknown key'", "adapter /usr/bin/true
+# accepted: wanted an error containing 'adapter outside scripts/consent'", "the file is missing accepted:
+# wanted an error containing 'gateway.json'", "production a list accepted: ...", "the project's production
+# is invalid: wanted rc=2 'a.claude.json', got rc=0", "Read with a bad configuration: wanted rc=2
+# 'CONSENT_ERROR:', got rc=0", "the CONSENT_ERROR names no 'gateway.json': ''") and the 17 rows that expect acceptance pass.
+CONSENT_CONFIG = [
+    ("the plan's document", lambda f: good_gateway(), None),
+    ("notify present and not looked at", lambda f: dict(good_gateway(), notify={"command": 5, "x": [1]}), None),
+    ("adapter omarchy", lambda f: gw(adapter="omarchy"), None),
+    ("adapter scripts/consent/otro", lambda f: gw(adapter="scripts/consent/otro"), None),
+    ("adapter absolute inside scripts/consent", lambda f: gw(adapter=f + "/scripts/consent/otro"), None),
+    ("timeout_s 1", lambda f: gw(timeout_s=1), None),
+    ("unknown top-level key", lambda f: dict(good_gateway(), extra=1), "unknown key"),
+    ("unknown key in consent", lambda f: gw(extra=1), "unknown key"),
+    ("unknown key in a rule", lambda f: gw_rule(extra=1), "unknown key"),
+    ("consent missing", lambda f: {"notify": {}}, "consent"),
+    ("consent not an object", lambda f: {"consent": []}, "consent"),
+    ("match unknown", lambda f: gw_rule(match="production.tags"), "match"),
+    ("match missing", lambda f: gw_drop("match"), "match"),
+    ("timeout_s a string", lambda f: gw(timeout_s="120"), "timeout_s"),
+    ("timeout_s 0", lambda f: gw(timeout_s=0), "timeout_s"),
+    ("timeout_s negative", lambda f: gw(timeout_s=-5), "timeout_s"),
+    ("timeout_s 1.5", lambda f: gw(timeout_s=1.5), "timeout_s"),
+    ("timeout_s true", lambda f: gw(timeout_s=True), "timeout_s"),
+    ("rules empty", lambda f: gw(rules=[]), "rules"),
+    ("rules not a list", lambda f: gw(rules={}), "rules"),
+    ("risks empty list", lambda f: gw_rule(risks=[]), "risks"),
+    ("risks holds an empty string", lambda f: gw_rule(risks=["ok", ""]), "risks"),
+    ("risks not a list", lambda f: gw_rule(risks="It may fail"), "risks"),
+    ("label empty", lambda f: gw_rule(label=" "), "label"),
+    ("id empty", lambda f: gw_rule(id=""), "id"),
+    ("id repeated", lambda f: gw_rule(id="production-command"), "id"),
+    ("adapter /usr/bin/true", lambda f: gw(adapter="/usr/bin/true"), _ADAPTER),
+    ("adapter ~/x", lambda f: gw(adapter="~/x"), _ADAPTER),
+    ("adapter scripts/consent/../x", lambda f: gw(adapter="scripts/consent/../x"), _ADAPTER),
+    ("adapter an absolute path that climbs out", lambda f: gw(adapter=f + "/scripts/consent/../../hooks/guard_tool_use.py"), _ADAPTER),
+    ("adapter a symlink that leaves the folder", lambda f: gw(adapter="scripts/consent/link-out"), _ADAPTER),
+    ("adapter in a sibling folder with the same prefix", lambda f: gw(adapter="scripts/consent-evil/x"), _ADAPTER),
+    ("adapter the folder itself", lambda f: gw(adapter="scripts/consent"), _ADAPTER),
+    ("adapter absolute outside forge", lambda f: gw(adapter="/bin/sh"), _ADAPTER),
+    ("adapter empty", lambda f: gw(adapter=""), "adapter"),
+    ("adapter not a string", lambda f: gw(adapter=5), "adapter"),
+    ("the file does not parse", lambda f: '{"consent": [', "gateway.json"),
+    ("the file is not an object", lambda f: "[]", "gateway.json"),
+    ("the file is missing", lambda f: None, "gateway.json"),
+]
+
+# (label, value of a profile's `production`, the text the error must contain, or None when accepted).
+# Red before: 12 rows "production_error missing from the guard"; the accept-everything control is above.
+CONSENT_PRODUCTION = [
+    ("both lists", {"branches": ["main"], "commands": ["gh pr merge", "mcp__neon-x__run_sql"]}, None),
+    ("both lists empty", {"branches": [], "commands": []}, None),
+    ("only commands", {"commands": ["vercel deploy"]}, None),
+    ("unknown key", {"branches": [], "commands": [], "tags": []}, "unknown key"),
+    ("production a list", ["main"], "production"),
+    ("production a string", "main", "production"),
+    ("production null", None, "production"),
+    ("branches a string", {"branches": "main", "commands": []}, "branches"),
+    ("commands a string", {"branches": [], "commands": "gh pr merge"}, "commands"),
+    ("branches holds an empty string", {"branches": [""], "commands": []}, "branches"),
+    ("commands holds a blank string", {"branches": [], "commands": ["  "]}, "commands"),
+    ("commands holds a number", {"branches": [], "commands": [1]}, "commands"),
+]
+
+# Profiles of a scratch forge, each a function of the scratch forge: {name: profile}. A project_path of
+# "{f}/p/..." is made a directory. (label, profiles, cwd of the call, rc, text of the error)
+_PROD_BAD = {"branches": "main"}
+_PROD_OK = {"branches": ["main"], "commands": []}
+CONSENT_PROFILES = [
+    ("the project's production is invalid",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p/a", 2, "a.claude.json"),
+    ("the same, from a subdirectory of the project",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p/a/src", 2, "production"),
+    ("the project's production is valid",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_OK}}, "/p/a", 0, ""),
+    ("the project has no production",
+     lambda f: {"a": {"project_path": f + "/p/a"}}, "/p/a", 0, ""),
+    ("another project's production is invalid",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD},
+                "b": {"project_path": f + "/p/b", "production": _PROD_OK}}, "/p/b", 0, ""),
+    ("a directory no profile owns",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p", 0, ""),
+    ("the deepest profile is the project's: invalid parent, valid child",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD},
+                "c": {"project_path": f + "/p/a/c", "production": _PROD_OK}}, "/p/a/c", 0, ""),
+    ("the deepest profile is the project's: valid parent, invalid child",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_OK},
+                "c": {"project_path": f + "/p/a/c", "production": _PROD_BAD}}, "/p/a/c", 2, "c.claude.json"),
+    ("a sibling with the same name prefix is not the project",
+     lambda f: {"a": {"project_path": f + "/p/a", "production": _PROD_BAD}}, "/p/ab", 0, ""),
+]
+# Control: a hook that does not check the profile (mutant "consent: production of the profile not checked")
+# fails the invalid rows with "wanted rc=2 'a.claude.json', got rc=0".
+
+
+def consent_forge(gateway, profiles=None, symlinks=True):
+    """A scratch forge: a copy of the guard under test at hooks/, config/gateway.json as `gateway` says (a
+    dict, text, or None for no file), config/profiles/<name>.claude.json, and scripts/consent/ with an adapter
+    and a symlink that leaves it. Returns (forge dir, the guard inside it)."""
+    d = sandbox.mkdtemp("guard-test-consent-")
+    guard = os.path.join(d, "hooks", "guard_tool_use.py")
+    os.makedirs(os.path.dirname(guard))
+    shutil.copyfile(GUARD, guard)
+    os.makedirs(os.path.join(d, "config", "profiles"))
+    os.makedirs(os.path.join(d, "scripts", "consent"))
+    os.makedirs(os.path.join(d, "scripts", "consent-evil"))
+    for sub in ("p/a/src", "p/a/c", "p/ab", "p/b"):
+        os.makedirs(os.path.join(d, sub))
+    open(os.path.join(d, "scripts", "consent", "otro"), "w").write("#!/bin/sh\n")
+    open(os.path.join(d, "scripts", "consent-evil", "x"), "w").write("#!/bin/sh\n")
+    if symlinks:
+        os.symlink("/usr/bin/true", os.path.join(d, "scripts", "consent", "link-out"))
+    if gateway is not None:
+        with open(os.path.join(d, "config", "gateway.json"), "w", encoding="utf-8") as fh:
+            fh.write(gateway if isinstance(gateway, str) else json.dumps(gateway))
+    for name, prof in (profiles or {}).items():
+        with open(os.path.join(d, "config", "profiles", name + ".claude.json"), "w", encoding="utf-8") as fh:
+            json.dump(dict(prof, project=name), fh)
+    return d, guard
+
+
+_CONSENT_MODULE = []
+
+
+def consent_module():
+    """The guard under test, loaded once, for the calls of its two importable functions."""
+    if not _CONSENT_MODULE:
+        spec = importlib.util.spec_from_file_location("guard_consent_under_test", GUARD)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _CONSENT_MODULE.append(mod)
+    return _CONSENT_MODULE[0]
+
+
+def consent_config_row(label, doc_fn, want):
+    f, guard = consent_forge(None)
+    doc = doc_fn(f)
+    if doc is not None:
+        with open(os.path.join(f, "config", "gateway.json"), "w", encoding="utf-8") as fh:
+            fh.write(doc if isinstance(doc, str) else json.dumps(doc))
+    mod = consent_module()
+    if not hasattr(mod, "consent_config"):
+        return "consent_config missing from the guard"
+    try:
+        cfg, err = mod.consent_config(f), None
+    except ValueError as e:
+        cfg, err = None, str(e)
+    if want is None and err is not None:
+        return "%s refused by consent_config: %s" % (label, err[:160])
+    if want is not None:
+        if err is None:
+            return "%s accepted: wanted an error containing %r" % (label, want)
+        if want.lower() not in err.lower() or "gateway.json" not in err:
+            return "%s: wanted %r and the file name in the error, got %r" % (label, want, err[:160])
+    if want is None:
+        adapter = cfg.get("adapter") if isinstance(cfg, dict) else None
+        base = os.path.join(f, "scripts", "consent") + "/"
+        if not isinstance(adapter, str) or not adapter.startswith(base):
+            return "%s: consent_config gave the adapter %r, wanted a path under %s" % (label, adapter, base)
+    # Through the hook: a valid file lets a Bash call through, an invalid one refuses it with the file name.
+    rc, err = run_tool("Bash", {"command": "git status"}, None, guard, ["--consent"])
+    if want is None:
+        return None if rc == 0 else "%s: --consent refused a valid configuration (rc=%s %s)" % (label, rc, err.strip()[:120])
+    if rc != 2 or not err.startswith("CONSENT_ERROR:") or want.lower() not in err.lower() or "gateway.json" not in err:
+        return "%s: --consent wanted rc=2 'CONSENT_ERROR:' and %r, got rc=%s %s" % (label, want, rc, err.strip()[:120])
+    return bad_message(err)
+
+
+def consent_production_row(label, value, want):
+    mod = consent_module()
+    if not hasattr(mod, "production_error"):
+        return "production_error missing from the guard"
+    err = mod.production_error(value)
+    if want is None:
+        return None if err is None else "%s refused by production_error: %s" % (label, err[:160])
+    if err is None:
+        return "%s accepted: wanted an error containing %r" % (label, want)
+    if want.lower() not in err.lower():
+        return "%s: wanted %r in the error, got %r" % (label, want, err[:160])
+    return None
+
+
+def consent_profile_row(label, profiles_fn, cwd, want, why):
+    f, guard = consent_forge(good_gateway())
+    for name, prof in profiles_fn(f).items():
+        with open(os.path.join(f, "config", "profiles", name + ".claude.json"), "w", encoding="utf-8") as fh:
+            json.dump(dict(prof, project=name), fh)
+    rc, err = run_tool("Bash", {"command": "git status"}, {"CLAUDE_PROJECT_DIR": f}, guard, ["--consent"], cwd=f + cwd)
+    if rc != want or why.lower() not in err.lower() or (want == 2 and not err.startswith("CONSENT_ERROR:")):
+        return "%s: wanted rc=%s %r, got rc=%s %s" % (label, want, why, rc, err.strip()[:120])
+    return bad_message(err) if rc == 2 else None
+
+
+def consent_mode_row(name):
+    """The rest of `--consent`: what it refuses besides a bad configuration, and what it does not run."""
+    f, guard = consent_forge(good_gateway())
+    bad, bad_guard = consent_forge(gw(timeout_s=0))
+    if name == "core-not-run":
+        # Only the consent rules run in this mode (1.1 5.2): a core refusal is not its to give.
+        rc, err = run_tool("Bash", {"command": "cat .env.local"}, None, guard, ["--consent"])
+        return None if rc == 0 else "--consent ran the core: rc=%s %s" % (rc, err.strip()[:100])
+    if name == "exclusive":
+        for argv in (["--consent", "--project", "fx"], ["--project", "fx", "--consent"], ["--consent", "x"]):
+            rc, err = run_tool("Bash", {"command": "git status"}, None, guard, argv)
+            if rc != 2 or "arguments" not in err:
+                return "%s: wanted rc=2 'arguments', got rc=%s %s" % (" ".join(argv), rc, err.strip()[:100])
+        return None
+    if name == "every-call":
+        # A configuration that cannot be applied refuses every call, whatever the tool and whether or not
+        # there is a payload; the Edit tool is not routed here (the hook row's matcher is Bash|mcp__.*).
+        for tool, ti in (("Read", {"file_path": "/tmp/x"}), ("mcp__x__y", {}), (None, "")):
+            rc, err = (run_tool(tool, ti, None, bad_guard, ["--consent"]) if tool else
+                       run_payload(ti, None, bad_guard, ["--consent"]))
+            if rc != 2 or not err.startswith("CONSENT_ERROR:"):
+                return "%s with a bad configuration: wanted rc=2 'CONSENT_ERROR:', got rc=%s %s" % (tool, rc, err.strip()[:100])
+        return None
+    if name == "message":
+        # The refusal names the file, the fix and the way back (1.1 section 4), on one line.
+        rc, err = run_tool("Bash", {"command": "git status"}, None, bad_guard, ["--consent"])
+        for part in ("gateway.json", "integrations.consent", "forge sync --apply", "instead"):
+            if part not in err:
+                return "the CONSENT_ERROR names no %r: %r" % (part, err.strip()[:200])
+        return bad_message(err)
+    return "unknown mode row %s" % name
+
+
+CONSENT_MODE_ROWS = ["core-not-run", "exclusive", "every-call", "message"]
+
+# ------------------------------------------------------------------ the window (1.1 U1c)
+#
+# The adapter under test is always a fake: a shell script in the toy forge's scripts/consent/ that records what
+# it was given in $FAKE_OUT (its $1, the request, the modes of the file and of its directory, its pid, one line
+# per call) and exits as $FAKE_MODE says (yes: 0; no: 1; code3: 3 with a reason on stderr; code4: 4; code7: 7; sleep: a child that sleeps 30 s, then 0). No real window is ever
+# opened. XDG_RUNTIME_DIR and XDG_STATE_HOME point at temp dirs, so the real consent.log is never written.
+#
+# Red before, against the guard of U1b (9f5ac1f, a match exits 2 `CONSENT_ERROR: not wired yet`): 84 rows fail
+# (68 match rows, 2 rule rows, 14 of the 15 flow rows; the 15th, a call that matches nothing, passes), each as "<label>: wanted rc=2 'CONSENT_DECLINED:' after one adapter call, got rc=2 CONSENT_ERROR:
+# not wired yet: the call matches the rule ... (adapter calls: 0)", and the CONSENT_FLOW rows (the request, yes,
+# no, timeout, missing adapter, unattended, the log) fail on the same output. The rows that do not match pass.
+# Control, one named mutant per behaviour (test_guard_mutants.py, "consent: ..."): the four the plan names
+# (unattended opens a window, an exit other than 0 taken as a yes, an expired cap taken as a yes, the log not
+# written), and one each for the request left on disk, the request readable by others, a missing adapter taken as a
+# yes, and the adapter left running after the cap.
+FAKE_ADAPTER = """#!/bin/sh
+if [ -n "$FAKE_OUT" ]; then
+  echo "$$" > "$FAKE_OUT/pid"
+  echo "$1" > "$FAKE_OUT/arg1"
+  stat -c %a "$1" > "$FAKE_OUT/file-mode"
+  stat -c %a "$(dirname "$1")" > "$FAKE_OUT/dir-mode"
+  cp "$1" "$FAKE_OUT/request.json"
+  echo call >> "$FAKE_OUT/calls"
+fi
+case "$FAKE_MODE" in
+  yes) exit 0 ;;
+  sleep) sleep 30 & echo "$!" > "$FAKE_OUT/child-pid"; wait; exit 0 ;;
+  code7) echo "adapter broke" >&2; exit 7 ;;
+  code3) echo "no WAYLAND_DISPLAY: cannot open a window" >&2; echo "second line" >&2; exit 3 ;;
+  code3long) printf 'x%.0s' $(seq 1 300) >&2; echo >&2; exit 3 ;;
+  code3bare) exit 3 ;;
+  code4) exit 4 ;;
+  *) exit 1 ;;
+esac
+"""
+
+
+def install_fake(forge, name="fake", mode=0o755):
+    p = os.path.join(forge, "scripts", "consent", name)
+    with open(p, "w") as fh:
+        fh.write(FAKE_ADAPTER)
+    os.chmod(p, mode)
+
+
+def consent_call(guard, tool, ti, cwd, mode, env=None, payload=None, state=None, runtime=None):
+    """One `--consent` call with the fake adapter answering `mode`. Returns a namespace: rc, err, took, out (the
+    directory the fake records in), runtime and state (the XDG dirs), calls (how many times it ran), request (the
+    request it was handed, {} when never called) and the log lines."""
+    out, rt, st = (sandbox.mkdtemp("guard-test-%s-" % n) for n in ("fake", "runtime", "state"))
+    e = {"FAKE_OUT": out, "FAKE_MODE": mode, "XDG_RUNTIME_DIR": runtime or rt, "XDG_STATE_HOME": state or st}
+    e.update(env or {})
+    start = time.monotonic()
+    rc, err = run_payload(json.dumps(dict({"tool_name": tool, "tool_input": ti, "cwd": cwd}, **(payload or {}))),
+                          e, guard, ["--consent"])
+    took = time.monotonic() - start
+
+    def read(name):
+        p = os.path.join(out, name)
+        return open(p).read() if os.path.exists(p) else ""
+    try:
+        request = json.loads(read("request.json"))
+    except ValueError:
+        request = {}
+    log = os.path.join(state or st, "forge", "consent.log")
+    lines = open(log).read().splitlines() if os.path.exists(log) else []
+    return types.SimpleNamespace(rc=rc, err=err, took=took, out=out, runtime=rt, state=st, read=read, request=request,
+                                 calls=len(read("calls").splitlines()), log=lines)
+
+
+def flow_forge(adapter="scripts/consent/fake", timeout_s=120, fake=True, fake_mode=0o755):
+    """A toy forge for the flow: project `toy` rooted at a temp dir, whose production commands include `gh pr merge`
+    and the MCP tool mcp__db-toy__execute_sql. Returns (guard, project root, forge)."""
+    root = sandbox.mkdtemp("guard-test-flow-")
+    f, guard = consent_forge(gw(adapter=adapter, timeout_s=timeout_s),
+                             {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
+    if fake:
+        install_fake(f, mode=fake_mode)
+    return guard, root, f
+
+
+def flow_call(mode, command="gh pr merge 12", forge=None, env=None, **kw):
+    guard, root, f = forge or flow_forge()
+    e = {"CLAUDE_PROJECT_DIR": f}
+    e.update(env or {})
+    return consent_call(guard, "Bash", {"command": command, "description": "merge the pr"}, root, mode, e,
+                        payload={"session_id": "sess-1"}, **kw), root
+
+
+def _says(r, prefix, command="gh pr merge 12"):
+    """The message of a block: one line, starts with `prefix`, says not to retry or work around it, and to tell
+    the user what was wanted (the command itself)."""
+    if r.rc != 2 or not r.err.startswith(prefix) or r.err.strip().count("\n"):
+        return "wanted rc=2 and one line starting %r, got rc=%s %r" % (prefix, r.rc, r.err.strip()[:160])
+    for part in ("Do not retry it", "work around it", "tell the user what you wanted to run", command):
+        if part not in r.err:
+            return "%s lacks %r: %r" % (prefix, part, r.err.strip()[:200])
+    return None
+
+
+def _log_ok(r, decision, root_cmd="gh pr merge 12", rule="production-command", sha=None):
+    if len(r.log) != 1:
+        return "wanted one log line, got %d: %r" % (len(r.log), r.log)
+    cols = r.log[0].split("\t")
+    if len(cols) != 6:
+        return "the log line has %d columns, wanted 6: %r" % (len(cols), r.log[0])
+    when, got, digest, project, rules, cmd = cols
+    if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", when):
+        return "the log date is not ISO 8601 UTC: %r" % when
+    if got != decision:
+        return "the log decision is %r, wanted %r" % (got, decision)
+    if not re.match(r"^[0-9a-f]{12}$", digest) or (sha and digest != sha):
+        return "the log hash is %r, wanted %s" % (digest, sha or "12 hex digits")
+    if project != "toy" or rules != rule or cmd != root_cmd[:200]:
+        return "the log names project %r rule %r command %r, wanted toy %r %r" % (project, rules, cmd, rule, root_cmd[:200])
+    return None
+
+
+def flow_request(name):
+    r, root = flow_call("yes")
+    want = {"project", "cwd", "session_id", "command", "what", "changes", "risks", "requested_at"}
+    if r.rc != 0 or set(r.request) != want:
+        return "rc=%s, the request has the keys %s, wanted exactly %s" % (r.rc, sorted(r.request), sorted(want))
+    q = r.request
+    if (q["project"], q["cwd"], q["session_id"], q["command"]) != ("toy", root, "sess-1", "gh pr merge 12"):
+        return "project/cwd/session_id/command are %r" % [q[k] for k in ("project", "cwd", "session_id", "command")]
+    if q["what"] != "Command that acts on production: merge the pr":
+        return "what is %r, wanted the rule's label and the call's description" % q["what"]
+    if q["changes"] != ["the command begins with `gh pr merge`, a production command of project toy"]:
+        return "changes is %r" % q["changes"]
+    if q["risks"] != ["It acts on production or on a real account", "It may not be reversible"]:
+        return "risks is %r, wanted the rule's" % q["risks"]
+    if not re.match(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$", q["requested_at"]):
+        return "requested_at is %r, wanted ISO 8601 UTC" % q["requested_at"]
+    arg1 = r.read("arg1").strip()
+    if os.path.dirname(os.path.dirname(arg1)) != r.runtime:
+        return "$1 is %s, wanted a file in a directory under XDG_RUNTIME_DIR %s" % (arg1, r.runtime)
+    if r.read("file-mode").strip() != "600" or r.read("dir-mode").strip() != "700":
+        return "the request is mode %s in a directory of mode %s, wanted 600 in 700" % (
+            r.read("file-mode").strip(), r.read("dir-mode").strip())
+    if os.listdir(r.runtime):
+        return "the request was left in XDG_RUNTIME_DIR: %s" % os.listdir(r.runtime)
+    return None
+
+
+def flow_mcp(name):
+    guard, root, f = flow_forge()
+    big = "select 1; " * 400
+    r = consent_call(guard, "mcp__db-toy__execute_sql", {"sql": big}, root, "yes", {"CLAUDE_PROJECT_DIR": f})
+    q = r.request
+    tool = "mcp__db-toy__execute_sql"
+    if r.rc != 0 or not q:
+        return "wanted rc=0 after a call of the adapter, got rc=%s %s" % (r.rc, r.err.strip()[:120])
+    if not q["command"].startswith(tool + " ") or not 1900 < len(q["command"]) - len(tool) - 1 <= 2000:
+        return "command is %d characters starting %r, wanted the tool and its arguments cut at 2000" % (
+            len(q["command"]), q["command"][:40])
+    if q["what"] != "Command that acts on production" or not any(c.startswith("sql: ") for c in q["changes"]):
+        return "what is %r, changes %r" % (q["what"], q["changes"][:2])
+    return None
+
+
+def flow_yes(name):
+    r, _ = flow_call("yes")
+    if r.rc != 0 or r.err.strip():
+        return "yes: wanted rc=0 and no output, got rc=%s %s" % (r.rc, r.err.strip()[:120])
+    return _log_ok(r, "approved")
+
+
+def flow_no(name):
+    r, _ = flow_call("no")  # exit 1
+    return _says(r, "CONSENT_DECLINED:") or _log_ok(r, "declined")
+
+
+def flow_other_exit(name):
+    """The adapter contract of scripts/consent/omarchy: 0 yes, 1 no, 3 it could not ask (reason on stderr), 4 nobody
+    answered in time. Any other exit is a broken adapter, not a no."""
+    r, _ = flow_call("code7")
+    err = _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+    if err or "adapter broke" not in r.err or "7" not in r.err:
+        return err or "an exit 7 is an error that names the exit and the adapter's stderr: %r" % r.err.strip()[:200]
+    r, _ = flow_call("code3")
+    err = _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+    if err:
+        return "exit 3: " + err
+    if "no WAYLAND_DISPLAY: cannot open a window" not in r.err or "second line" in r.err:
+        return "exit 3: the message wants the first line of the adapter's stderr and only it: %r" % r.err.strip()[:300]
+    r, _ = flow_call("code3bare")
+    err = _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+    if err:
+        return "exit 3 with no stderr: " + err
+    r, _ = flow_call("code3long")
+    if "x" * 200 not in r.err or "x" * 201 in r.err:
+        return "exit 3: the reason is cut at 200 characters: %r" % r.err.strip()[:60]
+    r, _ = flow_call("code4")
+    if r.took > 8:
+        return "exit 4 took %.1f s" % r.took
+    return _says(r, "CONSENT_TIMEOUT:") or _log_ok(r, "timeout")
+
+
+def flow_timeout(name):
+    r, _ = flow_call("sleep", forge=flow_forge(timeout_s=1))
+    if r.took > 8:
+        return "the adapter sleeps 30 s and timeout_s is 1: the hook took %.1f s" % r.took
+    err = _says(r, "CONSENT_TIMEOUT:") or _log_ok(r, "timeout")
+    if err:
+        return err
+    for name in ("pid", "child-pid"):
+        pid = int(r.read(name) or 0)
+        for _ in range(20):  # a killed process is a zombie until its parent, or init, reaps it
+            try:
+                alive = open("/proc/%d/stat" % pid).read().rsplit(")", 1)[1].split()[0] != "Z"
+            except OSError:
+                alive = False
+            if not alive:
+                break
+            time.sleep(0.1)
+        else:
+            return "the adapter's %s %d is still running after the cap" % (name, pid)
+    return None
+
+
+def flow_missing(name):
+    r, _ = flow_call("yes", forge=flow_forge(adapter="scripts/consent/nope", fake=False))
+    return _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+
+
+def flow_not_executable(name):
+    r, _ = flow_call("yes", forge=flow_forge(fake_mode=0o644))
+    if r.calls:
+        return "an adapter that is not executable was run"
+    return _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+
+
+def flow_no_runtime_dir(name):
+    r, _ = flow_call("yes", env={"XDG_RUNTIME_DIR": "/nonexistent/runtime"})
+    if r.calls:
+        return "the adapter ran with no directory for the request"
+    return _says(r, "CONSENT_ERROR:") or _log_ok(r, "error")
+
+
+def flow_unattended(name):
+    r, _ = flow_call("yes", env={"FORGE_CONSENT": "unattended"})
+    if r.calls:
+        return "unattended: the adapter was called (%d times)" % r.calls
+    if os.listdir(r.runtime):
+        return "unattended: a request was written: %s" % os.listdir(r.runtime)
+    return _says(r, "CONSENT_UNATTENDED:") or _log_ok(r, "unattended")
+
+
+def flow_attended_values(name):
+    for value in ("", "attended", "UNATTENDED"):
+        r, _ = flow_call("no", env={"FORGE_CONSENT": value})
+        if r.calls != 1 or not r.err.startswith("CONSENT_DECLINED:"):
+            return "FORGE_CONSENT=%r is not unattended: wanted the window (1 call, DECLINED), got %d calls %r" % (
+                value, r.calls, r.err.strip()[:80])
+    return None
+
+
+def flow_no_match(name):
+    for env in ({}, {"FORGE_CONSENT": "unattended"}):
+        r, _ = flow_call("yes", "ls -la && gh pr view 12", env=env)
+        if r.rc != 0 or r.err or r.calls or r.log or os.listdir(r.runtime):
+            return "an action that matches no rule (env %s): rc=%s %r, adapter calls %d, log %r" % (
+                env, r.rc, r.err[:80], r.calls, r.log)
+    return None
+
+
+def flow_log(name):
+    """One line per decision, appended: two calls, two lines, the directory made when missing; a command of 300
+    characters with a tab and a newline is cut at 200 and stays on one line of six columns; the hash is the
+    sha256 of the request the adapter was handed."""
+    guard, root, f = flow_forge()
+    st = sandbox.mkdtemp("guard-test-state-")
+    cmd = "gh pr merge 12\t--x\n" + "y" * 300
+    r1, _ = flow_call("yes", cmd, forge=(guard, root, f), state=st)
+    r2, _ = flow_call("no", "gh pr merge 13", forge=(guard, root, f), state=st)
+    if len(r2.log) != 2 or [x.split("\t")[1] for x in r2.log] != ["approved", "declined"]:
+        return "two decisions: wanted the log lines approved, declined, got %r" % r2.log
+    cols = r2.log[0].split("\t")
+    if len(cols) != 6 or cols[5] != cmd.replace("\t", " ").replace("\n", " ")[:200]:
+        return "the log line is %d columns, command %r" % (len(cols), cols[-1][:60])
+    want = hashlib.sha256(r1.read("request.json").encode()).hexdigest()[:12]
+    if cols[2] != want:
+        return "the log hash is %s, the sha256[:12] of the request is %s" % (cols[2], want)
+    return None
+
+
+def flow_log_unwritable(name):
+    """A log that cannot be written does not change the answer: the user said yes (or no) and that stands."""
+    blocker = os.path.join(sandbox.mkdtemp("guard-test-blocker-"), "file")
+    open(blocker, "w").close()
+    r, _ = flow_call("yes", env={"XDG_STATE_HOME": blocker})
+    if r.rc != 0:
+        return "yes with an unwritable log: wanted rc=0, got rc=%s %s" % (r.rc, r.err.strip()[:120])
+    r, _ = flow_call("no", env={"XDG_STATE_HOME": blocker})
+    first, _, warning = r.err.partition("\n")
+    r.err = first + "\n"
+    if "consent.log could not be written" not in warning:
+        return "an unwritable log is not mentioned: %r" % warning
+    return _says(r, "CONSENT_DECLINED:")
+
+
+def flow_two_rules(name):
+    """A push to main and a production command in one call is one window, one log line, both rules named."""
+    w = consent_world()
+    e = dict(w.env)
+    r = consent_call(w.guard, "Bash", {"command": "git push origin main && gh pr merge 12", "description": "ship it"},
+                     w.a, "yes", e)
+    q = r.request
+    if r.rc != 0 or r.calls != 1:
+        return "wanted one adapter call and rc=0, got %d calls rc=%s %s" % (r.calls, r.rc, r.err.strip()[:100])
+    if "Push to a production branch" not in q["what"] or "Command that acts on production" not in q["what"]:
+        return "what names %r, wanted both labels" % q["what"]
+    if not any(c.startswith("push to origin/main") for c in q["changes"]) or not any("gh pr merge" in c for c in q["changes"]):
+        return "changes %r lack one of the two matches" % q["changes"]
+    if len(q["risks"]) != len(set(q["risks"])) or len(q["risks"]) != 4:
+        return "risks %r: wanted the four of both rules, no repeats" % q["risks"]
+    if len(r.log) != 1 or r.log[0].split("\t")[4] != "push-production+production-command":
+        return "log %r: wanted one line naming both rules" % r.log
+    return None
+
+
+CONSENT_FLOW = {"request": flow_request, "mcp": flow_mcp, "yes": flow_yes, "no": flow_no, "other-exit": flow_other_exit,
+                "timeout": flow_timeout, "missing": flow_missing, "not-executable": flow_not_executable,
+                "no-runtime-dir": flow_no_runtime_dir, "unattended": flow_unattended,
+                "attended-values": flow_attended_values, "no-match": flow_no_match, "log": flow_log,
+                "log-unwritable": flow_log_unwritable, "two-rules": flow_two_rules}
+
+
+def consent_flow_row(name):
+    err = CONSENT_FLOW[name](name)
+    return "flow %s: %s" % (name, err) if err else None
+
+
+# ------------------------------------------------------------------ which actions match a rule (1.1 U1b)
+#
+# Each row feeds one call to `--consent` of the guard under test, copied into a toy forge (consent_forge) whose
+# profile `toy` covers a toy world: repos a and b under one project root, a bare local remote (every real push
+# of this suite goes there and nowhere else), repo c and a worktree of a OUTSIDE the project root, and repo d
+# with push.default=matching. A call that matches reaches the fake adapter (U1c; U1b printed `CONSENT_ERROR: not
+# wired yet` and one `  change:` line per entry instead) and the row reads `changes` from the request the adapter was
+# handed; here the adapter answers no, so a match exits 2 `CONSENT_DECLINED:`. One that does not match exits 0, prints
+# nothing and never calls the adapter.
+# git runs with no user or system config (GIT_CONFIG_GLOBAL), so the machine's own settings decide nothing.
+#
+# Red before, against the guard of U1a (10182c3: --consent validates and then lets every call through): all 68
+# rows that match fail, each as "<label>: wanted rc=2 'CONSENT_ERROR: not wired yet', got rc=0 ", and the 29 rows
+# that do not match pass.
+# Control, one named mutant per behaviour (test_guard_mutants.py, "consent: ..."): the seven the plan names, refspec
+# ignored, push without refspec ignored, --all ignored, unreadable refspec taken as not production, command
+# prefix that never matches, nested shells not read, MCP tool never compared, and one each for the destination
+# (not the source) deciding, --dry-run, tags only, --force, `cd`, `git -C`, a worktree elsewhere, the rule
+# being absent, the 5 s cap on git.
+CONSENT_PRODUCTION_TOY = {"branches": ["main"], "commands": ["gh pr merge", "infra/deploy.sh", "ssh deploy@host",
+                                                              "mcp__db-toy__execute_sql"]}
+_CONSENT_WORLD = []
+_CONSENT_WORLD_LOCK = threading.Lock()
+
+
+def consent_world():
+    """The toy world, built once: (a namespace with the scratch forge, its guard, the repos, the environment)."""
+    with _CONSENT_WORLD_LOCK:
+        if _CONSENT_WORLD:
+            return _CONSENT_WORLD[0]
+        root, outside = sandbox.mkdtemp("guard-test-world-"), sandbox.mkdtemp("guard-test-outside-")
+        remote = os.path.join(root, "remote.git")
+        a, b, d = (os.path.join(root, n) for n in ("a", "b", "d"))
+        c, wt = os.path.join(outside, "c"), os.path.join(outside, "wt")
+        sandbox.git(root, "init", "--bare", "-b", "main", remote)
+        for repo in (a, c):
+            os.makedirs(repo)
+            sandbox.git(repo, "init", "-b", "main")
+            sandbox.git(repo, "remote", "add", "origin", remote)
+        os.makedirs(os.path.join(root, "infra"))
+        open(os.path.join(root, "infra", "deploy.sh"), "w").write("echo deploy\n")
+        open(os.path.join(a, "f"), "w").write("0\n")
+        sandbox.git(a, "add", "f")
+        sandbox.git(a, "commit", "-m", "initial")
+        sandbox.git(a, "push", "-u", "origin", "main")
+        for n, msg in enumerate(("add login", "fix typo", "bump version"), 1):
+            open(os.path.join(a, "f"), "w").write("%d\n" % n)
+            sandbox.git(a, "commit", "-am", msg)
+        sandbox.git(root, "clone", remote, b)
+        sandbox.git(b, "checkout", "-b", "feature")
+        sandbox.git(root, "clone", remote, d)
+        sandbox.git(d, "config", "push.default", "matching")
+        sandbox.git(c, "commit", "--allow-empty", "-m", "c work")
+        sandbox.git(a, "worktree", "add", wt, "-b", "wt-branch")
+        forge, guard = consent_forge(gw(adapter="scripts/consent/fake"),
+                                     {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
+        install_fake(forge)
+        w = types.SimpleNamespace(
+            forge=forge, guard=guard, root=root, outside=outside, a=a, b=b, c=c, d=d, wt=wt, remote=remote,
+            sha=sandbox.git(a, "rev-parse", "--short", "HEAD").strip(),
+            env={"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "CLAUDE_PROJECT_DIR": forge})
+        _CONSENT_WORLD.append(w)
+        return w
+
+
+def consent_match_row(label, tool, ti, cwd, want, env=None, within=None):
+    """One call to `--consent`, with the fake adapter answering no. `want` None: exits 0, no output, the adapter
+    is not called. A list: exits 2 `CONSENT_DECLINED:`, the adapter was called once, and every string of the list
+    is in the `changes` of the request it was handed. Everything is a function of the world."""
+    w = consent_world()
+    e = dict(w.env)
+    e.update(env(w) if env else {})
+    r = consent_call(w.guard, tool, ti(w) if callable(ti) else ti, cwd(w), "no", e)
+    if within is not None and r.took > within:
+        return "%s: took %.1f s, wanted less than %s s (git is capped at 5 s and not asked again)" % (label, r.took, within)
+    if want is None:
+        if r.rc == 0 and not r.err and r.calls == 0:
+            return None
+        return "%s: wanted rc=0, no output and no adapter call, got rc=%s %s (adapter calls: %d)" % (
+            label, r.rc, r.err.strip()[:200], r.calls)
+    if r.rc != 2 or not r.err.startswith("CONSENT_DECLINED:") or r.calls != 1:
+        return "%s: wanted rc=2 'CONSENT_DECLINED:' after one adapter call, got rc=%s %s (adapter calls: %d)" % (
+            label, r.rc, r.err.strip()[:120], r.calls)
+    got = "\n".join(r.request.get("changes", []))
+    for need in want(w):
+        if need not in got:
+            return "%s: the changes of the request lack %r: %s" % (label, need, got[:600])
+    return None
+
+
+def consent_rule_row(label, keep, command, want):
+    """A gateway.json with only the rule whose `match` is `keep`: what the other rule would match no longer does
+    (removing a rule from the file switches that category off)."""
+    gate = gw(adapter="scripts/consent/fake")
+    gate["consent"]["rules"] = [r for r in gate["consent"]["rules"] if r["match"] == keep]
+    root = sandbox.mkdtemp("guard-test-rules-")
+    f, guard = consent_forge(gate, {"toy": {"project_path": root, "production": CONSENT_PRODUCTION_TOY}}, symlinks=False)
+    install_fake(f)
+    r = consent_call(guard, "Bash", {"command": command}, root, "no", {"CLAUDE_PROJECT_DIR": f})
+    if r.rc != want or (want == 2 and not r.err.startswith("CONSENT_DECLINED:")):
+        return "%s: wanted rc=%s, got rc=%s %s" % (label, want, r.rc, r.err.strip()[:120])
+    return None
+
+
+CONSENT_RULES_ONLY = [
+    ("only the command rule: a push to main passes", "production.commands", "git push origin main", 0),
+    ("only the command rule: a production command matches", "production.commands", "gh pr merge 12", 2),
+    ("only the push rule: a production command passes", "production.branches", "gh pr merge 12", 0),
+    ("only the push rule: a push to main matches", "production.branches", "git push origin main", 2),
+]
+
+
+def _sh(cmd):
+    return lambda w: {"command": cmd(w) if callable(cmd) else cmd}
+
+
+A_ROOT, A_A, A_B, A_C, A_D, A_WT, A_OUT = (lambda w: w.root), (lambda w: w.a), (lambda w: w.b), (lambda w: w.c), (
+    lambda w: w.d), (lambda w: w.wt), (lambda w: w.outside)
+LOG3 = '"bump version"; "fix typo"; "add login"'
+_push_a = lambda w: ["push to origin/main: main (%s), 3 commit(s) that origin lacks: %s" % (w.sha, LOG3)]
+_push_head = lambda w: ["push to origin/main: HEAD (%s), 3 commit(s) that origin lacks: %s" % (w.sha, LOG3)]
+_cmd = lambda entry: (lambda w: ["the command begins with `%s`, a production command of project toy" % entry])
+_unreadable = lambda w: ["cannot be read before it runs; treated as a push to production (main)"]
+_sleepy_git = lambda w: {"PATH": _fake_git(w, "sleep 15") + os.pathsep + os.environ["PATH"]}
+_broken_git = lambda w: {"PATH": _fake_git(w, "exit 1") + os.pathsep + os.environ["PATH"]}
+
+
+def _fake_git(w, body):
+    d = os.path.join(w.outside, "fake-" + str(abs(hash(body))))
+    if not os.path.isdir(d):
+        os.makedirs(d)
+        with open(os.path.join(d, "git"), "w") as fh:
+            fh.write("#!/bin/sh\n%s\n" % body)
+        os.chmod(os.path.join(d, "git"), 0o755)
+    return d
+
+
+# (label, tool, tool_input or a function of the world, cwd as a function of the world, the strings the output must
+# hold or None for "does not match"[, a function of the world giving extra environment[, the seconds it may take]])
+CONSENT_MATCH = [
+    # ---- a push to a production branch
+    ("push explicit to main", "Bash", _sh("git push origin main"), A_A, _push_a),
+    ("push HEAD:main", "Bash", _sh("git push origin HEAD:main"), A_A, _push_head),
+    ("push main:main", "Bash", _sh("git push origin main:main"), A_A, _push_a),
+    ("push +main says it rewrites", "Bash", _sh("git push origin +main"), A_A,
+     lambda w: _push_a(w) + ["--force: rewrites origin/main"]),
+    ("push --force to main", "Bash", _sh("git push --force origin main"), A_A,
+     lambda w: _push_a(w) + ["--force: rewrites origin/main"]),
+    ("push --force-with-lease to main", "Bash", _sh("git push --force-with-lease origin main"), A_A,
+     lambda w: ["--force: rewrites origin/main"]),
+    ("push -fu to main", "Bash", _sh("git push -fu origin main"), A_A, lambda w: ["--force: rewrites origin/main"]),
+    ("push refs/heads/main, shown as main", "Bash", _sh("git push origin refs/heads/main"), A_A, _push_a),
+    ("push HEAD alone, on main", "Bash", _sh("git push origin HEAD"), A_A, _push_head),
+    ("push a topic to main, whatever the source", "Bash", _sh("git push origin feature:main"), A_B,
+     lambda w: ["push to origin/main: feature"]),
+    ("push with no refspec from main", "Bash", _sh("git push"), A_A, _push_head),
+    ("push origin with no refspec from main", "Bash", _sh("git push origin"), A_A, _push_head),
+    ("push --all", "Bash", _sh("git push --all"), A_A, lambda w: ["--all pushes every local branch to origin"]),
+    ("push --all from a feature branch", "Bash", _sh("git push --all origin"), A_B,
+     lambda w: ["--all pushes every local branch to origin, production branches included (main)",
+                "push to origin/main: main (%s), nothing that origin lacks" % sandbox.git(w.b, "rev-parse", "--short", "main").strip()]),
+    ("push --mirror from a feature branch", "Bash", _sh("git push --mirror origin"), A_B,
+     lambda w: ["--mirror pushes every local branch", "also deletes on origin"]),
+    ("push --branches from a feature branch", "Bash", _sh("git push --branches origin"), A_B,
+     lambda w: ["--all pushes every local branch to origin"]),
+    ("push --delete origin main", "Bash", _sh("git push --delete origin main"), A_A,
+     lambda w: ["delete origin/main: the branch is removed from the remote"]),
+    ("push origin --delete main", "Bash", _sh("git push origin --delete main"), A_A,
+     lambda w: ["delete origin/main"]),
+    ("push -d origin main", "Bash", _sh("git push -d origin main"), A_A, lambda w: ["delete origin/main"]),
+    ("push origin :main", "Bash", _sh("git push origin :main"), A_A, lambda w: ["delete origin/main"]),
+    ("push after options and a second refspec", "Bash", _sh("git push -u --no-verify origin feature main"), A_A, _push_a),
+    ("push with --repo", "Bash", _sh("git push --repo=origin main"), A_A, _push_a),
+    ("push via cd into the repo", "Bash", lambda w: {"command": "cd %s && git push origin main" % w.a}, A_OUT, _push_a),
+    ("push via cd, relative", "Bash", _sh("cd a && git push origin main"), A_ROOT, _push_a),
+    ("push via git -C", "Bash", lambda w: {"command": "git -C %s push origin main" % w.a}, A_OUT, _push_a),
+    ("push via git -C and -c", "Bash", lambda w: {"command": "git -c core.pager=cat -C %s push origin main" % w.a}, A_OUT, _push_a),
+    ("push after a cd that may fail", "Bash", _sh("cd /no/such/dir; git push origin main"), A_A, _push_a),
+    ("push in a subshell with a cd", "Bash", lambda w: {"command": "(cd %s && git push origin main)" % w.a}, A_OUT, _push_a),
+    ("push to a directory in a variable", "Bash", lambda w: {"command": "R=%s; cd $R && git push origin main" % w.a}, A_OUT, _push_a),
+    ("push to a directory nobody can read", "Bash", _sh("cd $(mktemp -d) && git push origin main"), A_OUT,
+     lambda w: ["push to origin/main"]),
+    ("push in bash -c", "Bash", _sh("bash -c 'git push origin main'"), A_A, _push_a),
+    ("push in sh -lc", "Bash", _sh("sh -lc 'git push origin main'"), A_A, _push_a),
+    ("push in bash -c after a cd", "Bash", lambda w: {"command": "cd %s && bash -c 'git push origin main'" % w.a}, A_OUT, _push_a),
+    ("push in a nested bash -c", "Bash", _sh("bash -c \"sh -c 'git push origin main'\""), A_A, _push_a),
+    ("push in eval", "Bash", _sh("eval git push origin main"), A_A, _push_a),
+    ("push in eval, quoted", "Bash", _sh("eval 'git push origin main'"), A_A, _push_a),
+    ("push behind sudo env timeout", "Bash", _sh("sudo env X=1 timeout 30 git push origin main"), A_A, _push_a),
+    ("push by its path", "Bash", _sh("/usr/bin/git push origin main"), A_A, _push_a),
+    ("push after a commit", "Bash", _sh("git commit -m 'x' ; git push origin main"), A_A, _push_a),
+    ("push after a comment's apostrophe", "Bash", _sh("echo it's; git push origin main"), A_A, _push_a),
+    ("push piped", "Bash", _sh("git push origin main 2>&1 | tail -3"), A_A, _push_a),
+    ("push in a heredoc run by bash", "Bash", _sh("bash <<'EOF'\ngit push origin main\nEOF"), A_A, _push_a),
+    ("push from a variable", "Bash", _sh("B=main; git push origin $B"), A_A, _push_a),
+    ("push whose refspec is a substitution", "Bash", _sh("git push origin $(echo main)"), A_A, _unreadable),
+    ("push whose refspec is a variable nobody set", "Bash", _sh('git push origin "$BRANCH"'), A_A, _unreadable),
+    ("push whose refspec is a backtick", "Bash", _sh("git push origin `echo main`"), A_A, _unreadable),
+    ("push whose refspec is a glob", "Bash", _sh("git push origin 'ma*'"), A_A, _unreadable),
+    ("push whose refspec is refs/heads/*", "Bash", _sh("git push origin 'refs/heads/*:refs/heads/*'"), A_A, _unreadable),
+    ("push from a worktree outside the project", "Bash", _sh("git push origin HEAD:main"), A_WT,
+     lambda w: ["push to origin/main: HEAD"]),
+    ("push with push.default matching", "Bash", _sh("git push"), A_D, lambda w: ["push.default is matching"]),
+    ("push when git is broken, still asks", "Bash", _sh("git push origin main"), A_A,
+     lambda w: ["push to origin/main: could not read what is pushed", "asking anyway"], _broken_git),
+    ("push with no refspec when git is broken, still asks", "Bash", _sh("git push"), A_A,
+     lambda w: ["could not read which branch a plain `git push` updates"], _broken_git),
+    ("push when git hangs, asks within 8 s", "Bash", _sh("git push origin main"), A_A,
+     lambda w: ["push to origin/main: could not read what is pushed", "asking anyway"], _sleepy_git, 8),
+    # ---- a command of production
+    ("command gh pr merge", "Bash", _sh("gh pr merge 12"), A_A, _cmd("gh pr merge")),
+    ("command gh pr merge, behind env and sudo", "Bash", _sh("sudo env GH_TOKEN=x gh pr merge 12 --squash"), A_A, _cmd("gh pr merge")),
+    ("command gh pr merge, by its path", "Bash", _sh("/usr/bin/gh pr merge 12"), A_A, _cmd("gh pr merge")),
+    ("command gh pr merge in a nested shell", "Bash", _sh("bash -c 'gh pr merge 12'"), A_A, _cmd("gh pr merge")),
+    ("command a script with bash", "Bash", _sh("bash infra/deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script with sh and options", "Bash", _sh("sh infra/deploy.sh --prod"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script as ./X", "Bash", _sh("./infra/deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script by its absolute path", "Bash", lambda w: {"command": "bash %s/infra/deploy.sh" % w.root}, A_OUT,
+     _cmd("infra/deploy.sh")),
+    ("command a script after cd", "Bash", _sh("cd infra && bash deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command a script sourced", "Bash", _sh("source infra/deploy.sh"), A_ROOT, _cmd("infra/deploy.sh")),
+    ("command ssh to the production host", "Bash", _sh("ssh deploy@host systemctl restart app"), A_ROOT, _cmd("ssh deploy@host")),
+    # ---- an MCP tool that writes to production
+    ("mcp execute_sql", "mcp__db-toy__execute_sql", {"sql": "DROP TABLE users;\nSELECT 1"}, A_ROOT,
+     lambda w: ["tool mcp__db-toy__execute_sql, project toy", "sql: DROP TABLE users;", "sql: SELECT 1"]),
+    ("mcp execute_sql from another project's directory", "mcp__db-toy__execute_sql", {"query": "delete from t"}, A_OUT,
+     lambda w: ["query: delete from t"]),
+    ("mcp execute_sql shows ten lines and the rest", "mcp__db-toy__execute_sql", {"sql": "\n".join("l%d" % i for i in range(12))},
+     A_ROOT, lambda w: ["sql: l9", "sql: ... and 2 more lines"]),
+    ("mcp without arguments", "mcp__db-toy__execute_sql", {}, A_ROOT, lambda w: ["tool mcp__db-toy__execute_sql"]),
+    # ---- what does not match
+    ("push to feature", "Bash", _sh("git push origin feature"), A_A, None),
+    ("push --force to feature", "Bash", _sh("git push --force origin feature"), A_A, None),
+    ("push main:feature", "Bash", _sh("git push origin main:feature"), A_A, None),
+    ("push HEAD from a feature branch", "Bash", _sh("git push origin HEAD"), A_B, None),
+    ("push with no refspec from a feature branch", "Bash", _sh("git push"), A_B, None),
+    ("push --tags", "Bash", _sh("git push --tags"), A_A, None),
+    ("push origin --tags", "Bash", _sh("git push origin --tags"), A_A, None),
+    ("push a tag by name", "Bash", _sh("git push origin tag v1.0"), A_A, None),
+    ("push a tag by refspec", "Bash", _sh("git push origin refs/tags/v1.0"), A_A, None),
+    ("push --dry-run to main", "Bash", _sh("git push --dry-run origin main"), A_A, None),
+    ("push -n to main", "Bash", _sh("git push -n origin main"), A_A, None),
+    ("push --dry-run --all", "Bash", _sh("git push --all --dry-run"), A_A, None),
+    ("pull of main", "Bash", _sh("git pull origin main"), A_A, None),
+    ("log of main", "Bash", _sh("git log main"), A_A, None),
+    ("echo of a push", "Bash", _sh('echo "git push origin main"'), A_A, None),
+    ("commit message that mentions a push", "Bash", _sh('git commit -m "docs: git push origin main is gated now"'), A_A, None),
+    ("commit message in a heredoc that mentions a push", "Bash",
+     _sh("git commit -F - <<'EOF'\nsubject\n\nafter this, git push origin main\nEOF"), A_A, None),
+    ("push to main in a project with no profile", "Bash", _sh("git push origin main"), A_C, None),
+    ("push via cd to a repo with no profile", "Bash", lambda w: {"command": "cd %s && git push origin main" % w.c}, A_A, None),
+    ("push after a cd that must succeed", "Bash", _sh("cd /no/such/dir && git push origin main"), A_A, None),
+    ("a gh command that is not production", "Bash", _sh("gh pr view 12"), A_A, None),
+    ("a script that is not production", "Bash", _sh("bash infra/other.sh"), A_ROOT, None),
+    ("a production command in a project with no profile", "Bash", _sh("gh pr merge 12"), A_C, None),
+    ("echo of a production command", "Bash", _sh("echo gh pr merge 12"), A_A, None),
+    ("ssh to another host", "Bash", _sh("ssh other@host ls"), A_ROOT, None),
+    ("a plain command", "Bash", _sh("ls -la"), A_A, None),
+    ("mcp read-only tool", "mcp__db-toy__list_tables", {}, A_ROOT, None),
+    ("mcp tool of another server", "mcp__other__execute_sql", {"sql": "x"}, A_ROOT, None),
+    ("an edit tool", "Edit", {"file_path": "/tmp/x"}, A_ROOT, None),
+]
+CONSENT_CASES = ([("consent-config",) + c for c in CONSENT_CONFIG] + [("consent-production",) + c for c in CONSENT_PRODUCTION]
+                 + [("consent-profile",) + c for c in CONSENT_PROFILES] + [("consent-mode", n) for n in CONSENT_MODE_ROWS]
+                 + [("consent-match",) + c for c in CONSENT_MATCH] + [("consent-rules",) + c for c in CONSENT_RULES_ONLY]
+                 + [("consent-flow", n) for n in CONSENT_FLOW])
+
 # GUARD_TEST_INPROC=1 loads the guard once and calls its main() in this process instead
 # of starting a python per case. Only test_guard_mutants.py uses it: in the downstream project, 56
 # mutants times 311 subprocesses took 377 s on a CI runner. The ordinary run keeps the
@@ -2263,6 +3166,20 @@ def check(case):
                                                                rc, err.strip()[16:120])
         if rc == 2:
             return bad_message(err)
+    elif kind == "consent-config":
+        return consent_config_row(*case[1:])
+    elif kind == "consent-production":
+        return consent_production_row(*case[1:])
+    elif kind == "consent-profile":
+        return consent_profile_row(*case[1:])
+    elif kind == "consent-mode":
+        return consent_mode_row(case[1])
+    elif kind == "consent-match":
+        return consent_match_row(*case[1:])
+    elif kind == "consent-flow":
+        return consent_flow_row(case[1])
+    elif kind == "consent-rules":
+        return consent_rule_row(*case[1:])
     elif kind == "rooted":
         # A command run in a project that IS the forge checkout, which holds config/ (item 3 of round 9b:
         # the project's own root stays readable, a directory a cd reached does not).
@@ -2304,7 +3221,7 @@ def main():
              + [("file",) + fc for fc in FORGE_FILE_CASES] + [("malformed", m) for m in FORGE_MALFORMED]
              + [("bypass-env",)] + [("rooted",) + r for r in ROOTED]
              + [("backlog",) + c for c in BACKLOG_CASES]
-             + [("config",) + c for c in CONFIG_CASES])
+             + [("config",) + c for c in CONFIG_CASES] + CONSENT_CASES)
     # test_guard_mutants.py only needs to know that a weakened guard fails at least one case,
     # so it sets GUARD_TEST_FAIL_FAST and the run stops at the first failure.
     fail_fast = os.environ.get("GUARD_TEST_FAIL_FAST") == "1"
@@ -2331,8 +3248,9 @@ def main():
             fails.append(f)
     print("guard cases: %d bash block, %d bash allow, %d file tools, %d malformed, 1 unwritable log"
           % (len(BASH_BLOCK), len(BASH_ALLOW), len(FILE_CASES), len(MALFORMED)))
-    print("forge additions: %d bash block, %d bash allow, %d file tools, %d malformed, 1 env bypass refused, %d config"
-          % (len(FORGE_BLOCK), len(FORGE_ALLOW), len(FORGE_FILE_CASES), len(FORGE_MALFORMED), len(CONFIG_CASES)))
+    print("forge additions: %d bash block, %d bash allow, %d file tools, %d malformed, 1 env bypass refused, %d config, %d consent"
+          % (len(FORGE_BLOCK), len(FORGE_ALLOW), len(FORGE_FILE_CASES), len(FORGE_MALFORMED), len(CONFIG_CASES),
+             len(CONSENT_CASES)))
     fails += budget_renews()
     print("timed cases: %d, each under %.1f s; the glob budget is renewed per call" % (len(FAST_CASES), FAST_LIMIT))
     print("known gaps, not asserted: %d" % len(KNOWN_GAPS))

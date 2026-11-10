@@ -89,8 +89,10 @@ def run_chat(texto, active=False):
         ruta = f.name
     payload = json.dumps({"hook_event_name": "Stop", "transcript_path": ruta,
                           "stop_hook_active": active})
-    r = subprocess.run([sys.executable, HOOK], input=payload, capture_output=True, text=True)
-    os.unlink(ruta)
+    try:
+        r = subprocess.run([sys.executable, HOOK], input=payload, capture_output=True, text=True)
+    finally:
+        os.unlink(ruta)  # also when the hook cannot start: a failing run must leave nothing in /tmp
     assert r.returncode == 0, f"exit {r.returncode}: {r.stderr}"
     if not r.stdout.strip():
         return None

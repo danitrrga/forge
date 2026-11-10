@@ -1,9 +1,12 @@
 {
-  "_doc": "A stranger's forge.json (docs/portable-design.md section 4): every integration off, nothing of anyone's machine, every table empty. bin/forge init switches on what it detects. Keys that start with _ are documentation. integrations: codex, gsd and hindsight, each true or false, a missing key is false. codex_harness: only read with integrations.codex on; true configures Codex like Claude Code (forge writes its hook rows into ~/.codex/hooks.json and each project's MCP servers into .codex/config.toml), false or missing writes neither and takes out only what forge wrote there (the .agents/skills links and AGENTS.md stay either way). gsd_patches: false (or missing) is GSD unpatched, straight from its package, installed by forge init with `pnpm dlx @opengsd/gsd-core`; true is the maintainer's patched, staged copy (sync_gsd_runtime.py) and is not offered to a stranger. gsd_isolation_guard: only read with gsd_patches true; false switches off the one hook row gsd-agent-isolation-guard.js (forge takes its own entry out of ~/.claude/settings.json by exact command and forge doctor's `gsd isolation guard` row is a SKIP), true or missing writes it, any other value is read as true and forge doctor FAILs on it. user_settings: the plain defaults and env keys written into ~/.claude/settings.json. user_hooks: [{event, command, timeout, marker, matcher, agents, on}] rows reconciled like the engine's own. skill_keep: the tables sync_skill_keep.py applies (sets, design_permissions, extras, no_gsd_baseline, gsd_exclude (gsd-* skills left out everywhere: not linked, not kept), gsd_opt_in (gsd-* skills linked but kept only by a profile whose extras row names them), common_skills, common_permissions, common_env, common_plugins, common_opt_out, common_exclude). session_wait: {project, health, unit}, left out when no session start has to wait for a local server. instruction_files_skip: profile names forge doctor does not check. lock_exclude: plugin names (name@marketplace) that forge lock leaves out of config/forge.lock.json, because that file is published. doctor_extra: [name, argv, fix] rows added to forge doctor.",
+  "_doc": "A stranger's forge.json (docs/portable-design.md section 4): every integration off, nothing of anyone's machine, every table empty. bin/forge init switches on what it detects. Keys that start with _ are documentation. integrations: codex, gsd, hindsight, consent, agent_browser and mempalace, each true or false, a missing key is false. consent is the consent window (hooks/guard_tool_use.py --consent): true writes one user-scope PreToolUse row with onFailure block, and a push to a production branch or a command that acts on production then waits for a yes in a window of its own; what counts as production is each profile's `production` field and config/gateway.json, copied from examples/gateway.json; false takes the row out again with `forge sync --apply`, even when gateway.json is broken. agent_browser: true asks for the `agent-browser` tool through a config/toolchain.json entry whose `when` is {\"integration\": \"agent_browser\"} (the entry is wanted only while this is true) and forge doctor FAILs, naming `forge toolchain --fix`, when the binary is not on PATH; false asks for nothing. mempalace: its doctor check arrives with the MemPalace part, so the row is a SKIP either way. codex_harness: only read with integrations.codex on; true configures Codex like Claude Code (forge writes its hook rows into ~/.codex/hooks.json and each project's MCP servers into .codex/config.toml), false or missing writes neither and takes out only what forge wrote there (the .agents/skills links and AGENTS.md stay either way). gsd_patches: false (or missing) is GSD unpatched, straight from its package, installed by forge init with `pnpm dlx @opengsd/gsd-core`; true is the maintainer's patched, staged copy (sync_gsd_runtime.py) and is not offered to a stranger. gsd_isolation_guard: only read with gsd_patches true; false switches off the one hook row gsd-agent-isolation-guard.js (forge takes its own entry out of ~/.claude/settings.json by exact command and forge doctor's `gsd isolation guard` row is a SKIP), true or missing writes it, any other value is read as true and forge doctor FAILs on it. user_settings: the plain defaults and env keys written into ~/.claude/settings.json. user_hooks: [{event, command, timeout, marker, matcher, agents, on}] rows reconciled like the engine's own. skill_keep: the tables sync_skill_keep.py applies (sets, design_permissions, extras, gsd_exclude (gsd-* skills left out everywhere: not linked, not kept), gsd_opt_in (gsd-* skills linked but kept only by a profile whose extras row names them), common_skills, common_permissions, common_env, common_plugins, common_opt_out, common_exclude). session_wait: {project, health, unit}, left out when no session start has to wait for a local server. instruction_files_skip: profile names forge doctor does not check. lock_exclude: plugin names (name@marketplace) that forge lock leaves out of config/forge.lock.json, because that file is published. doctor_extra: [name, argv, fix] rows added to forge doctor. local_plugins: a list of plugin folders of your own (absolute or ~/...), each a directory marketplace (a `.claude-plugin/marketplace.json` whose `name` is the plugin's name and which lists a plugin of that name); `forge sync --apply` runs one `claude plugin marketplace add <folder> --scope local` for each the machine's registry (~/.claude/plugins/known_marketplaces.json) lacks, which is what makes Claude Code load it, and never removes a registration; a project turns the plugin on by naming `<name>@<name>` in its `plugins_keep` or in `skill_keep.common_plugins`; empty or missing is off, and forge doctor's `local plugins` row is then a SKIP. framework: the settings of the agent framework, written for it by forge into each project that has `framework: true` in its profile (a profile field, like `factory` \"off\" or \"trial\", `factory_ui_bugs`, `checks` and `protected_paths`). models: for each role the model alias (sonnet, opus, haiku or fable, never a full id) of each size, small, normal and big, the seed of the table; limits: {on, per_project, ram_min_free_gb}; rounds and critique_rounds_unattended: how many review rounds; factory: the watchdog and cost thresholds; weekly: {on, min_sessions}; paths: where the framework finds what is on this machine, empty here; walk: {browser_executable} the path of the clean browser the framework's UI walk must use, left out here and in the file when absent (the plugin's own default applies); linear.labels: {neutral label name: the name it has in the user's Linear}, empty here (a missing entry means the same name); plugin_source: where Claude Code fetches the framework plugin from, in the form of its `extraKnownMarketplaces`, here a documentation address.",
   "integrations": {
     "codex": false,
     "gsd": false,
-    "hindsight": false
+    "hindsight": false,
+    "consent": false,
+    "agent_browser": false,
+    "mempalace": false
   },
   "gsd_patches": false,
   "gsd_isolation_guard": true,
@@ -17,7 +20,6 @@
       "additionalDirectories": []
     },
     "extras": {},
-    "no_gsd_baseline": [],
     "gsd_exclude": [],
     "gsd_opt_in": [],
     "common_skills": [],
@@ -31,5 +33,139 @@
   },
   "instruction_files_skip": [],
   "lock_exclude": [],
-  "doctor_extra": []
+  "doctor_extra": [],
+  "local_plugins": [],
+  "framework": {
+    "models": {
+      "orchestrator": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "researcher": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "decisions": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "state": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "demo": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "pre-mortem": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "planner": {
+        "small": "opus",
+        "normal": "opus",
+        "big": "opus"
+      },
+      "post-mortem": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "executor": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "reviewer": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "review-verifier": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "security-reviewer": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "ui-walker": {
+        "small": "haiku",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "ui-verifier": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "skill-proposer": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "factory-orchestrator": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "intake": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "classifier": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      },
+      "detector": {
+        "small": "haiku",
+        "normal": "haiku",
+        "big": "haiku"
+      },
+      "analytics-verifier": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "opus"
+      },
+      "vision": {
+        "small": "sonnet",
+        "normal": "sonnet",
+        "big": "sonnet"
+      }
+    },
+    "limits": {
+      "on": false,
+      "per_project": {},
+      "ram_min_free_gb": 0
+    },
+    "rounds": 3,
+    "critique_rounds_unattended": 2,
+    "factory": {
+      "watchdog_nudge_min": 30,
+      "watchdog_fail_min": 30,
+      "cost_warn_x_median": 3
+    },
+    "weekly": {
+      "on": true,
+      "min_sessions": 5
+    },
+    "paths": {},
+    "linear": {
+      "labels": {}
+    },
+    "plugin_source": {
+      "source": "git",
+      "url": "https://example.org/fwx.git"
+    }
+  }
 }

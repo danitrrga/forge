@@ -86,7 +86,9 @@ def ui_paragraph(proj_dir, profs):
     return ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
             "screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
             "use that; otherwise write `decisions.json` in a folder and run `python3 " + tool + " verdict <folder>` (the format "
-            "is in `" + ROOT_FS + "/design/verdict/README.md`), then end your message with the `xdg-open` line it prints.\n")
+            "is in `" + ROOT_FS + "/design/verdict/README.md`), then end your message with the `xdg-open` line it prints. For a live "
+            "back-and-forth (the owner clicks rows and notes single elements, your replies appear in the page) add `--serve`; the README "
+            "says how to read the answers and reply.\n")
 
 
 def pointer(proj_dir, profs):

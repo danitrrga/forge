@@ -21,6 +21,8 @@ Targets written:
   ~/.codex/hooks.json  (the same hooks, for Codex, with codex_harness true; false takes forge's out; $CODEX_HOME when set)
   ~/.hindsight/coding-agent.json  (rendered from config/hindsight-coding-agents.json)
   data/memory-lite/<project>  (each project's claude-mem-lite store directory)
+  ~/.claude/plugins/known_marketplaces.json  (one `claude plugin marketplace add` per config/forge.json `local_plugins` folder the
+    registry lacks, run in a temporary folder; nothing with the key empty or missing, and a registration is never removed)
 
 Default = DRY RUN (prints what would change). Pass --apply to write.
 Writes are atomic (temp -> replace) with a one-time .bak backup. Idempotent.
@@ -28,17 +30,110 @@ Writes are atomic (temp -> replace) with a one-time .bak backup. Idempotent.
 Invariants (from a split-brain bug):
   * Claude project key is ALWAYS the forward-slash path; never create a backslash dup.
   * Never emit a server whose secret resolves empty -> abort that server, warn loudly.
+  * The agents of a project never write in forge: every profile but forge's own gets `permissions.deny` rules
+    (Edit and Write) on the top-level entries git tracks in this checkout, `plugins/` and `design/` left out (forge_deny).
   * claude-mem-lite's store dir is DERIVED from the project name -- see forge/memory.py.
     claude-mem itself (thedotmack) was retired; RETIRED_MEMORY refuses a profile
     that still grants it.
 """
 import contextlib
 import os
+import subprocess
 import sys
 
-from forge import hooks, lib, mcp, memory, skills
+from forge import framework, hooks, lib, marketplace, mcp, memory, skills
 
 CFG = os.path.join(lib.ROOT, "config")
+
+# The agents of a project do not write in forge (3.6 U2c): a problem with forge is fixed through the `forge` CLI or filed
+# as an issue, never by a session of a project, which lacks forge's context and tools. A `deny` beats every `allow`, and a
+# permission pattern cannot leave a folder out of itself (measured, tests/test_forge_write_deny.py), so the exceptions are
+# one pair of rules per top-level entry of the checkout that git tracks, the exempt ones left out: `plugins/` (the plugin
+# repos live there and their sessions write in their own folder) and `design/` (the taste library stays shared:
+# design-taste's `analyse` edits `design/taste/entries/*.md` from any project). Tracked, not on disk: `logs/` and the like
+# come and go and would rewrite every project's file on each sync; the few untracked ones that always matter are named in
+# FORGE_DENY_ALWAYS. A new tracked entry is covered at the next sync, which
+# runs at the start of each project's session.
+FORGE_PROFILE = "forge"
+FORGE_DENY_KEEP = ("plugins", "design")
+# `Edit` alone: an Edit rule covers every built-in file-writing tool, and Claude Code 2.1.308 prints a warning at each session start for a
+# `Write` rule ("never matches, use Edit"); with the Edit rules alone Write was denied too (tests/test_forge_write_deny.py).
+FORGE_DENY_TOOLS = ("Edit",)
+FORGE_DENY_WHY = "agents of a project do not write in forge"
+DATA_GIT = ".forge-data.git"  # the private data history over the same work tree (forge/publish.py)
+# Untracked, so git does not list them, yet always denied when the checkout has them: both histories, the secrets, the memory stores.
+FORGE_DENY_ALWAYS = (".git", DATA_GIT, "credentials", "data")
+# `data/` is made by the generator itself (memory.derive_lite_env, the first project that uses claude-mem-lite), in the middle of a
+# run: a checkout without it would give the profiles read before that no rule for it and the next run one more, a rewrite of every
+# settings.local.json. So it is denied whether or not it is there yet, as a directory.
+FORGE_DENY_MADE = ("data",)
+
+
+def _tracked_entries(root):
+    """({top-level entry: whether it is a directory}, error) of what git tracks in `root`: the engine's history and, when it has
+    one, the data history. An entry is a directory when some tracked path is below it."""
+    heads = [["git", "-C", root]]
+    if os.path.isdir(os.path.join(root, DATA_GIT)):
+        heads.append(["git", "--git-dir", os.path.join(root, DATA_GIT), "--work-tree", root])
+    out = {}
+    for head in heads:
+        try:
+            # cwd=root: `ls-files` lists what is under the current directory, and the data history names no folder of its own
+            r = subprocess.run(head + ["ls-files", "-z"], cwd=root, capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.SubprocessError) as e:
+            return {}, "git ls-files failed (%s)" % e
+        if r.returncode:
+            return {}, "git ls-files exited %d (%s)" % (r.returncode, r.stderr.strip()[:120])
+        for path in filter(None, r.stdout.split("\0")):
+            top, _, rest = path.partition("/")
+            out[top] = out.get(top, False) or bool(rest)
+    return out, None
+
+
+def forge_deny(name, prof):
+    """(rules, error) for the profile `name`: `Edit` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
+    read at call time, never written in the engine) tracks in git, plus those of FORGE_DENY_ALWAYS it has (FORGE_DENY_MADE ones even before they exist), but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
+    directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own profile (by name, or whose project is
+    the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout whose
+    history cannot be read or has nothing to deny."""
+    root = os.path.realpath(lib.ROOT)
+    ppath = prof.get("project_path") or ""
+    if name == FORGE_PROFILE or os.path.realpath(ppath) == root or not os.path.isdir(ppath):
+        # a project folder that is not there gets nothing: writing the file would make the folder and hide the `!` line
+        # the codex step prints for it
+        return [], None
+    tracked, why = _tracked_entries(root)
+    for e in FORGE_DENY_ALWAYS:
+        if e in FORGE_DENY_MADE or os.path.lexists(os.path.join(root, e)):
+            tracked.setdefault(e, e in FORGE_DENY_MADE or os.path.isdir(os.path.join(root, e)))
+    entries = sorted(e for e in tracked if e not in FORGE_DENY_KEEP)
+    if why or not entries:
+        return [], "   ! forge write deny -> the checkout %s %s -- nothing written for this project" % (
+            root, why or "tracks no entry to protect")
+    rules = []
+    for e in entries:
+        tail = "/**" if tracked[e] else ""
+        rules += ["%s(/%s/%s%s)" % (t, root, e, tail) for t in FORGE_DENY_TOOLS]
+    return rules, None
+
+
+def with_forge_deny(prof, rules):
+    """`prof` with `rules` added to its `permissions.deny`, after what the profile declares itself (as framework.with_permissions
+    does for allow, so forge/skills.py claims them item by item); `prof` itself with nothing to add."""
+    if not rules:
+        return prof
+    cur = dict(prof.get("permissions") or {})
+    have = cur.get("deny")
+    cur["deny"] = list(dict.fromkeys((have if isinstance(have, list) else []) + rules))
+    return dict(prof, permissions=cur)
+
+
+def _deny_lines(prof, rules):
+    """The `+ deny` lines for the rules the project's settings.local.json does not hold yet."""
+    cur = lib.read_json(os.path.join(prof["project_path"], ".claude", "settings.local.json"), quiet=True)
+    cur = cur.get("permissions") if isinstance(cur, dict) else None
+    have = cur.get("deny") if isinstance(cur, dict) and isinstance(cur.get("deny"), list) else []
+    return ["  + deny %s  (%s)" % (r, FORGE_DENY_WHY) for r in rules if r not in have]
 
 
 def _unreadable(e, what="not written"):
@@ -199,20 +294,43 @@ def _run(argv, rule):
             print()
             continue
 
+        # What the framework step wants of this project, decided before anything is written: a permissions list that
+        # fails its lint writes nothing for the profile (framework.permissions), as the memory invariant above.
+        fw = framework.plan(prof, name)
+        fp = framework.permissions(prof, fw, os.path.join(CFG, framework.PERMISSIONS_FILE))
+        if fp.errors:
+            print("\n".join(fp.errors) + "\n")
+            continue
+
+        denied, deny_error = forge_deny(name, prof)
+        if deny_error:
+            print(deny_error + "\n")
+            continue
+        deny_lines = _deny_lines(prof, denied)
+
         cj.project(prof, sel, registry, secrets, errors)
         for e in errors:
             print("   ! " + e)
 
         env_errors = []
+        # settings.local.json carries part of what the framework wants (the plugin's enabledPlugins entry, its
+        # marketplace, LINEAR_API_KEY, its permissions); the framework's own lines come after.
+        settings_ok = True
         try:
-            ov = skills.write_settings_local(ctx, mcp.with_denied_tools(prof, sel, registry), secrets, env_errors,
-                                            hooks.project_hooks(prof))
+            ov = skills.write_settings_local(
+                ctx, with_forge_deny(mcp.with_denied_tools(framework.with_permissions(framework.with_env(prof, fw, secrets), fp), sel, registry), denied),
+                secrets, env_errors, hooks.project_hooks(prof), fw if fw.on else None)
         except lib.Unreadable as e:
-            ov = _unreadable(e)
+            ov, settings_ok = _unreadable(e), False
         if ov:
             print(ov)
         for e in env_errors:
             print("   ! " + e)
+        if settings_ok:
+            for line in (*fp.lines, *deny_lines):
+                print(line)
+            for line in framework.write(ctx, prof, fw, name, secrets):
+                print(line)
 
         if not errors and not lib.on("codex"):
             # Codex off (config/forge.json integrations.codex): no .codex/, no .agents/ links and
@@ -267,6 +385,15 @@ def _run(argv, rule):
             # runtime check, so a missing canonical file is not an error either.
             print(hooks._not_run("hindsight config and runtime check", "hindsight"))
         print()
+
+        # The machine's marketplace registry (config/forge.json `local_plugins`): after everything else, so a run with the key
+        # off prints what it always printed. Silent when every folder is registered.
+        local = marketplace.local_step(ctx)
+        if local:
+            print("== local plugins (machine registry) ==")
+            for line in local:
+                print(line)
+            print()
     else:
         print("== user-scope files: not this run's scope (%s) ==\n" % ("project " + ", ".join(sorted(ctx.only)) if ctx.only else "no project"))
 

@@ -1,0 +1,9 @@
+case	planted	expected_verdict	must_mention	must_not_mention
+oversized	nine tasks, a plugin system, a settings file and a history nobody asked for, justified only in the plan's own Size section	objections	band	
+silent-decision	T2 moves the store from JSON to a database with no decision row behind it	objections	database	
+misread-intent	the reset button planned as an undo of the last entry	back-to-discuss		
+clean	a sound plan with an unusual but valid choice and a claim about an external limit that cannot be checked from a temp folder	ok	unproven	Fraction
+checkable-claim	total() is claimed to work on a store never written; running it says otherwise	objections	FileNotFoundError	
+misread-d	the discuss records the opposite of what the owner said: the intent asks for a confirmation, row D3 says no confirmation	back-to-discuss	confirm	
+invented-d	a row labelled agent-assumption that D2 needs no change, which running total() on a never-written store contradicts	objections	FileNotFoundError	
+oversized-d	a calculator discuss with three agent-assumption rows (plugins, a settings file, a history database) nobody asked for	objections	plugin	

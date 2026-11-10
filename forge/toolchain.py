@@ -81,15 +81,25 @@ def _entry_error(e):
     if e.get("track", "latest") not in TRACKS:
         return "with a track that is neither \"latest\" nor \"frozen\""
     when = e.get("when")
-    if when is not None and not (isinstance(when, dict) and list(when) == ["gsd_default"]
-                                 and isinstance(when["gsd_default"], str) and when["gsd_default"].strip()):
-        return 'with a `when` that is not {"gsd_default": "<key of ~/.gsd/defaults.json>"}'
+    if when is not None and not _when_ok(when):
+        return ('with a `when` that is neither {"gsd_default": "<key of ~/.gsd/defaults.json>"} nor '
+                '{"integration": "<one of %s>"}' % ", ".join(lib.INTEGRATIONS))
     opts = e.get("options", {})
     # mise reads conf.d in every directory, so a file it cannot parse breaks every mise command: what cannot be
     # written as TOML is refused here. `version` is written from the pin, and a value is a scalar or a list of them.
     if not isinstance(opts, dict) or not all(OPTION_KEY.match(k) and k != "version" and _scalar_or_list(v) for k, v in opts.items()):
         return "whose options are not an object of plain names (not \"version\") holding strings, numbers, booleans or lists of them"
     return None
+
+
+def _when_ok(when):
+    """Whether `when` is one condition: a key of the user's GSD defaults, or an integration of lib.INTEGRATIONS."""
+    if not isinstance(when, dict) or len(when) != 1:
+        return False
+    kind, value = next(iter(when.items()))
+    if kind == "gsd_default":
+        return isinstance(value, str) and bool(value.strip())
+    return kind == "integration" and value in lib.INTEGRATIONS
 
 
 def _scalar_or_list(v):
@@ -111,8 +121,18 @@ def gsd_default(key):
 
 def wanted(e):
     """(whether tool entry `e` is wanted on this machine, why not): an entry with a `when` is wanted only while that
-    GSD default is on (graphify comes with mise, but only for a user who switched it on)."""
-    key = (e.get("when") or {}).get("gsd_default")
+    condition holds: a GSD default is on (graphify comes with mise, but only for a user who switched it on), or an
+    integration is on in config/forge.json (agent-browser comes only with `agent_browser`). A checkout with no
+    config/forge.json has every integration off, as _gsd_pinned reads it."""
+    when = e.get("when") or {}
+    if "integration" in when:
+        try:
+            if when["integration"] in lib.INTEGRATIONS and lib.on(when["integration"]):
+                return True, ""
+        except SystemExit:
+            pass
+        return False, "the integration %s is not on in config/forge.json" % when["integration"]
+    key = when.get("gsd_default")
     if key is None or gsd_default(key):
         return True, ""
     return False, "its GSD default %s is not true in %s" % (key, lib.short(GSD_DEFAULTS))
@@ -352,7 +372,7 @@ def row():
     files = sum(r.name.startswith("file:") for r in results)
     off = [r.name for r in results if r.level == "SKIP"]
     checked = "%d tool(s), %d pip package(s), %d file(s)%s" % (len(results) - pips - files - len(off), pips, files,
-                                                               ", %d off by a GSD default: %s" % (len(off), ", ".join(off)) if off else "")
+                                                               ", %d off by their `when`: %s" % (len(off), ", ".join(off)) if off else "")
     failing = [r.name for r in results if r.level == "FAIL"]
     other = [r.name for r in results if r.level == "WARN"]
     if failing:

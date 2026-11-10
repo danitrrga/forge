@@ -5,6 +5,7 @@ import contextlib
 import copy
 import fcntl
 import functools
+import importlib.util
 import json
 import os
 import pwd
@@ -26,7 +27,11 @@ PROFILES = os.path.join(ROOT, "config", "profiles")
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # The names `on()` accepts: what a stranger's forge may switch off (docs/portable-design.md section 5).
-INTEGRATIONS = ("codex", "gsd", "hindsight")
+# `consent` is the consent window (hooks/guard_tool_use.py --consent): absent counts as off, so adding it
+# leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` and `mempalace`
+# are the framework's: the first asks for the `agent-browser` tool in config/toolchain.json (a `when` of
+# {"integration": "agent_browser"}), the second has no check until the MemPalace part and is a SKIP either way.
+INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
 
 
 @functools.lru_cache(maxsize=None)
@@ -123,7 +128,28 @@ PROFILE_FIELDS = {
     "frozen": bool, "ui": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,
     "worktree_guard": frozenset({bool, dict}),
     "verdict_command": str,
+    # {"branches": [str], "commands": [str]}: what the consent window treats as production. The shape is the guard's
+    # (production_error), asked from profile_error so there is one definition.
+    "production": dict,
+    # The framework (2.2): `framework` is its level-1 switch, `factory` its mode, `factory_ui_bugs` sends mechanical UI
+    # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
+    "framework": bool, "factory": str, "factory_ui_bugs": bool,
+    "checks": (list, str), "protected_paths": (list, str),
+    # The Linear project the framework files issues in, when it is not the repository's name (the default).
+    "linear_project": str,
+    # Fields the framework's plugin reads from .claude/fwx.json (forge/framework.py writes them): `checks_quick` the
+    # build commands `fwx wave` runs, `app_run` how the UI walk starts the app, `default_branch_protected` where
+    # `.fwx/` lives, `ui_image` the factory's UI image. The shapes of the two objects are in APP_RUN_KEYS and
+    # UI_IMAGE_KEYS, checked by _object_error.
+    "checks_quick": (list, str), "app_run": dict, "default_branch_protected": bool, "ui_image": dict,
 }
+# The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4.
+APP_RUN_KEYS = (("up", str, True, False), ("run", str, True, True), ("down", str, True, False), ("url", str, True, False),
+                ("login", str, False, False), ("container", bool, False, True))
+UI_IMAGE_KEYS = (("dockerfile", str, True, False), ("expect", str, True, False))
+# The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
+# that has a row there, so a field without its row is not checked at all.
+PROFILE_CHOICES = {"factory": ("off", "trial")}
 _TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object"}
 
 
@@ -133,6 +159,36 @@ def worktree_guard_on(prof):
     object with "on": false declares where the project's worktrees live without the guard."""
     v = prof.get("worktree_guard")
     return v is True or (isinstance(v, dict) and v.get("on", True) is True)
+
+
+@functools.lru_cache(maxsize=None)
+def _production_error():
+    """production_error of hooks/guard_tool_use.py, the one definition of a valid `production` (the guard reads
+    the same field at run time). Loaded by path and not imported by name: hooks/ is not a package, and the module
+    is read only when a profile carries the field."""
+    spec = importlib.util.spec_from_file_location("forge_guard_tool_use", os.path.join(ROOT, "hooks", "guard_tool_use.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.production_error
+
+
+def _object_error(field, obj, keys):
+    """None when the object `obj` of profile field `field` has exactly the `keys` rows' shape, else why not."""
+    known = {k for k, *_ in keys}
+    for key, kind, required, may_be_empty in keys:
+        if key not in obj:
+            if required:
+                return "%s.%s is missing" % (field, key)
+            continue
+        v = obj[key]
+        if not isinstance(v, kind):
+            return "%s.%s is not a %s" % (field, key, _TYPE_NAMES[kind])
+        if kind is str and not may_be_empty and not v.strip():
+            return "%s.%s is empty" % (field, key)
+    extra = sorted(set(obj) - known)
+    if extra:
+        return "%s.%s is not a key of %s (known: %s)" % (field, extra[0], field, ", ".join(sorted(known)))
+    return None
 
 
 def profile_error(prof):
@@ -152,9 +208,28 @@ def profile_error(prof):
         if not isinstance(v, kind) or (item and not all(isinstance(x, item) for x in (
                 v.values() if isinstance(v, dict) else v))):
             return "%s is not a %s%s" % (field, _TYPE_NAMES[kind], " of %ss" % _TYPE_NAMES[item] if item else "")
+        if field in PROFILE_CHOICES and v not in PROFILE_CHOICES[field]:
+            return "%s is not %s" % (field, " or ".join('"%s"' % c for c in PROFILE_CHOICES[field]))
+    if "production" in prof:
+        why = _production_error()(prof["production"])
+        if why:
+            return why
     # The command is written into the project's CLAUDE.md as an instruction: an empty one names nothing.
     if "verdict_command" in prof and not prof["verdict_command"].strip():
         return "verdict_command is empty"
+    # An empty name would be written to the framework's file as the project, and Linear would match none.
+    if "linear_project" in prof and not prof["linear_project"].strip():
+        return "linear_project is empty"
+    for field, keys in (("app_run", APP_RUN_KEYS), ("ui_image", UI_IMAGE_KEYS)):
+        if field in prof:
+            why = _object_error(field, prof[field], keys)
+            if why:
+                return why
+    # The Dockerfile lives in config/factory-images/<project>/ of forge: a name inside it, never a way out.
+    if "ui_image" in prof:
+        name = prof["ui_image"]["dockerfile"]
+        if os.path.isabs(name) or ".." in name.replace("\\", "/").split("/"):
+            return "ui_image.dockerfile is not a relative name without .."
     # `on` of a worktree_guard object is read as `is True`, so "true" or 1 would silently be off.
     wt = prof.get("worktree_guard")
     if isinstance(wt, dict) and "on" in wt and not isinstance(wt["on"], bool):

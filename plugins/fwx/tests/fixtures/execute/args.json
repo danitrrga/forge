@@ -1,0 +1,46 @@
+{
+ "run": "01-toy-ab12cd3-1",
+ "plane": "session",
+ "unattended": false,
+ "part_dir": "/work/.fwx/phases/01-toy",
+ "phase_dir": "/work/.fwx/phases/01-toy",
+ "checkout": "/work/wt",
+ "branch": "phase-01",
+ "base": "ab12cd34ab12cd34ab12cd34ab12cd34ab12cd34",
+ "isolation": "native",
+ "paths": {
+  "context": "/work/.fwx/phases/01-toy/context.md",
+  "decisions": "/work/.fwx/phases/01-toy/decisions.tsv",
+  "plan": "/work/.fwx/phases/01-toy/plan.md",
+  "postmortem": "/work/.fwx/phases/01-toy/postmortem.md",
+  "config": "/work/.claude/fwx.json"
+ },
+ "models": {
+  "runner": "m-run",
+  "executor": {"T1": "m-t1", "T2": "m-t2", "T3": "m-t3"},
+  "fixer": "m-fix",
+  "reviewer": "m-rev",
+  "review_verifier": "m-ver",
+  "security_reviewer": "m-sec"
+ },
+ "waves": [
+  {"n": 1, "serial": false, "tasks": [
+   {"id": "T1", "type": "feature", "size": "normal", "ui": false, "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T1.md", "trailer": "01-toy/T1"},
+   {"id": "T2", "type": "bug", "size": "small", "ui": false, "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T2.md", "trailer": "01-toy/T2"}
+  ]},
+  {"n": 2, "serial": false, "tasks": [
+   {"id": "T3", "type": "refactor", "size": "big", "ui": false, "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T3.md", "trailer": "01-toy/T3"}
+  ]}
+ ],
+ "done": [],
+ "plan_failures": [],
+ "security": {"needed": false, "why": "not asked for"},
+ "criteria": [
+  {"id": "C1", "text": "g is exported", "measure": "python -c 'import a; a.g'"},
+  {"id": "C2", "text": "b calls g", "measure": "grep -q 'g(' b.py"}
+ ],
+ "fix": null,
+ "revert": [],
+ "from": null,
+ "control_findings": []
+}

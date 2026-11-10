@@ -1,0 +1,119 @@
+Sources of text and code copied or ported into this repo. Each source is one entry (a block with no blank line inside); a file
+that carries a `copied-from: <source> <path> @<commit>` header needs the source and that commit in the same entry, and
+tests/test_notice.py fails when it does not. Sources a file only read for its shape carry a `referent:` header instead; those that
+also lent text are named below.
+
+marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209598517a4c826073b5a0edc2a4097a4fa,
+used with the author's permission.
+  Text copied by part 2.1, each line as written: playbooks/execute.md takes from its playbooks/factory.md the three rules
+  "Clean up only what you started", "Prove the commit you ship" and "Giving up means `failed`" of "Standing rules".
+  Text copied by agents/executor.md: line 18 of playbooks/factory.md, the rule "Clean up only what you started." and the three
+  sentences after it, word for word. Read for the same agent: lines 43-47 (the resolution of a merge conflict) and line 65 (the
+  question when no test can express the bug), in words of its own.
+  Read for workflows/execute.js: playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
+  Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
+    lib/fwx/core/keys.py     from lib/factory.ts
+    lib/fwx/core/globs.py    from lib/globs.ts
+    lib/fwx/core/trusted.py  from lib/trusted-checks.ts
+    lib/fwx/core/evidence.py from lib/evidence.ts
+    lib/fwx/core/decide.py   from lib/merge-decision.ts
+    lib/fwx/core/gh.py       from lib/github/pulls.ts (upsertComment)
+    lib/fwx/core/verify.py   from hooks/verify.ts, lib/evidence.ts (runChecks, outputTail) and lib/recipe.ts (redact)
+    lib/fwx/linear.py        from lib/linear.ts
+    tests/test_linear.py     from scripts/linear-regressions.ts
+  Cases ported without a header: tests/test_keys.py, tests/test_decide.py, tests/test_evidence.py, tests/test_trusted.py and
+  tests/test_verify.py port cases of its job-key, merge-decision, evidence and trusted-edit regression scripts.
+
+forge, the engine that installs this plugin, commits 2c95776, 59597b2 and 582258b (MIT when copied; forge and this folder are one
+repository under Apache-2.0 since the import).
+  githooks/commit-msg, githooks/pre-commit, githooks/pre-push   from githooks/ @2c95776
+  tests/helpers.py                                              from tests/sandbox.py @2c95776
+  lib/fwx/config.py (main_checkout)                             from forge/publish.py @59597b2
+  tests/test_readme.py                                          from tests/test_readme.py @582258b
+  The repository's own .github/ (ci.yml, checks.yml, zizmor.yml, dependabot.yml, PULL_REQUEST_TEMPLATE.md, ISSUE_TEMPLATE/ticket.yml, from
+  repo-kit/files/ @582258b) did not come with the import: forge's .github/ is that same kit and runs fwx's tests as the `fwx` job of checks.yml.
+
+EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230 (MIT).
+  agents/decisions.md: the section "The settlement test" of skills/ce-plan/references/settled-decisions.md, word for word except
+  "the user" reads "the owner", "(below)" is dropped and the Directive bullet ends after "Not settled.".
+  playbooks/principles.md: the sentence on risk of rule 5 of skills/ce-plan/references/structure.md, quoted.
+  agents/planner.md: lines 46-57 of skills/ce-plan/references/structure.md word for word (the units block); lines 137 and 143-152
+  of the same file adapted (the rule on what is built, what goes to `not_built` and what goes to `later`). Its shape is read from
+  skills/ce-plan/SKILL.md.
+  agents/post-mortem.md: the two questions on success criteria (line 51) of skills/ce-doc-review/references/personas/adversarial-document-reviewer.md,
+  word for word. Read for the same agent: what a plan critic looks at in that file and in scope-guardian-reviewer.md (unrequested
+  mechanisms), in words of its own.
+
+mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
+  agents/decisions.md: the three ADR criteria of skills/engineering/domain-modeling/SKILL.md, as written there.
+
+pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
+  Read for the shape of playbooks/execute.md, playbooks/session.md, playbooks/ui-walk.md and playbooks/principles.md, and for the
+  rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
+  Text copied by data/executor-brief.md: the nine fields of the brief in the order of playbooks/orchestrate.md lines 40-53 ("The brief"), the
+  TIMEBOX clause "on expiry, return partial findings and stop rather than run on" and the FORBIDDEN list "no PR retargets or merges, no
+  rebase, no force-push, no fixes outside scope", word for word; "paths it may not" in SCOPE, the same words.
+  Read for agents/pre-mortem.md: the voice of skills/interrogate/references/reviewer-prompt.md and the filters of its lead-judgment.md
+  ("no findings" is valid; a risk nobody can reach is dropped; another split of the work is not a finding), in words of its own.
+  Text copied by agents/planner.md: line 25 of skills/tdd/SKILL.md word for word (the two sentences on a bad test); the first
+  sentence of playbooks/multi-phase-plan.md line 5 word for word, and lines 9 and 12-13 of it, line 18 of skills/figure-it-out/SKILL.md
+  and line 9 of playbooks/refactoring.md adapted.
+  agents/post-mortem.md: the sentence "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21,
+  word for word. Read for the same agent: the voice of skills/interrogate/references/reviewer-prompt.md, the filters of its
+  lead-judgment.md and the ladder of proof of skills/blast-radius/SKILL.md, in words of its own.
+  agents/executor.md: "Workers never rebase and never retarget or merge PRs." of playbooks/orchestrate.md line 84, "Red is a colour,
+  not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, "Don't tweak a test's expected values just to get a pass."
+  of skills/babysit/SKILL.md line 53 and "Type check and lint are not a pin." of playbooks/refactoring.md line 9, each word for word.
+  Read for the same agent: line 18 of playbooks/autopilot-full.md and steps 1-4 of skills/tdd/SKILL.md, in words of its own.
+  agents/reviewer.md: "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, word for word.
+  Read for the same agent: skills/interrogate/references/reviewer-prompt.md, its lead-judgment.md and line 20 of
+  playbooks/autopilot-full.md, in words of its own.
+  agents/review-verifier.md: "Trace the call site." of skills/interrogate/references/lead-judgment.md line 11, word for word. Read for
+  the same agent: the four groups of skills/interrogate/SKILL.md (lines 52-58), in words of its own.
+  Text quoted in a comment of workflows/execute.js: "After a second miss, record a gap. A gap does not count as a pass" of skills/swarm/SKILL.md
+  (Phase C), word for word. Read for the same file: playbooks/orchestrate.md (the brief per worker; "Never resume-chain a brief. Respawn fresh
+  with consolidated scope"; "A worker may self-report. A verifier overrides it on the same key"), in words of its own.
+  Read for the shape of skills/pre-mortem/SKILL.md, skills/plan/SKILL.md and skills/post-mortem/SKILL.md: skills/thermos/SKILL.md.
+  Text copied by playbooks/execute.md: the sentence "Never reaches the human: ..." of playbooks/orchestrate.md line 110 ("Rules of the
+  stretch"), word for word.
+
+open-gsd/gsd-core, https://github.com/open-gsd/gsd-core, commit 35f5a452239b897b8d6352c973e1e4efd683370f (tag v1.18.0, the version
+of the npm package it was read from; MIT).
+  agents/pre-mortem.md: the phrase "assume it has already failed" of gsd-core/references/thinking-models-planning.md line 15,
+  word for word.
+  agents/planner.md: lines 10-11 of gsd-core/references/failing-direction.md word for word (the sentence on a command with no
+  failing direction); line 358 of agents/gsd-plan-checker.md adapted (a criterion the owner can observe, not an implementation detail).
+  agents/post-mortem.md: read for the classification of every finding as blocker, warning or info, each with evidence
+  (agents/gsd-plan-checker.md lines 41-47), and for its point that a complete plan can still miss the goal, in words of its own.
+
+EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230705a5 (MIT).
+  Text copied by part 3.1, in every line "user" reading "owner" (as in agents/decisions.md). skills/discuss/references/rounds.md takes line
+  27 of skills/ce-brainstorm/references/interaction-rules.md (its list number dropped) and line 78 of dialogue.md; line 13 of
+  approaches.md is not used because it tells the agent to recommend. skills/discuss/references/playback.md takes lines 31, 33, 35, 36,
+  38, 40, 42 and 92 of synthesis-summary.md, with "the scoping synthesis" and "the synthesis" reading "the playback" and "the doc"
+  reading `context.md`; line 40 loses its sentence on a Deep scope and its sentence naming the ce-noslop skill, and line 92 loses
+  " The loop is:". It takes line 87 of dialogue.md with "Before exiting Phase 1.3" reading "Before the playback", "Phase 2.5's" reading
+  "The playback's", "one-question-at-a-time dialogue" reading "the rounds", and three passages dropped: the example in brackets on the
+  mute rule, "(silent agent inferences, pre-loaded contexts with no dialogue)" and ", same discipline as rigor probes". agents/researcher.md takes
+  the sentence "Extraction only — quote what the repo says; do not interpret or propose." of line 41 of dialogue.md as written, and
+  adapts its next sentence on a topic with little footprint ("topic" reads "angle"). The agents and
+  skills of parts U3 to U5 of 3.1 copy more, each file naming its lines in its own header.
+
+mattpocock/skills, https://github.com/mattpocock/skills, commit 4ae2317ddb22 (MIT).
+  Text copied by part 3.1: skills/discuss/references/rounds.md takes lines 8, 26 and 28 of skills/productivity/grilling/SKILL.md with
+  "user" reading "owner", "Work the tree" reading "Work the decision tree" and "and give your recommended answer" dropped from line 8
+  (the owner takes no recommendations), and adapts the round format of its lines 10-22 to lettered options with what each implies and
+  no recommendation. Read for shape by the skills of 3.1 U4 and U5 (skills/engineering/to-tickets/SKILL.md, grilling).
+
+humanlayer/humanlayer, https://github.com/humanlayer/humanlayer, commit 316e74ef9af0 (Apache-2.0), Copyright 2025-2026 QueryTale, Inc.
+d/b/a HumanLayer. The licence is at https://www.apache.org/licenses/LICENSE-2.0 and in apps/riptide-rpi-claude-plugin/LICENSE of the commit.
+  Text copied by part 3.1: skills/discuss/references/rounds.md takes two sentences of line 16 of
+  apps/riptide-rpi-claude-plugin/skills/create-prd/SKILL.md. Changes: "user" reads "owner", "leave the document alone" reads "leave
+  `decisions.tsv` alone", and the example in brackets after "ask a clarifying question of their own" is dropped. The rest of that file
+  is this repo's own text.
+
+pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea631d2 (MIT).
+  Read by part 3.1 for the shape of the agents researcher and demo and of the skill discuss; single lines it copies are named in the
+  header of the file that copies them. agents/demo.md takes line 7 of plugins/pstack/skills/poteto-mode/playbooks/prototype.md as
+  written, except that its last sentence "Route to Feature." reads "Return the missing question instead of writing figures."
+  skills/discuss/references/reentry.md takes line 3 of plugins/pstack/skills/poteto-mode/playbooks/session-pickup.md as written.
