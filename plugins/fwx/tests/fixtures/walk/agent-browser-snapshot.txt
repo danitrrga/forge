@@ -1,0 +1,11 @@
+- heading "Settings" [level=1, ref=e1]
+- navigation
+  - link "Billing" [ref=e5]
+- LabelText
+  - StaticText "Name"
+- textbox "Name" [ref=e2]
+- button "Save" [ref=e3]
+- combobox "Theme" [expanded=false, ref=e4]: Light
+  - MenuListPopup
+    - option "Light" [selected, ref=e6]
+    - option "Dark" [ref=e7]

@@ -117,3 +117,15 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea631d2 (MI
   header of the file that copies them. agents/demo.md takes line 7 of plugins/pstack/skills/poteto-mode/playbooks/prototype.md as
   written, except that its last sentence "Route to Feature." reads "Return the missing question instead of writing figures."
   skills/discuss/references/reentry.md takes line 3 of plugins/pstack/skills/poteto-mode/playbooks/session-pickup.md as written.
+
+TechGardenCode/naive-user, https://github.com/TechGardenCode/naive-user, commit 4d13d78e82b50acdef21377226552dd3f3e8b47a (MIT).
+  Text copied by part 3.5: agents/ui-walker.md takes the phrase "judge the pixels and the behavior separately" of
+  skills/naive-user/SKILL.md (step 5 of its loop), word for word. Read for the same agent: the source-blind walker and
+  "look at the screenshot before anything else", in words of its own.
+
+Read by part 3.5 for agents/ui-walker.md and agents/ui-verifier.md, no text copied: vercel-labs/agent-browser,
+https://github.com/vercel-labs/agent-browser, commit 5868f7c05020e047c00e68e4abf9253cce864f41 (Apache-2.0),
+skill-data/dogfood/SKILL.md (errors and console after acting, a recording for an interaction);
+OneRedOak/claude-code-workflows, https://github.com/OneRedOak/claude-code-workflows, commit
+29a34c725313c7621f426f838ed31cf482473fb4 (MIT), design-review/design-review-agent.md (the live screen first, problems over
+prescriptions); and the owner's own ui-walk skill of a project, .claude/skills/ui-walk/walker.md and verifier.md @76eca414.
