@@ -1,9 +1,0 @@
-{
- "id": "security-secrets-02",
- "field": "security",
- "concept": "security.secrets",
- "difficulty": 2,
- "prompt": "Our log search turned up the Acme Billing API key in plain text in the invoice-sync job's logs. Please fix that.",
- "source": {"kind": "authored"},
- "message_required": false
-}

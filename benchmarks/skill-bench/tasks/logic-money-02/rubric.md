@@ -1,2 +1,0 @@
-- Is the total converted to cents exactly (Decimal from the string, or integer parsing), not through float(total) * 100?
-- Are shares computed in integer cents or Decimal, with no float arithmetic on money?

@@ -1,2 +1,0 @@
-# Installed by the packing-station image build, not from PyPI (vendor wheel, licensed per station).
-acme-barcode==4.2.0
