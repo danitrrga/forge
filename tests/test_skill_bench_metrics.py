@@ -99,14 +99,18 @@ def main():
 
     tmp = sandbox.mkdtemp("skillbench-metrics-")
     out = os.path.join(tmp, "runs")
-    # base `none`: 1 of 2 pass, $0.10 each -> $0.20 per pass; arm `lean`: 2 of 2 pass, $0.15 each -> $0.15 per pass
+    # Different base costs per task on purpose: with equal base costs the pooled ratio (sum of arm costs over sum of base costs) equals the
+    # mean of the per-task ratios, and a pooled calculation would pass. Here t0 is 0.10 -> 0.15 (ratio 1.50) and t1 is 0.30 -> 0.33 (ratio
+    # 1.10): mean of ratios 1.30, pooled 0.48 / 0.40 = 1.20.
+    # base `none`: 1 of 2 pass, $0.40 in all -> $0.40 per pass; arm `lean`: 2 of 2 pass, $0.48 in all -> $0.24 per pass
+    base_cost, lean_cost, old_cost = {"t0": 0.10, "t1": 0.30}, {"t0": 0.15, "t1": 0.33}, {"t0": 0.12, "t1": 0.36}
     for t, passed in (("t0", True), ("t1", False)):
-        write_result(out, t, "none", 1, passed=passed, tokens=1000, cost_usd=0.10, turns=10, overhead_tokens=26000)
+        write_result(out, t, "none", 1, passed=passed, tokens=1000, cost_usd=base_cost[t], turns=10, overhead_tokens=26000)
     for t in ("t0", "t1"):
-        write_result(out, t, "lean", 1, passed=True, tokens=800, cost_usd=0.15, turns=8, overhead_tokens=20000)
+        write_result(out, t, "lean", 1, passed=True, tokens=800, cost_usd=lean_cost[t], turns=8, overhead_tokens=20000)
     # a result written before these fields existed must not break the report
     for t in ("t0", "t1"):
-        write_result(out, t, "old", 1, passed=True, tokens=900, cost_usd=0.12)
+        write_result(out, t, "old", 1, passed=True, tokens=900, cost_usd=old_cost[t])
     r = subprocess.run([sys.executable, SCRIPT, "report", "--out", out, "--base", "none"], capture_output=True, text=True, timeout=120)
     text = r.stdout + r.stderr
     want("report exits 0 with old and new result files mixed", r.returncode, 0)
@@ -114,17 +118,20 @@ def main():
     none_l = next((l for l in lines if l.strip().startswith("none")), "")
     lean_l = next((l for l in lines if l.strip().startswith("lean")), "")
     old_l = next((l for l in lines if l.strip().startswith("old")), "")
-    want("none: cost per pass $0.20", "cost/pass $0.20" in none_l, True)
-    want("lean: cost per pass $0.15", "cost/pass $0.15" in lean_l, True)
+    want("none: cost per pass $0.40", "cost/pass $0.40" in none_l, True)
+    want("lean: cost per pass $0.24", "cost/pass $0.24" in lean_l, True)
     want("none: overhead shown", "overhead 26000" in none_l, True)
     want("old results: overhead shown as -", "overhead -" in old_l, True)
-    want("delta block names cost per pass against the base", any("cost/pass" in l and "lean" in l and "-25%" in l for l in lines), True)
+    want("delta block names cost per pass against the base", any("cost/pass" in l and "lean" in l and "-40%" in l for l in lines), True)
     want("delta block names turns", any(l.strip().startswith("turns") and "lean" in l for l in lines), True)
-    # the decision figure of a harness A/B: the per-task cost ratio against the base, with an interval over tasks and how many
-    # tasks cost more. Seen failing before it existed: no 'cost ratio' line in the report (want 1.50 [1.50, 1.50], 2 of 2 tasks).
+    # the decision figure of a harness A/B: the mean over tasks of each task's cost ratio against the base, with an interval over tasks and
+    # how many tasks cost more. Seen failing before it existed: no 'cost ratio' line in the report (want 1.50 [1.50, 1.50], 2 of 2 tasks).
+    # Negative control, run once: with the report's `mean(ratios)` replaced by the pooled `sum(cost_x) / sum(cost_base)` this test failed
+    # with "FAIL cost ratio line: mean of per-task ratios 1.30, not the pooled 1.20 ..." (got (False, True, True), want (True, True, True)).
     ratio_l = next((l for l in lines if "cost ratio" in l and "lean" in l), "")
-    want("cost ratio line: lean costs 1.5x none on every task", ("1.50" in ratio_l, "[1.50, 1.50]" in ratio_l, "costlier on 2 of 2 tasks" in ratio_l), (True, True, True))
-    want("cost ratio: the old-format arm (cost 0.12 vs 0.10 and 0.10) is also priced", any("cost ratio" in l and "old" in l and "1.20" in l for l in lines), True)
+    want("cost ratio line: mean of per-task ratios 1.30, not the pooled 1.20 (t0 1.50, t1 1.10), interval over the two, costlier on both",
+         ("lean/none 1.30 " in ratio_l, "[1.10, 1.50]" in ratio_l, "costlier on 2 of 2 tasks" in ratio_l), (True, True, True))
+    want("cost ratio: the old-format arm (1.20 on both tasks) is also priced", any("cost ratio" in l and "old" in l and "1.20" in l for l in lines), True)
 
     for msg in failures:
         print("FAIL", msg)

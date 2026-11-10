@@ -115,13 +115,16 @@ An arm folder (see "Running it") is a whole config, so one arm per config answer
 break anything?". Run the calibrated hard tier, the tasks a model can still fail (`calibration.json`, tasks at or under 0.7):
 
 ```bash
-python3 scripts/bench/skill_bench.py run --arm none --arm NAME=DIR --tasks hard --k 3 --sandbox none --out OUT
+python3 scripts/bench/skill_bench.py run --arm none --arm NAME=DIR --tasks hard --k 3 --out OUT
 python3 scripts/bench/skill_bench.py report --out OUT --base none
 ```
 
-`--sandbox none` is needed while a system-wide hook that fails closed blocks every prompt inside bubblewrap (that run would be INVALID,
-`not_run`, never a fail); the calibrated tier holds no task that baits a destructive action. About 54 runs, $5 and 10 minutes for two arms at
-k=3. Read it in this order:
+The default sandbox (`auto`: bubblewrap when installed) stays on. The run gives Claude `--permission-mode bypassPermissions`, so
+without the sandbox the agent runs commands with the host's full access. Only if a system-wide hook that fails closed blocks every
+prompt inside bubblewrap (that run would be INVALID, `not_run`, never a fail) add `--sandbox none`, and only in a disposable,
+isolated environment (a throwaway VM or container with no credentials and nothing worth keeping), never on a working machine. The
+calibrated tier holds no task that baits a destructive action, which limits the risk and does not remove it. About 54 runs, $5 and
+10 minutes for two arms at k=3. Read it in this order:
 
 1. `cost ratio` (per-task cost of the arm over the base, interval over tasks, tasks that cost more) and `overhead` (tokens before any
    work: deterministic, spread of a few hundred between runs) are the figures that move with a harness change.
@@ -131,5 +134,6 @@ k=3. Read it in this order:
 
 Worked example (a config arm holding only the owner's 8.1 KB global CLAUDE.md, against bare Claude Code, Sonnet): pass 13/27 for each
 arm, `diff` +0.000 [-0.148, +0.185]; `cost ratio` 1.17 [1.11, 1.22], costlier on 8 of 9 tasks; `overhead` 25.5k against 22.3k tokens.
-The file alone costs about 17% per run on these short tasks and shows no effect on pass rate that nine tasks could see. It says nothing
+The mean per-task cost ratio is 1.17: averaged over the nine tasks, each task's cost under the arm is 1.17 times its cost under the base
+(task-weighted; it is not a pooled per-run figure, so it does not say a run costs 17% more). The file shows no effect on pass rate that nine tasks could see. It says nothing
 about long sessions, hooks, skills or MCP, which are further arms. Re-run `calibrate` when the model changes.
