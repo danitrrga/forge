@@ -782,11 +782,12 @@ def cmd_pw(argv):
 
 
 # ---------------------------------------------------------------------------------------------------------- arm-control
+TARGET = 'h1, [role="heading"][aria-level="1"]'  # what the plant restyles, and what the read-back reads
 CONTROL_JS = """(() => {
-  const PATH = %s;
+  const PATH = %(path)s;
   const apply = () => {
     if (location.pathname.replace(/\\/+$/, "") !== PATH) return;
-    const h = document.querySelector('h1, [role="heading"][aria-level="1"]');
+    const h = document.querySelector(%(target)s);
     if (!h || h.dataset.fwxCtl === "1") return;
     const cs = getComputedStyle(document.body);
     h.style.setProperty("font-size", cs.fontSize, "important");
@@ -798,6 +799,56 @@ CONTROL_JS = """(() => {
   apply();
 })();
 """
+# What the plant alters, as the page's own computed style of the target: `fwx:<font-size>|<font-weight>`, or `fwx:missing`.
+READ_JS = """(() => {
+  const h = document.querySelector(%s);
+  if (!h) return "fwx:missing";
+  const c = getComputedStyle(h);
+  return "fwx:" + c.fontSize + "|" + c.fontWeight;
+})()"""
+READ_LINE = re.compile(r"fwx:(?:(missing)|([^|\s\"']+)\|([^|\s\"']+))")  # the answer may come back bare or quoted
+CONTROL_WAIT_S = float(os.environ.get("FWX_WALK_CONTROL_WAIT_S") or 30)  # how long the screen may take to draw its title
+
+
+def browser_must(run, args):
+    """The stdout of one `ab` call on the probe session; a failure stops arm-control (77 stays 77: NOT RUN, NOT ARMED)."""
+    rc, out, err = browser_call(run, args)
+    if rc:
+        raise Stop((err.strip().splitlines() or ["agent-browser %s exited %d" % (args[0], rc)])[-1], 77 if rc == 77 else 1)
+    return out
+
+
+def read_target(run):
+    """The target's (font-size, font-weight) on the page the probe session has open, or None while there is no target. The page may still be
+    drawing (a cold dev server), so it is asked again every SETTLE_POLL_S for CONTROL_WAIT_S."""
+    end = time.monotonic() + CONTROL_WAIT_S
+    while True:
+        m = READ_LINE.search(browser_must(run, ["eval", READ_JS % json.dumps(TARGET)]))
+        if m and not m.group(1):
+            return m.group(2), m.group(3)
+        if time.monotonic() >= end:
+            return None
+        time.sleep(SETTLE_POLL_S)
+
+
+def read_back(run, screen, plant):
+    """(before, after): the target's computed style without and with the plant, on the screen, in the walk's own browser (session w1, closed
+    after). It lives here and not in `up` because only arm-control knows the screen (the tramos come from an agent after `up`), and the probe
+    session is launched while no control.json exists, so `before` is the page as the app draws it; the plant is the init script's own code,
+    run on the loaded page. Stops, exit 1, when there is no target or the plant changes nothing."""
+    try:
+        browser_must(run, ["open", screen])
+        before = read_target(run)
+        if before is None:
+            raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, TARGET, CONTROL_WAIT_S), 1)
+        browser_must(run, ["eval", plant])
+        after = read_target(run)
+        if after == before:
+            raise Stop("arm-control: no visible change on %s: the `%s` has font-size %s and font-weight %s with and without the plant"
+                       % (screen, TARGET, before[0], before[1]), 1)
+        return before, after
+    finally:
+        browser_call(run, ["close"])
 
 
 def cmd_arm_control(argv):
@@ -809,14 +860,21 @@ def cmd_arm_control(argv):
     if host_of(screen) not in run["hosts"]:
         raise Stop("screen %s is not on the app (%s)" % (screen, ", ".join(run["hosts"])))
     path = urlsplit(screen if "://" in screen else "http://" + screen).path.rstrip("/") or "/"
+    ctl_file = os.path.join(run["run_dir"], "control.json")
+    if os.path.isfile(ctl_file):
+        os.remove(ctl_file)  # an earlier plant is not the one being armed: a failure below must leave none
+    code = CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(TARGET)}
+    before, after = read_back(run, screen, code)
     script = os.path.join(run["shots"], "init.js")
     os.makedirs(run["shots"], exist_ok=True)
     with open(script, "w", encoding="utf-8") as f:
-        f.write(CONTROL_JS % json.dumps(path))
+        f.write(code)
+    names = ("font-size", "font-weight")
     ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script,
            "planted": "the main title of the screen has the size and weight of body text",
+           "readback": {"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after))},
            "armed": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
-    write_json(os.path.join(run["run_dir"], "control.json"), ctl)
+    write_json(ctl_file, ctl)
     say(ctl)
     return 0
 

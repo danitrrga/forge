@@ -502,6 +502,11 @@ def case_ab_session(R, S):
         S.eq("ab session: run is the prefix", o.get("run"), "fakerig run --")
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
         S.eq("ab session: arm-control exit", r.returncode, 0)
+        # arm-control read the page in session w1 and closed it (case_arm_control_readback checks that); this case is about `ab`'s own session
+        # handling, so it starts from no session even under the mutant that keeps one after `close`
+        mark = os.path.join(rd, "sessions", "ab-w1")
+        if os.path.exists(mark):
+            os.remove(mark)
         sc.clear()
         r = sc.walk(R, "ab", "--run", rd, "w1", "open", sc.url + "/board")
         S.eq("ab session: first call exit", r.returncode, 0)
@@ -785,12 +790,15 @@ def case_arm_control(R, S):
 
 def case_arm_control_readback(R, S):
     """D14: the control is proved visible on the screen it is armed on, or the arming fails. Seen red on the branch before the read-back
-    (arm-control wrote control.json without opening the page; every line below is that run, FAKE_READ naming what the page holds):
-      FAIL: arm-control read-back: the plant changes the style: control.json records both readings: got None, want {'font-size': '24px', 'font-weight': '700'}
+    (arm-control wrote control.json without opening the page; the lines below are that run, FAKE_READ naming what the page holds):
+      FAIL: arm-control read-back: control.json records both readings: got [None, None], want [{'font-size': '24px', 'font-weight': '700'}, {'font-size': '16px', 'font-weight': '400'}]
+      FAIL: arm-control read-back: reads, plants (the init script's code), reads again: []
+      FAIL: arm-control read-back: the probe session is closed last (the walkers launch their own): got [], want ['close']
       FAIL: arm-control read-back: the title already has the planted style: exit: got 0, want 1
-      FAIL: arm-control read-back: the title already has the planted style: says no visible change: rc 0:
+      FAIL: arm-control read-back: the title already has the planted style: says no visible change, and where: rc 0:
+      FAIL: arm-control read-back: a failed arming leaves no control.json (an old plant is not kept)
       FAIL: arm-control read-back: no title on the screen: exit: got 0, want 1
-      FAIL: arm-control read-back: no title on the screen: says target not found: rc 0:
+      FAIL: arm-control read-back: no title on the screen: says target not found, and where: rc 0:
     (a) is the positive control of (b) and (c): the same call, the same fake, only what the page holds differs."""
     def scene(read, quote=False):
         sc = Scene()
@@ -821,6 +829,7 @@ def case_arm_control_readback(R, S):
         S.ok("arm-control read-back: the first reading is taken before any plant (the launch carries no init script)",
              not any("--init-script" in a for a in calls), repr([a for a in calls if "--init-script" in a]))
         S.eq("arm-control read-back: the probe session is closed last (the walkers launch their own)", [a[-1] for a in calls][-1:], ["close"])
+        S.ok("arm-control read-back: and no session mark is left", not os.path.exists(os.path.join(rd, "sessions", "ab-w1")))
         # (b) the title already has the planted style: nothing a walker could see; refuses, and the earlier control.json does not survive
         sc.env["FAKE_READ"] = "same"
         sc.clear()
@@ -1396,6 +1405,14 @@ MUTANTS = [
     ("pw: not offline", case_pw, '"npx", "--offline", "--no-install", ', '"npx", "--no-install", ', "pw: offline, no install, the pinned CLI"),
     ("pw: no Firefox check", case_pw, "if not os.path.isdir(os.path.join(pw_browsers(), PW_FIREFOX)):", "if False:", "pw: no Firefox"),
     ("arm-control: any screen", case_arm_control, 'if host_of(screen) not in run["hosts"]:', "if False:", "arm-control: a screen outside the app is refused"),
+    ("arm-control: no visible change accepted", case_arm_control_readback, "if after == before:", "if False:",
+     "arm-control read-back: the title already has the planted style: exit"),
+    ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
+     "arm-control read-back: no title on the screen: says target not found"),
+    ("arm-control: an old control.json kept", case_arm_control_readback, "os.remove(ctl_file)", "pass",
+     "arm-control read-back: a failed arming leaves no control.json"),
+    ("arm-control: the probe session left open", case_arm_control_readback, 'browser_call(run, ["close"])', "pass",
+     "arm-control read-back: the probe session is closed last"),
     ("sweep: every owner alive", case_sweep, "return start is not None and start == w.get(\"owner_start\")", "return True",
      "sweep: took down the one without an owner"),
     ("capacity resize: tramos not doubled", case_capacity_resize, 'cap = capacity(run["repo"], tramos * 2, run["container"])', 'cap = capacity(run["repo"], tramos, run["container"])',
