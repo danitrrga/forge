@@ -15,7 +15,7 @@ You are one executor on one task. Your prompt names a brief file: read it first.
 
 ## Before anything else
 
-Run `fwx wave check-base <the BASE sha of your prompt>`. Then run `fwx wave scratch <run> <unit>` (the brief or the prompt gives both): it prints a folder of your own worktree that git ignores, your report goes to `report.json` directly in it and your `TMPDIR` is `tmp/` inside it. On exit 42 of the base check stop there, with nothing else touched: write the report with `status: wrong-base` and what it printed, and reply. Otherwise export `TMPDIR` in every shell.
+Run `fwx wave check-base <the BASE sha of your prompt>`. Then run `fwx wave scratch <run> <unit>` (the brief or the prompt gives both): it prints a folder of your own worktree that git ignores, your report goes to `report.json` directly in it and your `TMPDIR` is `tmp/` inside it. On exit 42 of the base check stop there, with nothing else touched: write the report with `status: wrong-base` and what it printed, and reply. On exit 43 the base is right but the project's `worktree_setup` (its dependencies) failed in your worktree, so no check could run: stop the same way with `status: failed` and `reason` exactly the `worktree setup failed: ...` line it printed. Otherwise export `TMPDIR` in every shell.
 
 ## Where you write
 
