@@ -13,7 +13,7 @@ python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
 python3 bin/fwx budget    # context and quota left
-python3 bin/fwx open <file or URL>    # shows a page to the owner (in Orca when there is one); else prints `NOT OPENED: <why>` and the command to paste; `--print` only prints it; `--json` prints what happened as JSON
+python3 bin/fwx open <file or URL>    # shows a page to the owner with the opener the configuration names (`open.command`); with none, or when it fails, prints `NOT OPENED: <why>` and the command to paste; `--print` only prints it; `--json` prints what happened as JSON
 python3 bin/fwx capacity --role executor --want 3    # how many agents of a role can start now
 python3 bin/fwx state resolve    # the session's phase; `state --help` lists the rest
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
@@ -57,6 +57,12 @@ fix. With no file, the defaults apply and one line on stderr says so.
 `fwx model <role> <size>` prints the model for a role and size and exits 2 on an unknown role or size, naming the valid
 ones. `linear.labels` maps a label's neutral name in this repository to the name it has in your Linear workspace; a
 name with no entry is used as it is.
+
+`open.command` is how `fwx open` shows a page, and it is yours to set, replace or leave out: an argv list (no shell) in
+which `{url}` (a `file://` URL for a file, the URL itself for a URL) and `{path}` (the absolute path) are replaced inside
+each element, for example `{ "open": { "command": ["my-viewer", "--open", "{url}"] } }`. A command that is not a non-empty
+list of strings with a placeholder in it is an error (exit 2). Without the table `fwx open` opens nothing and prints the
+command for the system to paste.
 
 ## Install
 
