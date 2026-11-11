@@ -19,13 +19,19 @@ Controls, run every time: a key put in the wrong file of the table (the common e
 there) must change what the world generates, or the comparison could not see a misplaced key; one of the keys put in both places
 exits 1 in the world too.
 
-Seen failing (forge/config.py with LAYOUT and `load` but lib.settings() not composed with it), part 2 only, with the new layout's
-common keys never merged into lib.settings():
-  skill_keep missing in new layout -- lib.settings() of the new-layout world lacks it (the old one has it)
-  dry-run text differs between layouts -- the old world prints its pending writes from the common tables, the new one from none
-Mutation of this suite's own (load ignores the new place: `new = None` in _found): the same two, plus every concept check of
-part 1 ("<concept>: load is the same in both layouts").
-"""
+Seen failing, with forge/config.py holding LAYOUT and `load` but lib.settings() not composed with it (39 checks red, 16 of them "both: lib.settings() exits 1 too", part 2 and the
+`lib.settings()` ones of part 1; `skill_keep` is in the new layout's settings with only the keys that stayed, so the message names
+each key that left it):
+  skill_keep.sets missing in new layout -- lib.settings() of the new-layout world lacks it (the old one has it)
+  session_wait missing in new layout -- (same; the framework keys and the other skill_keep.common_* ones likewise)
+  world: the new layout's dry-run text is the old layout's -- the new world ended `forge sync: failed -- agent config`
+  world: every generated file is byte-identical in both layouts (103 files) -- among others home/.claude/plugins and projects/app/.codex/config.toml
+  control: a key in two places exits 1 in the world too -- exit 1 for another reason ("agent config" failed), without "in both"
+The controls were seen to work: with the common env in the memory file the world generates 9 other project files
+(first 'projects/app/.codex/config.toml'); and with `load` ignoring the new place (`new_value = _MISSING` in _found), 65 checks
+red: "<concept>: load is the same in both layouts" for common, tools, memory and framework, "settings: lib.settings() is the same
+in both layouts", the "... missing in new layout" ones, and every "both: ... exits 1 naming both files" (the conflict went unseen).
+Not here, run on the installed checkout by scripts/dev/gate.py: the byte-identity of the real dry-runs."""
 import hashlib
 import json
 import os
