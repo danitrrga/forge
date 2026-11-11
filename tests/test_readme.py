@@ -119,7 +119,7 @@ def check(readme, claude_md, subs, bench, exists, python_src, label=""):
 def control_cases(readme, claude_md, subs, bench, exists, python_src):
     """Each plant makes its check fail, then the plants are dropped from the failure list."""
     plants = (
-        ("a made-up subcommand", readme.replace("forge test [--mutants]", "forge test [--mutants]\nforge teleport", 1),
+        ("a made-up subcommand", readme.replace("forge test [GROUP]", "forge test [GROUP]\nforge teleport", 1),
          claude_md, "Commands block"),
         ("a missing subcommand", re.sub(r"^forge lock .*\n", "", readme, flags=re.M), claude_md, "Commands block"),
         ("a dead path", readme + "\n`forge/no_such_module.py`\n", claude_md, "engine paths named and missing"),

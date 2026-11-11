@@ -1588,23 +1588,66 @@ def cmd_doctor(a):
 # test_guard_tool_use.py of about six cores: it once took a voice detector from 0.3 s to 50+ s.
 ON_DEMAND = {"hooks/test_guard_mutants.py": "326 mutants on every core, minutes of full CPU; it stalls the machine"}
 FWX_PREFIX = "plugins/fwx/"
+# The groups of `forge test GROUP`: a test file belongs to the first row whose prefix its path starts with, so the last
+# row, with no prefix, is every other file. No file is listed by hand. `from_prefix`: the group's tests run with the
+# prefix folder as working directory and a path relative to it (fwx's suite is a folder of its own, plugins/fwx).
+GROUPS = (("fwx", FWX_PREFIX, True), ("hooks", "hooks/", False), ("engine", "", False))
+
+
+def test_group(f):
+    """The group a tracked test file belongs to, or None when it belongs to none: a fixture under plugins/fwx is
+    test data for that suite (a tiny app with tests of its own), not a test of it."""
+    for name, prefix, _ in GROUPS:
+        if f.startswith(prefix):
+            return None if name == "fwx" and "fixtures" in f.split("/")[:-1] else name
+
+
+def not_run_reason(output, f):
+    """What a test says on its last line after `NOT RUN, NOT ARMED:` or `NOT RUN:`; the file when it says nothing."""
+    last = (output.strip().splitlines() or [f])[-1]
+    return last.split(NOT_ARMED.strip(), 1)[-1].strip() if NOT_ARMED.strip() in last else last.removeprefix("NOT RUN: ")
 
 
 def cmd_test(a):
+    """forge test [GROUP] [--mutants] [--expect-not-run PATH[,PATH...]]
+
+    Exit 0: nothing failed (a test that exits 77 is a WARN row, never a PASS). Exit 1: a test failed, a git listing
+    failed, the group has no test file, or, with --expect-not-run, nothing passed or a declared path is no test of the
+    run. Exit 2: usage (a group nobody has, an empty name in --expect-not-run). Exit 77, only with --expect-not-run:
+    nothing failed but a test that is not declared did not run (neither green nor red: a CI job that skips its tests
+    must not end green). Whoever wants 0 lets that test run, or declares it: a declared test that exits 77 prints
+    `EXPECTED NOT RUN` and no longer turns the exit to 77; a declared test that runs counts as any other.
+    """
     # A git that fails (not a repository, not installed) or a list with no tests is a FAIL: until
     # an attack round either ran zero tests and printed "0 failures" with exit 0.
     # Two histories own the files once the engine and the private data are split (forge/publish.py): the
     # engine's, and .forge-data.git over the same work tree. Before the split only the first exists, and
     # the second is no failure, just absent.
     from forge import publish
-    histories = [("git ls-files", ["git"])]
+    group = getattr(a, "group", None)
+    if group is not None and group not in [g[0] for g in GROUPS]:
+        print("forge test: unknown group %s (groups: %s)" % (group, ", ".join(g[0] for g in GROUPS)), file=sys.stderr)
+        return 2
+    expect = set()
+    for value in getattr(a, "expect_not_run", None) or []:
+        names = [n.strip() for n in value.split(",")]
+        if not all(names):
+            print("forge test: --expect-not-run takes PATH[,PATH...], got %r" % value, file=sys.stderr)
+            return 2
+        expect.update(names)
+    # The environment without GIT_*: inside a git hook GIT_DIR and GIT_INDEX_FILE point at the repository being
+    # committed, and neither the listing nor a test that builds its own repositories may reach it.
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    # `--others --exclude-standard` on the engine's history: a test written first counts before its first commit.
+    histories = [("git ls-files", ["git"], ["--cached", "--others", "--exclude-standard"])]
     if os.path.isdir(os.path.join(lib.ROOT, publish.DATA_GIT)):
         histories.append(("git ls-files (data history)",
-                          ["git", "--git-dir", os.path.join(lib.ROOT, publish.DATA_GIT), "--work-tree", lib.ROOT]))
+                          ["git", "--git-dir", os.path.join(lib.ROOT, publish.DATA_GIT), "--work-tree", lib.ROOT], []))
     listed = set()
-    for label, git in histories:
+    for label, git, scope in histories:
         try:
-            r = lib.run_low(git + ["ls-files", "-z", "*test_*.py"], cwd=lib.ROOT, text=True, capture_output=True)
+            r = lib.run_low(git + ["ls-files", "-z"] + scope + ["*test_*.py"], cwd=lib.ROOT, env=env, text=True,
+                            capture_output=True)
         except OSError as e:
             return lib.report([lib.Result("FAIL", label, "git could not run: %s" % e)])
         if r.returncode:
@@ -1614,17 +1657,15 @@ def cmd_test(a):
     # The pathspec's leading * also matches a prefix (contest_helper.py), so the basename is checked here.
     found = sorted(f for f in listed if not f.startswith("benchmarks/")
                    and os.path.basename(f).startswith("test_") and f.endswith(".py"))
-    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its minutes of work
-    # are its own, and CI runs it as a job of its own.
-    fwx_owned = [f for f in found if f.startswith(FWX_PREFIX)]
-    files = [f for f in found if f not in fwx_owned]
+    files = [f for f in found if test_group(f) is not None and group in (None, test_group(f))]
     if not files:
-        return lib.report([lib.Result("FAIL", "git ls-files", "no tests found in %s" % lib.ROOT)])
+        return lib.report([lib.Result("FAIL", "git ls-files", "no tests found in %s%s" % (
+            lib.ROOT, " for the group %s" % group if group else ""))])
     mutants = getattr(a, "mutants", False)
     results = []
-    if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
-        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) with their own runner: run "
-                                  "`python3 %sbin/fwx test`" % (len(fwx_owned), FWX_PREFIX)))
+    # A declared path that is no test of this run (a typo would silently un-declare it) is a FAIL.
+    for rel in sorted(expect - set(files)):
+        results.append(lib.Result("FAIL", "--expect-not-run", "%s is no test file of this run" % rel))
     for f in files:
         if f in ON_DEMAND:
             if not mutants:  # said, never a PASS, and not counted in the summary (non-negotiable 7)
@@ -1633,16 +1674,31 @@ def cmd_test(a):
                 continue
         elif mutants:
             continue
-        r = lib.run([f], capture=True, low=True)  # nice 19 and idle I/O: a foreground tool keeps its cores
+        cwd, arg = lib.ROOT, f
+        for name, prefix, from_prefix in GROUPS:
+            if from_prefix and test_group(f) == name:
+                cwd, arg = os.path.join(lib.ROOT, prefix), f[len(prefix):]
+        # nice 19 and idle I/O: a foreground tool keeps its cores
+        r = lib.run_low([sys.executable, arg], cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT, text=True)
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
-            # (docs/unify-plan.md, non-negotiable 7). Its last line is why, after "NOT RUN: ".
-            why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
-            results.append(lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why))
+            # (docs/unify-plan.md, non-negotiable 7).
+            why = not_run_reason(r.stdout, f)
+            results.append(lib.Result("EXPECTED NOT RUN", os.path.basename(f), why) if f in expect else
+                           lib.Result("WARN", os.path.basename(f), NOT_ARMED + why))
             continue
+        if r.returncode:  # the test's own output, which CI has no other way to show
+            print("--- %s (exit %d)" % (f, r.returncode))
+            print("".join("    " + line + "\n" for line in r.stdout.splitlines()), end="")
         results.append(lib.Result("PASS", os.path.basename(f), f) if r.returncode == 0 else
                        lib.Result("FAIL", os.path.basename(f), "python3 %s" % f))
-    return lib.report(results)
+    if expect:  # a run in which nothing passed proves nothing, however much was declared away
+        if not any(x.level == "PASS" for x in results):
+            results.append(lib.Result("FAIL", "passed", "--expect-not-run: no test passed, so declaring the rest away proves nothing"))
+    code = lib.report(results)
+    # With a declaration, a test that did not run and was not declared is neither green nor red.
+    return 77 if expect and code == 0 and any(x.level == "WARN" for x in results) else code
 
 
 def transcript_key(project_path):
@@ -1939,8 +1995,12 @@ def main(argv=None):
     m.add_argument("--events-until", help="ISO instant: drop every transcript line stamped after it")
     m.add_argument("--json", action="store_true")
     m.set_defaults(fn=cmd_metrics)
-    t = sub.add_parser("test", help="run every test except the on-demand suites")
+    t = sub.add_parser("test", help="run every test except the on-demand suites, or one group of them: fwx, hooks, engine")
+    t.add_argument("group", nargs="?", help="fwx (plugins/fwx/), hooks (hooks/), engine (everything else); none runs all three")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
+    t.add_argument("--expect-not-run", action="append", metavar="PATH[,PATH...]",
+                   help="tests that cannot run where this is called from (repeatable); with it a test that exits 77 and is not "
+                        "declared makes the run exit 77, and a run in which nothing passed exits 1")
     t.set_defaults(fn=cmd_test)
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")

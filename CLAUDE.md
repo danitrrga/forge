@@ -16,8 +16,8 @@ scripts/bench/       skill-bench, its tasks in benchmarks/skill-bench/ (the one 
 hooks/               the shared hooks that user-scope settings point at, with their tests
 config/gsd/          prose payloads of the GSD patches
 examples/            what `forge init` copies for a new user (forge.json, AGENT-SYSTEM.md, ...)
-plugins/fwx/         the agentic-workflow framework (a Claude Code plugin and the `fwx` CLI), with its own README and runner:
-                     `python3 plugins/fwx/bin/fwx test`; `forge test` skips its suite, CI runs it as the `fwx` job
+plugins/fwx/         the agentic-workflow framework (a Claude Code plugin and the `fwx` CLI), with its own README; its suite is the
+                     `fwx` group of `forge test` (`python3 bin/forge test fwx`), and CI runs that group as the `fwx` job
 githooks/            the personal-data guard, enabled with `core.hooksPath githooks`
 tests/               the suites; tests/sandbox.py builds a toy world
 ```
@@ -28,7 +28,9 @@ tests/               the suites; tests/sandbox.py builds a toy world
 python3 bin/forge sync          # dry-run of every generator; --apply writes, --project NAME / --all set the scope
 python3 bin/forge skills        # dry-run of the user-scope steps (online skills, skill links, GSD runtime); --apply writes
 python3 bin/forge doctor        # one PASS/FAIL/SKIP line per check, exit 1 on a FAIL; `doctor NAME` scopes it to a project
-python3 bin/forge test          # every tracked test_*.py at nice 19; `--mutants` runs only the on-demand guard mutants
+python3 bin/forge test          # every test_*.py at nice 19, in three groups: `fwx` (plugins/fwx/), `hooks` (hooks/), `engine` (the rest);
+                                # `forge test fwx` runs one; `--mutants` runs only the on-demand guard mutants;
+                                # `--expect-not-run PATH[,PATH]` declares what cannot run here: an undeclared one then exits 77
 python3 tests/test_<name>.py    # one suite: each is a plain script (no pytest) that prints its FAILs and exits 1 on any
 python3 bin/forge check-public --all   # personal data in the engine files
 python3 scripts/bench/skill_bench.py validate   # every skill-bench task: its oracle fails at base and on the naive answer, passes the ideal and alt ones

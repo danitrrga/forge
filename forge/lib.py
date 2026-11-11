@@ -1061,5 +1061,7 @@ def report(results):
     for r in results:
         print("%-4s  %-22s %s" % (r.level, r.name, r.detail))
     n = collections.Counter(r.level for r in results)
-    print("SUMMARY: %d passed, %d warnings, %d failures" % (n["PASS"], n["WARN"], n["FAIL"]))
+    declared = n["EXPECTED NOT RUN"]  # forge test: tests the caller declared cannot run here; counted only when there are some
+    print("SUMMARY: %d passed, %d warnings, %d failures%s" % (
+        n["PASS"], n["WARN"], n["FAIL"], ", %d expected not run" % declared if declared else ""))
     return 1 if n["FAIL"] else 0

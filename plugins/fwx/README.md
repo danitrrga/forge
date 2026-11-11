@@ -8,7 +8,6 @@ moved into forge with its history, so forge's pull requests review it; forge's R
 ## Use
 
 ```
-python3 bin/fwx test    # runs every tests/test_*.py and summarises them
 python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
@@ -28,11 +27,12 @@ python3 bin/fwx playbooks tree    # the workflow tree (an Excalidraw file): each
 python3 bin/fwx playbooks check    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
 ```
 
-Run these from this folder (`fwx test` lists the tests of the folder it is run from, not of forge's top level). `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
-when every file passed, 1 when one failed or when there is no test file, and 77 when none failed but one could not
-run (a missing tool, key or network). `--expect-not-run PATH[,PATH...]` declares tests that cannot run where it is
-called (CI): each prints `EXPECTED NOT RUN: PATH: <reason>` and no longer makes the exit 77; an undeclared one still
-does, a declared one that fails is still 1, and a run where nothing passed or a declared path is no test file is 1. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
+Run these from this folder. The tests are not run from here: they are the `fwx` group of forge's runner, `python3 bin/forge test fwx`
+from forge's top level. It prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
+when nothing failed, 1 when one failed or when there is no test file. `--expect-not-run PATH[,PATH...]` declares tests that
+cannot run where it is called (CI; paths as forge lists them, `plugins/fwx/tests/test_x.py`): each prints `EXPECTED NOT RUN` with its
+reason and no longer makes the exit 77; with the flag an undeclared test that cannot run exits 77, a declared one that fails is still 1,
+and a run where nothing passed or a declared path is no test file is 1. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
 ## Configuration
@@ -68,5 +68,5 @@ Work happens in forge's repository, and forge's hooks (`git config core.hooksPat
 personal-data guard, `forge check-public`, over every commit, message and push, this folder included. The three hooks
 in this folder's `githooks/` are the form for a checkout that has only this folder: they call the same guard and find
 forge through `FORGE_ROOT` (the forge checkout) or, failing that, `forge` on `PATH`; with neither they refuse; forge's
-own hooks are the ones in force in a forge checkout. Tests are plain scripts, run with `python3 bin/fwx test` from this folder
-(`forge test` leaves them to it and says so; CI runs them as the `fwx` job of forge's `checks.yml`).
+own hooks are the ones in force in a forge checkout. Tests are plain scripts, run with `python3 bin/forge test fwx` from forge's top level
+(`forge test` with no group runs them with the rest; CI runs this group as the `fwx` job of forge's `checks.yml`).

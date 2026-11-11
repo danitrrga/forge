@@ -29,7 +29,7 @@ work = helpers.mkdtemp("fwx-cli-")
 os.makedirs(os.path.join(work, "bin"))
 shutil.copy(os.path.join(helpers.ROOT, "bin", "fwx"), os.path.join(work, "bin", "fwx"))
 shutil.copytree(os.path.join(helpers.ROOT, "lib", "fwx"), os.path.join(work, "lib", "fwx"),
-                ignore=shutil.ignore_patterns("__pycache__", "test.py"))
+                ignore=shutil.ignore_patterns("__pycache__"))
 commands = os.path.join(work, "lib", "fwx", "commands")
 helpers.write(commands, "probe.py", '"""Answer, and exit with the code given."""\nimport sys\n\n\n'
               'def main(argv):\n    print("probe ran: " + " ".join(argv))\n    return int(argv[0]) if argv and argv[0].isdigit() else 0\n')

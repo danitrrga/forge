@@ -4,7 +4,7 @@ what a test looked at.
 
 copied-from: forge tests/sandbox.py @2c95776, adapted (git(), mkdtemp(), cleanup(); the rest is new)
 
-The name does not match test_*.py, so `fwx test` never runs it; the tests import it.
+The name does not match test_*.py, so `forge test` never runs it; the tests import it.
 """
 import atexit
 import os

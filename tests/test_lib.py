@@ -818,17 +818,158 @@ def cli_test_cases(tmp):
              (rc, "SKIP  test_guard_mutants.py" in out and "NOT RUN" in out and "forge test --mutants" in out,
               "FAIL" in out, "PASS  test_guard_mutants.py" in out,
               "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, False, True))
-        # fwx's suite (plugins/fwx/tests) has its own runner, `fwx test`, with its own exit codes (77, --expect-not-run)
-        # and minutes of work: `forge test` does not run it and says so in one SKIP line, never a PASS and
-        # not in the summary's counts. Its toys exit 1, so a run of them would be a FAIL.
-        lib.ROOT = toy("fwx-owned", ["test_ok.py", ("plugins/fwx/tests/test_a.py", 1), ("plugins/fwx/tests/test_b.py", 1)])
-        rc, out = forge_test()
-        want("forge test leaves plugins/fwx to `fwx test` and says so",
-             (rc, "SKIP  plugins/fwx" in out and "2 tracked test_*.py file(s)" in out and "bin/fwx test" in out, "FAIL" in out,
-              "PASS  test_a.py" in out, "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, False, True))
-        lib.ROOT = toy("fwx-none", ["test_ok.py"])
-        rc, out = forge_test()
-        want("control: no plugins/fwx tests, no fwx line", (rc, "plugins/fwx" in out), (0, False))
+        # Groups. `forge test GROUP` runs one group of test files, picked by where the file lives: `fwx`
+        # (plugins/fwx/), `hooks` (hooks/), `engine` (everything else); no group runs all three. Each toy
+        # holds a failing test outside the group asked for, so a run not limited to the group is a FAIL.
+        # Red on the base, which skipped plugins/fwx with one SKIP line and read no group (cmd_test took only `mutants`):
+        #   FAIL: forge test fwx runs only the fwx group = (1, False, True, False), want (0, True, False, True)
+        #   FAIL: forge test hooks does not run fwx's suite or the engine's = (0, True, True, False), want (0, True, False, True)
+        #   FAIL: forge test with no group runs fwx's suite too = (0, False, False), want (1, True, True)
+        #   FAIL: forge test with a group nobody has = (0, False, False, 'SKIP  plugins/fwx ...'), want (2, True, True, '')
+        # (the base ignored the group: it ran every file outside plugins/fwx, and skipped test_a.py and test_b.py with one SKIP line)
+        def put(d, rel, src):
+            with open(os.path.join(d, rel), "w") as f:
+                f.write(src)
+
+        def forge_run(**kw):
+            with contextlib.redirect_stdout(io.StringIO()) as o, contextlib.redirect_stderr(io.StringIO()) as e:
+                rc = cli.cmd_test(argparse.Namespace(**kw))
+            return rc, o.getvalue(), e.getvalue()
+
+        SKIP77 = "print('NOT RUN, NOT ARMED: no such tool')\nraise SystemExit(77)\n"
+        FAILS = "raise SystemExit(1)\n"
+        lib.ROOT = toy("groups", ["test_ok.py", "hooks/test_h.py", "plugins/fwx/tests/test_a.py", "plugins/fwx/tests/test_b.py"])
+        for rel in ("test_ok.py", "hooks/test_h.py"):
+            put(lib.ROOT, rel, FAILS)  # a run that reaches these is red
+        rc, out, err = forge_run(group="fwx")
+        want("forge test fwx runs only the fwx group",
+             (rc, "PASS  test_a.py" in out and "PASS  test_b.py" in out, "test_ok" in out or "test_h" in out,
+              "SUMMARY: 2 passed, 0 warnings, 0 failures" in out), (0, True, False, True))
+        put(lib.ROOT, "test_ok.py", "")
+        put(lib.ROOT, "hooks/test_h.py", "")
+        for rel in ("plugins/fwx/tests/test_a.py", "plugins/fwx/tests/test_b.py"):
+            put(lib.ROOT, rel, FAILS)
+        rc, out, err = forge_run(group="hooks")
+        want("forge test hooks does not run fwx's suite or the engine's",
+             (rc, "PASS  test_h.py" in out, "test_a" in out or "test_b" in out or "test_ok" in out,
+              "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, True))
+        rc, out, err = forge_run(group="engine")
+        want("forge test engine does not run fwx's suite or the hooks'",
+             (rc, "PASS  test_ok.py" in out, "test_a" in out or "test_b" in out or "test_h" in out,
+              "SUMMARY: 1 passed, 0 warnings, 0 failures" in out), (0, True, False, True))
+        rc, out, err = forge_run(group=None)
+        want("forge test with no group runs fwx's suite too",
+             (rc, "test_a.py" in out and "test_b.py" in out, "SUMMARY: 2 passed, 0 warnings, 2 failures" in out), (1, True, True))
+        for rel in ("plugins/fwx/tests/test_a.py", "plugins/fwx/tests/test_b.py"):
+            put(lib.ROOT, rel, "")
+        rc, out, err = forge_run()
+        want("control: every group passing, no group asked, is all four files",
+             (rc, "SUMMARY: 4 passed, 0 warnings, 0 failures" in out, "SKIP" in out), (0, True, False))
+        rc, out, err = forge_run(group="nope")
+        want("forge test with a group nobody has",
+             (rc, "nope" in err, all(g in err for g in ("fwx", "hooks", "engine")), out), (2, True, True, ""))
+        lib.ROOT = toy("engine-only", ["test_ok.py"])
+        rc, out, err = forge_run(group="fwx")
+        want("a group with no test file is a FAIL, not a pass over zero", (rc, "no tests found" in out), (1, True))
+        # A test of fwx's suite runs from plugins/fwx (its tests/ path is relative to it, as `fwx test` ran it) with none of
+        # the caller's GIT_*, and the listing does not follow a caller's GIT_DIR into another repository. Red when the
+        # child inherits GIT_DIR (it sees it), and when the listing follows it (the decoy's test runs):
+        #   FAIL: a fwx test runs from plugins/fwx with none of the caller's GIT_* = (1, False, True), want (0, True, False)
+        lib.ROOT = toy("fwx-env", ["plugins/fwx/tests/test_here.py"])
+        put(lib.ROOT, "plugins/fwx/tests/test_here.py",
+            "import os, sys\nbad = [k for k in os.environ if k.startswith('GIT_')]\n"
+            "sys.exit(0 if os.path.isfile('tests/test_here.py') and not bad else 1)\n")
+        decoy = toy("decoy", ["test_decoy.py"])
+        put(decoy, "test_decoy.py", FAILS)
+        saved = {k: os.environ.get(k) for k in ("GIT_DIR", "GIT_INDEX_FILE")}
+        os.environ["GIT_DIR"], os.environ["GIT_INDEX_FILE"] = os.path.join(decoy, ".git"), os.path.join(decoy, ".git", "index")
+        try:
+            rc, out, err = forge_run(group="fwx")
+        finally:
+            for k, v in saved.items():
+                os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+        want("a fwx test runs from plugins/fwx with none of the caller's GIT_*",
+             (rc, "PASS  test_here.py" in out, "test_decoy" in out), (0, True, False))
+        # A test file git does not track yet counts (a test written first, run before its first commit) unless it is
+        # ignored; a fixture under plugins/fwx is no test of the suite.
+        lib.ROOT = toy("fresh", ["test_ok.py", "plugins/fwx/tests/fixtures/app/tests/test_fx.py"])
+        put(lib.ROOT, "test_ok.py", "")
+        put(lib.ROOT, "plugins/fwx/tests/fixtures/app/tests/test_fx.py", FAILS)
+        put(lib.ROOT, "test_new.py", "")
+        put(lib.ROOT, "test_ign.py", FAILS)
+        put(lib.ROOT, ".gitignore", "test_ign.py\n")
+        rc, out, err = forge_run()
+        want("an untracked test counts; an ignored one and a fwx fixture do not",
+             (rc, "PASS  test_new.py" in out, "test_ign" in out or "test_fx" in out), (0, True, False))
+        # A failing test shows its own output: the old runner did, and CI has no other way to see why.
+        lib.ROOT = toy("why", ["test_bad.py"])
+        put(lib.ROOT, "test_bad.py", "print('FAIL: the broken case')\nraise SystemExit(1)\n")
+        rc, out, err = forge_run()
+        want("a failing test shows its output", (rc, "FAIL: the broken case" in out), (1, True))
+        # --expect-not-run PATH[,PATH]: declares the tests that cannot run where this runs (CI has no key, no private
+        # tree) and arms the accounting `fwx test` had: a not-run test that is not declared exits 77 (neither green nor
+        # red), nothing passed exits 1, a declared path that is no test of the run exits 1. Without the flag a test
+        # that exits 77 stays a WARN with exit 0 (the toys above). Red on the base (the flag was no argument, plugins/fwx was not run, an
+        # undeclared 77 was a WARN and exit 0, so a CI step could end green with a test unrun):
+        #   FAIL: a declared not-run test is EXPECTED NOT RUN and no longer a warning = (1, False, False, False), want (0, True, False, True)
+        #   FAIL: an undeclared not-run test beside a declared one exits 77 = (1, False, False), want (77, True, True)
+        SK, SK2, OK = "plugins/fwx/tests/test_skip.py", "plugins/fwx/tests/test_skip2.py", "plugins/fwx/tests/test_ok.py"
+
+        def declared(name, skips, **kw):
+            lib.ROOT = toy(name, [OK] + skips)
+            put(lib.ROOT, OK, "")
+            for rel in skips:
+                put(lib.ROOT, rel, SKIP77)
+            return forge_run(group="fwx", **kw)
+        rc, out, err = declared("decl", [SK], expect_not_run=[SK])
+        want("a declared not-run test is EXPECTED NOT RUN and no longer a warning",
+             (rc, "EXPECTED NOT RUN" in out and "no such tool" in out, "WARN" in out,
+              "SUMMARY: 1 passed, 0 warnings, 0 failures, 1 expected not run" in out), (0, True, False, True))
+        rc, out, err = declared("decl-list", [SK, SK2], expect_not_run=[SK + "," + SK2])
+        want("a declared list, comma separated", (rc, out.count("EXPECTED NOT RUN")), (0, 2))
+        rc, out, err = declared("decl-twice", [SK, SK2], expect_not_run=[SK, SK2])
+        want("a flag given twice", (rc, out.count("EXPECTED NOT RUN")), (0, 2))
+        rc, out, err = declared("undecl", [SK, SK2], expect_not_run=[SK])
+        want("an undeclared not-run test beside a declared one exits 77",
+             (rc, "WARN  test_skip2.py" in out and "NOT RUN, NOT ARMED: no such tool" in out, "EXPECTED NOT RUN  test_skip.py" in out),
+             (77, True, True))
+        rc, out, err = declared("decl-pass", [SK], expect_not_run=[OK])
+        want("a declared test that runs and passes is fine; the undeclared skip is still 77",
+             (rc, "PASS  test_ok.py" in out), (77, True))
+        rc, out, err = declared("decl-none-pass", [SK], expect_not_run=[SK])
+        os.remove(os.path.join(lib.ROOT, OK))
+        git(lib.ROOT, "rm", "-q", "--cached", OK)
+        rc, out, err = forge_run(group="fwx", expect_not_run=[SK])
+        want("everything declared away is no pass: nothing passed exits 1", (rc, "FAIL  passed" in out), (1, True))
+        lib.ROOT = toy("decl-bad", [OK, SK])
+        put(lib.ROOT, OK, "")
+        put(lib.ROOT, SK, "print('FAIL: broken')\nraise SystemExit(1)\n")
+        rc, out, err = forge_run(group="fwx", expect_not_run=[SK])
+        want("a declared test that fails is a FAIL", (rc, "FAIL  test_skip.py" in out), (1, True))
+        rc, out, err = declared("decl-typo", [SK], expect_not_run=[SK + ",plugins/fwx/tests/test_typo.py"])
+        want("a declared path that is no test file exits 1 and is named", (rc, "plugins/fwx/tests/test_typo.py" in out), (1, True))
+        lib.ROOT = toy("decl-group", ["hooks/test_h.py", SK])
+        put(lib.ROOT, "hooks/test_h.py", "")
+        put(lib.ROOT, SK, SKIP77)
+        rc, out, err = forge_run(group="hooks", expect_not_run=[SK])
+        want("a declared path outside the group asked for is no test of the run", (rc, SK in out), (1, True))
+        rc, out, err = declared("decl-empty", [SK], expect_not_run=[SK + ",,"])
+        want("an empty name in the declaration is a usage error", (rc, "expect-not-run" in err), (2, True))
+        # The real command line: a group nobody has and a flag with no value are exit 2 before any test runs (the
+        # unknown group names the groups; argparse owns the flag's usage message).
+        for label, argv, mention in (("a group nobody has", ["nope"], "unknown group nope"),
+                                     ("--expect-not-run with no value", ["--expect-not-run"], "expect-not-run")):
+            r = subprocess.run([sys.executable, os.path.join(REPO, "bin", "forge"), "test"] + argv,
+                               capture_output=True, text=True, stdin=subprocess.DEVNULL)
+            want("bin/forge test with %s: exit 2, nothing run" % label, (r.returncode, mention in r.stderr, r.stdout), (2, True, ""))
+        # --mutants with a group runs the on-demand suites of that group only.
+        lib.ROOT = toy("mutants-group", ["hooks/test_guard_mutants.py", "test_ok.py"])
+        put(lib.ROOT, "test_ok.py", FAILS)
+        rc, out, err = forge_run(group="hooks", mutants=True)
+        want("forge test hooks --mutants runs the mutant suite alone", (rc, "PASS  test_guard_mutants.py" in out, "test_ok" in out), (0, True, False))
+        rc, out, err = forge_run(group="engine", mutants=True)
+        want("forge test engine --mutants has nothing on demand: none run, none passed",
+             (rc, "SUMMARY: 0 passed, 0 warnings, 0 failures" in out), (0, True))
         # --mutants runs only the on-demand suites: test_bad.py (exit 1) is not run, the mutant toy is.
         lib.ROOT = toy("ondemand-only", [("test_bad.py", 1), ("hooks/test_guard_mutants.py", 0)])
         with contextlib.redirect_stdout(io.StringIO()) as o:

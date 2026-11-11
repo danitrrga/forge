@@ -9,7 +9,7 @@ rc=0
 step() { name=$1; echo "== $name"; shift; "$@" || { echo "FAIL: $name" >&2; rc=1; }; }
 step check-public python3 bin/forge check-public --all
 step fresh-install python3 tests/test_fresh_install.py
-step fwx sh -c 'cd plugins/fwx && python3 bin/fwx test --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py'
+step fwx python3 bin/forge test fwx --expect-not-run plugins/fwx/tests/test_linear_live.py,plugins/fwx/tests/test_playbooks_tree.py
 step actionlint mise x actionlint@1.7.12 -- actionlint
 step zizmor mise x zizmor@1.30.1 -- zizmor --offline --config .github/zizmor.yml .github
 echo "commits in range: $(git rev-list --count "$base..HEAD")"
