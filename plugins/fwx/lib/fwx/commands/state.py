@@ -1,7 +1,7 @@
 """Make, find, bind, record in and check the project's `.fwx/` state: fwx state <subcommand> [args] (--help lists them).
 
 A thin layer over lib/fwx/state.py, which holds every rule: this file parses the arguments, calls it, and prints. The
-subcommands are resolve, list, use, new-phase, new-subphase, new-milestone, cancel, decision and check. Exit 0 when it
+subcommands are resolve, list, use, new-phase, new-subphase, new-milestone, cancel, decision, decisions and check. Exit 0 when it
 is done, 1 when the state layer refuses or the phase cannot be resolved (one line on stderr, `resolve` also lists the open
 phases), 2 when it cannot run: outside a git repository, a usage error, an unusable configuration. Never a traceback.
 """
@@ -9,6 +9,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 
 from fwx import config, context_base, state
@@ -135,7 +136,8 @@ def cmd_cancel(a):
 
 # ---- decision, check --------------------------------------------------------------------------------------------
 
-def cmd_decision(a):
+def _decision_file(a):
+    """The file `decision` writes and `decisions` reads: the phase's decisions.tsv, or with --adr the scope's adr.tsv."""
     if a.phase:
         phase, sub = os.path.abspath(a.phase), _subproject_of(a.phase)
     else:
@@ -143,9 +145,48 @@ def cmd_decision(a):
         if not r["phase_dir"]:
             raise Unresolved(_unresolved(r))
         phase, sub = r["phase_dir"], r["subproject"]
-    path = state.scope_root(state.plan_root(), sub) / "adr.tsv" if a.adr else os.path.join(phase, "decisions.tsv")
-    print(state.append_decision(path, decision=a.decision, why=a.why, support=a.support, rejected=a.rejected or "",
+    return state.scope_root(state.plan_root(), sub) / "adr.tsv" if a.adr else os.path.join(phase, "decisions.tsv")
+
+
+def cmd_decision(a):
+    print(state.append_decision(_decision_file(a), decision=a.decision, why=a.why, support=a.support, rejected=a.rejected or "",
                                 source=a.source or "", supersedes=a.supersedes or ""))
+    return 0
+
+
+def _fit(line, width):
+    """The line cut to `width` columns with `...` (width None: whole)."""
+    return line if width is None or len(line) <= width else line[:max(width - 3, 0)] + "..."
+
+
+def cmd_decisions(a):
+    if a.file and (a.phase or a.adr):
+        sys.stderr.write("fwx state: --file cannot be combined with --phase or --adr (fwx state --help)\n")
+        return 2
+    if a.file:
+        if not os.path.isfile(a.file):
+            raise state.StateError("%s: no such file" % a.file)
+        path = a.file
+    else:
+        path = _decision_file(a)
+    rows = state.decisions_in_force(state.read_decision_rows(path))
+    terms = a.grep or []
+    if terms and a.all:
+        shown = [r for r in rows if state.decision_matches(r, terms)]
+    elif terms:
+        shown = state.decisions_for_topic(rows, terms)
+    else:
+        shown = rows if a.all else [r for r in rows if r["in_force"]]
+    if a.json:
+        _dump(shown)
+        return 0
+    width = shutil.get_terminal_size((80, 24)).columns if sys.stdout.isatty() else None
+    for r in shown:
+        mark = "" if r["in_force"] else "[superseded by %s] " % r["superseded_by"]
+        print(_fit("%s  %s  %s  %s%s" % (r["id"], r["date"], r["support"], mark, r["decision"]), width))
+        if r.get("matched_superseded"):
+            print(_fit("    matched superseded %s" % ", ".join(r["matched_superseded"]), width))
+    print("%d in force of %d row(s)" % (sum(1 for r in shown if r["in_force"]), len(rows)))
     return 0
 
 
@@ -203,6 +244,15 @@ def parser():
     sp.add_argument("--source")
     sp.add_argument("--supersedes")
     sp.add_argument("--phase")
+    sp.add_argument("--session")
+    sp = add("decisions", cmd_decisions, "the rows of a decisions.tsv in force (or --all), or those a topic touches (--grep)")
+    sp.add_argument("--phase")
+    sp.add_argument("--file", help="any decisions file, by path (a build's own log lives outside a phase folder)")
+    sp.add_argument("--adr", action="store_true")
+    sp.add_argument("--grep", action="append", metavar="TEXT",
+                    help="every TEXT must be in decision, why, rejected or source; a superseded match leads to the row in force")
+    sp.add_argument("--all", action="store_true", help="every row, the superseded ones marked with the id that replaced them")
+    sp.add_argument("--json", action="store_true")
     sp.add_argument("--session")
     sp = add("check", cmd_check, "check a state.md or a phase report: an error for a rule, a WARN line for a length")
     sp.add_argument("kind", choices=("state", "report"))

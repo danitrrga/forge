@@ -34,7 +34,7 @@ import os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 from forge import lib, owned  # noqa: E402
-from forge.system_doc import BEGIN, CANON, END, GEN_BANNER, ROOT_FS, marker_error  # noqa: E402
+from forge.system_doc import BEGIN, CANON, END, GEN_BANNER, ROOT_FS, block_span, marker_error  # noqa: E402
 # A SessionStart run writes its own project only; a refused --apply is a dry-run.
 CTX = lib.context(sys.argv[1:])
 PART = "system-doc"  # this script's share of the ownership record's claims on a file
@@ -86,9 +86,9 @@ def ui_paragraph(proj_dir, profs):
     return ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
             "screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
             "use that; otherwise write `decisions.json` in a folder and run `python3 " + tool + " verdict <folder>` (the format "
-            "is in `" + ROOT_FS + "/design/verdict/README.md`), then end your message with the `xdg-open` line it prints. For a live "
-            "back-and-forth (the owner clicks rows and notes single elements, your replies appear in the page) add `--serve`; the README "
-            "says how to read the answers and reply.\n")
+            "is in `" + ROOT_FS + "/design/verdict/README.md`), then end your message with the `xdg-open` line it prints. The owner "
+            "answers on the page and pastes the JSON that `Copy answers` gives into the chat: never wait on the page; the README says "
+            "how to read it.\n")
 
 
 def pointer(proj_dir, profs):
@@ -191,9 +191,10 @@ def ensure_pointer(proj_dir, fname, changes, text):
         if CTX.apply:
             lib.write_text(p, new)
         return
-    if BEGIN in cur and END in cur:
-        pre = cur[: cur.index(BEGIN)]
-        post = cur[cur.index(END) + len(END):]
+    span = block_span(cur)  # the new pair or the old one; either is replaced by the new
+    if span:
+        pre = cur[: span[0]]
+        post = cur[span[1]:]
         new = pre + text + post  # replace the managed block exactly, keep the rest
         if new == cur:
             return
@@ -263,7 +264,7 @@ def ensure_agents_md(proj_dir, changes):
             claim_link(p, True)
         return
     cur = _read(p)
-    if cur is not None and not (BEGIN in cur and END in cur):
+    if cur is not None and not block_span(cur):
         changes.append(("SKIP-agents-md(non-forge content)", p))
         claim_link(p, False)
         return

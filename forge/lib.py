@@ -7,6 +7,7 @@ import fcntl
 import functools
 import importlib.util
 import json
+import math
 import os
 import pwd
 import re
@@ -143,14 +144,18 @@ PROFILE_FIELDS = {
     # UI_IMAGE_KEYS, checked by _object_error.
     "checks_quick": (list, str), "app_run": dict, "default_branch_protected": bool, "ui_image": dict,
 }
-# The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4.
+# The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
+# for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
+# logged-in app shows in its snapshot and `ready_timeout_s` the seconds the UI walk waits for it, both read by the
+# plugin's walk selftest.
 APP_RUN_KEYS = (("up", str, True, False), ("run", str, True, True), ("down", str, True, False), ("url", str, True, False),
-                ("login", str, False, False), ("container", bool, False, True))
+                ("login", str, False, False), ("container", bool, False, True),
+                ("ready", str, False, False), ("ready_timeout_s", float, False, True))
 UI_IMAGE_KEYS = (("dockerfile", str, True, False), ("expect", str, True, False))
 # The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
 # that has a row there, so a field without its row is not checked at all.
 PROFILE_CHOICES = {"factory": ("off", "trial")}
-_TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object"}
+_TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object", float: "positive number"}
 
 
 def worktree_guard_on(prof):
@@ -181,6 +186,10 @@ def _object_error(field, obj, keys):
                 return "%s.%s is missing" % (field, key)
             continue
         v = obj[key]
+        if kind is float:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) or v <= 0:
+                return "%s.%s is not a %s" % (field, key, _TYPE_NAMES[kind])
+            continue
         if not isinstance(v, kind):
             return "%s.%s is not a %s" % (field, key, _TYPE_NAMES[kind])
         if kind is str and not may_be_empty and not v.strip():

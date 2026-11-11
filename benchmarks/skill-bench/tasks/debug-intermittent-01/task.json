@@ -1,9 +1,0 @@
-{
-  "id": "debug-intermittent-01",
-  "field": "debug",
-  "concept": "debug.intermittent",
-  "difficulty": 2,
-  "prompt": "CI runs our tests in random order (run_tests.py) and test_defaults fails on more than half the runs, but `python3 -m unittest` is always green on my machine. Can you fix it?",
-  "source": {"kind": "authored"},
-  "message_required": false
-}

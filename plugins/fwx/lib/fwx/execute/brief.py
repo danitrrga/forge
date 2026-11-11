@@ -37,6 +37,9 @@ TESTS_OF_FINDINGS = "the test files that cover each finding, new or existing"
 NO_TEST = "none: a UI task carries no test; the owner walks it"
 SEVERITY = ("low", "medium", "high")
 FINDING_KEYS = ("id", "file", "line", "claim", "evidence", "severity")
+# The rows `fwx walk findings` writes into fix.json (the verifier's rows, 3.5): `prepare --fix` takes them as they are, since the review
+# page needs their full text; `normalize` turns each into plan C.5's shape. A row is the walk's when it carries one of these keys.
+WALK_KEYS = ("source", "verdict", "screen", "steps", "expected", "type", "kind", "why", "evidence_after", "clip", "duplicate_of")
 
 
 def shared_context(paths):
@@ -89,7 +92,8 @@ def fix_facts(findings, source, tasks, checks, size, ctx):
 
 def _acceptance(facts):
     if facts["kind"] == "fix":
-        return ["- %s (%s:%s, %s): %s" % (f["id"], f["file"], f["line"], f["severity"], " ".join(str(f["claim"]).split())) for f in facts["findings"]]
+        return ["- %s (%s, %s): %s" % (f["id"], f["file"] if f["line"] is None else "%s:%s" % (f["file"], f["line"]), f["severity"],
+                                       " ".join(str(f["claim"]).split())) for f in facts["findings"]]
     return ["- %s" % " ".join(t["measures"].split()) for t in facts["tests"]]
 
 
@@ -154,19 +158,59 @@ def put(path, text):
         f.write(text)
 
 
+def is_walk(f):
+    return isinstance(f, dict) and bool(set(f) & set(WALK_KEYS))
+
+
+def _evidence(f):
+    """The evidence as one string: a walk row may carry a list of captures and notes."""
+    e = f.get("evidence")
+    return " ".join(x for x in e if isinstance(x, str) and x.strip()) if isinstance(e, list) else e
+
+
+def normalize(items):
+    """The findings in plan C.5's shape: a walk row becomes {id, file, line, claim, evidence, severity}, its expected result and steps
+    added to the claim (the fixer sees no other field); any other finding is returned as it is. Call after `finding_problems`."""
+    out = []
+    for f in items:
+        if not is_walk(f):
+            out.append(f)
+            continue
+        claim = " ".join(str(f["claim"]).split())
+        for label, key in (("Expected", "expected"), ("Steps", "steps")):
+            v = f.get(key)
+            if isinstance(v, list):  # the verifier's schema lets `steps` be an ordered list of text steps
+                v = "; ".join(x.strip().rstrip(".") for x in v if isinstance(x, str) and x.strip())
+            if isinstance(v, str) and v.strip():
+                claim += " %s: %s." % (label, v.strip().rstrip("."))
+        out.append({"id": f["id"], "file": f["file"], "line": f.get("line"), "claim": claim, "evidence": _evidence(f), "severity": f["severity"]})
+    return out
+
+
 def finding_problems(items):
-    """What is wrong with a list of findings (plan C.5: {id, file, line, claim, evidence, severity}), one string per problem."""
+    """What is wrong with a list of findings (plan C.5: {id, file, line, claim, evidence, severity}, or a walk row of fix.json, which
+    may have a null `line` and extra keys but must name a file), one string per problem."""
     found, seen = [], set()
     for i, f in enumerate(items, 1):
         if not isinstance(f, dict):
             found.append("finding %d is not an object" % i)
             continue
-        for k in sorted(set(f) - set(FINDING_KEYS)):
-            found.append("finding %d has the key %r, which is not one of %s" % (i, k, ", ".join(FINDING_KEYS)))
+        walk = is_walk(f)
+        for k in sorted(set(f) - set(FINDING_KEYS) - set(WALK_KEYS if walk else ())):
+            found.append("finding %d has the key %r, which is not one of %s" % (i, k, ", ".join(FINDING_KEYS + (WALK_KEYS if walk else ()))))
+        if walk and f.get("file") is None:
+            found.append("finding %d (%s): file is null, the verifier named no file that holds the cause, so no fixer can be scoped to it; "
+                         "name the file in verified-*.json and run `fwx walk findings` again, or drop the finding from the file" % (i, f.get("id")))
         for k in ("id", "file", "claim", "evidence"):
-            if not isinstance(f.get(k), str) or not f[k].strip():
+            if k == "file" and walk and f.get("file") is None:
+                continue
+            if k == "evidence":
+                ok = isinstance(_evidence(f), str) and _evidence(f).strip()
+            else:
+                ok = isinstance(f.get(k), str) and f[k].strip()
+            if not ok:
                 found.append("finding %d: %s is not a non-empty string" % (i, k))
-        if not isinstance(f.get("line"), int) or isinstance(f.get("line"), bool) or f["line"] < 0:
+        if not (walk and f.get("line") is None) and (not isinstance(f.get("line"), int) or isinstance(f.get("line"), bool) or f["line"] < 0):
             found.append("finding %d: line is not a number" % i)
         if f.get("severity") not in SEVERITY:
             found.append("finding %d: severity %r is not one of %s" % (i, f.get("severity"), ", ".join(SEVERITY)))

@@ -311,6 +311,43 @@ def main():
     if rc or got != "# mine\n\n" + block + "\n" + NOTE:
         failures.append("one complete pair is replaced in place, the text around it kept: exit %d, got %r" % (rc, got))
 
+    # The pointer block was fenced by LIFEOS-SYSTEM-POINTER before it was renamed FORGE-SYSTEM-POINTER. A file that
+    # still carries the old pair gets it replaced by the new pair on the next sync: one block, the user's text outside
+    # untouched, and the sync after that writes nothing. A file with one old and one new block is an error, named,
+    # left byte-identical. Red before the migration (old markers unknown, the block appended beside them):
+    # "old marker pair migrated: exit 0, got '# mine\n\n<!-- BEGIN LIFEOS-SYSTEM-POINTER ...' (two blocks)".
+    _src = open(os.path.join(sandbox.FORGE, "forge", "system_doc.py"), encoding="utf-8").read()
+    OLD_B, OLD_E = (re.search(r'^%s = "(.*)"$' % n, _src, re.M).group(1) for n in ("OLD_BEGIN", "OLD_END"))
+    t = world("plain")
+    toy = os.path.join(projects(t), "toy", "CLAUDE.md")
+    run(t, "--apply")
+    block = text(toy)
+    old_block = block.replace(BEGIN, OLD_B).replace(END_LINE, OLD_E).replace("Shared agent-config system", "Old title")
+    if OLD_B == BEGIN or OLD_E == END_LINE or BEGIN not in block:
+        failures.append("old marker control: the old markers equal the new, or the block lacks BEGIN")
+    write(toy, "# mine\n\n" + old_block + "\n" + NOTE)
+    rc, out = run(t, "--apply")
+    got = text(toy)
+    if rc or got != "# mine\n\n" + block + "\n" + NOTE or OLD_B in (got or ""):
+        failures.append("old marker pair migrated: exit %d, got %r" % (rc, got))
+    rc, out = run(t, "--apply")
+    if rc or "0 change(s) applied." not in out or text(toy) != got:
+        failures.append("the sync after the migration is not a no-op: exit %d, %s" % (rc, tail(out)))
+    mixed = "# mine\n\n" + old_block + "\n" + NOTE + "\n" + block
+    write(toy, mixed)
+    rc, out = run(t, "--apply")
+    named = [l for l in out.splitlines() if l.startswith("  !") and "CLAUDE.md" in l]
+    if text(toy) != mixed or not named or not rc:
+        failures.append("one old and one new block: file unchanged %s, '  ! ' line naming CLAUDE.md %s, exit %d"
+                        % (text(toy) == mixed, bool(named), rc))
+    t = world("plain")
+    toy = os.path.join(projects(t), "toy", "AGENTS.md")
+    write(toy, "%s\nold copy\n%s\n" % (OLD_B, OLD_E))
+    write(os.path.join(projects(t), "toy", "CLAUDE.md"), "# mine\n")
+    rc, out = run(t, "--apply")
+    if rc or not os.path.islink(toy):
+        failures.append("an AGENTS.md holding the old pair is forge-owned and becomes the link: exit %d, link %s" % (rc, os.path.islink(toy)))
+
     # A UI project's pointer also says where a visual choice goes: on a verdict page, never in chat. Only when the
     # checkout has the tool (scripts/design/design.py); a plain project and a UI project without the tool get no paragraph.
     # Red before the field existed: "ui project: block lacks the verdict-page paragraph ('## Shared agent-config system' only)".
@@ -322,6 +359,8 @@ def main():
         if rc or has != want_para or (want_para and not got.count("verdict page") == 1):
             failures.append("%s project: verdict-page paragraph present %s (want %s), exit %d, block %r"
                             % (case, has, want_para, rc, got[-300:]))
+        if want_para and (any(w in got for w in ("--serve", "verdict wait", "verdict reply")) or "`Copy answers`" not in got):
+            failures.append("ui project: the paragraph names a live-server verb or not the pasted answers: %r" % got[-500:])
         agents = os.path.join(projects(t), "toy", "AGENTS.md")
         if want_para and text(agents) != got:
             failures.append("ui project: AGENTS.md does not read the same paragraph as CLAUDE.md")
@@ -329,11 +368,14 @@ def main():
     # A profile's own `verdict_command` replaces the generic paragraph, and needs nothing from this checkout.
     # Red on the unchanged code (messages in the PR): the "verdict" cases wrote the generic paragraph naming design.py and not the
     # command, verdict-no-design wrote no paragraph at all, and a bad verdict_command was not an error.
+    # The generic paragraph names no live server (`--serve`, `verdict wait`, `verdict reply`) and says the owner pastes the answers.
+    # Red on the paragraph that still told agents to add `--serve` (messages kept in the commit): "ui, no verdict_command: the paragraph
+    # is not the old one byte for byte" and "ui project: the paragraph names a live-server verb or not the pasted answers".
     generic = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, "
                "changed screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
                "use that; otherwise write `decisions.json` in a folder and run `python3 %(t)s/forge/scripts/design/design.py verdict <folder>` "
                "(the format is in `%(t)s/forge/design/verdict/README.md`), then end your message with the `xdg-open` line it prints."
-               " For a live back-and-forth (the owner clicks rows and notes single elements, your replies appear in the page) add `--serve`; the README says how to read the answers and reply.\n")
+               " The owner answers on the page and pastes the JSON that `Copy answers` gives into the chat: never wait on the page; the README says how to read it.\n")
     own = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
            "screenshots to accept) goes on a verdict page, never into a chat question. In this project the command is `pnpm verdict <dir>`: "
            "use it, not forge's `design.py verdict`; this file describes how it is used. End your message with the `xdg-open` line it prints.\n")

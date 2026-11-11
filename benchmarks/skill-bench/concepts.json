@@ -9,30 +9,10 @@
   "title": "Accessibility fixes",
   "pass_means": "Labels, contrast, focus order and keyboard operation are fixed with the semantic element, not an aria patch over a wrong one."
  },
- "ui.design-tokens": {
-  "field": "ui",
-  "title": "Design-system adherence",
-  "pass_means": "New UI uses the project's existing tokens and components; no hard-coded colours, spacing or re-implemented components."
- },
- "ui.states": {
-  "field": "ui",
-  "title": "Loading, error and empty states",
-  "pass_means": "A data view handles loading, failure and empty data explicitly, and a failed request is not shown as an empty list."
- },
  "logic.boundaries": {
   "field": "logic",
   "title": "Boundaries and off-by-one",
   "pass_means": "The edge values (first, last, empty, exactly-at-limit) are right, not just the typical case."
- },
- "logic.datetime": {
-  "field": "logic",
-  "title": "Dates, time zones and DST",
-  "pass_means": "Calendar arithmetic is correct across month ends, leap days, zones and daylight-saving changes."
- },
- "logic.money": {
-  "field": "logic",
-  "title": "Money and numeric precision",
-  "pass_means": "Amounts use integer minor units or decimal with explicit rounding; floats are not summed or compared for equality."
  },
  "logic.transform": {
   "field": "logic",
@@ -44,11 +24,6 @@
   "title": "Tests that can fail",
   "pass_means": "A new test is written that fails on the buggy code and passes on the fixed code (it asserts the behaviour, not the implementation)."
  },
- "tests.never-fails": {
-  "field": "tests",
-  "title": "Fix a test that can never fail",
-  "pass_means": "A test that is green whatever the code does is found and rewritten so a broken implementation turns it red."
- },
  "tests.characterization": {
   "field": "tests",
   "title": "Characterization before refactor",
@@ -58,11 +33,6 @@
   "field": "debug",
   "title": "Root cause, not workaround",
   "pass_means": "The underlying defect is fixed; no retry, sleep, skip, broad except or special case that hides the symptom."
- },
- "debug.intermittent": {
-  "field": "debug",
-  "title": "Intermittent failures",
-  "pass_means": "A failure that depends on ordering, shared state or timing is explained and made deterministic by removing the dependence."
  },
  "debug.misleading-error": {
   "field": "debug",
@@ -74,35 +44,10 @@
   "title": "SQL and command injection",
   "pass_means": "User input reaches a query or a shell only through parameters or an argument list, never by string building."
  },
- "security.authz": {
-  "field": "security",
-  "title": "Authorization and IDOR",
-  "pass_means": "Access to a record is checked against the caller, on the server, for every route that reaches it."
- },
- "security.secrets": {
-  "field": "security",
-  "title": "Secrets handling",
-  "pass_means": "Secrets are not logged, echoed, committed or placed in URLs, and existing leaks are removed at the source."
- },
- "security.path-traversal": {
-  "field": "security",
-  "title": "Path traversal and unsafe deserialization",
-  "pass_means": "File paths are confined to a root after resolving; untrusted data is not unpickled or evaluated."
- },
- "arch.refactor-same-behaviour": {
-  "field": "arch",
-  "title": "Refactor without behaviour change",
-  "pass_means": "Structure improves (duplication removed, a seam introduced) while every observable behaviour and test stays identical."
- },
  "arch.dependency-direction": {
   "field": "arch",
   "title": "Dependency direction and cycles",
   "pass_means": "A cyclic or inverted dependency is broken by moving code or inverting at one seam, with callers unchanged."
- },
- "arch.no-abstraction": {
-  "field": "arch",
-  "title": "Declining an abstraction",
-  "pass_means": "With two similar cases and no third in sight, the right answer is the small direct code, not a framework."
  },
  "process.scope-reframe": {
   "field": "process",
@@ -129,19 +74,9 @@
   "title": "Proportional checks",
   "pass_means": "Only the checks the change can move are run; slow unrelated suites are left for the phase gate and listed as not run."
  },
- "process.finish-the-job": {
-  "field": "process",
-  "title": "Finish the job",
-  "pass_means": "The agent runs the thing itself, fixes what it finds in the delivered surface, and does not hand the owner a command to run."
- },
  "review.planted-bug": {
   "field": "review",
   "title": "Review: a defect against a contract outside the diff",
   "pass_means": "A defect that only shows against the contract of code the diff does not touch (a unit, an idempotency rule, a constant's type) is found and named, and the verdict is request changes."
- },
- "review.clean-diff": {
-  "field": "review",
-  "title": "Review: a correct change that looks suspicious",
-  "pass_means": "A correct change that looks risky at a glance (a conversion factor, a retry, a membership test) is approved: no defect is invented, nits do not block."
  }
 }

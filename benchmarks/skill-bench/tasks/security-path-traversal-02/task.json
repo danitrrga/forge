@@ -1,9 +1,0 @@
-{
- "id": "security-path-traversal-02",
- "field": "security",
- "concept": "security.path-traversal",
- "difficulty": 2,
- "prompt": "Someone typed `__import__('os').getcwd()` into the calculator box on the help page and got our server's working directory back. It's only supposed to do arithmetic. Fix evaluate_expression in calc.py.",
- "source": {"kind": "public", "ref": "CWEval (github.com/Co1lin/CWEval @ e9a2a124c8c53679b6d8d27adfd2f6c40e7576d7) benchmark/core/py/cwe_095_0 (stands in for cwe_502_0, which needs PyYAML)", "license": "Apache-2.0"},
- "message_required": false
-}

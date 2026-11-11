@@ -49,6 +49,7 @@ PUBLIC_ASSETS = {
     "docs/assets/fig-trim-dark.png": "795a8e6dde77b7efc6dccf338a8f0aded697b47a4f6068163d390fa7f0d8bf76",
     "docs/assets/fig-bench.png": "9c4dfecd2307dfd37f2bd87f08fef07368f5cc9f2c58b23ad520853d239a93e5",
     "docs/assets/fig-bench-dark.png": "0c6552f887efd95af7b32aaa976ee805337eef27c9d1dc271a053fa51da0bee5",
+    "plugins/fwx/docs/workflow-tree.svg": "be78cc37baaf615cc6e4b1621096c275d591cf1673ffabff116b054852c3b908",
 }
 # Where dates are data (a skill-bench task's calendar, its leap day), not the record of a decision: in these files a
 # private pattern that matches a bare ISO date is not applied. Every other private pattern still is.
@@ -80,8 +81,7 @@ KEY_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 # longer word or name), before the private list runs; the same word anywhere else is still a hit, and the
 # public list never sees this. Not a place for a name or a date: those are renamed or removed.
 PRIVATE_ALLOW = {
-    "LIFEOS-SYSTEM-POINTER": "the begin and end marker written into every managed CLAUDE.md; "
-                             "renaming it rewrites every project's file",
+    "LIFEOS-SYSTEM-POINTER": "the old begin and end marker, still read to migrate files written before the rename",
 }
 ALLOW_RE = re.compile("(?<![\\w-])(?:%s)(?![\\w-])" % "|".join(re.escape(t) for t in PRIVATE_ALLOW))
 

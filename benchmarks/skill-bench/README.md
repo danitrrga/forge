@@ -10,9 +10,17 @@ python3 scripts/bench/skill_bench.py list       # tasks per field and concept
 
 ## Concepts
 
-`concepts.json` declares 29 concepts in 8 fields (ui, logic, tests, debug, security, arch, process, review). Each has at
-least two tasks (`validate --min-per-concept 2` fails otherwise), because one task can be passed by luck and the
-second is the only evidence the first was not luck. `pass_means` says in one sentence what nailing the concept is.
+`concepts.json` declares 16 concepts in 8 fields (ui, logic, tests, debug, security, arch, process, review), each with at least one
+task (`validate --min-per-concept N` demands more). A task is admitted by calibration, not by pairing it with a twin: it must be able
+to fail on the bare model. `pass_means` says in one sentence what nailing the concept is.
+
+## What is in the bench, and why only this
+
+24 tasks. 16 are the ones that failed at least once in 945 valid runs of 13 run directories across every arm tried (bare, GSD, ponytail,
+pstack variants): the only tasks that can show a difference between configs. 8 are a smoke set, the cheapest task per field that never
+failed, kept only to catch a config that breaks everything; they are excluded from effect estimates. The other 38 tasks never failed in
+any run and were removed (git history keeps them). Re-run `calibrate` when the model changes: a task that has become saturated moves
+out, one that has become hard moves in.
 
 ## A task
 
@@ -108,3 +116,33 @@ cumulative over the whole run, subagents included: a run that spawns background 
 each with a partial `usage` and all with the same cumulative `modelUsage`, which is what `tokens` is read from. Results written
 before that fix undercount such runs (`cost_usd` was always right), so do not compare `tokens` or `turns` across the two.
 `result.json` also records `cache_read_tokens`, `cache_write_tokens`, `tool_calls` and `tool_errors`.
+
+## Comparing two harness configs (the cheap A/B)
+
+An arm folder (see "Running it") is a whole config, so one arm per config answers "did this change make the harness cheaper, and did it
+break anything?". Run the calibrated hard tier, the tasks a model can still fail (`calibration.json`, tasks at or under 0.7):
+
+```bash
+python3 scripts/bench/skill_bench.py run --arm none --arm NAME=DIR --tasks hard --k 3 --sandbox bwrap --out OUT
+python3 scripts/bench/skill_bench.py report --out OUT --base none
+```
+
+`--sandbox bwrap` fails closed: without bubblewrap (`command -v bwrap`) the run exits before any job starts. Do not use the default
+`auto` for this recipe: it falls back to no sandbox when `bwrap` is missing (`wrap()` in `scripts/bench/skill_bench.py`), and the run gives
+Claude `--permission-mode bypassPermissions`, so the agent would run commands with the host's full access. Only if a system-wide hook that
+fails closed blocks every prompt inside bubblewrap (that run would be INVALID, `not_run`, never a fail) use `--sandbox none`, and only in
+a disposable, isolated environment (a throwaway VM or container with no credentials and nothing worth keeping), never on a working
+machine. The calibrated tier holds no task that baits a destructive action, which limits the risk and does not remove it. About 54 runs, $5 and
+10 minutes for two arms at k=3. Read it in this order:
+
+1. `cost ratio` (per-task cost of the arm over the base, interval over tasks, tasks that cost more) and `overhead` (tokens before any
+   work: deterministic, spread of a few hundred between runs) are the figures that move with a harness change.
+2. `diff` is a guard only. Nine tasks give an interval of about +-0.17 on the pass difference, so "no change" means "not larger than
+   that". Each task's calibrated rate comes from k=3 and is itself noisy (a task at 2 of 3 came out 1 of 3 and 3 of 3 in later runs).
+3. Decide the rule before running (SOURCES.md), e.g. which cost ratio and which pass drop count as a trade worth making.
+
+Worked example (a config arm holding only the owner's 8.1 KB global CLAUDE.md, against bare Claude Code, Sonnet): pass 13/27 for each
+arm, `diff` +0.000 [-0.148, +0.185]; `cost ratio` 1.17 [1.11, 1.22], costlier on 8 of 9 tasks; `overhead` 25.5k against 22.3k tokens.
+The mean per-task cost ratio is 1.17: averaged over the nine tasks, each task's cost under the arm is 1.17 times its cost under the base
+(task-weighted; it is not a pooled per-run figure, so it does not say a run costs 17% more). The file shows no effect on pass rate that nine tasks could see. It says nothing
+about long sessions, hooks, skills or MCP, which are further arms. Re-run `calibrate` when the model changes.

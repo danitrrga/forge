@@ -1,4 +1,0 @@
-[
-  {"number": "2026-0412", "email": "ana@example.test", "amount_cents": 12000, "due": "2026-03-11", "paid_at": null},
-  {"number": "2026-0413", "email": "ben@example.test", "amount_cents": 4550, "due": "2026-03-13", "paid_at": "2026-03-02"}
-]

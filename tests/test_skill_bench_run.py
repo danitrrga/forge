@@ -277,6 +277,17 @@ def main():
     r = [json.load(open(os.path.join(rr, f))) for rr, _, fs in os.walk(out3) for f in fs if f == "result.json"]
     want("timeout: one result, failed, marked timed out", (len(r), r and r[0]["passed"], r and r[0].get("timed_out")), (1, False, True))
 
+    # `--sandbox bwrap` is the documented default recipe because it fails closed: without bubblewrap the run refuses before any job starts,
+    # where `auto` would fall back to an unsandboxed bypassPermissions agent. PATH holds only an empty directory, so bwrap cannot be found.
+    out6, empty = os.path.join(tmp, "runs6"), os.path.join(tmp, "emptybin")
+    os.makedirs(empty)
+    code, text = cli("run", "--bench", bench, "--claude-bin", fake, "--sandbox", "bwrap", "--out", out6, "--k", "1", "--tasks", "t0",
+                     "--arm", "none", env=dict(env, PATH=empty))
+    n6 = sum(f == "result.json" for _, _, fs in os.walk(out6) for f in fs)
+    # Seen failing before the check existed: exit 0, no refusal, 1 INVALID result written (want a non-zero exit, "bwrap not found", 0 results).
+    want("--sandbox bwrap without bubblewrap refuses before any job (non-zero exit, named reason, no result written)",
+         (code != 0, "bwrap not found" in text, n6), (True, True, 0))
+
     for msg in failures:
         print("FAIL", msg)
     print("%d failure(s)" % len(failures))
