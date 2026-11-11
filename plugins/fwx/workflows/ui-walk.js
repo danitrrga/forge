@@ -366,13 +366,24 @@ function uniqueIds(rep) {
   return rep
 }
 
+// A recheck reply holds one row for each finding it was given, and no other: `{"findings": []}` would be saved and read as "nothing still there".
+function coversAll(rows, items) {
+  if (!items) return true
+  const got = rows.map((r) => (r && typeof r === 'object' ? r.id : null))
+  const bad = items.filter((f) => got.filter((g) => g === f.id).length !== 1).map((f) => f.id)
+  const extra = got.filter((g) => !items.some((f) => f.id === g))
+  if (bad.length === 0 && extra.length === 0) return true
+  log(PHASE + ': a recheck reply must hold one row for each finding it was given; ' + (bad.length ? 'missing or repeated: ' + bad.join(', ') + '. ' : '') + (extra.length ? 'not given: ' + extra.join(', ') + '.' : ''))
+  return false
+}
+
 // One verifier job for a tramo and the saving of its reply; returns the reply or null.
 async function verifyTramo(tramo, index, files, items) {
   const session = 'v' + (index + 1)
   const label = 'ui-verifier:' + tramo.id
   const rep = await withSlot(label, () =>
     twice('ui-verifier', { label, model: M.verifier, schema: VERIFY_SCHEMA, prompt: verifyPrompt(tramo, session, files, items) },
-      (v) => (v && Array.isArray(v.findings) ? v : null)))
+      (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) ? v : null)))
   if (st.fatal) return null
   if (!rep) {
     st.gaps.push('ui-verifier did not return: ' + tramo.id)

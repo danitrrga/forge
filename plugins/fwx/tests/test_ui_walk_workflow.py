@@ -447,6 +447,27 @@ def check_recheck(script, s):
          ["ui-verifier:T1", "ui-verifier:T2"])
     s.ok("recheck suffixed ids: each verifier is given its own finding", "T1-1.x" in launched(rec, "ui-verifier:T1")[0]["prompt"] and "T2-2.x.x" in launched(rec, "ui-verifier:T2")[0]["prompt"]
          and "T2-2.x.x" not in launched(rec, "ui-verifier:T1")[0]["prompt"], repr([l["prompt"][-200:] for l in launched(rec, "ui-verifier:T")]))
+    # a reply that holds no row for a finding it was given is no recheck of it: `{"findings": []}` was saved and read as "nothing still there"
+    # Red on the base (the reply accepted as long as `findings` was an array; rows shaped by agents/ui-verifier.md), the first of each case:
+    #   FAIL: recheck reply with no row: launched once more, then a gap and a failed run: got (1, 'done', False), want (2, 'failed', True)
+    #   FAIL: recheck reply that skips one finding of two / with a row twice / with a row nobody gave: the same
+    two = [dict(fixes[0], id="T1-1"), dict(fixes[0], id="T1-2"), dict(fixes[1], id="T2-1")]
+    base2 = {**ans, "executor:runner-read-fix": R(json.dumps(two))}
+
+    def row(id, verdict="NOT REPRODUCED"):
+        return real_row(s, id=id, source="v1-F1", verdict=verdict, kind="observed", type="layout", evidence_after="/srv/shots/after.png")
+    whole = {"findings": [row("T2-1")]}
+    for what, rows in (("with no row", []), ("that skips one finding of two", [row("T1-1")]), ("with a row twice", [row("T1-1"), row("T1-1"), row("T1-2")]),
+                       ("with a row nobody gave", [row("T1-1"), row("T1-2"), row("T1-9")])):
+        rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**base2, "ui-verifier:T1": {"findings": rows}, "ui-verifier:T2": whole})
+        rec = finish(s, "recheck reply " + what, rec, err)
+        s.eq("recheck reply %s: launched once more, then a gap and a failed run" % what,
+             (len(launched(rec, "ui-verifier:T1")), result(rec).get("status"), [g for g in details(rec).get("gaps", []) if "T1" in g] != []), (2, "failed", True))
+        s.ok("recheck reply %s: nothing is saved for the tramo" % what, runner(rec, "save-T1") == [], repr(labels(rec)))
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**base2, "ui-verifier:T1": {"findings": [row("T1-2"), row("T1-1", "CONFIRMED")]}, "ui-verifier:T2": whole})
+    rec = finish(s, "recheck reply in another order", rec, err)
+    s.eq("recheck reply in another order: a row for each finding, in any order, is accepted", (result(rec).get("status"), (details(rec).get("recheck") or {}).get("still"),
+         (details(rec).get("recheck") or {}).get("gone")), ("done", 1, 2))
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R("[]")})
     rec = finish(s, "recheck empty", rec, err)
     s.eq("recheck empty: a fix.json with nothing in it is failed, and the browsers closed", (result(rec).get("status"), "executor:runner-down" in labels(rec)), ("failed", True))
@@ -458,6 +479,17 @@ def agent_section(name, mode):
         text = f.read()
     m = re.search(r"^## Mode `%s`\n(.*?)(?=^## |\Z)" % mode, text, re.S | re.M)
     return m.group(1) if m else ""
+
+
+def real_row(s, **over):
+    """One row of a verify reply with the keys agents/ui-verifier.md names (the optional ones left out), `over` set on top."""
+    section = agent_section("ui-verifier.md", "verify")
+    keys = re.search(r"each `\{([^}]*)\}`", section)
+    s.ok("real verify reply: the row's keys are in the agent text", keys is not None, section[-300:])
+    names = [k.strip() for k in (keys.group(1) if keys else "").split(",")]
+    row = {k: ("x" if k not in ("severity", "file", "line") else None) for k in names if not k.endswith("?")}
+    row.update(over)
+    return row
 
 
 def check_real_replies(script, s):
@@ -479,12 +511,7 @@ def check_real_replies(script, s):
     rec = finish(s, "real tramos reply", rec, err, allow_unanswered=True)
     critic = launched(rec, "ui-walker:T1-critic")[0]["prompt"]
     s.ok("real tramos reply: the critic is given the reference its screen carries (REFERENCE (data): none)", all(r in critic for r in refs), critic[:700])
-    section = agent_section("ui-verifier.md", "verify")
-    keys = re.search(r"each `\{([^}]*)\}`", section)
-    s.ok("real verify reply: the row's keys are in the agent text", keys is not None, section[-300:])
-    names = [k.strip() for k in (keys.group(1) if keys else "").split(",")]
-    row = {k: ("x" if k not in ("severity", "file", "line") else None) for k in names if not k.endswith("?")}
-    row.update(id="T1-1", source="critic1-F2", verdict="NOT REPRODUCED", kind="observed", type="layout")  # copied from the walker's finding, as the text says
+    row = real_row(s, id="T1-1", source="critic1-F2", verdict="NOT REPRODUCED", kind="observed", type="layout")  # copied from the walker's finding, as the text says
     rec, err = go(script, answers_over={"ui-verifier:T1": {"findings": [row]}})
     rec = finish(s, "real verify reply", rec, err, allow_unanswered=True)
     s.eq("real verify reply: a NOT REPRODUCED row with severity null is accepted", [l["answer"] for l in launched(rec, "ui-verifier:T1")], ["value"])
@@ -555,6 +582,7 @@ MUTANTS = [
      "FAIL: quota from the second ask: the walkers of the tramos run at once"),
     ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
     ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
+    ("a recheck reply need not cover its findings", "if (!items) return true", "return true", "FAIL: recheck reply with no row: launched once more"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("the runner may name its stderr file", "never a fixed name in /tmp. ", "", "FAIL: green: the runner is told to keep stderr in a mktemp file"),
     ("the verifier is not told where captures go", "A path in /tmp is refused.", "", "FAIL: green: the verifier is told a screenshot with no path lands"),
