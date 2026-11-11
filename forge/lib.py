@@ -46,7 +46,8 @@ def _settings(path):
         sys.exit("! config/forge.json unreadable (%s)" % e)
     if not isinstance(doc, dict):
         sys.exit("! config/forge.json unreadable (top level is %s, not an object)" % type(doc).__name__)
-    return doc
+    from forge import config  # lazily, as owned is: config.py has no import of its own that needs lib
+    return config.merge(doc, os.path.dirname(os.path.abspath(path)))
 
 
 def settings():

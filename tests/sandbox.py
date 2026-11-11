@@ -191,9 +191,9 @@ def unshare_ok(ns=UNSHARE):
 
 
 def mini_root(root, *scripts):
-    """A toy checkout at root: forge/__init__.py and forge/lib.py (every writer's guard) and each
-    of `scripts`, a path relative to this checkout, at the same path."""
-    for rel in [os.path.join("forge", "__init__.py"), os.path.join("forge", "lib.py")] + list(scripts):
+    """A toy checkout at root: forge/__init__.py, forge/lib.py (every writer's guard) and forge/config.py (what
+    lib.settings() reads through) and each of `scripts`, a path relative to this checkout, at the same path."""
+    for rel in [os.path.join("forge", f) for f in ("__init__.py", "lib.py", "config.py")] + list(scripts):
         os.makedirs(os.path.dirname(os.path.join(root, rel)), exist_ok=True)
         shutil.copy(os.path.join(FORGE, rel), os.path.join(root, rel))
     return root

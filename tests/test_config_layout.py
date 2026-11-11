@@ -26,7 +26,7 @@ common keys never merged into lib.settings():
 Mutation of this suite's own (load ignores the new place: `new = None` in _found): the same two, plus every concept check of
 part 1 ("<concept>: load is the same in both layouts").
 """
-import copy
+import hashlib
 import json
 import os
 import shutil
@@ -233,7 +233,7 @@ def part1():
     os.rename(os.path.join(d, config.ENGINE), os.path.join(d, "forge-0.json"))
     r = subprocess.run([sys.executable, "-c", "import json; from forge import lib; lib.SETTINGS = %r; print(json.dumps(lib.settings(), sort_keys=True))"
                         % os.path.join(d, "forge-0.json")], cwd=sandbox.FORGE, capture_output=True, text=True, env=sandbox.bare_env(d, d))
-    check("settings: a differently named engine file is the engine file", r.returncode == 0 and r.stdout.strip() == a,
+    check("settings: a differently named engine file is the engine file", r.returncode == 0 and r.stdout == a,
           "exit %s, %s" % (r.returncode, r.stderr.strip()[-200:]))
 
 
@@ -332,19 +332,23 @@ class World:
     def dump_settings(self):
         r = subprocess.run([sys.executable, "-c", "import json; from forge import lib; print(json.dumps(lib.settings(), sort_keys=True))"],
                            cwd=self.forge, env=self.env(), capture_output=True, text=True)
-        return r.returncode, r.stdout.strip() if r.returncode == 0 else r.stderr.strip()
+        return r.returncode, (r.stdout if r.returncode == 0 else r.stderr).strip().replace(self.top, "@S@")
 
     def hashes(self):
         """{path: (type, mode, sha256)} of the toy HOME and the projects, the root masked; the ownership record without its sums."""
         m = sandbox.manifest(self.top, ("home", "projects"), mask=True)
         rel = os.path.join("home", ".local", "state", "forge", "owned.json")
         if rel in m and m[rel][0] == "f":
-            import hashlib
             doc = read_json(os.path.join(self.top, rel))
             for claims in doc.get("claims", {}).values():
                 for c in claims:
                     c.pop("sum", None)
             m[rel] = m[rel][:2] + (hashlib.sha256(json.dumps(doc, sort_keys=True).replace(self.top, "@S@").encode()).hexdigest(),) + m[rel][3:]
+        rel = os.path.join("home", ".local", "state", "forge", "journal.log")
+        if rel in m and m[rel][0] == "f":  # `<time> <cmd> <step> <what> <path>`: everything but the time
+            with open(os.path.join(self.top, rel), encoding="utf-8") as fh:
+                body = "\n".join(l.split(" ", 1)[1] for l in fh.read().splitlines()).replace(self.top, "@S@")
+            m[rel] = m[rel][:2] + (hashlib.sha256(body.encode()).hexdigest(),) + m[rel][3:]
         return {k: v[:3] for k, v in m.items()}
 
 
