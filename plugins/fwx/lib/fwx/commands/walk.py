@@ -13,6 +13,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       namespace, a mark every process of the app inherits, which `down` counts). `run.json` is written and printed:
       `{armed, run, run_dir, url, apps, namespace, capacity}`. `run` is `app_run.run` (a prefix that runs a command inside the app's
       network); the empty string is a valid value (the command runs in the repo's cwd), not an absent field. `capacity` is
+      A second `up` of the same part and round starts clean: it removes the earlier run's control.json (a recheck has no control) and
+      moves its verified-*.json to `earlier/`, so `findings` reads only this walk's. When an app's `up` fails, the `down` of each app already
+      started runs with the environment that app's `up` had (FWX_WALK_NAME, FWX_WALK_RUN, FWX_WALK_STATE).
       `fwx capacity --role ui-walker --want <2 x --tramos, default 1> --per-agent-mb <PER_AGENT_MB>`; when it cannot answer the quota
       is 1 and says so; allowed 0 stops before the app starts (exit 1). With `container: true` the quota is the number of walkers: `up` runs
       once per walker with FWX_WALK_NAME=<namespace>-w<k> (and `{name}` in `up`, `run`, `down` and `url`), and session `w<k>` of `ab`
@@ -26,6 +29,8 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `up` (the ui-walk workflow: `up` runs first, the tramos come from an agent): prints the capacity object and rewrites `capacity` in
       `run.json`. With `container` the quota never passes the apps `up` already started.
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
+      (Firefox starts logged in too: the app's demo session file is the context's storageState when `up` left one; the app-host filter
+      of `ab` has no counterpart here, Playwright's `network.allowedOrigins` being no boundary and blind to redirects)
       `--run` is a run folder or a namespace; without it, the repository's only open run.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
@@ -35,17 +40,20 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and no control.json is left.
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
-      written as high/high/medium/low (3.4's words).
+      written as high/high/medium/low (3.4's words). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
+      (starting with a letter or digit) is exit 2, as in `wave prepare`.
   review-page --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
       figures today/built) and one per CONTRADICTED ("¿Cambiar lo aprobado por esto?"), the item `id` being the finding's. A `.webm`
       clip becomes an animated WebP with ffmpeg; without it `NOT RUN, NOT ARMED: ffmpeg missing`, exit 0, the clip's path in the text.
-      `review/map.json` says which id is a fix and which a contradicted one. F is a file with [{id, commit}].
+      `review/map.json` says which id is a fix and which a contradicted one. F is a file with [{id, commit}]. The `built` figure of a fix
+      is the `evidence_after` its recheck saved in `rechecked-*.json`, else the one fix.json holds.
   review-answers --run R FILE        the line `verdict wait` printed, as `{accepted, rejected: [{id, note}], contradicted_wanted, open, stale}`
       in `review/answers.json`. Only a fix answered "ok" and not stale is accepted.
   down --run R         `close --all` of the run's namespace, the app's `down` (per app; the image's in the factory; with `container`
       `docker rm -f` by exact name), then a count of the processes whose environment or command line carries the namespace:
       `down.json` says how many it looked at and what is left; exit 1 if anything is, or a `down` or a container failed.
-      It also removes the `*.target` files agent-browser leaves in `<socket dir>/namespaces/<namespace>/run/` (that namespace's only).
+      It also removes the `*.target` files agent-browser leaves in `<socket dir>/namespaces/<namespace>/run/` (that namespace's only), and
+      the run's session marks (`sessions/ab-*`, `sessions/pw-*`), so the next `ab` of the same run launches and logs in again.
   selftest [--dir D] [--repo P] [--image-id ID] [--json]
       Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
       `agent-browser` opens the URL with the demo session and the snapshot has an element (`open` returns before a cold dev server has
@@ -100,7 +108,7 @@ import urllib.request
 from urllib.parse import urlsplit
 
 from fwx import config
-from fwx.execute import base
+from fwx.execute import base, brief
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 FACTORY_UI_DIR = "/opt/fwx/ui"  # the image's `up` and `down` (5.2a Appendix C); a test replaces this constant on a copy of the tree
@@ -415,9 +423,19 @@ def app_spec(o, cfg, factory):
     return app
 
 
-def stop_apps(started, repo, env):
+def app_env(a, ns, container, base_env):
+    """The environment an app's `up` runs with: its own session file, the run's mark and, with `container`, its container's name."""
+    env = dict(base_env, FWX_WALK_STATE=a["state"], FWX_WALK_RUN=ns)
+    if container:
+        env["FWX_WALK_NAME"] = a["name"]
+    return env
+
+
+def stop_apps(started, repo, env_of):
+    """The rollback of a startup that failed: each started app's `down` with the environment its `up` had (a teardown by container name
+    needs FWX_WALK_NAME, and there is no run.json yet for `down` or `sweep` to recover it from)."""
     for a in started:
-        shell(a["down"], repo, env, os.path.join(a["log_dir"], "down-%s.log" % a["name"]))
+        shell(a["down"], repo, env_of(a), os.path.join(a["log_dir"], "down-%s.log" % a["name"]))
 
 
 def cmd_up(argv):
@@ -467,17 +485,20 @@ def cmd_up(argv):
         if a["url"] and answering(a["url"], a["run"], repo):
             raise Stop("%s is already answering before up: another app (or a run that was not closed) is there" % a["url"])
     os.makedirs(run_dir, exist_ok=True)
-    for stale in ("down.json", "run.json"):
+    # A second `up` of the same part and round (a recheck, or a rerun) starts clean: the earlier plant (control.json) is not loaded by the
+    # new browsers, and the earlier verdicts (verified-*.json) are not read by `findings` as this walk's; they are kept in earlier/.
+    for stale in ("down.json", "run.json", "control.json"):
         if os.path.exists(os.path.join(run_dir, stale)):
             os.remove(os.path.join(run_dir, stale))
+    for old in glob.glob(os.path.join(run_dir, "verified-*.json")):
+        os.makedirs(os.path.join(run_dir, "earlier"), exist_ok=True)
+        os.replace(old, os.path.join(run_dir, "earlier", os.path.basename(old)))
     started = []
     env_base = dict(os.environ)
     try:
         for a in apps:
-            env = dict(env_base, FWX_WALK_STATE=a["state"], FWX_WALK_RUN=ns)
-            if container:
-                env["FWX_WALK_NAME"] = a["name"]
-            log = os.path.join(run_dir, "up-%s.log" % a["name"])
+            env = app_env(a, ns, container, env_base)
+            log =os.path.join(run_dir, "up-%s.log" % a["name"])
             started.append(a)
             rc = shell(a["up"], repo, env, log)
             if rc:
@@ -493,7 +514,7 @@ def cmd_up(argv):
             if not wait_for(a["url"], a["run"], repo):
                 raise Stop("nothing answered at %s within %d s after up" % (a["url"], WAIT_URL_S), 1)
     except Stop:
-        stop_apps(started, repo, env_base)
+        stop_apps(started, repo, lambda a: app_env(a, ns, container, env_base))
         raise
     hosts = []
     for a in apps:
@@ -753,11 +774,13 @@ def pw_browsers():
     return os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")
 
 
-def pw_config(run):
+def pw_config(run, app):
     path = os.path.join(run["run_dir"], "pw.config.json")
+    context = {"viewport": {"width": VIEWPORT[0], "height": VIEWPORT[1]}, "deviceScaleFactor": SCALE}
+    if os.path.isfile(app["state"]):  # the demo session the app's `up` left, as `ab` sets it by cookies: Firefox starts logged in too
+        context["storageState"] = app["state"]
     write_json(path, {"outputDir": run["shots"],  # without it Playwright's CLI writes `.playwright-cli/` in the working folder (the project)
-                      "browser": {"browserName": "firefox", "launchOptions": {"headless": True},
-                                  "contextOptions": {"viewport": {"width": VIEWPORT[0], "height": VIEWPORT[1]}, "deviceScaleFactor": SCALE}}})
+                      "browser": {"browserName": "firefox", "launchOptions": {"headless": True}, "contextOptions": context}})
     return path
 
 
@@ -776,7 +799,7 @@ def cmd_pw(argv):
         raise Stop("NOT RUN, NOT ARMED: Playwright Firefox missing (%s in %s)" % (PW_FIREFOX, pw_browsers()), 77)
     launch = positional(args)[:1] == ["open"]
     if launch:
-        args = args + ["--browser", "firefox", "--config", pw_config(run)]
+        args = args + ["--browser", "firefox", "--config", pw_config(run, app)]
         touch(marker(run, "pw", session))
     prefix = shlex.split(app["run"]) if launch else []
     os.makedirs(run["shots"], exist_ok=True)
@@ -790,7 +813,7 @@ TARGET = 'h1, [role="heading"][aria-level="1"]'  # what the plant restyles, and 
 CONTROL_JS = """(() => {
   const PATH = %(path)s;
   const apply = () => {
-    if (location.pathname.replace(/\\/+$/, "") !== PATH) return;
+    if ((location.pathname.replace(/\\/+$/, "") || "/") !== PATH) return;
     const h = document.querySelector(%(target)s);
     if (!h || h.dataset.fwxCtl === "1") return;
     const cs = getComputedStyle(document.body);
@@ -910,6 +933,7 @@ def cmd_findings(argv):
         for f in items:
             if not isinstance(f, dict) or not isinstance(f.get("id"), str) or not f["id"]:
                 raise Stop("%s: a finding with no id" % p)
+            check_id(f["id"], p)
             if f["id"] in seen:
                 raise Stop("%s: finding id %s appears twice" % (p, f["id"]))
             seen.add(f["id"])
@@ -978,7 +1002,14 @@ def convert_clip(rd, rev, fid, f, notes):
     return [{"src": name, "caption": "clip"}], []
 
 
+def check_id(fid, where):
+    """A finding id names the review's figure and clip files, so it is one path component: `brief.ID`, the rule `wave prepare` applies."""
+    if not brief.ID.match(fid):
+        raise Stop("%s: the finding id %r cannot name a file (letters, digits, `.`, `_` and `-`, starting with a letter or digit)" % (where, fid))
+
+
 def fid_of(f):
+    check_id(f["id"], "a finding of the review")
     return f["id"]
 
 
@@ -990,6 +1021,18 @@ def item_of(rd, rev, f, ask, commit, notes):
     what = [x for x in ["Screen: %s" % f["screen"] if f.get("screen") else "", "Expected: %s" % f["expected"] if f.get("expected") else "",
                         "Commit: %s" % commit if commit else ""] if x] + t1 + t2 + t3
     return {"id": fid, "title": f.get("claim") or fid, "what": what, "ask": ask, "figures": today + built + clip}
+
+
+def rechecked_after(rd):
+    """{finding id: evidence_after} from the rechecked-*.json of the folder: the capture a recheck took of each finding on the fixed app is
+    what the review page shows as `built`. A finding the recheck did not capture is not in it (its fix.json row keeps what it has)."""
+    got = {}
+    for p in sorted(glob.glob(os.path.join(rd, "rechecked-*.json"))):
+        data = read_json(p, "recheck file")
+        for f in (data.get("findings") if isinstance(data, dict) else data) or []:
+            if isinstance(f, dict) and isinstance(f.get("id"), str) and f.get("evidence_after"):
+                got[f["id"]] = f["evidence_after"]
+    return got
 
 
 def cmd_review_page(argv):
@@ -1007,11 +1050,13 @@ def cmd_review_page(argv):
     for x in fixed:
         if x["id"] not in fix:
             raise Stop("fixed id %s is not a finding of fix.json" % x["id"])
+    after = rechecked_after(rd)
     notes, items, mapping = [], [], {}
     if os.path.isdir(rev):
         shutil.rmtree(rev)
     for x in fixed:
-        items.append(item_of(rd, rev, fix[x["id"]], ASK_FIX, x.get("commit"), notes))
+        f = fix[x["id"]]
+        items.append(item_of(rd, rev, dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f, ASK_FIX, x.get("commit"), notes))
         mapping[x["id"]] = {"kind": "fix", "commit": x.get("commit")}
     for f in contradicted:
         items.append(item_of(rd, rev, f, ASK_CONTRADICTED, None, notes))
@@ -1165,6 +1210,13 @@ def do_down(run):
         except FileNotFoundError:
             steps.append({"step": "pw close %s" % session, "rc": None, "note": "npx is not on the PATH"})
     steps.append({"step": "remove agent-browser *.target files", "rc": 0, "removed": drop_targets(ns)})
+    # Every browser of the namespace was just closed: a mark that outlived it would make the next `ab` of the same run (a recheck within
+    # IDLE_S) take the closed session for an open one and skip the demo session, the viewport and the launch prefix.
+    for p in glob.glob(os.path.join(rd, "sessions", "ab-*")) + glob.glob(os.path.join(rd, "sessions", "pw-*")):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
     ok = True
     for a in run["apps"]:
         cmd = a["down"]

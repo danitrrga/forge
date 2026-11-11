@@ -676,9 +676,19 @@ def case_pw(R, S):
         S.ok("pw: the session is the run's", "-s=%s-w1" % ns in argv, str(argv))
         S.ok("pw: Firefox from the run's config", argv[-4:-2] == ["--browser", "firefox"] and argv[-2] == "--config", str(argv))
         cfg = jfile(argv[-1]) or {}
-        S.eq("pw: the config is Firefox, headless, 1309x818 at 1.1", (
+        # The Firefox context starts logged in like `ab` does: the app's own storageState (the file its `up` left) is the context's. Seen red
+        # on the base (the context had the viewport only, so a Firefox walker met the login screen):
+        #   FAIL: pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session: got (..., {'viewport': {...}, 'deviceScaleFactor': 1.1}), want (..., {..., 'storageState': '<run>/demo-state.json'})
+        S.eq("pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session", (
             cfg.get("browser", {}).get("browserName"), cfg.get("browser", {}).get("launchOptions", {}).get("headless"),
-            cfg.get("browser", {}).get("contextOptions")), ("firefox", True, {"viewport": {"width": 1309, "height": 818}, "deviceScaleFactor": 1.1}))
+            cfg.get("browser", {}).get("contextOptions")),
+             ("firefox", True, {"viewport": {"width": 1309, "height": 818}, "deviceScaleFactor": 1.1, "storageState": os.path.join(rd, "demo-state.json")}))
+        # an app that left no session file (the state is only a path until `up` writes it): no storageState, the launch still works
+        os.remove(os.path.join(rd, "demo-state.json"))
+        sc.clear()
+        S.eq("pw: no session file: open exit", sc.walk(R, "pw", "--run", rd, "w2", "open", sc.url).returncode, 0)
+        S.ok("pw: no session file: the context has no storageState (Playwright would refuse a missing file)",
+             "storageState" not in ((jfile(sc.calls("npx")[-1]["argv"][-1]) or {}).get("browser", {}).get("contextOptions") or {}), str(sc.calls("npx")[-1]["argv"]))
         sc.clear()
         sc.walk(R, "pw", "--run", rd, "w1", "snapshot")
         S.eq("pw: a later call is not wrapped", [c["prog"] for c in sc.calls()], ["npx"])
@@ -1328,9 +1338,169 @@ def case_usage(R, S):
     S.ok("`fwx help` lists walk", "walk" in h.stdout, h.stdout)
 
 
+DOWNENV = """import json, os
+with open("down-env.jsonl", "a") as f:
+    f.write(json.dumps({k: v for k, v in os.environ.items() if k.startswith("FWX_WALK_")}) + "\\n")
+"""
+
+
+def case_rollback_env(R, S):
+    """When an app's `up` fails, the rollback runs its `down` with the environment that app's `up` had (FWX_WALK_NAME, FWX_WALK_RUN,
+    FWX_WALK_STATE): a container teardown by name (`docker rm -f "$FWX_WALK_NAME"`) needs it, and no run.json exists yet for `down` or
+    `sweep` to recover the startup from. Seen red on the base (the rollback got the caller's environment):
+      FAIL: rollback: the down of the failed app ran with the env its up had: got {}, want {'FWX_WALK_NAME': '<ns>-w1', 'FWX_WALK_RUN': '<ns>', 'FWX_WALK_STATE': '<run>/demo-state-w1.json'}"""
+    sc = Scene(container=True, limits={"ui-walker": 2})
+    try:
+        helpers.write(sc.repo, "downenv.py", DOWNENV)
+        app = {"up": "python3 up.py %d %s fail" % (sc.port, sc.pidfile), "run": "", "down": "python3 downenv.py", "url": sc.url + "/{name}", "container": True}
+        r, o = sc.up(R, "--app", json.dumps(app))
+        S.ok("rollback: a failing up exits 1", r.returncode == 1 and "up failed" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
+        upenv = [json.loads(line) for line in open(sc.pidfile + ".env")]
+        downenv = [json.loads(line) for line in open(os.path.join(sc.repo, "down-env.jsonl"))] if os.path.exists(os.path.join(sc.repo, "down-env.jsonl")) else []
+        S.eq("rollback: the down of the failed app ran with the env its up had", downenv, upenv[:1])
+        S.ok("rollback: that env names the container", bool(downenv) and downenv[0].get("FWX_WALK_NAME", "").endswith("-w1"), str(downenv))
+    finally:
+        sc.stop()
+
+
+def case_up_restart(R, S):
+    """A second `up` of the same part and round (a recheck, or a rerun after a failed one) starts clean. Seen red on the base:
+      FAIL: restart: control.json of the earlier run is gone: it is still there
+      FAIL: restart: a verified file of the earlier run is not left for `findings`: ['verified-T9.json']
+      FAIL: restart: down leaves no session mark: ['ab-w1']
+      FAIL: restart: the first call after the restart launches again (the demo session is set): calls []
+    The marker case is the real consequence: a mark that `down` left made the next `ab` see an open browser and skip the demo session."""
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "restart")
+        if not o:
+            return
+        rd = o["run_dir"]
+        S.eq("restart: first call exit", sc.walk(R, "ab", "--run", rd, "w1", "open", sc.url).returncode, 0)
+        S.ok("restart: the session has its mark", os.path.exists(os.path.join(rd, "sessions", "ab-w1")))
+        sc.walk(R, "pw", "--run", rd, "w1", "open", sc.url)
+        S.eq("restart: down", sc.walk(R, "down", "--run", rd).returncode, 0)
+        S.eq("restart: down leaves no session mark", sorted(os.listdir(os.path.join(rd, "sessions"))) if os.path.isdir(os.path.join(rd, "sessions")) else [], [])
+        helpers.write(rd, "control.json", json.dumps({"screen": sc.url + "/a", "path": "/a", "script": os.path.join(rd, "init.js")}))
+        helpers.write(rd, "verified-T9.json", json.dumps([{"id": "T9-1", "verdict": "CONFIRMED"}]))
+        r, o2 = sc.up(R)
+        if not S.ok("restart: up armed again", r.returncode == 0 and o2 and o2.get("armed") is True, "rc %d %s" % (r.returncode, r.stderr)):
+            return
+        S.ok("restart: control.json of the earlier run is gone", not os.path.exists(os.path.join(rd, "control.json")), "it is still there")
+        S.eq("restart: a verified file of the earlier run is not left for `findings`", sorted(f for f in os.listdir(rd) if f.startswith("verified-")), [])
+        S.ok("restart: and it is kept, not deleted", os.path.exists(os.path.join(rd, "earlier", "verified-T9.json")))
+        sc.clear()
+        sc.walk(R, "ab", "--run", rd, "w1", "snapshot")
+        S.ok("restart: the first call after the restart launches again (the demo session is set)",
+             any(c["argv"][-6:-4] == ["cookies", "set"] for c in sc.calls("agent-browser")), "calls %s" % [c["argv"][-6:] for c in sc.calls("agent-browser")])
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_finding_ids(R, S):
+    """A finding id names files (the review figures, the clip), so one that is a path is refused before any file is built from it.
+    Seen red on the base (`findings` took any non-empty string, and `review-page` joined it into the figures folder):
+      FAIL: finding ids: ../../escape (CONTRADICTED): exit: got 0, want 2
+      FAIL: finding ids: review-page with the id ../../evil: exit: got 0, want 2
+      FAIL: finding ids: review-page with the id ../../evil: nothing was written outside review/: ['evil-today-1.png']
+    A normal id (F1, T1-3, a.b_c) is the negative control: it still goes through, and every other test of the file uses them."""
+    for label, fid in (("../../escape", "../../escape"), ("a/b", "a/b"), ("a\\b", "a\\b"), ("empty after trim", " "), ("leading dot", ".hidden")):
+        bad = helpers.mkdtemp("fwx-walk-run-")
+        helpers.write(bad, "verified-1.json", json.dumps([{"id": fid, "file": "a.ts", "line": 1, "claim": "c", "evidence": "e", "severity": "minor",
+                                                           "verdict": "CONTRADICTED"}]))
+        r = runner_walk(R, "findings", "--run", bad)
+        S.ok("finding ids: %s (CONTRADICTED): exit 2, nothing written" % label, r.returncode == 2 and not os.path.exists(os.path.join(bad, "contradicted.json"))
+             and "id" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
+    ok = helpers.mkdtemp("fwx-walk-run-")
+    helpers.write(ok, "verified-1.json", json.dumps([{"id": i, "file": "a.ts", "line": 1, "claim": "c", "evidence": "e", "severity": "minor", "verdict": "CONTRADICTED"}
+                                                     for i in ("F1", "T1-3", "a.b_c")]))
+    r = runner_walk(R, "findings", "--run", ok)
+    S.ok("finding ids: F1, T1-3 and a.b_c are ids", r.returncode == 0 and [x["id"] for x in jfile(os.path.join(ok, "contradicted.json"))] == ["F1", "T1-3", "a.b_c"],
+         "rc %d %s" % (r.returncode, r.stderr))
+    # a contradicted.json that was not made by `findings` (the review page builds file names from it too)
+    rd = fixed_run(("F1",), "F3", images=("F3",))
+    con = jfile(os.path.join(rd, "contradicted.json"))
+    con[0]["id"] = "../../evil"
+    helpers.write(rd, "contradicted.json", json.dumps(con))
+    fixed = os.path.join(helpers.mkdtemp("fwx-walk-fixed-"), "fixed.json")
+    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": "F1", "commit": "abc1234"}]))
+    r = runner_walk(R, "review-page", "--run", rd, "--fixed", fixed)
+    S.eq("finding ids: review-page with the id ../../evil: exit", r.returncode, 2)
+    S.eq("finding ids: review-page with the id ../../evil: nothing was written outside review/",
+         sorted(f for f in os.listdir(rd) if f.startswith("evil")), [])
+
+
+def case_review_recheck(R, S):
+    """The recheck's capture of a fixed finding is its `built` figure on the review page. The verifier of a recheck saves it in
+    rechecked-<tramo>.json (`evidence_after`), not in fix.json, so the page joins it by finding id; a finding the recheck did not cover
+    keeps what fix.json has. Seen red on the base (review-page read fix.json only):
+      FAIL: review recheck: F1 has today and built (the recheck's capture): got ['today'], want ['today', 'built']"""
+    bindir = helpers.mkdtemp("fwx-walk-bin-")
+    for name, target in (("python3", PY), ("git", GIT)):
+        os.symlink(target, os.path.join(bindir, name))
+    env = {"PATH": bindir}
+    rd = fixed_run(("F1", "F2", "F4"), "F3", images=("F1", "F2", "F3"), with_clip=False)
+    fix = jfile(os.path.join(rd, "fix.json"))
+    fix[0].pop("evidence_after")  # F1: the walk's own fix.json has no `built`; only the recheck does
+    helpers.write(rd, "fix.json", json.dumps(fix))
+    with open(os.path.join(rd, "shots", "after-F1.png"), "wb") as fh:
+        fh.write(PNG)
+    helpers.write(rd, "rechecked-T1.json", json.dumps({"findings": [{"id": "F1", "verdict": "NOT REPRODUCED", "evidence_after": os.path.join(rd, "shots", "after-F1.png")},
+                                                                    {"id": "F2", "verdict": "NOT REPRODUCED"}]}))
+    fixed = os.path.join(helpers.mkdtemp("fwx-walk-fixed-"), "fixed.json")
+    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": "F1", "commit": "a1"}, {"id": "F2", "commit": "b2"}, {"id": "F4", "commit": "c4"}]))
+    r = runner_walk(R, "review-page", "--run", rd, "--fixed", fixed, env=env)
+    S.eq("review recheck: exit", r.returncode, 0)
+    items = {i["id"]: i for i in (jfile(os.path.join(rd, "review", "decisions.json")) or {}).get("items", [])}
+    caps = {k: [fg["caption"] for fg in v["figures"]] for k, v in items.items()}
+    S.eq("review recheck: F1 has today and built (the recheck's capture)", caps.get("F1"), ["today", "built"])
+    S.eq("review recheck: F2 was rechecked without a capture and keeps the one fix.json has", caps.get("F2"), ["today", "built"])
+    S.eq("review recheck: F4 was not rechecked and has no figure", caps.get("F4"), [])
+
+
+def case_arm_control_root(R, S):
+    """The plant's route test is the same for `/` as for any route: the page's pathname with its trailing slashes cut is `""` for the
+    root, and the plant stores `/`. Seen red on the base (the script compared `""` with `"/"`, so on the root screen it never applied
+    and arm-control's read-back refused it as `no visible change`):
+      FAIL: arm-control root: the plant restyles the title on /: got {}, want {'font-size': '16px', 'font-weight': '400'}
+    The same script on another route is the negative control: it leaves the title alone."""
+    if not shutil.which("node"):
+        sys.stderr.write("NOT RUN, NOT ARMED: node missing: the plant's route match for the root screen was not run\n")
+        return
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "arm-control root")
+        if not o:
+            return
+        rd = o["run_dir"]
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/")
+        S.eq("arm-control root: exit", r.returncode, 0)
+        c = jfile(os.path.join(rd, "control.json")) or {}
+        S.eq("arm-control root: the plant's path", c.get("path"), "/")
+        harness = ("let styled = {};\n"
+                   "const h = {dataset: {}, style: {setProperty(k, v) { styled[k] = v; }}};\n"
+                   "global.location = {pathname: process.argv[3]};\n"
+                   "global.document = {querySelector: () => h, body: {}, addEventListener() {}};\n"
+                   "global.getComputedStyle = () => ({fontSize: '16px', fontWeight: '400'});\n"
+                   "global.MutationObserver = class { observe() {} };\n"
+                   "eval(require('fs').readFileSync(process.argv[2], 'utf8'));\n"
+                   "console.log(JSON.stringify(styled));\n")
+        hp = os.path.join(helpers.mkdtemp("fwx-walk-node-"), "harness.js")
+        with open(hp, "w", encoding="utf-8") as f:
+            f.write(harness)
+        for pathname, want in (("/", {"font-size": "16px", "font-weight": "400"}), ("/other", {})):
+            out = subprocess.run(["node", hp, c["script"], pathname], capture_output=True, text=True)
+            got = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else out.stderr[-200:]
+            S.eq("arm-control root: the plant restyles the title on %s" % pathname if want else "arm-control root: it leaves the title alone on %s" % pathname, got, want)
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
-         case_usage]
+         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
@@ -1441,6 +1611,18 @@ MUTANTS = [
     ("9 target files kept", case_hygiene, '"removed": drop_targets(ns)', '"removed": 0', "hygiene down: the target files of the namespace are gone"),
     ("9 every namespace's targets", case_hygiene, 'os.path.join(socket_dir(), "namespaces", ns, "run")', 'os.path.join(socket_dir(), "namespaces", "*", "run")',
      "hygiene down: another walk's target file stays"),
+    ("rollback with the caller's env", case_rollback_env, "stop_apps(started, repo, lambda a: app_env(a, ns, container, env_base))",
+     "stop_apps(started, repo, lambda a: env_base)", "rollback: the down of the failed app ran with the env its up had"),
+    ("control.json kept at up", case_up_restart, '("down.json", "run.json", "control.json")', '("down.json", "run.json")', "restart: control.json of the earlier run is gone"),
+    ("verified files kept at up", case_up_restart, 'os.replace(old, os.path.join(run_dir, "earlier", os.path.basename(old)))', "pass",
+     "restart: a verified file of the earlier run is not left for `findings`"),
+    ("session marks kept by down", case_up_restart, 'for p in glob.glob(os.path.join(rd, "sessions", "ab-*")) + glob.glob(os.path.join(rd, "sessions", "pw-*")):',
+     "for p in []:", "restart: down leaves no session mark"),
+    ("finding id not checked", case_finding_ids, "if not brief.ID.match(fid):", "if False:", "finding ids: ../../escape (CONTRADICTED)"),
+    ("recheck captures not joined", case_review_recheck, 'dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f', "f",
+     "review recheck: F1 has today and built"),
+    ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
+    ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
     ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),
 ]
 
