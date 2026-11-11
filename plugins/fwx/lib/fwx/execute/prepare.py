@@ -256,7 +256,8 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     phase = os.path.dirname(part) if _is_subphase(part) else part
     paths = state.phase_paths(part)
     data = _load(plan.load_plan, paths["plan"], "plan.md")
-    post = _load(plan.load_postmortem, paths["postmortem"], "postmortem.md")
+    owner = state.phase_paths(phase)  # context, decisions and the critique are the phase's; a subphase has its own plan and audit only
+    post = _load(plan.load_postmortem, owner["postmortem"], "postmortem.md")
     tasks = data["tasks"]
     ignored = _ignored(top, tasks)
     if ignored:
@@ -298,7 +299,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
     folder = brief.folder_of(common, run)
     ctx = {"run": run, "part": name, "folder": folder,
-           "paths": {"context": str(state.phase_paths(phase)["context"]), "decisions": str(state.phase_paths(phase)["decisions"]),
+           "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                      "plan": str(paths["plan"])}}
     quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
     made = _briefs(data, ctx, fixing, size, quick, revert is None and not gating)
@@ -324,8 +325,8 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     return {
         "run": run, "plane": plane, "unattended": plane == "factory" or unattended,
         "part_dir": part, "phase_dir": phase, "checkout": top, "branch": branch, "base": base, "isolation": "native",
-        "paths": {"context": str(state.phase_paths(phase)["context"]), "decisions": str(state.phase_paths(phase)["decisions"]),
-                  "plan": str(paths["plan"]), "postmortem": str(paths["postmortem"]), "config": os.path.join(main, config.FILE)},
+        "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
+                  "plan": str(paths["plan"]), "postmortem": str(owner["postmortem"]), "config": os.path.join(main, config.FILE)},
         "models": {"runner": _model(cfg, "executor", "small"),
                    "executor": {t["id"]: _model(cfg, "executor", t["size"]) for t in tasks},
                    "fixer": _model(cfg, "executor", size), "reviewer": _model(cfg, "reviewer", size),

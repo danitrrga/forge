@@ -19,6 +19,13 @@ Red before `fwx wave scratch` existed (3.4 U8 fix, F2; `case_scratch`):
   FAIL: scratch: with a report and a TMPDIR file in it the worktree is clean: got '?? .fwx-agent/\n', want ''
 Controls added: the folder not ignored, the folder under `.git`.
 
+Red before `prepare` read a subphase's postmortem.md from the phase folder (the post-mortem step writes it there; the contract
+keeps a subphase's own plan.md, state.md, report and audit.tsv only; `case_subphase`; the toy post-mortem is written where
+`fwx plan brief <phase> postmortem` says, not where the reader looks):
+  FAIL: subphase: exit: got (2, 'fwx wave prepare: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read (No such file or directory)'), want (0, '')
+  FAIL: subphase security: exit: got (2, 'fwx wave prepare: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read ...
+Control: a subphase with no postmortem.md anywhere is still refused, and the refusal names the phase's file.
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
 be in the file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (188 checks). The first FAIL
 line of each, seen red:
@@ -37,12 +44,16 @@ line of each, seen red:
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
+
+sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
+from fwx import state  # noqa: E402
 
 ROOT = helpers.ROOT
 s = helpers.Suite()
@@ -97,10 +108,26 @@ class Scene:
                 "not_built": [], "later": []}
         plan.update(plan_extra or {})
         helpers.write(self.part, "plan.md", front(plan))
-        helpers.write(self.part, "postmortem.md", front({"verdict": "ok", "security_review": security, "round": 1}))
+        post = front({"verdict": "ok", "security_review": security, "round": 1})
         helpers.write(self.phase, "context.md", "# context\n")
         helpers.write(self.phase, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
+        if sub:
+            self.write_postmortem_as_the_step(plan, post)
+        else:
+            helpers.write(self.part, "postmortem.md", post)
         self.name = os.path.basename(self.part)
+
+    def write_postmortem_as_the_step(self, plan, post):
+        """The post-mortem of a phase with subphases, written where the step writes it: the phase has its own plan.md and a
+        `postmortem` stage row, and the file goes to the path the step's brief names under `## Write` (`fwx plan brief`), not to a
+        place this test picks."""
+        helpers.write(self.phase, "plan.md", front(plan))
+        state.append_audit(self.phase, "stage", detail="postmortem", cwd=self.repo)
+        r = helpers.fwx(self.repo, "plan", "brief", self.phase, "postmortem")
+        m = re.search(r"## Write\n(.+?)(?:,|\n)", r.stdout)
+        assert r.returncode == 0 and m, "no `## Write` path in the post-mortem brief: rc=%s %r %r" % (r.returncode, r.stdout[-200:], r.stderr[:200])
+        self.post_path = m.group(1)
+        helpers.write(os.path.dirname(self.post_path), os.path.basename(self.post_path), post)
 
     def head(self):
         return helpers.git(self.cwd, "rev-parse", "HEAD").strip()
@@ -324,6 +351,13 @@ def case_subphase(R, S):
     S.eq("subphase: plan.md is its own", p.get("plan"), os.path.join(sc.part, "plan.md"))
     S.eq("subphase: phase_dir is the parent, part_dir the subphase", (a.get("phase_dir"), a.get("part_dir")), (sc.phase, sc.part))
     S.eq("subphase: the trailer names the subphase", ((a.get("waves") or [{"tasks": [{}]}])[0]["tasks"][0].get("trailer")), "03.1-beta/T1")
+    S.eq("subphase: the step writes postmortem.md in the phase folder", sc.post_path, os.path.join(sc.phase, "postmortem.md"))
+    S.eq("subphase: postmortem.md is the phase's, where the step wrote it", p.get("postmortem"), os.path.join(sc.phase, "postmortem.md"))
+    sec = Scene(sub=True, security=True)
+    S.eq("subphase: security_review is read from the phase's postmortem.md", (ok_args(S, "subphase security", sec.prepare(R)).get("security") or {}).get("needed"), True)
+    nm = Scene(sub=True)
+    os.remove(nm.post_path)
+    refused(S, "a subphase with no postmortem anywhere", nm, nm.prepare(R), os.path.join(nm.phase, "postmortem.md"))
 
 
 def case_fix_options(R, S):
@@ -480,6 +514,8 @@ MUTANTS = [
     ("checks from the checkout", case_worktree_checks, P, "return config.load(top)",
      'return dict(config.DEFAULTS, project=dict(config.DEFAULTS["project"], checks=[]))', "from a worktree: exit: got (2,"),
     ("subphase as a phase", case_subphase, P, "if _is_subphase(part) else part", "if False else part", "subphase: context.md is the parent's"),
+    ("postmortem from the subphase", case_subphase, P, 'post = _load(plan.load_postmortem, owner["postmortem"], "postmortem.md")',
+     'post = _load(plan.load_postmortem, paths["postmortem"], "postmortem.md")', "subphase: exit: got (2,"),
     ("from gate, the head as the base", case_from_gate, P, "base = _part_base(top, branch, name)", "base = verify.head(top)", "the base is where the part's first run started"),
     ("from gate runs the base", case_from_gate, P, "red = None if gating else _base_is_green(", "red = _base_is_green(", "from gate: exit"),
     ("from gate with a task not done", case_from_gate, P, "        if todo:\n", "        if False:\n", "from gate, a task not done"),

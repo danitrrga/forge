@@ -1,7 +1,9 @@
 #!/bin/sh
 # The personal-data check over the content and message of every commit about to be pushed. A
-# commit made with --no-verify is caught here. A new remote branch (all-zero remote sha) checks
-# every commit no remote branch has; a branch deletion is not checked.
+# commit made with --no-verify is caught here. Every pushed ref, new on the remote or not, checks the
+# commits reachable from the pushed tip that the remote pushed to does not advertise (git ls-remote).
+# A range from the remote's old sha would re-scan what a merged-in default branch already made public.
+# A branch deletion is not checked.
 root=$(git rev-parse --show-toplevel) || exit 1
 forge="$root/bin/forge"
 if [ ! -x "$forge" ]; then
@@ -9,9 +11,11 @@ if [ ! -x "$forge" ]; then
     exit 1
 fi
 rc=0
-while read -r local_ref local_sha remote_ref remote_sha; do
+while read -r local_ref local_sha remote_ref _remote_sha; do
     case "$local_sha" in *[!0]*) ;; *) continue ;; esac
-    "$forge" check-public --range "$remote_sha..$local_sha" || rc=1
+    # "remote:URL..TIP": TIP's commits that the destination does not advertise. Tracking refs prove nothing
+    # about it: another remote can write under the same name and a changed URL leaves the old ones behind.
+    "$forge" check-public --range "remote:$2..$local_sha" || rc=1
 done
 if [ "$rc" -ne 0 ]; then
     echo "pre-push: refused: personal data in the commits being pushed, listed above" >&2
