@@ -63,7 +63,20 @@ with open(os.environ["FAKE_LOG"], "a") as f:
 %(tail)s
 """
 TAILS = {
-    "agent-browser": 'sys.exit(int(os.environ.get("FAKE_RC", "0")))',
+    "agent-browser": """
+# The read-back of arm-control asks the page for the target's style with a call of the browser's eval command whose code carries the
+# word fwx: and answers with the line that code builds. FAKE_READ says what the page holds: changes (the default: 24px/700 before the
+# plant, 16px/400 after it), same (the plant changes nothing: the title already has the planted style) or missing (no title).
+# FAKE_QUOTE=1 wraps the line in quotes (the shape of a string result is not measured; the parser takes both).
+if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
+    mode = os.environ.get("FAKE_READ", "changes")
+    count = os.environ["FAKE_LOG"] + ".reads"
+    k = int(open(count).read()) if os.path.exists(count) else 0
+    open(count, "w").write(str(k + 1))
+    line = {"missing": "fwx:missing", "same": "fwx:16px|400"}.get(mode) or ("fwx:24px|700" if k == 0 else "fwx:16px|400")
+    print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
+sys.exit(int(os.environ.get("FAKE_RC", "0")))
+""",
     "npx": 'sys.exit(int(os.environ.get("FAKE_RC", "0")))',
     "fakerig": 'i = sys.argv.index("--"); os.execvp(sys.argv[i + 1], sys.argv[i + 1:])',
     "ffmpeg": 'open(sys.argv[-1], "wb").write(b"RIFF")',
@@ -199,8 +212,9 @@ class Scene:
         return [r for r in recs if prog is None or r["prog"] == prog]
 
     def clear(self):
-        if os.path.exists(self.log):
-            os.remove(self.log)
+        for f in (self.log, self.log + ".reads"):
+            if os.path.exists(f):
+                os.remove(f)
 
     def up(self, R, *extra, part=1, rnd=1, env=None, tramos=None):
         args = ["walk", "up", "--dir", self.run_dir_root, "--part", str(part), "--round", str(rnd), "--repo", self.repo]
@@ -769,6 +783,71 @@ def case_arm_control(R, S):
         sc.stop()
 
 
+def case_arm_control_readback(R, S):
+    """D14: the control is proved visible on the screen it is armed on, or the arming fails. Seen red on the branch before the read-back
+    (arm-control wrote control.json without opening the page; every line below is that run, FAKE_READ naming what the page holds):
+      FAIL: arm-control read-back: the plant changes the style: control.json records both readings: got None, want {'font-size': '24px', 'font-weight': '700'}
+      FAIL: arm-control read-back: the title already has the planted style: exit: got 0, want 1
+      FAIL: arm-control read-back: the title already has the planted style: says no visible change: rc 0:
+      FAIL: arm-control read-back: no title on the screen: exit: got 0, want 1
+      FAIL: arm-control read-back: no title on the screen: says target not found: rc 0:
+    (a) is the positive control of (b) and (c): the same call, the same fake, only what the page holds differs."""
+    def scene(read, quote=False):
+        sc = Scene()
+        sc.env.update(FAKE_READ=read, FWX_WALK_CONTROL_WAIT_S="1")
+        if quote:
+            sc.env["FAKE_QUOTE"] = "1"
+        return sc
+    screen = "/board"
+    # (a) the target is there and the plant changes its computed style: armed, both readings recorded, the browser left closed
+    sc = scene("changes")
+    try:
+        o = armed(sc, R, S, "arm-control read-back")
+        if not o:
+            return
+        rd = o["run_dir"]
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: the plant changes the style: exit", r.returncode, 0)
+        c = jfile(os.path.join(rd, "control.json")) or {}
+        rb = c.get("readback") or {}
+        S.eq("arm-control read-back: control.json records both readings", [rb.get("before"), rb.get("after")],
+             [{"font-size": "24px", "font-weight": "700"}, {"font-size": "16px", "font-weight": "400"}])
+        S.ok("arm-control read-back: and the selector they were read from", "h1" in str(rb.get("selector")), str(rb))
+        calls = [x["argv"] for x in sc.calls("agent-browser")]
+        evals = [a[a.index("eval") + 1] for a in calls if "eval" in a]
+        S.ok("arm-control read-back: reads, plants (the init script's code), reads again",
+             len(evals) == 3 and "fwx:" in evals[0] and "MutationObserver" in evals[1] and "fwx:" in evals[2], repr([e[:40] for e in evals]))
+        S.ok("arm-control read-back: the first reading is taken before any plant (the launch carries no init script)",
+             not any("--init-script" in a for a in calls), repr([a for a in calls if "--init-script" in a]))
+        S.eq("arm-control read-back: the probe session is closed last (the walkers launch their own)", [a[-1] for a in calls][-1:], ["close"])
+        # (b) the title already has the planted style: nothing a walker could see; refuses, and the earlier control.json does not survive
+        sc.env["FAKE_READ"] = "same"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: the title already has the planted style: exit", r.returncode, 1)
+        S.ok("arm-control read-back: the title already has the planted style: says no visible change, and where",
+             "no visible change" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.eq("arm-control read-back: the title already has the planted style: one line", len(r.stderr.strip().splitlines()), 1)
+        S.ok("arm-control read-back: a failed arming leaves no control.json (an old plant is not kept)", not os.path.exists(os.path.join(rd, "control.json")))
+        # (c) no title on the screen
+        sc.env["FAKE_READ"] = "missing"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: no title on the screen: exit", r.returncode, 1)
+        S.ok("arm-control read-back: no title on the screen: says target not found, and where",
+             "target not found" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("arm-control read-back: no title on the screen: nothing written", not os.path.exists(os.path.join(rd, "control.json")))
+        # a string result may come back quoted
+        sc.env.update(FAKE_READ="changes", FAKE_QUOTE="1")
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: a quoted answer is read too: exit", r.returncode, 0)
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
 def case_down_count(R, S):
     """Control 4."""
     sc = Scene()
@@ -1237,7 +1316,7 @@ def case_usage(R, S):
     S.ok("`fwx help` lists walk", "walk" in h.stdout, h.stdout)
 
 
-CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_down_count,
+CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage]
 
