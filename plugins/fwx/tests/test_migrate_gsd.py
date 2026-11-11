@@ -470,6 +470,17 @@ from pathlib import Path  # noqa: E402
 from fwx import state  # noqa: E402
 import fwx.commands.migrate_gsd as mg  # noqa: E402
 
+def _lenient_git(cwd, *args):
+    """helpers.git, reading git's output with surrogateescape: a toy repository now holds a file name that is not UTF-8."""
+    r = subprocess.run(["git", "-C", cwd, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "init.defaultBranch=master",
+                        "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false", "-c", "gc.auto=0"]
+                       + list(args), env=helpers.clean_env(), capture_output=True, text=True, errors="surrogateescape")
+    if r.returncode:
+        raise RuntimeError("git %s failed (%d): %s" % (" ".join(args), r.returncode, r.stderr.strip()))
+    return r.stdout
+
+
+helpers.git = _lenient_git
 CRLF = b"# c\r\nsecond line\r\n"
 BLOB = b"\xff\xfe\x00binary\r\n\x80"
 MAIN_PRESENT = "the main checkout"
@@ -485,7 +496,7 @@ def rd(path, mode="r"):
 
 
 def wbytes(root, rel, data):
-    p = os.path.join(root, rel)
+    p = os.path.join(os.fsencode(root), os.fsencode(rel))
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "wb") as f:
         f.write(data)
@@ -496,7 +507,9 @@ def build2(**kw):
     wbytes(repo, ".planning/phases/01-a/01-CONTEXT.md", CRLF)               # a CRLF file: a text copy would change it
     wbytes(repo, ".planning/knowledge/blob.bin", BLOB)                      # bytes that are not UTF-8, unknown to GSD: kept
     os.symlink("01-CONTEXT.md", os.path.join(repo, ".planning/phases/01-a/01-context-link"))  # a tracked symlink
-    helpers.git(repo, "add", "--", ".planning/phases/01-a/01-CONTEXT.md", ".planning/knowledge/blob.bin", ".planning/phases/01-a/01-context-link")
+    wbytes(repo, b".planning/phases/01-a/caf\xe9.md", b"odd name\n")             # a tracked file whose NAME is not UTF-8
+    helpers.git(repo, "add", "--", ".planning/phases/01-a/01-CONTEXT.md", ".planning/knowledge/blob.bin", ".planning/phases/01-a/01-context-link",
+                os.fsdecode(b".planning/phases/01-a/caf\xe9.md"))
     helpers.git(repo, "commit", "-q", "-m", "u2 extras")
     return repo, origin
 
@@ -525,11 +538,51 @@ def content(root):
     return out
 
 
+def snap2(root):
+    """Every path of root with its size, its modification time and, for a file, a hash of its bytes (for a link, its target)."""
+    seen = {}
+    for dirpath, dirnames, filenames in os.walk(root):
+        for n in dirnames + filenames:
+            p = os.path.join(dirpath, n)
+            st = os.lstat(p)
+            if os.path.islink(p):
+                h = os.readlink(p)
+            elif os.path.isfile(p):
+                with open(p, "rb") as f:
+                    h = hashlib.sha256(f.read()).hexdigest()
+            else:
+                h = None
+            seen[os.path.relpath(p, root)] = (st.st_size, st.st_mtime_ns, h)
+    return seen
+
+
 def strict(*roots):
     out = {}
     for i, r in enumerate(roots):
-        out.update({(i, p): v for p, v in snapshot(r).items()})
+        out.update({(i, p): v for p, v in snap2(r).items()})
     return out
+
+
+def undo_cmds(text):
+    """The commands a message prints for the owner: indented by two spaces and starting with `git -C` or `cd`."""
+    return [l[2:] for l in text.splitlines() if l.startswith("  ") and l[2:].startswith(("git -C", "cd "))]
+
+
+def run_cmds(cmds):
+    for c in cmds:
+        subprocess.run(c, shell=True, check=True, capture_output=True, env=helpers.clean_env(**ENV))
+
+
+def tryg(cwd, *args):
+    """A git command whose failure is a failed check, not a crash: its output, or '' when it fails."""
+    try:
+        return helpers.git(cwd, *args)
+    except RuntimeError:
+        return ""
+
+
+def marker_of(wt_):
+    return os.path.join(helpers.git(wt_, "rev-parse", "--absolute-git-dir").strip(), mg.MARKER)
 
 
 def porcelain(cwd):
@@ -661,7 +714,7 @@ keeps = [f for f in D["files"] if f["tracked"] and f["action"] == "keep"]
 gone = [f for f in D["files"] if f["tracked"] and f["action"] in ("purge", "backlog")]
 s.ok("the toy has kept, purged and backlog files to look at (%d, %d)" % (len(keeps), len(gone)), len(keeps) > 10 and len(gone) > 10)
 idx = {}
-for line in helpers.git(wt, "ls-files", "-s").splitlines():
+for line in [l for l in helpers.git(wt, "ls-files", "-s", "-z").split("\0") if l]:   # -z: git quotes a name that is not UTF-8 otherwise
     meta, _, path = line.partition("\t")
     idx[path] = tuple(meta.split()[:2])
 for f in keeps:
@@ -779,8 +832,6 @@ s.eq("leftovers --apply exits 0", r.returncode, 0)
 s.eq("fonts/ ends up in .fwx/milestones/v2/phases/01-a/fonts/", rd(os.path.join(repo, ".fwx/milestones/v2/phases/01-a/fonts/a.woff")), "font")
 s.eq("the workstream's private/ ends up in .fwx/subprojects/ws1/private/", rd(os.path.join(repo, ".fwx/subprojects/ws1/private/notes.md")), "# private\n")
 s.ok("state.json is deleted", not os.path.exists(os.path.join(repo, ".planning/state.json")))
-trash = [p for p in Path(helpers.git(repo, "rev-parse", "--absolute-git-dir").strip(), "fwx", "migrate-gsd", "deleted").rglob("state.json")]
-s.ok("... and a copy of it is in the git dir, not lost: %s" % trash, len(trash) == 1 and trash[0].read_text() == "{}\n")
 s.ok("a nested repository goes whole, its .git with it", os.path.isdir(os.path.join(repo, ".fwx/ref/.git")) and os.path.isfile(os.path.join(repo, ".fwx/ref/b/c.txt")))
 # control (the nested repository moved file by file, which drops its empty folders: refs/, objects/):
 #   "FAIL: ... and it is still a repository, with its empty folders: not a git repository ..."
@@ -837,6 +888,7 @@ def text_copy(job, src, dest):
     if os.path.islink(os.path.join(job.repo, src)):
         return orig_move(job, src, dest)
     mg.mkdirs(job, os.path.dirname(os.path.join(job.repo, dest)))
+    mg.record(job, "created", dest)
     with open(os.path.join(job.repo, src), encoding="utf-8", errors="replace") as fh:
         text = fh.read()
     with open(os.path.join(job.repo, dest), "w", encoding="utf-8") as fh:
@@ -871,11 +923,10 @@ rc, out, err = inproc(wt, ["apply"], [(mg, "step_generate", lambda job: (_ for _
                                      (mg, "rollback", lambda job: ["simulated: rollback failed"])])
 s.eq("a rollback that fails: exits 1", rc, 1)
 s.ok("... says it could NOT put the repository back, and names the marker", "could NOT be put back" in err and mg.MARKER in err, err[-400:])
-cmds = [l.strip() for l in err.splitlines() if l.strip().startswith("git -C")]
-s.eq("... and prints the two commands that undo it", len(cmds), 2)
+cmds = undo_cmds(err)
+s.ok("... and prints the commands that undo it", len(cmds) >= 3, err[-600:])
 r = refusal("apply on a repository an earlier apply left half done", wt, ["apply"], "stopped in the middle", (wt,))
-for c in cmds:
-    subprocess.run(c, shell=True, check=True, capture_output=True, env=helpers.clean_env(**ENV))
+run_cmds(cmds)
 s.eq("the printed commands put the files, the index and the status back", (content(wt), index_of(wt), porcelain(wt)), (c0, i0, s0))
 rc, out, err = inproc(wt, ["apply"])
 s.ok("... and apply runs again (the old marker does not block a repository that is clean)", rc == 0, err[-300:])
@@ -890,10 +941,9 @@ k = subprocess.run([sys.executable, "-c", prog], cwd=wt, env=helpers.clean_env(*
 s.eq("a process killed after the moves and removals: exit 137", k.returncode, 137)
 s.ok("... leaves the repository half converted (this is what the marker is for)", content(wt) != c0 and os.path.exists(os.path.join(helpers.git(wt, "rev-parse", "--absolute-git-dir").strip(), mg.MARKER)))
 r = refusal("apply on the repository a killed apply left", wt, ["apply"], "stopped in the middle", (wt,))
-cmds = [l.strip() for l in r.stderr.splitlines() if l.strip().startswith("git -C")]
-for c in cmds:
-    subprocess.run(c, shell=True, check=True, capture_output=True, env=helpers.clean_env(**ENV))
-s.eq("... and the two commands it printed put everything back", (content(wt), index_of(wt), porcelain(wt)), (c0, i0, s0))
+cmds = undo_cmds(r.stderr)
+run_cmds(cmds)
+s.eq("... and the commands it printed put everything back", (content(wt), index_of(wt), porcelain(wt)), (c0, i0, s0))
 
 # leftovers: a failure in the middle puts the moves back
 repo, wt = world()
@@ -932,7 +982,8 @@ helpers.git(wt, "-c", "merge.directoryRenames=false", "merge", "--no-edit", "-q"
 r = run(wt, "apply")
 s.eq("apply after a merge that brought new files exits 0", r.returncode, 0)
 staged = sorted(helpers.git(wt, "diff", "--cached", "--name-status").splitlines())
-s.eq("... it converted only those two files", staged, sorted([
+s.eq("... it converted only those two files (and added its base to the bases file)", staged, sorted([
+    "M\t.fwx/migrate-gsd-bases.md",
     "R100\t.planning/extra/n.md\t.fwx/extra/n.md",
     "R100\t.planning/phases/02.1-b/02.1-02-CONTEXT.md\t.fwx/milestones/v2/phases/02.1-b/02.1-02-CONTEXT.md"]))
 s.eq("... MILESTONE.md is as it was", open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), "rb").read(), mil0)
@@ -1003,5 +1054,295 @@ rc, out, err = inproc(wt, ["refs", "--base", base, "--rewrite", "other.sh", "scr
 s.eq("refs --rewrite failing on its second file: exits 1", rc, 1)
 s.ok("... says the files already rewritten were put back", "put back" in err, err[-300:])
 s.eq("... both files have their old bytes, nothing is staged", (content(wt), index_of(wt), porcelain(wt)), (c0, i0, s0))
+
+# =====================================================================================================================
+# Unit 2, review fixes: the scenarios of an independent data-loss review, each a fixture here (F1..F10 are its numbers).
+# =====================================================================================================================
+def same_size_edit_meta():
+    d = helpers.mkdtemp("fwx-hash-")
+    f = os.path.join(d, "f.txt")
+    with open(f, "w") as fh:
+        fh.write("aaaa")
+    st = os.stat(f)
+    a = snapshot(d)
+    h1 = strict(d)
+    with open(f, "w") as fh:
+        fh.write("bbbb")
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns))
+    return a == snapshot(d), h1 != strict(d)
+
+
+old_blind, new_sees = same_size_edit_meta()
+s.ok("(the size and mtime snapshot of unit 1 cannot tell a same-size edit that keeps the mtime)", old_blind)
+s.ok("the snapshot of the refusals hashes the content and tells it", new_sees)
+
+# ---- F1: the rollback never discards what the conversion did not do -------------------------------------------------------
+repo, wt = world()
+orig_rm = mg.step_removes
+c0 = content(wt)
+readme0 = rd(os.path.join(wt, "README"))
+
+
+def removals_then_edit_then_fail(job):
+    orig_rm(job)
+    with open(os.path.join(job.repo, "README"), "a", encoding="utf-8") as fh:
+        fh.write("edited while apply ran\n")
+    raise OSError("simulated: forced failure after the removals")
+
+
+rc, out, err = inproc(wt, ["apply"], [(mg, "step_removes", removals_then_edit_then_fail)])
+# red on the code of the review: "FAIL: F1 a tracked file edited while apply ran keeps its edit after a rollback: got 'ahead\n', want 'ahead\nedited while apply ran\n'"
+s.eq("F1 a tracked file edited while apply ran keeps its edit after a rollback", rd(os.path.join(wt, "README")), readme0 + "edited while apply ran\n")
+s.eq("F1 apply exits 1, says the repository is back and that README changed meanwhile and was left", (rc, "back as it was" in err, "README" in err), (1, True, True))
+now = content(wt)
+now.pop("README")
+c0.pop("README")
+s.eq("F1 everything else is back as it was", now, c0)
+s.eq("F1 the only change left is that edit, unstaged", (porcelain(wt), helpers.git(wt, "diff", "--cached", "--name-only")), (" M README\n", ""))
+repo, wt = world()
+orig_rm = mg.step_removes
+
+
+def removals_then_edit(job):
+    orig_rm(job)
+    with open(os.path.join(job.repo, "README"), "a", encoding="utf-8") as fh:
+        fh.write("edited while apply ran\n")
+
+
+rc, out, err = inproc(wt, ["apply"], [(mg, "step_removes", removals_then_edit)])
+s.eq("F1 an unrelated tracked file edited while apply ran does not fail the checks: apply exits 0", rc, 0)
+s.eq("... and the edit is neither staged nor lost", (helpers.git(wt, "diff", "--name-only").split(), helpers.git(wt, "diff", "--cached", "--name-only").split().count("README")), (["README"], 0))
+repo, wt = world()
+orig_rm = mg.step_removes
+mine = os.path.join(wt, ".planning/phases/01-a/01-RESEARCH.md")
+
+
+def removals_then_owner_recreates(job):
+    orig_rm(job)
+    os.makedirs(os.path.dirname(mine), exist_ok=True)
+    with open(mine, "w", encoding="utf-8") as fh:
+        fh.write("the owner's new notes\n")
+    raise OSError("simulated: forced failure")
+
+
+rc, out, err = inproc(wt, ["apply"], [(mg, "step_removes", removals_then_owner_recreates)])
+s.eq("F1 a file the owner wrote at a path apply removed is not overwritten by the rollback", rd(mine), "the owner's new notes\n")
+s.ok("... apply exits 1, stops, names the file and keeps its marker", rc == 1 and "01-RESEARCH.md" in err and os.path.exists(marker_of(wt)), err[-300:])
+
+# ---- F2 and F3: what was already under .fwx/ is never touched, and no printed command can delete it -----------------------
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+helpers.write(wt, ".fwx/milestones/v2/phases/02.1-b/audit.tsv", "date\tkind\tsha\tdetail\trc\n")   # untracked, from an earlier use
+r = refusal("F2 apply with an untracked audit file already at a closed phase's destination", wt, ["apply"], ".fwx/milestones/v2/phases/02.1-b/audit.tsv", roots)
+repo, wt = world()
+helpers.write(wt, ".fwx/mynotes.md", "the owner's notes\n")                                          # untracked, no conflict
+c0, i0, s0 = content(wt), index_of(wt), porcelain(wt)
+rc, out, err = inproc(wt, ["apply"], [(mg, "step_generate", lambda job: (_ for _ in ()).throw(RuntimeError("simulated")))])
+s.eq("F3 a clean rollback with an untracked .fwx/mynotes.md: exits 1", rc, 1)
+s.eq("... the file is still there and everything else is as before", (content(wt), index_of(wt), porcelain(wt)), (c0, i0, s0))
+s.ok("... and it prints no command to paste (nothing is left to undo): %r" % err[-200:], "git clean" not in err and "git restore" not in err and "undo by hand" not in err)
+repo, wt = world()
+helpers.write(wt, ".fwx/mynotes.md", "the owner's notes\n")
+c0, i0, s0 = content(wt), index_of(wt), porcelain(wt)
+prog = ("import os, sys; sys.dont_write_bytecode = True; sys.path.insert(0, %r)\n"
+        "import fwx.commands.migrate_gsd as mg\n"
+        "mg.step_generate = lambda job: os._exit(137)\n"
+        "sys.exit(mg.main(['apply']))\n" % os.path.join(helpers.ROOT, "lib"))
+k = subprocess.run([sys.executable, "-c", prog], cwd=wt, env=helpers.clean_env(**ENV), capture_output=True, text=True)
+r = run(wt, "apply")
+cmds = undo_cmds(r.stderr)
+s.ok("F3 after a kill the next apply prints commands that name only what apply made (no blanket clean)", r.returncode == 2 and cmds and not any(c.startswith("git -C") and " clean " in c for c in cmds), r.stderr[-400:])
+run_cmds(cmds)
+# red on the code of the review: "FAIL: F3 the printed commands leave the owner's untracked .fwx/mynotes.md: got None, want "the owner's notes\n""
+s.eq("F3 the printed commands leave the owner's untracked .fwx/mynotes.md", rd(os.path.join(wt, ".fwx/mynotes.md")), "the owner's notes\n")
+s.eq("... and put everything else back (files, index, status)", (content(wt), index_of(wt), porcelain(wt)), (c0, i0, s0))
+# F5: the commands also remove the marker, so a later dirty tree is not taken for the old accident
+helpers.write(wt, "README", "a later edit\n")
+r = run(wt, "apply")
+s.ok("F5 after the printed commands, a later edit gets 'not clean' and no advice to restore", r.returncode == 2 and "not clean" in r.stderr and "stopped in the middle" not in r.stderr and "restore" not in r.stderr, r.stderr[-300:])
+
+# ---- F4: a tracked file that git hides ------------------------------------------------------------------------------------
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+with open(os.path.join(wt, ".planning/phases/01-a/01-01-PLAN.md"), "a", encoding="utf-8") as fh:
+    fh.write("an edit git does not show\n")
+helpers.git(wt, "update-index", "--assume-unchanged", ".planning/phases/01-a/01-01-PLAN.md")
+refusal("F4 apply with an assume-unchanged file under .planning/", wt, ["apply"], ".planning/phases/01-a/01-01-PLAN.md", roots)
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+helpers.git(wt, "update-index", "--skip-worktree", ".planning/PROJECT.md")
+refusal("F4 apply with a skip-worktree file under .planning/", wt, ["apply"], ".planning/PROJECT.md", roots)
+
+# ---- F6: a relative symlink that the move would leave dangling ----------------------------------------------------------------
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+os.symlink("../../PROJECT.md", os.path.join(wt, ".planning/phases/01-a/link-to-project"))
+os.symlink("../../../README", os.path.join(wt, ".planning/phases/01-a/link-to-readme"))
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "two links that climb")
+r = refusal("F6 apply with relative symlinks that would dangle", wt, ["apply"], "link-to-project", roots)
+s.ok("... it names both links and their targets", "link-to-readme" in r.stderr and "../../../README" in r.stderr and "would dangle" in r.stderr, r.stderr[-400:])
+
+# ---- F7: --prefix and --rewrite change only the path component they mean ---------------------------------------------------
+repo, wt = world()
+run(wt, "apply", "--close", "1")
+base = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+TABLE = [("cp .planning.bak backup/", "cp .planning.bak backup/"),
+         ("rm -rf packages/app/.planning/cache", "rm -rf packages/app/.planning/cache"),
+         ("see https://example.test/docs/.planning/phases/x", "see https://example.test/docs/.planning/phases/x"),
+         ("cat $HOME/.planning/notes.md", "cat $HOME/.planning/notes.md"),
+         ("cat ~/.planning/notes.md", "cat ~/.planning/notes.md"),
+         ("echo a-.planning/x", "echo a-.planning/x"),
+         ("cd .planning", "cd .fwx"),
+         ('"!.planning"', '"!.fwx"'),
+         ("ls ./.planning/x", "ls ./.fwx/x"),
+         ("X=.planning/phases", "X=.fwx/phases"),
+         ("(.planning/x)", "(.fwx/x)"),
+         ("/.planning/phases/01-a/fonts/", "/.fwx/phases/01-a/fonts/"),
+         ("see .planning.", "see .fwx.")]
+helpers.write(wt, "scripts/prefix.sh", "".join(a + "\n" for a, _ in TABLE))
+helpers.git(wt, "add", "scripts/prefix.sh")
+helpers.git(wt, "commit", "-q", "-m", "a script that names .planning in many ways")
+r = run(wt, "refs", "--base", base, "--prefix", "scripts/prefix.sh")
+got = (rd(os.path.join(wt, "scripts/prefix.sh")) or "").splitlines()
+# red on the code of the review: "FAIL: F7 --prefix table: ... 'cp .planning.bak backup/' -> 'cp .fwx.bak backup/'"
+bad = ["%r -> %r (want %r)" % (a, g, w) for (a, w), g in zip(TABLE, got) if g != w]
+s.ok("F7 --prefix changes the path .planning only where it is a path of its own: %s" % bad, r.returncode == 0 and not bad and len(got) == len(TABLE), r.stderr[-200:])
+helpers.write(wt, "scripts/rw.sh", "cat docs/.planning/phases/01-a/01-01-SUMMARY.md\ncat .planning/phases/01-a/01-01-SUMMARY.md\n")
+helpers.git(wt, "add", "scripts/rw.sh")
+helpers.git(wt, "commit", "-q", "-m", "a second script")
+r = run(wt, "refs", "--base", base, "--rewrite", "scripts/rw.sh")
+s.eq("F7 --rewrite does not take docs/.planning/... for the root one",
+     (rd(os.path.join(wt, "scripts/rw.sh")) or "").splitlines(),
+     ["cat docs/.planning/phases/01-a/01-01-SUMMARY.md", "cat .fwx/milestones/v2/phases/01-a/01-01-SUMMARY.md"])
+
+# ---- F8: a file name that is not UTF-8 ------------------------------------------------------------------------------------------
+repo, wt = world()
+odd = os.path.join(os.fsencode(wt), b".fwx/milestones/v2/phases/01-a/caf\xe9.md")
+rj = run(wt, "plan", "--json")
+s.eq("F8 plan --json with a tracked file name that is not UTF-8 exits 0", rj.returncode, 0)
+r = run(wt, "apply", "--close", "1")
+s.eq("F8 apply with a tracked file name that is not UTF-8 exits 0", r.returncode, 0)
+s.ok("... and the file is at its destination, byte for byte", os.path.exists(odd) and open(odd, "rb").read() == b"odd name\n", r.stderr[-300:])
+
+# ---- F9 and the commit message and the tag: the base of every run is written down ------------------------------------------------
+repo, wt = world()
+base1 = helpers.git(wt, "rev-parse", "HEAD").strip()
+r = run(wt, "apply")
+tag1 = "fwx-migrate-gsd-base-" + base1[:12]
+s.ok("F9 apply prints the tag it made and the commit message file to use", tag1 in r.stdout and "git commit -F" in r.stdout, r.stdout[-500:])
+s.eq("... the tag points at the base", tryg(wt, "rev-parse", tag1 + "^{commit}").strip(), base1)
+msgfile = next((l.split("-F ", 1)[1].split()[0] for l in r.stdout.splitlines() if "git commit -F" in l), "")
+msg = rd(msgfile) or ""
+s.ok("... the message file holds the base, the counts and the recovery command", base1 in msg and "git show %s:.planning/<path>" % base1 in msg and "chore(fwx)" in msg, msg)
+s.ok("... and .fwx/ records the base in a file that is staged", base1 in (rd(os.path.join(wt, ".fwx/migrate-gsd-bases.md")) or "") and ".fwx/migrate-gsd-bases.md" in helpers.git(wt, "diff", "--cached", "--name-only"))
+helpers.git(wt, "commit", "-q", *(["-F", msgfile] if msgfile else ["-m", "convert"]))
+wx = helpers.add_worktree(repo, "extra")
+helpers.write(wx, ".planning/extra/n.md", "# new\n")
+helpers.git(wx, "add", "-A")
+helpers.git(wx, "commit", "-q", "-m", "adds to .planning/")
+helpers.git(wt, "-c", "merge.directoryRenames=false", "merge", "--no-edit", "-q", "extra")
+base2 = helpers.git(wt, "rev-parse", "HEAD").strip()
+first = rd(os.path.join(wt, ".fwx/migrate-gsd-bases.md")) or ""
+r = run(wt, "apply")
+both = rd(os.path.join(wt, ".fwx/migrate-gsd-bases.md")) or ""
+# red on the code of the review: "FAIL: F9 the second run's base is written in .fwx/: ..."
+s.ok("F9 a re-entrant apply appends its base (the first stays, byte for byte, in front)", both.startswith(first) and base2 in both and base1 in both and both != first, both)
+s.eq("... and tags its own base too", tryg(wt, "rev-parse", "fwx-migrate-gsd-base-%s^{commit}" % base2[:12]).strip(), base2)
+
+# ---- F10: a .gitignore line that would make the twin ignore the destinations ----------------------------------------------------
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+helpers.write(wt, ".gitignore", "node_modules/\n.planning/\n")
+helpers.git(wt, "commit", "-q", "-am", "ignore the whole folder")
+r = refusal("F10 apply with a .gitignore line .planning/ whose twin would ignore .fwx/", wt, ["apply"], ".planning/", roots)
+s.ok("... it names the twin and says what to do", ".fwx/" in r.stderr and "Edit that .gitignore line" in r.stderr, r.stderr[-300:])
+
+# ---- F14: a linked worktree only ---------------------------------------------------------------------------------------------------
+repo, wt = world()
+helpers.git(repo, "checkout", "-q", "-b", "other")
+refusal("F14 apply in the main checkout on a branch that is not the default one", repo, ["apply"], "not a linked worktree", (repo,))
+
+# ---- the refusals that had no control: detached HEAD, submodule, ignored destination, a destination under a file -----------------
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+with open(os.path.join(wt, ".fwx"), "w") as fh:
+    fh.write("a file where the folder goes\n")
+refusal("apply with .fwx a file (a destination under a file)", wt, ["apply"], "is not a folder", roots)
+
+# ---- leftovers: the archive, an untracked file into an ignored place, a link that would dangle, a name that is not UTF-8 --------------
+repo, wt = world()
+run(wt, "apply", "--close", "1")
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".planning/untracked.md", "an untracked note\n")
+wbytes(repo, ".planning/knowledge/n\xe9.txt".encode("latin-1"), b"odd name, untracked\n")
+os.symlink("../../../README", os.path.join(repo, ".planning/phases/01-a/up-link"))                 # a leftover link that climbs
+refusal("leftovers with a leftover symlink that the move would leave dangling", repo, ["leftovers", "--apply"], "up-link", (repo,))
+os.remove(os.path.join(repo, ".planning/phases/01-a/up-link"))
+gi_ok = rd(os.path.join(repo, ".gitignore")) or ""
+helpers.write(repo, ".gitignore", gi_ok + "/.fwx/untracked.md\n")
+helpers.git(repo, "commit", "-q", "-am", "ignore where an untracked file would land")
+refusal("F15 leftovers with an untracked file whose destination is ignored (it would vanish from git status)", repo, ["leftovers", "--apply"], "untracked.md", (repo,))
+helpers.write(repo, ".gitignore", gi_ok)
+helpers.git(repo, "commit", "-q", "-am", "back")
+before = {}
+for dp, dn, fn in os.walk(os.path.join(repo, ".planning")):
+    for n in fn:
+        p = os.path.join(dp, n)
+        if os.path.islink(p):
+            before[os.path.relpath(p, repo)] = ("l", os.readlink(p))
+        else:
+            with open(p, "rb") as fh:
+                before[os.path.relpath(p, repo)] = ("f", fh.read())
+r = run(repo, "leftovers")
+s.ok("leftovers (dry run) says where its archive would go and writes none", "archive" in r.stdout and ".git" in r.stdout, r.stdout[-400:])
+r = run(repo, "leftovers", "--apply")
+s.eq("leftovers --apply exits 0 (a name that is not UTF-8 included)", r.returncode, 0)
+m = [l for l in r.stdout.splitlines() if l.startswith("archive: ")]
+s.eq("... and prints the archive it made, once", len(m), 1)
+arch = m[0][len("archive: "):].split()[0] if m else ""
+s.ok("... which is inside the git dir (not in the worktree, not in /tmp)", arch.startswith(os.path.join(helpers.git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip(), "")), arch)
+s.ok("... with the command to restore from it", "tar -xf" in r.stdout, r.stdout[-400:])
+out_dir = helpers.mkdtemp("fwx-restore-")
+if arch:
+    import tarfile  # noqa: E402
+    with tarfile.open(arch) as tf:
+        try:
+            tf.extractall(out_dir, filter="fully_trusted")
+        except TypeError:
+            tf.extractall(out_dir)
+    restored = {}
+    for dp, dn, fn in os.walk(os.path.join(out_dir, ".planning")):
+        for n in fn:
+            p = os.path.join(dp, n)
+            if os.path.islink(p):
+                restored[os.path.relpath(p, out_dir)] = ("l", os.readlink(p))
+            else:
+                with open(p, "rb") as fh:
+                    restored[os.path.relpath(p, out_dir)] = ("f", fh.read())
+    s.eq("restoring from the archive gives back every untracked and ignored file, byte for byte (state.json too)", restored, before)
+s.ok("the untracked file with a name that is not UTF-8 moved", os.path.exists(os.path.join(os.fsencode(repo), b".fwx/knowledge/n\xe9.txt")))
+
+# ---- F5 without the commands: a stale marker and a dirty tree ------------------------------------------------------------------
+repo, wt = world()
+with open(marker_of(wt), "w", encoding="utf-8") as fh:
+    fh.write("apply started on %s\nbase %s\n" % (wt, helpers.git(wt, "rev-parse", "HEAD").strip()))   # left behind, nothing half done
+helpers.write(wt, "README", "an edit of the owner's, made after an old accident\n")
+r = run(wt, "apply")
+# control (a refusal that treats any dirty tree as the old accident): "FAIL: F5 a stale marker and a dirty tree: says 'not clean' ..."
+s.ok("F5 a stale marker and a dirty tree: 'not clean', and no advice to restore anything", r.returncode == 2 and "not clean" in r.stderr and "stopped in the middle" not in r.stderr, r.stderr[-300:])
+
+# ---- F11: the write half starts no hook of the repository ----------------------------------------------------------------------
+repo, wt = world()
+flag = os.path.join(helpers.mkdtemp("fwx-hook-"), "ran")
+hook = os.path.join(repo, ".git", "hooks", "post-index-change")
+with open(hook, "w") as fh:
+    fh.write("#!/bin/sh\ntouch %s\n" % flag)
+os.chmod(hook, 0o755)
+r = run(wt, "apply")
+s.eq("F11 apply with a post-index-change hook in the repository exits 0", r.returncode, 0)
+s.ok("... and the hook did not run (once per `git mv` otherwise)", not os.path.exists(flag))
 
 s.done()

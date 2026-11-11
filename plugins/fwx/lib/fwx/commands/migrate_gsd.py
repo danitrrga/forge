@@ -52,11 +52,13 @@ import fnmatch
 import glob
 import json
 import os
+import posixpath
 import re
 import shlex
-import shutil
 import subprocess
 import sys
+import tarfile
+import tempfile
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -129,8 +131,10 @@ def _git(repo, *args, ok=(0,), input=None):
     env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")}
     env["GIT_OPTIONAL_LOCKS"] = "0"
     try:
-        # no optional lock: git refreshes no index; no fsmonitor: a repository's own hook program is not started
-        r = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", repo] + list(args),
+        # no optional lock: git refreshes no index; no fsmonitor and no hooks (post-index-change runs once per `git mv`): a
+        # repository's own program is not started
+        r = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", "-C", repo]
+                           + list(args),
                            capture_output=True, env=env, input=input)
     except OSError as e:
         raise Refuse("cannot run git (%s)" % e)
@@ -140,11 +144,31 @@ def _git(repo, *args, ok=(0,), input=None):
 
 
 def _lines(repo, *args):
-    return [p for p in _git(repo, *args).stdout.decode("utf-8", "replace").split("\0") if p]
+    """Names as the file system has them: a name that is not UTF-8 keeps its bytes (os.fsdecode), so it can be given back to git."""
+    return [os.fsdecode(p) for p in _git(repo, *args).stdout.split(b"\0") if p]
 
 
 def _text(repo, *args):
-    return _git(repo, *args).stdout.decode("utf-8", "replace").strip()
+    return os.fsdecode(_git(repo, *args).stdout).strip()
+
+
+def emit_out(text):
+    """Print what names may hold bytes that are not text: shown with a replacement character, never an exception."""
+    sys.stdout.write(text.encode("utf-8", "surrogateescape").decode("utf-8", "replace"))
+
+
+def emit_err(text):
+    sys.stderr.write(text.encode("utf-8", "surrogateescape").decode("utf-8", "replace"))
+
+
+def dumps(doc):
+    """JSON that keeps a name that is not UTF-8 as an escape instead of failing."""
+    s = json.dumps(doc, indent=2, ensure_ascii=False)
+    try:
+        s.encode("utf-8")
+    except UnicodeEncodeError:
+        s = json.dumps(doc, indent=2, ensure_ascii=True)
+    return s
 
 
 class WorkTree:
@@ -667,7 +691,11 @@ class Mapper:
         return m.group(1) + self.structure(rest) if rest else m.group(1) + SCOPE_DEST + "/"
 
 
-RE_TOKEN = re.compile(r"(?<![A-Za-z0-9_])\.planning(?![A-Za-z0-9_-])(/[^\s\"'`<>()\[\]{},;|&$#]*)?")
+# `.planning` as a path of its own: after a space, a quote, `=`, `(`, `!` and the like, at the start of a line, or after `./` or a
+# leading `/`; never after a letter, `/` (`a/.planning`, a URL, `$HOME/.planning`), `~`, `-`, `.`, and never `.planning.bak`
+_BEFORE = "\\s\"'`=(!{\\[,;|&<>"
+RE_TOKEN = re.compile(r"(?:(?<![^%s])|(?<=^/)|(?<=[%s]/)|(?<=^\./)|(?<=[%s]\./))\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])"
+                      r"(/[^\s\"'`<>()\[\]{},;|&$#]*)?" % (_BEFORE, _BEFORE, _BEFORE))
 
 
 def tokens(line, mapper):
@@ -833,10 +861,13 @@ def render(doc, notes, files, refs_only=False):
 # apply stages everything and commits nothing, so the commit it was started on (`base`) holds every file it removes or
 # moves. It changes the repository in a fixed order (moves, removals, generated files, the `.gitignore` twins, staging, the
 # checks); a step that raises, or a check that fails, puts the repository back to `base` and says so. A process killed in the
-# middle cannot do that: it leaves MARKER in the git dir, and the next run refuses, naming the two commands that undo it.
+# middle cannot do that: it leaves MARKER in the git dir with the lists of what it was changing, and the next run refuses,
+# printing commands that undo exactly those paths.
 MARKER = "fwx-migrate-gsd-apply"
 RE_MS_DEST = re.compile(r"(\.fwx(?:/subprojects/[^/]+)?)/milestones/(v\d+)/")
 RE_SECTION = re.compile(r"(#{2,4}) Phase (\d+(?:\.\d+)*): (.+)$")
+LISTS = ("restore", "created", "dirs")    # the files next to MARKER that say, in advance, which paths apply changes
+BASES = ".fwx/migrate-gsd-bases.md"      # one line per apply: its base commit, kept in the repository
 
 
 class Failed(Exception):
@@ -847,11 +878,24 @@ def _abs(repo, rel):
     return os.path.join(repo, *rel.split("/"))
 
 
-def undo_commands(repo, base):
-    """The two commands that put a repository back to `base` by hand: tracked files first, then the files apply made that git
-    does not track (a folder of its own: `.fwx/`)."""
-    return ["git -C %s restore --source=%s --staged --worktree -- ." % (shlex.quote(repo), base),
-            "git -C %s clean -fd -- %s" % (shlex.quote(repo), SCOPE_DEST)]
+def undo_commands(repo, base, gitdir):
+    """The commands that put a repository back by hand: they act on the paths apply wrote down in the git dir before it changed
+    them (restore the tracked ones from the base, remove the ones it created, then the marker), never on a folder as a whole."""
+    q, marker = shlex.quote, os.path.join(gitdir, MARKER)
+    lists = {k: "%s.%s" % (marker, k) for k in LISTS}
+    full = lambda k: os.path.exists(lists[k]) and os.path.getsize(lists[k]) > 0
+    cmds = []
+    if full("restore"):
+        cmds.append("git -C %s --literal-pathspecs restore --source=%s --staged --worktree --pathspec-from-file=%s --pathspec-file-nul"
+                    % (q(repo), base, q(lists["restore"])))
+    if full("created"):
+        cmds.append("git -C %s --literal-pathspecs rm -q --cached --ignore-unmatch --pathspec-from-file=%s --pathspec-file-nul"
+                    % (q(repo), q(lists["created"])))
+        cmds.append("cd %s && xargs -0 -a %s rm -f --" % (q(repo), q(lists["created"])))
+    if full("dirs"):
+        cmds.append("cd %s && sort -rz %s | xargs -0 -r rmdir --ignore-fail-on-non-empty --" % (q(repo), q(lists["dirs"])))
+    cmds.append("rm -f %s" % " ".join(q(p) for p in [marker] + list(lists.values())))
+    return cmds
 
 
 def default_branches(repo):
@@ -867,10 +911,20 @@ def default_branches(repo):
     return names
 
 
-def status_tracked(repo):
-    """Entries of `git status` for tracked files only (staged or not); empty when the tracked tree is clean."""
-    out = _git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=no").stdout.decode("utf-8", "replace")
-    return [e for e in out.split("\0") if e]
+def parse_status(raw):
+    """{(XY, path)} of the bytes of `git status --porcelain=v1 -z`; the old name of a renamed file is a path of its own."""
+    out, items, i = set(), raw.split(b"\0"), 0
+    while i < len(items):
+        e = items[i]
+        i += 1
+        if len(e) < 4:
+            continue
+        xy = os.fsdecode(e[:2])
+        out.add((xy, os.fsdecode(e[3:])))
+        if ("R" in xy or "C" in xy) and i < len(items) and items[i]:
+            out.add(("->", os.fsdecode(items[i])))
+            i += 1
+    return out
 
 
 def status_all(repo):
@@ -951,8 +1005,8 @@ def ignored_among(repo, paths):
     """The paths of the list that git would ignore (`git check-ignore`; one that is already tracked is never ignored)."""
     if not paths:
         return set()
-    r = _git(repo, "check-ignore", "-z", "--stdin", ok=(0, 1), input="\0".join(paths).encode("utf-8") + b"\0")
-    return {p for p in r.stdout.decode("utf-8", "replace").split("\0") if p}
+    r = _git(repo, "check-ignore", "-z", "--stdin", ok=(0, 1), input=b"".join(os.fsencode(p) + b"\0" for p in paths))
+    return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p}
 
 
 def roadmap_section(text, number):
@@ -994,17 +1048,95 @@ def milestone_text(ms, base, totals_, state_ms):
 # ---- apply ------------------------------------------------------------------------------------------------------------
 
 class Job:
-    """What apply is going to do, and what it has done so far (the rollback needs the second)."""
+    """What apply is going to do, and what it has done so far (the rollback needs the second). Three lists of paths, relative
+    to the repository and NUL separated, sit in the git dir next to the marker: `restore` (the tracked files apply changes) is
+    written before the first change, `created` and `dirs` (the files and folders apply makes) are appended to BEFORE each
+    creation, so that even a process that dies has told, in advance, exactly what is its own."""
 
     def __init__(self, repo, base):
         self.repo, self.base = repo, base
+        self.gitdir = _text(repo, "rev-parse", "--absolute-git-dir")
+        self.marker = os.path.join(self.gitdir, MARKER)
+        self.lists = {k: "%s.%s" % (self.marker, k) for k in LISTS}
         self.moves, self.removes, self.gens, self.audit_rows, self.twins = [], [], [], [], []
         self.stage = []              # paths to `git add` after the files are written
-        self.created, self.dirs = [], []   # files and folders apply made (the rollback removes them)
-        self.phases = []             # (scope dest, milestone, folder dest, closed, from_roadmap)
+        self.created, self.dirs = [], []   # files and folders apply made, in the order it made them
+        self.restore = []            # tracked files of the base that apply moves, removes or edits
+        self.phases, self.closed = [], []
         self.base_entries, self.before = {}, None
-        self.marker = None
-        self.closed = []
+        self.bytes_of = {}           # path -> [bytes before, bytes apply wrote]: what is apply's and what is someone else's
+        self.append_to = None        # (path, text): a tracked file that gets a line added
+        self.tag, self.tag_made = None, False
+        self.outside = []            # paths that changed during the run and are not apply's: left as they are
+        self.msgfile = os.path.join(self.gitdir, "fwx-migrate-gsd-commit-message.txt")
+
+
+def _nul(paths):
+    return b"".join(os.fsencode(p) + b"\0" for p in paths)
+
+
+def read_list(path):
+    try:
+        with open(path, "rb") as f:
+            return [os.fsdecode(p) for p in f.read().split(b"\0") if p]
+    except OSError:
+        return []
+
+
+def record(job, kind, rel):
+    """Write down a path apply is about to create, before it creates it."""
+    with open(job.lists[kind], "ab") as f:
+        f.write(os.fsencode(rel) + b"\0")
+    (job.created if kind == "created" else job.dirs).append(rel)
+
+
+def safe_last_stage(folder):
+    try:
+        return state.last_stage(folder)
+    except OSError:
+        return None   # a path under a file: the destination check names it
+
+
+def link_problems(repo, pairs, mapping, target_of):
+    """For each (src, dest) symbolic link that moves: when its relative target would no longer be the same file from the new
+    place, a line saying so. A link whose target is absolute, or is already missing, is not judged."""
+    bad = []
+    for src, dest in pairs:
+        target = target_of(src)
+        if not target or target.startswith("/"):
+            continue
+        old = posixpath.normpath(posixpath.join(posixpath.dirname(src), target))
+        if not os.path.lexists(_abs(repo, old)):
+            continue
+        if old.startswith(SCOPE_SRC + "/") and old not in mapping:
+            if not os.path.isdir(_abs(repo, old)):
+                bad.append("%s -> %s: its target is removed by the conversion, it would dangle" % (src, target))
+            continue
+        got, want = posixpath.normpath(posixpath.join(posixpath.dirname(dest), target)), mapping.get(old, old)
+        if got != want:
+            bad.append("%s -> %s: from %s the same text points at %s, not at %s: it would dangle" % (src, target, dest, got, want))
+    return bad
+
+
+def twin_hits(job, paths):
+    """{path: (twin line, the line it is the twin of)} for the paths that the lines apply would add to `.gitignore` ignore."""
+    if not job.twins or not paths:
+        return {}
+    fd, tmp = tempfile.mkstemp(prefix="fwx-twins-")   # outside the repository: a refusal writes nothing in it
+    with os.fdopen(fd, "wb") as f:
+        f.write(("\n".join(t["new"] for t in job.twins) + "\n").encode("utf-8", "surrogateescape"))
+    try:
+        r = _git(job.repo, "-c", "core.excludesFile=" + tmp, "check-ignore", "--no-index", "-v", "-z", "--stdin", ok=(0, 1),
+                 input=_nul(paths))
+    finally:
+        os.remove(tmp)
+    parts = r.stdout.split(b"\0")
+    old_of = {t["new"]: t["old"] for t in job.twins}
+    out = {}
+    for i in range(0, len(parts) - 3, 4):
+        pattern, path = os.fsdecode(parts[i + 2]), os.fsdecode(parts[i + 3])
+        out[path] = (pattern, old_of.get(pattern, "?"))
+    return out
 
 
 def plan_apply(repo, opts):
@@ -1021,16 +1153,32 @@ def plan_apply(repo, opts):
         raise Refuse("%s is the default branch: apply runs on a branch of its own, in a worktree "
                      "(git worktree add .claude/worktrees/fwx-migrate-gsd -b fwx-migrate-gsd %s)" % (branch, branch))
     gitdir = _text(repo, "rev-parse", "--absolute-git-dir")
+    common = _text(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if os.path.realpath(gitdir) == os.path.realpath(common):
+        raise Refuse("%s is not a linked worktree: apply runs in a worktree of its own, so the checkout you work in does not "
+                     "change (git worktree add .claude/worktrees/fwx-migrate-gsd -b fwx-migrate-gsd <default branch>)" % repo)
     marker = os.path.join(gitdir, MARKER)
-    dirty = status_tracked(repo)
-    # the marker of an apply that stopped in the middle blocks only while the repository still shows it: once the two
-    # commands it names have run, the files are clean and a stale marker is just overwritten
-    if os.path.exists(marker) and (dirty or _lines(repo, "ls-files", "-z", "--others", "--exclude-standard", "--", SCOPE_DEST)):
-        raise Refuse("a previous apply stopped in the middle (%s exists) and left %s half converted. Undo it with:\n  %s"
-                     % (marker, repo, "\n  ".join(undo_commands(repo, base))))
+    dirty = parse_status(_git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=no").stdout)
+    if os.path.exists(marker):
+        # the marker of an apply that stopped in the middle blocks only while the repository still shows it; once the commands
+        # it names have run it is removed with the lists, and a stale one is just overwritten
+        lists = {k: "%s.%s" % (marker, k) for k in LISTS}
+        stray = [p for p in read_list(lists["created"]) if os.path.lexists(_abs(repo, p))]
+        if stray or {p for _, p in dirty} & set(read_list(lists["restore"])):
+            then = re.search(r"^base (\S+)", open(marker, encoding="utf-8", errors="replace").read(), re.M)
+            raise Refuse("a previous apply stopped in the middle (%s exists) and left %s half converted. Undo it with these, "
+                         "which touch only the paths that apply wrote down before it changed them:\n  %s"
+                         % (marker, repo, "\n  ".join(undo_commands(repo, then.group(1) if then else base, gitdir))))
     if dirty:
+        shown = sorted("%s %s" % t for t in dirty)
         raise Refuse("the tracked files are not clean, so what apply removes might not be recoverable from %s (%d entries, "
-                     "first: %s). Commit or discard them first." % (base[:12], len(dirty), "; ".join(dirty[:5])))
+                     "first: %s). Commit or discard them first." % (base[:12], len(shown), "; ".join(shown[:5])))
+    hidden = [rec for rec in _lines(repo, "ls-files", "-v", "-z", "--", SCOPE_SRC, SCOPE_DEST, ".gitignore") if rec[:1] != "H"]
+    if hidden:
+        raise Refuse("git hides changes of %d tracked file(s) (assume-unchanged or skip-worktree), so an edit of them would be "
+                     "lost by the purge and `git status` cannot tell. See them with `git ls-files -v | grep -v '^H'`; undo with "
+                     "`git update-index --no-assume-unchanged --no-skip-worktree <file>`. First: %s"
+                     % (len(hidden), "; ".join(rec[2:] + " (" + rec[0] + ")" for rec in hidden[:5])))
     for rec in _lines(repo, "ls-files", "-s", "-z", "--", SCOPE_SRC):
         if rec.startswith("160000 "):
             raise Refuse("%s is a submodule inside .planning/: apply does not move those, move it by hand first"
@@ -1051,6 +1199,7 @@ def plan_apply(repo, opts):
     job.leftover = [f for f in files if not f["tracked"]]
     roadmaps = {sc.ws: src.read(sc.prefix + "ROADMAP.md") for sc in scopes}
     milestones, dests = set(), [d for _, d in job.moves]
+    extra_bad = []
     for sc in scopes:
         for p in sc.phases:
             if p["dest_rel"] is None:
@@ -1062,7 +1211,11 @@ def plan_apply(repo, opts):
                 section = roadmap_section(roadmaps[sc.ws], ".".join(str(n) for n in p["num"])) or ("### Phase %s\n" % p["title"])
                 job.gens.append((dest + "/gsd-roadmap-entry.md", section.encode("utf-8")))
             elif p["closed"]:
-                if not state.last_stage(_abs(repo, dest)):
+                audit = str(state.phase_paths(_abs(repo, dest))["audit"])
+                if os.path.lexists(audit):
+                    if not safe_last_stage(_abs(repo, dest)):   # a file of the owner's, with no stage row: not apply's to extend
+                        extra_bad.append("%s exists with no stage row" % os.path.relpath(audit, repo))
+                else:
                     job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
                 job.closed.append(dest)
             elif not any(d.startswith(dest + "/") for d in dests) and not os.path.isdir(_abs(repo, dest)):
@@ -1076,15 +1229,59 @@ def plan_apply(repo, opts):
         rel = "%s/milestones/%s/MILESTONE.md" % (scope_dest, ms)
         if rel not in taken and not os.path.lexists(_abs(repo, rel)):
             job.gens.append((rel, milestone_text(ms, base, job.totals, job.root_state)))
+    # the bases file: one line per run, so that every base stays written down, in a file, after later merges and re-runs
+    line = ("- %s base %s (branch %s): %d kept files moved, %d files removed (%d of them backlog, not migrated); "
+            "get a removed file back with `git show %s:.planning/<path>`\n"
+            % (datetime.now(timezone.utc).strftime("%Y-%m-%d"), base, branch, len(job.moves), len(job.removes),
+               job.totals["backlog"]["files"], base))
+    if os.path.lexists(_abs(repo, BASES)):
+        if BASES in set(_lines(repo, "ls-files", "-z", "--", BASES)):
+            job.append_to = (BASES, line)
+            job.restore.append(BASES)
+            job.bytes_of[BASES] = [None, None]
+        else:
+            extra_bad.append("%s exists and is not tracked" % BASES)
+    else:
+        job.gens.append((BASES, ("# Migrated from GSD\n\nOne line per run of `fwx migrate-gsd apply`: the commit that still holds "
+                                 "the files that run removed or moved.\n\n" + line).encode("utf-8")))
     job.twins = [g for g in gitignore if g["new"] != g["old"]] if os.path.isfile(os.path.join(repo, ".gitignore")) \
         and _lines(repo, "ls-files", "-z", "--", ".gitignore") else []
-    bad = collisions(repo, dests + [g for g, _ in job.gens])
+    if job.twins:
+        job.restore.append(".gitignore")
+        with open(os.path.join(repo, ".gitignore"), "rb") as f:
+            job.bytes_of[".gitignore"] = [f.read(), None]
+    job.restore = sorted(set(job.restore) | {s for s, _ in job.moves} | set(job.removes))
+    if BASES in job.bytes_of:
+        with open(_abs(repo, BASES), "rb") as f:
+            job.bytes_of[BASES][0] = f.read()
+    bad = collisions(repo, dests + [g for g, _ in job.gens]) + extra_bad
     if bad:
         raise Refuse("a destination is in the way, nothing was written:\n  " + "\n  ".join(bad[:30])
                      + ("\n  ... %d more" % (len(bad) - 30) if len(bad) > 30 else ""))
-    hidden = sorted(ignored_among(repo, dests + [g for g, _ in job.gens]))
+    links = [(s, d) for s, d in job.moves if job.base_entries.get(s, ("",))[0] == "120000"]
+    if links:
+        mapping = dict(job.moves)
+        probs = link_problems(repo, links, mapping,
+                              lambda s: os.fsdecode(_git(repo, "cat-file", "blob", job.base_entries[s][1]).stdout))
+        if probs:
+            raise Refuse("%d symbolic link(s) would point at nothing after the move (their text is kept byte for byte, but the "
+                         "folder is deeper). Replace each with a link that works from its new place, or with a copy, then run "
+                         "apply again:\n  %s" % (len(probs), "\n  ".join(probs[:30])))
+    everything = dests + [g for g, _ in job.gens]
+    hidden = sorted(ignored_among(repo, everything))
     if hidden:
         raise Refuse("a destination is ignored by .gitignore, so git would not keep it:\n  " + "\n  ".join(hidden[:30]))
+    hit = twin_hits(job, everything)
+    if hit:
+        pat, old = next(iter(hit.values()))
+        raise Refuse("the line `%s` that apply would add to .gitignore (the twin of `%s`) ignores %d destination(s), first %s: git "
+                     "would refuse to add them. Edit that .gitignore line so it names only what is meant to stay ignored, then "
+                     "run apply again" % (pat, old, len(hit), next(iter(hit))))
+    job.tag = "fwx-migrate-gsd-base-" + base[:12]
+    r = _git(repo, "rev-parse", "-q", "--verify", "refs/tags/%s^{commit}" % job.tag, ok=(0, 1))
+    if r.returncode == 0 and r.stdout.decode().strip() != base:
+        raise Refuse("the tag %s exists and points at another commit" % job.tag)
+    job.tag_exists = r.returncode == 0
     return job, branch
 
 
@@ -1094,13 +1291,21 @@ def mkdirs(job, path):
         missing.append(p)
         p = os.path.dirname(p)
     for d in reversed(missing):
+        record(job, "dirs", os.path.relpath(d, job.repo).replace(os.sep, "/"))
         os.mkdir(d)
-        job.dirs.append(d)
 
 
 def move_file(job, src, dest):
     mkdirs(job, os.path.dirname(_abs(job.repo, dest)))
+    record(job, "created", dest)
     _git(job.repo, "--literal-pathspecs", "mv", "--", src, dest)
+
+
+def step_tag(job):
+    """Tag the base, so that a rebase or a squash of the branch cannot leave it without a name to be found by."""
+    if not job.tag_exists:
+        _git(job.repo, "tag", job.tag, job.base)
+        job.tag_made = True
 
 
 def step_moves(job):
@@ -1110,26 +1315,32 @@ def step_moves(job):
 
 def step_removes(job):
     if job.removes:
-        _git(job.repo, "--literal-pathspecs", "rm", "-q", "--pathspec-from-file=-", "--pathspec-file-nul",
-             input=b"".join(p.encode("utf-8") + b"\0" for p in job.removes))
+        _git(job.repo, "--literal-pathspecs", "rm", "-q", "--pathspec-from-file=-", "--pathspec-file-nul", input=_nul(job.removes))
 
 
 def step_generate(job):
     for rel, data in job.gens:
         a = _abs(job.repo, rel)
         mkdirs(job, os.path.dirname(a))
+        record(job, "created", rel)
         with open(a, "xb") as f:
             f.write(data)
-        job.created.append(a)
         job.stage.append(rel)
     for dest, detail in job.audit_rows:
         a = _abs(job.repo, dest)
         mkdirs(job, a)
         audit = str(state.phase_paths(a)["audit"])
-        if not os.path.exists(audit):
-            job.created.append(audit)
+        rel = os.path.relpath(audit, job.repo).replace(os.sep, "/")
+        record(job, "created", rel)       # it did not exist: plan_apply refuses one that does
         state.append_audit(a, "stage", detail, sha=job.base)
-        job.stage.append(os.path.relpath(audit, job.repo))
+        job.stage.append(rel)
+    if job.append_to:
+        rel, text = job.append_to
+        with open(_abs(job.repo, rel), "ab") as f:
+            f.write(text.encode("utf-8"))
+        with open(_abs(job.repo, rel), "rb") as f:
+            job.bytes_of[rel][1] = f.read()
+        job.stage.append(rel)
 
 
 def step_gitignore(job):
@@ -1154,27 +1365,30 @@ def step_gitignore(job):
             out.append(new + eol)
             have.add(new)
     if out != lines:
+        data = "".join(out).encode("utf-8", "surrogateescape")
         with open(path, "wb") as f:
-            f.write("".join(out).encode("utf-8", "surrogateescape"))
+            f.write(data)
+        job.bytes_of[".gitignore"][1] = data
         job.stage.append(".gitignore")
 
 
 def step_stage(job):
     if job.stage:
-        _git(job.repo, "--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul",
-             input=b"".join(p.encode("utf-8") + b"\0" for p in job.stage))
+        _git(job.repo, "--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul", input=_nul(job.stage))
 
 
 def verify(job):
     """The checks after the work, each against what git says and not against what the steps meant: the blob of every kept file
     is the same at its destination, every purged or backlog file is gone, `state.phases` sees each phase folder and
-    `state.last_stage` says closed for each closed one."""
+    `state.last_stage` says closed for each closed phase. Only paths apply wrote are judged: a file of the owner's that
+    changed meanwhile is none of its business."""
     repo, problems = job.repo, []
     now = tree_entries(repo)
     for src, dest in job.moves:
         if now.get(dest) != job.base_entries.get(src):
             problems.append("blob changed: %s -> %s (base %s, now %s)" % (src, dest, job.base_entries.get(src), now.get(dest)))
-    changed = [p for p in _lines(repo, "diff", "--name-only", "-z") if not p.startswith(SCOPE_SRC + "/")]
+    mine = {d for _, d in job.moves} | {g for g, _ in job.gens} | set(job.stage)
+    changed = [p for p in _lines(repo, "diff", "--name-only", "-z") if p in mine]
     if changed:
         problems.append("a file differs on disk from what was staged: %s" % ", ".join(changed[:5]))
     for src in job.removes:
@@ -1202,66 +1416,148 @@ def verify(job):
                      + ("\n  ... %d more" % (len(problems) - 20) if len(problems) > 20 else ""))
 
 
+def foreign_changes(job):
+    """The paths apply moved, removed or edited that someone else has written to since: a file at a path apply removed, an edit
+    of a file it has not reached, a `.gitignore` or bases file that is neither what it was nor what apply wrote."""
+    repo = job.repo
+    idx = set(_lines(repo, "ls-files", "-z"))
+    diff = set(_lines(repo, "diff", "--name-only", "-z"))
+    out = []
+    for p in job.restore:
+        if p in job.bytes_of:
+            try:
+                with open(_abs(repo, p), "rb") as f:
+                    cur = f.read()
+            except OSError:
+                cur = None
+            if cur not in job.bytes_of[p]:
+                out.append(p)
+        elif os.path.lexists(_abs(repo, p)) and (p not in idx or p in diff):
+            out.append(p)
+    return out
+
+
 def rollback(job):
-    """Put the repository back to `base`; the list of what could not be checked or done (empty: it is back, and the status
-    equals the one before)."""
+    """Put back what apply changed, and only that: the tracked files of the `restore` list are restored from the base, the files
+    and folders of the `created` and `dirs` lists are removed, the tag it made is deleted. Never `-- .`, never a path apply did not
+    write down. If someone else has written to one of its paths meanwhile it restores nothing and says which. Returns the list of
+    what is not right afterwards (empty: the status and the index are what they were)."""
     repo, errs = job.repo, []
+    foreign = foreign_changes(job)
+    if foreign:
+        return ["changed while apply ran, by someone else, so nothing was restored over it: %s" % ", ".join(foreign[:10])]
     try:
-        _git(repo, "restore", "--source=" + job.base, "--staged", "--worktree", "--", ".")
+        if job.restore:
+            _git(repo, "--literal-pathspecs", "restore", "--source=" + job.base, "--staged", "--worktree",
+                 "--pathspec-from-file=-", "--pathspec-file-nul", input=_nul(job.restore))
+        if job.created:
+            _git(repo, "--literal-pathspecs", "rm", "-q", "--cached", "--ignore-unmatch", "--pathspec-from-file=-",
+                 "--pathspec-file-nul", input=_nul(job.created))
     except Refuse as e:
         errs.append(str(e))
-    for a in job.created:
+    for rel in job.created:
+        a = _abs(repo, rel)
         try:
-            if os.path.lexists(a):
+            if os.path.lexists(a) and (os.path.islink(a) or not os.path.isdir(a)):
                 os.remove(a)
         except OSError as e:
-            errs.append("cannot remove %s: %s" % (a, e))
-    for d in reversed(job.dirs):
+            errs.append("cannot remove %s: %s" % (rel, e))
+    for rel in sorted(job.dirs, reverse=True):
         try:
-            os.rmdir(d)
+            os.rmdir(_abs(repo, rel))
         except OSError:
             pass
+    if job.tag_made:
+        try:
+            _git(repo, "tag", "-d", job.tag)
+        except Refuse as e:
+            errs.append(str(e))
     try:
-        if status_all(repo) != job.before:
-            errs.append("git status is not what it was before apply")
-        if _git(repo, "diff", "--cached", "--quiet", ok=(0, 1)).returncode:
-            errs.append("the index is not what it was before apply")
+        mine = set(job.restore) | set(job.created)
+        now, before = parse_status(status_all(repo)), parse_status(job.before)
+        new = sorted(p for _, p in now - before)
+        left = [p for p in new if p in mine or any(p.startswith(d + "/") or p == d for d in job.dirs)]
+        job.outside = [p for p in new if p not in left]
+        lost = sorted(p for _, p in before - now)
+        if left:
+            errs.append("git status still shows apply's changes: %s" % ", ".join(left[:5]))
+        if lost:
+            errs.append("git status no longer shows: %s" % ", ".join(lost[:5]))
+        staged = set(_lines(repo, "diff", "--cached", "--name-only", "-z"))
+        if staged & mine:
+            errs.append("the index still holds apply's changes: %s" % ", ".join(sorted(staged & mine)[:5]))
     except Refuse as e:
         errs.append(str(e))
     return errs
 
 
+def commit_message(job):
+    n = lambda k: job.totals[k]["files"]
+    lines = ["chore(fwx): migrate GSD .planning/ to .fwx/ (base %s)" % job.base, "",
+             "Converted by `fwx migrate-gsd apply`. The commit %s (tag %s) still holds every file this conversion removed or moved."
+             % (job.base, job.tag),
+             "Moved %d kept files, removed %d (purge %d, backlog %d, not migrated), generated %d, closed phases %d."
+             % (len(job.moves), len(job.removes), n("purge"), n("backlog"), len(job.gens), len(job.closed)),
+             "Get a removed file back: git show %s:.planning/<path>" % job.base]
+    if job.backlog:
+        lines += ["", "Backlog not migrated (it was in .planning/, recover it with the base):"]
+        lines += ["  - %s  %s" % (b["src"], b["title"]) for b in job.backlog]
+    return "\n".join(lines) + "\n"
+
+
 def execute(job):
     """Run the steps; on any failure, roll back. A Failed says whether the repository is back."""
-    gitdir = _text(job.repo, "rev-parse", "--absolute-git-dir")
-    job.marker = os.path.join(gitdir, MARKER)
+    for p in [job.marker] + list(job.lists.values()):
+        try:
+            os.remove(p)      # a stale one: plan_apply refused unless it was
+        except OSError:
+            pass
     try:
-        with open(job.marker, "w", encoding="utf-8") as f:
-            f.write("apply started on %s\nbase %s\nundo:\n  %s\n" % (job.repo, job.base, "\n  ".join(undo_commands(job.repo, job.base))))
+        with open(job.marker, "x", encoding="utf-8") as f:
+            f.write("apply started on %s\nbase %s\n" % (job.repo, job.base))
+        with open(job.lists["restore"], "wb") as f:
+            f.write(_nul(job.restore))
+        for k in ("created", "dirs"):
+            open(job.lists[k], "wb").close()
     except OSError as e:
         raise Refuse("cannot write %s (%s): nothing was changed" % (job.marker, e))
     try:
+        step_tag(job)
         step_moves(job)
         step_removes(job)
         step_generate(job)
         step_gitignore(job)
         step_stage(job)
         verify(job)
+        with open(job.msgfile, "w", encoding="utf-8", errors="surrogateescape") as f:
+            f.write(commit_message(job))
     except BaseException as e:
         try:
             errs = rollback(job)
         except Exception as e2:   # a rollback that crashes is a rollback that did not finish: keep the marker
             errs = ["the rollback itself failed: %s: %s" % (type(e2).__name__, e2)]
         if not errs:
-            os.remove(job.marker)
+            for p in [job.marker] + list(job.lists.values()):
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
         if not isinstance(e, Exception):
             raise
         what = str(e) if isinstance(e, Failed) else "%s: %s" % (type(e).__name__, e)
-        raise Failed("%s\n%s\nto undo by hand:\n  %s" % (
-            what, "the repository is back as it was before apply (status and index compared)" if not errs
-            else "the repository could NOT be put back (%s); %s stays, and apply refuses to run until it is undone"
-            % ("; ".join(errs), job.marker), "\n  ".join(undo_commands(job.repo, job.base))))
-    os.remove(job.marker)
+        if not errs:
+            raise Failed("%s\nthe repository is back as it was before apply (status and index compared)%s" % (
+                what, ("; these changed while it ran, are not apply's and were left as they are: " + ", ".join(job.outside[:10]))
+                if job.outside else ""))
+        raise Failed("%s\nthe repository could NOT be put back (%s); %s stays, and apply refuses to run until it is undone.\n"
+                     "If one of the files named above is yours, save it first: these commands restore them from the base.\n"
+                     "to undo by hand:\n  %s" % (what, "; ".join(errs), job.marker,
+                                                 "\n  ".join(undo_commands(job.repo, job.base, job.gitdir))))
+    for p in [job.marker] + list(job.lists.values()):
+        try:
+            os.remove(p)
+        except OSError:
+            pass
 
 
 def cmd_apply(repo, got):
@@ -1271,15 +1567,16 @@ def cmd_apply(repo, got):
     doc = {"schema": SCHEMA, "repo": repo, "base": job.base, "branch": branch, "moved": len(job.moves), "removed": len(job.removes),
            "generated": [g for g, _ in job.gens], "closed": [{"dest": d, "row": r} for d, r in job.audit_rows],
            "gitignore": job.twins, "backlog": job.backlog, "leftover": n_left, "totals": job.totals,
-           "recover": "git show %s:.planning/<path>" % job.base,
-           "next": ["fwx migrate-gsd refs --base %s [--rewrite FILE...] [--prefix FILE...]" % job.base, "git commit"]}
+           "recover": "git show %s:.planning/<path>" % job.base, "tag": job.tag, "commit_message": job.msgfile,
+           "next": ["fwx migrate-gsd refs --base %s [--rewrite FILE...] [--prefix FILE...]" % job.base, "git commit -F " + job.msgfile]}
     if "--json" in got:
-        sys.stdout.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        emit_out(dumps(doc) + "\n")
         for n in job.notes:
-            sys.stderr.write("fwx migrate-gsd: note: %s\n" % n)
+            emit_err("fwx migrate-gsd: note: %s\n" % n)
         return 0
     out = ["fwx migrate-gsd apply: %s (branch %s)" % (repo, branch),
            "base %s: every removed or moved file is there; get one back with `git show %s:.planning/<path>`" % (job.base, job.base),
+           "tag %s names the base, so a rebase or a squash of this branch cannot lose it" % job.tag,
            "moved %d, removed %d (purge %d, backlog %d), generated %d, stage rows %d, .gitignore twins %d; all staged, nothing committed"
            % (len(job.moves), len(job.removes), job.totals["purge"]["files"], job.totals["backlog"]["files"], len(job.gens),
               len(job.audit_rows), len(job.twins)),
@@ -1292,8 +1589,9 @@ def cmd_apply(repo, got):
     if job.notes:
         out.append("notes:")
         out += ["  " + n for n in job.notes]
-    out.append("next: fwx migrate-gsd refs --base %s, then commit" % job.base)
-    sys.stdout.write("\n".join(out) + "\n")
+    out.append("next: fwx migrate-gsd refs --base %s, then commit with the message apply wrote:" % job.base)
+    out.append("  git commit -F %s" % job.msgfile)
+    emit_out("\n".join(out) + "\n")
     return 0
 
 
@@ -1404,7 +1702,7 @@ def apply_rewrites(repo, mapper, rewrite, prefix):
             done.append(rel)
         if writes:
             _git(repo, "--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul",
-                 input=b"".join(rel.encode("utf-8") + b"\0" for rel, _, _ in writes))
+                 input=b"".join(os.fsencode(rel) + b"\0" for rel, _, _ in writes))
     except BaseException as e:
         for rel in done:
             full, raw = originals[rel]
@@ -1432,7 +1730,7 @@ def group_of(src, groups):
 
 
 def plan_leftovers(repo, opts):
-    """(moves [(src, dest, ignored)], deletes [src], nested {root: dest}), after every refusal. Reads only."""
+    """(moves [(src, dest, ignored)], deletes [src], nested {root: dest}, notes), after every refusal. Reads only."""
     tracked = _lines(repo, "ls-files", "-z", "--", SCOPE_SRC)
     if tracked:
         raise Refuse("%d file(s) under .planning/ are still tracked, first %s: apply and merge the conversion first"
@@ -1462,12 +1760,22 @@ def plan_leftovers(repo, opts):
     if exposed:
         raise Refuse("%d ignored file(s) would stop being ignored at their destination (no .gitignore line names it, apply adds "
                      "those): nothing was moved. First %s" % (len(exposed), exposed[0]))
+    shown = ignored_among(repo, [d for _, d, ig in moves if not ig])
+    vanish = [d for _, d, ig in moves if not ig and d in shown]
+    if vanish:
+        raise Refuse("%d untracked file(s) would be ignored at their destination, so they would vanish from `git status` and "
+                     "`git clean -X` would delete them: nothing was moved. First %s" % (len(vanish), vanish[0]))
     groups = {}
     for r in sorted({r for r in (nested_root(s) for s, _, _ in moves) if r}):
         members = [(s, d) for s, d, _ in moves if s.startswith(r + "/")]
         dests = {d[:len(d) - (len(s) - len(r))] for s, d in members if d.endswith(s[len(r):])}
         if len(dests) == 1 and all(d.endswith(s[len(r):]) for s, d in members):
             groups[r] = dests.pop()
+    links = [(s, d) for s, d, _ in moves if group_of(s, groups) is None and os.path.islink(_abs(repo, s))]
+    probs = link_problems(repo, links, {s: d for s, d, _ in moves}, lambda s: os.readlink(_abs(repo, s)))
+    if probs:
+        raise Refuse("%d symbolic link(s) would point at nothing after the move, nothing was moved. Replace each with a link that "
+                     "works from its new place, or with a copy:\n  %s" % (len(probs), "\n  ".join(probs[:30])))
     return moves, deletes, groups, notes
 
 
@@ -1480,12 +1788,52 @@ def prune_empty(repo):
     return not os.path.lexists(top)
 
 
+TAR_ARGS = {"format": tarfile.PAX_FORMAT, "encoding": "utf-8", "errors": "surrogateescape"}
+
+
+def archive_dir(repo):
+    return os.path.join(_text(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"), "fwx", "migrate-gsd")
+
+
+def write_archive(repo, moves, deletes, groups):
+    """One tar, inside the git dir, of exactly the untracked and ignored files leftovers is about to move or delete (a nested
+    repository whole): what git cannot give back. Written and read back before anything is touched."""
+    os.makedirs(archive_dir(repo), exist_ok=True)
+    path = os.path.join(archive_dir(repo), "leftovers-%s-%d.tar" % (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"), os.getpid()))
+    srcs = [s for s, _, _ in moves] + list(deletes)
+    try:
+        with tarfile.open(path, "x", **TAR_ARGS) as tf:
+            done = set()
+            for s in srcs:
+                r = group_of(s, groups)
+                if r:
+                    if r not in done:
+                        done.add(r)
+                        tf.add(_abs(repo, r), arcname=r, recursive=True)
+                else:
+                    tf.add(_abs(repo, s), arcname=s, recursive=False)
+        with tarfile.open(path, errors="surrogateescape") as tf:
+            names = set(tf.getnames())
+        missing = [s for s in srcs if s not in names and group_of(s, groups) not in names]
+        if missing:
+            raise OSError("the archive does not hold %s" % missing[0])
+    except BaseException as e:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        if not isinstance(e, Exception):
+            raise
+        raise Failed("cannot write the archive %s (%s: %s): nothing was moved or deleted" % (path, type(e).__name__, e))
+    return path
+
+
 def cmd_leftovers(repo, got):
     do = "--apply" in got
     top = os.path.join(repo, SCOPE_SRC)
     if not os.path.lexists(top):
         if os.path.isdir(os.path.join(repo, SCOPE_DEST)):
-            sys.stdout.write("fwx migrate-gsd leftovers: nothing to do, there is no .planning/ in %s (0 files looked at)\n" % repo)
+            emit_out("fwx migrate-gsd leftovers: nothing to do, there is no .planning/ in %s (0 files looked at)\n" % repo)
             return 0
         raise Refuse("0 files looked at: neither .planning/ nor .fwx/ in %s" % repo)
     if not WorkTree(repo).entries() and not _lines(repo, "ls-files", "-z", "--", SCOPE_SRC):
@@ -1493,13 +1841,13 @@ def cmd_leftovers(repo, got):
         if not left:
             if do:
                 prune_empty(repo)
-            sys.stdout.write("fwx migrate-gsd leftovers%s: .planning/ holds only empty folders: %s\n"
-                             % ("" if do else " (dry run)", "removed" if do else "would be removed"))
+            emit_out("fwx migrate-gsd leftovers%s: .planning/ holds only empty folders: %s\n"
+                     % ("" if do else " (dry run)", "removed" if do else "would be removed"))
             return 0
     moves, deletes, groups, notes = plan_leftovers(repo, options(got))
     out = ["fwx migrate-gsd leftovers%s: %s" % ("" if do else " (dry run)", repo),
            "%d file(s) to move (%d ignored: each stays ignored at its destination, checked with git check-ignore), %d machine-state "
-           "file(s) to delete (a copy of each goes to the git dir first), %d nested repositor%s moved whole"
+           "file(s) to delete, %d nested repositor%s moved whole"
            % (len(moves), sum(1 for m in moves if m[2]), len(deletes), len(groups), "y" if len(groups) == 1 else "ies")]
     out += ["  move %s -> %s%s" % (s, d, "" if ig else "  (untracked)") for s, d, ig in moves[:50]]
     if len(moves) > 50:
@@ -1507,12 +1855,16 @@ def cmd_leftovers(repo, got):
     out += ["  delete %s" % s for s in deletes]
     out += ["note: " + n for n in notes]
     if not do:
-        out.append("nothing was changed: --apply does it")
-        sys.stdout.write("\n".join(out) + "\n")
+        out.append("nothing was changed: --apply first writes an archive (a tar) of exactly these files inside the git dir (%s), then does it"
+                   % archive_dir(repo))
+        emit_out("\n".join(out) + "\n")
         return 0
-    journal = Journal2(repo)
+    archive = write_archive(repo, moves, deletes, groups)
+    out.append("archive: %s" % archive)
+    out.append("restore from it with: tar -xf %s -C %s   (every file comes back at its old path under .planning/)"
+               % (shlex.quote(archive), shlex.quote(repo)))
+    journal = Journal2(repo, archive)
     try:
-        journal.save_deleted(deletes)
         done_groups = set()
         for s, d, ig in moves:
             r = group_of(s, groups)
@@ -1535,28 +1887,19 @@ def cmd_leftovers(repo, got):
         if not isinstance(e, Exception):
             raise
         what = str(e) if isinstance(e, Failed) else "%s: %s" % (type(e).__name__, e)
-        raise Failed("%s\n%s" % (what, "everything moved was put back" if not errs else "NOT everything could be put back: " + "; ".join(errs)))
+        raise Failed("%s\n%s" % (what, ("everything moved was put back (the archive %s stays)" % archive) if not errs
+                                 else "NOT everything could be put back: " + "; ".join(errs) + "; restore with tar -xf " + archive))
     gone = prune_empty(repo)
-    out.append("done: %d moved, %d deleted (copies in %s)%s" % (len(moves), len(deletes), journal.trash if deletes else "-",
-                                                              "; .planning/ is gone" if gone else "; .planning/ still holds files"))
-    sys.stdout.write("\n".join(out) + "\n")
+    out.append("done: %d moved, %d deleted%s" % (len(moves), len(deletes), "; .planning/ is gone" if gone else "; .planning/ still holds files"))
+    emit_out("\n".join(out) + "\n")
     return 0
 
 
 class Journal2:
-    """The moves and deletes of `leftovers`, so that a failure can put them back. A deleted file is copied to the git dir
-    first, not recoverable from git (it was never tracked) but not lost either."""
+    """The moves and deletes of `leftovers`, so that a failure can put them back; a deleted file comes back from the archive."""
 
-    def __init__(self, repo):
-        self.repo, self.renames, self.dirs, self.deleted = repo, [], [], []
-        common = _text(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
-        self.trash = os.path.join(common, "fwx", "migrate-gsd", "deleted", datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
-
-    def save_deleted(self, deletes):
-        for s in deletes:
-            t = os.path.join(self.trash, *s.split("/"))
-            os.makedirs(os.path.dirname(t), exist_ok=True)
-            shutil.copy2(_abs(self.repo, s), t, follow_symlinks=False)
+    def __init__(self, repo, archive):
+        self.repo, self.archive, self.renames, self.dirs, self.deleted = repo, archive, [], [], []
 
     def rename(self, s, d):
         a, b = _abs(self.repo, s), _abs(self.repo, d)
@@ -1582,13 +1925,13 @@ class Journal2:
                 os.rename(b, a)
             except OSError as e:
                 errs.append("cannot move %s back: %s" % (b, e))
-        for s in self.deleted:
+        if self.deleted:
             try:
-                a = _abs(self.repo, s)
-                os.makedirs(os.path.dirname(a), exist_ok=True)
-                shutil.copy2(os.path.join(self.trash, *s.split("/")), a, follow_symlinks=False)
-            except OSError as e:
-                errs.append("cannot restore %s: %s" % (s, e))
+                with tarfile.open(self.archive, errors="surrogateescape") as tf:
+                    for s in self.deleted:
+                        tf.extract(tf.getmember(s), path=self.repo, **({"filter": "fully_trusted"} if hasattr(tarfile, "fully_trusted_filter") else {}))
+            except (OSError, KeyError, tarfile.TarError) as e:
+                errs.append("cannot restore the deleted files from %s: %s" % (self.archive, e))
         for d in reversed(self.dirs):
             try:
                 os.rmdir(d)
@@ -1708,9 +2051,9 @@ def run(argv):
         doc["rewritten"] = [{"file": f, "line": n, "old": o, "new": w, "kind": k} for f, n, o, w, k in rewritten]
         doc["left"] = [{"file": f, "line": n, "old": o, "kind": k, "why": why} for f, n, o, k, why in left]
     if "--json" in got:
-        sys.stdout.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
+        emit_out(dumps(doc) + "\n")
         for n in notes:
-            sys.stderr.write("fwx migrate-gsd: note: %s\n" % n)
+            emit_err("fwx migrate-gsd: note: %s\n" % n)
     else:
         text = render(doc, notes, files, refs_only=(sub == "refs"))
         if rewritten is not None:
@@ -1718,7 +2061,7 @@ def run(argv):
             text += "".join("  %s:%d  %s -> %s\n" % (f, n, o, w) for f, n, o, w, k in rewritten[:100])
             text += "left alone: %d\n" % len(left)
             text += "".join("  %s:%d  %s  (%s)\n" % (f, n, o, why) for f, n, o, k, why in left[:100])
-        sys.stdout.write(text)
+        emit_out(text)
     return 0
 
 
@@ -1726,8 +2069,8 @@ def main(argv):
     try:
         return run(list(argv))
     except Refuse as e:
-        sys.stderr.write("fwx migrate-gsd: %s\n" % e)
+        emit_err("fwx migrate-gsd: %s\n" % e)
         return 2
     except Failed as e:
-        sys.stderr.write("fwx migrate-gsd: %s\n" % e)
+        emit_err("fwx migrate-gsd: %s\n" % e)
         return 1
