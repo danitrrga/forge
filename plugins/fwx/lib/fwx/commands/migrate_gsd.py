@@ -19,20 +19,27 @@
   leftovers [--apply] [--milestone-map FILE]
       In the main checkout, after the conversion is merged: the ignored and untracked files still under `.planning/` move to
       their destination with `os.rename` (an ignored file only if git would still ignore it there, else nothing moves), the
-      machine-state names of GSD are deleted (a copy goes to `<git dir>/fwx/migrate-gsd/deleted/` first), and `.planning/` is
+      machine-state names of GSD are deleted (every file it moves or deletes is first written to a tar in `<git dir>/fwx/migrate-gsd/`; `tar -xf` restores it), and `.planning/` is
       removed when it is empty. A dry run unless `--apply`.
 
 `plan` and `refs` without a write flag only read: no cache, no log, git runs with `--no-optional-locks`, so not even the
 index is refreshed.
 
 What makes the write half safe is in the code, not in this text. `apply` refuses (exit 2, nothing written) on the default
-branch or a detached HEAD, with any tracked file not clean (so what it removes is in HEAD, the base it names), with a
-submodule in `.planning/`, with a destination that exists or that `.gitignore` ignores, with a phase no milestone range
-covers, with a `--close`/`--open` key that names no phase, and when a previous apply stopped in the middle. It changes the
-repository in a fixed order; a step that raises or a check that fails puts the repository back to the base (`git restore`,
-then the files it created are removed) and compares git status and the index with what they were, and exits 1. A process
-killed in the middle cannot clean up: it leaves a marker in the git dir, and the next run refuses and prints the two commands
-that undo it. The same two commands are printed whenever apply exits 1. `leftovers` puts its renames back on a failure.
+branch, on a detached HEAD, outside a linked worktree, with any tracked file not clean (so what it removes is in HEAD, the base
+it names), with a tracked file git hides (assume-unchanged, skip-worktree), with a submodule in `.planning/`, with a relative
+symbolic link that the move would leave dangling, with a destination that exists (untracked or ignored too) or that
+`.gitignore` ignores, also through the twin lines apply itself adds, with a phase no milestone range covers, with a
+`--close`/`--open` key that names no phase, and when a previous apply stopped in the middle. It writes down, before each change,
+the paths it is about to change (`restore`, `created` and `dirs`, next to a marker in the git dir) and changes the repository in a
+fixed order; a step that raises or a check that fails restores only those paths from the base, removes only what it created, and
+compares git status and the index with what they were, then exits 1; if someone else has written to one of its paths meanwhile
+it restores nothing and says which; a change elsewhere is left alone and named. A process killed in the middle leaves the marker
+and the lists: the next run refuses and prints commands over exactly those paths (and none after a clean rollback). It tags the
+base (`fwx-migrate-gsd-base-<sha12>`), appends a line with the base to `.fwx/migrate-gsd-bases.md` on every run and writes the
+commit message, with the base, to the git dir. Git runs without hooks and names are kept as bytes. `leftovers` writes a tar of
+exactly the files it will move or delete into the git dir (read back before it touches anything), refuses a link that would
+dangle and a file that would stop being tracked-or-ignored as it was, and puts its renames back on a failure.
 
 The classification is data (ROWS, PHASE_KEEP, PHASE_PURGE, ...): one tuple per row of the table the plan documents, each with
 its `rule`, which is also the `rule` of every file it decided. A file no row names is kept at its own path (rule
@@ -1156,7 +1163,7 @@ def plan_apply(repo, opts):
     common = _text(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
     if os.path.realpath(gitdir) == os.path.realpath(common):
         raise Refuse("%s is not a linked worktree: apply runs in a worktree of its own, so the checkout you work in does not "
-                     "change (git worktree add .claude/worktrees/fwx-migrate-gsd -b fwx-migrate-gsd <default branch>)" % repo)
+                     "change (git worktree add .claude/worktrees/fwx-migrate-gsd -b fwx-migrate-gsd <the branch to start from>)" % repo)
     marker = os.path.join(gitdir, MARKER)
     dirty = parse_status(_git(repo, "status", "--porcelain=v1", "-z", "--untracked-files=no").stdout)
     if os.path.exists(marker):

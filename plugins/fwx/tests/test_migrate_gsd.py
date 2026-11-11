@@ -84,6 +84,45 @@ good code):
     2: got 1, want 2" (its own check after the moves still catches it, and puts the moves back)
   - leftovers copying nothing before it deletes: "FAIL: ... and a copy of it is in the git dir, not lost: []"
   - a nested repository moved file by file: "FAIL: ... and it is still a repository, with its empty folders: <path>/.git"
+
+Review fixes (an independent data-loss review, F1..F15; each scenario is a fixture of the second half of this file). The red each
+gave on the code before the fix, then the first FAIL line of a copy of the plugin with that rule removed:
+  F1 the rollback restored the whole tree: "FAIL: F1 a tracked file edited while apply ran keeps its edit after a rollback: got
+     'ahead\n', want 'ahead\nedited while apply ran\n'"; with `-- .` put back: the same line; with the foreign-change stop removed:
+     "FAIL: F1 a file the owner wrote at a path apply removed is not overwritten by the rollback"
+  F2 an untracked audit file at a closed phase's destination: "FAIL: F2 apply with an untracked audit file ...: exits 2: got 0,
+     want 2"; the rule removed: "... exits 2: got 1, want 2"
+  F3 the printed commands deleted the owner's untracked .fwx/mynotes.md: "FAIL: F3 the printed commands leave the owner's untracked
+     .fwx/mynotes.md: got None, want "the owner's notes\n""; a blanket `git clean` printed again: "FAIL: F3 after a kill the next
+     apply prints commands that name only what apply made (no blanket clean)"
+  F4 assume-unchanged / skip-worktree: "FAIL: F4 apply with an assume-unchanged file under .planning/: exits 2: got 0, want 2"
+  F5 a stale marker told the owner to restore over a dirty tree: "FAIL: F5 a stale marker and a dirty tree: 'not clean', and no
+     advice to restore anything"
+  F6 a relative symlink that would dangle: "FAIL: F6 apply with relative symlinks that would dangle: exits 2: got 0, want 2"
+     (the plan's appendix keeps every blob byte for byte, so a link is refused, never rewritten); in `leftovers` the same with
+     "FAIL: leftovers with a leftover symlink that the move would leave dangling: exits 2: got 0, want 2"
+  F7 `--prefix` and `--rewrite` on a path that is not at the root: "FAIL: F7 --prefix changes the path .planning only where it is a
+     path of its own: ["'cp .planning.bak backup/' -> 'cp .fwx.bak backup/' ..."; "FAIL: F7 --rewrite does not take docs/.planning/..."
+  F8 a file name that is not UTF-8: "FAIL: apply said: ... git mv failed (128): fatal: bad source, source=.planning/phases/01-a/caf?.md"
+  F9 the base of each run written down: "FAIL: ... the tag points at the base: got '', want '<sha>'", "FAIL: F9 a re-entrant apply
+     appends its base ..." and, with the commit message file empty, "FAIL: ... the message file holds the base, the counts and the
+     recovery command"
+  F10 a .gitignore line .planning/ whose twin ignores .fwx/: "FAIL: F10 ...: exits 2: got 1, want 2"
+  F11 a hook of the repository: "FAIL: ... and the hook did not run (once per `git mv` otherwise)" with the hook switch removed
+  F14 apply in a main checkout: "FAIL: F14 apply in the main checkout on a branch that is not the default one: exits 2: got 0,
+      want 2"; the default-branch test now cannot be satisfied by that refusal ("FAIL: apply on the default branch: stderr says
+      'default branch': ... is not a linked worktree")
+  F15 an untracked file moved to an ignored place: "FAIL: F15 leftovers with an untracked file whose destination is ignored ...:
+      exits 2: got 0, want 2"
+  archive (leftovers): "FAIL: leftovers --apply exits 0 (a name that is not UTF-8 included): got 1, want 0" before it existed; with
+      the files not added to the tar: "FAIL: leftovers --apply exits 0: got 1, want 0" (it reads the tar back before it moves
+      anything); with no tar: "FAIL: ... and the archive is a file that exists"
+  controls the first review found missing: detached HEAD ("exits 2: got 0, want 2"), a submodule in `.planning/` (same), an ignored
+  destination ("exits 2: got 1, want 2"), a destination under a file ("exits 2: got 1, want 2"), and a rollback that is not
+  run or a marker that is not written (above). The refusals now compare the content hash of every path, not size and mtime: "(the
+  size and mtime snapshot of unit 1 cannot tell a same-size edit that keeps the mtime)" and "the snapshot of the refusals ... tells it".
+  Not controlled: the check in `rollback` that git status shows nothing of apply's afterwards (a second line of defence behind the
+  removal of each path), and F13, F16, F17 (see the PR).
 """
 import json
 import os
@@ -1237,7 +1276,7 @@ msgfile = next((l.split("-F ", 1)[1].split()[0] for l in r.stdout.splitlines() i
 msg = rd(msgfile) or ""
 s.ok("... the message file holds the base, the counts and the recovery command", base1 in msg and "git show %s:.planning/<path>" % base1 in msg and "chore(fwx)" in msg, msg)
 s.ok("... and .fwx/ records the base in a file that is staged", base1 in (rd(os.path.join(wt, ".fwx/migrate-gsd-bases.md")) or "") and ".fwx/migrate-gsd-bases.md" in helpers.git(wt, "diff", "--cached", "--name-only"))
-helpers.git(wt, "commit", "-q", *(["-F", msgfile] if msgfile else ["-m", "convert"]))
+tryg(wt, "commit", "-q", *(["-F", msgfile] if msgfile else ["-m", "convert"])) or helpers.git(wt, "commit", "-q", "--allow-empty", "-m", "convert")
 wx = helpers.add_worktree(repo, "extra")
 helpers.write(wx, ".planning/extra/n.md", "# new\n")
 helpers.git(wx, "add", "-A")
@@ -1280,7 +1319,8 @@ helpers.write(repo, ".planning/untracked.md", "an untracked note\n")
 wbytes(repo, ".planning/knowledge/n\xe9.txt".encode("latin-1"), b"odd name, untracked\n")
 os.symlink("../../../README", os.path.join(repo, ".planning/phases/01-a/up-link"))                 # a leftover link that climbs
 refusal("leftovers with a leftover symlink that the move would leave dangling", repo, ["leftovers", "--apply"], "up-link", (repo,))
-os.remove(os.path.join(repo, ".planning/phases/01-a/up-link"))
+if os.path.lexists(os.path.join(repo, ".planning/phases/01-a/up-link")):
+    os.remove(os.path.join(repo, ".planning/phases/01-a/up-link"))
 gi_ok = rd(os.path.join(repo, ".gitignore")) or ""
 helpers.write(repo, ".gitignore", gi_ok + "/.fwx/untracked.md\n")
 helpers.git(repo, "commit", "-q", "-am", "ignore where an untracked file would land")
@@ -1302,11 +1342,12 @@ r = run(repo, "leftovers", "--apply")
 s.eq("leftovers --apply exits 0 (a name that is not UTF-8 included)", r.returncode, 0)
 m = [l for l in r.stdout.splitlines() if l.startswith("archive: ")]
 s.eq("... and prints the archive it made, once", len(m), 1)
-arch = m[0][len("archive: "):].split()[0] if m else ""
+arch = (m[0][len("archive: "):].split() or [""])[0] if m else ""
 s.ok("... which is inside the git dir (not in the worktree, not in /tmp)", arch.startswith(os.path.join(helpers.git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip(), "")), arch)
 s.ok("... with the command to restore from it", "tar -xf" in r.stdout, r.stdout[-400:])
 out_dir = helpers.mkdtemp("fwx-restore-")
-if arch:
+s.ok("... and the archive is a file that exists", bool(arch) and os.path.isfile(arch), repr(arch))
+if arch and os.path.isfile(arch):
     import tarfile  # noqa: E402
     with tarfile.open(arch) as tf:
         try:
