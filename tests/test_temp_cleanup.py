@@ -18,7 +18,7 @@ run against that checkout's sandbox.py plus one KEEP_ENV line, 11 FAIL:
   hooks/test_worktree_guard.py make a temp dir nothing removes at exit
   bench verdict: left in TMPDIR = ['tmp69u8oyxh', 'tmpg6hhc_4c', 'tmpho00zjld', 'tmpvdtfimsc'], want []
   test_skill_bench_project: left in TMPDIR = ['skillbench-l3faz6wa', 'skillbench-xf4nbej9', 'skillbench-zr1bof79'], want []
-Seen failing on master 6e73ae6, in a linked worktree and (under load) in the main checkout alike, 1 FAIL: the bench case named the
+Seen failing on master 6e73ae6, in a linked worktree and in the main checkout alike, 1 FAIL: the bench case named the
 task arch-refactor-01, which cd64ee5 removed from the bench, so the probe died on it and printed only the first task:
   FAIL bench verdict: it ran both tasks to a result (else it looked at nothing) = ['arch-dependency-02', 'None', '4'], want
   ['arch-dependency-02', 'None', '4', 'arch-refactor-01', 'None', '4']
