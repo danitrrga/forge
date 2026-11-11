@@ -1017,12 +1017,42 @@ def push_scope_cases():
     code, out = g(root, "push", "priv", "shared:shared-again")  # control: the remote that has it scans nothing new
     want("two remotes, pushing to the remote that already has the commit = exit", code, 0)
     has("two remotes, the remote that already has it", out, "0 commit(s)", "no new commit")
-    # A remote name git would read as a glob, or none (a push to a URL), excludes nothing: over-scans, never under-scans.
-    for label, rname in (("a glob remote name", "pri*"), ("an empty remote name", ""), ("a remote that does not exist", "nosuch")):
-        r = subprocess.run(["sh", os.path.join(root, "githooks", "pre-push"), rname, remote], cwd=root, env=ENV, capture_output=True,
+    # 6. tracking refs are a record of what a remote had, not of what the destination has now. Red before the fix
+    # (CodeRabbit, second round): "remote with a fetch refspec under the pushed-to remote's namespace = exit = 0, want 1"
+    # (the remote `pv` writes refs/remotes/origin/pv/*, which `--remotes=origin` took for origin's) and "remote whose URL
+    # changed to an empty repository = exit = 0, want 1" (the stale tracking ref still excluded the commit).
+    pv = os.path.join(TMP, "push-scope-ns-%d.git" % _n[0])
+    run(["git", "init", "-q", "--bare", pv], TMP)
+    git_out(root, "remote", "add", "pv", pv)
+    git_out(root, "config", "remote.pv.fetch", "+refs/heads/*:refs/remotes/origin/pv/*")  # git refuses the name origin/pv itself
+    git_out(root, "checkout", "-q", "-b", "ns", "master")
+    add("ns1.txt", "clean\n", "ns: one")
+    code, out = g(root, "push", "-q", "origin", "ns")
+    want("namespace case, setup: the public branch exists = exit", code, 0)
+    add("ns2.txt", "has " + word + " inside\n", "ns: two")
+    git_out(root, *(nohook + ["push", "-q", "pv", "ns"]))
+    code, out = g(root, "push", "origin", "ns")
+    want("remote with a fetch refspec under the pushed-to remote's namespace = exit", code, 1)
+    has("remote with a fetch refspec under the pushed-to remote's namespace", out, ":ns2.txt:1 [private list]")
+    git_out(root, "checkout", "-q", "-b", "mv", "master")
+    old = os.path.join(TMP, "push-scope-old-%d.git" % _n[0])
+    empty = os.path.join(TMP, "push-scope-empty-%d.git" % _n[0])
+    for d in (old, empty):
+        run(["git", "init", "-q", "--bare", d], TMP)
+    git_out(root, "remote", "add", "moved", old)
+    add("mv1.txt", "has " + word + " inside\n", "mv: one")
+    git_out(root, *(nohook + ["push", "-q", "moved", "mv"]))  # the tracking ref refs/remotes/moved/mv now exists
+    git_out(root, "remote", "set-url", "moved", empty)
+    code, out = g(root, "push", "moved", "mv")
+    want("remote whose URL changed to an empty repository = exit", code, 1)
+    has("remote whose URL changed to an empty repository", out, ":mv1.txt:1 [private list]")
+    want("remote whose URL changed: the empty repository got nothing", run(["git", "--git-dir", empty, "for-each-ref"], TMP)[1], "")
+    # A destination git cannot read (an unreachable URL), or none, excludes nothing: over-scans, never under-scans.
+    for label, url in (("an unreachable URL", os.path.join(TMP, "no-such-remote")), ("no URL", "")):
+        r = subprocess.run(["sh", os.path.join(root, "githooks", "pre-push"), "x", url], cwd=root, env=ENV, capture_output=True,
                            text=True, input="refs/heads/shared %s refs/heads/shared %s\n" % (head(root), "0" * 40), timeout=60)
-        want("two remotes, %s = exit" % label, r.returncode, 1)
-        has("two remotes, %s" % label, r.stdout + r.stderr, ":sh2.txt:1 [private list]")
+        want("destination, %s = exit" % label, r.returncode, 1)
+        has("destination, %s" % label, r.stdout + r.stderr, ":mv1.txt:1 [private list]")
     git_out(root, "reset", "-q", "--hard", "HEAD~1")
 
     # 4. no new commit is reported as zero and passes; a range that cannot be computed fails closed
