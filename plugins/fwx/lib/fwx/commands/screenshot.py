@@ -7,11 +7,15 @@ captured as a PNG in `--out`, default the run's captures folder (`<git-common-di
 tree). It serves the part review and the factory handoff; widths, other themes and states are not here.
 
 Every browser call goes through `fwx walk ab`, so its guards hold (the app's own hosts only, the run's namespace and idle timeout, no
-caller-set flags); this command never starts `agent-browser` itself. The height is 900 and nothing waits after `open` beyond what
-`agent-browser` does by itself: a page that paints late is captured early.
+caller-set flags); this command never starts `agent-browser` itself. The height is 900. `open` returns before a cold dev server has
+drawn the app, so after it the snapshot is asked again every 0.5 s until it has an element (and the text of `app_run.ready`, when the
+project sets one) or `app_run.ready_timeout_s` seconds (default 30) have passed, as the walk's selftest does; a page that has drawn
+nothing by then is missing, never an `ok` on a blank PNG. The captures are the page as the app draws it: the planted control of the
+walk (control.json) is not loaded in these sessions.
 
 Output, one line per screen on stdout: `ok <absolute path> <url> theme=T width=1440`, or `missing <url> theme=T width=1440: <why>`
-(why is the last line the browser or the guard printed, or "no file written" when the call returned 0 and left no PNG). A stale PNG
+(why is the last line the browser or the guard printed, "no element in the snapshot after N s" for a page that did not draw, or "no
+file written" when the call returned 0 and left no PNG). A stale PNG
 at the target name is removed first, so only a capture of this call counts. Exit 0 when every screen has its capture; 1 with `fwx
 screenshot: N of M missing: <urls>` on stderr when some do not (the others are still taken); 2 on a usage error or an unreadable run
 or screens (nothing started, and zero screens is an error); 77 with `NOT RUN, NOT ARMED: ...` when `walk ab` could not start the
@@ -23,7 +27,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
+from fwx import config
 from fwx.commands import walk
 
 WIDTH = 1440
@@ -40,8 +46,8 @@ def parse_screens(raw):
         try:
             with open(raw, encoding="utf-8") as f:
                 text = f.read()
-        except OSError as e:
-            raise walk.Stop("--screens is neither JSON nor a readable file (%s): %s" % (raw[:60], e.strerror))
+        except (OSError, UnicodeDecodeError) as e:  # a file that is not UTF-8 text is as unreadable as one that is not there
+            raise walk.Stop("--screens is neither JSON nor a readable file (%s): %s" % (raw[:60], getattr(e, "strerror", None) or "not UTF-8 text"))
     try:
         value = json.loads(text)
     except ValueError as e:
@@ -70,19 +76,50 @@ def slug(url):
     return re.sub(r"[^A-Za-z0-9]+", "-", path).strip("-")[:40] or "root"
 
 
-def ab(run_dir, session, args):
-    """`fwx walk ab` with these words: (exit code, the last line it printed). Never `agent-browser` directly."""
+def ab_run(run_dir, session, args):
+    """`fwx walk ab` with these words: the finished process. Never `agent-browser` directly. FWX_WALK_NO_CONTROL keeps the walk's planted
+    control out of the session: a capture is the page as the app draws it."""
     cmd = [sys.executable, os.path.join(walk.ROOT, "bin", "fwx"), "walk", "ab", "--run", run_dir, session]
-    r = subprocess.run(cmd + args, capture_output=True, text=True)
+    return subprocess.run(cmd + args, capture_output=True, text=True, env=dict(os.environ, FWX_WALK_NO_CONTROL="1"))
+
+
+def last_line(r):
     lines = [ln.strip() for ln in (r.stderr + r.stdout).splitlines() if ln.strip()]
-    return r.returncode, lines[-1] if lines else "exit %d, no output" % r.returncode
+    return lines[-1] if lines else "exit %d, no output" % r.returncode
 
 
-def step(run_dir, session, args):
-    rc, why = ab(run_dir, session, args)
+def ab(run_dir, session, args):
+    """(exit code, the last line `fwx walk ab` printed)."""
+    r = ab_run(run_dir, session, args)
+    return r.returncode, last_line(r)
+
+
+def failed(rc, why):
+    """None for exit 0, else the line that says why; 77 (`walk ab` could not start the browser) stops the whole command."""
     if rc == 77:
         raise walk.Stop(why[why.find("NOT RUN"):] if "NOT RUN" in why else "NOT RUN, NOT ARMED: " + why, 77)
     return None if rc == 0 else why
+
+
+def step(run_dir, session, args):
+    return failed(*ab(run_dir, session, args))
+
+
+def settled(run_dir, session, ready, limit):
+    """None once the page has drawn (a snapshot with an element, and `ready` when the project names one), else why not."""
+    end = time.monotonic() + limit
+    while True:
+        r = ab_run(run_dir, session, ["snapshot"])
+        if r.returncode:
+            return failed(r.returncode, last_line(r))
+        n = walk.count_elements(r.stdout)
+        if n > 0 and (not ready or ready in r.stdout):
+            return None
+        if time.monotonic() >= end:
+            if n:
+                return "%r is not in the snapshot after %g s: not the logged-in app, or it did not finish drawing" % (ready, limit)
+            return "no element in the snapshot after %g s: the page did not draw" % limit
+        time.sleep(walk.SETTLE_POLL_S)
 
 
 def parse(argv):
@@ -107,10 +144,10 @@ def capture(run_dir, session, sc, dest, state, stage=None):
         steps.append(["viewport", str(WIDTH), str(HEIGHT)])
     if sc["theme"] != state["theme"]:
         steps.append(["media", sc["theme"]])
-    steps += [["open", sc["url"]], ["screenshot", stage]]
+    steps += [["open", sc["url"]], ["snapshot"], ["screenshot", stage]]
     for args in steps:
         state["launched"] = True
-        why = step(run_dir, session, args)
+        why = settled(run_dir, session, state["ready"], state["limit"]) if args[0] == "snapshot" else step(run_dir, session, args)
         if why:
             return why
         if args[0] == "viewport":
@@ -133,7 +170,10 @@ def cmd(argv):
     out = os.path.abspath(o["--out"]) if "--out" in o else run["shots"]
     os.makedirs(out, exist_ok=True)
     session = "w1" if run.get("container") else "shot"
-    state = {"sized": False, "theme": None, "launched": False}
+    ready, limit, bad = walk.ready_config(run)
+    if bad:
+        raise walk.Stop(bad)
+    state = {"sized": False, "theme": None, "launched": False, "ready": ready, "limit": limit}
     miss = []
     try:
         for i, sc in enumerate(screens, 1):
@@ -165,3 +205,6 @@ def main(argv):
     except walk.Stop as e:
         sys.stderr.write("fwx screenshot: %s\n" % e)
         return e.code
+    except config.ConfigError as e:
+        sys.stderr.write("fwx screenshot: %s\n" % e)
+        return 2

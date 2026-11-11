@@ -38,6 +38,18 @@ S0 = "lib/fwx/commands/screenshot.py"
 
 AB_TAIL = """
 rest = sys.argv[sys.argv.index("--allowed-domains") + 2:]
+SNAP = os.path.join(os.environ["FAKE_FIXTURES"], "agent-browser-snapshot.txt")  # a real `snapshot` output of agent-browser
+if rest[:1] == ["snapshot"]:
+    # FAKE_BLANK_URL: the page never draws (no element); FAKE_LATE_URL: it draws from the third snapshot on (a cold dev server)
+    cur = [r for r in open(os.environ["FAKE_LOG"]) if '"open"' in r]
+    url = json.loads(cur[-1])["argv"][-1] if cur else ""
+    n = len([r for r in open(os.environ["FAKE_LOG"]) if '"snapshot"' in r])
+    if os.environ.get("FAKE_BLANK_URL") and os.environ["FAKE_BLANK_URL"] in url:
+        sys.exit(0)
+    if os.environ.get("FAKE_LATE_URL") and os.environ["FAKE_LATE_URL"] in url and n < 3:
+        sys.exit(0)
+    sys.stdout.write(open(SNAP).read())
+    sys.exit(0)
 if rest[:1] == ["open"] and os.environ.get("FAKE_FAIL_URL") and os.environ["FAKE_FAIL_URL"] in rest[1]:
     sys.stderr.write("page crashed: " + rest[1] + "\\n")
     sys.exit(1)
@@ -57,6 +69,12 @@ class Rig:
     def __init__(self, R):
         self.R = R
         self.sc = tw.Scene()
+        self.sc.env["FAKE_FIXTURES"] = os.path.join(helpers.ROOT, "tests", "fixtures", "walk")
+        cfg = os.path.join(self.sc.repo, ".claude", "fwx.json")
+        c = json.load(open(cfg, encoding="utf-8"))
+        c["project"]["app_run"]["ready_timeout_s"] = 1  # a page that never draws is given up on after one second here
+        with open(cfg, "w", encoding="utf-8") as f:
+            json.dump(c, f)
         tw.script(os.path.join(self.sc.bin, "agent-browser"), tw.FAKE % {"py": tw.PY, "tail": AB_TAIL})
         self.rd = None
 
@@ -210,7 +228,77 @@ def case_guards(R, S):
         rig.stop()
 
 
-CASES = [case_all_captured, case_one_fails, case_from_run, case_guards]
+def case_screens_not_utf8(R, S):
+    """`--screens` naming a file that is not UTF-8 text is the documented exit 2, not a traceback. Seen red on the base (UnicodeDecodeError
+    is a ValueError, and only OSError was caught):
+      FAIL: not UTF-8 --screens file: exit 2, nothing called, no traceback: rc 1 Traceback (most recent call last): ... UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0"""
+    rig = Rig(R)
+    try:
+        if not rig.up(S):
+            return
+        f = os.path.join(helpers.mkdtemp("fwx-shot-in-"), "s.bin")
+        with open(f, "wb") as fh:
+            fh.write(b"\xff\xfe\x00[")
+        r = rig.shot("--screens", f)
+        S.ok("not UTF-8 --screens file: exit 2, nothing called, no traceback", r.returncode == 2 and rig.sc.calls("agent-browser") == []
+             and "Traceback" not in r.stderr and "readable file" in r.stderr, "rc %d %s" % (r.returncode, r.stderr[-300:]))
+    finally:
+        rig.stop()
+
+
+def case_no_control(R, S):
+    """A capture of the walked screens is the page as the app draws it: the planted control (control.json, an init script that `walk ab`
+    loads at every fresh launch) is for the walkers, and a handoff screenshot of the control's screen must not carry the altered title.
+    Seen red on the base: the launch of the capture session carried --init-script:
+      FAIL: control: the capture session's launch carries no init script: [['--init-script', '/.../init.js', ...]]
+    The positive control is the second half: a walker's own fresh session (`walk ab`, same run) still loads it."""
+    rig = Rig(R)
+    try:
+        if not rig.up(S):
+            return
+        init = os.path.join(rig.shots, "init.js")
+        with open(init, "w", encoding="utf-8") as f:
+            f.write("/* the plant */")
+        with open(os.path.join(rig.rd, "control.json"), "w", encoding="utf-8") as f:
+            json.dump({"screen": rig.url("/a"), "path": "/a", "kind": "hierarchy", "script": init}, f)
+        r = rig.shot("--screens", screens_arg(rig, ("/a", None)))
+        S.eq("control: the capture is taken: exit", r.returncode, 0)
+        flagged = [c["argv"] for c in rig.sc.calls("agent-browser") if "--init-script" in c["argv"]]
+        S.ok("control: the capture session's launch carries no init script", not flagged, str(flagged))
+        rig.sc.clear()
+        r = rig.fwx("walk", "ab", "--run", rig.rd, "w1", "open", rig.url("/a"))
+        flagged = [c["argv"] for c in rig.sc.calls("agent-browser") if "--init-script" in c["argv"]]
+        S.ok("control: a walker's fresh session of the same run still loads the plant", r.returncode == 0 and len(flagged) == 1, "rc %d %s" % (r.returncode, flagged))
+    finally:
+        rig.stop()
+
+
+def case_settled(R, S):
+    """The capture waits for the page to draw: after `open` it asks for a snapshot until one has an element (as the walk's selftest does),
+    for at most app_run.ready_timeout_s, and a page that never draws is missing, not an `ok` on a blank PNG. Seen red on the base (it took
+    the screenshot right after `open`):
+      FAIL: settled: a page that never draws is missing: rc 0 ok /.../01-blank-light-1440.png ...
+      FAIL: settled: a page that draws late is captured after it drew: snapshots asked 0, want 3 or more
+    The late page is the positive control of the blank one: the same fake, only when it draws differs."""
+    rig = Rig(R)
+    try:
+        if not rig.up(S):
+            return
+        r = rig.shot("--screens", screens_arg(rig, ("/blank", None), ("/fine", None)), env={"FAKE_BLANK_URL": "/blank"})
+        out = r.stdout + r.stderr
+        S.ok("settled: a page that never draws is missing, and says why", r.returncode == 1 and "missing %s" % rig.url("/blank") in r.stdout
+             and "no element" in r.stdout, "rc %d %s" % (r.returncode, out))
+        S.ok("settled: the page that draws is taken (one PNG)", "ok " in r.stdout and len(os.listdir(rig.shots)) == 1, out)
+        rig.sc.clear()
+        r = rig.shot("--screens", screens_arg(rig, ("/slow", None)), env={"FAKE_LATE_URL": "/slow"})
+        snaps = len([c for c in rig.sc.calls("agent-browser") if "snapshot" in c["argv"]])
+        S.ok("settled: a page that draws late is captured after it drew", r.returncode == 0 and snaps >= 3,
+             "rc %d, snapshots asked %d, want 3 or more: %s" % (r.returncode, snaps, r.stdout + r.stderr))
+    finally:
+        rig.stop()
+
+
+CASES = [case_all_captured, case_one_fails, case_from_run, case_guards, case_screens_not_utf8, case_no_control, case_settled]
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in screenshot.py exactly once
 MUTANTS = [
     ("ignores errors", case_one_fails, "            if why:\n                miss.append", "            if False:\n                miss.append",
@@ -226,6 +314,12 @@ MUTANTS = [
     ("run.json screens ignored", case_from_run, 'else run.get("screens")', "else None", "run.json screens: exit"),
     ("no screens is a pass", case_from_run, "if not isinstance(raw, list) or not raw:", "if False:", "no screens anywhere: exit 2 and says so"),
     ("77 flattened to missing", case_guards, "if rc == 77:", "if False:", "no agent-browser: NOT RUN, NOT ARMED and exit 77"),
+    ("non-UTF-8 file is a traceback", case_screens_not_utf8, "except (OSError, UnicodeDecodeError) as e:", "except OSError as e:",
+     "not UTF-8 --screens file: exit 2, nothing called, no traceback"),
+    ("capture session loads the control", case_no_control, ', env=dict(os.environ, FWX_WALK_NO_CONTROL="1"))', ")",
+     "control: the capture session's launch carries no init script"),
+    ("no wait after open", case_settled, '["open", sc["url"]], ["snapshot"], ["screenshot", stage]', '["open", sc["url"]], ["screenshot", stage]',
+     "settled: a page that never draws is missing"),
 ]
 
 
