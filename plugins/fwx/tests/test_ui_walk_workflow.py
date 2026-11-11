@@ -32,6 +32,11 @@ Red before a job closed its own browser before freeing its slot (a browser stays
   FAIL: close: every job's browser is closed after it returned: [('ui-walker:T1-breaker', 'w1', None), ('ui-walker:T1-critic', 'w2', None), ...]
   FAIL: close quota 1: the next job starts only after the previous one's browser was closed: [('ui-walker:T1-breaker', 'ui-walker:T1-critic'), ...]
 
+Red before the planted control's own verified row was taken out of what the fixer gets (the verifiers' browsers carry the plant too):
+  FAIL: control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json: no executor:runner-control-T1 launched
+  FAIL: control row clip: the clip of the control row is not listed: got ['.../control.webm'], want []
+  FAIL: control row not taken out: a gap, and a failed run: the fixer must not get it: ('done', [])
+
 Red before a recheck reply had to hold a row for each finding it was given (`{"findings": []}` was saved and the run was done with 0 still, 0 gone):
   FAIL: recheck reply with no row: launched once more, then a gap and a failed run: got (1, 'done', False), want (2, 'failed', True)
 
@@ -119,7 +124,7 @@ def green():
         "ui-verifier:T1": verified("T1", ("CONFIRMED", RUN_DIR + "/clip-1.webm"), ("NOT REPRODUCED", None)),
         "ui-verifier:T2": verified("T2", ("PLAUSIBLE", None)),
         "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved"),
-        "ui-verifier:control": {"screen": "/settings", "found": True, "finding": "T1-1", "why": "T1-1 says the title reads like body text"},
+        "ui-verifier:control": {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"},
         "executor:runner-findings": R(FINDINGS_OUT),
         "executor:runner-screenshot": R(SHOTS),
         "executor:runner-coverage": R("saved"),
@@ -239,7 +244,7 @@ def check_green(script, s):
     s.eq("green: details.run_dir, fix_file, contradicted_file, down_file, coverage_file", (d.get("run_dir"), d.get("fix_file"), d.get("contradicted_file"), d.get("down_file"), d.get("coverage_file")),
          (RUN_DIR, RUN_DIR + "/fix.json", RUN_DIR + "/contradicted.json", RUN_DIR + "/down.json", RUN_DIR + "/coverage.md"))
     s.eq("green: details.counts are what `findings` printed", d.get("counts"), FINDINGS_OUT["counts"])
-    s.eq("green: details.control", d.get("control"), {"screen": "/settings", "found": True, "finding": "T1-1"})
+    s.eq("green: details.control", d.get("control"), {"screen": "/settings", "found": True, "finding": "w2-F1"})
     s.eq("green: details.shots are the paths the screenshots were written to", d.get("shots"), [
          "/srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png", "/srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png"])
     s.eq("green: details.clips are the clip paths of the kept findings", d.get("clips"), [RUN_DIR + "/clip-1.webm"])
@@ -360,6 +365,63 @@ def check_close(script, s):
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=recheck_answers())
     rec = finish(s, "close in a recheck", rec, err)
     s.ok("close in a recheck: each verifier's browser is closed", closing("v1") in labels(rec) and closing("v2") in labels(rec), repr(labels(rec)))
+
+
+def check_control_rows(script, s):
+    """The planted fault is restyled by an init script that every `ab` browser of the run takes, the verifiers' too: a verifier confirms the title
+    that reads like body text and `fwx walk findings` would hand it to the fixer as a defect of the repository. The judge names the walker's
+    finding (`<session>-F<n>`, as agents/ui-verifier.md says); its verified row, and the rows tied to it by `duplicate_of`, are taken out of the
+    verified file before `findings` reads it and kept in control-<tramo>.json. Rows are shaped by the keys of the agent text.
+
+    Red on the base (no runner rewrote the file; the answers below were never asked for):
+      FAIL: control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json: no executor:runner-control-T1 launched
+    """
+    def row(id, source, verdict="CONFIRMED", **kw):
+        return real_row(s, id=id, source=source, verdict=verdict, kind="observed", type="hierarchy", **kw)
+
+    def split(rec):
+        """The two writes of the control runner's command: the verified file kept, the control rows set aside."""
+        cmd = (runner(rec, "control-T1") or [{"prompt": ""}])[0]["prompt"]
+        return (cmd.split(" && ")[-2:] + ["", ""])[:2] + [cmd[-500:] or "no executor:runner-control-T1 launched"]
+    judged = {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"}
+    rows = [row("T1-1", "w1-F1", clip=RUN_DIR + "/clip-1.webm"), row("T1-2", "w1-F2", "NOT REPRODUCED"), row("T1-3", "w2-F1")]
+    over = {"ui-verifier:T1": {"findings": rows}, "ui-verifier:control": judged, "executor:runner-control-T1": R("saved")}
+    rec, err = go(script, answers_over=over)
+    rec = finish(s, "control row", rec, err)
+    ls = labels(rec)
+    keep, gone, shown = split(rec)
+    s.ok("control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json",
+         RUN_DIR + "/verified-T1.json" in keep and '"T1-3"' not in keep and '"T1-1"' in keep and '"T1-2"' in keep
+         and RUN_DIR + "/control-T1.json" in gone and '"T1-3"' in gone and '"T1-1"' not in gone, shown)
+    s.ok("control row: it is taken out after the judge and before `findings` reads the files",
+         at(ls, "ui-verifier:control") < at(ls, "executor:runner-control-T1") < at(ls, "executor:runner-findings"), repr(ls))
+    s.ok("control row: a tramo with no control row is not rewritten", "executor:runner-control-T2" not in ls, repr(ls))
+    s.eq("control row: the run is done and the clips are those of the rows kept", (result(rec).get("status"), details(rec).get("clips")), ("done", [RUN_DIR + "/clip-1.webm"]))
+    # the control row carries a clip: it is not a clip of a finding the fixer gets
+    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", clip=RUN_DIR + "/control.webm")]}})
+    rec = finish(s, "control row clip", rec, err)
+    s.eq("control row clip: the clip of the control row is not listed", details(rec).get("clips"), [])
+    # the verifier grouped the sightings: the control walker's row is a DUPLICATE of the first one, which carries the verdict; and the other way round
+    for what, dup in (("the judged row duplicates a kept sighting", [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", "DUPLICATE", duplicate_of="T1-1")]),
+                      ("a row duplicates the judged one", [row("T1-1", "w1-F1", "DUPLICATE", duplicate_of="T1-3"), row("T1-3", "w2-F1")])):
+        rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": dup + [row("T1-4", "w1-F9")]}})
+        rec = finish(s, "control row, " + what, rec, err)
+        keep, gone, shown = split(rec)
+        s.ok("control row, %s: both rows of the one defect leave, the other finding stays" % what,
+             '"T1-1"' in gone and '"T1-3"' in gone and '"T1-1"' not in keep and '"T1-3"' not in keep and '"T1-4"' in keep, shown)
+    # the id the judge names may also be the verified row's own
+    rec, err = go(script, answers_over={**over, "ui-verifier:control": dict(judged, finding="T1-3")})
+    rec = finish(s, "control row by id", rec, err)
+    s.ok("control row by id: a finding named by the id of its verified row leaves too", "executor:runner-control-T1" in labels(rec), repr(labels(rec)))
+    for what, ctl in (("not found", dict(judged, found=False, finding=None)), ("not judged", dict(judged, found=None, finding=None)),
+                      ("found, no finding named", dict(judged, finding=None))):
+        rec, err = go(script, answers_over={**over, "ui-verifier:control": ctl})
+        rec = finish(s, "control row, " + what, rec, err)
+        s.ok("control row, %s: no file is rewritten" % what, "executor:runner-control-T1" not in labels(rec), repr(labels(rec)))
+    rec, err = go(script, answers_over={**over, "executor:runner-control-T1": R("", 1)})
+    rec = finish(s, "control row not taken out", rec, err)
+    s.ok("control row not taken out: a gap, and a failed run: the fixer must not get it", result(rec).get("status") == "failed"
+         and any("control" in g and "T1" in g for g in details(rec).get("gaps", [])), repr((result(rec).get("status"), details(rec).get("gaps"))))
 
 
 def check_control(script, s):
@@ -627,6 +689,7 @@ def check_all(script, s):
     check_down_fails(script, s)
     check_findings_fails(script, s)
     check_close(script, s)
+    check_control_rows(script, s)
     check_control(script, s)
     check_quota(script, s)
     check_tramos(script, s)
@@ -667,6 +730,9 @@ MUTANTS = [
     ("a job's browser is not closed", "      if (after) await after()\n", "", "FAIL: close: every job's browser is closed after it returned"),
     ("the slot is freed before the browser is closed", "      if (after) await after()\n    } finally {\n      release()\n    }", "      release()\n      if (after) await after()\n    } finally {\n    }",
      "FAIL: close quota 1: the next job starts only after the previous one's browser was closed"),
+    ("the planted control's row goes to the fixer", "if (!fid) return", "return", "FAIL: control row: the verifier confirmed the planted title"),
+    ("the rows tied to the control's row stay", "if (out.has(a) !== out.has(b)) {", "if (false) {", "FAIL: control row, the judged row duplicates a kept sighting"),
+    ("the control's clip is listed", "if (i >= 0) st.clips.splice(i, 1)", "", "FAIL: control row clip: the clip of the control row is not listed"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("the runner may name its stderr file", "never a fixed name in /tmp. ", "", "FAIL: green: the runner is told to keep stderr in a mktemp file"),
     ("the verifier is not told where captures go", "A path in /tmp is refused.", "", "FAIL: green: the verifier is told a screenshot with no path lands"),

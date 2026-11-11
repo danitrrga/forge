@@ -79,7 +79,7 @@ const SLOTS = () => quota
 const st = {
   agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [],
   ctl: null, control: { screen: null, found: null, finding: null }, noCount: null, counts: null, fixFile: null, contradictedFile: null,
-  shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
+  verified: [], shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
 }
 
 const sh = (x) => "'" + String(x).replace(/'/g, "'\\''") + "'"
@@ -303,6 +303,42 @@ async function judge() {
   else if (got.found === false) st.noCount = 'the walkers did not find the fault planted on ' + st.control.screen
 }
 
+// The control's init script runs in every `ab` browser of the run, the verifiers' too, so a verifier confirms the planted title and `fwx walk
+// findings` would hand it to the fixer as a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a
+// row's own id is read too): that row, the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json.
+async function dropControl() {
+  const fid = st.control.found === true ? st.control.finding : null
+  if (!fid) return
+  for (const v of st.verified) {
+    const rows = v.rep.findings
+    const out = new Set(rows.filter((r) => r.source === fid || r.id === fid).map((r) => r.id))
+    const ties = rows.filter((r) => typeof r.duplicate_of === 'string' && r.duplicate_of).map((r) => [r.id, r.duplicate_of])
+    for (let grew = out.size > 0; grew;) {
+      grew = false
+      for (const [a, b] of ties) {
+        if (out.has(a) !== out.has(b)) {
+          out.add(a).add(b)
+          grew = true
+        }
+      }
+    }
+    if (out.size === 0) continue
+    const gone = rows.filter((r) => out.has(r.id))
+    const keep = rows.filter((r) => !out.has(r.id))
+    const put = (o, f) => 'printf ' + sh('%s\n') + ' ' + sh(JSON.stringify(o)) + ' > ' + sh(f)
+    const cf = st.runDir + '/control-' + v.tramo + '.json'
+    const done = await exec('control-' + v.tramo, inRepo(put({ findings: keep }, v.file) + ' && ' + put({ findings: gone }, cf)), true)
+    if (!done || done.rc !== 0) {
+      st.gaps.push('the planted control\'s finding could not be taken out of ' + v.file + ': the fixer would get it')
+      continue
+    }
+    for (const r of gone) {
+      const i = typeof r.clip === 'string' ? st.clips.indexOf(r.clip) : -1
+      if (i >= 0) st.clips.splice(i, 1)
+    }
+  }
+}
+
 // ---- walkers --------------------------------------------------------------------------------------------------------------------
 function makeJobs(tramos) {
   const jobs = []
@@ -411,6 +447,7 @@ async function verifyTramo(tramo, index, files, items) {
     return null
   }
   st.saved.push(file)
+  if (!items) st.verified.push({ tramo: tramo.id, file, rep })
   for (const f of rep.findings) if (typeof f.clip === 'string' && f.clip && (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE')) st.clips.push(f.clip)
   return rep
 }
@@ -482,6 +519,7 @@ async function walkRun(up) {
   if (st.fatal) stop('failed', st.fatal)
   if (!st.jobs.some((j) => j.returned)) stop('failed', 'no walker returned: no tramo was walked')
   await judge()
+  await dropControl()
   const lead = st.noCount ? NO_COUNT + ': ' + st.noCount + '.' : ''
   if (out.every((x) => !x)) stop('failed', (lead ? lead + ' ' : '') + 'no tramo was verified: ' + st.gaps.join('; '))
   if (st.gaps.length) stop('failed', (lead ? lead + ' ' : '') + 'the walk is incomplete: ' + st.gaps.join('; '))
