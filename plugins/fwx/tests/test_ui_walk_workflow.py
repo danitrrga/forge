@@ -41,6 +41,8 @@ once; the first matching FAIL line of each, seen red):
   the walk keeps the quota `up` gave: FAIL: quota from the second ask: the walkers of the tramos run at once: [('ui-walker:T1-breaker', 7, 12), ...]
   a capacity that gives no answer drops the quota: FAIL: capacity ask rc 1: the quota stays what `up` allowed (3) and it is logged: [...]
   a raw tramo id in a path:  FAIL: unsafe tramo id: no launch or command carries the raw id: ['ui-walker:../x y-breaker', ...]
+  the quota capped at two (a review of the pairwise overlap count, which added 1 to a sum that held the walker itself): against the count as first
+      written the control stayed green: FAIL: control the quota is capped at two: red with 'FAIL: quota from the second ask: more than the 2 `up` would have allowed run at once': got []
 """
 import collections
 import json
@@ -302,6 +304,11 @@ def check_control(script, s):
              str(r.get("reason")).lower().startswith("the run does not count") and tag in str(r.get("reason")), repr(r.get("reason")))
 
 
+def peak(w):
+    """The most walkers running at one moment: for each walker's start, the intervals that hold that tick."""
+    return max([sum(1 for b in w if b["start"] <= a["start"] < b["end"]) for a in w] or [0])
+
+
 def check_quota(script, s):
     def cap(n, up_n=None):
         """`up` allows `up_n` (it was asked for one tramo), the second ask for the real tramos allows `n`."""
@@ -326,8 +333,9 @@ def check_quota(script, s):
     rec = finish(s, "quota from the second ask", rec, err)
     w = walkers(rec)
     s.ok("quota from the second ask: the walkers of the tramos run at once", any(overlap(a, b) for i, a in enumerate(w) for b in w[i + 1:]), repr([(x["label"], x["start"], x["end"]) for x in w]))
-    s.ok("quota from the second ask: more than the 2 `up` would have allowed run at once", max(sum(1 for b in w if overlap(a, b)) + 1 for a in w) > 2,
-         repr([(x["label"], x["start"], x["end"]) for x in w]))
+    # the walkers running at each walker's start, itself included: a pairwise overlap count (the first version added 1 to a sum that already
+    # held the walker itself) read two at once as three, so a quota capped at two passed
+    s.ok("quota from the second ask: more than the 2 `up` would have allowed run at once", peak(w) > 2, repr([(x["label"], x["start"], x["end"]) for x in w]))
     # a second ask that does not answer leaves the quota `up` gave, said
     for what, ans in (("rc 1", R("", 1)), ("no answer", None), ("not JSON", R("nope"))):
         over = cap(1, up_n=3)
@@ -504,6 +512,8 @@ MUTANTS = [
     ("the recheck branch removed", "if (A.recheck) {", "if (false) {", "FAIL: recheck: no breaker or critic launched (critic launched in recheck)"),
     ("not armed carries on", "if (up.armed !== true) {", "if (false) {", "FAIL: not armed: status"),
     ("the walkers are not capped", "const SLOTS = () => quota", "const SLOTS = () => 99", "FAIL: quota 1: no two walkers at once"),
+    ("the quota is capped at two", "const SLOTS = () => quota", "const SLOTS = () => Math.min(quota, 2)",
+     "FAIL: quota from the second ask: more than the 2 `up` would have allowed run at once"),
     ("the control is armed after the walkers", "await armControl(tramos)", "/* armed later */", "FAIL: green: the control is armed before any walker"),
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
     ("a missed control still counts", "The run does not count", "Run", "FAIL: control missed: the reason says first that the run does not count"),
