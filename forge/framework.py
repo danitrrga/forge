@@ -150,6 +150,8 @@ def _document(prof, name, ppath):
             doc[key] = section[key]
     if isinstance(section.get("walk"), dict):  # the plugin validates its own keys; a section without one leaves it out
         doc["walk"] = table("walk")
+    if isinstance(section.get("open"), dict):  # the user's opener ({"command": argv with {url} and {path}}), as is
+        doc["open"] = table("open")
     doc["linear"] = linear
     doc["integrations"] = {n: (lib.on(n) if n in lib.INTEGRATIONS else False) for n in INTEGRATIONS}
     doc["paths"] = table("paths")
