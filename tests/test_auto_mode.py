@@ -206,6 +206,14 @@ def main():
     want("denial source of the CLI's own classifier text", auto_mode.classify_denial(CLASSIFIER_TEXT), ("classifier", "External System Writes"))
     want("category of the real classifier text", auto_mode.classify_denial(REAL_CLASSIFIER_TEXT), ("classifier", "Shared Scratch Sweep"))
     want("a plain tool error is no denial", auto_mode.classify_denial("exit code 1: no such file"), (None, None))
+    # A directory deny rule's own text (no "Permission to use X", no path in it) is a rule denial with an empty rule. Seen failing before
+    # the fix: "directory deny rule text: want ('rule', ''), got (None, None)". The control is a similar plain error naming a directory.
+    DIR_DENY = "File is in a directory that is denied by your permission settings."
+    want("directory deny rule text", auto_mode.classify_denial(DIR_DENY), ("rule", ""))
+    want("directory deny rule text, no final period", auto_mode.classify_denial(DIR_DENY.rstrip(".")), ("rule", ""))
+    want("directory deny rule text, kind permission-rule", auto_mode.classify_denial(DIR_DENY, "permission-rule"), ("rule", ""))
+    want("CONTROL: a plain error naming a directory is no denial",
+         auto_mode.classify_denial("File is in a directory that does not exist: No such file or directory"), (None, None))
 
     # 2. the catalogue
     actions, err = auto_mode.load_actions()
