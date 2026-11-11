@@ -253,8 +253,16 @@ def source_all(root=None):
 
 
 def source_range(spec, root=None):
+    """The commits of `spec`: A..B as git reads it; `0...TIP` (an all-zero left side), TIP not reachable from any
+    remote-tracking ref; `remote:NAME..TIP` (the pre-push form), TIP not reachable from a tracking ref of the
+    remote NAME alone, since a commit another remote has is not public there. A name git would read as a glob,
+    or an empty one (a push to a bare URL), excludes nothing: more is scanned, never less."""
     m = re.match(r"^0+\.\.(.+)$", spec)
     args = [m.group(1), "--not", "--remotes"] if m else [spec]
+    m = re.match(r"^remote:(.*)\.\.([^.]+)$", spec)
+    if m:
+        name, tip = m.groups()
+        args = [tip] + (["--not", "--remotes=" + name] if name and not re.search(r"[*?\[\\]", name) else [])
     revs = git(["rev-list", "--reverse"] + args, root=root).split()
     items = []
     for c in revs:

@@ -996,6 +996,35 @@ def push_scope_cases():
     want("new remote branch, dirty: it was not created", tip("nb-dirty"), "")
     git_out(root, "reset", "-q", "--hard", "HEAD~1")
 
+    # 5. a commit that only a PRIVATE remote has is not public: pushing it to the public remote scans it
+    # Red before the fix (CodeRabbit on the PR): "two remotes, existing branch, a commit the other remote has = exit
+    # = 0, want 1" and the same for a new branch: `--not --remotes` took the other remote's tracking ref as public.
+    priv = os.path.join(TMP, "push-scope-private-%d.git" % _n[0])
+    run(["git", "init", "-q", "--bare", priv], TMP)
+    git_out(root, "remote", "add", "priv", priv)
+    git_out(root, "checkout", "-q", "-b", "shared", "master")
+    add("sh1.txt", "clean\n", "shared: one")
+    code, out = g(root, "push", "-q", "origin", "shared")
+    want("two remotes, setup: the public branch exists = exit", code, 0)
+    add("sh2.txt", "has " + word + " inside\n", "shared: two")
+    git_out(root, *(nohook + ["push", "-q", "priv", "shared"]))  # only the private remote may have it
+    code, out = g(root, "push", "origin", "shared")
+    want("two remotes, existing branch, a commit the other remote has = exit", code, 1)
+    has("two remotes, existing branch", out, ":sh2.txt:1 [private list]", "1 commit(s)")
+    code, out = g(root, "push", "origin", "shared:shared-new")
+    want("two remotes, new branch, a commit the other remote has = exit", code, 1)
+    has("two remotes, new branch", out, ":sh2.txt:1 [private list]")
+    code, out = g(root, "push", "priv", "shared:shared-again")  # control: the remote that has it scans nothing new
+    want("two remotes, pushing to the remote that already has the commit = exit", code, 0)
+    has("two remotes, the remote that already has it", out, "0 commit(s)", "no new commit")
+    # A remote name git would read as a glob, or none (a push to a URL), excludes nothing: over-scans, never under-scans.
+    for label, rname in (("a glob remote name", "pri*"), ("an empty remote name", ""), ("a remote that does not exist", "nosuch")):
+        r = subprocess.run(["sh", os.path.join(root, "githooks", "pre-push"), rname, remote], cwd=root, env=ENV, capture_output=True,
+                           text=True, input="refs/heads/shared %s refs/heads/shared %s\n" % (head(root), "0" * 40), timeout=60)
+        want("two remotes, %s = exit" % label, r.returncode, 1)
+        has("two remotes, %s" % label, r.stdout + r.stderr, ":sh2.txt:1 [private list]")
+    git_out(root, "reset", "-q", "--hard", "HEAD~1")
+
     # 4. no new commit is reported as zero and passes; a range that cannot be computed fails closed
     code, out = g(root, "push", "origin", "master:ptr")
     want("a branch at an already-public commit = exit", code, 0)

@@ -1,7 +1,7 @@
 #!/bin/sh
 # The personal-data check over the content and message of every commit about to be pushed. A
 # commit made with --no-verify is caught here. Every pushed ref, new on the remote or not, checks the
-# commits reachable from the pushed tip and from no remote-tracking ref: the commits this push adds.
+# commits reachable from the pushed tip and from no remote-tracking ref of the remote pushed to.
 # A range from the remote's old sha would re-scan what a merged-in default branch already made public.
 # A branch deletion is not checked.
 root=$(git rev-parse --show-toplevel) || exit 1
@@ -13,8 +13,9 @@ fi
 rc=0
 while read -r local_ref local_sha remote_ref _remote_sha; do
     case "$local_sha" in *[!0]*) ;; *) continue ;; esac
-    # the all-zero left side is check-public's form for "the commits no remote-tracking ref has"
-    "$forge" check-public --range "0000000000000000000000000000000000000000..$local_sha" || rc=1
+    # "remote:NAME..TIP": TIP's commits that no tracking ref of the remote being pushed to has. Another
+    # remote's tracking ref is not public history there: a commit only a private remote has is scanned.
+    "$forge" check-public --range "remote:$1..$local_sha" || rc=1
 done
 if [ "$rc" -ne 0 ]; then
     echo "pre-push: refused: personal data in the commits being pushed, listed above" >&2
