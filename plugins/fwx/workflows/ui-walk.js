@@ -530,7 +530,8 @@ async function main() {
   phase(PHASE)
   const v = await must('up', 'fwx walk up --dir ' + sh(A.phase_dir) + ' --part ' + A.part + ' --round ' + A.round + ' --repo ' + sh(A.repo) +
     (A.app ? ' --app ' + sh(JSON.stringify(A.app)) : ''), false)
-  if (!v) stop('failed', 'runner did not return: up')
+  // `up` may have started the app and lost its report; this script cannot tell that app from an earlier open run of the same folder, so it names the command
+  if (!v) stop('failed', 'runner did not return: up. If the app came up, `fwx walk down --run ' + sh(A.phase_dir + '/ui-walk/' + A.part + '-' + A.round) + '` closes it')
   const up = parseAny(v.stdout)
   if (v.rc === 77) stop('done', 'NOT RUN, NOT ARMED: fwx walk up exited 77 (a tool it needs is missing)')
   if (v.rc !== 0 || !up || typeof up !== 'object') stop('failed', 'fwx walk up exited ' + v.rc + ': the app did not come up (the reason is on its stderr; run the command by hand)')

@@ -266,6 +266,15 @@ def check_up_fails(script, s):
     rec, err = go(script, answers={"executor:runner-up": R("", 2)})
     rec = finish(s, "up refused", rec, err)
     s.eq("up refused: status failed, nothing else launched", (result(rec).get("status"), labels(rec)), ("failed", ["executor:runner-up"]))
+    # the runner may have started the app and lost its report: the run folder is `<phase>/ui-walk/<part>-<round>`, so the reason names the `down` that
+    # closes it; the script does not run that `down` itself, for it cannot tell this attempt's app from an earlier open run of the same folder
+    # Red on the base: FAIL: up with no report: the reason names the command that closes a run `up` may have started: 'runner did not return: up'
+    rec, err = go(script, answers={"executor:runner-up": None})
+    rec = finish(s, "up with no report", rec, err)
+    r = result(rec)
+    s.eq("up with no report: failed, and no `down` is run on a guess", (r.get("status"), labels(rec)), ("failed", ["executor:runner-up"]))
+    s.ok("up with no report: the reason names the command that closes a run `up` may have started: %r" % r.get("reason"),
+         "fwx walk down --run '%s'" % RUN_DIR in str(r.get("reason")), repr(r.get("reason")))
 
 
 def check_breaker_null(script, s):
