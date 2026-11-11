@@ -178,7 +178,7 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
 - **Stage:** postmortem
 - **Writes:** nothing
 - **Invokes:** command fwx plan status
-- **Does:** A script reads the verdict and the list of objections, not the body of the post-mortem, and routes by it. A back-to-discuss verdict counts as objections here: in a session of the owner it reaches him with the option to return to the discuss.
+- **Does:** A script reads the verdict and the list of objections, not the body of the post-mortem, and routes by it. A back-to-discuss verdict counts as objections here: in a session of the owner it reaches him at n_P4 with the option to return to the discuss: the orchestrator proposes the return and it happens only on his yes, never by itself (the tree has no arrow from here to n_L4, the path goes through n_P4).
 - **Exits:**
   - to n_P4: yes, there are objections and it is the owner's session
   - to p_PREP: no objections; factory: the check of the plan's scope runs here too (the plan's files stay out of hooks, settings and CI)
