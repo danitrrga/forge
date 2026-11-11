@@ -139,6 +139,7 @@ def _document(prof, name, ppath):
             "surface_context": copy.deepcopy(prof.get("surface_context") or {}),
             "default_branch_protected": prof.get("default_branch_protected") is True,
             "ui_image": copy.deepcopy(prof.get("ui_image")),
+            "worktree_setup": list(prof.get("worktree_setup") or []),
         },
         "factory": factory,
         "weekly": table("weekly"),
