@@ -342,6 +342,22 @@ def case_fix_walk(R, S):
     S.ok("fix walk: an unknown key on a walk finding is still refused", r.returncode == 2 and "'fix'" in r.stderr, r.stderr)
 
 
+def case_fix_walk_steps_list(R, S):
+    """The verifier's schema lets `steps` be a list, and the fixer sees no field but the claim, so a list of steps is kept, in order, in the claim.
+    Seen red on the base (only a string was read, so the steps were dropped):
+      FAIL: fix walk steps list: the claim carries the steps, in order: 'ArrowRight steps the month and drops keyboard focus. Expected: Keyboard user keeps a visible focus.'
+    The string case of case_fix_walk is the control: it is unchanged."""
+    sc = wp.Scene(tasks=[wp.task("T1", 1, ["src/a.py"])])
+    f = findings_file([dict(WALK, steps=["open the calendar", "press Tab 3 times", "press ArrowRight"])])
+    r = sc.prepare(R, "--fix", f)
+    S.eq("fix walk steps list: exit", r.returncode, 0)
+    claim = ((wp.args_of(r) or {}).get("fix") or {}).get("findings", [{}])[0].get("claim", "")
+    S.ok("fix walk steps list: the claim carries the steps, in order", "open the calendar" in claim and claim.index("open the calendar") < claim.index("press Tab 3 times")
+         < claim.index("press ArrowRight"), repr(claim))
+    r = sc.prepare(R, "--fix", findings_file([dict(WALK, steps=[])]))
+    S.ok("fix walk steps list: an empty list adds no Steps clause", r.returncode == 0 and "Steps" not in (((wp.args_of(r) or {}).get("fix") or {}).get("findings", [{}])[0].get("claim", "")), r.stderr)
+
+
 def case_revert(R, S):
     sc = wp.Scene()
     a = wp.ok_args(S, "revert", sc.prepare(R, "--revert", "F1,F2"))
@@ -359,7 +375,7 @@ def case_revert(R, S):
 B = "lib/fwx/execute/brief.py"
 P = "lib/fwx/execute/prepare.py"
 T = "data/executor-brief.md"
-CASES = [case_briefs, case_template, case_refused, case_ui, case_module, case_fix, case_fix_walk, case_revert]
+CASES = [case_briefs, case_template, case_refused, case_ui, case_module, case_fix, case_fix_walk, case_fix_walk_steps_list, case_revert]
 MUTANTS = [
     ("SCOPE not checked", case_module, B, '    if not facts["files"]:', "    if False:", "the empty SCOPE is named"),
     ("UI task refused", case_ui, B, '    if not facts["ui"]:', "    if True:", "ui task refused"),
@@ -387,6 +403,7 @@ MUTANTS = [
     ("previous report left out", case_module, B, '(["- The report of the previous attempt, read it before anything else: %s" % previous] if previous else [])', "[]",
      "a relaunch puts the previous report in CONTEXT"),
     ("severity not checked", case_fix, B, 'if f.get("severity") not in SEVERITY:', "if False:", "a severity that is not low, medium or high: exit"),
+    ("steps list dropped", case_fix_walk_steps_list, B, "if isinstance(v, list):", "if False:", "the claim carries the steps, in order"),
     ("walk rows not normalized", case_fix_walk, P, "    return brief.normalize(data)", "    return data", "the findings reach the brief in plan C.5's keys"),
     ("null file allowed", case_fix_walk, B, 'if walk and f.get("file") is None:\n            found.append', 'if False:\n            found.append',
      "a walk finding with file null: exit"),

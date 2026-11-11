@@ -178,8 +178,11 @@ def normalize(items):
             continue
         claim = " ".join(str(f["claim"]).split())
         for label, key in (("Expected", "expected"), ("Steps", "steps")):
-            if isinstance(f.get(key), str) and f[key].strip():
-                claim += " %s: %s." % (label, f[key].strip().rstrip("."))
+            v = f.get(key)
+            if isinstance(v, list):  # the verifier's schema lets `steps` be an ordered list of text steps
+                v = "; ".join(x.strip().rstrip(".") for x in v if isinstance(x, str) and x.strip())
+            if isinstance(v, str) and v.strip():
+                claim += " %s: %s." % (label, v.strip().rstrip("."))
         out.append({"id": f["id"], "file": f["file"], "line": f.get("line"), "claim": claim, "evidence": _evidence(f), "severity": f["severity"]})
     return out
 
