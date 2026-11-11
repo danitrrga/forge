@@ -18,6 +18,11 @@ run against that checkout's sandbox.py plus one KEEP_ENV line, 11 FAIL:
   hooks/test_worktree_guard.py make a temp dir nothing removes at exit
   bench verdict: left in TMPDIR = ['tmp69u8oyxh', 'tmpg6hhc_4c', 'tmpho00zjld', 'tmpvdtfimsc'], want []
   test_skill_bench_project: left in TMPDIR = ['skillbench-l3faz6wa', 'skillbench-xf4nbej9', 'skillbench-zr1bof79'], want []
+Seen failing on master 6e73ae6, in a linked worktree and (under load) in the main checkout alike, 1 FAIL: the bench case named the
+task arch-refactor-01, which cd64ee5 removed from the bench, so the probe died on it and printed only the first task:
+  FAIL bench verdict: it ran both tasks to a result (else it looked at nothing) = ['arch-dependency-02', 'None', '4'], want
+  ['arch-dependency-02', 'None', '4', 'arch-refactor-01', 'None', '4']
+The case now finds the tasks whose oracle makes temp dirs instead of naming them, and fails on fewer than two.
 The passing case was clean on master too (it is the control that the harness sees a clean run as clean).
 Controls: FORGE_TEST_KEEP=1 must leave the dir (a left-over is visible to this very check, and the switch is
 opt-in), and the static scan must flag a planted bare tempfile.mkdtemp line."""
@@ -112,18 +117,34 @@ with tempfile.TemporaryDirectory(prefix="temp-cleanup-") as top:
          ["cleanup-fail", "cleanup-fail"])
     want("control FORGE_TEST_KEEP=1: it says where they are", "kept:" in r.stdout, True)
 
-    # The bench: skill_bench.verdict on the two tasks whose oracle code makes temp dirs of its own (2 per run), and the
-    # one suite that called skill_bench.fresh and never removed its dir.
+    # The bench: skill_bench.verdict on two tasks whose oracle code makes temp dirs of its own (a dir each per run), and
+    # the one suite that called skill_bench.fresh and never removed its dir. The tasks are found, not named: a task
+    # that is pruned from the bench (arch-refactor-01 was) must not turn this case red, and finding fewer than two
+    # is a failure, since then the case looked at nothing.
     tmp = os.path.join(top, "tmp-bench")
     os.makedirs(tmp)
+    tasks_dir = os.path.join(FORGE, "benchmarks", "skill-bench", "tasks")
+
+    def oracle_makes_temp(t):
+        o = os.path.join(tasks_dir, t, "oracle.py")
+        if not os.path.exists(o):
+            return False
+        with open(o, encoding="utf-8") as fh:
+            return re.search(r"tempfile|mkdtemp|TemporaryDirectory", fh.read()) is not None
+
+    temp_tasks = sorted(t for t in os.listdir(tasks_dir) if oracle_makes_temp(t))[:2]
+    want("bench verdict: at least two tasks whose oracle makes temp dirs (else it looks at nothing)", len(temp_tasks), 2)
     probe = ("import os, sys\nsys.path.insert(0, %r)\nimport skill_bench as sb\n"
-             "for t in ('arch-dependency-02', 'arch-refactor-01'):\n"
+             "for t in %r:\n"
              "    res, err = sb.verdict(os.path.join(sb.DEFAULT_BENCH, 'tasks', t), None, '', 120)\n"
-             "    print(t, err, len(res or []))\n" % os.path.join(FORGE, "scripts", "bench"))
+             "    print(t, err, len(res or []))\n" % (os.path.join(FORGE, "scripts", "bench"), temp_tasks))
     r = subprocess.run([sys.executable, "-c", probe], env=child_env(tmp), capture_output=True, text=True, timeout=300)
     n += 1
-    want("bench verdict: it ran both tasks to a result (else it looked at nothing)", r.stdout.split(), ["arch-dependency-02", "None", "4", "arch-refactor-01", "None", "4"])
-    want("bench verdict: left in TMPDIR (stderr %r)" % r.stderr.strip()[-120:], left(tmp), [])
+    want("bench verdict: it ran every task to a result (else it looked at nothing)", [x for x in r.stdout.split() if x == "None" or x in temp_tasks],
+         [y for t in temp_tasks for y in (t, "None")])
+    nums = [int(x) for x in r.stdout.split() if x.isdigit()]
+    want("bench verdict: every result has checks in it (stderr %r)" % r.stderr.strip()[-120:], (len(nums), all(nums)), (len(temp_tasks), True))
+    want("bench verdict: left in TMPDIR", left(tmp), [])
     tmp = os.path.join(top, "tmp-bench-project")
     os.makedirs(tmp)
     r = subprocess.run([sys.executable, os.path.join(HERE, "test_skill_bench_project.py")], env=child_env(tmp),
