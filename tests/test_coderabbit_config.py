@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """`.coderabbit.yaml` keeps the properties the merge gate and the owner's decisions rest on: CodeRabbit
-requests changes and approves (auto_approvals on), approves only within a risk limit with a stricter one
+reviews only when asked (auto_review off, no label or keyword trigger), requests changes and approves
+(auto_approvals on), approves only within a risk limit with a stricter one
 for the risky paths, cannot be paused into a green-but-unreviewed check, runs no docstring-coverage check, skips only the bot that the gate
 could hold forever, and can commit, push or open a PR through no finishing touch. The schema check
 (https://coderabbit.ai/integrations/schema.v2.json) needs the network and is not run here.
@@ -8,7 +9,9 @@ could hold forever, and can commit, push or open a PR through no finishing touch
 Needs PyYAML; without it this prints NOT RUN, NOT ARMED and exits 0 (rule 4 of CLAUDE.md).
 
 Controls, each a copy of the real config with one property broken that `problems` must name. Seen
-failing first, before .coderabbit.yaml existed: "FAIL .coderabbit.yaml is missing". """
+failing first, before .coderabbit.yaml existed: "FAIL .coderabbit.yaml is missing". The on-request check was seen
+failing first against the config that still had auto_review on: "FAIL auto_review.enabled is not false:
+CodeRabbit would review every PR, not only on request". """
 import copy
 import os
 import sys
@@ -32,8 +35,10 @@ def problems(cfg):
         out.append("allow_author_approval is not false: the PR author could force an approval")
     if not any(o.get("max_merge_risk") == "low" and o.get("paths") for o in aa.get("overrides") or []):
         out.append("no override gives the risky paths a stricter limit")
-    if ar.get("enabled") is not True or ar.get("drafts") is not False:
-        out.append("auto_review is not on for non-draft PRs")
+    if ar.get("enabled") is not False:
+        out.append("auto_review.enabled is not false: CodeRabbit would review every PR, not only on request")
+    if ar.get("labels") or ar.get("description_keyword"):
+        out.append("auto_review.labels or description_keyword opens a second automatic trigger: a review must come only from a comment")
     if ar.get("auto_pause_after_reviewed_commits") != 0:
         out.append("auto_pause_after_reviewed_commits is not 0: a paused review leaves the required check green")
     if ar.get("ignore_usernames") != ["dependabot[bot]"]:
@@ -75,6 +80,8 @@ def main():
     broken("no limit", lambda r: r["auto_approvals"].pop("max_merge_risk"), "max_merge_risk")
     broken("author approval", lambda r: r["auto_approvals"].update(allow_author_approval=True), "author")
     broken("no override", lambda r: r["auto_approvals"].pop("overrides"), "stricter limit")
+    broken("auto review on", lambda r: r["auto_review"].update(enabled=True), "auto_review.enabled")
+    broken("label trigger", lambda r: r["auto_review"].update(labels=["security"]), "second automatic trigger")
     broken("pause", lambda r: r["auto_review"].update(auto_pause_after_reviewed_commits=5), "paused")
     broken("ignored users", lambda r: r["auto_review"].update(ignore_usernames=[]), "ignore_usernames")
     broken("autofix on", lambda r: r["finishing_touches"].update(autofix={"enabled": True}), "finishing_touches.autofix")
