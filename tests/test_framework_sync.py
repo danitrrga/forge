@@ -455,6 +455,29 @@ check("walk: framework.walk.browser_executable reaches fwx.json -- walk is %s" %
       (d5w.get("walk") or {}).get("browser_executable") == WALK["browser_executable"], d5w.get("walk"))
 check("walk: no `walk` key in the section means no `walk` key in the file (bare section) -- %s" % d5.get("walk", "absent"),
       "walk" not in d5 and "walk" not in doc, (d5.get("walk"), doc.get("walk")))
+# open: the user's opener, {"command": [argv with {url} and {path}]}, reaches the file as it is, under the top-level key
+# `open`; a section without one leaves the key out; one that is not a table is treated as absent (as for walk).
+# Seen failing before the change, 1 of 209 checks (the other two new checks pass on the old code, being absences):
+# `FAIL open: framework.open reaches fwx.json unchanged -- open is missing from fwx.json -- None`.
+OPEN = {"command": ["toy-opener", "--new-window", "{url}", "{path}"]}
+forge_json(fw=dict(FW, open=OPEN))
+pp5o = project()
+w5o = World()
+w5o.put(profile(pp5o, name="open"))
+w5o.run()
+d5o = load(fwfile(pp5o)) or {}
+check("open: framework.open reaches fwx.json unchanged -- open is %s" % d5o.get("open", "missing from fwx.json"),
+      d5o.get("open") == OPEN, d5o.get("open"))
+check("open: no `open` key in the section means no `open` key in the file (bare section) -- %s" % d5.get("open", "absent"),
+      "open" not in d5 and "open" not in doc, (d5.get("open"), doc.get("open")))
+forge_json(fw=dict(FW, open=["toy-opener", "{url}"]))
+pp5p = project()
+w5p = World()
+w5p.put(profile(pp5p, name="openlist"))
+w5p.run()
+d5p = load(fwfile(pp5p)) or {}
+check("open: an `open` that is not a table is left out of the file, as for walk -- %s" % d5p.get("open", "absent"),
+      "open" not in d5p, d5p.get("open"))
 forge_json(integrations=INTEGRATIONS_ON)
 
 # ------------------------------------------------------------------------------- 2. false: both directions
