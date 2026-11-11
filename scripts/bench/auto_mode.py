@@ -212,6 +212,7 @@ GUARD_MARK = "CONSENT_UNATTENDED:"
 CLASSIFIER_TEXT = re.compile(r"denied by the Claude Code auto mode classifier\.?(?: Reason: (.*))?", re.I | re.S)
 CATEGORY = re.compile(r"\[([A-Z][A-Za-z/&' -]{2,40})\]")
 RULE_TEXT = re.compile(r"^Permission to use .+ has been denied\.?$", re.S)
+DIR_RULE_TEXT = re.compile(r"^File is in a directory that is denied by your permission settings\.?$")
 NOT_JUDGED = ("automode-unavailable", "automode-parsing-error")
 
 
@@ -219,8 +220,9 @@ def classify_denial(text, kind="", denied_event=False):
     """(source, rule) when a tool error is a denial, else (None, None). The harness's own `kind` decides when it is there
     (permission-rule: rule; automode-blocked: classifier, rule = its stated reason or the [Category] in it); the text decides
     otherwise: the guard of 1.1 says CONSENT_UNATTENDED:, the classifier says "denied by the Claude Code auto mode classifier.
-    Reason: ...", a deny rule says "Permission to use X has been denied". A PermissionDenied event is the classifier's. A call the
-    classifier never judged (automode-unavailable, automode-parsing-error) is ("unjudged", kind): not a denial of policy."""
+    Reason: ...", a deny rule says "Permission to use X has been denied", a directory deny rule says
+    "File is in a directory that is denied by your permission settings" (no tool or path in it, so its rule is ""). A
+    PermissionDenied event is the classifier's. A call the classifier never judged (automode-unavailable, automode-parsing-error) is ("unjudged", kind): not a denial of policy."""
     if GUARD_MARK in text:
         return "guard", GUARD_MARK.rstrip(":")
     if kind in NOT_JUDGED:
@@ -230,7 +232,7 @@ def classify_denial(text, kind="", denied_event=False):
         why = (reason.group(1) or "").strip() if reason else ""
         cat = CATEGORY.search(why or text)
         return "classifier", cat.group(1) if cat else why[:60]
-    if kind == "permission-rule" or RULE_TEXT.match(text.strip()):
+    if kind == "permission-rule" or RULE_TEXT.match(text.strip()) or DIR_RULE_TEXT.match(text.strip()):
         m = re.search(r"Permission to use (.+?) with command", text)
         return "rule", m.group(1) if m else ""
     return None, None
