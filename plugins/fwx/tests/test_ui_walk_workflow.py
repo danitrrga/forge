@@ -22,6 +22,12 @@ Red before the workflow read the refusal of arm-control's read-back (D14; the re
   FAIL: control refused (no visible change): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
   FAIL: control refused (target not found): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
 
+Red before a failed `fwx walk findings` changed the final status (it ran in the close, after the gaps were read, and the run stayed `done` with no fix.json):
+  FAIL: findings rc 1: failed, and the reason names `fwx walk findings`: ('done', '')
+  FAIL: findings no answer: failed, and the reason names `fwx walk findings`: ('done', '')
+  FAIL: findings not JSON: failed, and the reason names `fwx walk findings`: ('done', '')
+  FAIL: findings and down fail: both are in the reason: 'fwx walk down exited 1: a browser or the app may be left, .../down.json says how many'
+
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
 once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
@@ -271,6 +277,21 @@ def check_down_fails(script, s):
     s.eq("down null: status failed", result(rec).get("status"), "failed")
 
 
+def check_findings_fails(script, s):
+    """`fwx walk findings` runs in the close, after the gaps were read: a run that collected no fix.json must still end failed, and `down` still runs."""
+    for what, ans in (("rc 1", R("", 1)), ("no answer", None), ("not JSON", R("nope"))):
+        rec, err = go(script, answers_over={"executor:runner-findings": ans})
+        rec = finish(s, "findings %s" % what, rec, err)
+        r = result(rec)
+        s.ok("findings %s: failed, and the reason names `fwx walk findings`" % what, r.get("status") == "failed" and "fwx walk findings" in str(r.get("reason")),
+             repr((r.get("status"), r.get("reason"))))
+        s.ok("findings %s: the browsers are closed all the same" % what, labels(rec)[-1:] == ["executor:runner-down"], repr(labels(rec)[-4:]))
+        s.ok("findings %s: no fix file is reported" % what, details(rec).get("fix_file") is None, repr(details(rec).get("fix_file")))
+    rec, err = go(script, answers_over={"executor:runner-findings": R("", 1), "executor:runner-down": R(DOWN, 1)})
+    rec = finish(s, "findings and down fail", rec, err)
+    s.ok("findings and down fail: both are in the reason", "fwx walk findings" in str(result(rec).get("reason")) and "down.json" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
+
+
 def check_control(script, s):
     rec, err = go(script, answers_over={"ui-verifier:control": {"screen": "/settings", "found": False, "finding": None, "why": "nothing about the title"}})
     rec = finish(s, "control missed", rec, err)
@@ -497,6 +518,7 @@ def check_all(script, s):
     check_up_fails(script, s)
     check_breaker_null(script, s)
     check_down_fails(script, s)
+    check_findings_fails(script, s)
     check_control(script, s)
     check_quota(script, s)
     check_tramos(script, s)

@@ -77,7 +77,7 @@ const stop = (status, reason) => {
 let quota = 1
 const SLOTS = () => quota
 const st = {
-  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFail: null,
+  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [],
   ctl: null, control: { screen: null, found: null, finding: null }, noCount: null, counts: null, fixFile: null, contradictedFile: null,
   shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
 }
@@ -498,6 +498,8 @@ async function collect() {
   const j = v ? parseAny(v.stdout) : null
   if (!v || v.rc !== 0 || !j || typeof j !== 'object') {
     st.gaps.push('fwx walk findings ' + (v ? 'exited ' + v.rc : 'did not return'))
+    // the close runs after the gaps were read, so a run with no fix.json to hand over fails here
+    st.closeFails.push('fwx walk findings ' + (v ? 'exited ' + v.rc : 'did not return') + ': no fix.json was collected')
     return
   }
   st.fixFile = j.fix_file || null
@@ -547,10 +549,10 @@ async function down() {
   const down = await exec('down', inRepo('fwx walk down --run ' + sh(st.runDir)), true)
   st.downFile = st.runDir + '/down.json'
   if (!down) {
-    st.closeFail = 'fwx walk down did not return: browsers or the app may be left; `fwx walk sweep` closes a walk whose owner is gone'
+    st.closeFails.push('fwx walk down did not return: browsers or the app may be left; `fwx walk sweep` closes a walk whose owner is gone')
     return
   }
-  if (down.rc !== 0) st.closeFail = 'fwx walk down exited ' + down.rc + ': a browser or the app may be left, ' + st.downFile + ' says how many'
+  if (down.rc !== 0) st.closeFails.push('fwx walk down exited ' + down.rc + ': a browser or the app may be left, ' + st.downFile + ' says how many')
 }
 
 // Each step of the close is tried on its own: a failing one never keeps `down` from running.
@@ -583,7 +585,7 @@ try {
   if (e instanceof Stop) outcome = [e.status, e.reason]
   else outcome = ['failed', 'script error: ' + String((e && e.message) || e)]
 }
-if (st.closeFail) outcome = ['failed', st.closeFail + (outcome[1] ? '. Before that: ' + outcome[1] : '')]
+if (st.closeFails.length) outcome = ['failed', st.closeFails.join('; ') + (outcome[1] ? '. Before that: ' + outcome[1] : '')]
 
 return {
   status: outcome[0], reason: outcome[1], phase_dir: A.phase_dir,
