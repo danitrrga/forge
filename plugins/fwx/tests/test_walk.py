@@ -541,6 +541,14 @@ def case_ab_session(R, S):
         sc.clear()
         sc.walk(R, "ab", "--run", rd, "w2", "snapshot")
         S.eq("ab session: another session launches on its own", sc.calls()[0]["prog"], "fakerig")
+        S.ok("ab session: a walker session (w2) launches with the planted control", any("--init-script" in c["argv"] for c in sc.calls()), str(sc.calls()))
+        # only the walkers carry the plant: a verifier (v1) launches without the init script, with the planted control armed all the same.
+        # Seen red on the branch before it: FAIL: ab session: a verifier session (v1) launches without the planted control: [['run', '--', 'agent-browser', '--namespace'], ...
+        sc.clear()
+        r = sc.walk(R, "ab", "--run", rd, "v1", "open", sc.url + "/board")
+        S.eq("ab session: a verifier session: exit", r.returncode, 0)
+        S.ok("ab session: a verifier session (v1) launches without the planted control",
+             len(sc.calls()) > 1 and not any("--init-script" in c["argv"] for c in sc.calls()), str([c["argv"][:4] for c in sc.calls()]))
         r = sc.walk(R, "ab", "--run", rd, "bad name", "snapshot")
         S.eq("ab session: a session name with a space is refused", r.returncode, 2)
         sc.clear()
@@ -1636,6 +1644,7 @@ MUTANTS = [
     ("ab: no cookies", case_ab_session, 'for name, value in cookies_of(app["state"]):', "for name, value in []:",
      "ab session: the first call is a cookie of the demo session"),
     ("ab: no init script", case_ab_session, "if os.path.isfile(ctl):", "if False:", "ab session: --init-script rides on the launch only"),
+    ("ab: the plant on a verifier", case_ab_session, ' and not session.startswith("v"):', ":", "ab session: a verifier session (v1) launches without the planted control"),
     ("ab: close keeps the session", case_ab_session, 'if "close" in words:', "if False:", "ab session: after close the next call launches again"),
     ("ab: commands refused", case_ab_commands, 'REFUSED_COMMANDS = (', 'REFUSED_COMMANDS = () and (', "ab commands: inspect: exit 2 naming the word"),
     ("ab: no viewport", case_ab_viewport, "if sized_first:", "if False:", "ab viewport: the first open sets the viewport once"),

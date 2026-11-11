@@ -758,7 +758,9 @@ def cmd_ab(argv):
     if sized_first:
         steps.append((common + SET_VIEWPORT, True))
     steps.append((common + args, False))
-    if fresh and not os.environ.get("FWX_WALK_NO_CONTROL"):  # `fwx screenshot` sets it: a handoff capture is the page without the plant
+    # `fwx screenshot` sets FWX_WALK_NO_CONTROL: a handoff capture is the page without the plant. A verifier (`v*`) never carries it either:
+    # only the walkers are tested on the planted control, and a verifier that saw it would confirm it as a finding.
+    if fresh and not os.environ.get("FWX_WALK_NO_CONTROL") and not session.startswith("v"):
         ctl = os.path.join(run["run_dir"], "control.json")
         if os.path.isfile(ctl):
             steps[0] = (steps[0][0][:len(common)] + ["--init-script", read_json(ctl, "control.json")["script"]] + steps[0][0][len(common):], steps[0][1])
