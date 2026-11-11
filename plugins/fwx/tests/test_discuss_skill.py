@@ -66,6 +66,14 @@ def problems(files, demo_text):
     return out
 
 
+WAITS = re.compile(r"verdict wait|--serve")
+
+
+def waiting_files(texts):
+    """texts: {path: text} of every skill and agent file. A page the session serves and waits on is gone: the tool builds the page, the owner pastes his answers."""
+    return [name for name, text in sorted(texts.items()) if WAITS.search(text)]
+
+
 def read(*p):
     with open(os.path.join(ROOT, *p), encoding="utf-8") as f:
         return f.read()
@@ -94,6 +102,22 @@ for label, files2, demo2, want in [
 ]:
     got = [c for c, _ in problems(files2, demo2)]
     check("control: " + label, want in got, "got %s" % got)
+
+# no skill and no agent names a served verdict page or the wait on it; the count of files looked at is part of the check
+texts = {}
+for sub in ("skills", "agents"):
+    for base, _dirs, names in os.walk(os.path.join(ROOT, sub)):
+        for n in names:
+            if n.endswith(".md"):
+                full = os.path.join(base, n)
+                texts[os.path.relpath(full, ROOT)] = open(full, encoding="utf-8").read()
+check("looked at the skill and agent files", len(texts) > 0, "looked at 0 files")
+print("looked at %d skill and agent files for `verdict wait` and `--serve`" % len(texts))
+for name in waiting_files(texts):
+    check("no skill or agent names `verdict wait` or `--serve`", False, name)
+check("control: a clean toy passes", waiting_files({"a.md": "run `design.py verdict <dir>`; the owner pastes his answers"}) == [])
+for label, text in [("verdict wait", "run `x verdict wait <dir>` in the background"), ("--serve", "`x verdict <dir> --serve`")]:
+    check("control: %s is caught" % label, waiting_files({"a.md": text}) == ["a.md"], "not caught")
 
 print("looked at %d checks" % looked[0])
 for f in fails:

@@ -25,7 +25,7 @@ Context. Read no long file or investigation yourself: a `researcher` returns sum
 
 6. **Research.** A fact you can look up goes to a `researcher` without holding the round; a bigger investigation, after his yes, to one on `models.researcher.normal`.
 
-7. **UI with demos.** For a bounded UI decision launch `demo` (`models.demo.normal`); when it returns, end your message with its `xdg-open` line and run `python3 <verdict_tool> verdict wait <dir>` in the background. His pick goes into `Approved UI` of `context.md`. No UI choice is closed in chat. Without `verdict_tool`, give each `xdg-open`; he answers by letter.
+7. **UI with demos.** For a bounded UI decision launch `demo` (`models.demo.normal`). It returns the page's folder and its question. With `verdict_tool`, run `python3 <verdict_tool> verdict <folder>` (it opens the page for him), say in one line the page is ready and end the turn: he presses `Copy answers` and pastes the text here, and nothing waits or polls. Each item's `pick` and `note` in that text go into `Approved UI` of `context.md`. No UI choice is closed in chat. Without `verdict_tool`, run `fwx open <folder>/<letter>.html` for each variant; he answers by letter.
 
 8. **Playback and sign-off.** When all is said, wait for every `decisions` to return, then give the playback per `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/playback.md`. He may correct, want more research, split into phases (`references/reentry.md`) or sign off; only that ends it.
 
