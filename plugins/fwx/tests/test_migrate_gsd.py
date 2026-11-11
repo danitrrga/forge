@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""`fwx migrate-gsd plan` and `refs`: what the conversion of a GSD `.planning/` to `.fwx/` would do, read only.
+"""`fwx migrate-gsd`: what the conversion of a GSD `.planning/` to `.fwx/` would do (unit 1, `plan` and `refs`, read only) and
+doing it (unit 2, `apply`, `refs --rewrite|--prefix`, `leftovers`; its cases are the second half of this file, from "Unit 2").
 
 Every case builds a toy repository in a temp dir (with its `origin` beside it), runs bin/fwx on it and reads the text or the
 `--json` it prints. The toy `.planning/` is described next to `build()`. HOME, XDG_* and git's global config are isolated, and
@@ -9,7 +10,7 @@ Cases (the plan's twelve, then what the code added):
   1 plan writes nothing   2 classification   3 milestone of each phase   4 closed or open   5 phases only in the ROADMAP
   6 scopes   7 backlog   8 `.gitignore`   9 refs   10 no `.planning/`   11 an emptied phase keeps its `.gitkeep`   12 ahead
   extras: unmerged branches, the remote without its credentials, a repository nested in `.planning/`, two files for one
-  destination, a folder cited as a reference, the write half refused (`apply`, `leftovers`, `refs --rewrite|--prefix`: exit 2)
+  destination, a folder cited as a reference, a flag with no file
 
 Seen red before the command existed (a copy of this plugin without migrate_gsd.py):
   FAIL: plan (text) exits 0: got 2, want 0
@@ -47,6 +48,42 @@ the first FAIL line it printed:
     a folder"), a cited `.planning/phases/` sent to `.fwx/phases/` ("FAIL: refs classify ... missing [('scripts/check.sh', 4,
     '.planning/phases/', 'moved', '.fwx/milestones/v2/phases/')]"), sizes not summed ("FAIL: totals.keep files and bytes: got
     {'files': 14, 'bytes': 0}, ...").
+
+Unit 2 (the write half). Cases: the refusals of `apply`, each with exit 2, its message and the repository unchanged (every path
+with size and mtime, `.git` included, and `git status --porcelain --ignored`); `apply` in a worktree (blob of each kept file,
+CRLF, binary and symlink included; each purged file gone; `state.phases`, `state.last_stage`; MILESTONE.md; nothing written in
+the main checkout); `refs --rewrite|--prefix` and its refusals; the commit and the proof that every removed file comes back
+with `git show <base>:<path>`; `leftovers` (dry run, refusals, `--apply`); a failure in the middle of `apply`, of a rollback,
+of `refs` and of `leftovers`; a process killed in the middle; re-entrance after a merge.
+Seen red before the write half existed (a copy of this plugin with unit 1's migrate_gsd.py):
+  FAIL: apply on the default branch: stderr says 'default branch': fwx migrate-gsd: fwx migrate-gsd apply is not built yet ...
+Controls, each a copy of this plugin with one rule of migrate_gsd.py changed (the first FAIL line it printed, 390 checks on the
+good code):
+  - the collision check removed and `git mv -f`: "FAIL: apply with a destination that exists (.fwx/PROJECT.md): exits 2: got 0,
+    want 2" and "FAIL: ... destination existed and was overwritten: got '# Project\n', want 'mine\n'"
+  - the default-branch refusal removed: "FAIL: apply on the default branch: exits 2: got 0, want 2"
+  - the clean-tree refusal removed: "FAIL: apply with .planning/phases/01-a/01-CONTEXT.md modified: exits 2: got 1, want 2" (the
+    rollback then restores the file to the base, which is the owner's edit lost: this is why the refusal is there)
+  - the blob check removed (the text-copying mover of the plan): "FAIL: a mover that copies as text (the check after the work):
+    exits 1: got 0, want 1"
+  - the purged-file check removed: "FAIL: a removal step that removes nothing (the check after the work): says 'purged file still
+    there' and that the repository is back"
+  - the rollback not run: "FAIL: a failure after 5 moves: every file (names and bytes, folders) is as before: got {...}"
+  - the marker not written: "FAIL: apply on a repository an earlier apply left half done: stderr says 'stopped in the middle'"
+  - nothing to convert but untracked files, the refusal removed: "FAIL: apply with only untracked files in .planning/: exits 2:
+    got 0, want 2"
+  - the `.gitignore` twins not written: "FAIL: .gitignore: each line that names .planning/ has its twin right under it, the old line
+    stays: got ['node_modules/', '/.planning/phases/01-a/fonts/', '/.planning/workstreams/*/private/'], want [...]"
+  - no pin of the phases that already exist under `.fwx/` (re-entrance): "FAIL: ... it converted only those two files: got
+    ['A\t.fwx/milestones/v1/MILESTONE.md', 'M\t.gitignore', ..., '.../v1/phases/02.1-b/02.1-02-CONTEXT.md'], want [...v2...]"
+  - `--rewrite` that swaps the prefix in every path: "FAIL: --rewrite changes the moved path exactly, leaves the one a purged file
+    had ...: got [..., '# the old state lived in .fwx/STATE.md', ...]"
+  - `--rewrite` without looking for the new path: "FAIL: ... changes nothing whose new path does not exist: got b'...v3...'"
+  - the unstaged-edit refusal of refs removed: "FAIL: --prefix a file with an unstaged edit: exits 2: got 0, want 2"
+  - leftovers without its `git check-ignore` refusal: "FAIL: leftovers with the .fwx twin of the .gitignore line missing: exits
+    2: got 1, want 2" (its own check after the moves still catches it, and puts the moves back)
+  - leftovers copying nothing before it deletes: "FAIL: ... and a copy of it is in the git dir, not lost: []"
+  - a nested repository moved file by file: "FAIL: ... and it is still a repository, with its empty folders: <path>/.git"
 """
 import json
 import os
@@ -376,7 +413,7 @@ s.eq("refs --base of a non-commit exits 2", run(repo, "refs", "--base", "nonsens
 s.eq("an unknown subcommand exits 2", run(repo, "nonsense").returncode, 2)
 for args in (["refs", "--base", base, "--rewrite"], ["refs", "--base", base, "--prefix"]):
     r = run(repo, *args)  # unit 2 built the write half: what is left of "not built yet" is a flag with no file
-    s.ok("`%s` with no file exits 2 and says it needs one" % " ".join(args[2:]), r.returncode == 2 and "needs at least one file" in r.stderr, r.stderr)
+    s.ok("`%s` with no file exits 2 and says it needs one" % " ".join(args[3:]), r.returncode == 2 and "needs at least one file" in r.stderr, r.stderr)
 
 # ---- 10: no .planning/ ----------------------------------------------------------------------------------------------
 bare = helpers.toy_repo()
@@ -615,6 +652,9 @@ for p in tracked_files:
         before_bytes[p] = fh.read() if not os.path.islink(os.path.join(wt, p)) else None
 r = run(wt, "apply", "--close", "1")
 s.eq("apply in a worktree exits 0", r.returncode, 0)
+if r.returncode != 0:
+    s.fails.append("FAIL: apply said: " + r.stderr.strip()[:300])
+    s.done()    # nothing after this can be read from a conversion that did not happen
 s.ok("apply says what it did and where the base is", base in r.stdout and "nothing committed" in r.stdout, r.stdout[:400] + r.stderr[:300])
 s.eq("apply commits nothing: HEAD is still the base", helpers.git(wt, "rev-parse", "HEAD").strip(), base)
 keeps = [f for f in D["files"] if f["tracked"] and f["action"] == "keep"]
@@ -664,8 +704,12 @@ s.eq("nothing was written in the main checkout (same files, same status, same HE
      (content(repo), porcelain(repo), helpers.git(repo, "rev-parse", "HEAD")), (main0, st_main0, head_main0))
 s.ok("... and its branch is still master", helpers.git(repo, "symbolic-ref", "--short", "HEAD").strip() == "master")
 with open(os.path.join(helpers.ROOT, "lib/fwx/commands/migrate_gsd.py"), encoding="utf-8") as fh:
-    s.eq("no line of migrate_gsd.py names the audit file: state.append_audit is its only writer",
-         [n for n, line in enumerate(fh, 1) if "audit.tsv" in line], [])
+    src_lines = fh.read().splitlines()
+# control (grep run by hand on a copy with the name in a string): "FAIL: no line of migrate_gsd.py names the audit file: ... got [N]"
+s.eq("no line of migrate_gsd.py names the audit file: state.append_audit is its only writer",
+     [n for n, line in enumerate(src_lines, 1) if "audit.tsv" in line], [])
+s.eq("apply passes the paths of its own checkout: nothing in migrate_gsd.py calls plan_root or resolve (3.2)",
+     [n for n, line in enumerate(src_lines, 1) if re.search(r"\b(plan_root|state\.resolve|config\.main_checkout)\(", line)], [])
 
 # refs --rewrite and --prefix, as the common procedure runs them: after apply, before the commit
 check_before = open(os.path.join(wt, "scripts/check.sh"), encoding="utf-8").read()
@@ -726,10 +770,10 @@ gi_now = open(os.path.join(repo, ".gitignore"), encoding="utf-8").read()
 # control: leftovers without its git check-ignore moves an ignored folder to where git shows it as untracked:
 #   "FAIL: leftovers with the .fwx twin of the .gitignore line missing: exits 2: got 0, want 2"
 helpers.write(repo, ".gitignore", "node_modules/\n/.planning/phases/01-a/fonts/\n%s\n" % OLD)
-helpers.git(repo, "commit", "-q", "-am", "drop the twin lines")
+helpers.git(repo, "commit", "-q", "--allow-empty", "-am", "drop the twin lines")
 refusal("leftovers with the .fwx twin of the .gitignore line missing", repo, ["leftovers", "--apply"], "would stop being ignored", (repo,))
 helpers.write(repo, ".gitignore", gi_now)
-helpers.git(repo, "commit", "-q", "-am", "twin lines back")
+helpers.git(repo, "commit", "-q", "--allow-empty", "-am", "twin lines back")
 r = run(repo, "leftovers", "--apply")
 s.eq("leftovers --apply exits 0", r.returncode, 0)
 s.eq("fonts/ ends up in .fwx/milestones/v2/phases/01-a/fonts/", rd(os.path.join(repo, ".fwx/milestones/v2/phases/01-a/fonts/a.woff")), "font")
@@ -738,6 +782,10 @@ s.ok("state.json is deleted", not os.path.exists(os.path.join(repo, ".planning/s
 trash = [p for p in Path(helpers.git(repo, "rev-parse", "--absolute-git-dir").strip(), "fwx", "migrate-gsd", "deleted").rglob("state.json")]
 s.ok("... and a copy of it is in the git dir, not lost: %s" % trash, len(trash) == 1 and trash[0].read_text() == "{}\n")
 s.ok("a nested repository goes whole, its .git with it", os.path.isdir(os.path.join(repo, ".fwx/ref/.git")) and os.path.isfile(os.path.join(repo, ".fwx/ref/b/c.txt")))
+# control (the nested repository moved file by file, which drops its empty folders: refs/, objects/):
+#   "FAIL: ... and it is still a repository, with its empty folders: not a git repository ..."
+nr = subprocess.run(["git", "-C", os.path.join(repo, ".fwx/ref"), "rev-parse", "--git-dir"], capture_output=True, text=True, env=helpers.clean_env(**ENV))
+s.ok("... and it is still a repository, with its empty folders: %s" % (nr.stdout + nr.stderr).strip(), nr.returncode == 0 and nr.stdout.strip() == ".git")
 s.ok(".planning/ is gone", not os.path.lexists(os.path.join(repo, ".planning")))
 after_lines = porcelain(repo).splitlines()
 s.eq("the number of ignored entries is the same", len([l for l in after_lines if l.startswith("!!")]), len(ign0))
@@ -779,7 +827,9 @@ def midway(label, patches, want):
 midway("a failure after 5 moves", [(mg, "move_file", failing_after(5))], "simulated: no space left")
 midway("a failure writing the generated files (after every move and removal)",
        [(mg, "step_generate", lambda job: (_ for _ in ()).throw(OSError("simulated: cannot write")))], "simulated: cannot write")
-midway("a failure in the .gitignore step", [(mg, "step_gitignore", lambda job: (_ for _ in ()).throw(RuntimeError("simulated")))], "simulated")
+# control: a verify that does not look for the purged files lets this through (exit 0): "FAIL: a removal step that removes nothing: exits 1: got 0, want 1"
+midway("a removal step that removes nothing (the check after the work)", [(mg, "step_removes", lambda job: None)], "purged file still there")
+midway("a failure in the .gitignore step",[(mg, "step_gitignore", lambda job: (_ for _ in ()).throw(RuntimeError("simulated")))], "simulated")
 
 
 def text_copy(job, src, dest):
@@ -895,8 +945,12 @@ refusal("a collision after a re-entrant apply", wt, ["apply"], ".fwx/extra/n.md 
 
 # ---- U2 5: refs --rewrite and --prefix, the refusals and the failure in the middle -----------------------------------------------
 repo, wt = world()
-run(wt, "apply", "--close", "1")
 base = helpers.git(wt, "rev-parse", "HEAD").strip()
+rj = run(wt, "apply", "--close", "1", "--json")
+dj = json.loads(rj.stdout) if rj.returncode == 0 else {}
+s.ok("apply --json: schema 1, the base, the counts, the recovery command and nothing else on stdout",
+     dj.get("schema") == 1 and dj.get("base") == base and dj.get("moved", 0) > 10 and dj.get("removed", 0) > 10
+     and dj.get("recover") == "git show %s:.planning/<path>" % base, rj.stdout[:300] + rj.stderr[:300])
 helpers.git(wt, "commit", "-q", "-m", "convert")
 sh0 = open(os.path.join(wt, "scripts/check.sh"), "rb").read()
 

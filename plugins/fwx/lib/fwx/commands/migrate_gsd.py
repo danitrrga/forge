@@ -1,15 +1,38 @@
-"""Say what moving a project's GSD `.planning/` to `.fwx/` would keep, purge and move: fwx migrate-gsd plan|refs [...]
+"""Convert a project's GSD `.planning/` to `.fwx/`: fwx migrate-gsd plan|refs|apply|leftovers [...]
 
   plan [--json] [--milestone-map FILE] [--close IDS] [--open IDS]
       Reads the `.planning/` of the repository you stand in (tracked, untracked and ignored files) and prints what the
-      conversion would do with each file, phase, backlog item, `.gitignore` line, reference and unmerged branch.
-  refs --base SHA [--json] [--milestone-map FILE]
-      The same reference list, for a branch the conversion has already run on: the files of `.planning/` at SHA are
-      classified again and every tracked line outside `.planning/` and `.fwx/` that names `.planning` is listed.
+      conversion would do with each file, phase, backlog item, `.gitignore` line, reference and unmerged branch. Writes nothing.
+  apply [--json] [--milestone-map FILE] [--close IDS] [--open IDS]
+      In a worktree, on a branch that is not the default one: `git mv` of what is kept, `git rm` of what is purged and of the
+      backlog (not migrated), the generated files (`milestones/<vN>/MILESTONE.md` with the base SHA and the recovery command, a
+      `gsd-roadmap-entry.md` per open phase only the ROADMAP had, a stage row per closed phase through `state.append_audit`),
+      the `.fwx/` twin under each `.gitignore` line that names `.planning/`; everything staged, nothing committed. Then the
+      checks: the blob of each kept file identical at its destination, each purged file gone, `state.phases` sees every phase
+      folder, `state.last_stage` says closed for each closed phase. Re-entrant: after a merge that brings new files into
+      `.planning/`, it converts only those.
+  refs --base SHA [--json] [--milestone-map FILE] [--rewrite FILE...] [--prefix FILE...]
+      The reference list, for a branch the conversion has already run on: the files of `.planning/` at SHA are classified again
+      and every tracked line outside `.planning/` and `.fwx/` that names `.planning` is listed. `--rewrite` changes, in the
+      named files only, the paths that moved (when their new path exists); `--prefix` changes `.planning` for `.fwx` in every
+      path of the named files. What a purged file was cited by is never touched. The changed files are staged.
+  leftovers [--apply] [--milestone-map FILE]
+      In the main checkout, after the conversion is merged: the ignored and untracked files still under `.planning/` move to
+      their destination with `os.rename` (an ignored file only if git would still ignore it there, else nothing moves), the
+      machine-state names of GSD are deleted (a copy goes to `<git dir>/fwx/migrate-gsd/deleted/` first), and `.planning/` is
+      removed when it is empty. A dry run unless `--apply`.
 
-Both only read. They write nothing in the repository, no cache and no log: git runs with `--no-optional-locks`, so not even
-the index is refreshed. `apply`, `leftovers` and `refs --rewrite|--prefix` are the write half and are not built here: they
-exit 2 with a line saying so.
+`plan` and `refs` without a write flag only read: no cache, no log, git runs with `--no-optional-locks`, so not even the
+index is refreshed.
+
+What makes the write half safe is in the code, not in this text. `apply` refuses (exit 2, nothing written) on the default
+branch or a detached HEAD, with any tracked file not clean (so what it removes is in HEAD, the base it names), with a
+submodule in `.planning/`, with a destination that exists or that `.gitignore` ignores, with a phase no milestone range
+covers, with a `--close`/`--open` key that names no phase, and when a previous apply stopped in the middle. It changes the
+repository in a fixed order; a step that raises or a check that fails puts the repository back to the base (`git restore`,
+then the files it created are removed) and compares git status and the index with what they were, and exits 1. A process
+killed in the middle cannot clean up: it leaves a marker in the git dir, and the next run refuses and prints the two commands
+that undo it. The same two commands are printed whenever apply exits 1. `leftovers` puts its renames back on a failure.
 
 The classification is data (ROWS, PHASE_KEEP, PHASE_PURGE, ...): one tuple per row of the table the plan documents, each with
 its `rule`, which is also the `rule` of every file it decided. A file no row names is kept at its own path (rule
@@ -21,9 +44,9 @@ phase number (`7`, `02.1`) or a folder name, with an optional `<workstream>/` in
 comma-separated keys of the same kind. A key no scope has, in any of the three flags, is exit 2.
 
 `--json` is schema 1 and nothing else on stdout; notes (a ROADMAP with no phase headings in the expected format, a phase with
-every file purged) go to stderr then, and to a `notes:` section in the text. Exit 0 done, 2 it cannot run or refuses: not a
-git repository, 0 files looked at, a phase no milestone range covers, a key that matches no phase, two files for one
-destination, a bad option.
+every file purged) go to stderr then, and to a `notes:` section in the text. Exit 0 done, 1 a step or a check after the work
+failed (the repository is put back and the message says so), 2 it cannot run or refuses: not a git repository, 0 files looked
+at, a phase no milestone range covers, a key that matches no phase, two files for one destination, a bad option.
 """
 import fnmatch
 import glob
@@ -44,7 +67,9 @@ SCHEMA = 1
 SCOPE_SRC = ".planning"
 SCOPE_DEST = ".fwx"
 USAGE = ("usage: fwx migrate-gsd plan [--json] [--milestone-map FILE] [--close IDS] [--open IDS]\n"
-         "       fwx migrate-gsd refs --base SHA [--json] [--milestone-map FILE]\n")
+         "       fwx migrate-gsd apply [--json] [--milestone-map FILE] [--close IDS] [--open IDS]\n"
+         "       fwx migrate-gsd refs --base SHA [--json] [--milestone-map FILE] [--rewrite FILE...] [--prefix FILE...]\n"
+         "       fwx migrate-gsd leftovers [--apply] [--milestone-map FILE]\n")
 MAX_SLUG = 60
 MAX_SCAN = 2 * 1024 * 1024  # a tracked file over this is not read for references
 
@@ -1223,7 +1248,10 @@ def execute(job):
         step_stage(job)
         verify(job)
     except BaseException as e:
-        errs = rollback(job)
+        try:
+            errs = rollback(job)
+        except Exception as e2:   # a rollback that crashes is a rollback that did not finish: keep the marker
+            errs = ["the rollback itself failed: %s: %s" % (type(e2).__name__, e2)]
         if not errs:
             os.remove(job.marker)
         if not isinstance(e, Exception):

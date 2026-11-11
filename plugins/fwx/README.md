@@ -28,7 +28,7 @@ python3 bin/fwx playbooks tree    # the workflow tree (an Excalidraw file): each
 python3 bin/fwx walk up --dir <phase dir> --part N --round R    # UI walk: starts the seeded local app (`up`), drives browsers with guards (`ab`, `pw`), plants the control (`arm-control`), merges findings (`findings`), builds and reads the review (`review-page`, `review-answers`) and closes with a process count (`down`, `sweep`); NOT RUN, NOT ARMED without `app_run` or `agent_browser`
 python3 bin/fwx walk selftest [--json]    # proves the walk environment works, on the host or inside an image: `up`, the app answers 200, `agent-browser` opens it with the demo session, a non-blank capture, `down` leaves 0 processes; exit 0 all pass, 1 a check failed, 2 NOT RUN, NOT ARMED
 python3 bin/fwx screenshot --run <run dir> [--screens JSON] [--out DIR]    # one 1440-wide capture per walked screen, through `walk ab` and its guards, no model; one line each, exit 1 naming the missing ones
-python3 bin/fwx migrate-gsd plan [--json]    # what converting a GSD .planning/ to .fwx/ would keep, purge and move; read-only; `refs --base SHA` lists the references to fix
+python3 bin/fwx migrate-gsd plan [--json]    # what converting a GSD .planning/ to .fwx/ would keep, purge and move; read-only. `apply` (in a worktree, own branch) does it, staged, with its checks and a rollback; `refs --base SHA [--rewrite F...] [--prefix F...]` lists and fixes the references; `leftovers [--apply]` moves the ignored files after the merge
 python3 bin/fwx playbooks check    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
 ```
 
