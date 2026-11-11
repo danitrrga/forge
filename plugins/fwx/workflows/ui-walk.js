@@ -77,9 +77,9 @@ const stop = (status, reason) => {
 let quota = 1
 const SLOTS = () => quota
 const st = {
-  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFail: null,
+  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [],
   ctl: null, control: { screen: null, found: null, finding: null }, noCount: null, counts: null, fixFile: null, contradictedFile: null,
-  shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
+  verified: [], shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
 }
 
 const sh = (x) => "'" + String(x).replace(/'/g, "'\\''") + "'"
@@ -177,13 +177,23 @@ function release() {
   if (next) next()
   else st.sem.free += 1
 }
-async function withSlot(tag, fn) {
+// A browser outlives its agent (until `down` or the idle timeout) and the quota budgets browsers, not agents: `after` closes the job's own
+// sessions before its slot is freed, whether the job returned or not. A close that fails is no gap: `down` is the net.
+async function withSlot(tag, fn, after) {
   await acquire(tag)
   try {
     return await fn()
   } finally {
-    release()
+    try {
+      if (after) await after()
+    } finally {
+      release()
+    }
   }
+}
+async function closeBrowser(tool, session) {
+  if (st.fatal) return
+  await exec('close-' + session + (tool === 'pw' ? '-pw' : ''), inRepo('fwx walk ' + tool + ' --run ' + sh(st.runDir) + ' ' + session + ' close'), false)
 }
 
 // `up` runs before the tramos are known, so it asked capacity for one tramo (a quota of 2 at most). Once they are, ask again for them
@@ -293,6 +303,42 @@ async function judge() {
   else if (got.found === false) st.noCount = 'the walkers did not find the fault planted on ' + st.control.screen
 }
 
+// The control's init script runs in every `ab` browser of the run, the verifiers' too, so a verifier confirms the planted title and `fwx walk
+// findings` would hand it to the fixer as a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a
+// row's own id is read too): that row, the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json.
+async function dropControl() {
+  const fid = st.control.found === true ? st.control.finding : null
+  if (!fid) return
+  for (const v of st.verified) {
+    const rows = v.rep.findings
+    const out = new Set(rows.filter((r) => r.source === fid || r.id === fid).map((r) => r.id))
+    const ties = rows.filter((r) => typeof r.duplicate_of === 'string' && r.duplicate_of).map((r) => [r.id, r.duplicate_of])
+    for (let grew = out.size > 0; grew;) {
+      grew = false
+      for (const [a, b] of ties) {
+        if (out.has(a) !== out.has(b)) {
+          out.add(a).add(b)
+          grew = true
+        }
+      }
+    }
+    if (out.size === 0) continue
+    const gone = rows.filter((r) => out.has(r.id))
+    const keep = rows.filter((r) => !out.has(r.id))
+    const put = (o, f) => 'printf ' + sh('%s\n') + ' ' + sh(JSON.stringify(o)) + ' > ' + sh(f)
+    const cf = st.runDir + '/control-' + v.tramo + '.json'
+    const done = await exec('control-' + v.tramo, inRepo(put({ findings: keep }, v.file) + ' && ' + put({ findings: gone }, cf)), true)
+    if (!done || done.rc !== 0) {
+      st.gaps.push('the planted control\'s finding could not be taken out of ' + v.file + ': the fixer would get it')
+      continue
+    }
+    for (const r of gone) {
+      const i = typeof r.clip === 'string' ? st.clips.indexOf(r.clip) : -1
+      if (i >= 0) st.clips.splice(i, 1)
+    }
+  }
+}
+
 // ---- walkers --------------------------------------------------------------------------------------------------------------------
 function makeJobs(tramos) {
   const jobs = []
@@ -331,7 +377,7 @@ async function walkOne(job) {
       log(PHASE + ': ' + job.label + ' returned nothing' + (i === 0 ? ', launching it once more' : ''))
     }
     return null
-  })
+  }, () => closeBrowser(job.firefox ? 'pw' : 'ab', job.session))
   if (got === null) {
     if (!st.fatal) st.gaps.push('ui-walker did not return: ' + job.tag)
     return null
@@ -366,13 +412,28 @@ function uniqueIds(rep) {
   return rep
 }
 
+// A recheck reply holds one row for each finding it was given, and no other: `{"findings": []}` would be saved and read as "nothing still there".
+function coversAll(rows, items) {
+  if (!items) return true
+  const got = rows.map((r) => (r && typeof r === 'object' ? r.id : null))
+  const bad = items.filter((f) => got.filter((g) => g === f.id).length !== 1).map((f) => f.id)
+  const extra = got.filter((g) => !items.some((f) => f.id === g))
+  if (bad.length === 0 && extra.length === 0) return true
+  log(PHASE + ': a recheck reply must hold one row for each finding it was given; ' + (bad.length ? 'missing or repeated: ' + bad.join(', ') + '. ' : '') + (extra.length ? 'not given: ' + extra.join(', ') + '.' : ''))
+  return false
+}
+
 // One verifier job for a tramo and the saving of its reply; returns the reply or null.
 async function verifyTramo(tramo, index, files, items) {
   const session = 'v' + (index + 1)
   const label = 'ui-verifier:' + tramo.id
   const rep = await withSlot(label, () =>
     twice('ui-verifier', { label, model: M.verifier, schema: VERIFY_SCHEMA, prompt: verifyPrompt(tramo, session, files, items) },
-      (v) => (v && Array.isArray(v.findings) ? v : null)))
+      (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) ? v : null)),
+  async () => {
+    await closeBrowser('ab', session)
+    if (tramo.firefox) await closeBrowser('pw', session)
+  })
   if (st.fatal) return null
   if (!rep) {
     st.gaps.push('ui-verifier did not return: ' + tramo.id)
@@ -386,6 +447,7 @@ async function verifyTramo(tramo, index, files, items) {
     return null
   }
   st.saved.push(file)
+  if (!items) st.verified.push({ tramo: tramo.id, file, rep })
   for (const f of rep.findings) if (typeof f.clip === 'string' && f.clip && (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE')) st.clips.push(f.clip)
   return rep
 }
@@ -457,6 +519,7 @@ async function walkRun(up) {
   if (st.fatal) stop('failed', st.fatal)
   if (!st.jobs.some((j) => j.returned)) stop('failed', 'no walker returned: no tramo was walked')
   await judge()
+  await dropControl()
   const lead = st.noCount ? NO_COUNT + ': ' + st.noCount + '.' : ''
   if (out.every((x) => !x)) stop('failed', (lead ? lead + ' ' : '') + 'no tramo was verified: ' + st.gaps.join('; '))
   if (st.gaps.length) stop('failed', (lead ? lead + ' ' : '') + 'the walk is incomplete: ' + st.gaps.join('; '))
@@ -467,7 +530,8 @@ async function main() {
   phase(PHASE)
   const v = await must('up', 'fwx walk up --dir ' + sh(A.phase_dir) + ' --part ' + A.part + ' --round ' + A.round + ' --repo ' + sh(A.repo) +
     (A.app ? ' --app ' + sh(JSON.stringify(A.app)) : ''), false)
-  if (!v) stop('failed', 'runner did not return: up')
+  // `up` may have started the app and lost its report; this script cannot tell that app from an earlier open run of the same folder, so it names the command
+  if (!v) stop('failed', 'runner did not return: up. If the app came up, `fwx walk down --run ' + sh(A.phase_dir + '/ui-walk/' + A.part + '-' + A.round) + '` closes it')
   const up = parseAny(v.stdout)
   if (v.rc === 77) stop('done', 'NOT RUN, NOT ARMED: fwx walk up exited 77 (a tool it needs is missing)')
   if (v.rc !== 0 || !up || typeof up !== 'object') stop('failed', 'fwx walk up exited ' + v.rc + ': the app did not come up (the reason is on its stderr; run the command by hand)')
@@ -498,6 +562,8 @@ async function collect() {
   const j = v ? parseAny(v.stdout) : null
   if (!v || v.rc !== 0 || !j || typeof j !== 'object') {
     st.gaps.push('fwx walk findings ' + (v ? 'exited ' + v.rc : 'did not return'))
+    // the close runs after the gaps were read, so a run with no fix.json to hand over fails here
+    st.closeFails.push('fwx walk findings ' + (v ? 'exited ' + v.rc : 'did not return') + ': no fix.json was collected')
     return
   }
   st.fixFile = j.fix_file || null
@@ -513,14 +579,15 @@ async function shoot() {
     for (const s of t.screens) if (!urls.includes(s.url)) urls.push(s.url)
   }
   if (urls.length === 0) return
-  const v = await exec('screenshot', inRepo('fwx screenshot --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls.map((u) => ({ url: u, theme: 'light' }))))), true)
+  const v = await exec('screenshot', inRepo('fwx screenshot --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls.map((u) => ({ url: u, theme: 'light' })))) + ' --json'), true)
   if (!v) {
     log(PHASE + ': fwx screenshot did not return: no capture of the walked screens')
     return
   }
   for (const line of String(v.stdout).split('\n')) {
-    const m = /^ok (\S+) /.exec(line.trim())
-    if (m) st.shots.push(m[1])
+    // `--json`: one object per screen, so a path with a space is read whole; a `missing` row is no capture
+    const row = line.trim() ? parseAny(line) : null
+    if (row && typeof row === 'object' && row.status === 'ok' && typeof row.path === 'string' && row.path) st.shots.push(row.path)
   }
   log(PHASE + ': ' + st.shots.length + ' of ' + urls.length + ' screen(s) captured' + (v.rc === 0 ? '' : ' (exit ' + v.rc + '), the missing ones are named on its stderr'))
 }
@@ -547,10 +614,10 @@ async function down() {
   const down = await exec('down', inRepo('fwx walk down --run ' + sh(st.runDir)), true)
   st.downFile = st.runDir + '/down.json'
   if (!down) {
-    st.closeFail = 'fwx walk down did not return: browsers or the app may be left; `fwx walk sweep` closes a walk whose owner is gone'
+    st.closeFails.push('fwx walk down did not return: browsers or the app may be left; `fwx walk sweep` closes a walk whose owner is gone')
     return
   }
-  if (down.rc !== 0) st.closeFail = 'fwx walk down exited ' + down.rc + ': a browser or the app may be left, ' + st.downFile + ' says how many'
+  if (down.rc !== 0) st.closeFails.push('fwx walk down exited ' + down.rc + ': a browser or the app may be left, ' + st.downFile + ' says how many')
 }
 
 // Each step of the close is tried on its own: a failing one never keeps `down` from running.
@@ -583,7 +650,7 @@ try {
   if (e instanceof Stop) outcome = [e.status, e.reason]
   else outcome = ['failed', 'script error: ' + String((e && e.message) || e)]
 }
-if (st.closeFail) outcome = ['failed', st.closeFail + (outcome[1] ? '. Before that: ' + outcome[1] : '')]
+if (st.closeFails.length) outcome = ['failed', st.closeFails.join('; ') + (outcome[1] ? '. Before that: ' + outcome[1] : '')]
 
 return {
   status: outcome[0], reason: outcome[1], phase_dir: A.phase_dir,

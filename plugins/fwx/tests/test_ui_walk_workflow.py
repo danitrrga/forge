@@ -22,6 +22,24 @@ Red before the workflow read the refusal of arm-control's read-back (D14; the re
   FAIL: control refused (no visible change): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
   FAIL: control refused (target not found): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
 
+Red before a failed `fwx walk findings` changed the final status (it ran in the close, after the gaps were read, and the run stayed `done` with no fix.json):
+  FAIL: findings rc 1: failed, and the reason names `fwx walk findings`: ('done', '')
+  FAIL: findings no answer: failed, and the reason names `fwx walk findings`: ('done', '')
+  FAIL: findings not JSON: failed, and the reason names `fwx walk findings`: ('done', '')
+  FAIL: findings and down fail: both are in the reason: 'fwx walk down exited 1: a browser or the app may be left, .../down.json says how many'
+
+Red before a job closed its own browser before freeing its slot (a browser stays up after its agent returns, so the quota limited agents, not browsers):
+  FAIL: close: every job's browser is closed after it returned: [('ui-walker:T1-breaker', 'w1', None), ('ui-walker:T1-critic', 'w2', None), ...]
+  FAIL: close quota 1: the next job starts only after the previous one's browser was closed: [('ui-walker:T1-breaker', 'ui-walker:T1-critic'), ...]
+
+Red before the planted control's own verified row was taken out of what the fixer gets (the verifiers' browsers carry the plant too):
+  FAIL: control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json: no executor:runner-control-T1 launched
+  FAIL: control row clip: the clip of the control row is not listed: got ['.../control.webm'], want []
+  FAIL: control row not taken out: a gap, and a failed run: the fixer must not get it: ('done', [])
+
+Red before a recheck reply had to hold a row for each finding it was given (`{"findings": []}` was saved and the run was done with 0 still, 0 gone):
+  FAIL: recheck reply with no row: launched once more, then a gap and a failed run: got (1, 'done', False), want (2, 'failed', True)
+
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
 once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
@@ -41,6 +59,8 @@ once; the first matching FAIL line of each, seen red):
   the walk keeps the quota `up` gave: FAIL: quota from the second ask: the walkers of the tramos run at once: [('ui-walker:T1-breaker', 7, 12), ...]
   a capacity that gives no answer drops the quota: FAIL: capacity ask rc 1: the quota stays what `up` allowed (3) and it is logged: [...]
   a raw tramo id in a path:  FAIL: unsafe tramo id: no launch or command carries the raw id: ['ui-walker:../x y-breaker', ...]
+  the quota capped at two (a review of the pairwise overlap count, which added 1 to a sum that held the walker itself): against the count as first
+      written the control stayed green: FAIL: control the quota is capped at two: red with 'FAIL: quota from the second ask: more than the 2 `up` would have allowed run at once': got []
 """
 import collections
 import json
@@ -79,7 +99,13 @@ UP = {"armed": True, "run": "", "run_dir": RUN_DIR, "url": APP, "apps": [{"name"
       "namespace": "walk-1-1-abc123", "capacity": {"role": "ui-walker", "want": 2, "allowed": 4}}
 FINDINGS_OUT = {"fix_file": RUN_DIR + "/fix.json", "contradicted_file": RUN_DIR + "/contradicted.json",
                 "counts": {"confirmed": 1, "plausible": 1, "contradicted": 0, "dropped": 1}}
-SHOTS = "ok /srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png %s/settings theme=light width=1440\nok /srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png %s/billing theme=light width=1440\n" % (APP, APP)
+def shots_out(rows):
+    """What `fwx screenshot --json` prints (lib/fwx/commands/screenshot.py): one JSON object per screen, `ok` with its `path` or `missing` with its `why`."""
+    return "".join(json.dumps(dict(r, url=APP + r["url"], theme="light", width=1440)) + "\n" for r in rows)
+
+
+SHOTS = shots_out([{"status": "ok", "path": "/srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png", "url": "/settings"},
+                   {"status": "ok", "path": "/srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png", "url": "/billing"}])
 DOWN = {"namespace": "walk-1-1-abc123", "run_dir": RUN_DIR, "looked": 31, "unreadable": 0, "left": [], "browsers_left": 0, "steps": []}
 
 
@@ -104,11 +130,12 @@ def green():
         "ui-verifier:T1": verified("T1", ("CONFIRMED", RUN_DIR + "/clip-1.webm"), ("NOT REPRODUCED", None)),
         "ui-verifier:T2": verified("T2", ("PLAUSIBLE", None)),
         "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved"),
-        "ui-verifier:control": {"screen": "/settings", "found": True, "finding": "T1-1", "why": "T1-1 says the title reads like body text"},
+        "ui-verifier:control": {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"},
         "executor:runner-findings": R(FINDINGS_OUT),
         "executor:runner-screenshot": R(SHOTS),
         "executor:runner-coverage": R("saved"),
         "executor:runner-down": R(DOWN),
+        **{closing(v): R("") for v in ("w1", "w2", "w3", "w4", "w5", "v1", "v2")}, closer("v2", True): R(""),
     }
 
 
@@ -217,13 +244,21 @@ def check_green(script, s):
          and "fwx walk down --run '%s'" % RUN_DIR in runner(rec, "down")[0]["prompt"])
     shot = runner(rec, "screenshot")[0]["prompt"]
     s.ok("green: screenshot is given the walked screens", "fwx screenshot --run '%s' --screens " % RUN_DIR in shot and APP + "/settings" in shot and APP + "/billing" in shot, shot[-400:])
+    s.ok("green: the screenshot is asked for `--json` (a path with a space cannot be read from the text line)", " --json" in shot, shot[-200:])
+    # Red on the base (the reader took `\S+` after `ok `, and the command had no --json, so the JSON line read as no capture):
+    #   FAIL: green: details.shots are the paths the screenshots were written to: got [], want [...s1.png, ...s2.png]
+    spaced = "/srv/git/fwx/walks/walk 1/shots/a b.png"
+    rec2, err2 = go(script, answers_over={"executor:runner-screenshot": R(shots_out([{"status": "ok", "path": spaced, "url": "/settings"},
+                                                                                     {"status": "missing", "why": "no file written", "url": "/billing"}]), 1)})
+    rec2 = finish(s, "screenshot paths", rec2, err2)
+    s.eq("screenshot paths: a path with a space is read whole, a missing screen is not a capture", details(rec2).get("shots"), [spaced])
     d = details(rec)
     s.eq("green: details keys", sorted(d), sorted(["run_dir", "fix_file", "counts", "contradicted_file", "control", "coverage_file", "shots", "clips", "down_file", "outside",
                                                  "recheck", "gaps", "agents"]))
     s.eq("green: details.run_dir, fix_file, contradicted_file, down_file, coverage_file", (d.get("run_dir"), d.get("fix_file"), d.get("contradicted_file"), d.get("down_file"), d.get("coverage_file")),
          (RUN_DIR, RUN_DIR + "/fix.json", RUN_DIR + "/contradicted.json", RUN_DIR + "/down.json", RUN_DIR + "/coverage.md"))
     s.eq("green: details.counts are what `findings` printed", d.get("counts"), FINDINGS_OUT["counts"])
-    s.eq("green: details.control", d.get("control"), {"screen": "/settings", "found": True, "finding": "T1-1"})
+    s.eq("green: details.control", d.get("control"), {"screen": "/settings", "found": True, "finding": "w2-F1"})
     s.eq("green: details.shots are the paths the screenshots were written to", d.get("shots"), [
          "/srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png", "/srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png"])
     s.eq("green: details.clips are the clip paths of the kept findings", d.get("clips"), [RUN_DIR + "/clip-1.webm"])
@@ -245,6 +280,15 @@ def check_up_fails(script, s):
     rec, err = go(script, answers={"executor:runner-up": R("", 2)})
     rec = finish(s, "up refused", rec, err)
     s.eq("up refused: status failed, nothing else launched", (result(rec).get("status"), labels(rec)), ("failed", ["executor:runner-up"]))
+    # the runner may have started the app and lost its report: the run folder is `<phase>/ui-walk/<part>-<round>`, so the reason names the `down` that
+    # closes it; the script does not run that `down` itself, for it cannot tell this attempt's app from an earlier open run of the same folder
+    # Red on the base: FAIL: up with no report: the reason names the command that closes a run `up` may have started: 'runner did not return: up'
+    rec, err = go(script, answers={"executor:runner-up": None})
+    rec = finish(s, "up with no report", rec, err)
+    r = result(rec)
+    s.eq("up with no report: failed, and no `down` is run on a guess", (r.get("status"), labels(rec)), ("failed", ["executor:runner-up"]))
+    s.ok("up with no report: the reason names the command that closes a run `up` may have started: %r" % r.get("reason"),
+         "fwx walk down --run '%s'" % RUN_DIR in str(r.get("reason")), repr(r.get("reason")))
 
 
 def check_breaker_null(script, s):
@@ -267,6 +311,140 @@ def check_down_fails(script, s):
     rec, err = go(script, answers_over={"executor:runner-down": None})
     rec = finish(s, "down null", rec, err)
     s.eq("down null: status failed", result(rec).get("status"), "failed")
+
+
+def check_findings_fails(script, s):
+    """`fwx walk findings` runs in the close, after the gaps were read: a run that collected no fix.json must still end failed, and `down` still runs."""
+    for what, ans in (("rc 1", R("", 1)), ("no answer", None), ("not JSON", R("nope"))):
+        rec, err = go(script, answers_over={"executor:runner-findings": ans})
+        rec = finish(s, "findings %s" % what, rec, err)
+        r = result(rec)
+        s.ok("findings %s: failed, and the reason names `fwx walk findings`" % what, r.get("status") == "failed" and "fwx walk findings" in str(r.get("reason")),
+             repr((r.get("status"), r.get("reason"))))
+        s.ok("findings %s: the browsers are closed all the same" % what, labels(rec)[-1:] == ["executor:runner-down"], repr(labels(rec)[-4:]))
+        s.ok("findings %s: no fix file is reported" % what, details(rec).get("fix_file") is None, repr(details(rec).get("fix_file")))
+    rec, err = go(script, answers_over={"executor:runner-findings": R("", 1), "executor:runner-down": R(DOWN, 1)})
+    rec = finish(s, "findings and down fail", rec, err)
+    s.ok("findings and down fail: both are in the reason", "fwx walk findings" in str(result(rec).get("reason")) and "down.json" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
+
+
+# the browser session each job of the green scenario drives (makeJobs numbers the walkers; a verifier takes the number of its tramo)
+SESSION_OF = {"ui-walker:T1-breaker": "w1", "ui-walker:T1-critic": "w2", "ui-walker:T2-breaker": "w3", "ui-walker:T2-critic": "w4", "ui-walker:T2-firefox": "w5",
+              "ui-verifier:T1": "v1", "ui-verifier:T2": "v2"}
+
+
+def closer(session, pw=False):
+    return "executor:runner-close-%s%s" % (session, "-pw" if pw else "")
+
+
+def closing(session):
+    """The runner that closes a job's own browser: the Firefox walker's is a `pw` one."""
+    return closer(session, session == "w5")
+
+
+def check_close(script, s):
+    """The quota budgets browsers, but a browser stays up after its agent returns (until `down` or the idle timeout): a job closes its own
+    sessions before it frees its slot, a failed job's included.
+
+    Red on the base (no `close` was ever run; the answers below were never asked for):
+      FAIL: close: every job's browser is closed after it returned: [('ui-walker:T1-breaker', 'w1', None), ('ui-walker:T1-critic', 'w2', None), ...]
+      FAIL: close quota 1: the next job starts only after the previous one's browser was closed: [...]
+    """
+    rec, err = go(script)
+    rec = finish(s, "close", rec, err)
+    byl = collections.defaultdict(list)
+    for l in rec["launches"]:
+        byl[l["label"]].append(l)
+    rows = []
+    for label, session in SESSION_OF.items():
+        c = byl.get(closing(session)) or [None]
+        rows.append((label, session, c[0] and c[0]["start"] >= max(x["end"] for x in byl[label])))
+    s.ok("close: every job's browser is closed after it returned", all(r[2] for r in rows), repr(rows))
+    s.ok("close: the command is `close` of that session, in the run", all("fwx walk ab --run '%s' %s close" % (RUN_DIR, v) in (byl.get(closing(v)) or [{"prompt": ""}])[0]["prompt"]
+                                                                           for k, v in SESSION_OF.items() if k != "ui-walker:T2-firefox"), repr(sorted(byl)))
+    s.ok("close: the Firefox walker's session is closed through `pw`, and so is the Firefox tramo's verifier's",
+         "fwx walk pw --run '%s' w5 close" % RUN_DIR in (byl.get(closing("w5")) or [{"prompt": ""}])[0]["prompt"]
+         and "fwx walk pw --run '%s' v2 close" % RUN_DIR in (byl.get(closer("v2", True)) or [{"prompt": ""}])[0]["prompt"], repr(sorted(byl)))
+    s.ok("close: no `pw` close for a tramo without Firefox", closer("v1", True) not in byl and closer("w1", True) not in byl, repr(sorted(byl)))
+    rec, err = go(script, answers_over={"executor:runner-up": R(dict(UP, capacity=dict(UP["capacity"], allowed=1))), "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": 1})})
+    rec = finish(s, "close quota 1", rec, err)
+    byl = collections.defaultdict(list)
+    for l in rec["launches"]:
+        byl[l["label"]].append(l)
+    jobs = sorted((l for k in SESSION_OF for l in byl[k]), key=lambda l: l["start"])
+    gaps = []
+    for a, b in zip(jobs, jobs[1:]):
+        c = byl.get(closing(SESSION_OF[a["label"]])) or [None]
+        if not c[0] or not (a["end"] <= c[0]["start"] and c[0]["end"] <= b["start"]):
+            gaps.append((a["label"], b["label"]))
+    s.ok("close quota 1: the next job starts only after the previous one's browser was closed", len(jobs) >= 7 and not gaps, repr(gaps or len(jobs)))
+    rec, err = go(script, answers_over={"ui-walker:T1-breaker": None})
+    rec = finish(s, "close after a walker that returned nothing", rec, err)
+    s.ok("close after a walker that returned nothing: its browser is closed all the same", closing("w1") in labels(rec), repr(labels(rec)))
+    # a close that fails is not a gap: `down` is the net, and the idle timeout; it never fails the run
+    rec, err = go(script, answers_over={closing("w1"): None, closing("v1"): R("", 1)})
+    rec = finish(s, "close fails", rec, err)
+    s.eq("close fails: the run is still done, with no gap", (result(rec).get("status"), details(rec).get("gaps")), ("done", []))
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=recheck_answers())
+    rec = finish(s, "close in a recheck", rec, err)
+    s.ok("close in a recheck: each verifier's browser is closed", closing("v1") in labels(rec) and closing("v2") in labels(rec), repr(labels(rec)))
+
+
+def check_control_rows(script, s):
+    """The planted fault is restyled by an init script that every `ab` browser of the run takes, the verifiers' too: a verifier confirms the title
+    that reads like body text and `fwx walk findings` would hand it to the fixer as a defect of the repository. The judge names the walker's
+    finding (`<session>-F<n>`, as agents/ui-verifier.md says); its verified row, and the rows tied to it by `duplicate_of`, are taken out of the
+    verified file before `findings` reads it and kept in control-<tramo>.json. Rows are shaped by the keys of the agent text.
+
+    Red on the base (no runner rewrote the file; the answers below were never asked for):
+      FAIL: control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json: no executor:runner-control-T1 launched
+    """
+    def row(id, source, verdict="CONFIRMED", **kw):
+        return real_row(s, id=id, source=source, verdict=verdict, kind="observed", type="hierarchy", **kw)
+
+    def split(rec):
+        """The two writes of the control runner's command: the verified file kept, the control rows set aside."""
+        cmd = (runner(rec, "control-T1") or [{"prompt": ""}])[0]["prompt"]
+        return (cmd.split(" && ")[-2:] + ["", ""])[:2] + [cmd[-500:] or "no executor:runner-control-T1 launched"]
+    judged = {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"}
+    rows = [row("T1-1", "w1-F1", clip=RUN_DIR + "/clip-1.webm"), row("T1-2", "w1-F2", "NOT REPRODUCED"), row("T1-3", "w2-F1")]
+    over = {"ui-verifier:T1": {"findings": rows}, "ui-verifier:control": judged, "executor:runner-control-T1": R("saved")}
+    rec, err = go(script, answers_over=over)
+    rec = finish(s, "control row", rec, err)
+    ls = labels(rec)
+    keep, gone, shown = split(rec)
+    s.ok("control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json",
+         RUN_DIR + "/verified-T1.json" in keep and '"T1-3"' not in keep and '"T1-1"' in keep and '"T1-2"' in keep
+         and RUN_DIR + "/control-T1.json" in gone and '"T1-3"' in gone and '"T1-1"' not in gone, shown)
+    s.ok("control row: it is taken out after the judge and before `findings` reads the files",
+         at(ls, "ui-verifier:control") < at(ls, "executor:runner-control-T1") < at(ls, "executor:runner-findings"), repr(ls))
+    s.ok("control row: a tramo with no control row is not rewritten", "executor:runner-control-T2" not in ls, repr(ls))
+    s.eq("control row: the run is done and the clips are those of the rows kept", (result(rec).get("status"), details(rec).get("clips")), ("done", [RUN_DIR + "/clip-1.webm"]))
+    # the control row carries a clip: it is not a clip of a finding the fixer gets
+    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", clip=RUN_DIR + "/control.webm")]}})
+    rec = finish(s, "control row clip", rec, err)
+    s.eq("control row clip: the clip of the control row is not listed", details(rec).get("clips"), [])
+    # the verifier grouped the sightings: the control walker's row is a DUPLICATE of the first one, which carries the verdict; and the other way round
+    for what, dup in (("the judged row duplicates a kept sighting", [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", "DUPLICATE", duplicate_of="T1-1")]),
+                      ("a row duplicates the judged one", [row("T1-1", "w1-F1", "DUPLICATE", duplicate_of="T1-3"), row("T1-3", "w2-F1")])):
+        rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": dup + [row("T1-4", "w1-F9")]}})
+        rec = finish(s, "control row, " + what, rec, err)
+        keep, gone, shown = split(rec)
+        s.ok("control row, %s: both rows of the one defect leave, the other finding stays" % what,
+             '"T1-1"' in gone and '"T1-3"' in gone and '"T1-1"' not in keep and '"T1-3"' not in keep and '"T1-4"' in keep, shown)
+    # the id the judge names may also be the verified row's own
+    rec, err = go(script, answers_over={**over, "ui-verifier:control": dict(judged, finding="T1-3")})
+    rec = finish(s, "control row by id", rec, err)
+    s.ok("control row by id: a finding named by the id of its verified row leaves too", "executor:runner-control-T1" in labels(rec), repr(labels(rec)))
+    for what, ctl in (("not found", dict(judged, found=False, finding=None)), ("not judged", dict(judged, found=None, finding=None)),
+                      ("found, no finding named", dict(judged, finding=None))):
+        rec, err = go(script, answers_over={**over, "ui-verifier:control": ctl})
+        rec = finish(s, "control row, " + what, rec, err)
+        s.ok("control row, %s: no file is rewritten" % what, "executor:runner-control-T1" not in labels(rec), repr(labels(rec)))
+    rec, err = go(script, answers_over={**over, "executor:runner-control-T1": R("", 1)})
+    rec = finish(s, "control row not taken out", rec, err)
+    s.ok("control row not taken out: a gap, and a failed run: the fixer must not get it", result(rec).get("status") == "failed"
+         and any("control" in g and "T1" in g for g in details(rec).get("gaps", [])), repr((result(rec).get("status"), details(rec).get("gaps"))))
 
 
 def check_control(script, s):
@@ -302,6 +480,11 @@ def check_control(script, s):
              str(r.get("reason")).lower().startswith("the run does not count") and tag in str(r.get("reason")), repr(r.get("reason")))
 
 
+def peak(w):
+    """The most walkers running at one moment: for each walker's start, the intervals that hold that tick."""
+    return max([sum(1 for b in w if b["start"] <= a["start"] < b["end"]) for a in w] or [0])
+
+
 def check_quota(script, s):
     def cap(n, up_n=None):
         """`up` allows `up_n` (it was asked for one tramo), the second ask for the real tramos allows `n`."""
@@ -326,8 +509,9 @@ def check_quota(script, s):
     rec = finish(s, "quota from the second ask", rec, err)
     w = walkers(rec)
     s.ok("quota from the second ask: the walkers of the tramos run at once", any(overlap(a, b) for i, a in enumerate(w) for b in w[i + 1:]), repr([(x["label"], x["start"], x["end"]) for x in w]))
-    s.ok("quota from the second ask: more than the 2 `up` would have allowed run at once", max(sum(1 for b in w if overlap(a, b)) + 1 for a in w) > 2,
-         repr([(x["label"], x["start"], x["end"]) for x in w]))
+    # the walkers running at each walker's start, itself included: a pairwise overlap count (the first version added 1 to a sum that already
+    # held the walker itself) read two at once as three, so a quota capped at two passed
+    s.ok("quota from the second ask: more than the 2 `up` would have allowed run at once", peak(w) > 2, repr([(x["label"], x["start"], x["end"]) for x in w]))
     # a second ask that does not answer leaves the quota `up` gave, said
     for what, ans in (("rc 1", R("", 1)), ("no answer", None), ("not JSON", R("nope"))):
         over = cap(1, up_n=3)
@@ -379,14 +563,24 @@ def check_verify(script, s):
     s.ok("save fails: a verified file that was not written is a gap", result(rec).get("status") == "failed" and any("T1" in g for g in details(rec).get("gaps", [])), repr(details(rec).get("gaps")))
 
 
-def check_recheck(script, s):
-    """Scenario 2: recheck with a fix.json. Only verifiers; no breaker, no critic, no tramos agent, no control."""
-    fixes = [dict(verified("T1", ("CONFIRMED", None))["findings"][0]), dict(verified("T2", ("PLAUSIBLE", None))["findings"][0])]
+def recheck_fixes():
+    return [dict(verified("T1", ("CONFIRMED", None))["findings"][0]), dict(verified("T2", ("PLAUSIBLE", None))["findings"][0])]
+
+
+def recheck_answers():
+    fixes = recheck_fixes()
     ans = green()
     ans.update({"executor:runner-read-fix": R(json.dumps(fixes)),
                 "ui-verifier:T1": {"findings": [dict(fixes[0], verdict="NOT REPRODUCED", evidence_after="/srv/shots/after-1.png")]},
                 "ui-verifier:T2": {"findings": [dict(fixes[1], verdict="PLAUSIBLE", evidence_after="/srv/shots/after-2.png")]},
                 "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved")})
+    return ans
+
+
+def check_recheck(script, s):
+    """Scenario 2: recheck with a fix.json. Only verifiers; no breaker, no critic, no tramos agent, no control."""
+    fixes = recheck_fixes()
+    ans = recheck_answers()
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=ans)
     rec = finish(s, "recheck", rec, err)
     ls = labels(rec)
@@ -406,6 +600,9 @@ def check_recheck(script, s):
     s.eq("recheck: status", r.get("status"), "done")
     s.eq("recheck: a judgement finding still there (PLAUSIBLE) counts as still there, not as other", (d.get("recheck") or {}).get("still"), 1)
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
+    # `fwx walk up` removes control.json on a restart, so a recheck round has no control: it must not be armed, judged or reported as "not found"
+    s.ok("recheck: no control is expected: no judge, found null, and the reason does not say the run does not count",
+         "ui-verifier:control" not in ls and d.get("control", {}).get("found") is None and "does not count" not in str(r.get("reason")), repr((d.get("control"), r.get("reason"))))
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
     s.eq("recheck: the up was run on the work branch's checkout", "fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
     # `uniqueIds` appends `.x` to an id the run already used (T1-1 twice): the finding still belongs to its tramo (3.5 U3d). Against the
@@ -418,6 +615,27 @@ def check_recheck(script, s):
          ["ui-verifier:T1", "ui-verifier:T2"])
     s.ok("recheck suffixed ids: each verifier is given its own finding", "T1-1.x" in launched(rec, "ui-verifier:T1")[0]["prompt"] and "T2-2.x.x" in launched(rec, "ui-verifier:T2")[0]["prompt"]
          and "T2-2.x.x" not in launched(rec, "ui-verifier:T1")[0]["prompt"], repr([l["prompt"][-200:] for l in launched(rec, "ui-verifier:T")]))
+    # a reply that holds no row for a finding it was given is no recheck of it: `{"findings": []}` was saved and read as "nothing still there"
+    # Red on the base (the reply accepted as long as `findings` was an array; rows shaped by agents/ui-verifier.md), the first of each case:
+    #   FAIL: recheck reply with no row: launched once more, then a gap and a failed run: got (1, 'done', False), want (2, 'failed', True)
+    #   FAIL: recheck reply that skips one finding of two / with a row twice / with a row nobody gave: the same
+    two = [dict(fixes[0], id="T1-1"), dict(fixes[0], id="T1-2"), dict(fixes[1], id="T2-1")]
+    base2 = {**ans, "executor:runner-read-fix": R(json.dumps(two))}
+
+    def row(id, verdict="NOT REPRODUCED"):
+        return real_row(s, id=id, source="v1-F1", verdict=verdict, kind="observed", type="layout", evidence_after="/srv/shots/after.png")
+    whole = {"findings": [row("T2-1")]}
+    for what, rows in (("with no row", []), ("that skips one finding of two", [row("T1-1")]), ("with a row twice", [row("T1-1"), row("T1-1"), row("T1-2")]),
+                       ("with a row nobody gave", [row("T1-1"), row("T1-2"), row("T1-9")])):
+        rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**base2, "ui-verifier:T1": {"findings": rows}, "ui-verifier:T2": whole})
+        rec = finish(s, "recheck reply " + what, rec, err)
+        s.eq("recheck reply %s: launched once more, then a gap and a failed run" % what,
+             (len(launched(rec, "ui-verifier:T1")), result(rec).get("status"), [g for g in details(rec).get("gaps", []) if "T1" in g] != []), (2, "failed", True))
+        s.ok("recheck reply %s: nothing is saved for the tramo" % what, runner(rec, "save-T1") == [], repr(labels(rec)))
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**base2, "ui-verifier:T1": {"findings": [row("T1-2"), row("T1-1", "CONFIRMED")]}, "ui-verifier:T2": whole})
+    rec = finish(s, "recheck reply in another order", rec, err)
+    s.eq("recheck reply in another order: a row for each finding, in any order, is accepted", (result(rec).get("status"), (details(rec).get("recheck") or {}).get("still"),
+         (details(rec).get("recheck") or {}).get("gone")), ("done", 1, 2))
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**ans, "executor:runner-read-fix": R("[]")})
     rec = finish(s, "recheck empty", rec, err)
     s.eq("recheck empty: a fix.json with nothing in it is failed, and the browsers closed", (result(rec).get("status"), "executor:runner-down" in labels(rec)), ("failed", True))
@@ -429,6 +647,17 @@ def agent_section(name, mode):
         text = f.read()
     m = re.search(r"^## Mode `%s`\n(.*?)(?=^## |\Z)" % mode, text, re.S | re.M)
     return m.group(1) if m else ""
+
+
+def real_row(s, **over):
+    """One row of a verify reply with the keys agents/ui-verifier.md names (the optional ones left out), `over` set on top."""
+    section = agent_section("ui-verifier.md", "verify")
+    keys = re.search(r"each `\{([^}]*)\}`", section)
+    s.ok("real verify reply: the row's keys are in the agent text", keys is not None, section[-300:])
+    names = [k.strip() for k in (keys.group(1) if keys else "").split(",")]
+    row = {k: ("x" if k not in ("severity", "file", "line") else None) for k in names if not k.endswith("?")}
+    row.update(over)
+    return row
 
 
 def check_real_replies(script, s):
@@ -450,12 +679,7 @@ def check_real_replies(script, s):
     rec = finish(s, "real tramos reply", rec, err, allow_unanswered=True)
     critic = launched(rec, "ui-walker:T1-critic")[0]["prompt"]
     s.ok("real tramos reply: the critic is given the reference its screen carries (REFERENCE (data): none)", all(r in critic for r in refs), critic[:700])
-    section = agent_section("ui-verifier.md", "verify")
-    keys = re.search(r"each `\{([^}]*)\}`", section)
-    s.ok("real verify reply: the row's keys are in the agent text", keys is not None, section[-300:])
-    names = [k.strip() for k in (keys.group(1) if keys else "").split(",")]
-    row = {k: ("x" if k not in ("severity", "file", "line") else None) for k in names if not k.endswith("?")}
-    row.update(id="T1-1", source="critic1-F2", verdict="NOT REPRODUCED", kind="observed", type="layout")  # copied from the walker's finding, as the text says
+    row = real_row(s, id="T1-1", source="critic1-F2", verdict="NOT REPRODUCED", kind="observed", type="layout")  # copied from the walker's finding, as the text says
     rec, err = go(script, answers_over={"ui-verifier:T1": {"findings": [row]}})
     rec = finish(s, "real verify reply", rec, err, allow_unanswered=True)
     s.eq("real verify reply: a NOT REPRODUCED row with severity null is accepted", [l["answer"] for l in launched(rec, "ui-verifier:T1")], ["value"])
@@ -489,6 +713,9 @@ def check_all(script, s):
     check_up_fails(script, s)
     check_breaker_null(script, s)
     check_down_fails(script, s)
+    check_findings_fails(script, s)
+    check_close(script, s)
+    check_control_rows(script, s)
     check_control(script, s)
     check_quota(script, s)
     check_tramos(script, s)
@@ -504,6 +731,8 @@ MUTANTS = [
     ("the recheck branch removed", "if (A.recheck) {", "if (false) {", "FAIL: recheck: no breaker or critic launched (critic launched in recheck)"),
     ("not armed carries on", "if (up.armed !== true) {", "if (false) {", "FAIL: not armed: status"),
     ("the walkers are not capped", "const SLOTS = () => quota", "const SLOTS = () => 99", "FAIL: quota 1: no two walkers at once"),
+    ("the quota is capped at two", "const SLOTS = () => quota", "const SLOTS = () => Math.min(quota, 2)",
+     "FAIL: quota from the second ask: more than the 2 `up` would have allowed run at once"),
     ("the control is armed after the walkers", "await armControl(tramos)", "/* armed later */", "FAIL: green: the control is armed before any walker"),
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
     ("a missed control still counts", "The run does not count", "Run", "FAIL: control missed: the reason says first that the run does not count"),
@@ -523,6 +752,13 @@ MUTANTS = [
      "FAIL: quota from the second ask: the walkers of the tramos run at once"),
     ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
     ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
+    ("a recheck reply need not cover its findings", "if (!items) return true", "return true", "FAIL: recheck reply with no row: launched once more"),
+    ("a job's browser is not closed", "      if (after) await after()\n", "", "FAIL: close: every job's browser is closed after it returned"),
+    ("the slot is freed before the browser is closed", "      if (after) await after()\n    } finally {\n      release()\n    }", "      release()\n      if (after) await after()\n    } finally {\n    }",
+     "FAIL: close quota 1: the next job starts only after the previous one's browser was closed"),
+    ("the planted control's row goes to the fixer", "if (!fid) return", "return", "FAIL: control row: the verifier confirmed the planted title"),
+    ("the rows tied to the control's row stay", "if (out.has(a) !== out.has(b)) {", "if (false) {", "FAIL: control row, the judged row duplicates a kept sighting"),
+    ("the control's clip is listed", "if (i >= 0) st.clips.splice(i, 1)", "", "FAIL: control row clip: the clip of the control row is not listed"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("the runner may name its stderr file", "never a fixed name in /tmp. ", "", "FAIL: green: the runner is told to keep stderr in a mktemp file"),
     ("the verifier is not told where captures go", "A path in /tmp is refused.", "", "FAIL: green: the verifier is told a screenshot with no path lands"),
