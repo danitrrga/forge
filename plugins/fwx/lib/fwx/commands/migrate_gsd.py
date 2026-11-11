@@ -97,7 +97,9 @@ def _git(repo, *args, ok=(0,)):
     env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")}
     env["GIT_OPTIONAL_LOCKS"] = "0"
     try:
-        r = subprocess.run(["git", "--no-optional-locks", "-C", repo] + list(args), capture_output=True, env=env)
+        # no optional lock: git refreshes no index; no fsmonitor: a repository's own hook program is not started
+        r = subprocess.run(["git", "--no-optional-locks", "-c", "core.fsmonitor=false", "-C", repo] + list(args),
+                           capture_output=True, env=env)
     except OSError as e:
         raise Refuse("cannot run git (%s)" % e)
     if r.returncode not in ok:
@@ -125,12 +127,24 @@ class WorkTree:
                            (False, ("ls-files", "-z", "--others", "--exclude-standard", "--", SCOPE_SRC)),
                            (False, ("ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--", SCOPE_SRC))):
             for p in _lines(self.repo, *args):
-                try:
-                    size = os.lstat(os.path.join(self.repo, p)).st_size
-                except OSError:
-                    size = 0
-                out.setdefault(p[len(SCOPE_SRC) + 1:], (kind, size))
+                for path in self.expand(p):
+                    try:
+                        size = os.lstat(os.path.join(self.repo, path)).st_size
+                    except OSError:
+                        size = 0
+                    out.setdefault(path[len(SCOPE_SRC) + 1:], (kind, size))
         return [(rel, t, n) for rel, (t, n) in sorted(out.items())]
+
+    def expand(self, p):
+        """git lists a repository nested in the folder as one `dir/` entry and does not look inside it: list its files
+        (its own `.git` too) from the disk, so none is left out of the count and the sizes."""
+        if not p.endswith("/"):
+            return [p]
+        found = []
+        for dirpath, dirnames, filenames in os.walk(os.path.join(self.repo, p)):
+            for n in filenames + [d for d in dirnames if os.path.islink(os.path.join(dirpath, d))]:
+                found.append(os.path.relpath(os.path.join(dirpath, n), self.repo))
+        return sorted(found)
 
     def read(self, rel):
         try:
@@ -569,8 +583,8 @@ class Mapper:
         if len(parts) >= 2 and parts[0] == "workstreams":
             sc, head, parts = self.scopes.get(parts[1]), "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
         tail = parts
-        if len(parts) >= 2 and parts[0] == "phases":
-            known = [p for p in (sc.phases if sc else []) if p["key"] == "phases/" + parts[1]]
+        if parts and parts[0] == "phases":
+            known = [p for p in (sc.phases if sc else []) if len(parts) >= 2 and p["key"] == "phases/" + parts[1]]
             others = {p["milestone"] for p in (sc.phases if sc else []) if p["milestone"]}
             ms = known[0]["milestone"] if known else (others.pop() if len(others) == 1 else "*")
             tail = ["milestones", ms, "phases"] + parts[1:]
@@ -775,7 +789,7 @@ def render(doc, notes, files, refs_only=False):
 # ---- the command ---------------------------------------------------------------------------------------------------------
 
 def parse(argv, flags, valued):
-    args, got, rest, i = {}, {}, [], 0
+    got, i = {}, 0
     while i < len(argv):
         a = argv[i]
         name, eq, val = a.partition("=")

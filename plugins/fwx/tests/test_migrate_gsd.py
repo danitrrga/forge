@@ -5,23 +5,52 @@ Every case builds a toy repository in a temp dir (with its `origin` beside it), 
 `--json` it prints. The toy `.planning/` is described next to `build()`. HOME, XDG_* and git's global config are isolated, and
 every temp dir is removed by helpers.cleanup() also when a check fails.
 
-Cases (the plan's twelve, then the ones the code added):
+Cases (the plan's twelve, then what the code added):
   1 plan writes nothing   2 classification   3 milestone of each phase   4 closed or open   5 phases only in the ROADMAP
   6 scopes   7 backlog   8 `.gitignore`   9 refs   10 no `.planning/`   11 an emptied phase keeps its `.gitkeep`   12 ahead
-  extras: unmerged branches, the remote without its credentials, two files for one destination, the write half refused
+  extras: unmerged branches, the remote without its credentials, a repository nested in `.planning/`, two files for one
+  destination, a folder cited as a reference, the write half refused (`apply`, `leftovers`, `refs --rewrite|--prefix`: exit 2)
 
-Seen red before the command existed (bin/fwx has no `migrate-gsd`):
+Seen red before the command existed (a copy of this plugin without migrate_gsd.py):
   FAIL: plan (text) exits 0: got 2, want 0
-  (every later check fails the same way)
 
-Controls, each seen red on a copy of this plugin with one rule of lib/fwx/commands/migrate_gsd.py changed; the FAIL line
-the case printed is quoted (filled in below from the run):
-CONTROLS
+Controls: each is a copy of this plugin with one rule of lib/fwx/commands/migrate_gsd.py changed (154 checks on the good code);
+the first FAIL line it printed:
+  - plan creates `.fwx/` (case 1):
+      FAIL: plan wrote .fwx: a .fwx/ exists in the repo
+  - a PLAN is purged without its SUMMARY being looked for (case 2):
+      FAIL: 02.1-01-PLAN.md (no SUMMARY) classified purge, want keep
+  - the milestone list of the ROADMAP ignored (case 3; ws1 falls to its STATE's v3.0 and the ranges are not read):
+      FAIL: ws1 has four phases, none made up: got ['.fwx/subprojects/ws1/milestones/v3/phases/01-one', ...
+  - closed read from the pairing only (case 4):
+      FAIL: phase 02.1-b closed: the box [x] wins over an incomplete pairing: got False, want True
+  - the slug of a ROADMAP-only phase without its 60-character limit (case 5):
+      FAIL: slug of phase 3 is 138 characters, over 60
+  - a workstream sent to `.fwx/workstreams/` (case 6):
+      FAIL: .planning/workstreams/ws1/private/notes.md destination: got '.fwx/workstreams/ws1/private/notes.md', want '.fwx/subprojects/ws1/private/notes.md'
+  - a quick task without SUMMARY counted as done (case 7):
+      FAIL: 260101-PLAN.md classified purge, want backlog
+  - `.gitignore` lines copied unchanged (case 8):
+      FAIL: the .gitignore lines that name .planning/: got [{'old': '/.planning/phases/01-a/fonts/', 'new': '/.planning/phases/01-a/fonts/'}, ...
+  - a reference to a purged file called moved (case 9):
+      FAIL: refs classify moved, purged and prefix in a script, a comment and a biome.json: missing [('scripts/check.sh', 3, '.planning/STATE.md', 'purged', None)]
+  - the zero-files refusal removed (case 10):
+      FAIL: a repo without .planning/ exits 2: got 0, want 2
+  - every `.gitkeep` purged (case 11):
+      FAIL: phase 02.5-c missing from destination
+  - the `ahead` key dropped from `--json` (case 12):
+      FAIL: ahead missing
+  - the extras: credentials left in the remote ("FAIL: a remote with credentials in its URL is printed without them: got
+    'https://user:s3cret@example.com/x.git', ..."), the collision check off ("FAIL: two files for one destination exit 2: got 0,
+    want 2"), the branch list emptied ("FAIL: unmerged branches that touch .planning/: got [], want [('eden/x', ...)]"), a
+    nested repository not expanded ("FAIL: a repository nested in .planning/ is listed file by file, its .git too, and never as
+    a folder"), a cited `.planning/phases/` sent to `.fwx/phases/` ("FAIL: refs classify ... missing [('scripts/check.sh', 4,
+    '.planning/phases/', 'moved', '.fwx/milestones/v2/phases/')]"), sizes not summed ("FAIL: totals.keep files and bytes: got
+    {'files': 14, 'bytes': 0}, ...").
 """
 import json
 import os
 import re
-import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -72,7 +101,7 @@ def build(outside=False, ws=True, roadmap=None):
     files = {
         "README": "toy\n",
         ".gitignore": "node_modules/\n/.planning/phases/01-a/fonts/\n%s\n" % OLD,
-        "scripts/check.sh": "#!/bin/sh\ncat .planning/phases/01-a/01-01-SUMMARY.md\n# the old state lived in .planning/STATE.md\n",
+        "scripts/check.sh": "#!/bin/sh\ncat .planning/phases/01-a/01-01-SUMMARY.md\n# the old state lived in .planning/STATE.md\nls .planning/phases/\n",
         "biome.json": '{"files": {"ignore": ["!.planning"]}}\n',
         ".planning/PROJECT.md": "# Project\n",
         ".planning/STATE.md": "---\nmilestone: v2.0\n---\n# State\n",
@@ -124,6 +153,11 @@ def build(outside=False, ws=True, roadmap=None):
     if ws:
         helpers.write(repo, ".planning/workstreams/ws1/private/notes.md", "# private\n")  # ignored
     helpers.write(repo, ".planning/state.json", "{}\n")                          # untracked
+    nested = os.path.join(repo, ".planning", "ref")                              # an untracked repository inside the folder
+    os.makedirs(nested)
+    helpers.git(nested, "init", "-q")
+    helpers.write(nested, "a.txt", "a\n")
+    helpers.write(nested, "b/c.txt", "c\n")
     return repo, origin
 
 
@@ -164,8 +198,13 @@ if d is None:
 F = by_src(d)
 s.eq("schema", d["schema"], 1)
 s.ok("text output counts the files it looked at", re.search(r"^\d+ files looked at in 2 scope\(s\)", rt.stdout, re.M), rt.stdout[:300])
-s.eq("untracked and ignored files are in the list", sorted(f["src"] for f in d["files"] if not f["tracked"]),
-     sorted([".planning/phases/01-a/fonts/a.woff", ".planning/state.json", ".planning/workstreams/ws1/private/notes.md"]))
+s.eq("untracked and ignored files are in the list (a nested repository's .git apart)",
+     sorted(f["src"] for f in d["files"] if not f["tracked"] and "/.git/" not in f["src"]),
+     sorted([".planning/phases/01-a/fonts/a.woff", ".planning/ref/a.txt", ".planning/ref/b/c.txt", ".planning/state.json",
+             ".planning/workstreams/ws1/private/notes.md"]))
+s.ok("a repository nested in .planning/ is listed file by file, its .git too, and never as a folder",
+     not any(f["src"].endswith("/") for f in d["files"]) and any(f["src"].startswith(".planning/ref/.git/") for f in d["files"]))
+s.eq("... and each file of it moves to the same path under .fwx", F.get(".planning/ref/b/c.txt", {}).get("dest"), ".fwx/ref/b/c.txt")
 
 
 def act(src, action, rule=None, dest=None, note=""):
@@ -219,6 +258,10 @@ def phase(dest, what, field, want):
     s.ok("phase %s %s: %s" % (os.path.basename(dest), what, "got %r, want %r" % (p and p[field], want)), p is not None and p[field] == want)
 
 
+def sig(dest):
+    return (PH.get(dest) or {}).get("signals", {})
+
+
 WS = ".fwx/subprojects/ws1/milestones/"
 for name in ("01-a", "02.1-b", "02.5-c"):
     phase(D2 + name, "milestone (STATE says v2.0)", "milestone", "v2")
@@ -228,7 +271,7 @@ for dest, ms in ((WS + "v1/phases/01-one", "v1"), (WS + "v2/phases/03-two", "v2"
          dest in PH and PH[dest]["milestone"] == ms.split()[0])
 s.eq("ws1 has four phases, none made up", sorted(k for k in PH if k.startswith(".fwx/subprojects/ws1")), sorted([
     WS + "v1/phases/01-one", WS + "v2/phases/03-two", WS + "v2/phases/05-three", WS + "v3/phases/08-four"]))
-s.eq("ws1's ROADMAP goes to its current milestone", F[".planning/workstreams/ws1/ROADMAP.md"]["dest"], WS + "v3/ROADMAP.md")
+s.eq("ws1's ROADMAP goes to its current milestone", F.get(".planning/workstreams/ws1/ROADMAP.md", {}).get("dest"), WS + "v3/ROADMAP.md")
 rep, _ = build(outside=True)  # one phase outside every range: exit 2, naming it
 r = run(rep, "plan")
 s.eq("a phase outside the ROADMAP's ranges exits 2", r.returncode, 2)
@@ -253,12 +296,12 @@ s.ok("a key of the map no phase has is a note, not an error", r.returncode == 0 
 # ---- 4: closed or open ----------------------------------------------------------------------------------------------
 phase(D2 + "02.1-b", "closed: the box [x] wins over an incomplete pairing", "closed", True)
 phase(D2 + "01-a", "open: the box [ ] wins over a complete pairing", "closed", False)
-s.eq("02.1-b signals", PH[D2 + "02.1-b"]["signals"], {"checklist": True, "pairing": False})
-s.eq("01-a signals", PH[D2 + "01-a"]["signals"], {"checklist": False, "pairing": True})
-s.eq("02.5-c signals (no plan is not a paired phase)", PH[D2 + "02.5-c"]["signals"], {"checklist": False, "pairing": False})
+s.eq("02.1-b signals", sig(D2 + "02.1-b"), {"checklist": True, "pairing": False})
+s.eq("01-a signals", sig(D2 + "01-a"), {"checklist": False, "pairing": True})
+s.eq("02.5-c signals (no plan is not a paired phase)", sig(D2 + "02.5-c"), {"checklist": False, "pairing": False})
 phase(WS + "v1/phases/01-one", "closed: no boxes, so the pairing decides", "closed", True)
 phase(WS + "v2/phases/05-three", "open: no boxes, a PLAN without SUMMARY", "closed", False)
-s.eq("a phase without boxes has checklist null", PH[WS + "v1/phases/01-one"]["signals"]["checklist"], None)
+s.eq("a phase without boxes has checklist null", sig(WS + "v1/phases/01-one").get("checklist", "phase missing"), None)
 s.ok("the text marks the two signals that disagree", re.search(r"02\.1-b .*DISAGREE", rt.stdout) and not re.search(r"02\.5-c .*DISAGREE", rt.stdout), rt.stdout)
 r, d4 = plan_json(repo, "--close", "1", "--open", "2.1")
 P4 = {p["dest"]: p for p in d4["phases"]} if d4 else {}
@@ -310,6 +353,7 @@ s.eq("the .gitignore lines that name .planning/", d["gitignore"], [
 # ---- 9: refs --------------------------------------------------------------------------------------------------------
 want = {("scripts/check.sh", 2, ".planning/phases/01-a/01-01-SUMMARY.md", "moved", D2 + "01-a/01-01-SUMMARY.md"),
         ("scripts/check.sh", 3, ".planning/STATE.md", "purged", None),
+        ("scripts/check.sh", 4, ".planning/phases/", "moved", ".fwx/milestones/v2/phases/"),
         ("biome.json", 1, ".planning", "prefix", ".fwx"),
         (".gitignore", 2, ".planning/phases/01-a/fonts/", "moved", ".fwx/milestones/v2/phases/01-a/fonts/"),
         (".gitignore", 3, OLD[1:], "moved", ".fwx/subprojects/*/private/")}
@@ -360,8 +404,8 @@ helpers.git(noremote, "remote", "add", "origin", "https://user:s3cret@example.co
 r, dn = plan_json(noremote)
 s.eq("a remote with credentials in its URL is printed without them", dn and dn["remote"], "https://example.com/x.git")
 s.ok("remote credentials removed from the text too", "s3cret" not in run(noremote, "plan").stdout)
-s.eq("ahead is null when there is no tracking branch", dn and dn["ahead"], None)
-s.eq("ahead is null and remote null without a remote", [(x["ahead"], x["remote"]) for x in [plan_json(helpers.toy_repo({".planning/PROJECT.md": "# p\n"}))[1]]], [(None, None)])
+s.eq("ahead is null when there is no tracking branch", dn and dn.get("ahead", "ahead missing"), None)
+s.eq("ahead is null and remote null without a remote", [(x.get("ahead", "ahead missing"), x.get("remote")) for x in [plan_json(helpers.toy_repo({".planning/PROJECT.md": "# p\n"}))[1]]], [(None, None)])
 clash = helpers.toy_repo({".planning/PROJECT.md": "# p\n", ".planning/milestones/v1.0-ROADMAP.md": "# a\n",
                           ".planning/milestones/v1/v1.0-ROADMAP.md": "# b\n"})
 r = run(clash, "plan")
