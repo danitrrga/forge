@@ -31,7 +31,8 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
       (Firefox starts logged in too: the app's demo session file is the context's storageState when `up` left one; the app-host filter
       of `ab` has no counterpart here, Playwright's `network.allowedOrigins` being no boundary and blind to redirects)
-      `--run` is a run folder or a namespace; without it, the repository's only open run.
+      `--run` is a run folder or a namespace; without it, the repository's only open run. Only a walker session (`w*`) launches with the
+      planted control; a verifier session (`v*`) does not. `close` of a session no agent opened is a no-op, exit 0 (`close --all` is not).
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
       Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size,
@@ -45,12 +46,15 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       written as high/high/medium/low (3.4's words). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
       (starting with a letter or digit) is exit 2, as in `wave prepare`.
   review-page --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
-      figures today/built) and one per CONTRADICTED ("¿Cambiar lo aprobado por esto?"), the item `id` being the finding's. A `.webm`
+      figures today/built; choices `ok`, `redo` and `not_defect`, the last two with `needs_note`) and one per CONTRADICTED
+      ("¿Cambiar lo aprobado por esto?", yes/no), the item `id` being the finding's. A `.webm`
       clip becomes an animated WebP with ffmpeg; without it `NOT RUN, NOT ARMED: ffmpeg missing`, exit 0, the clip's path in the text.
       `review/map.json` says which id is a fix and which a contradicted one. F is a file with [{id, commit}]. The `built` figure of a fix
       is the `evidence_after` its recheck saved in `rechecked-*.json`, else the one fix.json holds.
-  review-answers --run R FILE        the line `verdict wait` printed, as `{accepted, rejected: [{id, note}], contradicted_wanted, open, stale}`
-      in `review/answers.json`. Only a fix answered "ok" and not stale is accepted.
+  review-answers --run R FILE        the text the owner pasted (the last JSON object with "v": 2 in it, prose around it allowed; none: exit 2),
+      as `{accepted, redo, not_defect, contradicted_wanted, open, stale, missing_note}` in `review/answers.json`, its only write. Only a
+      fix answered "ok" and not stale is accepted; `redo` and `not_defect` are lists of {id, note, commit} (commit from the --fixed data the
+      page was built from, null when it had none); one of them with a blank note is in `missing_note` and `open`, in neither list.
   down --run R         `close --all` of the run's namespace, the app's `down` (per app; the image's in the factory; with `container`
       `docker rm -f` by exact name), then a count of the processes whose environment or command line carries the namespace:
       `down.json` says how many it looked at and what is left; exit 1 if anything is, or a `down` or a container failed.
