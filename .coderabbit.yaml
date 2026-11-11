@@ -1,12 +1,15 @@
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 #
-# CodeRabbit reviews and comments on every PR to the default branch. Its approval is required only
-# where a PR is security-relevant: the paths under `overrides` below (kept equal to RISKY in
+# CodeRabbit reviews a PR only when someone asks for it with the review comment command on that PR:
+# `auto_review.enabled: false` below, and no label or description keyword that would start one. Which
+# PRs get asked, and when, is the standard in CLAUDE.md ("Branches and CI"). Its approval is required
+# only where a PR is security-relevant: the paths under `overrides` below (kept equal to RISKY in
 # .github/scripts/coderabbit_gate.py by tests/test_coderabbit_gate.py) or the `security` label. The
 # status `CodeRabbit approval` (.github/workflows/coderabbit-gate.yml, required by repo-kit's
-# `ruleset --coderabbit`) is pending on those until CodeRabbit approves the head commit, and green at
-# once on every other PR. Strictness follows risk: `reviews.profile` is one value for the whole repo,
-# so what varies per PR is the approval limit below and the review text per path (`path_instructions`).
+# `ruleset --coderabbit`) is pending on those until CodeRabbit approves the head commit, so a security
+# PR nobody asked a review for stays pending, and it is green at once on every other PR. Strictness
+# follows risk: `reviews.profile` is one value for the whole repo, so what varies per PR is the
+# approval limit below and the review text per path (`path_instructions`).
 #
 # CodeRabbit never writes to the repo: every finishing touch that commits or opens a PR is off.
 language: en-US
@@ -44,10 +47,12 @@ reviews:
     path or address in an engine file is high or critical.
     Docs-only and test-only changes are low risk, unless they remove a check or its negative control.
 
-  # Automatic review of non-draft PRs to the default branch (the defaults, stated). Reviews are
-  # never paused after N commits: a paused review leaves the required check green with no review.
+  # Automatic review is off: a review runs only on a request comment (CodeRabbit's docs say a manual
+  # review works with automatic reviews paused). The schema's `labels` and `description_keyword` would
+  # each start a review on their own once `enabled` is false, so both stay unset. The rest applies to
+  # the reviews that are asked for: no draft, and never paused after N commits.
   auto_review:
-    enabled: true
+    enabled: false
     drafts: false
     auto_incremental_review: true
     auto_pause_after_reviewed_commits: 0
