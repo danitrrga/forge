@@ -359,6 +359,8 @@ def main():
         if rc or has != want_para or (want_para and not got.count("verdict page") == 1):
             failures.append("%s project: verdict-page paragraph present %s (want %s), exit %d, block %r"
                             % (case, has, want_para, rc, got[-300:]))
+        if want_para and (any(w in got for w in ("--serve", "verdict wait", "verdict reply")) or "`Copy answers`" not in got):
+            failures.append("ui project: the paragraph names a live-server verb or not the pasted answers: %r" % got[-500:])
         agents = os.path.join(projects(t), "toy", "AGENTS.md")
         if want_para and text(agents) != got:
             failures.append("ui project: AGENTS.md does not read the same paragraph as CLAUDE.md")
@@ -366,11 +368,14 @@ def main():
     # A profile's own `verdict_command` replaces the generic paragraph, and needs nothing from this checkout.
     # Red on the unchanged code (messages in the PR): the "verdict" cases wrote the generic paragraph naming design.py and not the
     # command, verdict-no-design wrote no paragraph at all, and a bad verdict_command was not an error.
+    # The generic paragraph names no live server (`--serve`, `verdict wait`, `verdict reply`) and says the owner pastes the answers.
+    # Red on the paragraph that still told agents to add `--serve` (messages kept in the commit): "ui, no verdict_command: the paragraph
+    # is not the old one byte for byte" and "ui project: the paragraph names a live-server verb or not the pasted answers".
     generic = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, "
                "changed screenshots to accept) goes on a verdict page, never into a chat question. If this file names a command for it, "
                "use that; otherwise write `decisions.json` in a folder and run `python3 %(t)s/forge/scripts/design/design.py verdict <folder>` "
                "(the format is in `%(t)s/forge/design/verdict/README.md`), then end your message with the `xdg-open` line it prints."
-               " For a live back-and-forth (the owner clicks rows and notes single elements, your replies appear in the page) add `--serve`; the README says how to read the answers and reply.\n")
+               " The owner answers on the page and pastes the JSON that `Copy answers` gives into the chat: never wait on the page; the README says how to read it.\n")
     own = ("\n**A UI change that needs a choice from the owner** (variants to compare, review findings to triage, changed "
            "screenshots to accept) goes on a verdict page, never into a chat question. In this project the command is `pnpm verdict <dir>`: "
            "use it, not forge's `design.py verdict`; this file describes how it is used. End your message with the `xdg-open` line it prints.\n")
