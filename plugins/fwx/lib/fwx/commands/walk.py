@@ -34,9 +34,11 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `--run` is a run folder or a namespace; without it, the repository's only open run.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
-      Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size and
-      font-weight, runs the plant on the page, reads them again (both readings go to control.json `readback`) and closes the session.
-      No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default 30): `target not found`; the two readings equal: `no visible change`.
+      Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size,
+      font-weight and rendered box (width and height in whole pixels), runs the plant on the page, reads them again (both readings go to
+      control.json `readback`, the boxes under `box`) and closes the session. No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default
+      30): `target not found`; a box that changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels (default 1) in both width and height:
+      `no visible change`, whatever the plant did to the font (the owner's rule: what moves no layout is not worth a walker's attention).
       Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and no control.json is left.
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
@@ -835,14 +837,18 @@ CONTROL_JS = """(() => {
   apply();
 })();
 """
-# What the plant alters, as the page's own computed style of the target: `fwx:<font-size>|<font-weight>`, or `fwx:missing`.
+# What the plant alters, as the page's own computed style and rendered box (whole pixels) of the target:
+# `fwx:<font-size>|<font-weight>|<width>x<height>`, or `fwx:missing`.
 READ_JS = """(() => {
   const h = document.querySelector(%s);
   if (!h) return "fwx:missing";
-  const c = getComputedStyle(h);
-  return "fwx:" + c.fontSize + "|" + c.fontWeight;
+  const c = getComputedStyle(h), r = h.getBoundingClientRect();
+  return "fwx:" + c.fontSize + "|" + c.fontWeight + "|" + Math.round(r.width) + "x" + Math.round(r.height);
 })()"""
-READ_LINE = re.compile(r"fwx:(?:(missing)|([^|\s\"']+)\|([^|\s\"']+))")  # the answer may come back bare or quoted
+READ_LINE = re.compile(r"fwx:(?:(missing)|([^|\s\"']+)\|([^|\s\"']+)\|(\d+)x(\d+))")  # the answer may come back bare or quoted
+# The plant counts as visible when the title's box changes by at least this many pixels, in width or in height. The owner's rule: a change
+# nobody can see is not important, and neither is a change of text as long as the layout of the page does not move. One place, one number.
+CONTROL_MIN_BOX_PX = int(os.environ.get("FWX_WALK_CONTROL_MIN_BOX_PX") or 1)
 CONTROL_WAIT_S = float(os.environ.get("FWX_WALK_CONTROL_WAIT_S") or 30)  # how long the screen may take to draw its title
 
 
@@ -855,23 +861,24 @@ def browser_must(run, args):
 
 
 def read_target(run):
-    """The target's (font-size, font-weight) on the page the probe session has open, or None while there is no target. The page may still be
-    drawing (a cold dev server), so it is asked again every SETTLE_POLL_S for CONTROL_WAIT_S."""
+    """The target's (font-size, font-weight, width, height) on the page the probe session has open (the box in whole pixels), or None while
+    there is no target. The page may still be drawing (a cold dev server), so it is asked again every SETTLE_POLL_S for CONTROL_WAIT_S."""
     end = time.monotonic() + CONTROL_WAIT_S
     while True:
         m = READ_LINE.search(browser_must(run, ["eval", READ_JS % json.dumps(TARGET)]))
         if m and not m.group(1):
-            return m.group(2), m.group(3)
+            return m.group(2), m.group(3), int(m.group(4)), int(m.group(5))
         if time.monotonic() >= end:
             return None
         time.sleep(SETTLE_POLL_S)
 
 
 def read_back(run, screen, plant):
-    """(before, after): the target's computed style without and with the plant, on the screen, in the walk's own browser (session w1, closed
-    after). It lives here and not in `up` because only arm-control knows the screen (the tramos come from an agent after `up`), and the probe
-    session is launched while no control.json exists, so `before` is the page as the app draws it; the plant is the init script's own code,
-    run on the loaded page. Stops, exit 1, when there is no target or the plant changes nothing."""
+    """(before, after): the target's computed style and rendered box without and with the plant, on the screen, in the walk's own browser (session
+    w1, closed after). It lives here and not in `up` because only arm-control knows the screen (the tramos come from an agent after `up`), and
+    the probe session is launched while no control.json exists, so `before` is the page as the app draws it; the plant is the init script's own
+    code, run on the loaded page. Stops, exit 1, when there is no target or the plant does not move the box by CONTROL_MIN_BOX_PX: the owner's
+    rule is that what changes no layout is not worth a walker's attention, whatever it does to the text."""
     try:
         browser_must(run, ["open", screen])
         before = read_target(run)
@@ -879,9 +886,9 @@ def read_back(run, screen, plant):
             raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, TARGET, CONTROL_WAIT_S), 1)
         browser_must(run, ["eval", plant])
         after = read_target(run)
-        if after == before:
-            raise Stop("arm-control: no visible change on %s: the `%s` has font-size %s and font-weight %s with and without the plant"
-                       % (screen, TARGET, before[0], before[1]), 1)
+        if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:
+            raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px without the plant and %dx%d px with it, and the box must change by at least %d px"
+                       % (screen, TARGET, before[2], before[3], after[2], after[3], CONTROL_MIN_BOX_PX), 1)
         return before, after
     finally:
         browser_call(run, ["close"])
@@ -911,9 +918,11 @@ def cmd_arm_control(argv):
     with open(script, "w", encoding="utf-8") as f:
         f.write(code)
     names = ("font-size", "font-weight")
+    box = lambda t: {"width": t[2], "height": t[3]}  # noqa: E731
     ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script,
            "planted": "the main title of the screen has the size and weight of body text",
-           "readback": {"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after))},
+           "readback": {"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
+                        "box": {"before": box(before), "after": box(after)}, "min_box_px": CONTROL_MIN_BOX_PX},
            "armed": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
     write_json(ctl_file, ctl)
     say(ctl)

@@ -65,16 +65,21 @@ with open(os.environ["FAKE_LOG"], "a") as f:
 """
 TAILS = {
     "agent-browser": """
-# The read-back of arm-control asks the page for the target's style with a call of the browser's eval command whose code carries the
-# word fwx: and answers with the line that code builds. FAKE_READ says what the page holds: changes (the default: 24px/700 before the
-# plant, 16px/400 after it), same (the plant changes nothing: the title already has the planted style) or missing (no title).
+# The read-back of arm-control asks the page for the target's style and rendered box with a call of the browser's eval command whose code
+# carries the word fwx: and answers with the line that code builds, `fwx:<font-size>|<font-weight>|<width>x<height>` (a string result comes
+# back quoted: measured live). FAKE_READ says what the page holds, as (before the plant, after it):
+#   changes (the default): 24px/700 in 300x40, then 16px/400 in 300x30      same: 16px/400 in 300x30 both times (the title already has the
+#   planted style)      weight: 16px/500, then 16px/400, the box 300x30 both times (a style that changes nothing a reader can see)
+#   grow10: the box goes from 300x30 to 310x30     missing: no title
 # FAKE_QUOTE=1 wraps the line in quotes (the shape of a string result is not measured; the parser takes both).
 if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
     mode = os.environ.get("FAKE_READ", "changes")
     count = os.environ["FAKE_LOG"] + ".reads"
     k = int(open(count).read()) if os.path.exists(count) else 0
     open(count, "w").write(str(k + 1))
-    line = {"missing": "fwx:missing", "same": "fwx:16px|400"}.get(mode) or ("fwx:24px|700" if k == 0 else "fwx:16px|400")
+    reads = {"changes": ("fwx:24px|700|300x40", "fwx:16px|400|300x30"), "same": ("fwx:16px|400|300x30",) * 2,
+             "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30")}
+    line = "fwx:missing" if mode == "missing" else reads[mode][min(k, 1)]
     print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
 sys.exit(int(os.environ.get("FAKE_RC", "0")))
 """,
@@ -852,6 +857,8 @@ def case_arm_control_readback(R, S):
         S.eq("arm-control read-back: control.json records both readings", [rb.get("before"), rb.get("after")],
              [{"font-size": "24px", "font-weight": "700"}, {"font-size": "16px", "font-weight": "400"}])
         S.ok("arm-control read-back: and the selector they were read from", "h1" in str(rb.get("selector")), str(rb))
+        S.eq("arm-control read-back: the boxes are recorded beside the styles", rb.get("box"),
+             {"before": {"width": 300, "height": 40}, "after": {"width": 300, "height": 30}})
         calls = [x["argv"] for x in sc.calls("agent-browser")]
         evals = [a[a.index("eval") + 1] for a in calls if "eval" in a]
         S.ok("arm-control read-back: reads, plants (the init script's code), reads again",
@@ -880,6 +887,38 @@ def case_arm_control_readback(R, S):
         S.ok("arm-control read-back: no title on the screen: says target not found, and where",
              "target not found" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
         S.ok("arm-control read-back: no title on the screen: nothing written", not os.path.exists(os.path.join(rd, "control.json")))
+        # (d) the layout is what counts: a plant that changes the style and leaves the title's box as it was (a weight 500 title already at the
+        # body's size) is refused, with both boxes in the reason. Seen red on the branch before it (the read-back compared styles):
+        #   FAIL: arm-control read-back: a weight-only change that leaves the box as it was: exit: got 0, want 1
+        #   FAIL: arm-control read-back: a box that grew 10 px arms it (the default is 1 px): exit: got 1, want 0   (same style, wider box)
+        #   FAIL: arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=10: armed: got 1, want 0
+        #   FAIL: arm-control read-back: the boxes are recorded beside the styles: got None, want {'before': {'width': 300, 'height': 40}, 'after': {'width': 300, 'height': 30}}
+        sc.env["FAKE_READ"] = "weight"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: a weight-only change that leaves the box as it was: exit", r.returncode, 1)
+        S.ok("arm-control read-back: and the reason says no visible change, where, and both boxes",
+             "no visible change" in r.stderr and sc.url + screen in r.stderr and r.stderr.count("300x30") == 2 and len(r.stderr.strip().splitlines()) == 1, r.stderr)
+        S.ok("arm-control read-back: and nothing is written", not os.path.exists(os.path.join(rd, "control.json")))
+        # (e) a box that changes by the constant (default 1 px, so any change) arms it, both boxes recorded
+        sc.env["FAKE_READ"] = "grow10"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: a box that grew 10 px arms it (the default is 1 px): exit", r.returncode, 0)
+        rb = (jfile(os.path.join(rd, "control.json")) or {}).get("readback") or {}
+        S.eq("arm-control read-back: the boxes are recorded beside the styles", rb.get("box"),
+             {"before": {"width": 300, "height": 30}, "after": {"width": 310, "height": 30}})
+        S.eq("arm-control read-back: and the number the change was measured against", rb.get("min_box_px"), 1)
+        # (f) the number is one constant read from the environment: 50 refuses the same 10 px, 10 still arms it (at least, not more than)
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "50"})
+        S.eq("arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=50: exit", r.returncode, 1)
+        S.ok("arm-control read-back: and the reason names the number and both boxes",
+             "no visible change" in r.stderr and "50" in r.stderr and "300x30" in r.stderr and "310x30" in r.stderr, r.stderr)
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "10"})
+        S.eq("arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=10: armed", r.returncode, 0)
+        S.eq("arm-control read-back: and the number recorded is the one in force", ((jfile(os.path.join(rd, "control.json")) or {}).get("readback") or {}).get("min_box_px"), 10)
         # a string result may come back quoted
         sc.env.update(FAKE_READ="changes", FAKE_QUOTE="1")
         sc.clear()
@@ -1669,8 +1708,16 @@ MUTANTS = [
     ("pw: not offline", case_pw, '"npx", "--offline", "--no-install", ', '"npx", "--no-install", ', "pw: offline, no install, the pinned CLI"),
     ("pw: no Firefox check", case_pw, "if not os.path.isdir(os.path.join(pw_browsers(), PW_FIREFOX)):", "if False:", "pw: no Firefox"),
     ("arm-control: any screen", case_arm_control, 'if host_of(screen) not in run["hosts"]:', "if False:", "arm-control: a screen outside the app is refused"),
-    ("arm-control: no visible change accepted", case_arm_control_readback, "if after == before:", "if False:",
+    ("arm-control: no visible change accepted", case_arm_control_readback, "if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:", "if False:",
      "arm-control read-back: the title already has the planted style: exit"),
+    ("arm-control: the styles decide, not the box", case_arm_control_readback, "if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:",
+     "if after[:2] == before[:2]:", "arm-control read-back: a weight-only change that leaves the box as it was: exit"),
+    ("arm-control: the box number is not from the environment", case_arm_control_readback, 'int(os.environ.get("FWX_WALK_CONTROL_MIN_BOX_PX") or 1)', "1",
+     "arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=50: exit"),
+    ("arm-control: the box must change by more than the number", case_arm_control_readback, ") < CONTROL_MIN_BOX_PX:", ") <= CONTROL_MIN_BOX_PX:",
+     "arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=10: armed"),
+    ("arm-control: the boxes not recorded", case_arm_control_readback, '"box": {"before": box(before), "after": box(after)}, ', "",
+     "arm-control read-back: the boxes are recorded beside the styles"),
     ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
      "arm-control read-back: no title on the screen: says target not found"),
     ("arm-control: an old control.json kept", case_arm_control_readback, "os.remove(ctl_file)", "pass",
