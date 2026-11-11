@@ -53,6 +53,7 @@ DEFAULTS = {
     "rounds": 3,
     "critique_rounds_unattended": 2,
     "linear": {"labels": {}},
+    "walk": {"browser_executable": None},
     "integrations": {"consent": False, "notifications": False, "agent_browser": False, "mempalace": False},
     "paths": {},
 }
@@ -122,6 +123,17 @@ def _validate(cfg, path):
                 raise _bad(path, "models.%s.%s is %r, not a model alias (%s)" % (role, size, name, ", ".join(ALIASES)))
 
 
+def _check_walk(cfg, path):
+    """walk.browser_executable: null (the browser agent-browser finds) or the path of the browser the UI walk must use instead,
+    e.g. a headless shell, so that a wrapper around the system browser (an extension, a window flag) never reaches the walk."""
+    walk = cfg.get("walk")
+    if not isinstance(walk, dict):
+        raise _bad(path, "walk is not a table")
+    exe = walk.get("browser_executable")
+    if exe is not None and (not isinstance(exe, str) or not exe.strip()):
+        raise _bad(path, "walk.browser_executable is %r, not null or the path of a browser" % (exe,))
+
+
 def load(cwd=None):
     """The configuration: the main checkout's .claude/fwx.json laid over DEFAULTS, validated. `_source` is the
     path read, or None when the file is missing (then one line on stderr, once per process)."""
@@ -151,6 +163,7 @@ def load(cwd=None):
         _merge(cfg, data)
         source = path
     _validate(cfg, source)
+    _check_walk(cfg, source)
     cfg["_source"] = source
     return cfg
 
