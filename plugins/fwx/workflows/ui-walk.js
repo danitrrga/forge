@@ -579,14 +579,15 @@ async function shoot() {
     for (const s of t.screens) if (!urls.includes(s.url)) urls.push(s.url)
   }
   if (urls.length === 0) return
-  const v = await exec('screenshot', inRepo('fwx screenshot --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls.map((u) => ({ url: u, theme: 'light' }))))), true)
+  const v = await exec('screenshot', inRepo('fwx screenshot --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls.map((u) => ({ url: u, theme: 'light' })))) + ' --json'), true)
   if (!v) {
     log(PHASE + ': fwx screenshot did not return: no capture of the walked screens')
     return
   }
   for (const line of String(v.stdout).split('\n')) {
-    const m = /^ok (\S+) /.exec(line.trim())
-    if (m) st.shots.push(m[1])
+    // `--json`: one object per screen, so a path with a space is read whole; a `missing` row is no capture
+    const row = line.trim() ? parseAny(line) : null
+    if (row && typeof row === 'object' && row.status === 'ok' && typeof row.path === 'string' && row.path) st.shots.push(row.path)
   }
   log(PHASE + ': ' + st.shots.length + ' of ' + urls.length + ' screen(s) captured' + (v.rc === 0 ? '' : ' (exit ' + v.rc + '), the missing ones are named on its stderr'))
 }

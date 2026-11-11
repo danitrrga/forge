@@ -99,7 +99,13 @@ UP = {"armed": True, "run": "", "run_dir": RUN_DIR, "url": APP, "apps": [{"name"
       "namespace": "walk-1-1-abc123", "capacity": {"role": "ui-walker", "want": 2, "allowed": 4}}
 FINDINGS_OUT = {"fix_file": RUN_DIR + "/fix.json", "contradicted_file": RUN_DIR + "/contradicted.json",
                 "counts": {"confirmed": 1, "plausible": 1, "contradicted": 0, "dropped": 1}}
-SHOTS = "ok /srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png %s/settings theme=light width=1440\nok /srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png %s/billing theme=light width=1440\n" % (APP, APP)
+def shots_out(rows):
+    """What `fwx screenshot --json` prints (lib/fwx/commands/screenshot.py): one JSON object per screen, `ok` with its `path` or `missing` with its `why`."""
+    return "".join(json.dumps(dict(r, url=APP + r["url"], theme="light", width=1440)) + "\n" for r in rows)
+
+
+SHOTS = shots_out([{"status": "ok", "path": "/srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png", "url": "/settings"},
+                   {"status": "ok", "path": "/srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png", "url": "/billing"}])
 DOWN = {"namespace": "walk-1-1-abc123", "run_dir": RUN_DIR, "looked": 31, "unreadable": 0, "left": [], "browsers_left": 0, "steps": []}
 
 
@@ -238,6 +244,14 @@ def check_green(script, s):
          and "fwx walk down --run '%s'" % RUN_DIR in runner(rec, "down")[0]["prompt"])
     shot = runner(rec, "screenshot")[0]["prompt"]
     s.ok("green: screenshot is given the walked screens", "fwx screenshot --run '%s' --screens " % RUN_DIR in shot and APP + "/settings" in shot and APP + "/billing" in shot, shot[-400:])
+    s.ok("green: the screenshot is asked for `--json` (a path with a space cannot be read from the text line)", " --json" in shot, shot[-200:])
+    # Red on the base (the reader took `\S+` after `ok `, and the command had no --json, so the JSON line read as no capture):
+    #   FAIL: green: details.shots are the paths the screenshots were written to: got [], want [...s1.png, ...s2.png]
+    spaced = "/srv/git/fwx/walks/walk 1/shots/a b.png"
+    rec2, err2 = go(script, answers_over={"executor:runner-screenshot": R(shots_out([{"status": "ok", "path": spaced, "url": "/settings"},
+                                                                                     {"status": "missing", "why": "no file written", "url": "/billing"}]), 1)})
+    rec2 = finish(s, "screenshot paths", rec2, err2)
+    s.eq("screenshot paths: a path with a space is read whole, a missing screen is not a capture", details(rec2).get("shots"), [spaced])
     d = details(rec)
     s.eq("green: details keys", sorted(d), sorted(["run_dir", "fix_file", "counts", "contradicted_file", "control", "coverage_file", "shots", "clips", "down_file", "outside",
                                                  "recheck", "gaps", "agents"]))
@@ -586,6 +600,9 @@ def check_recheck(script, s):
     s.eq("recheck: status", r.get("status"), "done")
     s.eq("recheck: a judgement finding still there (PLAUSIBLE) counts as still there, not as other", (d.get("recheck") or {}).get("still"), 1)
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
+    # `fwx walk up` removes control.json on a restart, so a recheck round has no control: it must not be armed, judged or reported as "not found"
+    s.ok("recheck: no control is expected: no judge, found null, and the reason does not say the run does not count",
+         "ui-verifier:control" not in ls and d.get("control", {}).get("found") is None and "does not count" not in str(r.get("reason")), repr((d.get("control"), r.get("reason"))))
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
     s.eq("recheck: the up was run on the work branch's checkout", "fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
     # `uniqueIds` appends `.x` to an id the run already used (T1-1 twice): the finding still belongs to its tramo (3.5 U3d). Against the
