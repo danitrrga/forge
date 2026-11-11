@@ -287,7 +287,29 @@ def case_prepare(R, S):
 CASES = [case_run, case_none, case_second_call, case_failing, case_dirty, case_main_checkout, case_config, case_timeout, case_check_base,
          case_prepare]
 
-MUTANTS = []
+# ---------------------------------------------------------------------------------------------------- the controls
+# (name, case, file, old text, new text, the FAIL text it must produce); each `old` is in the file exactly once.
+W, C, P = "lib/fwx/execute/worktree_setup.py", "lib/fwx/commands/wave.py", "lib/fwx/execute/prepare.py"
+MUTANTS = [
+    ("check-base does not call the setup", case_check_base, C,
+     "    # The base is right: the agent's checks need the project's dependencies in this worktree, so the setup is part of step 0.\n",
+     "    return 0\n", "setup did not run before the check"),
+    ("check-base swallows a failed setup", case_check_base, C, '        sys.stderr.write("%s\\n" % e)\n        return base.SETUP_FAILED\n',
+     '        sys.stderr.write("%s\\n" % e)\n        return 0\n', "a failing setup: exit 43, and the task's check did not run"),
+    ("prepare does not call the setup", case_prepare, P, "    _setup(top, cfg, say)\n", "    pass\n", "setup did not run before the base check"),
+    ("prepare swallows a failed setup", case_prepare, P, "    except worktree_setup.SetupFailed as e:\n        raise WaveError(str(e))\n",
+     "    except worktree_setup.SetupFailed as e:\n        pass\n", "a failing setup stops the run before the base"),
+    ("a failing command does not stop the sequence", case_failing, W, "            if why:\n                raise SetupFailed(", "            if False:\n                raise SetupFailed(",
+     "failing: the earlier command ran and the later one did not"),
+    ("files left behind are not refused", case_dirty, W, "    left = sorted(_status(top))", "    left = []", "dirty: an untracked, non-ignored file is refused: exit"),
+    ("no marker is read", case_second_call, W, "if not force and _read_marker(marker_path) == fingerprint:", "if False:", "second call: a no-op that says so"),
+    ("the dependency files are not hashed", case_second_call, W, '"dependencies": _dependency_digest(top)}', '"dependencies": ""}',
+     "a changed lockfile: the setup runs again by itself"),
+    ("the main checkout is allowed", case_main_checkout, W, "    if not linked(top):", "    if False:", "main checkout: refused with exit 2"),
+    ("a timeout kills the shell only", case_timeout, W, "        os.killpg(proc.pid, signal.SIGKILL)\n", "        proc.kill()\n", "timeout: no process is left"),
+    ("an empty config entry is accepted", case_config, "lib/fwx/config.py", "isinstance(c, str) and c.strip() for c in setup", "isinstance(c, str) for c in setup",
+     "config: worktree_setup as a blank command"),
+]
 
 if __name__ == "__main__":
     real = runner(ROOT)

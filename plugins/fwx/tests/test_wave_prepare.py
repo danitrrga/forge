@@ -524,7 +524,8 @@ MUTANTS = [
     ("check-base by merge-base", case_check_base, B, "if not head.startswith(sha):",
      'if git(top, "merge-base", "--is-ancestor", sha, "HEAD").returncode:', "an ancestor of HEAD is another base"),
     ("scratch folder not ignored", case_scratch, B, 'f.write("*\\n")', 'f.write("\\n")', "scratch: with a report and a TMPDIR file in it the worktree is clean"),
-    ("scratch under .git", case_scratch, B, 'root = os.path.join(os.path.realpath(top), AGENT_DIR)', 'root = os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), AGENT_DIR)',
+    ("scratch under .git", case_scratch, B, 'folder = os.path.join(os.path.realpath(top), AGENT_DIR, run, unit)',
+     'folder = os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), AGENT_DIR, run, unit)',
      "scratch: it prints the folder, inside the worktree"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
 ]
