@@ -5,13 +5,16 @@ Plain Python, no network: it reads skills/session/ of the checkout it sits in (`
 tree) and runs that tree's `bin/fwx --help` for the command list. Commands that only exist on another branch (`walk` on the UI-walk
 branch, `open` on master) are SKIPped with their reason printed, never silently; the rest must exist.
 
-Seen red on the untouched branch (text before this change; the six FAIL lines, 22 checks looked at):
+Seen red on the untouched branch (text before this change; the five FAIL lines, 21 checks looked at; an `xdg-open` ban was dropped in round two, because the text now names the line the tool prints, to relay it):
   FAIL: no 'verdict wait' in skills/session -> references/ui-review.md
   FAIL: no '--serve' in skills/session -> references/ui-review.md
-  FAIL: no 'xdg-open' in skills/session -> SKILL.md, references/ui-review.md
   FAIL: ui-review.md names 'redo' -> missing
   FAIL: ui-review.md names 'not_defect' -> missing
   FAIL: ui-review.md asks before the revert -> no 'revert it?' before the first '--revert'
+Round two (a review of the text found the open line not relayed and the fix round without `--fix`); run against the first version of
+ui-review.md the two new checks gave:
+  FAIL: ui-review.md names 'NOT OPENED' -> missing
+  FAIL: ui-review.md names '--fix <file>' -> missing
 Each check also has a control on a toy text (the "control:" checks): a text with 'verdict wait' must fail the removed-string check, and a text
 that reverts before it asks must fail the ask-first check.
 """
@@ -61,12 +64,13 @@ def main():
     review = texts[os.path.join("references", "ui-review.md")]
 
     # The session never waits on the page and hands the owner files through `fwx open`.
-    for gone in ("verdict wait", "--serve", "xdg-open"):
+    for gone in ("verdict wait", "--serve"):
         named = files_naming(gone, texts)
         check("no '%s' in skills/session" % gone, not named, ", ".join(named))
 
     # What the review text must say.
-    for word in ("review-answers", "redo", "not_defect"):
+    # Round two of the text review (the nine-point contract keys, the relayed open line, the fix round's findings file).
+    for word in ("review-answers", "redo", "not_defect", "contradicted_wanted", "open", "stale", "NOT OPENED", "--fix <file>"):
         check("ui-review.md names '%s'" % word, word in review, "missing")
     check("ui-review.md asks before the revert", asks_before_revert(review), "no 'revert it?' before the first '--revert'")
 
