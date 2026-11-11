@@ -35,6 +35,7 @@ line each mutant produced:
   11 unanswered counted:      FAIL: review answers: open item F3 in accepted: accepted ['F1', 'F3']
 The rest of MUTANTS (walk.py's own guards, the rig prefix, the sockets, pw, arm-control, sweep, capacity) each name their FAIL text.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -1221,7 +1222,16 @@ def case_review_page(R, S):
     S.ok("review page: a finding's text evidence and commit are in the item", "abc1234" in json.dumps(items[0]), json.dumps(items[0]))
     S.ok("review page: top-level fields of the verdict format", set(page) <= {"title", "intro", "items", "v", "run"} and page.get("title"), str(sorted(page)))
     keys = {k for i in items for k in i}
-    S.ok("review page: only fields the verdict builder knows", keys <= {"id", "title", "what", "figures", "ask", "recommend"}, str(keys))
+    S.ok("review page: only fields the verdict builder knows", keys <= {"id", "title", "what", "figures", "ask", "recommend", "options", "needs_note"}, str(keys))
+    # the verdict of a fix has three choices, and the two that refuse it need the owner's reason (3.5 review U3; the choice keys are the contract of
+    # review-answers). Seen red on the branch before it:
+    #   FAIL: review page: a fix has the choices ok, redo and not_defect: got [[], []], want [['ok', 'redo', 'not_defect'], ['ok', 'redo', 'not_defect']]
+    #   FAIL: review page: redo and not_defect need a note: got [None, None], want [['redo', 'not_defect'], ['redo', 'not_defect']]
+    S.eq("review page: a fix has the choices ok, redo and not_defect", [[o.get("key") for o in i.get("options", [])] for i in items[:2]], [["ok", "redo", "not_defect"]] * 2)
+    S.ok("review page: and each choice says what it is", all(o.get("text") for i in items[:2] for o in i.get("options", [])) and len(items[0].get("options", [])) == 3,
+         json.dumps(items[0].get("options")))
+    S.eq("review page: redo and not_defect need a note", [i.get("needs_note") for i in items[:2]], [["redo", "not_defect"]] * 2)
+    S.ok("review page: a contradicted item keeps its yes/no", "options" not in items[2] and "needs_note" not in items[2] and items[2].get("ask"), json.dumps(items[2]))
     m = jfile(os.path.join(rd, "review", "map.json")) or {}
     S.eq("review page: map.json says which items are fixes and which are contradicted", {k: v["kind"] for k, v in m.items()}, {"F1": "fix", "F2": "fix", "F3": "contradicted"})
     # no ffmpeg
@@ -1246,42 +1256,92 @@ def case_review_page(R, S):
     S.ok("review page: an evidence image that is missing is exit 2 naming it", r.returncode == 2 and "built-F2.png" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
 
 
+def tree_hashes(rd):
+    """{relative path: sha256} of every file under a run folder."""
+    got = {}
+    for base, _, names in os.walk(rd):
+        for n in names:
+            p = os.path.join(base, n)
+            with open(p, "rb") as fh:
+                got[os.path.relpath(p, rd)] = hashlib.sha256(fh.read()).hexdigest()
+    return got
+
+
 def case_review_answers(R, S):
-    """Control 11."""
+    """Control 11, and the verdict of a walk's fixes (3.5 review, unit U3): `redo` and `not_defect` are two lists, each with the note and the
+    fix's commit; a pick that needs a note and has none is `missing_note` and `open`; FILE is the pasted text, prose around the JSON included.
+    Seen red on the branch before it (review-answers knew `ok`/`no`, printed `rejected` and stopped at the page's own `missing_note` key):
+      FAIL: review answers: exit: got 2, want 0
+      FAIL: review answers: a redo with its note and the fix's commit (null when the run holds none): got None, want [{'id': 'F2', 'note': 'the clip is too slow', 'commit': 'cF2'}, ...]
+      FAIL: review answers: a redo with a blank note is missing_note: got None, want ['F3']
+      FAIL: review answers: the run folder changes only in review/answers.json: got [], want ['review/answers.json']
+      FAIL: review answers: a fix answered `no` is open, in neither list: {'accepted': [], 'rejected': [{'id': 'F2', 'note': 'x'}], ...
+    (the keys, the commit and the prose cases fail the same way; 19 FAILs in all)"""
     bindir = helpers.mkdtemp("fwx-walk-bin-")
     for name, target in (("python3", PY), ("git", GIT)):
         os.symlink(target, os.path.join(bindir, name))
     env = {"PATH": bindir}
-    rd = fixed_run(with_clip=False)  # F1..F4 are fixes, F5 is contradicted
+    rd = fixed_run(("F1", "F2", "F3", "F4", "F6", "F7"), "F5", with_clip=False)  # F1..F4, F6, F7 are fixes, F5 is contradicted
     fixed = os.path.join(helpers.mkdtemp("fwx-walk-fixed-"), "fixed.json")
-    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": i, "commit": "c" + i} for i in ("F1", "F2", "F3", "F4")]))
+    # F7 has no commit in the data the page was built from
+    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": i, "commit": "c" + i} for i in ("F1", "F2", "F3", "F4", "F6")] + [{"id": "F7"}]))
     r = runner_walk(R, "review-page", "--run", rd, "--fixed", fixed, env=env)
     S.eq("review answers: the page for the case", r.returncode, 0)
-    answers = {"v": 2, "F1": {"pick": "ok"}, "F2": {"pick": "no", "note": "the clip is too slow"}, "F4": {"pick": "ok"}, "F5": {"pick": "ok"},
-               "open": ["F3"], "stale": ["F4"], "global": "thanks"}
-    af = os.path.join(helpers.mkdtemp("fwx-walk-ans-"), "wait.out")
-    helpers.write(os.path.dirname(af), "wait.out", "waiting for the answers\n" + json.dumps(answers) + "\n")
+    answers = {"v": 2, "F1": {"pick": "ok"}, "F2": {"pick": "redo", "note": "the clip is too slow"}, "F3": {"pick": "redo", "note": "   "},
+               "F4": {"pick": "ok"}, "F5": {"pick": "ok"}, "F6": {"pick": "not_defect", "note": "on purpose"}, "F7": {"pick": "redo", "note": "still wrong"},
+               "open": ["F3"], "missing_note": ["F3"], "stale": ["F4"], "global": "thanks"}
+    af = os.path.join(helpers.mkdtemp("fwx-walk-ans-"), "pasted.txt")
+    adir = os.path.dirname(af)
+    helpers.write(adir, "pasted.txt", json.dumps(answers) + "\n")
+    before = tree_hashes(rd)
     r = runner_walk(R, "review-answers", "--run", rd, af, env=env)
     d = obj(r.stdout) or {}
     S.eq("review answers: exit", r.returncode, 0)
+    S.eq("review answers: the keys printed", sorted(d), ["accepted", "contradicted_wanted", "missing_note", "not_defect", "open", "redo", "stale"])
     S.ok("review answers: open item F3 in accepted", d.get("accepted") == ["F1"], "accepted %s" % d.get("accepted"))
-    S.eq("review answers: rejected with its note", d.get("rejected"), [{"id": "F2", "note": "the clip is too slow"}])
+    S.eq("review answers: a redo with its note and the fix's commit (null when the run holds none)", d.get("redo"),
+         [{"id": "F2", "note": "the clip is too slow", "commit": "cF2"}, {"id": "F7", "note": "still wrong", "commit": None}])
+    S.eq("review answers: a not_defect with its note and commit", d.get("not_defect"), [{"id": "F6", "note": "on purpose", "commit": "cF6"}])
     S.eq("review answers: a contradicted one he wants", d.get("contradicted_wanted"), ["F5"])
-    S.eq("review answers: open", d.get("open"), ["F3"])
+    S.eq("review answers: a redo with a blank note is open", d.get("open"), ["F3"])
+    S.eq("review answers: a redo with a blank note is missing_note", d.get("missing_note"), ["F3"])
+    S.ok("review answers: and it is in neither list of picks", all(x["id"] != "F3" for k in ("redo", "not_defect") for x in d.get(k, [])), str(d))
     S.eq("review answers: stale (answered ok, but not accepted)", d.get("stale"), ["F4"])
+    S.ok("review answers: a stale id is in no other list", all("F4" not in json.dumps(v) for k, v in d.items() if k != "stale"), str(d))
     S.eq("review answers: review/answers.json is what is printed", jfile(os.path.join(rd, "review", "answers.json")), d)
+    after = tree_hashes(rd)
+    S.eq("review answers: the run folder changes only in review/answers.json",
+         sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k)), ["review/answers.json"])
+    first = d
+    # the pasted text: prose before and after, two v 2 objects (the last wins), pretty-printed, stray braces in the prose
+    older = {"v": 2, "F1": {"pick": "redo", "note": "old"}}
+    helpers.write(adir, "prose.txt", "Here are my answers {not json}:\n" + json.dumps(older) + "\nno wait, this one:\n" + json.dumps(answers, indent=2) + "\nthanks {x\n")
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "prose.txt"), env=env)
+    S.eq("review answers: prose around the JSON, two v 2 objects: the last wins and the result is the same", obj(r.stdout), first)
+    helpers.write(adir, "oneline.txt", "my answers " + json.dumps(answers) + " end")
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "oneline.txt"), env=env)
+    S.eq("review answers: the object in the middle of a line", obj(r.stdout), first)
+    helpers.write(adir, "v1.txt", json.dumps(answers) + "\n" + json.dumps({"F1": {"pick": "redo", "note": "x"}, "v": 1}))
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "v1.txt"), env=env)
+    S.eq("review answers: a later object that is not v 2 does not win", obj(r.stdout), first)
     # an item missing from the answers and from `open` is open all the same; a contradicted one he declines is neither
-    helpers.write(os.path.dirname(af), "wait2.out", json.dumps({"v": 2, "F1": {"pick": "ok"}, "F5": {"pick": "no"}}))
-    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(os.path.dirname(af), "wait2.out"), env=env)
+    helpers.write(adir, "wait2.out", json.dumps({"v": 2, "F1": {"pick": "ok"}, "F5": {"pick": "no"}}))
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "wait2.out"), env=env)
     d = obj(r.stdout) or {}
-    S.eq("review answers: what he did not touch is open", d.get("open"), ["F2", "F3", "F4"])
+    S.eq("review answers: what he did not touch is open", d.get("open"), ["F2", "F3", "F4", "F6", "F7"])
+    S.eq("review answers: untouched is not missing_note", d.get("missing_note"), [])
     S.eq("review answers: a contradicted one declined is not wanted", d.get("contradicted_wanted"), [])
+    # the old `no` of a fix meant two things and counts for neither
+    helpers.write(adir, "oldno.txt", json.dumps({"v": 2, "F2": {"pick": "no", "note": "x"}}))
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "oldno.txt"), env=env)
+    d = obj(r.stdout) or {}
+    S.ok("review answers: a fix answered `no` is open, in neither list", "F2" in d.get("open", []) and d.get("redo") == [] and d.get("not_defect") == [], str(d))
     # not an answer, an id the page never had, no page
-    helpers.write(os.path.dirname(af), "junk.out", "no json here\n")
-    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(os.path.dirname(af), "junk.out"), env=env)
-    S.ok("review answers: no JSON in the file is exit 2", r.returncode == 2, "rc %d %s" % (r.returncode, r.stderr))
-    helpers.write(os.path.dirname(af), "other.out", json.dumps({"v": 2, "F9": {"pick": "ok"}}))
-    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(os.path.dirname(af), "other.out"), env=env)
+    helpers.write(adir, "junk.out", 'no json here {"v": 1}\n')
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "junk.out"), env=env)
+    S.ok("review answers: no v 2 object in the file is exit 2, one line", r.returncode == 2 and len(r.stderr.strip().splitlines()) == 1, "rc %d %s" % (r.returncode, r.stderr))
+    helpers.write(adir, "other.out", json.dumps({"v": 2, "F9": {"pick": "ok"}}))
+    r = runner_walk(R, "review-answers", "--run", rd, os.path.join(adir, "other.out"), env=env)
     S.ok("review answers: an id the page never had is exit 2", r.returncode == 2 and "F9" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
     r = runner_walk(R, "review-answers", "--run", helpers.mkdtemp("fwx-walk-run-"), af, env=env)
     S.ok("review answers: a run with no page is exit 2", r.returncode == 2, "rc %d %s" % (r.returncode, r.stderr))
@@ -1558,9 +1618,16 @@ MUTANTS = [
     ("10 no ffmpeg run anyway", case_review_page, 'if not shutil.which("ffmpeg"):', "if False:", "review page: no ffmpeg: exit"),
     ("10 unknown fixed id", case_review_page, 'if x["id"] not in fix:', "if False:", "review page: a fixed id that is no finding is exit 2"),
     ("10 missing picture", case_review_page, "if not os.path.isfile(p):", "if False:", "review page: an evidence image that is missing is exit 2"),
-    ("11 unanswered counted", case_review_answers, 'pick = a.get("pick")', 'pick = a.get("pick") or "ok"', "review answers: open item F3 in accepted"),
+    ("10 no choices on a fix", case_review_page, "notes, choices=True))", "notes))", "review page: a fix has the choices ok, redo and not_defect"),
+    ("10 no needs_note", case_review_page, "item.update(options=[dict(c) for c in FIX_CHOICES], needs_note=list(NEEDS_NOTE))",
+     "item.update(options=[dict(c) for c in FIX_CHOICES])", "review page: redo and not_defect need a note"),
+    ("11 unanswered counted", case_review_answers, 'pick = a.get("pick")', 'pick = a.get("pick") or "ok"', "review answers: what he did not touch is open"),
     ("11 stale counted", case_review_answers, "        if fid in stale:\n            continue", "        if False:\n            continue",
-     "review answers: open item F3 in accepted"),
+     "review answers: a stale id is in no other list"),
+    ("11 no note needed", case_review_answers, "if isinstance(note, str) and note.strip():", "if True:", "review answers: a redo with a blank note is open"),
+    ("11 the first object wins", case_review_answers, "found, at = v, end", "return v", "review answers: prose around the JSON, two v 2 objects: the last wins"),
+    ("11 commit not carried", case_review_answers, '"commit": m.get("commit")}', '"commit": None}', "review answers: a redo with its note and the fix's commit"),
+    ("11 not_defect is a redo", case_review_answers, 'out[pick].append({"id": fid', 'out["redo"].append({"id": fid', "review answers: a not_defect with its note and commit"),
     ("ab: the prefix on every call", case_ab_session, 'rc = execute((prefix if launch else []) + ["agent-browser"] + a, env, run["repo"], quiet)',
      'rc = execute(prefix + ["agent-browser"] + a, env, run["repo"], quiet)',
      "ab session: only the call that launches the daemon goes through the rig prefix"),

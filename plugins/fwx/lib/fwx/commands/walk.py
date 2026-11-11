@@ -130,6 +130,11 @@ WEBP = ("fps=12,scale=640:-1", "60")  # 640 px, 12 fps, quality 60: 13 KB for th
 IMAGES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
 ASK_FIX = "¿Mantener este arreglo?"
 ASK_CONTRADICTED = "¿Cambiar lo aprobado por esto?"
+# The three answers to a fix on the review page. `redo` and `not_defect` refuse the fix and need the owner's reason (`needs_note`): "no" used
+# to mean both "it does not work" and "it is not a defect", and a refusal without its reason is not an answer. The keys are what `review-answers` reads.
+FIX_CHOICES = [{"key": "ok", "text": "Mantener el arreglo"}, {"key": "redo", "text": "No funciona: arréglalo otra vez"},
+               {"key": "not_defect", "text": "No es un defecto"}]
+NEEDS_NOTE = ["redo", "not_defect"]
 VERDICTS = ("CONFIRMED", "PLAUSIBLE", "CONTRADICTED", "NOT REPRODUCED", "TOOLING", "DUPLICATE")
 SEVERITY = {"blocker": "high", "major": "high", "minor": "medium", "cosmetic": "low"}
 REFUSED_WORDS = ("connect", "auth", "batch", "chat")
@@ -1013,14 +1018,17 @@ def fid_of(f):
     return f["id"]
 
 
-def item_of(rd, rev, f, ask, commit, notes):
+def item_of(rd, rev, f, ask, commit, notes, choices=False):
     fid = fid_of(f)
     today, t1 = figures_of(rd, rev, fid, "today", f.get("evidence"))
     built, t2 = figures_of(rd, rev, fid, "built", f.get("evidence_after"))
     clip, t3 = convert_clip(rd, rev, fid, f, notes)
     what = [x for x in ["Screen: %s" % f["screen"] if f.get("screen") else "", "Expected: %s" % f["expected"] if f.get("expected") else "",
                         "Commit: %s" % commit if commit else ""] if x] + t1 + t2 + t3
-    return {"id": fid, "title": f.get("claim") or fid, "what": what, "ask": ask, "figures": today + built + clip}
+    item = {"id": fid, "title": f.get("claim") or fid, "what": what, "ask": ask, "figures": today + built + clip}
+    if choices:
+        item.update(options=[dict(c) for c in FIX_CHOICES], needs_note=list(NEEDS_NOTE))
+    return item
 
 
 def rechecked_after(rd):
@@ -1056,7 +1064,7 @@ def cmd_review_page(argv):
         shutil.rmtree(rev)
     for x in fixed:
         f = fix[x["id"]]
-        items.append(item_of(rd, rev, dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f, ASK_FIX, x.get("commit"), notes))
+        items.append(item_of(rd, rev, dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f, ASK_FIX, x.get("commit"), notes, choices=True))
         mapping[x["id"]] = {"kind": "fix", "commit": x.get("commit")}
     for f in contradicted:
         items.append(item_of(rd, rev, f, ASK_CONTRADICTED, None, notes))
@@ -1077,6 +1085,24 @@ def cmd_review_page(argv):
     return 0
 
 
+def last_answer(text):
+    """The last JSON object carrying "v": 2 in a pasted text, whatever prose, line breaks or stray braces surround it; None when there is none."""
+    decoder, at, found = json.JSONDecoder(), 0, None
+    while True:
+        at = text.find("{", at)
+        if at < 0:
+            return found
+        try:
+            v, end = decoder.raw_decode(text, at)
+        except ValueError:
+            at += 1
+            continue
+        if v.get("v") == 2:
+            found, at = v, end
+        else:
+            at += 1  # an object inside this one may be the answer
+
+
 def cmd_review_answers(argv):
     o, pos = opts("review-answers", argv, ("--run",), 1)
     if "--run" not in o:
@@ -1088,35 +1114,32 @@ def cmd_review_answers(argv):
             text = f.read()
     except OSError as e:
         raise Stop("cannot read %s (%s)" % (pos[0], e.strerror))
-    ans = None
-    for line in reversed([x for x in text.splitlines() if x.strip()] + ([text] if text.strip() else [])):
-        try:
-            v = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(v, dict) and v.get("v") == 2:
-            ans = v
-            break
+    ans = last_answer(text)
     if ans is None:
         raise Stop("no verdict answer (a JSON object with \"v\": 2) in %s" % pos[0])
-    unknown = [k for k in ans if k not in ("v", "open", "stale", "global") and k not in mapping]
+    unknown = [k for k in ans if k not in ("v", "open", "stale", "missing_note", "global") and k not in mapping]
     if unknown:
         raise Stop("answers for ids the page never had: %s" % ", ".join(unknown))
     stale = [i for i in ans.get("stale", []) if i in mapping]
-    out = {"accepted": [], "rejected": [], "contradicted_wanted": [], "open": [], "stale": stale}
+    out = {"accepted": [], "redo": [], "not_defect": [], "contradicted_wanted": [], "open": [], "stale": stale, "missing_note": []}
     for fid, m in mapping.items():
         a = ans.get(fid) if isinstance(ans.get(fid), dict) else {}
         pick = a.get("pick")
         if fid in stale:
             continue
-        if pick not in ("ok", "no"):
-            out["open"].append(fid)
-        elif m["kind"] == "fix" and pick == "ok":
+        if m["kind"] == "fix" and pick == "ok":
             out["accepted"].append(fid)
-        elif m["kind"] == "fix":
-            out["rejected"].append({"id": fid, "note": a.get("note", "")})
-        elif pick == "ok":
+        elif m["kind"] == "fix" and pick in NEEDS_NOTE:
+            note = a.get("note")
+            if isinstance(note, str) and note.strip():
+                out[pick].append({"id": fid, "note": note, "commit": m.get("commit")})
+            else:  # a refusal without its reason is no decision: the session asks for it
+                out["missing_note"].append(fid)
+                out["open"].append(fid)
+        elif m["kind"] == "contradicted" and pick == "ok":
             out["contradicted_wanted"].append(fid)
+        elif not (m["kind"] == "contradicted" and pick == "no"):
+            out["open"].append(fid)
     write_json(os.path.join(rd, "review", "answers.json"), out)
     say(out)
     return 0
