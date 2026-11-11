@@ -255,13 +255,18 @@ async function armControl(tramos) {
   st.control.screen = screen
   const v = await must('arm-control', 'fwx walk arm-control --run ' + sh(st.runDir) + ' --screen ' + sh(screen), true)
   st.ctl.armed = !!v && v.rc === 0
-  if (!st.ctl.armed) log(PHASE + ': the control could not be planted on ' + screen + (v ? ' (exit ' + v.rc + ')' : ' (no answer)') + '; the walk goes on and does not count')
+  if (!st.ctl.armed) {
+    // arm-control reads the plant back on the screen and refuses with `{"armed": false, "reason": ...}` (no target, or the plant changes nothing)
+    const why = v ? parseAny(v.stdout) : null
+    st.ctl.why = why && typeof why.reason === 'string' ? oneLine(why.reason, 300) : null
+    log(PHASE + ': the control could not be planted on ' + screen + (v ? ' (exit ' + v.rc + ')' : ' (no answer)') + (st.ctl.why ? ': ' + st.ctl.why : '') + '; the walk goes on and does not count')
+  }
 }
 
 async function judge() {
   const ctl = st.ctl
   if (!ctl.armed) {
-    st.noCount = 'the control could not be planted on ' + ctl.screen
+    st.noCount = 'the control could not be planted on ' + ctl.screen + (ctl.why ? ' (' + ctl.why + ')' : '')
     return
   }
   const walked = st.walked[ctl.tramo] === true

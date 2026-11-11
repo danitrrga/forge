@@ -838,6 +838,9 @@ def case_arm_control_readback(R, S):
         S.ok("arm-control read-back: the title already has the planted style: says no visible change, and where",
              "no visible change" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
         S.eq("arm-control read-back: the title already has the planted style: one line", len(r.stderr.strip().splitlines()), 1)
+        out = obj(r.stdout) or {}
+        S.ok("arm-control read-back: and the same reason on stdout as {armed: false} (the workflow's runner hands back stdout only)",
+             out.get("armed") is False and "no visible change" in str(out.get("reason")), r.stdout)
         S.ok("arm-control read-back: a failed arming leaves no control.json (an old plant is not kept)", not os.path.exists(os.path.join(rd, "control.json")))
         # (c) no title on the screen
         sc.env["FAKE_READ"] = "missing"
@@ -1411,6 +1414,8 @@ MUTANTS = [
      "arm-control read-back: no title on the screen: says target not found"),
     ("arm-control: an old control.json kept", case_arm_control_readback, "os.remove(ctl_file)", "pass",
      "arm-control read-back: a failed arming leaves no control.json"),
+    ("arm-control: the reason not on stdout", case_arm_control_readback, 'say({"armed": False, "reason": str(e)})', "pass",
+     "arm-control read-back: and the same reason on stdout"),
     ("arm-control: the probe session left open", case_arm_control_readback, 'browser_call(run, ["close"])', "pass",
      "arm-control read-back: the probe session is closed last"),
     ("sweep: every owner alive", case_sweep, "return start is not None and start == w.get(\"owner_start\")", "return True",

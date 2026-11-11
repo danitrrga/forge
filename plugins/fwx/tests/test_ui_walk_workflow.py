@@ -18,6 +18,10 @@ Red before `sizeQuota` (3.5 U3d; the quota stayed what `up` said for one tramo):
   FAIL: capacity ask rc 1: the quota stays what `up` allowed (3) and it is logged: ['ui-walk: ui-walker:T2-critic waits in the queue (quota 3, ...
   (the first two also in recheck: no capacity ask before the verifiers)
 
+Red before the workflow read the refusal of arm-control's read-back (D14; the reason of `{"armed": false, "reason": ...}` was dropped):
+  FAIL: control refused (no visible change): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
+  FAIL: control refused (target not found): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
+
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
 once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
@@ -283,6 +287,19 @@ def check_control(script, s):
     s.ok("control not armed: found null, the run does not count, the walk went on",
          details(rec).get("control", {}).get("found") is None and str(result(rec).get("reason")).lower().startswith("the run does not count") and len(walkers(rec)) == 5,
          repr((result(rec).get("reason"), len(walkers(rec)))))
+    # D14: arm-control reads the plant back and refuses (exit 1, `{"armed": false, "reason": ...}` on stdout) when the target is not there or
+    # the plant changes nothing. The control is then not armed, no judge runs, found is never true, and the result says which of the two it was.
+    for why in ("no visible change on %s/settings: the `h1` has font-size 16px and font-weight 400 with and without the plant" % APP,
+                "target not found on %s/settings: no `h1` after 30 s, so a plant there would change nothing" % APP):
+        tag = why.split(" on ")[0]
+        rec, err = go(script, answers_over={"executor:runner-arm-control": R({"armed": False, "reason": "arm-control: " + why}, 1)})
+        rec = finish(s, "control refused: " + tag, rec, err)
+        r = result(rec)
+        s.ok("control refused (%s): not armed: no judge, found null (never true), the walk went on" % tag,
+             "ui-verifier:control" not in labels(rec) and details(rec).get("control", {}).get("found") is None and len(walkers(rec)) == 5,
+             repr((labels(rec)[-4:], details(rec).get("control"))))
+        s.ok("control refused (%s): the run does not count, and the reason says which it was" % tag,
+             str(r.get("reason")).lower().startswith("the run does not count") and tag in str(r.get("reason")), repr(r.get("reason")))
 
 
 def check_quota(script, s):
@@ -490,6 +507,7 @@ MUTANTS = [
     ("the control is armed after the walkers", "await armControl(tramos)", "/* armed later */", "FAIL: green: the control is armed before any walker"),
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
     ("a missed control still counts", "The run does not count", "Run", "FAIL: control missed: the reason says first that the run does not count"),
+    ("a refused control's reason dropped", "(ctl.why ? ' (' + ctl.why + ')' : '')", "''", "FAIL: control refused (no visible change): the run does not count, and the reason says which it was"),
     ("a control tramo not walked is judged", "walked = st.walked[ctl.tramo] === true", "walked = true", "FAIL: control not walked: no judge launched"),
     ("a down that exits 1 is done", "if (down.rc !== 0)", "if (false)", "FAIL: down fails: status failed"),
     ("the Firefox critic always", "if (t.firefox === true)", "if (true)", "FAIL: green: five walkers"),

@@ -29,6 +29,10 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `--run` is a run folder or a namespace; without it, the repository's only open run.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
+      Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size and
+      font-weight, runs the plant on the page, reads them again (both readings go to control.json `readback`) and closes the session.
+      No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default 30): `target not found`; the two readings equal: `no visible change`.
+      Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and no control.json is left.
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words).
@@ -864,7 +868,12 @@ def cmd_arm_control(argv):
     if os.path.isfile(ctl_file):
         os.remove(ctl_file)  # an earlier plant is not the one being armed: a failure below must leave none
     code = CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(TARGET)}
-    before, after = read_back(run, screen, code)
+    try:
+        before, after = read_back(run, screen, code)
+    except Stop as e:
+        if e.code == 1:
+            say({"armed": False, "reason": str(e)})  # on stdout too: the workflow's runner hands back stdout only, and the walk's result names the reason
+        raise
     script = os.path.join(run["shots"], "init.js")
     os.makedirs(run["shots"], exist_ok=True)
     with open(script, "w", encoding="utf-8") as f:
