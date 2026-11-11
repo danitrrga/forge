@@ -15,6 +15,11 @@ Seen red with plan_step.py written but `fwx plan` knowing only `check` (362 of 4
 Added by 3.3 U4 (a U2 file), seen red against plan_step.py before the change:
   FAIL: brief plan: names the plan template of the plugin: <the brief>
 
+Added by 3.2 U5 follow-up (a `back-to-discuss` status said nothing about why), seen red against plan_step.py before the change:
+  FAIL: premortem back-to-discuss: the reason is the Verdict sentence on one line: got 'back-to-discuss', want 'back-to-discuss: the owner asked whether to add sub(), and D1 records it as decided, so the ask was misread.'
+  FAIL: premortem unattended back-to-discuss: the reason holds the Verdict sentence: back-to-discuss: what was decided has to be reopened with the owner
+  (the same two for the postmortem; the case with no `## Verdict` section keeps the bare word and is its own control)
+
 Controls, each seen red on a copy of the repo with one thing changed (FAIL lines quoted):
   - a `status` without the cap on unattended rounds (the control the plan names: it would let the factory loop a third time):
       FAIL: status postmortem unattended objections round 2: status: got 'done', want 'needs-owner'
@@ -228,6 +233,23 @@ status("postmortem unattended ok with a need", repo, ph, "postmortem", "needs-ow
 repo, ph = world({"postmortem.md": front({"verdict": "ok", "security_review": False, "round": 1}, "## Verdict\nok\n")})
 rows(repo, ph, "postmortem")
 status("postmortem unattended ok with no needs section", repo, ph, "postmortem", "needs-owner", "--unattended")
+
+# a back-to-discuss carries the reason the critique wrote under `## Verdict` (the session tells the owner why without reading the file)
+WHY = "the owner asked whether to add sub(), and D1 records it as decided"
+for step, mk in (("premortem", premortem), ("postmortem", postmortem)):
+    body = front({"verdict": "back-to-discuss", "round": 1, **({"size_tag": "small", "parts": 1} if step == "premortem" else {"security_review": False})},
+                 "## Verdict\n%s,\n  so the ask was misread.\n\n## Failure reasons\n- x\n" % WHY)
+    repo, ph = world({step + ".md": body})
+    rows(repo, ph, step)
+    want = "back-to-discuss: %s, so the ask was misread." % WHY
+    d = status("%s back-to-discuss carries its reason" % step, repo, ph, step, "back-to-discuss", first="back-to-discuss")
+    s.eq("%s back-to-discuss: the reason is the Verdict sentence on one line" % step, d.get("reason"), want)
+    d = status("%s unattended back-to-discuss carries its reason" % step, repo, ph, step, "needs-owner", "--unattended")
+    s.ok("%s unattended back-to-discuss: the reason holds the Verdict sentence" % step, WHY in d.get("reason", ""), d.get("reason", ""))
+repo, ph = world({"premortem.md": front({"verdict": "back-to-discuss", "size_tag": "small", "parts": 1, "round": 1}, "## Size\nSmall.\n")})
+rows(repo, ph, "premortem")
+d = status("premortem back-to-discuss with no Verdict section", repo, ph, "premortem", "back-to-discuss", first="back-to-discuss")
+s.eq("premortem back-to-discuss with no Verdict section: the bare word", d.get("reason"), "back-to-discuss")
 
 # the cap of unattended rounds: objections in round 1 go to the planner, in round 2 to the owner
 repo, ph = world({"postmortem.md": postmortem("objections", rnd=1)})

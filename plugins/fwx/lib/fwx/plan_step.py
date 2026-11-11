@@ -259,6 +259,11 @@ def _needs_none(path):
     return text is not None and text.strip().rstrip(".").strip().lower() == "none"
 
 
+def _why(path):
+    """The sentence under `## Verdict` on one line, or "" when the file has none: the reason a critique gave."""
+    return " ".join((plan.section(path, "Verdict") or "").split())
+
+
 def _verdict(d, step, unattended, cfg):
     """(status, reason) of a finished step; Missing means the file is not usable."""
     paths = state.phase_paths(d)
@@ -277,9 +282,10 @@ def _verdict(d, step, unattended, cfg):
         raise Missing("%s.md: round: %d in the file, but this is round %d (a dead agent or an old file)" % (step, data["round"], want))
     verdict = data["verdict"]
     if verdict == "back-to-discuss":
+        why = _why(path)
         if unattended:
-            return "needs-owner", "back-to-discuss: what was decided has to be reopened with the owner"
-        return "back-to-discuss", "back-to-discuss"
+            return "needs-owner", "back-to-discuss: what was decided has to be reopened with the owner" + (" (%s)" % why if why else "")
+        return "back-to-discuss", "back-to-discuss: " + why if why else "back-to-discuss"
     if verdict == "ok":
         if step == "postmortem" and unattended and not _needs_none(path):
             return "needs-owner", "ok: but `## %s` does not say None" % NEEDS
