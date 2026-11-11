@@ -62,8 +62,8 @@ name with no entry is used as it is.
 which `{url}` (a `file://` URL for a file, the URL itself for a URL) and `{path}` (the absolute path) are replaced inside
 each element, for example `{ "open": { "command": ["my-viewer", "--open", "{url}"] } }`. A command that is not a non-empty
 list of strings with a placeholder in it is an error (exit 2). Without the table, or with `open` or `command` set to null (the same as leaving it out), `fwx open` opens nothing and
-prints the command for the system to paste; for a target that cannot be quoted safely for that shell (a control
-character, and on Windows a double quote or a `%NAME%`) it prints no command and says why.
+prints the command for the system to paste; for a target that cannot be quoted safely for that shell (a control or
+format character; on Windows a double quote, a `%NAME%` or a `!`; elsewhere a backslash) it prints no command and says why.
 
 ## Install
 

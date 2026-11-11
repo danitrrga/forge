@@ -49,6 +49,11 @@ Review round (CodeRabbit on the PR), seen red on the open.py before each fix (23
       FAIL: placeholder text inside the target https://example.com/{path} is not replaced again: got [['https://example.com/https://example.com/{path}', ...
   - undecodable opener output (text=True strict decoding):
       FAIL: an opener printing undecodable bytes, exit 0: no crash: got 1, want 0
+  - second review round (250 checks), seen red before the fix:
+      FAIL: windows: !NAME! expands under cmd /v:on, no line is made: got 'start "" "https://example.test/!OPEN_TARGET!"', want None
+      FAIL: no safe line with --print --json: exit 2 as without --json: got 0, want 2
+    and from the sweep of the same two classes: a backslash (fish reads it inside single quotes), a bidi or C1 control
+    character, a `%NAME%` whose name holds a space.
   - explicit null is "not set", pinned (it already was; controls: raising on null fails `open null: exit 0: got 2, want 0`).
 """
 import json
@@ -365,7 +370,7 @@ for label, cfg in (("open null", {"open": None}), ("command null", {"open": {"co
 # the line to paste is safe to paste, or not printed
 if mod and hasattr(mod, "paste_command"):
     nasty = ["https://example.com/$(touch pwned)", "https://example.com/`touch pwned`", "https://example.com/'; touch pwned; '",
-             'https://example.com/" ; touch pwned ; "', "/srv/a b/$HOME/it's.html", "https://example.com/a\\b&c|d>e"]
+             'https://example.com/" ; touch pwned ; "', "/srv/a b/$HOME/it's.html", "https://example.com/a&c|d>e;f*?[x]~"]
     for target in nasty:
         for plat in ("linux", "darwin"):
             cmd = mod.paste_command(target, plat)
@@ -380,6 +385,16 @@ if mod and hasattr(mod, "paste_command"):
     s.eq("windows: & inside the quotes is literal, the line is made", mod.paste_command("https://x.test/?a=1&b=2", "win32"),
          'start "" "https://x.test/?a=1&b=2"')
     s.eq("windows: a percent-encoded URL is fine", mod.paste_command("https://x.test/a%20b", "win32"), 'start "" "https://x.test/a%20b"')
+    s.eq("windows: !NAME! expands under cmd /v:on, no line is made", mod.paste_command("https://example.test/!OPEN_TARGET!", "win32"), None)
+    s.eq("windows: a lone ! is dropped under cmd /v:on, no line is made", mod.paste_command("https://example.test/a!b", "win32"), None)
+    s.eq("windows: %NAME% with a space in the name is refused too", mod.paste_command("C:\\%USER NAME%\\x.html", "win32"), None)
+    for plat in ("linux", "darwin"):
+        s.eq("%s: a backslash is read differently inside single quotes by fish, no line is made" % plat,
+             mod.paste_command("/srv/a\\b.html", plat), None)
+    for plat in ("linux", "darwin", "win32"):
+        for label, ch in (("a bidi override", "\u202e"), ("a C1 control (NEL)", "\x85")):
+            s.eq("%s: %s in the target makes no line (the owner would read another target)" % (plat, label),
+                 mod.paste_command("https://x.test/a" + ch + "b", plat), None)
     for plat in ("linux", "darwin", "win32"):
         s.eq("%s: a newline in the target makes no line (pasted, it would run what follows)" % plat,
              mod.paste_command("https://x.test/a\ntouch pwned", plat), None)
@@ -395,5 +410,13 @@ s.eq("no safe line with --print: nothing on stdout", r.stdout, "")
 s.ok("no safe line with --print: one line on stderr", len(r.stderr.strip().splitlines()) == 1, r.stderr)
 got = json.loads(run(d, work, "https://x.test/a\nb", "--json").stdout or "null") or {}
 s.eq("no safe line with --json: command is null", got.get("command", "absent"), None)
+for flag in ("--print", "--no-open"):
+    r = run(d, work, "https://x.test/a\nb", flag, "--json")
+    got = json.loads(r.stdout or "null") or {}
+    s.eq("no safe line with %s --json: exit 2 as without --json" % flag, r.returncode, 2)
+    s.eq("no safe line with %s --json: the JSON is still printed, command null" % flag, (got.get("opened"), got.get("command", "absent")), (False, None))
+    s.eq("no safe line with %s --json: one line on stderr" % flag, len(r.stderr.strip().splitlines()), 1)
+r = run(d, work, "https://x.test/a\nb", "--json")
+s.eq("no safe line with --json and an opener that fails: exit 0", r.returncode, 0)
 
 s.done()

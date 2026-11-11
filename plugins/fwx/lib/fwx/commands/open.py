@@ -28,6 +28,7 @@ import re
 import shlex
 import subprocess
 import sys
+import unicodedata
 from pathlib import Path
 
 from fwx import config
@@ -45,19 +46,25 @@ class OpenConfigError(Exception):
 
 
 def unsafe(target, platform=None):
-    """Why no line to paste can be made for `target` on this system, or None when one can. A control character (a newline
-    pasted into a terminal runs whatever follows it) is refused everywhere. cmd.exe has no way to quote a double quote, and
-    expands %NAME% even inside quotes, so those two are refused there; every other character, `&` and `|` included, is
-    literal inside the double quotes. POSIX shells are covered by shlex.quote (single quotes, a quote inside them closed
-    and reopened)."""
+    """Why no line to paste can be made for `target` on this system, or None when one can. Refused everywhere: a control or
+    format character (a newline pasted into a terminal runs what follows it; a bidi override or a C1 control makes the owner
+    read another target). On Windows, where the line is for cmd.exe: a double quote (no way to quote it), a %NAME% (expands even
+    inside quotes) and any `!` (delayed expansion under `cmd /v:on` expands !NAME! and drops a lone one); every other
+    character, `&` `|` `^` `<` `>` `(` `)` included, is literal inside the double quotes. On POSIX: a backslash (fish reads
+    `\\` and `\'` inside single quotes where sh does not, so no one line is right for every shell); everything else is covered
+    by shlex.quote, which closes and reopens the single quotes around a quote, and nothing inside single quotes expands."""
     platform = sys.platform if platform is None else platform
-    if any(ord(c) < 32 or ord(c) == 127 for c in target):
-        return "the target holds a control character"
+    if any(unicodedata.category(c) in ("Cc", "Cf") for c in target):
+        return "the target holds a control or format character"
     if platform.startswith("win32"):
         if '"' in target:
             return "the target holds a double quote, which cmd.exe cannot quote"
-        if re.search(r"%[^%\s]+%", target):
+        if re.search(r"%[^%]+%", target):
             return "the target holds a %NAME% that cmd.exe would expand"
+        if "!" in target:
+            return "the target holds a !, which cmd.exe expands under /v:on"
+    elif "\\" in target:
+        return "the target holds a backslash, which fish reads differently from sh inside single quotes"
     return None
 
 
@@ -161,18 +168,21 @@ def main(argv):
     res = show(target, openers)
     if not res["opened"] and not noopen and not openers:
         res["reason"] = "no opener configured (set open.command in the fwx configuration)"
+    # the exit status does not depend on the output format: --print has nothing to print without a safe line
+    rc = 2 if noopen and res["command"] is None else 0
+    why = unsafe(target) if res["command"] is None else None
+    if rc:
+        sys.stderr.write("fwx open: no command to paste: %s\n" % why)
     if "--json" in argv:
         sys.stdout.write(json.dumps({k: res[k] for k in ("opened", "by", "target", "command")}) + "\n")
     elif res["opened"]:
         sys.stdout.write("opened %s (by %s)\n" % (target, res["by"]))
+    elif rc:
+        pass
     elif res["command"] is None:
-        why = unsafe(target)
-        if noopen:
-            sys.stderr.write("fwx open: no command to paste: %s\n" % why)
-            return 2
         sys.stdout.write("NOT OPENED: %s; no command to paste: %s\n" % (res["reason"], why))
     elif noopen:
         sys.stdout.write(res["command"] + "\n")
     else:
         sys.stdout.write("NOT OPENED: %s\n%s\n" % (res["reason"], res["command"]))
-    return 0
+    return rc
