@@ -15,7 +15,9 @@ walk (control.json) is not loaded in these sessions.
 
 Output, one line per screen on stdout: `ok <absolute path> <url> theme=T width=1440`, or `missing <url> theme=T width=1440: <why>`
 (why is the last line the browser or the guard printed, "no element in the snapshot after N s" for a page that did not draw, or "no
-file written" when the call returned 0 and left no PNG). A stale PNG
+file written" when the call returned 0 and left no PNG). The text line is split on whitespace by its readers, so a path with a space
+in it is ambiguous there: `--json` prints one JSON object per screen instead, `{"status": "ok", "path", "url", "theme", "width"}` or
+`{"status": "missing", "why", "url", "theme", "width"}`. Same exit codes and stderr. A stale PNG
 at the target name is removed first, so only a capture of this call counts. Exit 0 when every screen has its capture; 1 with `fwx
 screenshot: N of M missing: <urls>` on stderr when some do not (the others are still taken); 2 on a usage error or an unreadable run
 or screens (nothing started, and zero screens is an error); 77 with `NOT RUN, NOT ARMED: ...` when `walk ab` could not start the
@@ -35,7 +37,7 @@ from fwx.commands import walk
 WIDTH = 1440
 HEIGHT = 900
 THEMES = ("light", "dark")
-USAGE = "usage: fwx screenshot --run R [--screens JSON|FILE] [--out DIR]"
+USAGE = "usage: fwx screenshot --run R [--screens JSON|FILE] [--out DIR] [--json]"
 
 
 def parse_screens(raw):
@@ -128,6 +130,9 @@ def parse(argv):
         if argv[i] in ("--run", "--screens", "--out") and i + 1 < len(argv):
             got[argv[i]] = argv[i + 1]
             i += 2
+        elif argv[i] == "--json":
+            got["--json"] = True
+            i += 1
         else:
             raise walk.Stop("%s is not an option of this command, or lacks its value\n%s" % (argv[i], USAGE))
     if "--run" not in got:
@@ -187,6 +192,10 @@ def cmd(argv):
             tag = "%s theme=%s width=%d" % (sc["url"], sc["theme"], WIDTH)
             if why:
                 miss.append(sc["url"])
+            if "--json" in o:
+                row = {"status": "missing", "why": why} if why else {"status": "ok", "path": dest}
+                sys.stdout.write(json.dumps(dict(row, url=sc["url"], theme=sc["theme"], width=WIDTH)) + "\n")
+            elif why:
                 sys.stdout.write("missing %s: %s\n" % (tag, why))
             else:
                 sys.stdout.write("ok %s %s\n" % (dest, tag))

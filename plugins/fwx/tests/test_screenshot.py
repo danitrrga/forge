@@ -298,7 +298,35 @@ def case_settled(R, S):
         rig.stop()
 
 
-CASES = [case_all_captured, case_one_fails, case_from_run, case_guards, case_screens_not_utf8, case_no_control, case_settled]
+def case_json(R, S):
+    """`--json` prints one JSON object per screen, so a capture folder with a space in its path is not cut at the space the way the text
+    line (`ok <path> <url> ...`, split on whitespace by its readers) is. Seen red on the base (`--json` was not an option):
+      FAIL: json: exit (one screen is missing): got 2, want 1
+      FAIL: json: one object per screen, the path whole: got ['fwx screenshot: --json is not an option of this command, ...
+    The text format without the flag is the control: unchanged (case_all_captured)."""
+    rig = Rig(R)
+    try:
+        if not rig.up(S):
+            return
+        out = os.path.join(helpers.mkdtemp("fwx-shot-out-"), "pics with space")
+        r = rig.shot("--screens", screens_arg(rig, ("/a", "dark"), ("/broken", None)), "--out", out, "--json", env={"FAKE_FAIL_URL": "/broken"})
+        S.eq("json: exit (one screen is missing)", r.returncode, 1)
+        rows = []
+        for ln in r.stdout.splitlines():
+            try:
+                rows.append(json.loads(ln))
+            except ValueError:
+                rows.append(ln)
+        want = os.path.join(out, "01-a-dark-1440.png")
+        S.ok("json: one object per screen, the path whole", len(rows) == 2 and rows[0] == {"status": "ok", "path": want, "url": rig.url("/a"), "theme": "dark", "width": 1440}
+             and os.path.isfile(want), "got %r" % rows)
+        S.ok("json: a missing screen says why", len(rows) == 2 and isinstance(rows[1], dict) and rows[1].get("status") == "missing" and rows[1].get("url") == rig.url("/broken")
+             and "page crashed" in rows[1].get("why", ""), "got %r" % rows[1:])
+    finally:
+        rig.stop()
+
+
+CASES = [case_all_captured, case_one_fails, case_from_run, case_guards, case_screens_not_utf8, case_no_control, case_settled, case_json]
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in screenshot.py exactly once
 MUTANTS = [
     ("ignores errors", case_one_fails, "            if why:\n                miss.append", "            if False:\n                miss.append",
@@ -318,6 +346,7 @@ MUTANTS = [
      "not UTF-8 --screens file: exit 2, nothing called, no traceback"),
     ("capture session loads the control", case_no_control, ', env=dict(os.environ, FWX_WALK_NO_CONTROL="1"))', ")",
      "control: the capture session's launch carries no init script"),
+    ("json ignores a missing screen's why", case_json, '{"status": "missing", "why": why}', '{"status": "missing", "why": ""}', "json: a missing screen says why"),
     ("no wait after open", case_settled, '["open", sc["url"]], ["snapshot"], ["screenshot", stage]', '["open", sc["url"]], ["screenshot", stage]',
      "settled: a page that never draws is missing"),
 ]
