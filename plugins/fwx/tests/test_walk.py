@@ -549,6 +549,17 @@ def case_ab_session(R, S):
         S.eq("ab session: a verifier session: exit", r.returncode, 0)
         S.ok("ab session: a verifier session (v1) launches without the planted control",
              len(sc.calls()) > 1 and not any("--init-script" in c["argv"] for c in sc.calls()), str([c["argv"][:4] for c in sc.calls()]))
+        # `close` of a session no agent opened (no mark): nothing to close, so no browser is launched just to close it, and it is not a failure.
+        # Seen red on the branch before it: FAIL: ab session: close of a session never opened: no browser call: got ['fakerig', 'agent-browser', 'agent-browser', 'agent-browser'], want []
+        sc.clear()
+        r = sc.walk(R, "ab", "--run", rd, "w9", "close")
+        S.eq("ab session: close of a session never opened: exit", r.returncode, 0)
+        S.eq("ab session: close of a session never opened: no browser call", [c["prog"] for c in sc.calls()], [])
+        S.ok("ab session: and it leaves no session mark", not os.path.exists(os.path.join(rd, "sessions", "ab-w9")))
+        sc.clear()
+        r = sc.walk(R, "ab", "--run", rd, "w9", "close", "--all")
+        S.ok("ab session: close --all is not a no-op (it reaches the other sessions of the run)",
+             r.returncode == 0 and any(c["argv"][-2:] == ["close", "--all"] for c in sc.calls()), "rc %d %s" % (r.returncode, [c["argv"][-2:] for c in sc.calls()]))
         r = sc.walk(R, "ab", "--run", rd, "bad name", "snapshot")
         S.eq("ab session: a session name with a space is refused", r.returncode, 2)
         sc.clear()
@@ -1645,6 +1656,10 @@ MUTANTS = [
      "ab session: the first call is a cookie of the demo session"),
     ("ab: no init script", case_ab_session, "if os.path.isfile(ctl):", "if False:", "ab session: --init-script rides on the launch only"),
     ("ab: the plant on a verifier", case_ab_session, ' and not session.startswith("v"):', ":", "ab session: a verifier session (v1) launches without the planted control"),
+    ("ab: close of a session never opened launches it", case_ab_session, 'if fresh and words[:1] == ["close"] and "--all" not in args:', "if False:",
+     "ab session: close of a session never opened: no browser call"),
+    ("ab: close --all is a no-op too", case_ab_session, 'if fresh and words[:1] == ["close"] and "--all" not in args:', 'if fresh and words[:1] == ["close"]:',
+     "ab session: close --all is not a no-op"),
     ("ab: close keeps the session", case_ab_session, 'if "close" in words:', "if False:", "ab session: after close the next call launches again"),
     ("ab: commands refused", case_ab_commands, 'REFUSED_COMMANDS = (', 'REFUSED_COMMANDS = () and (', "ab commands: inspect: exit 2 naming the word"),
     ("ab: no viewport", case_ab_viewport, "if sized_first:", "if False:", "ab viewport: the first open sets the viewport once"),

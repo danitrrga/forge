@@ -742,6 +742,9 @@ def cmd_ab(argv):
         raise Stop("refused: " + why)
     mark = marker(run, "ab", session)
     fresh = not alive(mark)
+    words = positional(args)[:2]
+    if fresh and words[:1] == ["close"] and "--all" not in args:
+        return 0  # no agent opened this session (or its browser idled out): launching a browser only to close it is the whole cost
     common = ["--namespace", run["namespace"], "--session", session, "--idle-timeout", IDLE_TIMEOUT, "--screenshot-dir", run["shots"],
               "--args", FONT_ARGS, "--allowed-domains", ",".join(run["hosts"])]
     if run.get("browser_executable"):
@@ -752,7 +755,6 @@ def cmd_ab(argv):
             steps.append((common + ["cookies", "set", name, value, "--url", app["url"]], True))
     # The size the `pw` path uses, applied before the session's first command (the first `open` then loads at it, and the launch
     # step is whatever comes first); a caller's own `viewport` later wins, and a first call that is one is not preceded by ours.
-    words = positional(args)[:2]
     own_size = words[:1] == ["viewport"] or words[:2] == ["set", "viewport"] or words[:1] == ["close"]
     sized_first = fresh and not own_size
     if sized_first:
