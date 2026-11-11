@@ -15,6 +15,18 @@ Round two (a review of the text found the open line not relayed and the fix roun
 ui-review.md the two new checks gave:
   FAIL: ui-review.md names 'NOT OPENED' -> missing
   FAIL: ui-review.md names '--fix <file>' -> missing
+3.2 U5 follow-up. The `state` agent returns the report as text and the session saves it (a subagent's Write of a report is refused by
+Claude Code: "Subagents should return findings as text, not write report files"), and the fields the session's steps read are
+fields the code has. Run against the tree of 26a9c8b (the texts before the follow-up) the new checks gave:
+  FAIL: agents/state.md returns the report from its template's first heading -> no '# Report' or no 'final response' in the agent text
+  FAIL: agents/state.md and step 8 share the marker 'Noticed:' -> agent False, session False
+  FAIL: step 8 saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx state check report' in that order after the `state` launch
+The rest of the follow-up checks read code that already holds, so they pass on the old tree; each has a control on a toy text (a cited
+field the code does not have, a step-8 text that checks before it saves).
+No static check is added for the three earlier text fixes, except where a named field is checked below: rule 8 (the line a called skill
+ends with is a result, not the end of the turn) and the stop of step 8 are behaviour of a model reading prose, and a grep for the words
+would only prove the words are there.
+
 Each check also has a control on a toy text (the "control:" checks): a text with 'verdict wait' must fail the removed-string check, and a text
 that reverts before it asks must fail the ask-first check.
 """
@@ -54,6 +66,30 @@ def asks_before_revert(text):
     return ask != -1 and (flag == -1 or ask < flag)
 
 
+def step(text, n):
+    """The text of numbered step `n` of SKILL.md, after its `## Steps` heading (the fixed rules above it are numbered too), up to the
+    next numbered step or the end."""
+    text = text[text.find("## Steps"):] if "## Steps" in text else text
+    m = re.search(r"^%d\. \*\*.*?(?=^\d+\. \*\*|\Z)" % n, text, re.S | re.M)
+    return m.group(0) if m else ""
+
+
+def in_order(text, *words):
+    """True when every word is in `text` and each comes after the one before it."""
+    pos = -1
+    for w in words:
+        i = text.find(w, pos + 1)
+        if i == -1:
+            return False
+        pos = i
+    return True
+
+
+def missing_keys(cited, source):
+    """The cited keys that the source does not name as a quoted key."""
+    return [k for k in cited if '"%s"' % k not in source]
+
+
 def fwx_commands(text):
     """Top-level `fwx <name>` words; `fwx:execute` (a workflow) has a colon and is not one."""
     return set(re.findall(r"\bfwx ([a-z][a-z-]*)\b", text))
@@ -74,6 +110,36 @@ def main():
         check("ui-review.md names '%s'" % word, word in review, "missing")
     check("ui-review.md asks before the revert", asks_before_revert(review), "no 'revert it?' before the first '--revert'")
 
+    # The `state` agent returns the report and the session saves it (the harness refuses a subagent's Write of a report).
+    with open(os.path.join(ROOT, "agents", "state.md"), encoding="utf-8") as f:
+        agent = f.read()
+    with open(os.path.join(ROOT, "templates", "phase", "report.md"), encoding="utf-8") as f:
+        heading = next((ln.split(" <")[0].split(":")[0] for ln in f.read().splitlines() if ln.startswith("# ")), "")
+    check("report template has a first heading", bool(heading), "none")
+    check("agents/state.md returns the report from its template's first heading", bool(heading) and heading in agent and "final response" in agent,
+          "no '%s' or no 'final response' in the agent text" % heading)
+    s8 = step(texts["SKILL.md"], 8)
+    check("step 8 found", "Review of the part" in s8, "not found")
+    check("agents/state.md and step 8 share the marker 'Noticed:'", "Noticed:" in agent and "Noticed:" in s8,
+          "agent %s, session %s" % ("Noticed:" in agent, "Noticed:" in s8))
+    check("step 8 saves the returned report with Write, then checks it", in_order(s8, "`state`", "report-<n>.md", "`Write`", "fwx state check report"),
+          "no 'report-<n>.md' ... 'Write' ... 'fwx state check report' in that order after the `state` launch")
+
+    # The fields the steps read exist in the code that produces them (a rename would leave the text reading nothing).
+    with open(os.path.join(ROOT, "lib", "fwx", "commands", "budget.py"), encoding="utf-8") as f:
+        budget_src = f.read()
+    cited = [k for k in ("used_percentage", "week_tight") if "`%s`" % k in texts["SKILL.md"] or ".%s" % k in texts["SKILL.md"]]
+    check("SKILL.md cites both budget fields it reads", len(cited) == 2, "cites %s" % cited)
+    check("fwx budget names the fields rule 7 and step 2 read", not missing_keys(cited, budget_src), "missing %s" % missing_keys(cited, budget_src))
+    sys.path.insert(0, os.path.join(ROOT, "lib"))
+    from fwx import plan  # noqa: E402
+    check("step 8 reads `review: blocking` and the plan accepts that value", "`review: blocking`" in s8 and "blocking" in plan.REVIEWS,
+          "step 8 names it: %s; plan.REVIEWS: %s" % ("`review: blocking`" in s8, plan.REVIEWS))
+    check("steps 5 and 8 read `ui: true` and plan.py has a task key `ui`", "`ui: true`" in texts["SKILL.md"] and '"ui"' in open(os.path.join(ROOT, "lib", "fwx", "plan.py"), encoding="utf-8").read(),
+          "the text or the task keys lack it")
+    s2 = step(texts["SKILL.md"], 2)
+    check("step 2 reads the context before it writes stage `planning`", in_order(s2, "above 50", "Stage `planning`"), "the budget sentence does not come first")
+
     # Every command the two files name exists, or is skipped with its reason.
     out = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "--help"], capture_output=True, text=True)
     check("fwx --help ran", out.returncode == 0, out.stderr.strip())
@@ -92,6 +158,10 @@ def main():
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
 
     # control: the checks above can fail.
+    check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx state check report on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx state check report"))
+    check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx state check report", "`state`", "report-<n>.md", "`Write`", "fwx state check report"))
+    check("control: a cited field the code lacks is caught", missing_keys(["used_percentage", "usage_percentage"], '{"used_percentage": 1}') == ["usage_percentage"])
+    check("control: step() cuts one numbered step", step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2).startswith("2. **B.**") and "z" not in step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2))
     check("control: 'verdict wait' is caught", files_naming("verdict wait", {"x.md": "run verdict wait in the background"}) == ["x.md"])
     check("control: revert before the question fails", not asks_before_revert("run wave prepare --revert 1, then ask: revert it?"))
     check("control: question before the revert passes", asks_before_revert("ask: revert it? Then wave prepare --revert 1"))
