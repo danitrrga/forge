@@ -358,6 +358,72 @@ def append_decision(path, *, decision, why, support, rejected="", source="", sup
     return new_id
 
 
+def read_decision_rows(path):
+    """The rows of a decisions.tsv or an adr.tsv; [] when the file is missing or empty. A header that is not
+    DECISION_COLUMNS is refused (`append_row` refuses it too), so a read never takes another table for a decision log."""
+    try:
+        with open(str(path), encoding="utf-8", newline="") as f:
+            first = f.readline().rstrip("\r\n")
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        raise StateError("%s cannot be read (%s)" % (path, e.strerror))
+    if first and first != "\t".join(DECISION_COLUMNS):
+        raise StateError("%s has the header %r, not %r" % (path, first, "\t".join(DECISION_COLUMNS)))
+    return read_rows(path)
+
+
+def decisions_in_force(rows):
+    """Every row of a decision log as a copy with `in_force` and `superseded_by` added: a row is in force when no other
+    row names its id in `supersedes`, so in a chain A <- B <- C only C is. `superseded_by` is the id of the row that
+    replaced it ("" when in force; the last one written when two rows replace the same id, and then both stay in force).
+    Refused with a StateError, and nothing returned: an id that appears twice, a `supersedes` naming an id no row has,
+    a `supersedes` that loops back on itself."""
+    seen, by = set(), {}
+    for r in rows:
+        if r.get("id", "") in seen:
+            raise StateError("the id %s appears twice" % r.get("id", ""))
+        seen.add(r.get("id", ""))
+    for r in rows:
+        old = r.get("supersedes", "")
+        if old:
+            if old not in seen:
+                raise StateError("%s supersedes %r: no such id in this file" % (r.get("id", ""), old))
+            by[old] = r["id"]
+    for start in by:
+        walked, i = [], start
+        while i in by:
+            if i in walked:
+                raise StateError("supersedes loops back on itself through %s" % i)
+            walked.append(i)
+            i = by[i]
+    return [dict(r, in_force=r.get("id", "") not in by, superseded_by=by.get(r.get("id", ""), "")) for r in rows]
+
+
+def decision_matches(row, terms):
+    """Whether every term (case-insensitive) is in the row's decision, why, rejected or source text."""
+    text = "\n".join(str(row.get(k, "")) for k in ("decision", "why", "rejected", "source")).lower()
+    return all(str(t).lower() in text for t in terms)
+
+
+def decisions_for_topic(rows, terms):
+    """The rows of `decisions_in_force` output that touch a topic, as the rows in force today: a row matching every term
+    is itself when in force, else the row at the end of its chain, once however many rows of the chain match. Each
+    result is a copy with `matched_superseded`, the ids of the superseded rows that matched. Order of first match."""
+    by_id = {r["id"]: r for r in rows}
+    found = {}
+    for r in rows:
+        if not decision_matches(r, terms):
+            continue
+        end = r
+        while end["superseded_by"]:
+            end = by_id[end["superseded_by"]]
+        hit = found.setdefault(end["id"], dict(end, matched_superseded=[]))
+        if r is not end:
+            hit["matched_superseded"].append(r["id"])
+    return list(found.values())
+
+
 def append_audit(dir, kind, detail="", rc="", sha=None, cwd=None):
     """Add a row to `<dir>/audit.tsv`: the one writer of that file. `kind` is in AUDIT_KINDS. A `stage` row's detail starts
     with the target stage (`^[a-z][a-z-]*$`; whether the transition is legal is for the caller to check) and, with no `sha`,
