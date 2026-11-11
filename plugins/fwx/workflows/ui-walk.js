@@ -177,13 +177,23 @@ function release() {
   if (next) next()
   else st.sem.free += 1
 }
-async function withSlot(tag, fn) {
+// A browser outlives its agent (until `down` or the idle timeout) and the quota budgets browsers, not agents: `after` closes the job's own
+// sessions before its slot is freed, whether the job returned or not. A close that fails is no gap: `down` is the net.
+async function withSlot(tag, fn, after) {
   await acquire(tag)
   try {
     return await fn()
   } finally {
-    release()
+    try {
+      if (after) await after()
+    } finally {
+      release()
+    }
   }
+}
+async function closeBrowser(tool, session) {
+  if (st.fatal) return
+  await exec('close-' + session + (tool === 'pw' ? '-pw' : ''), inRepo('fwx walk ' + tool + ' --run ' + sh(st.runDir) + ' ' + session + ' close'), false)
 }
 
 // `up` runs before the tramos are known, so it asked capacity for one tramo (a quota of 2 at most). Once they are, ask again for them
@@ -331,7 +341,7 @@ async function walkOne(job) {
       log(PHASE + ': ' + job.label + ' returned nothing' + (i === 0 ? ', launching it once more' : ''))
     }
     return null
-  })
+  }, () => closeBrowser(job.firefox ? 'pw' : 'ab', job.session))
   if (got === null) {
     if (!st.fatal) st.gaps.push('ui-walker did not return: ' + job.tag)
     return null
@@ -383,7 +393,11 @@ async function verifyTramo(tramo, index, files, items) {
   const label = 'ui-verifier:' + tramo.id
   const rep = await withSlot(label, () =>
     twice('ui-verifier', { label, model: M.verifier, schema: VERIFY_SCHEMA, prompt: verifyPrompt(tramo, session, files, items) },
-      (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) ? v : null)))
+      (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) ? v : null)),
+  async () => {
+    await closeBrowser('ab', session)
+    if (tramo.firefox) await closeBrowser('pw', session)
+  })
   if (st.fatal) return null
   if (!rep) {
     st.gaps.push('ui-verifier did not return: ' + tramo.id)

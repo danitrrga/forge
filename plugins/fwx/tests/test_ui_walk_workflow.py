@@ -28,6 +28,13 @@ Red before a failed `fwx walk findings` changed the final status (it ran in the 
   FAIL: findings not JSON: failed, and the reason names `fwx walk findings`: ('done', '')
   FAIL: findings and down fail: both are in the reason: 'fwx walk down exited 1: a browser or the app may be left, .../down.json says how many'
 
+Red before a job closed its own browser before freeing its slot (a browser stays up after its agent returns, so the quota limited agents, not browsers):
+  FAIL: close: every job's browser is closed after it returned: [('ui-walker:T1-breaker', 'w1', None), ('ui-walker:T1-critic', 'w2', None), ...]
+  FAIL: close quota 1: the next job starts only after the previous one's browser was closed: [('ui-walker:T1-breaker', 'ui-walker:T1-critic'), ...]
+
+Red before a recheck reply had to hold a row for each finding it was given (`{"findings": []}` was saved and the run was done with 0 still, 0 gone):
+  FAIL: recheck reply with no row: launched once more, then a gap and a failed run: got (1, 'done', False), want (2, 'failed', True)
+
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
 once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
@@ -117,6 +124,7 @@ def green():
         "executor:runner-screenshot": R(SHOTS),
         "executor:runner-coverage": R("saved"),
         "executor:runner-down": R(DOWN),
+        **{closing(v): R("") for v in ("w1", "w2", "w3", "w4", "w5", "v1", "v2")}, closer("v2", True): R(""),
     }
 
 
@@ -292,6 +300,68 @@ def check_findings_fails(script, s):
     s.ok("findings and down fail: both are in the reason", "fwx walk findings" in str(result(rec).get("reason")) and "down.json" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
 
 
+# the browser session each job of the green scenario drives (makeJobs numbers the walkers; a verifier takes the number of its tramo)
+SESSION_OF = {"ui-walker:T1-breaker": "w1", "ui-walker:T1-critic": "w2", "ui-walker:T2-breaker": "w3", "ui-walker:T2-critic": "w4", "ui-walker:T2-firefox": "w5",
+              "ui-verifier:T1": "v1", "ui-verifier:T2": "v2"}
+
+
+def closer(session, pw=False):
+    return "executor:runner-close-%s%s" % (session, "-pw" if pw else "")
+
+
+def closing(session):
+    """The runner that closes a job's own browser: the Firefox walker's is a `pw` one."""
+    return closer(session, session == "w5")
+
+
+def check_close(script, s):
+    """The quota budgets browsers, but a browser stays up after its agent returns (until `down` or the idle timeout): a job closes its own
+    sessions before it frees its slot, a failed job's included.
+
+    Red on the base (no `close` was ever run; the answers below were never asked for):
+      FAIL: close: every job's browser is closed after it returned: [('ui-walker:T1-breaker', 'w1', None), ('ui-walker:T1-critic', 'w2', None), ...]
+      FAIL: close quota 1: the next job starts only after the previous one's browser was closed: [...]
+    """
+    rec, err = go(script)
+    rec = finish(s, "close", rec, err)
+    byl = collections.defaultdict(list)
+    for l in rec["launches"]:
+        byl[l["label"]].append(l)
+    rows = []
+    for label, session in SESSION_OF.items():
+        c = byl.get(closing(session)) or [None]
+        rows.append((label, session, c[0] and c[0]["start"] >= max(x["end"] for x in byl[label])))
+    s.ok("close: every job's browser is closed after it returned", all(r[2] for r in rows), repr(rows))
+    s.ok("close: the command is `close` of that session, in the run", all("fwx walk ab --run '%s' %s close" % (RUN_DIR, v) in (byl.get(closing(v)) or [{"prompt": ""}])[0]["prompt"]
+                                                                           for k, v in SESSION_OF.items() if k != "ui-walker:T2-firefox"), repr(sorted(byl)))
+    s.ok("close: the Firefox walker's session is closed through `pw`, and so is the Firefox tramo's verifier's",
+         "fwx walk pw --run '%s' w5 close" % RUN_DIR in (byl.get(closing("w5")) or [{"prompt": ""}])[0]["prompt"]
+         and "fwx walk pw --run '%s' v2 close" % RUN_DIR in (byl.get(closer("v2", True)) or [{"prompt": ""}])[0]["prompt"], repr(sorted(byl)))
+    s.ok("close: no `pw` close for a tramo without Firefox", closer("v1", True) not in byl and closer("w1", True) not in byl, repr(sorted(byl)))
+    rec, err = go(script, answers_over={"executor:runner-up": R(dict(UP, capacity=dict(UP["capacity"], allowed=1))), "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": 1})})
+    rec = finish(s, "close quota 1", rec, err)
+    byl = collections.defaultdict(list)
+    for l in rec["launches"]:
+        byl[l["label"]].append(l)
+    jobs = sorted((l for k in SESSION_OF for l in byl[k]), key=lambda l: l["start"])
+    gaps = []
+    for a, b in zip(jobs, jobs[1:]):
+        c = byl.get(closing(SESSION_OF[a["label"]])) or [None]
+        if not c[0] or not (a["end"] <= c[0]["start"] and c[0]["end"] <= b["start"]):
+            gaps.append((a["label"], b["label"]))
+    s.ok("close quota 1: the next job starts only after the previous one's browser was closed", len(jobs) >= 7 and not gaps, repr(gaps or len(jobs)))
+    rec, err = go(script, answers_over={"ui-walker:T1-breaker": None})
+    rec = finish(s, "close after a walker that returned nothing", rec, err)
+    s.ok("close after a walker that returned nothing: its browser is closed all the same", closing("w1") in labels(rec), repr(labels(rec)))
+    # a close that fails is not a gap: `down` is the net, and the idle timeout; it never fails the run
+    rec, err = go(script, answers_over={closing("w1"): None, closing("v1"): R("", 1)})
+    rec = finish(s, "close fails", rec, err)
+    s.eq("close fails: the run is still done, with no gap", (result(rec).get("status"), details(rec).get("gaps")), ("done", []))
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=recheck_answers())
+    rec = finish(s, "close in a recheck", rec, err)
+    s.ok("close in a recheck: each verifier's browser is closed", closing("v1") in labels(rec) and closing("v2") in labels(rec), repr(labels(rec)))
+
+
 def check_control(script, s):
     rec, err = go(script, answers_over={"ui-verifier:control": {"screen": "/settings", "found": False, "finding": None, "why": "nothing about the title"}})
     rec = finish(s, "control missed", rec, err)
@@ -408,14 +478,24 @@ def check_verify(script, s):
     s.ok("save fails: a verified file that was not written is a gap", result(rec).get("status") == "failed" and any("T1" in g for g in details(rec).get("gaps", [])), repr(details(rec).get("gaps")))
 
 
-def check_recheck(script, s):
-    """Scenario 2: recheck with a fix.json. Only verifiers; no breaker, no critic, no tramos agent, no control."""
-    fixes = [dict(verified("T1", ("CONFIRMED", None))["findings"][0]), dict(verified("T2", ("PLAUSIBLE", None))["findings"][0])]
+def recheck_fixes():
+    return [dict(verified("T1", ("CONFIRMED", None))["findings"][0]), dict(verified("T2", ("PLAUSIBLE", None))["findings"][0])]
+
+
+def recheck_answers():
+    fixes = recheck_fixes()
     ans = green()
     ans.update({"executor:runner-read-fix": R(json.dumps(fixes)),
                 "ui-verifier:T1": {"findings": [dict(fixes[0], verdict="NOT REPRODUCED", evidence_after="/srv/shots/after-1.png")]},
                 "ui-verifier:T2": {"findings": [dict(fixes[1], verdict="PLAUSIBLE", evidence_after="/srv/shots/after-2.png")]},
                 "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved")})
+    return ans
+
+
+def check_recheck(script, s):
+    """Scenario 2: recheck with a fix.json. Only verifiers; no breaker, no critic, no tramos agent, no control."""
+    fixes = recheck_fixes()
+    ans = recheck_answers()
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=ans)
     rec = finish(s, "recheck", rec, err)
     ls = labels(rec)
@@ -546,6 +626,7 @@ def check_all(script, s):
     check_breaker_null(script, s)
     check_down_fails(script, s)
     check_findings_fails(script, s)
+    check_close(script, s)
     check_control(script, s)
     check_quota(script, s)
     check_tramos(script, s)
@@ -583,6 +664,9 @@ MUTANTS = [
     ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
     ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
     ("a recheck reply need not cover its findings", "if (!items) return true", "return true", "FAIL: recheck reply with no row: launched once more"),
+    ("a job's browser is not closed", "      if (after) await after()\n", "", "FAIL: close: every job's browser is closed after it returned"),
+    ("the slot is freed before the browser is closed", "      if (after) await after()\n    } finally {\n      release()\n    }", "      release()\n      if (after) await after()\n    } finally {\n    }",
+     "FAIL: close quota 1: the next job starts only after the previous one's browser was closed"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("the runner may name its stderr file", "never a fixed name in /tmp. ", "", "FAIL: green: the runner is told to keep stderr in a mktemp file"),
     ("the verifier is not told where captures go", "A path in /tmp is refused.", "", "FAIL: green: the verifier is told a screenshot with no path lands"),
