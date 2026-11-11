@@ -121,6 +121,15 @@ gave on the code before the fix, then the first FAIL line of a copy of the plugi
   destination ("exits 2: got 1, want 2"), a destination under a file ("exits 2: got 1, want 2"), and a rollback that is not
   run or a marker that is not written (above). The refusals now compare the content hash of every path, not size and mtime: "(the
   size and mtime snapshot of unit 1 cannot tell a same-size edit that keeps the mtime)" and "the snapshot of the refusals ... tells it".
+Second pass of the review (red on 525fadc, then the control with the rule removed):
+  F6 links to folders: "FAIL: F6 a link to a folder (the reviewer's link-to-dir): refused is False, want True" and "FAIL: F6 apply
+     with a symbolic link to a folder that would dangle: exits 2: got 0, want 2"; a link to a folder that moves with it, an
+     absolute link and a link that was dangling are not refused (table test of link_problems and one apply)
+  N1 a file that changed after it was archived: "FAIL: N1 a file changed after it was archived is not deleted: got None, want
+     '{}\nwritten after the archive\n'" (the change is injected by replacing write_archive, no sleep); with the digest check off, the same
+  N2 an audit file at another stage: "FAIL: N2 plan says apply would refuse, names the stage and how to go on" and "FAIL: N2 apply
+     with an audit file at the stage discuss ...: exits 2: got 1, want 2"; each half has its own control
+  an archive folder that cannot be created: a traceback (PermissionError) instead of "FAIL: ... exit 2, one line, no traceback"
   Not controlled: the check in `rollback` that git status shows nothing of apply's afterwards (a second line of defence behind the
   removal of each path), and F13, F16, F17 (see the PR).
 """
@@ -1385,5 +1394,104 @@ os.chmod(hook, 0o755)
 r = run(wt, "apply")
 s.eq("F11 apply with a post-index-change hook in the repository exits 0", r.returncode, 0)
 s.ok("... and the hook did not run (once per `git mv` otherwise)", not os.path.exists(flag))
+
+# =====================================================================================================================
+# Unit 2, second pass of the review: links to folders (F6), a file that changed after it was archived (N1), an audit file at
+# another stage (N2), an archive folder that cannot be written.
+# =====================================================================================================================
+# ---- F6, links to folders and the rest of the table ----------------------------------------------------------------------------
+lroot = helpers.mkdtemp("fwx-links-")
+lrepo = os.path.join(lroot, "repo")
+for rel in (".planning/PROJECT.md", ".planning/knowledge/a.md", ".planning/phases/01-a/x.md", ".planning/phases/02-b/y.md",
+            ".planning/phases/03-c/purged.md"):
+    wbytes(lrepo, rel, b"x\n")
+wbytes(lroot, "outside.txt", b"x\n")
+MAPPING = {".planning/PROJECT.md": ".fwx/PROJECT.md", ".planning/knowledge/a.md": ".fwx/knowledge/a.md",
+           ".planning/phases/01-a/x.md": ".fwx/milestones/v1/phases/01-a/x.md",
+           ".planning/phases/02-b/y.md": ".fwx/milestones/v1/phases/02-b/y.md"}     # 03-c holds only a file the conversion purges
+LINK_SRC, LINK_DEST = ".planning/phases/01-a/L", ".fwx/milestones/v1/phases/01-a/L"
+for label, target, problem in (("a link to a file that moves elsewhere", "../../PROJECT.md", True),
+                               ("a link to a sibling file", "x.md", False),
+                               ("a link to a folder (the reviewer's link-to-dir)", "../../knowledge", True),
+                               ("a link to a folder that itself moves with it", "../02-b", False),
+                               ("an absolute link", "/usr/bin", False),
+                               ("a link that points outside the repository", "../../../../outside.txt", True),
+                               ("a link that was dangling before", "../../nothing", False),
+                               ("a link to a folder the conversion empties", "../03-c", True)):
+    got = mg.link_problems(lrepo, [(LINK_SRC, LINK_DEST)], MAPPING, lambda s, t=target: t)
+    # control (the folder case `continue`d as before): "FAIL: F6 a link to a folder (the reviewer's link-to-dir): refused is False, want True"
+    s.eq("F6 %s: refused is %s, want %s" % (label, bool(got), problem), bool(got), problem)
+s.ok("... a refusal names the link and its target", "../../knowledge" in " ".join(mg.link_problems(lrepo, [(LINK_SRC, LINK_DEST)], MAPPING, lambda s_: "../../knowledge")))
+
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+os.symlink("../../knowledge", os.path.join(wt, ".planning/phases/01-a/link-to-dir"))
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "a link to a folder that climbs")
+r = refusal("F6 apply with a symbolic link to a folder that would dangle", wt, ["apply"], "link-to-dir", roots)
+repo, wt = world()
+os.symlink("../02.1-b", os.path.join(wt, ".planning/phases/01-a/to-sibling-phase"))
+os.symlink("/usr/bin", os.path.join(wt, ".planning/phases/01-a/to-absolute"))
+os.symlink("../../nothing", os.path.join(wt, ".planning/phases/01-a/to-nothing"))
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "three links that stay right")
+r = run(wt, "apply", "--close", "1")
+s.eq("F6 apply with a link to a folder that moves, an absolute link and a link that was dangling exits 0", r.returncode, 0)
+s.ok("... and the link to the moved folder still resolves", os.path.isdir(os.path.join(wt, ".fwx/milestones/v2/phases/01-a/to-sibling-phase")))
+
+
+def merged_main():
+    repo_, wt_ = world()
+    run(wt_, "apply", "--close", "1")
+    helpers.git(wt_, "commit", "-q", "-m", "convert")
+    helpers.git(repo_, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+    return repo_, wt_
+
+
+# ---- N1: a machine-state file that changed after it was archived is not deleted -----------------------------------------------------
+repo, wt = merged_main()
+orig_archive = mg.write_archive
+state_json = os.path.join(repo, ".planning/state.json")
+
+
+def archive_then_late_write(*a, **k):
+    path = orig_archive(*a, **k)
+    with open(state_json, "a", encoding="utf-8") as fh:
+        fh.write("written after the archive\n")
+    return path
+
+
+rc, out, err = inproc(repo, ["leftovers", "--apply"], [(mg, "write_archive", archive_then_late_write)])
+# red on the code of the second pass: "FAIL: N1 a file changed after it was archived is still there: got None, want '{}\n...'"
+s.eq("N1 a file changed after it was archived is not deleted", rd(state_json), "{}\nwritten after the archive\n")
+s.ok("... leftovers says which one, and exits 1 after finishing the rest", rc == 1 and "state.json" in err and "NOT deleted" in err, err[-300:])
+s.ok("... the other files were moved all the same", os.path.exists(os.path.join(repo, ".fwx/milestones/v2/phases/01-a/fonts/a.woff")))
+
+# ---- N2: an audit file at another stage is a refusal that says what to do, and plan says it too ------------------------------------
+repo, wt = world()
+roots = (wt, os.path.join(repo, ".git"))
+helpers.write(wt, ".fwx/milestones/v2/phases/02.1-b/audit.tsv", "date\tkind\tsha\tdetail\trc\nearlier\tstage\t\tdiscuss started\t\n")
+rp = run(wt, "plan")
+# red on the code of the second pass: "FAIL: N2 plan says what apply will refuse: got ... (no note)"
+s.ok("N2 plan says apply would refuse, names the stage and how to go on", rp.returncode == 0 and "apply would refuse" in rp.stdout and "discuss" in rp.stdout and "--open" in rp.stdout, rp.stdout[-400:])
+r = refusal("N2 apply with an audit file at the stage discuss for a phase GSD left closed", wt, ["apply"], "discuss", roots)
+s.ok("... it names the file and the way out (--open)", "02.1-b/audit.tsv" in r.stderr and "--open" in r.stderr, r.stderr[-300:])
+
+# ---- an archive folder that cannot be written: one line, nothing touched ------------------------------------------------------------
+repo, wt = merged_main()
+gitdir = os.path.join(repo, ".git")
+if os.geteuid() == 0:
+    print("NOT RUN: the unwritable archive folder needs a user that is not root")
+else:
+    before = strict(repo)
+    os.chmod(gitdir, 0o500)
+    try:
+        r = run(repo, "leftovers", "--apply")
+    finally:
+        os.chmod(gitdir, 0o700)
+    # red on the code of the second pass: a Traceback ("PermissionError") instead of the line
+    s.ok("an archive folder that cannot be created: exit 2, one line, no traceback: %r" % r.stderr[-300:],
+         r.returncode == 2 and len(r.stderr.strip().splitlines()) == 1 and "cannot write the archive" in r.stderr and "Traceback" not in r.stderr)
+    s.ok("... and nothing was touched (every path, size, mtime and content hash)", strict(repo) == before)
 
 s.done()

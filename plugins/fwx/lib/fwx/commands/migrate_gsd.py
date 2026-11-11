@@ -57,6 +57,7 @@ at, a phase no milestone range covers, a key that matches no phase, two files fo
 """
 import fnmatch
 import glob
+import hashlib
 import json
 import os
 import posixpath
@@ -1104,9 +1105,16 @@ def safe_last_stage(folder):
         return None   # a path under a file: the destination check names it
 
 
+def dir_dest(old, mapping):
+    """Where a folder of `.planning/` goes, read from the files under it that move: the one folder they all agree on, or None
+    (nothing under it moves, or its files go to different places)."""
+    dests = {d[:len(d) - (len(s) - len(old))] for s, d in mapping.items() if s.startswith(old + "/") and d.endswith(s[len(old):])}
+    return dests.pop() if len(dests) == 1 else None
+
+
 def link_problems(repo, pairs, mapping, target_of):
-    """For each (src, dest) symbolic link that moves: when its relative target would no longer be the same file from the new
-    place, a line saying so. A link whose target is absolute, or is already missing, is not judged."""
+    """For each (src, dest) symbolic link that moves: when its relative target, a file or a folder, would no longer be the same
+    one from the new place, a line saying so. A link whose target is absolute, or is already missing, is not judged."""
     bad = []
     for src, dest in pairs:
         target = target_of(src)
@@ -1115,14 +1123,39 @@ def link_problems(repo, pairs, mapping, target_of):
         old = posixpath.normpath(posixpath.join(posixpath.dirname(src), target))
         if not os.path.lexists(_abs(repo, old)):
             continue
-        if old.startswith(SCOPE_SRC + "/") and old not in mapping:
-            if not os.path.isdir(_abs(repo, old)):
-                bad.append("%s -> %s: its target is removed by the conversion, it would dangle" % (src, target))
-            continue
-        got, want = posixpath.normpath(posixpath.join(posixpath.dirname(dest), target)), mapping.get(old, old)
+        if old == SCOPE_SRC or old.startswith(SCOPE_SRC + "/"):
+            want = mapping.get(old) or dir_dest(old, mapping)
+            if want is None:
+                bad.append("%s -> %s: its target %s is removed by the conversion (or its files go to different places), it would "
+                           "dangle" % (src, target, old))
+                continue
+        else:
+            want = old
+        got = posixpath.normpath(posixpath.join(posixpath.dirname(dest), target))
         if got != want:
             bad.append("%s -> %s: from %s the same text points at %s, not at %s: it would dangle" % (src, target, dest, got, want))
     return bad
+
+
+def audit_conflicts(repo, scopes):
+    """For each phase GSD left closed whose destination already holds an audit file apply cannot extend: a line saying what is
+    wrong and what to do. Shared by `plan` (as a note) and `apply` (as a refusal), so the owner is told before a run."""
+    out = []
+    for sc in scopes:
+        for p in sc.phases:
+            if p["dest_rel"] is None or p["from_roadmap"] or not p["closed"]:
+                continue
+            folder = _abs(repo, "%s/%s" % (sc.dest, p["dest_rel"]))
+            audit = str(state.phase_paths(folder)["audit"])
+            if not os.path.lexists(audit):
+                continue
+            last, rel = safe_last_stage(folder), os.path.relpath(audit, repo)
+            if not last:
+                out.append("%s exists with no stage row: move that file away" % rel)
+            elif last != "closed":
+                out.append("%s ends at the stage `%s`, but GSD left phase %s closed: move that file away, or pass --open %s to keep "
+                           "the phase open" % (rel, last, p["name"], p["name"]))
+    return out
 
 
 def twin_hits(job, paths):
@@ -1218,11 +1251,7 @@ def plan_apply(repo, opts):
                 section = roadmap_section(roadmaps[sc.ws], ".".join(str(n) for n in p["num"])) or ("### Phase %s\n" % p["title"])
                 job.gens.append((dest + "/gsd-roadmap-entry.md", section.encode("utf-8")))
             elif p["closed"]:
-                audit = str(state.phase_paths(_abs(repo, dest))["audit"])
-                if os.path.lexists(audit):
-                    if not safe_last_stage(_abs(repo, dest)):   # a file of the owner's, with no stage row: not apply's to extend
-                        extra_bad.append("%s exists with no stage row" % os.path.relpath(audit, repo))
-                else:
+                if not os.path.lexists(str(state.phase_paths(_abs(repo, dest))["audit"])):
                     job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
                 job.closed.append(dest)
             elif not any(d.startswith(dest + "/") for d in dests) and not os.path.isdir(_abs(repo, dest)):
@@ -1261,6 +1290,7 @@ def plan_apply(repo, opts):
     if BASES in job.bytes_of:
         with open(_abs(repo, BASES), "rb") as f:
             job.bytes_of[BASES][0] = f.read()
+    extra_bad += audit_conflicts(repo, scopes)    # a file of the owner's at the phase's audit path: not apply's to extend
     bad = collisions(repo, dests + [g for g, _ in job.gens]) + extra_bad
     if bad:
         raise Refuse("a destination is in the way, nothing was written:\n  " + "\n  ".join(bad[:30])
@@ -1802,10 +1832,30 @@ def archive_dir(repo):
     return os.path.join(_text(repo, "rev-parse", "--path-format=absolute", "--git-common-dir"), "fwx", "migrate-gsd")
 
 
+def digest(path):
+    """What a file is, for comparing it with what the archive holds: a link by its target, a file by its bytes."""
+    if os.path.islink(path):
+        return ("l", os.readlink(path))
+    with open(path, "rb") as f:
+        return ("f", hashlib.sha256(f.read()).hexdigest())
+
+
+def archive_digests(archive, names):
+    out = {}
+    with tarfile.open(archive, errors="surrogateescape") as tf:
+        for n in names:
+            m = tf.getmember(n)
+            out[n] = ("l", m.linkname) if m.issym() else ("f", hashlib.sha256(tf.extractfile(m).read()).hexdigest())
+    return out
+
+
 def write_archive(repo, moves, deletes, groups):
     """One tar, inside the git dir, of exactly the untracked and ignored files leftovers is about to move or delete (a nested
     repository whole): what git cannot give back. Written and read back before anything is touched."""
-    os.makedirs(archive_dir(repo), exist_ok=True)
+    try:
+        os.makedirs(archive_dir(repo), exist_ok=True)
+    except OSError as e:
+        raise Refuse("cannot write the archive folder %s (%s): nothing was moved or deleted" % (archive_dir(repo), e.strerror))
     path = os.path.join(archive_dir(repo), "leftovers-%s-%d.tar" % (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"), os.getpid()))
     srcs = [s for s, _, _ in moves] + list(deletes)
     try:
@@ -1872,6 +1922,7 @@ def cmd_leftovers(repo, got):
                % (shlex.quote(archive), shlex.quote(repo)))
     journal = Journal2(repo, archive)
     try:
+        journal.expect = archive_digests(archive, deletes)
         done_groups = set()
         for s, d, ig in moves:
             r = group_of(s, groups)
@@ -1897,8 +1948,13 @@ def cmd_leftovers(repo, got):
         raise Failed("%s\n%s" % (what, ("everything moved was put back (the archive %s stays)" % archive) if not errs
                                  else "NOT everything could be put back: " + "; ".join(errs) + "; restore with tar -xf " + archive))
     gone = prune_empty(repo)
-    out.append("done: %d moved, %d deleted%s" % (len(moves), len(deletes), "; .planning/ is gone" if gone else "; .planning/ still holds files"))
+    out.append("done: %d moved, %d deleted%s" % (len(moves), len(deletes) - len(journal.changed),
+                                                "; .planning/ is gone" if gone else "; .planning/ still holds files"))
     emit_out("\n".join(out) + "\n")
+    if journal.changed:
+        emit_err("fwx migrate-gsd: %d file(s) changed after they were archived and were NOT deleted (they are where they were; the "
+                 "archive holds the older version): %s\n" % (len(journal.changed), ", ".join(journal.changed)))
+        return 1
     return 0
 
 
@@ -1907,6 +1963,7 @@ class Journal2:
 
     def __init__(self, repo, archive):
         self.repo, self.archive, self.renames, self.dirs, self.deleted = repo, archive, [], [], []
+        self.expect, self.changed = {}, []    # what the archive holds of each file to delete; the ones that differ now
 
     def rename(self, s, d):
         a, b = _abs(self.repo, s), _abs(self.repo, d)
@@ -1921,6 +1978,9 @@ class Journal2:
         self.renames.append((a, b))
 
     def delete(self, s):
+        if digest(_abs(self.repo, s)) != self.expect.get(s):    # it changed after it was archived: neither place would hold the change
+            self.changed.append(s)
+            return
         os.remove(_abs(self.repo, s))
         self.deleted.append(s)
 
@@ -2043,6 +2103,8 @@ def run(argv):
             raise Refuse("%s has no commit yet" % repo)
         base, src = r.stdout.decode().strip(), WorkTree(repo)
     scopes, files, mapper, phases, gitignore, notes, root = build(repo, src, options(got))
+    if sub == "plan":
+        notes += ["apply would refuse: " + c for c in audit_conflicts(repo, scopes)]
     rewritten = left = None
     if sub == "refs" and (got["--rewrite"] or got["--prefix"]):
         rewritten, left = apply_rewrites(repo, mapper, got["--rewrite"], got["--prefix"])
