@@ -31,7 +31,7 @@ Your argument is `$ARGUMENTS`: a phase folder (absolute path), `retake <KEY>`, o
 
 1. **Pre-mortem.** Stage `premortem`. Call `fwx:pre-mortem` with `<phase folder>; language: <language>`. Its last line is `{status, reason, phase_dir}`: `failed` say so and stop; `back-to-discuss` step 7; otherwise the first word of `reason` is the verdict. `ok`: step 2. `objections`: read `## Findings` of `premortem.md` and give the owner a short numbered block; record his answers by the `decisions` agent (`source` `premortem r<N>`); then step 2.
 
-2. **Plan.** Budget first (rule 7). Stage `planning`. Call `fwx:plan` the same way; `failed` say so and stop. The planner writes one `plan.md` per part and `fwx plan check` has passed.
+2. **Plan.** Budget first (rule 7): with `context.used_percentage` above 50 here, do not write stage `planning` yet; propose in one line to split the topic into more phases and end your turn for his answer (a no: go on). Stage `planning`. Call `fwx:plan` the same way; `failed` say so and stop. The planner writes one `plan.md` per part and `fwx plan check` has passed.
 
 3. **Post-mortem.** Stage `postmortem`. Call `fwx:post-mortem` the same way. `failed` say so and stop; `back-to-discuss` step 7. Read only the frontmatter and `## Findings` of `postmortem.md`. The first word of `reason` is the verdict, as in step 1. `ok`: step 4 with no stop. `objections`: step 4 with a stop.
 
