@@ -36,10 +36,25 @@ Controls, each seen red with open.py changed in one place (176 checks each, firs
       FAIL: a hanging opener: not opened: got True, want False
   - a string command accepted:
       FAIL: a string command: exit 2: got 0, want 2
+
+Review round (CodeRabbit on the PR), seen red on the open.py before each fix (232 checks):
+  - the Windows paste line for `https://example.com/" & echo INJECTED & rem "` broke out of its quotes, and a `%NAME%` expands
+    inside them; a newline in a pasted line runs what follows:
+      FAIL: windows: a double quote cannot be quoted in cmd.exe, no line is made: got 'start "" "https://example.com/" & echo INJECTED & rem ""', want None
+      FAIL: windows: a %VAR% would expand even inside quotes, no line is made: got 'start "" "C:\\%USERPROFILE%\\x.html"', want None
+      FAIL: linux: a newline in the target makes no line (pasted, it would run what follows): got "xdg-open 'https://x.test/a\ntouch pwned'", want None
+    The POSIX line (`$(...)`, backticks, quotes) was already safe: shlex.quote, proved by running each line through /bin/sh
+    (control: unquoted, `FAIL: linux line for 'https://example.com/$(touch pwned)' reaches the shell as one literal argument`).
+  - placeholders replaced in two passes:
+      FAIL: placeholder text inside the target https://example.com/{path} is not replaced again: got [['https://example.com/https://example.com/{path}', ...
+  - undecodable opener output (text=True strict decoding):
+      FAIL: an opener printing undecodable bytes, exit 0: no crash: got 1, want 0
+  - explicit null is "not set", pinned (it already was; controls: raising on null fails `open null: exit 0: got 2, want 0`).
 """
 import json
 import os
 import shutil
+import subprocess
 import sys
 import time
 
@@ -64,6 +79,10 @@ rc = answers[min(n, len(answers) - 1)]
 if rc == "sleep":
     time.sleep(5)
     rc = 0
+if rc in ("junk0", "junk1"):  # output that is not valid text in any locale
+    sys.stdout.buffer.write(b"\\xff\\xfe junk\\n")
+    sys.stderr.buffer.write(b"\\xff\\xfe junk\\n")
+    sys.exit(int(rc[-1]))
 sys.stderr.write("viewer says no\\n" if rc else "")
 sys.exit(rc)
 """
@@ -317,5 +336,64 @@ if mod and hasattr(mod, "paste_command"):
     with open(mod.__file__, encoding="utf-8") as f:
         text = f.read().lower()
     s.ok("the module names no IDE", "orca" not in text, "orca is named in open.py")
+
+# the target is never rescanned: a URL or a path that itself holds {path} or {url} reaches the opener unchanged
+for url in ("https://example.com/{path}", "https://example.com/{url}/{path}"):
+    d, work, r = one("rescan", table(["viewer", "{url}", "{path}", "u={url}"]), [0], target=url)
+    s.eq("placeholder text inside the target %s is not replaced again" % url, calls(d), [[url, url, "u=" + url]])
+d, work = fakes([0]), repo(table(["viewer", "{path}", "{url}"]))
+helpers.write(work, "x{url}y.html", "<h1>hi</h1>")
+r = run(d, work, "x{url}y.html")
+tricky = os.path.join(work, "x{url}y.html")
+s.eq("a file whose name holds {url}: both placeholders get the real values", calls(d), [[tricky, "file://" + tricky.replace("{", "%7B").replace("}", "%7D")]])
+
+# an opener that prints bytes no locale decodes: the exit code still decides
+for label, code, opened in (("exit 0", "junk0", True), ("exit 1", "junk1", False)):
+    d, work, r = one("junk", table(["viewer", "{url}"]), [code], "--json")
+    got = json.loads(r.stdout or "null") or {}
+    s.eq("an opener printing undecodable bytes, %s: no crash" % label, r.returncode, 0)
+    s.ok("an opener printing undecodable bytes, %s: no traceback" % label, "Traceback" not in r.stderr, r.stderr[-300:])
+    s.eq("an opener printing undecodable bytes, %s: opened" % label, got.get("opened"), opened)
+
+# an explicit null is the same as the key left out: no opener, no error (the generated file writes null for "not set")
+for label, cfg in (("open null", {"open": None}), ("command null", {"open": {"command": None}})):
+    d, work, r = one(label, cfg, [0])
+    lines = not_opened(label, r)
+    s.eq("%s: the fixed reason" % label, lines[0] if lines else None, NO_TABLE)
+    s.eq("%s: no call" % label, calls(d), [])
+
+# the line to paste is safe to paste, or not printed
+if mod and hasattr(mod, "paste_command"):
+    nasty = ["https://example.com/$(touch pwned)", "https://example.com/`touch pwned`", "https://example.com/'; touch pwned; '",
+             'https://example.com/" ; touch pwned ; "', "/srv/a b/$HOME/it's.html", "https://example.com/a\\b&c|d>e"]
+    for target in nasty:
+        for plat in ("linux", "darwin"):
+            cmd = mod.paste_command(target, plat)
+            word = "xdg-open" if plat == "linux" else "open"
+            # what a POSIX shell makes of the line, with the opener swapped for the printf builtin: exactly one argument, the target
+            r = subprocess.run(["/bin/sh", "-c", cmd.replace(word, "printf '%s\\n'", 1)], capture_output=True, text=True, cwd=work)
+            s.eq("%s line for %r reaches the shell as one literal argument" % (plat, target), r.stdout, target + "\n")
+    s.eq("no file was created by pasting them", os.path.exists(os.path.join(work, "pwned")), False)
+    win = 'https://example.com/" & echo INJECTED & rem "'
+    s.eq("windows: a double quote cannot be quoted in cmd.exe, no line is made", mod.paste_command(win, "win32"), None)
+    s.eq("windows: a %VAR% would expand even inside quotes, no line is made", mod.paste_command("C:\\%USERPROFILE%\\x.html", "win32"), None)
+    s.eq("windows: & inside the quotes is literal, the line is made", mod.paste_command("https://x.test/?a=1&b=2", "win32"),
+         'start "" "https://x.test/?a=1&b=2"')
+    s.eq("windows: a percent-encoded URL is fine", mod.paste_command("https://x.test/a%20b", "win32"), 'start "" "https://x.test/a%20b"')
+    for plat in ("linux", "darwin", "win32"):
+        s.eq("%s: a newline in the target makes no line (pasted, it would run what follows)" % plat,
+             mod.paste_command("https://x.test/a\ntouch pwned", plat), None)
+# through the command: a refused line is said on the NOT OPENED line, not printed, exit 0; --print has nothing to print, exit 2
+d, work = fakes([1]), repo(table(["viewer", "{url}"]))
+r = run(d, work, "https://x.test/a\nb")
+s.eq("no safe line: exit 0", r.returncode, 0)
+s.eq("no safe line: one line, NOT OPENED with both reasons", len(r.stdout.splitlines()), 1)
+s.ok("no safe line: says so", r.stdout.startswith("NOT OPENED: ") and "no command to paste" in r.stdout, r.stdout)
+r = run(d, work, "https://x.test/a\nb", "--print")
+s.eq("no safe line with --print: exit 2", r.returncode, 2)
+s.eq("no safe line with --print: nothing on stdout", r.stdout, "")
+s.ok("no safe line with --print: one line on stderr", len(r.stderr.strip().splitlines()) == 1, r.stderr)
+got = json.loads(run(d, work, "https://x.test/a\nb", "--json").stdout or "null") or {}
+s.eq("no safe line with --json: command is null", got.get("command", "absent"), None)
 
 s.done()

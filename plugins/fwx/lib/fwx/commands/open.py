@@ -6,13 +6,16 @@ holds `command`, an argv list (never a shell string, no shell is run) in which `
 itself for a URL) and `{path}` (the absolute path; the URL itself for a URL) are replaced inside each element, e.g.
 `{"open": {"command": ["my-viewer", "--open", "{url}"]}}`. The core knows no IDE and no system opener that launches
 anything. A `command` that is not a non-empty list of strings with at least one placeholder, or an `open` that is not a
-table, is a configuration error: exit 2, one line naming the key.
+table, is a configuration error: exit 2, one line naming the key. A key left out and an explicit null mean the same, "not set"
+(the generated file writes null for what is unset), so `{"open": null}` and `{"command": null}` are no opener, not an error.
 
 The command runs with stdout and stderr captured and a timeout of TIMEOUT_S; exit 0 is "opened" (`by` is its first word).
 A non-zero exit, a timeout or a program not on PATH is not opened, and so is a project with no `open.command` (the default,
 and outside a git repository, where there is no configuration): nothing is opened by itself (a window must never appear on
 the owner's desktop without warning), and the command prints `NOT OPENED: <reason>` and, on the next line, the command for
-this system that the owner pastes (`xdg-open`, `open` or `start`, by sys.platform). It exits 0 either way. `--print` (or
+this system that the owner pastes (`xdg-open`, `open` or `start`, by sys.platform); for a target that cannot be quoted
+safely for that shell (`unsafe`) no line is made and the one NOT OPENED line says why (`--print` then exits 2, `--json`
+has `command: null`). It exits 0 either way. `--print` (or
 `--no-open`) skips the configuration and the opener and prints that command alone, for unattended runs and tests.
 `--json` prints `{opened, by, target, command}` instead.
 
@@ -41,9 +44,28 @@ class OpenConfigError(Exception):
     """The `open` table cannot be used; the message names the key."""
 
 
-def paste_command(target, platform=None):
-    """The command that shows `target` (a path or a URL) on this system, quoted for its shell."""
+def unsafe(target, platform=None):
+    """Why no line to paste can be made for `target` on this system, or None when one can. A control character (a newline
+    pasted into a terminal runs whatever follows it) is refused everywhere. cmd.exe has no way to quote a double quote, and
+    expands %NAME% even inside quotes, so those two are refused there; every other character, `&` and `|` included, is
+    literal inside the double quotes. POSIX shells are covered by shlex.quote (single quotes, a quote inside them closed
+    and reopened)."""
     platform = sys.platform if platform is None else platform
+    if any(ord(c) < 32 or ord(c) == 127 for c in target):
+        return "the target holds a control character"
+    if platform.startswith("win32"):
+        if '"' in target:
+            return "the target holds a double quote, which cmd.exe cannot quote"
+        if re.search(r"%[^%\s]+%", target):
+            return "the target holds a %NAME% that cmd.exe would expand"
+    return None
+
+
+def paste_command(target, platform=None):
+    """The command that shows `target` (a path or a URL) on this system, quoted for its shell; None when `unsafe`."""
+    platform = sys.platform if platform is None else platform
+    if unsafe(target, platform):
+        return None
     word = next(w for prefix, w in SHOW if platform.startswith(prefix))
     quoted = '"%s"' % target if platform.startswith("win32") else shlex.quote(target)
     return "%s %s" % (word, quoted)
@@ -69,9 +91,10 @@ def command_from(cfg):
 def command_opener(template):
     """An opener running the argv `template` with {url} and {path} filled in, no shell, output captured."""
     def opener(url, path):
-        argv = [a.replace("{url}", url).replace("{path}", path) for a in template]
+        fill = {"{url}": url, "{path}": path}  # one pass: what is inserted is never scanned again
+        argv = [re.sub(r"\{url\}|\{path\}", lambda m: fill[m.group(0)], a) for a in template]
         try:
-            proc = subprocess.run(argv, capture_output=True, text=True, timeout=TIMEOUT_S)
+            proc = subprocess.run(argv, capture_output=True, text=True, errors="replace", timeout=TIMEOUT_S)
         except FileNotFoundError:
             return False, "%s: not found on PATH" % argv[0]
         except subprocess.TimeoutExpired:
@@ -142,6 +165,12 @@ def main(argv):
         sys.stdout.write(json.dumps({k: res[k] for k in ("opened", "by", "target", "command")}) + "\n")
     elif res["opened"]:
         sys.stdout.write("opened %s (by %s)\n" % (target, res["by"]))
+    elif res["command"] is None:
+        why = unsafe(target)
+        if noopen:
+            sys.stderr.write("fwx open: no command to paste: %s\n" % why)
+            return 2
+        sys.stdout.write("NOT OPENED: %s; no command to paste: %s\n" % (res["reason"], why))
     elif noopen:
         sys.stdout.write(res["command"] + "\n")
     else:
