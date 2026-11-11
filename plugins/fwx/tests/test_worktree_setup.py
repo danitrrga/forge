@@ -153,7 +153,10 @@ def case_dirty(R, S):
     sc = Scene(setup=["touch stray.txt"])
     helpers.write(sc.wt, "stray.txt", "was here before\n")
     r = R(sc.wt, "wave", "setup", env=sc.env)
-    S.eq("dirty: a worktree that was already dirty before the setup is not blamed on it", r.returncode, 0)
+    S.ok("dirty: a worktree that was already dirty is refused too (its checks would refuse it), naming the file", r.returncode == 1 and "stray.txt" in r.stderr, r.stderr)
+    sc = Scene(setup=[MK])
+    helpers.write(sc.wt, ".fwx/milestones/v1/note", "documents the clean-tree checks do not count\n")
+    S.eq("dirty: .fwx/ is not counted, as in `fwx verify`", R(sc.wt, "wave", "setup", env=sc.env).returncode, 0)
 
 
 def case_main_checkout(R, S):

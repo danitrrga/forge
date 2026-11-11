@@ -42,7 +42,7 @@ DEFAULTS = {
     "project": {"name": None, "main_checkout": None, "linear_project": None, "default_branch": None,
                 "factory_branch": "factory", "checks": [], "protected_paths": [],
                 "production": {"branches": [], "commands": []}, "verdict_command": None, "ui": False,
-                "checks_quick": [], "app_run": None, "surface_context": {}},
+                "checks_quick": [], "app_run": None, "surface_context": {}, "worktree_setup": []},
     "factory": {"mode": "off", "ui_bugs": False, "watchdog_nudge_min": 30, "watchdog_fail_min": 30,
                 "cost_warn_x_median": 3, "tick_trigger": None, "classifier": "suggest"},
     "weekly": {"on": True, "min_sessions": 5, "trigger": None, "precision_low": 0.7, "precision_min_marks": 20,
@@ -123,6 +123,15 @@ def _validate(cfg, path):
                 raise _bad(path, "models.%s.%s is %r, not a model alias (%s)" % (role, size, name, ", ".join(ALIASES)))
 
 
+def _check_setup(cfg, path):
+    """project.worktree_setup: the shell commands `fwx wave setup` runs in a new worktree. A string would be run one letter at a
+    time, and a command that is empty names nothing to run."""
+    project = cfg.get("project")
+    setup = project.get("worktree_setup") if isinstance(project, dict) else []
+    if not isinstance(setup, list) or not all(isinstance(c, str) and c.strip() for c in setup):
+        raise _bad(path, "project.worktree_setup is %r, not a list of non-empty shell commands" % (setup,))
+
+
 def _check_walk(cfg, path):
     """walk.browser_executable: null (the browser agent-browser finds) or the path of the browser the UI walk must use instead,
     e.g. a headless shell, so that a wrapper around the system browser (an extension, a window flag) never reaches the walk."""
@@ -164,6 +173,7 @@ def load(cwd=None):
         source = path
     _validate(cfg, source)
     _check_walk(cfg, source)
+    _check_setup(cfg, source)
     cfg["_source"] = source
     return cfg
 
