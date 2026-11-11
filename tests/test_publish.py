@@ -913,6 +913,160 @@ def worktree_layout_cases():
         lacks("deny file %s" % label, out, "Traceback")
 
 
+def push_scope_cases():
+    """The pre-push guard scans the commits this push adds to the remote: reachable from the pushed tip and
+    from no remote-tracking ref, for a new branch and for an existing one alike. Before, an existing branch
+    scanned `remote_sha..local_sha`, so a branch that merged the default branch in re-scanned every commit
+    already public there. Red before the fix (case 1, an existing branch that merged the default branch, one
+    of whose commit messages is already public there): "push of an existing branch that merged the default
+    branch = exit = 1, want 0", the output "FAIL 0dbfba5:(message):1 [private list] zqxv-private ... 3 commit(s)"
+    (the old range held the public commit; the fix scans 2), and "the merge arrived = '401b8ea...', want
+    'a2e0bdd...'" (the push was refused). Case 4: "a branch at an already-public commit: output lacks 'no new
+    commit', got 'PASS check-public: 0 file(s) checked (... 0 commit(s))'".
+    Controls that held before and after: a new commit whose message, and one whose content, matches the
+    private list is refused on an existing branch and on a new one."""
+    word = j("zq", "xv-private")
+    root = toy("push-scope")
+    write(root, "config/publish-deny.txt", word + "\n")  # the toy private list, untracked as in the real checkout
+    remote = os.path.join(TMP, "push-scope-remote-%d.git" % _n[0])
+    run(["git", "init", "-q", "--bare", remote], TMP)
+    git_out(root, "add", "bin", "forge", "githooks")
+    git_out(root, "commit", "-q", "-m", "base")
+    git_out(root, "remote", "add", "origin", remote)
+    nohook = ["-c", "core.hooksPath=" + os.devnull]  # setup pushes only: the guard is what is under test below
+    git_out(root, *(nohook + ["push", "-q", "origin", "master"]))
+    git_out(root, "config", "core.hooksPath", "githooks")
+
+    def tip(branch):
+        return run(["git", "--git-dir", remote, "rev-parse", "--verify", "-q", branch], TMP)[1].strip()
+
+    def add(rel, text, msg):
+        write(root, rel, text)
+        git_out(root, "add", rel)
+        git_out(root, "commit", "-q", "--no-verify", "-m", msg)  # the guard under test is the push's
+
+    # 1. an existing branch merges the default branch, whose commits (one with the word in its message) are public
+    git_out(root, "checkout", "-q", "-b", "feat")
+    add("feat1.txt", "clean\n", "feat: one")
+    code, out = g(root, "push", "-q", "origin", "feat")
+    want("push of a new branch with a clean commit = exit", code, 0)
+    git_out(root, "checkout", "-q", "master")
+    add("m1.txt", "clean\n", "note about " + word + " in a message")
+    git_out(root, *(nohook + ["push", "-q", "origin", "master"]))
+    git_out(root, "checkout", "-q", "feat")
+    add("feat2.txt", "clean\n", "feat: two")
+    git_out(root, "merge", "-q", "--no-edit", "master")
+    merged = head(root)
+    code, out = g(root, "push", "origin", "feat")
+    want("push of an existing branch that merged the default branch = exit", code, 0)
+    has("push of an existing branch that merged the default branch", out, "PASS check-public", "2 commit(s)")
+    lacks("push of an existing branch that merged the default branch", out, "[private list]")
+    want("the merge arrived", tip("feat"), merged)
+
+    # 2. an existing branch, one new commit that matches the list: refused, the remote does not move
+    git_out(root, "checkout", "-q", "-b", "ex", "master")
+    add("ex1.txt", "clean\n", "ex: one")
+    code, out = g(root, "push", "-q", "origin", "ex")
+    want("existing-branch setup push = exit", code, 0)
+    pushed = tip("ex")
+    add("ex2.txt", "clean\n", "ex: a " + word + " message")
+    code, out = g(root, "push", "origin", "ex")
+    want("existing branch, a new commit with the word in its message = exit", code, 1)
+    has("existing branch, a new commit with the word in its message", out, ":(message):1 [private list]", "1 commit(s)")
+    want("existing branch, message: the remote did not move", tip("ex"), pushed)
+    git_out(root, "reset", "-q", "--hard", pushed)
+    add("ex3.txt", "has " + word + " inside\n", "ex: three")
+    code, out = g(root, "push", "origin", "ex")
+    want("existing branch, a new commit with the word in a file = exit", code, 1)
+    has("existing branch, a new commit with the word in a file", out, ":ex3.txt:1 [private list]")
+    want("existing branch, content: the remote did not move", tip("ex"), pushed)
+    git_out(root, "reset", "-q", "--hard", pushed)
+    add("ex4.txt", "clean\n", "ex: four")
+    code, out = g(root, "push", "origin", "ex")
+    want("existing branch, a new clean commit = exit", code, 0)
+
+    # 3. a new remote branch: clean passes, dirty is refused (unchanged)
+    add("nb1.txt", "clean\n", "nb: one")
+    code, out = g(root, "push", "origin", "ex:nb-clean")
+    want("new remote branch, clean = exit", code, 0)
+    add("nb2.txt", "has " + word + " inside\n", "nb: two")
+    code, out = g(root, "push", "origin", "ex:nb-dirty")
+    want("new remote branch, dirty = exit", code, 1)
+    has("new remote branch, dirty", out, ":nb2.txt:1 [private list]")
+    want("new remote branch, dirty: it was not created", tip("nb-dirty"), "")
+    git_out(root, "reset", "-q", "--hard", "HEAD~1")
+
+    # 5. a commit that only a PRIVATE remote has is not public: pushing it to the public remote scans it
+    # Red before the fix (CodeRabbit on the PR): "two remotes, existing branch, a commit the other remote has = exit
+    # = 0, want 1" and the same for a new branch: `--not --remotes` took the other remote's tracking ref as public.
+    priv = os.path.join(TMP, "push-scope-private-%d.git" % _n[0])
+    run(["git", "init", "-q", "--bare", priv], TMP)
+    git_out(root, "remote", "add", "priv", priv)
+    git_out(root, "checkout", "-q", "-b", "shared", "master")
+    add("sh1.txt", "clean\n", "shared: one")
+    code, out = g(root, "push", "-q", "origin", "shared")
+    want("two remotes, setup: the public branch exists = exit", code, 0)
+    add("sh2.txt", "has " + word + " inside\n", "shared: two")
+    git_out(root, *(nohook + ["push", "-q", "priv", "shared"]))  # only the private remote may have it
+    code, out = g(root, "push", "origin", "shared")
+    want("two remotes, existing branch, a commit the other remote has = exit", code, 1)
+    has("two remotes, existing branch", out, ":sh2.txt:1 [private list]", "1 commit(s)")
+    code, out = g(root, "push", "origin", "shared:shared-new")
+    want("two remotes, new branch, a commit the other remote has = exit", code, 1)
+    has("two remotes, new branch", out, ":sh2.txt:1 [private list]")
+    code, out = g(root, "push", "priv", "shared:shared-again")  # control: the remote that has it scans nothing new
+    want("two remotes, pushing to the remote that already has the commit = exit", code, 0)
+    has("two remotes, the remote that already has it", out, "0 commit(s)", "no new commit")
+    # 6. tracking refs are a record of what a remote had, not of what the destination has now. Red before the fix
+    # (CodeRabbit, second round): "remote with a fetch refspec under the pushed-to remote's namespace = exit = 0, want 1"
+    # (the remote `pv` writes refs/remotes/origin/pv/*, which `--remotes=origin` took for origin's) and "remote whose URL
+    # changed to an empty repository = exit = 0, want 1" (the stale tracking ref still excluded the commit).
+    pv = os.path.join(TMP, "push-scope-ns-%d.git" % _n[0])
+    run(["git", "init", "-q", "--bare", pv], TMP)
+    git_out(root, "remote", "add", "pv", pv)
+    git_out(root, "config", "remote.pv.fetch", "+refs/heads/*:refs/remotes/origin/pv/*")  # git refuses the name origin/pv itself
+    git_out(root, "checkout", "-q", "-b", "ns", "master")
+    add("ns1.txt", "clean\n", "ns: one")
+    code, out = g(root, "push", "-q", "origin", "ns")
+    want("namespace case, setup: the public branch exists = exit", code, 0)
+    add("ns2.txt", "has " + word + " inside\n", "ns: two")
+    git_out(root, *(nohook + ["push", "-q", "pv", "ns"]))
+    code, out = g(root, "push", "origin", "ns")
+    want("remote with a fetch refspec under the pushed-to remote's namespace = exit", code, 1)
+    has("remote with a fetch refspec under the pushed-to remote's namespace", out, ":ns2.txt:1 [private list]")
+    git_out(root, "checkout", "-q", "-b", "mv", "master")
+    old = os.path.join(TMP, "push-scope-old-%d.git" % _n[0])
+    empty = os.path.join(TMP, "push-scope-empty-%d.git" % _n[0])
+    for d in (old, empty):
+        run(["git", "init", "-q", "--bare", d], TMP)
+    git_out(root, "remote", "add", "moved", old)
+    add("mv1.txt", "has " + word + " inside\n", "mv: one")
+    git_out(root, *(nohook + ["push", "-q", "moved", "mv"]))  # the tracking ref refs/remotes/moved/mv now exists
+    git_out(root, "remote", "set-url", "moved", empty)
+    code, out = g(root, "push", "moved", "mv")
+    want("remote whose URL changed to an empty repository = exit", code, 1)
+    has("remote whose URL changed to an empty repository", out, ":mv1.txt:1 [private list]")
+    want("remote whose URL changed: the empty repository got nothing", run(["git", "--git-dir", empty, "for-each-ref"], TMP)[1], "")
+    # A destination git cannot read (an unreachable URL), or none, excludes nothing: over-scans, never under-scans.
+    for label, url in (("an unreachable URL", os.path.join(TMP, "no-such-remote")), ("no URL", "")):
+        r = subprocess.run(["sh", os.path.join(root, "githooks", "pre-push"), "x", url], cwd=root, env=ENV, capture_output=True,
+                           text=True, input="refs/heads/shared %s refs/heads/shared %s\n" % (head(root), "0" * 40), timeout=60)
+        want("destination, %s = exit" % label, r.returncode, 1)
+        has("destination, %s" % label, r.stdout + r.stderr, ":mv1.txt:1 [private list]")
+    git_out(root, "reset", "-q", "--hard", "HEAD~1")
+
+    # 4. no new commit is reported as zero and passes; a range that cannot be computed fails closed
+    code, out = g(root, "push", "origin", "master:ptr")
+    want("a branch at an already-public commit = exit", code, 0)
+    has("a branch at an already-public commit", out, "PASS check-public", "0 commit(s)", "no new commit")
+    r = subprocess.run(["sh", os.path.join(root, "githooks", "pre-push")], cwd=root, env=ENV, capture_output=True, text=True,
+                       input="refs/heads/x %s refs/heads/x %s\n" % ("1" * 40, "0" * 40), timeout=60)
+    out = r.stdout + r.stderr
+    want("a tip git cannot list = exit (fail closed)", r.returncode != 0, True)
+    has("a tip git cannot list", out, "forge check-public: git rev-list", "pre-push: refused")
+    lacks("a tip git cannot list", out, "PASS", "no new commit")
+
+
 def main():
     public_cases()
     pinned_asset_cases()
@@ -927,6 +1081,7 @@ def main():
     commit_cases()
     commit_edge_cases()
     hook_cases()
+    push_scope_cases()
     for msg in failures:
         print("FAIL", msg)
     for msg in notrun:

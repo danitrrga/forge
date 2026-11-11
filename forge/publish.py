@@ -195,9 +195,9 @@ def scan(path, data, deny):
     return out
 
 
-def git(args, check=True, binary=False, root=None):
+def git(args, check=True, binary=False, root=None, input=None):
     """git in `root`, else in this checkout."""
-    r = subprocess.run(["git", "-C", root or lib.ROOT] + args, capture_output=True, text=not binary)
+    r = subprocess.run(["git", "-C", root or lib.ROOT] + args, capture_output=True, text=not binary, input=input)
     if check and r.returncode:
         err = r.stderr if not binary else r.stderr.decode("utf-8", "replace")
         raise CheckError("git %s: %s" % (" ".join(args[:3]), err.strip()))
@@ -252,10 +252,41 @@ def source_all(root=None):
     return items, 0
 
 
+def remote_has(url, root=None):
+    """The commits the remote at `url` advertises right now, that this repository also has: what the destination
+    holds. A tracking ref says what some remote had at the last fetch, under a name another remote's refspec or a
+    changed URL can share, so it is no proof of what the destination has. A remote git cannot read in time (no
+    URL, unreachable, no terminal for a password) is [], so more is scanned, never less."""
+    if not url:
+        return []
+    try:
+        r = subprocess.run(["git", "-C", root or lib.ROOT, "ls-remote", "--", url], capture_output=True, text=True, timeout=60,
+                           stdin=subprocess.DEVNULL, env=dict(os.environ, GIT_TERMINAL_PROMPT="0"))
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if r.returncode:
+        return []
+    shas = sorted({l.split("\t")[0] for l in r.stdout.splitlines() if "\t" in l})
+    if not shas:
+        return []
+    c = subprocess.run(["git", "-C", root or lib.ROOT, "cat-file", "--batch-check=%(objecttype) %(objectname)"],
+                       input="\n".join(shas) + "\n", capture_output=True, text=True)
+    return sorted({l.split()[1] for l in c.stdout.splitlines() if l.split()[:1] in (["commit"], ["tag"])})
+
+
 def source_range(spec, root=None):
+    """The commits of `spec`: A..B as git reads it; `0...TIP` (an all-zero left side), TIP not reachable from any
+    remote-tracking ref; `remote:URL..TIP` (the pre-push form), TIP not reachable from anything the remote at URL
+    advertises (see remote_has)."""
     m = re.match(r"^0+\.\.(.+)$", spec)
     args = [m.group(1), "--not", "--remotes"] if m else [spec]
-    revs = git(["rev-list", "--reverse"] + args, root=root).split()
+    m = re.match(r"^remote:(.*)\.\.([^.]+)$", spec)
+    stdin = None
+    if m:
+        url, tip = m.groups()
+        args = ["--stdin"]
+        stdin = "\n".join([tip] + ["^" + h for h in remote_has(url, root)]) + "\n"
+    revs = git(["rev-list", "--reverse"] + args, root=root, input=stdin).split()
     items = []
     for c in revs:
         tag = c[:7]
@@ -331,6 +362,8 @@ def cmd_check_public(a):
         print("FAIL check-public: 0 file(s) checked: an empty tree means a wrong root (%s)" % lists)
         return 1
     print("PASS check-public: %d file(s) checked (%s%s)" % (len(items), lists, where))
+    if a.range and not ncommits:
+        print("check-public: no new commit in the range, so nothing was scanned (a range that cannot be listed is exit 2, not this)")
     return 0
 
 
