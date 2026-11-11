@@ -3,8 +3,11 @@ on in that project; with `false` or the field absent it writes nothing and takes
 
 What a `true` profile gets, all of it per project and none of it at user scope:
   * <project>/.claude/<plugin>.json, the one file the plugin reads (schema 1: project, factory, weekly, models,
-    limits, rounds, linear.labels, integrations, paths). It is generated: git-ignored (the ignore line goes to
-    .git/info/exclude for a profile with `writes_tracked_files: false`) and rewritten on every sync.
+    limits, rounds, linear.labels, integrations, paths). It is generated and rewritten on every sync.
+  * one managed block at the end of the project's ignore file (forge/fwxignore.py): it ignores that file and
+    .claude/worktrees/, and un-ignores `.fwx/**/*.md` after the project's own `*.md`, so the framework's documents are
+    tracked (it goes to .git/info/exclude for a profile with `writes_tracked_files: false`, whose own ignore file forge
+    never writes). A profile that turns the framework off has exactly the block taken out.
   * in settings.local.json, `enabledPlugins["<plugin>@<plugin>"] = true` and `extraKnownMarketplaces.<plugin>`
     (written by skills.write_settings_local, which this module feeds through a Plan), both owned claims; and
     `env.LINEAR_API_KEY` when config/secrets.json has the secret, else one line that is not a `!`.
@@ -35,15 +38,15 @@ identifier (it becomes a file name). Such a profile is read as off by settings.l
 because the plugin cannot load from a source that is wrong anyway), and its generated file is left where it is.
 
 Removal is by claim (forge/owned.py): the generated file is a `file` claim of part "framework", and is deleted
-only while it still is what forge wrote; one edited since stays and is named on a `!` line, once. The ignore line
-stays (it is claimed, so `forge uninstall` takes it out)."""
+only while it still is what forge wrote; one edited since stays and is named on a `!` line, once. The ignore block
+goes the same way (fwxignore.drop); a single `.claude/<plugin>.json` line an earlier forge wrote is folded into it."""
 import copy
 import collections
 import json
 import os
 import re
 
-from forge import lib, marketplace, owned
+from forge import fwxignore, lib, marketplace, owned
 
 PART = "framework"
 LINEAR_KEY = "LINEAR_API_KEY"
@@ -340,20 +343,18 @@ def _register(ctx, p, ppath):
 
 
 def _write_file(ctx, prof, p, name):
-    """The generated file and its ignore line. Returns the lines to print."""
+    """The generated file and the ignore block that keeps it out of git status. Returns the lines to print."""
     ppath = prof["project_path"]
-    entry = ".claude/%s.json" % p.name
     owner = prof.get("project") or name
     short = lib.short(p.file)
     try:
-        ignored, gi = lib.ensure_ignored(ctx.apply, ppath, entry, lib.repo_owns_tracked_files(prof))
+        ignored, block = fwxignore.ensure(ctx.apply, ppath, p.name, lib.repo_owns_tracked_files(prof), owner)
     except lib.Unreadable as e:  # the project's .gitignore
         return ["   ! framework -> %s NOT written: %s unreadable (%s)" % (short, lib.short(e.path), e.reason)]
     if not ignored:
-        return ["   ! framework -> %s NOT written%s" % (short, gi)]
+        return block + ["   ! framework -> %s NOT written: git would not ignore it" % short]
     if os.path.islink(p.file):
-        return ["   ! framework -> %s NOT written: it is a link, which forge never writes through" % short]
-    owned.claim_ignore_line(ctx.apply, ppath, entry, gi, lib.repo_owns_tracked_files(prof), PART, owner)
+        return block + ["   ! framework -> %s NOT written: it is a link, which forge never writes through" % short]
     text = lib.dumps(p.doc) + "\n"
     if lib.holds(p.file, text):
         state = "already current"
@@ -364,7 +365,7 @@ def _write_file(ctx, prof, p, name):
             os.makedirs(os.path.dirname(p.file), exist_ok=True)
             lib.write_text(p.file, text)
     owned.record(p.file, [owned.claim("file", [], p.doc, owner)], ctx.apply, part=PART)
-    return ["   framework -> %s (%s)%s" % (short, state, gi)]
+    return ["   framework -> %s (%s)" % (short, state)] + block
 
 
 def _drop_stale(ctx, ppath, keep):
@@ -400,4 +401,6 @@ def write(ctx, prof, p, name, secrets):
         if not secrets.get(LINEAR_KEY):
             out.append("   linear key -> NOT RUN, NOT ARMED: %s is not in config/secrets.json (%s linear exits 2)" % (LINEAR_KEY, p.name))
         out += _register(ctx, p, ppath)
+    if not p.on:
+        out += fwxignore.drop(ctx.apply, ppath, prof.get("project") or name)
     return out + _drop_stale(ctx, ppath, p.file if p.on else None)

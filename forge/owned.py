@@ -61,7 +61,7 @@ import hashlib
 import json
 import os
 
-from forge import lib
+from forge import gitblock, lib
 
 VERSION = 1
 KINDS = ("item", "key", "hook", "file")
@@ -170,13 +170,24 @@ def is_line(c):
     return c["kind"] == "item" and len(c["at"]) == 2 and c["at"][0] == "line"
 
 
+def is_block(c):
+    """Whether claim `c` is the block forge/gitblock.py keeps in an ignore file: kind item, `at` ["block", NAME];
+    its value is the block's lines joined by newlines (gitblock.text_of)."""
+    return c["kind"] == "item" and c["at"] == ["block", gitblock.NAME]
+
+
+def is_text(c):
+    """Whether claim `c` is read from the file's text: an ignore line or the ignore block."""
+    return is_line(c) or is_block(c)
+
+
 def read_doc(file, c):
     """The document current() wants for claim `c` of `file`: None for a `file` claim (current reads that one
-    itself) and for a file that is not there, the text for an ignore line, the parsed JSON object otherwise.
-    Raises lib.Unreadable."""
+    itself) and for a file that is not there, the text for an ignore line or block, the parsed JSON object
+    otherwise. Raises lib.Unreadable."""
     if c["kind"] == "file":
         return None
-    return lib.read_text(file) if is_line(c) else lib.read_owned(file, None)
+    return lib.read_text(file) if is_text(c) else lib.read_owned(file, None)
 
 
 def unchanged(file, c, doc=None):
@@ -194,6 +205,8 @@ def current(file, c, doc=None):
         config.toml). Missing is not found; one that cannot be read or parsed is found with a value that
         is not the claim's.
       item ["line", L]: found when a line of the text file, stripped, is L (an ignore line); the value is L.
+      item ["block", NAME]: found when the text holds forge's ignore block (gitblock.held); the value is its lines,
+        None when the markers are not one complete pair, so a broken block is found and never removable.
       item [path..., v]: found when the list at `path` holds v; the value is v, the locator being the value.
       hook ["hooks", event, command]: an entry under the event, in any group (a project's settings.local.json).
       hook [event, matcher, command]: an entry in a group with that matcher (~/.claude/settings.json, hooks.json).
@@ -225,6 +238,10 @@ def current(file, c, doc=None):
             return False, None
     if is_line(c):
         return any(l.strip() == at[1] for l in doc.splitlines()), at[1]
+    if is_block(c):
+        if gitblock.marker_error(doc):
+            return True, None
+        return (True, gitblock.held(doc)) if gitblock.span(doc) else (False, None)
     if kind == "hook" and len(at) == 3:
         event, matcher, command = hook_site(at)
         found = hooks_with(doc, event, command, matcher)
@@ -314,3 +331,27 @@ def claim_ignore_line(apply, ppath, entry, suffix, repo_owned, part, owner):
     if added and not seen:
         out.append(now)
     return record(file, out, apply, part)
+
+
+def claim_ignore_block(apply, file, lines, part, owner, wrote, folded=()):
+    """Claim the ignore block `lines` (gitblock.lines_for) that forge/fwxignore.py has put in `file`, as the item
+    ["block", NAME] under `part`. `wrote`: forge wrote or rewrote it this run; a block that was there already and is
+    not claimed is the project's own and stays unclaimed (the safe direction: forge uninstall never removes it).
+    `folded`: ignore lines the block replaces, whose item ["line", L] claims of the same part are released. The part's
+    other claims stay where they are. Nothing for a dry-run."""
+    if not apply:
+        return False
+    now = claim("item", ["block", gitblock.NAME], gitblock.text_of(lines), owner)
+    prev, _ = previous(file, part)
+    out = [c for c in prev if not is_block(c) and not (is_line(c) and c["at"][1] in folded)]
+    if wrote or any(is_block(c) for c in prev):
+        out.append(now)
+    return record(file, out, apply, part)
+
+
+def release_block(apply, file, part):
+    """Drop the block claim of `part` in `file`; the part's other claims stay."""
+    if not apply:
+        return False
+    prev, _ = previous(file, part)
+    return record(file, [c for c in prev if not is_block(c)], apply, part)

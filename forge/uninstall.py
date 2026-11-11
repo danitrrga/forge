@@ -32,7 +32,7 @@ import json
 import os
 import shutil
 
-from forge import hooks, lib, mcp, owned, skills, system_doc
+from forge import gitblock, hooks, lib, mcp, owned, skills, system_doc
 
 USER_SETTINGS = os.path.join(lib.HOME, ".claude", "settings.json")
 CLAUDE_JSON = os.path.join(lib.HOME, ".claude.json")
@@ -244,7 +244,7 @@ def _found(run, file, c):
         if file in run.files:  # already deleted by this run
             return False, None
         return owned.current(file, c)
-    if owned.is_line(c):
+    if owned.is_text(c):
         text = run.text(file)
         return (False, None) if text is None else owned.current(file, c, text)
     doc = run.json(file)
@@ -256,6 +256,8 @@ def _take_out(run, file, c):
     kind, at = c["kind"], c["at"]
     if kind == "file":
         run.delete(file)
+    elif owned.is_block(c):
+        run.set_text(file, gitblock.without(run.text(file)))
     elif owned.is_line(c):
         lines = run.text(file).splitlines(keepends=True)
         run.set_text(file, "".join(l for l in lines if l.strip() != at[1]))

@@ -1161,6 +1161,44 @@ def context_base_row():
                              "context was looked at" % (CONTEXT_BASE_HOOK, where))
 
 
+def framework_ignore_row(only=None):
+    """The `framework ignore` row: in every profile with `framework: true` (just `only`, when given) git answers as the
+    framework needs for four sample paths (.fwx/x/y.md and .fwx/decisions.tsv not ignored, .claude/<plugin>.json and
+    .claude/worktrees/x ignored), by `git check-ignore -v --no-index` in the project (forge/fwxignore.py). A FAIL names
+    the path and the rule with file:line. How many projects it looked at is in the detail; zero where a framework
+    profile exists is a FAIL, and no framework profile at all is a SKIP, NOT RUN, NOT ARMED."""
+    from forge import framework, fwxignore
+    wanted = {n: p for n, p in sorted(lib.profiles().items()) if p.get("framework") is True and (only is None or n == only)}
+    if not wanted:
+        return lib.Result("SKIP", "framework ignore", NOT_ARMED + "no profile has framework: true, so no project's ignore rules were looked at")
+    looked, bad, skipped = [], [], []
+    for name, prof in wanted.items():
+        pp = prof.get("project_path")
+        plan = framework.plan(prof, name)
+        if prof.get("frozen"):
+            skipped.append("%s (frozen: forge writes nothing there)" % name)
+        elif plan.error or not plan.on:
+            skipped.append("%s (%s)" % (name, plan.error or "framework is off"))
+        elif not pp or not lib.in_git_repo(pp):
+            skipped.append("%s (not a git repository)" % name)
+        else:
+            wrong = fwxignore.check(pp, plan.name)
+            if wrong is None:
+                skipped.append("%s (git did not answer)" % name)
+                continue
+            looked.append(name)
+            if wrong:
+                bad.append("%s: %s -- python3 bin/forge sync --apply --project %s; a project with writes_tracked_files false must "
+                           "carry the block in its own .gitignore" % (name, fwxignore._says(wrong), name))
+    note = "; not looked at: %s" % ", ".join(skipped) if skipped else ""
+    if bad:
+        return lib.Result("FAIL", "framework ignore", "looked at %d project(s)%s: %s" % (len(looked), note, " | ".join(bad)))
+    if not looked:
+        return lib.Result("FAIL", "framework ignore", "looked at 0 of %d framework project(s)%s" % (len(wanted), note))
+    return lib.Result("PASS", "framework ignore", "looked at %d project(s) (%s): the four sample paths are as the framework needs%s"
+                      % (len(looked), ", ".join(looked), note))
+
+
 def local_plugins_row():
     """The `local plugins` row: every folder of config/forge.json `local_plugins` is registered in the machine's marketplace
     registry at its path (forge/marketplace.py); a SKIP, NOT RUN, NOT ARMED, with the key empty or missing."""
@@ -1197,6 +1235,8 @@ CHECKS = [
     ("research expiry", research_expiry, RESEARCH_FIX),
     # Its failures carry the command that reproduces them, so the row's fix is empty.
     ("context base", context_base_row, ""),
+    # Its failures carry their own fix, so the row's is empty.
+    ("framework ignore", framework_ignore_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
     # Its failures carry their own fix (python3 bin/forge sync --apply), so the row's is empty.

@@ -355,7 +355,8 @@ check("true: integrations holds the four names, read from forge.json (notificati
       doc.get("integrations") == {"consent": True, "notifications": False, "agent_browser": False, "mempalace": False},
       doc.get("integrations"))
 gi = raw(os.path.join(pp, ".gitignore")) or b""
-check("true: the ignore line is in .gitignore", b".claude/toyfw.json" in gi.splitlines(), gi)
+check("true: the ignore line, inside the FORGE-FWX block, is in .gitignore",
+      b"/.claude/toyfw.json" in gi.splitlines() and b"# BEGIN FORGE-FWX (managed by forge)" in gi.splitlines(), gi)
 check("true: git ignores the file", subprocess.run(["git", "-C", pp, "check-ignore", "-q", ".claude/toyfw.json"]).returncode == 0, "")
 enabled, markets, env = sl_keys(pp)
 check("settings: enabledPlugins toyfw@toyfw is on -- %s" % enabled.get("toyfw@toyfw"), enabled.get("toyfw@toyfw") is True, enabled)
@@ -371,8 +372,8 @@ check("claims: the file is a `file` claim, part framework, owner the profile, th
 sc = {(c["kind"], tuple(c["at"])) for c in claims_of(slp(pp))}
 check("claims: extraKnownMarketplaces.toyfw and enabledPlugins.toyfw@toyfw are key claims",
       ("key", ("extraKnownMarketplaces", NAME)) in sc and ("key", ("enabledPlugins", "toyfw@toyfw")) in sc, sorted(sc))
-check("claims: the ignore line is claimed, part framework",
-      any(c["kind"] == "item" and c["at"] == ["line", ".claude/toyfw.json"] and c.get("part") == "framework"
+check("claims: the ignore block is claimed, part framework",
+      any(c["kind"] == "item" and c["at"] == ["block", "FORGE-FWX"] and c.get("part") == "framework"
           for c in claims_of(os.path.join(pp, ".gitignore"))), claims_of(os.path.join(pp, ".gitignore")))
 
 # Again: byte-identical, and the line says so.
@@ -569,7 +570,8 @@ w12 = World()
 w12.put(profile(pp12, name="repoowned", writes_tracked_files=False))
 code, out = w12.run()
 exclude = raw(os.path.join(pp12, ".git", "info", "exclude")) or b""
-check("writes_tracked_files false: the line is in .git/info/exclude, anchored", b"/.claude/toyfw.json" in exclude.splitlines(), exclude)
+check("writes_tracked_files false: the line is in .git/info/exclude, anchored", b"/.claude/toyfw.json" in exclude.splitlines()
+      and b"# BEGIN FORGE-FWX (managed by forge)" in exclude.splitlines(), exclude)
 check("writes_tracked_files false: .gitignore is intact", raw(os.path.join(pp12, ".gitignore")) == b"node_modules/\n", raw(os.path.join(pp12, ".gitignore")))
 check("writes_tracked_files false: the file is written and exit is 0", code == 0 and os.path.exists(fwfile(pp12)), (code, bang(out)))
 
