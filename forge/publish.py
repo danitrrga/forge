@@ -331,6 +331,8 @@ def cmd_check_public(a):
         print("FAIL check-public: 0 file(s) checked: an empty tree means a wrong root (%s)" % lists)
         return 1
     print("PASS check-public: %d file(s) checked (%s%s)" % (len(items), lists, where))
+    if a.range and not ncommits:
+        print("check-public: no new commit in the range, so nothing was scanned (a range that cannot be listed is exit 2, not this)")
     return 0
 
 
