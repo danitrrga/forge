@@ -6,7 +6,22 @@ sentinel `xdg-open` and `open` that record a call), so no real program can run: 
 behind the dir. `fakes()` asserts that construction before each case. The `orca` fake plays a list of canned answers,
 one per call (the last one repeats), and records its argv.
 
-RED_PLACEHOLDER
+Seen red before the command existed (lib/fwx/commands/open.py absent; `fwx open` is an unknown command, exit 2):
+  FAIL: orca answers ok: exit 0: got 2, want 0
+  FAIL: orca answers ok: the fake got `tab create --url file://<path> --json`: got [], want [['tab', 'create', '--url', 'file:///tmp/.../page.html', '--json']]
+
+Controls, each seen red with open.py changed in one place (111 checks each, first FAIL lines):
+  - the `--worktree active` retry removed:
+      FAIL: orca fails first, ok on the retry: two calls: got 1, want 2
+  - no fallback: nothing printed when every opener failed:
+      FAIL: orca fails twice (ok:false twice): says NOT OPENED: got '', want a line starting 'NOT OPENED: '
+      FAIL: orca fails twice (ok:false twice): the command is on its own line: got 0, want 2
+  - no fallback command: the NOT OPENED line without the paste-ready line:
+      FAIL: orca fails twice (ok:false twice): the command is on its own line: got 1, want 2
+  - `--print` still calls orca:
+      FAIL: --print: the fake orca was not called: got 1, want 0
+  - the fallback opens the page by itself (runs `xdg-open`):
+      FAIL: orca fails twice (ok:false twice): no system opener ran: ['xdg-open file:///tmp/.../page.html']
 """
 import json
 import os

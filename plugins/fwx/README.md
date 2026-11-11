@@ -13,6 +13,7 @@ python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
 python3 bin/fwx budget    # context and quota left
+python3 bin/fwx open <file or URL>    # shows a page to the owner (in Orca when there is one); else prints `NOT OPENED: <why>` and the command to paste; `--print` only prints it; `--json` prints what happened as JSON
 python3 bin/fwx capacity --role executor --want 3    # how many agents of a role can start now
 python3 bin/fwx state resolve    # the session's phase; `state --help` lists the rest
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it

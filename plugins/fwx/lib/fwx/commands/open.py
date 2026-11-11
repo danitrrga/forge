@@ -74,7 +74,7 @@ def orca(url):
         if proc.returncode == 0 and isinstance(data, dict) and data.get("ok") is True:
             return True, ""
         why.append(_reason(proc))
-    return False, "; ".join(why)
+    return False, "; ".join(dict.fromkeys(why))  # the same reason twice is said once
 
 
 OPENERS = [("orca", orca)]
