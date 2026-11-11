@@ -31,10 +31,10 @@ Rewrite the whole file from the template. The file describes now, and history li
 
 The owner reads this and no diff or code. Fill the template on one screen, 40 lines at most:
 
-- Evidence: the commit SHA, command and exit code of the last `evidence` row, copied from the row. `fwx state check report` fails when that SHA is missing.
+- Evidence: the commit SHA, command and exit code of the last `evidence` row, copied from the row. The session's check of the report fails when that SHA is missing, so copy it whole.
 - Assumptions: each open one in a line of words, with no row ids.
 - Diff: the pull request if one exists; otherwise the remote's compare URL; otherwise `git diff <base>..<head>`, where `<base>` is the `sha` of the `stage` row that moved to `executing`.
-- Handover: only when handing over, the one thing that needs the owner's judgment.
+- Handover: only when handing over, the one thing that needs the owner's judgment. A `skill-proposer` block in your prompt goes here, as it is: the owner decides it.
 
 When it runs over, shorten Done and Assumptions; the Evidence line stays whole.
 

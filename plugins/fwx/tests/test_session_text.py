@@ -42,7 +42,6 @@ fails, skips, looked = [], [], [0]
 # Commands that only exist on a branch this one does not contain yet; each is SKIPped with its reason.
 ELSEWHERE = {
     "walk": "the UI-walk branch (feat/3.5-ui-walk)",
-    "open": "master once `fwx open` lands",
 }
 
 
@@ -96,7 +95,7 @@ def fwx_commands(text):
 
 
 def main():
-    texts = {rel: read(rel) for rel in ("SKILL.md", os.path.join("references", "ui-review.md"))}
+    texts = {rel: read(rel) for rel in ("SKILL.md", os.path.join("references", "ui-review.md"), os.path.join("references", "part-report.md"))}
     review = texts[os.path.join("references", "ui-review.md")]
 
     # The session never waits on the page and hands the owner files through `fwx open`.
@@ -118,12 +117,21 @@ def main():
     check("report template has a first heading", bool(heading), "none")
     check("agents/state.md returns the report from its template's first heading", bool(heading) and heading in agent and "final response" in agent,
           "no '%s' or no 'final response' in the agent text" % heading)
+    rep_ref = texts[os.path.join("references", "part-report.md")]
     s8 = step(texts["SKILL.md"], 8)
     check("step 8 found", "Review of the part" in s8, "not found")
-    check("agents/state.md and step 8 share the marker 'Noticed:'", "Noticed:" in agent and "Noticed:" in s8,
-          "agent %s, session %s" % ("Noticed:" in agent, "Noticed:" in s8))
-    check("step 8 saves the returned report with Write, then checks it", in_order(s8, "`state`", "report-<n>.md", "`Write`", "fwx state check report"),
+    check("agents/state.md and the session's report text share the marker 'Noticed:'", "Noticed:" in agent and "Noticed:" in s8 and "Noticed:" in rep_ref,
+          "agent %s, step 8 %s, part-report.md %s" % ("Noticed:" in agent, "Noticed:" in s8, "Noticed:" in rep_ref))
+    check("part-report.md saves the returned report with Write, then checks it", in_order(rep_ref, "`state`", "report-<n>.md", "`Write`", "fwx state check report"),
           "no 'report-<n>.md' ... 'Write' ... 'fwx state check report' in that order after the `state` launch")
+    check("step 8 sends the owner to part-report.md and does not run the check itself", "references/part-report.md" in s8 and "fwx state check report" not in s8,
+          "pointer or check misplaced")
+    # Every `references/<file>.md` the session skill cites exists, and every file in references/ is cited.
+    cited = set(re.findall(r"references/([a-z-]+\.md)", texts["SKILL.md"]))
+    present = set(os.listdir(os.path.join(SESSION, "references")))
+    check("every references/ file SKILL.md cites exists", not (cited - present), "missing %s" % sorted(cited - present))
+    check("every file in references/ is cited by SKILL.md", not (present - cited), "uncited %s" % sorted(present - cited))
+    check("part-report.md names the two errors and the WARN of the check", all(w in rep_ref for w in ("no evidence row", "last evidence row", "WARN")), "an error or the WARN is not read")
 
     # The fields the steps read exist in the code that produces them (a rename would leave the text reading nothing).
     with open(os.path.join(ROOT, "lib", "fwx", "commands", "budget.py"), encoding="utf-8") as f:
@@ -158,6 +166,7 @@ def main():
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
 
     # control: the checks above can fail.
+    check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
     check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx state check report on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx state check report"))
     check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx state check report", "`state`", "report-<n>.md", "`Write`", "fwx state check report"))
     check("control: a cited field the code lacks is caught", missing_keys(["used_percentage", "usage_percentage"], '{"used_percentage": 1}') == ["usage_percentage"])
