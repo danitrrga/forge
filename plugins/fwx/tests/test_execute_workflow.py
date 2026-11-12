@@ -439,6 +439,39 @@ def check_executor_misses(script, s):
     s.eq("rounds exhausted: cleanup still runs", last(rec), "executor:runner-cleanup")
 
 
+def check_setup_failed(script, s):
+    """A worktree setup that failed (exit 43 of `fwx wave check-base`, or `setup` in the result of `integrate`) ends the job with its own
+    line: a new attempt would run the same setup and fail the same way, and the round it takes is one a real failure needs.
+
+    Red on the script before this check (the round was available, `fix-round` answered ok):
+      FAIL: setup failed in an executor (session): ended with the setup's line, no round spent, no new attempt: got ('done', ...), want ('needs-owner', 'worktree setup failed: npm ci (exit 1, log /w/.fwx-agent/worktree-setup.log)')
+      FAIL: setup failed at the join (session): ended with the setup's line, no round spent: ...
+    """
+    line = "worktree setup failed: npm ci (exit 1, log /w/.fwx-agent/worktree-setup.log)"
+    for plane, want in (("session", "needs-owner"), ("factory", "failed")):
+        def pl(a, plane=plane):
+            a["plane"] = plane
+        rec, err = go(script, args_over=pl, answers_over={
+            "executor:T1": {"$seq": [exec_line("T1", "failed"), exec_line("T1")]},
+            "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", "failed", reason=line), exec_report("wt-t1b")]},
+            "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"})})
+        rec = finish(s, "setup failed in an executor (%s)" % plane, rec, err)
+        s.eq("setup failed in an executor (%s): ended with the setup's line, no round spent, no new attempt" % plane,
+             (result(rec).get("status"), result(rec).get("reason"), len(runner(rec, "fix-round")), len(launched(rec, "executor:T1"))), (want, line, 0, 1))
+        s.ok("setup failed in an executor (%s): nothing was integrated" % plane, not runner(rec, "integrate"), repr(labels(rec)))
+        rec, err = go(script, args_over=pl, answers_over={
+            "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"], ok=False, setup=line)]},
+            "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"})})
+        rec = finish(s, "setup failed at the join (%s)" % plane, rec, err)
+        s.eq("setup failed at the join (%s): ended with the setup's line, no round spent" % plane,
+             (result(rec).get("status"), result(rec).get("reason"), len(runner(rec, "fix-round"))), (want, line, 0))
+    rec, err = go(script, answers_over={
+        "executor:T1": exec_line("T1", "failed"), "executor:runner-report-T1": exec_report("wt-t1", "failed", reason="no test can fail"),
+        "executor:runner-fix-round": R({"ok": False, "spent": False, "rounds": "3/3", "why": "w"}, 1)})
+    rec = finish(s, "other failure", rec, err)
+    s.eq("a failure that is not the setup's still takes the round path", (result(rec).get("reason"), len(runner(rec, "fix-round"))), ("rounds exhausted", 1))
+
+
 def check_join(script, s):
     conflict = integ("h1", ["wt-t1"], ok=False, conflict={"branch": "wt-t2", "files": ["a.py"]})
     rec, err = go(script, answers_over={
@@ -963,6 +996,7 @@ def check_all(script, s):
     check_green(script, s)
     check_clash_and_capacity(script, s)
     check_executor_misses(script, s)
+    check_setup_failed(script, s)
     check_join(script, s)
     check_gate(script, s)
     check_review(script, s)
@@ -975,6 +1009,10 @@ def check_all(script, s):
 
 # (what is wrong with the script, text in it, text instead, the check that must go red). Each anchor is in the script exactly once.
 MUTANTS = [
+    ("a failed setup takes a round", "if (rep.status === 'failed' && SETUP_FAILED.test(String(rep.reason)))", "if (false)",
+     "FAIL: setup failed in an executor (session)"),
+    ("a failed setup at the join takes a round", "if (typeof r.setup === 'string' && SETUP_FAILED.test(r.setup))", "if (false)",
+     "FAIL: setup failed at the join (session)"),
     ("serial wave ignored", "rest.slice(0, wave.serial ? 1 : allowed)", "rest.slice(0, allowed)", "FAIL: clash: the two executors never run at once"),
     ("capacity 0 not checked", "if (!(Number.isInteger(c.allowed) && c.allowed > 0)) {", "if (false) {", "FAIL: no capacity: the script ended"),
     ("rounds not honoured", "if (r.ok !== true) return { end: ['failed', 'rounds exhausted'] }", "if (false) return { end: ['failed', 'rounds exhausted'] }",

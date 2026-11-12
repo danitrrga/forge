@@ -39,6 +39,7 @@ const VERDICT_SCHEMA = {
   required: ['verdicts'],
 }
 const EXEC_LINE = /^(done|wrong-base|question|failed) (\S+) commits=(\d+)$/
+const SETUP_FAILED = /^worktree setup failed:/
 const REVIEW_LINE = /^reviewed (\S+) looked_at=(\d+) findings=(\d+) criteria_no=(\d+) criteria_unproven=(\d+)$/
 
 class Stop {
@@ -207,6 +208,9 @@ async function job(j) {
         return { report: rep }
       }
       if (rep.status === 'question') return { end: ['needs-owner', rep.question] }
+      // A setup that failed (exit 43 of `fwx wave check-base`) fails the same way in every new worktree: it ends the job with its own
+      // line, takes no round and launches no new attempt.
+      if (rep.status === 'failed' && SETUP_FAILED.test(String(rep.reason))) return { end: [A.plane === 'session' ? 'needs-owner' : 'failed', oneLine(rep.reason, 600)] }
       const fr = await fixRound(j.id + ' ' + rep.status + ': ' + (rep.reason || 'no reason given'))
       if (fr.end) return { end: fr.end }
       prev = rep
@@ -322,6 +326,8 @@ async function integrate(branches, o) {
       return r
     }
     if (r.locked && r.locked.length) stop('failed', 'a live agent holds ' + r.locked.map((x) => x.branch).join(', ') + ': nothing was merged')
+    // The setup ran again after the merge (a changed lockfile) and failed: the next worktree would fail the same way.
+    if (typeof r.setup === 'string' && SETUP_FAILED.test(r.setup)) stop(A.plane === 'session' ? 'needs-owner' : 'failed', oneLine(r.setup, 600))
     let kind = 'failure'
     let text
     if (r.findings_check && r.findings_check.ok === false) {
