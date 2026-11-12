@@ -76,6 +76,10 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of skills/pre-mortem/SKILL.md, skills/plan/SKILL.md and skills/post-mortem/SKILL.md: skills/thermos/SKILL.md.
   Text copied by playbooks/execute.md: the sentence "Never reaches the human: ..." of playbooks/orchestrate.md line 110 ("Rules of the
   stretch"), word for word.
+  Read for the shape of skills/session/SKILL.md: playbooks/session-pickup.md (step 0: read the trail, redo nothing), playbooks/pause-safely.md
+  (the cut), playbooks/multi-phase-plan.md and playbooks/orchestrate.md (the walk through parts, one writer per file), in words of its own.
+  Read for skills/session/references/closing.md: playbooks/opening-a-pr.md, playbooks/shipping.md and playbooks/worktree-cleanup.md, in
+  words of its own. Read for skills/session/references/factory-return.md: playbooks/session-pickup.md, in words of its own. No text is copied.
 
 open-gsd/gsd-core, https://github.com/open-gsd/gsd-core, commit 35f5a452239b897b8d6352c973e1e4efd683370f (tag v1.18.0, the version
 of the npm package it was read from; MIT).

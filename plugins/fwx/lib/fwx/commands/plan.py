@@ -13,7 +13,8 @@ agent of that step runs as its first action; with `--head` only `{agent, model, 
 step's skill reads so the brief never passes through the orchestrator. Exit 0, 1 when what the step needs is missing (the
 reason on stderr, nothing on stdout), 2 for a usage error or a folder or configuration that cannot be used.
 `status <dir> <step> [--unattended]` prints `{status, reason, phase_dir}` as one JSON line once the step has run: `done`,
-`failed`, `back-to-discuss` or `needs-owner`; the first word of `reason` is the verdict. Exit 0, or 2 when it cannot read.
+`failed`, `back-to-discuss` or `needs-owner`; the first word of `reason` is the verdict, and a `back-to-discuss` reason carries the
+`## Verdict` sentence of the critique after the colon, so the session can say why. Exit 0, or 2 when it cannot read.
 """
 import json
 import sys
