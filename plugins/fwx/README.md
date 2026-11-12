@@ -36,7 +36,7 @@ Run these from this folder (`fwx test` lists the tests of the folder it is run f
 when every file passed, 1 when one failed or when there is no test file, and 77 when none failed but one could not
 run (a missing tool, key or network). `--expect-not-run PATH[,PATH...]` declares tests that cannot run where it is
 called (CI): each prints `EXPECTED NOT RUN: PATH: <reason>` and no longer makes the exit 77; an undeclared one still
-does, a declared one that fails is still 1, and a run where nothing passed or a declared path is no test file is 1. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
+does, a declared one that fails is still 1, and a run where nothing passed or a declared path is no test file is 1. `--jobs N` runs up to N files at once (default: the CPUs the process may use, at most 8; `--jobs 1` is one file after another); the lines and the exit code are the same at any N, and a failing file's output is shown whole. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
 ## Configuration

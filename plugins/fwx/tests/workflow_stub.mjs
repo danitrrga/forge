@@ -14,7 +14,8 @@
 //   phase, start, end, answer: value|null|throw|unanswered|schema}], phases, logs, workflows [{n, ref, args}], swallowed
 //   [{where, message}] (what parallel/pipeline turned into null), meta, args, result, error {message, stage}, finished,
 //   max_concurrent. start/end are ticks of one counter: two launches overlap when their intervals do.
-// Exit 0 whenever the record was written (the script's own failure is in it), 2 on a usage problem.
+// Exit 0 whenever the record was written (the script's own failure is in it), 2 on a usage problem, 124 (record written, error says
+// "killed after N launches") when the script launches more than MAX_LAUNCHES agents: it does not end.
 // Not simulated: the concurrency cap, worktree isolation, one-level nesting of workflow() (a child is an answer, not run).
 import { readFileSync, writeFileSync } from 'node:fs'
 
@@ -44,6 +45,7 @@ function flush() {
 }
 const describe = (e, stage = 'run') => ({ message: String((e && e.message) || e), stage })
 
+const MAX_LAUNCHES = 400 // the longest real scenario launches a few dozen
 let tick = 0
 let inflight = 0
 let currentPhase = null
@@ -99,6 +101,12 @@ async function agent(prompt, opts = {}) {
   const key = opts.label ?? opts.agentType ?? ''
   const l = { n: rec.launches.length + 1, label: key, prompt, opts: clone(opts), phase: opts.phase ?? currentPhase, start: ++tick, end: null, answer: null }
   rec.launches.push(l)
+  if (rec.launches.length > MAX_LAUNCHES) {
+    // a script that launches for ever (a mutant of a loop) is cut off by count, not by the caller's clock; exit 124 as a timeout's kill does
+    rec.error = { message: `killed after ${MAX_LAUNCHES} launches: the script did not end`, stage: 'run' }
+    flush()
+    process.exit(124)
+  }
   rec.max_concurrent = Math.max(rec.max_concurrent, ++inflight)
   flush()
   try {

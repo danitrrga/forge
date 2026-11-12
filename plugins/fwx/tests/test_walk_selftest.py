@@ -547,13 +547,14 @@ if __name__ == "__main__":
     for case in CASES:
         W.guarded(case, real, s)
     for name, case, path, old, new, needle in MUTANTS:
-        m = helpers.Suite()
+        m = helpers.FirstFail(lambda f, needle=needle: needle in f)  # the control reads one FAIL: the case stops at it
         try:
             tree = W.copy_tree(ROOT, (path, old, new))
         except (AssertionError, OSError) as e:
             s.ok("control %s: built" % name, False, str(e))
             continue
-        W.guarded(case, W.runner(tree), m)
+        m.run(W.guarded, case, W.runner(tree), m)
+        W.stop_scenes()
         s.ok("control %s: the case fails" % name, bool(m.fails), "the mutant passed all %d checks" % m.checks)
         s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in m.fails),
              "FAILs: %s" % "; ".join(f[:140] for f in m.fails[:3]))

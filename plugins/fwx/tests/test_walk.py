@@ -197,11 +197,7 @@ def copy_tree(root, *patches):
 
 
 def free_port():
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
+    return helpers.free_port()
 
 
 def script(path, text):
@@ -209,10 +205,19 @@ def script(path, text):
     return path
 
 
+SCENES = []  # every Scene made; stop_scenes() ends what their `up` left, for a control run cut short by helpers.FirstFail
+
+
+def stop_scenes():
+    while SCENES:
+        SCENES.pop().stop()
+
+
 class Scene:
     """A toy repo with its configuration, an app (`up.py`/`down.py` in the repo) and the fakes on the only PATH."""
 
     def __init__(self, ab=True, prefix="", container=False, url_tpl=None, limits=None, app=True, firefox=True, fake_up=None):
+        SCENES.append(self)
         self.port = free_port()
         self.pidfile = None
         self.url = "http://127.0.0.1:%d" % self.port
@@ -245,7 +250,8 @@ class Scene:
         helpers.write(self.state, "meminfo", "MemAvailable: %d kB\n" % (64 * 1024 * 1024))
         self.env = {"PATH": self.bin, "FAKE_LOG": self.log, "FAKE_DOCKER": self.docker, "FWX_MEMINFO": meminfo,
                     "HOME": self.home, "PLAYWRIGHT_BROWSERS_PATH": self.browsers, "FWX_FACTORY_CONTAINER": "",
-                    "FWX_WALK_OWNER_PID": str(os.getpid())}
+                    "FWX_WALK_OWNER_PID": str(os.getpid()),
+                    "FWX_WALK_POLL_S": "0.05"}  # the cases are about what the walk does, not about how long it pauses between two looks (case_poll)
         self.started = []
 
     def fake(self, name):
@@ -283,6 +289,8 @@ class Scene:
                     os.kill(int(p), 15)
                 except OSError:
                     pass
+            if os.path.exists(pf):
+                os.remove(pf)  # a second stop() (stop_scenes) must not signal a pid the system has given to something else
 
 
 def obj(text):
@@ -2048,15 +2056,58 @@ def case_check_screens(R, S):
         sc.stop()
 
 
+SLOWUP = """import os, subprocess, sys
+port, pidfile = int(sys.argv[1]), sys.argv[2]
+here = os.path.dirname(os.path.abspath(__file__))
+code = "import runpy, sys, time; time.sleep(1); sys.argv = ['http.server', %r, '--bind', '127.0.0.1']; runpy.run_module('http.server', run_name='__main__')" % str(port)
+p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True, cwd=here)
+open(pidfile, "a").write(str(p.pid) + "\\n")
+"""
+
+
+def case_poll(R, S):
+    """FWX_WALK_POLL_S is the pause between two looks at the app (default 0.5 s). An app that answers a second after `up` returned is
+    looked at at once, not yet answering, and again after the pause: with a pause of 2 s `up` takes at least 2 s (a lower bound: a
+    slow machine cannot break it). Seen red on the base walk.py (no knob, the pause was a fixed 0.5 s):
+      FAIL: poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so up took at least 2 s: took 1.7 s
+      FAIL: poll: the module reads FWX_WALK_POLL_S: unset: got "AttributeError: module 'fwx.commands.walk' has no attribute 'POLL_S'", want '0.5 0.5'"""
+    sc = Scene()
+    try:
+        helpers.write(sc.repo, "slowup.py", SLOWUP)
+        app = json.dumps({"up": "python3 slowup.py %d %s" % (sc.port, sc.pidfile), "run": "", "down": "python3 down.py %s" % sc.pidfile, "url": sc.url})
+        t0 = time.monotonic()
+        r, o = sc.up(R, "--app", app, env={"FWX_WALK_POLL_S": "2"})
+        took = time.monotonic() - t0
+        S.ok("poll: an app that answers a second after up: up armed", r.returncode == 0 and o and o.get("armed") is True, "rc %d: %s %s" % (r.returncode, r.stdout, r.stderr))
+        S.ok("poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so up took at least 2 s", took >= 1.9, "took %.1f s" % took)
+        if o:
+            sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        sc.stop()
+    # the module's own reading of the variable: unset 0.5, a number above 0 taken, anything else ignored
+    probe = "import sys; sys.path.insert(0, %r); from fwx.commands import walk; print(walk.POLL_S, walk.SETTLE_POLL_S)" % os.path.join(R.root, "lib")
+    for label, value, want in (("unset", None, "0.5 0.5"), ("0.05", "0.05", "0.05 0.05"), ("not a number", "abc", "0.5 0.5"), ("zero", "0", "0.5 0.5"),
+                               ("negative", "-1", "0.5 0.5"), ("a minute and more", "61", "0.5 0.5")):
+        e = helpers.clean_env(**({"FWX_WALK_POLL_S": value} if value else {}))
+        if value is None:
+            e.pop("FWX_WALK_POLL_S", None)
+        r = subprocess.run([PY, "-c", probe], env=e, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        got = r.stdout.strip() if r.returncode == 0 else (r.stderr.strip().splitlines() or [""])[-1]
+        S.eq("poll: the module reads FWX_WALK_POLL_S: %s" % label, got, want)
+
+
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
-         case_arm_control_launch_path, case_check_screens]
+         case_arm_control_launch_path, case_check_screens, case_poll]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
 # has gone is an error, never a silent pass. The first eleven are the unit's controls, in its order.
 MUTANTS = [
+    ("poll: the wait for the app ignores FWX_WALK_POLL_S", case_poll, "        time.sleep(POLL_S)\n    return False", "        time.sleep(0.5)\n    return False",
+     "poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s"),
+    ("poll: a bad value is taken", case_poll, "    return v if 0 < v <= 60 else 0.5", "    return v", "poll: the module reads FWX_WALK_POLL_S: zero"),
     ("1 url guard", case_url_guard, 'if a["url"] and not local_host(a["url"]):', "if False:", "url guard: up with https://app.example.test: exit: got 1, want 2"),
     ("2 probe", case_probe, 'if a["url"] and answering(a["url"], a["run"], repo):', "if False:", "probe: a server already answering: exit: got 1, want 2"),
     ("2 pre-up asked from the host", case_run_prefix, 'if a["url"] and answering(a["url"], a["run"], repo):', 'if a["url"] and answering(a["url"]):',
@@ -2272,13 +2323,14 @@ if __name__ == "__main__":
     for case in CASES:
         guarded(case, real, s)
     for name, case, old, new, needle in MUTANTS:
-        m = helpers.Suite()
+        m = helpers.FirstFail(lambda f, needle=needle: needle in f)  # the control reads one FAIL: the case stops at it
         try:
             tree = copy_tree(ROOT, (W, old, new))
         except (AssertionError, OSError) as e:
             s.ok("control %s: built" % name, False, str(e))
             continue
-        guarded(case, runner(tree), m)
+        m.run(guarded, case, runner(tree), m)
+        stop_scenes()
         s.ok("control %s: the case fails" % name, bool(m.fails), "the mutant passed all %d checks" % m.checks)
         s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in m.fails),
              "FAILs: %s" % "; ".join(f[:140] for f in m.fails[:3]))
