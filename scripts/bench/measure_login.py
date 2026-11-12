@@ -11,8 +11,9 @@ toy store in tests) and a run says so on stderr. It is read here, not with forge
 failure into an empty store and the error must say which one it was.
 
 What the harness does with the value. It never prints it, logs it, writes it to a result file of its own (run.json, result.json,
-cells.tsv) or puts it on a command line, and the text it stores from a session (stream, stderr, hook log, transcripts) is written as a new
-file through `redact_text` / `write_redacted`, the value replaced by PLACEHOLDER; no redaction pass opens, rewrites or decompresses a
+cells.tsv) or puts it on a command line, and the text it stores from a session (stream, stderr, hook log, transcripts) and every record that holds text from
+outside the harness (result.json, run.json, cells.tsv: a check's output, an error string, a version line) is written as a new
+file through `redact_text` / `write_redacted` / `store_json`, the value replaced by PLACEHOLDER; no redaction pass opens, rewrites or decompresses a
 file the agent wrote. The limit: the measured agent runs with the token in its environment, so a file it writes into its work directory can
 hold it, and the run keeps those files as they are. Treat a run directory as private and do not share one without checking it.
 """
@@ -173,14 +174,24 @@ def write_redacted(path, text, tok):
     write_atomic(path, redact_text(text, tok).encode("utf-8", "surrogateescape"))
 
 
+def store_json(path, obj, tok, indent=1, newline=False):
+    """Stores `obj` as JSON at `path` as a new file after the whole text went through `redact_text`, and returns the object read back
+    from that text: what the harness stores, prints or aggregates from it is the redacted one. Used for every record that holds text from
+    outside the harness (a check's output, an error string, a version line), so no field is picked out one by one."""
+    text = redact_text(json.dumps(obj, indent=indent), tok)
+    back = json.loads(text)
+    write_atomic(path, (text + ("\n" if newline else "")).encode("utf-8"))
+    return back
+
+
 def copy_redacted(src, dst, tok):
     """Stores the regular file `src` (text the harness keeps: a transcript, the hook log) at `dst` as a new file with the token replaced.
     A link or a special file is not opened: LoginError. A file that cannot be copied leaves nothing under `dst`."""
     try:
         if not stat.S_ISREG(os.lstat(src).st_mode):
-            raise LoginError("cannot store %s: not a regular file" % src)
+            raise LoginError("cannot store %s: not a regular file" % os.path.basename(src))
         with open(src, "rb") as fh:
             data = fh.read()
         write_atomic(dst, redact_bytes(data, tok))
     except OSError as e:
-        raise LoginError("cannot store %s as %s: %s" % (src, dst, e.strerror or type(e).__name__))
+        raise LoginError("cannot store %s: %s" % (os.path.basename(src), e.strerror or type(e).__name__))

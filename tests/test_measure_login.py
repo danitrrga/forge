@@ -22,6 +22,9 @@ files are kept as they are). Cases, each seen failing on the code before it:
       token (skill_bench's `.gz` too, with and without --keep-work, on the timeout path too); the file the agent wrote itself is untouched
       (a hard link outside the run too), a FIFO in the work dir hangs nothing, a FIFO or link among the transcripts is never opened. A
       transcript that cannot be stored leaves nothing under its name. Control: with the redaction switched off the same runs hold the token.
+  (d2) text from outside the harness that reaches what it stores or prints: a check that prints a work file holding the token, an oracle
+      error with it, `claude --version`, an error naming a file: result.json, run.json, cells.tsv and the printed lines hold the
+      placeholder; the same runs with the redaction switched off hold the token.
   (e) with HOME on a toy dir whose `.claude/.credentials.json` exists, nothing in the script's process opens, links, copies or lists
       anything under that `.claude`; the sandbox command of skill_bench never binds it.
   (f) skill_bench jobs have a config dir of their own: what the first job writes there (settings, a marker) is not seen by the second.
@@ -79,7 +82,7 @@ FAKE = r'''#!%(py)s
 import json, os, re, sys, time
 a = sys.argv[1:]
 if a and a[0] == "--version":
-    print("9.9.9 (Fake Claude)")
+    print("9.9.9 (Fake Claude)" + (" " + json.load(open(os.environ["FORGE_SECRETS_FILE"]))["FORGE_MEASURE_OAUTH_TOKEN"] if os.environ.get("VERSION_LEAK") else ""))
     sys.exit(0)
 cfg = os.environ.get("CLAUDE_CONFIG_DIR", "")
 cred = os.path.join(cfg, ".credentials.json")
@@ -110,7 +113,7 @@ if os.environ.get("LEAK"):   # an agent that runs `env`: the token on stdout and
         os.makedirs(d, exist_ok=True)
         open(os.path.join(d, a[a.index("--session-id") + 1] + ".jsonl"), "w").write(json.dumps({"type": "user", "text": "env: " + tok}) + "\n")
         if os.environ.get("TRANSCRIPT_FIFO"):
-            os.mkfifo(os.path.join(d, "x.fifo"))
+            os.mkfifo(os.path.join(d, "x-" + tok + ".fifo"))
         if os.environ.get("TRANSCRIPT_LINK"):
             os.symlink(os.environ["TRANSCRIPT_LINK"], os.path.join(d, "x.link"))
 if os.environ.get("DENY_REASON"):   # a classifier denial whose reason text holds the token: the hook log and the transcript carry it, and so would the evidence
@@ -179,15 +182,19 @@ runpy.run_path(script, run_name="__main__")
 ORACLE = "def check(repo, message):\n    return [{'id': 'x', 'passed': False, 'evidence': 'toy'}]\n"
 
 
-def toy_bench(tmp, n=2):
-    b = os.path.join(tmp, "bench")
+LEAKY = {"evidence": "def check(repo, message):\n    return [{'id': 'x', 'passed': False, 'evidence': open(repo + '/leak.txt').read()}]\n",
+         "crash": "def check(repo, message):\n    raise RuntimeError(open(repo + '/leak.txt').read().strip())\n"}
+
+
+def toy_bench(tmp, n=2, name="bench", oracles=None):
+    b = os.path.join(tmp, name)
     put(os.path.join(b, "concepts.json"), json.dumps({"logic.arith": {"field": "logic", "title": "arithmetic"}}))
     for i in range(n):
         d = os.path.join(b, "tasks", "t%d" % i)
         put(os.path.join(d, "task.json"), json.dumps({"id": "t%d" % i, "field": "logic", "concept": "logic.arith", "difficulty": 1, "prompt": "Fix it %d." % i,
                                                        "source": {"kind": "authored"}, "message_required": False}))
         put(os.path.join(d, "repo", "calc.py"), "x = 1\n")
-        put(os.path.join(d, "oracle.py"), ORACLE)
+        put(os.path.join(d, "oracle.py"), LEAKY[oracles[i]] if oracles else ORACLE)
     return b
 
 
@@ -262,6 +269,7 @@ def main():
     store_empty = os.path.join(tmp, "store-empty.json")
     put(store_empty, json.dumps({KEY: "  "}))
     bench = toy_bench(tmp)
+    leaky_bench = toy_bench(tmp, name="bench-leaky", oracles=["evidence", "crash"])   # a check that prints a work file; an oracle that errors with its text
     counter = [0]
 
     def env_for(store, log, **extra):
@@ -276,7 +284,7 @@ def main():
         e.update(extra)
         return e
 
-    def run(script, which, store, extra_env=None, pre=None, wrapper=None, keep=False, noredact=False, more=(), tasks="t0", workers="1", actions="V1"):
+    def run(script, which, store, extra_env=None, pre=None, wrapper=None, keep=False, noredact=False, more=(), tasks="t0", workers="1", actions="V1", bench_dir=None):
         """Runs one session's worth of `which` (auto|skill) on the stand-in; returns (rc, text, log rows, out dir, audit seen)."""
         counter[0] += 1
         out = os.path.join(tmp, "out-%d" % counter[0])
@@ -288,7 +296,7 @@ def main():
             args = ["run", "--actions", actions, "--contexts", "main-asked", "--claude-bin", fake, "--out", out, "--guard-cmd", "none", "--workers", "1"]
             args += ["--keep-world"] if keep else []
         else:
-            args = ["run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", out, "--k", "1", "--tasks", tasks, "--arm", "none",
+            args = ["run", "--bench", bench_dir or bench, "--claude-bin", fake, "--sandbox", "none", "--out", out, "--k", "1", "--tasks", tasks, "--arm", "none",
                     "--workers", workers]
             args += ["--keep-work"] if keep else []
         args += list(more)
@@ -417,6 +425,44 @@ def main():
          ("denied/classifier" in tsv, PLACEHOLDER in tsv), (True, True))
     want("auto_mode, a denial reason holding the token: nothing the run stores holds it", holding(stored_text(out), TOKEN), [])
     drop_worlds()
+
+    # text that comes from outside the harness and reaches what it writes and prints: a check that prints a work file the agent wrote the
+    # token into, an oracle that errors with it (result.json, the line printed per job), `claude --version` (run.json), an error that names
+    # a file called after it (cells.tsv, the summary). All of it passes through one redaction step before it is stored or printed.
+    for noredact in (False, True):
+        tag = "redaction %s" % ("off (control)" if noredact else "on")
+        code, text, rows, out, _ = run(SKILL, "skill", store_ok, extra_env={"LEAK": "1", "VERSION_LEAK": "1"}, tasks="t0,t1", bench_dir=leaky_bench,
+                                       noredact=noredact)
+        mine = holding(stored_text(out), TOKEN)
+        names = sorted(os.path.relpath(h, out) for h in mine)
+        res_files = sorted(os.path.join("t%d" % i, "none", "1", "result.json") for i in (0, 1))
+        if noredact:   # control: the same runs, the same scan, the new step switched off: result.json, run.json and the printed line hold it
+            want("skill_bench, %s: result.json of the check and of the oracle error, and run.json, hold the token" % tag,
+                 [n for n in names if n.endswith("result.json") or n == "run.json"], sorted(res_files + ["run.json"]))
+            want("skill_bench, %s: the line printed per job holds the token" % tag, TOKEN in text, True)
+        else:
+            want("skill_bench, %s: nothing the run stores holds the token" % tag, names, [])
+            want("skill_bench, %s: nothing printed holds the token" % tag, TOKEN in text, False)
+            marked = sorted(os.path.relpath(h, out) for h in holding(stored_text(out), PLACEHOLDER))
+            want("skill_bench, %s: the placeholder is in both result.json files and in run.json" % tag,
+                 [m for m in marked if m.endswith("result.json") or m == "run.json"], sorted(res_files + ["run.json"]))
+            reasons = [json.load(open(os.path.join(out, f))) for f in res_files]
+            want("skill_bench, %s: the check's evidence and the oracle's error say what they said, redacted" % tag,
+                 (PLACEHOLDER in json.dumps(reasons[0]["checks"]), "oracle crashed" in reasons[1]["invalid_reason"], PLACEHOLDER in reasons[1]["invalid_reason"]),
+                 (True, True, True))
+    for noredact in (False, True):
+        tag = "redaction %s" % ("off (control)" if noredact else "on")
+        code, text, rows, out, _ = run(AUTO, "auto", store_ok, extra_env={"LEAK": "1", "VERSION_LEAK": "1", "TRANSCRIPT_FIFO": link_target}, noredact=noredact)
+        mine = [os.path.relpath(h, out) for h in holding(stored_text(out), TOKEN)]
+        if noredact:
+            want("auto_mode, %s: cells.tsv and run.json hold the token (a version line, an error naming a file)" % tag,
+                 sorted(n for n in mine if n in ("cells.tsv", "run.json")), ["cells.tsv", "run.json"])
+        else:
+            want("auto_mode, %s: cells.tsv, run.json and the printed summary do not hold the token" % tag,
+                 ([n for n in mine if n in ("cells.tsv", "run.json")], TOKEN in text), ([], False))
+            want("auto_mode, %s: the cell reports its harness error, with the placeholder where the name was" % tag,
+                 ("harness error" in open(os.path.join(out, "cells.tsv")).read(), PLACEHOLDER in open(os.path.join(out, "cells.tsv")).read()), (True, True))
+        drop_worlds()
 
     # (f) skill_bench jobs have a config dir of their own: job 1 writes a settings file and a marker there, job 2 must not see them
     for workers in ("1", "2"):

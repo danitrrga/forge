@@ -23,8 +23,8 @@ written: every run is on a temp copy. Exit 1 when anything above fails.
 CLAUDE.md, .claude/settings.json, agents, ...) copied over it before the start commit, the arm's skill directories mounted under
 .claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills, CLAUDE.md or credentials file; the login is the long-lived
 token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without a usable key refuses to start; each job has a config
-dir of its own, and the transcript and stderr the run stores have the token replaced by a placeholder, while files the agent wrote into its
-work dir are kept as they are) and
+dir of its own, and the transcript, the stderr and the result records the run stores have the token replaced by a placeholder, while files
+the agent wrote into its work dir are kept as they are) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
 INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
@@ -429,9 +429,7 @@ def write_manifest(a, tasks, arms):
         old["invocations"] = old.get("invocations", 1) + 1
         old["cli_versions"] = sorted(set(old.get("cli_versions", [old.get("cli_version")])) | {ver})
         man = old
-    with open(path, "w") as fh:
-        json.dump(man, fh, indent=1)
-        fh.write("\n")
+    measure_login.store_json(path, man, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"), newline=True)   # cli_version is the output of the CLI
 
 
 def is_skill_dir(d):
@@ -584,9 +582,7 @@ def do_job(job, a):
         res = {"task": task, "arm": arm, "trial": trial, "invalid": True, "passed": None, "started": time.time(),
                "invalid_reason": "runner error: %s: %s" % (type(e).__name__, str(e)[:160]), "field": None, "concept": None,
                "skill_called": False, "tokens": 0, "cost_usd": None, "duration_s": 0, "checks": []}
-        with open(os.path.join(base, "result.json"), "w") as fh:
-            json.dump(res, fh, indent=1)
-        return res
+        return measure_login.store_json(os.path.join(base, "result.json"), res, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
 
 
 def _do_job(job, a):
@@ -599,9 +595,7 @@ def _do_job(job, a):
     if err:
         res = {"task": task, "arm": arm, "trial": trial, "invalid": True, "passed": None, "invalid_reason": err, "started": time.time(),
                "field": None, "concept": None, "skill_called": False, "tokens": 0, "cost_usd": None, "duration_s": 0, "checks": []}
-        with open(os.path.join(base, "result.json"), "w") as fh:
-            json.dump(res, fh, indent=1)
-        return res
+        return measure_login.store_json(os.path.join(base, "result.json"), res, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
     skills = [d for d in paths if is_skill_dir(d)]
     overlays = [d for d in paths if not is_skill_dir(d)]
     for od in overlays:   # the arm's config is part of the start state, like a project's tracked CLAUDE.md: committed below, not untracked
@@ -659,8 +653,7 @@ def _do_job(job, a):
             res.update(invalid=True, passed=None, invalid_reason=why)
         else:
             res.update(checks=checks, passed=bool(checks) and all(c["passed"] for c in checks))
-    with open(os.path.join(base, "result.json"), "w") as fh:
-        json.dump(res, fh, indent=1)
+    res = measure_login.store_json(os.path.join(base, "result.json"), res, tok)   # checks[].evidence and invalid_reason come from outside the harness
     if not a.keep_work:   # space: the scored working copy and the job's config dir go
         shutil.rmtree(work, ignore_errors=True)
         shutil.rmtree(home, ignore_errors=True)

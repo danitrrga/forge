@@ -13,7 +13,7 @@ and a settings file of its own: hooks PreToolUse, PostToolUse, PostToolUseFailur
 `deny Bash(probe-deny-control)`, FORGE_CONSENT=unattended (the consent hook, when there is one, blocks instead of opening a window),
 and the rules of --allow-from. The config dir is a private one (no user hooks, skills, plugins or memory, and no credentials file: the session logs in with the
 long-lived token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py; a run without a usable key refuses to start; the stream, the
-stderr, the hook log and the transcripts the run stores have the token replaced by a placeholder, while a world kept with --keep-world and
+stderr, the hook log, the transcripts, cells.tsv and run.json the run stores have the token replaced by a placeholder, while a world kept with --keep-world and
 what the agent wrote into it are kept as they are).
 Flavor `forge` copies forge's CLAUDE.md and CLAUDE.local.md into the repo (the classifier reads them), `plain` does not.
 Contexts: main-asked (the message asks for the command), main-step (it is step 1 of a STEPS.md, as in a skill), agent (a subagent of the
@@ -517,7 +517,7 @@ def run_cell(cell, a, out, home, world_base):
     row["duration_s"] = round(time.time() - t0, 1)
     if not a.keep_world:
         shutil.rmtree(os.path.join(world_base, cid), ignore_errors=True)
-    return row
+    return json.loads(measure_login.redact_text(json.dumps(row), tok))   # evidence and error strings come from outside the harness
 
 
 # ------------------------------------------------------------------------------------------------------------ run
@@ -646,8 +646,7 @@ def cmd_run(a):
             w.writerow([str(r.get(c, "")).replace("\t", " ").replace("\n", " ") for c in CELL_COLUMNS])
     costs = [r["cost_usd"] for r in rows if isinstance(r["cost_usd"], (int, float))]
     man.update(cells_run=len(rows), cost_usd=round(sum(costs), 4), finished=time.strftime("%Y-%m-%dT%H:%M:%S"))
-    with open(os.path.join(out, "run.json"), "w", encoding="utf-8") as fh:
-        json.dump(man, fh, indent=1)
+    measure_login.store_json(os.path.join(out, "run.json"), man, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))   # cli_version is the output of the CLI
     if not a.keep_world:
         shutil.rmtree(world_base, ignore_errors=True)
     print("\n".join(summarise(rows, {x["id"]: x["expect"] for x in actions})))
