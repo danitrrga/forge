@@ -45,7 +45,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size,
       font-weight and rendered box (width and height in whole pixels), runs the plant on the page, reads them again (both readings go to
       control.json `readback`, the boxes under `box`) and closes the session. No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default
-      30): `target not found`; a box that changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels (default 1) in both width and height:
+      30; the pause between two looks is `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app): `target not found`; a box that changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels (default 1) in both width and height:
       `no visible change`, whatever the plant did to the font (the owner's rule: what moves no layout is not worth a walker's attention).
       Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and no control.json is left.
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
@@ -141,6 +141,20 @@ PW_SINK = "127.0.0.1:1"  # Firefox's proxy for every host but the app's: port 1 
 UP_TIMEOUT_S = 900
 WAIT_URL_S = int(os.environ.get("FWX_WALK_WAIT_S") or 120)
 DRAIN_S = 3  # how long `down` waits for processes to exit after the close
+
+
+def _poll_seconds():
+    """How long the waits for the app (`wait_for`, `settle`, the control's target) pause between two looks: 0.5 s. FWX_WALK_POLL_S
+    shortens it (the suites run it at 0.05, as a wait of a few looks is not what they test); a value that is not a number above 0 and up to 60 is
+    ignored, so a typo never turns a wait into a busy loop or a crash."""
+    try:
+        v = float(os.environ.get("FWX_WALK_POLL_S") or 0.5)
+    except ValueError:
+        return 0.5
+    return v if 0 < v <= 60 else 0.5
+
+
+POLL_S = _poll_seconds()
 STALE_H = 12
 WEBP = ("fps=12,scale=640:-1", "60")  # 640 px, 12 fps, quality 60: 13 KB for the 5 s clip of U1
 IMAGES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
@@ -379,7 +393,7 @@ def wait_for(url, run="", cwd=None):
     while time.monotonic() < end:
         if answering(url, run, cwd):
             return True
-        time.sleep(0.5)
+        time.sleep(POLL_S)
     return False
 
 
@@ -1468,7 +1482,7 @@ def cmd_sweep(argv):
 # ------------------------------------------------------------------------------------------------------------------ selftest
 CHECKS = ("up", "app answers", "snapshot", "capture", "down")
 SETTLE_S = 30  # how long the snapshot check waits for the app to draw (`app_run.ready_timeout_s`)
-SETTLE_POLL_S = 0.5
+SETTLE_POLL_S = POLL_S
 PNG_SIG = b"\x89PNG\r\n\x1a\n"
 PROBE = """import sys, urllib.error, urllib.request
 LOCAL = ("localhost", "127.0.0.1", "::1")

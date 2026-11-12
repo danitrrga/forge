@@ -886,8 +886,8 @@ def check_controls(s):
             continue
         mdir = helpers.mkdtemp("fwx-uwmut-")
         try:
-            sub = helpers.Suite()
-            check_all(helpers.write(mdir, "ui-walk.js", m), sub)
+            sub = helpers.FirstFail(lambda f, want=want: f.startswith(want))  # the control reads one FAIL: the run stops at it
+            sub.run(check_all, helpers.write(mdir, "ui-walk.js", m), sub)
         finally:
             helpers.remove(mdir)
         s.ok("control %s: red with %r" % (name, want), any(f.startswith(want) for f in sub.fails), "got %r" % (sub.fails[:2],))
