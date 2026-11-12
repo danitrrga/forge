@@ -10,24 +10,23 @@ Lives next to its two callers, so each reaches it as a sibling import with no pa
 toy store in tests) and a run says so on stderr. It is read here, not with forge's `lib.read_json`, because that reader turns every
 failure into an empty store and the error must say which one it was.
 
-What is guaranteed and what is not. The harness never prints the value, never logs it, never writes it to a run file of its own
-(run.json, cells.tsv, result.json) and never puts it on a command line. The agent under test is another matter: the child's
-environment holds the token, so an agent that runs `env` puts it into its own output. Every file a session produces that the run keeps
-(the stream, the stderr file, the hook log, the session transcripts, the working copy, the config dir) is therefore scanned after the
-session and at the end of the run, and the exact value is replaced by PLACEHOLDER (`redact_tree`, also inside `.gz` files; the form
-escaped for JSON too). NOT covered: a file the agent writes outside the run, a compressed file other than `.gz`, git objects, and the
-token sent over the network. A run directory is otherwise as private as the store: do not share one without looking.
+What the harness does with the value. It never prints it, logs it, writes it to a result file of its own (run.json, result.json,
+cells.tsv) or puts it on a command line, and the text it stores from a session (stream, stderr, hook log, transcripts) is written as a new
+file through `redact_text` / `write_redacted`, the value replaced by PLACEHOLDER; it never opens, rewrites or decompresses a file the
+agent produced. The limit: the measured agent runs with the token in its environment, so a file it writes into its work directory can
+hold it, and the run keeps those files as they are. Treat a run directory as private and do not share one without checking it.
 """
-import gzip
 import json
 import os
+import stat
 import sys
-import zlib
+import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 KEY = "FORGE_MEASURE_OAUTH_TOKEN"
 STORE_ENV = "FORGE_SECRETS_FILE"
 PLACEHOLDER = "[REDACTED: measurement token]"
+MIN_LEN, MAX_LEN = 20, 4096
 # Removed from the child's environment, the token variable last set from the store. Each group changes which credential or endpoint the
 # session would use, or exposes a login that is not the measurement one.
 DROPPED = (
@@ -35,8 +34,9 @@ DROPPED = (
     # by the store's value
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
     # cloud-provider credentials rank first "when CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX, or CLAUDE_CODE_USE_FOUNDRY is set":
-    # one of them in the owner's shell would turn a token run into a provider run
-    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+    # one of them in the owner's shell would turn a token run into a provider run; MANTLE and ANTHROPIC_AWS are provider switches of the
+    # same env-vars page (whether they outrank the token is not documented, they change the endpoint)
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS",
     # an endpoint of the owner's shell would receive the token
     "ANTHROPIC_BASE_URL",
     # CLAUDE_CODE_SIMPLE is bare mode without the flag: "OAuth tokens and keychain credentials are not read" (env-vars page)
@@ -90,9 +90,11 @@ def token(secrets_file=None):
     val = val.strip()
     if not val:
         _fail("the value of %s is empty" % KEY, path)
-    for i, ch in enumerate(val):
-        if ch.isspace() or not ch.isprintable():   # a control character, a lone surrogate or an inner space cannot be in a token
-            _fail("the value of %s has a character that cannot be in a token (control, space or surrogate) at position %d" % (KEY, i), path)
+    # a plausible shape and no more (no vendor prefix): too short a value would also match inside the run's own files, too long a one
+    # cannot be passed on a command's environment
+    if not (MIN_LEN <= len(val) <= MAX_LEN and val.isascii() and all(33 <= ord(ch) <= 126 for ch in val)):
+        _fail("the value of %s is not a plausible token (printable ASCII without spaces, %d to %d characters, this one has %d)"
+              % (KEY, MIN_LEN, MAX_LEN, len(val)), path)
     return val
 
 
@@ -100,7 +102,11 @@ def child_env(parent=None, secrets_file=None):
     """A copy of `parent` (default os.environ) for a measurement session: CLAUDE_CODE_OAUTH_TOKEN from the store, everything in DROPPED
     removed first, nothing else changed. LoginError when the store has no token (fail closed)."""
     tok = token(secrets_file)
-    env = {k: v for k, v in (os.environ if parent is None else parent).items() if k not in DROPPED}
+    src = os.environ if parent is None else parent
+    gone = sorted(k for k in DROPPED if k in src)
+    if gone:   # names only: an owner whose setup needs one of them must not get a run on the default endpoint without a word
+        print("measure_login: not passed to the session (set in this environment): %s" % ", ".join(gone), file=sys.stderr)
+    env = {k: v for k, v in src.items() if k not in DROPPED}
     env["CLAUDE_CODE_OAUTH_TOKEN"] = tok
     return env
 
@@ -126,65 +132,55 @@ def clean_config_dir(d):
 
 
 def _forms(tok):
-    """The byte strings that stand for the token in a file: as it is, and as JSON writes it when that differs."""
+    """The byte strings that stand for the token in text: as it is, and as JSON writes it when that differs (a `"` or `\\` in the value)."""
     out = [tok.encode("utf-8")]
     esc = json.dumps(tok)[1:-1].encode("utf-8")
     return out + ([esc] if esc != out[0] else [])
 
 
-def redact_text(text, tok):
-    """`text` with every occurrence of the token replaced by PLACEHOLDER (None and "" come back as ""). A no-op without a token."""
-    text = text or ""
-    if not tok:
-        return text
-    for f in _forms(tok):
-        text = text.replace(f.decode("utf-8"), PLACEHOLDER)
-    return text
-
-
-def _swap(data, tok):
-    for f in _forms(tok):
+def redact_bytes(data, tok):
+    """`data` with every occurrence of the token replaced by PLACEHOLDER. A no-op without a token."""
+    for f in (_forms(tok) if tok else ()):
         data = data.replace(f, PLACEHOLDER.encode("utf-8"))
     return data
 
 
-def redact_tree(root, tok):
-    """Replaces the token by PLACEHOLDER in every regular file under `root` (links not followed, `.git` skipped), `.gz` files through
-    their decompressed bytes. Returns the number of files changed. A file that cannot be read is named on stderr, never skipped silently."""
-    changed, unreadable = 0, []
-    if not tok or not os.path.isdir(root):
-        return 0
-    for r, dirs, files in os.walk(root):
-        dirs[:] = [d for d in dirs if d != ".git"]
-        for f in files:
-            p = os.path.join(r, f)
-            if os.path.islink(p):
-                continue
-            try:
-                with open(p, "rb") as fh:
-                    data = fh.read()
-                if f.endswith(".gz"):
-                    try:
-                        raw = gzip.decompress(data)
-                    except (OSError, EOFError, zlib.error):   # not gzip after all, or damaged: scanned as it is below
-                        raw = None
-                    if raw is not None:
-                        new = _swap(raw, tok)
-                        if new != raw:
-                            with open(p, "r+b") as fh:
-                                fh.write(gzip.compress(new))
-                                fh.truncate()
-                            changed += 1
-                        continue
-                new = _swap(data, tok)
-                if new != data:
-                    with open(p, "r+b") as fh:
-                        fh.write(new)
-                        fh.truncate()
-                    changed += 1
-            except OSError:
-                unreadable.append(p)
-    if unreadable:
-        print("measure_login: %d file(s) under %s could not be scanned for the token, e.g. %s" % (len(unreadable), root, unreadable[0]),
-              file=sys.stderr)
-    return changed
+def redact_text(text, tok):
+    """`text` with the token replaced by PLACEHOLDER (None comes back as ""). A no-op without a token."""
+    return redact_bytes((text or "").encode("utf-8", "surrogateescape"), tok).decode("utf-8", "surrogateescape")
+
+
+def write_atomic(path, data):
+    """Writes `data` (bytes) as a new file: to a temp name in the same directory, then renamed over `path`. Never an in-place edit; if
+    anything fails, or the process dies before the rename, nothing is under `path` that was not there before, and the temp file is
+    removed when the process lives to do it."""
+    fd, tmp = tempfile.mkstemp(prefix="." + os.path.basename(path) + ".", dir=os.path.dirname(path) or ".")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+        os.chmod(tmp, 0o644)
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def write_redacted(path, text, tok):
+    """Stores `text` (what a session printed) at `path`, the token replaced, as a new file (write_atomic)."""
+    write_atomic(path, redact_text(text, tok).encode("utf-8", "surrogateescape"))
+
+
+def copy_redacted(src, dst, tok):
+    """Stores the regular file `src` (text the harness keeps: a transcript, the hook log) at `dst` as a new file with the token replaced.
+    A link or a special file is not opened: LoginError. A file that cannot be copied leaves nothing under `dst`."""
+    try:
+        if not stat.S_ISREG(os.lstat(src).st_mode):
+            raise LoginError("cannot store %s: not a regular file" % src)
+        with open(src, "rb") as fh:
+            data = fh.read()
+        write_atomic(dst, redact_bytes(data, tok))
+    except OSError as e:
+        raise LoginError("cannot store %s as %s: %s" % (src, dst, e.strerror or type(e).__name__))

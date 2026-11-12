@@ -22,8 +22,9 @@ written: every run is on a temp copy. Exit 1 when anything above fails.
 `run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's config overlays (a dir without a SKILL.md:
 CLAUDE.md, .claude/settings.json, agents, ...) copied over it before the start commit, the arm's skill directories mounted under
 .claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills, CLAUDE.md or credentials file; the login is the long-lived
-token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without a usable key refuses to start; the harness replaces the
-token by a placeholder in every file the run keeps, an agent that printed its environment included, but not in a file it wrote outside the run) and
+token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without a usable key refuses to start; each job has a config
+dir of its own, and the transcript and stderr the run stores have the token replaced by a placeholder, while files the agent wrote into its
+work dir are kept as they are) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
 INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
@@ -490,8 +491,8 @@ def select_tasks(bench, selector):
 
 
 def agent_home(out):
-    """A CLAUDE_CONFIG_DIR with no hooks, skills, CLAUDE.md or login file: the session logs in with the measurement token
-    (measure_login), and a `.credentials.json` an earlier run left here is removed."""
+    """<out>/agent-home: a CLAUDE_CONFIG_DIR with no hooks, skills, CLAUDE.md or login file, made fresh for one job (`out` is the job's own
+    directory): the session logs in with the measurement token (measure_login), and a `.credentials.json` left here is removed."""
     d = os.path.join(out, "agent-home")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "settings.json"), "w") as fh:
@@ -571,6 +572,8 @@ def do_job(job, a):
     """One job, never fatal: whatever goes wrong inside it becomes an INVALID result, so one crash cannot end the whole run."""
     try:
         return _do_job(job, a)
+    except measure_login.LoginError:   # the job's config dir could not be prepared: the whole run ends, not one job
+        raise
     except Exception as e:   # noqa: BLE001
         task, arm, _, trial = job
         base = os.path.join(a.out, task, arm, str(trial))
@@ -613,7 +616,7 @@ def _do_job(job, a):
     prompt = meta["prompt"]
     if a.force_skill and skills:
         prompt = "Use the skill in .claude/skills/%s for this task.\n\n%s" % (os.path.basename(skills[0].rstrip("/")), prompt)
-    home = os.path.join(a.out, "agent-home")   # made, and cleaned of a login file, once by cmd_run before any job
+    home = agent_home(base)   # the job's own config dir: nothing a session writes there reaches another job
     tok = a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN")
     env = {k: v for k, v in a.login_env.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
     env["CLAUDE_CONFIG_DIR"] = home
@@ -629,12 +632,12 @@ def _do_job(job, a):
         timed_out = True
         os.killpg(p.pid, signal.SIGKILL)
         stdout, stderr = p.communicate()
-    stdout, stderr = measure_login.redact_text(stdout, tok), measure_login.redact_text(stderr, tok)   # an agent that ran `env` printed the token
-    measure_login.redact_tree(work, tok)   # ... and may have written it into a file of the working copy, which --keep-work keeps
-    with open(os.path.join(base, "agent.jsonl"), "w") as fh:
-        fh.write(stdout)
-    with open(os.path.join(base, "agent.err"), "w") as fh:
-        fh.write(stderr)
+    stdout = measure_login.redact_text(stdout, tok)   # an agent that ran `env` printed the token: the transcript is stored without it
+    if a.keep_work:
+        measure_login.write_atomic(os.path.join(base, "agent.jsonl"), stdout.encode("utf-8", "surrogateescape"))
+    else:   # space: kept gzipped (about a tenth of its size), compressed from the redacted text, never patched afterwards
+        measure_login.write_atomic(os.path.join(base, "agent.jsonl.gz"), gzip.compress(stdout.encode("utf-8", "surrogateescape")))
+    measure_login.write_redacted(os.path.join(base, "agent.err"), stderr, tok)
     m = parse_stream(stdout)
     msg = m["msg"]
     res = {"task": task, "field": meta.get("field"), "concept": meta.get("concept"), "arm": arm, "trial": trial,
@@ -655,13 +658,9 @@ def _do_job(job, a):
             res.update(checks=checks, passed=bool(checks) and all(c["passed"] for c in checks))
     with open(os.path.join(base, "result.json"), "w") as fh:
         json.dump(res, fh, indent=1)
-    if not a.keep_work:   # space: the scored working copy goes, the plain transcript is kept gzipped (about a tenth of its size)
+    if not a.keep_work:   # space: the scored working copy and the job's config dir go
         shutil.rmtree(work, ignore_errors=True)
-        plain = os.path.join(base, "agent.jsonl")
-        if os.path.exists(plain):
-            with open(plain, "rb") as src, gzip.open(plain + ".gz", "wb") as dst:
-                shutil.copyfileobj(src, dst)
-            os.remove(plain)
+        shutil.rmtree(home, ignore_errors=True)
     return res
 
 
@@ -696,20 +695,19 @@ def cmd_run(a):
     todo = [j for j in jobs if not finished(os.path.join(a.out, j[0], j[1], str(j[3]), "result.json"))]
     print("%d to run, %d already done (%d tasks x %d arms x k=%d)" % (len(todo), len(jobs) - len(todo), len(tasks), len(arms), a.k))
     os.makedirs(a.out, exist_ok=True)
-    try:
-        agent_home(a.out)   # made once here, before any job: the workers share it, and none cleans or rewrites it while a session runs
-    except measure_login.LoginError as e:
-        sys.exit("! " + str(e))
     write_manifest(a, tasks, arms)
     done = 0
+    ex = ThreadPoolExecutor(max_workers=a.workers)
     try:
-        with ThreadPoolExecutor(max_workers=a.workers) as ex:
-            for r in ex.map(lambda j: do_job(j, a), todo):
-                done += 1
-                print("  [%d/%d] %s %s #%d: %s" % (done, len(todo), r["task"], r["arm"], r["trial"],
-                                                  "INVALID " + r.get("invalid_reason", "") if r["invalid"] else ("pass" if r["passed"] else "fail")), flush=True)
-    finally:   # once every session is over: the whole run directory, however the run ended (a timeout, an error, an interrupt)
-        measure_login.redact_tree(a.out, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
+        for r in ex.map(lambda j: do_job(j, a), todo):
+            done += 1
+            print("  [%d/%d] %s %s #%d: %s" % (done, len(todo), r["task"], r["arm"], r["trial"],
+                                              "INVALID " + r.get("invalid_reason", "") if r["invalid"] else ("pass" if r["passed"] else "fail")), flush=True)
+    except measure_login.LoginError as e:   # a job's config dir could not be prepared: no job after it starts
+        ex.shutdown(wait=True, cancel_futures=True)
+        sys.exit("! " + str(e))
+    finally:
+        ex.shutdown(wait=True)
     print("results in %s" % a.out)
     return 0
 

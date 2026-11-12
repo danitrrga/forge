@@ -77,7 +77,7 @@ def toy_measure_store(tmp):
     `auto_mode.py run` on a stand-in `claude` starts: without the key those scripts refuse to start a session. Returns the path."""
     p = os.path.join(tmp, "toy-secrets.json")
     with open(p, "w") as fh:
-        json.dump({"FORGE_MEASURE_OAUTH_TOKEN": "tok-FAKE-toy-store"}, fh)
+        json.dump({"FORGE_MEASURE_OAUTH_TOKEN": "tok-FAKE-toy-store-0123456789"}, fh)
     os.environ["FORGE_SECRETS_FILE"] = p
     return p
 
