@@ -123,12 +123,16 @@ def _bound(cwd, session, phase):
     return {"subproject": subproject, "phase_dir": phase, "stage": stage, "reentry": stage == "discuss"}
 
 
-def _open_phases(root):
-    out = []
-    for sub in [None] + state.subprojects(root):
-        for p in state.open_phases(state.scope_root(root, sub)):
-            out.append({"dir": str(p), "subproject": sub, "stage": state.last_stage(p)})
-    return out
+def _open_phases(root, cwd=None):
+    """The open phases of `root`; in a protected project (documents live on the phase branches) a phase folder with no audit file is what
+    is left of one that moved, so it does not count, and with none left those of the worktrees are listed."""
+    wts = state.phase_worktrees(cwd)
+
+    def of(r):
+        return [{"dir": str(p), "subproject": sub, "stage": state.last_stage(p)}
+                for sub in [None] + state.subprojects(r) for p in state.open_phases(state.scope_root(r, sub))
+                if not wts or state.phase_paths(p)["audit"].is_file()]
+    return of(root) or [x for w in wts for x in of(w)]
 
 
 def build(cfg, cwd=None, session=None, phase=None, now=None):
@@ -139,7 +143,7 @@ def build(cfg, cwd=None, session=None, phase=None, now=None):
     return {"framework": True, "config": cfg["_source"], "project": proj["name"], "main_checkout": proj["main_checkout"],
             "ui": bool(proj.get("ui")), "verdict_command": proj.get("verdict_command"),
             "verdict_tool": (cfg.get("paths") or {}).get("verdict"), "factory_ui_bugs": bool(cfg["factory"]["ui_bugs"]),
-            "subprojects": state.subprojects(root), "bound": _bound(cwd, session, phase), "open_phases": _open_phases(root),
+            "subprojects": state.subprojects(root), "bound": _bound(cwd, session, phase), "open_phases": _open_phases(root, cwd),
             "models": {"researcher": {"small": m("researcher", "small"), "normal": m("researcher", "normal")},
                        "demo": {"normal": m("demo", "normal")}, "decisions": {"small": m("decisions", "small")}},
             "waiting": waiting(cfg, now)}

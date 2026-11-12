@@ -414,6 +414,8 @@ def _cited(folder, texts, w):
     for rel, text in texts.items():
         for old, new in replaced.items():
             if _DECISION.match(old) and re.search(r"\b%s\b" % re.escape(old), text):
+                for _ in replaced:  # a chain D1 <- D2 <- D3: name the row in force
+                    new = replaced.get(new, new)
                 w.append("%s: body: cites %s, superseded by %s" % (rel, old, new))
 
 

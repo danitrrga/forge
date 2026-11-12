@@ -18,6 +18,7 @@ config.ConfigError, whose message names the fix.
 Imports only the standard library and config: `fwx statusline` has to finish in under 100 ms.
 """
 import contextlib
+import filecmp
 import io
 import json
 import os
@@ -104,56 +105,141 @@ def plan_root(cwd=None):
     return Path(_protected_worktree(main, cwd) or main) / PLAN_DIR
 
 
-def _move_missing(src, dst):
-    """Move into `dst` every file of `src` that `dst` lacks, with its folder layout, then drop the folders it emptied."""
-    for here, _, files in os.walk(src):
+_DOC_EXT = (".md", ".tsv")
+_OTHER_WORK = re.compile(r"(?:^|/)((?:milestones/v\d+/phases/[^/]+)|(?:factory/[^/]+))/")  # a phase folder or a factory job
+_PHASE_REL = re.compile(r"(?:subprojects/[^/]+/)?milestones/v\d+/phases/[^/]+\Z")
+
+
+def _is_protected(cwd):
+    with contextlib.redirect_stderr(io.StringIO()):  # the missing-file line is for the commands that need the file
+        return config.load(cwd)["project"].get("default_branch_protected") is True
+
+
+def _documents(plan_dir, phase_rel):
+    """The documents under `plan_dir` (a `.fwx/` folder) as paths relative to it, with `/`: regular files, not links, named `*.md` or
+    `*.tsv`, with no name or folder starting with a dot; of the phase folders and factory jobs, only the one at `phase_rel`."""
+    out = []
+    for here, dirs, files in os.walk(plan_dir):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
         for f in files:
-            to = os.path.join(dst, os.path.relpath(here, src), f)
-            if not os.path.lexists(to):
-                os.makedirs(os.path.dirname(to), exist_ok=True)
-                shutil.move(os.path.join(here, f), to)
-    for here, _, _ in os.walk(src, topdown=False):
-        try:
-            os.rmdir(here)
-        except OSError:  # not empty: something stays
-            pass
+            p = os.path.join(here, f)
+            if f.startswith(".") or not f.endswith(_DOC_EXT) or os.path.islink(p) or not os.path.isfile(p):
+                continue
+            rel = os.path.relpath(p, plan_dir).replace(os.sep, "/")
+            m = _OTHER_WORK.search(rel)
+            if not m or rel[:m.end(1)] == phase_rel:
+                out.append(rel)
+    return sorted(out)
 
 
-def commit_plan(message, cwd=None):
-    """Commit `.fwx/` where its history is: (folder it was committed in, its branch, the short sha or None when nothing changed).
-    Refused with a StateError, and nothing written: `.fwx/` ignored by git (its history is on the data side), or a protected
-    default branch with `cwd` not in a linked worktree of another branch. Without the protection it is the main checkout. With
-    it, it is the worktree `cwd` is in, which first takes the files the main checkout holds and it lacks (the first phase: all of
-    them; a later one: the new phase's folder), so the phase branch carries the documents and the live copy is the worktree's."""
+def _phase_branch(audit):
+    """The branch of the last `stage` row of an audit file that names one (`... branch <name>`), or None."""
+    found = None
+    for row in read_rows(audit):
+        m = re.search(r"\bbranch (\S+)", row.get("detail", "")) if row.get("kind") == "stage" else None
+        found = m.group(1) if m else found
+    return found
+
+
+def commit_plan(message, cwd=None, phase=None, session=None):
+    """Commit the documents of one phase (and the root ones of `.fwx/`) where their history is: (folder it was committed in, its
+    branch, the short sha or None when nothing changed). The documents are `_documents`; nothing else under `.fwx/` is added, and the
+    phase is `phase`, else the session's. Refused with a StateError, and nothing moved: `.fwx/` ignored by git (its history is on
+    the data side); a protected default branch with `cwd` not in a linked worktree, on the default branch, on a detached HEAD or on a
+    branch other than the phase's; a document in both places with different text. Without the protection it is the main checkout.
+    With it, it is the worktree `cwd` is in, which first takes the documents the main checkout holds and it lacks, so the phase branch
+    carries them and the live copy is the worktree's. The move and the commit are one step: if the commit fails, the documents are put
+    back where they were."""
     cwd = os.getcwd() if cwd is None else cwd
     main = config.main_checkout(cwd)
     if _git(main, "check-ignore", "-q", PLAN_DIR + "/PROJECT.md").returncode == 0:
         raise StateError("%s/ is ignored by git (its history is on the data side): commit it with `forge commit -m MESSAGE %s` from %s"
                          % (PLAN_DIR, PLAN_DIR, main))
-    where = main
-    with contextlib.redirect_stderr(io.StringIO()):  # the missing-file line is for the commands that need the file
-        project = config.load(cwd)["project"]
-    if project.get("default_branch_protected") is True:
+    if phase is None:
+        phase = resolve(cwd, session)["phase_dir"]
+        if phase is None:
+            raise StateError("which phase? none is bound to this session and open: pass --phase PHASE_DIR (or bind one with `fwx state use PHASE_DIR`)")
+    parts = os.path.abspath(str(phase)).replace(os.sep, "/").rsplit("/" + PLAN_DIR + "/", 1)
+    phase_rel = parts[1] if len(parts) == 2 else ""
+    if not _PHASE_REL.match(phase_rel):
+        raise StateError("%s is not a phase folder of %s/" % (phase, PLAN_DIR))
+    where, main_plan, protected = main, os.path.join(main, PLAN_DIR), _is_protected(cwd)
+    if protected:
         where = _git(cwd, "rev-parse", "--show-toplevel").stdout.strip()
         if not where or os.path.realpath(where) == os.path.realpath(main):
             raise StateError("the default branch is protected: run it from the phase's worktree, where %s/ is committed on the phase branch" % PLAN_DIR)
-        if _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == project.get("default_branch"):
+        on = _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        if on == "HEAD":
+            raise StateError("%s is on a detached HEAD: check out the phase's branch there first" % where)
+        if on == config.load(cwd)["project"].get("default_branch"):
             raise StateError("%s is on the default branch, which is protected: run it from the phase's worktree" % where)
-        if os.path.isdir(os.path.join(main, PLAN_DIR)):
+        audits = [os.path.join(r, PLAN_DIR, phase_rel, "audit.tsv") for r in (where, main)]
+        want = _phase_branch(next((a for a in audits if os.path.isfile(a)), audits[0]))
+        if want and want != on:
+            raise StateError("%s is on branch %s, not the phase's branch %s: check it out there first" % (where, on, want))
+    where_plan = os.path.join(where, PLAN_DIR)
+    movable = _documents(main_plan, phase_rel) if protected and os.path.isdir(main_plan) else []
+    clash = [r for r in movable if os.path.lexists(os.path.join(where_plan, r)) and not _same(os.path.join(main_plan, r), os.path.join(where_plan, r))]
+    if clash:
+        raise StateError("%s exist(s) in %s and in %s with different text: compare them, remove one, and run it again"
+                         % (", ".join(clash), main_plan, where_plan))
+    moved, made = [], []
+    files = []
+
+    def undo(why):
+        if files:
+            _git(where, "reset", "-q", "--", *files)
+        for r in reversed(moved):
             try:
-                _move_missing(os.path.join(main, PLAN_DIR), os.path.join(where, PLAN_DIR))
-            except OSError as e:  # some files may have moved: running it again takes the rest
-                raise StateError("cannot move %s/ from %s into %s (%s): run it again once that is fixed" % (PLAN_DIR, main, where, e))
+                shutil.move(os.path.join(where_plan, r), os.path.join(main_plan, r))
+            except OSError as e:
+                raise StateError("%s; and %s could not be put back (%s): it is in %s" % (why, r, e, where_plan))
+        for d in sorted(made, key=len, reverse=True):
+            try:
+                os.rmdir(d)
+            except OSError:
+                pass
+        raise StateError("%s; the documents are %s in %s" % (why, "back" if moved else "still", main_plan))
+
+    try:
+        for r in movable:
+            dst = os.path.join(where_plan, r)
+            if os.path.lexists(dst):
+                continue  # the same text: the main copy goes once the commit is made
+            d = os.path.dirname(dst)
+            while not os.path.isdir(d):
+                made.append(d)
+                d = os.path.dirname(d)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.move(os.path.join(main_plan, r), dst)
+            moved.append(r)
+    except OSError as e:
+        undo("cannot move %s/ from %s into %s (%s)" % (PLAN_DIR, main, where, e))
+    files = [PLAN_DIR + "/" + r for r in _documents(where_plan, phase_rel)]
     branch = _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    r = _git(where, "add", "--", PLAN_DIR)
-    if r.returncode:
-        raise StateError("git add %s failed in %s: %s" % (PLAN_DIR, where, (r.stderr or r.stdout).strip()))
-    if not _git(where, "status", "--porcelain", "--", PLAN_DIR).stdout.strip():
-        return where, branch, None
-    r = _git(where, "commit", "-q", "-m", message, "--", PLAN_DIR)
-    if r.returncode:
-        raise StateError("git commit failed in %s: %s" % (where, (r.stderr or r.stdout).strip()))
-    return where, branch, _git(where, "rev-parse", "--short", "HEAD").stdout.strip()
+    sha = None
+    if files:
+        r = _git(where, "add", "--", *files)
+        if r.returncode:
+            undo("git add %s failed in %s: %s" % (PLAN_DIR, where, (r.stderr or r.stdout).strip()))
+        if _git(where, "diff", "--cached", "--quiet", "--", *files).returncode:
+            r = _git(where, "commit", "-q", "-m", message, "--", *files)
+            if r.returncode:
+                undo("git commit failed in %s: %s" % (where, (r.stderr or r.stdout).strip()))
+            sha = _git(where, "rev-parse", "--short", "HEAD").stdout.strip()
+    for r in movable:  # committed: the copies the main checkout still holds are the same text
+        if os.path.isfile(os.path.join(main_plan, r)) and r not in moved:
+            os.remove(os.path.join(main_plan, r))
+    for here, _, _ in os.walk(main_plan, topdown=False):
+        try:
+            os.rmdir(here)
+        except OSError:  # not empty: something stays
+            pass
+    return where, branch, sha
+
+
+def _same(a, b):
+    return os.path.isfile(a) and os.path.isfile(b) and not os.path.islink(b) and filecmp.cmp(a, b, shallow=False)
 
 
 def subprojects(root):
@@ -299,28 +385,70 @@ def _put_session(d, sid, subproject, stored):
             os.remove(tmp)
 
 
-def resolve(cwd=None, session=None):
-    """Where the session is: `{main_checkout, plan_root, has_subprojects, subproject, milestone, phase_dir, subphases,
-    candidates, paths}`, every path a string, nothing written. The subproject and the phase come from the session file;
-    with no phase bound (or a bound one that is gone) the only open phase of the scope's current milestone is the
-    phase, and with several or none `phase_dir` is None and `candidates` lists the open ones. Binding is the caller's."""
-    main = config.main_checkout(cwd)
-    root = plan_root(cwd)
-    bound = read_session(cwd, session)
+def _resolve_in(root, bound):
+    """(subproject, milestone, phase, candidates, bound_hit) of the `.fwx/` folder `root`: the phase the session is bound to when it is
+    there, else the only open one."""
     subproject = bound["subproject"] if bound else None
     scope = scope_root(root, subproject)
     candidates = [str(p) for p in open_phases(scope)]
-    phase, milestone = None, current_milestone(scope)
+    phase, milestone, hit = None, current_milestone(scope), False
     if bound and bound["phase_dir"]:
         p = os.path.join(str(root.parent), bound["phase_dir"])
         if os.path.isdir(p):
-            phase, milestone = p, os.path.basename(os.path.dirname(os.path.dirname(p)))
+            phase, milestone, hit = p, os.path.basename(os.path.dirname(os.path.dirname(p))), True
     if phase is None and len(candidates) == 1:
         phase = candidates[0]
+    return subproject, milestone, phase, candidates, hit
+
+
+def phase_worktrees(cwd=None):
+    """The `.fwx/` folders of the linked worktrees of a project whose default branch is protected: there the documents of a phase live
+    on its branch, so the main checkout may hold none. [] for any other project or when no worktree has a `.fwx/`."""
+    main = config.main_checkout(cwd)
+    try:
+        if not _is_protected(cwd):
+            return []
+    except config.ConfigError:
+        return []
+    listed = _git(os.getcwd() if cwd is None else cwd, "worktree", "list", "--porcelain").stdout.splitlines()
+    return [Path(l[9:]) / PLAN_DIR for l in listed if l.startswith("worktree ") and os.path.realpath(l[9:]) != os.path.realpath(main)
+            and os.path.isdir(os.path.join(l[9:], PLAN_DIR))]
+
+
+def resolve(cwd=None, session=None):
+    """Where the session is: `{main_checkout, plan_root, has_subprojects, subproject, milestone, phase_dir, subphases,
+    candidates, where, worktree, paths}`, every path a string, nothing written. The subproject and the phase come from the session
+    file; with no phase bound (or a bound one that is gone) the only open phase of the scope's current milestone is the phase, and
+    with several or none `phase_dir` is None and `candidates` lists the open ones. When the main checkout holds no open phase and
+    the project's default branch is protected, the phases open in its worktrees are looked at the same way (their documents live on
+    the phase branch): `where` is then `worktree` and `worktree` that folder (`main` and None otherwise). Binding is the caller's."""
+    main = config.main_checkout(cwd)
+    root = plan_root(cwd)
+    bound = read_session(cwd, session)
+    subproject, milestone, phase, candidates, _ = _resolve_in(root, bound)
+    roots = phase_worktrees(cwd) if root.parent == Path(main) else []
+    if roots:  # a phase folder here with no audit file is what is left of one whose documents moved to its worktree
+        stub = lambda p: not phase_paths(p)["audit"].is_file()
+        candidates = [c for c in candidates if not stub(c)]
+        phase = None if phase and stub(phase) else phase
+        phase = candidates[0] if phase is None and len(candidates) == 1 else phase
+    if roots and phase is None and not candidates:
+        found = []
+        for wroot in roots:
+            sub, ms, ph, cands, hit = _resolve_in(wroot, bound)
+            if hit:
+                root, subproject, milestone, phase = wroot, sub, ms, ph
+                break
+            found += cands
+        candidates = found if phase is None else candidates + found
+        if phase is None and len(found) == 1:
+            root = next(w for w in roots if found[0].startswith(str(w) + os.sep))
+            subproject, milestone, phase, _, _ = _resolve_in(root, bound)
+    inside = os.path.realpath(str(root.parent)) != os.path.realpath(main)
     return {"main_checkout": main, "plan_root": str(root), "has_subprojects": has_subprojects(root),
             "subproject": subproject, "milestone": milestone, "phase_dir": phase,
             "subphases": [str(p) for p in subphases(phase)] if phase else [],
-            "candidates": candidates,
+            "candidates": candidates, "where": "worktree" if inside else "main", "worktree": str(root.parent) if inside else None,
             "paths": {k: str(v) for k, v in phase_paths(phase).items()} if phase else {}}
 
 
@@ -610,6 +738,11 @@ def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
     if subproject is None and bound:
         subproject = bound["subproject"]
     root = plan_root(cwd)
+    for wroot in phase_worktrees(cwd) if root.parent == Path(config.main_checkout(cwd)) else []:
+        for sub in [None] + subprojects(wroot):
+            for p in open_phases(scope_root(wroot, sub)):
+                raise StateError("the phase %s is open in the worktree %s: continue it there, or close it, before starting another"
+                                 % (p.name, wroot.parent))
     scope = scope_root(root, subproject)
     texts = {n: _read_template(n) for n in ("PROJECT.md", "MILESTONE.md", "phase/context.md")}  # all of them, before any folder
     if not root.exists():

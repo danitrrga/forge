@@ -53,7 +53,7 @@ def cmd_resolve(a):
     sid = state.session_id(a.session)
     bound = state.read_session(session=sid)
     r = state.resolve(session=sid)
-    if r["phase_dir"] and sid and not _bound_to(r, bound):  # the one open phase, found with nothing bound: bind it
+    if r["phase_dir"] and sid and not _bound_to(r, bound) and r["plan_root"] == str(state.plan_root()):  # the one open phase, found with nothing bound: bind it (a phase found in a worktree from the main folder is not in this folder's `.fwx/`)
         state.write_session(session=sid, subproject=r["subproject"], phase_dir=r["phase_dir"])
     if a.json:
         _dump(r)
@@ -191,7 +191,7 @@ def cmd_decisions(a):
 
 
 def cmd_commit(a):
-    where, branch, sha = state.commit_plan(a.message)
+    where, branch, sha = state.commit_plan(a.message, phase=a.phase, session=a.session)
     print("committed %s on %s in %s" % (sha, branch, where) if sha else "nothing to commit in %s" % where)
     return 0
 
@@ -263,6 +263,8 @@ def parser():
     sp = add("commit", cmd_commit, ".fwx/ committed where its history is: the phase's worktree when the default branch is protected "
                                    "(run it from there; it takes the files the main checkout holds and the worktree lacks), else the main checkout")
     sp.add_argument("-m", "--message", required=True)
+    sp.add_argument("--phase", help="the phase to commit, by folder (default: the session's)")
+    sp.add_argument("--session")
     sp = add("check", cmd_check, "check a state.md or a phase report: an error for a rule, a WARN line for a length")
     sp.add_argument("kind", choices=("state", "report"))
     sp.add_argument("path")

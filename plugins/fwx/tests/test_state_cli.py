@@ -451,8 +451,8 @@ IDENT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME"
 PHASE_REL = ".fwx/milestones/v1/phases/%s"
 
 
-def commit(cwd, message):
-    return st(cwd, "commit", "-m", message, session=None, env=IDENT)
+def commit(cwd, message, phase=None):
+    return st(cwd, "commit", "-m", message, *(["--phase", phase] if phase else []), session=None, env=IDENT)
 
 
 def toy(protected, files=None):
@@ -486,6 +486,7 @@ clean("protected: from the main checkout", r, 1)
 s.ok("protected: from the main checkout, the message names the phase worktree", "worktree" in r.stderr, r.stderr)
 s.eq("protected: from the main checkout, nothing was committed", helpers.git(main, "rev-parse", "master").strip(), base)
 s.ok("protected: from the main checkout, `.fwx/` is where it was", os.path.isfile(os.path.join(main, PHASE_REL % "01-alpha", "context.md")))
+helpers.write(main, PHASE_REL % "01-alpha" + "/demo/page.html", "<p>a demo page, not a document</p>\n")  # what stays behind in the main checkout
 r = commit(wt, "fwx: part 1 starts")
 clean("protected, first phase: commit from the phase worktree", r, 0)
 s.ok("protected, first phase: stdout names the commit and the folder", re.match(r"committed [0-9a-f]{7,} on fwx-phase in \S+\Z", r.stdout.strip()), r.stdout)
@@ -494,7 +495,7 @@ s.ok("protected, first phase: the phase branch's tree holds the phase documents"
      all("%s/%s" % (PHASE_REL % "01-alpha", f) in head_files(wt) for f in ("context.md", "decisions.tsv")) and ".fwx/PROJECT.md" in head_files(wt), str(head_files(wt)))
 s.eq("protected, first phase: nothing was committed on the default branch", helpers.git(main, "rev-parse", "master").strip(), base)
 s.ok("protected, first phase: the default branch's log does not hold the message", "fwx: part 1 starts" not in subjects(main, "master"))
-s.ok("protected, first phase: the main checkout keeps no second copy", not os.path.exists(os.path.join(main, ".fwx")))
+s.ok("protected, first phase: the main checkout keeps no second copy of a document", not os.path.exists(os.path.join(main, PHASE_REL % "01-alpha", "context.md")))
 r = st(wt, "resolve", "--json", session=None)
 s.eq("protected, first phase: the live phase folder is the worktree's", os.path.realpath(json.loads(r.stdout)["phase_dir"]) if r.stdout else None,
      os.path.realpath(os.path.join(wt, PHASE_REL % "01-alpha")))
@@ -509,11 +510,12 @@ s.eq("protected: nothing changed, no commit was made", subjects(wt)[0], "fwx: cr
 s.eq("protected: the default branch is still untouched", helpers.git(main, "rev-parse", "master").strip(), base)
 
 # a protected default branch whose `.fwx/` is already tracked (a later phase): the new phase was made in the main checkout
-main2 = toy(True, {".fwx/PROJECT.md": "# p\n", PHASE_REL % "01-old" + "/context.md": "old\n"})
+main2 = toy(True, {".fwx/PROJECT.md": "# p\n", PHASE_REL % "01-old" + "/context.md": "old\n",
+                   PHASE_REL % "01-old" + "/audit.tsv": "\t".join(state.AUDIT_COLUMNS) + "\nd\tstage\tsha\tclosed\t\n"})  # a closed phase
 wt2 = helpers.add_worktree(main2, "fwx-phase")
 st(main2, "new-phase", "next", session=None)
 base2 = helpers.git(main2, "rev-parse", "master").strip()
-clean("protected, later phase: commit from the phase worktree", commit(wt2, "fwx: part 1 starts"), 0)
+clean("protected, later phase: commit from the phase worktree", commit(wt2, "fwx: part 1 starts", os.path.join(main2, PHASE_REL % "02-next")), 0)
 s.ok("protected, later phase: the new phase is in the branch and the old one is still there",
      PHASE_REL % "02-next" + "/context.md" in head_files(wt2) and PHASE_REL % "01-old" + "/context.md" in head_files(wt2), str(head_files(wt2)))
 s.ok("protected, later phase: the new phase left the main checkout", not os.path.exists(os.path.join(main2, PHASE_REL % "02-next")))
@@ -540,10 +542,174 @@ if os.geteuid() != 0:  # root writes into a read-only folder
     os.chmod(os.path.join(wt6, ".fwx"), 0o500)
     r = commit(wt6, "fwx: part 1 starts")
     clean("protected: a move that fails", r, 1)
-    s.ok("protected: a move that fails, the message says to run it again", "run it again" in r.stderr, r.stderr)
+    s.ok("protected: a move that fails, the message says where the documents are", "still in" in r.stderr, r.stderr)
+    s.ok("protected: a move that fails, the documents are still in the main checkout", os.path.isfile(os.path.join(main6, PHASE_REL % "01-alpha", "context.md")))
     os.chmod(os.path.join(wt6, ".fwx"), 0o700)
     clean("protected: run again after the fix", commit(wt6, "fwx: part 1 starts"), 0)
     s.ok("protected: run again after the fix, the phase documents are committed", PHASE_REL % "01-alpha" + "/context.md" in head_files(wt6))
+else:
+    print("SKIP: the move that fails is not checked: running as root, which writes into a read-only folder")
+
+# ---- what the review of PR 129 found (D1-D8) -----------------------------------------------------------------------
+# Seen red on bd44ce6 (each line is the first FAIL of its case):
+#   D1 FAIL: after the first commit, resolve from the main checkout finds the phase in the worktree: exit code: got 1, want 0
+#   D1 FAIL: new-phase while a phase is open in a worktree: refused: exit code: got 0, want 1
+#   D4 FAIL: a demo session file, a log, a screenshot, an editor file and a symlink are not in the commit: ['.fwx/.../ui-walk/1-1/demo-state.json', ...]
+#   D5 FAIL: two phases: the commit of alpha holds no file of beta: ['.fwx/.../02-beta/context.md', ...]
+#   D6 FAIL: detached HEAD: refused: exit code: got 0, want 1
+#   D3 FAIL: a document with another text in both places: refused and named: exit code: got 0, want 1
+#   D7 FAIL: a commit refused by a hook: the documents are back in the main checkout: False
+# Mutants, each seen red on lib/fwx/state.py changed in one place (put back after each): the move overwrites an existing file
+# (`FAIL: a document with another text in both places: the worktree's text is still there`), the commit without a pathspec
+# (`FAIL: an unrelated staged file stays staged and out of the commit`), the branch check dropped (`FAIL: a worktree on another branch: refused`),
+# the phase filter dropped (the D5 case). Skipped, not guarded: the printed sha replaced by a constant (only its shape is checked).
+PH = PHASE_REL % "01-alpha"
+
+# D1: the move empties the main checkout's `.fwx/` of documents (the phase folder stays, holding what is not a document, with no audit file);
+# a session that starts there finds the phase in the worktree, and `new-phase` does not start another
+# Seen red with that leftover (a demo page): FAIL: after the first commit, resolve answers with the worktree's folder: got '<main>/.fwx/.../01-alpha'
+r = st(main, "resolve", "--json", session=None)
+clean("after the first commit, resolve from the main checkout finds the phase in the worktree", r, 0)
+d = json.loads(r.stdout) if r.returncode == 0 else {}
+s.eq("after the first commit, resolve answers with the worktree's folder", os.path.realpath(d.get("phase_dir") or "/"), os.path.realpath(os.path.join(wt, PH)))
+s.eq("after the first commit, resolve says where it is", (d.get("where"), os.path.realpath(d.get("worktree") or "/")), ("worktree", os.path.realpath(wt)))
+r = st(main, "new-phase", "beta", session=None)
+clean("new-phase while a phase is open in a worktree: refused", r, 1)
+s.ok("new-phase while a phase is open in a worktree: names the phase and its worktree", "01-alpha" in r.stderr and os.path.basename(wt) in r.stderr, r.stderr)
+s.ok("new-phase while a phase is open in a worktree: nothing made in the main checkout", not os.path.exists(os.path.join(main, PHASE_REL % "02-beta")))
+r = helpers.fwx(main, "discuss", "start", "--json", env=NOSESSION)
+s.ok("`fwx discuss start` from the main checkout lists the phase open in the worktree",
+     any(os.path.realpath(p["dir"]) == os.path.realpath(os.path.join(wt, PH)) for p in (json.loads(r.stdout).get("open_phases") if r.stdout.startswith("{") else [])),
+     (r.stdout + r.stderr)[:300])
+r = st(wt, "resolve", "--json", session=None)
+s.eq("resolve from the worktree says it is the worktree's", json.loads(r.stdout).get("where") if r.stdout else None, "worktree")
+r = st(main, "resolve", "--json", session="sess-d1")
+clean("resolve from the main checkout with a session: finds it, binds nothing it cannot", r, 0)
+
+# D4: only the documents; what the walk and the editors leave beside them stays on disk and out of the commit
+main7 = toy(True)
+wt7 = helpers.add_worktree(main7, "fwx-phase")
+st(main7, "new-phase", "alpha", session=None)
+walk = os.path.join(main7, PH, "ui-walk", "1-1")
+for name, text in (("demo-state.json", '{"cookies": [{"value": "SECRET"}]}'), ("up.log", "log\n"), ("shot.png", "png"), (".context.md.swp", "swap"),
+                   ("context.md~", "old"), ("notes.txt", "t"), ("coverage.md", "# coverage\n")):
+    helpers.write(walk, name, text)
+helpers.write(main7, PH + "/research/angle.md", "# angle\n")
+os.symlink("/etc/hostname", os.path.join(main7, PH, "link.md"))
+clean("documents beside other files: commit", commit(wt7, "fwx: part 1 starts"), 0)
+inside = head_files(wt7)
+s.ok("a demo session file, a log, a screenshot, an editor file, a text file and a symlink are not in the commit",
+     not [f for f in inside if f.endswith(("demo-state.json", ".log", ".png", ".swp", "~", "notes.txt", "link.md"))], str(inside))
+s.ok("the documents are, research and the walk's coverage included", all(PH + x in inside for x in ("/context.md", "/research/angle.md", "/ui-walk/1-1/coverage.md")), str(inside))
+s.ok("what is not a document is still on disk, in the main checkout", all(os.path.lexists(os.path.join(walk, n)) for n in ("demo-state.json", "up.log", "shot.png", ".context.md.swp", "context.md~", "notes.txt"))
+     and os.path.islink(os.path.join(main7, PH, "link.md")))
+
+# D5: two phases open: a commit takes the phase it was called for and the root documents, and the other stays where it is
+main8 = toy(True)
+wa, wb = helpers.add_worktree(main8, "fwx-a"), helpers.add_worktree(main8, "fwx-b")
+st(main8, "new-phase", "alpha", session=None)
+st(main8, "new-phase", "beta", session=None)
+BETA = PHASE_REL % "02-beta"
+r = st(wa, "commit", "-m", "alpha", "--phase", os.path.join(main8, PH), session=None, env=IDENT)
+clean("two phases: commit of alpha", r, 0)
+fa = head_files(wa)
+s.ok("two phases: the commit of alpha holds its documents and the root ones", PH + "/context.md" in fa and ".fwx/PROJECT.md" in fa, str(fa))
+s.ok("two phases: the commit of alpha holds no file of beta", not [f for f in fa if "02-beta" in f], str(fa))
+s.ok("two phases: beta is still in the main checkout", os.path.isfile(os.path.join(main8, BETA, "context.md")))
+r = st(main8, "resolve", "--json", session=None)
+s.eq("two phases: beta can still be resolved from the main checkout", os.path.realpath(json.loads(r.stdout).get("phase_dir") or "/") if r.stdout else None,
+     os.path.realpath(os.path.join(main8, BETA)))
+r = st(wb, "commit", "-m", "beta", "--phase", os.path.join(main8, BETA), session=None, env=IDENT)
+clean("two phases: commit of beta from its own worktree", r, 0)
+fb = head_files(wb)
+s.ok("two phases: the commit of beta holds beta and not alpha", BETA + "/context.md" in fb and not [f for f in fb if "01-alpha" in f], str(fb))
+
+# D6: the worktree must be on the phase's branch, never detached; nothing is moved first
+main9 = toy(True)
+wt9 = helpers.add_worktree(main9, "fwx-phase")
+ph9 = st(main9, "new-phase", "alpha", session=None).stdout.strip()
+state.append_audit(ph9, "stage", detail="executing part 1 branch fwx-phase", cwd=main9)
+helpers.git(wt9, "checkout", "-q", "--detach")
+r = commit(wt9, "fwx: part 1 starts")
+clean("detached HEAD: refused", r, 1)
+s.ok("detached HEAD: nothing moved", os.path.isfile(os.path.join(main9, PH, "context.md")) and not os.path.exists(os.path.join(wt9, ".fwx")))
+helpers.git(wt9, "checkout", "-q", "-b", "feature-x")
+r = commit(wt9, "fwx: part 1 starts")
+clean("a worktree on another branch: refused", r, 1)
+s.ok("a worktree on another branch: the message names both branches", "feature-x" in r.stderr and "fwx-phase" in r.stderr, r.stderr)
+s.ok("a worktree on another branch: nothing moved", os.path.isfile(os.path.join(main9, PH, "context.md")) and not os.path.exists(os.path.join(wt9, ".fwx")))
+helpers.git(wt9, "checkout", "-q", "-B", "fwx-phase")
+clean("the phase's own branch: committed", commit(wt9, "fwx: part 1 starts"), 0)
+
+# a phase with no branch recorded yet: a detached HEAD is refused all the same
+main9b = toy(True)
+wt9b = helpers.add_worktree(main9b, "fwx-phase")
+st(main9b, "new-phase", "alpha", session=None)
+helpers.git(wt9b, "checkout", "-q", "--detach")
+r = commit(wt9b, "fwx: part 1 starts")
+clean("detached HEAD, no branch recorded for the phase: refused", r, 1)
+s.ok("detached HEAD, no branch recorded for the phase: the message says detached", "detached" in r.stderr, r.stderr)
+
+# D3: a document that exists in both places with other text is never overwritten or skipped: the command stops and names it
+main10 = toy(True, {PH + "/context.md": "the branch's text\n"})
+wt10 = helpers.add_worktree(main10, "fwx-phase")
+helpers.write(main10, PH + "/context.md", "the owner's newer text\n")
+helpers.write(main10, PH + "/decisions.tsv", "\t".join(state.DECISION_COLUMNS) + "\n")
+helpers.write(main10, PH + "/audit.tsv", "\t".join(state.AUDIT_COLUMNS) + "\n")
+r = commit(wt10, "fwx: part 1 starts")
+clean("a document with another text in both places: refused and named", r, 1)
+s.ok("a document with another text in both places: the message names the file", "context.md" in r.stderr, r.stderr)
+def text_of(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
+s.eq("a document with another text in both places: the worktree's text is still there", text_of(os.path.join(wt10, PH, "context.md")), "the branch's text\n")
+s.eq("a document with another text in both places: the main checkout's text is still there", text_of(os.path.join(main10, PH, "context.md")), "the owner's newer text\n")
+s.ok("a document with another text in both places: nothing else moved", os.path.isfile(os.path.join(main10, PH, "decisions.tsv")))
+# the same text in both places is no conflict: the main copy goes, the worktree's is committed
+helpers.write(main10, PH + "/context.md", "the branch's text\n")
+clean("the same text in both places: committed", commit(wt10, "fwx: part 1 starts"), 0)
+s.ok("the same text in both places: the main copy is gone", not os.path.exists(os.path.join(main10, PH, "context.md")))
+
+# D7: a commit that fails (a hook) puts the documents back and says so; the second run, with the hook gone, commits
+main11 = toy(True)
+wt11 = helpers.add_worktree(main11, "fwx-phase")
+st(main11, "new-phase", "alpha", session=None)
+hook = helpers.write(main11, ".git/hooks/pre-commit", "#!/bin/sh\necho 'lint failed: nope' >&2\nexit 1\n", mode=0o755)
+r = commit(wt11, "fwx: part 1 starts")
+clean("a commit refused by a hook", r, 1)
+s.ok("a commit refused by a hook: the message says why and that the documents are back", "lint failed: nope" in r.stderr and "back in" in r.stderr, r.stderr)
+s.ok("a commit refused by a hook: the documents are back in the main checkout", os.path.isfile(os.path.join(main11, PH, "context.md")))
+s.eq("a commit refused by a hook: the worktree holds nothing of `.fwx/` and nothing is staged",
+     (os.path.exists(os.path.join(wt11, ".fwx")), helpers.git(wt11, "status", "--porcelain")), (False, ""))
+os.remove(hook)
+clean("the hook gone: committed", commit(wt11, "fwx: part 1 starts"), 0)
+
+# M6: an unrelated staged file stays staged and out of the commit
+main12 = toy(True)
+wt12 = helpers.add_worktree(main12, "fwx-phase")
+st(main12, "new-phase", "alpha", session=None)
+helpers.write(wt12, "other.txt", "x\n")
+helpers.git(wt12, "add", "other.txt")
+clean("an unrelated staged file: commit", commit(wt12, "fwx: part 1 starts"), 0)
+s.ok("an unrelated staged file stays staged and out of the commit", "other.txt" not in head_files(wt12) and "other.txt" in helpers.git(wt12, "diff", "--cached", "--name-only"))
+
+# D8: without the protection the commit is what the skill's old line made on the main checkout's branch (same tree, same message)
+main13, twin = toy(False), toy(False)
+for repo in (main13, twin):
+    st(repo, "new-phase", "alpha", session=None)
+    helpers.write(repo, PH + "/research/angle.md", "# angle\n")
+helpers.git(twin, "add", ".fwx")
+helpers.git(twin, "commit", "-q", "-m", "fwx: part 1 starts", "--", ".fwx")
+clean("not protected, like the old line: commit", commit(main13, "fwx: part 1 starts"), 0)
+tree_of = lambda repo: [re.sub(r"^\d+ blob ", "", ln.replace(os.path.basename(repo), "R")) for ln in helpers.git(repo, "ls-tree", "-r", "HEAD").splitlines() if ".fwx/" in ln]
+s.ok("not protected: the commit holds the same files as the old line (the toys differ in nothing but the folder name)",
+     len(tree_of(main13)) == len(tree_of(twin)) > 3 and [x.split("\t")[1] for x in tree_of(main13)] == [x.split("\t")[1] for x in tree_of(twin)], "%s vs %s" % (tree_of(main13), tree_of(twin)))
+s.ok("not protected: it is on the main checkout's branch and not in the worktree's", subjects(main13)[0] == "fwx: part 1 starts")
 
 # not protected: the main checkout's own branch, as the skill's old line did
 main3 = toy(False)
@@ -566,7 +732,7 @@ clean("no `.fwx/` at all: refused", commit(toy(False), "x"), 1)
 clean("commit with no -m: usage error", st(main3, "commit", session=None, env=IDENT), 2)
 
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
-nogit =helpers.mkdtemp("fwx-nogit-")
+nogit = helpers.mkdtemp("fwx-nogit-")
 for args in (["resolve"], ["list"], ["use", "--root"], ["new-phase", "x"], ["new-milestone"], ["decision", "--decision", "a", "--why", "b",
              "--support", "chosen"]):
     r = st(nogit, *args)

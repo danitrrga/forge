@@ -239,17 +239,17 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
 
 ### p_CLOSE · Commit of .fwx/, consent if it deploys
 - **Who:** orchestrator
-- **Stage:** closed
-- **Writes:** audit.tsv
-- **Invokes:** command fwx stage
-- **Does:** There is no closing conversation: the transcripts are analysed afterwards, and the closing is these explicit steps. First it lists and stops any agent still holding the phase's worktree, then records `fwx stage <phase> closed` and commits `.fwx/`, before the push, so that the pull request carries the documents of a closed phase. A deploy goes through the consent window; a refusal is reported and not retried, because a retry asks the owner for the same thing twice.
+- **Stage:** phase-review
+- **Writes:** nothing
+- **Invokes:** nothing
+- **Does:** There is no closing conversation: the transcripts are analysed afterwards, and the closing is these explicit steps. First it lists and stops any agent still holding the phase's worktree, then commits `.fwx/` before the push: with a protected default branch the commit is on the phase branch and the pull request carries it; without one it is on the main checkout's branch, local, and not in the pull request. A deploy goes through the consent window; a refusal is reported and not retried, because a retry asks the owner for the same thing twice.
 - **Exits:**
   - to n_L10: `.fwx/` is committed and any deploy is consented or not requested
 
 ### n_L10 · Upload to GitHub, PR for the owner to merge
 - **Who:** orchestrator
 - **Stage:** closed
-- **Writes:** nothing
-- **Invokes:** nothing
-- **Does:** With a GitHub origin the orchestrator pushes the phase branch and opens the PR against the default branch with Why, What changed, Scope and Verification (the evidence line); a retaken factory job gets a result comment on its Linear issue and keeps its existing PR. With no origin the branch stays and the owner gets the merge command. The orchestrator never pushes to the default or a production branch, because the owner merges. Then it sweeps the walk leftovers and removes only the phase worktree this session made.
+- **Writes:** audit.tsv
+- **Invokes:** command fwx stage
+- **Does:** With a GitHub origin the orchestrator pushes the phase branch and opens the PR against the default branch with Why, What changed, Scope and Verification (the evidence line); a retaken factory job gets a result comment on its Linear issue and keeps its existing PR. With no origin the branch stays and the owner gets the merge command. The orchestrator never pushes to the default or a production branch, because the owner merges. Only when the push and the PR both succeeded it records `fwx stage <phase> closed`, commits `.fwx/` and, with a protected default branch, pushes again so that the PR carries the closed phase; a failure before that leaves the phase open with a one-line reason, and running the close again goes on from where it stopped, committing and pushing nothing twice. Then it sweeps the walk leftovers and removes only the phase worktree this session made.
 - **Exits:** none

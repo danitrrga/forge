@@ -258,12 +258,13 @@ def main():
     # playbook's block of the owner's review carries the matching exit. `fwx playbooks check` compares that exit with the table by itself.
     # Seen red on 239aa07 (step 8 and the playbook did not mention it):
     #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
+    # (reworded after the review of PR 129 into numbered sub-steps; the checks follow the new words)
     #   FAIL: playbooks/session.md n_L8 exits `loop n_C12` -> missing
     from fwx.core import stages  # noqa: E402
     check("the stage table allows phase-review -> ui-walk", stages.allowed("session", "phase-review", "ui-walk"), "refused")
     check("step 8 says when the walk is repeated from `phase-review`",
-          all(w in s8 for w in ("asks for the UI walk again", "did not count", "step 6", "`phase-review -> ui-walk`")),
-          "no 'asks for the UI walk again' with 'did not count', 'step 6' and '`phase-review -> ui-walk`'")
+          all(w in s8 for w in ("The walk again", "did not count", "Step 6 again", "from `phase-review`")),
+          "no 'The walk again' with 'did not count', 'Step 6 again' and 'from `phase-review`'")
     l8 = block(session_pb, "n_L8")
     check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
     # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
@@ -275,8 +276,13 @@ def main():
     from fwx import plan_step  # noqa: E402
     check("the stage table allows phase-review -> planning", stages.allowed("session", "phase-review", "planning"), "refused")
     check("step 8 sends a post-plan decision back to the planner",
-          all(w in s8 for w in ("after the plan", "changes a fact the plan states", "`phase-review -> planning`", "steps 2 and 3 again")),
-          "no 'after the plan', 'changes a fact the plan states', '`phase-review -> planning`' and 'steps 2 and 3 again'")
+          all(w in s8 for w in ("A decision after the plan", "the planner and the post-mortem get the decision", "Step 2 and step 3 again", "allowed from `phase-review`")),
+          "no 'A decision after the plan', 'the planner and the post-mortem get the decision', 'Step 2 and step 3 again' and 'allowed from `phase-review`'")
+    # Seen red on bd44ce6 (the sentence told the session to write stage `planning` while step 2 writes it, and to judge a fact of the plan):
+    #   FAIL: step 8 does not write stage `planning` itself and does not ask the session to read the plan -> a stage `planning` of its own, or no 'You do not read the plan'
+    check("step 8 does not write stage `planning` itself and does not ask the session to read the plan",
+          "stage `planning`" not in s8 and "You do not read the plan" in s8, "a stage `planning` of its own, or no 'You do not read the plan'")
+    check("step 2 writes stage `planning` and step 3 stage `postmortem`", "Stage `planning`" in step(texts["SKILL.md"], 2) and "Stage `postmortem`" in step(texts["SKILL.md"], 3), "missing")
     check("step 8 gives the decision the source the briefs look for",
           "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
     check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
@@ -291,18 +297,29 @@ def main():
     #   FAIL: playbooks/session.md p_CLOSE records the stage and commits, n_L10 does not commit after the push -> p_CLOSE False, n_L10 False
     rule4 = next((ln for ln in texts["SKILL.md"].splitlines() if ln.startswith("4. **Commits of `.fwx/`**")), "")
     check("rule 4 found", "forge commit" in rule4, "not found")
-    check("rule 4 names `fwx state commit` and `default_branch_protected`", "`fwx state commit -m" in rule4 and "default_branch_protected" in rule4, "missing")
+    check("rule 4 names `fwx state commit` with `--phase` and `default_branch_protected`", "`fwx state commit -m" in rule4 and "--phase <phase folder>" in rule4 and "default_branch_protected" in rule4, "missing")
+    from fwx import state  # noqa: E402
+    check("rule 4 names the documents the code commits", all("`*%s`" % e in rule4 for e in state._DOC_EXT) and "dotfile" in rule4 and "not in the pull request" in rule4,
+          "extensions %s; code commits %s" % ([e for e in state._DOC_EXT if "`*%s`" % e not in rule4], state._DOC_EXT))
+    check("rule 4 says what a failed commit leaves", "where they were" in rule4, "missing")
     state_help = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "state", "--help"], capture_output=True, text=True).stdout
     check("`fwx state --help` lists `commit`", re.search(r"^\s+commit\s", state_help, re.M) is not None, state_help)
+    s0 = step(texts["SKILL.md"], 0)
+    check("step 0 says where `resolve` looks from the main folder of a protected project", "`where`" in s0 and "`worktree`" in s0 and "phase worktrees" in s0, "missing")
+    # The close commits, pushes and opens the pull request, and only then writes `closed` (a closed phase cannot be continued); a failure
+    # before that leaves the phase open and a second run goes on; what the commit means without the protection is said.
+    # Seen red on bd44ce6 (closing.md wrote `closed` before the push):
+    #   FAIL: closing.md commits, pushes, opens the pull request and only then writes stage `closed` -> no 'rule 4' ... 'git push origin' ... 'gh pr create' ... 'closed' in that order
     closing = read(os.path.join("references", "closing.md"))
-    check("closing.md writes stage `closed` and commits `.fwx/` before the push",
-          in_order(closing, "`fwx stage <phase folder> closed`", "rule 4", "git push origin"), "no 'closed' ... 'rule 4' ... 'git push' in that order")
-    check("closing.md commits nothing after the push", "rule 4" not in closing[closing.index("git push origin"):], "rule 4 again after the push")
+    check("closing.md commits, pushes, opens the pull request and only then writes stage `closed`",
+          in_order(closing, "rule 4", "git push origin", "gh pr create", "`fwx stage <phase folder> closed`"), "no 'rule 4' ... 'git push origin' ... 'gh pr create' ... 'closed' in that order")
+    check("closing.md checks for the pull request before it opens one and says a second run goes on", "gh pr view" in closing and closing.index("gh pr view") < closing.index("gh pr create") and "run this file again" in closing, "missing")
+    check("closing.md says what the commit means without the protection", "the pull request does not carry it" in closing, "missing")
     pclose, l10 = block(session_pb, "p_CLOSE"), block(session_pb, "n_L10")
-    check("playbooks/session.md p_CLOSE records the stage and commits, n_L10 does not commit after the push",
-          "fwx stage <phase> closed" in pclose and "commits `.fwx/`" in pclose and "commits `.fwx/`" not in l10,
-          "p_CLOSE %s, n_L10 %s" % ("fwx stage <phase> closed" in pclose and "commits `.fwx/`" in pclose, "commits `.fwx/`" not in l10))
-    check("control: a closing text that pushes first fails", not in_order("push: git push origin x; then stage `fwx stage <phase folder> closed`, rule 4", "`fwx stage <phase folder> closed`", "rule 4", "git push origin"))
+    check("playbooks/session.md p_CLOSE commits before the push and n_L10 records `closed` only after both succeeded",
+          "commits `.fwx/` before the push" in pclose and "not in the pull request" in pclose and "fwx stage <phase> closed" not in pclose
+          and "Only when the push and the PR both succeeded it records `fwx stage <phase> closed`" in l10 and "running the close again goes on" in l10, "text of p_CLOSE or n_L10 differs")
+    check("control: a closing text that writes `closed` first fails", not in_order("`fwx stage <phase folder> closed`, rule 4, git push origin, gh pr create", "rule 4", "git push origin", "gh pr create", "`fwx stage <phase folder> closed`"))
     check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.
