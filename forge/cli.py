@@ -1164,8 +1164,9 @@ def context_base_row():
 def framework_ignore_row(only=None):
     """The `framework ignore` row: in every profile with `framework: true` (just `only`, when given) git answers as the
     framework needs for four sample paths (.fwx/x/y.md and .fwx/decisions.tsv not ignored, .claude/<plugin>.json and
-    .claude/worktrees/x ignored), by `git check-ignore -v --no-index` in the project (forge/fwxignore.py). A FAIL names
-    the path and the rule with file:line. How many projects it looked at is in the detail; zero where a framework
+    .claude/worktrees/x ignored), by `git check-ignore -v --no-index` asked of a scratch repository with the project's real
+    layout (forge/fwxignore.py: the same function the sync uses, so the two agree). A FAIL names the path and the rule
+    with file:line, and says when the rule is the machine's global ignore file. How many projects it looked at is in the detail; zero where a framework
     profile exists is a FAIL, and no framework profile at all is a SKIP, NOT RUN, NOT ARMED. A profile with
     `framework_ignore_block: false` is switched off: not looked at, and a SKIP of the same wording when no other is."""
     from forge import framework, fwxignore
@@ -1187,14 +1188,17 @@ def framework_ignore_row(only=None):
         elif not pp or not lib.in_git_repo(pp):
             skipped.append("%s (not a git repository)" % name)
         else:
-            wrong = fwxignore.check(pp, plan.name)
+            try:
+                wrong = fwxignore.check(pp, plan.name)
+            except lib.Unreadable as e:  # an ignore file of the project's layout
+                skipped.append("%s (%s unreadable: %s)" % (name, lib.short(e.path), e.reason))
+                continue
             if wrong is None:
                 skipped.append("%s (git did not answer)" % name)
                 continue
             looked.append(name)
             if wrong:
-                bad.append("%s: %s -- python3 bin/forge sync --apply --project %s; a project with writes_tracked_files false must "
-                           "carry the block in its own .gitignore%s" % (name, fwxignore._says(wrong), name, fwxignore.OWN_WAY_OUT))
+                bad.append("%s: %s -- %s" % (name, fwxignore._says(wrong), fwxignore.advice(wrong, lib.repo_owns_tracked_files(prof))))
     skipped += ["%s (framework_ignore_block is false: switched off)" % n for n in off]
     note = "; not looked at: %s" % ", ".join(skipped) if skipped else ""
     if bad:

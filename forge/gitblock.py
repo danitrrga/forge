@@ -24,7 +24,8 @@ reused; its rule is the same, though: markers that are not one complete pair are
 at. A line counts as a marker when its stripped text is the marker; one that starts like a marker and is not
 exactly one of forge's is an edited marker, an error too (for every tag: whose it was cannot be told). A block is
 written with the line ending its file already uses (eol), and handled with its endings, so a CRLF file keeps its lines
-outside the block."""
+outside the block. A directory name with a glob character (`[`, `]`, `*`, `?`, a backslash) is written escaped in the
+lines, and a tag is %-quoted."""
 import re
 import urllib.parse
 
@@ -52,11 +53,17 @@ def end(tag=""):
 BEGIN, END = begin(), end()  # the untagged pair
 
 
+def _glob_escape(prefix):
+    """`prefix` as a literal in a gitignore pattern: a backslash, `[`, `]`, `*` and `?` in a directory name are not
+    wildcards there."""
+    return "".join("\\" + c if c in "\\[]*?" else c for c in prefix)
+
+
 def lines_for(plugin, prefix="", tag=""):
     """The block's lines. `prefix` is where the project sits in its repository ("" or "sub/dir/"), for a block in
     .git/info/exclude, whose patterns are anchored at the repository's root; `tag` names the block in a file several
     projects share. The tsv files get a line too: a project's own `*.tsv`, or a `*` allowlist, ignores them."""
-    p = "/" + prefix
+    p = "/" + _glob_escape(prefix)
     return [begin(tag), "!%s.fwx/**/*.md" % p, "!%s.fwx/**/*.tsv" % p, "%s.claude/%s.json" % (p, plugin),
             "%s.claude/worktrees/" % p, end(tag)]
 
@@ -126,9 +133,19 @@ def without(text, tag=""):
 
 
 def after(text, tag=""):
-    """The lines that follow the block, with their line endings."""
+    """The lines that follow the block of `tag`, with their line endings, but not those of the other projects' blocks
+    that follow it in a file several share: those are not lines that decide anything."""
     s = span(text, tag)
-    return [] if s is None else _split(text)[s[1] + 1:]
+    out, inside = [], False
+    for l in ([] if s is None else _split(text)[s[1] + 1:]):
+        t = l.strip()
+        if _BEGIN_RE.match(t):
+            inside = True
+        elif inside:
+            inside = not _END_RE.match(t)
+        elif not _END_RE.match(t):
+            out.append(l)
+    return out
 
 
 def append(text, lines):

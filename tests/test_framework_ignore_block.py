@@ -6,11 +6,14 @@ project's own `*.md` rule ignores every one of them, nothing ignores the worktre
 .claude/worktrees/, and .claude/<plugin>.json is generated. For a profile with `framework: true`, `forge sync` keeps ONE
 block at the END of the project's .gitignore (a negation only works after the rule it negates):
 
-    # BEGIN FORGE-FWX (managed by forge)
+    # BEGIN FORGE-FWX (managed by forge, do not edit inside)
     !/.fwx/**/*.md
+    !/.fwx/**/*.tsv
     /.claude/<plugin>.json
     /.claude/worktrees/
     # END FORGE-FWX
+
+(in .git/info/exclude, one block per project, the markers tagged with the project's place: `# BEGIN FORGE-FWX app/ (...)`)
 
 Everything runs in-process against a toy HOME, toy profiles and toy git repositories (tests/sandbox.py's temp dirs, removed
 at exit); PATH is the fake directory alone, python3 and git linked in (standing order 10).
@@ -49,8 +52,11 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
@@ -64,8 +70,10 @@ for tool in ("python3", "git"):
     os.symlink(shutil.which(tool), os.path.join(BIN, tool))
 os.environ["HOME"] = HOME  # before the import: HOME-derived constants are computed there
 os.environ["PATH"] = BIN
-for var in ("CLAUDE_PROJECT_DIR", "FORGE_WRITE_LOG", "XDG_CONFIG_HOME", "CLAUDE_CONFIG_DIR"):
+for var in ("CLAUDE_PROJECT_DIR", "FORGE_WRITE_LOG", "CLAUDE_CONFIG_DIR"):
     os.environ.pop(var, None)
+XDG = os.path.join(TOY, "xdg")  # the global ignore file git reads by default lives under it: a toy, so no check reads the machine's
+os.environ["XDG_CONFIG_HOME"] = XDG
 os.environ.update(sandbox.GIT_ENV)
 sys.argv = sys.argv[:1]
 sys.path.insert(0, sandbox.FORGE)
@@ -75,7 +83,7 @@ BASE_SETTINGS = os.path.join(TOY, "forge-base.json")
 with open(BASE_SETTINGS, "w", encoding="utf-8") as fh:
     json.dump({"integrations": {k: False for k in lib.INTEGRATIONS}}, fh)
 lib.SETTINGS = BASE_SETTINGS
-from forge import cli, owned, sync, uninstall  # noqa: E402
+from forge import cli, fwxignore, owned, sync, uninstall  # noqa: E402
 
 assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
 lib.may_write = lambda: (True, "")  # this checkout may be a linked worktree, which never writes
@@ -688,8 +696,6 @@ check("D2: control: a root `*.md` above a project whose own .gitignore carries t
 
 # ------------------------------------------------------------ 12. D3: it cannot be checked
 # D3 on the base: exit 0 and "framework -> .../.gitignore FORGE-FWX block (created)" with no `!`, the file written, STAR unchanged...
-import tempfile  # noqa: E402
-
 p, w = fresh(STAR)
 real_tempdir = tempfile.tempdir
 tempfile.tempdir = os.path.join(TOY, "no-such-scratch-dir")
@@ -903,6 +909,380 @@ p, w = fresh(STAR, framework_ignore_block="no")
 code, out = w.run()
 check("17d: a sync of a profile with \"no\" exits non-zero and writes nothing to the project -- %s" % bang(out)[:2],
       code != 0 and text(gi(p)) == STAR, (code, out))
+
+# ------------------------------------------------------------ 18. second review of the PR
+def check_ignore_calls(calls):
+    return [c for c in calls if "check-ignore" in c]
+
+
+@contextlib.contextmanager
+def git_stub(decide):
+    """subprocess.run replaced: decide(args, k) is None (run for real), an exception (raised) or the CompletedProcess to
+    answer; k counts the `git check-ignore` calls so far, this one included."""
+    real = subprocess.run
+    calls = []
+
+    def fake(args, *a, **kw):
+        calls.append(list(args))
+        r = decide(list(args), len(check_ignore_calls(calls)))
+        if r is None:
+            return real(args, *a, **kw)
+        if isinstance(r, BaseException):
+            raise r
+        return r
+
+    subprocess.run = fake
+    try:
+        yield calls
+    finally:
+        subprocess.run = real
+
+
+def cp(args, rc, out="", err=""):
+    return subprocess.CompletedProcess(args, rc, out, err)
+
+
+def silent(a, k):
+    """A git whose check-ignore never answers."""
+    return subprocess.TimeoutExpired(a, 1) if "check-ignore" in a else None
+
+
+@contextlib.contextmanager
+def global_ignore(rules, via_config=True):
+    """The user's global ignore file holding `rules`: named by core.excludesFile of a toy global config, or at the default
+    place under the toy XDG_CONFIG_HOME. Yields its path; the environment is put back."""
+    _n[0] += 1
+    d = os.path.join(TOY, "gl%d" % _n[0])
+    os.makedirs(d)
+    saved = (os.environ["GIT_CONFIG_GLOBAL"], os.environ["XDG_CONFIG_HOME"])
+    if via_config:
+        ign = os.path.join(d, "global-ignore")
+        put(ign, rules)
+        put(os.path.join(d, "config"), "[core]\n\texcludesFile = %s\n" % ign)
+        os.environ["GIT_CONFIG_GLOBAL"] = os.path.join(d, "config")
+    else:
+        ign = os.path.join(d, "xdg", "git", "ignore")
+        put(ign, rules)
+        os.environ["XDG_CONFIG_HOME"] = os.path.join(d, "xdg")
+    try:
+        yield ign
+    finally:
+        os.environ["GIT_CONFIG_GLOBAL"], os.environ["XDG_CONFIG_HOME"] = saved
+
+
+# 18.0 a `git check-ignore` that says anything but 0 or 1 is no answer
+# Mutation (`return None` -> `continue` in _probe) left this file at 146 checks, 0 failures; with it: exit 0 and the block written.
+p, w = fresh(STAR)
+with git_stub(lambda a, k: cp(a, 128, "", "fatal: detected dubious ownership") if "check-ignore" in a else None):
+    code, out = w.run()
+check("18.0: check-ignore exits 128: exit 1, a `!` line that says what could not be checked, nothing written -- %s" % bang(out),
+      code == 1 and any("could not check" in l and "NOT RUN, NOT ARMED" in l for l in bang(out)) and text(gi(p)) == STAR
+      and not os.path.exists(os.path.join(p, ".claude", NAME + ".json")), (code, out))
+
+# 18.2 sync and doctor are one decision, and it sees what git sees: .gitignore files under .fwx/ and .claude/
+# Seen failing on 85c0c8b: sync exit 0 with no `!` while the doctor said FAIL (.fwx/.gitignore:1:*.md, .claude/.gitignore:1:!toyfw.json).
+def below(rel, body):
+    def setup():
+        p_, w_ = fresh(STAR)
+        put(os.path.join(p_, rel), body)
+        return p_, w_
+    return setup
+
+
+def exclude_mode_root_rule():
+    q_ = mono("*.md\n", "app")
+    return os.path.join(q_, "app"), only("sub", os.path.join(q_, "app"), writes_tracked_files=False)
+
+
+SCENARIOS = (("a `*.md` in .fwx/.gitignore", below(".fwx/.gitignore", "*.md\n"), False),
+             ("a `*.tsv` in .fwx/.gitignore", below(".fwx/.gitignore", "*.tsv\n"), False),
+             ("a `!toyfw.json` in .claude/.gitignore", below(".claude/.gitignore", "!toyfw.json\n"), False),
+             ("a `!worktrees/` in .claude/.gitignore", below(".claude/.gitignore", "!worktrees/\n"), False),
+             ("a root `*.md` above a project of the exclude mode", exclude_mode_root_rule, False),
+             ("nothing under the project", lambda: fresh(STAR), True))
+for label, setup, clean_wanted in SCENARIOS:
+    p, w = setup()
+    code, out = w.run()
+    r = row()
+    clean = code == 0 and not bang(out)
+    check("18.2: %s: sync (%s) and the doctor row (%s) agree, and clean is %s -- %s" % (label, "clean" if clean else "`!`", r.level, clean_wanted, bang(out)[:1]),
+          clean == clean_wanted and (r.level == "PASS") == clean_wanted, (code, out, r))
+p, w = below(".fwx/.gitignore", "*.md\n")()
+code, out = w.run()
+check("18.2: the `!` line names the rule of the file under .fwx/ -- %s" % bang(out), any(".fwx/.gitignore:1:*.md" in l for l in bang(out)), (code, out))
+r = row()
+check("18.2: and the doctor's FAIL names it and does not tell a project that writes its own .gitignore to carry the block in it -- %s" % r.detail,
+      r.level == "FAIL" and ".fwx/.gitignore:1:*.md" in r.detail and "carry the block" not in r.detail, r)
+
+# 18.3 the global ignore is the machine's own: read by sync and doctor alike, and named as the cause
+# Seen failing on 85c0c8b: with core.excludesFile naming a file with `.fwx/`, sync exit 0 while git status hid the documents and the doctor said FAIL.
+for how, kw in (("core.excludesFile", dict(via_config=True)), ("the default file under XDG_CONFIG_HOME", dict(via_config=False))):
+    with global_ignore(".fwx/\n", **kw) as g:
+        p, w = fresh(STAR)
+        code, out = w.run()
+        make_docs(p)
+        r = row()
+        check("18.3: a global ignore (%s) that ignores .fwx/: exit 1, the `!` line names that file as the machine's own setting -- %s" % (how, bang(out)),
+              code == 1 and any("global ignore %s:1:.fwx/" % g in l and "this machine's own setting" in l for l in bang(out)), (code, out))
+        check("18.3: (%s) git status agrees (the documents are hidden), and so does the doctor -- %s" % (how, r.level),
+              ".fwx/decisions.tsv" not in "\n".join(status(p)) and r.level == "FAIL" and "this machine's own setting" in r.detail, (status(p), r))
+with global_ignore("*.md\n") as g:
+    p, w = fresh("node_modules/\n")
+    code, out = w.run()
+    make_docs(p)
+    check("18.3: a global `*.md` is beaten by the block, as git would: exit 0, the documents show -- %s" % status(p),
+          code == 0 and not bang(out) and seen(p)[:2] == (True, True), (code, out))
+# The scratch reads no other git config: a template directory of the global config holding an exclude file would be copied into it.
+_n[0] += 1
+tpl = os.path.join(TOY, "tpl%d" % _n[0])
+put(os.path.join(tpl, "info", "exclude"), ".fwx/\n")
+tplcfg = os.path.join(TOY, "tplcfg%d" % _n[0])
+put(tplcfg, "[init]\n\ttemplateDir = %s\n" % tpl)
+p, w = fresh(STAR)
+os.remove(os.path.join(p, ".git", "info", "exclude"))
+saved_cfg = os.environ["GIT_CONFIG_GLOBAL"]
+os.environ["GIT_CONFIG_GLOBAL"] = tplcfg
+try:
+    code, out = w.run()
+finally:
+    os.environ["GIT_CONFIG_GLOBAL"] = saved_cfg
+check("18.3: a global config with init.templateDir is not read by the scratch repository: exit 0 -- %s" % bang(out)[:1],
+      code == 0 and not bang(out), (code, out))
+
+# 18.4 a project path with glob characters
+# Seen failing on 85c0c8b: "exit 1 ... git does not ignore .claude/toyfw.json (no rule) ... a rule of the repo's own .gitignore ranks above" (there is none).
+for dirname in ("a+b(c)[d]", "sp ace\\back", "st*r?"):
+    q = mono("node_modules/\n", dirname)
+    pq = os.path.join(q, dirname)
+    wq = only("glob", pq, writes_tracked_files=False)
+    code, out = wq.run()
+    exq = os.path.join(q, ".git", "info", "exclude")
+    esc = "".join("\\" + c if c in "\\[]*?" else c for c in dirname)
+    check("18.4: project `%s` in .git/info/exclude: exit 0, its lines escaped -- %s" % (dirname, bang(out)),
+          code == 0 and not bang(out) and "/%s/.claude/toyfw.json" % esc in (text(exq) or "").splitlines(), (code, out, text(exq)))
+    check("18.4: `%s`: git ignores the generated file and the worktrees folder" % dirname,
+          ignored(pq, ".claude/toyfw.json")[0] and ignored(pq, ".claude/worktrees/x")[0], "")
+    before = raw(exq)
+    code, out = wq.run()
+    check("18.4: `%s`: the second run is already current and changes nothing" % dirname,
+          raw(exq) == before and any("already current" in l for l in blines(out)), blines(out))
+
+# 18.5 two projects in one repository that both stay wrong: one write per sync, and no false reason
+# Seen failing on 85c0c8b: every run "(updated; moved to the end of the file: a later line decided .fwx/x/y.md (.gitignore:1:*.md))", twice.
+q = mono("*.md\n", "a", "b")
+both = World()
+both.put(profile(os.path.join(q, "a"), name="proja", writes_tracked_files=False))
+both.put(profile(os.path.join(q, "b"), name="projb", writes_tracked_files=False))
+exq = os.path.join(q, ".git", "info", "exclude")
+both.run()
+writes = []
+real_write_text = lib.write_text
+lib.write_text = lambda path, *a, **k: (writes.append(path), real_write_text(path, *a, **k))[1]
+try:
+    outs = [both.run()[1] for _ in range(3)]
+finally:
+    lib.write_text = real_write_text
+check("18.5: three more runs of two projects held by a rule they cannot beat write the exclude file %d times" % len([x for x in writes if x == exq]),
+      not [x for x in writes if x == exq], writes)
+check("18.5: and say `already current` for both, never `moved` -- %s" % blines(outs[0]),
+      all(len([l for l in blines(o) if "already current" in l]) == 2 and not any("moved" in l for l in blines(o)) for o in outs), outs[0])
+
+# 18.7 two profiles with the same `project` name in different directories of a repository (nothing in forge refuses that)
+# Seen failing on 85c0c8b: the one that is off removed the block of the one that is on, on every sync, which put it back.
+q = mono("node_modules/\n", "a", "b")
+w7 = World()
+for nm, pp, on in (("proja", os.path.join(q, "a"), True), ("projb", os.path.join(q, "b"), False)):
+    with open(os.path.join(w7.pdir, nm + ".claude.json"), "w") as fh:
+        json.dump(profile(pp, name="shared", writes_tracked_files=False, framework=on), fh)
+    w7.names.add(nm)
+exq = os.path.join(q, ".git", "info", "exclude")
+for i in range(3):
+    code, out = w7.run()
+check("18.7: the profile that is off removes nothing of the one that is on (the same `project`) -- %s" % (text(exq) or "").splitlines()[-7:],
+      code == 0 and btext(prefix="a/", tag="a/") in (text(exq) or "") and "FORGE-FWX b/" not in (text(exq) or ""), (code, out))
+
+# 18.8 the scratch repository is removed on every way out
+# Mutation `mkdtemp` without cleanup: 94 folders left in the second review's run and the file said 0 failures.
+scr = os.path.join(TOY, "scratch-tmp")
+os.makedirs(scr)
+real_tempdir = tempfile.tempdir
+tempfile.tempdir = scr
+try:
+    p, w = fresh(STAR)
+    w.run()
+    p, w = fresh(STAR)
+    with git_stub(silent):
+        w.run()
+    real_probe = fwxignore._probe
+    fwxignore._probe = lambda *a, **k: 1 / 0
+    try:
+        fwxignore.ensure(False, p, NAME, False, "toyapp")
+    except ZeroDivisionError:
+        pass
+    finally:
+        fwxignore._probe = real_probe
+    left = [x for x in os.listdir(scr) if x.startswith("forge-fwx-")]
+finally:
+    tempfile.tempdir = real_tempdir
+check("18.8: a success, a git that does not answer and an exception leave no forge-fwx-* folder -- %s" % left, left == [], left)
+fakebin = os.path.join(TOY, "fakegit")
+os.makedirs(fakebin)
+mark = os.path.join(TOY, "probe-started")
+with open(os.path.join(fakebin, "git"), "w") as fh:
+    fh.write('#!/bin/sh\ncase "$*" in *check-ignore*) : > "$FWX_MARK"; exec %s 30;; esac\nexec %s "$@"\n' % (shutil.which("sleep", path="/usr/bin:/bin"), shutil.which("git")))
+os.chmod(os.path.join(fakebin, "git"), 0o755)
+scr2 = os.path.join(TOY, "scratch-tmp2")
+os.makedirs(scr2)
+p, w = fresh(STAR)
+child = subprocess.Popen([sys.executable, "-c", "import sys; sys.path.insert(0, %r)\nfrom forge import fwxignore\n"
+                          "fwxignore.ensure(False, %r, 'toyfw', False, 'toyapp')" % (sandbox.FORGE, p)],
+                         env={"HOME": HOME, "PATH": fakebin, "TMPDIR": scr2, "FWX_MARK": mark, "PYTHONDONTWRITEBYTECODE": "1",
+                              "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"},
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+rc = None
+try:
+    for _ in range(300):
+        if os.path.exists(mark):
+            break
+        time.sleep(0.1)
+    started = os.path.exists(mark)
+    child.send_signal(signal.SIGTERM)
+    rc = child.wait(timeout=30)
+finally:
+    if child.poll() is None:
+        child.kill()
+        child.wait()
+left = [x for x in os.listdir(scr2) if x.startswith("forge-fwx-")]
+check("18.8: a SIGTERM in the middle of the probe leaves no forge-fwx-* folder and ends the process as terminated -- started %s, rc %s, %s" % (started, rc, left),
+      started and left == [] and rc == 128 + signal.SIGTERM, (started, rc, left))
+
+# 18.9 a caller's GIT_DIR / GIT_WORK_TREE aims neither the scratch nor forge's questions at another repository
+# Seen failing on 85c0c8b: with a decoy repository's GIT_DIR and GIT_WORK_TREE, exit 1 and a `!` whose rule is the decoy's `*.md`.
+decoy = project("*.md\n", commit=True)
+for how, kw in (("its own .gitignore", {}), ("info/exclude", dict(writes_tracked_files=False))):
+    p, w = fresh("node_modules/\n", commit=True, **kw)
+    os.environ["GIT_DIR"], os.environ["GIT_WORK_TREE"] = os.path.join(decoy, ".git"), decoy
+    try:
+        code, out = w.run()
+    finally:
+        del os.environ["GIT_DIR"], os.environ["GIT_WORK_TREE"]
+    check("18.9: (%s) GIT_DIR and GIT_WORK_TREE of a decoy repository: no `!` (the decoy's rule decides nothing) -- %s" % (how, bang(out)[:1]),
+          code == 0 and not bang(out), (code, out))
+    # the doctor too
+    os.environ["GIT_DIR"], os.environ["GIT_WORK_TREE"] = os.path.join(decoy, ".git"), decoy
+    try:
+        r = row()
+    finally:
+        del os.environ["GIT_DIR"], os.environ["GIT_WORK_TREE"]
+    check("18.9: (%s) and the doctor row -- %s %s" % (how, r.level, r.detail[:90]), r.level == "PASS", r)
+
+# 18.10 an ignore file that is not UTF-8 above the project is copied as it is
+# Seen failing on 85c0c8b: "! framework -> .../toyfw.json NOT written: <root>/.gitignore unreadable ('utf-8' codec can't decode byte 0xf3".
+q = mono("", "app")
+with open(gi(q), "wb") as fh:
+    fh.write(b"# caf\xf3\nnode_modules/\n")
+pq = os.path.join(q, "app")
+wq = only("latin", pq, writes_tracked_files=False)
+code, out = wq.run()
+check("18.10: a latin-1 comment in the repository's .gitignore: exit 0, the block written, the file untouched -- %s" % bang(out)[:1],
+      code == 0 and not bang(out) and "FORGE-FWX" in (text(os.path.join(q, ".git", "info", "exclude")) or "")
+      and raw(gi(q)) == b"# caf\xf3\nnode_modules/\n", (code, out))
+with open(gi(q), "wb") as fh:
+    fh.write(b"# caf\xf3\n*.md\n")
+code, out = wq.run()
+check("18.10: and its rules count: a `*.md` after it is the rule the `!` line names -- %s" % bang(out)[:1],
+      code == 1 and any(".gitignore:2:*.md" in l for l in bang(out)), (code, out))
+
+# 18.11 mutations of the first round's fixes that no check saw (second review), each now caught
+# a block tagged with a path with a space: the tag is %-quoted
+q = mono("node_modules/\n", "my app")
+wq = only("spaced", os.path.join(q, "my app"), writes_tracked_files=False)
+code, out = wq.run()
+check("18.11: a project in `my app`: the marker carries `my%%20app/`, exit 0 -- %s" % bang(out)[:1],
+      code == 0 and "# END FORGE-FWX my%20app/" in (text(os.path.join(q, ".git", "info", "exclude")) or ""), (code, out))
+# a block whose tag starts like another's (a project and one inside it)
+q = mono("node_modules/\n", "app", "app/sub")
+wn = World()
+wn.put(profile(os.path.join(q, "app"), name="outer", writes_tracked_files=False))
+wn.put(profile(os.path.join(q, "app", "sub"), name="inner", writes_tracked_files=False))
+exq = os.path.join(q, ".git", "info", "exclude")
+wn.run()
+before = raw(exq)
+code, out = wn.run()
+check("18.11: a project inside another: both blocks, a second run already current for both -- %s" % blines(out),
+      code == 0 and raw(exq) == before and len([l for l in blines(out) if "already current" in l]) == 2
+      and (text(exq) or "").count("# BEGIN FORGE-FWX") == 2, (code, out))
+wo = only("outer", os.path.join(q, "app"), framework=False, writes_tracked_files=False)
+wo.run()
+check("18.11: the outer one off takes out its block and leaves the inner one's whole",
+      btext(prefix="app/sub/", tag="app/sub/") in (text(exq) or "") and "FORGE-FWX app/ " not in (text(exq) or ""), text(exq))
+# the chain is every directory down to the project, not the root and the project only
+q = mono("node_modules/\n", "docs/app")
+put(os.path.join(q, "docs", ".gitignore"), "app/.fwx/\n")
+wq = only("deep", os.path.join(q, "docs", "app"), writes_tracked_files=False)
+code, out = wq.run()
+check("18.11: a rule of a directory between the root and the project counts -- %s" % bang(out)[:1],
+      code == 1 and any("docs/.gitignore:1:app/.fwx/" in l for l in bang(out)), (code, out))
+# the probe that follows the move of the block to the end gives no answer: nothing is moved, nothing is said to be done
+p, w = fresh(STAR)
+w.run()
+put(gi(p), text(gi(p)) + "*.md\n")
+before = raw(gi(p))
+with git_stub(lambda a, k: subprocess.TimeoutExpired(a, 1) if "check-ignore" in a and k > 4 else None):
+    code, out = w.run()
+check("18.11: the probe that follows the move gives no answer: exit 1, NOT RUN, NOT ARMED, the file as it was -- %s" % bang(out)[:1],
+      code == 1 and any("NOT RUN, NOT ARMED" in l for l in bang(out)) and raw(gi(p)) == before, (code, out))
+# a .gitignore that is a link, and git does not answer
+p, w = fresh(None)
+put(os.path.join(p, "real-ignore"), "node_modules/\n")
+os.symlink("real-ignore", gi(p))
+with git_stub(silent):
+    code, out = w.run()
+check("18.11: a .gitignore that is a link and git that does not answer: exit 1, NOT RUN, NOT ARMED -- %s" % bang(out)[:1],
+      code == 1 and any("NOT RUN, NOT ARMED" in l for l in bang(out)), (code, out))
+code, out = w.run()
+check("18.11: the same link with git answering: the generated file is not ignored, so a `!` line, exit 1, nothing written through the link",
+      code == 1 and os.path.islink(gi(p)) and text(os.path.join(p, "real-ignore")) == "node_modules/\n" and bool(bang(out)), (code, out))
+# the doctor's row, when git does not answer
+p, w = fresh(STAR)
+w.run()
+with git_stub(silent):
+    r = row()
+check("18.11: the doctor row, git not answering: not a PASS, and it says git did not answer -- %s %s" % (r.level, r.detail),
+      r.level == "FAIL" and "git did not answer" in r.detail, r)
+# a tsv that only a later line re-ignores: the probe must see it and move the block
+p, w = fresh(STAR)
+w.run()
+put(gi(p), text(gi(p)) + "*.tsv\n")
+code, out = w.run()
+make_docs(p)
+check("18.11: a later `*.tsv` is seen: the block is moved, the tsv shows -- %s" % blines(out),
+      code == 0 and any("moved" in l and ".fwx/decisions.tsv" in l for l in blines(out)) and seen(p)[1], (code, out, status(p)))
+# an info/exclude that is a link is never written through
+p, w = fresh("node_modules/\n", commit=True, writes_tracked_files=False)
+exq = os.path.join(p, ".git", "info", "exclude")
+os.remove(exq)
+put(os.path.join(TOY, "exclude-target"), "# the target\n")
+os.symlink(os.path.join(TOY, "exclude-target"), exq)
+code, out = w.run()
+check("18.11: an info/exclude that is a link: a `!` line, exit 1, the target is untouched -- %s" % bang(out)[:1],
+      code == 1 and bool(bang(out)) and text(os.path.join(TOY, "exclude-target")) == "# the target\n", (code, out))
+# a block that was there already and is not claimed stays unclaimed
+p, w = fresh(STAR + btext())
+code, out = w.run()
+check("18.11: a block the project had already (unclaimed) is `already current` and stays unclaimed (uninstall leaves it) -- %s" % blines(out),
+      code == 0 and any("already current" in l for l in blines(out)) and not owned.previous(gi(p), "framework")[0], (code, out, owned.previous(gi(p), "framework")[0]))
+# the single claimed line outside the block, equal to a line inside it: only the outside one is folded
+p, w = fresh("node_modules/\n", commit=True, writes_tracked_files=False)
+exq = os.path.join(p, ".git", "info", "exclude")
+ex_template = text(exq)
+w.run()
+put(exq, "/.claude/toyfw.json\n" + text(exq))
+owned.record(exq, owned.previous(exq, "framework")[0] + [owned.claim("item", ["line", "/.claude/toyfw.json"], "/.claude/toyfw.json", "toyapp")], True, part="framework")
+code, out = w.run()
+check("18.11: a claimed single line equal to one inside an intact block is folded, and the block is not called different -- %s" % blines(out),
+      code == 0 and any("folded" in l for l in blines(out)) and not any("differed" in l for l in blines(out))
+      and text(exq) == ex_template + btext(), (code, out, text(exq)))
 
 # ------------------------------------------------------------ 9. a project with no framework is never touched
 forge_json()
