@@ -28,7 +28,18 @@ Seen failing on the base (97c3ec7, this file as it is, the framework step writin
   same reason: no block. First messages: "4: the first apply writes the block -- None", "5: BEGIN without END: ... -- exit 0",
   "7: writes_tracked_files false: the block is in .git/info/exclude -- ...", "8: doctor row: FAIL naming .gitignore:1:*.md ...
   -- AttributeError: module 'forge.cli' has no attribute 'framework_ignore_row'".
-Negative controls on the finished code, each mutation put back (the checks that went red are named in the commit message).
+Review round (sections 10 to 16, seen failing on a11e284 before the fixes: 47 of 119 checks):
+  D1 two projects in one repository, writes_tracked_files false: "each keeps its own block ... -- ['# git ls-files ...', ...]" and
+     every run printed "(updated; ..." for both. D1 with the tracked .gitignore did NOT fail: each project has its own file.
+  D2 "exit 1 and a `!` line naming the root rule -- [] -- (0, ..." (exit 0, no `!`, with the root `.gitignore:1:*.md`).
+  D3 "no scratch directory: exit 1 and a `!` line ... -- [] -- (0, ..." (exit 0, block written). D4 "(updated)" with no mention
+  of the edit, uninstall "was edited, left in place". D5 "git still ignores .fwx/decisions.tsv (.gitignore:4:*.tsv) -- no line from the
+  end of the file can beat that rule". D6 two `git rev-parse` per profile with the framework off. D7 the block in LF after CRLF lines.
+Negative controls on the finished code, each mutation put back (the checks that went red are named in the commit message):
+  M1 one shared tag, M2 probe without the parent .gitignore files, M3 "no answer" read as success, M4 a git call before the claims
+  in drop, M5 line ending always LF, M6 no tsv line in the block, M7a an edited block not removable, M7b sync silent about the
+  edit, M8 the block never moved to the end, M9 the worktrees sample taken out of the probe (the 4c worktrees check of D8 fails,
+  its old form `... if "md" in rel else True` passes).
 """
 import argparse
 import contextlib
@@ -230,9 +241,11 @@ def blines(out):
     return [l for l in out.splitlines() if "FORGE-FWX block" in l]
 
 
-def block(prefix="", name=NAME):
-    return ["# BEGIN FORGE-FWX (managed by forge)", "!/%s.fwx/**/*.md" % prefix, "/%s.claude/%s.json" % (prefix, name),
-            "/%s.claude/worktrees/" % prefix, "# END FORGE-FWX"]
+def block(prefix="", name=NAME, tag=""):
+    """The block as forge writes it; `tag` (the project's place, "sub/") only in the exclude file of a repository."""
+    t = " " + tag if tag else ""
+    return ["# BEGIN FORGE-FWX%s (managed by forge, do not edit inside)" % t, "!/%s.fwx/**/*.md" % prefix, "!/%s.fwx/**/*.tsv" % prefix,
+            "/%s.claude/%s.json" % (prefix, name), "/%s.claude/worktrees/" % prefix, "# END FORGE-FWX%s" % t]
 
 
 def btext(**kw):
@@ -407,14 +420,19 @@ for why, tail, rel in (("`*.md` again", "*.md\n", ".fwx/milestones/v1/phases/01-
               code == 1 and any(".gitignore:" in l and ".fwx" in l for l in bang(out)), (code, out))
     else:
         make_docs(p)
-        check("4c: (%s) and the outcome is right: the documents show" % why, code == 0 and (seen(p)[0] if "md" in rel else True), (code, status(p), out))
+        make_worktree(p)
+        if "worktrees" in rel:  # D8: this used to be `... if "md" in rel else True`, which looked at nothing for this case
+            check("4c: (%s) and the outcome is right: a real worktree stays out of git status, the documents show" % why,
+                  code == 0 and ignored(p, rel)[0] and not seen(p)[3] and seen(p)[0], (code, status(p), out))
+        else:
+            check("4c: (%s) and the outcome is right: the documents show" % why, code == 0 and seen(p)[0], (code, status(p), out))
 
 # ------------------------------------------------------------------------------------------------------ 5. broken markers
 B, E = block()[0], block()[-1]
 for label, body, line in (("BEGIN without END", STAR + B + "\n!/.fwx/**/*.md\n", 4),
                           ("END without BEGIN", STAR + "!/.fwx/**/*.md\n" + E + "\n", 5),
-                          ("two blocks", STAR + btext() + "dist/\n" + btext(), 10),
-                          ("edited marker text", STAR + btext().replace("(managed by forge)", "(managed by hand)"), 4),
+                          ("two blocks", STAR + btext() + "dist/\n" + btext(), 11),
+                          ("edited marker text", STAR + btext().replace("(managed by forge, do not edit inside)", "(managed by hand)"), 4),
                           ("END before BEGIN", STAR + E + "\n" + B + "\n", 4)):
     p, w = fresh(body)
     code, out = w.run()
@@ -437,14 +455,14 @@ code, out = w.run()
 check("6: true -> false removes exactly the block: the file is the original again, identical lines outside the markers stay -- %s"
       % (text(gi(p)) or "").splitlines(), text(gi(p)) == orig and code == 0, text(gi(p)))
 check("6: no claim of the block is left", not owned.previous(gi(p), "framework")[0], owned.previous(gi(p), "framework")[0])
-# an edited block stays, and is named
+# a block edited by hand is forge's too (D4: everything between the markers is forge's): it goes, and nothing is said as `!`
 p, w = fresh(STAR)
 w.run()
 put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my-extra/"))
 w.put(profile(p, name="toyapp", framework=False))
 code, out = w.run()
-check("6: an edited block is the project's: it stays, and a `!` line names it -- %s" % bang(out),
-      "# BEGIN FORGE-FWX" in text(gi(p)) and any("block" in l and "edited" in l for l in bang(out)), (text(gi(p)), out))
+check("6: an edited block is removed with the rest of it, like sync rewrites it -- %s" % bang(out),
+      text(gi(p)) == STAR and code == 0 and not bang(out), (text(gi(p)), out))
 # forge uninstall --project
 p, w = fresh(orig)
 w.run()
@@ -533,6 +551,267 @@ r = row()
 check("8: a framework profile whose project cannot be looked at: looking at zero is a FAIL -- %s %s" % (r.level, r.detail),
       r.level == "FAIL" and "looked at 0" in r.detail, r)
 check("8: the row is registered in forge doctor", "framework ignore" in [c[0] for c in cli.CHECKS], [c[0] for c in cli.CHECKS])
+
+# ------------------------------------------------------------ 10. D1: two projects in one repository
+def mono(gitignore, *subs):
+    """A toy repository (the .gitignore committed) with empty directories `subs`; returns its top."""
+    _p[0] += 1
+    top = os.path.join(TOY, "toymono%d" % _p[0])
+    os.makedirs(top)
+    sandbox.git(top, "init", "-q", "-b", "main")
+    sandbox.git(top, "commit", "-q", "--allow-empty", "-m", "init")
+    put(gi(top), gitignore)
+    sandbox.git(top, "add", "-A")
+    sandbox.git(top, "commit", "-q", "-m", "ignore")
+    for sub in subs:
+        os.makedirs(os.path.join(top, sub))
+    return top
+
+
+def only(world_name, ppath, **over):
+    """A world holding the one profile `world_name`: a sync of it alone."""
+    w_ = World()
+    w_.put(profile(ppath, name=world_name, **over))
+    return w_
+
+
+top = mono("node_modules/\n", "a", "b")
+ex = os.path.join(top, ".git", "info", "exclude")
+ex0 = text(ex)
+pa, pb = os.path.join(top, "a"), os.path.join(top, "b")
+wa, wb = only("proja", pa, writes_tracked_files=False), only("projb", pb, writes_tracked_files=False)
+both = World()
+both.put(profile(pa, name="proja", writes_tracked_files=False))
+both.put(profile(pb, name="projb", writes_tracked_files=False))
+code, out = both.run()
+ta, tb = btext(prefix="a/", tag="a/"), btext(prefix="b/", tag="b/")
+# D1 on the base (a11e284): "framework -> .../exclude FORGE-FWX block (updated; ...)" for both on every run, and the exclude holds
+# only /b/ lines: -- ['# BEGIN FORGE-FWX (managed by forge)', '!/b/.fwx/**/*.md', '/b/.claude/toyfw.json', '/b/.claude/worktrees/', ...]
+check("D1: two projects of one repository with writes_tracked_files false: each keeps its own block in .git/info/exclude -- %s"
+      % (text(ex) or "").splitlines()[-12:], code == 0 and ta in text(ex) and tb in text(ex), (code, out))
+check("D1: and there are exactly two blocks in it", (text(ex) or "").count("# BEGIN FORGE-FWX") == 2, text(ex))
+check("D1: git ignores both generated files and both worktrees folders",
+      all(ignored(q, rel)[0] for q in (pa, pb) for rel in (".claude/toyfw.json", ".claude/worktrees/x")), "")
+before = (raw(ex), REG())
+code, out = both.run()
+check("D1: a second run of both changes nothing and says already current for both, never updated -- %s" % blines(out),
+      before == (raw(ex), REG()) and len([l for l in blines(out) if "already current" in l]) == 2
+      and not any("updated" in l for l in blines(out)), (blines(out)))
+snapshot = raw(ex)
+for order in (wa, wb, wb, wa, wa, wb):
+    order.run()
+check("D1: runs of each project alone, in any order, leave both blocks and the exclude as it was", raw(ex) == snapshot,
+      (text(ex) or "").splitlines()[-14:])
+# one project is switched off: only its own lines go
+wa.put(profile(pa, name="proja", framework=False, writes_tracked_files=False))
+code, out = wa.run()
+check("D1: proja with framework false takes out its own block and leaves projb's whole -- %s" % (text(ex) or "").splitlines()[-8:],
+      code == 0 and ta not in text(ex) and tb in text(ex) and (text(ex) or "").count("# BEGIN FORGE-FWX") == 1, (code, out))
+wa.put(profile(pa, name="proja", writes_tracked_files=False))
+wa.run()
+check("D1: and turned on again it gets its block back beside projb's", ta in text(ex) and tb in text(ex), text(ex))
+# forge uninstall --project of one
+wb.drop("projb")
+sync.CFG, lib.PROFILES = wb.cfg, wb.pdir
+o = io.StringIO()
+with contextlib.redirect_stdout(o):
+    code = uninstall.main(argparse.Namespace(integration=None, project="projb", apply=True))
+check("D1: forge uninstall --project projb (a directory of the repository) removes projb's block only, exit 0 -- %s"
+      % sandbox.tail(o.getvalue(), 3), code == 0 and tb not in text(ex) and ta in text(ex), (code, o.getvalue(), text(ex)))
+w_off = World()
+w_off.put(profile(pa, name="proja", framework=False, writes_tracked_files=False))
+w_off.run()
+check("D1: the last one off leaves the exclude as git made it", text(ex) == ex0, text(ex))
+
+# the same two-projects-in-one-repository case with the repo's .gitignore written by forge: each its own file
+top = mono("*.md\n", "b")
+tb_ = os.path.join(top, "b")
+w1, w2 = only("projroot", top), only("projsub", tb_)
+both = World()
+both.put(profile(top, name="projroot"))
+both.put(profile(tb_, name="projsub"))
+code, out = both.run()
+check("D1 (tracked .gitignore): the project at the root and the one in b each carry their own block, exit 0 -- %s" % bang(out),
+      code == 0 and all((text(f) or "").count("# BEGIN FORGE-FWX") == 1 and "/.claude/toyfw.json" in text(f).splitlines()
+                        for f in (gi(top), gi(tb_))), (code, out))
+make_docs(top)
+make_docs(tb_)
+st = "\n".join(status(top))
+check("D1 (tracked .gitignore): the documents of both show -- %s" % status(top),
+      ".fwx/decisions.tsv" in st and "b/.fwx/decisions.tsv" in st and ".fwx/milestones/v1/phases/01-x/context.md" in st
+      and "b/.fwx/milestones/v1/phases/01-x/context.md" in st, status(top))
+before = (raw(gi(top)), raw(gi(tb_)), REG())
+for order in (w1, w2, both, w2, w1):
+    order.run()
+check("D1 (tracked .gitignore): runs in any order change nothing", before == (raw(gi(top)), raw(gi(tb_)), REG()), "")
+w2.put(profile(tb_, name="projsub", framework=False))
+w2.run()
+check("D1 (tracked .gitignore): the sub project off removes its block (its file is gone) and the root's stays whole",
+      not os.path.exists(gi(tb_)) and text(gi(top)) == before[0].decode(), (text(gi(tb_)), text(gi(top))))
+
+# ------------------------------------------------------------ 11. D2: rules above the project, in the repository's layout
+# D2 on the base: exit 0 with "FORGE-FWX block (created; in .git/info/exclude: ...)" and no `!` line, while
+# `git check-ignore -v --no-index .fwx/x/y.md` says `.gitignore:1:*.md`.
+top = mono("*.md\n", "app")
+app = os.path.join(top, "app")
+w = only("sub", app, writes_tracked_files=False)
+code, out = w.run()
+check("D2: a project in a directory, its rules in the repository's root .gitignore: exit 1 and a `!` line naming the root rule -- %s" % bang(out),
+      code == 1 and any(".fwx/x/y.md" in l and ".gitignore:1:*.md" in l for l in bang(out)), (code, out))
+code, out = w.run()
+check("D2: the second run does not turn that into a success -- %s" % bang(out), code == 1 and bool(bang(out)), (code, out))
+w.run(apply=False)
+code, out = w.run(apply=False)
+check("D2: nor does a dry-run", code == 1 and bool(bang(out)), (code, out))
+r = cli.framework_ignore_row("sub")
+check("D2: sync and the doctor row agree -- %s %s" % (r.level, r.detail), r.level == "FAIL", r)
+# the repository's rules already give the wanted answer for a project in a directory (the generated file ignored, the documents not)
+top = mono(".claude/\n", "app")
+w = only("sub", os.path.join(top, "app"), writes_tracked_files=False)
+code, out = w.run()
+check("D2: root rules that already ignore .claude/ and not the documents: `already current` and exit 0 is true", code == 0 and not bang(out) and any("already current" in l for l in blines(out))
+      and ignored(os.path.join(top, "app"), ".fwx/x/y.md")[0] is False, (code, out))
+# a rule above a project whose .gitignore forge writes: a directory rule it cannot beat is a `!` line, not a success
+top = mono("/app/.fwx/\n", "app")
+w = only("sub", os.path.join(top, "app"))
+code, out = w.run()
+check("D2: tracked .gitignore of a project in a directory, a root rule `/app/.fwx/`: exit 1, the `!` line names that rule -- %s" % bang(out),
+      code == 1 and any(".gitignore:1:/app/.fwx/" in l for l in bang(out)), (code, out))
+# a root `*.md` is beaten by the project's own block, which sits deeper
+top = mono("*.md\n", "app")
+w = only("sub", os.path.join(top, "app"))
+code, out = w.run()
+make_docs(os.path.join(top, "app"))
+check("D2: control: a root `*.md` above a project whose own .gitignore carries the block is beaten by it: exit 0, documents show",
+      code == 0 and seen(os.path.join(top, "app"))[0], (code, out))
+
+# ------------------------------------------------------------ 12. D3: it cannot be checked
+# D3 on the base: exit 0 and "framework -> .../.gitignore FORGE-FWX block (created)" with no `!`, the file written, STAR unchanged...
+import tempfile  # noqa: E402
+
+p, w = fresh(STAR)
+real_tempdir = tempfile.tempdir
+tempfile.tempdir = os.path.join(TOY, "no-such-scratch-dir")
+try:
+    code, out = w.run()
+finally:
+    tempfile.tempdir = real_tempdir
+check("D3: no scratch directory: exit 1 and a `!` line that says what could not be checked, NOT RUN, NOT ARMED -- %s" % bang(out),
+      code == 1 and any("could not check" in l and "NOT RUN, NOT ARMED" in l for l in bang(out)), (code, out))
+check("D3: nothing is written: no block, no claim, no generated file", text(gi(p)) == STAR and not owned.previous(gi(p), "framework")[0]
+      and not os.path.exists(os.path.join(p, ".claude", NAME + ".json")), text(gi(p)))
+p, w = fresh(STAR)
+real_run = subprocess.run
+
+
+def silent_git(args, *a, **kw):
+    if "check-ignore" in args:
+        raise subprocess.TimeoutExpired(args, 1)
+    return real_run(args, *a, **kw)
+
+
+subprocess.run = silent_git
+try:
+    code, out = w.run()
+finally:
+    subprocess.run = real_run
+check("D3: git gives no answer: exit 1, the same `!` line, nothing written -- %s" % bang(out),
+      code == 1 and any("could not check" in l and "NOT RUN, NOT ARMED" in l for l in bang(out)) and text(gi(p)) == STAR, (code, out))
+p, w = fresh(STAR, commit=True, writes_tracked_files=False)
+tempfile.tempdir = os.path.join(TOY, "no-such-scratch-dir")
+try:
+    code, out = w.run()
+finally:
+    tempfile.tempdir = real_tempdir
+check("D3: the same for a project whose block goes to .git/info/exclude", code == 1 and any("NOT RUN, NOT ARMED" in l for l in bang(out))
+      and "FORGE-FWX" not in (text(os.path.join(p, ".git", "info", "exclude")) or ""), (code, out))
+
+# ------------------------------------------------------------ 13. D4: everything between the markers is forge's
+# D4 on the base: sync said `(updated)` and uninstall `... ["block","FORGE-FWX"] was edited, left in place`.
+p, w = fresh(STAR)
+w.run()
+put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my-extra/"))
+code, out = w.run()
+check("D4: sync rewrites a block edited inside the markers, and the line says it differed from what forge writes -- %s" % blines(out),
+      code == 0 and text(gi(p)) == STAR + btext() and any("differed from what forge writes" in l for l in blines(out)), (text(gi(p)), blines(out)))
+check("D4: a sync of a block that is right says nothing of the kind", not any("differed" in l for l in blines(w.run()[1])), "")
+check("D4: the BEGIN line tells the reader not to edit inside", "do not edit inside" in block()[0], block()[0])
+put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my-extra/"))
+w.drop("toyapp")
+sync.CFG, lib.PROFILES = w.cfg, w.pdir
+o = io.StringIO()
+with contextlib.redirect_stdout(o):
+    code = uninstall.main(argparse.Namespace(integration=None, project="toyapp", apply=True))
+check("D4: uninstall removes a block edited inside the markers, with no `edited, left in place` line -- %s" % sandbox.tail(o.getvalue(), 3),
+      code == 0 and text(gi(p)) == STAR and "left in place" not in o.getvalue(), (code, o.getvalue(), text(gi(p))))
+
+# ------------------------------------------------------------ 14. D5: the fix text is true, and a tsv rule is beaten
+# D5 on the base: exit 1, "git still ignores .fwx/decisions.tsv (.gitignore:3:*.tsv) -- no line from the end of the file can beat that rule"
+for why, rules in (("a `*.tsv` rule", STAR + "*.tsv\n"), ("a `*` allowlist with `!*/` and `!*.py`", "*\n!*/\n!*.py\n")):
+    p, w = fresh(rules)
+    code, out = w.run()
+    make_docs(p)
+    check("D5: %s: exit 0, no `!` line -- %s" % (why, bang(out)), code == 0 and not bang(out), (code, out))
+    check("D5: %s: the markdown and the tsv both show in git status -- %s" % (why, status(p)), seen(p)[:2] == (True, True), status(p))
+q = project("*.tsv\n" + btext().replace("!/.fwx/**/*.tsv\n", ""))
+make_docs(q)
+check("D5 control: without the tsv line a `*.tsv` rule keeps the tsv ignored (the line is needed)", seen(q)[1] is False, status(q))
+p, w = fresh(STAR + ".fwx/\n")
+code, out = w.run()
+check("D5: a rule the block cannot beat (`.fwx/`): exit 1 and a fix text that claims no impossibility -- %s" % bang(out),
+      code == 1 and bang(out) and not any("no line from the end" in l for l in bang(out)) and any("un-ignores only" in l for l in bang(out)), (code, out))
+
+# ------------------------------------------------------------ 15. D6: a project without the framework forks no git of its own
+# D6 on the base: 2 `git rev-parse` calls per profile with the framework off (--git-common-dir, --show-prefix).
+p, w = fresh(STAR, framework=False)
+calls = []
+
+
+def spy(args, *a, **kw):
+    calls.append(list(args))
+    return real_run(args, *a, **kw)
+
+
+subprocess.run = spy
+try:
+    code, out = w.run(apply=False)
+finally:
+    subprocess.run = real_run
+rp = [c for c in calls if "rev-parse" in c]
+check("D6: a profile with framework false, never given a block, runs no git rev-parse -- %s" % rp, code == 0 and not rp, (calls, out))
+# ... and one that had a block is still cleaned (the registry tells where, not git)
+p, w = fresh(STAR, commit=True, writes_tracked_files=False)
+w.run()
+w.put(profile(p, name="toyapp", framework=False, writes_tracked_files=False))
+subprocess.run = spy
+calls[:] = []
+try:
+    code, out = w.run()
+finally:
+    subprocess.run = real_run
+check("D6: a profile that had its block in .git/info/exclude loses it with no rev-parse either -- %s" % [c for c in calls if "rev-parse" in c],
+      "FORGE-FWX" not in (text(os.path.join(p, ".git", "info", "exclude")) or "") and not [c for c in calls if "rev-parse" in c], (calls, out))
+
+# ------------------------------------------------------------ 16. D7: the line ending the file uses
+# D7 on the base: b'*.md\r\nnode_modules/\r\n# BEGIN FORGE-FWX (managed by forge)\n!/.fwx/**/*.md\n...' (the block in LF).
+for why, orig_ in (("CRLF", b"*.md\r\nnode_modules/\r\n"), ("CRLF without a last break", b"*.md\r\nnode_modules/")):
+    p, w = fresh("")
+    with open(gi(p), "wb") as fh:
+        fh.write(orig_)
+    code, out = w.run()
+    got = raw(gi(p)) or b""
+    check("D7: %s file: every line break after the block went in is CRLF -- %s" % (why, got), b"\n" not in got.replace(b"\r\n", b"")
+          and got.startswith(orig_) and got.endswith(b"# END FORGE-FWX\r\n"), got)
+    before = raw(gi(p))
+    w.run()
+    check("D7: %s: the second run is byte-identical" % why, raw(gi(p)) == before, raw(gi(p)))
+    if orig_.endswith(b"\r\n"):
+        w.put(profile(p, name="toyapp", framework=False))
+        w.run()
+        check("D7: %s: framework false gives the original bytes back" % why, raw(gi(p)) == orig_, raw(gi(p)))
+p, w = fresh(STAR)
+w.run()
+check("D7: control: an LF file stays LF", b"\r" not in (raw(gi(p)) or b""), raw(gi(p)))
 
 # ------------------------------------------------------------ 9. a project with no framework is never touched
 forge_json()

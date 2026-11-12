@@ -356,7 +356,7 @@ check("true: integrations holds the four names, read from forge.json (notificati
       doc.get("integrations"))
 gi = raw(os.path.join(pp, ".gitignore")) or b""
 check("true: the ignore line, inside the FORGE-FWX block, is in .gitignore",
-      b"/.claude/toyfw.json" in gi.splitlines() and b"# BEGIN FORGE-FWX (managed by forge)" in gi.splitlines(), gi)
+      b"/.claude/toyfw.json" in gi.splitlines() and b"# BEGIN FORGE-FWX (managed by forge, do not edit inside)" in gi.splitlines(), gi)
 check("true: git ignores the file", subprocess.run(["git", "-C", pp, "check-ignore", "-q", ".claude/toyfw.json"]).returncode == 0, "")
 enabled, markets, env = sl_keys(pp)
 check("settings: enabledPlugins toyfw@toyfw is on -- %s" % enabled.get("toyfw@toyfw"), enabled.get("toyfw@toyfw") is True, enabled)
@@ -571,7 +571,7 @@ w12.put(profile(pp12, name="repoowned", writes_tracked_files=False))
 code, out = w12.run()
 exclude = raw(os.path.join(pp12, ".git", "info", "exclude")) or b""
 check("writes_tracked_files false: the line is in .git/info/exclude, anchored", b"/.claude/toyfw.json" in exclude.splitlines()
-      and b"# BEGIN FORGE-FWX (managed by forge)" in exclude.splitlines(), exclude)
+      and b"# BEGIN FORGE-FWX (managed by forge, do not edit inside)" in exclude.splitlines(), exclude)
 check("writes_tracked_files false: .gitignore is intact", raw(os.path.join(pp12, ".gitignore")) == b"node_modules/\n", raw(os.path.join(pp12, ".gitignore")))
 check("writes_tracked_files false: the file is written and exit is 0", code == 0 and os.path.exists(fwfile(pp12)), (code, bang(out)))
 

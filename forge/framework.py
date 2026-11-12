@@ -352,7 +352,7 @@ def _write_file(ctx, prof, p, name):
     except lib.Unreadable as e:  # the project's .gitignore
         return ["   ! framework -> %s NOT written: %s unreadable (%s)" % (short, lib.short(e.path), e.reason)]
     if not ignored:
-        return block + ["   ! framework -> %s NOT written: git would not ignore it" % short]
+        return block + ["   ! framework -> %s NOT written: it is not known to be ignored" % short]
     if os.path.islink(p.file):
         return block + ["   ! framework -> %s NOT written: it is a link, which forge never writes through" % short]
     text = lib.dumps(p.doc) + "\n"
