@@ -103,19 +103,26 @@ if _a[_i:] == ["screenshot"] and os.environ.get("FAKE_SHOT_PATH"):
     sys.exit(0)
 # The read-back of arm-control asks the page for the target's style and rendered box with a call of the browser's eval command whose code
 # carries the word fwx: and answers with the line that code builds, `fwx:<font-size>|<font-weight>|<width>x<height>` (a string result comes
-# back quoted: measured live). FAKE_READ says what the page holds, as (before the plant, after it):
+# back quoted: measured live). FAKE_READ says what the page holds, as (without the plant, with it):
 #   changes (the default): 24px/700 in 300x40, then 16px/400 in 300x30      same: 16px/400 in 300x30 both times (the title already has the
 #   planted style)      weight: 16px/500, then 16px/400, the box 300x30 both times (a style that changes nothing a reader can see)
-#   grow10: the box goes from 300x30 to 310x30     missing: no title
+#   grow10: the box goes from 300x30 to 310x30     missing: no title     vanish: a title without the plant, none with it
 # FAKE_QUOTE=1 wraps the line in quotes (the shape of a string result is not measured; the parser takes both).
+# The plant is on from the moment the session was launched with --init-script, or the plant's code was run on the page by eval, until a
+# `close`; FAKE_INIT=ignore is a browser that drops the --init-script (the launch path the walkers use does not plant: the F-3 defect).
+planted = os.environ["FAKE_LOG"] + ".planted"
+if "--init-script" in sys.argv and os.environ.get("FAKE_INIT") != "ignore":
+    open(planted, "w").write("1")
+if "eval" in sys.argv and "MutationObserver" in sys.argv[-1]:
+    open(planted, "w").write("1")
+if _a[_i:_i + 1] == ["close"] and os.path.exists(planted):
+    os.remove(planted)
 if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
     mode = os.environ.get("FAKE_READ", "changes")
-    count = os.environ["FAKE_LOG"] + ".reads"
-    k = int(open(count).read()) if os.path.exists(count) else 0
-    open(count, "w").write(str(k + 1))
     reads = {"changes": ("fwx:24px|700|300x40", "fwx:16px|400|300x30"), "same": ("fwx:16px|400|300x30",) * 2,
-             "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30")}
-    line = "fwx:missing" if mode == "missing" else reads[mode][min(k, 1)]
+             "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30"),
+             "vanish": ("fwx:24px|700|300x40", "fwx:missing")}
+    line = "fwx:missing" if mode == "missing" else reads[mode][1 if os.path.exists(planted) else 0]
     print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
 sys.exit(int(os.environ.get("FAKE_RC", "0")))
 """,
@@ -260,7 +267,7 @@ class Scene:
         return [r for r in recs if prog is None or r["prog"] == prog]
 
     def clear(self):
-        for f in (self.log, self.log + ".reads"):
+        for f in (self.log, self.log + ".planted"):
             if os.path.exists(f):
                 os.remove(f)
 
@@ -982,11 +989,17 @@ def case_arm_control_readback(R, S):
         S.eq("arm-control read-back: the boxes are recorded beside the styles", rb.get("box"),
              {"before": {"width": 300, "height": 40}, "after": {"width": 300, "height": 30}})
         calls = [x["argv"] for x in sc.calls("agent-browser")]
-        evals = [a[a.index("eval") + 1] for a in calls if "eval" in a]
-        S.ok("arm-control read-back: reads, plants (the init script's code), reads again",
-             len(evals) == 3 and "fwx:" in evals[0] and "MutationObserver" in evals[1] and "fwx:" in evals[2], repr([e[:40] for e in evals]))
-        S.ok("arm-control read-back: the first reading is taken before any plant (the launch carries no init script)",
-             not any("--init-script" in a for a in calls), repr([a for a in calls if "--init-script" in a]))
+        reads = [i for i, a in enumerate(calls) if "eval" in a and "fwx:" in a[-1]]
+        inits = [i for i, a in enumerate(calls) if "--init-script" in a]
+        # F-3 (the plant went to the page by an eval of its code, not by the launch the walkers' sessions use). Seen red on the base:
+        #   FAIL: arm-control read-back: reads without the plant, then in a session launched with the plant (the walkers' launch path): reads [2, 4], launches with --init-script []
+        S.ok("arm-control read-back: reads without the plant, then in a session launched with the plant (the walkers' launch path)",
+             len(reads) == 2 and len(inits) == 1 and reads[0] < inits[0] < reads[1], "reads %r, launches with --init-script %r" % (reads, inits))
+        S.ok("arm-control read-back: the code is never run on the page by hand",
+             not any("eval" in a and "MutationObserver" in a[-1] for a in calls), repr([a[-1][:40] for a in calls if "eval" in a]))
+        ctl_script = c.get("script") or ""
+        S.ok("arm-control read-back: the launch carries the init script control.json names, which holds the plant",
+             len(inits) == 1 and ctl_script in calls[inits[0]] and "MutationObserver" in open(ctl_script, encoding="utf-8").read(), repr(calls[inits[0]][:6] if inits else None))
         S.eq("arm-control read-back: the probe session is closed last (the walkers launch their own)", [a[-1] for a in calls][-1:], ["close"])
         S.ok("arm-control read-back: and no session mark is left", not os.path.exists(os.path.join(rd, "sessions", "ab-w1")))
         # (b) the title already has the planted style: nothing a walker could see; refuses, and the earlier control.json does not survive
@@ -1006,8 +1019,9 @@ def case_arm_control_readback(R, S):
         sc.clear()
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
         S.eq("arm-control read-back: no title on the screen: exit", r.returncode, 1)
-        S.ok("arm-control read-back: no title on the screen: says target not found, and where",
-             "target not found" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched",
+             "target not found" in r.stderr and sc.url + screen in r.stderr and "fresh walker session" not in r.stderr
+             and not any("--init-script" in x["argv"] for x in sc.calls("agent-browser")), "rc %d: %s" % (r.returncode, r.stderr))
         S.ok("arm-control read-back: no title on the screen: nothing written", not os.path.exists(os.path.join(rd, "control.json")))
         # (d) the layout is what counts: a plant that changes the style and leaves the title's box as it was (a weight 500 title already at the
         # body's size) is refused, with both boxes in the reason. Seen red on the branch before it (the read-back compared styles):
@@ -1703,7 +1717,7 @@ def case_sweep(R, S):
 def case_usage(R, S):
     sc = Scene()
     for argv in ([], ["bogus"], ["up"], ["ab"], ["ab", "w1"], ["pw"], ["arm-control"], ["findings"], ["review-page"], ["review-answers"], ["down"],
-                  ["up", "--bogus"], ["capacity"], ["up", "--dir", "x", "--part", "x", "--round", "1"]):
+                  ["check-screens"], ["up", "--bogus"], ["capacity"], ["up", "--dir", "x", "--part", "x", "--round", "1"]):
         r = sc.walk(R, *argv)
         S.ok("usage: walk %s: exit 2 and a usage line" % " ".join(argv), r.returncode == 2 and "usage: fwx walk" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
     h = R(sc.repo, "help")
@@ -1881,33 +1895,327 @@ def case_arm_control_root(R, S):
         sc.stop()
 
 
-SLOWUP = """import os, subprocess, sys
-port, pidfile = int(sys.argv[1]), sys.argv[2]
-here = os.path.dirname(os.path.abspath(__file__))
-code = "import runpy, sys, time; time.sleep(1); sys.argv = ['http.server', %r, '--bind', '127.0.0.1']; runpy.run_module('http.server', run_name='__main__')" % str(port)
-p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True, cwd=here)
-open(pidfile, "a").write(str(p.pid) + "\\n")
-"""
+def case_arm_control_launch_path(R, S):
+    """F-3: the control is proved in a browser launched the way the walkers' sessions are (control.json written first, so the launch carries
+    --init-script), not by running its code on the page by hand. A fake agent-browser that drops --init-script (FAKE_INIT=ignore: the
+    walkers' launch path does not plant) is the case that exposed it. Seen red on the base (it ran the code by eval, so the plant showed
+    on the page and the arming passed):
+      FAIL: arm-control launch path: a browser that ignores --init-script: exit: got 0, want 1
+      FAIL: arm-control launch path: a browser that ignores --init-script: says no visible change, in a fresh walker session, and where: rc 0:
+      FAIL: arm-control launch path: a browser that ignores --init-script: no control.json is left
+    The same call on a browser that takes the script is the negative control (armed, the readings differ)."""
+    sc = Scene()
+    sc.env["FWX_WALK_CONTROL_WAIT_S"] = "1"
+    try:
+        o = armed(sc, R, S, "arm-control launch path")
+        if not o:
+            return
+        rd = o["run_dir"]
+        label = "arm-control launch path: a browser that ignores --init-script"
+        sc.env["FAKE_INIT"] = "ignore"
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        S.eq(label + ": exit", r.returncode, 1)
+        S.ok(label + ": says no visible change, in a fresh walker session, and where",
+             "no visible change" in r.stderr and "fresh walker session" in r.stderr and sc.url + "/board" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok(label + ": the same reason on stdout as {armed: false}", (obj(r.stdout) or {}).get("armed") is False, r.stdout)
+        S.ok(label + ": no control.json is left", not os.path.exists(os.path.join(rd, "control.json")))
+        shots = (jfile(os.path.join(rd, "run.json")) or {}).get("shots", "")
+        S.ok(label + ": and no init script", bool(shots) and not os.path.exists(os.path.join(shots, "init.js")), shots)
+        del sc.env["FAKE_INIT"]
+        sc.env["FAKE_READ"] = "vanish"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        S.eq("arm-control launch path: a title that is gone in the planted session: exit", r.returncode, 1)
+        S.ok("arm-control launch path: a title that is gone in the planted session: says target not found, in a fresh walker session, one line",
+             "target not found" in r.stderr and "fresh walker session" in r.stderr and len(r.stderr.strip().splitlines()) == 1, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("arm-control launch path: a title that is gone in the planted session: no control.json is left", not os.path.exists(os.path.join(rd, "control.json")))
+        del sc.env["FAKE_READ"]
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        S.eq("arm-control launch path: a browser that takes the script: exit", r.returncode, 0)
+        S.ok("arm-control launch path: a browser that takes the script: control.json is there", os.path.isfile(os.path.join(rd, "control.json")))
+        # armed again over the earlier plant: the reading without the plant is still taken before any launch that carries it
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        calls = [x["argv"] for x in sc.calls("agent-browser")]
+        first_read = next((i for i, a in enumerate(calls) if "eval" in a and "fwx:" in a[-1]), None)
+        first_init = next((i for i, a in enumerate(calls) if "--init-script" in a), None)
+        S.ok("arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant",
+             r.returncode == 0 and first_read is not None and first_init is not None and first_read < first_init, "rc %d reads %r launch %r" % (r.returncode, first_read, first_init))
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+class Pages:
+    """A toy app on a port chosen free at run time, in a thread of this process: /ok answers 200, /docs/docs 404, /go-local redirects to /ok
+    and /go-away to a host that is not local. `hits` lists the paths it was asked for."""
+
+    def __init__(self, port=0):
+        import http.server
+        import threading
+        outer = self
+        self.hits = []
+
+        class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                outer.hits.append(self.path)
+                code, loc = {"/go-local": (302, outer.url + "/ok"), "/go-away": (302, "http://example.test/ok"),
+                             "/docs/docs": (404, None)}.get(self.path, (200, None))
+                self.send_response(code)
+                if loc:
+                    self.send_header("Location", loc)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *a):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
+        self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join(5)
+
+
+def take_over(sc):
+    """A Pages server on the toy app's own port, once `up` armed: the screens of check-screens must be on the app's origin, so the toy app's server
+    (a plain file server that `up` started) is stopped and this one answers there instead."""
+    sc.stop()
+    for _ in range(50):
+        try:
+            return Pages(sc.port)
+        except OSError:
+            time.sleep(0.1)
+    raise OSError("the toy app's port did not come free")
+
+
+def declare_login(sc):
+    path = os.path.join(sc.repo, ".claude", "fwx.json")
+    cfg = jfile(path)
+    cfg["project"]["app_run"]["login"] = "python3 login.py"
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps(cfg))
+
+
+def case_check_screens(R, S):
+    """F-1: `fwx walk check-screens --run R --screens JSON` asks each screen through the probe `up` uses (the app's `run` prefix, local
+    redirects followed, any other redirect refused) and exits 1 naming each screen that does not answer 2xx. Seen red before it existed
+    (the walk went on to walk /docs/docs for 13 minutes in the rehearsal; every call exited 2 with the usage line):
+      FAIL: check-screens: all answer 200: exit: got 2, want 0
+      FAIL: check-screens: one answers 404: exit: got 2, want 1
+      FAIL: check-screens: one answers 404: stderr names the screen and the status: rc 2: fwx walk: usage ...
+    The all-200 call is the negative control of the 404 one: same command, same toy app, only the path differs."""
+    sc = Scene()
+    pg = None
+    try:
+        o = armed(sc, R, S, "check-screens")
+        if not o:
+            return
+        rd = o["run_dir"]
+        pg = take_over(sc)
+
+        def check(*paths):
+            r = sc.walk(R, "check-screens", "--run", rd, "--screens", json.dumps([p if "://" in p else pg.url + p for p in paths]))
+            return r, obj(r.stdout) or {}
+        r, out = check("/ok", "/other")
+        S.eq("check-screens: all answer 200: exit", r.returncode, 0)
+        S.eq("check-screens: all answer 200: JSON", (out.get("checked"), out.get("bad"), [x.get("status") for x in out.get("screens", [])]), (2, 0, [200, 200]))
+        r, out = check("/ok", "/docs/docs", "/other")
+        S.eq("check-screens: one answers 404: exit", r.returncode, 1)
+        S.ok("check-screens: one answers 404: stderr names the screen and the status", pg.url + "/docs/docs" in r.stderr and "404" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("check-screens: one answers 404: stderr does not name the screens that answer", "/ok" not in r.stderr and "/other" not in r.stderr, r.stderr)
+        S.eq("check-screens: one answers 404: JSON says which", [(x.get("url"), x.get("status"), x.get("ok")) for x in out.get("screens", [])],
+             [(pg.url + "/ok", 200, True), (pg.url + "/docs/docs", 404, False), (pg.url + "/other", 200, True)])
+        S.eq("check-screens: one answers 404: checked and bad", (out.get("checked"), out.get("bad")), (3, 1))
+        r, out = check("/go-local")
+        S.eq("check-screens: a redirect to a local host is followed: exit", r.returncode, 0)
+        S.eq("check-screens: a redirect to a local host is followed: the final status", [x.get("status") for x in out.get("screens", [])], [200])
+        r, out = check("/go-away")
+        S.eq("check-screens: a redirect to a host that is not local is not followed: exit", r.returncode, 1)
+        S.ok("check-screens: a redirect to a host that is not local is not followed: it names the screen and the redirect's status",
+             pg.url + "/go-away" in r.stderr and "302" in r.stderr, r.stderr)
+        r, out = check("/docs/docs", "/go-away", "/ok")
+        S.ok("check-screens: every bad screen is named, not the first", pg.url + "/docs/docs" in r.stderr and pg.url + "/go-away" in r.stderr, r.stderr)
+        pg.hits.clear()
+        r, out = check("http://example.test/ok", "file:///etc/hostname", "/ok")
+        S.eq("check-screens: a screen that is not on the app: exit", r.returncode, 1)
+        S.ok("check-screens: a screen that is not on the app: named, and not asked", "example.test/ok" in r.stderr and "file:///etc/hostname" in r.stderr
+             and "not on the app" in r.stderr and "etc/hostname" not in "".join(pg.hits), "rc %d: %s hits %r" % (r.returncode, r.stderr, pg.hits))
+        pg.hits.clear()
+        r, out = check("/ok", "/ok")
+        S.eq("check-screens: a screen listed twice is asked once", (out.get("checked"), pg.hits), (1, ["/ok"]))
+        # A screen is text an agent wrote: spaces and non-ASCII characters are quoted as a browser would, so a healthy page is not failed.
+        # Seen red on 26d1cf6: FAIL: check-screens: a space and non-ASCII characters are quoted: exit: got 1, want 0
+        #   (screen http://127.0.0.1:P/sp ace is not answered: error: URL can't contain control characters. '/sp ace' ...)
+        pg.hits.clear()
+        r, out = check("/sp ace", "/caf\u00e9", "/q?q=hello world")
+        S.eq("check-screens: a space and non-ASCII characters are quoted: exit", r.returncode, 0)
+        S.eq("check-screens: a space and non-ASCII characters are quoted: what the app was asked", pg.hits, ["/sp%20ace", "/caf%C3%A9", "/q?q=hello%20world"])
+        # A screen is on the app's own origin: another local port (another service) or a port that is no number is refused, named, not asked.
+        # Seen red on 26d1cf6: FAIL: check-screens: a screen on another local port: never asked: got ['/ok'], want []
+        other = Pages()
+        try:
+            r, out = check(other.url + "/ok", "http://127.0.0.1:notaport/ok", "/ok")
+            S.eq("check-screens: a screen on another local port: exit", r.returncode, 1)
+            S.ok("check-screens: a screen on another local port: both refused screens named, 'not on the app', one line each",
+                 other.url + "/ok" in r.stderr and "notaport" in r.stderr and r.stderr.count("not on the app") == 2 and len(r.stderr.strip().splitlines()) == 2, r.stderr)
+            S.eq("check-screens: a screen on another local port: never asked", other.hits, [])
+        finally:
+            other.stop()
+        # No status is not a pass: a refused connection is named as not answered (fail closed). The server is stopped for it.
+        gone = pg.url
+        pg.stop()
+        pg = None
+        r, out = check(gone + "/ok")
+        S.eq("check-screens: a refused connection: exit", r.returncode, 1)
+        S.ok("check-screens: a refused connection: named as not answered, with the reason", "screen %s/ok is not answered: error" % gone in r.stderr, r.stderr)
+        S.eq("check-screens: a refused connection: the row is not ok and has no number", [(x.get("ok"), isinstance(x.get("status"), int)) for x in out.get("screens", [])], [(False, False)])
+        # nothing to look at is a refusal, not a pass; a usage error is exit 2
+        for label, argv in (("an empty list", ["--screens", "[]"]), ("not JSON", ["--screens", "nope"]), ("a list of numbers", ["--screens", "[1]"]), ("no --screens", [])):
+            r = sc.walk(R, "check-screens", "--run", rd, *argv)
+            S.ok("check-screens: %s: exit 2 and a usage line" % label, r.returncode == 2 and "usage: fwx walk check-screens" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        r = sc.walk(R, "check-screens", "--screens", "[]")
+        S.eq("check-screens: no --run: exit 2", r.returncode, 2)
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        if pg:
+            pg.stop()
+        sc.stop()
+    # An app that declares a login: the probe has no demo session, so what a screen answers says nothing about the walk. Nothing is asked, the
+    # command says NOT RUN, NOT ARMED per screen and exits 0, and the workflow goes on as it did before check-screens existed.
+    # Seen red on 26d1cf6: FAIL: check-screens login: exit: got 1, want 0 (screen .../docs/docs answers 404, the app's own login page answered 404 to the probe)
+    sc = Scene()
+    pg = None
+    try:
+        declare_login(sc)
+        o = armed(sc, R, S, "check-screens login")
+        if not o:
+            return
+        pg = take_over(sc)
+        r = sc.walk(R, "check-screens", "--run", o["run_dir"], "--screens", json.dumps([pg.url + "/ok", pg.url + "/docs/docs"]))
+        out = obj(r.stdout) or {}
+        S.eq("check-screens login: exit", r.returncode, 0)
+        S.ok("check-screens login: NOT RUN, NOT ARMED on stdout and stderr, with the reason", str(out.get("not_run")).startswith("NOT RUN, NOT ARMED: ") and "app_run.login" in str(out.get("not_run"))
+             and "NOT RUN, NOT ARMED: " in r.stderr, "%s | %s" % (r.stdout, r.stderr))
+        S.eq("check-screens login: every screen is listed as not checked", [(x.get("url"), x.get("checked")) for x in out.get("screens", [])],
+             [(pg.url + "/ok", False), (pg.url + "/docs/docs", False)])
+        S.eq("check-screens login: nothing looked at, nothing bad", (out.get("checked"), out.get("bad")), (0, 0))
+        S.eq("check-screens login: the app was not asked", pg.hits, [])
+        sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        if pg:
+            pg.stop()
+        sc.stop()
+    # the probe runs from where the app lives: through the app's `run` prefix, as the selftest's does
+    sc = Scene(prefix="fakerig run --")
+    pg = None
+    try:
+        o = armed(sc, R, S, "check-screens prefix")
+        if not o:
+            return
+        pg = take_over(sc)
+        sc.clear()
+        r = sc.walk(R, "check-screens", "--run", o["run_dir"], "--screens", json.dumps([pg.url + "/ok"]))
+        S.eq("check-screens prefix: exit", r.returncode, 0)
+        S.ok("check-screens prefix: the screen was asked through the rig prefix", [c["prog"] for c in sc.calls()] == ["fakerig"] and pg.hits == ["/ok"],
+             "%r hits %r" % ([c["prog"] for c in sc.calls()], pg.hits))
+        sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        if pg:
+            pg.stop()
+        sc.stop()
+
+
+def case_check_screens_apps(R, S):
+    """A run with several apps (one per walker, `container`): each screen belongs to the app whose host (or its local alias) AND port it has, and is
+    asked through that app's own run prefix. A single-app run (case_check_screens) is the same rule with one app. Seen red on 74eff2f (the host and
+    the port were matched against two sets of the whole run, and every screen went through the first app's prefix):
+      FAIL: check-screens apps: each screen is probed through the run prefix of the app that owns it (only the second app has one): got [], want ['fakerig']
+      FAIL: check-screens apps: a screen on the first app's host and the second app's port is refused: exit: got 0, want 1
+    A screen of the second app through the second app's prefix is the negative control of both."""
+    sc = Scene()
+    one, two = Pages(), Pages()
+    try:
+        rd = os.path.join(sc.run_dir_root, "multi")
+        a_url, b_url = "http://a.localhost:%d" % int(one.url.rsplit(":", 1)[1]), "http://b.localhost:%d" % int(two.url.rsplit(":", 1)[1])
+        helpers.write(rd, "run.json", json.dumps({"armed": True, "repo": sc.repo, "factory": False, "container": True, "run": "", "url": a_url,
+                                                  "hosts": ["a.localhost", "b.localhost", "localhost", "127.0.0.1"],
+                                                  "apps": [{"name": "w-1", "url": a_url, "run": ""}, {"name": "w-2", "url": b_url, "run": "fakerig run --"}]}))
+        sc.clear()
+        r = sc.walk(R, "check-screens", "--run", rd, "--screens", json.dumps([one.url + "/ok", two.url + "/ok"]))
+        S.eq("check-screens apps: a screen of each app: exit", r.returncode, 0)
+        S.eq("check-screens apps: each screen is probed through the run prefix of the app that owns it (only the second app has one)",
+             [c["prog"] for c in sc.calls()], ["fakerig"])
+        S.eq("check-screens apps: and both were asked", (one.hits, two.hits), (["/ok"], ["/ok"]))
+        one.hits.clear()
+        two.hits.clear()
+        cross = "http://a.localhost:%s/ok" % two.url.rsplit(":", 1)[1]
+        r = sc.walk(R, "check-screens", "--run", rd, "--screens", json.dumps([cross]))
+        S.eq("check-screens apps: a screen on the first app's host and the second app's port is refused: exit", r.returncode, 1)
+        S.ok("check-screens apps: a screen on the first app's host and the second app's port is refused: named, 'not on the app', not asked",
+             cross in r.stderr and "not on the app" in r.stderr and one.hits == [] and two.hits == [], "%s hits %r %r" % (r.stderr, one.hits, two.hits))
+    finally:
+        one.stop()
+        two.stop()
+        sc.stop()
+
+
+class Looks:
+    """A port where every connection is counted and closed at once: nothing answers there, so each look at the app (`answering`) is one connection
+    and the count is how many times the wait looked, whatever the speed of the machine."""
+
+    def __init__(self):
+        import threading
+        self.count = 0
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(16)
+        self.sock.settimeout(0.05)
+        self.url = "http://127.0.0.1:%d" % self.sock.getsockname()[1]
+        self.done = False
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.done:
+            try:
+                conn, _ = self.sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            self.count += 1
+            conn.close()
+
+    def stop(self):
+        self.done = True
+        self.thread.join(5)
+        self.sock.close()
 
 
 def case_poll(R, S):
-    """FWX_WALK_POLL_S is the pause between two looks at the app (default 0.5 s). An app that answers a second after `up` returned is
-    looked at at once, not yet answering, and again after the pause: with a pause of 2 s `up` takes at least 2 s (a lower bound: a
-    slow machine cannot break it). Seen red on the base walk.py (no knob, the pause was a fixed 0.5 s):
-      FAIL: poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so up took at least 2 s: took 1.7 s
+    """FWX_WALK_POLL_S is the pause between two looks at the app (default 0.5 s). The case counts the looks the wait makes at an app that never
+    answers, in a window of 4 s (FWX_WALK_WAIT_S): with a pause of 2 s that is the look before `up`, the first look after it and one more, so
+    at most 4 connections and at least 2; a wait that ignores the variable and pauses 0.5 s looks about nine times. Counting looks does not depend
+    on how fast the machine is (the first version measured that `up` took at least 2 s with an app answering after a second, and its mutant, a
+    wait that ignores the variable, passed that bound on a slow runner: `FAIL: control poll: the wait for the app ignores FWX_WALK_POLL_S: the case
+    fails: the mutant passed all 8 checks`). Seen red on the base walk.py (no knob, the pause was a fixed 0.5 s):
+      FAIL: poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so the wait looked at most 4 times in 4 s: counted 9 looks
       FAIL: poll: the module reads FWX_WALK_POLL_S: unset: got "AttributeError: module 'fwx.commands.walk' has no attribute 'POLL_S'", want '0.5 0.5'"""
     sc = Scene()
+    looks = Looks()
     try:
-        helpers.write(sc.repo, "slowup.py", SLOWUP)
-        app = json.dumps({"up": "python3 slowup.py %d %s" % (sc.port, sc.pidfile), "run": "", "down": "python3 down.py %s" % sc.pidfile, "url": sc.url})
-        t0 = time.monotonic()
-        r, o = sc.up(R, "--app", app, env={"FWX_WALK_POLL_S": "2"})
-        took = time.monotonic() - t0
-        S.ok("poll: an app that answers a second after up: up armed", r.returncode == 0 and o and o.get("armed") is True, "rc %d: %s %s" % (r.returncode, r.stdout, r.stderr))
-        S.ok("poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so up took at least 2 s", took >= 1.9, "took %.1f s" % took)
-        if o:
-            sc.walk(R, "down", "--run", o["run_dir"])
+        app = json.dumps({"up": "true", "run": "", "down": "true", "url": looks.url})
+        r, o = sc.up(R, "--app", app, env={"FWX_WALK_POLL_S": "2", "FWX_WALK_WAIT_S": "4"})
+        S.ok("poll: an app that never answers: up gives up, naming the wait", r.returncode == 1 and "nothing answered" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so the wait looked at most 4 times in 4 s", looks.count <= 4, "counted %d looks" % looks.count)
+        S.ok("poll: and it did look (looking at nothing is no pass)", looks.count >= 2, "counted %d looks" % looks.count)
     finally:
+        looks.stop()
         sc.stop()
     # the module's own reading of the variable: unset 0.5, a number above 0 taken, anything else ignored
     probe = "import sys; sys.path.insert(0, %r); from fwx.commands import walk; print(walk.POLL_S, walk.SETTLE_POLL_S)" % os.path.join(R.root, "lib")
@@ -1923,7 +2231,8 @@ def case_poll(R, S):
 
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
-         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures, case_poll]
+         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
+         case_arm_control_launch_path, case_check_screens, case_check_screens_apps, case_poll]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
@@ -2027,9 +2336,9 @@ MUTANTS = [
     ("arm-control: the boxes not recorded", case_arm_control_readback, '"box": {"before": box(before), "after": box(after)}, ', "",
      "arm-control read-back: the boxes are recorded beside the styles"),
     ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
-     "arm-control read-back: no title on the screen: says target not found"),
-    ("arm-control: an old control.json kept", case_arm_control_readback, "os.remove(ctl_file)", "pass",
-     "arm-control read-back: a failed arming leaves no control.json"),
+     "arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched"),
+    ("arm-control: an old control.json kept", case_arm_control_launch_path, "os.remove(ctl_file)", "pass",
+     "arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant"),
     ("arm-control: the reason not on stdout", case_arm_control_readback, 'say({"armed": False, "reason": str(e)})', "pass",
      "arm-control read-back: and the same reason on stdout"),
     ("arm-control: the probe session left open", case_arm_control_readback, 'browser_call(run, ["close"])', "pass",
@@ -2104,6 +2413,43 @@ MUTANTS = [
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
     ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),
+    ("check-screens: any status is ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = got.isdigit()",
+     "check-screens: one answers 404: exit: got 0, want 1"),
+    ("check-screens: a failing run exits 0", case_check_screens, "return 1 if bad else 0", "return 0", "check-screens: one answers 404: exit: got 0, want 1"),
+    ("check-screens: a screen off the app is asked for", case_check_screens, "if app is None:  # a screen is agent-written text", "if False:  # a screen is agent-written text",
+     "check-screens: a screen that is not on the app: named, and not asked"),
+    ("check-screens: a redirect off the app is followed", case_check_screens,
+     'return super().redirect_request(req, fp, code, msg, headers, newurl) if host in LOCAL or host.endswith(".localhost") else None',
+     "return super().redirect_request(req, fp, code, msg, headers, newurl)", "check-screens: a redirect to a host that is not local is not followed: it names the screen"),
+    ("check-screens: only the first bad screen is named", case_check_screens, "    for r in bad:\n", "    for r in bad[:1]:\n",
+     "check-screens: every bad screen is named, not the first"),
+    ("check-screens: a screen listed twice is asked twice", case_check_screens, "urls = list(dict.fromkeys(screens))", "urls = list(screens)",
+     "check-screens: a screen listed twice is asked once"),
+    ("check-screens: an empty list is a pass", case_check_screens, "or not screens or not all(", "or not all(", "check-screens: an empty list: exit 2 and a usage line"),
+    ("arm-control: the plant is written after the proof", case_arm_control_launch_path, "    arm()\n    after = read_fresh(run, screen)", "    after = read_fresh(run, screen)",
+     "arm-control launch path: a browser that takes the script: exit"),
+    ("arm-control: control.json left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (script,):",
+     "arm-control launch path: a browser that ignores --init-script: no control.json is left"),
+    ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])', 'got = ask(quote(u, safe=SAFE_URL), "", run["repo"])',
+     "check-screens prefix: the screen was asked through the rig prefix"),
+    ("arm-control: a title gone in the planted session accepted", case_arm_control_launch_path, "if after is None:", "if False:",
+     "arm-control launch path: a title that is gone in the planted session: says target not found"),
+    ("check-screens: a probe error counted ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = (not got.isdigit()) or 200 <= int(got) < 300",
+     "check-screens: a refused connection: exit"),
+    ("check-screens: stderr says answers for every status", case_check_screens, '"is not answered: %s" % r["status"]', '"answers %s" % r["status"]',
+     "check-screens: a refused connection: named as not answered"),
+    ("check-screens: a screen is not quoted", case_check_screens, "got = ask(quote(u, safe=SAFE_URL), app[\"run\"], run[\"repo\"])", "got = ask(u, app[\"run\"], run[\"repo\"])",
+     "check-screens: a space and non-ASCII characters are quoted: exit"),
+    ("check-screens: every screen through the first app's prefix", case_check_screens_apps, 'got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])',
+     'got = ask(quote(u, safe=SAFE_URL), run["apps"][0]["run"], run["repo"])', "check-screens apps: each screen is probed through the run prefix of the app that owns it"),
+    ("check-screens: any port of any app", case_check_screens_apps, 'and port_of(url) == port_of(a["url"])', 'and port_of(url) in {port_of(b["url"]) for b in run["apps"]}',
+     "check-screens apps: a screen on the first app's host and the second app's port is refused"),
+    ("check-screens: any port of the app's host", case_check_screens, "and port_of(url) == port_of(a[\"url\"])", "",
+     "check-screens: a screen on another local port: both refused screens named"),
+    ("check-screens: an app with a login is judged", case_check_screens, "if login_declared(run):\n        why = ", "if False:\n        why = ",
+     "check-screens login: exit"),
+    ("arm-control: init.js left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (ctl_file,):",
+     "arm-control launch path: a browser that ignores --init-script: and no init script"),
 ]
 
 

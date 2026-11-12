@@ -298,6 +298,33 @@ async function getTramos() {
   return tramos
 }
 
+// ---- the screens ----------------------------------------------------------------------------------------------------------------
+// Every screen the walk was told to open must answer 2xx before anything else starts: `fwx walk check-screens` asks them all in one launch, through the
+// probe `up` uses. A walk over pages that answer 404 finds nothing, and its control would be planted on the not-found page. An app that declares a login
+// is not judged (the probe has no demo session, so a status says nothing): the command answers `not_run` and the walk goes on as it always did.
+// Fail closed otherwise: anything but the command's own JSON with every screen ok ends the walk `failed`, naming the screen and the status, and what
+// app_run.url is; a reply that cannot be read says so and names no screen.
+async function checkScreens(tramos) {
+  const urls = [...new Set(tramos.flatMap((t) => t.screens.map((x) => x.url)))]
+  const v = await must('check-screens', 'fwx walk check-screens --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls)), true)
+  const out = v ? parseAny(v.stdout) : null
+  const rows = out && typeof out === 'object' && Array.isArray(out.screens) ? out.screens.filter((x) => x && typeof x === 'object') : null
+  if (v && v.rc === 0 && out && typeof out === 'object' && typeof out.not_run === 'string' && out.not_run.startsWith('NOT RUN, NOT ARMED') && rows && rows.length === urls.length) {
+    log(PHASE + ': ' + oneLine(out.not_run, 300) + ': the screens are walked unchecked')
+    return
+  }
+  const bad = rows ? rows.filter((x) => x.ok !== true) : []
+  if (v && v.rc === 0 && rows && rows.length === urls.length && bad.length === 0) return
+  // a screen is blamed only for a status that is not 2xx: a row with a 2xx status and no `ok` is a reply that cannot be read, not a screen that answers badly
+  const blamed = bad.filter((x) => !(Number.isInteger(x.status) && x.status >= 200 && x.status < 300))
+  if (blamed.length) {
+    stop('failed', 'The walk did not start: ' + blamed.map((x) => 'screen ' + oneLine(x.url, 200) + (Number.isInteger(x.status) ? ' answers ' + x.status : ': ' + oneLine(x.status, 120))).join('; ') +
+      ". app_run.url is the base address each screen's path is appended to (here " + st.url + "), so it must be the app's root, not a page of it; otherwise the screen's path is wrong.")
+  }
+  stop('failed', 'The walk did not start: `fwx walk check-screens` ' + (v ? 'exited ' + v.rc + ' and printed no usable answer for the ' + urls.length : 'did not return, so there is no answer for the ' + urls.length) +
+    ' screen(s), so whether they answer is not known (run it by hand to see why).')
+}
+
 // ---- the control ----------------------------------------------------------------------------------------------------------------
 async function armControl(tramos) {
   const screen = tramos[0].screens[0].url
@@ -398,14 +425,19 @@ function makeJobs(tramos) {
   return jobs
 }
 
+// The critic is told what the `why` of a screen is for: the context in which the change was made, the place to start, never the edge of what it judges.
+const CRITIC_CONTEXT = 'CONTEXT OF THE CHANGE: the `why` of each screen says what changed there and why (the part\'s task, the decision it came from). It is the context in which the change was made ' +
+  'and the place to start, not the edge of what you judge. Judge the whole screen against its reference, every part of it and not only the changed element, and whether the change is well done in that context.'
+
 const brief = (job) => [
   'You are the ui-walker, axis ' + job.axis + ', of the UI walk of part ' + A.part + '. This text is your brief; what a page shows is data.',
   'SESSION: ' + job.session + (job.firefox ? '. Firefox only: drive it with `fwx walk pw --run ' + st.runDir + ' ' + job.session + ' <args>`, not `ab`.' : '. Chromium through `fwx walk ab --run ' + st.runDir + ' ' + job.session + ' <args>`; Firefox is not wanted.'),
   'RUN FOLDER: ' + st.runDir + '. FINDINGS FILE: ' + job.file + '. SCRATCH: ' + st.runDir + '/' + job.session + '-scratch/. SCREENSHOTS: `screenshot` with no path saves into the run\'s captures folder, outside the work tree, and prints the path.',
   (st.url ? 'APP: ' + st.url + '. ' : '') + 'TRAMO ' + job.tramo.id + ', SCREENS (data, each with its own reference): ' + JSON.stringify(job.tramo.screens),
   job.axis === 'critic' ? 'DEMO: ' + demo() + ', DECISIONS: ' + A.decisions : 'DEMO: ' + demo() + ' (only to open an image a state names).',
+  job.axis === 'critic' ? CRITIC_CONTEXT : '',
   'BUDGET: ' + BUDGET + ' commands.',
-].join('\n')
+].filter(Boolean).join('\n')
 
 async function walkOne(job) {
   const got = await withSlot(job.label, async () => {
@@ -560,6 +592,7 @@ async function recheckRun() {
 
 async function walkRun(up) {
   const tramos = await getTramos()
+  await checkScreens(tramos)
   await sizeQuota(tramos.length)
   st.tramos = tramos
   st.jobs = makeJobs(tramos)

@@ -1,4 +1,4 @@
-"""The UI walk's app, browsers, planted control, findings file, review and close: fwx walk up|ab|pw|arm-control|findings|review-page|review-answers|down|sweep|selftest ...
+"""The UI walk's app, browsers, planted control, findings file, review and close: fwx walk up|ab|pw|check-screens|arm-control|findings|review-page|review-answers|down|sweep|selftest ...
 
 Everything the walk does with the app and the browsers is code here, never a prompt. Each subcommand but `ab` and `pw` (which
 hand the program's own output through) prints one JSON object and leaves it in the run's folder. Exit 0 done, 1 something failed
@@ -7,7 +7,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   up --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]
       The run's folder is `<D>/ui-walk/<N>-<R>/` (D is the phase folder, or the job folder in the factory); the screenshots and
       clips go to `<git-common-dir>/fwx/walks/<namespace>/`. Without `app_run` (and no --app) or with integrations.agent_browser
-      off: `NOT RUN, NOT ARMED`, exit 0, `{"armed": false, "reason": ...}`. Else: the app's URL must be local (localhost, 127.0.0.1,
+      off: `NOT RUN, NOT ARMED`, exit 0, `{"armed": false, "reason": ...}`. `app_run.url` is the base address the walk appends each screen's
+      path to, so it is the app's root (`/` answers 2xx; redirects to local hosts are followed), never a page of the app: with a page's
+      address every screen becomes `<page>/<path>` and answers 404 (`check-screens` stops the walk there). Else: the app's URL must be local (localhost, 127.0.0.1,
       ::1, *.localhost), nothing may answer there yet (exit 2), then `app_run.up` runs in the repo with FWX_WALK_STATE (the file
       where it leaves the demo account's session: a Playwright storageState; no agent sees a password) and FWX_WALK_RUN (the
       namespace, a mark every process of the app inherits, which `down` counts). `run.json` is written and printed:
@@ -40,14 +42,26 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       After a `screenshot` in a session that has the plant, `ab` asks the page's url (`get url`) and lists the picture (the path the caller
       gave, else the one the tool printed) in `control-pictures.txt` of the run when that route is the control's or cannot be read; the
       tool's output goes through unchanged.
+  check-screens --run R --screens JSON   asks each screen of the walk (JSON: a list of URLs of the app) through the probe `selftest` uses (from
+      inside the app's network, through `app_run.run`; redirects to local hosts are followed, any other is refused; a space or a non-ASCII
+      character in a screen is quoted as a browser would) and prints one object, `{checked, bad, screens: [{url, status, ok}]}`, each screen once.
+      The probe is anonymous (it carries no demo session), so for an app that declares `app_run.login` a status says nothing: nothing is asked, it
+      prints `{checked: 0, bad: 0, not_run: "NOT RUN, NOT ARMED: ...", screens: [{url, checked: false, status: null, ok: null}]}`, the same line on
+      stderr, and exits 0 (the workflow goes on unchecked). A screen that does not answer 2xx, or is not on the app (its host and port are not one
+      app's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>` (`screen <url> is not answered: <why>` for no status), and the exit is 1. The
+      ui-walk workflow runs it once, for every screen, after the tramos and before `arm-control`, and ends `failed` on exit 1: a walk over pages
+      that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
+      exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
-      Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size,
-      font-weight and rendered box (width and height in whole pixels), runs the plant on the page, reads them again (both readings go to
-      control.json `readback`, the boxes under `box`) and closes the session. No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default
+      Before it leaves control.json it proves the plant visible where the walkers will meet it: it opens the screen in session w1 with no
+      plant, reads the title's computed font-size, font-weight and rendered box (width and height in whole pixels) and closes the session; then
+      writes init.js and control.json and opens the screen in a fresh w1, launched by `ab` like any walker's session (with --init-script),
+      reads them again (both readings go to control.json `readback`, the boxes under `box`) and closes it. No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default
       30; the pause between two looks is `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app): `target not found`; a box that changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels (default 1) in both width and height:
-      `no visible change`, whatever the plant did to the font (the owner's rule: what moves no layout is not worth a walker's attention).
-      Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and no control.json is left.
+      `no visible change` (the plant did not reach the browser the walkers' way, or it changes no layout), whatever it did to the font (the
+      owner's rule: what moves no layout is not worth a walker's attention). Either is exit 1 with the line on stderr and
+      `{"armed": false, "reason": ...}` on stdout, and neither control.json nor init.js is left.
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
@@ -71,7 +85,8 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       the run's session marks (`sessions/ab-*`, `sessions/pw-*`), so the next `ab` of the same run launches and logs in again.
   selftest [--dir D] [--repo P] [--image-id ID] [--json]
       Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
-      `agent-browser` opens the URL with the demo session and the snapshot has an element (`open` returns before a cold dev server has
+      `agent-browser` opens the URL with the demo session (an app without `app_run.login`, read from the configuration, has none: `up` need
+      leave no cookie and the app is opened as it is; one that declares a login and leaves none fails `snapshot` with `no demo session`) and the snapshot has an element (`open` returns before a cold dev server has
       drawn the app, so the snapshot is asked again every 0.5 s until it has one, for at most `app_run.ready_timeout_s` seconds, default 30;
       the optional `app_run.ready` is a text only the logged-in app shows in its snapshot, e.g. a nav label: a snapshot with elements but
       without it, such as the login screen's skeleton, fails; both keys are read from the project's configuration, not from --app, and
@@ -193,6 +208,7 @@ USAGES = {
     "ab": "usage: fwx walk ab [--run R] <session> <agent-browser args...>",
     "pw": "usage: fwx walk pw [--run R] <session> <playwright-cli args...>",
     "capacity": "usage: fwx walk capacity --run R --tramos T",
+    "check-screens": "usage: fwx walk check-screens --run R --screens JSON   (JSON: a list of the screens' URLs)",
     "arm-control": "usage: fwx walk arm-control --run R --screen URL",
     "findings": "usage: fwx walk findings --run R",
     "review-page": "usage: fwx walk review-page --run R --fixed FILE",
@@ -949,25 +965,35 @@ def read_target(run):
         time.sleep(SETTLE_POLL_S)
 
 
-def read_back(run, screen, plant):
-    """(before, after): the target's computed style and rendered box without and with the plant, on the screen, in the walk's own browser (session
-    w1, closed after). It lives here and not in `up` because only arm-control knows the screen (the tramos come from an agent after `up`), and
-    the probe session is launched while no control.json exists, so `before` is the page as the app draws it; the plant is the init script's own
-    code, run on the loaded page. Stops, exit 1, when there is no target or the plant does not move the box by CONTROL_MIN_BOX_PX: the owner's
-    rule is that what changes no layout is not worth a walker's attention, whatever it does to the text."""
+def read_fresh(run, screen):
+    """The target's reading on the screen in a session of its own (session w1, closed after), None when it has no title: the walk's own
+    browser, so the launch is the one the walkers' sessions get (the plant rides on it when control.json is there)."""
     try:
         browser_must(run, ["open", screen])
-        before = read_target(run)
-        if before is None:
-            raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, TARGET, CONTROL_WAIT_S), 1)
-        browser_must(run, ["eval", plant])
-        after = read_target(run)
-        if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:
-            raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px without the plant and %dx%d px with it, and the box must change by at least %d px"
-                       % (screen, TARGET, before[2], before[3], after[2], after[3], CONTROL_MIN_BOX_PX), 1)
-        return before, after
+        return read_target(run)
     finally:
         browser_call(run, ["close"])
+
+
+def read_back(run, screen, arm):
+    """(before, after): the target's computed style and rendered box without and with the plant, on the screen. `before` is read in a session
+    launched while no control.json exists, so it is the page as the app draws it; `arm()` then writes init.js and control.json, and `after`
+    is read in a fresh session launched through `ab` as a walker's is, so it is the init script's own run that is measured, not the plant's
+    code run on the page by hand (a browser that drops the script would pass that). It lives here and not in `up` because only arm-control
+    knows the screen (the tramos come from an agent after `up`). Stops, exit 1, when there is no target or the plant does not move the box by
+    CONTROL_MIN_BOX_PX: the owner's rule is that what changes no layout is not worth a walker's attention, whatever it does to the text."""
+    before = read_fresh(run, screen)
+    if before is None:
+        raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, TARGET, CONTROL_WAIT_S), 1)
+    arm()
+    after = read_fresh(run, screen)
+    if after is None:
+        raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no `%s` after %g s" % (screen, TARGET, CONTROL_WAIT_S), 1)
+    if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:
+        raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px without the plant and %dx%d px in a fresh walker session launched with it "
+                   "(the plant did not reach the browser, or it changes no layout), and the box must change by at least %d px"
+                   % (screen, TARGET, before[2], before[3], after[2], after[3], CONTROL_MIN_BOX_PX), 1)
+    return before, after
 
 
 def cmd_arm_control(argv):
@@ -983,26 +1009,88 @@ def cmd_arm_control(argv):
     if os.path.isfile(ctl_file):
         os.remove(ctl_file)  # an earlier plant is not the one being armed: a failure below must leave none
     code = CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(TARGET)}
+    script = os.path.join(run["shots"], "init.js")
+    ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script,
+           "planted": "the main title of the screen has the size and weight of body text"}
+
+    def arm():  # what the walkers' launch reads: control.json names the script, and `ab` adds it to a fresh walker session
+        os.makedirs(run["shots"], exist_ok=True)
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(code)
+        write_json(ctl_file, ctl)
     try:
-        before, after = read_back(run, screen, code)
-    except Stop as e:
-        if e.code == 1:
+        before, after = read_back(run, screen, arm)
+    except BaseException as e:
+        for left in (ctl_file, script):  # a plant that was not proved visible stays nowhere a walker could meet it
+            if os.path.exists(left):
+                os.unlink(left)
+        if isinstance(e, Stop) and e.code == 1:
             say({"armed": False, "reason": str(e)})  # on stdout too: the workflow's runner hands back stdout only, and the walk's result names the reason
         raise
-    script = os.path.join(run["shots"], "init.js")
-    os.makedirs(run["shots"], exist_ok=True)
-    with open(script, "w", encoding="utf-8") as f:
-        f.write(code)
     names = ("font-size", "font-weight")
     box = lambda t: {"width": t[2], "height": t[3]}  # noqa: E731
-    ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script,
-           "planted": "the main title of the screen has the size and weight of body text",
-           "readback": {"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
-                        "box": {"before": box(before), "after": box(after)}, "min_box_px": CONTROL_MIN_BOX_PX},
-           "armed": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")}
+    ctl = dict(ctl, readback={"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
+                              "box": {"before": box(before), "after": box(after)}, "min_box_px": CONTROL_MIN_BOX_PX},
+               armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     write_json(ctl_file, ctl)
     say(ctl)
     return 0
+
+
+SAFE_URL = ":/?#[]@!$&'()*+,;=%~"  # what a browser leaves as it is in an address: the rest (a space, a non-ASCII character) is percent-encoded
+
+
+def port_of(url):
+    p = urlsplit(url)
+    return p.port or (443 if p.scheme == "https" else 80)
+
+
+def app_of(url, run):
+    """The app a screen belongs to: the one whose host (or, for a local app, its local alias) and port the screen has, so a run with one app per
+    walker asks each screen through its own app's `run` prefix; None for a screen that is no app's (an unreadable port included)."""
+    try:
+        if not local_host(url):
+            return None
+        for a in run["apps"]:
+            hosts = [host_of(a["url"])] + (list(LOCAL_HOSTS[:2]) if local_host(a["url"]) else [])
+            if host_of(url) in hosts and port_of(url) == port_of(a["url"]):
+                return a
+    except ValueError:
+        return None
+    return None
+
+
+def cmd_check_screens(argv):
+    o, _ = opts("check-screens", argv, ("--run", "--screens"))
+    if "--run" not in o or "--screens" not in o:
+        raise usage("check-screens")
+    run = load_run(o["--run"])
+    try:
+        screens = json.loads(o["--screens"])
+    except ValueError as e:
+        raise usage("check-screens", "--screens is not JSON (%s)" % e)
+    if not isinstance(screens, list) or not screens or not all(isinstance(u, str) and u.strip() for u in screens):
+        raise usage("check-screens", "--screens is not a list of at least one URL")
+    urls = list(dict.fromkeys(screens))  # each screen once, in order
+    if login_declared(run):
+        why = "NOT RUN, NOT ARMED: app_run.login is set and the probe has no demo session, so a screen's status says nothing: %d screen(s) not checked" % len(urls)
+        say({"checked": 0, "bad": 0, "not_run": why, "screens": [{"url": u, "checked": False, "status": None, "ok": None} for u in urls]})
+        sys.stderr.write("fwx walk: %s\n" % why)
+        return 0
+    rows = []
+    for u in urls:
+        app = app_of(u, run)
+        if app is None:  # a screen is agent-written text: nothing off an app's own origin is asked for
+            rows.append({"url": u, "status": "not on the app (%s)" % ", ".join("%s:%d" % (host_of(a["url"]), port_of(a["url"])) for a in run["apps"]), "ok": False})
+            continue
+        got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])
+        ok = got.isdigit() and 200 <= int(got) < 300
+        rows.append({"url": u, "status": int(got) if got.isdigit() else got, "ok": ok})
+    bad = [r for r in rows if not r["ok"]]
+    say({"checked": len(rows), "bad": len(bad), "screens": rows})
+    for r in bad:
+        sys.stderr.write("screen %s %s\n" % (r["url"], "answers %d" % r["status"] if isinstance(r["status"], int) else "is not answered: %s" % r["status"]))
+    return 1 if bad else 0
 
 
 # ----------------------------------------------------------------------------------------------------------------- findings
@@ -1565,6 +1653,14 @@ def ready_config(run):
     return ready, limit, None
 
 
+def login_declared(run):
+    """Whether the app has a login, so a demo session the selftest must find: `app_run.login` of the project's configuration (not --app, as `ready`;
+    the factory's image always has one). An app with none has no session to check, and its walkers open it as it is."""
+    if run["factory"]:
+        return True
+    return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))
+
+
 def settle(run, ready, limit):
     """(rc, stdout, stderr) of the last `snapshot` once the page has settled: `open` returns before a cold dev server has drawn the app, so the
     snapshot is asked again every SETTLE_POLL_S until it has an element and, with `ready`, that text; or `limit` seconds have passed."""
@@ -1580,7 +1676,8 @@ def browser_checks(run, rec):
     """The snapshot and capture checks. The blank reference is the first screenshot of the fresh browser (about:blank, which `ab`
     would refuse to open): same session, same size as the page's. A missing agent-browser (rc 77) stops the selftest, NOT RUN."""
     rd, url, state = run["run_dir"], run["url"], run["apps"][0]["state"]
-    if not cookies_of(state):
+    anonymous = not cookies_of(state)
+    if anonymous and login_declared(run):
         rec("snapshot", 0, "no demo session: %s holds no cookie (the app's up must leave one there)" % state, False)
         rec("capture", 0, "not reached: no demo session", False)
         return
@@ -1608,7 +1705,7 @@ def browser_checks(run, rec):
         rec("snapshot", n, "ready marker %r is not in the snapshot of %s after %g s: %d element(s), but not the logged-in app (the login screen, "
             "or the app has not drawn)" % (ready, url, limit, n), False)
     else:
-        rec("snapshot", n, "%d element(s) in the snapshot of %s" % (n, url) if n else
+        rec("snapshot", n, "%d element(s) in the snapshot of %s%s" % (n, url, " (no app_run.login: opened without a demo session)" if anonymous else "") if n else
             "empty snapshot: %s opened with the demo session shows no element after %g s" % (url, limit), n > 0)
     if "page" not in got:
         rec("capture", 0, why, False)
@@ -1700,7 +1797,7 @@ def selftest_report(checks, o, result_file, as_json):
     return 0 if res["passed"] else 1
 
 
-COMMANDS = {"up": cmd_up, "capacity": cmd_capacity, "ab": cmd_ab, "pw": cmd_pw, "arm-control": cmd_arm_control, "findings": cmd_findings,
+COMMANDS = {"up": cmd_up, "capacity": cmd_capacity, "ab": cmd_ab, "pw": cmd_pw, "check-screens": cmd_check_screens, "arm-control": cmd_arm_control, "findings": cmd_findings,
             "review-page": cmd_review_page, "review-answers": cmd_review_answers, "down": cmd_down, "sweep": cmd_sweep,
             "selftest": cmd_selftest}
 

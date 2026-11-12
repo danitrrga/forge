@@ -112,7 +112,7 @@ UP = """import json, os, subprocess, sys
 port, pidfile = int(sys.argv[1]), sys.argv[2]
 here = os.path.dirname(os.path.abspath(__file__))
 open(os.path.join(here, "up-ran"), "a").write("x\\n")
-if os.environ.get("FWX_WALK_STATE"):
+if os.environ.get("FWX_WALK_STATE") and not os.environ.get("FAKE_NO_SESSION"):
     json.dump({"cookies": [{"name": "sess", "value": "s3cret", "domain": "localhost", "path": "/"}], "origins": []},
               open(os.environ["FWX_WALK_STATE"], "w"))
 p = subprocess.Popen([sys.executable, os.path.join(here, "srv.py"), str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -464,7 +464,53 @@ def case_real_snapshot(R, S):
             sc.stop()
 
 
-CASES = [case_green, case_red_app, case_red_snapshot, case_cold_start, case_login_skeleton, case_real_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser]
+def case_no_login(R, S):
+    """F-9: an app without `app_run.login` has no demo session to check. Seen red on the base (python3 tests/test_walk_selftest.py), the toy app
+    leaving no session and declaring no login, which is a healthy app:
+      FAIL: no login: exit: got 1, want 0
+      FAIL: no login: all five checks ok, each looked at more than 0: ...'snapshot': {'name': 'snapshot', 'looked_at': 0, 'ok': False, 'detail': 'no demo session: .../demo-state.json holds no cookie ...
+    The same app declaring a login (`app_run.login`) and still leaving no session is the negative control: it stays a FAIL naming the missing session."""
+    sc = Scene()
+    try:
+        r, o = sc.selftest(R, "--json", env={"FAKE_NO_SESSION": "1"})
+        S.eq("no login: exit", r.returncode, 0)
+        cs = by_name(o)
+        S.ok("no login: all five checks ok, each looked at more than 0", len(cs) == 5 and all(c["ok"] and c["looked_at"] > 0 for c in cs.values()), str(cs))
+        S.ok("no login: the snapshot check says it opened the app without a demo session, and why",
+             "no app_run.login" in (cs.get("snapshot") or {}).get("detail", "") and "without a demo session" in cs["snapshot"]["detail"], str(cs.get("snapshot")))
+        calls = [c["argv"] for c in sc.calls("agent-browser")]
+        S.ok("no login: no cookie was set and the page was opened and captured", not any("cookies" in c for c in calls) and any("open" in c for c in calls)
+             and sum(1 for c in calls if "screenshot" in c) == 2, str(calls))
+    finally:
+        sc.stop()
+    sc = Scene(app_run={"login": "python3 login.py"})
+    try:
+        r, o = sc.selftest(R, "--json", env={"FAKE_NO_SESSION": "1"})
+        cs = red_case(S, "login declared, no session", r, o, sc, "snapshot", "no demo session", unreached=("capture",))
+        S.ok("login declared, no session: it looked at 0 and says where the session should be", (cs.get("snapshot") or {}).get("looked_at") == 0 and "holds no cookie" in (
+            cs.get("snapshot") or {}).get("detail", ""), str(cs.get("snapshot")))
+        S.ok("login declared, no session: no page was opened", not any("open" in c["argv"] for c in sc.calls("agent-browser")), str(sc.calls("agent-browser")))
+    finally:
+        sc.stop()
+    sc = Scene(app_run={"login": "python3 login.py"})
+    try:
+        r, o = sc.selftest(R, "--json")
+        S.eq("login declared, with a session: exit", r.returncode, 0)
+        S.eq("login declared, with a session: the session is used (a cookie call)", any("cookies" in c["argv"] for c in sc.calls("agent-browser")), True)
+    finally:
+        sc.stop()
+    # a malformed `login`: an empty text declares none (configuration validation refuses it, the plugin reads it as no login); anything else that is set declares one, so
+    # a session is demanded (fail closed)
+    for value, code in (("", 0), (5, 1)):
+        sc = Scene(app_run={"login": value})
+        try:
+            r, o = sc.selftest(R, "--json", env={"FAKE_NO_SESSION": "1"})
+            S.eq("login %r, no session: exit" % (value,), r.returncode, code)
+        finally:
+            sc.stop()
+
+
+CASES = [case_green, case_red_app, case_red_snapshot, case_cold_start, case_login_skeleton, case_real_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser, case_no_login]
 
 WALK = "lib/fwx/commands/walk.py"
 CONFIG = "lib/fwx/config.py"
@@ -498,6 +544,14 @@ MUTANTS = [
     ("clean browser: missing file ignored", case_clean_browser, WALK, "if exe and not os.path.isfile(exe):", "if False:", "clean browser missing: armed false"),
     ("clean browser: key type unchecked", case_clean_browser, CONFIG, "if exe is not None and (not isinstance(exe, str) or not exe.strip()):", "if False:",
      "clean browser: key 5 is a configuration error"),
+    ("login: every app needs a session", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))', "return True",
+     "no login: exit: got 1, want 0"),
+    ("login: an empty text is a login", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))',
+     'return "login" in (config.load(run["repo"])["project"].get("app_run") or {})', "login '', no session: exit"),
+    ("login: only a text is a login", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))',
+     'return isinstance((config.load(run["repo"])["project"].get("app_run") or {}).get("login"), str)', "login 5, no session: exit"),
+    ("login: no app has a login", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))', "return False",
+     "login declared, no session: exit: got 0, want 1"),
 ]
 if __name__ == "__main__":
     W.CWD[0] = helpers.mkdtemp("fwx-walk-cwd-")
