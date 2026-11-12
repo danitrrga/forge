@@ -97,16 +97,21 @@ ask only where the standard says to:
 - **Security**: a PR that touches the risky paths of `.coderabbit.yaml` or carries the label `security`. Ask BEFORE merge; its
   approval is required: the status `CodeRabbit approval` (`coderabbit-gate.yml`) stays pending until it approves the head commit.
 - **Architecture**: a PR that changes a contract between parts (the generator's sequence, profile fields, the stage table, the
-  `decide` rules, the `.fwx/` format, the configuration schema, a new CLI command). Ask AFTER merge; it never blocks.
+  `decide` rules, the `.fwx/` format, the configuration schema, a new CLI command). Ask while the PR is open and wait for the
+  answer before merging (the approval status is not required).
 - **Logic**: code that decides with nobody watching (fwx core: verify, decide, stages, rounds; wave prepare/integrate; workflows)
-  and the PR that closes a whole part. Ask AFTER merge; it never blocks.
+  and the PR that closes a whole part. Same as Architecture.
 - **Never**: UI, documentation, data, texts for agents (prompts, playbooks, skills: they have their own review), test-only PRs,
   renames and moves, Dependabot.
 
-When several reviews wait, the order is security, architecture, logic, oldest first. A real defect found becomes a fix PR;
-anything else is dismissed with one line saying why. A PR too large for CodeRabbit gets a separate reviewer agent instead of being
-split. On a Dependabot PR the owner's approval releases the gate. A security PR CodeRabbit never approves (the owner cannot approve
+A PR gets at most one external review, asked only after its separate adversarial review, the fixes and a second pass over them
+(CodeRabbit does not review a closed PR, so a request after the merge gets "Pull request is closed"). What it finds is fixed and
+checked by the coordinator, with no second review. When several reviews wait, the order is security, architecture, logic, oldest
+first. A finding that is not a real defect is dismissed with one line saying why. A PR too large for CodeRabbit gets a separate
+reviewer agent instead of being split. On a Dependabot PR the owner's approval releases the gate. A security PR CodeRabbit never approves (the owner cannot approve
 their own PR) is merged by the owner with GitHub's admin bypass, only through a PR; agents never do (`gh pr merge --admin` is denied).
+The same holds for a PR whose one review ended as "changes requested": GitHub keeps it blocked after the fixes, even with every
+check green.
 Work in a git worktree, since only the installed checkout writes (rule 1).
 `githooks/ci-local` runs the same checks on this machine (fwx's suite takes about six minutes, the rest seconds) (control: a planted AWS key in a commit makes
 its gitleaks step, and so the script, fail); use it when Actions minutes are out.
