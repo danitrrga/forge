@@ -8,8 +8,10 @@ The name does not match test_*.py, so `fwx test` never runs it; the tests import
 """
 import atexit
 import os
+import random
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -40,6 +42,43 @@ def git(cwd, *args):
     if r.returncode:
         raise RuntimeError("git %s failed (%d): %s" % (" ".join(args), r.returncode, r.stderr.strip()))
     return r.stdout
+
+
+_ports = []  # the reservations of this process, held until it ends
+PORT_LOW, PORT_HIGH = 12000, 32000  # below Linux's ephemeral range (32768 and up): outgoing connections and `bind(0)` never land here
+
+
+def free_port():
+    """A local TCP port that nothing listens on and that no other process of the test run is given. The port is picked at random
+    below the ephemeral range and claimed under a name in the abstract Unix socket namespace (kernel-wide, no file, released when
+    this process ends), so two test files running at once never receive the same one; the claim is held for the life of the
+    process, the port itself is closed again for the caller to bind. Without abstract sockets (not Linux) it is `bind(0)`."""
+    for _ in range(500):
+        port = random.randint(PORT_LOW, PORT_HIGH)
+        claim = socket.socket(socket.AF_UNIX)
+        try:
+            claim.bind("\0fwx-test-port-%d" % port)
+        except OSError:
+            claim.close()
+            continue
+        except (AttributeError, ValueError):
+            claim.close()
+            break
+        probe = socket.socket()
+        try:
+            probe.bind(("127.0.0.1", port))
+        except OSError:
+            claim.close()  # something outside the test run has it: not ours to give
+            continue
+        finally:
+            probe.close()
+        _ports.append(claim)
+        return port
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
 
 
 KEEP_ENV = "FWX_TEST_KEEP"
@@ -141,6 +180,43 @@ def fwx(cwd, *args, input=None, env=None):
     """This repo's bin/fwx run in cwd with clean_env(**env). The CompletedProcess, whatever its exit."""
     return subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx")] + list(args), cwd=cwd,
                           env=clean_env(**(env or {})), input=input, capture_output=True, text=True)
+
+
+class Found(BaseException):
+    """Raised by FirstFail to end a control run at the FAIL it was waiting for. A BaseException, so that a case's own
+    `except Exception` does not swallow it; its `finally` blocks still run."""
+
+
+class FirstFail:
+    """The Suite of a control run (a mutant), which has to show one thing: a FAIL that `want` accepts. At the first such FAIL it
+    raises Found, because the rest of the case would only add FAILs the control never reads. Same interface as Suite where
+    cases use it (ok, eq, not_run); `fails` holds every FAIL up to and including the matching one and `checks` what ran.
+    `want` is a function of one FAIL line. Use `run(case, *args)`: it catches Found and says whether the match was seen."""
+
+    def __init__(self, want):
+        self.want = want
+        self.checks = 0
+        self.fails = []
+        self.seen = False
+
+    def ok(self, label, cond, detail=""):
+        self.checks += 1
+        if not cond:
+            self.fails.append("FAIL: %s%s" % (label, (": " + detail) if detail else ""))
+            if self.want(self.fails[-1]):
+                self.seen = True
+                raise Found()
+        return bool(cond)
+
+    def eq(self, label, got, want):
+        return self.ok(label, got == want, "got %r, want %r" % (got, want))
+
+    def run(self, case, *args):
+        try:
+            case(*args)
+        except Found:
+            pass
+        return self.seen
 
 
 class Suite:
