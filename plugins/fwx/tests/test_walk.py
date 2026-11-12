@@ -2438,7 +2438,7 @@ MUTANTS = [
      "check-screens: a refused connection: exit"),
     ("check-screens: stderr says answers for every status", case_check_screens, '"is not answered: %s" % r["status"]', '"answers %s" % r["status"]',
      "check-screens: a refused connection: named as not answered"),
-    ("check-screens: a screen is not quoted", case_check_screens, "got = ask(quote(u, safe=SAFE_URL), run[\"run\"], run[\"repo\"])", "got = ask(u, run[\"run\"], run[\"repo\"])",
+    ("check-screens: a screen is not quoted", case_check_screens, "got = ask(quote(u, safe=SAFE_URL), app[\"run\"], run[\"repo\"])", "got = ask(u, app[\"run\"], run[\"repo\"])",
      "check-screens: a space and non-ASCII characters are quoted: exit"),
     ("check-screens: every screen through the first app's prefix", case_check_screens_apps, 'got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])',
      'got = ask(quote(u, safe=SAFE_URL), run["apps"][0]["run"], run["repo"])', "check-screens apps: each screen is probed through the run prefix of the app that owns it"),
