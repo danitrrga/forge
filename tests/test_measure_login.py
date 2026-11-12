@@ -406,7 +406,8 @@ def main():
         cells = sorted(os.listdir(os.path.join(out, "transcripts"))) if os.path.isdir(os.path.join(out, "transcripts")) else []
         want("auto_mode, %s among the transcripts: no partial transcript is kept" % what, cells, [])
         want("auto_mode, %s among the transcripts: the cell says why, in one line, and nothing holds the token" % what,
-             ("cannot store" in text or "cannot store" in open(os.path.join(out, "cells.tsv")).read(), holding(stored_text(out), TOKEN)), (True, []))
+             ("cannot store" in text or "cannot store" in (open(os.path.join(out, "cells.tsv")).read() if os.path.exists(os.path.join(out, "cells.tsv")) else ""),
+              holding(stored_text(out), TOKEN)), (True, []))
         drop_worlds()
 
     # the verdict of a cell is read from the redacted hook log: a denial whose reason holds the token must not put it into cells.tsv
