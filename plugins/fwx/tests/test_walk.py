@@ -2012,6 +2012,22 @@ def case_check_screens(R, S):
     finally:
         pg.stop()
         sc.stop()
+    # the probe runs from where the app lives: through the app's `run` prefix, as the selftest's does
+    sc = Scene(prefix="fakerig run --")
+    pg = Pages()
+    try:
+        o = armed(sc, R, S, "check-screens prefix")
+        if not o:
+            return
+        sc.clear()
+        r = sc.walk(R, "check-screens", "--run", o["run_dir"], "--screens", json.dumps([pg.url + "/ok"]))
+        S.eq("check-screens prefix: exit", r.returncode, 0)
+        S.ok("check-screens prefix: the screen was asked through the rig prefix", [c["prog"] for c in sc.calls()] == ["fakerig"] and pg.hits == ["/ok"],
+             "%r hits %r" % ([c["prog"] for c in sc.calls()], pg.hits))
+        sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        pg.stop()
+        sc.stop()
 
 
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
@@ -2212,6 +2228,8 @@ MUTANTS = [
      "arm-control launch path: a browser that takes the script: exit"),
     ("arm-control: control.json left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (script,):",
      "arm-control launch path: a browser that ignores --init-script: no control.json is left"),
+    ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(u, run["run"], run["repo"])', 'got = ask(u, "", run["repo"])',
+     "check-screens prefix: the screen was asked through the rig prefix"),
     ("arm-control: init.js left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (ctl_file,):",
      "arm-control launch path: a browser that ignores --init-script: and no init script"),
 ]

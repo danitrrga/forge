@@ -45,7 +45,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   check-screens --run R --screens JSON   asks each screen of the walk (JSON: a list of URLs of the app) through the probe `selftest` uses (from
       inside the app's network, through `app_run.run`; redirects to local hosts are followed, any other is refused) and prints one object,
       `{checked, bad, screens: [{url, status, ok}]}`, each screen once. A screen that does not answer 2xx, or is not on the app (its host is not
-      the run's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>`, and the exit is 1. The
+      the run's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>` (`screen <url> is not answered: <why>` for no status), and the exit is 1. The
       ui-walk workflow runs it once, for every screen, after the tramos and before `arm-control`, and ends `failed` on exit 1: a walk over pages
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.

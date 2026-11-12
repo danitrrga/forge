@@ -298,6 +298,25 @@ async function getTramos() {
   return tramos
 }
 
+// ---- the screens ----------------------------------------------------------------------------------------------------------------
+// Every screen the walk was told to open must answer 2xx before anything else starts: `fwx walk check-screens` asks them all in one launch, through the
+// probe `up` uses. A walk over pages that answer 404 finds nothing, and its control would be planted on the not-found page. Fail closed: anything but the
+// command's own JSON with every screen ok ends the walk `failed`, naming the screen and the status, and what app_run.url is.
+async function checkScreens(tramos) {
+  const urls = [...new Set(tramos.flatMap((t) => t.screens.map((x) => x.url)))]
+  const v = await must('check-screens', 'fwx walk check-screens --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls)), true)
+  const out = v ? parseAny(v.stdout) : null
+  const rows = out && typeof out === 'object' && Array.isArray(out.screens) ? out.screens.filter((x) => x && typeof x === 'object') : null
+  const bad = rows ? rows.filter((x) => x.ok !== true) : []
+  if (v && v.rc === 0 && rows && rows.length === urls.length && bad.length === 0) return
+  if (bad.length) {
+    stop('failed', 'The walk did not start: ' + bad.map((x) => 'screen ' + oneLine(x.url, 200) + (Number.isInteger(x.status) ? ' answers ' + x.status : ': ' + oneLine(x.status, 120))).join('; ') +
+      ". app_run.url is the base address each screen's path is appended to (here " + st.url + "), so it must be the app's root, not a page of it; otherwise the screen's path is wrong.")
+  }
+  stop('failed', 'The walk did not start: `fwx walk check-screens` ' + (v ? 'exited ' + v.rc + ' and named no screen it could not open' : 'did not return') +
+    ', so whether the ' + urls.length + ' screen(s) answer is not known (run it by hand: its stderr says why).')
+}
+
 // ---- the control ----------------------------------------------------------------------------------------------------------------
 async function armControl(tramos) {
   const screen = tramos[0].screens[0].url
@@ -560,6 +579,7 @@ async function recheckRun() {
 
 async function walkRun(up) {
   const tramos = await getTramos()
+  await checkScreens(tramos)
   await sizeQuota(tramos.length)
   st.tramos = tramos
   st.jobs = makeJobs(tramos)

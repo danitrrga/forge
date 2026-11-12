@@ -153,7 +153,9 @@ PROFILE_FIELDS = {
 # The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
 # for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
 # logged-in app shows in its snapshot and `ready_timeout_s` the seconds the UI walk waits for it, both read by the
-# plugin's walk selftest.
+# plugin's walk selftest. `url` is the base address the UI walk appends each screen's path to: the app's root (`/` answers 2xx;
+# redirects to local hosts are followed), never a page of it. `login`, when set, says the app has a demo session the selftest
+# must find; an app without it is opened as it is.
 APP_RUN_KEYS = (("up", str, True, False), ("run", str, True, True), ("down", str, True, False), ("url", str, True, False),
                 ("login", str, False, False), ("container", bool, False, True),
                 ("ready", str, False, False), ("ready_timeout_s", float, False, True))
