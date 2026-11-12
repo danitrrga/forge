@@ -622,13 +622,17 @@ runpy.run_path(script, run_name="__main__")
              ("a " + PLACEHOLDER, "a " + TOKEN))
         os.symlink(src_f, os.path.join(adir, "lnk"))
         os.mkfifo(os.path.join(adir, "fifo"))
-        for nm in ("lnk", "fifo"):   # a link or a special file is refused without being opened (a FIFO would block here)
+        for nm in ("lnk", "fifo"):   # a link or a special file is refused without being opened (a FIFO would block): in a child with a time limit
+            code_snip = ("import sys; sys.path.insert(0, %r); import measure_login as ml\n"
+                         "try:\n    ml.copy_redacted(%r, %r, %r)\n    print('ACCEPTED')\n"
+                         "except ml.LoginError as e:\n    print('REFUSED', e)\n"
+                         % (BENCH_DIR, os.path.join(adir, nm), os.path.join(adir, "out-" + nm), TOKEN))
             try:
-                ml.copy_redacted(os.path.join(adir, nm), os.path.join(adir, "out-" + nm), TOKEN)
-                failures.append("helper: copy_redacted accepted a %s" % nm)
-            except ml.LoginError as e:
-                want("helper: copy_redacted refuses a %s with one line" % nm, ("not a regular file" in str(e), "\n" in str(e), os.path.exists(os.path.join(adir, "out-" + nm))),
-                     (True, False, False))
+                r = subprocess.run([sys.executable, "-c", code_snip], capture_output=True, text=True, timeout=20, stdin=subprocess.DEVNULL)
+                got = (r.stdout.startswith("REFUSED"), "not a regular file" in r.stdout, len(r.stdout.strip().splitlines()), os.path.exists(os.path.join(adir, "out-" + nm)))
+            except subprocess.TimeoutExpired:
+                got = "hung (it opened the %s)" % nm
+            want("helper: copy_redacted refuses a %s with one line and stores nothing" % nm, got, (True, True, 1, False))
         parent2 = dict(PASSED, A="1", HOME="/srv/toy-home", PATH="/srv/bin")
         parent2.update({k: "x" for k in DROPPED})
         want("helper: the child environment is the parent's minus the drop list plus the token",
