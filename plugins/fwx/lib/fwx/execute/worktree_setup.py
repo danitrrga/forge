@@ -32,16 +32,19 @@ command that writes past it is killed and the setup fails. After the last comman
 what its setup creates), or a tracked file it changed, would make every later clean-tree check refuse the worktree, so it is named
 and refused here instead. That holds for a tree that was already dirty too: its checks would refuse it all the same.
 
-The marker `<worktree>/.fwx-agent/worktree-setup.json` holds the command list, a digest of the files that define the
+The marker `<worktree>/.fwx-agent/worktree-setup.json` holds the command list and a digest of the files that define the
 dependencies (the lockfiles and manifests of DEPENDENCY_FILES, wherever they are in the tree, as they are on disk, the tracked ones
-and the untracked ones git does not ignore) and `made`, the git-ignored files and folders (`node_modules/`) that appeared during the
-setup (a rerun keeps what the marker it replaces said was made and is still there; a run that failed forgets it): a changed list, a
-changed or a new dependency file, or a folder of `made` that is gone runs the setup again, anything else is
-a no-op, and `force` runs it regardless. What it does not see: a dependency file that is not in DEPENDENCY_FILES (a `.tool-versions`), a
-folder that was already there before the setup (it is not in `made`), and a change to the dependency file made after the setup in a
-worktree nobody calls this in again (an executor's own `npm install` is its own business). The phase worktree is covered: `prepare`
-calls this once at the start of a run and `integrate` after the merges of every wave, before its checks, and `fwx wave setup` is
-the call anywhere else.
+and the untracked ones git does not ignore). Beside it `worktree-setup-made.json` lists what the setup made: the git-ignored files
+and folders (`node_modules/`) that appeared during a run, kept from run to run while they exist and written after a failed run too.
+A changed list, a changed or a new dependency file, or a made folder that is gone or empty runs the setup again, anything else is
+a no-op, and `force` runs it regardless. What it does not see: a dependency file that is not in DEPENDENCY_FILES (a `.tool-versions`),
+a folder that was already there before the first run (it is not in the made list), a made folder that was replaced by another with
+something in it, and a change to the dependency file made after the setup in a worktree nobody calls this in again (an executor's own
+`npm install` is its own business). The phase worktree is covered: `prepare` calls this once at the start of a run and `integrate`
+and `revert` after the branch changed under it, before their checks, and `fwx wave setup` is the call anywhere else.
+
+When `check-base` ends 43 it also leaves the line in `.fwx-agent/worktree-setup-failed.json` (`record_failure`), the fact that ends
+a job in `workflows/execute.js`.
 
 Imports only the standard library and execute.base.
 """
@@ -60,6 +63,8 @@ TIMEOUT_S = 15 * 60
 LOG_CAP = 32 * 1024 * 1024
 LOG = "worktree-setup.log"
 MARKER = "worktree-setup.json"
+MADE = "worktree-setup-made.json"
+FAILED = "worktree-setup-failed.json"
 # The files whose content says which dependencies the worktree needs. Names, not paths: each is looked for at any depth.
 DEPENDENCY_FILES = ("package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
                     "pyproject.toml", "uv.lock", "poetry.lock", "Pipfile.lock", "requirements*.txt",
@@ -114,13 +119,69 @@ def _read_marker(path):
         return None
 
 
-def _valid(marker, fingerprint, top):
-    """Whether the marker vouches for this worktree: the same list, the same dependency files, and what the setup made still there."""
-    if not isinstance(marker, dict):
-        return False
-    made = marker.get("made", [])
-    return (marker.get("commands") == fingerprint["commands"] and marker.get("dependencies") == fingerprint["dependencies"]
-            and isinstance(made, list) and all(isinstance(m, str) and os.path.exists(os.path.join(top, m)) for m in made))
+def _read_list(path):
+    """The list of strings in the JSON file `path`; empty when it is missing or is not one."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return []
+    return [m for m in data if isinstance(m, str)] if isinstance(data, list) else []
+
+
+def _present(top, rel):
+    """Whether what the setup made is still there: a file, or a folder with something in it (an emptied one is not)."""
+    path = os.path.join(top, rel)
+    if rel.endswith("/"):
+        try:
+            return bool(os.listdir(path))
+        except OSError:
+            return False
+    return os.path.exists(path)
+
+
+def _valid(marker, fingerprint, top, made):
+    """Whether the marker vouches for this worktree: the same list, the same dependency files, and what the setup made (`made`)
+    still there."""
+    return (isinstance(marker, dict) and marker.get("commands") == fingerprint["commands"]
+            and marker.get("dependencies") == fingerprint["dependencies"] and all(_present(top, m) for m in made))
+
+
+def _remember(path, kept, before, top):
+    """Writes down what the setup made so far: what appeared (git-ignored, not there before the run) and what an earlier run made
+    that is still there. Written after a failed run too, so that the next success does not take the half-made folder for one that was
+    there before. Best effort: a file that cannot be written leaves the old list."""
+    try:
+        after = {e for e in _ignored(top) if _present(top, e)}  # an empty folder is not something to vouch for: it would never be "there"
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(sorted((after - before) | (set(kept) & after)), f)
+            f.write("\n")
+    except (OSError, WaveError):
+        pass
+
+
+def record_failure(cwd, line):
+    """Leaves the line of a failed setup in `<worktree>/.fwx-agent/worktree-setup-failed.json`, which the workflow reads (`fwx wave
+    check-base` calls this on exit 43): the end of a job on a failed setup is a fact the code wrote, not the words an agent chose
+    for its report. Best effort: no record means the workflow falls back to the start of the agent's reason."""
+    top = toplevel(cwd)
+    if top is None:
+        return
+    try:
+        with open(os.path.join(agent_root(top), FAILED), "w", encoding="utf-8") as f:
+            json.dump({"setup_failed": line.strip()}, f)
+            f.write("\n")
+    except OSError:
+        pass
+
+
+def clear_failure(cwd):
+    top = toplevel(cwd)
+    if top is not None:
+        try:
+            os.remove(os.path.join(os.path.realpath(top), AGENT_DIR, FAILED))
+        except OSError:
+            pass
 
 
 def _descendants(pid):
@@ -139,11 +200,18 @@ def _descendants(pid):
         except (OSError, ValueError, IndexError):
             continue
         kids.setdefault(ppid, []).append(int(name))
-    found, todo = [], [pid]
+    return _walk(kids, pid)
+
+
+def _walk(kids, pid):
+    """Every pid below `pid` in `kids` ({parent: [children]})."""
+    found, todo, seen = [], [pid], {pid}
     while todo:
         for kid in kids.get(todo.pop(), ()):
-            found.append(kid)
-            todo.append(kid)
+            if kid not in seen:  # a table in which two pids name each other (a pid reused during the walk) must not loop
+                seen.add(kid)
+                found.append(kid)
+                todo.append(kid)
     return found
 
 
@@ -238,12 +306,11 @@ def run(cwd, commands, force=False, timeout=TIMEOUT_S, log_cap=LOG_CAP):
         root = agent_root(top)
     except OSError as e:
         raise WaveError("cannot make the .fwx-agent folder of %s: %s" % (top, e))
-    log_path, marker_path = os.path.join(root, LOG), os.path.join(root, MARKER)
+    log_path, marker_path, made_path = os.path.join(root, LOG), os.path.join(root, MARKER), os.path.join(root, MADE)
     fingerprint = {"commands": list(commands), "dependencies": _dependency_digest(top)}
-    if not force and _valid(_read_marker(marker_path), fingerprint, top):
+    made = _read_list(made_path)
+    if not force and _valid(_read_marker(marker_path), fingerprint, top, made):
         return {"state": "noop", "ran": 0, "log": log_path}
-    old = _read_marker(marker_path)
-    kept = [m for m in (old.get("made") if isinstance(old, dict) else None) or [] if isinstance(m, str)]
     try:
         os.remove(marker_path)
     except FileNotFoundError:
@@ -262,15 +329,16 @@ def run(cwd, commands, force=False, timeout=TIMEOUT_S, log_cap=LOG_CAP):
                     raise SetupFailed("worktree setup failed: %s (%s, log %s)" % (command, why, log_path))
     except OSError as e:
         raise WaveError("cannot write the log of the setup, %s: %s" % (log_path, e))
+    finally:
+        _remember(made_path, made, before, top)
     left = sorted(_status(top))
     if left:
         raise SetupFailed("worktree setup failed: the worktree is not clean after the commands, which every clean-tree check would "
                           "refuse; what they create must be in the project's .gitignore (log %s):\n%s"
                           % (log_path, "\n".join("  " + line for line in left)))
-    after = _ignored(top)
     try:
         with open(marker_path, "w", encoding="utf-8") as f:
-            json.dump(dict(fingerprint, made=sorted((after - before) | (set(kept) & after))), f)
+            json.dump(fingerprint, f)
             f.write("\n")
     except OSError as e:
         raise WaveError("cannot write the marker of the setup, %s: %s" % (marker_path, e))

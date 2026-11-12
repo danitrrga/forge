@@ -526,8 +526,290 @@ def case_toolchain_files(R, S):
         S.eq("toolchain files: a changed %s runs the setup again" % name, (r.returncode, sc.lines("deps/count")), (0, want))
 
 
+REAL_GIT = shutil.which("git")
+
+
+def int_scene(setup, quick=()):
+    """An integration scene (phase worktree, `deps/` ignored) whose configuration has `setup`, and the setup already run once."""
+    sc = IntScene(quick=list(quick))
+    with open(os.path.join(sc.repo, ".git", "info", "exclude"), "a") as f:
+        f.write("deps/\n")
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"checks": ["true"], "checks_quick": list(quick), "worktree_setup": list(setup)}}))
+    R0 = runner(ROOT)
+    R0(sc.cwd, "wave", "setup", env=IDENT)
+    return sc
+
+
+def case_revert_setup(R, S):
+    """A revert that changes a lockfile is followed by the setup before the next checks, as a merge is.
+
+    Red before the fix (`revert` never called the setup; the count is the number of runs of the setup):
+      FAIL: revert: a lockfile change reverted: the setup ran again (count 3): exit 0, count 2
+      FAIL: revert: a failing setup after the revert: exit 1 and `setup` carries the line: 0 ...
+    """
+    sc = int_scene(["mkdir -p deps && echo run >> deps/count"])
+    b1 = sc.agent("w1", [("package-lock.json", '{"lock": 1}\n', ["F1"])])
+    r = sc.integrate(R, b1, extra=("--findings", "F1"))
+    count = lambda: slurp(os.path.join(sc.cwd, "deps", "count")).count("\n")
+    S.eq("revert: the merge of the lockfile change ran the setup again", (r.returncode, count()), (0, 2))
+    r = sc.call(R, "revert", "--part-dir", sc.part, "--run", sc.run, "--findings", "F1")
+    S.ok("revert: a lockfile change reverted: the setup ran again (count 3): exit %d, count %d" % (r.returncode, count()), r.returncode == 0 and count() == 3, r.stderr + r.stdout[:200])
+    b2 = sc.agent("w2", [("package-lock.json", '{"lock": 2}\n', ["F2"])])
+    sc.integrate(R, b2, extra=("--findings", "F2"))
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"checks": ["true"], "worktree_setup": ["sh -c 'exit 6'"]}}))
+    r = sc.call(R, "revert", "--part-dir", sc.part, "--run", sc.run, "--findings", "F2")
+    v = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+    S.ok("revert: a failing setup after the revert: exit 1 and `setup` carries the line: %d %s" % (r.returncode, r.stdout[:120]),
+         r.returncode == 1 and v.get("ok") is False and str(v.get("setup", "")).startswith("worktree setup failed: sh -c 'exit 6'"), r.stdout[:300] + r.stderr)
+    plain = IntScene()
+    pb = plain.agent("n", [("src/a.py", "n\n", ["F1"])])
+    plain.integrate(R, pb, extra=("--findings", "F1"))
+    pv = json.loads(plain.call(R, "revert", "--part-dir", plain.part, "--run", plain.run, "--findings", "F1").stdout)
+    S.ok("revert: a project with no setup has no `setup` key", "setup" not in pv, repr(sorted(pv)))
+
+
+def case_integrate_trusted(R, S):
+    """With a worktree setup, a join whose diff edits `.npmrc` reports it among the trusted edits (the gate, `--final`).
+
+    Red before the fix: FAIL: trusted: the diff edits .npmrc and a setup is set: reported: got []
+    """
+    sc = int_scene([MK])
+    b1 = sc.agent("w1", [(".npmrc", "registry=http://example.test/\n", None)])
+    r = sc.integrate(R, b1, extra=("--final",))
+    v = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+    S.ok("trusted: the gate ran (ok): %s" % r.stderr[-120:], v.get("ok") is True, r.stdout[:200] + r.stderr[-200:])
+    S.ok("trusted: the diff edits .npmrc and a setup is set: reported: got %r" % v.get("trusted"), any(".npmrc" in x for x in v.get("trusted") or []), repr(v.get("trusted")))
+    plain = IntScene()
+    pb = plain.agent("n", [(".npmrc", "registry=http://example.test/\n", None)])
+    pv = json.loads(plain.integrate(R, pb, extra=("--final",)).stdout or "{}")
+    S.eq("trusted: with no setup the same diff is not reported", pv.get("trusted"), [])
+
+
+def case_failure_record(R, S):
+    """`check-base` leaves a record of a failed setup that the workflow reads, so that the end of the job does not depend on the words
+    an agent chose for its report.
+
+    Red before the fix: FAIL: failure record: exit 43 leaves .fwx-agent/worktree-setup-failed.json: no such file
+    """
+    sc = Scene(setup=["sh -c 'exit 7'"])
+    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    rec = os.path.join(os.path.realpath(sc.wt), ".fwx-agent", "worktree-setup-failed.json")
+    try:
+        with open(rec, encoding="utf-8") as f:
+            got = json.load(f)
+    except (OSError, ValueError) as e:
+        got = "no such file: %s" % e
+    S.eq("failure record: exit", r.returncode, 43)
+    S.ok("failure record: exit 43 leaves .fwx-agent/worktree-setup-failed.json holding the line printed: %r" % (got,),
+         isinstance(got, dict) and got.get("setup_failed") == r.stderr.splitlines()[0] and got["setup_failed"].startswith("worktree setup failed:"), repr(got))
+    S.ok("failure record: the worktree is still clean (the record is ignored)", sc.clean(), helpers.git(sc.wt, "status", "--porcelain"))
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"worktree_setup": [MK]}}))
+    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    S.ok("failure record: a later success removes it", r.returncode == 0 and not os.path.exists(rec), r.stderr)
+    wrong = Scene()
+    R(wrong.wt, "wave", "check-base", "abcdef1", env=wrong.env)
+    S.ok("failure record: a wrong base (42) leaves none", not os.path.exists(os.path.join(wrong.wt, ".fwx-agent", "worktree-setup-failed.json")))
+
+
+def case_marker_after_failure(R, S):
+    """The marker keeps what the setup made across a failed run, and an emptied folder is not vouched for.
+
+    Red before the fix:
+      FAIL: failed first run: after a failure and then a success, a deleted folder is noticed: got (0, 0), want (0, 1)
+      FAIL: rerun failed then ok: a deleted folder is noticed: got (0, 0), want (0, 1)
+      FAIL: an emptied folder is not vouched for: got (0, 0), want (0, 1)
+    """
+    sc = Scene(setup=["mkdir -p deps && echo run >> deps/count", "test ! -f .stopflag"], ignore="deps/\n.stopflag\n")
+    helpers.write(sc.wt, ".stopflag", "")
+    S.eq("failed first run: the second command fails", R(sc.wt, "wave", "setup", env=sc.env).returncode, 1)
+    os.remove(os.path.join(sc.wt, ".stopflag"))
+    S.eq("failed first run: then it succeeds", R(sc.wt, "wave", "setup", env=sc.env).returncode, 0)
+    shutil.rmtree(os.path.join(sc.wt, "deps"))
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.eq("failed first run: after a failure and then a success, a deleted folder is noticed", (r.returncode, sc.lines("deps/count")), (0, 1))
+    sc = Scene(setup=["mkdir -p deps && echo run >> deps/count", "test ! -f deps/stop"], files={"package-lock.json": "{}\n"})
+    R(sc.wt, "wave", "setup", env=sc.env)
+    helpers.write(sc.wt, "package-lock.json", '{"changed": 1}\n')
+    helpers.git(sc.wt, "add", "-A")
+    helpers.git(sc.wt, "commit", "-q", "-m", "lock")
+    helpers.write(sc.wt, "deps/stop", "")
+    S.eq("rerun failed then ok: the rerun fails", R(sc.wt, "wave", "setup", env=sc.env).returncode, 1)
+    os.remove(os.path.join(sc.wt, "deps", "stop"))
+    S.eq("rerun failed then ok: and then passes", R(sc.wt, "wave", "setup", env=sc.env).returncode, 0)
+    shutil.rmtree(os.path.join(sc.wt, "deps"))
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.eq("rerun failed then ok: a deleted folder is noticed", (r.returncode, sc.lines("deps/count")), (0, 1))
+    em = Scene(setup=["mkdir -p deps && echo run >> deps/count"])
+    R(em.wt, "wave", "setup", env=em.env)
+    os.remove(os.path.join(em.wt, "deps", "count"))
+    r = R(em.wt, "wave", "setup", env=em.env)
+    S.eq("an emptied folder is not vouched for", (r.returncode, em.lines("deps/count")), (0, 1))
+
+
+def case_symlink_root(R, S):
+    """A `.fwx-agent` that is a symbolic link (a tracked one merged from an agent's branch) is refused in one line; nothing is written
+    through it.
+
+    Red before the fix: FAIL: .fwx-agent a symlink: setup refused: got (0, ...), want (2, ...) and the target got worktree-setup.log
+    """
+    sc = Scene()
+    target = helpers.mkdtemp("fwx-target-")
+    os.symlink(target, os.path.join(sc.wt, ".fwx-agent"))
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.ok("`.fwx-agent` a symlink: setup refused with one line and exit 2: got %d %r" % (r.returncode, r.stderr[-160:]),
+         r.returncode == 2 and "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1 and "symbolic link" in r.stderr, r.stderr)
+    S.eq("`.fwx-agent` a symlink: nothing written in its target, the command did not run", (os.listdir(target), sc.has("deps/installed")), ([], False))
+    r = R(sc.wt, "wave", "scratch", "run1", "unit1", env=sc.env)
+    S.ok("`.fwx-agent` a symlink: scratch refuses it too (exit 2, nothing in the target)", r.returncode == 2 and os.listdir(target) == [], "%d %s %s" % (r.returncode, r.stderr, os.listdir(target)))
+
+
+def case_walk_cycle(R, S):
+    """`_descendants` cannot loop: a process table in which two pids name each other (a pid reused during the walk) ends.
+
+    Red before the fix (no visited set): FAIL: the walk of a cycle ends: it did not end in 3 s
+    """
+    import signal as _signal
+    ws = _load_ws(R, S)
+    if ws is None:
+        return
+    done = {}
+
+    def boom(*_a):
+        raise TimeoutError("it did not end in 3 s")
+    old = _signal.signal(_signal.SIGALRM, boom)
+    _signal.alarm(3)
+    try:
+        done["found"] = ws._walk({10: [11], 11: [10, 12], 12: []}, 10)
+    except TimeoutError as e:
+        done["error"] = str(e)
+    finally:
+        _signal.alarm(0)
+        _signal.signal(_signal.SIGALRM, old)
+    S.ok("the walk of a cycle ends: %s" % done.get("error", ""), "found" in done, done.get("error", ""))
+    S.eq("the walk lists each pid below once", sorted(done.get("found", [])), [11, 12])
+    S.eq("the walk of a plain tree", sorted(ws._walk({1: [2, 3], 2: [4]}, 1)), [2, 3, 4])
+
+
+def case_gaps(R, S):
+    """Checks for what the mutation review found uncaught: a failing git is an error, stdin is at EOF, nested lockfiles, the cap's
+    edge, stderr in the log, a child that holds the pipe, a failed --force leaves no marker, `.fwx/` is not counted.
+
+    Each is run against one mutant in MUTANTS below (the row names it) and was seen failing there.
+    """
+    # a failing git, through a PATH that holds only a stub: it fails when its arguments hold the pattern, else runs the real git
+    fake = helpers.mkdtemp("fwx-stubgit-")
+    for prog in ("python3", "bash", "sh", "mkdir", "touch", "cat", "env", "sleep", "head", "tr"):
+        src = shutil.which(prog)
+        if src:
+            os.symlink(src, os.path.join(fake, prog))
+    stub = os.path.join(fake, "git")
+    with open(stub, "w") as f:
+        f.write('#!/bin/sh\ncase " $* " in *"$FWX_STUB_FAIL"*) echo "fatal: simulated failure" >&2; exit 128;; esac\nexec %s "$@"\n' % REAL_GIT)
+    os.chmod(stub, 0o755)
+    for label, pattern, ran in (("the digest's ls-files", "ls-files -z --cached", False), ("the ignored list's ls-files", "ls-files -z --others --ignored", False),
+                                ("the status after the commands", "status --porcelain", True)):
+        sc = Scene()
+        r = R(sc.wt, "wave", "setup", env=dict(sc.env, PATH=fake, FWX_STUB_FAIL=pattern))
+        S.ok("git failing: %s: exit 2, one line naming git, no traceback: got %d %r" % (label, r.returncode, r.stderr[-120:]),
+             r.returncode == 2 and "failed in" in r.stderr and "Traceback" not in r.stderr, r.stderr)
+        S.ok("git failing: %s: no marker, and the commands %s" % (label, "ran" if ran else "did not run"),
+             not sc.has(".fwx-agent/worktree-setup.json") and sc.has("deps/installed") == ran, "marker %s, deps %s" % (sc.has(".fwx-agent/worktree-setup.json"), sc.has("deps/installed")))
+        r = R(sc.wt, "wave", "check-base", sc.head(), env=dict(sc.env, PATH=fake, FWX_STUB_FAIL=pattern))
+        S.ok("git failing: %s: check-base: not a pass (43 or 42)" % label, r.returncode in (42, 43), "%d %s" % (r.returncode, r.stderr[-120:]))
+    # stdin: the command reads and gets EOF at once, though the caller's stdin is an open pipe that never closes
+    sc = Scene(setup=["read x; mkdir -p deps && touch deps/after-read"])
+    p = subprocess.Popen([sys.executable, os.path.join(R.root, "bin", "fwx"), "wave", "setup"], cwd=sc.wt, env=helpers.clean_env(**sc.env), stdin=subprocess.PIPE,
+                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        p.wait(timeout=20)
+        done = p.returncode
+    except subprocess.TimeoutExpired:
+        done = "timed out: the command waited for its stdin"
+    finally:
+        if p.poll() is None:
+            p.kill()
+            p.wait()
+        for pipe in (p.stdin, p.stdout, p.stderr):
+            pipe.close()
+    S.ok("stdin: a command that reads gets EOF, not the caller's open pipe: %s" % done, done == 0 and sc.has("deps/after-read"), str(done))
+    # a lockfile in a nested folder, and a requirements file with a suffix
+    sc = Scene(setup=["mkdir -p deps && echo run >> deps/count"], files={"sub/pkg/package-lock.json": "{}\n", "requirements-dev.txt": "a\n"})
+    R(sc.wt, "wave", "setup", env=sc.env)
+    for rel, text_ in (("sub/pkg/package-lock.json", '{"c": 1}\n'), ("requirements-dev.txt", "b\n")):
+        helpers.write(sc.wt, rel, text_)
+        helpers.git(sc.wt, "add", "-A")
+        helpers.git(sc.wt, "commit", "-q", "-m", "change " + rel)
+        n = sc.lines("deps/count")
+        R(sc.wt, "wave", "setup", env=sc.env)
+        S.eq("a changed %s runs the setup again" % rel, sc.lines("deps/count"), n + 1)
+    # `.fwx/` is not counted, in a repo that does not ignore it
+    sc = Scene(setup=[MK], files={".gitignore": ".claude/\ndeps/\n"})
+    helpers.write(sc.wt, ".fwx/milestones/v1/note", "not counted\n")
+    S.eq("`.fwx/` not counted although the project does not ignore it", R(sc.wt, "wave", "setup", env=sc.env).returncode, 0)
+    # a failed --force leaves no marker of the earlier run
+    sc = Scene(setup=["mkdir -p deps && echo run >> deps/count && test ! -f deps/stop"])
+    R(sc.wt, "wave", "setup", env=sc.env)
+    helpers.write(sc.wt, "deps/stop", "")
+    S.eq("a failing --force run fails", R(sc.wt, "wave", "setup", "--force", env=sc.env).returncode, 1)
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.ok("a failing --force run leaves no marker: the next call runs (and fails) instead of `already done`", r.returncode == 1 and "already" not in r.stdout, r.stdout + r.stderr)
+    # a one-word string is not a list of commands
+    one = Scene()
+    helpers.write(one.repo, ".claude/fwx.json", '{"project":{"worktree_setup":"make"}}')
+    r = R(one.wt, "wave", "setup", env=one.env)
+    S.ok("a one-word string worktree_setup is refused (exit 2, nothing ran)", r.returncode == 2 and "worktree_setup" in r.stderr, "%d %s" % (r.returncode, r.stderr))
+    # the module as a function: the cap's edge, stderr in the log, a child that holds the pipe, a command that exits and leaves a child
+    ws = _load_ws(R, S)
+    if ws is None:
+        return
+    cmd = "head -c %d /dev/zero | tr '\\0' a"
+    cap = 4096
+    n = cap
+    for _ in range(3):  # the header "$ <command>\n" counts in the cap: n bytes of output make the log exactly `cap` bytes
+        n = cap - len(("$ %s\n" % (cmd % n)).encode())
+    sc = Scene()
+    try:
+        ws.run(sc.wt, [cmd % n], log_cap=cap)
+        edge_ok = True
+    except ws.SetupFailed as e:
+        edge_ok = str(e)
+    S.ok("log cap: output that makes the log exactly the cap passes: %s" % (edge_ok if edge_ok is not True else ""), edge_ok is True, str(edge_ok))
+    sc = Scene()
+    try:
+        ws.run(sc.wt, [cmd % (n + 1)], log_cap=cap)
+        over = "it passed"
+    except ws.SetupFailed as e:
+        over = str(e)
+    S.ok("log cap: one byte more fails, naming the cap: %s" % over[:80], "output past %d bytes" % cap in over, over)
+    sc = Scene()
+    try:
+        ws.run(sc.wt, ["head -c 60000000 /dev/zero | tr '\\0' a"], log_cap=100000)
+    except ws.SetupFailed:
+        pass
+    size = os.path.getsize(os.path.join(sc.wt, ".fwx-agent", "worktree-setup.log"))
+    S.ok("log cap: the log holds the cap and the trailer, not the whole chunk (%d bytes)" % size, size <= 100000 + 40, str(size))
+    sc = Scene(setup=["echo only-on-stderr-$((1+1)) >&2"])
+    R(sc.wt, "wave", "setup", env=sc.env)
+    S.ok("stderr is in the log", "only-on-stderr-2" in slurp(os.path.join(sc.wt, ".fwx-agent", "worktree-setup.log")))
+    sc = Scene()
+    started = time.monotonic()
+    ws.run(sc.wt, ["setsid sleep 6 & echo hi"])
+    took = time.monotonic() - started
+    S.ok("a child that outlives the command and holds the pipe: back in about 2 s, not when it ends (%.1f s)" % took, took < 4.5, "%.1f s" % took)
+    pids = helpers.mkdtemp("fwx-pids-")
+    pidfile = os.path.join(pids, "c.pid")
+    sc = Scene()
+    ws.run(sc.wt, ["sleep 300 & echo $! > %s" % pidfile])
+    pid = int(open(pidfile).read().strip()) if os.path.exists(pidfile) else None
+    gone = pid is not None and _gone(pid)
+    if not gone and pid:
+        os.kill(pid, 9)
+    S.ok("a command that exits by itself and leaves a same-group child: no process is left (pid %s)" % pid, gone)
+
+
 CASES = [case_run, case_none, case_second_call, case_failing, case_dirty, case_main_checkout, case_config, case_timeout, case_check_base,
-         case_prepare, case_unrelated_config, case_integrate_setup, case_io_errors, case_detached_child, case_log_cap, case_marker_validity, case_toolchain_files]
+         case_prepare, case_unrelated_config, case_integrate_setup, case_io_errors, case_detached_child, case_log_cap, case_marker_validity, case_toolchain_files, case_revert_setup,
+         case_integrate_trusted, case_failure_record, case_marker_after_failure, case_symlink_root, case_walk_cycle, case_gaps]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (name, case, file, old text, new text, the FAIL text it must produce); each `old` is in the file exactly once.
@@ -536,15 +818,14 @@ MUTANTS = [
     ("check-base does not call the setup", case_check_base, C,
      "    # The base is right: the agent's checks need the project's dependencies in this worktree, so the setup is part of step 0.\n",
      "    return 0\n", "setup did not run before the check"),
-    ("check-base swallows a failed setup", case_check_base, C, '        sys.stderr.write("%s\\n" % e)\n        return base.SETUP_FAILED\n',
-     '        sys.stderr.write("%s\\n" % e)\n        return 0\n', "a failing setup: exit 43, and the task's check did not run"),
+    ("check-base swallows a failed setup", case_check_base, C, '        return _setup_failed(str(e))\n', '        return 0\n', "a failing setup: exit 43, and the task's check did not run"),
     ("prepare does not call the setup", case_prepare, P, "    _setup(top, cfg, say)\n", "    pass\n", "setup did not run before the base check"),
     ("prepare swallows a failed setup", case_prepare, P, "    except worktree_setup.SetupFailed as e:\n        raise WaveError(str(e))\n",
      "    except worktree_setup.SetupFailed as e:\n        pass\n", "a failing setup stops the run before the base"),
     ("a failing command does not stop the sequence", case_failing, W, "                if why:\n                    raise SetupFailed(", "                if False:\n                    raise SetupFailed(",
      "failing: the earlier command ran and the later one did not"),
     ("files left behind are not refused", case_dirty, W, "    left = sorted(_status(top))", "    left = []", "dirty: an untracked, non-ignored file is refused: exit"),
-    ("no marker is read", case_second_call, W, "if not force and _valid(_read_marker(marker_path), fingerprint, top):", "if False:", "second call: a no-op that says so"),
+    ("no marker is read", case_second_call, W, "if not force and _valid(_read_marker(marker_path), fingerprint, top, made):", "if False:", "second call: a no-op that says so"),
     ("the dependency files are not hashed", case_second_call, W, '"dependencies": _dependency_digest(top)}', '"dependencies": ""}',
      "a changed lockfile: the setup runs again by itself"),
     ("the main checkout is allowed", case_main_checkout, W, "    if not linked(top):", "    if False:", "main checkout: refused with exit 2"),
@@ -552,15 +833,43 @@ MUTANTS = [
      "timeout: no process is left"),
     ("a timeout kills nothing outside the group", case_detached_child, W, "    below = _descendants(pid)\n", "    below = []\n", "detached child: no process is left"),
     ("the log has no cap", case_log_cap, W, "if len(chunk) > room and not self.over:", "if False:", "log cap: a runaway output fails the setup"),
-    ("the marker ignores what the setup made", case_marker_validity, W, "all(isinstance(m, str) and os.path.exists(os.path.join(top, m)) for m in made))", "True)",
+    ("the marker ignores what the setup made", case_marker_validity, W, "and all(_present(top, m) for m in made))", "and True)",
      "marker: the folder the setup made is gone"),
-    ("a rerun forgets what the earlier run made", case_marker_validity, W, "made=sorted((after - before) | (set(kept) & after))", "made=sorted(after - before)",
+    ("a rerun forgets what the earlier run made", case_marker_validity, W, "json.dump(sorted((after - before) | (set(kept) & after)), f)", "json.dump(sorted(after - before), f)",
      "marker: after a rerun for a changed lockfile the folder is still vouched for"),
+    ("a failed run is not written down", case_marker_after_failure, W, "    finally:\n        _remember(made_path, made, before, top)\n", "    finally:\n        pass\n",
+     "failed first run: after a failure and then a success, a deleted folder is noticed"),
+    ("an emptied folder is vouched for", case_marker_after_failure, W, '    if rel.endswith("/"):\n        try:\n            return bool(os.listdir(path))', '    if rel.endswith("/"):\n        try:\n            return bool(os.listdir(path)) or True',
+     "an emptied folder is not vouched for"),
+    ("the walk has no visited set", case_walk_cycle, W, "            if kid not in seen:", "            if True:", "the walk of a cycle ends"),
+    ("a symlink root is written through", case_symlink_root, "lib/fwx/execute/base.py", "    if os.path.islink(root):", "    if False:", "`.fwx-agent` a symlink: setup refused"),
+    ("revert does not call the setup", case_revert_setup, "lib/fwx/execute/integrate.py", "    if result[\"ok\"] and result[\"reverted\"] and _setup_again(", "    if False and _setup_again(",
+     "revert: a lockfile change reverted"),
+    ("the trusted edits ignore the setup", case_integrate_trusted, "lib/fwx/execute/integrate.py", "trusted.trusted_edits(changed, cfg[\"project\"][\"checks\"], setup=setup, manifest=manifest)",
+     "trusted.trusted_edits(changed, cfg[\"project\"][\"checks\"])", "trusted: the diff edits .npmrc and a setup is set"),
+    ("check-base leaves no record", case_failure_record, C, "    worktree_setup.record_failure(os.getcwd(), line)\n", "    pass\n", "failure record: exit 43 leaves"),
+    ("a failing digest git is ignored", case_gaps, W, '    if r.returncode:\n        raise WaveError("git ls-files failed in %s: %s" % (top, r.stderr.strip()))\n    h = hashlib.sha256()',
+     '    h = hashlib.sha256()', "git failing: the digest's ls-files"),
+    ("a failing ignored-list git is ignored", case_gaps, W, '    if r.returncode:\n        raise WaveError("git ls-files failed in %s: %s" % (top, r.stderr.strip()))\n    return {p for p',
+     '    return {p for p', "git failing: the ignored list's ls-files"),
+    ("a failing git status is ignored", case_gaps, W, '    if r.returncode:\n        raise WaveError("git status failed', '    if False:\n        raise WaveError("git status failed', "git failing: the status after the commands"),
+    ("stdin is inherited", case_gaps, W, "cwd=cwd, stdin=subprocess.DEVNULL,", "cwd=cwd, stdin=None,", "stdin: a command that reads gets EOF"),
+    ("dependency files only at the root", case_gaps, W, '[":(glob)**/" + name for name in DEPENDENCY_FILES]', '[":(glob)" + name for name in DEPENDENCY_FILES]', "a changed sub/pkg/package-lock.json"),
+    ("requirements-dev.txt is no dependency file", case_gaps, W, '"requirements*.txt"', '"requirements.txt"', "a changed requirements-dev.txt"),
+    (".fwx is counted in the clean check", case_gaps, W, '":(exclude).fwx"', '":(exclude).nothing"', "`.fwx/` not counted"),
+    ("an old marker survives a failing run", case_gaps, W, "    try:\n        os.remove(marker_path)\n    except FileNotFoundError:\n        pass\n", "    try:\n        pass\n    except FileNotFoundError:\n        pass\n",
+     "a failing --force run leaves no marker"),
+    ("a string worktree_setup is not refused", case_gaps, "lib/fwx/config.py", "not isinstance(setup, list) or not all(", "not all(", "a one-word string worktree_setup is refused"),
+    ("the cap is `>=`", case_gaps, W, "if len(chunk) > room and not self.over:", "if len(chunk) >= room and not self.over:", "log cap: output that makes the log exactly the cap passes"),
+    ("the log takes the whole chunk", case_gaps, W, "self.log.write(chunk[:room])", "self.log.write(chunk)", "log cap: the log holds the cap and the trailer"),
+    ("stderr is not in the log", case_gaps, W, "stderr=subprocess.STDOUT, start_new_session=True)", "stderr=subprocess.DEVNULL, start_new_session=True)", "stderr is in the log"),
+    ("the pump is joined without a limit", case_gaps, W, "pump.join(2)", "pump.join()", "a child that outlives the command and holds the pipe"),
+    ("no kill after a normal exit", case_gaps, W, "    _kill_tree(proc.pid)\n    proc.wait()\n", "    proc.wait()\n", "a command that exits by itself and leaves a same-group child"),
     ("the digest ignores untracked lockfiles", case_marker_validity, W, '"--cached", "--others", "--exclude-standard", "--",', '"--cached", "--",',
      "marker: a new untracked lockfile"),
     ("a failure to write the log is a traceback", case_io_errors, W, "    except OSError as e:\n        raise WaveError(\"cannot write the log of the setup",
      "    except ZeroDivisionError as e:\n        raise WaveError(\"cannot write the log of the setup", "log is a directory: setup"),
-    ("integrate does not call the setup", case_integrate_setup, "lib/fwx/execute/integrate.py", "            worktree_setup.run(top, commands)\n", "            pass\n",
+    ("integrate does not call the setup", case_integrate_setup, "lib/fwx/execute/integrate.py", "    if _setup_again(top, cfg[\"project\"][\"worktree_setup\"], result, say):\n        return 1, result\n", "",
      "two waves: wave 1 changes the lockfile"),
     ("check-base reads the whole configuration", case_unrelated_config, C, "worktree_setup.run(os.getcwd(), config.setup_commands(os.getcwd()))",
      'worktree_setup.run(os.getcwd(), config.load(os.getcwd())["project"]["worktree_setup"])', "config tolerance, a model table error: check-base exit"),

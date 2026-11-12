@@ -24,8 +24,17 @@ Declared limit, as in marshal: what a script runs inside is not followed. A shel
 script that calls another file is trusted as far as the name goes; the file it calls is not looked at. Settings kept in
 `package.json` other than `scripts` (`eslintConfig`, `jest`) are not looked at either.
 
+With a worktree setup configured (`setup`, the commands of `project.worktree_setup`, e.g. `npm ci`) the setup runs the package
+manager in every worktree, and the package manager runs what the worktree under test holds: a `.npmrc`, the lockfiles, and the
+install scripts of package.json (`preinstall`, `install`, `postinstall`, `prepare`). That happens before any person reads the diff,
+so an edit of those files is a handover too (SETUP_INPUTS, LIFECYCLE). Not followed, the same declared limit: what an install
+script of a dependency runs, a setup command that is not a package manager, and the manifests of other ecosystems than the
+lockfiles named in SETUP_INPUTS (a `pyproject.toml` build backend, a `Cargo.toml` build script). `manifest=(base_text,
+head_text)` gives the two versions of package.json for the install scripts; without it the patch of the entry is read.
+
 Imports only `fwx.core.globs`.
 """
+import fnmatch
 import json
 import os
 import posixpath
@@ -38,6 +47,10 @@ RECIPE_PATH = ".claude/fwx.json"
 WORKFLOWS = [".github/workflows/**"]
 PACKAGE_JSON = "package.json"
 DEFAULT_CHECKS = ("test", "lint", "typecheck", "build")
+# What a worktree setup installs from, by file name at any depth, and the package.json scripts the package manager runs by itself.
+SETUP_INPUTS = (".npmrc", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb", "uv.lock",
+                "poetry.lock", "Pipfile.lock", "Gemfile.lock", "composer.lock", "requirements*.txt")
+LIFECYCLE = ("preinstall", "install", "postinstall", "prepare", "preprepare", "postprepare")
 
 # One row per executor: (name, the words of a command that run it, the files it reads). A glob with a leading `**/`
 # also names the root. A new executor is a new row.
@@ -193,8 +206,32 @@ def _list(files):
     return "%s%s" % (", ".join(files[:3]), " and %d more" % (len(files) - 3) if len(files) > 3 else "")
 
 
-def trusted_edits(changed_files, checks, package_json=None):
-    """Why this PR edits what its checks trust, one reason each; empty when it doesn't."""
+def _setup_reasons(touched, patch, setup, manifest):
+    """The handovers for the files the worktree setup `setup` installs from."""
+    reasons = []
+    inputs = [f for f in touched if any(fnmatch.fnmatchcase(posixpath.basename(f), n) for n in SETUP_INPUTS)]
+    if inputs:
+        reasons.append("The pull request edits %s, which the worktree setup `%s` installs from and runs." % (_list(inputs), setup[0]))
+    if PACKAGE_JSON in touched:
+        changed = None
+        if manifest is not None:
+            base, head = scripts_of(manifest[0]), scripts_of(manifest[1])
+            if base is not None and head is not None:
+                changed = [n for n in LIFECYCLE if base.get(n) != head.get(n)]
+        elif patch is not None:
+            changed = [n for n in sorted(_patch_view(patch)[1]) if n in LIFECYCLE]
+        if changed is None:
+            reasons.append("The pull request edits package.json, and the install scripts the worktree setup `%s` runs couldn't be compared "
+                           "with the base branch's." % setup[0])
+        elif changed:
+            reasons.append("The pull request edits the install scripts the worktree setup `%s` runs: %s." %
+                           (setup[0], ", ".join("package.json scripts.%s" % n for n in changed)))
+    return reasons
+
+
+def trusted_edits(changed_files, checks, package_json=None, setup=(), manifest=None):
+    """Why this PR edits what its checks trust, one reason each; empty when it doesn't. `setup` and `manifest` are in the module's
+    docstring: without a setup they change nothing."""
     touched, patch = _touched(changed_files)
     commands = _commands(checks)
     reasons = []
@@ -239,6 +276,9 @@ def trusted_edits(changed_files, checks, package_json=None):
         edited = [f for f in touched if globs.matches_any(f, files)]
         if edited:
             reasons.append("The pull request edits %s, which `%s` reads (%s)." % (_list(edited), command, name))
+
+    if setup:
+        reasons += _setup_reasons(touched, patch, setup, manifest)
 
     paths = {}
     for command in scan:

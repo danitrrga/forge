@@ -152,6 +152,8 @@ def green():
         "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"])]},
         "reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report(),
         "executor:runner-cleanup": CLEAN_CLEANUP,
+        # what the runner finds when it looks for a failed setup's record in the worktree of a job that reported `failed`: none
+        **{"executor:runner-setup-" + u: R("", 1) for u in ("T1", "T2", "T3", "fix-1", "fix-2", "fix-3", "resolve-1", "resolve-2")},
     }
 
 
@@ -440,31 +442,77 @@ def check_executor_misses(script, s):
 
 
 def check_setup_failed(script, s):
-    """A worktree setup that failed (exit 43 of `fwx wave check-base`, or `setup` in the result of `integrate`) ends the job with its own
-    line: a new attempt would run the same setup and fail the same way, and the round it takes is one a real failure needs.
+    """A worktree setup that failed (exit 43 of `fwx wave check-base`, or `setup` in the result of `integrate` and `revert`) ends the job
+    with its own line: a new attempt would run the same setup and fail the same way, and the round it takes is one a real failure needs.
+
+    The signal is a fact the code wrote, not words an agent chose: `check-base` leaves `.fwx-agent/worktree-setup-failed.json` in the
+    worktree and the workflow reads it with a runner when an executor reports `failed`. The start of the reason stays as a second net.
 
     Red on the script before this check (the round was available, `fix-round` answered ok):
-      FAIL: setup failed in an executor (session): ended with the setup's line, no round spent, no new attempt: got ('done', ...), want ('needs-owner', 'worktree setup failed: npm ci (exit 1, log /w/.fwx-agent/worktree-setup.log)')
+      FAIL: setup failed in an executor (session): ended with the setup's line, no round spent, no new attempt: got ('done', ...), want ('needs-owner', 'worktree setup failed: npm ci (exit 1, ...)', 0, 1)
       FAIL: setup failed at the join (session): ended with the setup's line, no round spent: ...
+    Red on the script that read only the start of the reason (second review): the three paraphrases each went the old way, one round
+    and a new executor:
+      FAIL: setup failed, reason 'Worktree setup failed: ...': ended once with the record's line, no round, no new attempt: got ('done', '', 1, 2), want (...)
+      FAIL: setup failed, reason ' worktree setup failed: ...' (leading space): ...
+      FAIL: setup failed, reason 'check-base exit 43: worktree setup failed: ...': ...
+      FAIL: setup failed, reason 'npm could not install': ...
     """
     line = "worktree setup failed: npm ci (exit 1, log /w/.fwx-agent/worktree-setup.log)"
-    for plane, want in (("session", "needs-owner"), ("factory", "failed")):
-        def pl(a, plane=plane):
+    record = R({"setup_failed": line})
+
+    def failing(reason, plane="session", rec_answer=record):
+        def pl(a):
             a["plane"] = plane
-        rec, err = go(script, args_over=pl, answers_over={
+        return go(script, args_over=pl, answers_over={
             "executor:T1": {"$seq": [exec_line("T1", "failed"), exec_line("T1")]},
-            "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", "failed", reason=line), exec_report("wt-t1b")]},
+            "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", "failed", reason=reason), exec_report("wt-t1b")]},
+            "executor:runner-setup-T1": rec_answer,
             "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"})})
+    for plane, want in (("session", "needs-owner"), ("factory", "failed")):
+        rec, err = failing(line, plane)
         rec = finish(s, "setup failed in an executor (%s)" % plane, rec, err)
         s.eq("setup failed in an executor (%s): ended with the setup's line, no round spent, no new attempt" % plane,
              (result(rec).get("status"), result(rec).get("reason"), len(runner(rec, "fix-round")), len(launched(rec, "executor:T1"))), (want, line, 0, 1))
         s.ok("setup failed in an executor (%s): nothing was integrated" % plane, not runner(rec, "integrate"), repr(labels(rec)))
+    s.ok("setup failed: the runner reads the record in the worktree the report came from", "cat -- '/work/wt-T1/.fwx-agent/worktree-setup-failed.json'" in runner(rec, "setup-T1")[0]["prompt"],
+         runner(rec, "setup-T1")[0]["prompt"][-200:] if runner(rec, "setup-T1") else "no runner")
+    for label, reason in (("'Worktree setup failed: ...'", "Worktree setup failed: npm ci (exit 1)"), ("' worktree setup failed: ...' (leading space)", " worktree setup failed: npm ci (exit 1)"),
+                          ("'check-base exit 43: worktree setup failed: ...'", "check-base exit 43: worktree setup failed: npm ci (exit 1)"), ("'npm could not install'", "npm could not install")):
+        rec, err = failing(reason)
+        rec = finish(s, "setup failed, reason " + label, rec, err)
+        s.eq("setup failed, reason %s: ended once with the record's line, no round, no new attempt" % label,
+             (result(rec).get("status"), result(rec).get("reason"), len(runner(rec, "fix-round")), len(launched(rec, "executor:T1"))), ("needs-owner", line, 0, 1))
+    # the second net: no record (the runner found none), the reason still starts with the phrase, any case, any padding
+    for reason in ("worktree setup failed: npm ci", "Worktree Setup Failed: npm ci", "  worktree setup failed: npm ci"):
+        rec, err = failing(reason, rec_answer=R("", 1))
+        rec = finish(s, "setup failed, no record, reason %r" % reason, rec, err)
+        s.eq("setup failed, no record, reason %r: the start of the reason is the second net" % reason,
+             (result(rec).get("status"), len(runner(rec, "fix-round")), len(launched(rec, "executor:T1"))), ("needs-owner", 0, 1))
+    # a failure that is not the setup's: no record, another reason: a round, a new attempt
+    rec, err = failing("check-base exit 43: worktree setup failed: npm ci (exit 1)", rec_answer=R("", 1))
+    rec = finish(s, "no record, phrase inside the reason", rec, err)
+    s.eq("no record and the phrase inside other words: an ordinary failure (a round, a new attempt)", (len(runner(rec, "fix-round")), len(launched(rec, "executor:T1"))), (1, 2))
+    rec, err = failing("no test can fail", rec_answer=R({"setup_failed": ""}))
+    rec = finish(s, "empty record", rec, err)
+    s.eq("an empty record is no record", (len(runner(rec, "fix-round")), len(launched(rec, "executor:T1"))), (1, 2))
+    for plane, want in (("session", "needs-owner"), ("factory", "failed")):
+        def pl(a, plane=plane):
+            a["plane"] = plane
         rec, err = go(script, args_over=pl, answers_over={
             "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"], ok=False, setup=line)]},
             "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"})})
         rec = finish(s, "setup failed at the join (%s)" % plane, rec, err)
         s.eq("setup failed at the join (%s): ended with the setup's line, no round spent" % plane,
              (result(rec).get("status"), result(rec).get("reason"), len(runner(rec, "fix-round"))), (want, line, 0))
+
+    def rev(a):
+        a["revert"] = ["r1-F1"]
+    rec, err = go(script, args_over=rev, base={
+        "executor:runner-revert": R({"ok": False, "head": "h4", "reverted": [{"id": "r1-F1", "commit": "c1", "revert": "h4"}], "failed": None, "setup": line}, 1),
+        "executor:runner-cleanup": CLEAN_CLEANUP})
+    rec = finish(s, "setup failed after a revert", rec, err)
+    s.eq("setup failed after a revert: ended with the setup's line, no gate", (result(rec).get("status"), result(rec).get("reason"), runner(rec, "verify")), ("needs-owner", line, []))
     rec, err = go(script, answers_over={
         "executor:T1": exec_line("T1", "failed"), "executor:runner-report-T1": exec_report("wt-t1", "failed", reason="no test can fail"),
         "executor:runner-fix-round": R({"ok": False, "spent": False, "rounds": "3/3", "why": "w"}, 1)})
@@ -1009,10 +1057,13 @@ def check_all(script, s):
 
 # (what is wrong with the script, text in it, text instead, the check that must go red). Each anchor is in the script exactly once.
 MUTANTS = [
-    ("a failed setup takes a round", "if (rep.status === 'failed' && SETUP_FAILED.test(String(rep.reason)))", "if (false)",
-     "FAIL: setup failed in an executor (session)"),
-    ("a failed setup at the join takes a round", "if (typeof r.setup === 'string' && SETUP_FAILED.test(r.setup))", "if (false)",
+    ("a failed setup takes a round", "if (setupLine) return { end:", "if (false) return { end:", "FAIL: setup failed in an executor (session)"),
+    ("the record is not read", "return j && typeof j.setup_failed === 'string' && j.setup_failed.trim() ? oneLine(j.setup_failed, 600) : null", "return null",
+     "FAIL: setup failed, reason 'npm could not install'"),
+    ("a failed setup at the join takes a round", "fail the same way.\n    if (typeof r.setup === 'string' && r.setup.trim())", "fail the same way.\n    if (false)",
      "FAIL: setup failed at the join (session)"),
+    ("a failed setup after a revert takes the gate", "if (r.head) st.head = r.head\n    if (typeof r.setup === 'string' && r.setup.trim())", "if (r.head) st.head = r.head\n    if (false)",
+     "FAIL: setup failed after a revert"),
     ("serial wave ignored", "rest.slice(0, wave.serial ? 1 : allowed)", "rest.slice(0, allowed)", "FAIL: clash: the two executors never run at once"),
     ("capacity 0 not checked", "if (!(Number.isInteger(c.allowed) && c.allowed > 0)) {", "if (false) {", "FAIL: no capacity: the script ended"),
     ("rounds not honoured", "if (r.ok !== true) return { end: ['failed', 'rounds exhausted'] }", "if (false) return { end: ['failed', 'rounds exhausted'] }",

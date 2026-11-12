@@ -11,15 +11,16 @@ given. It refuses (exit 2, nothing merged) a checkout with uncommitted changes, 
 it aborts that merge and stops (the earlier ones stay). Then it runs the project's `worktree_setup` again in the checkout (a no-op unless a merge changed a dependency file; a failure
 stops here with `setup` in the result and exit 1) and then `project.checks_quick`, removes the
 worktrees of the branches it merged (only unlocked, clean ones: a stale lock is `cleanup`'s), and, with `final` and everything
-green, runs the gate (`core.verify`) and reports the trusted edits and the protected paths of `<base>..HEAD`, `base` being the
-sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
+green, runs the gate (`core.verify`) and reports the trusted edits (with a `worktree_setup`, also the files it installs from: core.trusted) and the protected paths of
+`<base>..HEAD`, `base` being the sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
 is (the re-entry of `prepare --from gate`).
 
 `fix_round(cwd, part_dir, why)` decides whether a failure may be fixed and spends the round for it. If the last audit row is
 the red evidence of the checkout's HEAD, `verify` already made that failure a round and nothing more is spent. A failure is
 allowed only when fewer than `rounds` were spent before it: the third round is fixed, only the failure after it ends the job.
 
-`revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first. `summary(...)` says whether the gate
+`revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first, and then runs the setup again like `integrate`
+(`setup` in the result on a failure). `summary(...)` says whether the gate
 of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.core and execute.base, cleanup and worktree_setup.
 """
 import json
@@ -88,6 +89,27 @@ def _findings_check(top, phase, branches, wanted):
     return {"ok": not problems, "problems": problems}
 
 
+def _setup_again(top, commands, result, say):
+    """The setup of the worktree after the branch changed under it (a merge, a revert): installed again when a dependency file moved
+    (a no-op otherwise). True when it failed: `setup` of the result then holds the line, which starts `worktree setup failed:`. The
+    main checkout is the owner's own and is left alone."""
+    if not commands or not linked(top):
+        return False
+    try:
+        worktree_setup.run(top, commands)
+    except (worktree_setup.SetupFailed, WaveError) as e:
+        result["setup"] = str(e) if isinstance(e, worktree_setup.SetupFailed) else "worktree setup failed: %s" % e
+        say(result["setup"])
+        return True
+    return False
+
+
+def _show(top, rev, path):
+    """The text of `path` at `rev`; None when there is none."""
+    r = git(top, "show", "%s:%s" % (rev, path))
+    return r.stdout if r.returncode == 0 else None
+
+
 def _quick(top, cfg):
     """{ran, cmds, rc}: project.checks_quick, run in the checkout; rc is 0 or the first exit that is not."""
     cmds = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
@@ -108,7 +130,7 @@ def _changed(top, base):
 
 def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
     """(exit code, result). The result is C.2's: {ok, head, merged, conflict, locked, findings_check, quick, verify, trusted,
-    protected}. Raises WaveError for what stops it before it merges anything and cleanup.NoProc without /proc."""
+    protected}, and `setup` (the line `worktree setup failed: ...`) only when the setup after the merges failed. Raises WaveError for what stops it before it merges anything and cleanup.NoProc without /proc."""
     top = _top(cwd)
     phase = _branch(top)
     if not os.path.isdir(part_dir):
@@ -158,16 +180,9 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
     if result["conflict"]:
         return 1, result
     # A merged lockfile changes what the checks need: the dependencies of this checkout are installed again before any check runs
-    # (the marker makes it a no-op when no dependency file changed). The main checkout is the owner's own and is left alone.
-    commands = cfg["project"]["worktree_setup"]
-    if commands and linked(top):
-        try:
-            worktree_setup.run(top, commands)
-        except (worktree_setup.SetupFailed, WaveError) as e:
-            line = str(e) if isinstance(e, worktree_setup.SetupFailed) else "worktree setup failed: %s" % e
-            result["setup"] = line
-            say(line)
-            return 1, result
+    # (the marker makes it a no-op when no dependency file changed).
+    if _setup_again(top, cfg["project"]["worktree_setup"], result, say):
+        return 1, result
     result["quick"] = _quick(top, cfg)
     result["ok"] = result["quick"]["rc"] == 0
     if final and result["ok"]:
@@ -176,7 +191,9 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
         result["ok"] = code == 0
         if result["ok"]:
             changed = _changed(top, base)
-            result["trusted"] = trusted.trusted_edits(changed, cfg["project"]["checks"])
+            setup = cfg["project"]["worktree_setup"]
+            manifest = (_show(top, base, "package.json"), _show(top, "HEAD", "package.json")) if setup else None
+            result["trusted"] = trusted.trusted_edits(changed, cfg["project"]["checks"], setup=setup, manifest=manifest)
             protected = list(decide.load_table()["default_protected_paths"]) + list(cfg["project"]["protected_paths"])
             result["protected"] = [p for p in changed if globs.matches_any(p, protected)]
     return (0 if result["ok"] else 1), result
@@ -205,9 +222,10 @@ def fix_round(cwd, part_dir, why):
     return 0, {"ok": True, "spent": spent, "rounds": "%d/%d" % (used, cap), "why": why}
 
 
-def revert(cwd, part_dir, ids):
+def revert(cwd, part_dir, ids, say=lambda line: None):
     """(exit code, result): {ok, head, reverted: [{id, commit, revert}], failed}. The commit of each finding is reverted,
-    newest first, with no round spent; a revert that conflicts is aborted (the earlier ones stay) and exits 1."""
+    newest first, with no round spent; a revert that conflicts is aborted (the earlier ones stay) and exits 1. As after a merge, the
+    worktree's setup runs again when a dependency file moved; a failure is exit 1 with `setup` in the result."""
     top = _top(cwd)
     _branch(top)
     if not os.path.isdir(part_dir):
@@ -241,6 +259,8 @@ def revert(cwd, part_dir, ids):
             break
         result["reverted"].append({"id": i, "commit": sha, "revert": verify.head(top)})
     result["head"] = verify.head(top)
+    if result["ok"] and result["reverted"] and _setup_again(top, config.setup_commands(top), result, say):
+        result["ok"] = False
     return (0 if result["ok"] else 1), result
 
 

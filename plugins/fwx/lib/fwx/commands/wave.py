@@ -12,7 +12,8 @@ into the checks once every task is on the phase branch (the tree's n_C7F loops t
 (the one at `P`, when given) whose HEAD is `<sha>`, 42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
 worktree: <path>` on stderr), 2 for a usage error. `<sha>` is 7 to 40 hex digits. With the base right it then runs the project's
 `worktree_setup` (below), so that the agent's own checks find the dependencies: exit 43 when that fails, with `worktree setup
-failed: <command> (exit N, log PATH)` on stderr, which is the reason the agent reports; nothing configured prints nothing. It reads
+failed: <command> (exit N, log PATH)` on stderr, which is the reason the agent reports, and in `.fwx-agent/worktree-setup-failed.json`
+of the worktree, which the workflow reads to end the job; nothing configured prints nothing. It reads
 that one field of the configuration (`config.setup_commands`) and no other value: a project that never set it behaves as before,
 and a configuration file that cannot be read is 43 too, naming the file (it cannot say whether a setup is owed).
 
@@ -20,7 +21,8 @@ and a configuration file that cannot be read is 43 too, naming the file (it cann
 refuses): exit 0 with a line on stdout saying how many commands ran, that it was already done, or that none is configured; 1 when a
 command failed, ran past its limit or left files git does not ignore (the reason on stderr); 2 in the main checkout, outside a
 repository, for a configuration it cannot read and for a usage error. `prepare` calls it in the phase worktree before the base runs,
-and `integrate` after the merges and before its checks (a merged lockfile needs the dependencies again).
+and `integrate` after the merges and before its checks, and `revert` after the reverts (a merged or reverted lockfile needs the
+dependencies again; a failure is exit 1 and `setup` in the JSON).
 
 `scratch <run> <unit>` makes the folder an agent writes its report and its TMPDIR in, inside its own worktree and ignored by git, and
 prints its path (execute/base.py says why it is not under `.git`): exit 0, 2 for a usage error or outside a repository.
@@ -137,14 +139,20 @@ def do_check_base(argv):
     try:
         result = worktree_setup.run(os.getcwd(), config.setup_commands(os.getcwd()))
     except worktree_setup.SetupFailed as e:
-        sys.stderr.write("%s\n" % e)
-        return base.SETUP_FAILED
+        return _setup_failed(str(e))
     except (base.WaveError, config.ConfigError) as e:
-        sys.stderr.write("worktree setup failed: %s\n" % e)
-        return base.SETUP_FAILED
+        return _setup_failed("worktree setup failed: %s" % e)
+    worktree_setup.clear_failure(os.getcwd())
     if result["state"] != "none":
         sys.stderr.write(worktree_setup.summary(result) + "\n")
     return 0
+
+
+def _setup_failed(line):
+    """Exit 43: the line on stderr, and as a record in the worktree for the workflow (worktree_setup.record_failure)."""
+    sys.stderr.write("%s\n" % line)
+    worktree_setup.record_failure(os.getcwd(), line)
+    return base.SETUP_FAILED
 
 
 def do_setup(argv):
@@ -268,7 +276,7 @@ def do_step(step, argv):
             sys.stderr.write("rounds %s\n" % result["rounds"])
         elif step == "revert":
             args = {"part_dir": part, "run": run, "findings": findings}
-            code, result = integrate.revert(".", part, findings)
+            code, result = integrate.revert(".", part, findings, say)
         elif step == "cleanup":
             args = {"run": run}
             result = cleanup.cleanup(".", run, _recorded_branches(top, run))

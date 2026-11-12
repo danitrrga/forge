@@ -70,8 +70,10 @@ def check_base(sha, cwd, worktree=None):
 
 def agent_root(top):
     """`<worktree>/.fwx-agent`, made, with its `.gitignore` of `*` (written once, never rewritten): what an agent or the worktree's
-    setup keeps in the worktree, and git sees none of it, the `.gitignore` included. OSError when it cannot be made."""
+    setup keeps in the worktree, and git sees none of it, the `.gitignore` included. OSError when it cannot be made, or when it is a link."""
     root = os.path.join(os.path.realpath(top), AGENT_DIR)
+    if os.path.islink(root):  # a tracked link merged from a branch: nothing is written through it
+        raise OSError("%s is a symbolic link" % root)
     os.makedirs(root, exist_ok=True)
     ignore = os.path.join(root, ".gitignore")
     if not os.path.exists(ignore):
@@ -90,8 +92,8 @@ def scratch(cwd, run, unit):
         raise WaveError("not inside a git repository: %s" % cwd)
     folder = os.path.join(os.path.realpath(top), AGENT_DIR, run, unit)
     try:
-        os.makedirs(os.path.join(folder, "tmp"), exist_ok=True)
         agent_root(top)
+        os.makedirs(os.path.join(folder, "tmp"), exist_ok=True)
     except OSError as e:
         raise WaveError("cannot make %s: %s" % (folder, e))
     return folder
