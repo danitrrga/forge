@@ -47,7 +47,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       character in a screen is quoted as a browser would) and prints one object, `{checked, bad, screens: [{url, status, ok}]}`, each screen once.
       The probe is anonymous (it carries no demo session), so for an app that declares `app_run.login` a status says nothing: nothing is asked, it
       prints `{checked: 0, bad: 0, not_run: "NOT RUN, NOT ARMED: ...", screens: [{url, checked: false, status: null, ok: null}]}`, the same line on
-      stderr, and exits 0 (the workflow goes on unchecked). A screen that does not answer 2xx, or is not on the app (its host or its port is not the
+      stderr, and exits 0 (the workflow goes on unchecked). A screen that does not answer 2xx, or is not on the app (its host and port are not one
       app's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>` (`screen <url> is not answered: <why>` for no status), and the exit is 1. The
       ui-walk workflow runs it once, for every screen, after the tramos and before `arm-control`, and ends `failed` on exit 1: a walk over pages
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
@@ -1045,12 +1045,19 @@ def port_of(url):
     return p.port or (443 if p.scheme == "https" else 80)
 
 
-def on_app(url, run):
-    """Whether a screen is on the app's own origin: a local http(s) address whose host is the run's and whose port is one of its apps' (an unreadable port is no)."""
+def app_of(url, run):
+    """The app a screen belongs to: the one whose host (or, for a local app, its local alias) and port the screen has, so a run with one app per
+    walker asks each screen through its own app's `run` prefix; None for a screen that is no app's (an unreadable port included)."""
     try:
-        return bool(local_host(url)) and host_of(url) in run["hosts"] and port_of(url) in {port_of(a["url"]) for a in run["apps"]}
+        if not local_host(url):
+            return None
+        for a in run["apps"]:
+            hosts = [host_of(a["url"])] + (list(LOCAL_HOSTS[:2]) if local_host(a["url"]) else [])
+            if host_of(url) in hosts and port_of(url) == port_of(a["url"]):
+                return a
     except ValueError:
-        return False
+        return None
+    return None
 
 
 def cmd_check_screens(argv):
@@ -1072,10 +1079,11 @@ def cmd_check_screens(argv):
         return 0
     rows = []
     for u in urls:
-        if not on_app(u, run):  # a screen is agent-written text: nothing off the app's own origin is asked for
-            rows.append({"url": u, "status": "not on the app (%s; port %s)" % (", ".join(run["hosts"]), ", ".join(str(n) for n in sorted({port_of(a["url"]) for a in run["apps"]}))), "ok": False})
+        app = app_of(u, run)
+        if app is None:  # a screen is agent-written text: nothing off an app's own origin is asked for
+            rows.append({"url": u, "status": "not on the app (%s)" % ", ".join("%s:%d" % (host_of(a["url"]), port_of(a["url"])) for a in run["apps"]), "ok": False})
             continue
-        got = ask(quote(u, safe=SAFE_URL), run["run"], run["repo"])
+        got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])
         ok = got.isdigit() and 200 <= int(got) < 300
         rows.append({"url": u, "status": int(got) if got.isdigit() else got, "ok": ok})
     bad = [r for r in rows if not r["ok"]]

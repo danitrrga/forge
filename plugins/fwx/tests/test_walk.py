@@ -2130,6 +2130,40 @@ def case_check_screens(R, S):
         sc.stop()
 
 
+def case_check_screens_apps(R, S):
+    """A run with several apps (one per walker, `container`): each screen belongs to the app whose host (or its local alias) AND port it has, and is
+    asked through that app's own run prefix. A single-app run (case_check_screens) is the same rule with one app. Seen red on 74eff2f (the host and
+    the port were matched against two sets of the whole run, and every screen went through the first app's prefix):
+      FAIL: check-screens apps: each screen is probed through the run prefix of the app that owns it (only the second app has one): got [], want ['fakerig']
+      FAIL: check-screens apps: a screen on the first app's host and the second app's port is refused: exit: got 0, want 1
+    A screen of the second app through the second app's prefix is the negative control of both."""
+    sc = Scene()
+    one, two = Pages(), Pages()
+    try:
+        rd = os.path.join(sc.run_dir_root, "multi")
+        a_url, b_url = "http://a.localhost:%d" % int(one.url.rsplit(":", 1)[1]), "http://b.localhost:%d" % int(two.url.rsplit(":", 1)[1])
+        helpers.write(rd, "run.json", json.dumps({"armed": True, "repo": sc.repo, "factory": False, "container": True, "run": "", "url": a_url,
+                                                  "hosts": ["a.localhost", "b.localhost", "localhost", "127.0.0.1"],
+                                                  "apps": [{"name": "w-1", "url": a_url, "run": ""}, {"name": "w-2", "url": b_url, "run": "fakerig run --"}]}))
+        sc.clear()
+        r = sc.walk(R, "check-screens", "--run", rd, "--screens", json.dumps([one.url + "/ok", two.url + "/ok"]))
+        S.eq("check-screens apps: a screen of each app: exit", r.returncode, 0)
+        S.eq("check-screens apps: each screen is probed through the run prefix of the app that owns it (only the second app has one)",
+             [c["prog"] for c in sc.calls()], ["fakerig"])
+        S.eq("check-screens apps: and both were asked", (one.hits, two.hits), (["/ok"], ["/ok"]))
+        one.hits.clear()
+        two.hits.clear()
+        cross = "http://a.localhost:%s/ok" % two.url.rsplit(":", 1)[1]
+        r = sc.walk(R, "check-screens", "--run", rd, "--screens", json.dumps([cross]))
+        S.eq("check-screens apps: a screen on the first app's host and the second app's port is refused: exit", r.returncode, 1)
+        S.ok("check-screens apps: a screen on the first app's host and the second app's port is refused: named, 'not on the app', not asked",
+             cross in r.stderr and "not on the app" in r.stderr and one.hits == [] and two.hits == [], "%s hits %r %r" % (r.stderr, one.hits, two.hits))
+    finally:
+        one.stop()
+        two.stop()
+        sc.stop()
+
+
 class Looks:
     """A port where every connection is counted and closed at once: nothing answers there, so each look at the app (`answering`) is one connection
     and the count is how many times the wait looked, whatever the speed of the machine."""
@@ -2198,7 +2232,7 @@ def case_poll(R, S):
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
-         case_arm_control_launch_path, case_check_screens, case_poll]
+         case_arm_control_launch_path, case_check_screens, case_check_screens_apps, case_poll]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
@@ -2382,7 +2416,7 @@ MUTANTS = [
     ("check-screens: any status is ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = got.isdigit()",
      "check-screens: one answers 404: exit: got 0, want 1"),
     ("check-screens: a failing run exits 0", case_check_screens, "return 1 if bad else 0", "return 0", "check-screens: one answers 404: exit: got 0, want 1"),
-    ("check-screens: a screen off the app is asked for", case_check_screens, "if not on_app(u, run):", "if False:",
+    ("check-screens: a screen off the app is asked for", case_check_screens, "if app is None:  # a screen is agent-written text", "if False:  # a screen is agent-written text",
      "check-screens: a screen that is not on the app: named, and not asked"),
     ("check-screens: a redirect off the app is followed", case_check_screens,
      'return super().redirect_request(req, fp, code, msg, headers, newurl) if host in LOCAL or host.endswith(".localhost") else None',
@@ -2396,7 +2430,7 @@ MUTANTS = [
      "arm-control launch path: a browser that takes the script: exit"),
     ("arm-control: control.json left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (script,):",
      "arm-control launch path: a browser that ignores --init-script: no control.json is left"),
-    ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(quote(u, safe=SAFE_URL), run["run"], run["repo"])', 'got = ask(quote(u, safe=SAFE_URL), "", run["repo"])',
+    ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])', 'got = ask(quote(u, safe=SAFE_URL), "", run["repo"])',
      "check-screens prefix: the screen was asked through the rig prefix"),
     ("arm-control: a title gone in the planted session accepted", case_arm_control_launch_path, "if after is None:", "if False:",
      "arm-control launch path: a title that is gone in the planted session: says target not found"),
@@ -2406,7 +2440,11 @@ MUTANTS = [
      "check-screens: a refused connection: named as not answered"),
     ("check-screens: a screen is not quoted", case_check_screens, "got = ask(quote(u, safe=SAFE_URL), run[\"run\"], run[\"repo\"])", "got = ask(u, run[\"run\"], run[\"repo\"])",
      "check-screens: a space and non-ASCII characters are quoted: exit"),
-    ("check-screens: any port of the app's host", case_check_screens, "and port_of(url) in {port_of(a[\"url\"]) for a in run[\"apps\"]}", "",
+    ("check-screens: every screen through the first app's prefix", case_check_screens_apps, 'got = ask(quote(u, safe=SAFE_URL), app["run"], run["repo"])',
+     'got = ask(quote(u, safe=SAFE_URL), run["apps"][0]["run"], run["repo"])', "check-screens apps: each screen is probed through the run prefix of the app that owns it"),
+    ("check-screens: any port of any app", case_check_screens_apps, 'and port_of(url) == port_of(a["url"])', 'and port_of(url) in {port_of(b["url"]) for b in run["apps"]}',
+     "check-screens apps: a screen on the first app's host and the second app's port is refused"),
+    ("check-screens: any port of the app's host", case_check_screens, "and port_of(url) == port_of(a[\"url\"])", "",
      "check-screens: a screen on another local port: both refused screens named"),
     ("check-screens: an app with a login is judged", case_check_screens, "if login_declared(run):\n        why = ", "if False:\n        why = ",
      "check-screens login: exit"),

@@ -499,7 +499,7 @@ def case_no_login(R, S):
         S.eq("login declared, with a session: the session is used (a cookie call)", any("cookies" in c["argv"] for c in sc.calls("agent-browser")), True)
     finally:
         sc.stop()
-    # a malformed `login`: an empty text declares none (forge refuses it, the plugin reads it as no login); anything else that is set declares one, so
+    # a malformed `login`: an empty text declares none (configuration validation refuses it, the plugin reads it as no login); anything else that is set declares one, so
     # a session is demanded (fail closed)
     for value, code in (("", 0), (5, 1)):
         sc = Scene(app_run={"login": value})
