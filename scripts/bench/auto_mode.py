@@ -12,7 +12,9 @@ PATH that only write their arguments down (the classifier judges the text of a c
 and a settings file of its own: hooks PreToolUse, PostToolUse, PostToolUseFailure and PermissionDenied into a log, the control rule
 `deny Bash(probe-deny-control)`, FORGE_CONSENT=unattended (the consent hook, when there is one, blocks instead of opening a window),
 and the rules of --allow-from. The config dir is a private one (no user hooks, skills, plugins or memory, and no credentials file: the session logs in with the
-long-lived token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py; a run without that key refuses to start).
+long-lived token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py; a run without a usable key refuses to start; the harness
+replaces the token by a placeholder in every file the run keeps, an agent that printed its environment included, but not in a file it wrote
+outside the run).
 Flavor `forge` copies forge's CLAUDE.md and CLAUDE.local.md into the repo (the classifier reads them), `plain` does not.
 Contexts: main-asked (the message asks for the command), main-step (it is step 1 of a STEPS.md, as in a skill), agent (a subagent of the
 Agent tool with the role's prompt), workflow (agent() of a toy workflow .claude/workflows/probe.js), workflow-def (agent() with a
@@ -425,8 +427,8 @@ def agent_home(out):
     return d
 
 
-def keep_transcripts(home, sid, cwd, dest):
-    """Moves the session's transcript folder (main file and subagents) out of the config dir into `dest`; the files moved."""
+def session_dirs(home, sid, cwd):
+    """The folders of the config dir that hold this session's transcript (main file and subagents)."""
     projects = os.path.join(home, "projects")
     enc = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
     found = []
@@ -435,8 +437,14 @@ def keep_transcripts(home, sid, cwd, dest):
             full = os.path.join(projects, d)
             if d == enc or os.path.exists(os.path.join(full, sid + ".jsonl")):
                 found.append(full)
+    return found
+
+
+def keep_transcripts(home, sid, cwd, dest, tok=None):
+    """Moves the session's transcript folder out of the config dir into `dest`, the token redacted first; the files moved."""
     files = []
-    for src in found:
+    for src in session_dirs(home, sid, cwd):
+        measure_login.redact_tree(src, tok)
         shutil.copytree(src, dest, dirs_exist_ok=True)
         shutil.rmtree(src, ignore_errors=True)
     for r, _, fs in os.walk(dest):
@@ -460,9 +468,12 @@ def run_cell(cell, a, out, home, world_base):
            "rep": cell["rep"], "cost_usd": "", "duration_s": ""}
     cdir = os.path.join(out, "cells", cid)
     os.makedirs(cdir, exist_ok=True)
+    tok = a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN")
+    base = sid = repo = None   # set as the cell goes; the `finally` redacts whatever exists, so an error or a timeout leaves no token behind
     try:
         base = os.path.join(world_base, cid)
         world = build_world(base, cell["flavor"], a.forge_root)
+        repo = world["repo"]
         prompt = build_prompt(cell, world)
         log = os.path.join(base, "hooks.jsonl")
         open(log, "w").close()
@@ -483,10 +494,11 @@ def run_cell(cell, a, out, home, world_base):
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
             stdout, stderr = p.communicate()
-        write(os.path.join(cdir, "stream.jsonl"), stdout or "")
-        write(os.path.join(cdir, "stderr.txt"), stderr or "")
+        write(os.path.join(cdir, "stream.jsonl"), measure_login.redact_text(stdout, tok))
+        write(os.path.join(cdir, "stderr.txt"), measure_login.redact_text(stderr, tok))
+        measure_login.redact_tree(base, tok)   # the hook log, the settings and the world the agent worked in
         shutil.copy(log, os.path.join(cdir, "hooks.jsonl"))
-        files = keep_transcripts(home, sid, world["repo"], os.path.join(out, "transcripts", cid)) + [os.path.join(cdir, "stream.jsonl")]
+        files = keep_transcripts(home, sid, world["repo"], os.path.join(out, "transcripts", cid), tok) + [os.path.join(cdir, "stream.jsonl")]
         uses, results = transcript_blocks(files)
         target = target_for(cell["action"]["command"], world["repo"], world["wt"])
         v = decide(target, read_jsonl(log), uses, results)
@@ -496,6 +508,11 @@ def run_cell(cell, a, out, home, world_base):
             row["evidence"] += " (claude exited %s)" % p.returncode
     except Exception as e:   # noqa: BLE001
         row.update(verdict="not-run", tool="", rule="", evidence="harness error: %s: %s" % (type(e).__name__, str(e)[:160]))
+    finally:
+        if base:
+            measure_login.redact_tree(base, tok)
+        for d in (session_dirs(home, sid, repo) if sid and repo else []):
+            measure_login.redact_tree(d, tok)
     row["duration_s"] = round(time.time() - t0, 1)
     if not a.keep_world:
         shutil.rmtree(os.path.join(world_base, cid), ignore_errors=True)
@@ -601,9 +618,13 @@ def cmd_run(a):
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = a.out or os.path.join(data_dir(), "runs", stamp)
     os.makedirs(out, exist_ok=True)
+    try:
+        home = agent_home(out)
+    except measure_login.LoginError as e:
+        print("! " + str(e))
+        return 1
     world_base = os.path.join(tempfile.gettempdir(), "auto-mode-%s" % stamp)
     os.makedirs(world_base, exist_ok=True)
-    home = agent_home(out)
     man = {"cli_version": cli_version(a.claude_bin), "conductor_model": a.model, "flavor": a.flavor, "k": a.k, "catalogue_sha256": sha256_file(a.catalogue),
            "allow_from": a.allow_from, "allow_from_sha256": allow_sha, "allow_rules": a.allow_rules, "guard_cmd": a.guard_cmd or None,
            "forge_files": {n: sha256_file(os.path.join(a.forge_root, n)) for n in ("CLAUDE.md", "CLAUDE.local.md")
@@ -613,10 +634,15 @@ def cmd_run(a):
         print("guard: none (no config/gateway.json beside the harness); the consent hook is not in this run")
     print("%d cells, workers %d, results in %s" % (len(cells), a.workers, out))
     rows = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=a.workers) as ex:
-        for r in ex.map(lambda c: run_cell(c, a, out, home, world_base), cells):
-            rows.append(r)
-            print("  [%d/%d] %s: %s" % (len(rows), len(cells), r["cell"], r["verdict"]), flush=True)
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=a.workers) as ex:
+            for r in ex.map(lambda c: run_cell(c, a, out, home, world_base), cells):
+                rows.append(r)
+                print("  [%d/%d] %s: %s" % (len(rows), len(cells), r["cell"], r["verdict"]), flush=True)
+    finally:   # once every session is over: the whole run directory (and the kept worlds), however the run ended
+        measure_login.redact_tree(out, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
+        if a.keep_world:
+            measure_login.redact_tree(world_base, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
     with open(os.path.join(out, "cells.tsv"), "w", encoding="utf-8", newline="") as fh:
         w = csv.writer(fh, delimiter="\t", lineterminator="\n")
         w.writerow(CELL_COLUMNS)

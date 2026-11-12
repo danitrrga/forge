@@ -22,7 +22,8 @@ written: every run is on a temp copy. Exit 1 when anything above fails.
 `run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's config overlays (a dir without a SKILL.md:
 CLAUDE.md, .claude/settings.json, agents, ...) copied over it before the start commit, the arm's skill directories mounted under
 .claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills, CLAUDE.md or credentials file; the login is the long-lived
-token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without that key refuses to start) and
+token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without a usable key refuses to start; the harness replaces the
+token by a placeholder in every file the run keeps, an agent that printed its environment included, but not in a file it wrote outside the run) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
 INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
@@ -612,7 +613,8 @@ def _do_job(job, a):
     prompt = meta["prompt"]
     if a.force_skill and skills:
         prompt = "Use the skill in .claude/skills/%s for this task.\n\n%s" % (os.path.basename(skills[0].rstrip("/")), prompt)
-    home = agent_home(a.out)
+    home = os.path.join(a.out, "agent-home")   # made, and cleaned of a login file, once by cmd_run before any job
+    tok = a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN")
     env = {k: v for k, v in a.login_env.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
     env["CLAUDE_CONFIG_DIR"] = home
     cmd = wrap([a.claude_bin, "-p", prompt, "--model", a.model, "--output-format", "stream-json", "--verbose",
@@ -627,11 +629,13 @@ def _do_job(job, a):
         timed_out = True
         os.killpg(p.pid, signal.SIGKILL)
         stdout, stderr = p.communicate()
+    stdout, stderr = measure_login.redact_text(stdout, tok), measure_login.redact_text(stderr, tok)   # an agent that ran `env` printed the token
+    measure_login.redact_tree(work, tok)   # ... and may have written it into a file of the working copy, which --keep-work keeps
     with open(os.path.join(base, "agent.jsonl"), "w") as fh:
-        fh.write(stdout or "")
+        fh.write(stdout)
     with open(os.path.join(base, "agent.err"), "w") as fh:
-        fh.write(stderr or "")
-    m = parse_stream(stdout or "")
+        fh.write(stderr)
+    m = parse_stream(stdout)
     msg = m["msg"]
     res = {"task": task, "field": meta.get("field"), "concept": meta.get("concept"), "arm": arm, "trial": trial,
            "model": a.model, "model_id": m["model"], "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out,
@@ -692,14 +696,20 @@ def cmd_run(a):
     todo = [j for j in jobs if not finished(os.path.join(a.out, j[0], j[1], str(j[3]), "result.json"))]
     print("%d to run, %d already done (%d tasks x %d arms x k=%d)" % (len(todo), len(jobs) - len(todo), len(tasks), len(arms), a.k))
     os.makedirs(a.out, exist_ok=True)
+    try:
+        agent_home(a.out)   # made once here, before any job: the workers share it, and none cleans or rewrites it while a session runs
+    except measure_login.LoginError as e:
+        sys.exit("! " + str(e))
     write_manifest(a, tasks, arms)
-    agent_home(a.out)   # made once here: the workers share it
     done = 0
-    with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        for r in ex.map(lambda j: do_job(j, a), todo):
-            done += 1
-            print("  [%d/%d] %s %s #%d: %s" % (done, len(todo), r["task"], r["arm"], r["trial"],
-                                              "INVALID " + r.get("invalid_reason", "") if r["invalid"] else ("pass" if r["passed"] else "fail")), flush=True)
+    try:
+        with ThreadPoolExecutor(max_workers=a.workers) as ex:
+            for r in ex.map(lambda j: do_job(j, a), todo):
+                done += 1
+                print("  [%d/%d] %s %s #%d: %s" % (done, len(todo), r["task"], r["arm"], r["trial"],
+                                                  "INVALID " + r.get("invalid_reason", "") if r["invalid"] else ("pass" if r["passed"] else "fail")), flush=True)
+    finally:   # once every session is over: the whole run directory, however the run ended (a timeout, an error, an interrupt)
+        measure_login.redact_tree(a.out, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
     print("results in %s" % a.out)
     return 0
 

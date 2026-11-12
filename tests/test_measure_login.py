@@ -3,7 +3,7 @@
 the long-lived token of `claude setup-token`, stored under FORGE_MEASURE_OAUTH_TOKEN, passed as CLAUDE_CODE_OAUTH_TOKEN. They never
 link or copy the machine's `.credentials.json` into the throwaway config dir: Claude Code rewrites that file by temp file plus rename,
 which replaces a symlink with a regular file, so the rotated refresh token ended up only in the throwaway dir and the real login died
-for every session on the machine (Linear DTC-43; docs in framework-discuss/research/login-compartido.md).
+for every session on the machine (a refresh in the throwaway dir logged the machine's real login out).
 
 Everything runs offline against a stand-in `claude` (this test writes it; the PATH of every child holds only its own fake directory with
 git and python3 linked in), a toy secret store with a FAKE value, and a toy HOME. No live session, no real store, no real credentials.
@@ -26,6 +26,7 @@ Cases (a) to (e) of the unit, each seen failing on the code before the change (m
       Red: "... touched the real home's .claude: want [], got [('os.symlink', ...)]".
 Also: --bare is refused in front of a session; the helper's own cases (environment, empty token); the token reaches a bwrap-wrapped child
 (NOT RUN, NOT ARMED when bubblewrap cannot start here)."""
+import gzip
 import json
 import os
 import shutil
@@ -44,6 +45,10 @@ sys.path.insert(0, BENCH_DIR)
 KEY = "FORGE_MEASURE_OAUTH_TOKEN"
 TOKEN = "tok-FAKE-0f3a9c51d7e24b68"
 PARENT_TOKEN = "tok-PARENT-must-not-reach-the-child"
+PLACEHOLDER = "[REDACTED: measurement token]"
+# what the child must not inherit (one statement here, independent of the helper's own list)
+DROPPED = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
+           "ANTHROPIC_BASE_URL", "CLAUDE_CODE_SIMPLE", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES"]
 failures = []
 not_run = []
 
@@ -57,14 +62,14 @@ def put(path, text, mode=None):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as fh:
         fh.write(text)
-    if mode:
+    if mode is not None:   # 0o000 is a mode too
         os.chmod(path, mode)
 
 
 # The stand-in records, outside the run's output dir, what a session would see; it prints a minimal stream. LEAK=1 makes it echo its
 # token on stdout (the control of check (d)).
 FAKE = r'''#!%(py)s
-import json, os, sys
+import json, os, re, sys, time
 a = sys.argv[1:]
 if a and a[0] == "--version":
     print("9.9.9 (Fake Claude)")
@@ -74,9 +79,18 @@ cred = os.path.join(cfg, ".credentials.json")
 with open(os.environ["FAKE_LOG"], "a") as fh:
     fh.write(json.dumps({"argv": a, "token": os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"), "api_key": os.environ.get("ANTHROPIC_API_KEY"),
                          "auth_token": os.environ.get("ANTHROPIC_AUTH_TOKEN"), "marker": os.environ.get("MEASURE_MARKER"),
-                         "cfg": cfg, "cred_exists": os.path.lexists(cred), "cred_is_link": os.path.islink(cred)}) + "\n")
-if os.environ.get("LEAK"):
-    print("token is " + os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", ""))
+                         "dropped": {k: os.environ.get(k) for k in %(dropped)r}, "cfg": cfg, "cred_exists": os.path.lexists(cred), "cred_is_link": os.path.islink(cred)}) + "\n")
+if os.environ.get("LEAK"):   # an agent that runs `env`: the token on stdout, in a file of the work dir and in its session transcript
+    tok = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    print(json.dumps({"type": "user", "message": "env says CLAUDE_CODE_OAUTH_TOKEN=" + tok}))
+    open("leak.txt", "w").write("CLAUDE_CODE_OAUTH_TOKEN=" + tok + "\n")
+    if "--session-id" in a:
+        d = os.path.join(cfg, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
+        os.makedirs(d, exist_ok=True)
+        open(os.path.join(d, a[a.index("--session-id") + 1] + ".jsonl"), "w").write(json.dumps({"type": "user", "text": "env: " + tok}) + "\n")
+sys.stdout.flush()
+if os.environ.get("SLEEP"):   # a session that outlives --timeout, killed after it leaked
+    time.sleep(float(os.environ["SLEEP"]))
 print(json.dumps({"type": "result", "result": "ok", "is_error": False, "num_turns": 1, "total_cost_usd": 0.01,
                   "usage": {"input_tokens": 1, "output_tokens": 1}}))
 '''
@@ -105,6 +119,18 @@ with open(log, "w") as fh:
 sys.exit(code if isinstance(code, int) else (1 if code else 0))
 '''
 
+# Runs a script with the redaction switched off, so the leak checks can be seen failing (their negative control).
+NOREDACT = r'''
+import os, runpy, sys
+script = sys.argv[1]
+sys.argv = sys.argv[1:]
+sys.path.insert(0, os.path.dirname(script))
+import measure_login
+measure_login.redact_tree = lambda *a, **k: 0
+measure_login.redact_text = lambda text, tok: text or ""
+runpy.run_path(script, run_name="__main__")
+'''
+
 ORACLE = "def check(repo, message):\n    return [{'id': 'x', 'passed': False, 'evidence': 'toy'}]\n"
 
 
@@ -120,7 +146,7 @@ def toy_bench(tmp):
 
 
 def tree_text(root, needle):
-    """The files under root (links not followed) whose bytes hold `needle`."""
+    """The files under root (links not followed) whose bytes hold `needle`, a `.gz` file also through its decompressed bytes."""
     hits = []
     for r, _, fs in os.walk(root):
         for f in fs:
@@ -128,7 +154,13 @@ def tree_text(root, needle):
             if os.path.islink(p):
                 continue
             try:
-                if needle.encode() in open(p, "rb").read():
+                data = open(p, "rb").read()
+                if f.endswith(".gz"):
+                    try:
+                        data += b"\n" + gzip.decompress(data)
+                    except (OSError, EOFError):
+                        pass
+                if needle.encode() in data:
                     hits.append(p)
             except OSError:
                 pass
@@ -147,7 +179,7 @@ def main():
         real = subprocess.run(["sh", "-c", "command -v " + prog], capture_output=True, text=True).stdout.strip()
         os.symlink(real, os.path.join(fakedir, prog))
     fake = os.path.join(tmp, "claude")
-    put(fake, FAKE % {"py": sys.executable}, 0o755)
+    put(fake, FAKE % {"py": sys.executable, "dropped": DROPPED}, 0o755)
     # the toy HOME holds a credentials file that nothing may touch
     real_cred = os.path.join(home, ".claude", ".credentials.json")
     put(real_cred, '{"toy": "real login"}', 0o600)
@@ -163,13 +195,15 @@ def main():
     def env_for(store, log, **extra):
         e = {"PATH": fakedir, "HOME": home, "TMPDIR": tmp, "FAKE_LOG": log, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8",
              "MEASURE_MARKER": "kept", "ANTHROPIC_API_KEY": "key-PARENT", "ANTHROPIC_AUTH_TOKEN": "auth-PARENT",
-             "CLAUDE_CODE_OAUTH_TOKEN": PARENT_TOKEN}
+             "CLAUDE_CODE_OAUTH_TOKEN": PARENT_TOKEN, "CLAUDE_CODE_USE_BEDROCK": "1", "CLAUDE_CODE_USE_VERTEX": "1", "CLAUDE_CODE_USE_FOUNDRY": "1",
+             "ANTHROPIC_BASE_URL": "https://example.test", "CLAUDE_CODE_SIMPLE": "1", "CLAUDE_CODE_OAUTH_REFRESH_TOKEN": "REFRESH-PARENT",
+             "CLAUDE_CODE_OAUTH_SCOPES": "user:inference"}
         if store:
             e["FORGE_SECRETS_FILE"] = store
         e.update(extra)
         return e
 
-    def run(script, which, store, extra_env=None, pre=None, wrapper=None):
+    def run(script, which, store, extra_env=None, pre=None, wrapper=None, keep=False, noredact=False, more=()):
         """Runs one session's worth of `which` (auto|skill) on the stand-in; returns (rc, text, log rows, out dir, audit seen)."""
         counter[0] += 1
         out = os.path.join(tmp, "out-%d" % counter[0])
@@ -179,13 +213,19 @@ def main():
             pre(os.path.join(out, "agent-home"))
         if which == "auto":
             args = ["run", "--actions", "V1", "--contexts", "main-asked", "--claude-bin", fake, "--out", out, "--guard-cmd", "none", "--workers", "1"]
+            args += ["--keep-world"] if keep else []
         else:
             args = ["run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", out, "--k", "1", "--tasks", "t0", "--arm", "none"]
+            args += ["--keep-work"] if keep else []
+        args += list(more)
         env = env_for(store, log, **(extra_env or {}))
         audit_log = os.path.join(tmp, "audit-%d.txt" % counter[0])
         if wrapper:
             put(os.path.join(tmp, "audit.py"), AUDIT)
             cmd = [sys.executable, os.path.join(tmp, "audit.py"), os.path.join(home, ".claude"), audit_log, script] + args
+        elif noredact:
+            put(os.path.join(tmp, "noredact.py"), NOREDACT)
+            cmd = [sys.executable, os.path.join(tmp, "noredact.py"), script] + args
         else:
             cmd = [sys.executable, script] + args
         r = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=300, stdin=subprocess.DEVNULL)
@@ -202,6 +242,8 @@ def main():
             want("%s: token in child" % name, row["token"], TOKEN)
             want("%s: ANTHROPIC_API_KEY in child" % name, row["api_key"], None)
             want("%s: ANTHROPIC_AUTH_TOKEN in child" % name, row["auth_token"], None)
+            want("%s: the variables that change credential or endpoint are dropped" % name,
+                 {k: v for k, v in row["dropped"].items() if v is not None}, {})
             want("%s: another variable of the parent is untouched" % name, row["marker"], "kept")
             want("%s: credentials file in child's config dir" % name, row["cred_exists"], False)
             want("%s: child's config dir is the throwaway agent-home" % name, row["cfg"], os.path.join(out, "agent-home"))
@@ -211,10 +253,32 @@ def main():
         want("%s: token on the child's command line" % name, [r for r in rows if any(TOKEN in x for x in r["argv"])], [])
         want("%s: parent's own token on stdout, stderr or in files" % name, (PARENT_TOKEN in text, tree_text(out, PARENT_TOKEN)), (False, []))
 
-    # (d) control: a stand-in that prints its token makes the same check fail, so the check can fail
-    code, text, rows, out, _ = run(AUTO, "auto", store_ok, extra_env={"LEAK": "1"})
-    leaked = tree_text(out, TOKEN)
-    want("control (d): a child that prints its token is seen in the output dir (this check can fail)", bool(leaked), True)
+    # (d) an agent that runs `env`: stdout, a work-dir file and a session transcript all hold the token. Everything the run keeps is
+    # scanned (gzip decompressed). With the redaction on, none holds it and the placeholder is there; with it off (control), the same scan
+    # finds it, in the gzipped transcript of skill_bench too.
+    def kept_dirs(out):
+        return [out] + [os.path.join(tmp, d) for d in os.listdir(tmp) if d.startswith("auto-mode-2")]
+
+    def drop_worlds():
+        for d in [d for d in os.listdir(tmp) if d.startswith("auto-mode-2")]:
+            shutil.rmtree(os.path.join(tmp, d), ignore_errors=True)
+
+    for name, script, which in scripts:
+        code, text, rows, out, _ = run(script, which, store_ok, extra_env={"LEAK": "1"}, keep=True)
+        want("%s, agent printed its env: a session ran" % name, len(rows) >= 1, True)
+        want("%s, agent printed its env: files holding the token" % name, [h for k in kept_dirs(out) for h in tree_text(k, TOKEN)], [])
+        want("%s, agent printed its env: token on stdout or stderr" % name, TOKEN in text, False)
+        marked = sorted({os.path.basename(h) for k in kept_dirs(out) for h in tree_text(k, PLACEHOLDER)})
+        want("%s, agent printed its env: the placeholder is in the work file" % name, "leak.txt" in marked, True)
+        want("%s, agent printed its env: the placeholder is in the stream or transcript" % name,
+             any(m.endswith(".gz") or m.endswith(".jsonl") for m in marked), True)
+        drop_worlds()
+        code, text, rows, out, _ = run(script, which, store_ok, extra_env={"LEAK": "1"}, keep=True, noredact=True)
+        hits = sorted(os.path.basename(h) for k in kept_dirs(out) for h in tree_text(k, TOKEN))
+        want("control (d) %s: with the redaction off the scan finds the token in the work file" % name, "leak.txt" in hits, True)
+        want("control (d) %s: ... and in the stream or transcript (gzip included)" % name,
+             any(h.endswith(".gz") or h.endswith(".jsonl") for h in hits), True)
+        drop_worlds()
 
     # (b) the key missing: no session starts, one line names the key and the fix
     for label, store in (("key absent", store_nokey), ("key empty", store_empty), ("no store", os.path.join(tmp, "missing.json"))):
@@ -224,6 +288,69 @@ def main():
             want("%s, %s: child started" % (name, label), len(rows) > 0, False)
             want("%s, %s: names the key and the fix" % (name, label), (KEY in text, "claude setup-token" in text, "Traceback" in text), (True, True, False))
             want("%s, %s: the parent's token is not printed" % (name, label), PARENT_TOKEN in text, False)
+
+    # the same on the timeout path: the session leaked, then outlived --timeout and was killed
+    for name, script, which in scripts:
+        for noredact in (False, True):
+            code, text, rows, out, _ = run(script, which, store_ok, extra_env={"LEAK": "1", "SLEEP": "30"}, keep=True, noredact=noredact,
+                                           more=["--timeout", "3"])
+            hits = [h for k in kept_dirs(out) for h in tree_text(k, TOKEN)]
+            want("%s, timed-out session that leaked, redaction %s: files holding the token" % (name, "off (control)" if noredact else "on"),
+                 bool(hits), noredact)
+            drop_worlds()
+
+    # the error says what failed and where the store is; a store that is no good in any way starts nothing and ends the whole run
+    store_dir = os.path.join(tmp, "store-dir")
+    os.makedirs(store_dir)
+    store_bin = os.path.join(tmp, "store-binary.json")
+    put(store_bin, "{not json")
+    store_arr = os.path.join(tmp, "store-array.json")
+    put(store_arr, "[1, 2]")
+    store_int = os.path.join(tmp, "store-int.json")
+    put(store_int, json.dumps({KEY: 5}))
+    store_nul = os.path.join(tmp, "store-nul.json")
+    put(store_nul, json.dumps({KEY: "tok-BADVALUE\x00x"}))
+    store_sur = os.path.join(tmp, "store-surrogate.json")
+    put(store_sur, json.dumps({KEY: "tok-BADVALUE\ud800x"}))
+    store_sp = os.path.join(tmp, "store-space.json")
+    put(store_sp, json.dumps({KEY: "tok-BADVALUE x"}))
+    store_000 = os.path.join(tmp, "store-000.json")
+    put(store_000, json.dumps({KEY: TOKEN}), 0o000)
+    variants = [("missing file", os.path.join(tmp, "missing.json"), "does not exist"), ("a directory", store_dir, "is a directory"),
+                ("not JSON", store_bin, "not valid JSON"), ("a JSON array", store_arr, "not an object"), ("key absent", store_nokey, "is not in the store"),
+                ("key empty", store_empty, "is empty"), ("key not a string", store_int, "not a string"),
+                ("NUL in the value", store_nul, "cannot be in a token"), ("lone surrogate in the value", store_sur, "cannot be in a token"),
+                ("space inside the value", store_sp, "cannot be in a token")]
+    if os.geteuid() != 0:
+        variants.append(("unreadable file", store_000, "cannot be read"))
+    else:
+        not_run.append("unreadable store case -> NOT RUN, NOT ARMED: running as root, mode 000 is readable")
+    for label, store, cause in variants:
+        for name, script, which in scripts:
+            code, text, rows, out, _ = run(script, which, store)
+            want("%s, store %s: exit (the whole run, not 0 with invalid jobs)" % (name, label), code != 0, True)
+            want("%s, store %s: child started" % (name, label), len(rows), 0)
+            want("%s, store %s: says what failed, names the store, the key and the fix" % (name, label),
+                 (cause in text, store in text, KEY in text, "claude setup-token" in text, "Traceback" in text), (True, True, True, True, False))
+            want("%s, store %s: no part of the bad value is echoed" % (name, label), "BADVALUE" in text or TOKEN in text, False)
+            want("%s, store %s: one error line" % (name, label), len([l for l in text.splitlines() if "no measurement login" in l]), 1)
+    for name, script, which in scripts:
+        code, text, rows, out, _ = run(script, which, store_ok)
+        want("%s: a redirected store is said on stderr, with its path, never the value" % name,
+             (("redirected by FORGE_SECRETS_FILE to %s" % store_ok) in text, TOKEN in text), (True, False))
+    # a throwaway dir whose `.credentials.json` cannot be removed (a directory): one line, no traceback, no session, exit non-zero
+    for name, script, which in scripts:
+        code, text, rows, out, _ = run(script, which, store_ok, pre=lambda d: os.makedirs(os.path.join(d, ".credentials.json", "sub")))
+        want("%s, a directory named .credentials.json: refused with one line" % name,
+             (code != 0, len(rows), "Traceback" in text, ".credentials.json" in text), (True, 0, False, True))
+
+    # no private reference in an engine file; the root README says the key is needed
+    for rel in ("scripts/bench/measure_login.py", "scripts/bench/auto_mode.py", "scripts/bench/skill_bench.py", "tests/test_measure_login.py",
+                "tests/sandbox.py", "benchmarks/skill-bench/README.md"):
+        body = open(os.path.join(sandbox.FORGE, rel)).read()
+        private = ("framework" + "-discuss", "DTC" + "-", "login-" + "compartido")   # joined here so this file does not hold them itself
+        want("%s: no private path or ticket id" % rel, [w for w in private if w in body], [])
+    want("README.md quick-start names the key", KEY in open(os.path.join(sandbox.FORGE, "README.md")).read(), True)
 
     # (c) a leftover credentials link and file in the throwaway dir
     target = os.path.join(tmp, "target-creds.json")
