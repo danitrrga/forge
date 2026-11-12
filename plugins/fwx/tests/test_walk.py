@@ -43,6 +43,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -63,8 +64,29 @@ with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps(rec) + "\\n")
 %(tail)s
 """
+# The commands the pinned agent-browser knows: the top-level words of `agent-browser --help` of AB_VERSION (the Core, Navigation, Get Info,
+# Check State, Find, Mouse, Browser Settings (`set`), Network, Storage, Tabs, Diff, Debug, Streaming, WebMCP, React, Performance, A11y, SPA, Init
+# scripts, Batch, Auth, Plugins, Confirmation, Sessions, MCP, Chat, Dashboard, Setup and `skills` sections), and the settings of `set`. The fake
+# agent-browser of this file and of test_screenshot.py refuses any other command with the real tool's line and exit code (`Unknown command: viewport`,
+# exit 1: measured on 0.41.1), so a step the real tool would reject cannot pass here. Update it with the version: `agent-browser --help`.
+AB_VERSION = "0.41.1"
+AB_COMMANDS = ("open read click dblclick type fill press keyboard hover focus check uncheck select drag upload download scroll scrollintoview wait screenshot pdf "
+               "snapshot eval connect close back forward reload get is find mouse set network cookies storage tab diff trace profiler record console errors "
+               "highlight inspect clipboard stream webmcp react vitals a11y pushstate removeinitscript batch auth plugin confirm deny session mcp chat "
+               "dashboard install upgrade doctor profiles skills").split()
+AB_SET = "viewport device geo offline headers credentials media".split()
+AB_GUARD = '''
+_COMMANDS, _SET = %r, %r
+_VALUED = ("--namespace", "--session", "--idle-timeout", "--screenshot-dir", "--args", "--allowed-domains", "--init-script", "--executable-path", "--state")
+_a, _i = sys.argv[1:], 0
+while _i < len(_a) and _a[_i].startswith("-"):
+    _i += 2 if _a[_i] in _VALUED else 1
+if _a[_i:_i + 1] and (_a[_i] not in _COMMANDS or (_a[_i] == "set" and _a[_i + 1:_i + 2] and _a[_i + 1] not in _SET)):
+    sys.stderr.write("Unknown command: %%s\\n" %% _a[_i])
+    sys.exit(1)
+''' % (AB_COMMANDS, AB_SET)
 TAILS = {
-    "agent-browser": """
+    "agent-browser": AB_GUARD + """
 # The read-back of arm-control asks the page for the target's style and rendered box with a call of the browser's eval command whose code
 # carries the word fwx: and answers with the line that code builds, `fwx:<font-size>|<font-weight>|<width>x<height>` (a string result comes
 # back quoted: measured live). FAKE_READ says what the page holds, as (before the plant, after it):
@@ -683,6 +705,29 @@ def case_run_empty(R, S):
         sc.stop()
 
 
+BOUNDARY_URLS = ["http://localhost:3000/", "http://127.0.0.1:3000/x", "http://other.localhost:3000/", "http://sub.other.localhost/", "http://127.0.0.2:3000/",
+                 "http://[::1]:3000/", "http://a.example.test/", "http://localhost.example.test/"]
+NODE = shutil.which("node")
+
+
+def pac_table(cfg, urls):
+    """({url: True when the config's proxy-autoconfig script lets Firefox reach it directly}, why): the script run by node, with the host as
+    Firefox passes it (no brackets round an IPv6 literal). (None, why) when the config has no such script, (None, "node") with no node."""
+    prefs = cfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs") or {}
+    src = prefs.get("network.proxy.autoconfig_url") or ""
+    if prefs.get("network.proxy.type") != 2 or not src.startswith("data:text/javascript,"):
+        return None, "got no PAC: %r" % prefs
+    if not NODE:
+        return None, "node"
+    js = unquote(src[len("data:text/javascript,"):]) + (
+        "\nfor (const u of JSON.parse(process.argv[1])) console.log(JSON.stringify([u, FindProxyForURL(u, new URL(u).hostname.replace(/^\\[|\\]$/g, ''))]))")
+    r = subprocess.run([NODE, "-e", js, json.dumps(urls)], capture_output=True, text=True, timeout=30)
+    if r.returncode:
+        return None, "the script did not run: %s" % r.stderr[-200:]
+    got = {u: v for u, v in (json.loads(line) for line in r.stdout.splitlines() if line.strip())}
+    return {u: v == "DIRECT" for u, v in got.items()}, ""
+
+
 def case_pw(R, S):
     sc = Scene(prefix="fakerig run --")
     try:
@@ -709,15 +754,32 @@ def case_pw(R, S):
             cfg.get("browser", {}).get("contextOptions")),
              ("firefox", True, {"viewport": {"width": 1309, "height": 818}, "deviceScaleFactor": 1.1, "storageState": os.path.join(rd, "demo-state.json")}))
         # Firefox has no counterpart of `ab`'s --allowed-domains (Playwright's origin filter is no boundary and blind to redirects), so the
-        # config sends every host but the app's to a proxy nothing listens on: a link or a redirect out of the app is refused by the browser.
-        # Measured live on a toy page (Playwright Firefox 158 through @playwright/cli 0.1.23): without it a 302 from the app to another host
-        # was followed and the other server answered; with it `NS_ERROR_PROXY_CONNECTION_REFUSED` and the other server saw nothing.
-        # Seen red on the base (PR 103 review thread, "Enforce the local-app boundary for Firefox"; the config had no proxy):
-        #   FAIL: pw: every host but the app's goes to a sink that refuses it: got None, want {'server': 'http://127.0.0.1:1', 'bypass': '127.0.0.1,localhost'}
+        # config carries a proxy-autoconfig script (a `data:` URL, Firefox's own `network.proxy.autoconfig_url`) that lets the app's hosts
+        # through (exact host names, as `--allowed-domains` does) and sends every other host to a proxy nothing listens on: a link or a
+        # redirect out of the app is refused by the browser. Measured live on toy pages (Playwright Firefox 158 through @playwright/cli
+        # 0.1.23): with no rule a 302 to another host was followed and that server answered; with a static proxy and `bypass=localhost` a
+        # redirect to `other.localhost` was still followed (the bypass matches the suffix); with the script it is refused
+        # (`NS_ERROR_PROXY_CONNECTION_REFUSED`), as are `127.0.0.2` and every other name, while the app's own hosts load.
+        # Seen red on the base (PR 103 review threads, "Enforce the local-app boundary for Firefox" and the review of PR 125; no rule, then a
+        # static proxy that let `*.localhost` through):
+        #   FAIL: pw: the config carries a proxy-autoconfig script for the app's hosts: got no PAC: {}
         hosts = (jfile(os.path.join(rd, "run.json")) or {}).get("hosts")
         S.ok("pw: the run has the app's hosts to let through", bool(hosts) and "127.0.0.1" in hosts, repr(hosts))
-        S.eq("pw: every host but the app's goes to a sink that refuses it", cfg.get("browser", {}).get("launchOptions", {}).get("proxy"),
-             {"server": "http://127.0.0.1:1", "bypass": ",".join(hosts or [])})
+        # the same table of URLs through both browsers' guards: `ab` by `fwx walk ab open` (its arg guard, and --allowed-domains = the hosts)
+        # and `pw` by the script the config carries, run by node; they must agree on every URL
+        ab_allowed = {}
+        for u in BOUNDARY_URLS:
+            sc.clear()
+            ab_allowed[u] = sc.walk(R, "ab", "--run", rd, "w1", "open", u).returncode == 0
+        S.ok("pw/ab boundary: the table has urls of both kinds", True in ab_allowed.values() and False in ab_allowed.values(), repr(ab_allowed))
+        S.eq("pw/ab boundary: `ab` lets through only the app's hosts, exact", {u for u, ok in ab_allowed.items() if ok},
+             {u for u in BOUNDARY_URLS if urlsplit(u).hostname in (hosts or [])})
+        pw_allowed, why = pac_table(cfg, BOUNDARY_URLS)
+        if why == "node":
+            print("NOT RUN, NOT ARMED: node is not on the PATH: the Firefox boundary table was not checked")
+        else:
+            S.ok("pw: the config carries a proxy-autoconfig script for the app's hosts", pw_allowed is not None, why)
+            S.eq("pw/ab boundary: Firefox and Chromium refuse the same urls (the sink for the rest)", pw_allowed, ab_allowed)
         first_cfg = argv[-1]
         # an app that left no session file (the state is only a path until `up` writes it): no storageState, the launch still works
         os.remove(os.path.join(rd, "demo-state.json"))
@@ -730,6 +792,13 @@ def case_pw(R, S):
         second_cfg = sc.calls("npx")[-1]["argv"][-1]
         S.eq("pw: a second session's config is its own file and leaves the first's alone", (
             first_cfg != second_cfg, "storageState" in (((jfile(first_cfg) or {}).get("browser") or {}).get("contextOptions") or {})), (True, True))
+        # the boundary is the run's, not a walker's: a verifier's Firefox session (`v*`) is held to it too (a mutant that set it only for `w*`
+        # sessions passed every check of the first version of this case)
+        sc.clear()
+        S.eq("pw: a verifier's session opens", sc.walk(R, "pw", "--run", rd, "v1", "open", sc.url).returncode, 0)
+        vcfg = jfile(sc.calls("npx")[-1]["argv"][-1]) or {}
+        S.ok("pw: a verifier's session (v1) has the same boundary as a walker's", vcfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs") ==
+             cfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs") and bool(vcfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs")), repr(vcfg))
         S.ok("pw: no session file: the context has no storageState (Playwright would refuse a missing file)",
              "storageState" not in ((jfile(sc.calls("npx")[-1]["argv"][-1]) or {}).get("browser", {}).get("contextOptions") or {}), str(sc.calls("npx")[-1]["argv"]))
         sc.clear()
@@ -1055,6 +1124,12 @@ def case_container(R, S):
         S.eq("container: ab w2 uses the second app's url", cookie[-1], sc.url + "/" + ns + "-w2")
         r = sc.walk(R, "ab", "--run", rd, "w3", "snapshot")
         S.ok("container: a third walker has no app", r.returncode == 2 and "w3" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
+        # What a container run with fewer apps than the workflow's sessions does today (the ui-walk workflow names sessions `w1`..`w5` and `v1`..):
+        # a verifier session has no app either, so its every call, `close` included, exits 2. A run with one app (container false) takes any
+        # session name: `ab session` and `pw` above use w2, w3 and v1 on it. The session-to-app assignment is its own unit; this pins both sides.
+        r = sc.walk(R, "ab", "--run", rd, "v1", "close")
+        S.ok("container: a verifier session has no app either, `close` included (known, left: the workflow's v<k> sessions need slot numbers)",
+             r.returncode == 2 and "v1" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
         r = sc.walk(R, "ab", "--run", rd, "main", "snapshot")
         S.ok("container: a session that is not w<k> has no app", r.returncode == 2, "rc %d %s" % (r.returncode, r.stderr))
         # the toy up declared the two containers; its down does not remove them: `down` does, by exact name
@@ -1227,6 +1302,58 @@ def case_findings(R, S):
         helpers.write(bad, "verified-1.json", json.dumps(body))
         r = runner_walk(R, "findings", "--run", bad)
         S.ok("findings: %s is exit 2" % label, r.returncode == 2 and not os.path.exists(os.path.join(bad, "fix.json")), "rc %d %s" % (r.returncode, r.stderr))
+
+
+def case_findings_control_pictures(R, S):
+    """The planted control is restyled by an init script that every walker's browser loads, so a walker's screenshot of the control screen
+    shows the shrunken title. A genuine finding the walkers filed on that screen carries such screenshots as its `evidence`, which `findings`
+    copies to fix.json (the fixer) and `review-page` shows the owner as the `today` figure. `findings` leaves the pictures of the control's
+    screen out of `evidence` (listing them in `evidence_dropped`) and keeps every other row and every text. Seen red on the base:
+      FAIL: control pictures: a finding on the control's screen keeps no walker picture: got ['/.../walker-1.png', 'the title is cut off'], want ['the title is cut off']
+      FAIL: control pictures: the owner's page shows no `today` picture of the control's screen: got ['today'], want []"""
+    rd = helpers.mkdtemp("fwx-walk-run-")
+    os.makedirs(os.path.join(rd, "shots"))
+    pics = {n: os.path.join(rd, "shots", "walker-%s.png" % n) for n in ("1", "2", "3")}
+    for p in pics.values():
+        with open(p, "wb") as fh:
+            fh.write(PNG)
+
+    def f(i, screen, evidence):
+        return {"id": i, "file": "src/a.ts", "line": 3, "claim": "claim " + i, "evidence": evidence, "severity": "major", "screen": screen,
+                "verdict": "CONFIRMED", "expected": "x", "type": "layout", "kind": "observed"}
+    rows = [f("T1-1", "/settings", [pics["1"], "the title is cut off"]), f("T1-2", "http://127.0.0.1:3000/settings/?tab=a", pics["2"]),
+            f("T1-3", "/billing", [pics["3"]])]
+    helpers.write(rd, "verified-T1.json", json.dumps({"findings": rows}))
+    helpers.write(rd, "control.json", json.dumps({"screen": "http://127.0.0.1:3000/settings", "path": "/settings", "script": os.path.join(rd, "init.js")}))
+    r = runner_walk(R, "findings", "--run", rd)
+    S.eq("control pictures: exit", r.returncode, 0)
+    fix = {x["id"]: x for x in jfile(os.path.join(rd, "fix.json")) or []}
+    S.eq("control pictures: a finding on the control's screen keeps no walker picture", (fix.get("T1-1") or {}).get("evidence"), ["the title is cut off"])
+    S.eq("control pictures: ...and says which it left out", (fix.get("T1-1") or {}).get("evidence_dropped"), [pics["1"]])
+    S.eq("control pictures: the same screen as an absolute url with a trailing slash and a query, evidence a single path", (
+        (fix.get("T1-2") or {}).get("evidence"), (fix.get("T1-2") or {}).get("evidence_dropped")), ([], [pics["2"]]))
+    S.eq("control pictures: another screen keeps its evidence and has no list of dropped ones", (
+        (fix.get("T1-3") or {}).get("evidence"), "evidence_dropped" in (fix.get("T1-3") or {})), ([pics["3"]], False))
+    fixed = os.path.join(helpers.mkdtemp("fwx-walk-fixed-"), "fixed.json")
+    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": "T1-1", "commit": "a1"}, {"id": "T1-3", "commit": "c3"}]))
+    r = runner_walk(R, "review-page", "--run", rd, "--fixed", fixed)
+    S.eq("control pictures: the review page is built", r.returncode, 0)
+    items = {i["id"]: i for i in (jfile(os.path.join(rd, "review", "decisions.json")) or {}).get("items", [])}
+    caps = {k: [fg["caption"] for fg in v["figures"]] for k, v in items.items()}
+    S.eq("control pictures: the owner's page shows no `today` picture of the control's screen", caps.get("T1-1"), [])
+    S.eq("control pictures: and still shows the other screen's", caps.get("T1-3"), ["today"])
+    # no control in the run (a recheck's folder, or a walk whose plant was refused): nothing is left out
+    rd2 = helpers.mkdtemp("fwx-walk-run-")
+    helpers.write(rd2, "verified-T1.json", json.dumps({"findings": [f("T1-1", "/settings", [pics["1"]])]}))
+    runner_walk(R, "findings", "--run", rd2)
+    S.eq("control pictures: with no control.json the evidence is as it came", (jfile(os.path.join(rd2, "fix.json")) or [{}])[0].get("evidence"), [pics["1"]])
+    # a control.json that names no route cannot say which pictures to leave out: exit 2, nothing written (not read as "no control")
+    rd3 = helpers.mkdtemp("fwx-walk-run-")
+    helpers.write(rd3, "verified-T1.json", json.dumps({"findings": [f("T1-1", "/settings", [pics["1"]])]}))
+    helpers.write(rd3, "control.json", json.dumps({"screen": "http://127.0.0.1:3000/settings"}))
+    r = runner_walk(R, "findings", "--run", rd3)
+    S.ok("control pictures: a control.json with no route is exit 2 and writes no fix.json", r.returncode == 2 and not os.path.exists(os.path.join(rd3, "fix.json")),
+         "rc %d %s" % (r.returncode, r.stderr))
 
 
 def runner_walk(R, *args, env=None):
@@ -1524,6 +1651,9 @@ def case_up_restart(R, S):
         # earlier walk invocations"):
         #   FAIL: restart: a rechecked file of the earlier run is not left for `review-page`: ['rechecked-T9.json']
         helpers.write(rd, "rechecked-T9.json", json.dumps({"findings": [{"id": "T9-1", "verdict": "NOT REPRODUCED", "evidence_after": "/srv/old-after.png"}]}))
+        # a tramo id is whatever the tramos agent named it (`safe` in ui-walk.js lets any letter or digit start it): not only `T<n>`. A glob
+        # narrowed to `rechecked-T*.json` passed the first version of this case.
+        helpers.write(rd, "rechecked-x7.json", json.dumps({"findings": [{"id": "x7-1", "verdict": "NOT REPRODUCED", "evidence_after": "/srv/old-after.png"}]}))
         r, o2 = sc.up(R)
         if not S.ok("restart: up armed again", r.returncode == 0 and o2 and o2.get("armed") is True, "rc %d %s" % (r.returncode, r.stderr)):
             return
@@ -1531,7 +1661,8 @@ def case_up_restart(R, S):
         S.eq("restart: a verified file of the earlier run is not left for `findings`", sorted(f for f in os.listdir(rd) if f.startswith("verified-")), [])
         S.ok("restart: and it is kept, not deleted", os.path.exists(os.path.join(rd, "earlier", "verified-T9.json")))
         S.eq("restart: a rechecked file of the earlier run is not left for `review-page`", sorted(f for f in os.listdir(rd) if f.startswith("rechecked-")), [])
-        S.ok("restart: and it is kept, not deleted (rechecked)", os.path.exists(os.path.join(rd, "earlier", "rechecked-T9.json")))
+        S.ok("restart: and it is kept, not deleted (rechecked)", os.path.exists(os.path.join(rd, "earlier", "rechecked-T9.json"))
+             and os.path.exists(os.path.join(rd, "earlier", "rechecked-x7.json")))
         sc.clear()
         sc.walk(R, "ab", "--run", rd, "w1", "snapshot")
         S.ok("restart: the first call after the restart launches again (the demo session is set)",
@@ -1643,7 +1774,7 @@ def case_arm_control_root(R, S):
 
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
-         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root]
+         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_findings_control_pictures]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
@@ -1784,11 +1915,19 @@ MUTANTS = [
     ("finding id not checked", case_finding_ids, "if not brief.ID.match(fid):", "if False:", "finding ids: ../../escape (CONTRADICTED)"),
     ("recheck captures not joined", case_review_recheck, 'dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f', "f",
      "review recheck: F1 has today and built"),
-    ("pw: no proxy for outside hosts", case_pw, 'launch = {"headless": True, "proxy": {"server": PW_SINK, "bypass": ",".join(run["hosts"])}}',
-     'launch = {"headless": True}', "pw: every host but the app's goes to a sink that refuses it"),
+    ("pw: no proxy for outside hosts", case_pw, 'launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}}',
+     'launch = {"headless": True}', "pw: the config carries a proxy-autoconfig script"),
+    ("pw: the boundary only for walker sessions", case_pw, 'launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}}',
+     'launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}} if session.startswith("w") else {"headless": True}', "pw: a verifier's session (v1) has the same boundary as a walker's"),
+    ("pw: hosts matched by suffix", case_pw, '.indexOf(h)>=0?', '.some(function(x){return h.slice(-x.length)===x})?',
+     "pw/ab boundary: Firefox and Chromium refuse the same urls"),
     ("pw: one config file for every session", case_pw, '"pw.config-%s.json" % session', '"pw.config.json"', "pw: a second session's config is its own file"),
+    ("rechecked files kept at up, only those of a tramo named T<n>", case_up_restart, 'glob.glob(os.path.join(run_dir, "rechecked-*.json"))',
+     'glob.glob(os.path.join(run_dir, "rechecked-T*.json"))', "restart: a rechecked file of the earlier run is not left for `review-page`"),
     ("rechecked files kept at up", case_up_restart, ' + glob.glob(os.path.join(run_dir, "rechecked-*.json")):', ":",
      "restart: a rechecked file of the earlier run is not left for `review-page`"),
+    ("the control's pictures reach the fixer", case_findings_control_pictures, 'return dict(f, evidence=kept, evidence_dropped=left) if left else f', "return f",
+     "control pictures: a finding on the control's screen keeps no walker picture"),
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
     ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),

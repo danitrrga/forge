@@ -56,6 +56,11 @@ def read(rel):
         return f.read()
 
 
+def supports(text):
+    """{answer: the support the text says the decisions agent records for it}, for `not_defect` and `redo`: "`x` with support `y`" or "`x`: `support` `y`"."""
+    return {w: m.group(1) for w in ("not_defect", "redo") for m in [re.search(r"`%s`(?::| with) (?:`support`|support) `(\w+)`" % w, text)] if m}
+
+
 def files_naming(needle, texts):
     return [rel for rel, text in texts.items() if needle in text]
 
@@ -164,6 +169,22 @@ def main():
             skips.append("SKIP: fwx %s not checked: it lives on %s" % (cmd, ELSEWHERE[cmd]))
         else:
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
+
+    # The playbook and the skill say the same of a rejected fix: `fwx walk review-answers` only sorts the answers (walk.py `cmd_review_answers`
+    # writes review/answers.json and no decision), and the `decisions` agent records `not_defect` with support `approved` and `redo` with
+    # support `chosen`. PR 125 made the playbook say a `redo` records nothing while this skill (what the session follows) records it.
+    # Seen red on 93e43d9 (the playbook said `redo` records nothing; the skill did not say that the command writes no decision):
+    #   FAIL: the playbook and ui-review.md both say what the decisions agent records for each rejection -> playbook {}, ui-review.md {'not_defect': 'approved', 'redo': 'chosen'}
+    #   FAIL: the playbook and ui-review.md both say `review-answers` writes no decision -> playbook False, ui-review.md False
+    with open(os.path.join(ROOT, "playbooks", "ui-walk.md"), encoding="utf-8") as f:
+        playbook = f.read()
+    rej = playbook[playbook.index("### p_REJ"):]
+    want = {"not_defect": "approved", "redo": "chosen"}
+    check("the playbook and ui-review.md both say what the decisions agent records for each rejection",
+          supports(rej) == want and supports(review) == want, "playbook %s, ui-review.md %s" % (supports(rej), supports(review)))
+    check("the playbook and ui-review.md both say `review-answers` writes no decision", "no decision" in rej and "no decision" in review,
+          "playbook %s, ui-review.md %s" % ("no decision" in rej, "no decision" in review))
+    check("control: a text that records a `redo` as approved is not the wanted one", supports("`not_defect` with support `approved`, `redo` with support `approved`") != want)
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})

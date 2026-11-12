@@ -30,8 +30,11 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `run.json`. With `container` the quota never passes the apps `up` already started.
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
       (Firefox starts logged in too: the app's demo session file is the context's storageState when `up` left one; Playwright's
-      `network.allowedOrigins` being no boundary and blind to redirects, the config's `launchOptions.proxy` sends every host but the
-      app's to PW_SINK, which refuses: redirects and links out of the app fail in the browser, and each session has its own config file)
+      `network.allowedOrigins` being no boundary and blind to redirects, the config carries a proxy-autoconfig script (Firefox's
+      `network.proxy.autoconfig_url`) that lets the run's hosts through, by exact name as `ab`'s list does, and sends every other host
+      to PW_SINK, which refuses: redirects and links out of the app fail in the browser, `*.localhost` siblings included, and each session
+      has its own config file. The port of a host is not looked at, by either browser; a page that embeds another origin in an iframe
+      makes `open` wait about 30 s in Firefox, measured)
       `--run` is a run folder or a namespace; without it, the repository's only open run. Only a walker session (`w*`) launches with the
       planted control; a verifier session (`v*`) does not. `close` of a session no agent opened is a no-op, exit 0 (`close --all` is not).
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
@@ -44,7 +47,8 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and no control.json is left.
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
-      written as high/high/medium/low (3.4's words). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
+      written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
+      pictures in its `evidence` (the walkers' browsers carried the plant; the text stays, the pictures are listed in `evidence_dropped`). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
       (starting with a letter or digit) is exit 2, as in `wave prepare`.
   review-page --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
       figures today/built; choices `ok`, `redo` and `not_defect`, the last two with `needs_note`) and one per CONTRADICTED
@@ -112,7 +116,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from fwx import config
 from fwx.execute import base, brief
@@ -129,7 +133,7 @@ IDLE_S = 20 * 60
 FONT_ARGS = "--font-render-hinting=none"  # U1: changes no capture; the spec keeps it
 PW_VERSION = "0.1.23"  # @playwright/cli, with Firefox 158 = firefox-1569 (probe.md step 10)
 PW_FIREFOX = "firefox-1569"
-PW_SINK = "http://127.0.0.1:1"  # Firefox's proxy for every host but the app's: port 1 is never listened on, so the request is refused
+PW_SINK = "127.0.0.1:1"  # Firefox's proxy for every host but the app's: port 1 is never listened on, so the request is refused
 UP_TIMEOUT_S = 900
 WAIT_URL_S = int(os.environ.get("FWX_WALK_WAIT_S") or 120)
 DRAIN_S = 3  # how long `down` waits for processes to exit after the close
@@ -158,7 +162,12 @@ OWN_FLAGS = ("--namespace", "--session", "--idle-timeout", "--screenshot-dir", "
 REFUSED_COMMANDS = ("inspect", "stream", "dashboard", "mcp", "plugin", "install", "upgrade", "doctor", "profiles")
 TEMP_DIRS = ("/tmp", "/var/tmp", "/dev/shm")  # RAM or scratch, outside the run; where the verifier's rechecks once landed (3.5 acceptance, D8)
 URL_WORDS = ("open", "goto", "navigate", "pushstate", "read")  # `read <url>` fetches from the CLI process, outside --allowed-domains
-SET_VIEWPORT = ["set", "viewport", "%d" % VIEWPORT[0], "%d" % VIEWPORT[1], "%g" % SCALE]  # `set viewport <w> <h> [scale]` (agent-browser set --help)
+def set_viewport(width, height, scale=None):
+    """The words of agent-browser's `set viewport <w> <h> [scale]`, the only form it has (a top-level `viewport` is `Unknown command`, 0.41.1)."""
+    return ["set", "viewport", "%d" % width, "%d" % height] + (["%g" % scale] if scale else [])
+
+
+SET_VIEWPORT = set_viewport(VIEWPORT[0], VIEWPORT[1], SCALE)
 SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 URL_IN_CODE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"`)\\<>]+")
 USAGES = {
@@ -792,14 +801,21 @@ def pw_browsers():
     return os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")
 
 
+def pw_pac(hosts):
+    """The `data:` URL of Firefox's proxy-autoconfig script: DIRECT for a host of the run, the sink for any other."""
+    js = "function FindProxyForURL(u,h){return %s.indexOf(h)>=0?\"DIRECT\":\"PROXY %s\";}" % (json.dumps(list(hosts)), PW_SINK)
+    return "data:text/javascript," + quote(js, safe="")
+
+
 def pw_config(run, app, session):
     path = os.path.join(run["run_dir"], "pw.config-%s.json" % session)  # one file per session: two opens at once must not share one
     context = {"viewport": {"width": VIEWPORT[0], "height": VIEWPORT[1]}, "deviceScaleFactor": SCALE}
     if os.path.isfile(app["state"]):  # the demo session the app's `up` left, as `ab` sets it by cookies: Firefox starts logged in too
         context["storageState"] = app["state"]
-    # Firefox has no `--allowed-domains`: every host but the app's goes to a proxy nothing listens on, so a link or a redirect out of the app
-    # is refused by the browser itself (Playwright's own origin filter does not see redirects).
-    launch = {"headless": True, "proxy": {"server": PW_SINK, "bypass": ",".join(run["hosts"])}}
+    # Firefox has no `--allowed-domains`: its own proxy-autoconfig script lets the run's hosts through (exact names, like `ab`'s list) and sends
+    # every other host to a proxy nothing listens on, so a link or a redirect out of the app is refused by the browser itself (Playwright's
+    # origin filter does not see redirects, and a static proxy's bypass list matches `localhost` as a suffix, so `other.localhost` got through).
+    launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}}
     write_json(path, {"outputDir": run["shots"],  # without it Playwright's CLI writes `.playwright-cli/` in the working folder (the project)
                       "browser": {"browserName": "firefox", "launchOptions": launch, "contextOptions": context}})
     return path
@@ -947,11 +963,37 @@ def finding_files(rd):
     return files
 
 
+def route_of(screen):
+    """The path of a screen as `arm-control` plants it: no host, no query, no trailing slash."""
+    return urlsplit(screen if "://" in screen else "http://" + screen).path.rstrip("/") or "/"
+
+
+def without_control_pictures(f, ctl_path):
+    """The finding without the pictures its walkers took of the control's screen: their browsers carried the plant (the title shrunk), so
+    a picture of that route in `evidence` would show the owner and the fixer a defect nobody wrote. Text stays; the pictures left out are
+    listed in `evidence_dropped`. Clips and other fields are not looked at."""
+    if ctl_path is None or not isinstance(f.get("screen"), str) or route_of(f["screen"]) != ctl_path:
+        return f
+    ev = f.get("evidence")
+    kept, left = [], []
+    for v in ev if isinstance(ev, list) else [ev] if ev else []:
+        (left if isinstance(v, str) and os.path.splitext(v)[1].lower() in IMAGES else kept).append(v)
+    return dict(f, evidence=kept, evidence_dropped=left) if left else f
+
+
 def cmd_findings(argv):
     o, _ = opts("findings", argv, ("--run",))
     if "--run" not in o:
         raise usage("findings")
     rd = run_dir_of(o["--run"])
+    ctl_file = os.path.join(rd, "control.json")
+    ctl = read_json(ctl_file, "control.json") if os.path.isfile(ctl_file) else None
+    ctl_path = None
+    if ctl is not None:  # a control.json that names no route cannot say which pictures to leave out: refused, not read as "none"
+        route = ctl.get("path") if isinstance(ctl, dict) else None
+        if not isinstance(route, str) or not route.startswith("/"):
+            raise Stop("%s names no route (a `path` starting with /): `fwx walk arm-control` writes it" % ctl_file)
+        ctl_path = route
     seen, fix, contradicted, dropped = set(), [], [], 0
     for p in finding_files(rd):
         data = read_json(p, "verified file")
@@ -968,7 +1010,7 @@ def cmd_findings(argv):
             verdict = f.get("verdict")
             if verdict not in VERDICTS:
                 raise Stop("%s: finding %s has verdict %r, not one of %s" % (p, f["id"], verdict, ", ".join(VERDICTS)))
-            f = dict(f, severity=SEVERITY.get(f.get("severity"), f.get("severity")))
+            f = without_control_pictures(dict(f, severity=SEVERITY.get(f.get("severity"), f.get("severity"))), ctl_path)
             if verdict in ("CONFIRMED", "PLAUSIBLE"):
                 fix.append(f)
             elif verdict == "CONTRADICTED":

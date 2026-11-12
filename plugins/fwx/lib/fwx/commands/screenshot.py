@@ -146,18 +146,18 @@ def capture(run_dir, session, sc, dest, state, stage=None):
     stage = stage or dest
     steps = []
     if not state["sized"]:
-        steps.append(["viewport", str(WIDTH), str(HEIGHT)])
+        steps.append(walk.set_viewport(WIDTH, HEIGHT))
     if sc["theme"] != state["theme"]:
-        steps.append(["media", sc["theme"]])
+        steps.append(["set", "media", sc["theme"]])
     steps += [["open", sc["url"]], ["snapshot"], ["screenshot", stage]]
     for args in steps:
         state["launched"] = True
         why = settled(run_dir, session, state["ready"], state["limit"]) if args[0] == "snapshot" else step(run_dir, session, args)
         if why:
             return why
-        if args[0] == "viewport":
+        if args[:2] == ["set", "viewport"]:
             state["sized"] = True
-        elif args[0] == "media":
+        elif args[:2] == ["set", "media"]:
             state["theme"] = sc["theme"]
     if not os.path.isfile(stage) or not os.path.getsize(stage):
         return "no file written"

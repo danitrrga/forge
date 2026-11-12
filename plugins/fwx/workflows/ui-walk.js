@@ -77,7 +77,7 @@ const stop = (status, reason) => {
 let quota = 1
 const SLOTS = () => quota
 const st = {
-  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [], lost: 0,
+  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [], lost: 0, lostTags: [],
   ctl: null, control: { screen: null, found: null, finding: null }, noCount: null, counts: null, fixFile: null, contradictedFile: null,
   verified: [], shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
 }
@@ -183,15 +183,18 @@ function release() {
 // slot is lost nothing can run, so the queue is let go (each job a gap) and the close of the run (`down`) is what is left.
 function lose(tag) {
   st.lost += 1
+  st.lostTags.push(tag)
   log(PHASE + ': the browser of ' + tag + ' was not confirmed closed: its slot stays taken (' + st.lost + ' of ' + quota + ' lost)')
   if (st.lost >= quota) for (const next of st.sem.waiting.splice(0)) next(false)
 }
 // A browser outlives its agent (until `down` or the idle timeout) and the quota budgets browsers, not agents: `after` closes the job's own
-// sessions before its slot is freed, whether the job returned or not, and says whether it could (false: the slot stays taken).
+// sessions before its slot is freed, whether the job returned or not, and says whether it could (false: the slot stays taken). NOSLOT: the job
+// was never started (its gap is already written, the caller adds none).
+const NOSLOT = { noSlot: true }
 async function withSlot(tag, fn, after) {
   if (!(await acquire(tag))) {
     st.gaps.push(tag + ' was not started: no browser slot is left, every slot holds a browser that was not confirmed closed')
-    return null
+    return NOSLOT
   }
   let closed = true
   try {
@@ -205,14 +208,29 @@ async function withSlot(tag, fn, after) {
     }
   }
 }
-// true when the close is confirmed (exit 0, also for a session nobody opened), tried twice; a script error counts as confirmed, the run ends there.
+// true when the close is confirmed, tried twice: exit 0 (also for a session nobody opened) or 77 (`NOT RUN, NOT ARMED`: the tool, `agent-browser`
+// or Playwright's Firefox, is not on this machine, so no browser of it can be open); a script error counts as confirmed, the run ends there.
 async function closeBrowser(tool, session) {
   for (let i = 0; i < 2; i++) {
     if (st.fatal) return true
     const v = await exec('close-' + session + (tool === 'pw' ? '-pw' : ''), inRepo('fwx walk ' + tool + ' --run ' + sh(st.runDir) + ' ' + session + ' close'), false)
-    if (st.fatal || (v && v.rc === 0)) return true
+    if (st.fatal || (v && (v.rc === 0 || v.rc === 77))) return true
   }
   return false
+}
+// What the owner reads first when a browser could not be closed: which, what it cost, and where the findings already collected are.
+function lostLead() {
+  if (st.lost === 0) return ''
+  const nv = unverified()
+  return 'A browser could not be closed (' + st.lostTags.join(', ') + '), so ' +
+    (st.lost >= quota ? 'no browser slot was left to run or verify the rest with' : st.lost + ' of ' + quota + ' browser slot(s) stayed taken') + '.' +
+    (nv.length ? ' Findings of tramo(s) ' + nv.map((x) => x.tramo).join(', ') + ' were collected but not verified (details.unverified lists their files).' : '')
+}
+// The tramos a walker returned findings for and no verifier saved a verdict for: the files are there, nobody checked them.
+function unverified() {
+  const have = new Set(st.verified.map((v) => v.tramo))
+  return st.tramos.filter((t) => !have.has(t.id)).map((t) => ({ tramo: t.id, files: st.jobs.filter((j) => j.tramo === t && j.returned).map((j) => j.file) }))
+    .filter((x) => x.files.length > 0)
 }
 
 // `up` runs before the tramos are known, so it asked capacity for one tramo (a quota of 2 at most). Once they are, ask again for them
@@ -322,9 +340,11 @@ async function judge() {
   else if (got.found === false) st.noCount = 'the walkers did not find the fault planted on ' + st.control.screen
 }
 
-// The control's init script runs in every `ab` browser of the run, the verifiers' too, so a verifier confirms the planted title and `fwx walk
-// findings` would hand it to the fixer as a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a
-// row's own id is read too): that row, the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json.
+// The control's init script runs in the walkers' `ab` browsers (`fwx walk ab` leaves it out of a verifier's `v*` session and of `fwx screenshot`'s),
+// so a walker files the planted title and a verifier that is told about it could confirm it, and `fwx walk findings` would hand it to the fixer as
+// a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a row's own id is read too): that row,
+// the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json. (The pictures the walkers took of the control's
+// screen that a genuine finding carries are left out by `fwx walk findings`.)
 async function dropControl() {
   const fid = st.control.found === true ? st.control.finding : null
   if (!fid) return
@@ -397,6 +417,7 @@ async function walkOne(job) {
     }
     return null
   }, () => closeBrowser(job.firefox ? 'pw' : 'ab', job.session))
+  if (got === NOSLOT) return null
   if (got === null) {
     if (!st.fatal) st.gaps.push('ui-walker did not return: ' + job.tag)
     return null
@@ -456,7 +477,7 @@ async function verifyTramo(tramo, index, files, items) {
     const pw = tramo.firefox || items ? await closeBrowser('pw', session) : true
     return ab && pw
   })
-  if (st.fatal) return null
+  if (st.fatal || rep === NOSLOT) return null
   if (!rep) {
     st.gaps.push('ui-verifier did not return: ' + tramo.id)
     return null
@@ -512,7 +533,8 @@ async function recheckRun() {
     }
   }
   st.recheck = rc
-  if (st.gaps.length) stop('failed', 'recheck incomplete: ' + st.gaps.join('; '))
+  if (st.gaps.length) stop('failed', (st.lost ? lostLead() + ' ' : '') + 'recheck incomplete: ' + st.gaps.join('; '))
+  if (st.lost) stop('done', lostLead())
 }
 
 async function walkRun(up) {
@@ -539,10 +561,11 @@ async function walkRun(up) {
       return verifyTramo(t, i, files, null)
     })
   if (st.fatal) stop('failed', st.fatal)
-  if (!st.jobs.some((j) => j.returned)) stop('failed', 'no walker returned: no tramo was walked')
+  if (!st.jobs.some((j) => j.returned)) stop('failed', (st.lost ? lostLead() + ' ' : '') + 'no walker returned: no tramo was walked')
   await judge()
   await dropControl()
-  const lead = st.noCount ? NO_COUNT + ': ' + st.noCount + '.' : ''
+  // the lost slot first: it is the cause of the gaps after it and of a control that was never walked
+  const lead = [lostLead(), st.noCount ? NO_COUNT + ': ' + st.noCount + '.' : ''].filter(Boolean).join(' ')
   if (out.every((x) => !x)) stop('failed', (lead ? lead + ' ' : '') + 'no tramo was verified: ' + st.gaps.join('; '))
   if (st.gaps.length) stop('failed', (lead ? lead + ' ' : '') + 'the walk is incomplete: ' + st.gaps.join('; '))
   if (lead) stop('done', lead)
@@ -682,5 +705,7 @@ return {
     // the walkers' "Outside" notes stay in their findings files: the script reads no file, and the verifier reads them
     outside: [],
     recheck: st.recheck, gaps: st.gaps, agents: st.agents,
+    // findings a walker returned that no verifier checked (a file each tramo), and the browser slots a close that was not confirmed left taken
+    unverified: unverified(), lost_slots: st.lost,
   },
 }

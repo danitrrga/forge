@@ -19,7 +19,7 @@ ignores errors", is the first; the FAIL lines the mutants produced:
   exit code only:      FAIL: no file: exit 1 naming /ghost: rc 0 ok /.../01-a-light-1440.png ...
   old file kept:       FAIL: stale: an old PNG at the same name is not taken for a new capture: rc 0 ok ...
   agent-browser direct:FAIL: guard: a URL outside the app is missing (the `walk ab` guard refused it), the other is taken: rc 1 missing https://evil.example.test/x ...
-  theme ignored / width not set: FAIL: all captured: the first screen is dark, at 1440 wide: [['viewport', '1440', '900'], ['open', ...
+  theme ignored / width not set: FAIL: all captured: the first screen is dark, at 1440 wide: [['set', 'viewport', '1440', '900'], ['open', ...
   run.json ignored:    FAIL: run.json screens: exit: got 2, want 0
   zero screens passes: FAIL: no screens anywhere: exit 2 and says so: rc 1 Traceback ...
   77 as missing:       FAIL: no agent-browser: NOT RUN, NOT ARMED and exit 77, not a list of missing screens: rc 1 fwx screenshot: 1 of 1 missing ...
@@ -36,8 +36,8 @@ import test_walk as tw  # noqa: E402
 ROOT = helpers.ROOT
 S0 = "lib/fwx/commands/screenshot.py"
 
-AB_TAIL = """
-rest = sys.argv[sys.argv.index("--allowed-domains") + 2:]
+AB_TAIL = tw.AB_GUARD + """
+rest =sys.argv[sys.argv.index("--allowed-domains") + 2:]
 SNAP = os.path.join(os.environ["FAKE_FIXTURES"], "agent-browser-snapshot.txt")  # a real `snapshot` output of agent-browser
 if rest[:1] == ["snapshot"]:
     # FAKE_BLANK_URL: the page never draws (no element); FAKE_LATE_URL: it draws from the third snapshot on (a cold dev server)
@@ -129,7 +129,10 @@ def case_all_captured(R, S):
         S.ok("all captured: the files are outside the repo's work tree", all(not f.startswith(rig.sc.repo + os.sep + "ui-walk") for f in files))
         calls = [c["argv"][c["argv"].index("--allowed-domains") + 2:] for c in rig.sc.calls("agent-browser")]
         calls = [c for c in calls if c[:1] != ["cookies"] and c[:1] != ["close"]]
-        S.ok("all captured: the first screen is dark, at 1440 wide", ["media", "dark"] in calls and ["viewport", "1440", "900"] in calls, str(calls))
+        # The commands are the real tool's (`set viewport`, `set media`: the fake refuses a command `agent-browser --help` of 0.41.1 does not list,
+        # as the real one answers `Unknown command: viewport`, exit 1). Seen red on the base, where the steps were `viewport 1440 900` and `media dark`:
+        #   FAIL: all captured: exit: got 1, want 0   (and every screen `missing ...: Unknown command: viewport`)
+        S.ok("all captured: the first screen is dark, at 1440 wide", ["set", "media", "dark"] in calls and ["set", "viewport", "1440", "900"] in calls, str(calls))
         S.eq("all captured: no stderr", r.stderr, "")
         out = os.path.join(helpers.mkdtemp("fwx-shot-out-"), "pics")
         r2 = rig.shot("--screens", screens_arg(rig, ("/a", "dark")), "--out", out)
@@ -337,6 +340,10 @@ MUTANTS = [
      "stale: an old PNG at the same name is not taken for a new capture"),
     ("calls agent-browser itself", case_guards, 'cmd = [sys.executable, os.path.join(walk.ROOT, "bin", "fwx"), "walk", "ab", "--run", run_dir, session]',
      'cmd = ["agent-browser", "--session", session]', "guard: a URL outside the app is missing"),
+    ("a top-level `viewport` command", case_all_captured, "steps.append(walk.set_viewport(WIDTH, HEIGHT))", 'steps.append(["viewport", str(WIDTH), str(HEIGHT)])',
+     "all captured: exit: got 1, want 0"),
+    ("a top-level `media` command", case_all_captured, 'steps.append(["set", "media", sc["theme"]])', 'steps.append(["media", sc["theme"]])',
+     "all captured: exit: got 1, want 0"),
     ("theme ignored", case_all_captured, 'if sc["theme"] != state["theme"]:', "if False:", "the first screen is dark, at 1440 wide"),
     ("width not set", case_all_captured, 'if not state["sized"]:', "if False:", "the first screen is dark, at 1440 wide"),
     ("run.json screens ignored", case_from_run, 'else run.get("screens")', "else None", "run.json screens: exit"),
