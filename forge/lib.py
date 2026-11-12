@@ -146,6 +146,9 @@ PROFILE_FIELDS = {
     # `.fwx/` lives, `ui_image` the factory's UI image. The shapes of the two objects are in APP_RUN_KEYS and
     # UI_IMAGE_KEYS, checked by _object_error.
     "checks_quick": (list, str), "app_run": dict, "default_branch_protected": bool, "ui_image": dict,
+    # Shell commands (e.g. ["npm ci"]) the framework runs inside each worktree it makes, before any check runs there: a
+    # fresh worktree has none of the project's installed dependencies. `fwx wave setup` runs them; each must name something.
+    "worktree_setup": (list, str),
 }
 # The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
 # for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
@@ -232,6 +235,8 @@ def profile_error(prof):
     # An empty name would be written to the framework's file as the project, and Linear would match none.
     if "linear_project" in prof and not prof["linear_project"].strip():
         return "linear_project is empty"
+    if any(not c.strip() for c in prof.get("worktree_setup", ())):
+        return "worktree_setup has an empty command"
     for field, keys in (("app_run", APP_RUN_KEYS), ("ui_image", UI_IMAGE_KEYS)):
         if field in prof:
             why = _object_error(field, prof[field], keys)

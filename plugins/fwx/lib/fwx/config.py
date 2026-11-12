@@ -42,7 +42,7 @@ DEFAULTS = {
     "project": {"name": None, "main_checkout": None, "linear_project": None, "default_branch": None,
                 "factory_branch": "factory", "checks": [], "protected_paths": [],
                 "production": {"branches": [], "commands": []}, "verdict_command": None, "ui": False,
-                "checks_quick": [], "app_run": None, "surface_context": {}},
+                "checks_quick": [], "app_run": None, "surface_context": {}, "worktree_setup": []},
     "factory": {"mode": "off", "ui_bugs": False, "watchdog_nudge_min": 30, "watchdog_fail_min": 30,
                 "cost_warn_x_median": 3, "tick_trigger": None, "classifier": "suggest"},
     "weekly": {"on": True, "min_sessions": 5, "trigger": None, "precision_low": 0.7, "precision_min_marks": 20,
@@ -123,6 +123,44 @@ def _validate(cfg, path):
                 raise _bad(path, "models.%s.%s is %r, not a model alias (%s)" % (role, size, name, ", ".join(ALIASES)))
 
 
+def _setup_list(project, path):
+    """project.worktree_setup of a `project` value as the file has it: the shell commands `fwx wave setup` runs in a new worktree.
+    Absent (or a project that is no table: nothing in it names a setup) is the empty list. A string would be run one letter at a
+    time, and a command that is empty names nothing to run."""
+    setup = project.get("worktree_setup", []) if isinstance(project, dict) else []
+    if not isinstance(setup, list) or not all(isinstance(c, str) and c.strip() for c in setup):
+        raise _bad(path, "project.worktree_setup is %r, not a list of non-empty shell commands" % (setup,))
+    return list(setup)
+
+
+def _check_setup(cfg, path):
+    _setup_list(cfg.get("project"), path)
+
+
+def setup_commands(cwd=None):
+    """`project.worktree_setup` of the main checkout's file, and nothing else of it: a worktree's setup does not depend on the rest
+    of the configuration, so a problem in an unrelated value (a model table, the schema) must not stop it, and a project that never
+    set the field gets the empty list from a missing file, a missing `project` and a `project` that is no table, silently.
+    What cannot say whether a setup is owed (the file is unreadable, not JSON, not an object, or the field is malformed) is a
+    ConfigError naming the file: fail closed, never a traceback."""
+    main = main_checkout(cwd)
+    path = os.path.join(main, FILE)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return []
+    except OSError as e:
+        raise _bad(path, "cannot be read (%s)" % e.strerror)
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise _bad(path, "is not valid JSON (%s)" % e)
+    if not isinstance(data, dict):
+        raise _bad(path, "is not a JSON object")
+    return _setup_list(data.get("project"), path)
+
+
 def _check_walk(cfg, path):
     """walk.browser_executable: null (the browser agent-browser finds) or the path of the browser the UI walk must use instead,
     e.g. a headless shell, so that a wrapper around the system browser (an extension, a window flag) never reaches the walk."""
@@ -164,6 +202,7 @@ def load(cwd=None):
         source = path
     _validate(cfg, source)
     _check_walk(cfg, source)
+    _check_setup(cfg, source)
     cfg["_source"] = source
     return cfg
 

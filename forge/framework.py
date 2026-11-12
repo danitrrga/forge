@@ -149,6 +149,8 @@ def _document(prof, name, ppath):
         "models": table("models"),
         "limits": table("limits"),
     }
+    if prof.get("worktree_setup"):  # written only when set: a profile without it leaves the file as it was (fwx reads the empty list)
+        doc["project"]["worktree_setup"] = list(prof["worktree_setup"])
     for key in ("rounds", "critique_rounds_unattended"):
         if key in section:
             doc[key] = section[key]

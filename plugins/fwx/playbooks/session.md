@@ -201,7 +201,7 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
 - **Stage:** executing
 - **Writes:** audit.tsv
 - **Invokes:** command fwx stage
-- **Does:** With no objections there is no stop: one status line (size, parts, agents, branch) and it goes on. The orchestrator creates the phase branch and its worktree, commits `.fwx/`, and records `fwx stage <phase> executing` for part one with the branch. A red base is not started: it is a question to the owner and uses no round. If the owner chose a new session the work stops here, with nothing irreversible pending, everything on disk and the first action on resuming stated; the new session loads the context, the decisions and the plan.
+- **Does:** With no objections there is no stop: one status line (size, parts, agents, branch) and it goes on. The orchestrator creates the phase branch and its worktree, runs `fwx wave setup` in it (the project's `worktree_setup`; `fwx wave prepare` runs it again at n_C5, so this only shows a failing setup first: exit 1 or 2, one line, which the orchestrator gives to the owner and stops), commits `.fwx/`, and records `fwx stage <phase> executing` for part one with the branch. A red base is not started: it is a question to the owner and uses no round. If the owner chose a new session the work stops here, with nothing irreversible pending, everything on disk and the first action on resuming stated; the new session loads the context, the decisions and the plan.
 - **Exits:**
   - to n_C5: the branch exists, `.fwx/` is committed and the base is green
 

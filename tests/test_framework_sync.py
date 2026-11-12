@@ -850,6 +850,8 @@ for label, field, value in (("checks_quick list", "checks_quick", ["pnpm tsc", "
                             ("app_run with ready_timeout_s 12.5", "app_run", dict(GOOD_APP, ready_timeout_s=12.5)),
                             ("app_run with ready and ready_timeout_s", "app_run", dict(GOOD_APP, ready="Dashboard", ready_timeout_s=45)),
                             ("ui_image", "ui_image", GOOD_IMG),
+                            ("worktree_setup list", "worktree_setup", ["npm ci", "make deps"]),
+                            ("worktree_setup empty", "worktree_setup", []),
                             ("ui_image in a subfolder", "ui_image", dict(GOOD_IMG, dockerfile="ui/Dockerfile"))):
     why = lib.profile_error({"project": "x", "project_path": "/x", field: value})
     check("profile_error accepts %s -- %s" % (label, why), why is None, why)
@@ -875,6 +877,12 @@ for label, field, value, word in (
         ("app_run with ready_timeout_s -1", "app_run", dict(GOOD_APP, ready_timeout_s=-1), "ready_timeout_s"),
         ("app_run with ready_timeout_s \"30\"", "app_run", dict(GOOD_APP, ready_timeout_s="30"), "ready_timeout_s"),
         ("app_run with ready_timeout_s infinity", "app_run", dict(GOOD_APP, ready_timeout_s=float("inf")), "ready_timeout_s"),
+        # worktree_setup runs, in a fresh worktree, before any check: a string would be run one letter at a time and an
+        # empty command names nothing to run.
+        ("worktree_setup as a string", "worktree_setup", "npm ci", "worktree_setup"),
+        ("worktree_setup with a non-string", "worktree_setup", ["npm ci", 3], "worktree_setup"),
+        ("worktree_setup with an empty command", "worktree_setup", ["npm ci", ""], "worktree_setup"),
+        ("worktree_setup with a blank command", "worktree_setup", ["  "], "worktree_setup"),
         ("ui_image as a string", "ui_image", "Dockerfile", "ui_image"),
         ("ui_image without dockerfile", "ui_image", {"expect": "Sign in"}, "dockerfile"),
         ("ui_image without expect", "ui_image", {"dockerfile": "Dockerfile.ui"}, "expect"),
@@ -918,6 +926,27 @@ wd.run()
 pd = (load(fwfile(ppd)) or {}).get("project", {})
 check("fields: without them, project.default_branch_protected is false and project.ui_image null -- %s" % {k: pd.get(k, "missing") for k in ("default_branch_protected", "ui_image")},
       pd.get("default_branch_protected") is False and "ui_image" in pd and pd["ui_image"] is None, pd)
+
+# worktree_setup reaches project.worktree_setup of the file.
+ppw = project()
+ww = World()
+ww.put(profile(ppw, name="setup", worktree_setup=["npm ci", "make deps"]))
+ww.run()
+pw = (load(fwfile(ppw)) or {}).get("project", {})
+check("fields: worktree_setup reaches project.worktree_setup -- %s" % pw.get("worktree_setup", "missing from fwx.json"),
+      pw.get("worktree_setup") == ["npm ci", "make deps"], pw)
+# A profile without the field leaves the file as it was before the field existed (CLAUDE.md rule 2: the dry-run is byte-identical), so the
+# key is not written for it, nor for an empty list. fwx reads a missing key as the empty list.
+# Red before the fix: FAIL: fields: without worktree_setup, project.worktree_setup is not written -- []
+check("fields: without worktree_setup, project.worktree_setup is not written -- %s" % pd.get("worktree_setup", "missing from fwx.json"),
+      "worktree_setup" not in pd, pd)
+ppe = project()
+we = World()
+we.put(profile(ppe, name="setupempty", worktree_setup=[]))
+we.run()
+pe = (load(fwfile(ppe)) or {}).get("project", {})
+check("fields: with an empty worktree_setup, project.worktree_setup is not written either -- %s" % pe.get("worktree_setup", "missing from fwx.json"),
+      bool(pe) and "worktree_setup" not in pe, pe)
 
 sandbox.cleanup(bool(failures))
 for f in failures:
