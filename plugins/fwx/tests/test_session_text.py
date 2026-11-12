@@ -266,6 +266,21 @@ def main():
           "no 'asks for the UI walk again' with 'did not count', 'step 6' and '`phase-review -> ui-walk`'")
     l8 = block(session_pb, "n_L8")
     check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
+    # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
+    # `phase-review -> planning`); the `source` the skill tells the `decisions` agent to use is the one `plan_step.py` looks for, and the
+    # playbook's block of the review and of the plan carry the matching exit and sentence.
+    # Seen red on 83c37cb (step 8 and the playbook said nothing of it):
+    #   FAIL: step 8 sends a post-plan decision back to the planner -> no 'planning' with 'steps 2 and 3' and 'review of part <N>'
+    #   FAIL: playbooks/session.md n_L8 exits `loop n_C2` -> missing
+    from fwx import plan_step  # noqa: E402
+    check("the stage table allows phase-review -> planning", stages.allowed("session", "phase-review", "planning"), "refused")
+    check("step 8 sends a post-plan decision back to the planner",
+          all(w in s8 for w in ("after the plan", "changes a fact the plan states", "`phase-review -> planning`", "steps 2 and 3 again")),
+          "no 'after the plan', 'changes a fact the plan states', '`phase-review -> planning`' and 'steps 2 and 3 again'")
+    check("step 8 gives the decision the source the briefs look for",
+          "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
+    check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
+    check("playbooks/session.md n_C2 names the decision of the review as what a replan attends", "his review" in block(session_pb, "n_C2"), "missing")
     check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.

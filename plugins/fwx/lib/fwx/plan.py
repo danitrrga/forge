@@ -402,14 +402,19 @@ def _plan_warnings(label, data, w):
 
 
 def _cited(folder, texts, w):
-    """A decision with support chosen or approved, not replaced by a later one, that no plan text cites."""
+    """`texts` is {plan file: its text}. A decision with support chosen or approved, not replaced by a later one, that no
+    plan text cites; and a plan text that cites a decision a later row replaced (the owner decided after the plan)."""
     rows = state.read_rows(os.path.join(folder, "decisions.tsv"))
-    replaced = {r.get("supersedes") for r in rows}
+    replaced = {r.get("supersedes"): r.get("id") for r in rows}
     for r in rows:
         i = r.get("id", "")
         if _DECISION.match(i) and r.get("support") in ("chosen", "approved") and i not in replaced \
-                and not any(re.search(r"\b%s\b" % re.escape(i), t) for t in texts):
+                and not any(re.search(r"\b%s\b" % re.escape(i), t) for t in texts.values()):
             w.append("plan.md: body: %s (%s) is not cited" % (i, r["support"]))
+    for rel, text in texts.items():
+        for old, new in replaced.items():
+            if _DECISION.match(old) and re.search(r"\b%s\b" % re.escape(old), text):
+                w.append("%s: body: cites %s, superseded by %s" % (rel, old, new))
 
 
 def _read_text(path):
@@ -499,7 +504,7 @@ def check_phase(dir):
             if mine != theirs:
                 warnings.append("plan.md: %s: %s, but premortem.md says %s" % (field, mine, theirs))
     if isinstance(seen.get("plan.md"), dict):
-        _cited(dir, [_read_text(os.path.join(dir, rel)) for rel in seen], warnings)
+        _cited(dir, {rel: _read_text(os.path.join(dir, rel)) for rel in seen}, warnings)
     from fwx import plan_form  # here, not at the top: plan_form imports this module
     plan_form.check(dir, seen, out)
     return out
