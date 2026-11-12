@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.realpath(sys.argv[1]) if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SESSION = os.path.join(ROOT, "skills", "session")
@@ -116,6 +117,30 @@ def block(playbook, node):
     """The block of `node` in a playbook: from its `### <id> ·` heading to the next heading."""
     m = re.search(r"^### %s ·.*?(?=^### |\Z)" % re.escape(node), playbook, re.S | re.M)
     return m.group(0) if m else ""
+
+
+def commit_effect(line):
+    """Run rule 4's commit line in a toy repo holding the documents of a phase beside what the UI walk leaves, and say what it tracked and
+    what it left untracked: (tracked files under .fwx/, untracked ones). `<main_checkout>` is the toy, `<message>` is `m`."""
+    with tempfile.TemporaryDirectory(prefix="fwx-rule4-") as toy:
+        return _commit_effect(line, toy)
+
+
+def _commit_effect(line, toy):
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1")
+    env = {k: v for k, v in env.items() if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")}
+    phase = ".fwx/milestones/v1/phases/01-a"
+    subprocess.run("git init -q -b master && echo x > README && git add -A && git commit -q -m toy", shell=True, cwd=toy, env=env, capture_output=True)
+    for rel in (".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
+                phase + "/demo/shot.png", phase + "/ui-walk/1-1/demo-state.json", phase + "/ui-walk/1-1/up.log", phase + "/ui-walk/1-1/shot.png"):
+        os.makedirs(os.path.dirname(os.path.join(toy, rel)), exist_ok=True)
+        with open(os.path.join(toy, rel), "w") as f:
+            f.write("x\n")
+    r = subprocess.run(line.replace("<main_checkout>", toy).replace("<message>", "m"), shell=True, cwd=toy, env=env, capture_output=True, text=True)
+    tracked = subprocess.run("git ls-tree -r --name-only HEAD", shell=True, cwd=toy, env=env, capture_output=True, text=True).stdout.split()
+    untracked = subprocess.run("git status --porcelain -uall", shell=True, cwd=toy, env=env, capture_output=True, text=True).stdout.split("\n")
+    return r.returncode, [f for f in tracked if f.startswith(".fwx/")], [u[3:] for u in untracked if u.startswith("?? ")]
 
 
 def in_order(text, *words):
@@ -287,6 +312,32 @@ def main():
           "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
     check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
     check("playbooks/session.md n_C2 names the decision of the review as what a replan attends", "his review" in block(session_pb, "n_C2"), "missing")
+    # Rule 4: the documents are always committed in the main checkout, never on the phase branch (the old exception for a default branch that
+    # takes changes by pull request could not be followed: in the rehearsal nothing was committed), and only the documents: `.md` and `.tsv`
+    # files and the `demo/` pages, so the walk's `demo-state.json` (demo session cookies), logs and screenshots stay untracked. The command
+    # line is run here as written. A `:(glob)` pathspec per pattern was tried first: `git add` fails outright when one pattern matches nothing
+    # (`fatal: pathspec ':(glob).fwx/**/demo/*.html' did not match any files`, a phase with no demo page), so the list comes from `find`.
+    # Seen red on 769589c (rule 4 said `git add .fwx` and named the phase branch):
+    #   FAIL: rule 4 commits in the main checkout and no longer names the phase branch as a place -> 'requires a pull request' still in rule 4
+    #   FAIL: rule 4's commit line adds the documents and leaves the walk's files untracked -> no line `cd <main_checkout> && find ...`
+    rule4 = next((ln for ln in texts["SKILL.md"].splitlines() if ln.startswith("4. **Commits of `.fwx/`**")), "")
+    check("rule 4 found", "forge commit" in rule4, "not found")
+    check("rule 4 commits in the main checkout and no longer names the phase branch as a place",
+          "requires a pull request" not in rule4 and "in its worktree" not in rule4 and "never on the phase branch" in rule4,
+          "'requires a pull request' or 'in its worktree' still in rule 4, or no 'never on the phase branch'")
+    lines = re.findall(r"`(cd <main_checkout> && find [^`]*)`", rule4)
+    check("rule 4 has one commit line built on `find`", len(lines) == 1, "found %d" % len(lines))
+    if len(lines) == 1:
+        rc, tracked, untracked = commit_effect(lines[0])
+        phase = ".fwx/milestones/v1/phases/01-a"
+        check("rule 4's commit line adds the documents and the demo pages", rc == 0 and all(f in tracked for f in (
+            ".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
+              "rc %s, tracked %s" % (rc, tracked))
+        check("rule 4's commit line leaves demo-state.json, a log and a screenshot untracked", all(any(u.endswith(n) for u in untracked) for n in (
+            "demo-state.json", "up.log", "ui-walk/1-1/shot.png", "demo/shot.png")) and not [f for f in tracked if f.endswith(("demo-state.json", ".log", ".png"))],
+              "untracked %s, tracked %s" % (untracked, tracked))
+    old = commit_effect("git -C <main_checkout> add .fwx && git -C <main_checkout> commit -m \"<message>\" -- .fwx")
+    check("control: the old line `git add .fwx` tracks the walk's session file", any(f.endswith("demo-state.json") for f in old[1]), "tracked %s" % old[1])
     check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.
