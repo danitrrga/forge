@@ -106,7 +106,7 @@ if _a[_i:] == ["screenshot"] and os.environ.get("FAKE_SHOT_PATH"):
 # back quoted: measured live). FAKE_READ says what the page holds, as (without the plant, with it):
 #   changes (the default): 24px/700 in 300x40, then 16px/400 in 300x30      same: 16px/400 in 300x30 both times (the title already has the
 #   planted style)      weight: 16px/500, then 16px/400, the box 300x30 both times (a style that changes nothing a reader can see)
-#   grow10: the box goes from 300x30 to 310x30     missing: no title
+#   grow10: the box goes from 300x30 to 310x30     missing: no title     vanish: a title without the plant, none with it
 # FAKE_QUOTE=1 wraps the line in quotes (the shape of a string result is not measured; the parser takes both).
 # The plant is on from the moment the session was launched with --init-script, or the plant's code was run on the page by eval, until a
 # `close`; FAKE_INIT=ignore is a browser that drops the --init-script (the launch path the walkers use does not plant: the F-3 defect).
@@ -120,7 +120,8 @@ if _a[_i:_i + 1] == ["close"] and os.path.exists(planted):
 if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
     mode = os.environ.get("FAKE_READ", "changes")
     reads = {"changes": ("fwx:24px|700|300x40", "fwx:16px|400|300x30"), "same": ("fwx:16px|400|300x30",) * 2,
-             "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30")}
+             "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30"),
+             "vanish": ("fwx:24px|700|300x40", "fwx:missing")}
     line = "fwx:missing" if mode == "missing" else reads[mode][1 if os.path.exists(planted) else 0]
     print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
 sys.exit(int(os.environ.get("FAKE_RC", "0")))
@@ -1010,8 +1011,9 @@ def case_arm_control_readback(R, S):
         sc.clear()
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
         S.eq("arm-control read-back: no title on the screen: exit", r.returncode, 1)
-        S.ok("arm-control read-back: no title on the screen: says target not found, and where",
-             "target not found" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched",
+             "target not found" in r.stderr and sc.url + screen in r.stderr and "fresh walker session" not in r.stderr
+             and not any("--init-script" in x["argv"] for x in sc.calls("agent-browser")), "rc %d: %s" % (r.returncode, r.stderr))
         S.ok("arm-control read-back: no title on the screen: nothing written", not os.path.exists(os.path.join(rd, "control.json")))
         # (d) the layout is what counts: a plant that changes the style and leaves the title's box as it was (a weight 500 title already at the
         # body's size) is refused, with both boxes in the reason. Seen red on the branch before it (the read-back compared styles):
@@ -1912,6 +1914,14 @@ def case_arm_control_launch_path(R, S):
         shots = (jfile(os.path.join(rd, "run.json")) or {}).get("shots", "")
         S.ok(label + ": and no init script", bool(shots) and not os.path.exists(os.path.join(shots, "init.js")), shots)
         del sc.env["FAKE_INIT"]
+        sc.env["FAKE_READ"] = "vanish"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        S.eq("arm-control launch path: a title that is gone in the planted session: exit", r.returncode, 1)
+        S.ok("arm-control launch path: a title that is gone in the planted session: says target not found, in a fresh walker session, one line",
+             "target not found" in r.stderr and "fresh walker session" in r.stderr and len(r.stderr.strip().splitlines()) == 1, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("arm-control launch path: a title that is gone in the planted session: no control.json is left", not os.path.exists(os.path.join(rd, "control.json")))
+        del sc.env["FAKE_READ"]
         sc.clear()
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
         S.eq("arm-control launch path: a browser that takes the script: exit", r.returncode, 0)
@@ -2142,7 +2152,7 @@ MUTANTS = [
     ("arm-control: the boxes not recorded", case_arm_control_readback, '"box": {"before": box(before), "after": box(after)}, ', "",
      "arm-control read-back: the boxes are recorded beside the styles"),
     ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
-     "arm-control read-back: no title on the screen: says target not found"),
+     "arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched"),
     ("arm-control: an old control.json kept", case_arm_control_launch_path, "os.remove(ctl_file)", "pass",
      "arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant"),
     ("arm-control: the reason not on stdout", case_arm_control_readback, 'say({"armed": False, "reason": str(e)})', "pass",
@@ -2238,6 +2248,8 @@ MUTANTS = [
      "arm-control launch path: a browser that ignores --init-script: no control.json is left"),
     ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(u, run["run"], run["repo"])', 'got = ask(u, "", run["repo"])',
      "check-screens prefix: the screen was asked through the rig prefix"),
+    ("arm-control: a title gone in the planted session accepted", case_arm_control_launch_path, "if after is None:", "if False:",
+     "arm-control launch path: a title that is gone in the planted session: says target not found"),
     ("arm-control: init.js left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (ctl_file,):",
      "arm-control launch path: a browser that ignores --init-script: and no init script"),
 ]
