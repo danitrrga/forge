@@ -494,9 +494,12 @@ def agent_home(out):
     """<out>/agent-home: a CLAUDE_CONFIG_DIR with no hooks, skills, CLAUDE.md or login file, made fresh for one job (`out` is the job's own
     directory): the session logs in with the measurement token (measure_login), and a `.credentials.json` left here is removed."""
     d = os.path.join(out, "agent-home")
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "settings.json"), "w") as fh:
-        json.dump({"model": "sonnet"}, fh)
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "settings.json"), "w") as fh:
+            json.dump({"model": "sonnet"}, fh)
+    except OSError as e:
+        raise measure_login.LoginError("cannot prepare the config dir %s (%s). No session was started." % (d, e.strerror or type(e).__name__))
     measure_login.clean_config_dir(d)
     return d
 

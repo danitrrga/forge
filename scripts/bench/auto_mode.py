@@ -421,8 +421,11 @@ def agent_home(out):
     """A CLAUDE_CONFIG_DIR with no hooks, skills, plugins or memory and no login file: the session logs in with the measurement token
     (measure_login), and a `.credentials.json` an earlier run left here is removed."""
     d = os.path.join(out, "agent-home")
-    os.makedirs(d, exist_ok=True)
-    write(os.path.join(d, "settings.json"), "{}")
+    try:
+        os.makedirs(d, exist_ok=True)
+        write(os.path.join(d, "settings.json"), "{}")
+    except OSError as e:
+        raise measure_login.LoginError("cannot prepare the config dir %s (%s). No session was started." % (d, e.strerror or type(e).__name__))
     measure_login.clean_config_dir(d)
     return d
 

@@ -113,6 +113,26 @@ if os.environ.get("LEAK"):   # an agent that runs `env`: the token on stdout and
             os.mkfifo(os.path.join(d, "x.fifo"))
         if os.environ.get("TRANSCRIPT_LINK"):
             os.symlink(os.environ["TRANSCRIPT_LINK"], os.path.join(d, "x.link"))
+if os.environ.get("DENY_REASON"):   # a classifier denial whose reason text holds the token: the hook log and the transcript carry it, and so would the evidence
+    import subprocess, uuid
+    cmd = re.search(r"`([^`]+)`", a[a.index("-p") + 1]).group(1)
+    tid = "toolu_" + uuid.uuid4().hex[:8]
+    sid = a[a.index("--session-id") + 1]
+    reason = ("Permission for this action was denied by the Claude Code auto mode classifier. Reason: [External System Writes] "
+              + os.environ["CLAUDE_CODE_OAUTH_TOKEN"])
+    payload = {"session_id": sid, "cwd": os.getcwd(), "tool_name": "Bash", "tool_input": {"command": cmd}, "tool_use_id": tid,
+               "hook_event_name": "PermissionDenied", "reason": reason}
+    for g in json.load(open(a[a.index("--settings") + 1]))["hooks"]["PermissionDenied"]:
+        for h in g["hooks"]:
+            subprocess.run(h["command"], shell=True, input=json.dumps(payload), text=True)
+    lines = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": tid, "name": "Bash", "input": {"command": cmd}}]}},
+             {"type": "user", "toolDenialKind": "automode-blocked", "message": {"role": "user", "content": [
+                 {"type": "tool_result", "tool_use_id": tid, "content": reason, "is_error": True}]}}]
+    d = os.path.join(cfg, "projects", re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(os.getcwd())))
+    os.makedirs(d, exist_ok=True)
+    open(os.path.join(d, sid + ".jsonl"), "w").write("".join(json.dumps(l) + "\n" for l in lines))
+    for l in lines:
+        print(json.dumps(l))
 sys.stdout.flush()
 if os.environ.get("SLEEP"):   # a session that outlives --timeout, killed after it leaked
     time.sleep(float(os.environ["SLEEP"]))
@@ -256,7 +276,7 @@ def main():
         e.update(extra)
         return e
 
-    def run(script, which, store, extra_env=None, pre=None, wrapper=None, keep=False, noredact=False, more=(), tasks="t0", workers="1"):
+    def run(script, which, store, extra_env=None, pre=None, wrapper=None, keep=False, noredact=False, more=(), tasks="t0", workers="1", actions="V1"):
         """Runs one session's worth of `which` (auto|skill) on the stand-in; returns (rc, text, log rows, out dir, audit seen)."""
         counter[0] += 1
         out = os.path.join(tmp, "out-%d" % counter[0])
@@ -265,7 +285,7 @@ def main():
         if pre:
             pre(os.path.join(out, "agent-home"))
         if which == "auto":
-            args = ["run", "--actions", "V1", "--contexts", "main-asked", "--claude-bin", fake, "--out", out, "--guard-cmd", "none", "--workers", "1"]
+            args = ["run", "--actions", actions, "--contexts", "main-asked", "--claude-bin", fake, "--out", out, "--guard-cmd", "none", "--workers", "1"]
             args += ["--keep-world"] if keep else []
         else:
             args = ["run", "--bench", bench, "--claude-bin", fake, "--sandbox", "none", "--out", out, "--k", "1", "--tasks", tasks, "--arm", "none",
@@ -388,6 +408,14 @@ def main():
         want("auto_mode, %s among the transcripts: the cell says why, in one line, and nothing holds the token" % what,
              ("cannot store" in text or "cannot store" in open(os.path.join(out, "cells.tsv")).read(), holding(stored_text(out), TOKEN)), (True, []))
         drop_worlds()
+
+    # the verdict of a cell is read from the redacted hook log: a denial whose reason holds the token must not put it into cells.tsv
+    code, text, rows, out, _ = run(AUTO, "auto", store_ok, extra_env={"DENY_REASON": "1"})
+    tsv = open(os.path.join(out, "cells.tsv")).read() if os.path.exists(os.path.join(out, "cells.tsv")) else ""
+    want("auto_mode, a denial reason holding the token: the cell was judged from it (denied/classifier, placeholder in the evidence)",
+         ("denied/classifier" in tsv, PLACEHOLDER in tsv), (True, True))
+    want("auto_mode, a denial reason holding the token: nothing the run stores holds it", holding(stored_text(out), TOKEN), [])
+    drop_worlds()
 
     # (f) skill_bench jobs have a config dir of their own: job 1 writes a settings file and a marker there, job 2 must not see them
     for workers in ("1", "2"):
@@ -619,6 +647,18 @@ runpy.run_path(script, run_name="__main__")
         want("helper: clean_config_dir removes a link and keeps its target", (os.path.lexists(os.path.join(d, ".credentials.json")), os.path.exists(target)), (False, True))
 
     import skill_bench as sb  # noqa: E402
+    import auto_mode as am  # noqa: E402
+    if ml:   # a config dir that cannot be made (its parent is a regular file): LoginError with one line, never a bare OSError (a traceback)
+        blocker = os.path.join(tmp, "blocker")
+        put(blocker, "x")
+        for modname, mod in (("skill_bench", sb), ("auto_mode", am)):
+            try:
+                mod.agent_home(os.path.join(blocker, "sub"))
+                failures.append("%s.agent_home: no error for a parent that is a file" % modname)
+            except ml.LoginError as e:
+                want("%s.agent_home: the error is one line naming the dir" % modname, (os.path.join(blocker, "sub") in str(e), "\n" in str(e)), (True, False))
+            except OSError as e:
+                failures.append("%s.agent_home: a bare %s instead of LoginError" % (modname, type(e).__name__))
     work, ahome = os.path.join(tmp, "w"), os.path.join(tmp, "ah")
     os.makedirs(work)
     os.makedirs(ahome)

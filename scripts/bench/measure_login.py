@@ -12,8 +12,8 @@ failure into an empty store and the error must say which one it was.
 
 What the harness does with the value. It never prints it, logs it, writes it to a result file of its own (run.json, result.json,
 cells.tsv) or puts it on a command line, and the text it stores from a session (stream, stderr, hook log, transcripts) is written as a new
-file through `redact_text` / `write_redacted`, the value replaced by PLACEHOLDER; it never opens, rewrites or decompresses a file the
-agent produced. The limit: the measured agent runs with the token in its environment, so a file it writes into its work directory can
+file through `redact_text` / `write_redacted`, the value replaced by PLACEHOLDER; no redaction pass opens, rewrites or decompresses a
+file the agent wrote. The limit: the measured agent runs with the token in its environment, so a file it writes into its work directory can
 hold it, and the run keeps those files as they are. Treat a run directory as private and do not share one without checking it.
 """
 import json
