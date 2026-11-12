@@ -29,8 +29,12 @@ later `.fwx/`) is a `!` line naming the path and the rule, never a silent succes
 What git answers is asked of a scratch repository that has the repository's real layout: the .gitignore of every
 directory from the repository's root down to the project, the repository's own .git/info/exclude, the candidate in
 place of the file that is being written, so a dry-run decides what an apply would, a rule in a parent directory
-counts, and no machine or user config is read. When it cannot be asked (no scratch directory, git does not answer)
+counts, and no system or user git config is read (the user's global ignore file is). When it cannot be asked (no scratch directory, git does not answer)
 that is a `!` line saying what was not checked and nothing is written, never a success.
+
+A profile with `framework_ignore_block: false` has none of this: its framework documents are kept out of the repository's
+history on purpose (a second history, say), so forge writes no block, runs no probe, removes one it wrote earlier and prints one
+SKIP line (`switched_off`); the exit code does not depend on it.
 
 A profile with `writes_tracked_files: false` owns its .gitignore: forge never writes it. The block goes to
 .git/info/exclude (anchored to the project's place in the repository), which only this clone reads, and git ranks
@@ -118,17 +122,20 @@ def _chain(top, at):
 
 
 def _real_exclude(ppath, top):
-    """The text of the repository's own .git/info/exclude (None: none, or a link), read where git keeps it."""
+    """(known, the text of the repository's own .git/info/exclude: None for none or a link), read where git keeps it.
+    Not known when .git is a file (a linked worktree) and git does not say where the exclude file is."""
     g = os.path.join(top, ".git")
     f = os.path.join(g, "info", "exclude") if os.path.isdir(g) else (lib.exclude_site(ppath, ".fwx") or (None,))[0]
-    return None if f is None or os.path.islink(f) else lib.read_text(f)
+    if f is None:
+        return False, None
+    return True, None if os.path.islink(f) else lib.read_text(f)
 
 
 def _outcome(chain, at, exclude, plugin):
     """_probe of a scratch repository with the repository's layout: `chain` ({directory: .gitignore text}, _chain's
     form, the candidate in it when it is a .gitignore) and `exclude` as .git/info/exclude (None for none), the project at
-    `at`. No machine or user config is read, so the answer is the candidate's. The directory is removed however this
-    ends. None when it cannot be asked."""
+    `at`. No system or user git config is read (the user's global ignore file is: git has no switch for it), so the answer
+    is the candidate's. The directory is removed however this ends. None when it cannot be asked."""
     try:
         with tempfile.TemporaryDirectory(prefix="forge-fwx-") as top:
             subprocess.run(["git", "init", "-q", top], capture_output=True, check=True, timeout=20, env=_SCRATCH_ENV)
@@ -173,10 +180,24 @@ def _says(wrong):
     return ", ".join("git %s %s (%s)" % ("does not ignore" if w.want else "still ignores", w.path, w.rule) for w in wrong)
 
 
+SWITCHED_OFF = ("   framework -> ignore block: NOT RUN, NOT ARMED: framework_ignore_block is false in the profile (the project keeps "
+                "its framework documents out of this git on purpose), so forge writes and checks no FORGE-FWX block; the generated "
+                "file is written as always")
+OWN_WAY_OUT = ('; or, if the repository keeps .fwx out of its history on purpose, set "framework_ignore_block": false in the '
+               'profile')
+
+
+def switched_off(apply, ppath, owner):
+    """The lines for a profile with `framework_ignore_block: false`: one SKIP line (a feature the user switched off), then
+    what drop says about a block forge wrote earlier, which goes as it does for `framework: false`. No probe, no block
+    written, and nothing here counts as an error."""
+    return [SWITCHED_OFF] + drop(apply, ppath, owner)
+
+
 def _cannot(ppath):
     """Fail closed: what could not be checked, and that nothing was written."""
     return Out(False, ["   ! framework -> %s: the ignore block NOT written: could not check what git does with the project's ignore "
-                       "rules (no scratch repository, or git did not answer) -- NOT RUN, NOT ARMED, so not counted as done" % lib.short(ppath)])
+                       "rules (no scratch repository, git did not answer, or it did not say where info/exclude is) -- NOT RUN, NOT ARMED, so not counted as done" % lib.short(ppath)])
 
 
 def ensure(apply, ppath, plugin, repo_owned, owner):
@@ -206,7 +227,9 @@ def ensure(apply, ppath, plugin, repo_owned, owner):
     else:
         target = gi
     chain = _chain(top, at)
-    real_exclude = _real_exclude(ppath, top)
+    known, real_exclude = _real_exclude(ppath, top)
+    if not known:
+        return _cannot(ppath)
     cur = lib.read_text(target)
     text = cur or ""
     err = gitblock.marker_error(text, tag)
@@ -261,7 +284,7 @@ def ensure(apply, ppath, plugin, repo_owned, owner):
     owned.claim_ignore_block(apply, target, bl, PART, owner, wrote, (old,) if folded else (), tag)
     lines = ["   framework -> %s FORGE-FWX block (%s%s)" % (lib.short(target), state, "".join("; " + n for n in notes))]
     if wrong:
-        lines.append("   ! framework -> %s: after the block %s -- %s" % (lib.short(ppath), _says(wrong), _fix(repo_owned)))
+        lines.append("   ! framework -> %s: after the block %s -- %s%s" % (lib.short(ppath), _says(wrong), _fix(repo_owned), OWN_WAY_OUT))
     return Out(not any(w.path == entry for w in wrong), lines)
 
 

@@ -28,7 +28,8 @@ Seen failing on the base (97c3ec7, this file as it is, the framework step writin
   same reason: no block. First messages: "4: the first apply writes the block -- None", "5: BEGIN without END: ... -- exit 0",
   "7: writes_tracked_files false: the block is in .git/info/exclude -- ...", "8: doctor row: FAIL naming .gitignore:1:*.md ...
   -- AttributeError: module 'forge.cli' has no attribute 'framework_ignore_row'".
-Review round (sections 10 to 16, seen failing on a11e284 before the fixes: 47 of 119 checks):
+Review round (sections 10 to 16, seen failing on a11e284 before the fixes: 47 of 119 checks; section 17, the profile field
+framework_ignore_block, 22 checks red on that head):
   D1 two projects in one repository, writes_tracked_files false: "each keeps its own block ... -- ['# git ls-files ...', ...]" and
      every run printed "(updated; ..." for both. D1 with the tracked .gitignore did NOT fail: each project has its own file.
   D2 "exit 1 and a `!` line naming the root rule -- [] -- (0, ..." (exit 0, no `!`, with the root `.gitignore:1:*.md`).
@@ -726,6 +727,20 @@ finally:
 check("D3: the same for a project whose block goes to .git/info/exclude", code == 1 and any("NOT RUN, NOT ARMED" in l for l in bang(out))
       and "FORGE-FWX" not in (text(os.path.join(p, ".git", "info", "exclude")) or ""), (code, out))
 
+# a project that is a linked worktree: where info/exclude is comes from git, and when git does not say, that is not "no rules"
+main_ = project(STAR, commit=True)
+wt_ = os.path.join(TOY, "toylinked%d" % _p[0])
+sandbox.git(main_, "worktree", "add", "-q", wt_, "-b", "lw-%d" % _p[0])
+w = only("linked", wt_)
+real_exclude_site = lib.exclude_site
+lib.exclude_site = lambda *a, **k: None
+try:
+    code, out = w.run()
+finally:
+    lib.exclude_site = real_exclude_site
+check("D3: a linked worktree whose info/exclude git does not place: exit 1, NOT RUN, NOT ARMED, nothing written -- %s" % bang(out),
+      code == 1 and any("NOT RUN, NOT ARMED" in l for l in bang(out)) and text(gi(wt_)) == STAR, (code, out))
+
 # ------------------------------------------------------------ 13. D4: everything between the markers is forge's
 # D4 on the base: sync said `(updated)` and uninstall `... ["block","FORGE-FWX"] was edited, left in place`.
 p, w = fresh(STAR)
@@ -734,7 +749,9 @@ put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my
 code, out = w.run()
 check("D4: sync rewrites a block edited inside the markers, and the line says it differed from what forge writes -- %s" % blines(out),
       code == 0 and text(gi(p)) == STAR + btext() and any("differed from what forge writes" in l for l in blines(out)), (text(gi(p)), blines(out)))
-check("D4: a sync of a block that is right says nothing of the kind", not any("differed" in l for l in blines(w.run()[1])), "")
+out = w.run()[1]
+check("D4: a sync of a block that is right says already current and nothing of the kind -- %s" % blines(out),
+      bool(blines(out)) and all("already current" in l and "differed" not in l for l in blines(out)), blines(out))
 check("D4: the BEGIN line tells the reader not to edit inside", "do not edit inside" in block()[0], block()[0])
 put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my-extra/"))
 w.drop("toyapp")
@@ -812,6 +829,80 @@ for why, orig_ in (("CRLF", b"*.md\r\nnode_modules/\r\n"), ("CRLF without a last
 p, w = fresh(STAR)
 w.run()
 check("D7: control: an LF file stays LF", b"\r" not in (raw(gi(p)) or b""), raw(gi(p)))
+
+# ------------------------------------------------------------ 17. framework_ignore_block: false, a project that keeps .fwx out of this git
+# Seen failing on adb68b7 before the field existed: (a) "exit 0 ... -- (1, ..." (the D2 `!` line, exit 1, for a repo whose
+# `/*` ignores .fwx on purpose); (b) the block stayed; (d) "framework_ignore_block is refused by profile_error -- None";
+# (e) the row said FAIL (`git still ignores .fwx/x/y.md (.gitignore:1:/*)`).
+SKIP_TXT = "NOT RUN, NOT ARMED: framework_ignore_block is false"
+
+
+def fresh_all_ignored(rules, **over):
+    """A repository whose committed .gitignore (force-added: its own `/*` ignores it) is `rules`."""
+    q = project(rules)
+    sandbox.git(q, "add", "-f", ".gitignore")
+    sandbox.git(q, "commit", "-q", "-m", "ignore")
+    w_ = World()
+    w_.put(profile(q, **over))
+    return q, w_
+
+
+for why, kw in (("writes_tracked_files false, rules in the repo's .gitignore", dict(writes_tracked_files=False)),
+                ("its own .gitignore", {})):
+    p, w = fresh_all_ignored("/*\n", framework_ignore_block=False, **kw)
+    ex = os.path.join(p, ".git", "info", "exclude")
+    before = (raw(gi(p)), raw(ex), REG())
+    code, out = w.run()
+    check("17a: %s, `/*` ignores .fwx on purpose: exit 0, no `!` line, one SKIP line -- %s" % (why, bang(out)),
+          code == 0 and not bang(out) and len([l for l in out.splitlines() if SKIP_TXT in l]) == 1, (code, out))
+    check("17a: %s: nothing written to .gitignore, .git/info/exclude or the registry's block claims" % why,
+          (raw(gi(p)), raw(ex)) == before[:2] and not [c for c in owned.previous(ex)[0] + owned.previous(gi(p))[0] if owned.is_block(c)], text(gi(p)))
+    code, out = w.run(apply=False)
+    check("17a: %s: a dry-run says the same and exits 0" % why, code == 0 and any(SKIP_TXT in l for l in out.splitlines()) and not bang(out), (code, out))
+    r = row()
+    check("17e: %s: the doctor row is a SKIP with NOT RUN, NOT ARMED, neither PASS nor FAIL -- %s %s" % (why, r.level, r.detail),
+          r.level == "SKIP" and r.detail.startswith("NOT RUN, NOT ARMED: ") and "framework_ignore_block" in r.detail, r)
+# (b) a block written earlier goes, and nothing else in the file changes
+for why, kw, site in (("tracked .gitignore", {}, gi), ("info/exclude", dict(writes_tracked_files=False), lambda q: os.path.join(q, ".git", "info", "exclude"))):
+    p, w = fresh("node_modules/\n", commit=True, **kw)
+    ex_before = text(os.path.join(p, ".git", "info", "exclude"))
+    gi_before = text(gi(p))
+    w.run()
+    check("17b: setup (%s): the block is there -- %s" % (why, (text(site(p)) or "").splitlines()[-7:]), "FORGE-FWX" in (text(site(p)) or ""), text(site(p)))
+    w.put(profile(p, name="toyapp", framework_ignore_block=False, **kw))
+    code, out = w.run(apply=False)
+    check("17b: %s: a dry-run says it would remove the block and writes nothing" % why,
+          any("would remove" in l for l in blines(out)) and "FORGE-FWX" in (text(site(p)) or ""), blines(out))
+    code, out = w.run()
+    check("17b: %s: the block is removed, the file is what it was before forge, the SKIP line is there, exit 0 -- %s" % (why, bang(out)),
+          code == 0 and text(gi(p)) == gi_before and text(os.path.join(p, ".git", "info", "exclude")) == ex_before
+          and any(SKIP_TXT in l for l in out.splitlines()) and not bang(out), (code, out))
+    check("17b: %s: no claim of the block is left" % why, not [c for c in owned.previous(site(p))[0] if owned.is_block(c)], owned.previous(site(p))[0])
+# (c) the field absent, true or null-free: the D2 case is still the `!` line and exit 1
+p, w = fresh_all_ignored("/*\n", writes_tracked_files=False)
+code, out = w.run()
+check("17c: field absent: the repo that ignores .fwx gives the `!` line, exit 1, and the line names the field as the other way out -- %s" % bang(out),
+      code == 1 and any(".gitignore:1:/*" in l and "framework_ignore_block" in l for l in bang(out)), (code, out))
+p, w = fresh_all_ignored("/*\n", writes_tracked_files=False, framework_ignore_block=True)
+code, out = w.run()
+check("17c: field true is the same as absent", code == 1 and bool(bang(out)) and not any(SKIP_TXT in l for l in out.splitlines()), (code, out))
+# the row with one managed and one switched-off project looks at the first only
+pm, wm = fresh(STAR)
+off_p, _ = fresh_all_ignored("/*\n")
+wm.put(profile(off_p, name="offproj", framework_ignore_block=False))
+wm.run()
+r = row()
+check("17e: one project looked at, one switched off: PASS, and the detail names the switched-off one -- %s %s" % (r.level, r.detail),
+      r.level == "PASS" and "looked at 1 project" in r.detail and "offproj (framework_ignore_block is false: switched off)" in r.detail, r)
+# (d) the type
+for bad in ("no", 0, None, [], {}):
+    why = lib.profile_error(profile(project(), framework_ignore_block=bad))
+    check("17d: framework_ignore_block %r is a profile error naming the field -- %s" % (bad, why), bool(why) and "framework_ignore_block" in why, why)
+check("17d: true and false are accepted", all(lib.profile_error(profile(project(), framework_ignore_block=v)) is None for v in (True, False)), "")
+p, w = fresh(STAR, framework_ignore_block="no")
+code, out = w.run()
+check("17d: a sync of a profile with \"no\" exits non-zero and writes nothing to the project -- %s" % bang(out)[:2],
+      code != 0 and text(gi(p)) == STAR, (code, out))
 
 # ------------------------------------------------------------ 9. a project with no framework is never touched
 forge_json()

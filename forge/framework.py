@@ -7,7 +7,8 @@ What a `true` profile gets, all of it per project and none of it at user scope:
   * one managed block at the end of the project's ignore file (forge/fwxignore.py): it ignores that file and
     .claude/worktrees/, and un-ignores `.fwx/**/*.md` after the project's own `*.md`, so the framework's documents are
     tracked (it goes to .git/info/exclude for a profile with `writes_tracked_files: false`, whose own ignore file forge
-    never writes). A profile that turns the framework off has exactly the block taken out.
+    never writes). A profile that turns the framework off has exactly the block taken out, and `framework_ignore_block:
+    false` (the project keeps its documents out of its git on purpose) writes and checks no block and takes one out too.
   * in settings.local.json, `enabledPlugins["<plugin>@<plugin>"] = true` and `extraKnownMarketplaces.<plugin>`
     (written by skills.write_settings_local, which this module feeds through a Plan), both owned claims; and
     `env.LINEAR_API_KEY` when config/secrets.json has the secret, else one line that is not a `!`.
@@ -347,10 +348,13 @@ def _write_file(ctx, prof, p, name):
     ppath = prof["project_path"]
     owner = prof.get("project") or name
     short = lib.short(p.file)
-    try:
-        ignored, block = fwxignore.ensure(ctx.apply, ppath, p.name, lib.repo_owns_tracked_files(prof), owner)
-    except lib.Unreadable as e:  # the project's .gitignore
-        return ["   ! framework -> %s NOT written: %s unreadable (%s)" % (short, lib.short(e.path), e.reason)]
+    if prof.get("framework_ignore_block") is False:  # kept out of this git on purpose: nothing to write, nothing to ask git
+        ignored, block = True, fwxignore.switched_off(ctx.apply, ppath, owner)
+    else:
+        try:
+            ignored, block = fwxignore.ensure(ctx.apply, ppath, p.name, lib.repo_owns_tracked_files(prof), owner)
+        except lib.Unreadable as e:  # the project's .gitignore
+            return ["   ! framework -> %s NOT written: %s unreadable (%s)" % (short, lib.short(e.path), e.reason)]
     if not ignored:
         return block + ["   ! framework -> %s NOT written: it is not known to be ignored" % short]
     if os.path.islink(p.file):

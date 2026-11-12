@@ -135,6 +135,9 @@ PROFILE_FIELDS = {
     # The framework (2.2): `framework` is its level-1 switch, `factory` its mode, `factory_ui_bugs` sends mechanical UI
     # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
     "framework": bool, "factory": str, "factory_ui_bugs": bool,
+    # false: the project keeps its framework documents out of its git history on purpose, so forge writes and checks no
+    # ignore block there (forge/fwxignore.py) and takes out one it wrote earlier. Default true.
+    "framework_ignore_block": bool,
     "checks": (list, str), "protected_paths": (list, str),
     # The Linear project the framework files issues in, when it is not the repository's name (the default).
     "linear_project": str,
