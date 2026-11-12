@@ -225,6 +225,7 @@ def main():
     want("C3 is a forge-flavor cell only", (len(auto_mode.plan_cells([x for x in actions if x["id"] == "C3"], "forge", 1)),
                                             len(auto_mode.plan_cells([x for x in actions if x["id"] == "C3"], "plain", 1))), (1, 0))
     tmp = sandbox.mkdtemp("auto-mode-test-")
+    store = sandbox.toy_measure_store(tmp)
     empty = os.path.join(tmp, "empty.tsv")
     put(empty, "\t".join(auto_mode.COLUMNS) + "\n")
     want("an empty catalogue is an error", auto_mode.load_actions(empty)[1] is not None and "0 actions" in auto_mode.load_actions(empty)[1], True)
@@ -239,7 +240,7 @@ def main():
     log = os.path.join(tmp, "fake.log")
     fake = os.path.join(tmp, "claude")
     put(fake, FAKE_CLAUDE % {"py": sys.executable}, 0o755)
-    base = {"PATH": fakedir, "HOME": home, "TMPDIR": tmp, "FAKE_LOG": log, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8"}
+    base = {"PATH": fakedir, "FORGE_SECRETS_FILE": store, "HOME": home, "TMPDIR": tmp, "FAKE_LOG": log, "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8"}
 
     code, text = cli("run", "--actions", "NOPE", env=base)
     want("a run that selects no cell exits 1 and says `0 cells`", (code, "0 cells" in text), (1, True))

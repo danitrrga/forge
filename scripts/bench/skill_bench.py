@@ -21,7 +21,10 @@ written: every run is on a temp copy. Exit 1 when anything above fails.
 
 `run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's config overlays (a dir without a SKILL.md:
 CLAUDE.md, .claude/settings.json, agents, ...) copied over it before the start commit, the arm's skill directories mounted under
-.claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills or CLAUDE.md; only the login is shared) and
+.claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills, CLAUDE.md or credentials file; the login is the long-lived
+token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without a usable key refuses to start; each job has a config
+dir of its own, and the transcript, the stderr and the result records the run stores have the token replaced by a placeholder, while files
+the agent wrote into its work dir are kept as they are) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
 INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
@@ -46,6 +49,8 @@ import platform
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+import measure_login
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_BENCH = os.path.join(ROOT, "benchmarks", "skill-bench")
@@ -424,9 +429,7 @@ def write_manifest(a, tasks, arms):
         old["invocations"] = old.get("invocations", 1) + 1
         old["cli_versions"] = sorted(set(old.get("cli_versions", [old.get("cli_version")])) | {ver})
         man = old
-    with open(path, "w") as fh:
-        json.dump(man, fh, indent=1)
-        fh.write("\n")
+    measure_login.store_json(path, man, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"), newline=True)   # cli_version is the output of the CLI
 
 
 def is_skill_dir(d):
@@ -486,18 +489,16 @@ def select_tasks(bench, selector):
 
 
 def agent_home(out):
-    """A CLAUDE_CONFIG_DIR with no hooks, skills or CLAUDE.md; only the login is shared with the real home."""
+    """<out>/agent-home: a CLAUDE_CONFIG_DIR with no hooks, skills, CLAUDE.md or login file, made fresh for one job (`out` is the job's own
+    directory): the session logs in with the measurement token (measure_login), and a `.credentials.json` left here is removed."""
     d = os.path.join(out, "agent-home")
-    os.makedirs(d, exist_ok=True)
-    with open(os.path.join(d, "settings.json"), "w") as fh:
-        json.dump({"model": "sonnet"}, fh)
-    real = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
-    link = os.path.join(d, ".credentials.json")
-    if os.path.exists(real) and not os.path.lexists(link):
-        try:
-            os.symlink(real, link)
-        except FileExistsError:   # another worker made it between the check and the call
-            pass
+    try:
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "settings.json"), "w") as fh:
+            json.dump({"model": "sonnet"}, fh)
+    except OSError as e:
+        raise measure_login.LoginError("cannot prepare the config dir %s (%s). No session was started." % (d, e.strerror or type(e).__name__))
+    measure_login.clean_config_dir(d)
     return d
 
 
@@ -506,12 +507,10 @@ def wrap(cmd, sandbox, work, home, claude_bin):
     if sandbox == "none" or (sandbox == "auto" and not shutil.which("bwrap")):
         return cmd
     h = os.path.expanduser("~")
-    real_cred = os.path.join(h, ".claude", ".credentials.json")
     binds = ["--bind", work, work, "--bind", home, home]
     for ro in (os.path.join(h, ".local", "share", "mise"), os.path.join(h, ".local", "bin"), os.path.dirname(os.path.realpath(claude_bin))):
         binds += ["--ro-bind-try", ro, ro]
-    if os.path.exists(real_cred):
-        binds += ["--bind", real_cred, real_cred]
+    # no bind of any credentials file, and no --clearenv/--setenv: bwrap passes the caller's environment on, token variable included
     return (["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", h]
             + binds + ["--unshare-pid", "--die-with-parent", "--chdir", work, "--"] + cmd)
 
@@ -574,6 +573,8 @@ def do_job(job, a):
     """One job, never fatal: whatever goes wrong inside it becomes an INVALID result, so one crash cannot end the whole run."""
     try:
         return _do_job(job, a)
+    except measure_login.LoginError:   # the job's config dir could not be prepared: the whole run ends, not one job
+        raise
     except Exception as e:   # noqa: BLE001
         task, arm, _, trial = job
         base = os.path.join(a.out, task, arm, str(trial))
@@ -581,9 +582,7 @@ def do_job(job, a):
         res = {"task": task, "arm": arm, "trial": trial, "invalid": True, "passed": None, "started": time.time(),
                "invalid_reason": "runner error: %s: %s" % (type(e).__name__, str(e)[:160]), "field": None, "concept": None,
                "skill_called": False, "tokens": 0, "cost_usd": None, "duration_s": 0, "checks": []}
-        with open(os.path.join(base, "result.json"), "w") as fh:
-            json.dump(res, fh, indent=1)
-        return res
+        return measure_login.store_json(os.path.join(base, "result.json"), res, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
 
 
 def _do_job(job, a):
@@ -596,9 +595,7 @@ def _do_job(job, a):
     if err:
         res = {"task": task, "arm": arm, "trial": trial, "invalid": True, "passed": None, "invalid_reason": err, "started": time.time(),
                "field": None, "concept": None, "skill_called": False, "tokens": 0, "cost_usd": None, "duration_s": 0, "checks": []}
-        with open(os.path.join(base, "result.json"), "w") as fh:
-            json.dump(res, fh, indent=1)
-        return res
+        return measure_login.store_json(os.path.join(base, "result.json"), res, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))
     skills = [d for d in paths if is_skill_dir(d)]
     overlays = [d for d in paths if not is_skill_dir(d)]
     for od in overlays:   # the arm's config is part of the start state, like a project's tracked CLAUDE.md: committed below, not untracked
@@ -616,11 +613,13 @@ def _do_job(job, a):
     prompt = meta["prompt"]
     if a.force_skill and skills:
         prompt = "Use the skill in .claude/skills/%s for this task.\n\n%s" % (os.path.basename(skills[0].rstrip("/")), prompt)
-    home = agent_home(a.out)
-    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
+    home = agent_home(base)   # the job's own config dir: nothing a session writes there reaches another job
+    tok = a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN")
+    env = {k: v for k, v in a.login_env.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
     env["CLAUDE_CONFIG_DIR"] = home
     cmd = wrap([a.claude_bin, "-p", prompt, "--model", a.model, "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "bypassPermissions", "--no-session-persistence"], a.sandbox, work, home, a.claude_bin)
+    measure_login.refuse_bare(cmd)
     started, timed_out = time.time(), False
     p = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          start_new_session=True)
@@ -630,11 +629,13 @@ def _do_job(job, a):
         timed_out = True
         os.killpg(p.pid, signal.SIGKILL)
         stdout, stderr = p.communicate()
-    with open(os.path.join(base, "agent.jsonl"), "w") as fh:
-        fh.write(stdout or "")
-    with open(os.path.join(base, "agent.err"), "w") as fh:
-        fh.write(stderr or "")
-    m = parse_stream(stdout or "")
+    stdout = measure_login.redact_text(stdout, tok)   # an agent that ran `env` printed the token: the transcript is stored without it
+    if a.keep_work:
+        measure_login.write_atomic(os.path.join(base, "agent.jsonl"), stdout.encode("utf-8", "surrogateescape"))
+    else:   # space: kept gzipped (about a tenth of its size), compressed from the redacted text, never patched afterwards
+        measure_login.write_atomic(os.path.join(base, "agent.jsonl.gz"), gzip.compress(stdout.encode("utf-8", "surrogateescape")))
+    measure_login.write_redacted(os.path.join(base, "agent.err"), stderr, tok)
+    m = parse_stream(stdout)
     msg = m["msg"]
     res = {"task": task, "field": meta.get("field"), "concept": meta.get("concept"), "arm": arm, "trial": trial,
            "model": a.model, "model_id": m["model"], "started": started, "duration_s": round(time.time() - started, 1), "timed_out": timed_out,
@@ -652,15 +653,10 @@ def _do_job(job, a):
             res.update(invalid=True, passed=None, invalid_reason=why)
         else:
             res.update(checks=checks, passed=bool(checks) and all(c["passed"] for c in checks))
-    with open(os.path.join(base, "result.json"), "w") as fh:
-        json.dump(res, fh, indent=1)
-    if not a.keep_work:   # space: the scored working copy goes, the plain transcript is kept gzipped (about a tenth of its size)
+    res = measure_login.store_json(os.path.join(base, "result.json"), res, tok)   # checks[].evidence and invalid_reason come from outside the harness
+    if not a.keep_work:   # space: the scored working copy and the job's config dir go
         shutil.rmtree(work, ignore_errors=True)
-        plain = os.path.join(base, "agent.jsonl")
-        if os.path.exists(plain):
-            with open(plain, "rb") as src, gzip.open(plain + ".gz", "wb") as dst:
-                shutil.copyfileobj(src, dst)
-            os.remove(plain)
+        shutil.rmtree(home, ignore_errors=True)
     return res
 
 
@@ -675,6 +671,10 @@ def finished(result_path):
 
 
 def cmd_run(a):
+    try:
+        a.login_env = measure_login.child_env()   # before anything starts, `claude --version` included: no key, no run
+    except measure_login.LoginError as e:
+        sys.exit("! " + str(e))
     if a.sandbox == "bwrap" and not shutil.which("bwrap"):   # `auto` falls back to no sandbox (wrap); `bwrap` must fail closed
         sys.exit("bwrap not found on PATH: --sandbox bwrap refuses to run the agent unsandboxed (bypassPermissions). Install bubblewrap.")
     if not a.out:
@@ -692,13 +692,18 @@ def cmd_run(a):
     print("%d to run, %d already done (%d tasks x %d arms x k=%d)" % (len(todo), len(jobs) - len(todo), len(tasks), len(arms), a.k))
     os.makedirs(a.out, exist_ok=True)
     write_manifest(a, tasks, arms)
-    agent_home(a.out)   # made once here: the workers share it
     done = 0
-    with ThreadPoolExecutor(max_workers=a.workers) as ex:
+    ex = ThreadPoolExecutor(max_workers=a.workers)
+    try:
         for r in ex.map(lambda j: do_job(j, a), todo):
             done += 1
             print("  [%d/%d] %s %s #%d: %s" % (done, len(todo), r["task"], r["arm"], r["trial"],
                                               "INVALID " + r.get("invalid_reason", "") if r["invalid"] else ("pass" if r["passed"] else "fail")), flush=True)
+    except measure_login.LoginError as e:   # a job's config dir could not be prepared: no job after it starts
+        ex.shutdown(wait=True, cancel_futures=True)
+        sys.exit("! " + str(e))
+    finally:
+        ex.shutdown(wait=True)
     print("results in %s" % a.out)
     return 0
 

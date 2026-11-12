@@ -88,8 +88,14 @@ config dir stays stripped, and a CLAUDE.md, hook and agent in the work dir still
 the CLAUDE.md marker, the hook ran, the agent was listed, none of it in an empty dir). MCP servers are not part of an overlay yet.
 `run.json` records an overlay's hash under `config`, so changing it under the same arm name is refused like a changed skill. The agent
 decides by itself whether to use the skill (that is what triggering is worth); `--force-skill` tells it to. Each run is an
-isolated `claude -p` (own config dir: no user hooks, skills, CLAUDE.md or MCP, only the login) inside bubblewrap when
-installed. Claude Code's own built-in skills and plugins are loaded in every arm, so they are part of the baseline. Runs are
+isolated `claude -p` (own config dir: no user hooks, skills, CLAUDE.md, MCP or credentials file; it logs in with the long-lived token of
+`claude setup-token`, stored as `FORGE_MEASURE_OAUTH_TOKEN` in the secret store and passed as `CLAUDE_CODE_OAUTH_TOKEN`; a run without
+a usable key refuses to start, and `--bare` is never used because it ignores the token) inside bubblewrap when installed.
+The measured agent runs with the token in its environment. The stream, the stderr, the transcript and the result records (`result.json`, `run.json`) the run stores have it replaced by
+`[REDACTED: measurement token]`, but a file the agent writes into its work directory can hold it, and the run keeps those files as they are:
+treat a run directory as private and do not share one without checking it. Each job has a config dir of its own, and the child's
+environment loses `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_BASE_URL`, the `CLAUDE_CODE_USE_*` provider switches,
+`CLAUDE_CODE_SIMPLE` and the OAuth refresh-token variables (the run says on stderr which of them it dropped). Claude Code's own built-in skills and plugins are loaded in every arm, so they are part of the baseline. Runs are
 resumable and interleaved across arms; an oracle that crashes makes an INVALID run, counted and never scored as a fail. So does a run in which the agent never ran
 (a prompt blocked by a hook, 0 turns, no result): it is marked `not_run`, left out of every score, and a re-run of the same `--out`
 redoes it. A run that times out is still a fail: the agent did run.

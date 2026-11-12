@@ -90,6 +90,7 @@ def transcript(out, arm):
 
 def main():
     tmp = sandbox.mkdtemp("skillbench-cfgarm-")
+    sandbox.toy_measure_store(tmp)
     fake = os.path.join(tmp, "claude")
     put(fake, FAKE)
     os.chmod(fake, 0o755)

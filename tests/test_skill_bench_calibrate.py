@@ -77,6 +77,7 @@ def cli(*a, env=None):
 
 def main():
     tmp = sandbox.mkdtemp("skillbench-cal-")
+    sandbox.toy_measure_store(tmp)
     bench = make_bench(tmp)
     fake = os.path.join(tmp, "claude")
     put(fake, FAKE)

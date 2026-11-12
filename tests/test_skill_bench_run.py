@@ -123,6 +123,7 @@ def cli(*a, env=None):
 def main():
     import skill_bench as sb  # noqa: E402  (the module under test, for the statistics)
     tmp = sandbox.mkdtemp("skillbench-run-")
+    sandbox.toy_measure_store(tmp)
 
     # --- statistics against hand-computed values -------------------------------------------------------------
     lo, hi = sb.wilson(8, 10)
@@ -253,7 +254,8 @@ def main():
     r4 = [json.load(open(os.path.join(rr, f))) for rr, _, fs in os.walk(out4) for f in fs if f == "result.json"]
     want("unstartable agent: exit 0, no traceback, every job recorded as invalid with a runner error",
          (code, "Traceback" in text, len(r4), all(r["invalid"] and "runner error" in r.get("invalid_reason", "") for r in r4)), (0, False, 4, True))
-    # many workers on a machine with a login: the shared agent home is made once, no job loses a race for it
+    # many workers on a machine with a credentials file in the home: each job makes a config dir of its own and none of them touches the home's file,
+    # so six workers finish every job
     fake_home = os.path.join(tmp, "fakehome")
     os.makedirs(os.path.join(fake_home, ".claude"))
     put(os.path.join(fake_home, ".claude", ".credentials.json"), "{}")
@@ -267,7 +269,7 @@ def main():
         n5 = len([1 for rr, _, fs in os.walk(out5) for f in fs if f == "result.json"])
         if code != 0 or n5 != 12:
             bad5.append((code, n5))
-    want("6 workers, 4 repeats: every run completes all 12 jobs (no credentials-link race)", bad5, [])
+    want("6 workers, 4 repeats: every run completes all 12 jobs", bad5, [])
 
     # a run that exceeds --timeout is a fail, not a crash of the runner
     slow = skill(tmp, "slow", "slow")

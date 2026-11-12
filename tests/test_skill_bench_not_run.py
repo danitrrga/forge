@@ -69,6 +69,7 @@ def result(out):
 
 def main():
     tmp = sandbox.mkdtemp("skillbench-notrun-")
+    sandbox.toy_measure_store(tmp)
     fake = os.path.join(tmp, "claude")
     put(fake, FAKE)
     os.chmod(fake, 0o755)

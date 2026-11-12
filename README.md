@@ -254,6 +254,9 @@ scores the result, plus a correct answer, a second correct answer built differen
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-bench-dark.png"><img src="docs/assets/fig-bench.png" alt="skill-bench in five steps: a task such as logic-datetime-02 with its repository and an oracle of 8 checks; validate, where the ideal and alternative answers pass and the naive one fails; the arms, no skill and your skill, k runs each; each run as claude -p in its own config directory; a paired report per task. Arms that ran on different models are refused." width="100%"></picture>
 
+`run` logs in with a long-lived token, not with your own login. Run `claude setup-token` once and store the token under the key
+FORGE_MEASURE_OAUTH_TOKEN in the secret store (config/secrets.json); without it `run` refuses to start. `validate` and `report` need no token.
+
 ```sh
 python3 scripts/bench/skill_bench.py validate          # every task: the ideal and alt answers pass, the naive one fails
 python3 scripts/bench/skill_bench.py run --arm none --arm mine=skills/my-skill --k 3

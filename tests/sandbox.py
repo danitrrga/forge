@@ -71,6 +71,17 @@ def mkdtemp(prefix):
     return d
 
 
+def toy_measure_store(tmp):
+    """The secret store the measurement scripts read their login token from (scripts/bench/measure_login.py), as a toy file with a FAKE
+    value, and FORGE_SECRETS_FILE in this process' environment pointing at it, so a test that runs `skill_bench.py run` or
+    `auto_mode.py run` on a stand-in `claude` starts: without the key those scripts refuse to start a session. Returns the path."""
+    p = os.path.join(tmp, "toy-secrets.json")
+    with open(p, "w") as fh:
+        json.dump({"FORGE_MEASURE_OAUTH_TOKEN": "tok-FAKE-toy-store-0123456789"}, fh)
+    os.environ["FORGE_SECRETS_FILE"] = p
+    return p
+
+
 def rmtree(d):
     """shutil.rmtree that also removes what a test made read-only (a 0500 directory refuses its own files'
     removal) and a dir that is already gone."""
