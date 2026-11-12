@@ -56,6 +56,45 @@ def read(rel):
         return f.read()
 
 
+def returned_fields(js):
+    """(top, details): the keys at the first level of the object a workflow script returns (its last top-level `return {`), and the keys at the
+    first level of its `details` object, found by the braces (comment lines left out, nested objects not counted)."""
+    body = "\n".join(ln for ln in js[js.rindex("\nreturn {"):].splitlines() if not ln.strip().startswith("//"))
+    keys, depth, i = {0: set(), 1: set()}, 0, 0
+    inside = None  # the depth at which the `details` object's keys sit
+    while i < len(body):
+        c = body[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if inside is not None and depth < inside:
+                inside = None
+        else:
+            m = re.match(r"([a-z][a-z_]*):", body[i:]) if (c.isalpha() and not body[i - 1].isalnum() and body[i - 1] != "_") else None
+            if m:
+                if depth == 1:
+                    keys[0].add(m.group(1))
+                    if m.group(1) == "details":
+                        inside = 2
+                elif inside is not None and depth == inside:
+                    keys[1].add(m.group(1))
+                i += len(m.group(1))
+        i += 1
+    return keys[0], keys[1]
+
+
+def cited_missing(text, returned):
+    """The `details.<field>` words of a text that the returned object's `details` has no key for (a top-level field such as `reason` is not
+    one: `details.reason` is a field nobody returns)."""
+    return [k for k in re.findall(r"details\.([a-z][a-z_]*)", text) if k not in returned[1]]
+
+
+def supports(text):
+    """{answer: the support the text says the decisions agent records for it}, for `not_defect` and `redo`: "`x` with support `y`" or "`x`: `support` `y`"."""
+    return {w: m.group(1) for w in ("not_defect", "redo") for m in [re.search(r"`%s`(?::| with) (?:`support`|support) `(\w+)`" % w, text)] if m}
+
+
 def files_naming(needle, texts):
     return [rel for rel, text in texts.items() if needle in text]
 
@@ -164,6 +203,50 @@ def main():
             skips.append("SKIP: fwx %s not checked: it lives on %s" % (cmd, ELSEWHERE[cmd]))
         else:
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
+
+    # The playbook and the skill say the same of a rejected fix: `fwx walk review-answers` only sorts the answers (walk.py `cmd_review_answers`
+    # writes review/answers.json and no decision), and the `decisions` agent records `not_defect` with support `approved` and `redo` with
+    # support `chosen`. PR 125 made the playbook say a `redo` records nothing while this skill (what the session follows) records it.
+    # Seen red on 93e43d9 (the playbook said `redo` records nothing; the skill did not say that the command writes no decision):
+    #   FAIL: the playbook and ui-review.md both say what the decisions agent records for each rejection -> playbook {}, ui-review.md {'not_defect': 'approved', 'redo': 'chosen'}
+    #   FAIL: the playbook and ui-review.md both say `review-answers` writes no decision -> playbook False, ui-review.md False
+    with open(os.path.join(ROOT, "playbooks", "ui-walk.md"), encoding="utf-8") as f:
+        playbook = f.read()
+    rej = playbook[playbook.index("### p_REJ"):]
+    want = {"not_defect": "approved", "redo": "chosen"}
+    check("the playbook and ui-review.md both say what the decisions agent records for each rejection",
+          supports(rej) == want and supports(review) == want, "playbook %s, ui-review.md %s" % (supports(rej), supports(review)))
+    check("the playbook and ui-review.md both say `review-answers` writes no decision", "no decision" in rej and "no decision" in review,
+          "playbook %s, ui-review.md %s" % ("no decision" in rej, "no decision" in review))
+    check("control: a text that records a `redo` as approved is not the wanted one", supports("`not_defect` with support `approved`, `redo` with support `approved`") != want)
+
+    # A walk that did not finish is not "no findings": `fix_file` is null then, and step 6 once read that as nothing to fix. The session texts
+    # name the fields the workflow returns (`status`, `reason`, `details.unverified`, `details.gaps`: copied from the object `workflows/ui-walk.js`
+    # returns, which tests/test_ui_walk_workflow.py pins key by key), so a renamed field breaks this check.
+    # Seen red on 1afad4d (no session text read them):
+    #   FAIL: SKILL.md step 6 tells the owner the reason, the unverified findings and that the walk did not pass -> missing: ['reason', 'unverified', 'passed']
+    #   (and the same for references/ui-review.md, playbooks/ui-walk.md and playbooks/session.md)
+    with open(os.path.join(ROOT, "workflows", "ui-walk.js"), encoding="utf-8") as f:
+        js = f.read()
+    returned = returned_fields(js)
+    # Top-level fields and `details` fields are kept apart (review of PR 125: with one merged set `details.reason` passed although `reason` is a
+    # top-level field only). Seen red with the merged set: FAIL: control: `details.reason` is flagged, `reason` is a top-level field only -> got []
+    top, det = returned
+    check("the workflow returns the top-level fields the session texts cite", {"status", "reason", "phase_dir", "details"} <= top, "top-level %s" % sorted(top))
+    check("the workflow returns the details fields the session texts cite", {"gaps", "unverified", "fix_file", "lost_slots"} <= det, "details %s" % sorted(det))
+    # a walk with no `fix_file` has no `fix.json`, so `review-page` would stop: ui-review.md says to skip the command then (review of PR 125).
+    # Seen red on a11691f: FAIL: references/ui-review.md says what to do when `details.fix_file` is null -> missing
+    check("references/ui-review.md says what to do when `details.fix_file` is null", "`details.fix_file` null" in review and "do not run the command" in review, "missing")
+    check("control: `details.reason` is flagged, `reason` is a top-level field only", cited_missing("read `details.reason`", returned) == ["reason"], "got %s" % cited_missing("read `details.reason`", returned))
+    check("control: a details field is read as a details field", cited_missing("read `details.gaps` and `details.fix_file`", returned) == [])
+    with open(os.path.join(ROOT, "playbooks", "session.md"), encoding="utf-8") as f:
+        session_pb = f.read()
+    for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review), ("playbooks/ui-walk.md", playbook),
+                       ("playbooks/session.md", session_pb)):
+        absent = [w for w in ("reason", "unverified", "passed") if w not in text]
+        check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
+        check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
+    check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})

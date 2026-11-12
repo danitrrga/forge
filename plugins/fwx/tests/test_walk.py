@@ -43,6 +43,7 @@ import socket
 import subprocess
 import sys
 import time
+from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -63,8 +64,43 @@ with open(os.environ["FAKE_LOG"], "a") as f:
     f.write(json.dumps(rec) + "\\n")
 %(tail)s
 """
+# The commands the pinned agent-browser knows: the top-level words of `agent-browser --help` of AB_VERSION (the Core, Navigation, Get Info,
+# Check State, Find, Mouse, Browser Settings (`set`), Network, Storage, Tabs, Diff, Debug, Streaming, WebMCP, React, Performance, A11y, SPA, Init
+# scripts, Batch, Auth, Plugins, Confirmation, Sessions, MCP, Chat, Dashboard, Setup and `skills` sections), and the settings of `set`. The fake
+# agent-browser of this file and of test_screenshot.py refuses any other command with the real tool's line and exit code (`Unknown command: viewport`,
+# exit 1: measured on 0.41.1), so a step the real tool would reject cannot pass here. Update it with the version: `agent-browser --help`.
+AB_VERSION = "0.41.1"
+AB_COMMANDS = ("open read click dblclick type fill press keyboard hover focus check uncheck select drag upload download scroll scrollintoview wait screenshot pdf "
+               "snapshot eval connect close back forward reload get is find mouse set network cookies storage tab diff trace profiler record console errors "
+               "highlight inspect clipboard stream webmcp react vitals a11y pushstate removeinitscript batch auth plugin confirm deny session mcp chat "
+               "dashboard install upgrade doctor profiles skills "
+               # accepted by 0.41.1 though `--help` does not print them (probed by running each with no argument: `Missing arguments for: goto`,
+               # `✓ Browser closed`, never `Unknown command`); `walk.py` names goto, navigate and state in its own guards
+               "goto navigate quit exit state frame dialog window").split()
+# `agent-browser set --help` lists viewport, device, geo, offline, headers, credentials and media; `agent-browser set bogus` answers
+# `Valid options: viewport, device, geo, geolocation, offline, headers, credentials, auth, media` (geolocation and auth are aliases)
+AB_SET = "viewport device geo geolocation offline headers credentials auth media".split()
+AB_GUARD = '''
+_COMMANDS, _SET = %r, %r
+_VALUED = ("--namespace", "--session", "--idle-timeout", "--screenshot-dir", "--args", "--allowed-domains", "--init-script", "--executable-path", "--state")
+_a, _i = sys.argv[1:], 0
+while _i < len(_a) and _a[_i].startswith("-"):
+    _i += 2 if _a[_i] in _VALUED else 1
+if _a[_i:_i + 1] and (_a[_i] not in _COMMANDS or (_a[_i] == "set" and _a[_i + 1:_i + 2] and _a[_i + 1] not in _SET)):
+    sys.stderr.write("Unknown command: %%s\\n" %% _a[_i])
+    sys.exit(1)
+''' % (AB_COMMANDS, AB_SET)
 TAILS = {
-    "agent-browser": """
+    "agent-browser": AB_GUARD + """
+# `get url` answers FAKE_PAGE_URL (the page the session is on); a `screenshot` with no path writes FAKE_SHOT_PATH and prints a line that names
+# it (the real tool's names the path after `Screenshot saved to`), when the case sets them.
+if _a[_i:_i + 2] == ["get", "url"]:
+    sys.stdout.write(os.environ.get("FAKE_PAGE_URL", "") + "\\n")
+    sys.exit(0)
+if _a[_i:] == ["screenshot"] and os.environ.get("FAKE_SHOT_PATH"):
+    open(os.environ["FAKE_SHOT_PATH"], "wb").write(b"PNG")
+    sys.stdout.write("Screenshot saved to " + os.environ["FAKE_SHOT_PATH"] + "\\n")
+    sys.exit(0)
 # The read-back of arm-control asks the page for the target's style and rendered box with a call of the browser's eval command whose code
 # carries the word fwx: and answers with the line that code builds, `fwx:<font-size>|<font-weight>|<width>x<height>` (a string result comes
 # back quoted: measured live). FAKE_READ says what the page holds, as (before the plant, after it):
@@ -613,11 +649,20 @@ def case_ab_commands(R, S):
         S.eq("ab commands: nothing refused reached the binary", sc.calls(), [])
         # the words a walker needs, and a refused word typed as text, still go through
         for args in (["snapshot"], ["screenshot"], ["console"], ["errors"], ["get", "text", "h1"], ["wait", "10"], ["fill", "@e1", "inspect"],
-                     ["type", "@e1", "stream"], ["eval", "1+1"], ["record", "start", os.path.join(rd, "c.webm")], ["read"]):
+                     ["type", "@e1", "stream"], ["eval", "1+1"], ["record", "start", os.path.join(rd, "c.webm")], ["read"],
+                     # words the real 0.41.1 accepts though its `--help` does not print them (the fake takes them too, so a test of the guards on
+                     # them is possible; red before: `Unknown command: goto` from the fake):
+                     ["goto", sc.url], ["navigate", sc.url], ["quit"], ["set", "geolocation", "1", "2"]):
             sc.clear()
             r = sc.walk(R, "ab", "--run", rd, "w1", *args)
             S.ok("ab commands: %s: still accepted" % " ".join(args), r.returncode == 0 and sc.calls("agent-browser")
                  and sc.calls("agent-browser")[-1]["argv"][-len(args):] == list(args), "rc %d: %s" % (r.returncode, r.stderr))
+        # A verifier session's `close` in a run with one app: no browser was opened, so it is a no-op with exit 0 (the workflow counts it as a
+        # confirmed close and keeps the slot free). The container run with several apps refuses `v<k>` (see case_container; the session-to-app
+        # assignment is a unit of its own), but this run is not affected.
+        sc.clear()
+        r = sc.walk(R, "ab", "--run", rd, "v1", "close")
+        S.ok("ab commands: a verifier session's close in a run with one app is a no-op, exit 0", r.returncode == 0 and sc.calls() == [], "rc %d: %s %s" % (r.returncode, r.stderr, sc.calls()))
         sc.walk(R, "down", "--run", rd)
     finally:
         sc.stop()
@@ -651,13 +696,17 @@ def case_ab_viewport(R, S):
         sc.walk(R, "ab", "--run", rd, "w1", "open", sc.url + "/b")
         S.eq("ab viewport: a second open of the same session does not repeat it", sized(sc.calls("agent-browser")), [])
         sc.clear()
-        r = sc.walk(R, "ab", "--run", rd, "w1", "viewport", "1440", "900")
-        S.eq("ab viewport: an explicit viewport is passed through untouched", [c["argv"][-3:] for c in sc.calls("agent-browser")],
-             [["viewport", "1440", "900"]])
+        # (the real tool has no top-level `viewport`, the fake refuses it with exit 1: these two checks use `set viewport` and want exit 0, as the
+        # review of PR 125 asked; before, they passed on calls the fake had rejected)
+        r = sc.walk(R, "ab", "--run", rd, "w1", "set", "viewport", "1440", "900")
+        S.eq("ab viewport: an explicit viewport is accepted", r.returncode, 0)
+        S.eq("ab viewport: an explicit viewport is passed through untouched", [c["argv"][-4:] for c in sc.calls("agent-browser")],
+             [["set", "viewport", "1440", "900"]])
         # a session whose first call is the caller's own viewport keeps only that one
         sc.clear()
-        sc.walk(R, "ab", "--run", rd, "w2", "viewport", "1440", "900")
-        S.eq("ab viewport: a first call that is a viewport is not preceded by ours", sized(sc.calls("agent-browser")), [["viewport", "1440", "900"]])
+        r = sc.walk(R, "ab", "--run", rd, "w2", "set", "viewport", "1440", "900")
+        S.eq("ab viewport: a first call that is a viewport is accepted", r.returncode, 0)
+        S.eq("ab viewport: a first call that is a viewport is not preceded by ours", sized(sc.calls("agent-browser")), [["set", "viewport", "1440", "900"]])
         sc.clear()
         sc.walk(R, "ab", "--run", rd, "w3", "set", "viewport", "800", "600")
         S.eq("ab viewport: `set viewport` as the first call likewise", sized(sc.calls("agent-browser")), [["set", "viewport", "800", "600"]])
@@ -691,6 +740,29 @@ def case_run_empty(R, S):
         sc.stop()
 
 
+BOUNDARY_URLS = ["http://localhost:3000/", "http://127.0.0.1:3000/x", "http://other.localhost:3000/", "http://sub.other.localhost/", "http://198.51.100.7:3000/",
+                 "http://[::1]:3000/", "http://a.example.test/", "http://localhost.example.test/"]
+NODE = shutil.which("node")
+
+
+def pac_table(cfg, urls):
+    """({url: True when the config's proxy-autoconfig script lets Firefox reach it directly}, why): the script run by node, with the host as
+    Firefox passes it (no brackets round an IPv6 literal). (None, why) when the config has no such script, (None, "node") with no node."""
+    prefs = cfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs") or {}
+    src = prefs.get("network.proxy.autoconfig_url") or ""
+    if prefs.get("network.proxy.type") != 2 or not src.startswith("data:text/javascript,"):
+        return None, "got no PAC: %r" % prefs
+    if not NODE:
+        return None, "node"
+    js = unquote(src[len("data:text/javascript,"):]) + (
+        "\nfor (const u of JSON.parse(process.argv[1])) console.log(JSON.stringify([u, FindProxyForURL(u, new URL(u).hostname.replace(/^\\[|\\]$/g, ''))]))")
+    r = subprocess.run([NODE, "-e", js, json.dumps(urls)], capture_output=True, text=True, timeout=30)
+    if r.returncode:
+        return None, "the script did not run: %s" % r.stderr[-200:]
+    got = {u: v for u, v in (json.loads(line) for line in r.stdout.splitlines() if line.strip())}
+    return {u: v == "DIRECT" for u, v in got.items()}, ""
+
+
 def case_pw(R, S):
     sc = Scene(prefix="fakerig run --")
     try:
@@ -716,10 +788,52 @@ def case_pw(R, S):
             cfg.get("browser", {}).get("browserName"), cfg.get("browser", {}).get("launchOptions", {}).get("headless"),
             cfg.get("browser", {}).get("contextOptions")),
              ("firefox", True, {"viewport": {"width": 1309, "height": 818}, "deviceScaleFactor": 1.1, "storageState": os.path.join(rd, "demo-state.json")}))
+        # Firefox has no counterpart of `ab`'s --allowed-domains (Playwright's origin filter is no boundary and blind to redirects), so the
+        # config carries a proxy-autoconfig script (a `data:` URL, Firefox's own `network.proxy.autoconfig_url`) that lets the app's hosts
+        # through (exact host names, as `--allowed-domains` does) and sends every other host to a proxy nothing listens on: a link or a
+        # redirect out of the app is refused by the browser. Measured live on toy pages (Playwright Firefox 158 through @playwright/cli
+        # 0.1.23): with no rule a 302 to another host was followed and that server answered; with a static proxy and `bypass=localhost` a
+        # redirect to `other.localhost` was still followed (the bypass matches the suffix); with the script it is refused
+        # (`NS_ERROR_PROXY_CONNECTION_REFUSED`), as are another loopback address and every other name, while the app's own hosts load.
+        # Seen red on the base (PR 103 review threads, "Enforce the local-app boundary for Firefox" and the review of PR 125; no rule, then a
+        # static proxy that let `*.localhost` through):
+        #   FAIL: pw: the config carries a proxy-autoconfig script for the app's hosts: got no PAC: {}
+        hosts = (jfile(os.path.join(rd, "run.json")) or {}).get("hosts")
+        S.ok("pw: the run has the app's hosts to let through", bool(hosts) and "127.0.0.1" in hosts, repr(hosts))
+        # the same table of URLs through both browsers' guards: `ab` by `fwx walk ab open` (its arg guard, and --allowed-domains = the hosts)
+        # and `pw` by the script the config carries, run by node; they must agree on every URL
+        ab_allowed = {}
+        for u in BOUNDARY_URLS:
+            sc.clear()
+            ab_allowed[u] = sc.walk(R, "ab", "--run", rd, "w1", "open", u).returncode == 0
+        S.ok("pw/ab boundary: the table has urls of both kinds", True in ab_allowed.values() and False in ab_allowed.values(), repr(ab_allowed))
+        S.eq("pw/ab boundary: `ab` lets through only the app's hosts, exact", {u for u, ok in ab_allowed.items() if ok},
+             {u for u in BOUNDARY_URLS if urlsplit(u).hostname in (hosts or [])})
+        pw_allowed, why = pac_table(cfg, BOUNDARY_URLS)
+        if why == "node":
+            print("NOT RUN, NOT ARMED: node is not on the PATH: the Firefox boundary table was not checked")
+        else:
+            S.ok("pw: the config carries a proxy-autoconfig script for the app's hosts", pw_allowed is not None, why)
+            S.eq("pw/ab boundary: Firefox and Chromium refuse the same urls (the sink for the rest)", pw_allowed, ab_allowed)
+        first_cfg = argv[-1]
         # an app that left no session file (the state is only a path until `up` writes it): no storageState, the launch still works
         os.remove(os.path.join(rd, "demo-state.json"))
         sc.clear()
         S.eq("pw: no session file: open exit", sc.walk(R, "pw", "--run", rd, "w2", "open", sc.url).returncode, 0)
+        # Two sessions opened one after the other each name their own config file: with one shared `pw.config.json` a container run's second
+        # open could overwrite the first's before the CLI read it, and the first browser would load the second app's demo session.
+        # Seen red on the base (PR 103 review thread, "Use a separate Playwright configuration file for each session"):
+        #   FAIL: pw: a second session's config is its own file and leaves the first's alone: got (False, False), want (True, True)
+        second_cfg = sc.calls("npx")[-1]["argv"][-1]
+        S.eq("pw: a second session's config is its own file and leaves the first's alone", (
+            first_cfg != second_cfg, "storageState" in (((jfile(first_cfg) or {}).get("browser") or {}).get("contextOptions") or {})), (True, True))
+        # the boundary is the run's, not a walker's: a verifier's Firefox session (`v*`) is held to it too (a mutant that set it only for `w*`
+        # sessions passed every check of the first version of this case)
+        sc.clear()
+        S.eq("pw: a verifier's session opens", sc.walk(R, "pw", "--run", rd, "v1", "open", sc.url).returncode, 0)
+        vcfg = jfile(sc.calls("npx")[-1]["argv"][-1]) or {}
+        S.ok("pw: a verifier's session (v1) has the same boundary as a walker's", vcfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs") ==
+             cfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs") and bool(vcfg.get("browser", {}).get("launchOptions", {}).get("firefoxUserPrefs")), repr(vcfg))
         S.ok("pw: no session file: the context has no storageState (Playwright would refuse a missing file)",
              "storageState" not in ((jfile(sc.calls("npx")[-1]["argv"][-1]) or {}).get("browser", {}).get("contextOptions") or {}), str(sc.calls("npx")[-1]["argv"]))
         sc.clear()
@@ -1045,6 +1159,12 @@ def case_container(R, S):
         S.eq("container: ab w2 uses the second app's url", cookie[-1], sc.url + "/" + ns + "-w2")
         r = sc.walk(R, "ab", "--run", rd, "w3", "snapshot")
         S.ok("container: a third walker has no app", r.returncode == 2 and "w3" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
+        # What a container run with fewer apps than the workflow's sessions does today (the ui-walk workflow names sessions `w1`..`w5` and `v1`..):
+        # a verifier session has no app either, so its every call, `close` included, exits 2. A run with one app (container false) takes any
+        # session name: `ab session` and `pw` above use w2, w3 and v1 on it. The session-to-app assignment is its own unit; this pins both sides.
+        r = sc.walk(R, "ab", "--run", rd, "v1", "close")
+        S.ok("container: a verifier session has no app either, `close` included (known, left: the workflow's v<k> sessions need slot numbers)",
+             r.returncode == 2 and "v1" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
         r = sc.walk(R, "ab", "--run", rd, "main", "snapshot")
         S.ok("container: a session that is not w<k> has no app", r.returncode == 2, "rc %d %s" % (r.returncode, r.stderr))
         # the toy up declared the two containers; its down does not remove them: `down` does, by exact name
@@ -1217,6 +1337,132 @@ def case_findings(R, S):
         helpers.write(bad, "verified-1.json", json.dumps(body))
         r = runner_walk(R, "findings", "--run", bad)
         S.ok("findings: %s is exit 2" % label, r.returncode == 2 and not os.path.exists(os.path.join(bad, "fix.json")), "rc %d %s" % (r.returncode, r.stderr))
+
+
+def case_planted_captures(R, S):
+    """A walker's `screenshot` taken on the control's route is a picture of the plant, whichever finding it is attached to later (review of
+    PR 125: a finding filed under /billing can carry a picture of /settings). `fwx walk ab` notes the route at the moment of the capture:
+    after a `screenshot` in a session that launched with the plant it asks the page for its url (`get url`) and lists the picture in
+    `control-pictures.txt` when the route is the control's, or when the route cannot be read (a doubt is not a clean picture). The tool's own
+    output goes through unchanged. Verifier sessions and runs with no control.json are not looked at. Seen red on the base:
+      FAIL: planted captures: a walker's capture of the control's route is listed: got [], want ['<shots>/on-settings.png']"""
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "planted captures")
+        if not o:
+            return
+        rd = o["run_dir"]
+        shots = jfile(os.path.join(rd, "run.json"))["shots"]
+        listing = os.path.join(rd, "control-pictures.txt")
+
+        def listed():
+            return [ln for ln in open(listing, encoding="utf-8").read().splitlines() if ln] if os.path.exists(listing) else []
+
+        def shoot(session, page, name, *path):
+            pic = os.path.join(shots, name)
+            return sc.walk(R, "ab", "--run", rd, session, "screenshot", *path, env={"FAKE_PAGE_URL": page, "FAKE_SHOT_PATH": pic}), pic
+        r, _ = shoot("w1", sc.url + "/settings", "before-the-plant.png")
+        S.eq("planted captures: no control.json, nothing is looked at", (r.returncode, listed(), [c["argv"][-2:] for c in sc.calls("agent-browser") if "url" in c["argv"]]), (0, [], []))
+        sc.walk(R, "ab", "--run", rd, "w1", "close")
+        helpers.write(rd, "init.js", "//")
+        helpers.write(rd, "control.json", json.dumps({"screen": sc.url + "/settings", "path": "/settings", "script": os.path.join(rd, "init.js")}))
+        sc.walk(R, "ab", "--run", rd, "w2", "close")
+        r, pic = shoot("w2", sc.url + "/settings/", "on-settings.png")
+        S.ok("planted captures: the tool's own output goes through", r.returncode == 0 and "Screenshot saved to " + pic in r.stdout, "rc %d %s" % (r.returncode, r.stdout))
+        S.eq("planted captures: a walker's capture of the control's route is listed", listed(), [pic])
+        r, _ = shoot("w2", sc.url + "/billing", "on-billing.png")
+        S.eq("planted captures: a capture of another route is not", listed(), [pic])
+        r, _ = shoot("v1", sc.url + "/settings", "verifier.png")
+        S.eq("planted captures: a verifier's capture is not (its browser has no plant)", listed(), [pic])
+        explicit = os.path.join(shots, "named.png")
+        r, _ = shoot("w2", sc.url + "/settings?tab=2", "ignored.png", explicit)
+        S.eq("planted captures: a capture with a path of the caller's is listed under that path", listed(), [pic, explicit])
+        r, pic3 = shoot("w2", "", "unreadable.png")
+        S.eq("planted captures: a page whose route cannot be read is listed (a doubt is not a clean picture)", listed(), [pic, explicit, pic3])
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_findings_control_pictures(R, S):
+    """The planted control is restyled by an init script that every walker's browser loads, so a walker's screenshot of the control screen
+    shows the shrunken title. A genuine finding the walkers filed on that screen carries such screenshots as its `evidence`, which `findings`
+    copies to fix.json (the fixer) and `review-page` shows the owner as the `today` figure. `findings` leaves the pictures of the control's
+    screen out of `evidence` (listing them in `evidence_dropped`) and keeps every other row and every text. Seen red on the base:
+      FAIL: control pictures: a finding on the control's screen keeps no walker picture: got ['/.../walker-1.png', 'the title is cut off'], want ['the title is cut off']
+      FAIL: control pictures: the owner's page shows no `today` picture of the control's screen: got ['today'], want []"""
+    rd = helpers.mkdtemp("fwx-walk-run-")
+    os.makedirs(os.path.join(rd, "shots"))
+    pics = {n: os.path.join(rd, "shots", "walker-%s.png" % n) for n in ("1", "2", "3", "4", "5", "6", "7")}
+    vpic = os.path.join(rd, "shots", "verifier-5.png")  # a verifier's own capture: its browser never carried the plant
+    for p in list(pics.values()) + [vpic]:
+        with open(p, "wb") as fh:
+            fh.write(PNG)
+
+    def f(i, screen, evidence, **kw):
+        return dict({"id": i, "file": "src/a.ts", "line": 3, "claim": "claim " + i, "evidence": evidence, "severity": "major", "screen": screen,
+                     "verdict": "CONFIRMED", "expected": "x", "type": "layout", "kind": "observed"}, **kw)
+    rows = [f("T1-1", "/settings", [pics["1"], "the title is cut off"]), f("T1-2", "http://127.0.0.1:3000/settings/?tab=a", pics["2"]),
+            f("T1-3", "/billing", [pics["3"]]), f("T1-4", "/settings", {"before": pics["4"], "note": "the title is cut off", "all": [pics["4"], "x"]}),
+            f("T1-5", "/settings", [pics["5"]], evidence_verifier=[vpic]),
+            # a finding filed under another route that carries a picture `fwx walk ab` listed as taken on the control's route (review of PR 125)
+            f("T1-6", "/billing", [pics["6"], "seen from the billing page"]),
+            # object evidence on another screen: its text and its picture reach the review item
+            f("T1-7", "/billing", {"before": pics["7"], "note": "seven"})]
+    helpers.write(rd, "control-pictures.txt", pics["6"] + "\n")
+    helpers.write(rd, "verified-T1.json", json.dumps({"findings": rows}))
+    helpers.write(rd, "control.json", json.dumps({"screen": "http://127.0.0.1:3000/settings", "path": "/settings", "script": os.path.join(rd, "init.js")}))
+    r = runner_walk(R, "findings", "--run", rd)
+    S.eq("control pictures: exit", r.returncode, 0)
+    fix = {x["id"]: x for x in jfile(os.path.join(rd, "fix.json")) or []}
+    S.eq("control pictures: a finding on the control's screen keeps no walker picture", (fix.get("T1-1") or {}).get("evidence"), ["the title is cut off"])
+    S.eq("control pictures: ...and says which it left out", (fix.get("T1-1") or {}).get("evidence_dropped"), [pics["1"]])
+    S.eq("control pictures: the same screen as an absolute url with a trailing slash and a query, evidence a single path", (
+        (fix.get("T1-2") or {}).get("evidence"), (fix.get("T1-2") or {}).get("evidence_dropped")), ([], [pics["2"]]))
+    S.eq("control pictures: another screen keeps its evidence and has no list of dropped ones", (
+        (fix.get("T1-3") or {}).get("evidence"), "evidence_dropped" in (fix.get("T1-3") or {})), ([pics["3"]], False))
+    # Seen red on a11691f: FAIL: control pictures: a picture listed as taken on the control's route is left out wherever it is attached: got [...walker-6.png, 'seen from the billing page'], want ['seen from the billing page']
+    S.eq("control pictures: a picture listed as taken on the control's route is left out wherever it is attached", (
+        (fix.get("T1-6") or {}).get("evidence"), (fix.get("T1-6") or {}).get("evidence_dropped")), (["seen from the billing page"], [pics["6"]]))
+    # evidence given as an object is filtered by the same rule (its picture values go, its text stays), and the verifier's own capture
+    # (`evidence_verifier`, taken in a browser without the plant) is never dropped. Seen red on 1afad4d:
+    #   FAIL: control pictures: evidence given as an object is filtered by the same rule: got ({'before': '.../walker-4.png', ...}, None), want ({'note': ..., 'all': ['x']}, [...])
+    S.eq("control pictures: evidence given as an object is filtered by the same rule", ((fix.get("T1-4") or {}).get("evidence"), (fix.get("T1-4") or {}).get("evidence_dropped")),
+         ({"note": "the title is cut off", "all": ["x"]}, [pics["4"], pics["4"]]))
+    S.eq("control pictures: the verifier's own capture is kept, the walker's is not", ((fix.get("T1-5") or {}).get("evidence_verifier"), (fix.get("T1-5") or {}).get("evidence"),
+         (fix.get("T1-5") or {}).get("evidence_dropped")), ([vpic], [], [pics["5"]]))
+    fixed = os.path.join(helpers.mkdtemp("fwx-walk-fixed-"), "fixed.json")
+    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": "T1-1", "commit": "a1"}, {"id": "T1-3", "commit": "c3"}, {"id": "T1-4", "commit": "d4"},
+                                                                    {"id": "T1-5", "commit": "e5"}, {"id": "T1-7", "commit": "g7"}]))
+    r = runner_walk(R, "review-page", "--run", rd, "--fixed", fixed)
+    S.eq("control pictures: the review page is built", r.returncode, 0)
+    items = {i["id"]: i for i in (jfile(os.path.join(rd, "review", "decisions.json")) or {}).get("items", [])}
+    caps = {k: [fg["caption"] for fg in v["figures"]] for k, v in items.items()}
+    S.eq("control pictures: the owner's page shows no `today` picture of the control's screen", caps.get("T1-1"), [])
+    S.eq("control pictures: and still shows the other screen's", caps.get("T1-3"), ["today"])
+    # what was left out is said on the item, not left as an empty space, and the verifier's capture is the picture the owner gets instead
+    # Seen red on 1afad4d: FAIL: control pictures: the item says a picture was left out and why: ['Screen: /settings', 'Commit: a1', 'the title is cut off']
+    S.ok("control pictures: the item says a picture was left out and why", any("left out" in w and "planted control" in w for w in items.get("T1-1", {}).get("what", [])),
+         repr(items.get("T1-1", {}).get("what")))
+    S.ok("control pictures: an item with nothing left out says nothing of it", not any("left out" in w for w in items.get("T1-3", {}).get("what", [])), repr(items.get("T1-3", {}).get("what")))
+    S.eq("control pictures: the verifier's own capture is the item's picture", caps.get("T1-5"), ["verified"])
+    # evidence given as an object is rendered on the review item (its text, and its pictures as figures), not skipped. Seen red on a11691f:
+    #   FAIL: control pictures: an object's retained text reaches the item: ['Screen: /settings', ...] has no 'x'
+    S.ok("control pictures: an object's retained text reaches the item", all(w in items.get("T1-4", {}).get("what", []) for w in ("the title is cut off", "x")),
+         repr(items.get("T1-4", {}).get("what")))
+    S.eq("control pictures: an object's picture is a figure and its text is on the item", (caps.get("T1-7"), "seven" in items.get("T1-7", {}).get("what", [])), (["today"], True))
+    # no control in the run (a recheck's folder, or a walk whose plant was refused): nothing is left out
+    rd2 = helpers.mkdtemp("fwx-walk-run-")
+    helpers.write(rd2, "verified-T1.json", json.dumps({"findings": [f("T1-1", "/settings", [pics["1"]])]}))
+    runner_walk(R, "findings", "--run", rd2)
+    S.eq("control pictures: with no control.json the evidence is as it came", (jfile(os.path.join(rd2, "fix.json")) or [{}])[0].get("evidence"), [pics["1"]])
+    # a control.json that names no route cannot say which pictures to leave out: exit 2, nothing written (not read as "no control")
+    rd3 = helpers.mkdtemp("fwx-walk-run-")
+    helpers.write(rd3, "verified-T1.json", json.dumps({"findings": [f("T1-1", "/settings", [pics["1"]])]}))
+    helpers.write(rd3, "control.json", json.dumps({"screen": "http://127.0.0.1:3000/settings"}))
+    r = runner_walk(R, "findings", "--run", rd3)
+    S.ok("control pictures: a control.json with no route is exit 2 and writes no fix.json", r.returncode == 2 and not os.path.exists(os.path.join(rd3, "fix.json")),
+         "rc %d %s" % (r.returncode, r.stderr))
 
 
 def runner_walk(R, *args, env=None):
@@ -1509,12 +1755,23 @@ def case_up_restart(R, S):
         S.eq("restart: down leaves no session mark", sorted(os.listdir(os.path.join(rd, "sessions"))) if os.path.isdir(os.path.join(rd, "sessions")) else [], [])
         helpers.write(rd, "control.json", json.dumps({"screen": sc.url + "/a", "path": "/a", "script": os.path.join(rd, "init.js")}))
         helpers.write(rd, "verified-T9.json", json.dumps([{"id": "T9-1", "verdict": "CONFIRMED"}]))
+        # A recheck's capture is joined to a finding by id (`review-page`), and a new walk numbers its findings T9-1 again: the earlier
+        # recheck's file must not stay where the page reads it. Seen red on the base (PR 103 review thread, "Exclude recheck captures from
+        # earlier walk invocations"):
+        #   FAIL: restart: a rechecked file of the earlier run is not left for `review-page`: ['rechecked-T9.json']
+        helpers.write(rd, "rechecked-T9.json", json.dumps({"findings": [{"id": "T9-1", "verdict": "NOT REPRODUCED", "evidence_after": "/srv/old-after.png"}]}))
+        # a tramo id is whatever the tramos agent named it (`safe` in ui-walk.js lets any letter or digit start it): not only `T<n>`. A glob
+        # narrowed to `rechecked-T*.json` passed the first version of this case.
+        helpers.write(rd, "rechecked-x7.json", json.dumps({"findings": [{"id": "x7-1", "verdict": "NOT REPRODUCED", "evidence_after": "/srv/old-after.png"}]}))
         r, o2 = sc.up(R)
         if not S.ok("restart: up armed again", r.returncode == 0 and o2 and o2.get("armed") is True, "rc %d %s" % (r.returncode, r.stderr)):
             return
         S.ok("restart: control.json of the earlier run is gone", not os.path.exists(os.path.join(rd, "control.json")), "it is still there")
         S.eq("restart: a verified file of the earlier run is not left for `findings`", sorted(f for f in os.listdir(rd) if f.startswith("verified-")), [])
         S.ok("restart: and it is kept, not deleted", os.path.exists(os.path.join(rd, "earlier", "verified-T9.json")))
+        S.eq("restart: a rechecked file of the earlier run is not left for `review-page`", sorted(f for f in os.listdir(rd) if f.startswith("rechecked-")), [])
+        S.ok("restart: and it is kept, not deleted (rechecked)", os.path.exists(os.path.join(rd, "earlier", "rechecked-T9.json"))
+             and os.path.exists(os.path.join(rd, "earlier", "rechecked-x7.json")))
         sc.clear()
         sc.walk(R, "ab", "--run", rd, "w1", "snapshot")
         S.ok("restart: the first call after the restart launches again (the demo session is set)",
@@ -1666,7 +1923,7 @@ def case_poll(R, S):
 
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
-         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_poll]
+         case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures, case_poll]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
@@ -1701,8 +1958,8 @@ MUTANTS = [
     ("4 left does not fail down", case_down_count, "return res, 0 if ok and not left else 1", "return res, 0 if ok else 1",
      "down: a process with the run's mark in its environment: exit: got 0, want 1"),
     ("5 switch ignored", case_off, 'if not cfg["integrations"].get("agent_browser"):', "if False:", "switch off: exit and JSON"),
-    ("6 run '' as a prefix", case_run_empty, 'prefix = shlex.split(app["run"])\n    for i, (a, quiet)',
-     'prefix = [app["run"]]\n    for i, (a, quiet)', 'run "": ab was called'),
+    ("6 run '' as a prefix", case_run_empty, 'prefix = shlex.split(app["run"])\n    seen = ',
+     'prefix = [app["run"]]\n    seen = ', 'run "": ab was called'),
     ("6 run '' as absent", case_run_empty, '"run": apps[0]["run"], "hosts"', '"run": apps[0]["run"] or None, "hosts"', 'run "": run is the empty string'),
     ("7 one app for two walkers", case_container, 'names = [ns + "-w%d" % k for k in range(1, cap["allowed"] + 1)] if container else [ns]',
      'names = [ns + "-w1"] if container else [ns]', "container: 1 app for 2 walkers: got 1, want 2"),
@@ -1737,15 +1994,15 @@ MUTANTS = [
     ("11 the first object wins", case_review_answers, "found, at = v, end", "return v", "review answers: prose around the JSON, two v 2 objects: the last wins"),
     ("11 commit not carried", case_review_answers, '"commit": m.get("commit")}', '"commit": None}', "review answers: a redo with its note and the fix's commit"),
     ("11 not_defect is a redo", case_review_answers, 'out[pick].append({"id": fid', 'out["redo"].append({"id": fid', "review answers: a not_defect with its note and commit"),
-    ("ab: the prefix on every call", case_ab_session, 'rc = execute((prefix if launch else []) + ["agent-browser"] + a, env, run["repo"], quiet)',
-     'rc = execute(prefix + ["agent-browser"] + a, env, run["repo"], quiet)',
+    ("ab: the prefix on every call", case_ab_session, 'rc = execute((prefix if launch else []) + ["agent-browser"] + a, env, run["repo"], quiet, seen',
+     'rc = execute(prefix + ["agent-browser"] + a, env, run["repo"], quiet, seen',
      "ab session: only the call that launches the daemon goes through the rig prefix"),
     ("ab: no socket dir", case_ab_session, 'env = clean_env({"AGENT_BROWSER_SOCKET_DIR": socket_dir()} if prefix and not launch else None)',
      "env = clean_env()", "ab session: a later call carries the socket dir"),
     ("ab: no cookies", case_ab_session, 'for name, value in cookies_of(app["state"]):', "for name, value in []:",
      "ab session: the first call is a cookie of the demo session"),
-    ("ab: no init script", case_ab_session, "if os.path.isfile(ctl):", "if False:", "ab session: --init-script rides on the launch only"),
-    ("ab: the plant on a verifier", case_ab_session, ' and not session.startswith("v"):', ":", "ab session: a verifier session (v1) launches without the planted control"),
+    ("ab: no init script", case_ab_session, "if fresh and planted:", "if False:", "ab session: --init-script rides on the launch only"),
+    ("ab: the plant on a verifier", case_ab_session, ' and not session.startswith("v") and os.path.isfile(ctl)', " and os.path.isfile(ctl)", "ab session: a verifier session (v1) launches without the planted control"),
     ("ab: close of a session never opened launches it", case_ab_session, 'if fresh and words[:1] == ["close"] and "--all" not in args:', "if False:",
      "ab session: close of a session never opened: no browser call"),
     ("ab: close --all is a no-op too", case_ab_session, 'if fresh and words[:1] == ["close"] and "--all" not in args:', 'if fresh and words[:1] == ["close"]:',
@@ -1802,7 +2059,7 @@ MUTANTS = [
      "hygiene down: another walk's target file stays"),
     ("rollback with the caller's env", case_rollback_env, "stop_apps(started, repo, lambda a: app_env(a, ns, container, env_base))",
      "stop_apps(started, repo, lambda a: env_base)", "rollback: the down of the failed app ran with the env its up had"),
-    ("control.json kept at up", case_up_restart, '("down.json", "run.json", "control.json")', '("down.json", "run.json")', "restart: control.json of the earlier run is gone"),
+    ("control.json kept at up", case_up_restart, '("down.json", "run.json", "control.json", "control-pictures.txt")', '("down.json", "run.json")', "restart: control.json of the earlier run is gone"),
     ("verified files kept at up", case_up_restart, 'os.replace(old, os.path.join(run_dir, "earlier", os.path.basename(old)))', "pass",
      "restart: a verified file of the earlier run is not left for `findings`"),
     ("session marks kept by down", case_up_restart, 'for p in glob.glob(os.path.join(rd, "sessions", "ab-*")) + glob.glob(os.path.join(rd, "sessions", "pw-*")):',
@@ -1810,6 +2067,40 @@ MUTANTS = [
     ("finding id not checked", case_finding_ids, "if not brief.ID.match(fid):", "if False:", "finding ids: ../../escape (CONTRADICTED)"),
     ("recheck captures not joined", case_review_recheck, 'dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f', "f",
      "review recheck: F1 has today and built"),
+    ("pw: no proxy for outside hosts", case_pw, 'launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}}',
+     'launch = {"headless": True}', "pw: the config carries a proxy-autoconfig script"),
+    ("pw: the boundary only for walker sessions", case_pw, 'launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}}',
+     'launch = {"headless": True, "firefoxUserPrefs": {"network.proxy.type": 2, "network.proxy.autoconfig_url": pw_pac(run["hosts"])}} if session.startswith("w") else {"headless": True}', "pw: a verifier's session (v1) has the same boundary as a walker's"),
+    ("pw: hosts matched by suffix", case_pw, '.indexOf(h)>=0?', '.some(function(x){return h.slice(-x.length)===x})?',
+     "pw/ab boundary: Firefox and Chromium refuse the same urls"),
+    ("pw: one config file for every session", case_pw, '"pw.config-%s.json" % session', '"pw.config.json"', "pw: a second session's config is its own file"),
+    ("rechecked files kept at up, only those of a tramo named T<n>", case_up_restart, 'glob.glob(os.path.join(run_dir, "rechecked-*.json"))',
+     'glob.glob(os.path.join(run_dir, "rechecked-T*.json"))', "restart: a rechecked file of the earlier run is not left for `review-page`"),
+    ("rechecked files kept at up", case_up_restart, ' + glob.glob(os.path.join(run_dir, "rechecked-*.json")):', ":",
+     "restart: a rechecked file of the earlier run is not left for `review-page`"),
+    ("a control.json with no route is read as no control", case_findings_control_pictures, 'if not isinstance(route, str) or not route.startswith("/"):', "if False:",
+     "control pictures: a control.json with no route is exit 2 and writes no fix.json"),
+    ("a listed picture is kept wherever it is attached", case_findings_control_pictures, "(on_route or os.path.realpath(resolve(rd, v)) in taint)", "on_route",
+     "control pictures: a picture listed as taken on the control's route is left out wherever it is attached"),
+    ("a capture on the control's route is not listed", case_planted_captures, "if url and route_of(url) != ctl.get(\"path\"):\n        return", "if True:\n        return",
+     "planted captures: a walker's capture of the control's route is listed"),
+    ("a capture of a page whose route cannot be read is not listed", case_planted_captures, 'if url and route_of(url) != ctl.get("path"):', 'if route_of(url or "") != ctl.get("path"):',
+     "planted captures: a page whose route cannot be read is listed"),
+    ("a capture of another route is listed", case_planted_captures, 'if url and route_of(url) != ctl.get("path"):', "if False:",
+     "planted captures: a capture of another route is not"),
+    ("a verifier's capture is listed", case_planted_captures, 'planted = not os.environ.get("FWX_WALK_NO_CONTROL") and not session.startswith("v") and os.path.isfile(ctl)',
+     'planted = not os.environ.get("FWX_WALK_NO_CONTROL") and os.path.isfile(ctl)', "planted captures: a verifier's capture is not"),
+    ("the tool's output swallowed", case_planted_captures, "                sys.stdout.write(r.stdout)\n", "", "planted captures: the tool's own output goes through"),
+    ("object evidence is not rendered", case_findings_control_pictures, "        elif isinstance(x, dict):\n            for y in x.values():\n                yield from leaves(y)\n", "",
+     "control pictures: an object's picture is a figure and its text is on the item"),
+    ("evidence given as an object kept whole",case_findings_control_pictures, "return {k: x for k, (x, gone) in ((k, strip(y)) for k, y in v.items()) if not gone}, False",
+     "return v, False", "control pictures: evidence given as an object is filtered by the same rule"),
+    ("a picture left out is not said on the item", case_findings_control_pictures, 'if isinstance(left, list) and left else ""]', 'if False else ""]',
+     "control pictures: the item says a picture was left out and why"),
+    ("the verifier's own capture is not shown", case_findings_control_pictures, 'seen, t4 = figures_of(rd, rev, fid, "verified", f.get("evidence_verifier"))',
+     "seen, t4 = [], []", "control pictures: the verifier's own capture is the item's picture"),
+    ("the control's pictures reach the fixer",case_findings_control_pictures, 'return dict(f, evidence=kept, evidence_dropped=left) if left else f', "return f",
+     "control pictures: a finding on the control's screen keeps no walker picture"),
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
     ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),

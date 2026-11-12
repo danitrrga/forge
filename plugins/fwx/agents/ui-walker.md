@@ -37,7 +37,7 @@ A finding:
 
 `type` is one of `bug`, `broken-expectation`, `unclear`, `inconsistency`, `hierarchy`, `layout`, `motion`, `drift`, `console`. Severity is what a user feels: `blocker` cannot finish the task, `major` finishes with difficulty or a wrong result, `minor` is noticed but does not slow the task, `cosmetic` is only how it looks. No pixel values in any finding, `drift` included: say what you see. No findings is a valid walk.
 
-When you finish, end the file with "Covered" (each screen and state, width, theme, browser), "Not covered" (what you did not reach and why), "Tooling" and "Outside". Your reply is three lines: the count by severity, the findings file path, and the finding a user would hit first.
+When you finish, end the file with "Covered" (each screen and state, width, theme, browser), "Not covered" (what you did not reach and why), "Tooling" and "Outside". Your reply is three lines: the count by severity (each number before its word, `1 blocker, 0 major, 2 minor`: the workflow adds them up to check that the verifier gave a row for every finding), the findings file path, and the finding a user would hit first.
 
 ## Axis `breaker`
 

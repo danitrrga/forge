@@ -254,7 +254,7 @@ def check_green(script, s):
     s.eq("screenshot paths: a path with a space is read whole, a missing screen is not a capture", details(rec2).get("shots"), [spaced])
     d = details(rec)
     s.eq("green: details keys", sorted(d), sorted(["run_dir", "fix_file", "counts", "contradicted_file", "control", "coverage_file", "shots", "clips", "down_file", "outside",
-                                                 "recheck", "gaps", "agents"]))
+                                                 "recheck", "gaps", "agents", "unverified", "lost_slots"]))
     s.eq("green: details.run_dir, fix_file, contradicted_file, down_file, coverage_file", (d.get("run_dir"), d.get("fix_file"), d.get("contradicted_file"), d.get("down_file"), d.get("coverage_file")),
          (RUN_DIR, RUN_DIR + "/fix.json", RUN_DIR + "/contradicted.json", RUN_DIR + "/down.json", RUN_DIR + "/coverage.md"))
     s.eq("green: details.counts are what `findings` printed", d.get("counts"), FINDINGS_OUT["counts"])
@@ -381,13 +381,80 @@ def check_close(script, s):
     rec, err = go(script, answers_over={"ui-walker:T1-breaker": None})
     rec = finish(s, "close after a walker that returned nothing", rec, err)
     s.ok("close after a walker that returned nothing: its browser is closed all the same", closing("w1") in labels(rec), repr(labels(rec)))
-    # a close that fails is not a gap: `down` is the net, and the idle timeout; it never fails the run
+    # a close that fails is no gap while capacity is left: `down` is the net, and the idle timeout; the job's slot stays taken (the browser may
+    # still be up), so the run goes on with what is left
     rec, err = go(script, answers_over={closing("w1"): None, closing("v1"): R("", 1)})
     rec = finish(s, "close fails", rec, err)
     s.eq("close fails: the run is still done, with no gap", (result(rec).get("status"), details(rec).get("gaps")), ("done", []))
+    # A close that did not return, or exited non-zero, leaves the browser up: its slot is not freed, so the quota still bounds browsers. With
+    # a quota of 1 the next job would have started a second browser beside it; the queue is stopped instead (a gap each) and `down` runs.
+    # Seen red on the base (PR 103 review thread, "Do not release capacity after an unsuccessful browser close"; the close's result was dropped):
+    #   FAIL: close not confirmed (rc 1): no second browser starts beside one that may be up: got ['ui-walker:T1-breaker', 'ui-walker:T1-critic', 'ui-walker:T2-breaker', 'ui-walker:T2-critic', 'ui-walker:T2-firefox'], want ['ui-walker:T1-breaker']
+    one = {"executor:runner-up": R(dict(UP, capacity=dict(UP["capacity"], allowed=1))), "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": 1})}
+    for what, ans in (("rc 1", R("", 1)), ("no answer", None)):
+        rec, err = go(script, answers_over={**one, closing("w1"): ans})
+        rec = finish(s, "close not confirmed (%s)" % what, rec, err)
+        s.eq("close not confirmed (%s): no second browser starts beside one that may be up" % what, [l["label"] for l in walkers(rec)], ["ui-walker:T1-breaker"])
+        s.eq("close not confirmed (%s): the close was tried twice" % what, labels(rec).count(closing("w1")), 2)
+        s.ok("close not confirmed (%s): the jobs left in the queue are gaps that say why, the run is failed and `down` still runs" % what,
+             result(rec).get("status") == "failed" and any("no browser slot" in g for g in details(rec).get("gaps", [])) and labels(rec)[-1:] == ["executor:runner-down"],
+             repr((result(rec).get("status"), details(rec).get("gaps"), labels(rec)[-3:])))
+    # What the owner reads when the slot is lost (review of PR 125: the reason led with "the critic returned nothing", each job was a gap twice,
+    # and the walker's findings were nowhere in the result). Seen red on 93e43d9:
+    #   FAIL: close not confirmed, the owner's reading: the reason leads with the browser that could not be closed: 'The run does not count: the control screen ... was not walked: the critic of tramo T1 returned nothing. no tramo was verified: ...'
+    #   FAIL: close not confirmed, the owner's reading: the findings the walker returned stay in the result as not verified: got None, want [{'tramo': 'T1', 'files': [...findings-w1.md]}]
+    rec, err = go(script, answers_over={**one, closing("w1"): R("", 1)})
+    rec = finish(s, "close not confirmed, the owner's reading", rec, err)
+    r, d = result(rec), details(rec)
+    s.ok("close not confirmed, the owner's reading: the reason leads with the browser that could not be closed and says no slot was left",
+         str(r.get("reason")).startswith("A browser could not be closed (ui-walker:T1-breaker), so no browser slot was left"), repr(r.get("reason"))[:300])
+    s.ok("close not confirmed, the owner's reading: the reason says the findings were collected but not verified", "collected but not verified" in str(r.get("reason")),
+         repr(r.get("reason"))[:400])
+    s.eq("close not confirmed, the owner's reading: the findings the walker returned stay in the result as not verified", d.get("unverified"),
+         [{"tramo": "T1", "files": [RUN_DIR + "/findings-w1.md"]}])
+    s.eq("close not confirmed, the owner's reading: one slot lost", d.get("lost_slots"), 1)
+    s.eq("close not confirmed, the owner's reading: each job that never started is one gap, none of them 'did not return'",
+         (len([g for g in d.get("gaps", []) if "was not started" in g]), [g for g in d.get("gaps", []) if "did not return" in g]), (5, []))
+    # No hang at any quota: with two slots and both closes failing every slot is lost while jobs wait (a counter that stuck at 1 left them
+    # queued for ever: `st.lost = 1`); with one of two lost the other carries the walk to its end.
+    two = {"executor:runner-up": R(dict(UP, capacity=dict(UP["capacity"], allowed=2))), "executor:runner-capacity": R({"role": "ui-walker", "want": 4, "allowed": 2})}
+    rec, err = go(script, answers_over={**two, closing("w1"): R("", 1), closing("w2"): R("", 1)})
+    rec = finish(s, "close not confirmed, quota 2, both lost", rec, err)
+    s.eq("close not confirmed, quota 2, both lost: the two walkers that ran are the only ones, the run ends failed with the lost slots in front",
+         (sorted(l["label"] for l in walkers(rec)), result(rec).get("status"), str(result(rec).get("reason")).startswith("A browser could not be closed ("), details(rec).get("lost_slots")),
+         (["ui-walker:T1-breaker", "ui-walker:T1-critic"], "failed", True, 2))
+    rec, err = go(script, answers_over={**two, closing("w1"): R("", 1)})
+    rec = finish(s, "close not confirmed, quota 2, one lost", rec, err)
+    s.eq("close not confirmed, quota 2, one lost: the other slot carries every job, done, with the loss said",
+         (len(walkers(rec)), result(rec).get("status"), details(rec).get("gaps"), details(rec).get("lost_slots"), str(result(rec).get("reason")).startswith("A browser could not be closed (")),
+         (5, "done", [], 1, True))
+    # exit 77 of a close (`NOT RUN, NOT ARMED`: no Playwright Firefox, or no agent-browser, on this machine) means no browser of that tool can be open:
+    # a confirmed close, no slot lost (a recheck of a machine with no Firefox lost one slot per verifier). Seen red on 93e43d9:
+    #   FAIL: close exit 77: the recheck is done with no gap and no slot lost: got ('failed', 1, [...'ui-verifier:T2 was not started: no browser slot is left ...']), want ('done', 0, [])
+    rc77 = {**recheck_answers(), **one, closer("v1", True): R("", 77), closer("v2", True): R("", 77)}
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=rc77)
+    rec = finish(s, "close exit 77", rec, err)
+    s.eq("close exit 77: the recheck is done with no gap and no slot lost", (result(rec).get("status"), details(rec).get("lost_slots"), details(rec).get("gaps")), ("done", 0, []))
+    # a `pw` close that fails keeps the slot of its verifier (`ab` closing is not the whole close of a recheck's verifier)
+    rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers={**recheck_answers(), **one, closer("v1", True): R("", 1)})
+    rec = finish(s, "pw close fails", rec, err)
+    s.eq("pw close fails: the next verifier does not start beside a Firefox that may be up, and the reason says which close",
+         ("ui-verifier:T2" in labels(rec), result(rec).get("status"), str(result(rec).get("reason")).startswith("A browser could not be closed (ui-verifier:T1)")), (False, "failed", True))
+    # A runner error on the close (its agent type is missing: the script's own error) confirms nothing either: the browser may be up, so the slot stays
+    # taken and no second browser starts beside it, and the run ends with that error. Seen red on a11691f (the slot was freed):
+    #   FAIL: close with a missing runner agent type: no second browser starts, the run stops with that error: got (5, 'failed', True), want (1, 'failed', True)
+    rec, err = go(script, answers_over={**one, closing("w1"): {"$throw": "agent type fwx:executor not found"}})
+    rec = finish(s, "close with a missing runner agent type", rec, err)
+    s.eq("close with a missing runner agent type: no second browser starts, the run stops with that error",
+         (len(walkers(rec)), result(rec).get("status"), "agent type fwx:executor not found" in str(result(rec).get("reason"))), (1, "failed", True))
     rec, err = go(script, args_over={"recheck": RUN_DIR + "/fix.json"}, answers=recheck_answers())
     rec = finish(s, "close in a recheck", rec, err)
     s.ok("close in a recheck: each verifier's browser is closed", closing("v1") in labels(rec) and closing("v2") in labels(rec), repr(labels(rec)))
+    # A recheck's verifier repeats a finding in the browser its `steps` name, and the tramo rebuilt from fix.json cannot say which: `ab` and `pw`
+    # are both closed (`pw close` of a session nobody opened is a no-op, exit 0). Seen red on the base (PR 103 review thread, "Close Playwright
+    # sessions used during rechecks"; `tramo.firefox` is false there, so a Firefox browser stayed up when the slot was freed):
+    #   FAIL: close in a recheck: a Firefox browser a verifier opened is closed too: got [], want ['executor:runner-close-v1-pw', 'executor:runner-close-v2-pw']
+    s.eq("close in a recheck: a Firefox browser a verifier opened is closed too", sorted(l for l in labels(rec) if l.endswith("-pw")), [closer("v1", True), closer("v2", True)])
 
 
 def check_control_rows(script, s):
@@ -561,6 +628,25 @@ def check_verify(script, s):
     rec, err = go(script, answers_over={"executor:runner-save-T1": R("", 1)})
     rec = finish(s, "save fails", rec, err)
     s.ok("save fails: a verified file that was not written is a gap", result(rec).get("status") == "failed" and any("T1" in g for g in details(rec).get("gaps", [])), repr(details(rec).get("gaps")))
+    # A saved reply is not a verified tramo: the walkers of T1 reported 2 findings and the verifier answered `{"findings": []}` (or one row), which
+    # the script accepted, so the tramo left `details.unverified`, `fix.json` was empty and the run was `done`. The count comes from the walkers'
+    # replies (`2 minor`); fewer rows than that is asked for once more, then a gap, and the tramo stays in `unverified`. Seen red on a11691f:
+    #   FAIL: verifier with no row for the findings the walkers reported: asked once more, then a gap, failed: got (1, 'done', False), want (2, 'failed', True)
+    two = "0 blocker, 2 minor\n%s/findings-w1.md\nthe save bar clips" % RUN_DIR
+    for what, reply in (("no row", {"findings": []}), ("one row of two", verified("T1", ("CONFIRMED", None)))):
+        rec, err = go(script, answers_over={"ui-walker:T1-breaker": two, "ui-verifier:T1": reply})
+        rec = finish(s, "verifier with " + what, rec, err)
+        s.eq("verifier with %s for the findings the walkers reported: asked once more, then a gap, failed" % what, (
+            len(launched(rec, "ui-verifier:T1")), result(rec).get("status"), any("ui-verifier did not return: T1" in g and "2 finding(s)" in g for g in details(rec).get("gaps", []))),
+             (2, "failed", True))
+        s.eq("verifier with %s: nothing is saved for the tramo and its files are in details.unverified" % what, (runner(rec, "save-T1"), details(rec).get("unverified")),
+             ([], [{"tramo": "T1", "files": [RUN_DIR + "/findings-w1.md", RUN_DIR + "/findings-w2.md"]}]))
+    rec, err = go(script, answers_over={"ui-walker:T1-breaker": two, "ui-verifier:T1": verified("T1", ("CONFIRMED", None), ("NOT REPRODUCED", None))})
+    rec = finish(s, "verifier with a row for each", rec, err)
+    s.eq("verifier with a row for each finding reported: the tramo is verified", (len(launched(rec, "ui-verifier:T1")), result(rec).get("status"), details(rec).get("unverified")), (1, "done", []))
+    rec, err = go(script, answers_over={"ui-walker:T1-breaker": "0 blocker, 0 minor\n%s/findings-w1.md\nnone" % RUN_DIR, "ui-verifier:T1": {"findings": []}})
+    rec = finish(s, "verifier with no row, none reported", rec, err)
+    s.eq("verifier with no row and no finding reported: accepted (an empty walk is a valid result)", (len(launched(rec, "ui-verifier:T1")), result(rec).get("status")), (1, "done"))
 
 
 def recheck_fixes():
@@ -573,7 +659,8 @@ def recheck_answers():
     ans.update({"executor:runner-read-fix": R(json.dumps(fixes)),
                 "ui-verifier:T1": {"findings": [dict(fixes[0], verdict="NOT REPRODUCED", evidence_after="/srv/shots/after-1.png")]},
                 "ui-verifier:T2": {"findings": [dict(fixes[1], verdict="PLAUSIBLE", evidence_after="/srv/shots/after-2.png")]},
-                "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved")})
+                "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved"),
+                closer("v1", True): R(""), closer("v2", True): R("")})
     return ans
 
 
@@ -750,11 +837,33 @@ MUTANTS = [
     ("the walkers are not told the run", "`fwx walk ab --run ' + st.runDir + ' ' + job.session", "`fwx walk ab ' + job.session", "FAIL: green: every walker command names the run"),
     ("the walk keeps the quota `up` gave", "const tramos = await getTramos()\n  await sizeQuota(tramos.length)\n", "const tramos = await getTramos()\n",
      "FAIL: quota from the second ask: the walkers of the tramos run at once"),
-    ("the recheck keeps the quota `up` gave", "  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
+    ("a slot is freed after a close that was not confirmed", "      if (closed) release()\n      else lose(tag)", "      release()", "FAIL: close not confirmed (rc 1): no second browser starts"),
+    ("a close is not tried twice", "for (let i = 0; i < 2; i++) {\n    if (st.fatal) return false", "for (let i = 0; i < 1; i++) {\n    if (st.fatal) return false",
+     "FAIL: close not confirmed (rc 1): the close was tried twice"),
+    ("a lost slot leaves the queue waiting for ever", "if (st.lost >= quota) for (const next of st.sem.waiting.splice(0)) next(false)", "",
+     "FAIL: close not confirmed (rc 1): the script ended"),
+    ("a script error on a close frees the slot", "    if (st.fatal) return false\n    if (v && (v.rc === 0 || v.rc === 77)) return true", "    if (st.fatal || (v && (v.rc === 0 || v.rc === 77))) return true",
+     "FAIL: close with a missing runner agent type"),
+    ("a verifier reply with too few rows is accepted", " && coversWalkers(v.findings, expected, label) ? v : null)", " ? v : null)",
+     "FAIL: verifier with no row for the findings the walkers reported"),
+    ("the walkers' count is not read", "job.count = reportedCount(got)", "job.count = 0", "FAIL: verifier with no row for the findings the walkers reported"),
+    ("the lost-slot counter stuck at 1","  st.lost += 1\n", "  st.lost = 1\n", "FAIL: close not confirmed, quota 2, both lost"),
+    ("the `pw` close result ignored", "return ab && pw", "return ab", "FAIL: pw close fails"),
+    ("a close that exits 77 is not confirmed", "(v.rc === 0 || v.rc === 77)", "v.rc === 0", "FAIL: close exit 77"),
+    ("the findings of an unverified tramo dropped", "unverified: unverified(), lost_slots: st.lost,", "unverified: [], lost_slots: st.lost,",
+     "FAIL: close not confirmed, the owner's reading: the findings the walker returned stay in the result as not verified"),
+    ("the lost slot after the control's reason", "const lead = [lostLead(), st.noCount ? NO_COUNT + ': ' + st.noCount + '.' : ''].filter(Boolean).join(' ')",
+     "const lead = [st.noCount ? NO_COUNT + ': ' + st.noCount + '.' : '', lostLead()].filter(Boolean).join(' ')",
+     "FAIL: close not confirmed, the owner's reading: the reason leads with the browser that could not be closed"),
+    ("a job that never started is a gap twice", "  if (got === NOSLOT) return null\n", "", "FAIL: close not confirmed, the owner's reading: each job that never started is one gap"),
+    ("a recheck closes no Firefox browser","tramo.firefox || items ? await closeBrowser('pw', session) : true", "tramo.firefox ? await closeBrowser('pw', session) : true",
+     "FAIL: close in a recheck: a Firefox browser a verifier opened is closed too"),
+    ("the recheck keeps the quota `up` gave","  await sizeQuota(tramos.length)\n  st.tramos = tramos.map", "  st.tramos = tramos.map", "FAIL: recheck: capacity is asked for the 2 tramos"),
     ("a capacity that gives no answer drops the quota", "if (!Number.isInteger(allowed)) {", "if (false) {", "FAIL: capacity ask rc 1: the quota stays what `up` allowed (3)"),
     ("a recheck reply need not cover its findings", "if (!items) return true", "return true", "FAIL: recheck reply with no row: launched once more"),
-    ("a job's browser is not closed", "      if (after) await after()\n", "", "FAIL: close: every job's browser is closed after it returned"),
-    ("the slot is freed before the browser is closed", "      if (after) await after()\n    } finally {\n      release()\n    }", "      release()\n      if (after) await after()\n    } finally {\n    }",
+    ("a job's browser is not closed", "      if (after) closed = (await after()) !== false\n", "", "FAIL: close: every job's browser is closed after it returned"),
+    ("the slot is freed before the browser is closed", "      if (after) closed = (await after()) !== false\n    } finally {\n      if (closed) release()\n      else lose(tag)\n    }",
+     "      release()\n      if (after) await after()\n    } finally {\n    }",
      "FAIL: close quota 1: the next job starts only after the previous one's browser was closed"),
     ("the planted control's row goes to the fixer", "if (!fid) return", "return", "FAIL: control row: the verifier confirmed the planted title"),
     ("the rows tied to the control's row stay", "if (out.has(a) !== out.has(b)) {", "if (false) {", "FAIL: control row, the judged row duplicates a kept sighting"),
