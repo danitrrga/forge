@@ -431,8 +431,128 @@ s.ok("new-phase with a map over the cap: one `fwx state new-phase: context-base:
 s.eq("new-phase with a map over the cap: the phase is bound", (session_file(big_repo, "sess-big") or {}).get("phase_dir"),
      ".fwx/milestones/v1/phases/01-alpha")
 
+# ---- `fwx state commit`: the documents of a phase go where their history is ---------------------------------------------
+# A project whose default branch takes changes only by pull request keeps `.fwx/` on the phase branch: the command, run from the phase's
+# worktree, moves the files the worktree lacks out of the main checkout (the first phase: everything; a later one: the new phase's folder),
+# commits `.fwx/` there and leaves the default branch alone. Without the protection it commits on the main checkout's branch; with `.fwx/`
+# ignored by git (its history is on the data side) it refuses and names `forge commit`.
+# Seen red on master (no `commit` subcommand; 25 FAIL lines, first ones):
+#   FAIL: protected, first phase: commit from the phase worktree: exit code: got 2, want 0
+#   FAIL: protected, first phase: the phase branch's tree holds the phase documents: ['README']
+# Controls, each seen red on lib/fwx/state.py changed in one place (put back after each):
+#   - the protection ignored, so the commit goes to the main checkout as the skill's old line did (18 failed):
+#       FAIL: protected: from the main checkout: exit code: got 0, want 1
+#       FAIL: protected: from the main checkout, nothing was committed: got <a new sha>, want <the base sha>
+#   - the files not moved into the worktree (14 failed):
+#       FAIL: protected, first phase: commit from the phase worktree: exit code: got 1, want 0
+#   - the default-branch guard dropped (4 failed):
+#       FAIL: protected: a worktree on the default branch: exit code: got 0, want 1
+IDENT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"}
+PHASE_REL = ".fwx/milestones/v1/phases/%s"
+
+
+def commit(cwd, message):
+    return st(cwd, "commit", "-m", message, session=None, env=IDENT)
+
+
+def toy(protected, files=None):
+    repo = helpers.toy_repo(dict({"README": "toy\n"}, **(files or {})))
+    helpers.write(repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"default_branch_protected": protected}}))
+    return repo
+
+
+def head_files(cwd):
+    return helpers.git(cwd, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+
+
+def show(cwd, spec):
+    try:
+        return helpers.git(cwd, "show", spec)
+    except RuntimeError:  # the path is not in the commit: a FAIL line, not a crash
+        return ""
+
+
+def subjects(cwd, rev="HEAD"):
+    return helpers.git(cwd, "log", "--format=%s", rev).splitlines()
+
+
+# a protected default branch, a first phase: `.fwx/` is untracked in the main checkout
+main = toy(True)
+wt = helpers.add_worktree(main, "fwx-phase")
+st(main, "new-phase", "alpha", session=None)
+base = helpers.git(main, "rev-parse", "master").strip()
+r = commit(main, "from the main checkout")
+clean("protected: from the main checkout", r, 1)
+s.ok("protected: from the main checkout, the message names the phase worktree", "worktree" in r.stderr, r.stderr)
+s.eq("protected: from the main checkout, nothing was committed", helpers.git(main, "rev-parse", "master").strip(), base)
+s.ok("protected: from the main checkout, `.fwx/` is where it was", os.path.isfile(os.path.join(main, PHASE_REL % "01-alpha", "context.md")))
+r = commit(wt, "fwx: part 1 starts")
+clean("protected, first phase: commit from the phase worktree", r, 0)
+s.ok("protected, first phase: stdout names the commit and the folder", re.match(r"committed [0-9a-f]{7,} on fwx-phase in \S+\Z", r.stdout.strip()), r.stdout)
+s.eq("protected, first phase: the phase branch's log shows the commit", subjects(wt)[0], "fwx: part 1 starts")
+s.ok("protected, first phase: the phase branch's tree holds the phase documents",
+     all("%s/%s" % (PHASE_REL % "01-alpha", f) in head_files(wt) for f in ("context.md", "decisions.tsv")) and ".fwx/PROJECT.md" in head_files(wt), str(head_files(wt)))
+s.eq("protected, first phase: nothing was committed on the default branch", helpers.git(main, "rev-parse", "master").strip(), base)
+s.ok("protected, first phase: the default branch's log does not hold the message", "fwx: part 1 starts" not in subjects(main, "master"))
+s.ok("protected, first phase: the main checkout keeps no second copy", not os.path.exists(os.path.join(main, ".fwx")))
+r = st(wt, "resolve", "--json", session=None)
+s.eq("protected, first phase: the live phase folder is the worktree's", os.path.realpath(json.loads(r.stdout)["phase_dir"]) if r.stdout else None,
+     os.path.realpath(os.path.join(wt, PHASE_REL % "01-alpha")))
+# a later commit: the live copy is the worktree's, so a stage row written there is what the next commit takes
+helpers.fwx(wt, "stage", os.path.join(wt, PHASE_REL % "01-alpha"), "premortem", "--why", "light critique")
+clean("protected: a second commit", commit(wt, "fwx: critique"), 0)
+s.eq("protected: a second commit is a second commit on the phase branch", subjects(wt)[:2], ["fwx: critique", "fwx: part 1 starts"])
+s.ok("protected: the stage row is in the commit", "premortem" in show(wt, "HEAD:%s/audit.tsv" % (PHASE_REL % "01-alpha")))
+r = commit(wt, "fwx: nothing changed")
+clean("protected: nothing changed", r, 0, "nothing to commit in %s" % wt)
+s.eq("protected: nothing changed, no commit was made", subjects(wt)[0], "fwx: critique")
+s.eq("protected: the default branch is still untouched", helpers.git(main, "rev-parse", "master").strip(), base)
+
+# a protected default branch whose `.fwx/` is already tracked (a later phase): the new phase was made in the main checkout
+main2 = toy(True, {".fwx/PROJECT.md": "# p\n", PHASE_REL % "01-old" + "/context.md": "old\n"})
+wt2 = helpers.add_worktree(main2, "fwx-phase")
+st(main2, "new-phase", "next", session=None)
+base2 = helpers.git(main2, "rev-parse", "master").strip()
+clean("protected, later phase: commit from the phase worktree", commit(wt2, "fwx: part 1 starts"), 0)
+s.ok("protected, later phase: the new phase is in the branch and the old one is still there",
+     PHASE_REL % "02-next" + "/context.md" in head_files(wt2) and PHASE_REL % "01-old" + "/context.md" in head_files(wt2), str(head_files(wt2)))
+s.ok("protected, later phase: the new phase left the main checkout", not os.path.exists(os.path.join(main2, PHASE_REL % "02-next")))
+s.eq("protected, later phase: nothing was committed on the default branch", helpers.git(main2, "rev-parse", "master").strip(), base2)
+
+# a worktree that is itself on the default branch (the main checkout is on another one) is no place for it either
+main5 = toy(True)
+helpers.write(main5, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"default_branch": "master", "default_branch_protected": True}}))
+st(main5, "new-phase", "alpha", session=None)
+helpers.git(main5, "checkout", "-q", "-b", "other")
+wt5 = os.path.join(helpers.mkdtemp("fwx-wt-"), "on-default")
+helpers.git(main5, "worktree", "add", "-q", wt5, "master")
+r = commit(wt5, "fwx: part 1 starts")
+clean("protected: a worktree on the default branch", r, 1)
+s.ok("protected: a worktree on the default branch, the message says so", "default branch" in r.stderr, r.stderr)
+s.eq("protected: a worktree on the default branch, nothing was committed", subjects(main5, "master"), ["toy"])
+
+# not protected: the main checkout's own branch, as the skill's old line did
+main3 = toy(False)
+st(main3, "new-phase", "alpha", session=None)
+clean("not protected: commit", commit(main3, "fwx: part 1 starts"), 0)
+s.eq("not protected: the commit is on the main checkout's branch", subjects(main3)[0], "fwx: part 1 starts")
+s.ok("not protected: the phase documents are in it", PHASE_REL % "01-alpha" + "/context.md" in head_files(main3))
+r = commit(main3, "again")
+clean("not protected: nothing changed", r, 0, "nothing to commit in %s" % main3)
+
+# `.fwx/` ignored by the project's git: its history is elsewhere, so the command refuses and names the other one
+main4 = toy(False, {".gitignore": ".fwx/\n"})
+st(main4, "new-phase", "alpha", session=None)
+base4 = helpers.git(main4, "rev-parse", "master").strip()
+r = commit(main4, "fwx: part 1 starts")
+clean("ignored: refused", r, 1)
+s.ok("ignored: the message names `forge commit`", "forge commit" in r.stderr, r.stderr)
+s.eq("ignored: nothing was committed", helpers.git(main4, "rev-parse", "master").strip(), base4)
+clean("no `.fwx/` at all: refused", commit(toy(False), "x"), 1)
+clean("commit with no -m: usage error", st(main3, "commit", session=None, env=IDENT), 2)
+
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
-nogit = helpers.mkdtemp("fwx-nogit-")
+nogit =helpers.mkdtemp("fwx-nogit-")
 for args in (["resolve"], ["list"], ["use", "--root"], ["new-phase", "x"], ["new-milestone"], ["decision", "--decision", "a", "--why", "b",
              "--support", "chosen"]):
     r = st(nogit, *args)

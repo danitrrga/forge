@@ -9,7 +9,8 @@ Every path resolves against the main checkout (config.main_checkout), never agai
 a linked worktree has none of the ignored files. The one exception is `plan_root` in a repository whose default
 branch is protected and whose `.fwx/` is tracked: there the session's own worktree holds the live copy and reaches
 the default branch through the phase's pull request. The signal is `project.default_branch_protected: true` in
-`.claude/fwx.json`; without it `plan_root` never leaves the main checkout.
+`.claude/fwx.json`; without it `plan_root` never leaves the main checkout. `commit_plan` (`fwx state commit`) is what
+tracks it there: it moves the files the main checkout holds into the worktree and commits them on the phase branch.
 
 Reading creates nothing. Rejections raise StateError before anything is written. A path outside a git repository is
 config.ConfigError, whose message names the fix.
@@ -101,6 +102,55 @@ def plan_root(cwd=None):
     protected-default-branch variant (module docstring) it is the session worktree's `.fwx`."""
     main = config.main_checkout(cwd)
     return Path(_protected_worktree(main, cwd) or main) / PLAN_DIR
+
+
+def _move_missing(src, dst):
+    """Move into `dst` every file of `src` that `dst` lacks, with its folder layout, then drop the folders it emptied."""
+    for here, _, files in os.walk(src):
+        for f in files:
+            to = os.path.join(dst, os.path.relpath(here, src), f)
+            if not os.path.lexists(to):
+                os.makedirs(os.path.dirname(to), exist_ok=True)
+                shutil.move(os.path.join(here, f), to)
+    for here, _, _ in os.walk(src, topdown=False):
+        try:
+            os.rmdir(here)
+        except OSError:  # not empty: something stays
+            pass
+
+
+def commit_plan(message, cwd=None):
+    """Commit `.fwx/` where its history is: (folder it was committed in, its branch, the short sha or None when nothing changed).
+    Refused with a StateError, and nothing written: `.fwx/` ignored by git (its history is on the data side), or a protected
+    default branch with `cwd` not in a linked worktree of another branch. Without the protection it is the main checkout. With
+    it, it is the worktree `cwd` is in, which first takes the files the main checkout holds and it lacks (the first phase: all of
+    them; a later one: the new phase's folder), so the phase branch carries the documents and the live copy is the worktree's."""
+    cwd = os.getcwd() if cwd is None else cwd
+    main = config.main_checkout(cwd)
+    if _git(main, "check-ignore", "-q", PLAN_DIR + "/PROJECT.md").returncode == 0:
+        raise StateError("%s/ is ignored by git (its history is on the data side): commit it with `forge commit -m MESSAGE %s` from %s"
+                         % (PLAN_DIR, PLAN_DIR, main))
+    where = main
+    with contextlib.redirect_stderr(io.StringIO()):  # the missing-file line is for the commands that need the file
+        project = config.load(cwd)["project"]
+    if project.get("default_branch_protected") is True:
+        where = _git(cwd, "rev-parse", "--show-toplevel").stdout.strip()
+        if not where or os.path.realpath(where) == os.path.realpath(main):
+            raise StateError("the default branch is protected: run it from the phase's worktree, where %s/ is committed on the phase branch" % PLAN_DIR)
+        if _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == project.get("default_branch"):
+            raise StateError("%s is on the default branch, which is protected: run it from the phase's worktree" % where)
+        if os.path.isdir(os.path.join(main, PLAN_DIR)):
+            _move_missing(os.path.join(main, PLAN_DIR), os.path.join(where, PLAN_DIR))
+    branch = _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    r = _git(where, "add", "--", PLAN_DIR)
+    if r.returncode:
+        raise StateError("git add %s failed in %s: %s" % (PLAN_DIR, where, (r.stderr or r.stdout).strip()))
+    if not _git(where, "status", "--porcelain", "--", PLAN_DIR).stdout.strip():
+        return where, branch, None
+    r = _git(where, "commit", "-q", "-m", message, "--", PLAN_DIR)
+    if r.returncode:
+        raise StateError("git commit failed in %s: %s" % (where, (r.stderr or r.stdout).strip()))
+    return where, branch, _git(where, "rev-parse", "--short", "HEAD").stdout.strip()
 
 
 def subprojects(root):

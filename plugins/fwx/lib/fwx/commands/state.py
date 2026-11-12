@@ -1,7 +1,7 @@
 """Make, find, bind, record in and check the project's `.fwx/` state: fwx state <subcommand> [args] (--help lists them).
 
 A thin layer over lib/fwx/state.py, which holds every rule: this file parses the arguments, calls it, and prints. The
-subcommands are resolve, list, use, new-phase, new-subphase, new-milestone, cancel, decision, decisions and check. Exit 0 when it
+subcommands are resolve, list, use, new-phase, new-subphase, new-milestone, cancel, decision, decisions, commit and check. Exit 0 when it
 is done, 1 when the state layer refuses or the phase cannot be resolved (one line on stderr, `resolve` also lists the open
 phases), 2 when it cannot run: outside a git repository, a usage error, an unusable configuration. Never a traceback.
 """
@@ -190,6 +190,12 @@ def cmd_decisions(a):
     return 0
 
 
+def cmd_commit(a):
+    where, branch, sha = state.commit_plan(a.message)
+    print("committed %s on %s in %s" % (sha, branch, where) if sha else "nothing to commit in %s" % where)
+    return 0
+
+
 def cmd_check(a):
     errors, warnings = (state.check_state if a.kind == "state" else state.check_report)(a.path)
     for w in warnings:
@@ -254,6 +260,9 @@ def parser():
     sp.add_argument("--all", action="store_true", help="every row, the superseded ones marked with the id that replaced them")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--session")
+    sp = add("commit", cmd_commit, ".fwx/ committed where its history is: the phase's worktree when the default branch is protected "
+                                   "(run it from there; it takes the files the main checkout holds and the worktree lacks), else the main checkout")
+    sp.add_argument("-m", "--message", required=True)
     sp = add("check", cmd_check, "check a state.md or a phase report: an error for a rule, a WARN line for a length")
     sp.add_argument("kind", choices=("state", "report"))
     sp.add_argument("path")

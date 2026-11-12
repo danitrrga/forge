@@ -281,6 +281,28 @@ def main():
           "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
     check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
     check("playbooks/session.md n_C2 names the decision of the review as what a replan attends", "his review" in block(session_pb, "n_C2"), "missing")
+    # The documents of a phase are committed on the phase branch and the close commits before it pushes. Rule 4 names the command that does it
+    # (`fwx state commit`, which the code has), keeps `forge commit` for a project whose `.fwx/` git ignores, and closing.md writes the
+    # stage row `closed` and commits before the push, so the pull request carries a phase that is closed.
+    # Seen red on abf03cf (rule 4 had no command for a protected default branch; closing.md pushed first and committed third):
+    #   FAIL: rule 4 names `fwx state commit` and `default_branch_protected` -> missing
+    #   FAIL: closing.md writes stage `closed` and commits `.fwx/` before the push -> no 'closed' ... 'rule 4' ... 'git push' in that order
+    #   FAIL: closing.md commits nothing after the push -> rule 4 again after the push
+    #   FAIL: playbooks/session.md p_CLOSE records the stage and commits, n_L10 does not commit after the push -> p_CLOSE False, n_L10 False
+    rule4 = next((ln for ln in texts["SKILL.md"].splitlines() if ln.startswith("4. **Commits of `.fwx/`**")), "")
+    check("rule 4 found", "forge commit" in rule4, "not found")
+    check("rule 4 names `fwx state commit` and `default_branch_protected`", "`fwx state commit -m" in rule4 and "default_branch_protected" in rule4, "missing")
+    state_help = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "state", "--help"], capture_output=True, text=True).stdout
+    check("`fwx state --help` lists `commit`", re.search(r"^\s+commit\s", state_help, re.M) is not None, state_help)
+    closing = read(os.path.join("references", "closing.md"))
+    check("closing.md writes stage `closed` and commits `.fwx/` before the push",
+          in_order(closing, "`fwx stage <phase folder> closed`", "rule 4", "git push origin"), "no 'closed' ... 'rule 4' ... 'git push' in that order")
+    check("closing.md commits nothing after the push", "rule 4" not in closing[closing.index("git push origin"):], "rule 4 again after the push")
+    pclose, l10 = block(session_pb, "p_CLOSE"), block(session_pb, "n_L10")
+    check("playbooks/session.md p_CLOSE records the stage and commits, n_L10 does not commit after the push",
+          "fwx stage <phase> closed" in pclose and "commits `.fwx/`" in pclose and "commits `.fwx/`" not in l10,
+          "p_CLOSE %s, n_L10 %s" % ("fwx stage <phase> closed" in pclose and "commits `.fwx/`" in pclose, "commits `.fwx/`" not in l10))
+    check("control: a closing text that pushes first fails", not in_order("push: git push origin x; then stage `fwx stage <phase folder> closed`, rule 4", "`fwx stage <phase folder> closed`", "rule 4", "git push origin"))
     check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.
