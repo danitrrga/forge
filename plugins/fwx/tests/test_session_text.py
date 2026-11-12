@@ -258,12 +258,13 @@ def main():
     # playbook's block of the owner's review carries the matching exit. `fwx playbooks check` compares that exit with the table by itself.
     # Seen red on 239aa07 (step 8 and the playbook did not mention it):
     #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
+    # (reworded after the review of PR 129 into numbered sub-steps; the checks follow the new words)
     #   FAIL: playbooks/session.md n_L8 exits `loop n_C12` -> missing
     from fwx.core import stages  # noqa: E402
     check("the stage table allows phase-review -> ui-walk", stages.allowed("session", "phase-review", "ui-walk"), "refused")
     check("step 8 says when the walk is repeated from `phase-review`",
-          all(w in s8 for w in ("asks for the UI walk again", "did not count", "step 6", "`phase-review -> ui-walk`")),
-          "no 'asks for the UI walk again' with 'did not count', 'step 6' and '`phase-review -> ui-walk`'")
+          all(w in s8 for w in ("The walk again", "did not count", "Step 6 again", "from `phase-review`")),
+          "no 'The walk again' with 'did not count', 'Step 6 again' and 'from `phase-review`'")
     l8 = block(session_pb, "n_L8")
     check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
     # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
@@ -275,8 +276,13 @@ def main():
     from fwx import plan_step  # noqa: E402
     check("the stage table allows phase-review -> planning", stages.allowed("session", "phase-review", "planning"), "refused")
     check("step 8 sends a post-plan decision back to the planner",
-          all(w in s8 for w in ("after the plan", "changes a fact the plan states", "`phase-review -> planning`", "steps 2 and 3 again")),
-          "no 'after the plan', 'changes a fact the plan states', '`phase-review -> planning`' and 'steps 2 and 3 again'")
+          all(w in s8 for w in ("A decision after the plan", "the planner and the post-mortem get the decision", "Step 2 and step 3 again", "allowed from `phase-review`")),
+          "no 'A decision after the plan', 'the planner and the post-mortem get the decision', 'Step 2 and step 3 again' and 'allowed from `phase-review`'")
+    # Seen red on bd44ce6 (the sentence told the session to write stage `planning` while step 2 writes it, and to judge a fact of the plan):
+    #   FAIL: step 8 does not write stage `planning` itself and does not ask the session to read the plan -> a stage `planning` of its own, or no 'You do not read the plan'
+    check("step 8 does not write stage `planning` itself and does not ask the session to read the plan",
+          "stage `planning`" not in s8 and "You do not read the plan" in s8, "a stage `planning` of its own, or no 'You do not read the plan'")
+    check("step 2 writes stage `planning` and step 3 stage `postmortem`", "Stage `planning`" in step(texts["SKILL.md"], 2) and "Stage `postmortem`" in step(texts["SKILL.md"], 3), "missing")
     check("step 8 gives the decision the source the briefs look for",
           "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
     check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
