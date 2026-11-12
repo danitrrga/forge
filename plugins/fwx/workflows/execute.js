@@ -39,6 +39,9 @@ const VERDICT_SCHEMA = {
   required: ['verdicts'],
 }
 const EXEC_LINE = /^(done|wrong-base|question|failed) (\S+) commits=(\d+)$/
+// The start of an executor's reason is only the second net for a failed setup: the first is the record `check-base` leaves (setupRecord).
+const SETUP_FAILED = /^\s*worktree setup failed:/i
+const reportDirs = {}
 const REVIEW_LINE = /^reviewed (\S+) looked_at=(\d+) findings=(\d+) criteria_no=(\d+) criteria_unproven=(\d+)$/
 
 class Stop {
@@ -151,6 +154,16 @@ async function readFile(unit, path) {
   return v ? parseJson(v.stdout) : null
 }
 
+// What `fwx wave check-base` leaves in the worktree when the base is right and its setup failed (exit 43): the line, in
+// `.fwx-agent/worktree-setup-failed.json`. A runner reads it, so the job ends on a fact the code wrote and not on the words an agent
+// chose for its report. null: no record.
+async function setupRecord(unit) {
+  if (!reportDirs[unit]) return null
+  const v = await exec('setup-' + unit, inCheckout('cat -- ' + sh(reportDirs[unit] + '/.fwx-agent/worktree-setup-failed.json')), false)
+  const j = v ? parseJson(v.stdout) : null
+  return j && typeof j.setup_failed === 'string' && j.setup_failed.trim() ? oneLine(j.setup_failed, 600) : null
+}
+
 function fixRound(why) {
   const text = oneLine(why, 400)
   return exclusive(async () => {
@@ -181,6 +194,7 @@ async function readExec(unit, reply) {
   if (!m) return null
   const rep = await readFile(unit, m[2])
   if (!rep || rep.status !== m[1]) return null
+  reportDirs[unit] = String(m[2]).replace(/\\/g, '/').slice(0, -reportTail(unit).length)
   if (m[1] === 'done' && !(typeof rep.branch === 'string' && rep.branch)) return null
   if (m[1] === 'question' && !(typeof rep.question === 'string' && rep.question.trim())) return null
   return rep
@@ -207,6 +221,12 @@ async function job(j) {
         return { report: rep }
       }
       if (rep.status === 'question') return { end: ['needs-owner', rep.question] }
+      // A setup that failed (exit 43 of `fwx wave check-base`) fails the same way in every new worktree: it ends the job with its own
+      // line, takes no round and launches no new attempt.
+      if (rep.status === 'failed') {
+        const setupLine = (await setupRecord(j.id)) || (SETUP_FAILED.test(String(rep.reason)) ? oneLine(rep.reason, 600) : null)
+        if (setupLine) return { end: [A.plane === 'session' ? 'needs-owner' : 'failed', setupLine] }
+      }
       const fr = await fixRound(j.id + ' ' + rep.status + ': ' + (rep.reason || 'no reason given'))
       if (fr.end) return { end: fr.end }
       prev = rep
@@ -322,6 +342,8 @@ async function integrate(branches, o) {
       return r
     }
     if (r.locked && r.locked.length) stop('failed', 'a live agent holds ' + r.locked.map((x) => x.branch).join(', ') + ': nothing was merged')
+    // The setup ran again after the merge (a changed lockfile) and failed: the next worktree would fail the same way.
+    if (typeof r.setup === 'string' && r.setup.trim()) stop(A.plane === 'session' ? 'needs-owner' : 'failed', oneLine(r.setup, 600))
     let kind = 'failure'
     let text
     if (r.findings_check && r.findings_check.ok === false) {
@@ -491,6 +513,7 @@ async function main() {
     // Code that was already reviewed comes back: no review. `integrate` needs a branch, so the gate on the new head is `fwx verify`.
     const r = await run('revert', 'fwx wave revert --part-dir ' + sh(A.part_dir) + ' --run ' + sh(RUN) + ' --findings ' + sh(A.revert.join(',')))
     if (r.head) st.head = r.head
+    if (typeof r.setup === 'string' && r.setup.trim()) stop(A.plane === 'session' ? 'needs-owner' : 'failed', oneLine(r.setup, 600))
     if (r.ok !== true) stop('failed', 'a revert conflicted' + (r.failed ? ' on ' + r.failed.id : '') + ': nothing was reverted past it')
     const g = await run('verify', 'fwx verify --json --dir ' + sh(A.part_dir))
     st.evidence = 'evidence ' + g.sha + ' ' + (g.commands || []).map((c) => c.cmd + '=' + c.rc).join(' ')

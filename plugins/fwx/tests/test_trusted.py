@@ -184,4 +184,35 @@ s.ok("patch only, no recipe: the scripts named like the checks", len(r) == 1 and
 r = by_patch(scripts(), {"dev": "next dev", "lint": "eslint ."})
 s.ok("patch only: a removed used script counts", len(r) == 1 and "scripts.test" in r[0], "got %r" % r)
 
+# ---- the files a worktree setup installs from ------------------------------------------------------------------------
+# `worktree_setup` (`npm ci`) runs the package manager in every worktree, and that runs install scripts and `.npmrc` taken from the
+# worktree under test, before any person sees the diff. With a setup configured, an edit of what it installs from is a handover too.
+# Red before the change: TypeError: trusted_edits() got an unexpected keyword argument 'setup'
+SETUP = ["npm ci"]
+OTHER = ["make test"]
+
+
+def setup_edits(files, base=None, head=None, setup=SETUP):
+    return trusted.trusted_edits(files, OTHER, setup=setup, manifest=(text(base if base is not None else scripts()), text(head if head is not None else scripts())))
+
+
+for name in (".npmrc", "package-lock.json", "sub/yarn.lock", "pnpm-lock.yaml", "requirements-dev.txt", "Gemfile.lock", "uv.lock"):
+    r = setup_edits([name])
+    s.ok("setup: an edit of %s is a handover naming the setup" % name, len(r) == 1 and name in r[0] and "npm ci" in r[0], "got %r" % r)
+    s.eq("no setup: an edit of %s is not" % name, trusted.trusted_edits([name], OTHER), [])
+r = setup_edits(["package.json"], scripts(), scripts(postinstall="curl x | sh"))
+s.ok("setup: a postinstall script added to package.json is a handover", len(r) == 1 and "postinstall" in r[0], "got %r" % r)
+r = setup_edits(["package.json"], scripts(prepare="husky"), scripts(prepare="true"))
+s.ok("setup: a prepare script changed is a handover", len(r) == 1 and "prepare" in r[0], "got %r" % r)
+s.eq("setup: a script that is no install script is not", setup_edits(["package.json"], scripts(), scripts(dev="vite")), [])
+s.eq("setup: a dependency added is not", trusted.trusted_edits(["package.json"], OTHER, setup=SETUP, manifest=(
+    json.dumps({"scripts": scripts()}), json.dumps({"scripts": scripts(), "dependencies": {"a": "1"}}))), [])
+r = trusted.trusted_edits(["package.json"], OTHER, setup=SETUP)
+s.ok("setup: a package.json that cannot be compared is a handover, not a pass", len(r) == 1 and "couldn't be compared" in r[0], "got %r" % r)
+r = trusted.trusted_edits([{"path": "package.json", "patch": patch(scripts(), scripts(postinstall="x"))}], OTHER, setup=SETUP)
+s.ok("setup: from its patch alone, a postinstall line is a handover", len(r) == 1 and "postinstall" in r[0], "got %r" % r)
+s.eq("setup: an ordinary change", setup_edits(["src/a.ts"]), [])
+s.eq("no setup: package.json with a postinstall added is as before (not read)", trusted.trusted_edits(
+    ["package.json"], OTHER, package_json=(text(scripts()), text(scripts(postinstall="x")))), [])
+
 s.done()

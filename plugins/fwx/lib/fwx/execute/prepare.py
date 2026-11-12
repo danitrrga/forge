@@ -14,6 +14,11 @@ The effective value is the last one set of: the user's settings (`$CLAUDE_CONFIG
 `.claude/settings.json` and `.claude/settings.local.json` (read from a linked worktree too: Claude Code does), and the
 checkout's own two.
 
+Then, in a linked worktree, `project.worktree_setup` runs (execute/worktree_setup.py; a no-op when it already ran against the same
+dependency files): the phase worktree comes from a plain `git worktree add` and has none of the project's installed dependencies,
+so the base and every later check would be red for a reason that has nothing to do with the work. A setup that fails stops the run
+with exit 2 before the base is run.
+
 Then the base is run: the effective recipe (`evidence.plan_checks`) in the checkout, unless the part's audit rows already
 holds a green `evidence` row for the base sha. A red check is RedBase: needs-owner, no round spent.
 
@@ -36,7 +41,7 @@ so a refusal and a red base leave nothing behind. With `--fix` the one brief is 
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
 shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's fix.json (`normalize`), `--revert` a list of finding ids; anything else is refused.
 
-Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base and execute.brief.
+Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
 """
 import json
 import os
@@ -45,8 +50,8 @@ import shlex
 
 from fwx import config, plan, plan_step, state
 from fwx.core import evidence, rounds, verify
-from fwx.execute import brief
-from fwx.execute.base import WaveError, git, out, toplevel
+from fwx.execute import brief, worktree_setup
+from fwx.execute.base import WaveError, git, linked, out, toplevel
 
 PLANES = ("session", "factory")
 STARTS = ("gate",)
@@ -68,6 +73,19 @@ def _is_subphase(part):
 
 def _config(top):
     return config.load(top)
+
+
+def _setup(top, cfg, say):
+    """`project.worktree_setup` in the phase worktree, before any check runs there: a worktree made by `git worktree add` has none
+    of the project's installed dependencies, so the base would be red for a reason that has nothing to do with the work. The main
+    checkout is the owner's own, with its dependencies, and is left alone. A failure stops the run (exit 2), before the base."""
+    commands = cfg["project"]["worktree_setup"]
+    if not commands or not linked(top):
+        return
+    try:
+        say(worktree_setup.summary(worktree_setup.run(top, commands)))
+    except worktree_setup.SetupFailed as e:
+        raise WaveError(str(e))
 
 
 def _load(loader, path, label):
@@ -303,6 +321,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
                      "plan": str(paths["plan"])}}
     quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
     made = _briefs(data, ctx, fixing, size, quick, revert is None and not gating)
+    _setup(top, cfg, say)
     red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)
     if red:
         used, cap = rounds.count(state.read_rows(paths["audit"])), rounds.cap(top)

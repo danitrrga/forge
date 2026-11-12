@@ -32,7 +32,7 @@ import json
 import os
 import shutil
 
-from forge import hooks, lib, mcp, owned, skills, system_doc
+from forge import gitblock, hooks, lib, mcp, owned, skills, system_doc
 
 USER_SETTINGS = os.path.join(lib.HOME, ".claude", "settings.json")
 CLAUDE_JSON = os.path.join(lib.HOME, ".claude.json")
@@ -186,6 +186,8 @@ class Scope:
         if a.integration and lib.on(a.integration):
             self.refusal = "%s is on in config/forge.json: set it false first" % a.integration
         prof = profs.get(a.project) if a.project else None
+        # Who owns an ignore block of this project: its claims carry the profile's `project` (else its name).
+        self.owners = {a.project, (prof or {}).get("project") or a.project} if a.project else set()
         if prof is not None and not prof.get("frozen"):
             self.refusal = ("%s is a live profile, which the next forge sync writes again: set \"frozen\": true in "
                             "config/profiles/%s.claude.json, or delete it, first" % (a.project, a.project))
@@ -219,6 +221,12 @@ class Scope:
         if self.whole:
             return True
         if self.project:
+            if owned.is_block(c):
+                # An ignore block: the owner's, in the project's own .gitignore or in the .git/info/exclude of the repository
+                # the project sits in (a file shared with its other projects, whose own blocks stay).
+                repo = os.path.dirname(os.path.dirname(os.path.dirname(file)))
+                return c["owner"] in self.owners and (self.under(file) or (
+                    os.path.basename(file) == "exclude" and any(_inside(p, repo) for p in self.real)))
             return self.under(file) or (file == CLAUDE_JSON and c.get("part") in self.keys)
         return c["owner"] == self.integration or (self.integration == "codex" and (file == CODEX_HOOKS or c.get("part") == "skills"))
 
@@ -244,7 +252,7 @@ def _found(run, file, c):
         if file in run.files:  # already deleted by this run
             return False, None
         return owned.current(file, c)
-    if owned.is_line(c):
+    if owned.is_text(c):
         text = run.text(file)
         return (False, None) if text is None else owned.current(file, c, text)
     doc = run.json(file)
@@ -252,10 +260,12 @@ def _found(run, file, c):
 
 
 def _take_out(run, file, c):
-    """Remove claim `c`, found and unchanged, from the run's copy of `file`."""
+    """Remove claim `c`, found and unchanged (a block: found with its markers whole), from the run's copy of `file`."""
     kind, at = c["kind"], c["at"]
     if kind == "file":
         run.delete(file)
+    elif owned.is_block(c):
+        run.set_text(file, gitblock.without(run.text(file), owned.block_tag(c)))
     elif owned.is_line(c):
         lines = run.text(file).splitlines(keepends=True)
         run.set_text(file, "".join(l for l in lines if l.strip() != at[1]))
@@ -287,7 +297,7 @@ def _claims(run, chosen):
                 found, value = _found(run, f, c)
                 if not found:
                     gone += 1
-                elif not owned.removable(c, value):
+                elif not owned.block_removable(c, value):
                     run.say("  ! %s %s was edited, left in place" % (lib.short(f), json.dumps(c["at"], ensure_ascii=False)))
                 else:
                     _take_out(run, f, c)

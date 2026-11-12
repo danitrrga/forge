@@ -135,6 +135,9 @@ PROFILE_FIELDS = {
     # The framework (2.2): `framework` is its level-1 switch, `factory` its mode, `factory_ui_bugs` sends mechanical UI
     # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
     "framework": bool, "factory": str, "factory_ui_bugs": bool,
+    # false: the project keeps its framework documents out of its git history on purpose, so forge writes and checks no
+    # ignore block there (forge/fwxignore.py) and takes out one it wrote earlier. Default true.
+    "framework_ignore_block": bool,
     "checks": (list, str), "protected_paths": (list, str),
     # The Linear project the framework files issues in, when it is not the repository's name (the default).
     "linear_project": str,
@@ -143,6 +146,9 @@ PROFILE_FIELDS = {
     # `.fwx/` lives, `ui_image` the factory's UI image. The shapes of the two objects are in APP_RUN_KEYS and
     # UI_IMAGE_KEYS, checked by _object_error.
     "checks_quick": (list, str), "app_run": dict, "default_branch_protected": bool, "ui_image": dict,
+    # Shell commands (e.g. ["npm ci"]) the framework runs inside each worktree it makes, before any check runs there: a
+    # fresh worktree has none of the project's installed dependencies. `fwx wave setup` runs them; each must name something.
+    "worktree_setup": (list, str),
 }
 # The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
 # for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
@@ -229,6 +235,8 @@ def profile_error(prof):
     # An empty name would be written to the framework's file as the project, and Linear would match none.
     if "linear_project" in prof and not prof["linear_project"].strip():
         return "linear_project is empty"
+    if any(not c.strip() for c in prof.get("worktree_setup", ())):
+        return "worktree_setup has an empty command"
     for field, keys in (("app_run", APP_RUN_KEYS), ("ui_image", UI_IMAGE_KEYS)):
         if field in prof:
             why = _object_error(field, prof[field], keys)
@@ -694,10 +702,24 @@ def repo_owns_tracked_files(prof):
     return prof.get("writes_tracked_files") is False
 
 
+# The variables that point git at a repository: a caller's (a git hook's) would aim every question forge asks at the
+# wrong one.
+_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES")
+
+
+def git_env(**extra):
+    """The environment for a git that is asked about a project: the caller's, without the variables that choose the
+    repository (_REPO_VARS), plus `extra`."""
+    env = {k: v for k, v in os.environ.items() if k not in _REPO_VARS}
+    env.update(extra)
+    return env
+
+
 def _git_out(ppath, *args):
     """What `git -C ppath <args>` prints without its final newline, or None when git cannot answer."""
     try:
-        r = subprocess.run(["git", "-C", ppath] + list(args), capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["git", "-C", ppath] + list(args), capture_output=True, text=True, timeout=20, env=git_env())
     except Exception:
         return None
     return r.stdout.rstrip("\n") if r.returncode == 0 else None

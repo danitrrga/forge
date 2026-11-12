@@ -18,6 +18,7 @@ import re
 import subprocess
 
 WRONG_BASE = 42  # the exit of check-base for "do not start"
+SETUP_FAILED = 43  # the exit of check-base when the base is right but the worktree's setup failed: do not start either
 SHA = re.compile(r"[0-9a-f]{7,40}\Z")
 AGENT_DIR = ".fwx-agent"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")  # a run or a unit: one folder name, never a path
@@ -67,6 +68,20 @@ def check_base(sha, cwd, worktree=None):
     return 0, ""
 
 
+def agent_root(top):
+    """`<worktree>/.fwx-agent`, made, with its `.gitignore` of `*` (written once, never rewritten): what an agent or the worktree's
+    setup keeps in the worktree, and git sees none of it, the `.gitignore` included. OSError when it cannot be made, or when it is a link."""
+    root = os.path.join(os.path.realpath(top), AGENT_DIR)
+    if os.path.islink(root):  # a tracked link merged from a branch: nothing is written through it
+        raise OSError("%s is a symbolic link" % root)
+    os.makedirs(root, exist_ok=True)
+    ignore = os.path.join(root, ".gitignore")
+    if not os.path.exists(ignore):
+        with open(ignore, "w", encoding="utf-8") as f:
+            f.write("*\n")
+    return root
+
+
 def scratch(cwd, run, unit):
     """The folder `<worktree>/.fwx-agent/<run>/<unit>` (made, with its `tmp/`) of the worktree `cwd` is in."""
     for what, name in (("run", run), ("unit", unit)):
@@ -75,14 +90,10 @@ def scratch(cwd, run, unit):
     top = toplevel(cwd)
     if top is None:
         raise WaveError("not inside a git repository: %s" % cwd)
-    root = os.path.join(os.path.realpath(top), AGENT_DIR)
-    folder = os.path.join(root, run, unit)
+    folder = os.path.join(os.path.realpath(top), AGENT_DIR, run, unit)
     try:
+        agent_root(top)
         os.makedirs(os.path.join(folder, "tmp"), exist_ok=True)
-        ignore = os.path.join(root, ".gitignore")
-        if not os.path.exists(ignore):
-            with open(ignore, "w", encoding="utf-8") as f:
-                f.write("*\n")
     except OSError as e:
         raise WaveError("cannot make %s: %s" % (folder, e))
     return folder

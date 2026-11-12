@@ -11,7 +11,10 @@ bare repo (`insteadOf` and `pushInsteadOf`, so nothing leaves the machine), fake
 PATH that only write their arguments down (the classifier judges the text of a command, and nothing may reach Linear or GitHub),
 and a settings file of its own: hooks PreToolUse, PostToolUse, PostToolUseFailure and PermissionDenied into a log, the control rule
 `deny Bash(probe-deny-control)`, FORGE_CONSENT=unattended (the consent hook, when there is one, blocks instead of opening a window),
-and the rules of --allow-from. The config dir is a private one (no user hooks, skills, plugins or memory), only the login is shared.
+and the rules of --allow-from. The config dir is a private one (no user hooks, skills, plugins or memory, and no credentials file: the session logs in with the
+long-lived token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py; a run without a usable key refuses to start; the stream, the
+stderr, the hook log, the transcripts, cells.tsv and run.json the run stores have the token replaced by a placeholder, while a world kept with --keep-world and
+what the agent wrote into it are kept as they are).
 Flavor `forge` copies forge's CLAUDE.md and CLAUDE.local.md into the repo (the classifier reads them), `plain` does not.
 Contexts: main-asked (the message asks for the command), main-step (it is step 1 of a STEPS.md, as in a skill), agent (a subagent of the
 Agent tool with the role's prompt), workflow (agent() of a toy workflow .claude/workflows/probe.js), workflow-def (agent() with a
@@ -38,6 +41,8 @@ import sys
 import tempfile
 import time
 import uuid
+
+import measure_login
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ACTIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_mode_actions.tsv")
@@ -413,22 +418,22 @@ def cell_settings(world, log, allow, guard_cmd, base_path):
 
 
 def agent_home(out):
-    """A CLAUDE_CONFIG_DIR with no hooks, skills, plugins or memory; only the login is shared with the real home."""
+    """A CLAUDE_CONFIG_DIR with no hooks, skills, plugins or memory and no login file: the session logs in with the measurement token
+    (measure_login), and a `.credentials.json` an earlier run left here is removed."""
     d = os.path.join(out, "agent-home")
-    os.makedirs(d, exist_ok=True)
-    write(os.path.join(d, "settings.json"), "{}")
-    real = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
-    link = os.path.join(d, ".credentials.json")
-    if os.path.exists(real) and not os.path.lexists(link):
-        try:
-            os.symlink(real, link)
-        except FileExistsError:
-            pass
+    try:
+        os.makedirs(d, exist_ok=True)
+        write(os.path.join(d, "settings.json"), "{}")
+    except OSError as e:
+        raise measure_login.LoginError("cannot prepare the config dir %s (%s). No session was started." % (d, e.strerror or type(e).__name__))
+    measure_login.clean_config_dir(d)
     return d
 
 
-def keep_transcripts(home, sid, cwd, dest):
-    """Moves the session's transcript folder (main file and subagents) out of the config dir into `dest`; the files moved."""
+def keep_transcripts(home, sid, cwd, dest, tok=None):
+    """Moves the session's transcript folder (main file and subagents) out of the config dir into `dest`, each file stored as a new
+    file with the token replaced (measure_login.copy_redacted; a link or a special file is not opened). When a file cannot be stored,
+    nothing is kept under `dest` and the folder is dropped from the config dir too. Returns the .jsonl files stored."""
     projects = os.path.join(home, "projects")
     enc = re.sub(r"[^A-Za-z0-9]", "-", os.path.realpath(cwd))
     found = []
@@ -438,11 +443,21 @@ def keep_transcripts(home, sid, cwd, dest):
             if d == enc or os.path.exists(os.path.join(full, sid + ".jsonl")):
                 found.append(full)
     files = []
-    for src in found:
-        shutil.copytree(src, dest, dirs_exist_ok=True)
-        shutil.rmtree(src, ignore_errors=True)
-    for r, _, fs in os.walk(dest):
-        files += [os.path.join(r, f) for f in fs if f.endswith(".jsonl")]
+    try:
+        for src in found:
+            for r, dirs, fs in os.walk(src):
+                os.makedirs(os.path.join(dest, os.path.relpath(r, src)), exist_ok=True)
+                for f in fs:
+                    out_f = os.path.join(dest, os.path.relpath(os.path.join(r, f), src))
+                    measure_login.copy_redacted(os.path.join(r, f), out_f, tok)
+                    if f.endswith(".jsonl"):
+                        files.append(out_f)
+    except BaseException:
+        shutil.rmtree(dest, ignore_errors=True)
+        raise
+    finally:
+        for src in found:
+            shutil.rmtree(src, ignore_errors=True)
     return sorted(files)
 
 
@@ -462,6 +477,7 @@ def run_cell(cell, a, out, home, world_base):
            "rep": cell["rep"], "cost_usd": "", "duration_s": ""}
     cdir = os.path.join(out, "cells", cid)
     os.makedirs(cdir, exist_ok=True)
+    tok = a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN")
     try:
         base = os.path.join(world_base, cid)
         world = build_world(base, cell["flavor"], a.forge_root)
@@ -472,11 +488,12 @@ def run_cell(cell, a, out, home, world_base):
         spath = os.path.join(base, "settings.json")
         write(spath, json.dumps(settings, indent=1))
         sid = str(uuid.uuid4())
-        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
+        env = {k: v for k, v in a.login_env.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
         env.update(GIT_ENV, CLAUDE_CONFIG_DIR=home, FORGE_CONSENT="unattended", XDG_STATE_HOME=world["state"],
                    PATH=world["bin"] + os.pathsep + env.get("PATH", "/usr/bin:/bin"))
         cmd = [a.claude_bin, "-p", prompt, "--model", a.model, "--permission-mode", "auto", "--settings", spath,
                "--output-format", "stream-json", "--verbose", "--session-id", sid, "--max-budget-usd", str(a.budget)]
+        measure_login.refuse_bare(cmd)
         p = subprocess.Popen(cmd, cwd=world["repo"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              text=True, start_new_session=True)
         try:
@@ -484,13 +501,13 @@ def run_cell(cell, a, out, home, world_base):
         except subprocess.TimeoutExpired:
             os.killpg(p.pid, signal.SIGKILL)
             stdout, stderr = p.communicate()
-        write(os.path.join(cdir, "stream.jsonl"), stdout or "")
-        write(os.path.join(cdir, "stderr.txt"), stderr or "")
-        shutil.copy(log, os.path.join(cdir, "hooks.jsonl"))
-        files = keep_transcripts(home, sid, world["repo"], os.path.join(out, "transcripts", cid)) + [os.path.join(cdir, "stream.jsonl")]
+        measure_login.write_redacted(os.path.join(cdir, "stream.jsonl"), stdout, tok)
+        measure_login.write_redacted(os.path.join(cdir, "stderr.txt"), stderr, tok)
+        measure_login.copy_redacted(log, os.path.join(cdir, "hooks.jsonl"), tok)   # the log holds tool output, so what the harness keeps is redacted
+        files = keep_transcripts(home, sid, world["repo"], os.path.join(out, "transcripts", cid), tok) + [os.path.join(cdir, "stream.jsonl")]
         uses, results = transcript_blocks(files)
         target = target_for(cell["action"]["command"], world["repo"], world["wt"])
-        v = decide(target, read_jsonl(log), uses, results)
+        v = decide(target, read_jsonl(os.path.join(cdir, "hooks.jsonl")), uses, results)
         row.update(verdict=v["verdict"], tool=v["tool"], rule=v["rule"], evidence=v["evidence"],
                    cost_usd=stream_cost(os.path.join(cdir, "stream.jsonl")) or "")
         if v["verdict"] == "not-run" and p.returncode not in (0, None):
@@ -500,7 +517,7 @@ def run_cell(cell, a, out, home, world_base):
     row["duration_s"] = round(time.time() - t0, 1)
     if not a.keep_world:
         shutil.rmtree(os.path.join(world_base, cid), ignore_errors=True)
-    return row
+    return json.loads(measure_login.redact_text(json.dumps(row), tok))   # evidence and error strings come from outside the harness
 
 
 # ------------------------------------------------------------------------------------------------------------ run
@@ -594,12 +611,21 @@ def cmd_run(a):
             print("%s\t%s\t%s" % (c["id"], c["action"]["role"], c["action"]["command"]))
         print("%d cells (dry run, nothing started)" % len(cells))
         return 0
+    try:
+        a.login_env = measure_login.child_env()
+    except measure_login.LoginError as e:
+        print("! " + str(e))
+        return 1
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = a.out or os.path.join(data_dir(), "runs", stamp)
     os.makedirs(out, exist_ok=True)
+    try:
+        home = agent_home(out)
+    except measure_login.LoginError as e:
+        print("! " + str(e))
+        return 1
     world_base = os.path.join(tempfile.gettempdir(), "auto-mode-%s" % stamp)
     os.makedirs(world_base, exist_ok=True)
-    home = agent_home(out)
     man = {"cli_version": cli_version(a.claude_bin), "conductor_model": a.model, "flavor": a.flavor, "k": a.k, "catalogue_sha256": sha256_file(a.catalogue),
            "allow_from": a.allow_from, "allow_from_sha256": allow_sha, "allow_rules": a.allow_rules, "guard_cmd": a.guard_cmd or None,
            "forge_files": {n: sha256_file(os.path.join(a.forge_root, n)) for n in ("CLAUDE.md", "CLAUDE.local.md")
@@ -620,8 +646,7 @@ def cmd_run(a):
             w.writerow([str(r.get(c, "")).replace("\t", " ").replace("\n", " ") for c in CELL_COLUMNS])
     costs = [r["cost_usd"] for r in rows if isinstance(r["cost_usd"], (int, float))]
     man.update(cells_run=len(rows), cost_usd=round(sum(costs), 4), finished=time.strftime("%Y-%m-%dT%H:%M:%S"))
-    with open(os.path.join(out, "run.json"), "w", encoding="utf-8") as fh:
-        json.dump(man, fh, indent=1)
+    measure_login.store_json(os.path.join(out, "run.json"), man, a.login_env.get("CLAUDE_CODE_OAUTH_TOKEN"))   # cli_version is the output of the CLI
     if not a.keep_world:
         shutil.rmtree(world_base, ignore_errors=True)
     print("\n".join(summarise(rows, {x["id"]: x["expect"] for x in actions})))
