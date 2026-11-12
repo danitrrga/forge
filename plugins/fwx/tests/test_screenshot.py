@@ -133,8 +133,13 @@ def case_all_captured(R, S):
         # as the real one answers `Unknown command: viewport`, exit 1). Seen red on the base, where the steps were `viewport 1440 900` and `media dark`:
         #   FAIL: all captured: exit: got 1, want 0   (and every screen `missing ...: Unknown command: viewport`)
         S.ok("all captured: the first screen is dark, at 1440 wide", ["set", "media", "dark"] in calls and ["set", "viewport", "1440", "900"] in calls, str(calls))
+        # each theme sends its own value: the first screen is dark, the second light (a mutant that sent `dark` for every screen passed the check above),
+        # the third is light again and sends nothing. Seen red on 1afad4d with `set media` always dark:
+        #   FAIL: all captured: a dark screen then a light one send their own `set media` value: got [['set', 'media', 'dark']], want [['set', 'media', 'dark'], ['set', 'media', 'light']]
+        S.eq("all captured: a dark screen then a light one send their own `set media` value", [c for c in calls if c[:2] == ["set", "media"]],
+             [["set", "media", "dark"], ["set", "media", "light"]])
         S.eq("all captured: no stderr", r.stderr, "")
-        out = os.path.join(helpers.mkdtemp("fwx-shot-out-"), "pics")
+        out =os.path.join(helpers.mkdtemp("fwx-shot-out-"), "pics")
         r2 = rig.shot("--screens", screens_arg(rig, ("/a", "dark")), "--out", out)
         S.ok("out: --out puts the capture there (and makes the folder)", r2.returncode == 0 and len(os.listdir(out)) == 1, "%d %s" % (r2.returncode, r2.stderr))
     finally:
@@ -342,6 +347,8 @@ MUTANTS = [
      'cmd = ["agent-browser", "--session", session]', "guard: a URL outside the app is missing"),
     ("a top-level `viewport` command", case_all_captured, "steps.append(walk.set_viewport(WIDTH, HEIGHT))", 'steps.append(["viewport", str(WIDTH), str(HEIGHT)])',
      "all captured: exit: got 1, want 0"),
+    ("`set media` always dark", case_all_captured, 'steps.append(["set", "media", sc["theme"]])', 'steps.append(["set", "media", "dark"])',
+     "all captured: a dark screen then a light one send their own `set media` value"),
     ("a top-level `media` command", case_all_captured, 'steps.append(["set", "media", sc["theme"]])', 'steps.append(["media", sc["theme"]])',
      "all captured: exit: got 1, want 0"),
     ("theme ignored", case_all_captured, 'if sc["theme"] != state["theme"]:', "if False:", "the first screen is dark, at 1440 wide"),

@@ -73,8 +73,13 @@ AB_VERSION = "0.41.1"
 AB_COMMANDS = ("open read click dblclick type fill press keyboard hover focus check uncheck select drag upload download scroll scrollintoview wait screenshot pdf "
                "snapshot eval connect close back forward reload get is find mouse set network cookies storage tab diff trace profiler record console errors "
                "highlight inspect clipboard stream webmcp react vitals a11y pushstate removeinitscript batch auth plugin confirm deny session mcp chat "
-               "dashboard install upgrade doctor profiles skills").split()
-AB_SET = "viewport device geo offline headers credentials media".split()
+               "dashboard install upgrade doctor profiles skills "
+               # accepted by 0.41.1 though `--help` does not print them (probed by running each with no argument: `Missing arguments for: goto`,
+               # `✓ Browser closed`, never `Unknown command`); `walk.py` names goto, navigate and state in its own guards
+               "goto navigate quit exit state frame dialog window").split()
+# `agent-browser set --help` lists viewport, device, geo, offline, headers, credentials and media; `agent-browser set bogus` answers
+# `Valid options: viewport, device, geo, geolocation, offline, headers, credentials, auth, media` (geolocation and auth are aliases)
+AB_SET = "viewport device geo geolocation offline headers credentials auth media".split()
 AB_GUARD = '''
 _COMMANDS, _SET = %r, %r
 _VALUED = ("--namespace", "--session", "--idle-timeout", "--screenshot-dir", "--args", "--allowed-domains", "--init-script", "--executable-path", "--state")
@@ -627,7 +632,10 @@ def case_ab_commands(R, S):
         S.eq("ab commands: nothing refused reached the binary", sc.calls(), [])
         # the words a walker needs, and a refused word typed as text, still go through
         for args in (["snapshot"], ["screenshot"], ["console"], ["errors"], ["get", "text", "h1"], ["wait", "10"], ["fill", "@e1", "inspect"],
-                     ["type", "@e1", "stream"], ["eval", "1+1"], ["record", "start", os.path.join(rd, "c.webm")], ["read"]):
+                     ["type", "@e1", "stream"], ["eval", "1+1"], ["record", "start", os.path.join(rd, "c.webm")], ["read"],
+                     # words the real 0.41.1 accepts though its `--help` does not print them (the fake takes them too, so a test of the guards on
+                     # them is possible; red before: `Unknown command: goto` from the fake):
+                     ["goto", sc.url], ["navigate", sc.url], ["quit"], ["set", "geolocation", "1", "2"]):
             sc.clear()
             r = sc.walk(R, "ab", "--run", rd, "w1", *args)
             S.ok("ab commands: %s: still accepted" % " ".join(args), r.returncode == 0 and sc.calls("agent-browser")
@@ -1313,16 +1321,18 @@ def case_findings_control_pictures(R, S):
       FAIL: control pictures: the owner's page shows no `today` picture of the control's screen: got ['today'], want []"""
     rd = helpers.mkdtemp("fwx-walk-run-")
     os.makedirs(os.path.join(rd, "shots"))
-    pics = {n: os.path.join(rd, "shots", "walker-%s.png" % n) for n in ("1", "2", "3")}
-    for p in pics.values():
+    pics = {n: os.path.join(rd, "shots", "walker-%s.png" % n) for n in ("1", "2", "3", "4", "5")}
+    vpic = os.path.join(rd, "shots", "verifier-5.png")  # a verifier's own capture: its browser never carried the plant
+    for p in list(pics.values()) + [vpic]:
         with open(p, "wb") as fh:
             fh.write(PNG)
 
-    def f(i, screen, evidence):
-        return {"id": i, "file": "src/a.ts", "line": 3, "claim": "claim " + i, "evidence": evidence, "severity": "major", "screen": screen,
-                "verdict": "CONFIRMED", "expected": "x", "type": "layout", "kind": "observed"}
+    def f(i, screen, evidence, **kw):
+        return dict({"id": i, "file": "src/a.ts", "line": 3, "claim": "claim " + i, "evidence": evidence, "severity": "major", "screen": screen,
+                     "verdict": "CONFIRMED", "expected": "x", "type": "layout", "kind": "observed"}, **kw)
     rows = [f("T1-1", "/settings", [pics["1"], "the title is cut off"]), f("T1-2", "http://127.0.0.1:3000/settings/?tab=a", pics["2"]),
-            f("T1-3", "/billing", [pics["3"]])]
+            f("T1-3", "/billing", [pics["3"]]), f("T1-4", "/settings", {"before": pics["4"], "note": "the title is cut off", "all": [pics["4"], "x"]}),
+            f("T1-5", "/settings", [pics["5"]], evidence_verifier=[vpic])]
     helpers.write(rd, "verified-T1.json", json.dumps({"findings": rows}))
     helpers.write(rd, "control.json", json.dumps({"screen": "http://127.0.0.1:3000/settings", "path": "/settings", "script": os.path.join(rd, "init.js")}))
     r = runner_walk(R, "findings", "--run", rd)
@@ -1334,14 +1344,27 @@ def case_findings_control_pictures(R, S):
         (fix.get("T1-2") or {}).get("evidence"), (fix.get("T1-2") or {}).get("evidence_dropped")), ([], [pics["2"]]))
     S.eq("control pictures: another screen keeps its evidence and has no list of dropped ones", (
         (fix.get("T1-3") or {}).get("evidence"), "evidence_dropped" in (fix.get("T1-3") or {})), ([pics["3"]], False))
+    # evidence given as an object is filtered by the same rule (its picture values go, its text stays), and the verifier's own capture
+    # (`evidence_verifier`, taken in a browser without the plant) is never dropped. Seen red on 1afad4d:
+    #   FAIL: control pictures: evidence given as an object is filtered by the same rule: got ({'before': '.../walker-4.png', ...}, None), want ({'note': ..., 'all': ['x']}, [...])
+    S.eq("control pictures: evidence given as an object is filtered by the same rule", ((fix.get("T1-4") or {}).get("evidence"), (fix.get("T1-4") or {}).get("evidence_dropped")),
+         ({"note": "the title is cut off", "all": ["x"]}, [pics["4"], pics["4"]]))
+    S.eq("control pictures: the verifier's own capture is kept, the walker's is not", ((fix.get("T1-5") or {}).get("evidence_verifier"), (fix.get("T1-5") or {}).get("evidence"),
+         (fix.get("T1-5") or {}).get("evidence_dropped")), ([vpic], [], [pics["5"]]))
     fixed = os.path.join(helpers.mkdtemp("fwx-walk-fixed-"), "fixed.json")
-    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": "T1-1", "commit": "a1"}, {"id": "T1-3", "commit": "c3"}]))
+    helpers.write(os.path.dirname(fixed), "fixed.json", json.dumps([{"id": "T1-1", "commit": "a1"}, {"id": "T1-3", "commit": "c3"}, {"id": "T1-5", "commit": "e5"}]))
     r = runner_walk(R, "review-page", "--run", rd, "--fixed", fixed)
     S.eq("control pictures: the review page is built", r.returncode, 0)
     items = {i["id"]: i for i in (jfile(os.path.join(rd, "review", "decisions.json")) or {}).get("items", [])}
     caps = {k: [fg["caption"] for fg in v["figures"]] for k, v in items.items()}
     S.eq("control pictures: the owner's page shows no `today` picture of the control's screen", caps.get("T1-1"), [])
     S.eq("control pictures: and still shows the other screen's", caps.get("T1-3"), ["today"])
+    # what was left out is said on the item, not left as an empty space, and the verifier's capture is the picture the owner gets instead
+    # Seen red on 1afad4d: FAIL: control pictures: the item says a picture was left out and why: ['Screen: /settings', 'Commit: a1', 'the title is cut off']
+    S.ok("control pictures: the item says a picture was left out and why", any("left out" in w and "planted control" in w for w in items.get("T1-1", {}).get("what", [])),
+         repr(items.get("T1-1", {}).get("what")))
+    S.ok("control pictures: an item with nothing left out says nothing of it", not any("left out" in w for w in items.get("T1-3", {}).get("what", [])), repr(items.get("T1-3", {}).get("what")))
+    S.eq("control pictures: the verifier's own capture is the item's picture", caps.get("T1-5"), ["verified"])
     # no control in the run (a recheck's folder, or a walk whose plant was refused): nothing is left out
     rd2 = helpers.mkdtemp("fwx-walk-run-")
     helpers.write(rd2, "verified-T1.json", json.dumps({"findings": [f("T1-1", "/settings", [pics["1"]])]}))
@@ -1926,7 +1949,13 @@ MUTANTS = [
      'glob.glob(os.path.join(run_dir, "rechecked-T*.json"))', "restart: a rechecked file of the earlier run is not left for `review-page`"),
     ("rechecked files kept at up", case_up_restart, ' + glob.glob(os.path.join(run_dir, "rechecked-*.json")):', ":",
      "restart: a rechecked file of the earlier run is not left for `review-page`"),
-    ("the control's pictures reach the fixer", case_findings_control_pictures, 'return dict(f, evidence=kept, evidence_dropped=left) if left else f', "return f",
+    ("evidence given as an object kept whole", case_findings_control_pictures, "return {k: x for k, (x, gone) in ((k, strip(y)) for k, y in v.items()) if not gone}, False",
+     "return v, False", "control pictures: evidence given as an object is filtered by the same rule"),
+    ("a picture left out is not said on the item", case_findings_control_pictures, 'if isinstance(left, list) and left else ""]', 'if False else ""]',
+     "control pictures: the item says a picture was left out and why"),
+    ("the verifier's own capture is not shown", case_findings_control_pictures, 'seen, t4 = figures_of(rd, rev, fid, "verified", f.get("evidence_verifier"))',
+     "seen, t4 = [], []", "control pictures: the verifier's own capture is the item's picture"),
+    ("the control's pictures reach the fixer",case_findings_control_pictures, 'return dict(f, evidence=kept, evidence_dropped=left) if left else f', "return f",
      "control pictures: a finding on the control's screen keeps no walker picture"),
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),

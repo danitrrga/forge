@@ -971,13 +971,26 @@ def route_of(screen):
 def without_control_pictures(f, ctl_path):
     """The finding without the pictures its walkers took of the control's screen: their browsers carried the plant (the title shrunk), so
     a picture of that route in `evidence` would show the owner and the fixer a defect nobody wrote. Text stays; the pictures left out are
-    listed in `evidence_dropped`. Clips and other fields are not looked at."""
+    listed in `evidence_dropped`. `evidence` is a path, a list or an object (the verifier's schema allows any), and the same rule goes through
+    all three. `evidence_verifier` (the verifier's own captures, taken in a browser without the plant), `evidence_after`, clips and the other
+    fields are not looked at."""
     if ctl_path is None or not isinstance(f.get("screen"), str) or route_of(f["screen"]) != ctl_path:
         return f
+    left = []
+
+    def strip(v):  # (v without its pictures, True when v was a picture and goes whole)
+        if isinstance(v, str):
+            gone = os.path.splitext(v)[1].lower() in IMAGES
+            if gone:
+                left.append(v)
+            return v, gone
+        if isinstance(v, list):
+            return [x for x, gone in map(strip, v) if not gone], False
+        if isinstance(v, dict):
+            return {k: x for k, (x, gone) in ((k, strip(y)) for k, y in v.items()) if not gone}, False
+        return v, False
     ev = f.get("evidence")
-    kept, left = [], []
-    for v in ev if isinstance(ev, list) else [ev] if ev else []:
-        (left if isinstance(v, str) and os.path.splitext(v)[1].lower() in IMAGES else kept).append(v)
+    kept = strip(ev if isinstance(ev, (list, dict)) else [ev] if ev else [])[0]
     return dict(f, evidence=kept, evidence_dropped=left) if left else f
 
 
@@ -1087,10 +1100,14 @@ def item_of(rd, rev, f, ask, commit, notes, choices=False):
     fid = fid_of(f)
     today, t1 = figures_of(rd, rev, fid, "today", f.get("evidence"))
     built, t2 = figures_of(rd, rev, fid, "built", f.get("evidence_after"))
+    seen, t4 = figures_of(rd, rev, fid, "verified", f.get("evidence_verifier"))
     clip, t3 = convert_clip(rd, rev, fid, f, notes)
+    left = f.get("evidence_dropped")
+    note = ["%d picture(s) of this screen left out: the walkers took them with the planted control on, so the title is not as the app draws it" % len(left)
+            if isinstance(left, list) and left else ""]
     what = [x for x in ["Screen: %s" % f["screen"] if f.get("screen") else "", "Expected: %s" % f["expected"] if f.get("expected") else "",
-                        "Commit: %s" % commit if commit else ""] if x] + t1 + t2 + t3
-    item = {"id": fid, "title": f.get("claim") or fid, "what": what, "ask": ask, "figures": today + built + clip}
+                        "Commit: %s" % commit if commit else ""] + note if x] + t1 + t2 + t3 + t4
+    item = {"id": fid, "title": f.get("claim") or fid, "what": what, "ask": ask, "figures": today + seen + built + clip}
     if choices:
         item.update(options=[dict(c) for c in FIX_CHOICES], needs_note=list(NEEDS_NOTE))
     return item

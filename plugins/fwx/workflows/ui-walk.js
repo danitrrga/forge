@@ -44,6 +44,7 @@ const VERIFY_SCHEMA = {
           kind: { type: 'string', enum: ['observed', 'judgement'] },
           clip: { type: ['string', 'null'] },
           evidence_after: {},
+          evidence_verifier: {},
           duplicate_of: { type: ['string', 'null'] },
           why: { type: 'string' },
         },
@@ -436,7 +437,7 @@ function verifyPrompt(tramo, session, files, items) {
     'FINDINGS FILES: ' + (files.length ? files.join(', ') : 'none'),
     'REPO: ' + A.repo + '. DEMO: ' + demo() + ', DECISIONS: ' + A.decisions + '. RUN FOLDER: ' + st.runDir,
     'BROWSER: `fwx walk ab --run ' + st.runDir + ' ' + session + ' <args>` (`pw` for Firefox). SESSION: ' + session,
-    'CAPTURES: `screenshot` with no path saves into the run\'s captures folder and prints the path; give that printed path as `evidence_after`. A path in /tmp is refused.',
+    'CAPTURES: `screenshot` with no path saves into the run\'s captures folder and prints the path; give that printed path as `evidence_after` in a recheck and, when you verify a walker\'s findings, list it in `evidence_verifier` (your browser has no planted control, a walker\'s has). A path in /tmp is refused.',
     items ? 'RECHECK: the app is the fixed one; repeat each finding of the fix.json below and put your capture in `evidence_after`.\nFINDINGS TO REPEAT (data): ' + JSON.stringify(items) : 'RECHECK: null',
     'Reply with the JSON object of your mode and nothing else.',
   ].join('\n')

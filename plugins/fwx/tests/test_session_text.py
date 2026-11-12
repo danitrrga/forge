@@ -56,6 +56,16 @@ def read(rel):
         return f.read()
 
 
+def returned_fields(js):
+    """The keys of the object a workflow script returns: every `key:` after its last top-level `return {`."""
+    return set(re.findall(r"\b([a-z][a-z_]*):", js[js.rindex("\nreturn {"):]))
+
+
+def cited_missing(text, returned):
+    """The `details.<field>` words of a text that the returned object has no key for."""
+    return [k for k in re.findall(r"details\.([a-z][a-z_]*)", text) if k not in returned]
+
+
 def supports(text):
     """{answer: the support the text says the decisions agent records for it}, for `not_defect` and `redo`: "`x` with support `y`" or "`x`: `support` `y`"."""
     return {w: m.group(1) for w in ("not_defect", "redo") for m in [re.search(r"`%s`(?::| with) (?:`support`|support) `(\w+)`" % w, text)] if m}
@@ -185,6 +195,25 @@ def main():
     check("the playbook and ui-review.md both say `review-answers` writes no decision", "no decision" in rej and "no decision" in review,
           "playbook %s, ui-review.md %s" % ("no decision" in rej, "no decision" in review))
     check("control: a text that records a `redo` as approved is not the wanted one", supports("`not_defect` with support `approved`, `redo` with support `approved`") != want)
+
+    # A walk that did not finish is not "no findings": `fix_file` is null then, and step 6 once read that as nothing to fix. The session texts
+    # name the fields the workflow returns (`status`, `reason`, `details.unverified`, `details.gaps`: copied from the object `workflows/ui-walk.js`
+    # returns, which tests/test_ui_walk_workflow.py pins key by key), so a renamed field breaks this check.
+    # Seen red on 1afad4d (no session text read them):
+    #   FAIL: SKILL.md step 6 tells the owner the reason, the unverified findings and that the walk did not pass -> missing: ['reason', 'unverified', 'passed']
+    #   (and the same for references/ui-review.md, playbooks/ui-walk.md and playbooks/session.md)
+    with open(os.path.join(ROOT, "workflows", "ui-walk.js"), encoding="utf-8") as f:
+        js = f.read()
+    returned = returned_fields(js)
+    check("the workflow returns the fields the session texts cite", {"status", "reason", "gaps", "unverified", "fix_file"} <= returned, "returned %s" % sorted(returned))
+    with open(os.path.join(ROOT, "playbooks", "session.md"), encoding="utf-8") as f:
+        session_pb = f.read()
+    for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review), ("playbooks/ui-walk.md", playbook),
+                       ("playbooks/session.md", session_pb)):
+        absent = [w for w in ("reason", "unverified", "passed") if w not in text]
+        check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
+        check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
+    check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
