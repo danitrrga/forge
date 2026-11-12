@@ -134,4 +134,176 @@ r = case("a flag with no value is a usage error", NO_BAD, 2, "", args=("--expect
 s.ok("a flag with no value: usage on stderr", "usage: fwx test" in r.stderr, r.stderr)
 r = case("an unknown flag is a usage error", NO_BAD, 2, "", args=("--nope",))
 
+# --jobs: the files run in parallel, each its own process, and nothing a reader sees depends on how many at once.
+# Seen red before --jobs existed (the flag was unknown, exit 2, and the runner went one file after another):
+#   FAIL: --jobs 2: two files running at once see each other: exit code: got 2, want 0
+#   FAIL: --jobs 1: the files run one after the other (the first cannot see the second): exit code: got 2, want 1
+#   FAIL: --jobs 1 and --jobs 4 print the same, set 1: stdout: got '', want what --jobs 1 printed
+#   FAIL: a failing file's output is contiguous: x has all its lines: got 0, want 150
+#   FAIL: SIGTERM: the runner's children are alive while it runs (the search finds them): got 0, want 4
+#   FAIL: --jobs 0 is a usage error: one line on stderr, naming --jobs (the generic usage line names the flag, but --jobs is unknown)
+# Controls, each on a copy of lib/fwx/commands/test.py changed in one place: listed after the code block that proves them.
+import signal
+import subprocess
+import time
+
+RENDEZVOUS = ('import os, sys, time\n'
+              'd, me, other = %(d)r, %(me)r, %(other)r\n'
+              'open(os.path.join(d, me), "w").close()\n'
+              'end = time.time() + %(wait)s\n'
+              'while time.time() < end:\n'
+              '    if os.path.exists(os.path.join(d, other)):\n'
+              '        sys.exit(0)\n'
+              '    time.sleep(0.02)\n'
+              'print("FAIL: %%s never saw %%s start" %% (me, other))\n'
+              'sys.exit(1)\n')
+
+
+def pair(wait):
+    """Two files that each announce themselves and wait for the other's announcement: both pass only if both are alive at
+    the same time, which is the definition of parallel, with no clock to tune. `wait` is how long one waits for the other."""
+    d = helpers.mkdtemp("fwx-par-")
+    return helpers.toy_repo({"tests/test_a.py": RENDEZVOUS % {"d": d, "me": "a", "other": "b", "wait": wait},
+                             "tests/test_b.py": RENDEZVOUS % {"d": d, "me": "b", "other": "a", "wait": wait}})
+
+
+def last(r):
+    out = r.stdout.splitlines()
+    return out[-1] if out else ""
+
+
+r = helpers.fwx(pair(60), "test", "--jobs", "2")
+s.eq("--jobs 2: two files running at once see each other: exit code", r.returncode, 0)
+s.eq("--jobs 2: summary", last(r), "2 test file(s): 2 passed, 0 failed, 0 not run")
+r = helpers.fwx(pair(60), "test", "--jobs=2")
+s.eq("--jobs=2 form: exit code", r.returncode, 0)
+r = helpers.fwx(pair(1), "test", "--jobs", "1")
+s.eq("--jobs 1: the files run one after the other (the first cannot see the second): exit code", r.returncode, 1)
+s.eq("--jobs 1: summary", last(r), "2 test file(s): 1 passed, 1 failed, 0 not run")
+if (os.cpu_count() or 1) > 1:
+    r = helpers.fwx(pair(60), "test")
+    s.eq("no --jobs on a machine with several cores: parallel: exit code", r.returncode, 0)
+
+# The same results at any width: same lines, same order, same exit code, for a set with a pass, a fail, a 77, an expected 77
+# and files of different sizes (the start order follows the size, the print order never does).
+big = OK + "# padding\n" * 400
+SET = {"tests/test_ok.py": OK, "tests/test_big.py": big.replace("test_ok", "test_big"), "tests/test_bad.py": BAD,
+       "tests/test_skip.py": SKIP, "tests/test_skip2.py": SKIP.replace("no such tool", "other tool"),
+       "tests/test_zeta.py": OK.replace("test_ok", "test_zeta")}
+for label, drop, args in (("set 1: everything", (), ()),
+                          ("set 2: no failing file, a declared skip", ("tests/test_bad.py",), ("--expect-not-run", "tests/test_skip.py")),
+                          ("set 3: both skips declared, no failing file", ("tests/test_bad.py",),
+                           ("--expect-not-run", "tests/test_skip.py,tests/test_skip2.py"))):
+    repo = helpers.toy_repo({k: v for k, v in SET.items() if k not in drop})
+    one = helpers.fwx(repo, "test", "--jobs", "1", *args)
+    four = helpers.fwx(repo, "test", "--jobs", "4", *args)
+    s.ok("--jobs 1 and --jobs 4 print the same, %s: --jobs 1 printed something" % label, len(one.stdout.splitlines()) >= 6, one.stdout + one.stderr)
+    s.eq("--jobs 1 and --jobs 4 print the same, %s: stdout" % label, four.stdout, one.stdout)
+    s.eq("--jobs 1 and --jobs 4 print the same, %s: stderr" % label, four.stderr, one.stderr)
+    s.eq("--jobs 1 and --jobs 4 print the same, %s: exit code" % label, four.returncode, one.returncode)
+    names = [l.split()[1] if l.startswith(("PASS", "FAIL")) else l.split(": ")[1] for l in one.stdout.splitlines()[:-1]
+             if l.startswith(("PASS", "FAIL", "NOT RUN", "EXPECTED"))]
+    s.eq("--jobs 4, %s: the lines are in the order of the file names" % label, names, sorted(names))
+    s.ok("--jobs 4, %s: a line for every file" % label, len(names) == len(SET) - len(drop), str(names))
+
+# A failing file's output is shown whole, never split by another file's lines.
+CHATTY = 'import sys, time\nfor i in range(%d):\n    print("%s line %%d" %% i)\n    sys.stdout.flush()\n    time.sleep(0.002)\nsys.exit(1)\n'
+repo = helpers.toy_repo({"tests/test_x.py": CHATTY % (150, "x"), "tests/test_y.py": CHATTY % (150, "y"),
+                         "tests/test_z.py": CHATTY % (150, "z"), "tests/test_ok.py": OK})
+r = helpers.fwx(repo, "test", "--jobs", "4")
+lines = r.stdout.splitlines()
+for tag in "xyz":
+    idx = [i for i, l in enumerate(lines) if l.startswith("    %s line " % tag)]
+    s.eq("a failing file's output is contiguous: %s has all its lines" % tag, len(idx), 150)
+    s.ok("a failing file's output is contiguous: %s is one block, right after its FAIL line" % tag,
+         bool(idx) and idx == list(range(idx[0], idx[0] + 150)) and lines[idx[0] - 1].startswith("FAIL  tests/test_%s.py" % tag),
+         "first lines at %s" % idx[:3])
+s.eq("a failing file's output is contiguous: the summary", last(r), "4 test file(s): 1 passed, 3 failed, 0 not run")
+
+# Killing the runner kills every child and its group: nothing is left running.
+HOLD = ('import os, subprocess, sys, time\n'
+        'child = subprocess.Popen(["sleep", "300"])\n'
+        'tmp = %(f)r + ".tmp"\n'
+        'open(tmp, "w").write("%%d %%d" %% (os.getpid(), child.pid))\n'
+        'os.rename(tmp, %(f)r)\n'
+        'time.sleep(300)\n')
+
+
+def state(pid):
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            return f.read().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return None
+
+
+def alive(pid):
+    return state(pid) not in (None, "Z", "X")
+
+
+def gone(pids, within=10):
+    end = time.time() + within
+    while time.time() < end and any(alive(p) for p in pids):
+        time.sleep(0.05)
+    return [p for p in pids if alive(p)]
+
+
+def killed_runner(sig, jobs="2"):
+    """Start the runner on two files that each park a child and sleep; send `sig` once all four processes exist."""
+    d = helpers.mkdtemp("fwx-kill-")
+    marks = [os.path.join(d, "m%d" % i) for i in range(2)]
+    repo = helpers.toy_repo({"tests/test_h%d.py" % i: HOLD % {"f": marks[i]} for i in range(2)})
+    runner = subprocess.Popen([sys.executable, os.path.join(helpers.ROOT, "bin", "fwx"), "test", "--jobs", jobs], cwd=repo,
+                              env=helpers.clean_env(), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              text=True, start_new_session=True)
+    pids = []
+    try:
+        end = time.time() + 60
+        while time.time() < end and not all(os.path.exists(m) for m in marks) and runner.poll() is None:
+            time.sleep(0.05)
+        for m in marks:
+            if os.path.exists(m):
+                pids += [int(x) for x in open(m).read().split()]
+        before = [p for p in pids if alive(p)]
+        if runner.poll() is None:
+            runner.send_signal(sig)
+        try:
+            out, err = runner.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            runner.kill()
+            out, err = runner.communicate()
+            err += " [the runner did not exit within 30 s of the signal]"
+        return pids, before, runner.returncode, out, err, gone(pids)
+    finally:
+        for p in pids:
+            if alive(p):
+                os.kill(p, signal.SIGKILL)
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait()
+        for pipe in (runner.stdout, runner.stderr):
+            if pipe:
+                pipe.close()
+
+
+for sig, name in ((signal.SIGTERM, "SIGTERM"), (signal.SIGINT, "SIGINT")):
+    pids, before, rc, out, err, left = killed_runner(sig)
+    s.eq("%s: the runner's children are alive while it runs (the search finds them)" % name, len(before), 4)
+    s.eq("%s: the runner exits with 128 + the signal" % name, rc, 128 + int(sig))
+    s.eq("%s: no test file, no sleep it started is left running" % name, left, [])
+    s.ok("%s: one line on stderr says it was interrupted" % name, "interrupted" in err and len(err.strip().splitlines()) == 1, err)
+
+# Usage errors: one line on stderr, exit 2, no traceback, nothing run.
+for label, args in (("--jobs 0", ("--jobs", "0")), ("--jobs -1", ("--jobs", "-1")), ("--jobs abc", ("--jobs", "abc")),
+                    ("--jobs 1.5", ("--jobs", "1.5")), ("--jobs with no value", ("--jobs",)), ("--jobs=", ("--jobs=",)),
+                    ("--jobs=0", ("--jobs=0",)), ("--jobs given twice", ("--jobs", "2", "--jobs", "3"))):
+    r = case("%s is a usage error" % label, NO_BAD, 2, "", args=args, new=False)
+    err = r.stderr.strip().splitlines()
+    s.ok("%s: one line on stderr, naming --jobs, no traceback" % label,
+         len(err) == 1 and "--jobs" in err[0] and "Traceback" not in r.stderr, repr(r.stderr))
+    s.eq("%s: nothing on stdout" % label, r.stdout, "")
+case("--jobs together with --expect-not-run", NO_BAD, 0, "3 test file(s): 2 passed, 0 failed, 0 not run, 1 expected not run",
+     args=("--jobs", "3", "--expect-not-run", "tests/test_skip.py"))
+case("--jobs 1 and a failing file: same as before", FILES, 1, "4 test file(s): 2 passed, 1 failed, 1 not run", args=("--jobs", "1"))
+
 s.done()

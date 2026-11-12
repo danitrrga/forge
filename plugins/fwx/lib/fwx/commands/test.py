@@ -15,14 +15,31 @@ runs counts as any other, so a failing one is still 1. The declaration widens no
 test passed is 1 (everything declared away proves nothing), and so is a declared path that is no test file (a typo
 would silently un-declare it). Why a flag and not a list file: the reason sits beside the command in the workflow,
 and there is no second file to forget. Exit 2 on a usage error.
+
+`--jobs N` runs up to N files at once (default: the CPUs this process may use, at most 8; `--jobs 1` is one file after another,
+as before). Each file is still its own process with its own exit code, its output captured whole, so a failing file's lines are
+never mixed with another's. What a reader sees does not depend on N: the per-file lines and the summary are printed in the order
+of the file names, each as soon as it and every file before it has finished, so for a given set of results the output and the
+exit code are the same at any N. Start order is largest file first (the slowest files of a suite are mostly its largest; a
+longest-first order keeps the last worker from starting the one long file; a duration table would have to be written somewhere
+and would rot, and the size costs one `stat`). Each child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends
+SIGTERM to every running child's whole process group (the test's own cleanup runs), SIGKILL to what is left after 5 s, and exits
+128 + the signal, so nothing a test started outlives the run. SIGKILL of the runner itself cannot be caught and leaves them.
 """
 import os
+import signal
 import subprocess
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 NOT_RUN = "NOT RUN, NOT ARMED"
 EXPECTED = "EXPECTED NOT RUN"
-USAGE = "usage: fwx test [--expect-not-run PATH[,PATH...]]\n"
+USAGE = "usage: fwx test [--expect-not-run PATH[,PATH...]] [--jobs N]\n"
+MAX_DEFAULT_JOBS = 8
+GRACE_S = 5
+STOP = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
 def clean_env():
@@ -46,34 +63,111 @@ def reason(output):
     return last.split(NOT_RUN + ":", 1)[1].strip() if (NOT_RUN + ":") in last else "no reason printed"
 
 
-def declared(argv):
-    """The set of declared paths, or None on a usage error."""
+def parse(argv):
+    """(declared paths, jobs) or an error line. `jobs` is None when --jobs was not given."""
     out = set()
+    jobs = None
     i = 0
     while i < len(argv):
         a = argv[i]
         if a == "--expect-not-run":
             i += 1
             if i >= len(argv):
-                return None
+                return None, None, USAGE.strip()
             value = argv[i]
         elif a.startswith("--expect-not-run="):
             value = a.split("=", 1)[1]
+        elif a == "--jobs" or a.startswith("--jobs="):
+            if jobs is not None:
+                return None, None, "fwx test: --jobs given twice"
+            if a == "--jobs":
+                i += 1
+                value = argv[i] if i < len(argv) else ""
+            else:
+                value = a.split("=", 1)[1]
+            if not (value.isascii() and value.isdigit() and int(value) >= 1):
+                return None, None, "fwx test: --jobs wants a whole number of 1 or more, got %r" % value
+            jobs = int(value)
+            i += 1
+            continue
         else:
-            return None
+            return None, None, USAGE.strip()
         names = [n.strip() for n in value.split(",")]
         if not all(names):
-            return None
+            return None, None, USAGE.strip()
         out.update(names)
         i += 1
-    return out
+    return out, jobs, None
+
+
+def default_jobs():
+    try:
+        cpus = len(os.sched_getaffinity(0))
+    except AttributeError:
+        cpus = os.cpu_count() or 1
+    return max(1, min(cpus, MAX_DEFAULT_JOBS))
+
+
+class Interrupted(Exception):
+    def __init__(self, signum):
+        Exception.__init__(self, signum)
+        self.signum = signum
+
+
+class Children:
+    """The running test processes, each the leader of its own process group, so that one call can end them all."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.live = {}
+        self.stopped = False
+
+    def run(self, rel, root, env):
+        """(exit code, output) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave."""
+        with self.lock:
+            if self.stopped:
+                return None, ""
+            p = subprocess.Popen([sys.executable, rel], cwd=root, env=env, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
+            self.live[p.pid] = p
+        try:
+            out, _ = p.communicate()
+        finally:
+            with self.lock:
+                self.live.pop(p.pid, None)
+        return p.returncode, out
+
+    def kill_all(self):
+        """SIGTERM to every group, SIGKILL to what is still there after GRACE_S. Returns how many were running."""
+        with self.lock:
+            self.stopped = True
+            groups = list(self.live)
+        for sig, wait in ((signal.SIGTERM, GRACE_S), (signal.SIGKILL, 0)):
+            for pgid in groups:
+                try:
+                    os.killpg(pgid, sig)
+                except OSError:
+                    pass
+            end = time.monotonic() + wait
+            while time.monotonic() < end and any(_group_alive(g) for g in groups):
+                time.sleep(0.02)
+        return len(groups)
+
+
+def _group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except OSError:
+        return False
+    return True
 
 
 def main(argv):
-    expect = declared(argv)
-    if expect is None:
-        sys.stderr.write(USAGE)
+    expect, jobs, error = parse(argv)
+    if error:
+        sys.stderr.write(error + "\n")
         return 2
+    jobs = jobs or default_jobs()
     env = clean_env()
     # The folder it is run from, not the repository's top level: this plugin is a folder of a bigger repository
     # (forge's plugins/fwx), and the top level's tests are not its own. `git ls-files` run there lists only that folder.
@@ -86,23 +180,49 @@ def main(argv):
     unknown = sorted(expect - set(files))
     for rel in unknown:
         sys.stderr.write("fwx test: --expect-not-run names %s, which is no tests/test_*.py file\n" % rel)
-    for rel in files:
-        r = subprocess.run([sys.executable, rel], cwd=root, env=env, stdin=subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-        if r.returncode == 0:
-            passed += 1
-            print("PASS  " + rel)
-        elif r.returncode == 77 and rel in expect:
-            expected += 1
-            print("%s: %s: %s" % (EXPECTED, rel, reason(r.stdout)))
-        elif r.returncode == 77:
-            not_run += 1
-            print("%s: %s: %s" % (NOT_RUN, rel, reason(r.stdout)))
-        else:
-            failed += 1
-            print("FAIL  %s (exit %d)" % (rel, r.returncode))
-            for line in r.stdout.splitlines():
-                print("    " + line)
+    children = Children()
+    pool = ThreadPoolExecutor(max_workers=jobs)
+
+    def stop(signum, frame):
+        raise Interrupted(signum)
+
+    old = {s: signal.signal(s, stop) for s in STOP}  # before the first child starts: no window in which a signal leaves one running
+    try:
+        # largest first, ties by name: the order the files start in; the order they are printed in is `files`
+        start = sorted(files, key=lambda f: (-os.path.getsize(os.path.join(root, f)), f))
+        futures = {rel: pool.submit(children.run, rel, root, env) for rel in start}
+        for rel in files:
+            code, output = futures[rel].result()
+            if code == 0:
+                passed += 1
+                print("PASS  " + rel)
+            elif code == 77 and rel in expect:
+                expected += 1
+                print("%s: %s: %s" % (EXPECTED, rel, reason(output)))
+            elif code == 77:
+                not_run += 1
+                print("%s: %s: %s" % (NOT_RUN, rel, reason(output)))
+            else:
+                failed += 1
+                print("FAIL  %s (exit %d)" % (rel, code))
+                for line in output.splitlines():
+                    print("    " + line)
+            sys.stdout.flush()
+    except Interrupted as e:
+        for s in STOP:  # no second signal may cut the cleanup short
+            signal.signal(s, signal.SIG_IGN)
+        n = children.kill_all()
+        pool.shutdown(wait=True, cancel_futures=True)
+        sys.stderr.write("fwx test: interrupted by %s; ended %d running test file(s)\n" % (signal.Signals(e.signum).name, n))
+        return 128 + e.signum
+    except BaseException:  # a child that could not start, a closed stdout: leave nothing running either
+        children.kill_all()
+        pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+    pool.shutdown(wait=True)
     total = passed + failed + not_run + expected
     print("%d test file(s): %d passed, %d failed, %d not run%s"
           % (total, passed, failed, not_run, ", %d expected not run" % expected if expected else ""))
