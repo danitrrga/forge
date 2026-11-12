@@ -499,6 +499,15 @@ def case_no_login(R, S):
         S.eq("login declared, with a session: the session is used (a cookie call)", any("cookies" in c["argv"] for c in sc.calls("agent-browser")), True)
     finally:
         sc.stop()
+    # a malformed `login`: an empty text declares none (forge refuses it, the plugin reads it as no login); anything else that is set declares one, so
+    # a session is demanded (fail closed)
+    for value, code in (("", 0), (5, 1)):
+        sc = Scene(app_run={"login": value})
+        try:
+            r, o = sc.selftest(R, "--json", env={"FAKE_NO_SESSION": "1"})
+            S.eq("login %r, no session: exit" % (value,), r.returncode, code)
+        finally:
+            sc.stop()
 
 
 CASES = [case_green, case_red_app, case_red_snapshot, case_cold_start, case_login_skeleton, case_real_snapshot, case_red_blank, case_red_down, case_not_armed, case_prefix, case_clean_browser, case_no_login]
@@ -537,6 +546,10 @@ MUTANTS = [
      "clean browser: key 5 is a configuration error"),
     ("login: every app needs a session", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))', "return True",
      "no login: exit: got 1, want 0"),
+    ("login: an empty text is a login", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))',
+     'return "login" in (config.load(run["repo"])["project"].get("app_run") or {})', "login '', no session: exit"),
+    ("login: only a text is a login", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))',
+     'return isinstance((config.load(run["repo"])["project"].get("app_run") or {}).get("login"), str)', "login 5, no session: exit"),
     ("login: no app has a login", case_no_login, WALK, 'return bool((config.load(run["repo"])["project"].get("app_run") or {}).get("login"))', "return False",
      "login declared, no session: exit: got 0, want 1"),
 ]

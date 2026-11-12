@@ -43,9 +43,12 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       gave, else the one the tool printed) in `control-pictures.txt` of the run when that route is the control's or cannot be read; the
       tool's output goes through unchanged.
   check-screens --run R --screens JSON   asks each screen of the walk (JSON: a list of URLs of the app) through the probe `selftest` uses (from
-      inside the app's network, through `app_run.run`; redirects to local hosts are followed, any other is refused) and prints one object,
-      `{checked, bad, screens: [{url, status, ok}]}`, each screen once. A screen that does not answer 2xx, or is not on the app (its host is not
-      the run's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>` (`screen <url> is not answered: <why>` for no status), and the exit is 1. The
+      inside the app's network, through `app_run.run`; redirects to local hosts are followed, any other is refused; a space or a non-ASCII
+      character in a screen is quoted as a browser would) and prints one object, `{checked, bad, screens: [{url, status, ok}]}`, each screen once.
+      The probe is anonymous (it carries no demo session), so for an app that declares `app_run.login` a status says nothing: nothing is asked, it
+      prints `{checked: 0, bad: 0, not_run: "NOT RUN, NOT ARMED: ...", screens: [{url, checked: false, status: null, ok: null}]}`, the same line on
+      stderr, and exits 0 (the workflow goes on unchecked). A screen that does not answer 2xx, or is not on the app (its host or its port is not the
+      app's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>` (`screen <url> is not answered: <why>` for no status), and the exit is 1. The
       ui-walk workflow runs it once, for every screen, after the tramos and before `arm-control`, and ends `failed` on exit 1: a walk over pages
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
@@ -1034,6 +1037,22 @@ def cmd_arm_control(argv):
     return 0
 
 
+SAFE_URL = ":/?#[]@!$&'()*+,;=%~"  # what a browser leaves as it is in an address: the rest (a space, a non-ASCII character) is percent-encoded
+
+
+def port_of(url):
+    p = urlsplit(url)
+    return p.port or (443 if p.scheme == "https" else 80)
+
+
+def on_app(url, run):
+    """Whether a screen is on the app's own origin: a local http(s) address whose host is the run's and whose port is one of its apps' (an unreadable port is no)."""
+    try:
+        return bool(local_host(url)) and host_of(url) in run["hosts"] and port_of(url) in {port_of(a["url"]) for a in run["apps"]}
+    except ValueError:
+        return False
+
+
 def cmd_check_screens(argv):
     o, _ = opts("check-screens", argv, ("--run", "--screens"))
     if "--run" not in o or "--screens" not in o:
@@ -1045,12 +1064,18 @@ def cmd_check_screens(argv):
         raise usage("check-screens", "--screens is not JSON (%s)" % e)
     if not isinstance(screens, list) or not screens or not all(isinstance(u, str) and u.strip() for u in screens):
         raise usage("check-screens", "--screens is not a list of at least one URL")
+    urls = list(dict.fromkeys(screens))  # each screen once, in order
+    if login_declared(run):
+        why = "NOT RUN, NOT ARMED: app_run.login is set and the probe has no demo session, so a screen's status says nothing: %d screen(s) not checked" % len(urls)
+        say({"checked": 0, "bad": 0, "not_run": why, "screens": [{"url": u, "checked": False, "status": None, "ok": None} for u in urls]})
+        sys.stderr.write("fwx walk: %s\n" % why)
+        return 0
     rows = []
-    for u in dict.fromkeys(screens):  # each screen once, in order
-        if not (local_host(u) and host_of(u) in run["hosts"]):  # a screen is agent-written text: nothing off the app is asked for
-            rows.append({"url": u, "status": "not on the app (%s)" % ", ".join(run["hosts"]), "ok": False})
+    for u in urls:
+        if not on_app(u, run):  # a screen is agent-written text: nothing off the app's own origin is asked for
+            rows.append({"url": u, "status": "not on the app (%s; port %s)" % (", ".join(run["hosts"]), ", ".join(str(n) for n in sorted({port_of(a["url"]) for a in run["apps"]}))), "ok": False})
             continue
-        got = ask(u, run["run"], run["repo"])
+        got = ask(quote(u, safe=SAFE_URL), run["run"], run["repo"])
         ok = got.isdigit() and 200 <= int(got) < 300
         rows.append({"url": u, "status": int(got) if got.isdigit() else got, "ok": ok})
     bad = [r for r in rows if not r["ok"]]

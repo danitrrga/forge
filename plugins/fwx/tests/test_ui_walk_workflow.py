@@ -348,17 +348,70 @@ def check_screens(script, s):
     why = str(result(rec).get("reason"))
     s.ok("screens two bad: both are named", APP + "/settings answers 404" in why and APP + "/billing: not on the app (localhost)" in why, why)
     # fail closed: no answer, an exit that is not 0 or 1, a pass that is not the command's own JSON
+    ok_rows = screens_out((APP + "/settings", 200), (APP + "/billing", 200))
+    no_ok = {"checked": 2, "bad": 0, "screens": [{"url": APP + "/settings", "status": 200}, {"url": APP + "/billing", "status": 200}]}
     for label, ans in (("no answer", None), ("exit 2", R("", 2)), ("exit 1 and no JSON", R("boom", 1)), ("exit 0 and no JSON", R("ok", 0)),
-                       ("exit 0 and no screen looked at", R({"checked": 0, "bad": 0, "screens": []}, 0))):
+                       ("exit 0 and no screen looked at", R({"checked": 0, "bad": 0, "screens": []}, 0)),
+                       ("exit 1 and every row ok", R(ok_rows, 1)), ("exit 0 and a row without ok", R(no_ok, 0)),
+                       ("exit 0 and fewer rows than screens", R(screens_out((APP + "/settings", 200)), 0)),
+                       ("exit 0 and rows that are no objects", R({"checked": 2, "bad": 0, "screens": [None, 3]}, 0))):
         rec, err = go(script, answers_over={"executor:runner-check-screens": ans})
         rec = finish(s, "screens %s" % label, rec, err)
         r = result(rec)
         s.ok("screens %s: failed, naming the command, and no walker ran" % label, r.get("status") == "failed" and "check-screens" in str(r.get("reason"))
              and not walkers(rec), repr((r.get("status"), r.get("reason"), labels(rec)[-3:])))
+        # the reason says the reply was unusable, not that a screen answered badly, and sends the owner to run the command (a runner hands back stdout only)
+        s.ok("screens %s: the reason says the answer was not usable and names no screen's status" % label,
+             ("no usable answer" in str(r.get("reason")) or "did not return" in str(r.get("reason"))) and "stderr" not in str(r.get("reason")) and "answers" not in str(r.get("reason")),
+             repr(r.get("reason")))
     rec, err = go(script, answers_over={"executor:runner-check-screens": R(bad, 0)})
     rec = finish(s, "screens exit 0 and a bad screen", rec, err)
     s.ok("screens exit 0 and a bad screen: the screen's own status decides, not the exit", result(rec).get("status") == "failed" and not walkers(rec),
          repr((result(rec).get("status"), labels(rec)[-3:])))
+
+
+def check_screens_login(script, s):
+    """An app that declares a login: check-screens does not judge a screen (the probe has no demo session), prints `NOT RUN, NOT ARMED` per screen and
+    exits 0, and the walk goes on exactly as before check-screens existed. Seen red on 26d1cf6 (the command had no such answer, so it read as a failure):
+      FAIL: screens login: the walk goes on: got 'failed', want 'done'"""
+    not_run = {"checked": 0, "bad": 0, "not_run": "NOT RUN, NOT ARMED: app_run.login is set, so a screen's status says nothing without the demo session: 2 screen(s) not checked",
+               "screens": [{"url": APP + "/settings", "checked": False, "status": None, "ok": None}, {"url": APP + "/billing", "checked": False, "status": None, "ok": None}]}
+    rec, err = go(script, answers_over={"executor:runner-check-screens": R(not_run, 0)})
+    rec = finish(s, "screens login", rec, err)
+    s.eq("screens login: the walk goes on", (result(rec).get("status"), result(rec).get("reason")), ("done", ""))
+    s.eq("screens login: five walkers", len(walkers(rec)), 5)
+    # the same answer for fewer screens than asked, or with no reason, is not a pass
+    for label, ans in (("fewer rows", dict(not_run, screens=not_run["screens"][:1])), ("no reason", {k: v for k, v in not_run.items() if k != "not_run"})):
+        rec, err = go(script, answers_over={"executor:runner-check-screens": R(ans, 0)})
+        rec = finish(s, "screens login %s" % label, rec, err)
+        s.ok("screens login %s: failed, no walker" % label, result(rec).get("status") == "failed" and not walkers(rec), repr((result(rec).get("status"), labels(rec)[-3:])))
+
+
+def check_critic_context(script, s):
+    """The owner's decision (F-3): the critic judges THE WHOLE SCREEN, given the context in which the change was made (the `why` of each screen: the
+    part's task, the decision it came from) as the place to start, so it can say whether the change is well done. Until then the brief named what
+    changed and the critic looked only there, which is why a fault elsewhere on the same screen (the planted one) went unseen in three acceptances.
+    Seen red on the base (the brief carried the screens' JSON and nothing about how to read it):
+      FAIL: critic brief: the whole screen is judged against its reference, not only the changed element: 'You are the ui-walker, axis critic, ...'
+      FAIL: critic brief: what changed is the context of the change and the place to start, not the edge of what is judged: ...
+      FAIL: ui-walker.md: the critic section says the same
+    The breaker's brief is the negative control: it is not told to judge a reference."""
+    rec, err = go(script)
+    rec = finish(s, "critic context", rec, err)
+    ws = {l["label"]: l["prompt"] for l in walkers(rec)}
+    for label in ("ui-walker:T1-critic", "ui-walker:T2-critic", "ui-walker:T2-firefox"):
+        p = ws.get(label, "")
+        s.ok("%s brief: the whole screen is judged against its reference, not only the changed element" % label,
+             "Judge the whole screen against its reference" in p and "not only the changed element" in p, p[-700:])
+        s.ok("%s brief: what changed is the context of the change and the place to start, not the edge of what is judged" % label,
+             "the context in which the change was made" in p and "the place to start" in p and "whether the change is well done" in p, p[-700:])
+    s.ok("critic brief: the screen's own why is in it, as the context", "the save bar" in ws.get("ui-walker:T1-critic", ""), ws.get("ui-walker:T1-critic", "")[-500:])
+    s.ok("breaker brief: not told to judge a reference or the whole screen", all("whole screen" not in p and "context in which" not in p for k, p in ws.items() if k.endswith("breaker")),
+         repr([k for k, p in ws.items() if k.endswith("breaker") and "whole screen" in p]))
+    with open(os.path.join(ROOT, "agents", "ui-walker.md"), encoding="utf-8") as f:
+        agent = f.read()
+    critic = agent.split("## Axis `critic`", 1)[-1]
+    s.ok("ui-walker.md: the critic section says the same", "the whole screen" in critic and "context" in critic and "place to start" in critic and "well done" in critic, critic[:600])
 
 
 def check_down_fails(script, s):
@@ -866,6 +919,8 @@ def check_all(script, s):
     check_quota(script, s)
     check_tramos(script, s)
     check_screens(script, s)
+    check_screens_login(script, s)
+    check_critic_context(script, s)
     check_verify(script, s)
     check_recheck(script, s)
     check_args(script, s)
@@ -940,6 +995,16 @@ MUTANTS = [
     ("the exit code decides, not the screens", "&& rows.length === urls.length && bad.length === 0) return", ") return", "FAIL: screens exit 0 and a bad screen"),
     ("a count of screens that is not compared", "rows && rows.length === urls.length && bad.length === 0) return", "rows && bad.length === 0) return",
      "FAIL: screens exit 0 and no screen looked at"),
+    ("an app with a login is judged on its screens", "if (v && v.rc === 0 && out && typeof out === 'object' && typeof out.not_run === 'string'", "if (false && v && v.rc === 0 && out && typeof out === 'object' && typeof out.not_run === 'string'",
+     "FAIL: screens login: the walk goes on"),
+    ("a row with no ok passes", "const bad = rows ? rows.filter((x) => x.ok !== true) : []", "const bad = rows ? rows.filter((x) => x.ok === false) : []",
+     "FAIL: screens exit 0 and a row without ok"),
+    ("the exit code is not read", "if (v && v.rc === 0 && rows && rows.length === urls.length && bad.length === 0) return", "if (v && rows && rows.length === urls.length && bad.length === 0) return",
+     "FAIL: screens exit 1 and every row ok"),
+    ("fewer rows than screens pass", "rows && rows.length === urls.length && bad.length === 0) return", "rows && rows.length > 0 && bad.length === 0) return",
+     "FAIL: screens exit 0 and fewer rows than screens"),
+    ("rows that are no objects are read", "out.screens.filter((x) => x && typeof x === 'object')", "out.screens", "FAIL: screens exit 0 and rows that are no objects"),
+    ("the critic is not told to judge the whole screen", "Judge the whole screen against its reference", "Look at the changed element", "FAIL: ui-walker:T1-critic brief: the whole screen is judged"),
     ("the reason does not say what app_run.url is", '". app_run.url is the base address each screen\'s path is appended to (here "', '". (here "',
      "FAIL: screens 404: the reason says app_run.url is the base the screens are appended to"),
 ]

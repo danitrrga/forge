@@ -1951,7 +1951,7 @@ class Pages:
     """A toy app on a port chosen free at run time, in a thread of this process: /ok answers 200, /docs/docs 404, /go-local redirects to /ok
     and /go-away to a host that is not local. `hits` lists the paths it was asked for."""
 
-    def __init__(self):
+    def __init__(self, port=0):
         import http.server
         import threading
         outer = self
@@ -1971,7 +1971,7 @@ class Pages:
             def log_message(self, *a):
                 pass
 
-        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), H)
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", port), H)
         self.url = "http://127.0.0.1:%d" % self.server.server_address[1]
         self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
         self.thread.start()
@@ -1980,6 +1980,25 @@ class Pages:
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(5)
+
+
+def take_over(sc):
+    """A Pages server on the toy app's own port, once `up` armed: the screens of check-screens must be on the app's origin, so the toy app's server
+    (a plain file server that `up` started) is stopped and this one answers there instead."""
+    sc.stop()
+    for _ in range(50):
+        try:
+            return Pages(sc.port)
+        except OSError:
+            time.sleep(0.1)
+    raise OSError("the toy app's port did not come free")
+
+
+def declare_login(sc):
+    path = os.path.join(sc.repo, ".claude", "fwx.json")
+    cfg = jfile(path)
+    cfg["project"]["app_run"]["login"] = "python3 login.py"
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps(cfg))
 
 
 def case_check_screens(R, S):
@@ -1991,12 +2010,13 @@ def case_check_screens(R, S):
       FAIL: check-screens: one answers 404: stderr names the screen and the status: rc 2: fwx walk: usage ...
     The all-200 call is the negative control of the 404 one: same command, same toy app, only the path differs."""
     sc = Scene()
-    pg = Pages()
+    pg = None
     try:
         o = armed(sc, R, S, "check-screens")
         if not o:
             return
         rd = o["run_dir"]
+        pg = take_over(sc)
 
         def check(*paths):
             r = sc.walk(R, "check-screens", "--run", rd, "--screens", json.dumps([p if "://" in p else pg.url + p for p in paths]))
@@ -2028,6 +2048,32 @@ def case_check_screens(R, S):
         pg.hits.clear()
         r, out = check("/ok", "/ok")
         S.eq("check-screens: a screen listed twice is asked once", (out.get("checked"), pg.hits), (1, ["/ok"]))
+        # A screen is text an agent wrote: spaces and non-ASCII characters are quoted as a browser would, so a healthy page is not failed.
+        # Seen red on 26d1cf6: FAIL: check-screens: a space and non-ASCII characters are quoted: exit: got 1, want 0
+        #   (screen http://127.0.0.1:P/sp ace is not answered: error: URL can't contain control characters. '/sp ace' ...)
+        pg.hits.clear()
+        r, out = check("/sp ace", "/caf\u00e9", "/q?q=hello world")
+        S.eq("check-screens: a space and non-ASCII characters are quoted: exit", r.returncode, 0)
+        S.eq("check-screens: a space and non-ASCII characters are quoted: what the app was asked", pg.hits, ["/sp%20ace", "/caf%C3%A9", "/q?q=hello%20world"])
+        # A screen is on the app's own origin: another local port (another service) or a port that is no number is refused, named, not asked.
+        # Seen red on 26d1cf6: FAIL: check-screens: a screen on another local port: never asked: got ['/ok'], want []
+        other = Pages()
+        try:
+            r, out = check(other.url + "/ok", "http://127.0.0.1:notaport/ok", "/ok")
+            S.eq("check-screens: a screen on another local port: exit", r.returncode, 1)
+            S.ok("check-screens: a screen on another local port: both refused screens named, 'not on the app', one line each",
+                 other.url + "/ok" in r.stderr and "notaport" in r.stderr and r.stderr.count("not on the app") == 2 and len(r.stderr.strip().splitlines()) == 2, r.stderr)
+            S.eq("check-screens: a screen on another local port: never asked", other.hits, [])
+        finally:
+            other.stop()
+        # No status is not a pass: a refused connection is named as not answered (fail closed). The server is stopped for it.
+        gone = pg.url
+        pg.stop()
+        pg = None
+        r, out = check(gone + "/ok")
+        S.eq("check-screens: a refused connection: exit", r.returncode, 1)
+        S.ok("check-screens: a refused connection: named as not answered, with the reason", "screen %s/ok is not answered: error" % gone in r.stderr, r.stderr)
+        S.eq("check-screens: a refused connection: the row is not ok and has no number", [(x.get("ok"), isinstance(x.get("status"), int)) for x in out.get("screens", [])], [(False, False)])
         # nothing to look at is a refusal, not a pass; a usage error is exit 2
         for label, argv in (("an empty list", ["--screens", "[]"]), ("not JSON", ["--screens", "nope"]), ("a list of numbers", ["--screens", "[1]"]), ("no --screens", [])):
             r = sc.walk(R, "check-screens", "--run", rd, *argv)
@@ -2036,15 +2082,42 @@ def case_check_screens(R, S):
         S.eq("check-screens: no --run: exit 2", r.returncode, 2)
         sc.walk(R, "down", "--run", rd)
     finally:
-        pg.stop()
+        if pg:
+            pg.stop()
+        sc.stop()
+    # An app that declares a login: the probe has no demo session, so what a screen answers says nothing about the walk. Nothing is asked, the
+    # command says NOT RUN, NOT ARMED per screen and exits 0, and the workflow goes on as it did before check-screens existed.
+    # Seen red on 26d1cf6: FAIL: check-screens login: exit: got 1, want 0 (screen .../docs/docs answers 404, the app's own login page answered 404 to the probe)
+    sc = Scene()
+    pg = None
+    try:
+        declare_login(sc)
+        o = armed(sc, R, S, "check-screens login")
+        if not o:
+            return
+        pg = take_over(sc)
+        r = sc.walk(R, "check-screens", "--run", o["run_dir"], "--screens", json.dumps([pg.url + "/ok", pg.url + "/docs/docs"]))
+        out = obj(r.stdout) or {}
+        S.eq("check-screens login: exit", r.returncode, 0)
+        S.ok("check-screens login: NOT RUN, NOT ARMED on stdout and stderr, with the reason", str(out.get("not_run")).startswith("NOT RUN, NOT ARMED: ") and "app_run.login" in str(out.get("not_run"))
+             and "NOT RUN, NOT ARMED: " in r.stderr, "%s | %s" % (r.stdout, r.stderr))
+        S.eq("check-screens login: every screen is listed as not checked", [(x.get("url"), x.get("checked")) for x in out.get("screens", [])],
+             [(pg.url + "/ok", False), (pg.url + "/docs/docs", False)])
+        S.eq("check-screens login: nothing looked at, nothing bad", (out.get("checked"), out.get("bad")), (0, 0))
+        S.eq("check-screens login: the app was not asked", pg.hits, [])
+        sc.walk(R, "down", "--run", o["run_dir"])
+    finally:
+        if pg:
+            pg.stop()
         sc.stop()
     # the probe runs from where the app lives: through the app's `run` prefix, as the selftest's does
     sc = Scene(prefix="fakerig run --")
-    pg = Pages()
+    pg = None
     try:
         o = armed(sc, R, S, "check-screens prefix")
         if not o:
             return
+        pg = take_over(sc)
         sc.clear()
         r = sc.walk(R, "check-screens", "--run", o["run_dir"], "--screens", json.dumps([pg.url + "/ok"]))
         S.eq("check-screens prefix: exit", r.returncode, 0)
@@ -2052,7 +2125,8 @@ def case_check_screens(R, S):
              "%r hits %r" % ([c["prog"] for c in sc.calls()], pg.hits))
         sc.walk(R, "down", "--run", o["run_dir"])
     finally:
-        pg.stop()
+        if pg:
+            pg.stop()
         sc.stop()
 
 
@@ -2283,24 +2357,34 @@ MUTANTS = [
     ("check-screens: any status is ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = got.isdigit()",
      "check-screens: one answers 404: exit: got 0, want 1"),
     ("check-screens: a failing run exits 0", case_check_screens, "return 1 if bad else 0", "return 0", "check-screens: one answers 404: exit: got 0, want 1"),
-    ("check-screens: a screen off the app is asked for", case_check_screens, 'if not (local_host(u) and host_of(u) in run["hosts"]):', "if False:",
+    ("check-screens: a screen off the app is asked for", case_check_screens, "if not on_app(u, run):", "if False:",
      "check-screens: a screen that is not on the app: named, and not asked"),
     ("check-screens: a redirect off the app is followed", case_check_screens,
      'return super().redirect_request(req, fp, code, msg, headers, newurl) if host in LOCAL or host.endswith(".localhost") else None',
      "return super().redirect_request(req, fp, code, msg, headers, newurl)", "check-screens: a redirect to a host that is not local is not followed: it names the screen"),
     ("check-screens: only the first bad screen is named", case_check_screens, "    for r in bad:\n", "    for r in bad[:1]:\n",
      "check-screens: every bad screen is named, not the first"),
-    ("check-screens: a screen listed twice is asked twice", case_check_screens, "for u in dict.fromkeys(screens):", "for u in screens:",
+    ("check-screens: a screen listed twice is asked twice", case_check_screens, "urls = list(dict.fromkeys(screens))", "urls = list(screens)",
      "check-screens: a screen listed twice is asked once"),
     ("check-screens: an empty list is a pass", case_check_screens, "or not screens or not all(", "or not all(", "check-screens: an empty list: exit 2 and a usage line"),
     ("arm-control: the plant is written after the proof", case_arm_control_launch_path, "    arm()\n    after = read_fresh(run, screen)", "    after = read_fresh(run, screen)",
      "arm-control launch path: a browser that takes the script: exit"),
     ("arm-control: control.json left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (script,):",
      "arm-control launch path: a browser that ignores --init-script: no control.json is left"),
-    ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(u, run["run"], run["repo"])', 'got = ask(u, "", run["repo"])',
+    ("check-screens: asked from the host, not through the prefix", case_check_screens, 'got = ask(quote(u, safe=SAFE_URL), run["run"], run["repo"])', 'got = ask(quote(u, safe=SAFE_URL), "", run["repo"])',
      "check-screens prefix: the screen was asked through the rig prefix"),
     ("arm-control: a title gone in the planted session accepted", case_arm_control_launch_path, "if after is None:", "if False:",
      "arm-control launch path: a title that is gone in the planted session: says target not found"),
+    ("check-screens: a probe error counted ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = (not got.isdigit()) or 200 <= int(got) < 300",
+     "check-screens: a refused connection: exit"),
+    ("check-screens: stderr says answers for every status", case_check_screens, '"is not answered: %s" % r["status"]', '"answers %s" % r["status"]',
+     "check-screens: a refused connection: named as not answered"),
+    ("check-screens: a screen is not quoted", case_check_screens, "got = ask(quote(u, safe=SAFE_URL), run[\"run\"], run[\"repo\"])", "got = ask(u, run[\"run\"], run[\"repo\"])",
+     "check-screens: a space and non-ASCII characters are quoted: exit"),
+    ("check-screens: any port of the app's host", case_check_screens, "and port_of(url) in {port_of(a[\"url\"]) for a in run[\"apps\"]}", "",
+     "check-screens: a screen on another local port: both refused screens named"),
+    ("check-screens: an app with a login is judged", case_check_screens, "if login_declared(run):\n        why = ", "if False:\n        why = ",
+     "check-screens login: exit"),
     ("arm-control: init.js left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (ctl_file,):",
      "arm-control launch path: a browser that ignores --init-script: and no init script"),
 ]
