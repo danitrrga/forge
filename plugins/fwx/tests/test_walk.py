@@ -154,11 +154,7 @@ def copy_tree(root, *patches):
 
 
 def free_port():
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", 0))
-    port = sock.getsockname()[1]
-    sock.close()
-    return port
+    return helpers.free_port()
 
 
 def script(path, text):
@@ -166,10 +162,19 @@ def script(path, text):
     return path
 
 
+SCENES = []  # every Scene made; stop_scenes() ends what their `up` left, for a control run cut short by helpers.FirstFail
+
+
+def stop_scenes():
+    while SCENES:
+        SCENES.pop().stop()
+
+
 class Scene:
     """A toy repo with its configuration, an app (`up.py`/`down.py` in the repo) and the fakes on the only PATH."""
 
     def __init__(self, ab=True, prefix="", container=False, url_tpl=None, limits=None, app=True, firefox=True, fake_up=None):
+        SCENES.append(self)
         self.port = free_port()
         self.pidfile = None
         self.url = "http://127.0.0.1:%d" % self.port
@@ -240,6 +245,8 @@ class Scene:
                     os.kill(int(p), 15)
                 except OSError:
                     pass
+            if os.path.exists(pf):
+                os.remove(pf)  # a second stop() (stop_scenes) must not signal a pid the system has given to something else
 
 
 def obj(text):
@@ -1782,13 +1789,14 @@ if __name__ == "__main__":
     for case in CASES:
         guarded(case, real, s)
     for name, case, old, new, needle in MUTANTS:
-        m = helpers.Suite()
+        m = helpers.FirstFail(lambda f, needle=needle: needle in f)  # the control reads one FAIL: the case stops at it
         try:
             tree = copy_tree(ROOT, (W, old, new))
         except (AssertionError, OSError) as e:
             s.ok("control %s: built" % name, False, str(e))
             continue
-        guarded(case, runner(tree), m)
+        m.run(guarded, case, runner(tree), m)
+        stop_scenes()
         s.ok("control %s: the case fails" % name, bool(m.fails), "the mutant passed all %d checks" % m.checks)
         s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in m.fails),
              "FAILs: %s" % "; ".join(f[:140] for f in m.fails[:3]))

@@ -66,4 +66,73 @@ s.eq("add_worktree: the worktree shares the repo's git dir", os.path.realpath(co
 s.ok("add_worktree: the worktree has the files", os.path.isfile(os.path.join(wt, "a.txt")))
 s.eq("add_worktree: it is on its own branch", query(wt, "rev-parse", "--abbrev-ref", "HEAD"), "side")
 
+# FirstFail, the Suite of a control run: the case stops at the first FAIL the control is waiting for, and at nothing else.
+# Seen red on the base helpers.py (no FirstFail yet): AttributeError: module 'helpers' has no attribute 'FirstFail'
+# Controls, each on a copy of helpers.py changed in one place:
+#   raising at every FAIL (`if self.want(self.fails[-1]):` -> `if True:`):  FAIL: FirstFail: a FAIL the control is not waiting for does not stop the case: got ['one', 'two'], want ['one', 'two', 'three']
+#   never raising (the `raise Found()` line removed):  FAIL: FirstFail: the case stops at the FAIL it waits for: got ['one', 'two', 'three'], want ['one', 'two']
+#   Found an Exception, so the case's own `except Exception` swallows it:  FAIL: FirstFail: a case's `except Exception` does not swallow the stop: got ['one', 'two', 'swallowed'], want ['one', 'two']
+def case(S, trail, swallow=False):
+    try:
+        trail.append("one")
+        S.ok("one", True)
+        trail.append("two")
+        S.ok("two", False, "wanted")
+        trail.append("three")
+        S.ok("three", False, "not wanted")
+    except Exception:  # a case that catches its own errors must not catch the stop
+        if not swallow:
+            raise
+        trail.append("swallowed")
+
+
+f = helpers.FirstFail(lambda line: "two" in line)
+trail = []
+seen = f.run(case, f, trail)
+s.eq("FirstFail: the case stops at the FAIL it waits for", trail, ["one", "two"])
+s.ok("FirstFail: run says the FAIL was seen, and `fails` holds it last", seen is True and f.fails == ["FAIL: two: wanted"], repr(f.fails))
+s.eq("FirstFail: what ran is counted", f.checks, 2)
+f = helpers.FirstFail(lambda line: "nothing like this" in line)
+trail = []
+seen = f.run(case, f, trail)
+s.eq("FirstFail: a FAIL the control is not waiting for does not stop the case", trail, ["one", "two", "three"])
+s.ok("FirstFail: run says the FAIL was not seen, `fails` has both", seen is False and len(f.fails) == 2, repr(f.fails))
+f = helpers.FirstFail(lambda line: "two" in line)
+trail = []
+f.run(case, f, trail, True)
+s.eq("FirstFail: a case's `except Exception` does not swallow the stop", trail, ["one", "two"])
+f = helpers.FirstFail(lambda line: True)
+trail = []
+s.ok("FirstFail: a case with no FAIL runs to its end and is not seen", f.run(lambda: f.ok("fine", True)) is False and f.fails == [])
+
+# free_port: two test files running at once must never be handed the same port, nor a port the kernel hands to an outgoing
+# connection or to a `bind(0)` of its own. The naive version (bind to port 0, read the number, close) lets either happen in the
+# window between the close and the caller's own bind. Seen red on that naive version:
+#   FAIL: free_port: 300 calls, 300 different ports: got 299, want 300
+#   FAIL: free_port: below the ephemeral range, where the kernel gives nobody a port: got 60499, want below 32768
+#   FAIL: free_port: a port one process holds is never handed to another: got [46793, 48935, 51221, 52913], want []
+# Control, on a copy of helpers.py with the claim removed (`claim.bind(...)` replaced by `pass`, the range kept), red 3 runs in 3:
+#   FAIL: free_port: 300 calls, 300 different ports: got 297, want 300
+#   FAIL: free_port: a port one process holds is never handed to another: got [13410, 27189, 28208, 31146], want []
+import subprocess
+import socket
+mine = [helpers.free_port() for _ in range(300)]
+s.eq("free_port: 300 calls, 300 different ports", len(set(mine)), 300)
+s.ok("free_port: below the ephemeral range, where the kernel gives nobody a port", max(mine) < 32768, "got %d, want below 32768" % max(mine))
+child = subprocess.run([sys.executable, "-c", "import sys; sys.path.insert(0, %r); import helpers; print(' '.join(str(helpers.free_port()) for _ in range(300)))"
+                        % os.path.dirname(os.path.realpath(__file__))], capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                       env=helpers.clean_env(), timeout=120)
+theirs = set(int(x) for x in child.stdout.split())
+s.eq("free_port: another process got its own 300", len(theirs), 300)
+s.eq("free_port: a port one process holds is never handed to another", sorted(set(mine) & theirs), [])
+probe = socket.socket()
+try:
+    probe.bind(("127.0.0.1", mine[0]))
+    bound = True
+except OSError:
+    bound = False
+finally:
+    probe.close()
+s.ok("free_port: the caller can bind what it was given", bound)
+
 s.done()

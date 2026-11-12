@@ -44,13 +44,13 @@ MODELS = {"a": "m1", "b": "m2", "c": "m3", "close": "m4"}
 OK = {"ok": True}
 
 
-def run_workflow(script, scenario, stub=STUB, work=None):
-    """Run `script` under the stub with `scenario` (a dict). (rc, record or None, stderr)."""
+def run_workflow(script, scenario, stub=STUB, work=None, timeout=None):
+    """Run `script` under the stub with `scenario` (a dict). (rc, record or None, stderr); subprocess.TimeoutExpired after `timeout` s."""
     work = work or helpers.mkdtemp("fwx-wfstub-")
     sc, out = os.path.join(work, "scenario.json"), os.path.join(work, "record.json")
     with open(sc, "w", encoding="utf-8") as f:
         json.dump(scenario, f)
-    r = subprocess.run(["node", stub, script, sc, out], capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    r = subprocess.run(["node", stub, script, sc, out], capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=timeout)
     rec = None
     if os.path.exists(out):
         with open(out, encoding="utf-8") as f:
@@ -149,6 +149,25 @@ def check_stub(stub, s):
     s.eq("host: the script sees no process and no require", (rec or {}).get("logs"), ["process undefined require undefined"])
 
 
+def check_runaway(stub, s):
+    """A script that launches for ever is stopped by the stub after a count of launches (exit 124, the record says why), not by
+    the caller's clock: a mutant of a workflow that loops used to cost the caller its whole time limit (25 s) per scenario."""
+    work = helpers.mkdtemp("fwx-wfloop-")
+    loop = helpers.write(work, "loop.js", "export const meta = {name: 'loop', description: 'never ends'}\nwhile (true) await agent('x', {label: 'a'})\n")
+    try:
+        rc, rec, err = run_workflow(loop, {"answers": {"a": OK}}, stub, work=work, timeout=8)
+    except subprocess.TimeoutExpired:
+        s.ok("runaway: the stub ends a script that launches for ever", False, "still running after 8 s")
+        return
+    s.eq("runaway: exit 124", rc, 124)
+    s.ok("runaway: the record holds what ran and says the script did not end",
+         bool(rec) and len(rec["launches"]) > 100 and rec["finished"] is False and "did not end" in ((rec["error"] or {}).get("message") or ""),
+         repr(rec and (len(rec["launches"]), rec["finished"], rec["error"])))
+    rc, rec, err = run_workflow(TOY, {"args": {"mode": "base", "models": MODELS, "order": ["a", "b", "c"]}, "answers": {"a": OK, "b": OK, "c": OK}},
+                                stub, timeout=30)
+    s.ok("runaway: a script that ends is not touched by the limit", rc == 0 and rec and rec["finished"] is True and len(rec["launches"]) == 3, "rc %s" % rc)
+
+
 def check_edges(s):
     work = helpers.mkdtemp("fwx-wfedge-")
     bad = helpers.write(work, "bad.js", "export const meta = {name: 'x', description: 'y'}\nconst = 1\n")
@@ -177,6 +196,7 @@ MUTANTS = [
     ("null answered as {}", "return value === null ? null : clone(value)", "return clone(value ?? {})",
      "FAIL: base: a null answer reaches the script as None"),
     ("Date.now allowed", "/*D*/ throw new Error(", "/*D*/ return 0; new Error(", "FAIL: clock: Date.now() throws in the script"),
+    ("no launch limit", "const MAX_LAUNCHES = 400", "const MAX_LAUNCHES = 1e12", "FAIL: runaway: the stub ends a script that launches for ever"),
 ]
 
 
@@ -201,6 +221,7 @@ def check_controls(s):
         path = helpers.write(helpers.mkdtemp("fwx-wfmut-"), "workflow_stub.mjs", m)
         sub = helpers.Suite()
         check_stub(path, sub)
+        check_runaway(path, sub)
         s.ok("control %s: red with %r" % (name, want), any(f.startswith(want) for f in sub.fails),
              "got %r" % (sub.fails[:2],))
     check_stub_good = helpers.Suite()
@@ -229,6 +250,7 @@ def main():
         s.not_run("node is not on PATH")
     check_stub(STUB, s)
     check_edges(s)
+    check_runaway(STUB, s)
     if not os.environ.get("FWX_STUB_NESTED"):  # the controls and the PATH run call this file again
         check_controls(s)
         check_no_node(s)

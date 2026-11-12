@@ -30,7 +30,6 @@ Controls, each seen red (the first FAIL of the case it was made for); the run is
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import threading
@@ -387,10 +386,7 @@ def case_project(s, root, repo, bare):
 
 
 def case_failures(s, root, repo, bare):
-    dead = socket.socket()
-    dead.bind(("127.0.0.1", 0))
-    port = dead.getsockname()[1]
-    dead.close()
+    port = helpers.free_port()
     e = env(None, FWX_LINEAR_ENDPOINT="http://127.0.0.1:%d/graphql" % port)
     r = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "linear", "list", "--label", "factory"],
                        cwd=repo, env=e, capture_output=True, text=True, timeout=60)
