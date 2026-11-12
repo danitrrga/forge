@@ -18,9 +18,13 @@ Cases (a) to (e) of the unit, each seen failing on the code before the change (m
       Red: "... exit: want non-zero, got 0" and "... child started: want False, got True".
   (c) a `.credentials.json` symlink (and a regular file) left in the throwaway dir by an earlier run is gone before the child starts, and
       the file it pointed to keeps its inode, size and mtime. Red: "... leftover link seen by the child: want False, got True".
-  (d) the fake token is in no file under the run's output directory, not in stdout or stderr, and not in the child's argv.
-      Red: none on this code (it never carried the token) -- the control is `leaky` below: a stand-in that echoes its token makes
-      this very check fail with "token found in ...", so the check is shown able to fail.
+  (d) the fake token is in no file the run keeps (output directory, kept working copy or world, `.gz` read decompressed), not in stdout
+      or stderr, not in the child's argv, also when the agent prints its environment (stream, a work file, a transcript) and also on
+      the timeout path: the harness replaces it by a placeholder. Control: the same runs with the redaction switched off find it in both
+      scripts. Red on 39df9d2: "files holding the token: want [], got ['.../transcripts/....jsonl', '.../agent.jsonl', '.../work/leak.txt']".
+  Review of the first version added: the variables that change credential or endpoint are dropped, the store error says what failed and
+  where the store is, a redirected store is said on stderr, a login file that cannot be removed and a malformed token value end the run
+  with one line, no private path or ticket id in engine files.
   (e) with HOME on a toy dir whose `.claude/.credentials.json` exists, nothing in the script's process opens, links, copies or lists
       anything under that `.claude` (a Python audit hook records it); the sandbox command of skill_bench never binds it.
       Red: "... touched the real home's .claude: want [], got [('os.symlink', ...)]".
@@ -33,6 +37,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import zlib
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, HERE)
@@ -158,7 +163,7 @@ def tree_text(root, needle):
                 if f.endswith(".gz"):
                     try:
                         data += b"\n" + gzip.decompress(data)
-                    except (OSError, EOFError):
+                    except (OSError, EOFError, zlib.error):
                         pass
                 if needle.encode() in data:
                     hits.append(p)
@@ -314,10 +319,12 @@ def main():
     put(store_sur, json.dumps({KEY: "tok-BADVALUE\ud800x"}))
     store_sp = os.path.join(tmp, "store-space.json")
     put(store_sp, json.dumps({KEY: "tok-BADVALUE x"}))
+    store_deep = os.path.join(tmp, "store-deep.json")
+    put(store_deep, "[" * 200000)
     store_000 = os.path.join(tmp, "store-000.json")
     put(store_000, json.dumps({KEY: TOKEN}), 0o000)
     variants = [("missing file", os.path.join(tmp, "missing.json"), "does not exist"), ("a directory", store_dir, "is a directory"),
-                ("not JSON", store_bin, "not valid JSON"), ("a JSON array", store_arr, "not an object"), ("key absent", store_nokey, "is not in the store"),
+                ("not JSON", store_bin, "not valid JSON"), ("nested too deep for the parser", store_deep, "not valid JSON"), ("a JSON array", store_arr, "not an object"), ("key absent", store_nokey, "is not in the store"),
                 ("key empty", store_empty, "is empty"), ("key not a string", store_int, "not a string"),
                 ("NUL in the value", store_nul, "cannot be in a token"), ("lone surrogate in the value", store_sur, "cannot be in a token"),
                 ("space inside the value", store_sp, "cannot be in a token")]
@@ -409,6 +416,24 @@ def main():
         except ml.LoginError as e:
             want("helper: --bare refusal names the reason", "--bare" in str(e) and "OAUTH" in str(e), True)
         want("helper: a command without --bare passes", ml.refuse_bare(["claude", "-p", "x"]), None)
+        # a corrupt .gz (valid header, damaged stream: zlib.error, which is not an OSError) must not stop the scan of the files after it
+        rdir = os.path.join(tmp, "redact-unit")
+        os.makedirs(rdir)
+        bad = bytearray(gzip.compress(b"x" * 1000 + b"hello world" * 50))
+        bad[10] ^= 0xFF
+        with open(os.path.join(rdir, "a-corrupt.gz"), "wb") as fh:
+            fh.write(bytes(bad))
+        put(os.path.join(rdir, "b-plain.txt"), "TOKEN=" + TOKEN + " and json " + json.dumps({"t": TOKEN}) + "\n")
+        with open(os.path.join(rdir, "c-good.gz"), "wb") as fh:
+            fh.write(gzip.compress(("x " + TOKEN).encode()))
+        try:
+            n = ml.redact_tree(rdir, TOKEN)
+        except Exception as e:   # noqa: BLE001
+            n = "raised %s: %s" % (type(e).__name__, e)
+        want("helper: redact_tree survives a corrupt .gz and redacts the rest (files changed)", n, 2)
+        want("helper: redact_tree leaves no token in the plain or the gzipped file",
+             tree_text(rdir, TOKEN), [])
+        want("helper: redact_text", (ml.redact_text("a " + TOKEN + " b", TOKEN), ml.redact_text(None, TOKEN)), ("a " + PLACEHOLDER + " b", ""))
         d = os.path.join(tmp, "cfgdir")
         os.makedirs(d)
         os.symlink(target, os.path.join(d, ".credentials.json"))

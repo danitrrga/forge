@@ -22,6 +22,7 @@ import gzip
 import json
 import os
 import sys
+import zlib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 KEY = "FORGE_MEASURE_OAUTH_TOKEN"
@@ -30,7 +31,8 @@ PLACEHOLDER = "[REDACTED: measurement token]"
 # Removed from the child's environment, the token variable last set from the store. Each group changes which credential or endpoint the
 # session would use, or exposes a login that is not the measurement one.
 DROPPED = (
-    # the three credentials that rank above or beside the token in Claude Code's authentication precedence ("Authentication precedence")
+    # the parent's own credentials: the first two outrank the token in Claude Code's authentication precedence, the third is replaced
+    # by the store's value
     "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN",
     # cloud-provider credentials rank first "when CLAUDE_CODE_USE_BEDROCK, CLAUDE_CODE_USE_VERTEX, or CLAUDE_CODE_USE_FOUNDRY is set":
     # one of them in the owner's shell would turn a token run into a provider run
@@ -76,7 +78,7 @@ def token(secrets_file=None):
         _fail("the store cannot be read (%s)" % (e.strerror or type(e).__name__), path)
     try:
         doc = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
+    except (UnicodeDecodeError, ValueError, RecursionError):   # the last: a document nested deeper than the parser allows
         _fail("the store is not valid JSON", path)
     if not isinstance(doc, dict):
         _fail("the store is JSON but not an object", path)
@@ -164,7 +166,7 @@ def redact_tree(root, tok):
                 if f.endswith(".gz"):
                     try:
                         raw = gzip.decompress(data)
-                    except (OSError, EOFError):   # not gzip after all: scanned as it is below
+                    except (OSError, EOFError, zlib.error):   # not gzip after all, or damaged: scanned as it is below
                         raw = None
                     if raw is not None:
                         new = _swap(raw, tok)
