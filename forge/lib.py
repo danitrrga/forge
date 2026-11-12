@@ -135,6 +135,9 @@ PROFILE_FIELDS = {
     # The framework (2.2): `framework` is its level-1 switch, `factory` its mode, `factory_ui_bugs` sends mechanical UI
     # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
     "framework": bool, "factory": str, "factory_ui_bugs": bool,
+    # false: the project keeps its framework documents out of its git history on purpose, so forge writes and checks no
+    # ignore block there (forge/fwxignore.py) and takes out one it wrote earlier. Default true.
+    "framework_ignore_block": bool,
     "checks": (list, str), "protected_paths": (list, str),
     # The Linear project the framework files issues in, when it is not the repository's name (the default).
     "linear_project": str,
@@ -699,10 +702,24 @@ def repo_owns_tracked_files(prof):
     return prof.get("writes_tracked_files") is False
 
 
+# The variables that point git at a repository: a caller's (a git hook's) would aim every question forge asks at the
+# wrong one.
+_REPO_VARS = ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY",
+              "GIT_ALTERNATE_OBJECT_DIRECTORIES", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES")
+
+
+def git_env(**extra):
+    """The environment for a git that is asked about a project: the caller's, without the variables that choose the
+    repository (_REPO_VARS), plus `extra`."""
+    env = {k: v for k, v in os.environ.items() if k not in _REPO_VARS}
+    env.update(extra)
+    return env
+
+
 def _git_out(ppath, *args):
     """What `git -C ppath <args>` prints without its final newline, or None when git cannot answer."""
     try:
-        r = subprocess.run(["git", "-C", ppath] + list(args), capture_output=True, text=True, timeout=20)
+        r = subprocess.run(["git", "-C", ppath] + list(args), capture_output=True, text=True, timeout=20, env=git_env())
     except Exception:
         return None
     return r.stdout.rstrip("\n") if r.returncode == 0 else None
