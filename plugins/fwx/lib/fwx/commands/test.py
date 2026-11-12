@@ -154,6 +154,14 @@ class Children:
         return len(groups)
 
 
+def _size(path):
+    """Bytes of a file; 0 for one the listing has and the disk no longer has: it still gets its FAIL line from running it."""
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
 def _group_alive(pgid):
     try:
         os.killpg(pgid, 0)
@@ -189,7 +197,7 @@ def main(argv):
     old = {s: signal.signal(s, stop) for s in STOP}  # before the first child starts: no window in which a signal leaves one running
     try:
         # largest first, ties by name: the order the files start in; the order they are printed in is `files`
-        start = sorted(files, key=lambda f: (-os.path.getsize(os.path.join(root, f)), f))
+        start = sorted(files, key=lambda f: (-_size(os.path.join(root, f)), f))
         futures = {rel: pool.submit(children.run, rel, root, env) for rel in start}
         for rel in files:
             code, output = futures[rel].result()

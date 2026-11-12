@@ -142,7 +142,15 @@ r = case("an unknown flag is a usage error", NO_BAD, 2, "", args=("--nope",))
 #   FAIL: a failing file's output is contiguous: x has all its lines: got 0, want 150
 #   FAIL: SIGTERM: the runner's children are alive while it runs (the search finds them): got 0, want 4
 #   FAIL: --jobs 0 is a usage error: one line on stderr, naming --jobs (the generic usage line names the flag, but --jobs is unknown)
-# Controls, each on a copy of lib/fwx/commands/test.py changed in one place: listed after the code block that proves them.
+# Controls, each on a copy of lib/fwx/commands/test.py changed in one place (first FAIL of each):
+#   one worker (`max_workers=jobs` -> 1):  FAIL: --jobs 2: two files running at once see each other: exit code: got 1, want 0   (6 FAIL lines)
+#   printed in start order, not file-name order (`for rel in files:` -> `for rel in start:`):
+#       FAIL: --jobs 4, set 1: everything: the lines are in the order of the file names: got ['tests/test_big.py', 'tests/test_zeta.py', ...]   (3)
+#   only the leader of a group killed (`os.killpg` -> `os.kill`):  FAIL: SIGTERM: no test file, no sleep it started is left running: got [891171, 891172], want []   (6)
+#   no session of its own (`start_new_session=True` dropped):  FAIL: SIGTERM: no test file, no sleep it started is left running: got [920365, 920371, 920367, 920372], want []   (6)
+#   no signal handlers (`old = {}`):  FAIL: SIGTERM: the runner exits with 128 + the signal: got -15, want 143, and the four processes left   (5)
+#   --jobs 0 accepted (`>= 1` -> `>= 0`):  FAIL: --jobs 0 is a usage error: exit code: got 77, want 2   (8)
+#   --jobs given twice accepted:  FAIL: --jobs given twice is a usage error: exit code: got 77, want 2   (4)
 import signal
 import subprocess
 import time
@@ -302,6 +310,17 @@ for label, args in (("--jobs 0", ("--jobs", "0")), ("--jobs -1", ("--jobs", "-1"
     s.ok("%s: one line on stderr, naming --jobs, no traceback" % label,
          len(err) == 1 and "--jobs" in err[0] and "Traceback" not in r.stderr, repr(r.stderr))
     s.eq("%s: nothing on stdout" % label, r.stdout, "")
+# A file git lists but the disk no longer has (deleted, not yet committed): a FAIL line like any file that cannot run, never a traceback
+# from the size the start order is taken from. Seen red before the size was read with a fallback:
+#   FAIL: a tracked file missing on disk: exit code: got 1, want 1 ... FAIL: a tracked file missing on disk: no traceback: Traceback (most recent call last): ... FileNotFoundError
+repo = helpers.toy_repo({"tests/test_ok.py": OK, "tests/test_gone.py": OK})
+os.remove(os.path.join(repo, "tests", "test_gone.py"))
+for jobs in ("1", "3"):
+    r = helpers.fwx(repo, "test", "--jobs", jobs)
+    s.ok("a tracked file missing on disk, --jobs %s: no traceback" % jobs, "Traceback" not in r.stderr, r.stderr[-300:])
+    s.eq("a tracked file missing on disk, --jobs %s: exit code" % jobs, r.returncode, 1)
+    s.ok("a tracked file missing on disk, --jobs %s: it is a FAIL line, the other file passes" % jobs,
+         "FAIL  tests/test_gone.py (exit 2)" in r.stdout and "PASS  tests/test_ok.py" in r.stdout and last(r) == "2 test file(s): 1 passed, 1 failed, 0 not run", r.stdout + r.stderr)
 case("--jobs together with --expect-not-run", NO_BAD, 0, "3 test file(s): 2 passed, 0 failed, 0 not run, 1 expected not run",
      args=("--jobs", "3", "--expect-not-run", "tests/test_skip.py"))
 case("--jobs 1 and a failing file: same as before", FILES, 1, "4 test file(s): 2 passed, 1 failed, 1 not run", args=("--jobs", "1"))

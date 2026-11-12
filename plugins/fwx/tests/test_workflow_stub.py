@@ -27,6 +27,8 @@ Controls: the checks run on a copy of the stub changed in one place (red seen, c
   pipeline does not null:    FAIL: pipeline: a stage that throws drops its item to None: got 'rejected', want [{'ok': True}, None]
   null answered as {}:       FAIL: base: a null answer reaches the script as None: got [{'ok': True}, {}, {'ok': True}], want [{'ok': True}, None, {'ok': True}]
   Date.now allowed:          FAIL: clock: Date.now() throws in the script: got None, want an error naming Date.now
+  no launch limit:           FAIL: runaway: the stub ends a script that launches for ever: still running after 8 s
+  (the launch limit, seen red before it existed: the same FAIL, and `FAIL: control no launch limit: the anchor is in the stub`)
 """
 import json
 import os

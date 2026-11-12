@@ -26,8 +26,10 @@ be in the script exactly once), and must go red with the text given. The first F
   the runner's rc decides:    FAIL: rc 1 with ok true: carries on (the exit code is not read): got ('failed', False), want ('done', False)
   catchable_by "maybe" in the schema: FAIL: verifier schema: catchable_by "maybe" is rejected: {'type': 'string', 'enum': [..., 'maybe']}
   finding ids not prefixed:   FAIL: fix: the fixer is given the finding under its unique id and not the one it was written with
-  and 21 more rows of MUTANTS, each seen red with the text in its fourth column. A mutant that makes the script loop (capacity 0)
-  is cut off by `run_capped` after 25 s.
+  and 21 more rows of MUTANTS, each seen red with the text in its fourth column. A control run stops at the first FAIL it waits
+  for (helpers.FirstFail: the rest of the run could only add FAILs the control does not read). A mutant that makes the script
+  loop (capacity 0) is cut off by the stub after 400 launches (exit 124); `run_capped` cuts a script that does not even launch
+  after 25 s.
 
 Red before 3.4 align (the gate's stage, the re-entry at the gate, the agents' wording; first lines of this file on the old script):
   FAIL: stage: the wave merge runs in executing, the gate (last wave's --final integrate) in reviewing (gate ran in executing): got ['executing', 'executing'], want ['executing', 'reviewing']
