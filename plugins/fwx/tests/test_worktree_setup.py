@@ -497,8 +497,25 @@ def case_marker_validity(R, S):
     S.ok("marker: a folder that was there before the setup is not vouched for (the run after its removal is a no-op)", r.returncode == 0 and "already" in r.stdout, r.stdout + r.stderr)
 
 
+def case_toolchain_files(R, S):
+    """A changed `.nvmrc` or `.npmrc` (the node version, the registry) changes what an install produces: the setup runs again.
+
+    Red before the files were in DEPENDENCY_FILES:
+      FAIL: toolchain files: a changed .nvmrc runs the setup again: got (0, 1), want (0, 2)
+      FAIL: toolchain files: a changed .npmrc runs the setup again: got (0, 1), want (0, 3)
+    """
+    sc = Scene(setup=["mkdir -p deps && echo run >> deps/count"], files={".nvmrc": "18\n", ".npmrc": "a=b\n"})
+    R(sc.wt, "wave", "setup", env=sc.env)
+    for name, text, want in ((".nvmrc", "20\n", 2), (".npmrc", "a=c\n", 3)):
+        helpers.write(sc.wt, name, text)
+        helpers.git(sc.wt, "add", "-A")
+        helpers.git(sc.wt, "commit", "-q", "-m", "change " + name)
+        r = R(sc.wt, "wave", "setup", env=sc.env)
+        S.eq("toolchain files: a changed %s runs the setup again" % name, (r.returncode, sc.lines("deps/count")), (0, want))
+
+
 CASES = [case_run, case_none, case_second_call, case_failing, case_dirty, case_main_checkout, case_config, case_timeout, case_check_base,
-         case_prepare, case_unrelated_config, case_integrate_setup, case_io_errors, case_detached_child, case_log_cap, case_marker_validity]
+         case_prepare, case_unrelated_config, case_integrate_setup, case_io_errors, case_detached_child, case_log_cap, case_marker_validity, case_toolchain_files]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (name, case, file, old text, new text, the FAIL text it must produce); each `old` is in the file exactly once.

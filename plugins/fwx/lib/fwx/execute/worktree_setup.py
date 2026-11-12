@@ -36,7 +36,7 @@ The marker `<worktree>/.fwx-agent/worktree-setup.json` holds the command list, a
 dependencies (the lockfiles and manifests of DEPENDENCY_FILES, wherever they are in the tree, as they are on disk, the tracked ones
 and the untracked ones git does not ignore) and `made`, the git-ignored files and folders (`node_modules/`) that appeared during the
 setup: a changed list, a changed or a new dependency file, or a folder of `made` that is gone runs the setup again, anything else is
-a no-op, and `force` runs it regardless. What it does not see: a dependency file that is not in DEPENDENCY_FILES (a `.nvmrc`), a
+a no-op, and `force` runs it regardless. What it does not see: a dependency file that is not in DEPENDENCY_FILES (a `.tool-versions`), a
 folder that was already there before the setup (it is not in `made`), and a change to the dependency file made after the setup in a
 worktree nobody calls this in again (an executor's own `npm install` is its own business). The phase worktree is covered: `prepare`
 calls this once at the start of a run and `integrate` after the merges of every wave, before its checks, and `fwx wave setup` is
@@ -62,7 +62,7 @@ MARKER = "worktree-setup.json"
 # The files whose content says which dependencies the worktree needs. Names, not paths: each is looked for at any depth.
 DEPENDENCY_FILES = ("package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock", "bun.lockb",
                     "pyproject.toml", "uv.lock", "poetry.lock", "Pipfile.lock", "requirements*.txt",
-                    "Gemfile.lock", "Cargo.lock", "go.sum", "composer.lock")
+                    "Gemfile.lock", "Cargo.lock", "go.sum", "composer.lock", ".nvmrc", ".npmrc")
 
 
 class SetupFailed(Exception):
