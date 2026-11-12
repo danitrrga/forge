@@ -11,7 +11,8 @@ bare repo (`insteadOf` and `pushInsteadOf`, so nothing leaves the machine), fake
 PATH that only write their arguments down (the classifier judges the text of a command, and nothing may reach Linear or GitHub),
 and a settings file of its own: hooks PreToolUse, PostToolUse, PostToolUseFailure and PermissionDenied into a log, the control rule
 `deny Bash(probe-deny-control)`, FORGE_CONSENT=unattended (the consent hook, when there is one, blocks instead of opening a window),
-and the rules of --allow-from. The config dir is a private one (no user hooks, skills, plugins or memory), only the login is shared.
+and the rules of --allow-from. The config dir is a private one (no user hooks, skills, plugins or memory, and no credentials file: the session logs in with the
+long-lived token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py; a run without that key refuses to start).
 Flavor `forge` copies forge's CLAUDE.md and CLAUDE.local.md into the repo (the classifier reads them), `plain` does not.
 Contexts: main-asked (the message asks for the command), main-step (it is step 1 of a STEPS.md, as in a skill), agent (a subagent of the
 Agent tool with the role's prompt), workflow (agent() of a toy workflow .claude/workflows/probe.js), workflow-def (agent() with a
@@ -38,6 +39,8 @@ import sys
 import tempfile
 import time
 import uuid
+
+import measure_login
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 ACTIONS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "auto_mode_actions.tsv")
@@ -413,17 +416,12 @@ def cell_settings(world, log, allow, guard_cmd, base_path):
 
 
 def agent_home(out):
-    """A CLAUDE_CONFIG_DIR with no hooks, skills, plugins or memory; only the login is shared with the real home."""
+    """A CLAUDE_CONFIG_DIR with no hooks, skills, plugins or memory and no login file: the session logs in with the measurement token
+    (measure_login), and a `.credentials.json` an earlier run left here is removed."""
     d = os.path.join(out, "agent-home")
     os.makedirs(d, exist_ok=True)
     write(os.path.join(d, "settings.json"), "{}")
-    real = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
-    link = os.path.join(d, ".credentials.json")
-    if os.path.exists(real) and not os.path.lexists(link):
-        try:
-            os.symlink(real, link)
-        except FileExistsError:
-            pass
+    measure_login.clean_config_dir(d)
     return d
 
 
@@ -472,11 +470,12 @@ def run_cell(cell, a, out, home, world_base):
         spath = os.path.join(base, "settings.json")
         write(spath, json.dumps(settings, indent=1))
         sid = str(uuid.uuid4())
-        env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
+        env = {k: v for k, v in a.login_env.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
         env.update(GIT_ENV, CLAUDE_CONFIG_DIR=home, FORGE_CONSENT="unattended", XDG_STATE_HOME=world["state"],
                    PATH=world["bin"] + os.pathsep + env.get("PATH", "/usr/bin:/bin"))
         cmd = [a.claude_bin, "-p", prompt, "--model", a.model, "--permission-mode", "auto", "--settings", spath,
                "--output-format", "stream-json", "--verbose", "--session-id", sid, "--max-budget-usd", str(a.budget)]
+        measure_login.refuse_bare(cmd)
         p = subprocess.Popen(cmd, cwd=world["repo"], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                              text=True, start_new_session=True)
         try:
@@ -594,6 +593,11 @@ def cmd_run(a):
             print("%s\t%s\t%s" % (c["id"], c["action"]["role"], c["action"]["command"]))
         print("%d cells (dry run, nothing started)" % len(cells))
         return 0
+    try:
+        a.login_env = measure_login.child_env()
+    except measure_login.LoginError as e:
+        print("! " + str(e))
+        return 1
     stamp = time.strftime("%Y%m%d-%H%M%S")
     out = a.out or os.path.join(data_dir(), "runs", stamp)
     os.makedirs(out, exist_ok=True)

@@ -123,6 +123,7 @@ def cli(*a, env=None):
 def main():
     import skill_bench as sb  # noqa: E402  (the module under test, for the statistics)
     tmp = sandbox.mkdtemp("skillbench-run-")
+    sandbox.toy_measure_store(tmp)
 
     # --- statistics against hand-computed values -------------------------------------------------------------
     lo, hi = sb.wilson(8, 10)

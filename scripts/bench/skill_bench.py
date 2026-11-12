@@ -21,7 +21,8 @@ written: every run is on a temp copy. Exit 1 when anything above fails.
 
 `run` plays each task as an arm x trial job: a throwaway git copy of repo/, the arm's config overlays (a dir without a SKILL.md:
 CLAUDE.md, .claude/settings.json, agents, ...) copied over it before the start commit, the arm's skill directories mounted under
-.claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills or CLAUDE.md; only the login is shared) and
+.claude/skills/, `claude -p` in an isolated config dir (no user hooks, skills, CLAUDE.md or credentials file; the login is the long-lived
+token stored as FORGE_MEASURE_OAUTH_TOKEN, see measure_login.py, and a run without that key refuses to start) and
 inside bubblewrap when available (home hidden, only the work dir writable), then the task oracle scores the tree and the
 final reply. Jobs are interleaved across arms, resumable (finished jobs are skipped), and a run whose oracle crashes is
 INVALID: counted, never scored as a fail. Only tasks a model can still fail carry signal about a skill, so `calibrate` records the no-skill arm's pass rate per task and
@@ -46,6 +47,8 @@ import platform
 import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
+
+import measure_login
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_BENCH = os.path.join(ROOT, "benchmarks", "skill-bench")
@@ -486,18 +489,13 @@ def select_tasks(bench, selector):
 
 
 def agent_home(out):
-    """A CLAUDE_CONFIG_DIR with no hooks, skills or CLAUDE.md; only the login is shared with the real home."""
+    """A CLAUDE_CONFIG_DIR with no hooks, skills, CLAUDE.md or login file: the session logs in with the measurement token
+    (measure_login), and a `.credentials.json` an earlier run left here is removed."""
     d = os.path.join(out, "agent-home")
     os.makedirs(d, exist_ok=True)
     with open(os.path.join(d, "settings.json"), "w") as fh:
         json.dump({"model": "sonnet"}, fh)
-    real = os.path.join(os.path.expanduser("~"), ".claude", ".credentials.json")
-    link = os.path.join(d, ".credentials.json")
-    if os.path.exists(real) and not os.path.lexists(link):
-        try:
-            os.symlink(real, link)
-        except FileExistsError:   # another worker made it between the check and the call
-            pass
+    measure_login.clean_config_dir(d)
     return d
 
 
@@ -506,12 +504,10 @@ def wrap(cmd, sandbox, work, home, claude_bin):
     if sandbox == "none" or (sandbox == "auto" and not shutil.which("bwrap")):
         return cmd
     h = os.path.expanduser("~")
-    real_cred = os.path.join(h, ".claude", ".credentials.json")
     binds = ["--bind", work, work, "--bind", home, home]
     for ro in (os.path.join(h, ".local", "share", "mise"), os.path.join(h, ".local", "bin"), os.path.dirname(os.path.realpath(claude_bin))):
         binds += ["--ro-bind-try", ro, ro]
-    if os.path.exists(real_cred):
-        binds += ["--bind", real_cred, real_cred]
+    # no bind of any credentials file, and no --clearenv/--setenv: bwrap passes the caller's environment on, token variable included
     return (["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc", "--tmpfs", "/tmp", "--tmpfs", h]
             + binds + ["--unshare-pid", "--die-with-parent", "--chdir", work, "--"] + cmd)
 
@@ -617,10 +613,11 @@ def _do_job(job, a):
     if a.force_skill and skills:
         prompt = "Use the skill in .claude/skills/%s for this task.\n\n%s" % (os.path.basename(skills[0].rstrip("/")), prompt)
     home = agent_home(a.out)
-    env = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
+    env = {k: v for k, v in a.login_env.items() if k not in ("CLAUDE_PROJECT_DIR", "CLAUDE_CODE_ENTRYPOINT")}
     env["CLAUDE_CONFIG_DIR"] = home
     cmd = wrap([a.claude_bin, "-p", prompt, "--model", a.model, "--output-format", "stream-json", "--verbose",
                 "--permission-mode", "bypassPermissions", "--no-session-persistence"], a.sandbox, work, home, a.claude_bin)
+    measure_login.refuse_bare(cmd)
     started, timed_out = time.time(), False
     p = subprocess.Popen(cmd, cwd=work, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          start_new_session=True)
@@ -675,6 +672,10 @@ def finished(result_path):
 
 
 def cmd_run(a):
+    try:
+        a.login_env = measure_login.child_env()   # before anything starts, `claude --version` included: no key, no run
+    except measure_login.LoginError as e:
+        sys.exit("! " + str(e))
     if a.sandbox == "bwrap" and not shutil.which("bwrap"):   # `auto` falls back to no sandbox (wrap); `bwrap` must fail closed
         sys.exit("bwrap not found on PATH: --sandbox bwrap refuses to run the agent unsandboxed (bypassPermissions). Install bubblewrap.")
     if not a.out:
