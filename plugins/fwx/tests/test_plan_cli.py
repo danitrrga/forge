@@ -385,6 +385,22 @@ rows(repo4, ph4, "discuss", "premortem")
 t = brief("premortem after a discuss row", repo4, ph4, "premortem").stdout
 s.ok("brief premortem: the round starts again at 1", "round 1" in first(t) and '"round": 1' in t, t)
 
+# a decision of the owner's review of a part, after the plan, is named in the planner's brief and in the post-mortem's: the amendment
+# of the plan and its new critique both start from it.
+# Seen red on master (neither brief named it):
+#   FAIL: brief plan after a decision of the review: names D6 and what it replaces: <the brief>
+#   FAIL: brief postmortem after a decision of the review: names D6 and what it replaces: <the brief>
+repo5, ph5 = world({"premortem.md": premortem("ok"), "plan.md": good_plan(), "postmortem.md": postmortem("ok")})
+helpers.write(ph5, "decisions.tsv", DECISIONS + "when\tD6\tcap of 20\tthe owner saw it\t\tchosen\treview of part 1\tD2\n")
+rows(repo5, ph5, "premortem", "planning", "postmortem", "executing", "phase-review", "planning")
+t = brief("plan after a decision of the review", repo5, ph5, "plan").stdout
+s.ok("brief plan after a decision of the review: names D6 and what it replaces", "D6 (replaces D2)" in this_round(t) and "Amend" in this_round(t), t)
+rows(repo5, ph5, "postmortem")
+t = brief("postmortem after a decision of the review", repo5, ph5, "postmortem").stdout
+s.ok("brief postmortem after a decision of the review: names D6 and what it replaces", "D6 (replaces D2)" in this_round(t) and "amended plan" in this_round(t), t)
+t = brief("plan with no decision of the review", repo, ph, "plan").stdout
+s.ok("brief plan with no decision of the review: no such line", "D6" not in t and "his review" not in t, t)
+
 # --head: the three keys, and no brief
 for step, agent in (("premortem", "fwx:pre-mortem"), ("plan", "fwx:planner"), ("postmortem", "fwx:post-mortem")):
     r = brief("head %s" % step, repo, ph, step, "--head")

@@ -10,7 +10,7 @@
       "executing": ["reviewing", "phase-review"],
       "reviewing": ["executing", "ui-walk", "phase-review"],
       "ui-walk": ["phase-review", "discuss", "executing"],
-      "phase-review": ["executing", "closed", "discuss", "ui-walk"]
+      "phase-review": ["executing", "closed", "discuss", "ui-walk", "planning"]
     }
   },
   "factory": {

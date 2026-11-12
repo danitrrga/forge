@@ -160,7 +160,7 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
 - **Stage:** planning
 - **Writes:** plan.md
 - **Invokes:** skill fwx:plan
-- **Does:** The planner owns the plan, not the code: parts, waves and two to five success criteria that can come out false, each task with the tests that show it, and the kind of each task (bug, refactor, feature), which sets the first step of its execution. It keeps the size tag and the parts the pre-mortem set, runs `fwx plan check` and fixes every line it prints, then returns the path and that output and stops. A replan attends only what the brief hands it: the objections the owner accepted, or in the factory the blockers of the last post-mortem.
+- **Does:** The planner owns the plan, not the code: parts, waves and two to five success criteria that can come out false, each task with the tests that show it, and the kind of each task (bug, refactor, feature), which sets the first step of its execution. It keeps the size tag and the parts the pre-mortem set, runs `fwx plan check` and fixes every line it prints, then returns the path and that output and stops. A replan attends only what the brief hands it: the objections the owner accepted, a decision of his review that changes a fact the plan states (the planner amends the criteria it touches), or in the factory the blockers of the last post-mortem.
 - **Exits:**
   - to n_C3: the plan is written and passes `fwx plan check`; factory: a small issue gets a mini plan
 
@@ -224,6 +224,7 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
   - to n_L9: it is fine, or it does not block: a review blocks only if the part touches UI or the plan marks it
   - loop n_C5: he corrects, or rejects fixes: the attempts start again
   - loop n_C12: he asks for the UI walk again, or a walk did not count: the walk is repeated with no code change
+  - loop n_C2: he decided something after the plan that changes a fact the plan states: the planner amends the affected criteria and the post-mortem reads the plan again before the correction runs
   - loop n_L4: it was about the intention
 
 ### n_L9 · Are there parts of the plan left to run?
