@@ -140,7 +140,10 @@ def commit_plan(message, cwd=None):
         if _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == project.get("default_branch"):
             raise StateError("%s is on the default branch, which is protected: run it from the phase's worktree" % where)
         if os.path.isdir(os.path.join(main, PLAN_DIR)):
-            _move_missing(os.path.join(main, PLAN_DIR), os.path.join(where, PLAN_DIR))
+            try:
+                _move_missing(os.path.join(main, PLAN_DIR), os.path.join(where, PLAN_DIR))
+            except OSError as e:  # some files may have moved: running it again takes the rest
+                raise StateError("cannot move %s/ from %s into %s (%s): run it again once that is fixed" % (PLAN_DIR, main, where, e))
     branch = _git(where, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
     r = _git(where, "add", "--", PLAN_DIR)
     if r.returncode:

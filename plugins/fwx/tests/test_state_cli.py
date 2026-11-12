@@ -531,6 +531,20 @@ clean("protected: a worktree on the default branch", r, 1)
 s.ok("protected: a worktree on the default branch, the message says so", "default branch" in r.stderr, r.stderr)
 s.eq("protected: a worktree on the default branch, nothing was committed", subjects(main5, "master"), ["toy"])
 
+# a move that fails (the worktree's `.fwx/` cannot be written) is one line and no traceback, and running it again takes the rest
+if os.geteuid() != 0:  # root writes into a read-only folder
+    main6 = toy(True)
+    wt6 = helpers.add_worktree(main6, "fwx-phase")
+    st(main6, "new-phase", "alpha", session=None)
+    os.makedirs(os.path.join(wt6, ".fwx"))
+    os.chmod(os.path.join(wt6, ".fwx"), 0o500)
+    r = commit(wt6, "fwx: part 1 starts")
+    clean("protected: a move that fails", r, 1)
+    s.ok("protected: a move that fails, the message says to run it again", "run it again" in r.stderr, r.stderr)
+    os.chmod(os.path.join(wt6, ".fwx"), 0o700)
+    clean("protected: run again after the fix", commit(wt6, "fwx: part 1 starts"), 0)
+    s.ok("protected: run again after the fix, the phase documents are committed", PHASE_REL % "01-alpha" + "/context.md" in head_files(wt6))
+
 # not protected: the main checkout's own branch, as the skill's old line did
 main3 = toy(False)
 st(main3, "new-phase", "alpha", session=None)
