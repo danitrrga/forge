@@ -59,6 +59,14 @@ IDENT = {"GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME"
 PY = sys.executable
 
 
+SCENES = []  # every Scene made: stop_scenes() ends the agents a control run cut short by helpers.FirstFail left planted
+
+
+def stop_scenes():
+    while SCENES:
+        SCENES.pop().stop()
+
+
 class Scene:
     """A main checkout on master, the integration checkout (a linked worktree on `phase`), the part's folder in the main
     checkout's `.fwx/`, and fake executors: a linked worktree each, on `worktree-agent-<name>`, born from `phase`."""
@@ -75,6 +83,7 @@ class Scene:
         self.common = os.path.join(self.repo, ".git")
         self.trees = {}
         self.procs = []
+        SCENES.append(self)
 
     def head(self, cwd=None):
         return helpers.git(cwd or self.cwd, "rev-parse", "HEAD").strip()
@@ -99,13 +108,13 @@ class Scene:
 
     def live(self):
         """(pid, start) of a process that is running."""
-        p = subprocess.Popen(["sleep", "300"])
+        p = subprocess.Popen(["sleep", "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.procs.append(p)
         return p.pid, start_of(p.pid)
 
     def dead(self):
         """(pid, start) of a process that has finished (its start time is the one it had)."""
-        p = subprocess.Popen(["sleep", "300"])
+        p = subprocess.Popen(["sleep", "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         start = start_of(p.pid)
         p.kill()
         p.wait()
@@ -426,7 +435,7 @@ def case_cleanup(R, S):
     helpers.write(sc.trees[dirty], "untracked.txt", "x\n")
     sc.lock(stale, *sc.dead())
     sc.lock(livel, *sc.live())
-    p = subprocess.Popen(["sleep", "300"], cwd=sc.trees[busy])
+    p = subprocess.Popen(["sleep", "300"], cwd=sc.trees[busy], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     sc.procs.append(p)
     r = sc.call(R, "cleanup", "--run", sc.run)
     v = ok_json(S, "cleanup", r)
@@ -646,6 +655,7 @@ if __name__ == "__main__":
         R = runner(tree)
         R.root = tree
         m.run(case, R, m)
+        stop_scenes()
         s.ok("control %s: the case fails" % name, bool(m.fails), "the mutant passed all %d checks" % m.checks)
         s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in m.fails),
              "FAILs: %s" % "; ".join(f[:140] for f in m.fails[:3]))

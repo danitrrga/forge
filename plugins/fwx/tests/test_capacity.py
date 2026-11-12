@@ -54,6 +54,14 @@ s = helpers.Suite()
 GB = 1024 * 1024  # kB per GiB
 
 
+SCENES = []  # every Scene made: stop_scenes() ends the agents a control run cut short by helpers.FirstFail left planted
+
+
+def stop_scenes():
+    while SCENES:
+        SCENES.pop().stop()
+
+
 class Scene:
     """A main checkout on master with a linked worktree `phase` (where the session runs), a fake meminfo and planted agents."""
 
@@ -69,6 +77,7 @@ class Scene:
         self.ram(8)
         self.procs = []
         self.n = 0
+        SCENES.append(self)
 
     def ram(self, gb):
         """MemAvailable of the fake /proc/meminfo, in GiB (other lines as the real file has them)."""
@@ -86,12 +95,12 @@ class Scene:
         return wt
 
     def live(self):
-        p = subprocess.Popen(["sleep", "300"])
+        p = subprocess.Popen(["sleep", "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self.procs.append(p)
         return p.pid, start_of(p.pid)
 
     def dead(self):
-        p = subprocess.Popen(["sleep", "300"])
+        p = subprocess.Popen(["sleep", "300"], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         start = start_of(p.pid)
         p.kill()
         p.wait()
@@ -424,6 +433,7 @@ if __name__ == "__main__":
         R = runner(tree)
         R.root = tree
         m.run(case, R, m)
+        stop_scenes()
         s.ok("control %s: the case fails" % name, bool(m.fails), "the mutant passed all %d checks" % m.checks)
         s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in m.fails),
              "FAILs: %s" % "; ".join(f[:140] for f in m.fails[:3]))
