@@ -895,7 +895,7 @@ MUTANTS = [
     ("a judgement still there counted as other", "if (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE') rc.still += 1", "if (f.verdict === 'CONFIRMED') rc.still += 1",
      "FAIL: recheck: a judgement finding still there"),
     ("the walkers are not told the run", "`fwx walk ab --run ' + st.runDir + ' ' + job.session", "`fwx walk ab ' + job.session", "FAIL: green: every walker command names the run"),
-    ("the walk keeps the quota `up` gave", "const tramos = await getTramos()\n  await sizeQuota(tramos.length)\n", "const tramos = await getTramos()\n",
+    ("the walk keeps the quota `up` gave", "await checkScreens(tramos)\n  await sizeQuota(tramos.length)\n", "await checkScreens(tramos)\n",
      "FAIL: quota from the second ask: the walkers of the tramos run at once"),
     ("a slot is freed after a close that was not confirmed", "      if (closed) release()\n      else lose(tag)", "      release()", "FAIL: close not confirmed (rc 1): no second browser starts"),
     ("a close is not tried twice", "for (let i = 0; i < 2; i++) {\n    if (st.fatal) return false", "for (let i = 0; i < 1; i++) {\n    if (st.fatal) return false",

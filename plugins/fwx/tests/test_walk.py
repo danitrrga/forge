@@ -1916,6 +1916,14 @@ def case_arm_control_launch_path(R, S):
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
         S.eq("arm-control launch path: a browser that takes the script: exit", r.returncode, 0)
         S.ok("arm-control launch path: a browser that takes the script: control.json is there", os.path.isfile(os.path.join(rd, "control.json")))
+        # armed again over the earlier plant: the reading without the plant is still taken before any launch that carries it
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        calls = [x["argv"] for x in sc.calls("agent-browser")]
+        first_read = next((i for i, a in enumerate(calls) if "eval" in a and "fwx:" in a[-1]), None)
+        first_init = next((i for i, a in enumerate(calls) if "--init-script" in a), None)
+        S.ok("arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant",
+             r.returncode == 0 and first_read is not None and first_init is not None and first_read < first_init, "rc %d reads %r launch %r" % (r.returncode, first_read, first_init))
         sc.walk(R, "down", "--run", rd)
     finally:
         sc.stop()
@@ -2135,8 +2143,8 @@ MUTANTS = [
      "arm-control read-back: the boxes are recorded beside the styles"),
     ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
      "arm-control read-back: no title on the screen: says target not found"),
-    ("arm-control: an old control.json kept", case_arm_control_readback, "os.remove(ctl_file)", "pass",
-     "arm-control read-back: a failed arming leaves no control.json"),
+    ("arm-control: an old control.json kept", case_arm_control_launch_path, "os.remove(ctl_file)", "pass",
+     "arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant"),
     ("arm-control: the reason not on stdout", case_arm_control_readback, 'say({"armed": False, "reason": str(e)})', "pass",
      "arm-control read-back: and the same reason on stdout"),
     ("arm-control: the probe session left open", case_arm_control_readback, 'browser_call(run, ["close"])', "pass",
