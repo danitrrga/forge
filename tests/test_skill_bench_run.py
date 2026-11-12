@@ -254,7 +254,8 @@ def main():
     r4 = [json.load(open(os.path.join(rr, f))) for rr, _, fs in os.walk(out4) for f in fs if f == "result.json"]
     want("unstartable agent: exit 0, no traceback, every job recorded as invalid with a runner error",
          (code, "Traceback" in text, len(r4), all(r["invalid"] and "runner error" in r.get("invalid_reason", "") for r in r4)), (0, False, 4, True))
-    # many workers on a machine with a login: the shared agent home is made once, no job loses a race for it
+    # many workers on a machine with a credentials file in the home: the shared agent home is made once, no job loses a race for it (each
+    # job removes a leftover `.credentials.json` there; two workers doing so at once must not fail)
     fake_home = os.path.join(tmp, "fakehome")
     os.makedirs(os.path.join(fake_home, ".claude"))
     put(os.path.join(fake_home, ".claude", ".credentials.json"), "{}")
