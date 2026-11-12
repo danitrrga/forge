@@ -223,6 +223,7 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
 - **Exits:**
   - to n_L9: it is fine, or it does not block: a review blocks only if the part touches UI or the plan marks it
   - loop n_C5: he corrects, or rejects fixes: the attempts start again
+  - loop n_C12: he asks for the UI walk again, or a walk did not count: the walk is repeated with no code change
   - loop n_L4: it was about the intention
 
 ### n_L9 · Are there parts of the plan left to run?

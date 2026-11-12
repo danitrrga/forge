@@ -112,6 +112,12 @@ def step(text, n):
     return m.group(0) if m else ""
 
 
+def block(playbook, node):
+    """The block of `node` in a playbook: from its `### <id> ·` heading to the next heading."""
+    m = re.search(r"^### %s ·.*?(?=^### |\Z)" % re.escape(node), playbook, re.S | re.M)
+    return m.group(0) if m else ""
+
+
 def in_order(text, *words):
     """True when every word is in `text` and each comes after the one before it."""
     pos = -1
@@ -247,6 +253,20 @@ def main():
         check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
         check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
     check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
+
+    # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when, and the
+    # playbook's block of the owner's review carries the matching exit. `fwx playbooks check` compares that exit with the table by itself.
+    # Seen red on 239aa07 (step 8 and the playbook did not mention it):
+    #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
+    #   FAIL: playbooks/session.md n_L8 exits `loop n_C12` -> missing
+    from fwx.core import stages  # noqa: E402
+    check("the stage table allows phase-review -> ui-walk", stages.allowed("session", "phase-review", "ui-walk"), "refused")
+    check("step 8 says when the walk is repeated from `phase-review`",
+          all(w in s8 for w in ("asks for the UI walk again", "did not count", "step 6", "`phase-review -> ui-walk`")),
+          "no 'asks for the UI walk again' with 'did not count', 'step 6' and '`phase-review -> ui-walk`'")
+    l8 = block(session_pb, "n_L8")
+    check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
+    check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})

@@ -77,7 +77,7 @@ SESSION = {
     "executing": ["reviewing", "phase-review"],
     "reviewing": ["executing", "ui-walk", "phase-review"],
     "ui-walk": ["phase-review", "discuss", "executing"],
-    "phase-review": ["executing", "closed", "discuss"],
+    "phase-review": ["executing", "closed", "discuss", "ui-walk"],
 }
 FACTORY = {
     "claimed": ["intake"],
@@ -254,6 +254,27 @@ r = helpers.fwx(repo, "stage", os.path.join(repo, "nowhere"), "premortem")
 s.eq("a folder that is not there: exit 2, not a refusal by the table", r.returncode, 2)
 r = helpers.fwx(repo, "help")
 s.ok("`fwx help` lists stage", any(line.split()[:1] == ["stage"] for line in r.stdout.splitlines()), r.stdout)
+
+# ---- after the owner's review of a part, the walk can be repeated with no false stage rows ---------------------------
+
+# Seen red on master (the table lacks phase-review -> ui-walk; the rehearsal hit this refusal and wrote three false rows):
+#   FAIL: session: phase-review -> ui-walk is allowed: got False
+#   FAIL: phase-review -> ui-walk: exit 0: got 1, want 0
+rev = os.path.join(repo, ".fwx", "milestones", "v1", "phases", "05-review")
+os.makedirs(rev)
+for to in ("premortem", "planning", "postmortem", "executing", "phase-review"):
+    step(rev, to, cwd=repo)
+r = helpers.fwx(repo, "stage", rev, "ui-walk", "--why", "part 1 re-walk")
+s.eq("phase-review -> ui-walk: exit 0", (r.returncode, r.stderr), (0, ""))
+s.eq("phase-review -> ui-walk: says what it did", r.stdout.strip(), "phase-review -> ui-walk")
+s.eq("phase-review -> ui-walk: one row, the stage the owner asked for", state.read_rows(state.phase_paths(rev)["audit"])[-1]["detail"],
+     "ui-walk part 1 re-walk")
+closed = os.path.join(repo, ".fwx", "milestones", "v1", "phases", "06-closed")
+os.makedirs(closed)
+for to in ("premortem", "planning", "postmortem", "executing", "phase-review", "closed"):
+    step(closed, to, cwd=repo)
+r = helpers.fwx(repo, "stage", closed, "ui-walk")
+s.eq("closed -> ui-walk stays refused (negative control)", r.returncode, 1)
 
 # ---- the base context follows the stage (2.5 U4) --------------------------------------------------------------------
 
