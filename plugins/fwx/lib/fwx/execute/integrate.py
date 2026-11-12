@@ -8,7 +8,8 @@ round.
 given. It refuses (exit 2, nothing merged) a checkout with uncommitted changes, a branch whose worktree holds a live agent
 (`cleanup.lock_state`: the pid lives and its start time is the lock's; a dead agent's lock does not stop it), and, with
 `findings`, a set of branches whose commits are not exactly one `Fwx-Finding: <id>` commit per finding. At the first conflict
-it aborts that merge and stops (the earlier ones stay). Then it runs `project.checks_quick` in the checkout, removes the
+it aborts that merge and stops (the earlier ones stay). Then it runs the project's `worktree_setup` again in the checkout (a no-op unless a merge changed a dependency file; a failure
+stops here with `setup` in the result and exit 1) and then `project.checks_quick`, removes the
 worktrees of the branches it merged (only unlocked, clean ones: a stale lock is `cleanup`'s), and, with `final` and everything
 green, runs the gate (`core.verify`) and reports the trusted edits and the protected paths of `<base>..HEAD`, `base` being the
 sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
@@ -19,15 +20,15 @@ the red evidence of the checkout's HEAD, `verify` already made that failure a ro
 allowed only when fewer than `rounds` were spent before it: the third round is fixed, only the failure after it ends the job.
 
 `revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first. `summary(...)` says whether the gate
-of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.core and execute.base and cleanup.
+of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.core and execute.base, cleanup and worktree_setup.
 """
 import json
 import os
 
 from fwx import config, state
 from fwx.core import decide, evidence, globs, rounds, trusted, verify
-from fwx.execute import cleanup
-from fwx.execute.base import WaveError, git, out
+from fwx.execute import cleanup, worktree_setup
+from fwx.execute.base import WaveError, git, linked, out
 
 
 def _top(cwd):
@@ -156,6 +157,17 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
     result["head"] = verify.head(top)
     if result["conflict"]:
         return 1, result
+    # A merged lockfile changes what the checks need: the dependencies of this checkout are installed again before any check runs
+    # (the marker makes it a no-op when no dependency file changed). The main checkout is the owner's own and is left alone.
+    commands = cfg["project"]["worktree_setup"]
+    if commands and linked(top):
+        try:
+            worktree_setup.run(top, commands)
+        except (worktree_setup.SetupFailed, WaveError) as e:
+            line = str(e) if isinstance(e, worktree_setup.SetupFailed) else "worktree setup failed: %s" % e
+            result["setup"] = line
+            say(line)
+            return 1, result
     result["quick"] = _quick(top, cfg)
     result["ok"] = result["quick"]["rc"] == 0
     if final and result["ok"]:

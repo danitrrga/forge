@@ -22,6 +22,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
 from test_wave_prepare import Scene as PrepScene, mutant_tree, runner  # noqa: E402
+from test_wave_integrate import Scene as IntScene, IDENT  # noqa: E402
 
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -284,8 +285,220 @@ def case_prepare(R, S):
     S.ok("prepare: in the main checkout (no linked worktree) the setup is not run there", not os.path.exists(os.path.join(main.repo, ".claude", "installed")) and "worktree setup" not in r.stderr, r.stderr[-200:])
 
 
+def tolerant(R, S, label, cfg_text, want):
+    """check-base and `wave setup` on a worktree whose configuration file is `cfg_text` (None: no file): the exits `want`
+    ((check-base, setup)), no traceback, and nothing on stderr when `want` is zero."""
+    sc = Scene()
+    if cfg_text is None:
+        os.remove(os.path.join(sc.repo, ".claude", "fwx.json"))
+    else:
+        helpers.write(sc.repo, ".claude/fwx.json", cfg_text)
+    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    S.eq("config tolerance, %s: check-base exit" % label, r.returncode, want[0])
+    S.ok("config tolerance, %s: check-base prints no traceback%s" % (label, ", and nothing at all" if want[0] == 0 else ""),
+         "Traceback" not in r.stderr and (want[0] != 0 or r.stderr == ""), r.stderr)
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.eq("config tolerance, %s: setup exit" % label, r.returncode, want[1])
+    S.ok("config tolerance, %s: setup prints no traceback" % label, "Traceback" not in r.stderr, r.stderr)
+    return r
+
+
+def case_unrelated_config(R, S):
+    """A project with no worktree_setup behaves as before the field existed: check-base reads nothing but that field.
+
+    Red before the fix (check-base loaded the whole configuration; same toy worktree, base right):
+      FAIL: config tolerance, a model table error: check-base exit: got 43, want 0       (stderr `worktree setup failed: ... unknown role`)
+      FAIL: config tolerance, schema 2: check-base exit: got 43, want 0
+      FAIL: config tolerance, project null: check-base exit: got 1, want 0                (TypeError: 'NoneType' object is not subscriptable)
+      FAIL: config tolerance, project a list: check-base exit: got 1, want 0              (TypeError: list indices must be integers)
+      FAIL: config tolerance, no fwx.json: check-base prints no traceback, and nothing at all: ... fwx: no .claude/fwx.json at ...; using defaults
+    """
+    cases = (("a model table error", '{"schema":1,"models":{"foo":{}}}'), ("schema 2", '{"schema":2}'), ("project null", '{"schema":1,"project":null}'),
+             ("project a list", '{"schema":1,"project":[]}'), ("project a string", '{"schema":1,"project":"x"}'), ("no fwx.json", None))
+    for label, text in cases:
+        tolerant(R, S, label, text, (0, 0))
+    r = tolerant(R, S, "no worktree_setup in a project table", '{"schema":1,"project":{"checks":["true"]}}', (0, 0))
+    S.ok("config tolerance: wave setup says nothing is configured", "no worktree_setup configured" in r.stdout, r.stdout)
+    # What cannot be read cannot say whether a setup is owed, so it fails closed, naming the file, and never with a traceback.
+    for label, text in (("invalid JSON", "{not json"), ("not an object", "[1]"), ("worktree_setup a string", '{"project":{"worktree_setup":"npm ci"}}')):
+        r = tolerant(R, S, label, text, (43, 2))
+    sc = Scene(setup=[MK])
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 2, "models": {"foo": {}}, "project": {"worktree_setup": [MK]}}))
+    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    S.ok("config tolerance: with a setup configured, an unrelated bad value does not stop it", r.returncode == 0 and sc.has("deps/installed"), r.stderr)
+
+
+def case_integrate_setup(R, S):
+    """The phase worktree gets its dependencies again when a merge changes a lockfile, before the checks of the join.
+
+    Red before the fix (nothing called the setup after a merge; the quick check counts the runs of the setup):
+      FAIL: two waves: wave 1 changes the lockfile: the setup ran again before its checks (count 2): ... quick rc 1, count 1
+    """
+    sc = IntScene(quick=['test "$(wc -l < deps/count | tr -d " ")" = 2'])
+    with open(os.path.join(sc.repo, ".git", "info", "exclude"), "a") as f:
+        f.write("deps/\n")
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {
+        "checks": ["true"], "checks_quick": ['test "$(wc -l < deps/count | tr -d " ")" = 2'], "worktree_setup": ["mkdir -p deps && echo run >> deps/count"]}}))
+    first = R(sc.cwd, "wave", "setup", env=IDENT)
+    S.eq("two waves: prepare's setup of the phase worktree", (first.returncode, slurp(os.path.join(sc.cwd, "deps", "count")).count("\n")), (0, 1))
+    b1 = sc.agent("w1", [("package-lock.json", '{"lock": 1}\n', None)])
+    r = sc.integrate(R, b1)
+    v = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+    count = slurp(os.path.join(sc.cwd, "deps", "count")).count("\n")
+    S.ok("two waves: wave 1 changes the lockfile: the setup ran again before its checks (count 2): exit %s, quick rc %s, count %d" % (r.returncode, (v.get("quick") or {}).get("rc"), count),
+         r.returncode == 0 and v.get("ok") is True and count == 2, r.stderr + r.stdout[:300])
+    b2 = sc.agent("w2", [("src/b.py", "b2\n", None)])
+    r = sc.integrate(R, b2)
+    count = slurp(os.path.join(sc.cwd, "deps", "count")).count("\n")
+    S.ok("two waves: wave 2 changes no dependency file: the setup does not run again (count %d)" % count, r.returncode == 0 and count == 2, r.stderr + r.stdout[:300])
+    # a setup that fails after a merge ends the join with its own line in `setup`, and the run's `ok` is false
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"checks": ["true"], "worktree_setup": ["sh -c 'exit 6'"]}}))
+    b3 = sc.agent("w3", [("src/a.py", "a3\n", None)])
+    r = sc.integrate(R, b3)
+    v = json.loads(r.stdout) if r.stdout.strip().startswith("{") else {}
+    S.ok("two waves: a failing setup after the merge: exit 1, `setup` carries the line, ok false, no round spent",
+         r.returncode == 1 and v.get("ok") is False and str(v.get("setup", "")).startswith("worktree setup failed: sh -c 'exit 6'") and sc.rounds() == "rounds 0/3",
+         "%s %s %s" % (r.returncode, r.stdout[:300], r.stderr))
+    plain = IntScene()
+    pb = plain.agent("n", [("src/a.py", "n\n", None)])
+    pv = json.loads(plain.integrate(R, pb).stdout)
+    S.ok("a join of a project with no setup: no `setup` key (the result is as before)", "setup" not in pv, repr(sorted(pv)))
+
+
+def case_io_errors(R, S):
+    """An OSError in the setup's own files is one line and an exit, never a traceback.
+
+    Red before the fix:
+      FAIL: log is a directory: setup: exit 1 and a traceback: got (1, 'Traceback (most recent call last): ... IsADirectoryError: [Errno 21] Is a directory: ...worktree-setup.log')
+      FAIL: marker cannot be written: setup: ... PermissionError: [Errno 13] Permission denied: '.../worktree-setup.json'
+    """
+    sc = Scene()
+    os.makedirs(os.path.join(sc.wt, ".fwx-agent", "worktree-setup.log"))
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.ok("log is a directory: setup: a one-line error, exit 2, no traceback: got %d %r" % (r.returncode, r.stderr[-200:]),
+         r.returncode == 2 and "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1 and "worktree-setup.log" in r.stderr, r.stderr)
+    S.ok("log is a directory: the command did not run", not sc.has("deps/installed"))
+    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    S.ok("log is a directory: check-base: exit 43, the reason on one line, no traceback: got %d %r" % (r.returncode, r.stderr[-200:]),
+         r.returncode == 43 and "Traceback" not in r.stderr and r.stderr.startswith("worktree setup failed:"), r.stderr)
+    if os.geteuid() == 0:
+        S.ok("marker cannot be written: NOT RUN (root writes anywhere)", True)
+        return
+    sc = Scene(setup=[MK + " && chmod a-w .fwx-agent"])
+    try:
+        r = R(sc.wt, "wave", "setup", env=sc.env)
+        S.ok("marker cannot be written: setup: a one-line error, exit 2, no traceback: got %d %r" % (r.returncode, r.stderr[-200:]),
+             r.returncode == 2 and "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1 and "worktree-setup.json" in r.stderr, r.stderr)
+    finally:
+        os.chmod(os.path.join(sc.wt, ".fwx-agent"), 0o755)
+
+
+def _load_ws(R, S):
+    sys.path.insert(0, os.path.join(R.root, "lib"))
+    for name in [m for m in sys.modules if m == "fwx" or m.startswith("fwx.")]:
+        del sys.modules[name]
+    try:
+        from fwx.execute import worktree_setup as ws
+    except ImportError as e:
+        S.ok("the module is there", False, str(e))
+        return None
+    return ws
+
+
+def _gone(pid, tries=40):
+    for _ in range(tries):
+        try:
+            os.kill(pid, 0)
+        except (ProcessLookupError, TypeError):
+            return True
+        time.sleep(0.1)
+    return False
+
+
+def case_detached_child(R, S):
+    """A child that left the process group with `setsid` is killed at the limit too, as far as the platform allows: found through
+    its parent (the shell, still alive at the limit) in /proc. Not covered, and said in the module's docstring: a child that
+    detached and whose parent had already exited (init's now), and anything left running after a command that exited by itself.
+
+    Red before the fix (killpg alone):
+      FAIL: detached child: no process is left (pid N)
+    """
+    ws = _load_ws(R, S)
+    if ws is None:
+        return
+    sc = Scene()
+    pids = helpers.mkdtemp("fwx-pids-")
+    pidfile = os.path.join(pids, "d.pid")
+    command = "sh -c 'setsid sleep 300 >/dev/null 2>&1 & echo $! > %s; wait'" % pidfile
+    try:
+        ws.run(sc.wt, [command], timeout=1)
+        S.ok("detached child: the timeout is reported", False, "it returned")
+    except ws.SetupFailed as e:
+        S.ok("detached child: the timeout is reported", "timed out after 1 s" in str(e), str(e))
+    pid = int(open(pidfile).read().strip()) if os.path.exists(pidfile) else None
+    S.ok("detached child: its pid was written", pid is not None)
+    gone = pid is not None and _gone(pid)
+    if not gone and pid:
+        os.kill(pid, 9)
+    S.ok("detached child: no process is left (pid %s)" % pid, gone)
+
+
+def case_log_cap(R, S):
+    """The log has a size cap: a command that writes past it is killed and the setup fails, naming the cap and the log.
+
+    Red before the fix (`run` had no `log_cap`; the command wrote 60000066 bytes and the setup passed):
+      FAIL: log cap: a runaway output fails the setup: TypeError: run() got an unexpected keyword argument 'log_cap'
+    """
+    ws = _load_ws(R, S)
+    if ws is None:
+        return
+    sc = Scene()
+    started = time.monotonic()
+    try:
+        ws.run(sc.wt, ["head -c 60000000 /dev/zero | tr '\\0' a", "touch deps/after"], log_cap=100000)
+        S.ok("log cap: a runaway output fails the setup", False, "it returned")
+    except ws.SetupFailed as e:
+        S.ok("log cap: a runaway output fails the setup, naming the cap and the log", "output past 100000 bytes" in str(e) and "worktree-setup.log" in str(e), str(e))
+    except TypeError as e:
+        S.ok("log cap: a runaway output fails the setup: %s" % e, False, str(e))
+    log = os.path.join(sc.wt, ".fwx-agent", "worktree-setup.log")
+    size = os.path.getsize(log) if os.path.exists(log) else -1
+    S.ok("log cap: the log stays near the cap (%d bytes), not 60 MB" % size, 0 < size < 20000000, str(size))
+    S.ok("log cap: the next command did not run, no marker", not sc.has("deps/after") and not sc.has(".fwx-agent/worktree-setup.json"))
+    S.ok("log cap: it came back at once", time.monotonic() - started < 20, "%.1f s" % (time.monotonic() - started))
+    S.eq("log cap: the default cap is a number of megabytes", 1 << 20 <= ws.LOG_CAP <= 1 << 30, True) if hasattr(ws, "LOG_CAP") else S.ok("log cap: the default cap exists", False, "no LOG_CAP")
+
+
+def case_marker_validity(R, S):
+    """The marker vouches for what the setup made and for the dependency files that were there.
+
+    Red before the fix:
+      FAIL: marker: the folder the setup made is gone: the setup runs again: got (0, 1), want (0, 2)
+      FAIL: marker: a new untracked lockfile: not a no-op: got 'already done ...'
+    """
+    sc = Scene(setup=["mkdir -p deps && echo run >> deps/count"], files={"package-lock.json": "{}\n"})
+    R(sc.wt, "wave", "setup", env=sc.env)
+    shutil.rmtree(os.path.join(sc.wt, "deps"))
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.eq("marker: the folder the setup made is gone: the setup runs again", (r.returncode, sc.lines("deps/count")), (0, 1))
+    S.ok("marker: and says it ran", "1 command ran" in r.stdout, r.stdout)
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.ok("marker: with the folder back, a no-op again", r.returncode == 0 and "already" in r.stdout and sc.lines("deps/count") == 1, r.stdout + r.stderr)
+    helpers.write(sc.wt, "yarn.lock", "# a new lockfile, not committed\n")
+    r = R(sc.wt, "wave", "setup", env=sc.env)
+    S.ok("marker: a new untracked lockfile: not a no-op (it is refused as an untracked file): got %d %r" % (r.returncode, (r.stdout + r.stderr)[:120]),
+         "already" not in r.stdout and r.returncode == 1 and "yarn.lock" in r.stderr, r.stdout + r.stderr)
+    # ignored things that were there before the setup are not its to vouch for
+    pre = Scene(setup=["mkdir -p deps && echo run >> deps/count"])
+    os.makedirs(os.path.join(pre.wt, "deps"))
+    R(pre.wt, "wave", "setup", env=pre.env)
+    shutil.rmtree(os.path.join(pre.wt, "deps"))
+    r = R(pre.wt, "wave", "setup", env=pre.env)
+    S.ok("marker: a folder that was there before the setup is not vouched for (the run after its removal is a no-op)", r.returncode == 0 and "already" in r.stdout, r.stdout + r.stderr)
+
+
 CASES = [case_run, case_none, case_second_call, case_failing, case_dirty, case_main_checkout, case_config, case_timeout, case_check_base,
-         case_prepare]
+         case_prepare, case_unrelated_config, case_integrate_setup, case_io_errors, case_detached_child, case_log_cap, case_marker_validity]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (name, case, file, old text, new text, the FAIL text it must produce); each `old` is in the file exactly once.
@@ -299,14 +512,27 @@ MUTANTS = [
     ("prepare does not call the setup", case_prepare, P, "    _setup(top, cfg, say)\n", "    pass\n", "setup did not run before the base check"),
     ("prepare swallows a failed setup", case_prepare, P, "    except worktree_setup.SetupFailed as e:\n        raise WaveError(str(e))\n",
      "    except worktree_setup.SetupFailed as e:\n        pass\n", "a failing setup stops the run before the base"),
-    ("a failing command does not stop the sequence", case_failing, W, "            if why:\n                raise SetupFailed(", "            if False:\n                raise SetupFailed(",
+    ("a failing command does not stop the sequence", case_failing, W, "                if why:\n                    raise SetupFailed(", "                if False:\n                    raise SetupFailed(",
      "failing: the earlier command ran and the later one did not"),
     ("files left behind are not refused", case_dirty, W, "    left = sorted(_status(top))", "    left = []", "dirty: an untracked, non-ignored file is refused: exit"),
-    ("no marker is read", case_second_call, W, "if not force and _read_marker(marker_path) == fingerprint:", "if False:", "second call: a no-op that says so"),
+    ("no marker is read", case_second_call, W, "if not force and _valid(_read_marker(marker_path), fingerprint, top):", "if False:", "second call: a no-op that says so"),
     ("the dependency files are not hashed", case_second_call, W, '"dependencies": _dependency_digest(top)}', '"dependencies": ""}',
      "a changed lockfile: the setup runs again by itself"),
     ("the main checkout is allowed", case_main_checkout, W, "    if not linked(top):", "    if False:", "main checkout: refused with exit 2"),
-    ("a timeout kills the shell only", case_timeout, W, "        os.killpg(proc.pid, signal.SIGKILL)\n", "        proc.kill()\n", "timeout: no process is left"),
+    ("a timeout kills the shell only", case_timeout, W, "    for kill, target in [(os.killpg, pid)] + [(os.kill, p) for p in below]:", "    for kill, target in [(os.kill, pid)]:",
+     "timeout: no process is left"),
+    ("a timeout kills nothing outside the group", case_detached_child, W, "    below = _descendants(pid)\n", "    below = []\n", "detached child: no process is left"),
+    ("the log has no cap", case_log_cap, W, "if len(chunk) > room and not self.over:", "if False:", "log cap: a runaway output fails the setup"),
+    ("the marker ignores what the setup made", case_marker_validity, W, "all(isinstance(m, str) and os.path.exists(os.path.join(top, m)) for m in made))", "True)",
+     "marker: the folder the setup made is gone"),
+    ("the digest ignores untracked lockfiles", case_marker_validity, W, '"--cached", "--others", "--exclude-standard", "--",', '"--cached", "--",',
+     "marker: a new untracked lockfile"),
+    ("a failure to write the log is a traceback", case_io_errors, W, "    except OSError as e:\n        raise WaveError(\"cannot write the log of the setup",
+     "    except ZeroDivisionError as e:\n        raise WaveError(\"cannot write the log of the setup", "log is a directory: setup"),
+    ("integrate does not call the setup", case_integrate_setup, "lib/fwx/execute/integrate.py", "            worktree_setup.run(top, commands)\n", "            pass\n",
+     "two waves: wave 1 changes the lockfile"),
+    ("check-base reads the whole configuration", case_unrelated_config, C, "worktree_setup.run(os.getcwd(), config.setup_commands(os.getcwd()))",
+     'worktree_setup.run(os.getcwd(), config.load(os.getcwd())["project"]["worktree_setup"])', "config tolerance, a model table error: check-base exit"),
     ("an empty config entry is accepted", case_config, "lib/fwx/config.py", "isinstance(c, str) and c.strip() for c in setup", "isinstance(c, str) for c in setup",
      "config: worktree_setup as a blank command"),
 ]
