@@ -57,13 +57,37 @@ def read(rel):
 
 
 def returned_fields(js):
-    """The keys of the object a workflow script returns: every `key:` after its last top-level `return {`."""
-    return set(re.findall(r"\b([a-z][a-z_]*):", js[js.rindex("\nreturn {"):]))
+    """(top, details): the keys at the first level of the object a workflow script returns (its last top-level `return {`), and the keys at the
+    first level of its `details` object, found by the braces (comment lines left out, nested objects not counted)."""
+    body = "\n".join(ln for ln in js[js.rindex("\nreturn {"):].splitlines() if not ln.strip().startswith("//"))
+    keys, depth, i = {0: set(), 1: set()}, 0, 0
+    inside = None  # the depth at which the `details` object's keys sit
+    while i < len(body):
+        c = body[i]
+        if c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if inside is not None and depth < inside:
+                inside = None
+        else:
+            m = re.match(r"([a-z][a-z_]*):", body[i:]) if (c.isalpha() and not body[i - 1].isalnum() and body[i - 1] != "_") else None
+            if m:
+                if depth == 1:
+                    keys[0].add(m.group(1))
+                    if m.group(1) == "details":
+                        inside = 2
+                elif inside is not None and depth == inside:
+                    keys[1].add(m.group(1))
+                i += len(m.group(1))
+        i += 1
+    return keys[0], keys[1]
 
 
 def cited_missing(text, returned):
-    """The `details.<field>` words of a text that the returned object has no key for."""
-    return [k for k in re.findall(r"details\.([a-z][a-z_]*)", text) if k not in returned]
+    """The `details.<field>` words of a text that the returned object's `details` has no key for (a top-level field such as `reason` is not
+    one: `details.reason` is a field nobody returns)."""
+    return [k for k in re.findall(r"details\.([a-z][a-z_]*)", text) if k not in returned[1]]
 
 
 def supports(text):
@@ -205,7 +229,16 @@ def main():
     with open(os.path.join(ROOT, "workflows", "ui-walk.js"), encoding="utf-8") as f:
         js = f.read()
     returned = returned_fields(js)
-    check("the workflow returns the fields the session texts cite", {"status", "reason", "gaps", "unverified", "fix_file"} <= returned, "returned %s" % sorted(returned))
+    # Top-level fields and `details` fields are kept apart (review of PR 125: with one merged set `details.reason` passed although `reason` is a
+    # top-level field only). Seen red with the merged set: FAIL: control: `details.reason` is flagged, `reason` is a top-level field only -> got []
+    top, det = returned
+    check("the workflow returns the top-level fields the session texts cite", {"status", "reason", "phase_dir", "details"} <= top, "top-level %s" % sorted(top))
+    check("the workflow returns the details fields the session texts cite", {"gaps", "unverified", "fix_file", "lost_slots"} <= det, "details %s" % sorted(det))
+    # a walk with no `fix_file` has no `fix.json`, so `review-page` would stop: ui-review.md says to skip the command then (review of PR 125).
+    # Seen red on a11691f: FAIL: references/ui-review.md says what to do when `details.fix_file` is null -> missing
+    check("references/ui-review.md says what to do when `details.fix_file` is null", "`details.fix_file` null" in review and "do not run the command" in review, "missing")
+    check("control: `details.reason` is flagged, `reason` is a top-level field only", cited_missing("read `details.reason`", returned) == ["reason"], "got %s" % cited_missing("read `details.reason`", returned))
+    check("control: a details field is read as a details field", cited_missing("read `details.gaps` and `details.fix_file`", returned) == [])
     with open(os.path.join(ROOT, "playbooks", "session.md"), encoding="utf-8") as f:
         session_pb = f.read()
     for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review), ("playbooks/ui-walk.md", playbook),

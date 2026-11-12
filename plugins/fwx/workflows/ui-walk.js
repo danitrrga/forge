@@ -210,12 +210,14 @@ async function withSlot(tag, fn, after) {
   }
 }
 // true when the close is confirmed, tried twice: exit 0 (also for a session nobody opened) or 77 (`NOT RUN, NOT ARMED`: the tool, `agent-browser`
-// or Playwright's Firefox, is not on this machine, so no browser of it can be open); a script error counts as confirmed, the run ends there.
+// or Playwright's Firefox, is not on this machine, so no browser of it can be open). A script error (the runner's agent type is missing) confirms
+// nothing: the browser may be up, so its slot stays taken and the queue does not start another beside it; the run stops with that error.
 async function closeBrowser(tool, session) {
   for (let i = 0; i < 2; i++) {
-    if (st.fatal) return true
+    if (st.fatal) return false
     const v = await exec('close-' + session + (tool === 'pw' ? '-pw' : ''), inRepo('fwx walk ' + tool + ' --run ' + sh(st.runDir) + ' ' + session + ' close'), false)
-    if (st.fatal || (v && (v.rc === 0 || v.rc === 77))) return true
+    if (st.fatal) return false
+    if (v && (v.rc === 0 || v.rc === 77)) return true
   }
   return false
 }
@@ -424,6 +426,7 @@ async function walkOne(job) {
     return null
   }
   job.returned = true
+  job.count = reportedCount(got)
   st.touched[job.tramo.id] = true
   if (job.axis === 'critic' && !job.firefox) st.walked[job.tramo.id] = true
   return got
@@ -465,12 +468,29 @@ function coversAll(rows, items) {
 }
 
 // One verifier job for a tramo and the saving of its reply; returns the reply or null.
+// The findings a walker says it wrote: the numbers in front of a severity word on the first line of its reply (`0 blocker, 2 minor`), as
+// agents/ui-walker.md asks. A reply that gives none counts 0: nothing is demanded of the verifier then.
+function reportedCount(reply) {
+  let n = 0
+  for (const m of String(reply).split('\n')[0].matchAll(/(\d+)\s*(?:blocker|major|minor|cosmetic)/gi)) n += Number(m[1])
+  return n
+}
+
+// A verifier of a walk gives one row for each finding the walkers reported (a duplicate or a finding it could not repeat is a row too): a reply
+// with fewer rows than that, `{"findings": []}` above all, has not verified them, and is asked for once more before the tramo is a gap.
+function coversWalkers(rows, expected, label) {
+  if (rows.length >= expected) return true
+  log(PHASE + ': ' + label + ' gave ' + rows.length + ' row(s) for the ' + expected + ' finding(s) the walkers reported')
+  return false
+}
+
 async function verifyTramo(tramo, index, files, items) {
   const session = 'v' + (index + 1)
   const label = 'ui-verifier:' + tramo.id
+  const expected = items ? 0 : st.jobs.filter((j) => j.tramo === tramo && j.returned).reduce((n, j) => n + (j.count || 0), 0)
   const rep = await withSlot(label, () =>
     twice('ui-verifier', { label, model: M.verifier, schema: VERIFY_SCHEMA, prompt: verifyPrompt(tramo, session, files, items) },
-      (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) ? v : null)),
+      (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) && coversWalkers(v.findings, expected, label) ? v : null)),
   async () => {
     const ab = await closeBrowser('ab', session)
     // A recheck's tramo is rebuilt from fix.json and cannot say whether Firefox was used: the verifier repeats each finding in the browser its
@@ -480,7 +500,7 @@ async function verifyTramo(tramo, index, files, items) {
   })
   if (st.fatal || rep === NOSLOT) return null
   if (!rep) {
-    st.gaps.push('ui-verifier did not return: ' + tramo.id)
+    st.gaps.push('ui-verifier did not return: ' + tramo.id + (expected ? ' (a reply with a row for each of the ' + expected + ' finding(s) the walkers reported)' : ''))
     return null
   }
   if (!items) uniqueIds(rep)

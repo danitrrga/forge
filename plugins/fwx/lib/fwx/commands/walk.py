@@ -37,6 +37,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       makes `open` wait about 30 s in Firefox, measured)
       `--run` is a run folder or a namespace; without it, the repository's only open run. Only a walker session (`w*`) launches with the
       planted control; a verifier session (`v*`) does not. `close` of a session no agent opened is a no-op, exit 0 (`close --all` is not).
+      After a `screenshot` in a session that has the plant, `ab` asks the page's url (`get url`) and lists the picture (the path the caller
+      gave, else the one the tool printed) in `control-pictures.txt` of the run when that route is the control's or cannot be read; the
+      tool's output goes through unchanged.
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
       Before writing control.json it proves the plant visible: it opens the screen in session w1, reads the title's computed font-size,
@@ -48,7 +51,8 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
-      pictures in its `evidence` (the walkers' browsers carried the plant; the text stays, the pictures are listed in `evidence_dropped`). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
+      pictures in its `evidence` (the walkers' browsers carried the plant; the text stays, the pictures are listed in `evidence_dropped`), and
+      so does any finding for a picture `ab` listed in `control-pictures.txt` (below). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
       (starting with a letter or digit) is exit 2, as in `wave prepare`.
   review-page --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
       figures today/built; choices `ok`, `redo` and `not_defect`, the last two with `needs_note`) and one per CONTRADICTED
@@ -509,7 +513,7 @@ def cmd_up(argv):
     os.makedirs(run_dir, exist_ok=True)
     # A second `up` of the same part and round (a recheck, or a rerun) starts clean: the earlier plant (control.json) is not loaded by the
     # new browsers, and the earlier verdicts (verified-*.json) are not read by `findings` as this walk's; they are kept in earlier/.
-    for stale in ("down.json", "run.json", "control.json"):
+    for stale in ("down.json", "run.json", "control.json", "control-pictures.txt"):
         if os.path.exists(os.path.join(run_dir, stale)):
             os.remove(os.path.join(run_dir, stale))
     # rechecked-*.json too: `review-page` joins a recheck's capture to a finding by id, and this walk numbers its findings T1-1 again
@@ -731,12 +735,17 @@ def touch(path):
     os.utime(path)
 
 
-def execute(argv, env, cwd, quiet=False):
-    """Run one program; its output goes through (or is kept when `quiet`). NOT RUN, 77, when the program is not there."""
+def execute(argv, env, cwd, quiet=False, seen=None):
+    """Run one program; its output goes through (or is kept when `quiet`). NOT RUN, 77, when the program is not there. With a list as
+    `seen` the output still goes through, unchanged, and its standard output is also appended to the list."""
     try:
-        if quiet:
+        if quiet or seen is not None:
             r = subprocess.run(argv, cwd=cwd, env=env, capture_output=True, text=True)
-            if r.returncode:
+            if seen is not None:
+                sys.stdout.write(r.stdout)
+                sys.stderr.write(r.stderr)
+                seen.append(r.stdout)
+            elif r.returncode:
                 sys.stderr.write(r.stderr)
             return r.returncode
         return subprocess.run(argv, cwd=cwd, env=env).returncode
@@ -749,6 +758,30 @@ def cookies_of(path):
         return []
     data = read_json(path, "the demo session")
     return [(c["name"], c["value"]) for c in data.get("cookies", []) if "name" in c and "value" in c]
+
+
+def note_control_capture(run, common, prefix, args, out, ctl_file):
+    """After a `screenshot` in a session that launched with the plant: list the picture in `control-pictures.txt` when the page it shows is
+    the control's route, or when that route cannot be read (a doubt is not a clean picture). `fwx walk findings` leaves every listed picture
+    out of a finding's evidence, whichever screen the finding names. The picture is the path the caller gave, else the one the tool printed
+    (`Screenshot saved to <path>`); none found, nothing is listed."""
+    ctl = read_json(ctl_file, "control.json")
+    env = clean_env({"AGENT_BROWSER_SOCKET_DIR": socket_dir()} if prefix else None)
+    url = None
+    try:
+        r = subprocess.run(["agent-browser"] + common + ["get", "url"], cwd=run["repo"], env=env, capture_output=True, text=True)
+        lines = [ln.strip() for ln in r.stdout.splitlines() if ln.strip()] if r.returncode == 0 else []
+        url = lines[-1] if lines else None
+    except FileNotFoundError:
+        pass
+    if url and route_of(url) != ctl.get("path"):
+        return
+    named = [w for w in positional(args)[1:] if w.lower().endswith(IMAGES) or w.startswith(("/", "./", "../", "~"))]
+    m = re.search(r"Screenshot saved to (\S.*)", out)
+    pic = named[0] if named else m.group(1).strip() if m else None
+    if pic:
+        with open(os.path.join(run["run_dir"], "control-pictures.txt"), "a", encoding="utf-8") as f:
+            f.write(os.path.realpath(os.path.join(run["repo"], os.path.expanduser(pic))) + "\n")
 
 
 def cmd_ab(argv):
@@ -780,18 +813,21 @@ def cmd_ab(argv):
     steps.append((common + args, False))
     # `fwx screenshot` sets FWX_WALK_NO_CONTROL: a handoff capture is the page without the plant. A verifier (`v*`) never carries it either:
     # only the walkers are tested on the planted control, and a verifier that saw it would confirm it as a finding.
-    if fresh and not os.environ.get("FWX_WALK_NO_CONTROL") and not session.startswith("v"):
-        ctl = os.path.join(run["run_dir"], "control.json")
-        if os.path.isfile(ctl):
-            steps[0] = (steps[0][0][:len(common)] + ["--init-script", read_json(ctl, "control.json")["script"]] + steps[0][0][len(common):], steps[0][1])
+    ctl = os.path.join(run["run_dir"], "control.json")
+    planted = not os.environ.get("FWX_WALK_NO_CONTROL") and not session.startswith("v") and os.path.isfile(ctl)
+    if fresh and planted:
+        steps[0] = (steps[0][0][:len(common)] + ["--init-script", read_json(ctl, "control.json")["script"]] + steps[0][0][len(common):], steps[0][1])
     prefix = shlex.split(app["run"])
+    seen = [] if planted and words[:1] == ["screenshot"] else None  # a capture in a session that has the plant: its route is noted below
     for i, (a, quiet) in enumerate(steps):
         launch = fresh and i == 0
         env = clean_env({"AGENT_BROWSER_SOCKET_DIR": socket_dir()} if prefix and not launch else None)
-        rc = execute((prefix if launch else []) + ["agent-browser"] + a, env, run["repo"], quiet)
+        rc = execute((prefix if launch else []) + ["agent-browser"] + a, env, run["repo"], quiet, seen if i == len(steps) - 1 else None)
         if rc:
             return rc
         touch(mark)
+    if seen:
+        note_control_capture(run, common, prefix, args, seen[0], ctl)
     if "close" in words:
         os.remove(mark)
     return 0
@@ -968,19 +1004,23 @@ def route_of(screen):
     return urlsplit(screen if "://" in screen else "http://" + screen).path.rstrip("/") or "/"
 
 
-def without_control_pictures(f, ctl_path):
+def without_control_pictures(f, ctl_path, taint, rd):
     """The finding without the pictures its walkers took of the control's screen: their browsers carried the plant (the title shrunk), so
     a picture of that route in `evidence` would show the owner and the fixer a defect nobody wrote. Text stays; the pictures left out are
-    listed in `evidence_dropped`. `evidence` is a path, a list or an object (the verifier's schema allows any), and the same rule goes through
-    all three. `evidence_verifier` (the verifier's own captures, taken in a browser without the plant), `evidence_after`, clips and the other
-    fields are not looked at."""
-    if ctl_path is None or not isinstance(f.get("screen"), str) or route_of(f["screen"]) != ctl_path:
+    listed in `evidence_dropped`. A picture goes when the finding is on the control's route, or when `fwx walk ab` listed it (`taint`, the
+    pictures it saw taken on that route) whatever screen the finding names. `evidence` is a path, a list or an object (the verifier's schema
+    allows any), and the same rule goes through all three. `evidence_verifier` (the verifier's own captures, taken in a browser without the
+    plant), `evidence_after`, clips and the other fields are not looked at."""
+    if ctl_path is None:
+        return f
+    on_route = isinstance(f.get("screen"), str) and route_of(f["screen"]) == ctl_path
+    if not on_route and not taint:
         return f
     left = []
 
     def strip(v):  # (v without its pictures, True when v was a picture and goes whole)
         if isinstance(v, str):
-            gone = os.path.splitext(v)[1].lower() in IMAGES
+            gone = os.path.splitext(v)[1].lower() in IMAGES and (on_route or os.path.realpath(resolve(rd, v)) in taint)
             if gone:
                 left.append(v)
             return v, gone
@@ -1007,6 +1047,11 @@ def cmd_findings(argv):
         if not isinstance(route, str) or not route.startswith("/"):
             raise Stop("%s names no route (a `path` starting with /): `fwx walk arm-control` writes it" % ctl_file)
         ctl_path = route
+    listing = os.path.join(rd, "control-pictures.txt")
+    taint = set()
+    with contextlib.suppress(OSError):
+        with open(listing, encoding="utf-8") as lf:
+            taint = {os.path.realpath(ln.strip()) for ln in lf if ln.strip()}
     seen, fix, contradicted, dropped = set(), [], [], 0
     for p in finding_files(rd):
         data = read_json(p, "verified file")
@@ -1023,7 +1068,7 @@ def cmd_findings(argv):
             verdict = f.get("verdict")
             if verdict not in VERDICTS:
                 raise Stop("%s: finding %s has verdict %r, not one of %s" % (p, f["id"], verdict, ", ".join(VERDICTS)))
-            f = without_control_pictures(dict(f, severity=SEVERITY.get(f.get("severity"), f.get("severity"))), ctl_path)
+            f = without_control_pictures(dict(f, severity=SEVERITY.get(f.get("severity"), f.get("severity"))), ctl_path, taint, rd)
             if verdict in ("CONFIRMED", "PLAUSIBLE"):
                 fix.append(f)
             elif verdict == "CONTRADICTED":
@@ -1046,9 +1091,17 @@ def resolve(rd, value):
 def figures_of(rd, rev, fid, role, value):
     """([figure objects], [text lines]) for an evidence value: a path to a picture is copied next to decisions.json, any other string is text."""
     figs, text = [], []
-    for k, v in enumerate(value if isinstance(value, list) else [value] if value else [], 1):
-        if not isinstance(v, str):
-            continue
+
+    def leaves(x):  # the strings of a path, a list or an object (the verifier's schema allows any), in order
+        if isinstance(x, str):
+            yield x
+        elif isinstance(x, (list, tuple)):
+            for y in x:
+                yield from leaves(y)
+        elif isinstance(x, dict):
+            for y in x.values():
+                yield from leaves(y)
+    for k, v in enumerate(leaves(value), 1):
         p = resolve(rd, v)
         ext = os.path.splitext(p)[1].lower()
         if ext in IMAGES:
