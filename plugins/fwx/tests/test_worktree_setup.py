@@ -382,7 +382,7 @@ def case_io_errors(R, S):
     S.ok("log is a directory: check-base: exit 43, the reason on one line, no traceback: got %d %r" % (r.returncode, r.stderr[-200:]),
          r.returncode == 43 and "Traceback" not in r.stderr and r.stderr.startswith("worktree setup failed:"), r.stderr)
     if os.geteuid() == 0:
-        S.ok("marker cannot be written: NOT RUN (root writes anywhere)", True)
+        print("NOT RUN, NOT ARMED: the unwritable-marker case, because root writes anywhere")
         return
     sc = Scene(setup=[MK + " && chmod a-w .fwx-agent"])
     try:
@@ -495,6 +495,18 @@ def case_marker_validity(R, S):
     shutil.rmtree(os.path.join(pre.wt, "deps"))
     r = R(pre.wt, "wave", "setup", env=pre.env)
     S.ok("marker: a folder that was there before the setup is not vouched for (the run after its removal is a no-op)", r.returncode == 0 and "already" in r.stdout, r.stdout + r.stderr)
+    # found in the self-review: a run caused by a changed lockfile finds the folder already there, and must not forget that the setup made it
+    # Red before the fix: FAIL: marker: after a rerun for a changed lockfile the folder is still vouched for: got (0, 0), want (0, 1)
+    re_ = Scene(setup=["mkdir -p deps && echo run >> deps/count"], files={"package-lock.json": "{}\n"})
+    R(re_.wt, "wave", "setup", env=re_.env)
+    helpers.write(re_.wt, "package-lock.json", '{"changed": 1}\n')
+    helpers.git(re_.wt, "add", "-A")
+    helpers.git(re_.wt, "commit", "-q", "-m", "lock")
+    R(re_.wt, "wave", "setup", env=re_.env)
+    S.eq("marker: the rerun for a changed lockfile ran", re_.lines("deps/count"), 2)
+    shutil.rmtree(os.path.join(re_.wt, "deps"))
+    r = R(re_.wt, "wave", "setup", env=re_.env)
+    S.eq("marker: after a rerun for a changed lockfile the folder is still vouched for", (r.returncode, re_.lines("deps/count")), (0, 1))
 
 
 def case_toolchain_files(R, S):
@@ -542,6 +554,8 @@ MUTANTS = [
     ("the log has no cap", case_log_cap, W, "if len(chunk) > room and not self.over:", "if False:", "log cap: a runaway output fails the setup"),
     ("the marker ignores what the setup made", case_marker_validity, W, "all(isinstance(m, str) and os.path.exists(os.path.join(top, m)) for m in made))", "True)",
      "marker: the folder the setup made is gone"),
+    ("a rerun forgets what the earlier run made", case_marker_validity, W, "made=sorted((after - before) | (set(kept) & after))", "made=sorted(after - before)",
+     "marker: after a rerun for a changed lockfile the folder is still vouched for"),
     ("the digest ignores untracked lockfiles", case_marker_validity, W, '"--cached", "--others", "--exclude-standard", "--",', '"--cached", "--",',
      "marker: a new untracked lockfile"),
     ("a failure to write the log is a traceback", case_io_errors, W, "    except OSError as e:\n        raise WaveError(\"cannot write the log of the setup",

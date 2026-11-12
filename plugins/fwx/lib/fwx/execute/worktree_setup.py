@@ -9,7 +9,7 @@ dependencies (a task that changes the dependency file would write through the li
 untracked file that makes every clean-tree check refuse) and over a copy (hundreds of megabytes per worktree): a real install
 is correct after a dependency change and shares nothing between concurrent tasks.
 
-`run(cwd, commands, force=False, timeout=TIMEOUT_S)` works in the linked worktree `cwd` is in (WaveError for the main checkout:
+`run(cwd, commands, force=False, timeout=TIMEOUT_S, log_cap=LOG_CAP)` works in the linked worktree `cwd` is in (WaveError for the main checkout:
 a command like `npm ci` there would replace the owner's own dependencies) and returns `{state, ran, log}`:
   none  no command is configured; nothing is touched
   noop  the marker says this worktree was set up against this list and these dependency files; nothing ran
@@ -26,8 +26,8 @@ Linux, every child outside the process group.
 
 The output of every command goes to `<worktree>/.fwx-agent/worktree-setup.log` (rewritten by each run; `base.agent_root` makes
 the folder and its `.gitignore`, which hides the log and the marker from git), through a pipe this module drains, so that the log
-never holds more than `log_cap` bytes in total (LOG_CAP, 32 MiB, for the whole run): a command that writes past it is killed and
-the setup fails. After the last command `git status --porcelain`
+holds about `log_cap` bytes at most for the whole run (LOG_CAP, 32 MiB; the lines this module adds itself are not counted): a
+command that writes past it is killed and the setup fails. After the last command `git status --porcelain`
 (not counting `.fwx/`) must show nothing: a file the setup left that git does not ignore (the project's `.gitignore` must cover
 what its setup creates), or a tracked file it changed, would make every later clean-tree check refuse the worktree, so it is named
 and refused here instead. That holds for a tree that was already dirty too: its checks would refuse it all the same.
@@ -35,7 +35,8 @@ and refused here instead. That holds for a tree that was already dirty too: its 
 The marker `<worktree>/.fwx-agent/worktree-setup.json` holds the command list, a digest of the files that define the
 dependencies (the lockfiles and manifests of DEPENDENCY_FILES, wherever they are in the tree, as they are on disk, the tracked ones
 and the untracked ones git does not ignore) and `made`, the git-ignored files and folders (`node_modules/`) that appeared during the
-setup: a changed list, a changed or a new dependency file, or a folder of `made` that is gone runs the setup again, anything else is
+setup (a rerun keeps what the marker it replaces said was made and is still there; a run that failed forgets it): a changed list, a
+changed or a new dependency file, or a folder of `made` that is gone runs the setup again, anything else is
 a no-op, and `force` runs it regardless. What it does not see: a dependency file that is not in DEPENDENCY_FILES (a `.tool-versions`), a
 folder that was already there before the setup (it is not in `made`), and a change to the dependency file made after the setup in a
 worktree nobody calls this in again (an executor's own `npm install` is its own business). The phase worktree is covered: `prepare`
@@ -73,6 +74,8 @@ class SetupFailed(Exception):
 def _dependency_digest(top):
     """A digest of the dependency files of the worktree, tracked or untracked and not ignored: their paths and their content on disk."""
     r = git(top, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *[":(glob)**/" + name for name in DEPENDENCY_FILES])
+    if r.returncode:
+        raise WaveError("git ls-files failed in %s: %s" % (top, r.stderr.strip()))
     h = hashlib.sha256()
     for rel in sorted({p for p in r.stdout.split("\0") if p}):
         h.update(rel.encode("utf-8") + b"\0")
@@ -98,6 +101,8 @@ def _ignored(top):
     """The git-ignored files and folders of the worktree, a folder that is all ignored as one entry (`deps/`), not counting the
     folders of this tool and of `.fwx/`."""
     r = git(top, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+    if r.returncode:
+        raise WaveError("git ls-files failed in %s: %s" % (top, r.stderr.strip()))
     return {p for p in r.stdout.split("\0") if p and p.split("/")[0] not in (AGENT_DIR, ".fwx")}
 
 
@@ -237,6 +242,8 @@ def run(cwd, commands, force=False, timeout=TIMEOUT_S, log_cap=LOG_CAP):
     fingerprint = {"commands": list(commands), "dependencies": _dependency_digest(top)}
     if not force and _valid(_read_marker(marker_path), fingerprint, top):
         return {"state": "noop", "ran": 0, "log": log_path}
+    old = _read_marker(marker_path)
+    kept = [m for m in (old.get("made") if isinstance(old, dict) else None) or [] if isinstance(m, str)]
     try:
         os.remove(marker_path)
     except FileNotFoundError:
@@ -260,9 +267,10 @@ def run(cwd, commands, force=False, timeout=TIMEOUT_S, log_cap=LOG_CAP):
         raise SetupFailed("worktree setup failed: the worktree is not clean after the commands, which every clean-tree check would "
                           "refuse; what they create must be in the project's .gitignore (log %s):\n%s"
                           % (log_path, "\n".join("  " + line for line in left)))
+    after = _ignored(top)
     try:
         with open(marker_path, "w", encoding="utf-8") as f:
-            json.dump(dict(fingerprint, made=sorted(_ignored(top) - before)), f)
+            json.dump(dict(fingerprint, made=sorted((after - before) | (set(kept) & after))), f)
             f.write("\n")
     except OSError as e:
         raise WaveError("cannot write the marker of the setup, %s: %s" % (marker_path, e))
