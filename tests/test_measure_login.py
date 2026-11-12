@@ -696,4 +696,12 @@ runpy.run_path(script, run_name="__main__")
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except BaseException:   # a crash must not hide the failures found before it
+        for msg in failures:
+            print("FAIL", msg)
+        print("%d failure(s) before the crash" % len(failures))
+        raise
