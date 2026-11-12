@@ -925,7 +925,7 @@ pd = (load(fwfile(ppd)) or {}).get("project", {})
 check("fields: without them, project.default_branch_protected is false and project.ui_image null -- %s" % {k: pd.get(k, "missing") for k in ("default_branch_protected", "ui_image")},
       pd.get("default_branch_protected") is False and "ui_image" in pd and pd["ui_image"] is None, pd)
 
-# worktree_setup reaches project.worktree_setup of the file; without it the file holds an empty list.
+# worktree_setup reaches project.worktree_setup of the file.
 ppw = project()
 ww = World()
 ww.put(profile(ppw, name="setup", worktree_setup=["npm ci", "make deps"]))
@@ -933,8 +933,18 @@ ww.run()
 pw = (load(fwfile(ppw)) or {}).get("project", {})
 check("fields: worktree_setup reaches project.worktree_setup -- %s" % pw.get("worktree_setup", "missing from fwx.json"),
       pw.get("worktree_setup") == ["npm ci", "make deps"], pw)
-check("fields: without worktree_setup, project.worktree_setup is an empty list -- %s" % pd.get("worktree_setup", "missing from fwx.json"),
-      pd.get("worktree_setup") == [], pd)
+# A profile without the field leaves the file as it was before the field existed (CLAUDE.md rule 2: the dry-run is byte-identical), so the
+# key is not written for it, nor for an empty list. fwx reads a missing key as the empty list.
+# Red before the fix: FAIL: fields: without worktree_setup, project.worktree_setup is not written -- []
+check("fields: without worktree_setup, project.worktree_setup is not written -- %s" % pd.get("worktree_setup", "missing from fwx.json"),
+      "worktree_setup" not in pd, pd)
+ppe = project()
+we = World()
+we.put(profile(ppe, name="setupempty", worktree_setup=[]))
+we.run()
+pe = (load(fwfile(ppe)) or {}).get("project", {})
+check("fields: with an empty worktree_setup, project.worktree_setup is not written either -- %s" % pe.get("worktree_setup", "missing from fwx.json"),
+      bool(pe) and "worktree_setup" not in pe, pe)
 
 sandbox.cleanup(bool(failures))
 for f in failures:

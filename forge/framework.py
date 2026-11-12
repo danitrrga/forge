@@ -139,13 +139,14 @@ def _document(prof, name, ppath):
             "surface_context": copy.deepcopy(prof.get("surface_context") or {}),
             "default_branch_protected": prof.get("default_branch_protected") is True,
             "ui_image": copy.deepcopy(prof.get("ui_image")),
-            "worktree_setup": list(prof.get("worktree_setup") or []),
         },
         "factory": factory,
         "weekly": table("weekly"),
         "models": table("models"),
         "limits": table("limits"),
     }
+    if prof.get("worktree_setup"):  # written only when set: a profile without it leaves the file as it was (fwx reads the empty list)
+        doc["project"]["worktree_setup"] = list(prof["worktree_setup"])
     for key in ("rounds", "critique_rounds_unattended"):
         if key in section:
             doc[key] = section[key]
