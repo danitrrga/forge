@@ -77,7 +77,7 @@ const stop = (status, reason) => {
 let quota = 1
 const SLOTS = () => quota
 const st = {
-  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [],
+  agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [], lost: 0,
   ctl: null, control: { screen: null, found: null, finding: null }, noCount: null, counts: null, fixFile: null, contradictedFile: null,
   verified: [], shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
 }
@@ -164,36 +164,55 @@ async function must(step, cmd, retry) {
 }
 
 // ---- the quota ------------------------------------------------------------------------------------------------------------------
+// true when the slot is granted, false when no slot will ever be: every slot of the quota is held by a browser whose close was not confirmed.
 function acquire(tag) {
   if (st.sem.free > 0) {
     st.sem.free -= 1
-    return Promise.resolve()
+    return Promise.resolve(true)
   }
+  if (st.lost >= quota) return Promise.resolve(false)
   log(PHASE + ': ' + tag + ' waits in the queue (quota ' + quota + ', ' + st.sem.waiting.length + ' ahead of it in the queue)')
   return new Promise((resolve) => st.sem.waiting.push(resolve))
 }
 function release() {
   const next = st.sem.waiting.shift()
-  if (next) next()
+  if (next) next(true)
   else st.sem.free += 1
 }
+// A slot whose browser may still be up is never freed: the quota bounds browsers, and a second one beside it is what it forbids. Once every
+// slot is lost nothing can run, so the queue is let go (each job a gap) and the close of the run (`down`) is what is left.
+function lose(tag) {
+  st.lost += 1
+  log(PHASE + ': the browser of ' + tag + ' was not confirmed closed: its slot stays taken (' + st.lost + ' of ' + quota + ' lost)')
+  if (st.lost >= quota) for (const next of st.sem.waiting.splice(0)) next(false)
+}
 // A browser outlives its agent (until `down` or the idle timeout) and the quota budgets browsers, not agents: `after` closes the job's own
-// sessions before its slot is freed, whether the job returned or not. A close that fails is no gap: `down` is the net.
+// sessions before its slot is freed, whether the job returned or not, and says whether it could (false: the slot stays taken).
 async function withSlot(tag, fn, after) {
-  await acquire(tag)
+  if (!(await acquire(tag))) {
+    st.gaps.push(tag + ' was not started: no browser slot is left, every slot holds a browser that was not confirmed closed')
+    return null
+  }
+  let closed = true
   try {
     return await fn()
   } finally {
     try {
-      if (after) await after()
+      if (after) closed = (await after()) !== false
     } finally {
-      release()
+      if (closed) release()
+      else lose(tag)
     }
   }
 }
+// true when the close is confirmed (exit 0, also for a session nobody opened), tried twice; a script error counts as confirmed, the run ends there.
 async function closeBrowser(tool, session) {
-  if (st.fatal) return
-  await exec('close-' + session + (tool === 'pw' ? '-pw' : ''), inRepo('fwx walk ' + tool + ' --run ' + sh(st.runDir) + ' ' + session + ' close'), false)
+  for (let i = 0; i < 2; i++) {
+    if (st.fatal) return true
+    const v = await exec('close-' + session + (tool === 'pw' ? '-pw' : ''), inRepo('fwx walk ' + tool + ' --run ' + sh(st.runDir) + ' ' + session + ' close'), false)
+    if (st.fatal || (v && v.rc === 0)) return true
+  }
+  return false
 }
 
 // `up` runs before the tramos are known, so it asked capacity for one tramo (a quota of 2 at most). Once they are, ask again for them
@@ -431,8 +450,11 @@ async function verifyTramo(tramo, index, files, items) {
     twice('ui-verifier', { label, model: M.verifier, schema: VERIFY_SCHEMA, prompt: verifyPrompt(tramo, session, files, items) },
       (v) => (v && Array.isArray(v.findings) && coversAll(v.findings, items) ? v : null)),
   async () => {
-    await closeBrowser('ab', session)
-    if (tramo.firefox) await closeBrowser('pw', session)
+    const ab = await closeBrowser('ab', session)
+    // A recheck's tramo is rebuilt from fix.json and cannot say whether Firefox was used: the verifier repeats each finding in the browser its
+    // `steps` name, and `pw close` of a session nobody opened is a no-op. Closing `ab` does not close the named Playwright browser.
+    const pw = tramo.firefox || items ? await closeBrowser('pw', session) : true
+    return ab && pw
   })
   if (st.fatal) return null
   if (!rep) {

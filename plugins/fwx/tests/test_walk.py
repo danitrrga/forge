@@ -708,10 +708,28 @@ def case_pw(R, S):
             cfg.get("browser", {}).get("browserName"), cfg.get("browser", {}).get("launchOptions", {}).get("headless"),
             cfg.get("browser", {}).get("contextOptions")),
              ("firefox", True, {"viewport": {"width": 1309, "height": 818}, "deviceScaleFactor": 1.1, "storageState": os.path.join(rd, "demo-state.json")}))
+        # Firefox has no counterpart of `ab`'s --allowed-domains (Playwright's origin filter is no boundary and blind to redirects), so the
+        # config sends every host but the app's to a proxy nothing listens on: a link or a redirect out of the app is refused by the browser.
+        # Measured live on a toy page (Playwright Firefox 158 through @playwright/cli 0.1.23): without it a 302 from the app to another host
+        # was followed and the other server answered; with it `NS_ERROR_PROXY_CONNECTION_REFUSED` and the other server saw nothing.
+        # Seen red on the base (PR 103 review thread, "Enforce the local-app boundary for Firefox"; the config had no proxy):
+        #   FAIL: pw: every host but the app's goes to a sink that refuses it: got None, want {'server': 'http://127.0.0.1:1', 'bypass': '127.0.0.1,localhost'}
+        hosts = (jfile(os.path.join(rd, "run.json")) or {}).get("hosts")
+        S.ok("pw: the run has the app's hosts to let through", bool(hosts) and "127.0.0.1" in hosts, repr(hosts))
+        S.eq("pw: every host but the app's goes to a sink that refuses it", cfg.get("browser", {}).get("launchOptions", {}).get("proxy"),
+             {"server": "http://127.0.0.1:1", "bypass": ",".join(hosts or [])})
+        first_cfg = argv[-1]
         # an app that left no session file (the state is only a path until `up` writes it): no storageState, the launch still works
         os.remove(os.path.join(rd, "demo-state.json"))
         sc.clear()
         S.eq("pw: no session file: open exit", sc.walk(R, "pw", "--run", rd, "w2", "open", sc.url).returncode, 0)
+        # Two sessions opened one after the other each name their own config file: with one shared `pw.config.json` a container run's second
+        # open could overwrite the first's before the CLI read it, and the first browser would load the second app's demo session.
+        # Seen red on the base (PR 103 review thread, "Use a separate Playwright configuration file for each session"):
+        #   FAIL: pw: a second session's config is its own file and leaves the first's alone: got (False, False), want (True, True)
+        second_cfg = sc.calls("npx")[-1]["argv"][-1]
+        S.eq("pw: a second session's config is its own file and leaves the first's alone", (
+            first_cfg != second_cfg, "storageState" in (((jfile(first_cfg) or {}).get("browser") or {}).get("contextOptions") or {})), (True, True))
         S.ok("pw: no session file: the context has no storageState (Playwright would refuse a missing file)",
              "storageState" not in ((jfile(sc.calls("npx")[-1]["argv"][-1]) or {}).get("browser", {}).get("contextOptions") or {}), str(sc.calls("npx")[-1]["argv"]))
         sc.clear()
@@ -1501,12 +1519,19 @@ def case_up_restart(R, S):
         S.eq("restart: down leaves no session mark", sorted(os.listdir(os.path.join(rd, "sessions"))) if os.path.isdir(os.path.join(rd, "sessions")) else [], [])
         helpers.write(rd, "control.json", json.dumps({"screen": sc.url + "/a", "path": "/a", "script": os.path.join(rd, "init.js")}))
         helpers.write(rd, "verified-T9.json", json.dumps([{"id": "T9-1", "verdict": "CONFIRMED"}]))
+        # A recheck's capture is joined to a finding by id (`review-page`), and a new walk numbers its findings T9-1 again: the earlier
+        # recheck's file must not stay where the page reads it. Seen red on the base (PR 103 review thread, "Exclude recheck captures from
+        # earlier walk invocations"):
+        #   FAIL: restart: a rechecked file of the earlier run is not left for `review-page`: ['rechecked-T9.json']
+        helpers.write(rd, "rechecked-T9.json", json.dumps({"findings": [{"id": "T9-1", "verdict": "NOT REPRODUCED", "evidence_after": "/srv/old-after.png"}]}))
         r, o2 = sc.up(R)
         if not S.ok("restart: up armed again", r.returncode == 0 and o2 and o2.get("armed") is True, "rc %d %s" % (r.returncode, r.stderr)):
             return
         S.ok("restart: control.json of the earlier run is gone", not os.path.exists(os.path.join(rd, "control.json")), "it is still there")
         S.eq("restart: a verified file of the earlier run is not left for `findings`", sorted(f for f in os.listdir(rd) if f.startswith("verified-")), [])
         S.ok("restart: and it is kept, not deleted", os.path.exists(os.path.join(rd, "earlier", "verified-T9.json")))
+        S.eq("restart: a rechecked file of the earlier run is not left for `review-page`", sorted(f for f in os.listdir(rd) if f.startswith("rechecked-")), [])
+        S.ok("restart: and it is kept, not deleted (rechecked)", os.path.exists(os.path.join(rd, "earlier", "rechecked-T9.json")))
         sc.clear()
         sc.walk(R, "ab", "--run", rd, "w1", "snapshot")
         S.ok("restart: the first call after the restart launches again (the demo session is set)",
@@ -1759,6 +1784,11 @@ MUTANTS = [
     ("finding id not checked", case_finding_ids, "if not brief.ID.match(fid):", "if False:", "finding ids: ../../escape (CONTRADICTED)"),
     ("recheck captures not joined", case_review_recheck, 'dict(f, evidence_after=after[x["id"]]) if x["id"] in after else f', "f",
      "review recheck: F1 has today and built"),
+    ("pw: no proxy for outside hosts", case_pw, 'launch = {"headless": True, "proxy": {"server": PW_SINK, "bypass": ",".join(run["hosts"])}}',
+     'launch = {"headless": True}', "pw: every host but the app's goes to a sink that refuses it"),
+    ("pw: one config file for every session", case_pw, '"pw.config-%s.json" % session', '"pw.config.json"', "pw: a second session's config is its own file"),
+    ("rechecked files kept at up", case_up_restart, ' + glob.glob(os.path.join(run_dir, "rechecked-*.json")):', ":",
+     "restart: a rechecked file of the earlier run is not left for `review-page`"),
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
     ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),

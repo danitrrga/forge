@@ -14,7 +14,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `{armed, run, run_dir, url, apps, namespace, capacity}`. `run` is `app_run.run` (a prefix that runs a command inside the app's
       network); the empty string is a valid value (the command runs in the repo's cwd), not an absent field. `capacity` is
       A second `up` of the same part and round starts clean: it removes the earlier run's control.json (a recheck has no control) and
-      moves its verified-*.json to `earlier/`, so `findings` reads only this walk's. When an app's `up` fails, the `down` of each app already
+      moves its verified-*.json and rechecked-*.json to `earlier/`, so `findings` and `review-page` read only this walk's. When an app's `up` fails, the `down` of each app already
       started runs with the environment that app's `up` had (FWX_WALK_NAME, FWX_WALK_RUN, FWX_WALK_STATE).
       `fwx capacity --role ui-walker --want <2 x --tramos, default 1> --per-agent-mb <PER_AGENT_MB>`; when it cannot answer the quota
       is 1 and says so; allowed 0 stops before the app starts (exit 1). With `container: true` the quota is the number of walkers: `up` runs
@@ -29,8 +29,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `up` (the ui-walk workflow: `up` runs first, the tramos come from an agent): prints the capacity object and rewrites `capacity` in
       `run.json`. With `container` the quota never passes the apps `up` already started.
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
-      (Firefox starts logged in too: the app's demo session file is the context's storageState when `up` left one; the app-host filter
-      of `ab` has no counterpart here, Playwright's `network.allowedOrigins` being no boundary and blind to redirects)
+      (Firefox starts logged in too: the app's demo session file is the context's storageState when `up` left one; Playwright's
+      `network.allowedOrigins` being no boundary and blind to redirects, the config's `launchOptions.proxy` sends every host but the
+      app's to PW_SINK, which refuses: redirects and links out of the app fail in the browser, and each session has its own config file)
       `--run` is a run folder or a namespace; without it, the repository's only open run. Only a walker session (`w*`) launches with the
       planted control; a verifier session (`v*`) does not. `close` of a session no agent opened is a no-op, exit 0 (`close --all` is not).
   arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
@@ -128,6 +129,7 @@ IDLE_S = 20 * 60
 FONT_ARGS = "--font-render-hinting=none"  # U1: changes no capture; the spec keeps it
 PW_VERSION = "0.1.23"  # @playwright/cli, with Firefox 158 = firefox-1569 (probe.md step 10)
 PW_FIREFOX = "firefox-1569"
+PW_SINK = "http://127.0.0.1:1"  # Firefox's proxy for every host but the app's: port 1 is never listened on, so the request is refused
 UP_TIMEOUT_S = 900
 WAIT_URL_S = int(os.environ.get("FWX_WALK_WAIT_S") or 120)
 DRAIN_S = 3  # how long `down` waits for processes to exit after the close
@@ -501,7 +503,8 @@ def cmd_up(argv):
     for stale in ("down.json", "run.json", "control.json"):
         if os.path.exists(os.path.join(run_dir, stale)):
             os.remove(os.path.join(run_dir, stale))
-    for old in glob.glob(os.path.join(run_dir, "verified-*.json")):
+    # rechecked-*.json too: `review-page` joins a recheck's capture to a finding by id, and this walk numbers its findings T1-1 again
+    for old in glob.glob(os.path.join(run_dir, "verified-*.json")) + glob.glob(os.path.join(run_dir, "rechecked-*.json")):
         os.makedirs(os.path.join(run_dir, "earlier"), exist_ok=True)
         os.replace(old, os.path.join(run_dir, "earlier", os.path.basename(old)))
     started = []
@@ -789,13 +792,16 @@ def pw_browsers():
     return os.environ.get("PLAYWRIGHT_BROWSERS_PATH") or os.path.join(os.path.expanduser("~"), ".cache", "ms-playwright")
 
 
-def pw_config(run, app):
-    path = os.path.join(run["run_dir"], "pw.config.json")
+def pw_config(run, app, session):
+    path = os.path.join(run["run_dir"], "pw.config-%s.json" % session)  # one file per session: two opens at once must not share one
     context = {"viewport": {"width": VIEWPORT[0], "height": VIEWPORT[1]}, "deviceScaleFactor": SCALE}
     if os.path.isfile(app["state"]):  # the demo session the app's `up` left, as `ab` sets it by cookies: Firefox starts logged in too
         context["storageState"] = app["state"]
+    # Firefox has no `--allowed-domains`: every host but the app's goes to a proxy nothing listens on, so a link or a redirect out of the app
+    # is refused by the browser itself (Playwright's own origin filter does not see redirects).
+    launch = {"headless": True, "proxy": {"server": PW_SINK, "bypass": ",".join(run["hosts"])}}
     write_json(path, {"outputDir": run["shots"],  # without it Playwright's CLI writes `.playwright-cli/` in the working folder (the project)
-                      "browser": {"browserName": "firefox", "launchOptions": {"headless": True}, "contextOptions": context}})
+                      "browser": {"browserName": "firefox", "launchOptions": launch, "contextOptions": context}})
     return path
 
 
@@ -814,7 +820,7 @@ def cmd_pw(argv):
         raise Stop("NOT RUN, NOT ARMED: Playwright Firefox missing (%s in %s)" % (PW_FIREFOX, pw_browsers()), 77)
     launch = positional(args)[:1] == ["open"]
     if launch:
-        args = args + ["--browser", "firefox", "--config", pw_config(run, app)]
+        args = args + ["--browser", "firefox", "--config", pw_config(run, app, session)]
         touch(marker(run, "pw", session))
     prefix = shlex.split(app["run"]) if launch else []
     os.makedirs(run["shots"], exist_ok=True)
