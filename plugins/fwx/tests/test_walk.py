@@ -2130,33 +2130,58 @@ def case_check_screens(R, S):
         sc.stop()
 
 
-SLOWUP = """import os, subprocess, sys
-port, pidfile = int(sys.argv[1]), sys.argv[2]
-here = os.path.dirname(os.path.abspath(__file__))
-code = "import runpy, sys, time; time.sleep(1); sys.argv = ['http.server', %r, '--bind', '127.0.0.1']; runpy.run_module('http.server', run_name='__main__')" % str(port)
-p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True, cwd=here)
-open(pidfile, "a").write(str(p.pid) + "\\n")
-"""
+class Looks:
+    """A port where every connection is counted and closed at once: nothing answers there, so each look at the app (`answering`) is one connection
+    and the count is how many times the wait looked, whatever the speed of the machine."""
+
+    def __init__(self):
+        import threading
+        self.count = 0
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(16)
+        self.sock.settimeout(0.05)
+        self.url = "http://127.0.0.1:%d" % self.sock.getsockname()[1]
+        self.done = False
+        self.thread = threading.Thread(target=self.serve, daemon=True)
+        self.thread.start()
+
+    def serve(self):
+        while not self.done:
+            try:
+                conn, _ = self.sock.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            self.count += 1
+            conn.close()
+
+    def stop(self):
+        self.done = True
+        self.thread.join(5)
+        self.sock.close()
 
 
 def case_poll(R, S):
-    """FWX_WALK_POLL_S is the pause between two looks at the app (default 0.5 s). An app that answers a second after `up` returned is
-    looked at at once, not yet answering, and again after the pause: with a pause of 2 s `up` takes at least 2 s (a lower bound: a
-    slow machine cannot break it). Seen red on the base walk.py (no knob, the pause was a fixed 0.5 s):
-      FAIL: poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so up took at least 2 s: took 1.7 s
+    """FWX_WALK_POLL_S is the pause between two looks at the app (default 0.5 s). The case counts the looks the wait makes at an app that never
+    answers, in a window of 4 s (FWX_WALK_WAIT_S): with a pause of 2 s that is the look before `up`, the first look after it and one more, so
+    at most 4 connections and at least 2; a wait that ignores the variable and pauses 0.5 s looks about nine times. Counting looks does not depend
+    on how fast the machine is (the first version measured that `up` took at least 2 s with an app answering after a second, and its mutant, a
+    wait that ignores the variable, passed that bound on a slow runner: `FAIL: control poll: the wait for the app ignores FWX_WALK_POLL_S: the case
+    fails: the mutant passed all 8 checks`). Seen red on the base walk.py (no knob, the pause was a fixed 0.5 s):
+      FAIL: poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so the wait looked at most 4 times in 4 s: counted 9 looks
       FAIL: poll: the module reads FWX_WALK_POLL_S: unset: got "AttributeError: module 'fwx.commands.walk' has no attribute 'POLL_S'", want '0.5 0.5'"""
     sc = Scene()
+    looks = Looks()
     try:
-        helpers.write(sc.repo, "slowup.py", SLOWUP)
-        app = json.dumps({"up": "python3 slowup.py %d %s" % (sc.port, sc.pidfile), "run": "", "down": "python3 down.py %s" % sc.pidfile, "url": sc.url})
-        t0 = time.monotonic()
-        r, o = sc.up(R, "--app", app, env={"FWX_WALK_POLL_S": "2"})
-        took = time.monotonic() - t0
-        S.ok("poll: an app that answers a second after up: up armed", r.returncode == 0 and o and o.get("armed") is True, "rc %d: %s %s" % (r.returncode, r.stdout, r.stderr))
-        S.ok("poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so up took at least 2 s", took >= 1.9, "took %.1f s" % took)
-        if o:
-            sc.walk(R, "down", "--run", o["run_dir"])
+        app = json.dumps({"up": "true", "run": "", "down": "true", "url": looks.url})
+        r, o = sc.up(R, "--app", app, env={"FWX_WALK_POLL_S": "2", "FWX_WALK_WAIT_S": "4"})
+        S.ok("poll: an app that never answers: up gives up, naming the wait", r.returncode == 1 and "nothing answered" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("poll: FWX_WALK_POLL_S=2: the pause between two looks is 2 s, so the wait looked at most 4 times in 4 s", looks.count <= 4, "counted %d looks" % looks.count)
+        S.ok("poll: and it did look (looking at nothing is no pass)", looks.count >= 2, "counted %d looks" % looks.count)
     finally:
+        looks.stop()
         sc.stop()
     # the module's own reading of the variable: unset 0.5, a number above 0 taken, anything else ignored
     probe = "import sys; sys.path.insert(0, %r); from fwx.commands import walk; print(walk.POLL_S, walk.SETTLE_POLL_S)" % os.path.join(R.root, "lib")
