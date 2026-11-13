@@ -80,8 +80,8 @@ behind every "built".
    `plugins/fwx/playbooks/principles.md`; each proposal's `layer` field of the weekly improvement is planned.
 2. **Every deciding step is a command, not the model's judgement.** Whether to merge is `fwx decide`. Whether the work
    is good is `fwx verify`, which runs the project's checks on a clean tree at the exact commit. How many fix rounds a
-   job may spend is `fwx rounds`. How many agents of a role may start is `fwx capacity`, from the configured cap and the
-   free memory. Which model a launch uses is `fwx model <role> <size>`, read from the project's file, never from a
+   job may spend is `fwx rounds`. How many agents of a role run at once is the cap in the configuration, a fixed number that
+   `fwx wave new` and `fwx walk start` print and the base context states; nothing is measured. Which model a launch uses is `fwx model <role> <size>`, read from the project's file, never from a
    prompt. Which stage may follow which is `fwx stage`, from a table. The orchestrator runs the command and acts on
    what it prints; it does not ask itself the question. Built.
 3. **A check is seen to fail before it is trusted.** A test is written first and run against the current code, and the

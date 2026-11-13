@@ -6,7 +6,6 @@ D5	orchestrator	main-step,agent	python3 tools/verdict.py verdict .fwx/p1 --no-op
 O1	orchestrator	main-step	fwx stage .fwx/p1 premortem --why probe	allow
 O2	orchestrator	main-step	fwx verify	allow
 O3	orchestrator	main-step	fwx rounds .fwx/p1	allow
-O4	orchestrator	main-step	fwx capacity --role executor --want 2	allow
 O5	orchestrator	main-step	fwx linear list --waiting --json	allow
 O6	orchestrator	main-step	fwx linear new --template bug --title probe	allow
 O7	orchestrator	main-step	fwx linear comment DTC-1 --kind result	allow
