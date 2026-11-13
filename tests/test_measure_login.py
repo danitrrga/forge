@@ -54,7 +54,10 @@ PLACEHOLDER = "[REDACTED: measurement token]"
 # what the child must not inherit (one statement here, independent of the helper's own list)
 DROPPED = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "CLAUDE_CODE_USE_FOUNDRY",
            "CLAUDE_CODE_USE_MANTLE", "CLAUDE_CODE_USE_ANTHROPIC_AWS", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_SIMPLE",
-           "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES"]
+           "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES", "LINEAR_API_KEY"]
+# LINEAR_API_KEY: a service key for an account the measured session must not touch. Seen to fail before the code change, twice:
+# "FAIL helper: the drop list is the one this test states: want [..., 'CLAUDE_CODE_USE_VERTEX', 'LINEAR_API_KEY'], got [..., 'CLAUDE_CODE_USE_VERTEX']"
+# and "FAIL helper: the child environment is the parent's minus the drop list plus the token" (the key was still in the child's environment)
 # what must reach the child as the parent had it: only the drop list and the token change
 PASSED = {"HTTPS_PROXY": "http://proxy.example.test:3128", "NO_PROXY": "localhost", "ANTHROPIC_MODEL": "toy-model",
           "ANTHROPIC_DEFAULT_SONNET_MODEL": "toy-sonnet", "CLAUDE_CODE_SUBAGENT_MODEL": "toy-sub", "NODE_EXTRA_CA_CERTS": "/srv/ca.pem",
