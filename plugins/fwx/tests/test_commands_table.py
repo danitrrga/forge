@@ -26,6 +26,7 @@ Controls, each a copy of lib/fwx/routes.py changed in one place, seen red on the
   - the default of `wave` gone:
       FAIL: default of `wave --run R`: routes to wave ['summary', '--run', 'R']: got ['fwx wave: unknown verb: --run'], want 'STUB wave ["summary", "--run", "R"]'
 """
+import glob
 import importlib.util
 import json
 import os
@@ -220,5 +221,25 @@ CONTROLS = (
 for name, mutate, label in CONTROLS if os.path.exists(ROUTES) else ():
     bad = failures(scenario(build(mutate)))
     s.ok("control (%s) is seen red on `%s...` (%d failed)" % (name, label, len(bad)), any(b[0].startswith(label) for b in bad), bad[:2])
+
+# ---- the texts agents read name no command that is gone ------------------------------------------------------------------
+# A removed command (`fwx capacity`, D90) lived on in a playbook line nothing read, and the workflow no longer did what it said. The base
+# context's own check (`context_base._unknown_commands`, which knows the table and its old names) is run over every playbook, agent,
+# skill, reference and the README: each `fwx <object> [word]` they name must be a command. Seen red on the head of PR 140
+# (playbooks/execute.md still said the workflow runs `fwx capacity --role executor --want N --wait 540`):
+#   FAIL: playbooks/execute.md names no command that is gone: ['unknown command: fwx capacity']
+sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
+from fwx import context_base as _cb  # noqa: E402
+
+texts = sorted(glob.glob(os.path.join(helpers.ROOT, "playbooks", "*.md")) + glob.glob(os.path.join(helpers.ROOT, "agents", "*.md"))
+               + glob.glob(os.path.join(helpers.ROOT, "skills", "*", "SKILL.md")) + glob.glob(os.path.join(helpers.ROOT, "skills", "*", "references", "*.md"))
+               + [os.path.join(helpers.ROOT, "README.md")])
+s.ok("the scan looks at the playbooks, the agents, the skills and the README (%d files)" % len(texts),
+     any("playbooks" + os.sep in p for p in texts) and any("agents" + os.sep in p for p in texts) and any(p.endswith("SKILL.md") for p in texts) and len(texts) > 20, len(texts))
+for p in texts:
+    with open(p, encoding="utf-8") as f:
+        s.eq("%s names no command that is gone" % os.path.relpath(p, helpers.ROOT), _cb._unknown_commands(f.read()), [])
+# control: the scan does see a removed command
+s.eq("control: a text that names `fwx capacity` is caught", _cb._unknown_commands("it runs `fwx capacity --role executor`"), ["unknown command: fwx capacity"])
 
 s.done()
