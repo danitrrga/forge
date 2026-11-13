@@ -2121,8 +2121,13 @@ def consent_config(forge_root):
             _strings("%s.risks" % where, r["risks"])
     except ValueError as e:
         raise ValueError("%s: %s" % (path, e))
+    # The registry still under its old name: no project would have a `production`, so the window would be
+    # silently off. lib.require_registry's condition, written again: the guard imports nothing of forge.
+    pdir = os.path.join(root, "config", "projects")
+    if not os.path.lexists(pdir) and os.path.isdir(os.path.join(os.path.dirname(pdir), "profiles")):
+        raise ValueError("config/profiles/ was renamed config/projects/: mv config/profiles config/projects")
     projects = []
-    for f in sorted(glob.glob(os.path.join(root, "config", "projects", "*.claude.json"))):
+    for f in sorted(glob.glob(os.path.join(pdir, "*.claude.json"))):
         try:
             with open(f, encoding="utf-8") as fh:
                 prof = json.load(fh)

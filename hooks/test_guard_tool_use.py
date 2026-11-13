@@ -2655,7 +2655,33 @@ def flow_two_rules(name):
     return None
 
 
-CONSENT_FLOW = {"request": flow_request, "mcp": flow_mcp, "yes": flow_yes, "no": flow_no, "other-exit": flow_other_exit,
+def flow_registry(name):
+    """The registry folder's four states while the owner's data moves, a production command under
+    FORGE_CONSENT=unattended: the folder and a link config/projects -> profiles stop it as always; only the old
+    folder refuses it (and every call) with the mv line; neither folder is pinned to what it did before
+    (no project, nothing matches, rc 0) as the control that nothing else moved. Red before the check, only the
+    old folder: "only old: wanted rc=2 and one line starting 'CONSENT_ERROR: <the mv line>', got rc=0 ''" --
+    the window was silently off."""
+    guard, root, f = forge = flow_forge()
+    new, old = os.path.join(f, "config", "projects"), os.path.join(f, "config", "profiles")
+    renamed = "CONSENT_ERROR: config/profiles/ was renamed config/projects/: mv config/profiles config/projects"
+    states = (("folder", lambda: None, "CONSENT_UNATTENDED:"),
+              ("link", lambda: (os.rename(new, old), os.symlink("profiles", new)), "CONSENT_UNATTENDED:"),
+              ("only old", lambda: os.remove(new), renamed),
+              ("neither", lambda: os.rename(old, os.path.join(f, "aside")), None))
+    for state, arrange, want in states:
+        arrange()
+        r, _ = flow_call("yes", forge=forge, env={"FORGE_CONSENT": "unattended"})
+        if want is None:
+            if r.rc != 0 or r.err:
+                return "%s: wanted rc=0 and nothing, got rc=%s %r" % (state, r.rc, r.err.strip()[:160])
+            continue
+        if r.rc != 2 or not r.err.startswith(want) or r.err.strip().count("\n"):
+            return "%s: wanted rc=2 and one line starting %r, got rc=%s %r" % (state, want, r.rc, r.err.strip()[:160])
+    return None
+
+
+CONSENT_FLOW = {"registry": flow_registry, "request": flow_request, "mcp": flow_mcp, "yes": flow_yes, "no": flow_no, "other-exit": flow_other_exit,
                 "timeout": flow_timeout, "missing": flow_missing, "not-executable": flow_not_executable,
                 "no-runtime-dir": flow_no_runtime_dir, "unattended": flow_unattended,
                 "attended-values": flow_attended_values, "no-match": flow_no_match, "log": flow_log,

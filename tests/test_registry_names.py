@@ -6,6 +6,7 @@ lib.project_error. "Profile" is left free for the set of skills, plugins and ser
 1. No tracked file holds an old registry name (the path config/profiles and its os.path.join spelling, PROFILE_FIELDS,
    profile_error, lib.profiles(, lib.PROFILES), except a line that names the new folder as well: the lines that
    explain the rename and the one-line instruction below. `--at REV` counts the old names in a commit instead.
+   In a copy with no checkout the scan cannot run: the last line says NOT RUN, NOT ARMED and the exit is 77.
    Control: one name put back in a copy of a file is reported as `old registry name in <file>:<line>`.
 2. While the owner's data moves (U15), the registry may be found only under its old name. lib.projects() then exits
    1 with `config/profiles/ was renamed config/projects/: mv config/profiles config/projects`; without the check it
@@ -79,7 +80,9 @@ def scan(root, files):
 
 
 def tracked(root):
-    return subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True, check=True).stdout.split("\n")
+    """The tracked files, or None when `root` is no git checkout (a plain copy): the scan cannot run there."""
+    r = subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True)
+    return r.stdout.split("\n") if r.returncode == 0 else None
 
 
 def at(rev):
@@ -97,10 +100,13 @@ if "--at" in sys.argv:
     sys.exit(0)
 
 # 1. The scan over every tracked file, and its control.
-hits, looked = scan(ROOT, tracked(ROOT))
-check("the scan read the tracked files", looked > 100, "read %d file(s)" % looked)
-check("tracked files hold no old registry name", not hits,
-      "%d hit(s), first: %s" % (len(hits), "; ".join(hits[:5])))
+files = tracked(ROOT)
+not_run = None if files is not None else "%s is no git checkout, so the tracked files were not scanned" % ROOT
+if files is not None:
+    hits, looked = scan(ROOT, files)
+    check("the scan read the tracked files", looked > 100, "read %d file(s)" % looked)
+    check("tracked files hold no old registry name", not hits,
+          "%d hit(s), first: %s" % (len(hits), "; ".join(hits[:5])))
 planted = hits_in("forge/lib.py", "x = 1\nnames = lib." + "profiles()\n")
 check("control: a name put back is reported with its file and line",
       planted == ["old registry name in forge/lib.py:2 (lib." + "profiles()"], repr(planted))
@@ -170,4 +176,8 @@ finally:
     sandbox.cleanup()
 
 print("%d check(s), %d failure(s)" % (n_checks[0], len(failures)))
+if not failures and not_run:
+    # Neither a pass nor a fail (rule 4): forge test shows the last line as a WARN.
+    print("NOT RUN, NOT ARMED: " + not_run)
+    sys.exit(77)
 sys.exit(1 if failures else 0)

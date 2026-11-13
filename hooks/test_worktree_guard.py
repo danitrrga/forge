@@ -777,6 +777,45 @@ def scaling_checks():
     return fails
 
 
+RENAMED = "config/profiles/ was renamed config/projects/: mv config/profiles config/projects"
+
+
+def registry_states():
+    """The registry folder's four states while the owner's data moves: the folder, a link
+    config/projects -> profiles, only the old config/profiles/ (refused everywhere with the mv line), and
+    neither. Red before the check: with only the old folder the main checkout let
+    `git worktree add <elsewhere>` through, "only old: main worktree add: rc=0 ''", and a worktree said
+    "the project cannot be used (... config/projects/toy.claude.json cannot be read ...)" without the rename.
+    The other three states are pinned to what the hook did before, as the control that nothing else moved."""
+    new, old = os.path.join(TOY, "config", "projects"), os.path.join(TOY, "config", "profiles")
+    aside = os.path.join(BASE, "registry-aside")
+    probes = (("main worktree add", bash("git worktree add %s/x" % ELSEWHERE), MAIN),
+              ("main ls", bash("ls"), MAIN),
+              ("worktree ls", bash("ls"), WT))
+    folder_want = {"main worktree add": (2, "Worktrees of this project live only"), "main ls": (0, ""), "worktree ls": (0, "")}
+    states = (
+        ("folder", lambda: None, folder_want),
+        ("link", lambda: (os.rename(new, old), os.symlink("profiles", new)), folder_want),
+        ("only old", lambda: os.remove(new),
+         {k: (2, "worktree_guard: BLOCKED - " + RENAMED) for k in folder_want}),
+        ("neither", lambda: os.rename(old, aside),
+         {"main worktree add": (0, ""), "main ls": (0, ""), "worktree ls": (2, "the project cannot be used")}),
+    )
+    fails, seen = [], {}
+    for state, arrange, want in states:
+        arrange()
+        for name, (tool, ti), cwd in probes:
+            rc, err = run(tool, ti, cwd)
+            seen[(state, name)] = (rc, err)
+            if rc != want[name][0] or want[name][1] not in err or (not want[name][1] and err):
+                fails.append("%s: %s: rc=%s %r, want rc %s with %r" % (state, name, rc, err.strip()[:160], *want[name]))
+    for name, _, _ in probes:  # the bridge is the folder, byte for byte
+        if seen[("link", name)] != seen[("folder", name)]:
+            fails.append("link: %s differs from the folder: %r vs %r" % (name, seen[("link", name)], seen[("folder", name)]))
+    os.rename(aside, new)
+    return fails
+
+
 def main():
     try:
         build_fixture()
@@ -788,6 +827,7 @@ def main():
         with ThreadPoolExecutor(max_workers=8) as pool:
             fails = [f for f in pool.map(check, all_cases) if f]
         fails += scaling_checks()
+        fails += registry_states()
         n_block = sum(1 for c in all_cases if c[0] == "block")
         n_allow = sum(1 for c in all_cases if c[0] == "allow")
         n_mal = sum(1 for c in all_cases if c[0] == "malformed")
