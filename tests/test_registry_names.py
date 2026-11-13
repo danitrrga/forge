@@ -86,7 +86,7 @@ def at(rev):
     """Count the old names in commit `rev`, lines per name, the way the scan reads them."""
     for old in OLD:
         r = subprocess.run(["git", "-C", ROOT, "grep", "-n", "-F", "-e", old, rev, "--", ".",
-                            ":!docs/archive", ":!framework-discuss", ":!benchmarks", ":!design"],
+                            ":!docs/archive", ":!framework-discuss", ":!benchmarks", ":!design", ":!" + SELF],
                            capture_output=True, text=True)
         lines = [l for l in r.stdout.splitlines() if not NEW_DIR.search(l)]
         print("%-22s %d line(s) at %s" % (old, len(lines), rev))
