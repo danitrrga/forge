@@ -180,12 +180,14 @@ function fixRound(why) {
   })
 }
 
-async function capacity(want) {
-  const c = await run('capacity', 'fwx capacity --role executor --want ' + want + ' --wait 540 --json' + (A.unattended ? ' --unattended' : ''), true)
-  if (!(Number.isInteger(c.allowed) && c.allowed > 0)) {
-    stop('failed', 'capacity: no executor may start now' + (Array.isArray(c.reasons) && c.reasons.length ? ' (' + c.reasons.join('; ') + ')' : ''))
+// The most executors at once is `args.cap`, a fixed number of the configuration that `fwx wave new` prints (`limits.per_project.executor`, else
+// `limits.default_cap` of the plane's kind). Nothing is measured and no command is asked: the agents of other sessions are not counted. An
+// `args` with no usable cap ends the run before any executor starts, never "everything at once".
+function cap() {
+  if (!(Number.isInteger(A.cap) && A.cap > 0)) {
+    stop('failed', 'cap: args.cap is ' + JSON.stringify(A.cap === undefined ? null : A.cap) + ', not a positive whole number: `fwx wave new` prints it from the configuration (limits), so run it again')
   }
-  return c.allowed
+  return A.cap
 }
 
 // ---- executors ---------------------------------------------------------------------------------------------------------
@@ -257,9 +259,9 @@ async function runWave(wave) {
   const tasks = wave.tasks.filter((t) => !done.has(t.id))
   const reports = {}
   let rest = tasks.slice()
+  const most = cap()
   while (rest.length) {
-    const allowed = await capacity(wave.serial ? 1 : rest.length)
-    const batch = rest.slice(0, wave.serial ? 1 : allowed)
+    const batch = rest.slice(0, wave.serial ? 1 : most)
     rest = rest.slice(batch.length)
     const got = await parallel(batch.map((t) => () => job(taskJob(t))))
     for (let i = 0; i < batch.length; i++) {
@@ -548,7 +550,7 @@ async function main() {
     await integrate([], { final: true })
   } else if (A.fix) {
     const ids = A.fix.findings.map((f) => f.id)
-    await capacity(1)
+    cap()
     const r = await job({ id: 'fix', label: 'executor:fix', model: A.models.fixer, trailer: null,
       prompt: (prev) => 'Your brief is ' + A.fix.brief + '. Read it first and follow it.' + baseOrder() + again(prev) })
     if (r.end) stop(r.end[0], r.end[1])

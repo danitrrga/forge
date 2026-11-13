@@ -229,7 +229,7 @@ def stop_scenes():
 class Scene:
     """A toy repo with its configuration, an app (`up.py`/`down.py` in the repo) and the fakes on the only PATH."""
 
-    def __init__(self, ab=True, prefix="", container=False, url_tpl=None, limits=None, app=True, firefox=True, fake_up=None):
+    def __init__(self, ab=True, prefix="", container=False, url_tpl=None, limits=None, app=True, firefox=True, fake_up=None, limits_raw=None):
         SCENES.append(self)
         self.port = free_port()
         self.pidfile = None
@@ -246,6 +246,8 @@ class Scene:
                "project": {"app_run": app_run if app else None}}
         if limits is not None:
             cfg["limits"] = {"per_project": limits}
+        if limits_raw is not None:  # the whole `limits` table as a file has it (the removed keys included)
+            cfg["limits"] = limits_raw
         helpers.write(self.repo, ".claude/fwx.json", json.dumps(cfg))
         self.bin = helpers.mkdtemp("fwx-walk-bin-")
         for name, target in (("python3", PY), ("git", GIT)):
@@ -259,9 +261,7 @@ class Scene:
         self.browsers = helpers.mkdtemp("fwx-walk-browsers-")
         if firefox:
             os.makedirs(os.path.join(self.browsers, "firefox-1569"))
-        meminfo = os.path.join(self.state, "meminfo")
-        helpers.write(self.state, "meminfo", "MemAvailable: %d kB\n" % (64 * 1024 * 1024))
-        self.env = {"PATH": self.bin, "FAKE_LOG": self.log, "FAKE_DOCKER": self.docker, "FWX_MEMINFO": meminfo,
+        self.env = {"PATH": self.bin, "FAKE_LOG": self.log, "FAKE_DOCKER": self.docker,
                     "HOME": self.home, "PLAYWRIGHT_BROWSERS_PATH": self.browsers, "FWX_FACTORY_CONTAINER": "",
                     "FWX_WALK_OWNER_PID": str(os.getpid()),
                     "FWX_WALK_POLL_S": "0.05"}  # the cases are about what the walk does, not about how long it pauses between two looks (case_poll)
@@ -476,7 +476,7 @@ def case_up(R, S):
         S.eq("up: run_dir", o.get("run_dir"), rd)
         S.eq("up: url", o.get("url"), sc.url)
         S.eq("up: capacity role", (o.get("capacity") or {}).get("role"), "ui-walker")
-        S.eq("up: capacity is asked for two walkers per tramo", (o.get("capacity") or {}).get("want"), 2)
+        S.eq("up: the quota is for two walkers per tramo, one tramo until the workflow knows them", (o.get("capacity") or {}).get("want"), 2)
         run = jfile(os.path.join(rd, "run.json")) or {}
         S.eq("up: run.json holds the url", run.get("url"), sc.url)
         S.eq("up: run.json holds one app", [a["url"] for a in run.get("apps", [])], [sc.url])
@@ -1168,7 +1168,7 @@ def case_container(R, S):
         S.eq("container: 1 app for 2 walkers", len(apps), 2)
         if len(apps) != 2:
             return
-        S.eq("container: capacity", (o.get("capacity") or {}).get("allowed"), 2)
+        S.eq("container: capacity", ((o.get("capacity") or {}).get("allowed"), (o.get("capacity") or {}).get("container")), (2, True))
         envs = [json.loads(line) for line in open(sc.pidfile + ".env")]
         names = [e.get("FWX_WALK_NAME") for e in envs]
         ns = run["namespace"]
@@ -1217,75 +1217,75 @@ def case_container(R, S):
         S.ok("container: no docker to ask is exit 1, said", r.returncode == 1 and "docker" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
     finally:
         sc.stop()
-    # no room: capacity 0 starts nothing
-    sc = Scene(container=True, limits={"ui-walker": 1})
+    # a cap of 0 is an error and starts nothing, never "no limit" (D90)
+    sc = Scene(container=True, limits={"ui-walker": 0})
     try:
-        meminfo = os.path.join(sc.state, "meminfo")
-        helpers.write(sc.state, "meminfo", "MemAvailable: %d kB\n" % (1024 * 1024))  # 1 GiB, floor is 3
         r, o = sc.up(R)
-        S.ok("container: no room for a walker: exit 1, the app not started", r.returncode == 1 and "no room" in r.stderr and
+        S.ok("container: a cap of 0: exit 2 naming the key, the app not started", r.returncode == 2 and "limits.per_project.ui-walker" in r.stderr and
              not os.path.exists(os.path.join(sc.repo, "up-ran")), "rc %d %s" % (r.returncode, r.stderr))
     finally:
         sc.stop()
 
 
-def case_capacity_missing(R, S):
-    """`fwx capacity` that cannot answer is a quota of one, said."""
+def case_cap(R, S):
+    """The quota of walkers is a number of the configuration, never measured, and `start` prints it for the workflow (D90): `capacity` is
+    `{role, want, cap, allowed, container}` with `want` 2 per tramo (1 tramo unless --tramos), `cap` the configuration's number for the role
+    ui-walker (`limits.per_project.ui-walker`, else `limits.default_cap.supervised`, 3) and `allowed` the smaller of the two. The keys
+    `limits` used to carry are ignored, and a cap that is not a positive whole number refuses the run before the app starts.
+
+    Red on master (the walk asked `fwx capacity`, which read /proc/meminfo; the toy has none now, so it could not answer):
+      FAIL: cap: no limits in the file: the default cap of 3, two walkers for one tramo: got {'role': 'ui-walker', 'want': 2, 'allowed': 1, 'note': 'capacity unavailable (rc 1: ...): a quota of 1'}, want {...'cap': 3, 'allowed': 2...}
+    """
+    def shape(sc, *extra):
+        r, o = sc.up(R, *extra)
+        return r, o, (o or {}).get("capacity")
     sc = Scene()
     try:
-        os.remove(sc.env["FWX_MEMINFO"])
-        r, o = sc.up(R)
-        S.ok("capacity unavailable: armed with a quota of 1, and it says why", r.returncode == 0 and o and (o.get("capacity") or {}).get("allowed") == 1 and
-             "capacity" in json.dumps(o.get("capacity")).lower() and (o["capacity"].get("note") or "").startswith("capacity unavailable"),
-             "rc %d %s %s" % (r.returncode, o, r.stderr))
+        r, o, c = shape(sc)
+        S.eq("cap: no limits in the file: the default cap of 3, two walkers for one tramo", c,
+             {"role": "ui-walker", "want": 2, "cap": 3, "allowed": 2, "container": False})
+        if o:
+            rd = o["run_dir"]
+            S.eq("cap: run.json carries the same", (jfile(os.path.join(rd, "run.json")) or {}).get("capacity"), c)
+            sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+    sc = Scene(limits={"ui-walker": 1})
+    try:
+        r, o, c = shape(sc)
+        S.eq("cap: per_project.ui-walker 1: one walker", (c or {}).get("cap"), 1)
+        S.eq("cap: per_project.ui-walker 1: allowed 1", (c or {}).get("allowed"), 1)
         if o:
             sc.walk(R, "down", "--run", o["run_dir"])
     finally:
         sc.stop()
-
-
-def case_capacity_resize(R, S):
-    """`walk capacity --run R --tramos N` asks `fwx capacity` again for the tramos the workflow only learns after `up` (3.5 U3d: `up` is
-    called without --tramos, so its quota was sized for one tramo whatever the walk). It rewrites `capacity` in run.json.
-
-    Red before the subcommand existed (python3 tests/test_walk.py):
-      FAIL: capacity resize: three tramos: exit and JSON: rc 2  usage: fwx walk <up|ab|pw|arm-control|findings|review-page|...> ...
-      FAIL: capacity resize: three tramos: asked for 6, so a quota that can pass 2: got (None, False), want (6, True)
-      FAIL: capacity resize: run.json carries the new answer: got 2, want 6
-    """
-    sc = Scene()
+    sc = Scene(limits={"ui-walker": 4})
     try:
-        o = armed(sc, R, S, "capacity resize")
-        if not o:
-            return
-        rd = o["run_dir"]
-        S.eq("capacity resize: `up` without --tramos asked for 2", (o.get("capacity") or {}).get("want"), 2)
-        r = sc.walk(R, "capacity", "--run", rd, "--tramos", "3")
-        c = obj(r.stdout)
-        S.ok("capacity resize: three tramos: exit and JSON", r.returncode == 0 and c is not None and c.get("role") == "ui-walker", "rc %d %s %s" % (r.returncode, r.stdout, r.stderr))
-        S.eq("capacity resize: three tramos: asked for 6, so a quota that can pass 2", ((c or {}).get("want"), ((c or {}).get("allowed") or 0) > 2), (6, True))
-        S.eq("capacity resize: run.json carries the new answer", ((jfile(os.path.join(rd, "run.json")) or {}).get("capacity") or {}).get("want"), 6)
-        for argv in (["capacity"], ["capacity", "--run", rd], ["capacity", "--run", rd, "--tramos", "0"], ["capacity", "--run", rd, "--tramos", "x"]):
-            r = sc.walk(R, *argv)
-            S.ok("capacity resize: walk %s: exit 2 and a usage line" % " ".join(argv[1:]), r.returncode == 2 and "usage: fwx walk capacity" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
-        sc.walk(R, "down", "--run", rd)
+        r, o, c = shape(sc, "--tramos", "3")
+        S.eq("cap: three tramos want 6, the cap of 4 allows 4", ((c or {}).get("want"), (c or {}).get("cap"), (c or {}).get("allowed")), (6, 4, 4))
+        if o:
+            sc.walk(R, "down", "--run", o["run_dir"])
     finally:
         sc.stop()
-    sc = Scene(container=True, limits={"ui-walker": 4})
+    # the removed keys and `on: false` change nothing: the cap is read, and nothing reads the memory
+    sc = Scene(limits_raw={"on": False, "ram_min_free_gb": 3, "ram_per_agent_mb": 512, "default_cap": {"supervised": 2, "unattended": 6}})
     try:
-        app = {"up": "python3 up.py %d %s" % (sc.port, sc.pidfile), "run": "fakerig run --name {name} --", "down": "python3 down.py %s" % sc.pidfile,
-               "url": sc.url + "/{name}", "container": True}
-        r, o = sc.up(R, "--app", json.dumps(app))
-        if not S.ok("capacity resize, container: up armed", r.returncode == 0 and o and o.get("armed") is True, "rc %d %s %s" % (r.returncode, r.stdout, r.stderr)):
-            return
-        n = len(o["apps"])
-        r = sc.walk(R, "capacity", "--run", o["run_dir"], "--tramos", "5")
-        c = obj(r.stdout)
-        S.ok("capacity resize: container: the quota never passes the apps `up` started (%d)" % n, r.returncode == 0 and c is not None and n == 2 and c.get("allowed") == n,
-             "rc %d %s %s" % (r.returncode, r.stdout, r.stderr))
-        sc.walk(R, "down", "--run", o["run_dir"])
+        r, o, c = shape(sc)
+        S.ok("cap: a file with the removed limits keys starts, the cap is read (2) and `on: false` is no \"unlimited\"",
+             r.returncode == 0 and (c or {}).get("cap") == 2 and (c or {}).get("allowed") == 2, "rc %d %s %s" % (r.returncode, c, r.stderr))
+        if o:
+            sc.walk(R, "down", "--run", o["run_dir"])
     finally:
         sc.stop()
+    for what, raw in (("per_project 0", {"per_project": {"ui-walker": 0}}), ("default_cap null", {"default_cap": None}),
+                      ("supervised 'many'", {"default_cap": {"supervised": "many"}})):
+        sc = Scene(limits_raw=raw)
+        try:
+            r, o, c = shape(sc)
+            S.ok("cap: %s: exit 2 naming the key, the app not started" % what, r.returncode == 2 and "limits." in r.stderr and not os.path.exists(os.path.join(sc.repo, "up-ran")),
+                 "rc %d %s" % (r.returncode, r.stderr))
+        finally:
+            sc.stop()
 
 
 FACTORY_CONST = 'FACTORY_UI_DIR = "/opt/fwx/ui"'
@@ -2243,7 +2243,7 @@ def case_poll(R, S):
 
 
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
-         case_off, case_container, case_capacity_missing, case_capacity_resize, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
+         case_off, case_container, case_cap, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
          case_arm_control_launch_path, case_check_screens, case_check_screens_apps, case_poll]
 
@@ -2289,7 +2289,7 @@ MUTANTS = [
      "container: down removed both by their exact names"),
     ("7 containers left not a failure", case_container, 'ok = ok and containers["left"] == []', "ok = ok",
      "container: a container still there after down: exit 1 and counted"),
-    ("7 no room still starts", case_container, 'if cap["allowed"] < 1:', "if False:", "container: no room for a walker"),
+    ("7 a cap of 0 still starts", case_container, 'cap = config.cap(cfg, "ui-walker", unattended=factory)', "cap = 3", "container: a cap of 0: exit 2 naming the key"),
     ("8 factory variable ignored", case_factory, 'factory = os.environ.get("FWX_FACTORY_CONTAINER") == "1"', "factory = False",
      "factory: host app_run used in container mode"),
     ("8 run dir outside the job dir", case_factory, 'run_dir = os.path.join(os.path.abspath(o["--dir"]), "ui-walk", "%d-%d" % (part, rnd))',
@@ -2358,14 +2358,6 @@ MUTANTS = [
      "arm-control read-back: the probe session is closed last"),
     ("sweep: every owner alive", case_sweep, "return start is not None and start == w.get(\"owner_start\")", "return True",
      "sweep: took down the one without an owner"),
-    ("capacity resize: tramos not doubled", case_capacity_resize, 'cap = capacity(run["repo"], tramos * 2, run["container"])', 'cap = capacity(run["repo"], tramos, run["container"])',
-     "capacity resize: three tramos: asked for 6"),
-    ("capacity resize: always 2 (the `up` default)", case_capacity_resize, 'cap = capacity(run["repo"], tramos * 2, run["container"])', 'cap = capacity(run["repo"], 2, run["container"])',
-     "capacity resize: three tramos: asked for 6"),
-    ("capacity resize: run.json not rewritten", case_capacity_resize, '    run["capacity"] = cap\n    write_json(os.path.join(rd, "run.json"), run)\n', "",
-     "capacity resize: run.json carries the new answer"),
-    ("capacity resize: container quota past the apps", case_capacity_resize, 'cap["allowed"] = min(cap["allowed"], len(run["apps"]))', "pass",
-     "capacity resize: container: the quota never passes the apps"),
     ("8 temp capture path allowed", case_hygiene, 'return temp_path_problem(args, run, pw, run["shots"] if pw else run["repo"])', "return None",
      "hygiene capture path: ab screenshot /tmp/v1b.png: exit 2"),
     ("8 run folder not exempt", case_hygiene, 'if not (inside(full, run["run_dir"]) or inside(full, run["shots"])) and any(', "if any(",
@@ -2425,7 +2417,6 @@ MUTANTS = [
      "control pictures: a finding on the control's screen keeps no walker picture"),
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
-    ("capacity unavailable is 0", case_capacity_missing, '"allowed": 1, "note"', '"allowed": 0, "note"', "capacity unavailable: armed with a quota of 1"),
     ("check-screens: any status is ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = got.isdigit()",
      "check-screens: one answers 404: exit: got 0, want 1"),
     ("check-screens: a failing run exits 0", case_check_screens, "return 1 if bad else 0", "return 0", "check-screens: one answers 404: exit: got 0, want 1"),
@@ -2463,6 +2454,9 @@ MUTANTS = [
      "check-screens login: exit"),
     ("arm-control: init.js left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (ctl_file,):",
      "arm-control launch path: a browser that ignores --init-script: and no init script"),
+    ("cap: the tramos are not doubled", case_cap, "cap = capacity(cfg, tramos * 2, container, factory)", "cap = capacity(cfg, tramos, container, factory)",
+     "cap: three tramos want 6"),
+    ("cap: allowed is what was asked for", case_cap, '"allowed": min(want, cap)', '"allowed": want', "cap: per_project.ui-walker 1: allowed 1"),
 ]
 
 

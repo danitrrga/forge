@@ -190,4 +190,56 @@ for label, labels in (("two neutral names to one Linear name", {"a": "same", "b"
         except config.ConfigError as e:
             s.ok("%s: %s raises" % (label, fn.__name__), "forge sync" in str(e) or "labels" in str(e), str(e))
 
+# --- the cap of agents at once: a number in the configuration, nothing measured (D90)
+# Seen red on master (no config.cap, and `limits` still carrying the two RAM keys and `on`):
+#   Traceback ...: AttributeError: module 'fwx.config' has no attribute 'cap'
+#   FAIL: limits keeps no RAM key: got ['default_cap', 'on', 'per_project', 'ram_min_free_gb', 'ram_per_agent_mb'], want ['default_cap', 'per_project']
+capdir = helpers.toy_repo()
+cfg, _ = load(capdir)
+s.eq("limits keeps no RAM key and no switch", sorted(cfg["limits"]) if isinstance(cfg, dict) else cfg, ["default_cap", "per_project"])
+has_cap = hasattr(config, "cap")
+s.ok("config.cap exists", has_cap, "no such function")
+if has_cap:
+    s.eq("no limits in the file: the documented default, 3 with the owner present", config.cap(cfg, "executor"), 3)
+    s.eq("no limits in the file: the documented default, 4 with nobody present", config.cap(cfg, "executor", unattended=True), 4)
+    s.eq("a role with no per_project row takes the default", config.cap(cfg, "ui-walker"), 3)
+    # the old RAM keys, `on` and a key nobody knows are ignored, with no error and no change of the cap
+    put(capdir, {"schema": 1, "limits": {"on": False, "ram_min_free_gb": 3, "ram_per_agent_mb": 512, "nosuch": 1,
+                                         "default_cap": {"supervised": 2, "unattended": 6}, "per_project": {"ui-walker": 5}}})
+    old, _ = load(capdir)
+    s.ok("a file with the removed limits keys loads", isinstance(old, dict), "ConfigError: %s" % old)
+    if isinstance(old, dict):
+        s.eq("the removed keys: the cap is read, supervised", config.cap(old, "executor"), 2)
+        s.eq("the removed keys: the cap is read, unattended", config.cap(old, "executor", unattended=True), 6)
+        s.eq("limits.on false is ignored: never an unlimited run", config.cap(old, "executor"), 2)
+        s.eq("per_project of a role wins over default_cap", (config.cap(old, "ui-walker"), config.cap(old, "ui-walker", unattended=True)), (5, 5))
+    # a value that is no positive whole number is an error that names the key, never "unlimited" (a missing, null, 0, text, float or boolean cap)
+    for what, limits, needle in (("default_cap null", {"default_cap": None}, "limits.default_cap"),
+                                 ("default_cap a number", {"default_cap": 3}, "limits.default_cap"),
+                                 ("supervised 0", {"default_cap": {"supervised": 0}}, "limits.default_cap.supervised"),
+                                 ("supervised text", {"default_cap": {"supervised": "3"}}, "limits.default_cap.supervised"),
+                                 ("supervised float", {"default_cap": {"supervised": 2.5}}, "limits.default_cap.supervised"),
+                                 ("supervised true", {"default_cap": {"supervised": True}}, "limits.default_cap.supervised"),
+                                 ("unattended null", {"default_cap": {"unattended": None}}, "limits.default_cap.unattended"),
+                                 ("per_project not a table", {"per_project": [1]}, "limits.per_project"),
+                                 ("per_project row 0", {"per_project": {"executor": 0}}, "limits.per_project.executor"),
+                                 ("limits not a table", "many", "limits")):
+        put(capdir, {"schema": 1, "limits": limits})
+        c, _ = load(capdir)
+        got = None
+        if isinstance(c, dict):
+            try:
+                got = config.cap(c, "executor", unattended="unattended" in what)
+                msg = "returned %r" % (got,)
+            except config.ConfigError as e:
+                got, msg = e, str(e)
+            s.ok("%s: a ConfigError naming %s" % (what, needle), isinstance(got, config.ConfigError) and needle in msg, msg)
+        else:
+            s.ok("%s: a ConfigError naming %s" % (what, needle), needle in str(c), str(c))
+    try:
+        config.cap(cfg, "nosuch")
+        s.ok("an unknown role raises", False, "returned")
+    except config.ConfigError as e:
+        s.ok("an unknown role: the message lists the roles", all(r in str(e) for r in config.ROLES), str(e))
+
 s.done()

@@ -15,11 +15,16 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       namespace, a mark every process of the app inherits, which `stop` counts). `run.json` is written and printed:
       `{armed, run, run_dir, url, apps, namespace, capacity}`. `run` is `app_run.run` (a prefix that runs a command inside the app's
       network); the empty string is a valid value (the command runs in the repo's cwd), not an absent field. `capacity` is
+      `{role: "ui-walker", want, cap, allowed, container}`: `want` is 2 walkers per tramo (--tramos, default 1: the workflow learns the
+      number of tramos only after `start`), `cap` the configuration's number for the role (config.cap: `limits.per_project.ui-walker`,
+      else `limits.default_cap.supervised`, or `.unattended` in the factory), `allowed` the smaller of the two. Nothing is measured
+      and the agents of other sessions are not counted. A cap that is no positive whole number is a ConfigError, exit 2, before the app
+      starts: never "no limit". The workflow sizes its browsers to its tramos itself, `min(cap, 2 x tramos)`, and with `container` never
+      past the apps `start` made.
       A second `start` of the same part and round starts clean: it removes the earlier run's control.json (a recheck has no control) and
       moves its verified-*.json and rechecked-*.json to `earlier/`, so `converge` and `fwx review new` read only this walk's. When an app's `up` fails, the `down` of each app already
       started runs with the environment that app's `up` had (FWX_WALK_NAME, FWX_WALK_RUN, FWX_WALK_STATE).
-      `fwx capacity --role ui-walker --want <2 x --tramos, default 1> --per-agent-mb <PER_AGENT_MB>`; when it cannot answer the quota
-      is 1 and says so; allowed 0 stops before the app starts (exit 1). With `container: true` the quota is the number of walkers: `start` runs the app's `up`
+      With `container: true` the quota is the number of walkers: `start` runs the app's `up`
       once per walker with FWX_WALK_NAME=<namespace>-w<k> (and `{name}` in `up`, `run`, `down` and `url`), and session `w<k>` of `ab`
       uses app k. With FWX_FACTORY_CONTAINER=1 the image's `up` and `down` (FACTORY_UI_DIR) run and `app_run` is not read; the URL
       is the last line of its output, `{"url": ...}`.
@@ -27,9 +32,6 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       added to every call as `--executable-path`, so a wrapper around the system browser (an extension) never reaches the walk. Set
       and the file missing: `NOT RUN, NOT ARMED: browser_executable <path> missing`, exit 0, `{"armed": false}`. Unset: nothing
       changes. Ignored in the factory (the image's own browser).
-  capacity --run R --tramos T       `fwx capacity` asked again for 2 x T walkers, for a caller that learns the number of tramos only after
-      `up` (the ui-walk workflow: `up` runs first, the tramos come from an agent): prints the capacity object and rewrites `capacity` in
-      `run.json`. With `container` the quota never passes the apps `up` already started.
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
       (Firefox starts logged in too: the app's demo session file is the context's storageState when `start` left one; Playwright's
       `network.allowedOrigins` being no boundary and blind to redirects, the config carries a proxy-autoconfig script (Firefox's
@@ -143,8 +145,6 @@ from fwx.execute import base, brief
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
 FACTORY_UI_DIR = "/opt/fwx/ui"  # the image's `up` and `down` (5.2a Appendix C); a test replaces this constant on a copy of the tree
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
-PER_AGENT_MB = 500  # a browser on the host, measured by U1 (490 MiB PSS, rounded)
-PER_AGENT_MB_CONTAINER = 1400  # the browser plus its own copy of the app (U1: ~897 MiB for the measured project's rig)
 VIEWPORT = (1309, 818)
 SCALE = 1.1
 IDLE_TIMEOUT = "20m"
@@ -207,7 +207,6 @@ USAGES = {
     "up": "usage: fwx walk start --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]",
     "ab": "usage: fwx walk ab [--run R] <session> <agent-browser args...>",
     "pw": "usage: fwx walk pw [--run R] <session> <playwright-cli args...>",
-    "capacity": "usage: fwx walk capacity --run R --tramos T",
     "check-screens": "usage: fwx walk check-screens --run R --screens JSON   (JSON: a list of the screens' URLs)",
     "arm-control": "usage: fwx control new --run R --screen URL",
     "findings": "usage: fwx walk converge --run R",
@@ -437,22 +436,11 @@ def tail(path, n=12):
         return ""
 
 
-def capacity(repo, want, container):
-    """`fwx capacity --role ui-walker` as one object; when it cannot answer, a quota of one and the reason."""
-    mb = PER_AGENT_MB_CONTAINER if container else PER_AGENT_MB
-    cmd = [sys.executable, os.path.join(ROOT, "bin", "fwx"), "capacity", "--role", "ui-walker", "--want", str(want),
-           "--per-agent-mb", str(mb), "--json"]
-    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    try:
-        r = subprocess.run(cmd, cwd=repo, env=env, capture_output=True, text=True, timeout=60)
-        if r.returncode in (0, 1):
-            res = json.loads(r.stdout.strip().splitlines()[-1])
-            if isinstance(res, dict) and isinstance(res.get("allowed"), int):
-                return res
-        why = "rc %d: %s" % (r.returncode, (r.stderr.strip().splitlines() or ["no output"])[0])
-    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as e:
-        why = str(e)
-    return {"role": "ui-walker", "want": want, "allowed": 1, "note": "capacity unavailable (%s): a quota of 1" % why}
+def capacity(cfg, want, container, factory):
+    """The quota of walkers of one run: `want`, but never more than the cap of the configuration for the role ui-walker. A cap
+    that cannot be read raises ConfigError (exit 2): there is no "unlimited" to fall back on."""
+    cap = config.cap(cfg, "ui-walker", unattended=factory)
+    return {"role": "ui-walker", "want": want, "cap": cap, "allowed": min(want, cap), "container": container}
 
 
 def app_spec(o, cfg, factory):
@@ -521,9 +509,7 @@ def cmd_up(argv):
     run_dir = os.path.join(os.path.abspath(o["--dir"]), "ui-walk", "%d-%d" % (part, rnd))
     ns = namespace_of(run_dir, part, rnd)
     container = bool(app.get("container"))
-    cap = capacity(repo, tramos * 2, container)
-    if cap["allowed"] < 1:
-        raise Stop("no room for a walker: capacity allowed 0 (%s)" % "; ".join(cap.get("reasons", [])[:2]), 1)
+    cap = capacity(cfg, tramos * 2, container, factory)
     names = [ns + "-w%d" % k for k in range(1, cap["allowed"] + 1)] if container else [ns]
     walks = os.path.join(common_dir(repo), "fwx", "walks", ns)
     apps = []
@@ -589,26 +575,6 @@ def cmd_up(argv):
     write_json(os.path.join(walks, "walk.json"), {"run_dir": run_dir, "namespace": ns, "repo": repo, "owner_pid": owner,
                                                   "owner_start": start, "started": started_at, "closed": None})
     say({k: run[k] for k in ("armed", "run", "run_dir", "url", "apps", "namespace", "capacity")})
-    return 0
-
-
-def cmd_capacity(argv):
-    o, _ = opts("capacity", argv, ("--run", "--tramos"))
-    if "--run" not in o or "--tramos" not in o:
-        raise usage("capacity")
-    try:
-        tramos = int(o["--tramos"])
-        assert tramos >= 1
-    except (ValueError, AssertionError):
-        raise usage("capacity", "--tramos is a whole number of 1 or more")
-    rd = run_dir_of(o["--run"])
-    run = read_json(os.path.join(rd, "run.json"), "run.json")
-    cap = capacity(run["repo"], tramos * 2, run["container"])
-    if run["container"]:
-        cap["allowed"] = min(cap["allowed"], len(run["apps"]))
-    run["capacity"] = cap
-    write_json(os.path.join(rd, "run.json"), run)
-    say(cap)
     return 0
 
 
@@ -1797,7 +1763,7 @@ def selftest_report(checks, o, result_file, as_json):
     return 0 if res["passed"] else 1
 
 
-COMMANDS = {"up": cmd_up, "capacity": cmd_capacity, "ab": cmd_ab, "pw": cmd_pw, "check-screens": cmd_check_screens, "arm-control": cmd_arm_control, "findings": cmd_findings,
+COMMANDS = {"up": cmd_up, "ab": cmd_ab, "pw": cmd_pw, "check-screens": cmd_check_screens, "arm-control": cmd_arm_control, "findings": cmd_findings,
             "review-page": cmd_review_page, "review-answers": cmd_review_answers, "down": cmd_down, "sweep": cmd_sweep,
             "selftest": cmd_selftest}
 

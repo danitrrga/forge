@@ -229,6 +229,15 @@ def _model(cfg, role, size):
         raise WaveError(str(e))
 
 
+def _cap(cfg, unattended):
+    """The most executors at once, from the configuration (`limits.per_project.executor`, else `limits.default_cap`): the workflow reads
+    it from the args and asks no command. A value that is no positive whole number refuses the run before anything is written."""
+    try:
+        return config.cap(cfg, "executor", unattended)
+    except config.ConfigError as e:
+        raise WaveError(str(e))
+
+
 def _base_is_green(top, base, recipe, folders, say):
     """None when the base passes (or a green evidence row of the part says so), else the red results."""
     for d in folders:
@@ -267,6 +276,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         raise WaveError("not inside a git repository: %s" % cwd)
     main = config.main_checkout(top)
     cfg = _config(top)
+    cap = _cap(cfg, plane == "factory" or unattended)
     try:
         part = plan_step.resolve(part_dir)
     except plan_step.CannotRun as e:
@@ -342,7 +352,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
     why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
     return {
-        "run": run, "plane": plane, "unattended": plane == "factory" or unattended,
+        "run": run, "plane": plane, "unattended": plane == "factory" or unattended, "cap": cap,
         "part_dir": part, "phase_dir": phase, "checkout": top, "branch": branch, "base": base, "isolation": "native",
         "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                   "plan": str(paths["plan"]), "postmortem": str(owner["postmortem"]), "config": os.path.join(main, config.FILE)},

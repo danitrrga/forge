@@ -41,7 +41,7 @@ s = helpers.Suite()
 
 # (new name, old name or None, module, handler argv before the user's own) -- gramatica-decidida.md, "fwx: hoy -> decidido"
 DECIDED = [
-    ("budget", None, "budget", []), ("capacity", None, "capacity", []), ("model", None, "model", []),
+    ("budget", None, "budget", []), ("model", None, "model", []),
     ("statusline", None, "statusline", []), ("rounds", None, "rounds", []), ("stage", None, "stage", []),
     ("decide", None, "decide", []), ("verify", None, "verify", []), ("test", None, "test", []),
     ("walk capture", "screenshot", "screenshot", []),
@@ -70,7 +70,7 @@ DECIDED = [
     ("walk selftest", None, "walk", ["selftest"]),
     ("migrate-gsd", None, "migrate_gsd", []),
     # not in the table, kept under the name they have (their units are others', or the table does not name them)
-    ("walk capacity", None, "walk", ["capacity"]), ("walk check-screens", None, "walk", ["check-screens"]),
+    ("walk check-screens", None, "walk", ["check-screens"]),
     ("wave setup", None, "wave", ["setup"]),
 ]
 # what `fwx OBJECT` with no verb runs: (words, handler module, handler argv)
@@ -155,7 +155,12 @@ def scenario(work):
     check("old `state check` names both new names", (r.returncode, r.stderr), (2, "fwx state check: now 'fwx state lint' or 'fwx report lint'\n"))
     # unknown names and verbs
     for args, text in ((("nosuch",), "unknown command: nosuch"), (("phase", "nwe"), "unknown verb: nwe"), (("phase",), "needs a verb"),
-                       (("../commands/budget",), "unknown command"), (("Budget",), "unknown command")):
+                       (("../commands/budget",), "unknown command"), (("Budget",), "unknown command"),
+                       # the cap of agents is a number of the configuration (D90): no command answers how many can start now, and the old
+                       # names are not refused with a "now ...": there is no natural target. Red on master (both were rows of the table):
+                       #   FAIL: fwx capacity: exit 2 and 'unknown command: capacity': got (0, False, ...)
+                       #   FAIL: fwx walk capacity: exit 2 and 'unknown verb: capacity': got (0, False, ...)
+                       (("capacity",), "unknown command: capacity"), (("walk", "capacity"), "unknown verb: capacity")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing
@@ -167,6 +172,9 @@ def scenario(work):
         if old and old != new:
             check("--help does not list `fwx %s`" % old, old in listed, False)
             check("--help: no line says `fwx %s`" % old, bool(re.search(r"\bfwx " + re.escape(old) + r"(?![\w-])", r.stdout)), False)
+    check("--help names no capacity command", "capacity" in r.stdout, False)
+    r = run(work, "walk", "--help")
+    check("`fwx walk --help` names no capacity verb", "capacity" in r.stdout, False)
     r = run(work, "wave", "--help")
     verbs = {re.split(r"\s{2,}", line.strip()[4:], maxsplit=1)[0] for line in r.stdout.splitlines() if line.startswith("  fwx ")}
     check("`fwx wave --help` lists the verbs of wave and no other object",

@@ -2,6 +2,7 @@
  "run": "01-toy-ab12cd3-1",
  "plane": "session",
  "unattended": false,
+ "cap": 3,
  "part_dir": "/work/.fwx/phases/01-toy",
  "phase_dir": "/work/.fwx/phases/01-toy",
  "checkout": "/work/wt",

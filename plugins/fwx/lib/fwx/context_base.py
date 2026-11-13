@@ -6,7 +6,9 @@ holds `.fwx/`, with `/` turned into `__`. It is outside the work tree on purpose
 derived file would dirty it, and every worktree reads the same place. Its parts, in order: the mark (`# Base context · <sha8 of
 everything after this line>`), `data/context-map.md` whole, `## Goal` (Intent and What success means of `context.md`, each cut
 at 1000 units with a pointer), `## Files` (the absolute paths that exist), `## Decided` (the `decision` column of the `chosen`
-and `approved` rows of `decisions.tsv`, none of the open ones and none that a closed row superseded) and the `<!-- built ... -->` line the check compares.
+and `approved` rows of `decisions.tsv`, none of the open ones and none that a closed row superseded), `## Limits` (one line: the
+cap of agents at once, read from the configuration, never measured) and the `<!-- built ... -->` line the check compares (it carries
+the sha of the Limits line, so a changed cap makes the base stale).
 
 Every length is counted in UTF-16 code units (`units`): Claude Code persists an `additionalContext` of more than 10,000 of them
 instead of delivering it (measured), and a byte count would refuse a text of 6000 `é`. The cap here is 9000, a warning from 6000.
@@ -34,7 +36,7 @@ DECIDED_LINE = 160
 CLOSED = ("chosen", "approved")
 MARK = "# Base context · "
 _MARK = re.compile(r"# Base context · ([0-9a-f]{8})\Z")
-_BUILT = re.compile(r"<!-- built stage=(\S+) context=(\S+) decisions=(\S+) map=(\S+) -->\Z")
+_BUILT = re.compile(r"<!-- built stage=(\S+) context=(\S+) decisions=(\S+) map=(\S+)(?: cap=(\S+))? -->\Z")
 _SOURCE = re.compile(r"<!-- source: (.+) @([0-9a-f]{8}) -->\Z")
 _FWX_CMD = re.compile(r"`fwx ([a-z][a-z0-9-]*)(?: ([a-z][a-z0-9-]*))?")
 _SECTIONS = ("map", "map+decided", "none")
@@ -179,6 +181,20 @@ def _decided(decisions_path):
     return "## Decided\n" + "\n".join(lines) + "\n"
 
 
+def _limits(folder):
+    """`## Limits`: the cap of agents at once as the configuration has it, in one line. A cap that cannot be read is an error
+    (the base is not built), never a base with no cap or with "no limit"."""
+    try:
+        sup, unat, per = config.caps(config.load(folder, quiet=True))
+    except config.ConfigError as e:
+        raise ContextBaseError(str(e))
+    line = ("Agents at once, a fixed number of the configuration (`limits`; nothing is measured, other sessions' agents are not counted): "
+            "%d with the owner present, %d with nobody present" % (sup, unat))
+    if per:
+        line += "; per role: " + ", ".join("%s %d" % (r, n) for r, n in sorted(per.items()))
+    return "## Limits\n" + line + ".\n"
+
+
 def render(folder, map_path=None):
     """The text of the base file for `folder` and what went into it: `(text, {"map": n, "goal": n, "decided": n})` in units."""
     f = _folder(folder)
@@ -187,10 +203,10 @@ def render(folder, map_path=None):
     if map_text is None:
         raise ContextBaseError("the map %s is not there" % (map_path or MAP))
     paths = state.phase_paths(f)
-    goal, files, decided = _goal(paths["context"]), _files(f), _decided(paths["decisions"])
-    built = "<!-- built stage=%s context=%s decisions=%s map=%s -->\n" % (
-        state.last_stage(f) or "discuss", _sha_of(paths["context"]), _sha_of(paths["decisions"]), _sha_of(map_path or MAP))
-    rest = "\n".join(b for b in (map_text.rstrip("\n") + "\n", goal, files, decided, built) if b)
+    goal, files, decided, limits = _goal(paths["context"]), _files(f), _decided(paths["decisions"]), _limits(f)
+    built = "<!-- built stage=%s context=%s decisions=%s map=%s cap=%s -->\n" % (
+        state.last_stage(f) or "discuss", _sha_of(paths["context"]), _sha_of(paths["decisions"]), _sha_of(map_path or MAP), sha8(limits.encode("utf-8")))
+    rest = "\n".join(b for b in (map_text.rstrip("\n") + "\n", goal, files, decided, limits, built) if b)
     text = MARK + sha8(rest) + "\n" + rest
     return text, {"map": units(map_text), "goal": units(goal), "decided": units(decided)}
 
@@ -317,6 +333,13 @@ def inspect(path, folder=None, map_path=None, source=None):
                                     ("data/context-map.md", b.group(4), _sha_of(map_path or MAP))):
                 if then != now:
                     problems.append("stale: %s changed since the build" % name)
+            try:
+                cap_now = sha8(_limits(folder).encode("utf-8"))
+            except ContextBaseError as e:
+                problems.append("the cap cannot be read: %s" % e)
+            else:
+                if (b.group(5) or "none") != cap_now:
+                    problems.append("stale: the cap of the configuration changed since the build")
         map_text = _text(map_path or MAP)
         problems += _unknown_commands(map_text or "")
     else:

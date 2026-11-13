@@ -13,7 +13,6 @@ python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
 python3 bin/fwx budget    # context and quota left
-python3 bin/fwx capacity --role executor --want 3    # how many agents of a role can start now
 python3 bin/fwx phase new <slug>    # the next phase folder, the session bound to it; `phase list` shows them, `phase remove <dir>` deletes one whose discuss was cancelled; `session attach <phase dir>` binds the session to one
 python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
 python3 bin/fwx milestone new [vN]    # the next milestone of a scope
@@ -70,6 +69,12 @@ fix. With no file, the defaults apply and one line on stderr says so.
 `fwx model <role> <size>` prints the model for a role and size and exits 2 on an unknown role or size, naming the valid
 ones. `linear.labels` maps a label's neutral name in this repository to the name it has in your Linear workspace; a
 name with no entry is used as it is.
+
+`limits` is the most agents at once, a fixed number that nothing measures: `default_cap` is `{"supervised": 3, "unattended": 4}` (the
+owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave new` prints the
+executor's as `cap` in the `args` of `execute`, `fwx walk start` the walkers' as `capacity.cap`, and the base context states them to every
+agent. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
+are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
 
 `walk.browser_executable` (default `null`) is the path of the browser the UI walk uses instead of the one `agent-browser`
 finds, for a machine where that one goes through a wrapper (an extension, a window flag): `fwx walk ab` then adds
