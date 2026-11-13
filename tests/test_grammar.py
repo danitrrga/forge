@@ -145,9 +145,17 @@ try:
     check("(b) the full sync writes toy-b too (control: the two projects differ in what they have)", os.path.isfile(slp("toy-b")))
     check("(b) toy-a's tree after sync NAME equals its tree after sync --all", tree("toy-a") == scoped,
           "differs: %s" % sorted(k for k in set(scoped) | set(tree("toy-a")) if scoped.get(k) != tree("toy-a").get(k))[:4])
+    # The dry-run starts from a pending change (a generated file gone), or it proves nothing: with nothing to do an apply
+    # writes nothing either. Seen passing with cmd_sync passing apply=True to run_steps (59 checks ok on 515ed40); now red:
+    # "(b) a dry-run of sync toy-a: writes nothing -- the dry-run wrote <W>/projects/toy-a/.claude/settings.local.json" and
+    # "... names the project's generators and the pending change -- got 0: = toy-a up to date | 0 change(s) applied.".
+    os.remove(slp("toy-a"))
     code, out = forge("sync", "toy-a")
-    check("(b) a dry-run of sync toy-a: exit 0, names the project's generators and writes nothing",
-          code == 0 and "== forge:" in out and tree("toy-a") == scoped, "got %d: %s" % (code, tail(out)))
+    check("(b) a dry-run of sync toy-a: exit 0, names the project's generators and the pending change",
+          code == 0 and "== forge:" in out and "toy-a" in out and "change(s) would apply" in out, "got %d: %s" % (code, tail(out)))
+    check("(b) a dry-run of sync toy-a: writes nothing", not os.path.exists(slp("toy-a")), "the dry-run wrote %s" % slp("toy-a"))
+    code, out = forge("sync", "toy-a", "--apply")
+    check("(b) sync toy-a --apply repairs it: exit 0 and byte-identical to before", code == 0 and tree("toy-a") == scoped, tail(out))
 
     # unknown name: refused, no generator runs (it must not fall through to "everything").
     before = {n: tree(n) for n in projects}
