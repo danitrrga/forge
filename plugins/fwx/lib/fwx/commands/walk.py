@@ -137,7 +137,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote, urlsplit
 
-from fwx import config
+from fwx import config, routes
 from fwx.execute import base, brief
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
@@ -1804,7 +1804,7 @@ COMMANDS = {"up": cmd_up, "capacity": cmd_capacity, "ab": cmd_ab, "pw": cmd_pw, 
 
 def main(argv):
     if not argv or argv[0] not in COMMANDS:
-        sys.stderr.write("usage: fwx walk <%s> ...\n" % "|".join(COMMANDS))
+        sys.stderr.write("usage: fwx walk <verb> ...   (fwx walk --help lists them)\n")
         return 2
     try:
         return COMMANDS[argv[0]](argv[1:])
@@ -1815,8 +1815,8 @@ def main(argv):
         elif msg.startswith("usage:") or "\nusage:" in msg:
             sys.stderr.write(msg + "\n")
         else:
-            sys.stderr.write("fwx walk %s: %s\n" % (argv[0], msg))
+            sys.stderr.write("fwx %s: %s\n" % (routes.shown("walk", [argv[0]]), msg))
         return e.code
     except (config.ConfigError, base.WaveError) as e:
-        sys.stderr.write("fwx walk %s: %s\n" % (argv[0], e))
+        sys.stderr.write("fwx %s: %s\n" % (routes.shown("walk", [argv[0]]), e))
         return 2

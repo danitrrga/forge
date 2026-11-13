@@ -12,8 +12,9 @@ import re
 import shutil
 import sys
 
-from fwx import config, context_base, state
+from fwx import config, context_base, routes, state
 
+PROG = "fwx state"  # main() sets it to the name the command ran under (`fwx phase new`), for the messages
 SUB_OF_PATH = re.compile(r"/" + re.escape(state.PLAN_DIR) + r"/subprojects/([^/]+)/")
 
 
@@ -23,7 +24,7 @@ class Unresolved(Exception):
 
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
-        sys.stderr.write("fwx state: %s (fwx state --help)\n" % message.replace("\n", " "))
+        sys.stderr.write("%s: %s (%s --help)\n" % (self.prog, message.replace("\n", " "), self.prog))
         sys.exit(2)
 
 
@@ -62,7 +63,7 @@ def cmd_resolve(a):
         print("subproject: %s" % (r["subproject"] or "root"))
         print("milestone: %s" % r["milestone"])
     if not r["phase_dir"]:
-        sys.stderr.write("fwx state: %s\n" % _unresolved(r))
+        sys.stderr.write("%s: %s\n" % (PROG, _unresolved(r)))
         return 1
     return 0
 
@@ -110,7 +111,7 @@ def cmd_new_phase(a):
     try:  # the phase is made: a base that cannot be built is a line on stderr, never another exit code
         context_base.refresh(folder)
     except Exception as e:
-        sys.stderr.write("fwx state new-phase: context-base: %s\n" % e)
+        sys.stderr.write("%s: context-base: %s\n" % (PROG, e))
     print(folder)
     return 0
 
@@ -161,7 +162,7 @@ def _fit(line, width):
 
 def cmd_decisions(a):
     if a.file and (a.phase or a.adr):
-        sys.stderr.write("fwx state: --file cannot be combined with --phase or --adr (fwx state --help)\n")
+        sys.stderr.write("%s: --file cannot be combined with --phase or --adr (%s --help)\n" % (PROG, PROG))
         return 2
     if a.file:
         if not os.path.isfile(a.file):
@@ -195,18 +196,18 @@ def cmd_check(a):
     for w in warnings:
         print("WARN: %s" % w)
     for e in errors:
-        sys.stderr.write("fwx state: %s\n" % e.replace("\n", " "))
+        sys.stderr.write("%s: %s\n" % (PROG, e.replace("\n", " ")))
     if not errors and not warnings:
         print("ok")
     return 1 if errors else 0
 
 
 def parser():
-    p = _Parser(prog="fwx state", description=__doc__.strip().splitlines()[0])
+    p = _Parser(prog=PROG, description=__doc__.strip().splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True, metavar="subcommand")
 
     def add(name, fn, help_):
-        sp = sub.add_parser(name, help=help_, description=help_)
+        sp = sub.add_parser(name, help=help_, description=help_, prog="fwx " + routes.shown("state", [name]))
         sp.set_defaults(fn=fn)
         return sp
 
@@ -254,13 +255,16 @@ def parser():
     sp.add_argument("--all", action="store_true", help="every row, the superseded ones marked with the id that replaced them")
     sp.add_argument("--json", action="store_true")
     sp.add_argument("--session")
-    sp = add("check", cmd_check, "check a state.md or a phase report: an error for a rule, a WARN line for a length")
-    sp.add_argument("kind", choices=("state", "report"))
-    sp.add_argument("path")
+    for kind in ("state", "report"):
+        sp = add("check-" + kind, cmd_check, "lint a state.md" if kind == "state" else "lint a phase report")
+        sp.set_defaults(kind=kind)
+        sp.add_argument("path")
     return p
 
 
 def main(argv):
+    global PROG
+    PROG = "fwx " + routes.shown("state", argv)
     try:
         a = parser().parse_args(argv)
     except SystemExit as e:  # a usage error (exit 2) or --help (exit 0)
@@ -268,8 +272,8 @@ def main(argv):
     try:
         return a.fn(a)
     except (state.StateError, Unresolved) as e:
-        sys.stderr.write("fwx state: %s\n" % str(e).replace("\n", " "))
+        sys.stderr.write("%s: %s\n" % (PROG, str(e).replace("\n", " ")))
         return 1
     except config.ConfigError as e:
-        sys.stderr.write("fwx state: %s\n" % str(e).replace("\n", " "))
+        sys.stderr.write("%s: %s\n" % (PROG, str(e).replace("\n", " ")))
         return 2

@@ -49,7 +49,7 @@ import os
 import re
 import sys
 
-from fwx import config, plan_step, state
+from fwx import config, plan_step, routes, state
 from fwx.execute import base, cleanup, integrate, prepare as prep, worktree_setup
 
 PREPARE_USAGE = ("usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] "
@@ -261,7 +261,7 @@ def do_step(step, argv):
     findings = _ids(got["--findings"]) if "--findings" in got else []
 
     def say(line):
-        sys.stderr.write("fwx wave %s: %s\n" % (step, line))
+        sys.stderr.write("fwx %s: %s\n" % (routes.shown("wave", [step]), line))
     try:
         top = base.toplevel(os.getcwd())
         if top is None:
@@ -293,7 +293,7 @@ def do_step(step, argv):
         sys.stderr.write("%s\n" % e)
         return 77
     except (base.WaveError, config.ConfigError, state.StateError) as e:
-        sys.stderr.write("fwx wave %s: %s\n" % (step, e))
+        sys.stderr.write("fwx %s: %s\n" % (routes.shown("wave", [step]), e))
         return 2
     print(json.dumps(result))
     return code
@@ -310,5 +310,5 @@ def main(argv):
         return do_setup(argv[1:])
     if argv and argv[0] in USAGES:
         return do_step(argv[0], argv[1:])
-    sys.stderr.write("usage: fwx wave <prepare|check-base|scratch|setup|%s> ...\n" % "|".join(USAGES))
+    sys.stderr.write("usage: fwx wave [new|merge|fix|revert|remove|setup] ...   (fwx base and fwx scratch new are their own commands)\n")
     return 2
