@@ -149,6 +149,10 @@ PROFILE_FIELDS = {
     # Shell commands (e.g. ["npm ci"]) the framework runs inside each worktree it makes, before any check runs there: a
     # fresh worktree has none of the project's installed dependencies. `fwx wave setup` runs them; each must name something.
     "worktree_setup": (list, str),
+    # {"<surface>": {"skills": [str]}}: which skills of the project's own .claude/skills/ the agent loads when the work
+    # touches a surface (framework.py hands it on to .claude/<plugin>.json; the `surface context` doctor row checks each
+    # skill exists). The shape of the inner objects is SURFACE_KEYS, checked by profile_error.
+    "surface_context": (dict, dict),
 }
 # The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
 # for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
@@ -160,6 +164,8 @@ APP_RUN_KEYS = (("up", str, True, False), ("run", str, True, True), ("down", str
                 ("login", str, False, False), ("container", bool, False, True),
                 ("ready", str, False, False), ("ready_timeout_s", float, False, True))
 UI_IMAGE_KEYS = (("dockerfile", str, True, False), ("expect", str, True, False))
+# One surface of `surface_context`: the skill names (a list of strings, each a folder name of .claude/skills/).
+SURFACE_KEYS = (("skills", list, True, True),)
 # The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
 # that has a row there, so a field without its row is not checked at all.
 PROFILE_CHOICES = {"factory": ("off", "trial")}
@@ -244,6 +250,19 @@ def profile_error(prof):
             why = _object_error(field, prof[field], keys)
             if why:
                 return why
+    # A skill name is joined onto <project_path>/.claude/skills/ by the doctor row: a folder name, never a path.
+    for surface, obj in prof.get("surface_context", {}).items():
+        field = "surface_context.%s" % surface
+        why = _object_error(field, obj, SURFACE_KEYS)
+        if why:
+            return why
+        for s in obj["skills"]:
+            if not isinstance(s, str):
+                return "%s.skills has an item that is not a string" % field
+            if not s.strip():
+                return "%s.skills has an empty name" % field
+            if "/" in s or "\\" in s or s in (".", ".."):
+                return "%s.skills names a path, not a skill: %r" % (field, s)
     # The Dockerfile lives in config/factory-images/<project>/ of forge: a name inside it, never a way out.
     if "ui_image" in prof:
         name = prof["ui_image"]["dockerfile"]

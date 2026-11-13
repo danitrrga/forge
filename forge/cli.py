@@ -1209,6 +1209,12 @@ def framework_ignore_row(only=None):
                       % (len(looked), ", ".join(looked), note))
 
 
+def surface_context_row(only=None):
+    """The `surface context` row (forge/framework.py), imported here as framework_ignore_row's modules are."""
+    from forge import framework
+    return framework.surface_context_row(only)
+
+
 def local_plugins_row():
     """The `local plugins` row: every folder of config/forge.json `local_plugins` is registered in the machine's marketplace
     registry at its path (forge/marketplace.py); a SKIP, NOT RUN, NOT ARMED, with the key empty or missing."""
@@ -1247,6 +1253,8 @@ CHECKS = [
     ("context base", context_base_row, ""),
     # Its failures carry their own fix, so the row's is empty.
     ("framework ignore", framework_ignore_row, ""),
+    # Its failures name the skill and the path, so the row's fix is empty.
+    ("surface context", surface_context_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
     # Its failures carry their own fix (python3 bin/forge sync --apply), so the row's is empty.
@@ -1320,6 +1328,8 @@ def project_checks(name, prof, why):
     ]
     if prof.get("frozen"):  # only a frozen project has a drift to report; the row follows skill names
         rows.insert(3, ("frozen drift", lambda: frozen_drift(name), fix["frozen drift"]))
+    if prof.get("surface_context"):  # a project that does not declare the field keeps the rows it had
+        rows.append(("surface context", lambda: surface_context_row(name), fix["surface context"]))
     return rows
 
 

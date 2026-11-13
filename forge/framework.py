@@ -410,3 +410,34 @@ def write(ctx, prof, p, name, secrets):
     if not p.on:
         out += fwxignore.drop(ctx.apply, ppath, prof.get("project") or name)
     return out + _drop_stale(ctx, ppath, p.file if p.on else None)
+
+
+def surface_context_row(only=None):
+    """The `surface context` row of `forge doctor`: every skill a profile's `surface_context` names has a
+    `<project_path>/.claude/skills/<name>/SKILL.md` (just profile `only`, when given). The detail says how many skills of
+    how many projects it looked at. A FAIL names each missing skill with its surface and path, and a project whose
+    directory is not there (its skills cannot be shown to exist); a declared surface list that holds no skill at all
+    looked at zero, also a FAIL. No profile with a non-empty `surface_context` is a SKIP, NOT RUN, NOT ARMED. It is a
+    doctor row and never an error of the generator: a profile that made `forge sync` exit 1 would do it on every session start."""
+    wanted = {n: p for n, p in sorted(lib.profiles().items()) if p.get("surface_context") and (only is None or n == only)}
+    if not wanted:
+        return lib.Result("SKIP", "surface context", lib.NOT_ARMED + "no profile declares surface_context, so no skill was looked at")
+    looked, bad = 0, []
+    for name, prof in wanted.items():
+        pp = prof.get("project_path")
+        if not pp or not os.path.isdir(pp):
+            bad.append("%s: project_path is not a directory, so its skills cannot be looked for" % name)
+            continue
+        for surface, obj in prof["surface_context"].items():
+            for skill in obj["skills"]:
+                looked += 1
+                f = os.path.join(pp, ".claude", "skills", skill, "SKILL.md")
+                if not os.path.isfile(f):
+                    bad.append("%s: %s names skill %s, but %s is missing" % (name, surface, skill, lib.short(f)))
+    scope = "%d skill(s) of %d project(s) (%s)" % (looked, len(wanted), ", ".join(wanted))
+    if bad:
+        return lib.Result("FAIL", "surface context", "looked at %s: %s" % (scope, " | ".join(bad)))
+    if not looked:
+        return lib.Result("FAIL", "surface context", "looked at 0 skills in %d project(s) (%s): surface_context names no skill"
+                          % (len(wanted), ", ".join(wanted)))
+    return lib.Result("PASS", "surface context", "looked at %s: every named skill has its SKILL.md" % scope)
