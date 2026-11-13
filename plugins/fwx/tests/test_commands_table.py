@@ -44,7 +44,7 @@ s = helpers.Suite()
 DECIDED = [
     ("budget", None, "budget", []), ("model", None, "model", []),
     ("statusline", None, "statusline", []), ("rounds", None, "rounds", []), ("stage", None, "stage", []),
-    ("decide", None, "decide", []), ("verify", None, "verify", []), ("test", None, "test", []),
+    ("decide", None, "decide", []), ("verify", None, "verify", []),
     ("walk capture", "screenshot", "screenshot", []),
     ("session", "state resolve", "state", ["resolve"]), ("session attach", "state use", "state", ["use"]),
     ("phase list", "state list", "state", ["list"]), ("phase new", "state new-phase", "state", ["new-phase"]),
@@ -154,6 +154,16 @@ def scenario(work):
               (2, "", "fwx %s: now 'fwx %s'\n" % (old, new)))
     r = run(work, "state", "check")
     check("old `state check` names both new names", (r.returncode, r.stderr), (2, "fwx state check: now 'fwx state lint' or 'fwx report lint'\n"))
+    # `fwx test` left the table: the suite is run by forge as a group (`forge test fwx`), and the refusal names that, outside fwx. Red on master
+    # (the command was a row and ran the suite of the working folder):
+    #   FAIL: old `fwx test` is refused with one line naming `forge test fwx`: got (0, 'STUB test []\n', ''), want (2, '', "fwx test: now 'forge test fwx'\n")
+    #   FAIL: fwx test: no command of the table runs it: got 'STUB test []', want ''
+    for args in (("test",), ("test", "--jobs", "2"), ("test", "--expect-not-run", "tests/test_x.py")):
+        r = run(work, *args)
+        check("old `fwx %s` is refused with one line naming `forge test fwx`" % " ".join(args), (r.returncode, r.stdout, r.stderr),
+              (2, "", "fwx test: now 'forge test fwx'\n"))
+    r = run(work, "--help")
+    check("--help does not list `fwx test`", bool(re.search(r"^  fwx test\b", r.stdout, re.M)), False)
     # unknown names and verbs
     for args, text in ((("nosuch",), "unknown command: nosuch"), (("phase", "nwe"), "unknown verb: nwe"), (("phase",), "needs a verb"),
                        (("../commands/budget",), "unknown command"), (("Budget",), "unknown command"),
@@ -214,6 +224,8 @@ CONTROLS = (
                                                              '("wave merge", "wave integrate", "wave", ["cleanup"]'),
      "wave merge: routes to"),
     ("an old name forgotten", lambda t: t.replace('("wave new", "wave prepare"', '("wave new", None'), "old name `wave prepare` is refused"),
+    ("the refusal of `fwx test` forgotten", lambda t: t.replace('("test",): "\'forge test fwx\'"', '("testx",): "\'forge test fwx\'"'),
+     "old `fwx test` is refused"),
     ("a flag row gone", lambda t: re.sub(r'    \("linear list --waiting".*\n', "", t), "linear list --waiting: routes to"),
     ("the default of an object gone", lambda t: t.replace('("wave", "wave summary", "wave", ["summary"]', '("wave summary", None, "wave", ["summary"]'),
      "default of `wave --run R`"),

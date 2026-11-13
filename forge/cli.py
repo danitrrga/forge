@@ -1646,10 +1646,31 @@ def cmd_doctor(a):
 # to ROOT, and the reason. hooks/test_guard_mutants.py runs 326 mutants on max(2, cpu_count) workers, each a
 # test_guard_tool_use.py of about six cores: it once took a voice detector from 0.3 s to 50+ s.
 ON_DEMAND = {"hooks/test_guard_mutants.py": "326 mutants on every core, minutes of full CPU; it stalls the machine"}
-FWX_PREFIX = "plugins/fwx/"
+# The groups of `forge test GROUP`: a suite with its own runner (forge/testgroup.py), named by the folder it lives in.
+GROUPS = {"fwx": "plugins/fwx"}
+FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
 def cmd_test(a):
+    """forge test [GROUP [--expect-not-run PATH[,PATH...]] [--jobs N]] [--mutants]: every test but the ones of a group, or one group.
+
+    A group is a suite run on its own, with its own exit codes (forge/testgroup.py); `fwx` is the plugin's (plugins/fwx/tests). The
+    options belong to a group, and --mutants to the run with no group; combined otherwise they exit 2, as does a group nobody has."""
+    group = getattr(a, "group", None)
+    expect, jobs = getattr(a, "expect_not_run", None), getattr(a, "jobs", None)
+    if group is not None:
+        if group not in GROUPS:
+            print("forge test: unknown group %s (groups: %s)" % (group, ", ".join(GROUPS)), file=sys.stderr)
+            return 2
+        if getattr(a, "mutants", False):
+            print("forge test: --mutants runs only the on-demand suites of the run with no group", file=sys.stderr)
+            return 2
+        from forge import testgroup  # not at the top: threads and signals that every other command (session-start) never needs
+        return testgroup.main(os.path.join(lib.ROOT, GROUPS[group]), expect, jobs, GROUPS[group])
+    if expect or jobs:
+        print("forge test: %s needs a group (groups: %s)" % ("--expect-not-run" if expect else "--jobs", ", ".join(GROUPS)),
+              file=sys.stderr)
+        return 2
     # A git that fails (not a repository, not installed) or a list with no tests is a FAIL: until
     # an attack round either ran zero tests and printed "0 failures" with exit 0.
     # Two histories own the files once the engine and the private data are split (forge/publish.py): the
@@ -1673,7 +1694,7 @@ def cmd_test(a):
     # The pathspec's leading * also matches a prefix (contest_helper.py), so the basename is checked here.
     found = sorted(f for f in listed if not f.startswith("benchmarks/")
                    and os.path.basename(f).startswith("test_") and f.endswith(".py"))
-    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its minutes of work
+    # fwx (plugins/fwx) is a group of its own, `forge test fwx`: its exit codes (77, --expect-not-run) and its minutes of work
     # are its own, and CI runs it as a job of its own.
     fwx_owned = [f for f in found if f.startswith(FWX_PREFIX)]
     files = [f for f in found if f not in fwx_owned]
@@ -1682,8 +1703,8 @@ def cmd_test(a):
     mutants = getattr(a, "mutants", False)
     results = []
     if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
-        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) with their own runner: run "
-                                  "`python3 %sbin/fwx test`" % (len(fwx_owned), FWX_PREFIX)))
+        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) that are a group of their own: "
+                                  "run `forge test fwx`" % len(fwx_owned)))
     for f in files:
         if f in ON_DEMAND:
             if not mutants:  # said, never a PASS, and not counted in the summary (non-negotiable 7)
@@ -2107,7 +2128,12 @@ def main(argv=None):
     m.add_argument("--init-diff", nargs=2, metavar=("BEFORE", "AFTER"), help="check an applied profile: two system/init captures of `claude -p` against --answers")
     m.add_argument("--answers", help="with --init-diff: the review's answers (keep, drop, add per name)")
     m.set_defaults(fn=cmd_metrics)
-    t = sub.add_parser("test", help="run every test except the on-demand suites")
+    t = sub.add_parser("test", help="run every test except the on-demand suites and the group fwx, or one group: forge test fwx")
+    t.add_argument("group", nargs="?", help="a group: fwx (plugins/fwx/, which the run with no group leaves out)")
+    t.add_argument("--expect-not-run", action="append", metavar="PATH[,PATH...]",
+                   help="with a group: tests that cannot run where this is called from, as the group lists them (repeatable); with it a test "
+                        "that exits 77 and is not declared makes the run exit 77, and a run in which nothing passed exits 1")
+    t.add_argument("--jobs", action="append", metavar="N", help="with a group: how many test files run at once (default: the CPUs, at most 8)")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
     t.set_defaults(fn=cmd_test)
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
