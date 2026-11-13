@@ -290,6 +290,18 @@ def main():
     check("step 8 says when the walk is repeated from `phase-review`",
           all(w in s8 for w in ("The walk again", "did not count", "Step 6 again", "from `phase-review`")),
           "no 'The walk again' with 'did not count', 'Step 6 again' and 'from `phase-review`'")
+    # Two wording defects of the PR 130 review (the walk again re-runs step 6, which ends in fix rounds through `execute`; and the amendment's
+    # "no branch, no `executing` row" gave no reason). Seen red on 1166a3d:
+    #   FAIL: step 8's 'No execute' sub-step names the fix rounds of step 6 -> sub-step 2 of 'The walk again' is: 'No execute. Then this step again.'
+    #   FAIL: step 8's amendment sub-step 3 gives the reason for no branch and no `executing` row -> sub-step 3 is: '3. At step 4 give the status line and the stop for objections, but make no branch and write no `executing` row.'
+    walk2 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("2. ") and "Then this step again" in ln), "")
+    check("step 8's 'No execute' sub-step names the fix rounds of step 6",
+          "execute" in walk2 and "fix rounds of step 6" in walk2, "sub-step 2 of 'The walk again' is: %r" % walk2)
+    amend3 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("3. At step 4")), "")
+    check("step 8's amendment sub-step 3 gives the reason for no branch and no `executing` row",
+          "no branch" in amend3 and all(w in amend3 for w in ("already exist", "git worktree add")), "sub-step 3 is: %r" % amend3)
+    check("control: a sub-step 2 without the fix rounds and a sub-step 3 without a reason are caught",
+          "fix rounds of step 6" not in "2. No execute. Then this step again." and "git worktree add" not in "3. At step 4 give the status line, but make no branch and write no `executing` row.")
     l8 = block(session_pb, "n_L8")
     check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
     # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows

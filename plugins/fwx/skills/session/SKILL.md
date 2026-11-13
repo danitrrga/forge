@@ -58,11 +58,11 @@ Your argument is `$ARGUMENTS`: a phase folder (absolute path), `retake <KEY>`, o
    His answer: good: next part (step 5 for part N+1) or step 9 after the last. An implementation problem: `fwx rounds <part> --reset "<his words>"`, stage `executing` (`part <N> corrections`) and `execute` with the correction (step 5). A problem of intention: step 7. Two more answers have steps of their own, below. Asynchronous review: a late objection is recorded at once with `fwx rounds <part> --reset "<his words>"` (on disk, so a cut keeps it) and runs as a correction of that part at the next boundary. The phase closes only when no part has a reset after its last `phase-review` row. An accepted proposer patch goes to `execute` as a correction of the last part.
    The walk again: he asks for it, or a walk did not count.
    1. Step 6 again (it writes its own stage `ui-walk`, which the table allows from `phase-review`), with the `args` of the part's last walk.
-   2. No execute. Then this step again.
+   2. His answer itself starts no `execute`; the fix rounds of step 6 stay as they are. Then this step again.
    A decision after the plan: he decides something that is not a defect of the code, such as another value, size or wording than the one decided before. You do not read the plan to judge it: the planner and the post-mortem get the decision.
    1. The `decisions` agent records it (`source` `review of part <N>`), then `fwx rounds <part> --reset "<his words>"`.
    2. Step 2 and step 3 again: the stages they write are allowed from `phase-review`, the planner amends the criteria the decision touches and the post-mortem reads the amended plan.
-   3. At step 4 give the status line and the stop for objections, but make no branch and write no `executing` row.
+   3. At step 4 give the status line and the stop for objections, but make no branch and write no `executing` row: the part's branch and its `executing` row already exist, and a second `git worktree add` of that branch fails.
    4. Then the correction as for an implementation problem.
    Next part left: step 5. None: step 9.
 
