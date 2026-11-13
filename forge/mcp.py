@@ -3,8 +3,8 @@ them in ~/.claude.json (ClaudeJson) and <project>/.codex/config.toml (write_code
 
 A `${VAR}` in the registry (tracked in git) names a key of credentials/secrets.json (git-ignored),
 the only place a real token lives; this module is where one becomes the other. ~/.claude.json is
-one document every profile writes into and every open Claude Code session writes too, so it is
-opened once, changed in memory profile by profile, and committed once at the end."""
+one document every project writes into and every open Claude Code session writes too, so it is
+opened once, changed in memory project by project, and committed once at the end."""
 import copy
 import os
 import re
@@ -33,7 +33,7 @@ def resolve_secrets(env, secrets, errors, server, block="env"):
 
 
 def migrate_project_keys(cj, relocations):
-    """Move explicitly registered old project keys before profile generation.
+    """Move explicitly registered old project keys before project generation.
 
     The generator deliberately preserves unrelated Claude project entries, so repository
     relocations need an explicit canonical migration rather than broad orphan pruning.
@@ -59,7 +59,7 @@ def migrate_project_keys(cj, relocations):
 
 def project_key(path):
     """A project's ~/.claude.json key: the forward-slash, normalised path, case kept -- the form
-    Claude Code itself writes. A profile's `/x/proj/` used to become the key as written, which
+    Claude Code itself writes. A project's `/x/proj/` used to become the key as written, which
     turned Claude Code's own `/x/proj` into the "duplicate" and deleted it every session."""
     return os.path.normpath(path).replace("\\", "/")
 
@@ -96,9 +96,9 @@ def resolved_server(name, regdef, secrets, errors):
 
 
 def with_denied_tools(prof, sel, registry):
-    """The profile plus a permissions.deny row for every `deny_tools` entry of a server it grants.
+    """The project plus a permissions.deny row for every `deny_tools` entry of a server it grants.
 
-    Declared on the registry entry, not per profile, so a new project granted the server cannot
+    Declared on the registry entry, not per project, so a new project granted the server cannot
     miss it. Codex gets the same list as `disabled_tools` in write_codex_project_mcp."""
     deny = ["mcp__%s__%s" % (s, t) for s in sel
             for t in (registry.get(s) or {}).get("deny_tools") or []]
@@ -238,7 +238,7 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     refs = {k: v for k, v in env_set.items() if isinstance(v, str) and VARRE.match(v)}
     got = resolve_secrets(refs, secrets, [], "")
     env_set = {k: got.get(k, v) for k, v in env_set.items() if k not in refs or k in got}
-    # The same value as sync_skill_keep.py's common_env, which every profile it manages already
+    # The same value as sync_skill_keep.py's common_env, which every project it manages already
     # carries; this reaches the ones it does not. Read from config/forge.json's
     # skill_keep.common_env, not imported from that script (it decides APPLY from sys.argv at
     # import time, which would print its refusal into this run's output); a file without the key
@@ -255,7 +255,7 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
     skipped = []
     seen = set()
     for name in sel:
-        # Dedupe: a profile's servers list is hand-authored JSON and could, in principle,
+        # Dedupe: a project's servers list is hand-authored JSON and could, in principle,
         # repeat a name -- two identical `[mcp_servers.X]` table headers is a TOML "duplicate
         # key" DecodeError. Silently keep the first occurrence rather than emit invalid TOML.
         if name in seen:
@@ -308,7 +308,7 @@ def write_codex_project_mcp(ctx, prof, sel, registry, secrets, errors):
 
     # Byte-exact, and a file that is not UTF-8 is simply not `content`: read here with universal
     # newlines, a CRLF copy was "(already current)" forever, and one holding b'\xff' raised
-    # UnicodeDecodeError, which took every later profile, ~/.claude.json and the user scope.
+    # UnicodeDecodeError, which took every later project, ~/.claude.json and the user scope.
     existed = os.path.exists(path)
     changed = not lib.holds(path, content)
     # Mode is part of the contract, as for the hindsight config: the file and its once-ever .bak
@@ -412,10 +412,10 @@ POLICY = "shell_environment_policy"
 
 def _policy_mismatch(table, names):
     """Why `table` (the parsed [shell_environment_policy]) is not the one write_codex_project_mcp writes for a
-    profile whose env keys are `names`, or None when it is. Forge's is `inherit = "core"` and nothing else but
+    project whose env keys are `names`, or None when it is. Forge's is `inherit = "core"` and nothing else but
     a `set` table, whose keys are all `names` or MCPORTER_CONFIG; with no `names` it writes no `set`, and a
     table with none is its too. Values are never compared, and never named: a rotated secret or an edited
-    profile leaves a table whose values are stale and still forge's, and the reason lines are printed."""
+    project leaves a table whose values are stale and still forge's, and the reason lines are printed."""
     if not isinstance(table, dict):
         return "it is not a table"
     extra = sorted(set(table) - {"inherit", "set"})
@@ -425,12 +425,12 @@ def _policy_mismatch(table, names):
         return 'its inherit is not "core"'
     env = table.get("set")
     if env is None:
-        return None if not names else "forge would write a set table for this profile and this one has none"
+        return None if not names else "forge would write a set table for this project and this one has none"
     if not isinstance(env, dict):
         return "its set is not a table"
     foreign = sorted(k for k in env if k not in names and k != "MCPORTER_CONFIG")
     if foreign:
-        return "it sets keys forge does not write for this profile (%s)" % ", ".join(foreign)
+        return "it sets keys forge does not write for this project (%s)" % ", ".join(foreign)
     return None
 
 
@@ -460,7 +460,7 @@ def drop_codex_policy(text, names):
 
 
 def _codex_env_names(prof):
-    """The env keys write_codex_project_mcp writes into a profile's [shell_environment_policy.set]."""
+    """The env keys write_codex_project_mcp writes into a project's [shell_environment_policy.set]."""
     names = set(prof.get("env") or {})
     if _mcporter_config() is not None:
         names.add("MCPORTER_CONFIG")
@@ -492,7 +492,7 @@ def _bak_verdict(ppath, path, registry):
     servers = doc.get("mcp_servers")
     if isinstance(servers, dict) and any(n in registry for n in servers):
         return "forge", None
-    # The oldest content, so its names have drifted: a retired server, a key the profile no longer carries.
+    # The oldest content, so its names have drifted: a retired server, a key the project no longer carries.
     # The writer's whole-file rewrite always began with the policy table and held nothing but it and the
     # servers, so that is the mark: those two top-level keys at most, the policy `inherit = "core"`.
     pol = doc.get(POLICY)
@@ -506,7 +506,7 @@ def drop_codex_project_mcp(ctx, prof, registry, errors):
     """The `codex_harness` false half of write_codex_project_mcp: with the switch off Codex gets nothing
     Claude-style from forge, so forge takes out of <project>/.codex/config.toml what it wrote there: the
     `[mcp_servers.<name>]` tables (and their `.env` tables) whose name is a registry server, and the
-    [shell_environment_policy] table (with its `.set`) when it has the shape forge writes for this profile
+    [shell_environment_policy] table (with its `.set`) when it has the shape forge writes for this project
     (drop_codex_policy); one of another shape stays and the line says so. Any other table, key and comment
     stays, and so does the file itself: forge keeps no record of who created it, and Codex may have written
     to it since. The once-ever `.bak` that lib.write_text kept of its first replaced content holds the old
@@ -580,7 +580,7 @@ def load_inputs(cfg):
     # config/secrets.json MUST be the symlink to credentials/secrets.json, never a copy. Found
     # in use: it had been a regular file for days, so this line was reading a frozen
     # snapshot -- six secrets added to credentials/ since were invisible here, two retired ones
-    # lingered, and one held a different value in each. Nothing errored, because a profile only
+    # lingered, and one held a different value in each. Nothing errored, because a project only
     # fails when it REFERENCES a missing secret and none of the six was referenced yet. A stale
     # copy is therefore silent until the day it is not, which is why this is a check and not a
     # sentence in the docs.
@@ -603,21 +603,21 @@ def load_inputs(cfg):
 
 
 def relocations_in_scope(ctx, loaded, relocations):
-    """A relocation writes a project's key, so it follows the same scope as the profile loop: a
+    """A relocation writes a project's key, so it follows the same scope as the project loop: a
     scoped run moves only its own projects' keys, and a frozen project's key is never moved
     into or out of (the loop's frozen skip promises it is left exactly as it is). Returns the
     relocations to apply, after one line for each one skipped for a frozen or skipped end."""
-    # No project_path, no key to move or protect; a frozen profile may name none (2c1cc85).
+    # No project_path, no key to move or protect; a frozen project may name none (2c1cc85).
     every = {os.path.basename(pf)[:-len(".claude.json")]: p for pf, p in loaded.items()
              if isinstance(p, dict) and isinstance(p.get("project_path"), str) and p["project_path"]}
-    # A profile the loop skips for a wrong type (lib.profile_error) is held like a frozen one: the
+    # A project the loop skips for a wrong type (lib.project_error) is held like a frozen one: the
     # loop says nothing was written for it, so its key is not moved either.
     held = {}
     for p in every.values():
-        bad = lib.profile_error(p)
+        bad = lib.project_error(p)
         if bad or p.get("frozen"):
             held[project_key(p["project_path"])] = (
-                "its profile is skipped (%s)" % bad if bad else "a frozen project's key is never touched")
+                "its project is skipped (%s)" % bad if bad else "a frozen project's key is never touched")
     mine = None if ctx.only is None else {project_key(p["project_path"]) for n, p in every.items() if n in ctx.only}
     kept = []
     for item in relocations:
@@ -635,7 +635,7 @@ def relocations_in_scope(ctx, loaded, relocations):
 class ClaudeJson:
     """~/.claude.json, which holds every project's MCP servers with their secrets resolved.
 
-    It is loaded ONCE (open), every profile mutates this one copy (project), and it is written
+    It is loaded ONCE (open), every project mutates this one copy (project), and it is written
     once after the loop, only if the serialized text changed (commit). It once was
     loaded 21 times and written 20 times per run (~38 ms of ~95), all of them on a normal run that
     changed nothing -- and Claude Code writes this same file from every open session, so a write
@@ -672,13 +672,13 @@ class ClaudeJson:
         try:
             doc, err = lib.read_owned(path), None
         except lib.Unreadable as e:
-            doc, err = {}, e  # the profile loop still runs; the file is never written
+            doc, err = {}, e  # the project loop still runs; the file is never written
         return cls(path, doc, err, mtime)
 
     def relocate(self, ctx, loaded, relocations):
         """Apply the `relocations` (config/project-relocations.json) that are in this run's scope,
-        given every profile as {profile file: profile}, printing one line per key moved. It runs
-        before the profile loop, which then finds each project under its new key."""
+        given every project as {project file: project}, printing one line per key moved. It runs
+        before the project loop, which then finds each project under its new key."""
         kept = relocations_in_scope(ctx, loaded, relocations)
         if kept:
             for old, new in migrate_project_keys(self.doc, kept):
@@ -686,12 +686,12 @@ class ClaudeJson:
                 self.moved.add(old)
 
     def project(self, prof, sel, registry, secrets, errors):
-        """Give one profile's project its servers `sel`, resolved. A secret that does not resolve
+        """Give one project its servers `sel`, resolved. A secret that does not resolve
         is appended to `errors` and leaves the project's servers as they were."""
         fk = project_key(prof["project_path"])
         # SANDBOX: top-level `mcpServers` is USER scope -> every server there leaks into
         # EVERY project Claude opens. The design assigns every server per-project
-        # (via these profiles), so user scope must stay EMPTY. Clear it each run so a stray
+        # (via these projects), so user scope must stay EMPTY. Clear it each run so a stray
         # `claude mcp add -s user` / manual edit can't re-leak. Servers wanted
         # by a project remain in that project's own mcpServers below.
         top = self.doc.get("mcpServers") or {}

@@ -1,12 +1,12 @@
 """What a project's agent really uses, counted from its Claude Code transcripts, and the check of an applied
-profile by the difference of two `init` captures. `forge metrics NAME --usage` and `--init-diff` (cli.cmd_metrics)
+project by the difference of two `init` captures. `forge metrics NAME --usage` and `--init-diff` (cli.cmd_metrics)
 are thin over this module; it imports the standard library only and reads no configuration of its own.
 
 Usage (`collect`, `report`)
   Folders  : under the projects directory, the transcript folder of the project path, of every worktree
              `git worktree list --porcelain` names, of every `<project>/.claude/worktrees/*` and of the
-             `worktree_guard.worktree_dirs` of the profile (a `path` holds worktrees directly under it, a `prefix`
-             names the folder itself; a child of such a folder that is, or is under, another profile's project is
+             `worktree_guard.worktree_dirs` of the project (a `path` holds worktrees directly under it, a `prefix`
+             names the folder itself; a child of such a folder that is, or is under, another project's project_path is
              that project's and is left out, counted in `looked_at.left_out_other_projects`). They are found by
              listing the projects directory, not by guessing each key,
              because a worktree that was removed has no entry in git and its transcripts stay. A folder that only
@@ -83,7 +83,7 @@ def git_worktrees(project_path):
 
 
 def worktree_dir_specs(prof, home):
-    """[(kind, path)] of the profile's worktree_guard.worktree_dirs, `~/` expanded against `home`; raises UsageError
+    """[(kind, path)] of the project's worktree_guard.worktree_dirs, `~/` expanded against `home`; raises UsageError
     for an entry that is neither {"path": str} nor {"prefix": str} (a folder left out is usage left out)."""
     guard = prof.get("worktree_guard")
     rows = guard.get("worktree_dirs", []) if isinstance(guard, dict) else []
@@ -103,7 +103,7 @@ def folders(projects_dir, project_path, specs, registered, key, others=()):
     """(the folder names under projects_dir that hold this project's sessions, how many folders were left out as
     another project's). A folder that is the project's own, a registered worktree or under `.claude/worktrees` is
     admitted outright. A folder that only matches a `worktree_dirs` entry is admitted unless it is, or is under, the
-    path of one of `others` (the other profiles' projects) and no more specific path of this project claims it: the
+    path of one of `others` (the other projects' paths) and no more specific path of this project claims it: the
     entry names the folder that holds every project, so its direct children include the sibling projects."""
     try:
         names = sorted(os.listdir(projects_dir))
@@ -451,7 +451,7 @@ def count_line(label, cap):
 
 
 def init_diff(before, after, marks):
-    """(exit code, lines): 0 and [] when the applied profile is what the marks say, 1 and one line per fault,
+    """(exit code, lines): 0 and [] when the applied project is what the marks say, 1 and one line per fault,
     2 and one line when a capture is empty (looking at nothing is a failure, never a pass)."""
     for label, cap in (("before", before), ("after", after)):
         if not any(cap.values()):

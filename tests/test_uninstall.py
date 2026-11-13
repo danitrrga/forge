@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """`forge uninstall` (forge/uninstall.py) and the doctor's `owned` row over every claim kind.
 
-Each world is W/forge (an engine copy plus tests/fixtures/config, one toy skill, one profile `app`), W/home
+Each world is W/forge (an engine copy plus tests/fixtures/config, one toy skill, one project `app`), W/home
 and W/projects/app (a repository with a .gitignore line and a CLAUDE.md of its own), side by side, the shape
 lib.may_write allows a toy HOME to write. Codex, codex_harness and Hindsight are on, GSD is off;
 systemctl is a logging stub. `forge sync --all --apply` builds what forge writes, and then, by hand: a user
@@ -13,7 +13,7 @@ Assertions:
   the doctor row: PASS over a record holding .gitignore lines, a config.toml, a link and .bak files; WARN
   naming settings.local.json ["env"] (never its value) after the hand edit;
   a dry-run changes no byte (manifest of home and projects, mtimes included) and says how much it looked at;
-  `--integration hindsight` while hindsight is on and `app` (a live profile) are refused, exit 1,
+  `--integration hindsight` while hindsight is on and `app` (a live project) are refused, exit 1,
   writing nothing; with hindsight switched off in the toy config/forge.json, `--integration hindsight --apply`
   takes out hindsight's claims only;
   `--apply`: every claim of the record is gone but the edited env, which is named on a '  ! ' line; the
@@ -116,10 +116,10 @@ class World:
         doc = load(reg)
         doc["servers"]["hindsight-coding-agents"] = {"type": "stdio", "command": "toy-hs", "args": [], "env": {}}
         write_json(reg, doc)
-        profiles = os.path.join(self.root, "config", "profiles")
-        for n in os.listdir(profiles):
-            os.remove(os.path.join(profiles, n))
-        write_json(os.path.join(profiles, "app.claude.json"), {
+        projects = os.path.join(self.root, "config", "projects")
+        for n in os.listdir(projects):
+            os.remove(os.path.join(projects, n))
+        write_json(os.path.join(projects, "app.claude.json"), {
             "project": "app", "project_path": self.app, "servers": ["toy-echo", "hindsight-coding-agents"],
             "env": {"TOY": "1"}, "permissions": {"allow": ["Bash(toy:*)"]}, "skills_keep": ["toy-common"],
             "plugins_keep": [], "command_guard": True})
@@ -241,7 +241,7 @@ code, out = w.forge("uninstall", "--integration", "hindsight", "--apply")
 check("--integration hindsight while on: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
       code == 1 and "! hindsight is on in config/forge.json: set it false first" in out, out)
 code, out = w.forge("uninstall", "app", "--apply")
-check("NAME of a live profile: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)), code == 1 and "!" in out, out)
+check("NAME of a live project: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)), code == 1 and "!" in out, out)
 diff = sorted(k for k in set(before) | set(w.manifest()) if before.get(k) != w.manifest().get(k))
 check("the refusals wrote nothing -- %s" % diff[:8], not diff)
 
@@ -326,24 +326,24 @@ def bang_lines(out, *words):
     return [l for l in out.splitlines() if l.startswith("  ! ") and all(x in l for x in words)]
 
 
-# F1 and F4: uninstall NAME on a frozen parent leaves a live profile nested under NAME's project_path alone.
+# F1 and F4: uninstall NAME on a frozen parent leaves a live project nested under NAME's project_path alone.
 # Red on 34c191b: the dry-run listed '.../projects/app/sub/.claude/settings.local.json -> would remove 3 claim(s)'
 # and `app --apply` deleted sub's settings.local.json and .codex/config.toml.
 w = World("nested")
 sub = os.path.join(w.app, "sub")
 write(os.path.join(sub, "CLAUDE.md"), "# sub\n")
 sandbox.git(sub, "init", "-q")
-write_json(os.path.join(w.root, "config", "profiles", "sub.claude.json"), {
+write_json(os.path.join(w.root, "config", "projects", "sub.claude.json"), {
     "project": "sub", "project_path": sub, "servers": ["toy-echo"], "env": {"SUB_FLAG": "1"},
     "permissions": {"allow": ["Bash(sub-only-rule)"]}, "skills_keep": ["toy-common"], "plugins_keep": [], "command_guard": True})
 code, out = w.forge("sync", "--all", "--apply")
-check("nested: the sync builds both profiles", code == 0 and os.path.isfile(os.path.join(sub, ".claude", "settings.local.json")), sandbox.tail(out, 6))
+check("nested: the sync builds both projects", code == 0 and os.path.isfile(os.path.join(sub, ".claude", "settings.local.json")), sandbox.tail(out, 6))
 sub_files = sorted(f for f in load(w.registry)["claims"] if f.startswith(sub + os.sep))
 check("control: the record holds claims under the nested project -- %s" % [f.replace(w.top, "W") for f in sub_files], len(sub_files) >= 2)
 sub_manifest = {k: v for k, v in w.manifest().items() if k.startswith("projects/app/sub")}
-prof = load(os.path.join(w.root, "config", "profiles", "app.claude.json"))
+prof = load(os.path.join(w.root, "config", "projects", "app.claude.json"))
 prof["frozen"] = True
-write_json(os.path.join(w.root, "config", "profiles", "app.claude.json"), prof)
+write_json(os.path.join(w.root, "config", "projects", "app.claude.json"), prof)
 code, out = w.forge("uninstall", "app")
 # The dry-run must have run: its exit 0 and its header, or a crash (or a parse error) with no "app/sub" in its text passes.
 # Seen passing with the dry-run of `uninstall NAME` replaced by a printed 'boom' and exit 1 (96 checks, 0 failed); now red:

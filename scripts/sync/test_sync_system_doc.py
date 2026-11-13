@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""sync_system_doc.py on a toy world: forge/ (lib, the script, the canonical doc, profiles), home/
+"""sync_system_doc.py on a toy world: forge/ (lib, the script, the canonical doc, projects), home/
 and projects/ side by side, each project a git repo.
 
 - A plain project gets the doc copy, the .gitignore line and the CLAUDE.md pointer.
@@ -12,11 +12,11 @@ and projects/ side by side, each project a git repo.
   the frozen skip disabled it gets the doc: "the frozen project was written".
 - An --apply refused by lib.may_write (the toy settings.json names another checkout) writes
   nothing and says it is a dry-run.
-- A malformed profile (`{broken`, `null`, a list) is named once and skipped; the good profiles'
+- A malformed project (`{broken`, `null`, a list) is named once and skipped; the good projects'
   output is byte-identical to a world without it, and the toy still gets its doc. The dry-run and
   the apply each exit 1 for the '!' lines (the exit rule, see run()); they exited 0 before the fix.
-  Seen failing before the fix, every profile json.loaded unguarded:
-  "malformed profiles: exit 1, 0
+  Seen failing before the fix, every project json.loaded unguarded:
+  "malformed projects: exit 1, 0
   '! could not read' line(s), good output unchanged False, doc False: ... json.decoder.
   JSONDecodeError: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)".
 - A CLAUDE.md that is a symlink (here to a real AGENTS.md holding the user's own rules), or a
@@ -34,10 +34,10 @@ and projects/ side by side, each project a git repo.
   mode: "CRLF doc copy: exit 0, rewritten False, dry '  = toy                  up to date'" and
   "non-UTF-8 doc copy: exit 0, rewritten False, dry \"  ! toy                  ERROR: 'utf-8' codec
   can't decode byte 0xff in position 0: invalid start byte -- skipped, other projects unaffected\"".
-- Two profiles that name one project_path both run, and a profile is tagged and scoped by its file
+- Two projects that name one project_path both run, and a project is tagged and scoped by its file
   name, not its `project` field. Seen failing on a78637a, projects keyed by path with
-  the field as the name: "two profiles, one project_path: exit 0, lines ['  ~ toy2 ...']: ...
-  managed projects: 2 (1 repo-owned)" (the last profile won), and "profile whose project field is
+  the field as the name: "two projects, one project_path: exit 0, lines ['  ~ toy2 ...']: ...
+  managed projects: 2 (1 repo-owned)" (the last project won), and "project whose project field is
   not its file name: exit 0: ... managed projects: 2 (1 repo-owned) | | | 0 change(s) would apply."
   (`--project toy` scoped the run to a project named `other`, so to nothing).
 """
@@ -87,7 +87,7 @@ def world(case):
         pp = os.path.join(projects, name)
         os.makedirs(pp)
         sandbox.git(pp, "init", "-q")
-        write(os.path.join(root, "config", "profiles", name + ".claude.json"),
+        write(os.path.join(root, "config", "projects", name + ".claude.json"),
               json.dumps(dict({"project": name, "project_path": pp}, **extra)))
     if case in ("ui", "ui-no-design", "no-ui-with-design") or case.startswith(("verdict", "no-ui-verdict")):
         prof = {"project": "toy", "project_path": os.path.join(projects, "toy")}
@@ -95,7 +95,7 @@ def world(case):
             prof["ui"] = True
         if case.startswith(("verdict", "no-ui-verdict")):
             prof["verdict_command"] = VERDICT_BAD.get(case, VERDICT_CMD)
-        write(os.path.join(root, "config", "profiles", "toy.claude.json"), json.dumps(prof))
+        write(os.path.join(root, "config", "projects", "toy.claude.json"), json.dumps(prof))
         if case not in ("ui-no-design", "verdict-no-design"):   # the tool the generic paragraph names exists in this checkout; a stranger's has none
             write(os.path.join(root, "scripts", "design", "design.py"), "")
     write(os.path.join(projects, "portal", "CLAUDE.md"), "# portal, owned by its repo\n")
@@ -106,7 +106,7 @@ def world(case):
         os.symlink(os.path.join(t, "shared-gitignore"), os.path.join(projects, "toy", ".gitignore"))
     elif case == "malformed":
         for name, text in BAD.items():
-            write(os.path.join(root, "config", "profiles", name), text)
+            write(os.path.join(root, "config", "projects", name), text)
     elif case == "claude-symlink":
         write(os.path.join(projects, "toy", "AGENTS.md"), "# my rules\n")
         os.symlink("AGENTS.md", os.path.join(projects, "toy", "CLAUDE.md"))
@@ -119,10 +119,10 @@ def world(case):
         write(os.path.join(t, "other", "bin", "forge"), "")
         sandbox.installed_settings(home, os.path.join(t, "other"))
     elif case == "shared-path":
-        write(os.path.join(root, "config", "profiles", "toy2.claude.json"),
+        write(os.path.join(root, "config", "projects", "toy2.claude.json"),
               json.dumps({"project": "toy2", "project_path": os.path.join(projects, "toy")}))
     elif case == "renamed":
-        write(os.path.join(root, "config", "profiles", "toy.claude.json"),
+        write(os.path.join(root, "config", "projects", "toy.claude.json"),
               json.dumps({"project": "other", "project_path": os.path.join(projects, "toy")}))
     return t
 
@@ -161,11 +161,11 @@ WORLDS = {}  # toy root -> its case name
 
 
 def run(t, *args):
-    """The script over every profile, or over the one a --project in `args` names (it wins over --all).
+    """The script over every project, or over the one a --project in `args` names (it wins over --all).
     Every run is held to forge/sync.py agent_config's exit rule, which this step keeps too: a line
     whose first non-space character is '!' means exit 1, and no other line does. Red on 0ad2214,
     whose main() always returned None: "exit rule: malformed: exit 0, first '!' line
-    '  ! could not read <t>/forge/config/profiles/broken.claude.json: Expecting property name
+    '  ! could not read <t>/forge/config/projects/broken.claude.json: Expecting property name
     enclosed in double quotes: line 1 column 2 (char 1)'", the same for the malformed --apply."""
     r = subprocess.run([sys.executable, os.path.join(t, "forge", SCRIPT), "--all"] + list(args), cwd=t,
                        env=sandbox.bare_env(os.path.join(t, "home"), t), capture_output=True, text=True, timeout=120)
@@ -210,7 +210,7 @@ def main():
     if snapshot(projects(t)) != before or "MODE: DRY-RUN" not in out or "would apply" not in out:
         failures.append("refused apply: projects changed %s: %s" % (snapshot(projects(t)) != before, tail(out)))
 
-    # The good profiles' output must not move: compared, with the '!' lines dropped, to a plain world's.
+    # The good projects' output must not move: compared, with the '!' lines dropped, to a plain world's.
     plain = world("plain")
     _, plain_out = run(plain)
     t = world("malformed")
@@ -222,7 +222,7 @@ def main():
     doc = os.path.isfile(os.path.join(projects(t), "toy", DOC))
     if (rc, rc_apply) != (1, 1) or sorted(os.path.basename(l.split(": ")[0].split()[-1]) for l in named) != sorted(BAD) \
             or not same or not doc:
-        failures.append("malformed profiles: exit %d and %d, %d '! could not read' line(s), good output unchanged %s, "
+        failures.append("malformed projects: exit %d and %d, %d '! could not read' line(s), good output unchanged %s, "
                         "doc %s: %s" % (rc, rc_apply, len(named), same, doc, tail(out + out_apply)))
 
     # CLAUDE.md -> AGENTS.md: nothing is written through the link, and the dry-run says what the
@@ -272,18 +272,18 @@ def main():
             failures.append("%s doc copy: exit %d, rewritten %s, dry %r"
                             % (what, rc, now == good, " ".join(l for l in dry.splitlines() if " toy " in l)))
 
-    # Two profiles naming one directory both run; one path used to key a dict and the last one won.
+    # Two projects naming one directory both run; one path used to key a dict and the last one won.
     t = world("shared-path")
     rc, out = run(t)
     lines = [l for l in out.splitlines() if l.startswith("  ~ toy ") or l.startswith("  ~ toy2 ")]
     if rc or len(lines) != 2 or "managed projects: 3 (1 repo-owned)" not in out:
-        failures.append("two profiles, one project_path: exit %d, lines %r: %s" % (rc, lines, tail(out, 25)))
+        failures.append("two projects, one project_path: exit %d, lines %r: %s" % (rc, lines, tail(out, 25)))
 
-    # A profile is named by its file, as --project and the session scope name it, not by its field.
+    # A project is named by its file, as --project and the session scope name it, not by its field.
     t = world("renamed")
     rc, out = run(t, "--project", "toy")
     if rc or not any(l.startswith("  ~ toy ") for l in out.splitlines()) or " other " in out:
-        failures.append("profile whose project field is not its file name: exit %d: %s" % (rc, tail(out, 25)))
+        failures.append("project whose project field is not its file name: exit %d: %s" % (rc, tail(out, 25)))
 
     # A CLAUDE.md with a BEGIN that opens no block (quoted in prose, or an orphan) keeps every byte of the
     # user's text through two syncs, and is named on a '  ! ' line: ensure_pointer replaced from the first BEGIN
@@ -365,7 +365,7 @@ def main():
         if want_para and text(agents) != got:
             failures.append("ui project: AGENTS.md does not read the same paragraph as CLAUDE.md")
 
-    # A profile's own `verdict_command` replaces the generic paragraph, and needs nothing from this checkout.
+    # A project's own `verdict_command` replaces the generic paragraph, and needs nothing from this checkout.
     # Red on the unchanged code (messages in the PR): the "verdict" cases wrote the generic paragraph naming design.py and not the
     # command, verdict-no-design wrote no paragraph at all, and a bad verdict_command was not an error.
     # The generic paragraph names no live server (`--serve`, `verdict wait`, `verdict reply`) and says the owner pastes the answers.
@@ -404,14 +404,14 @@ def main():
     got = text(os.path.join(projects(t), "toy", "CLAUDE.md")) or ""
     if rc or "A UI change" in got:
         failures.append("verdict_command without ui: exit %d, a paragraph was written: %r" % (rc, got[-500:]))
-    # A block holding the generic paragraph is replaced in place once the profile gains the field, then stable.
+    # A block holding the generic paragraph is replaced in place once the project gains the field, then stable.
     t = world("ui")
     run(t, "--apply")
     toy_md = os.path.join(projects(t), "toy", "CLAUDE.md")
     write(toy_md, "# mine\n\n" + (text(toy_md) or "") + "\n" + NOTE)
     generic_block = text(toy_md)
     old = (generic % {"t": t}).replace("\\", "/")
-    write(os.path.join(t, "forge", "config", "profiles", "toy.claude.json"), json.dumps(
+    write(os.path.join(t, "forge", "config", "projects", "toy.claude.json"), json.dumps(
         {"project": "toy", "project_path": os.path.join(projects(t), "toy"), "ui": True, "verdict_command": VERDICT_CMD}))
     rc, out = run(t, "--apply")
     got = text(toy_md) or ""
@@ -420,14 +420,14 @@ def main():
     rc, out = run(t, "--apply")
     if rc or "0 change(s) applied." not in out or text(toy_md) != got:
         failures.append("the second --apply after the replacement is not a no-op: exit %d, %s" % (rc, tail(out)))
-    # A bad verdict_command is that profile's error (lib.profile_error): named, the profile left out, no traceback.
+    # A bad verdict_command is that project's error (lib.project_error): named, the project left out, no traceback.
     for case, why in (("verdict-bad-int", "verdict_command is not a string"), ("verdict-bad-null", "verdict_command is not a string"),
                       ("verdict-bad-empty", "verdict_command is empty"), ("verdict-bad-blank", "verdict_command is empty")):
         t = world(case)
         rc, out = run(t, "--apply")
         got = text(os.path.join(projects(t), "toy", "CLAUDE.md"))
         if why not in out or "Traceback" in out or not rc or got is not None:
-            failures.append("%s: want '%s', exit 1, no traceback, no CLAUDE.md for that profile: exit %d, CLAUDE.md %r, %s"
+            failures.append("%s: want '%s', exit 1, no traceback, no CLAUDE.md for that project: exit %d, CLAUDE.md %r, %s"
                             % (case, why, rc, got and got[-200:], tail(out)))
 
     failures += RULE

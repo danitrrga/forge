@@ -2,12 +2,12 @@
 """Part 2.5 (base context), unit U8: the `context base` row of `forge doctor` (forge/cli.py context_base_row).
 
 The row runs fwx's `context lint` and `context audit` for each target: every ~/.claude/settings.json entry
-whose command runs `subagent_context.py --file F [--source S]`, and every profile with `framework: true`. One result
+whose command runs `subagent_context.py --file F [--source S]`, and every project with `framework: true`. One result
 per target: any exit other than 0 and 77 is a FAIL (naming the target, what fwx printed and the `python3 <fwx>/bin/fwx
 context-base ...` command that reproduces it), 77 is a SKIP that starts `NOT RUN, NOT ARMED`, 0 is a PASS with fwx's
 last line. No fwx, or no target: a SKIP, NOT RUN, NOT ARMED.
 
-A toy world per case: a toy forge root, HOME with a settings.json, profiles, a forge.json whose framework.plugin_source
+A toy world per case: a toy forge root, HOME with a settings.json, projects, a forge.json whose framework.plugin_source
 points at a toy plugin directory whose `bin/fwx` is a fake (a python script that logs its argv and answers from a plan
 file), and a PATH holding only the fake's directory with python3 linked in (standing order 10: no real program behind it).
 
@@ -46,7 +46,7 @@ from forge import cli, hooks  # noqa: E402
 assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
 SETTINGS = os.path.join(HOME, ".claude", "settings.json")
 hooks.USER_SETTINGS = SETTINGS
-REAL_PATH, REAL_ROOT, REAL_PROFILES = os.environ.get("PATH", ""), lib.ROOT, lib.PROFILES
+REAL_PATH, REAL_ROOT, REAL_PROJECTS = os.environ.get("PATH", ""), lib.ROOT, lib.PROJECTS
 failures, n_cases, _n = [], [0], [0]
 FILE, SOURCE = "/toy/forge/framework-discuss/context-base.md", "/toy/forge/framework-discuss/plan/CONTEXTO-AGENTES.md"
 CMD = "python3 /toy/forge/plugins/fwx/hooks/subagent_context.py --file %s --source %s" % (FILE, SOURCE)
@@ -82,22 +82,22 @@ def write(path, text, mode=None):
         os.chmod(path, mode)
 
 
-def world(plan=(), commands=(CMD,), profiles=None, fwx=True, section=True):
+def world(plan=(), commands=(CMD,), projects=None, fwx=True, section=True):
     """A toy forge root, HOME and PATH for one case; returns the fake's directory. `commands`: the SubagentStart hook
-    commands in settings.json; `profiles`: {name: extra profile fields}; `fwx` False: a plugin directory without bin/fwx;
+    commands in settings.json; `projects`: {name: extra project fields}; `fwx` False: a plugin directory without bin/fwx;
     `section` False: no `framework` table in forge.json."""
     _n[0] += 1
     top = os.path.join(TOY, "case-%d" % _n[0])
     root, plugin = os.path.join(top, "forge"), os.path.join(top, "plugin")
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     os.makedirs(os.path.join(plugin, "bin"))
     if fwx:
         write(os.path.join(plugin, "bin", "fwx"), FAKE, stat.S_IRWXU)
         write(os.path.join(plugin, "bin", "plan.json"), json.dumps(list(plan)))
-    for name, extra in (profiles or {}).items():
+    for name, extra in (projects or {}).items():
         project = os.path.join(top, name)
         os.makedirs(project)
-        write(os.path.join(root, "config", "profiles", name + ".claude.json"),
+        write(os.path.join(root, "config", "projects", name + ".claude.json"),
               json.dumps(dict({"project": name, "project_path": project}, **extra)))
     groups = {"SubagentStart": [{"hooks": [{"type": "command", "command": c}]} for c in commands]} if commands else {}
     groups["SessionStart"] = [{"hooks": [{"type": "command", "command": "python3 /toy/forge/bin/forge session-start"}]}]
@@ -108,7 +108,7 @@ def world(plan=(), commands=(CMD,), profiles=None, fwx=True, section=True):
     os.makedirs(bindir)
     os.symlink(sys.executable, os.path.join(bindir, "python3"))
     os.environ["PATH"] = bindir  # only the fake directory (standing order 10)
-    lib.ROOT, lib.PROFILES = root, os.path.join(root, "config", "profiles")
+    lib.ROOT, lib.PROJECTS = root, os.path.join(root, "config", "projects")
     lib.SETTINGS = os.path.join(top, "forge.json")
     doc = {"integrations": {k: False for k in lib.INTEGRATIONS}, "user_settings": {}, "user_hooks": []}
     if section:
@@ -126,7 +126,7 @@ def rows():
         return [lib.Result("CRASH", "context base", "%s: %s" % (type(e).__name__, e))]
     finally:
         os.environ["PATH"] = REAL_PATH
-        lib.ROOT, lib.PROFILES = REAL_ROOT, REAL_PROFILES
+        lib.ROOT, lib.PROJECTS = REAL_ROOT, REAL_PROJECTS
         lib.settings.cache_clear()
 
 
@@ -146,8 +146,8 @@ def one(label, got, level):
 # ---- registered, and never a PASS over nothing
 check("the row is registered", any(c[0] == "context base" and c[1] is getattr(cli, "context_base_row", 0) for c in cli.CHECKS),
       [c[0] for c in cli.CHECKS])
-d = world(commands=(), profiles={"plain": {}})
-r = one("no hook entry, no framework profile", rows(), "SKIP")
+d = world(commands=(), projects={"plain": {}})
+r = one("no hook entry, no framework project", rows(), "SKIP")
 check("no target: says NOT RUN, NOT ARMED", r.detail.startswith(cli.NOT_ARMED), r)
 check("no target: fwx was not run", calls(d) == [], calls(d))
 d = world(fwx=False)
@@ -217,22 +217,22 @@ got = rows()
 check("two entries, two results", [x.level for x in got] == ["PASS", "PASS"], got)
 check("each result names its own file", "context-base.md" in got[0].detail and "other.md" in got[1].detail, got)
 
-# ---- profiles
-d = world(commands=(), profiles={"app": {"framework": True}, "off": {"framework": False}, "plain": {}},
+# ---- projects
+d = world(commands=(), projects={"app": {"framework": True}, "off": {"framework": False}, "plain": {}},
           plan=[{"match": "audit", "rc": 0, "out": "audited 1 subagent(s) in 1 session(s): 1 ok, 0 stale, 0 not armed\n"},
                 {"match": "lint", "rc": 0, "out": "checked 1 file, 4 units, sources current\n"}])
-r = one("one framework profile", rows(), "PASS")
-check("the profile is named", "app" in r.detail, r)
+r = one("one framework project", rows(), "PASS")
+check("the project is named", "app" in r.detail, r)
 asked = calls(d)
-check("check --project P, then audit --project P --last 3, on the project's path (and only that profile)",
+check("check --project P, then audit --project P --last 3, on the project's path (and only that project)",
       len(asked) == 2 and asked[0][:2] == ["context", "lint"] and asked[0][2] == "--project" and asked[0][3].endswith("/app") and
       asked[1][:2] == ["context", "audit"] and asked[1][2:3] == ["--project"] and asked[1][3] == asked[0][3] and
       asked[1][4:] == ["--last", "3"], asked)
-world(commands=(), profiles={"app": {"framework": True}}, plan=[{"match": "audit", "rc": 1, "out": "FAIL q1 general-purpose: missing\n"}])
-r = one("a framework profile whose audit fails", rows(), "FAIL")
-check("it names the profile, the agent and its type", all(w in r.detail for w in ("app", "q1", "general-purpose")), r)
-d = world(profiles={"app": {"framework": True}})
-check("a hook entry and a profile: two results, entry first", [("hook" in x.detail, "app" in x.detail) for x in rows()] == [(True, False), (False, True)],
+world(commands=(), projects={"app": {"framework": True}}, plan=[{"match": "audit", "rc": 1, "out": "FAIL q1 general-purpose: missing\n"}])
+r = one("a framework project whose audit fails", rows(), "FAIL")
+check("it names the project, the agent and its type", all(w in r.detail for w in ("app", "q1", "general-purpose")), r)
+d = world(projects={"app": {"framework": True}})
+check("a hook entry and a project: two results, entry first", [("hook" in x.detail, "app" in x.detail) for x in rows()] == [(True, False), (False, True)],
       rows())
 
 # ---- fwx that never returns

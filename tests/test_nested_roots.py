@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""forge doctor row `project roots`: a project that lives inside another profile's git repository and has skills of its
+"""forge doctor row `project roots`: a project that lives inside another project's git repository and has skills of its
 own is a FAIL. Why: forge switches an enclosing project's neighbours' skills off in its settings (skills.neighbour_skills),
 Claude Code applies those settings inside the nested directory too, and an inner "on" does not override an outer "off"
 (tested with claude -p on a toy tree: parent off + child on, in settings.local.json and in settings.json, the
@@ -8,7 +8,7 @@ git repository per project: `git init` in the nested directory, ignored by the o
 
 Toy projects under /tmp with real `git init`s. The row is the function cli.nested_project_roots(only, profs).
 Controls: with the nested-without-own-skills case turned into a FAIL, or the own-repository case into a FAIL, the matching
-case below fails; an outer repository that no profile owns is not a problem (nothing hides the inner skills); reading zero
+case below fails; an outer repository that no project owns is not a problem (nothing hides the inner skills); reading zero
 projects is a FAIL, never a PASS.
 Seen failing before the row existed: "AttributeError: module 'forge.cli' has no attribute 'nested_project_roots'"."""
 import os
@@ -53,9 +53,9 @@ def main():
     mk(os.path.join(plain, "inner"))                # nested, no skills of its own
     orphan = os.path.join(tmp, "orphan")
     mk(orphan, repo=True)
-    mk(os.path.join(orphan, "inner"), skill="teach")  # nested in a repo no profile owns
+    mk(os.path.join(orphan, "inner"), skill="teach")  # nested in a repo no project owns
 
-    far = os.path.join(tmp, "far-outer")            # an ancestor profile by path, but a repository of its own in between
+    far = os.path.join(tmp, "far-outer")            # an ancestor project by path, but a repository of its own in between
     mk(far, repo=True)
     mk(os.path.join(far, "mid"), repo=True)
     mk(os.path.join(far, "mid", "inner"), skill="teach")
@@ -66,23 +66,23 @@ def main():
 
     p = {"outer": {"project_path": outer}, "inner": {"project_path": nested}}
     st, det = row(p)
-    want("nested with own skills in a profile's repository: FAIL naming both", (st, "inner" in det and "outer" in det), ("FAIL", True))
+    want("nested with own skills in a project's repository: FAIL naming both", (st, "inner" in det and "outer" in det), ("FAIL", True))
     want("the row is registered with a fix that names git init",
          [f for n, _, f in cli.CHECKS if n == "project roots"] != [] and "git init" in [f for n, _, f in cli.CHECKS if n == "project roots"][0], True)
     st, det = row({"outer": {"project_path": own}, "inner": {"project_path": os.path.join(own, "inner")}})
     want("inner with its own repository: PASS", st, "PASS")
     st, det = row({"outer": {"project_path": plain}, "inner": {"project_path": os.path.join(plain, "inner")}})
     want("nested without skills of its own: PASS", st, "PASS")
-    want("an ancestor profile in a different repository does not hide it: PASS",
+    want("an ancestor project in a different repository does not hide it: PASS",
          row({"outer": {"project_path": far}, "inner": {"project_path": os.path.join(far, "mid", "inner")}})[0], "PASS")
     st, det = row({"inner": {"project_path": os.path.join(orphan, "inner")}})
-    want("nested in a repository no profile owns: PASS", st, "PASS")
-    want("frozen profile is not read (only one left, none read: FAIL, never a silent PASS)",
+    want("nested in a repository no project owns: PASS", st, "PASS")
+    want("frozen project is not read (only one left, none read: FAIL, never a silent PASS)",
          row({"inner": {"project_path": nested, "frozen": True}})[0], "FAIL")
     want("only= scopes to one project", row(p, only="outer")[0], "PASS")
     want("only= on the nested one reports it", row(p, only="inner")[0], "FAIL")
     want("no projects at all: FAIL", row({})[0], "FAIL")
-    want("a profile whose directory is gone is named, not a crash", row({"gone": {"project_path": os.path.join(tmp, "nope")}, **p})[0], "FAIL")
+    want("a project whose directory is gone is named, not a crash", row({"gone": {"project_path": os.path.join(tmp, "nope")}, **p})[0], "FAIL")
 
     for msg in failures:
         print("FAIL", msg)

@@ -10,7 +10,7 @@ prefix (`decoy`, never read):
               file holds one more MCP call, one plugin-MCP call and a listing that must be ignored), s-b (two Skill
               calls, an Agent call, a line that is not JSON, a later non-initial skill_listing)
   worktree    <project>/.claude/worktrees/wt1, a session with an MCP call and a Skill call
-  external    a folder the profile only declares in worktree_guard.worktree_dirs, one MCP call
+  external    a folder the project only declares in worktree_guard.worktree_dirs, one MCP call
   registered  a worktree `git worktree list` names and nothing else does, one MCP call
   ~/.claude.json holds a skillUsage entry whose name must never come out.
 
@@ -82,7 +82,7 @@ def write(path, text):
 
 
 def build(tmp, name, skip=()):
-    """(home, profiles dir, folder names, project path) of a toy world; `skip` leaves out one source of usage
+    """(home, projects dir, folder names, project path) of a toy world; `skip` leaves out one source of usage
     ('worktree', 'external', 'registered', 'subagents') for the controls."""
     root = os.path.join(tmp, name)
     home, projects = os.path.join(root, "home"), os.path.join(root, "home", ".claude", "projects")
@@ -101,7 +101,7 @@ def build(tmp, name, skip=()):
             continue
         copy_dated(os.path.join(FIXTURE, role), os.path.join(projects, folder), "subagents" in skip)
     shutil.copy(os.path.join(FIXTURE, "claude.json"), os.path.join(home, ".claude.json"))
-    profiles = os.path.join(root, "profiles")
+    registry = os.path.join(root, "projects")
     guard = {"worktree_dirs": [{"path": ext, "why": "toy"}]}
     lone, empty = os.path.join(root, "work", "lone"), os.path.join(root, "work", "empty")
     copy_dated(os.path.join(FIXTURE, "external"), os.path.join(projects, key(lone)))
@@ -109,17 +109,17 @@ def build(tmp, name, skip=()):
     for pname, prof in {"toy": {"project_path": project, "worktree_guard": guard}, "lone": {"project_path": lone},
                         "empty": {"project_path": empty}, "nopath": {},
                         "badguard": {"project_path": project, "worktree_guard": {"worktree_dirs": [{"nope": 1}]}}}.items():
-        write(os.path.join(profiles, pname + ".claude.json"), json.dumps(dict(prof, project=pname)))
-    return home, profiles, [folders[r] for r in ("main", "worktree", "external", "registered") if r not in skip], project
+        write(os.path.join(registry, pname + ".claude.json"), json.dumps(dict(prof, project=pname)))
+    return home, registry, [folders[r] for r in ("main", "worktree", "external", "registered") if r not in skip], project
 
 
-def run(home, profiles, **kw):
+def run(home, registry, **kw):
     """(exit code, stdout, stderr) of cli.cmd_metrics over the toy world."""
     args = dict(project="toy", session=None, baseline=False, since=None, until=None, events_until=None, json=True,
                 usage=True, init_diff=None, answers=None)
     args.update(kw)
-    real = lib.HOME, lib.PROFILES
-    lib.HOME, lib.PROFILES = home, profiles
+    real = lib.HOME, lib.PROJECTS
+    lib.HOME, lib.PROJECTS = home, registry
     out, err = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -127,7 +127,7 @@ def run(home, profiles, **kw):
     except Exception as e:
         code = "raised %s: %s" % (type(e).__name__, e)
     finally:
-        lib.HOME, lib.PROFILES = real
+        lib.HOME, lib.PROJECTS = real
     return code, out.getvalue(), err.getvalue()
 
 
@@ -146,8 +146,8 @@ def toy_db_problem(rep):
     return None if got == 5 else "mcp toy-db: expected 5 calls, got %d" % got
 
 
-def report_of(home, profiles, **kw):
-    code, out, err = run(home, profiles, **kw)
+def report_of(home, registry, **kw):
+    code, out, err = run(home, registry, **kw)
     try:
         return code, json.loads(out), err
     except ValueError:
@@ -155,8 +155,8 @@ def report_of(home, profiles, **kw):
 
 
 def usage_cases(tmp):
-    home, profiles, folders, project = build(tmp, "main")
-    code, rep, err = report_of(home, profiles)
+    home, registry, folders, project = build(tmp, "main")
+    code, rep, err = report_of(home, registry)
     want("--usage --json over the toy world exits 0", (code, err), (0, ""))
     if not rep:
         failures.append("no JSON report: %s" % err[:200])
@@ -192,7 +192,7 @@ def usage_cases(tmp):
     want("the one hook outside a plugin directory is counted apart; /clear, not a skill, is listed apart",
          (rep["startup_unattributed"], rep["unlisted_commands"]), ({"hooks": 1, "bytes": 21}, {"clear": 1}))
     # ~/.claude.json: its skillUsage is global; nothing of it comes out
-    raw = run(home, profiles)[1]
+    raw = run(home, registry)[1]
     want("the decoy of ~/.claude.json is absent", DECOY in raw, False)
     with open(os.path.join(home, ".claude.json"), encoding="utf-8") as fh:
         want("control: a version that dumps ~/.claude.json prints the decoy", DECOY in raw + fh.read(), True)
@@ -204,34 +204,34 @@ def usage_cases(tmp):
              "mcp toy-db: expected 5 calls, got 4")
     want("toy-db with every source is not flagged", toy_db_problem(rep), None)
     # --since and the minimum of sessions
-    code, rep2, err = report_of(home, profiles, since=day(3))
+    code, rep2, err = report_of(home, registry, since=day(3))
     want("--since the fourth day reads the two sessions from that day on and says so on stderr",
          (code, rep2.get("looked_at", {}).get("sessions"), rep2.get("few_sessions"), "few sessions (2)" in err), (0, 2, True, True))
     want("--since: toy-db calls", next((i["calls"] for i in rep2.get("items", []) if i["name"] == "toy-db"), None), 2)
     want("--since drops the line of a kept session that is older than the day (an agent called the day before)",
          [i["name"] for i in rep2.get("items", []) if i["name"] == "early-agent"], [])
-    code, out, err = run(home, profiles, since=day(20))
+    code, out, err = run(home, registry, since=day(20))
     want("--since after every session is zero sessions: FAIL, rc 1", (code, "toy: 0 sessions in" in out, "usage unknown" in out), (1, True, True))
-    want("--since that is not a date", run(home, profiles, since="yesterday")[0], 1)
-    code, out, err = run(home, profiles, project="lone")
+    want("--since that is not a date", run(home, registry, since="yesterday")[0], 1)
+    code, out, err = run(home, registry, project="lone")
     want("one session: rc 0 and 'few sessions (1)'", (code, "few sessions (1)" in err, json.loads(out)["few_sessions"]), (0, True, True))
-    code, out, err = run(home, profiles, project="lone", json=False)
+    code, out, err = run(home, registry, project="lone", json=False)
     want("text mode says it on stdout", (code, "few sessions (1)" in out), (0, True))
-    code, out, err = run(home, profiles, project="empty")
+    code, out, err = run(home, registry, project="empty")
     want("a transcript folder with no session: rc 1, 'usage unknown'", (code, "empty: 0 sessions in" in out, "usage unknown" in out), (1, True, True))
-    code, out, err = run(home, profiles, json=False)
+    code, out, err = run(home, registry, json=False)
     want("text mode lists the items", (code, "toy-db" in out, "mcp" in out), (0, True, True))
-    want("a profile with no project_path", (run(home, profiles, project="nopath")[0], "nopath: the profile has no project_path" in run(home, profiles, project="nopath")[1]), (1, True))
-    code, out, err = run(home, profiles, project="badguard")
+    want("a project with no project_path", (run(home, registry, project="nopath")[0], "nopath: the project has no project_path" in run(home, registry, project="nopath")[1]), (1, True))
+    code, out, err = run(home, registry, project="badguard")
     want("a worktree_dirs entry with neither path nor prefix is a FAIL", (code, "worktree_dirs[0]" in out), (1, True))
-    want("--usage with --baseline", run(home, profiles, baseline=True)[0], 1)
-    want("--usage with a session id", run(home, profiles, session="s-a")[0], 1)
-    want("--usage with --until", run(home, profiles, until=day(3))[0], 1)
-    want("a decoy-only project does not exist: unknown project", run(home, profiles, project="nosuch")[0], 1)
+    want("--usage with --baseline", run(home, registry, baseline=True)[0], 1)
+    want("--usage with a session id", run(home, registry, session="s-a")[0], 1)
+    want("--usage with --until", run(home, registry, until=day(3))[0], 1)
+    want("a decoy-only project does not exist: unknown project", run(home, registry, project="nosuch")[0], 1)
 
 
 def mini(tmp, name, lines):
-    """(home, profiles) of a world with one project `p` and one session whose transcript is `lines`: the shapes of
+    """(home, projects) of a world with one project `p` and one session whose transcript is `lines`: the shapes of
     real transcript objects (an attachment with `type`, `names`, `content`, `isInitial`; a user message whose
     `message.content` is a string), built only from toy names."""
     root = os.path.join(tmp, name)
@@ -239,8 +239,8 @@ def mini(tmp, name, lines):
     os.makedirs(project)
     write(os.path.join(root, "home", ".claude", "projects", cli.transcript_key(project), "s1.jsonl"),
           "".join(json.dumps(l) + "\n" for l in lines))
-    write(os.path.join(root, "profiles", "p.claude.json"), json.dumps({"project": "p", "project_path": project}))
-    return os.path.join(root, "home"), os.path.join(root, "profiles")
+    write(os.path.join(root, "projects", "p.claude.json"), json.dumps({"project": "p", "project_path": project}))
+    return os.path.join(root, "home"), os.path.join(root, "projects")
 
 
 def at(n, sec=0):
@@ -302,7 +302,7 @@ def sibling_cases(tmp):
     (its linked worktrees may be direct children of it). Red before the fix: asking for the first project read the
     second's sessions too, "sessions = 6, want 3" (its own folder, its `.claude/worktrees/w1` and the sibling folder
     all swept in by the folder-wide prefix). Worktrees of the first: `a-wt` (registered in git) and `a-old` (a removed one:
-    no profile, no git entry, counted because nothing else owns it)."""
+    no project, no git entry, counted because nothing else owns it)."""
     root = os.path.join(tmp, "siblings")
     work = os.path.join(root, "work")
     a, b = os.path.join(work, "a"), os.path.join(work, "b")
@@ -321,15 +321,15 @@ def sibling_cases(tmp):
                 {"type": "tool_use", "id": "t%d" % i, "name": "mcp__toy-db__query", "input": {}}]}}) + "\n")
     guard = {"worktree_dirs": [{"path": work, "why": "toy"}]}
     for name, path in (("a", a), ("b", b)):
-        write(os.path.join(root, "profiles", name + ".claude.json"),
+        write(os.path.join(root, "projects", name + ".claude.json"),
               json.dumps({"project": name, "project_path": path, "worktree_guard": guard}))
-    home, profiles = os.path.join(root, "home"), os.path.join(root, "profiles")
-    code, rep, err = report_of(home, profiles, project="a")
+    home, registry = os.path.join(root, "home"), os.path.join(root, "projects")
+    code, rep, err = report_of(home, registry, project="a")
     look = rep.get("looked_at", {})
     want("the first project reads its own folder and the two worktrees beside it, not the sibling project's",
          (code, sorted(look.get("folders", [])), look.get("sessions")), (0, sorted(mine), 3))
     want("and says how many folders of other projects it left out", look.get("left_out_other_projects"), 2)
-    code, rep, err = report_of(home, profiles, project="b")
+    code, rep, err = report_of(home, registry, project="b")
     look = rep.get("looked_at", {})
     want("control: the second project never counts the first's folders, its worktrees included",
          (code, sorted(look.get("folders", [])), look.get("sessions"), look.get("left_out_other_projects")), (0, sorted(theirs), 2, 3))
@@ -347,7 +347,7 @@ def weak_diff(before, after, marks):
 
 
 def init_cases(tmp):
-    home, profiles, _, _ = build(tmp, "init")
+    home, registry, _, _ = build(tmp, "init")
     d = os.path.join(tmp, "init-files")
     before = init_event(["alpha", "gamma", "base-one"], ["p1", "p2"], ["toy-db", "plugin_p1_x"])
     marks = {"gamma": "drop", "plugin_p1_x": "drop", "alpha": "keep", "p2": "keep", "toy-db": "keep", "base-one": "approve"}
@@ -370,7 +370,7 @@ def init_cases(tmp):
               nomarks={"alpha": "approve", "gamma": "open"}, rows={"answers": [{"id": n, "answer": m} for n, m in marks.items()]})
 
     def diff(after, answers="answers", bef="before", **kw):
-        return run(home, profiles, usage=False, json=False, init_diff=[f[bef], f[after]], answers=f[answers], **kw)
+        return run(home, registry, usage=False, json=False, init_diff=[f[bef], f[after]], answers=f[answers], **kw)
     code, out, err = diff("ok")
     want("drops gone, keeps kept, nothing added: rc 0, counts of both captures",
          (code, "before: 3 skills, 2 plugins, 2 servers" in out, "after: 2 skills, 2 plugins, 1 servers" in out), (0, True, True))
@@ -393,10 +393,10 @@ def init_cases(tmp):
         want("%s: rc 2" % label, diff(after)[0], 2)
     want("an empty before capture: rc 2", diff("ok", bef="empty")[0], 2)
     want("answers that mark nothing keep, drop or add: rc 2 (zero looked at is a failure)", diff("ok", answers="nomarks")[0], 2)
-    want("a capture file that is not there: rc 2", run(home, profiles, usage=False, json=False, init_diff=[f["before"], os.path.join(d, "none.json")],
+    want("a capture file that is not there: rc 2", run(home, registry, usage=False, json=False, init_diff=[f["before"], os.path.join(d, "none.json")],
                                                        answers=f["answers"])[0], 2)
-    want("--init-diff without --answers: rc 2", run(home, profiles, usage=False, json=False, init_diff=[f["before"], f["ok"]])[0], 2)
-    want("--init-diff with --usage: rc 1", run(home, profiles, usage=True, json=False, init_diff=[f["before"], f["ok"]], answers=f["answers"])[0], 1)
+    want("--init-diff without --answers: rc 2", run(home, registry, usage=False, json=False, init_diff=[f["before"], f["ok"]])[0], 2)
+    want("--init-diff with --usage: rc 1", run(home, registry, usage=True, json=False, init_diff=[f["before"], f["ok"]], answers=f["answers"])[0], 1)
     want("--init-diff of an unknown project: rc 1", diff("ok", project="nosuch")[0], 1)
     # a mark that names something in no capture was not done, so it cannot be counted as done
     write(f["answers"], json.dumps(dict(marks, ghost="drop")))

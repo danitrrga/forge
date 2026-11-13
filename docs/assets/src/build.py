@@ -88,8 +88,8 @@ def stage(dst):
 def data(t):
     """What the pages draw, read off the transcript: the files forge wrote, and which project got which server and skill."""
     files = t["files"]
-    api = json.loads(files["config/profiles/api.claude.json"])
-    site = json.loads(files["config/profiles/site.claude.json"])
+    api = json.loads(files["config/projects/api.claude.json"])
+    site = json.loads(files["config/projects/site.claude.json"])
     claude = json.loads(files["~/.claude.json"])["projects"]
     overrides = json.loads(files["~/code/api/.claude/settings.local.json"]).get("skillOverrides", {})
     skills = ["review", "release"]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The `framework` step of the generator (forge/framework.py, called from forge/sync.py): for a profile with
+"""The `framework` step of the generator (forge/framework.py, called from forge/sync.py): for a project with
 `framework: true`, `forge sync` writes <project>/.claude/<plugin>.json and enables the plugin; with `false` or the
 field absent it writes nothing and takes out only what it wrote itself.
 
@@ -20,12 +20,12 @@ field absent it writes nothing and takes out only what it wrote itself.
     toy repo in the temp world (equal, and one alias changed as its control); with FRAMEWORK_REPO set it also runs
     against the real repo, an extra and never a condition: the suite runs every check without it.
 
-Everything runs in-process against a toy HOME, a toy forge.json and toy profiles. `claude` is a fake on PATH: PATH is
+Everything runs in-process against a toy HOME, a toy forge.json and toy projects. `claude` is a fake on PATH: PATH is
 the fake directory alone (python3 and git linked into it), never the system's behind it, so the real `claude` is
 unreachable (the first check proves it).
 
 Seen failing on 530fc79 (master: no framework step; this file as it is, run in a plain copy of that commit): 54 of 121
-checks red, the other 67 are controls that pass there (a profile with `false` or no field writes nothing, a dry-run
+checks red, the other 67 are controls that pass there (a project with `false` or no field writes nothing, a dry-run
 writes nothing, every error writes nothing, uninstall of a project with nothing written). First messages:
   true: "true: .claude/toyfw.json is written -- exists False"
   true: "settings: enabledPlugins toyfw@toyfw is on -- None -- {'keep@toy': True}"
@@ -34,16 +34,16 @@ writes nothing, every error writes nothing, uninstall of a project with nothing 
   errors: "no plugins_keep: a `!` line that names plugins_keep -- [] -- MODE: APPLY ..." (exit 0)
   uninstall: "uninstall: setup, the file is there -- " (nothing was ever written to take out)
   branch B: "branch B: two applies make one `marketplace add` -- calls 0 -- []"
-3.6 U3b (section 7: worktree.baseRef and the profile fields checks_quick, app_run, default_branch_protected, ui_image).
+3.6 U3b (section 7: worktree.baseRef and the project fields checks_quick, app_run, default_branch_protected, ui_image).
 Seen failing on 57655b6 (master, this file as it is): 32 of 186 checks red. First messages:
-  baseRef: "baseRef: a `true` profile gets worktree.baseRef \"head\" -- worktree None -- None"
-  profile_error: "profile_error rejects ui_image without dockerfile, naming dockerfile -- None -- None" (the bad profile passes: no row)
+  baseRef: "baseRef: a `true` project gets worktree.baseRef \"head\" -- worktree None -- None"
+  project_error: "project_error rejects ui_image without dockerfile, naming dockerfile -- None -- None" (the bad project passes: no row)
   fields: "fields: default_branch_protected true reaches project.default_branch_protected -- missing from fwx.json"
 Negative controls, each mutation put back: baseRef never pruned (2 red); an edited baseRef removed anyway (1); baseRef not claimed (3);
 `..` allowed in dockerfile (2); unknown keys of app_run/ui_image allowed (2); default_branch_protected always false (1).
 With FRAMEWORK_REPO set there is one more check: the real repo's models comparison.
 app_run.ready / ready_timeout_s (the keys the plugin's walk selftest reads). Seen failing on dacc4e9 (master, this file as it is): 5 of 204
-checks red, first message: "profile_error accepts app_run with ready -- app_run.ready is not a key of app_run (known: container, down,
+checks red, first message: "project_error accepts app_run with ready -- app_run.ready is not a key of app_run (known: container, down,
 login, run, up, url)"; the others: ready_timeout_s 45 and 12.5, both keys together, and "fields: app_run.ready and ready_timeout_s reach
 project.app_run unchanged -- missing from fwx.json". The rejection rows already passed there (the unknown-key error names the key), so
 they are controls on the finished code, each mutation put back: positivity check dropped (3 red: ready_timeout_s 0, 0.0, -1); bool
@@ -176,7 +176,7 @@ def project(remote="https://example.org/toy-org/toy-repo.git", head_branch="toy-
     return d
 
 
-def profile(ppath, name="toyapp", **over):
+def project_file(ppath, name="toyapp", **over):
     p = {"project": name, "project_path": ppath, "servers": [], "plugins_keep": ["keep@toy"], "skills_keep": ["*"],
          "framework": True, "factory": "trial", "factory_ui_bugs": True, "checks": ["make test", "make lint"],
          "protected_paths": ["db/**"], "production": {"branches": ["release"], "commands": ["deploy "]},
@@ -189,13 +189,13 @@ _w = [0]
 
 
 class World:
-    """A toy config/ (registry, secrets link, profiles) the generator runs over, one world per case."""
+    """A toy config/ (registry, secrets link, projects) the generator runs over, one world per case."""
 
     def __init__(self, secrets=None):
         _w[0] += 1
         self.base = os.path.join(TOY, "world%d" % _w[0])
         self.cfg = os.path.join(self.base, "config")
-        self.pdir = os.path.join(self.cfg, "profiles")
+        self.pdir = os.path.join(self.cfg, "projects")
         os.makedirs(self.pdir)
         with open(os.path.join(self.cfg, "mcp-registry.json"), "w") as f:
             f.write('{"servers": {}}')
@@ -218,11 +218,11 @@ class World:
 
     def run(self, apply=True):
         """(exit code, everything the run printed). Nothing outside TOY is in scope: asserted first."""
-        sync.CFG, lib.PROFILES = self.cfg, self.pdir
+        sync.CFG, lib.PROJECTS = self.cfg, self.pdir
         for pf in os.listdir(self.pdir):
             pp = json.load(open(os.path.join(self.pdir, pf)))["project_path"]
             if not os.path.realpath(pp).startswith(TOY + os.sep):
-                sys.exit("FENCE: a toy profile points outside the toy world -- nothing run")
+                sys.exit("FENCE: a toy project points outside the toy world -- nothing run")
         real = lib.context
         lib.context = lambda argv: lib.Ctx(bool(argv), set(self.names), False)
         out, err = io.StringIO(), io.StringIO()
@@ -322,7 +322,7 @@ forge_json(integrations=INTEGRATIONS_ON)
 plugin = plugin_dir()
 pp = project()
 w = World()
-w.put(profile(pp))
+w.put(project_file(pp))
 code, out = w.run()
 doc = load(fwfile(pp))
 check("true: exit 0 -- exit %d: %s" % (code, bang(out)), code == 0, out)
@@ -330,24 +330,24 @@ check("true: .claude/toyfw.json is written", doc is not None, "exists %s; output
 doc = doc or {}
 proj = doc.get("project", {})
 check("true: schema 1 and framework true", doc.get("schema") == 1 and doc.get("framework") is True, (doc.get("schema"), doc.get("framework")))
-check("true: project.name is the profile's `project`", proj.get("name") == "toyapp", proj.get("name"))
+check("true: project.name is the project's `project`", proj.get("name") == "toyapp", proj.get("name"))
 check("true: project.main_checkout is project_path resolved", proj.get("main_checkout") == os.path.realpath(pp), proj.get("main_checkout"))
 check("true: project.linear_project is the origin's last segment without .git", proj.get("linear_project") == "toy-repo",
       proj.get("linear_project"))
 check("true: project.default_branch is origin/HEAD's", proj.get("default_branch") == "trunk", proj.get("default_branch"))
 check("true: project.factory_branch is factory", proj.get("factory_branch") == "factory", proj.get("factory_branch"))
-check("true: checks, protected_paths, production, verdict_command and ui come from the profile",
+check("true: checks, protected_paths, production, verdict_command and ui come from the project",
       proj.get("checks") == ["make test", "make lint"] and proj.get("protected_paths") == ["db/**"]
       and proj.get("production") == {"branches": ["release"], "commands": ["deploy "]}
       and proj.get("verdict_command") == "python3 verdict.py" and proj.get("ui") is True, proj)
 check("true: the later phases' project fields are the schema's defaults",
       proj.get("checks_quick") == [] and proj.get("app_run") is None, proj)
-# The owner decided against `surface_context` (a profile and its skill set specialise UI work): the key is not generated.
+# The owner decided against `surface_context` (a project and its skill set specialise UI work): the key is not generated.
 # Seen red on master: FAIL true: the generated project table has no surface_context key -- key present: {}
 check("true: the generated project table has no surface_context key", "surface_context" not in proj,
       "key present: %r" % (proj.get("surface_context"),))
 fac = doc.get("factory", {})
-check("true: factory.mode and factory.ui_bugs come from the profile", fac.get("mode") == "trial" and fac.get("ui_bugs") is True, fac)
+check("true: factory.mode and factory.ui_bugs come from the project", fac.get("mode") == "trial" and fac.get("ui_bugs") is True, fac)
 check("true: factory carries the framework section's keys", fac.get("watchdog_nudge_min") == 7 and fac.get("classifier") == "apply", fac)
 check("true: weekly, models, limits, rounds, critique_rounds_unattended and paths come from the framework section",
       doc.get("weekly") == FW["weekly"] and doc.get("models") == FW["models"] and doc.get("limits") == FW["limits"]
@@ -364,13 +364,13 @@ check("true: the ignore line, inside the FORGE-FWX block, is in .gitignore",
 check("true: git ignores the file", subprocess.run(["git", "-C", pp, "check-ignore", "-q", ".claude/toyfw.json"]).returncode == 0, "")
 enabled, markets, env = sl_keys(pp)
 check("settings: enabledPlugins toyfw@toyfw is on -- %s" % enabled.get("toyfw@toyfw"), enabled.get("toyfw@toyfw") is True, enabled)
-check("settings: the profile's own plugins_keep entry is kept", enabled.get("keep@toy") is True, enabled)
+check("settings: the project's own plugins_keep entry is kept", enabled.get("keep@toy") is True, enabled)
 check("settings: extraKnownMarketplaces.toyfw is the source with ~ expanded, in the form `marketplace add` writes",
       markets.get(NAME) == {"source": {"source": "directory", "path": plugin}}, markets)
 check("settings: env.LINEAR_API_KEY is the resolved secret", env.get("LINEAR_API_KEY") == SECRET, sorted(env))
 check("settings: the file is 0600 (it holds the key)", os.path.exists(slp(pp)) and os.stat(slp(pp)).st_mode & 0o777 == 0o600, "")
 fc = claims_of(fwfile(pp))
-check("claims: the file is a `file` claim, part framework, owner the profile, the digest of what was written",
+check("claims: the file is a `file` claim, part framework, owner the project, the digest of what was written",
       len(fc) == 1 and fc[0]["kind"] == "file" and fc[0].get("part") == "framework" and fc[0]["owner"] == "toyapp"
       and fc[0]["sum"] == owned.digest(doc) and doc, fc)
 sc = {(c["kind"], tuple(c["at"])) for c in claims_of(slp(pp))}
@@ -390,57 +390,57 @@ check("again: the line says already current", any("already current" in l for l i
 # A dry-run in a fresh project writes nothing and says what it would write.
 pp2 = project()
 w2 = World()
-w2.put(profile(pp2))
+w2.put(project_file(pp2))
 code, out = w2.run(apply=False)
 check("dry-run: exit 0, no file, no settings.local.json, no .gitignore",
       code == 0 and not os.path.exists(fwfile(pp2)) and not os.path.exists(slp(pp2))
       and not os.path.exists(os.path.join(pp2, ".gitignore")), (code, out[-300:]))
 check("dry-run: the line says it would write", any("would" in l for l in fwlines(out)), out)
 
-# defaults: no origin/HEAD -> the checkout's branch; no remote -> the folder's name; absent profile fields -> defaults.
+# defaults: no origin/HEAD -> the checkout's branch; no remote -> the folder's name; absent project fields -> defaults.
 pp3 = project(origin_head=None)
 w3 = World()
-w3.put(profile(pp3, name="lean", factory="DROP", factory_ui_bugs="DROP", checks="DROP", protected_paths="DROP",
+w3.put(project_file(pp3, name="lean", factory="DROP", factory_ui_bugs="DROP", checks="DROP", protected_paths="DROP",
                production="DROP", verdict_command="DROP", ui="DROP"))
 w3.run()
 d3 = load(fwfile(pp3)) or {}
 check("defaults: without origin/HEAD, default_branch is the checkout's branch", d3.get("project", {}).get("default_branch") == "toy-main",
       d3.get("project"))
-check("defaults: absent profile fields give factory off/false, no checks, no protected paths, no production, no verdict, ui false",
+check("defaults: absent project fields give factory off/false, no checks, no protected paths, no production, no verdict, ui false",
       d3.get("factory", {}).get("mode") == "off" and d3.get("factory", {}).get("ui_bugs") is False
       and d3["project"].get("checks") == [] and d3["project"].get("protected_paths") == []
       and d3["project"].get("production") == {"branches": [], "commands": []}
       and d3["project"].get("verdict_command") is None and d3["project"].get("ui") is False, d3.get("project"))
 pp4 = project(remote=None)
 w4 = World()
-w4.put(profile(pp4, name="solo"))
+w4.put(project_file(pp4, name="solo"))
 w4.run()
 d4 = load(fwfile(pp4)) or {}
 check("defaults: without a remote, linear_project is the folder's name",
       d4.get("project", {}).get("linear_project") == os.path.basename(pp4), d4.get("project"))
 
-# A profile's `linear_project` overrides the remote's name (a repository whose issues live in another Linear project).
+# A project's `linear_project` overrides the remote's name (a repository whose issues live in another Linear project).
 pp4b = project()
 w4b = World()
-w4b.put(profile(pp4b, name="shared", linear_project="Other Project"))
+w4b.put(project_file(pp4b, name="shared", linear_project="Other Project"))
 w4b.run()
 d4b = load(fwfile(pp4b)) or {}
-check("linear_project in the profile overrides the remote's name",
+check("linear_project in the project overrides the remote's name",
       d4b.get("project", {}).get("linear_project") == "Other Project", d4b.get("project", {}).get("linear_project"))
-check("linear_project in the profile: the other fields are as without it",
+check("linear_project in the project: the other fields are as without it",
       {k: v for k, v in d4b.get("project", {}).items() if k != "linear_project"} ==
       {k: v for k, v in proj.items() if k not in ("linear_project", "name", "main_checkout")} | {
           "name": "shared", "main_checkout": os.path.realpath(pp4b)}, d4b.get("project"))
 for bad in (5, "", "  "):
-    why = lib.profile_error(profile(pp4b, linear_project=bad))
-    check("linear_project %r is refused by profile_error" % (bad,), bool(why) and "linear_project" in why, why)
+    why = lib.project_error(project_file(pp4b, linear_project=bad))
+    check("linear_project %r is refused by project_error" % (bad,), bool(why) and "linear_project" in why, why)
 
 # no `framework.linear` -> {"labels": {}}; no framework.models etc. -> the file still has the schema's tables.
 fw_bare = {k: v for k, v in FW.items() if k in ("plugin_source",)}
 forge_json(fw=fw_bare)
 pp5 = project()
 w5 = World()
-w5.put(profile(pp5, name="bare"))
+w5.put(project_file(pp5, name="bare"))
 w5.run()
 d5 = load(fwfile(pp5)) or {}
 check("no framework.linear: linear is {\"labels\": {}}", d5.get("linear") == {"labels": {}}, d5.get("linear"))
@@ -453,7 +453,7 @@ WALK = {"browser_executable": "/srv/browsers/chrome-headless-shell"}
 forge_json(fw=dict(FW, walk=WALK))
 pp5w = project()
 w5w = World()
-w5w.put(profile(pp5w, name="walk"))
+w5w.put(project_file(pp5w, name="walk"))
 w5w.run()
 d5w = load(fwfile(pp5w)) or {}
 check("walk: framework.walk.browser_executable reaches fwx.json -- walk is %s" % d5w.get("walk", "missing from fwx.json"),
@@ -468,7 +468,7 @@ OPEN = {"command": ["toy-opener", "--new-window", "{url}", "{path}"]}
 forge_json(fw=dict(FW, open=OPEN))
 pp5o = project()
 w5o = World()
-w5o.put(profile(pp5o, name="open"))
+w5o.put(project_file(pp5o, name="open"))
 w5o.run()
 d5o = load(fwfile(pp5o)) or {}
 check("open: framework.open reaches fwx.json unchanged -- open is %s" % d5o.get("open", "missing from fwx.json"),
@@ -478,7 +478,7 @@ check("open: no `open` key in the section means no `open` key in the file (bare 
 forge_json(fw=dict(FW, open=["toy-opener", "{url}"]))
 pp5p = project()
 w5p = World()
-w5p.put(profile(pp5p, name="openlist"))
+w5p.put(project_file(pp5p, name="openlist"))
 w5p.run()
 d5p = load(fwfile(pp5p)) or {}
 check("open: an `open` that is not a table is left out of the file, as for walk -- %s" % d5p.get("open", "absent"),
@@ -488,7 +488,7 @@ forge_json(integrations=INTEGRATIONS_ON)
 # ------------------------------------------------------------------------------- 2. false: both directions
 pp6 = project(gitignore="node_modules/\n", commit_ignore=True)
 w6 = World()
-w6.put(profile(pp6, name="off", framework=False))
+w6.put(project_file(pp6, name="off", framework=False))
 code, out = w6.run()
 check("false: exit 0 and the run prints no framework line", code == 0 and not fwlines(out), out)
 check("false: no file, no marketplace, no plugin, no key", not os.path.exists(fwfile(pp6)) and sl_keys(pp6)[1] == {}
@@ -496,21 +496,21 @@ check("false: no file, no marketplace, no plugin, no key", not os.path.exists(fw
 check("false: the .gitignore is untouched", raw(os.path.join(pp6, ".gitignore")) == b"node_modules/\n", raw(os.path.join(pp6, ".gitignore")))
 pp7 = project()
 w7 = World()
-w7.put(profile(pp7, name="absent", framework="DROP"))
+w7.put(project_file(pp7, name="absent", framework="DROP"))
 code, out = w7.run()
 check("absent: nothing either", code == 0 and not os.path.exists(fwfile(pp7)) and "toyfw" not in json.dumps(load(slp(pp7)) or {}), out)
 
 # true -> false: the file, the two keys and the key env go; a foreign marketplace, a foreign file and the rest stay.
 pp8 = project()
 w8 = World()
-w8.put(profile(pp8, name="flip"))
+w8.put(project_file(pp8, name="flip"))
 w8.run()
 s = load(slp(pp8)) or {}
 s.setdefault("extraKnownMarketplaces", {})["other"] = {"source": {"source": "github", "repo": "toy-org/other"}}
 lib.write_json(slp(pp8), s)
 with open(os.path.join(pp8, ".claude", "keep-me.json"), "w") as f:
     f.write("{}")
-w8.put(profile(pp8, name="flip", framework=False))
+w8.put(project_file(pp8, name="flip", framework=False))
 code, out = w8.run(apply=False)
 check("true -> false, dry-run: says what it would remove, removes nothing",
       os.path.exists(fwfile(pp8)) and "toyfw@toyfw" in sl_keys(pp8)[0] and any("would remove" in l for l in fwlines(out)), out)
@@ -518,7 +518,7 @@ code, out = w8.run()
 en, mk, ev = sl_keys(pp8)
 check("true -> false: exit 0 -- %s" % bang(out), code == 0, out)
 check("true -> false: .claude/toyfw.json is gone", not os.path.exists(fwfile(pp8)), "")
-check("true -> false: enabledPlugins no longer has toyfw@toyfw, the profile's keep entry stays",
+check("true -> false: enabledPlugins no longer has toyfw@toyfw, the project's keep entry stays",
       "toyfw@toyfw" not in en and en.get("keep@toy") is True, en)
 check("true -> false: extraKnownMarketplaces.toyfw is gone, the foreign marketplace stays", NAME not in mk and "other" in mk, mk)
 check("true -> false: env.LINEAR_API_KEY is gone", "LINEAR_API_KEY" not in ev, ev)
@@ -534,7 +534,7 @@ check("true -> false, again: nothing to do, bytes unchanged, no framework line",
 # true -> false with the file edited by hand: it stays, one `!` line; the marketplace key edited: stays, `!`.
 pp9 = project()
 w9 = World()
-w9.put(profile(pp9, name="hand"))
+w9.put(project_file(pp9, name="hand"))
 w9.run()
 d = load(fwfile(pp9)) or {}
 d["rounds"] = 9
@@ -542,7 +542,7 @@ lib.write_json(fwfile(pp9), d)
 s = load(slp(pp9)) or {}
 s.setdefault("extraKnownMarketplaces", {}).setdefault(NAME, {"source": {}}).setdefault("source", {})["path"] = "/somewhere/else"
 lib.write_json(slp(pp9), s)
-w9.put(profile(pp9, name="hand", framework=False))
+w9.put(project_file(pp9, name="hand", framework=False))
 code, out = w9.run()
 check("hand-edited: the file stays with its edit", (load(fwfile(pp9)) or {}).get("rounds") == 9, os.path.exists(fwfile(pp9)))
 check("hand-edited: the marketplace key stays with its edit", sl_keys(pp9)[1].get(NAME, {}).get("source", {}).get("path") == "/somewhere/else",
@@ -554,7 +554,7 @@ check("hand-edited: one `!` line each, exit 1",
 # ------------------------------------------------------------------------------------- 3. the secret, the repo
 w10 = World(secrets={})
 pp10 = project()
-w10.put(profile(pp10, name="nokey"))
+w10.put(project_file(pp10, name="nokey"))
 code, out = w10.run()
 lines = [l for l in out.splitlines() if "NOT RUN, NOT ARMED" in l and "LINEAR_API_KEY" in l]
 check("no secret: one NOT RUN, NOT ARMED line, no `!` -- %s" % lines,
@@ -565,13 +565,13 @@ check("no secret: exit 0, the file and the plugin are still there", code == 0 an
 check("no secret: no env key written", "LINEAR_API_KEY" not in sl_keys(pp10)[2], sl_keys(pp10)[2])
 w11 = World()
 pp11 = project()
-w11.put(profile(pp11, name="withkey"))
+w11.put(project_file(pp11, name="withkey"))
 code, out = w11.run()
 check("control: with the secret there is no NOT RUN line", "LINEAR_API_KEY" not in out, out)
 
 pp12 = project(gitignore="node_modules/\n", commit_ignore=True)
 w12 = World()
-w12.put(profile(pp12, name="repoowned", writes_tracked_files=False))
+w12.put(project_file(pp12, name="repoowned", writes_tracked_files=False))
 code, out = w12.run()
 exclude = raw(os.path.join(pp12, ".git", "info", "exclude")) or b""
 check("writes_tracked_files false: the line is in .git/info/exclude, anchored", b"/.claude/toyfw.json" in exclude.splitlines()
@@ -587,7 +587,7 @@ def nothing_written(p):
 
 w = World()
 pp = project()
-w.put(profile(pp, name="nokeep", plugins_keep="DROP"))
+w.put(project_file(pp, name="nokeep", plugins_keep="DROP"))
 code, out = w.run()
 check("no plugins_keep: a `!` line that names plugins_keep -- %s" % bang(out), any("plugins_keep" in l for l in bang(out)), out)
 check("no plugins_keep: exit 1 and nothing written (no toyfw.json, no enabledPlugins)",
@@ -596,21 +596,21 @@ check("no plugins_keep: exit 1 and nothing written (no toyfw.json, no enabledPlu
 forge_json(fw={k: v for k, v in FW.items() if k != "plugin_source"}, integrations=INTEGRATIONS_ON)
 w = World()
 pp = project()
-w.put(profile(pp, name="nosource"))
+w.put(project_file(pp, name="nosource"))
 code, out = w.run()
 check("no plugin_source: a `!` line that names it, exit 1, nothing written",
       code == 1 and any("plugin_source" in l for l in bang(out)) and nothing_written(pp), (code, bang(out)))
 forge_json(fw=None, integrations=INTEGRATIONS_ON)
 w = World()
 pp = project()
-w.put(profile(pp, name="nosection"))
+w.put(project_file(pp, name="nosection"))
 code, out = w.run()
 check("no framework section: the same", code == 1 and any("plugin_source" in l for l in bang(out)) and nothing_written(pp), (code, bang(out)))
 
 forge_json(fw=dict(FW, plugin_source={"source": "git", "url": "https://example.org/toyfw.git"}), integrations=INTEGRATIONS_ON)
 w = World()
 pp = project()
-w.put(profile(pp, name="git"))
+w.put(project_file(pp, name="git"))
 code, out = w.run()
 check("a source that is not a directory: `!`, exit 1, nothing written",
       code == 1 and any("directory" in l for l in bang(out)) and nothing_written(pp), (code, bang(out)))
@@ -619,21 +619,21 @@ forge_json(integrations=INTEGRATIONS_ON)
 plugin_dir(marketplace=False)
 w = World()
 pp = project()
-w.put(profile(pp, name="nomarket"))
+w.put(project_file(pp, name="nomarket"))
 code, out = w.run()
 check("a folder without marketplace.json: `!` naming it, exit 1, nothing written -- %s" % bang(out),
       code == 1 and any("marketplace.json" in l for l in bang(out)) and nothing_written(pp), (code, bang(out)))
 plugin_dir(listed="other")
 w = World()
 pp = project()
-w.put(profile(pp, name="unlisted"))
+w.put(project_file(pp, name="unlisted"))
 code, out = w.run()
 check("a marketplace that lists no plugin of its name: `!`, exit 1, nothing written -- %s" % bang(out),
       code == 1 and any("marketplace.json" in l or "lists" in l for l in bang(out)) and nothing_written(pp), (code, bang(out)))
 plugin_dir(listed=None)
 w = World()
 pp = project()
-w.put(profile(pp, name="empty"))
+w.put(project_file(pp, name="empty"))
 code, out = w.run()
 check("a marketplace that lists no plugin at all: the same", code == 1 and nothing_written(pp), (code, bang(out)))
 os.makedirs(os.path.join(HOME, "plug", "traversal", ".claude-plugin"), exist_ok=True)
@@ -642,7 +642,7 @@ with open(os.path.join(HOME, "plug", "traversal", ".claude-plugin", "marketplace
 forge_json(fw=dict(FW, plugin_source={"source": "directory", "path": "~/plug/traversal"}), integrations=INTEGRATIONS_ON)
 w = World()
 pp = project()
-w.put(profile(pp, name="evil"))
+w.put(project_file(pp, name="evil"))
 code, out = w.run()
 check("a plugin name that is not a plain identifier: `!`, exit 1, nothing written outside .claude/",
       code == 1 and bang(out) and not os.path.exists(os.path.join(pp, "evil.json")) and nothing_written(pp)
@@ -653,11 +653,11 @@ plugin_dir()
 # ------------------------------------------------------------------------------------ 5. forge uninstall NAME
 w = World()
 pp = project()
-w.put(profile(pp, name="gone"))
+w.put(project_file(pp, name="gone"))
 w.run()
 check("uninstall: setup, the file is there", os.path.exists(fwfile(pp)) and "toyfw@toyfw" in sl_keys(pp)[0], "")
 w.drop("gone")
-sync.CFG, lib.PROFILES = w.cfg, w.pdir
+sync.CFG, lib.PROJECTS = w.cfg, w.pdir
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     code = uninstall.main(argparse.Namespace(integration=None, project="gone", apply=True))
@@ -674,7 +674,7 @@ reset_registry()
 want_argv = ["plugin", "marketplace", "add", plugin, "--scope", "local"]
 w = World()
 pp = project()
-w.put(profile(pp, name="regb"))
+w.put(project_file(pp, name="regb"))
 code, out = w.run(apply=False)
 check("branch B, dry-run: no call to claude", calls() == [], calls())
 check("branch B, dry-run: the line says the command it would run, no `!`, exit 0",
@@ -685,7 +685,7 @@ check("branch B: the first apply calls `claude plugin marketplace add <path> --s
 code, out = w.run()
 check("branch B: two applies make one `marketplace add` -- calls %d" % len(calls()), len(calls()) == 1, calls())
 pp_b = project()
-w.put(profile(pp_b, name="regb2"))
+w.put(project_file(pp_b, name="regb2"))
 code, out = w.run()
 check("branch B: a second project finds the machine registry already holding the marketplace: still one call",
       len(calls()) == 1 and code == 0, calls())
@@ -693,7 +693,7 @@ reset_registry()
 os.remove(os.path.join(BIN, "claude"))
 w = World()
 pp = project()
-w.put(profile(pp, name="noclaude"))
+w.put(project_file(pp, name="noclaude"))
 code, out = w.run()
 check("no claude on PATH, apply: a `!` line that holds the command as the fix, exit 1",
       code == 1 and any("claude plugin marketplace add" in l and "--scope local" in l for l in bang(out)), (code, bang(out)))
@@ -703,7 +703,7 @@ install_fake(exit_code=3)
 reset_registry()
 w = World()
 pp = project()
-w.put(profile(pp, name="failing"))
+w.put(project_file(pp, name="failing"))
 code, out = w.run()
 check("claude exits 3: a `!` line, exit 1", code == 1 and bang(out), (code, bang(out)))
 install_fake()
@@ -711,13 +711,13 @@ reset_registry()
 # framework false never calls claude, and turning it off does not remove the machine's entry.
 w = World()
 pp = project()
-w.put(profile(pp, name="off2", framework=False))
+w.put(project_file(pp, name="off2", framework=False))
 w.run()
 check("false: no call to claude", calls() == [], calls())
-w.put(profile(pp, name="off2"))
+w.put(project_file(pp, name="off2"))
 w.run()
 n_after_on = len(calls())
-w.put(profile(pp, name="off2", framework=False))
+w.put(project_file(pp, name="off2", framework=False))
 w.run()
 check("true -> false: the machine's registry entry is left (it is shared by every project)",
       n_after_on == 1 and len(calls()) == 1 and os.path.exists(REGISTRY_FILE) and NAME in load(REGISTRY_FILE), calls())
@@ -770,7 +770,7 @@ if repo:
     why, diff = seed_diff(repo)
     check("m15: examples/forge.json's framework.models equal the framework repo's DEFAULTS", why is None and diff == {}, (why, diff))
 
-# ------------------------------------------------------------------ 7. 3.6 U3b: baseRef and the four profile fields
+# ------------------------------------------------------------------ 7. 3.6 U3b: baseRef and the four project fields
 forge_json(integrations=INTEGRATIONS_ON)
 plugin_dir()
 
@@ -783,14 +783,14 @@ def base_claims(p):
     return [c for c in claims_of(slp(p)) if c["at"][:1] == ["worktree"]]
 
 
-# baseRef: a `true` profile gets it, a `false` one nothing, true -> false takes it out, a foreign worktree key stays.
+# baseRef: a `true` project gets it, a `false` one nothing, true -> false takes it out, a foreign worktree key stays.
 ppb = project()
 wb = World()
-wb.put(profile(ppb, name="baseref"))
+wb.put(project_file(ppb, name="baseref"))
 code, out = wb.run(apply=False)
 check("baseRef: a dry-run writes nothing", not os.path.exists(slp(ppb)) and "baseRef" in out, out)
 code, out = wb.run()
-check("baseRef: a `true` profile gets worktree.baseRef \"head\" -- worktree %s" % worktree_of(ppb),
+check("baseRef: a `true` project gets worktree.baseRef \"head\" -- worktree %s" % worktree_of(ppb),
       worktree_of(ppb) == {"baseRef": "head"}, worktree_of(ppb))
 check("baseRef: the summary line names it", any("worktree.baseRef" in l for l in out.splitlines() if "overrides ->" in l), out)
 check("baseRef: it is an owned key claim", [c["kind"] for c in base_claims(ppb)] == ["key"] and base_claims(ppb)[0]["at"] == ["worktree", "baseRef"],
@@ -801,38 +801,38 @@ check("baseRef: a second apply leaves the file byte-identical", raw(slp(ppb)) ==
 s = load(slp(ppb))
 s.setdefault("worktree", {})["symlinkDirectories"] = ["node_modules"]
 lib.write_json(slp(ppb), s)
-wb.put(profile(ppb, name="baseref", framework=False))
+wb.put(project_file(ppb, name="baseref", framework=False))
 code, out = wb.run()
 check("baseRef: true -> false takes baseRef out and leaves the foreign worktree key -- worktree %s" % worktree_of(ppb),
       code == 0 and worktree_of(ppb) == {"symlinkDirectories": ["node_modules"]} and not base_claims(ppb), (code, out))
-wb.put(profile(ppb, name="baseref"))
+wb.put(project_file(ppb, name="baseref"))
 wb.run()
 check("baseRef: back to true, it is there again", (worktree_of(ppb) or {}).get("baseRef") == "head", worktree_of(ppb))
 ppo = project()
 wo = World()
-wo.put(profile(ppo, name="baserefoff", framework=False))
+wo.put(project_file(ppo, name="baserefoff", framework=False))
 wo.run()
-check("baseRef: a `false` profile gets no worktree key", "worktree" not in (load(slp(ppo)) or {}), load(slp(ppo)))
+check("baseRef: a `false` project gets no worktree key", "worktree" not in (load(slp(ppo)) or {}), load(slp(ppo)))
 ppa = project()
 wa = World()
-wa.put(profile(ppa, name="baserefabsent", framework="DROP"))
+wa.put(project_file(ppa, name="baserefabsent", framework="DROP"))
 wa.run()
-check("baseRef: a profile without the field gets no worktree key", "worktree" not in (load(slp(ppa)) or {}), load(slp(ppa)))
+check("baseRef: a project without the field gets no worktree key", "worktree" not in (load(slp(ppa)) or {}), load(slp(ppa)))
 pph = project()
 wh = World()
-wh.put(profile(pph, name="basereftwo"))
+wh.put(project_file(pph, name="basereftwo"))
 wh.run()
 s = load(slp(pph))
 s.setdefault("worktree", {})["baseRef"] = "fresh"
 lib.write_json(slp(pph), s)
-wh.put(profile(pph, name="basereftwo", framework=False))
+wh.put(project_file(pph, name="basereftwo", framework=False))
 code, out = wh.run()
 check("baseRef: edited by hand, it stays and one `!` line names it, exit 1",
       worktree_of(pph) == {"baseRef": "fresh"} and code == 1
       and len([l for l in bang(out) if "worktree.baseRef" in l and "left" in l]) == 1, (worktree_of(pph), code, bang(out)))
 ppn = project()
 wn = World()
-wn.put(profile(ppn, name="baserefshape"))
+wn.put(project_file(ppn, name="baserefshape"))
 wn.run()
 s = load(slp(ppn))
 s["worktree"] = "by hand"
@@ -841,7 +841,7 @@ code, out = wn.run()
 check("baseRef: a worktree that is not an object is left alone and named, not crashed on -- %s" % bang(out),
       load(slp(ppn)).get("worktree") == "by hand" and any("worktree is not an object" in l for l in out.splitlines()), (code, out))
 
-# profile_error: the four fields, each bad shape rejected and each good one accepted (a control that the rows do not reject all).
+# project_error: the four fields, each bad shape rejected and each good one accepted (a control that the rows do not reject all).
 GOOD_APP = {"up": "make up", "run": "", "down": "make down", "url": "http://localhost:3000"}
 GOOD_IMG = {"dockerfile": "Dockerfile.ui", "expect": "Sign in"}
 for label, field, value in (("checks_quick list", "checks_quick", ["pnpm tsc", "pnpm lint"]), ("checks_quick empty", "checks_quick", []),
@@ -857,8 +857,8 @@ for label, field, value in (("checks_quick list", "checks_quick", ["pnpm tsc", "
                             ("worktree_setup list", "worktree_setup", ["npm ci", "make deps"]),
                             ("worktree_setup empty", "worktree_setup", []),
                             ("ui_image in a subfolder", "ui_image", dict(GOOD_IMG, dockerfile="ui/Dockerfile"))):
-    why = lib.profile_error({"project": "x", "project_path": "/x", field: value})
-    check("profile_error accepts %s -- %s" % (label, why), why is None, why)
+    why = lib.project_error({"project": "x", "project_path": "/x", field: value})
+    check("project_error accepts %s -- %s" % (label, why), why is None, why)
 for label, field, value, word in (
         ("checks_quick as a string", "checks_quick", "pnpm tsc", "checks_quick"),
         ("checks_quick with a non-string", "checks_quick", ["pnpm tsc", 3], "checks_quick"),
@@ -896,19 +896,19 @@ for label, field, value, word in (
         ("ui_image with dockerfile a/../../x", "ui_image", dict(GOOD_IMG, dockerfile="a/../../x"), "dockerfile"),
         ("ui_image with an absolute dockerfile", "ui_image", dict(GOOD_IMG, dockerfile="/etc/passwd"), "dockerfile"),
         ("ui_image with a key it has no slot for", "ui_image", dict(GOOD_IMG, extra="x"), "extra")):
-    why = lib.profile_error({"project": "x", "project_path": "/x", field: value})
-    check("profile_error rejects %s, naming %s -- %s" % (label, word, why), why is not None and word in why, why)
+    why = lib.project_error({"project": "x", "project_path": "/x", field: value})
+    check("project_error rejects %s, naming %s -- %s" % (label, word, why), why is not None and word in why, why)
 bad = World()
 ppbad = project()
-bad.put(profile(ppbad, name="badimg", ui_image={"expect": "Sign in"}))
+bad.put(project_file(ppbad, name="badimg", ui_image={"expect": "Sign in"}))
 code, out = bad.run()
-check("a profile with a bad ui_image: the run says so and writes no framework file -- exit %d" % code,
+check("a project with a bad ui_image: the run says so and writes no framework file -- exit %d" % code,
       code != 0 and "ui_image" in out and not os.path.exists(fwfile(ppbad)), out)
 
 # The two fields reach .claude/fwx.json; absent they are false and null.
 ppf = project()
 wf = World()
-wf.put(profile(ppf, name="fields", default_branch_protected=True, ui_image=GOOD_IMG, app_run=GOOD_APP, checks_quick=["pnpm tsc"]))
+wf.put(project_file(ppf, name="fields", default_branch_protected=True, ui_image=GOOD_IMG, app_run=GOOD_APP, checks_quick=["pnpm tsc"]))
 code, out = wf.run()
 pf = (load(fwfile(ppf)) or {}).get("project", {})
 check("fields: default_branch_protected true reaches project.default_branch_protected -- %s" % pf.get("default_branch_protected", "missing from fwx.json"),
@@ -918,14 +918,14 @@ check("fields: app_run and checks_quick still reach the file", pf.get("app_run")
 ppr = project()
 wr = World()
 READY_APP = dict(GOOD_APP, ready="Dashboard", ready_timeout_s=12.5)
-wr.put(profile(ppr, name="readyapp", app_run=READY_APP))
+wr.put(project_file(ppr, name="readyapp", app_run=READY_APP))
 code, out = wr.run()
 pr = (load(fwfile(ppr)) or {}).get("project", {})
 check("fields: app_run.ready and ready_timeout_s reach project.app_run unchanged -- %s" % pr.get("app_run", "missing from fwx.json"),
       pr.get("app_run") == READY_APP, pr.get("app_run"))
 ppd = project()
 wd = World()
-wd.put(profile(ppd, name="defaults"))
+wd.put(project_file(ppd, name="defaults"))
 wd.run()
 pd = (load(fwfile(ppd)) or {}).get("project", {})
 check("fields: without them, project.default_branch_protected is false and project.ui_image null -- %s" % {k: pd.get(k, "missing") for k in ("default_branch_protected", "ui_image")},
@@ -934,19 +934,19 @@ check("fields: without them, project.default_branch_protected is false and proje
 # worktree_setup reaches project.worktree_setup of the file.
 ppw = project()
 ww = World()
-ww.put(profile(ppw, name="setup", worktree_setup=["npm ci", "make deps"]))
+ww.put(project_file(ppw, name="setup", worktree_setup=["npm ci", "make deps"]))
 ww.run()
 pw = (load(fwfile(ppw)) or {}).get("project", {})
 check("fields: worktree_setup reaches project.worktree_setup -- %s" % pw.get("worktree_setup", "missing from fwx.json"),
       pw.get("worktree_setup") == ["npm ci", "make deps"], pw)
-# A profile without the field leaves the file as it was before the field existed (CLAUDE.md rule 2: the dry-run is byte-identical), so the
+# A project without the field leaves the file as it was before the field existed (CLAUDE.md rule 2: the dry-run is byte-identical), so the
 # key is not written for it, nor for an empty list. fwx reads a missing key as the empty list.
 # Red before the fix: FAIL: fields: without worktree_setup, project.worktree_setup is not written -- []
 check("fields: without worktree_setup, project.worktree_setup is not written -- %s" % pd.get("worktree_setup", "missing from fwx.json"),
       "worktree_setup" not in pd, pd)
 ppe = project()
 we = World()
-we.put(profile(ppe, name="setupempty", worktree_setup=[]))
+we.put(project_file(ppe, name="setupempty", worktree_setup=[]))
 we.run()
 pe = (load(fwfile(ppe)) or {}).get("project", {})
 check("fields: with an empty worktree_setup, project.worktree_setup is not written either -- %s" % pe.get("worktree_setup", "missing from fwx.json"),

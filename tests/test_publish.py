@@ -23,11 +23,11 @@ FORGE = sandbox.FORGE
 ALLOWLIST = os.path.join(FORGE, "publish", "engine.gitignore")
 DENY = os.path.join(FORGE, "config", "publish-deny.txt")
 # The two private files exist wherever the data does; a stranger's checkout has neither, and then
-# the cases that need them print NOT RUN instead of failing. config/profiles/ alone is not the
+# the cases that need them print NOT RUN instead of failing. config/projects/ alone is not the
 # data: `forge init` creates it in a stranger's checkout (red there before, M1: "FAIL
 # config/publish-deny.txt does not exist", "FAIL publish/engine.gitignore does not exist"). Either
 # file present is the data, so a checkout that lost one of them still fails on that one.
-HAVE_DATA = os.path.isdir(os.path.join(FORGE, "config", "profiles")) and (os.path.exists(DENY) or os.path.exists(ALLOWLIST))
+HAVE_DATA = os.path.isdir(os.path.join(FORGE, "config", "projects")) and (os.path.exists(DENY) or os.path.exists(ALLOWLIST))
 
 
 def want(label, got, expected):
@@ -419,7 +419,7 @@ def allowlist_cases():
     engine = tracked - ignored
     private = ["hooks/test_audit_tool_use.py",
                "hooks/audit_tool_use.py", "hooks/track_skill_usage.py", "scripts/sync/hindsight_doctor.py",
-               "scripts/sync/test_hindsight_doctor.py", "tests/test_gate.py", j("config/profiles/life", "os.claude.json"),
+               "scripts/sync/test_hindsight_doctor.py", "tests/test_gate.py", j("config/projects/life", "os.claude.json"),
                "config/mcp-registry.json", "config/toolchain.json", "docs/portable-design.md", "design/taste/README.md",
                "skills/new-project/SKILL.md", j("mcp-servers/vdw", "aals-mcp.py"), "scripts/dev/gate.py",
                "scripts/backup/t7-backup.sh", ".claude/settings.json", "publish/engine.gitignore"]
@@ -436,10 +436,10 @@ def allowlist_cases():
     want("every named engine path is tracked", sorted(p for p in public if p not in tracked), [])
     # docs/assets/ holds the README's images and benchmarks/skill-bench/ the benchmark, which are public; the rest of
     # docs/ and benchmarks/ is not. Of config/, gsd/ and the lock (the versions a release ships) are.
-    want("no skill, doc, design file or profile in the engine",
+    want("no skill, doc, design file or project in the engine",
          sorted(p for p in engine if (p.split("/")[0] in ("skills", "docs", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
                                       and not p.startswith(("docs/assets/", "benchmarks/skill-bench/")))
-                or p.startswith("config/profiles/")
+                or p.startswith("config/projects/")
                 or (p.startswith("config/") and not p.startswith("config/gsd/") and p != "config/forge.lock.json")), [])
     # The private list runs over today's engine files: exit 0, no hit in any file. The gate's `public tree` row
     # holds the same state from the other side.
@@ -453,7 +453,7 @@ def allowlist_cases():
     leaked = sorted(set(l.split()[1].rsplit(":", 1)[0] for l in hits
                         if (l.split()[1].split("/")[0] in ("docs", "skills", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
                             and not l.split()[1].startswith(("docs/assets/", "benchmarks/skill-bench/")))
-                        or l.split()[1].startswith("config/profiles/")))
+                        or l.split()[1].startswith("config/projects/")))
     want("the control names nothing outside the engine", leaked, [])
 
 
@@ -592,7 +592,7 @@ def root_cases():
 # --- 5. forge commit
 def commit_cases():
     root = toy("overlay", overlay=True)
-    write(root, "config/profiles/a.claude.json", "{}\n")
+    write(root, "config/projects/a.claude.json", "{}\n")
     write(root, "notes.txt", "n\n")
     code, out = forge(root, "commit", "--all", "-m", "seed")
     want("seed = exit", code, 0)
@@ -601,36 +601,36 @@ def commit_cases():
     if os.path.isdir(os.path.join(root, "githooks")):
         engine += ["githooks/" + f for f in os.listdir(os.path.join(root, "githooks"))]
     want("seed: engine files", files_of(root), sorted(engine))
-    want("seed: data files", files_of(root, data=True), ["config/profiles/a.claude.json", "notes.txt"])
+    want("seed: data files", files_of(root, data=True), ["config/projects/a.claude.json", "notes.txt"])
     want("seed: nothing from either git directory in the data history",
          [f for f in files_of(root, data=True) if f.startswith((".git/", ".forge-data.git/"))], [])
     want("seed: a second run has nothing to commit = exit", forge(root, "commit", "--all", "-m", "again")[0], 0)
     # The routing: one change in each history, and a new file outside the allowlist.
     e0, d0 = head(root), head(root, data=True)
     write(root, "forge/extra.py", "X = 1\n")
-    write(root, "config/profiles/a.claude.json", '{"a": 1}\n')
+    write(root, "config/projects/a.claude.json", '{"a": 1}\n')
     write(root, "notes/new.md", "new\n")
     code, out = forge(root, "commit", "--all", "-m", "mixed change")
     want("mixed change = exit", code, 0)
     want("mixed: engine files", files_of(root), ["forge/extra.py"])
-    want("mixed: data files", files_of(root, data=True), ["config/profiles/a.claude.json", "notes/new.md"])
+    want("mixed: data files", files_of(root, data=True), ["config/projects/a.claude.json", "notes/new.md"])
     want("mixed: both histories grew by one", (g(root, "rev-list", "--count", e0 + "..HEAD")[1].strip(),
                                                g(root, "rev-list", "--count", d0 + "..HEAD", data=True)[1].strip()), ("1", "1"))
     want("mixed: one message", (g(root, "log", "-1", "--format=%s")[1].strip(), g(root, "log", "-1", "--format=%s", data=True)[1].strip()),
          ("mixed change", "mixed change"))
     has("mixed: both hashes", out, head(root)[:7], head(root, data=True)[:7])
     has("mixed: the private-by-default line", out, "notes/new.md went to the private history; to publish it, add !/notes/new.md to .gitignore")
-    lacks("mixed: a tracked data file is not announced", out, "config/profiles/a.claude.json went")
+    lacks("mixed: a tracked data file is not announced", out, "config/projects/a.claude.json went")
     want("mixed: nothing left in either", dirty(root), ([], []))
     # Named paths narrow the set.
     write(root, "forge/extra.py", "X = 2\n")
-    write(root, "config/profiles/a.claude.json", '{"a": 2}\n')
+    write(root, "config/projects/a.claude.json", '{"a": 2}\n')
     write(root, "notes.txt", "changed\n")
     code, out = forge(root, "commit", "-m", "only one", "notes.txt")
     want("named path = exit", code, 0)
     want("named path: data files", files_of(root, data=True), ["notes.txt"])
     want("named path: the engine did not move", files_of(root), ["forge/extra.py"])
-    want("named path: the other changes stay", dirty(root), ([" M forge/extra.py"], [" M config/profiles/a.claude.json"]))
+    want("named path: the other changes stay", dirty(root), ([" M forge/extra.py"], [" M config/projects/a.claude.json"]))
     # A path outside the checkout is refused.
     code, out = forge(root, "commit", "-m", "x", "/etc/hostname")
     want("a path outside the checkout = exit", code, 2)
@@ -737,7 +737,7 @@ def hook_cases():
         p = os.path.join(real, name)
         want("githooks/%s is an executable file" % name, os.path.isfile(p) and os.access(p, os.X_OK), True)
     root = toy("hooks", overlay=True)
-    write(root, "config/profiles/a.claude.json", "{}\n")
+    write(root, "config/projects/a.claude.json", "{}\n")
     code, out = forge(root, "commit", "--all", "-m", "seed")
     want("hooks: seed = exit", code, 0)
     git_out(root, "config", "core.hooksPath", "githooks")
@@ -751,12 +751,12 @@ def hook_cases():
     code, out = g(root, "commit", "-q", "-m", "clean")
     want("pre-commit, a clean commit = (exit, moved)", (code, head(root) != before), (0, True))
     # ... and a data path added with -f is refused, by the hook's own words.
-    write(root, "config/profiles/a.claude.json", '{"a": 1}\n')
-    git_out(root, "add", "-f", "config/profiles/a.claude.json")
+    write(root, "config/projects/a.claude.json", '{"a": 1}\n')
+    git_out(root, "add", "-f", "config/projects/a.claude.json")
     before = head(root)
     code, out = g(root, "commit", "-q", "-m", "data")
     want("pre-commit, a data path added with -f = (exit, moved)", (code, head(root) != before), (1, False))
-    has("pre-commit, a data path added with -f", out, "pre-commit: refused", "config/profiles/a.claude.json", "ignored by .gitignore")
+    has("pre-commit, a data path added with -f", out, "pre-commit: refused", "config/projects/a.claude.json", "ignored by .gitignore")
     git_out(root, "reset", "-q")
     # pre-commit runs lint: a planted address is refused with the finding, a no-reply form passes.
     for label, text, rc in (("a planted address", "mail bob@" + j("acme", ".io") + "\n", 1), ("its no-reply form", "mail " + NOREPLY + "\n", 0)):

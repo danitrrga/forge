@@ -1,5 +1,5 @@
 {
-  "_doc": "A toy profile that declares hooks and turns the command guard on, for tests/test_profile_hooks.py: the audit and the tracker as a project's profile declares them, the guard left to command_guard.",
+  "_doc": "A toy project that declares hooks and turns the command guard on, for tests/test_project_hooks.py: the audit and the tracker as a project file declares them, the guard left to command_guard.",
   "project": "hooked-app",
   "project_path": "/srv/toy/hooked-app",
   "command_guard": true,

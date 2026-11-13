@@ -2,12 +2,12 @@
 """Part 1.1 (consent window), unit U4: the `consent` row of `forge doctor` (forge/cli.py consent_row).
 
 Off: a SKIP that says NOT RUN, NOT ARMED. On: the first problem found is a FAIL that names its fix, in this order:
-gateway.json, adapter, built-in adapter's tools, no profile with `production`, the `--consent` entry of
+gateway.json, adapter, built-in adapter's tools, no project with `production`, the `--consent` entry of
 ~/.claude/settings.json (missing, onFailure not "block"), timeout_s not below the entry's timeout, then the smoke
 test: the entry's exact command, run with shell=True under the hook's own cap, on `git status` (must exit 0) and on an
 unattended push to a production branch (must exit 2 with CONSENT_UNATTENDED:). The PASS says what it looked at.
 
-A toy world per case: a toy forge root (a copy of the guard, gateway.json, profiles, scripts/consent/), a toy HOME with
+A toy world per case: a toy forge root (a copy of the guard, gateway.json, projects, scripts/consent/), a toy HOME with
 a settings.json, a PATH holding only a fake directory (python3 linked in, `gum` and the Omarchy launcher stubs), and
 fake guards written here for the smoke test. The real guard of this branch still answers a match with `CONSENT_ERROR:
 not wired yet` (U1c builds the window flow), so the smoke test is driven against fakes that honour the contract
@@ -22,7 +22,7 @@ with the mutation applied, this file run against it), each case below went red a
   gateway check removed (consent_config not called)            -> gateway missing / invalid: "FAIL, got PASS"
   adapter check removed                                        -> adapter not there / not executable: got PASS
   gum / launcher check removed                                 -> built-in without gum / launcher: got PASS
-  production check removed (`declared` never empty)            -> no profile declares production: got PASS
+  production check removed (`declared` never empty)            -> no project declares production: got PASS
   entry check removed / onFailure check removed                -> no entry, onFailure absent / "allow": got PASS
   timeout comparison `limit >= cap` weakened to `limit > cap`  -> timeout_s == cap (the boundary): got PASS
   smoke test removed (consent_probe returns None, the same as the `entry exists` control below)
@@ -114,16 +114,16 @@ sys.exit(0)
 DEFAULT_PROD = {"branches": ["main"], "commands": ["vercel deploy --prod"]}
 
 
-def world(consent=True, gateway="ok", adapter="omarchy", timeout_s=120, profiles="prod", guard="good", entry="ok",
+def world(consent=True, gateway="ok", adapter="omarchy", timeout_s=120, projects="prod", guard="good", entry="ok",
           cap=300, on_failure="block", tools=("gum", "omarchy-launch-floating-terminal-with-presentation"),
           adapter_mode=EXE, prod=DEFAULT_PROD):
     """A toy forge root, HOME and PATH for one case; returns the fake guard's directory. `gateway`: "ok", "missing",
-    "broken" or a path for the adapter; `profiles`: "prod", "none" or "invalid"; `entry`: "ok", "missing",
+    "broken" or a path for the adapter; `projects`: "prod", "none" or "invalid"; `entry`: "ok", "missing",
     "nofile" (the command names a .py that is not there), "no-settings" (no settings.json at all)."""
     _n[0] += 1
     top = os.path.join(TOY, "case-%d" % _n[0])
     root = os.path.join(top, "forge")
-    for sub in ("hooks", "config/profiles", "scripts/consent"):
+    for sub in ("hooks", "config/projects", "scripts/consent"):
         os.makedirs(os.path.join(root, sub))
     shutil.copy(os.path.join(REPO, "hooks", "guard_tool_use.py"), os.path.join(root, "hooks", "guard_tool_use.py"))
     write(os.path.join(root, "scripts", "consent", "omarchy"), "#!/bin/sh\nexit 0\n", adapter_mode)
@@ -143,13 +143,13 @@ def world(consent=True, gateway="ok", adapter="omarchy", timeout_s=120, profiles
         write(gpath, json.dumps(doc))
     project = os.path.join(top, "app")
     os.makedirs(project)
-    if profiles == "prod":
-        write(os.path.join(root, "config", "profiles", "app.claude.json"),
+    if projects == "prod":
+        write(os.path.join(root, "config", "projects", "app.claude.json"),
               json.dumps({"project": "app", "project_path": project, "production": prod}))
-    elif profiles == "none":
-        write(os.path.join(root, "config", "profiles", "app.claude.json"), json.dumps({"project": "app", "project_path": project}))
-    elif profiles == "invalid":
-        write(os.path.join(root, "config", "profiles", "app.claude.json"),
+    elif projects == "none":
+        write(os.path.join(root, "config", "projects", "app.claude.json"), json.dumps({"project": "app", "project_path": project}))
+    elif projects == "invalid":
+        write(os.path.join(root, "config", "projects", "app.claude.json"),
               json.dumps({"project": "app", "project_path": project, "production": {"branches": "main"}}))
     gdir = os.path.join(top, "guards")
     os.makedirs(gdir)
@@ -212,7 +212,7 @@ check("the doctor lists the row", any(c[0] == "consent" and c[1] is cli.consent_
 gdir = world()
 r = row()
 check("good world: PASS", r.level == "PASS", r)
-for piece in ("scripts/consent/omarchy", "timeout_s 120 below the hook's 300 s", "1 profile(s) with production", "`git status` exits 0",
+for piece in ("scripts/consent/omarchy", "timeout_s 120 below the hook's 300 s", "1 project(s) with production", "`git status` exits 0",
               "`git push origin main` exits 2 with CONSENT_UNATTENDED:", "guard_tool_use.py --consent"):
     check("PASS says %r" % piece, piece in r.detail, r.detail)
 recs = [json.loads(l) for l in open(os.path.join(gdir, "record.jsonl"))] if os.path.exists(os.path.join(gdir, "record.jsonl")) else []
@@ -244,9 +244,9 @@ fails("adapter not there", dict(adapter="not-there"), "not there", "scripts/cons
 fails("adapter not executable", dict(adapter_mode=0o644), "not executable", "chmod +x")
 fails("built-in adapter without gum", dict(tools=("omarchy-launch-floating-terminal-with-presentation",)), "`gum`", "install gum")
 fails("built-in adapter without the Omarchy launcher", dict(tools=("gum",)), "omarchy-launch-floating-terminal-with-presentation", "another adapter")
-fails("no profile declares production", dict(profiles="none"), "no profile", "production", "never open")
-fails("no profile at all", dict(profiles="absent"), "no profile", "production")
-fails("a profile's production is invalid", dict(profiles="invalid"), "app.claude.json", "fix the profile")
+fails("no project declares production", dict(projects="none"), "no project", "production", "never open")
+fails("no project at all", dict(projects="absent"), "no project", "production")
+fails("a project's production is invalid", dict(projects="invalid"), "app.claude.json", "fix the project")
 fails("no settings.json", dict(entry="no-settings"), "settings.json", "forge sync --apply")
 fails("settings.json without the --consent entry", dict(entry="missing"), "--consent", "forge sync --apply")
 fails("entry without onFailure", dict(on_failure=None), "onFailure", '"block"', "forge sync --apply")
@@ -273,11 +273,11 @@ r = fails("a guard that answers the push with CONSENT_ERROR (the guard of this b
           "as wanted but its stderr has no CONSENT_UNATTENDED:")
 
 # ---------------------------------------------------------------- the first problem wins
-world(gateway="broken", entry="no-settings", profiles="none")
+world(gateway="broken", entry="no-settings", projects="none")
 r = row()
-check("gateway.json broken, no profile and no settings.json: the gateway is named, once", r.level == "FAIL" and "gateway.json" in r.detail
+check("gateway.json broken, no project and no settings.json: the gateway is named, once", r.level == "FAIL" and "gateway.json" in r.detail
       and "settings.json" not in r.detail.split("--")[0], r.detail)
-world(profiles="none", entry="no-settings")
+world(projects="none", entry="no-settings")
 r = row()
 check("no production and no settings.json: production first", r.level == "FAIL" and "production" in r.detail, r.detail)
 world(entry="nofile", timeout_s=300)

@@ -294,7 +294,7 @@ def copy_engine(dst):
     """The engine files only, as they are on disk: what git tracks (`ls-files -c`) less what
     publish/engine.gitignore leaves out (`ls-files -c -i --exclude-from=...`), which is what a
     stranger's checkout holds (docs/portable-design.md section 10). No config/forge.json, no
-    profiles, no skills/. Not a git repo: a suite that needs one runs `git init` itself. Where there is
+    projects, no skills/. Not a git repo: a suite that needs one runs `git init` itself. Where there is
     no publish/engine.gitignore (a checkout that is already an engine, after the split, or a copy of one
     that a suite is running in) every tracked file is an engine file: copy_checkout(untracked=False)."""
     if not os.path.exists(os.path.join(FORGE, "publish", "engine.gitignore")):

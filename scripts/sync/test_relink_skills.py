@@ -4,7 +4,7 @@ other links and the other mirror still get done, the run exits 1, and a real dir
 mirror is never deleted.
 
 A copy of the script and forge/lib.py runs from a temp dir laid out like forge (forge/, home/
-side by side, no profiles), with a temp HOME whose ~/.claude/skills is read-only and holds one
+side by side, no projects), with a temp HOME whose ~/.claude/skills is read-only and holds one
 skill to link, one stale link to repoint, one dangling link to prune, one real directory and
 one correct link; ~/.codex/skills is writable and empty. It runs in an empty network namespace
 as this uid, not as the namespace's root (`unshare -rn`), which would ignore the 0555.
@@ -67,7 +67,7 @@ def bare_root():
     """forge/ with the four skills and an empty toy HOME: no ~/.claude, no ~/.codex."""
     tmp = sandbox.mkdtemp("relink-test-")
     root = os.path.join(tmp, "forge")
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     sandbox.mini_root(root, os.path.join("scripts", "sync", "relink_skills.py"))
     shutil.copy(FIXTURE_JSON, os.path.join(root, "config", "forge.json"))  # relink reads integrations.codex
     for n in SKILLS:
@@ -79,7 +79,7 @@ def bare_root():
 def make_root(read_only, codex=True):
     tmp = sandbox.mkdtemp("relink-test-")
     root = os.path.join(tmp, "forge")
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     sandbox.mini_root(root, os.path.join("scripts", "sync", "relink_skills.py"))
     shutil.copy(FIXTURE_JSON, os.path.join(root, "config", "forge.json"))  # relink reads integrations.codex
     for n in SKILLS:

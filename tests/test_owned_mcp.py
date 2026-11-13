@@ -4,7 +4,7 @@ tasks T3+T4+T5; forge/owned.py), so a coming `forge uninstall` can take it out w
 
   C7  ~/.claude.json: one `key` claim per server forge writes for a project, at
       ["projects", <project key>, "mcpServers", <server>], the hash of the resolved definition (it holds the
-      secret, only its SHA-256 is kept), owner the profile, part "mcp:<project key>": the file is shared by
+      secret, only its SHA-256 is kept), owner the project, part "mcp:<project key>": the file is shared by
       every project, so one project's run never erases another's claims.
   C10 <project>/.codex/config.toml (codex_harness on): kind `file`, at [], the hash of the text written,
       owner "codex", part "codex". With codex_harness off, forge takes its own tables out of the file and
@@ -93,7 +93,7 @@ def prof(p, name, **keys):
 
 
 def run_cj(ctx, *pairs, relocations=()):
-    """One ~/.claude.json run over (profile, servers) pairs, as sync.py drives it: open, relocate, project
+    """One ~/.claude.json run over (project, servers) pairs, as sync.py drives it: open, relocate, project
     each, commit."""
     errors = []
     out = io.StringIO()
@@ -179,7 +179,7 @@ check("C7: a run over project A alone leaves B's claims", len(claims(CJ, "mcp:" 
       claims(CJ))
 
 line, _ = run_cj(APPLY, (prof(pa, "toy-a"), ["srv"]), (prof(pb, "toy-b"), ["srv2"]))
-check("C7: a server taken out of B's profile loses its claim, A's and B's other claim stay",
+check("C7: a server taken out of B's project loses its claim, A's and B's other claim stay",
       sorted(tuple(c["at"])[3] for c in claims(CJ, "mcp:" + kb)) == ["srv2"] and len(claims(CJ, "mcp:" + ka)) == 1,
       claims(CJ))
 

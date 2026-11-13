@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """forge/lib.py decides which project a session writes, so a wrong answer rewrites someone
 else's config: until a fix every session start in forge or in a second project rewrote all 19 projects and
-hot-reloaded a frozen project's sessions. This builds profiles, a nested profile, a linked worktree and
+hot-reloaded a frozen project's sessions. This builds projects, a nested project, a linked worktree and
 an unregistered repo in a temp dir and checks every answer, then the lock.
 
-The None cases are the negative control: a resolver that always finds the nearest profile
+The None cases are the negative control: a resolver that always finds the nearest project
 would hand the worktree and the unregistered repo to a real project. The worktree cases were
 seen to fail by mutation: without `if linked: return None` resolve_project(app-wt/src) is
 'wtsrc', and with context's may_write guard replaced by `if False:` an --apply from a worktree
@@ -28,15 +28,15 @@ want 'returned'". The copy refusal gained "; apply from <installed>": before, "n
 checkout (a copy) = (False, '... -- nothing written'), want (False, '... -- nothing written; apply
 from .../installed')".
 
-A toy HOME only writes a toy world. Before that rule, "a toy HOME, one profile outside = (True,
-'')"; with the real-HOME exemption removed, "the real HOME with no forge entry, profiles anywhere
+A toy HOME only writes a toy world. Before that rule, "a toy HOME, one project outside = (True,
+'')"; with the real-HOME exemption removed, "the real HOME with no forge entry, projects anywhere
 (a fresh machine) = (False, 'forge: HOME is a sandbox ...')". The session-start case feeds cli the
 real refusal from every step it runs: before the pattern it "showed ''"; without the deduplication it
 showed the refusal four times, and since the app session runs two steps twice, as
 "agent config: forge: cannot tell ... | system doc: forge: cannot tell ...".
 
 Seen failing before their fixes (round 2): "context ('--project', 'app', '--project',
-'dev') = ({'app'}, False), want the exit 'forge: --project given more than once'"; "profiles() on an
+'dev') = ({'app'}, False), want the exit 'forge: --project given more than once'"; "projects() on an
 unreadable directory = {}, want PermissionError"; "session start from the cwd .../dev/app gave its
 steps CLAUDE_PROJECT_DIR [None, None, None, None]". With the flag-as-name guard deleted, "context
 ('--project', '--apply') exited with 'forge: unknown project: --apply (...)', want 'unknown project:
@@ -140,10 +140,10 @@ def read_cases(tmp):
     return failures, want.count()
 
 
-def profile_type_cases(tmp):
-    """profile_error: the one place that knows each profile field's type (PROFILE_FIELDS). Red
+def project_type_cases(tmp):
+    """project_error: the one place that knows each project field's type (PROJECT_FIELDS). Red
     before it existed: "AttributeError: module 'forge.lib' has no attribute
-    'profile_error'". A present field must have its type, null included; a field the table does
+    'project_error'". A present field must have its type, null included; a field the table does
     not name is not checked; a bool is not an int and an int is not a bool."""
     want, failures = checker()
     ok = {"project": "x", "project_path": "/p", "servers": ["a"], "skills_keep": ["*"], "plugins_keep": [],
@@ -151,10 +151,10 @@ def profile_type_cases(tmp):
           "writes_tracked_files": False, "enableAllProjectMcpServers": False,
           "mcpjson_approved": [], "mcpjson_disabled": ["s"], "hooks": {"E": []}, "command_guard": True, "_doc": 1, "some_unknown_key": 5}
     for label, prof, expected in (
-            ("an empty profile", {}, None),
+            ("an empty project", {}, None),
             ("every field well typed, unknown fields ignored", ok, None),
-            ("a JSON list", [1], "the profile is not a JSON object"),
-            ("null", None, "the profile is not a JSON object"),
+            ("a JSON list", [1], "the project is not a JSON object"),
+            ("null", None, "the project is not a JSON object"),
             ("servers null", {"servers": None}, "servers is not a list of strings"),
             ("servers [5]", {"servers": [5]}, "servers is not a list of strings"),
             ("skills_keep a string", {"skills_keep": "*"}, "skills_keep is not a list of strings"),
@@ -169,14 +169,14 @@ def profile_type_cases(tmp):
             ("command_guard null", {"command_guard": None}, "command_guard is not a boolean"),
             ("command_guard \"true\"", {"command_guard": "true"}, "command_guard is not a boolean"),
             # `ui` marks a project with a user interface (its pointer block then says where a visual choice goes). Red before:
-            # "profile_error(ui \"yes\") = None, want 'ui is not a boolean'" (and 1, null).
+            # "project_error(ui \"yes\") = None, want 'ui is not a boolean'" (and 1, null).
             ("ui true", {"ui": True}, None),
             ("ui \"yes\"", {"ui": "yes"}, "ui is not a boolean"),
             ("ui 1", {"ui": 1}, "ui is not a boolean"),
             ("ui null", {"ui": None}, "ui is not a boolean"),
             # `verdict_command` is the command a ui project's pointer block names for a verdict page: a non-empty string.
-            # Red before the field existed: "profile_error(verdict_command 5) = None, want 'verdict_command is not a string'"
-            # (and null, ["x"]); "profile_error(verdict_command \"\") = None, want 'verdict_command is empty'" (and blank).
+            # Red before the field existed: "project_error(verdict_command 5) = None, want 'verdict_command is not a string'"
+            # (and null, ["x"]); "project_error(verdict_command \"\") = None, want 'verdict_command is empty'" (and blank).
             ("verdict_command set", {"verdict_command": "pnpm verdict <dir>"}, None),
             ("verdict_command 5", {"verdict_command": 5}, "verdict_command is not a string"),
             ("verdict_command null", {"verdict_command": None}, "verdict_command is not a string"),
@@ -184,8 +184,8 @@ def profile_type_cases(tmp):
             ("verdict_command empty", {"verdict_command": ""}, "verdict_command is empty"),
             ("verdict_command blank", {"verdict_command": "  "}, "verdict_command is empty"),
             # Round 10: a worktree_guard object whose "on" is not a boolean read as off, the doctor PASSed.
-            # Red before: "profile_error(worktree_guard.on "true") = None, want 'worktree_guard.on is not a
-            # boolean'" (and 1, null); "profile_error(worktree_guard true, no project) = None, want 'project
+            # Red before: "project_error(worktree_guard.on "true") = None, want 'worktree_guard.on is not a
+            # boolean'" (and 1, null); "project_error(worktree_guard true, no project) = None, want 'project
             # is missing, and worktree_guard is on (its command names the project)'" (7 of 274 failed).
             ("worktree_guard.on \"true\"", {"worktree_guard": {"on": "true"}}, "worktree_guard.on is not a boolean"),
             ("worktree_guard.on 1", {"worktree_guard": {"on": 1}}, "worktree_guard.on is not a boolean"),
@@ -199,7 +199,7 @@ def profile_type_cases(tmp):
             ("worktree_guard on, project \"\"", {"project": "", "worktree_guard": True}, "project is missing, and worktree_guard is on (its command names the project)"),
             ("guards off, no project", {"command_guard": False, "worktree_guard": {"on": False}}, None),
             ("a guard on, project named", {"project": "x", "command_guard": True, "worktree_guard": True}, None),
-            # 2.2 U5a: the framework's profile fields. Red before they had a row: "profile_error(framework \"true\") = None,
+            # 2.2 U5a: the framework's project fields. Red before they had a row: "project_error(framework \"true\") = None,
             # want 'framework is not a boolean'", the same for factory "auto" (want 'factory is not "off" or "trial"') and
             # checks "pnpm test" (want 'checks is not a list of strings'); a bool, "off", "trial" and lists pass.
             ("framework true", {"framework": True}, None),
@@ -218,35 +218,35 @@ def profile_type_cases(tmp):
             ("protected_paths a list", {"protected_paths": ["db/migrations/**"]}, None),
             ("protected_paths \"db/**\"", {"protected_paths": "db/**"}, "protected_paths is not a list of strings"),
             ("protected_paths [null]", {"protected_paths": [None]}, "protected_paths is not a list of strings")):
-        want("profile_error(%s)" % label, raised(lambda: lib.profile_error(prof)), expected)
-    # Control (2.2 U5a): the factory row is what rejects "auto". With the row taken out of PROFILE_FIELDS the same profile
-    # passes ("profile_error(factory \"auto\", no factory row) = None"), so the check above is able to fail.
-    saved_fields = dict(lib.PROFILE_FIELDS)
-    lib.PROFILE_FIELDS.pop("factory", None)
+        want("project_error(%s)" % label, raised(lambda: lib.project_error(prof)), expected)
+    # Control (2.2 U5a): the factory row is what rejects "auto". With the row taken out of PROJECT_FIELDS the same project
+    # passes ("project_error(factory \"auto\", no factory row) = None"), so the check above is able to fail.
+    saved_fields = dict(lib.PROJECT_FIELDS)
+    lib.PROJECT_FIELDS.pop("factory", None)
     try:
-        want("control: profile_error(factory \"auto\") with no factory row", raised(lambda: lib.profile_error({"factory": "auto"})), None)
+        want("control: project_error(factory \"auto\") with no factory row", raised(lambda: lib.project_error({"factory": "auto"})), None)
     finally:
-        lib.PROFILE_FIELDS.clear()
-        lib.PROFILE_FIELDS.update(saved_fields)
+        lib.PROJECT_FIELDS.clear()
+        lib.PROJECT_FIELDS.update(saved_fields)
 
-    # profiles() leaves out a profile of the wrong shape and names it in `skipped`, as it does an
+    # projects() leaves out a project of the wrong shape and names it in `skipped`, as it does an
     # unreadable one, so every caller is protected and not only forge/sync.py. Red before:
-    # "profiles() beside a project_path 5 = ({'ok': {...}, 'pp5': {...}}, []), want
+    # "projects() beside a project_path 5 = ({'ok': {...}, 'pp5': {...}}, []), want
     # ({'ok': ...}, [('pp5.claude.json', 'project_path is not a string')])" and "resolve_project
     # beside a project_path 5 = ('raised', 'TypeError', 'expected str, bytes or os.PathLike
     # object, not int')".
-    d = os.path.join(tmp, "typed-profiles")
+    d = os.path.join(tmp, "typed-projects")
     os.makedirs(d)
     for n, text in (("ok", '{"project_path": "/x"}'), ("pp5", '{"project_path": 5}')):
         with open(os.path.join(d, n + ".claude.json"), "w") as f:
             f.write(text)
-    real_profiles, lib.PROFILES = lib.PROFILES, d
+    real_projects, lib.PROJECTS = lib.PROJECTS, d
     skipped = []
-    got = raised(lib.profiles, skipped)
-    want("profiles() beside a project_path 5", (got, skipped),
+    got = raised(lib.projects, skipped)
+    want("projects() beside a project_path 5", (got, skipped),
          ({"ok": {"project_path": "/x"}}, [("pp5.claude.json", "project_path is not a string")]))
     want("resolve_project beside a project_path 5", raised(lib.resolve_project, "/x/sub"), "ok")
-    lib.PROFILES = real_profiles
+    lib.PROJECTS = real_projects
     return failures, want.count()
 
 
@@ -998,7 +998,7 @@ def main():
     lib.SETTINGS = os.path.join(FIXTURES, "forge.json")
     lib.settings.cache_clear()
     tmp = sandbox.mkdtemp("lib-test-")
-    dev, prof_dir = os.path.join(tmp, "dev"), os.path.join(tmp, "profiles")
+    dev, prof_dir = os.path.join(tmp, "dev"), os.path.join(tmp, "projects")
     os.makedirs(prof_dir)
     for name, rel in (("dev", ""), ("app", "app"), ("vault", "app/vault")):
         os.makedirs(os.path.join(dev, rel, "src"), exist_ok=True)
@@ -1007,24 +1007,24 @@ def main():
     git(os.path.join(dev, "app"), "init", "-q")
     git(os.path.join(dev, "app"), "commit", "-q", "--allow-empty", "-m", "x")
     git(os.path.join(dev, "app"), "worktree", "add", "-q", os.path.join(dev, "app-wt"))
-    # A profile whose directory is inside the linked worktree, below its root: only the
-    # worktree check refuses it -- the nested-repo check sees the worktree root above the profile.
+    # A project whose directory is inside the linked worktree, below its root: only the
+    # worktree check refuses it -- the nested-repo check sees the worktree root above the project.
     os.makedirs(os.path.join(dev, "app-wt", "src"))
     with open(os.path.join(prof_dir, "wtsrc.claude.json"), "w") as f:
         f.write('{"project_path": "%s"}' % os.path.join(dev, "app-wt", "src"))
     os.makedirs(os.path.join(dev, "newrepo", "sub"))
     git(os.path.join(dev, "newrepo"), "init", "-q")
-    lib.PROFILES = prof_dir
+    lib.PROJECTS = prof_dir
     lib.ROOT = tmp  # not a worktree, wherever the test itself is run from
     lib.HOME = os.path.join(tmp, "home")  # no settings.json yet: the real one names the real checkout
 
     cases = {
         os.path.join(dev, "app"): "app",
         os.path.join(dev, "app", "src"): "app",
-        os.path.join(dev, "app", "vault"): "vault",  # deepest profile wins
+        os.path.join(dev, "app", "vault"): "vault",  # deepest project wins
         dev: "dev",
         os.path.join(dev, "app-wt"): None,  # a linked worktree writes nothing
-        os.path.join(dev, "app-wt", "src"): None,  # ... nor does a profile inside one
+        os.path.join(dev, "app-wt", "src"): None,  # ... nor does a project inside one
         os.path.join(dev, "newrepo", "sub"): None,  # an unregistered repo is not `dev`'s
         "/": None,
     }
@@ -1036,7 +1036,7 @@ def main():
         return tuple(lib.context(argv + (["--apply"] if applying else []))[1:])
 
     # session_scope is the one place that says a session gets its own project and forge's session
-    # also the user-scope files. No profile here is called forge, so only this reaches its True.
+    # also the user-scope files. No project here is called forge, so only this reaches its True.
     # Red before it existed: "session_scope('forge') = ('raised', 'AttributeError',
     # \"module 'forge.lib' has no attribute 'session_scope'\"), want ({'forge'}, True)"; with
     # `name == "forge"` replaced by False, "session_scope('forge') = ({'forge'}, False), want
@@ -1086,40 +1086,40 @@ def main():
             if want not in str(e.code):
                 failures.append("context %r exited with %r, want %r" % (argv, e.code, want))
 
-    # A profiles directory that cannot be listed is an error, not "no profiles": glob swallowed
+    # A projects directory that cannot be listed is an error, not "no projects": glob swallowed
     # the PermissionError, and every caller then saw a machine with no projects.
     if os.geteuid() != 0:  # root reads a mode-000 directory anyway
-        locked = os.path.join(tmp, "locked-profiles")
+        locked = os.path.join(tmp, "locked-projects")
         os.makedirs(locked)
         open(os.path.join(locked, "a.claude.json"), "w").write("{}")
         os.chmod(locked, 0)
-        real_profiles, lib.PROFILES = lib.PROFILES, locked
+        real_projects, lib.PROJECTS = lib.PROJECTS, locked
         try:
-            failures.append("profiles() on an unreadable directory = %r, want PermissionError" % lib.profiles())
+            failures.append("projects() on an unreadable directory = %r, want PermissionError" % lib.projects())
         except PermissionError:
             pass
-        lib.PROFILES = real_profiles
+        lib.PROJECTS = real_projects
         os.chmod(locked, 0o755)
 
-    # A profile that is not a JSON object is left out, not a crash: may_write and resolve_project
-    # call .get on every profile, and one holding `null` raised AttributeError in both, so from a
+    # A project that is not a JSON object is left out, not a crash: may_write and resolve_project
+    # call .get on every project, and one holding `null` raised AttributeError in both, so from a
     # session start too. The generator reports the file itself ('! could not read', '! no
-    # project_path'). Red before: "profiles() over bad profiles = ('raised', 'JSONDecodeError', ...)"
-    # and "resolve_project beside a null profile = ('raised', 'AttributeError', "'list' object has
+    # project_path'). Red before: "projects() over bad projects = ('raised', 'JSONDecodeError', ...)"
+    # and "resolve_project beside a null project = ('raised', 'AttributeError', "'list' object has
     # no attribute 'get'")".
-    bad = os.path.join(tmp, "bad-profiles")
+    bad = os.path.join(tmp, "bad-projects")
     os.makedirs(bad)
     for n, text in (("ok", '{"project_path": "/x"}'), ("null", "null"), ("list", "[1]"), ("broken", "{nope")):
         open(os.path.join(bad, n + ".claude.json"), "w").write(text)
-    real_profiles, lib.PROFILES = lib.PROFILES, bad
-    got = raised(lib.profiles)
+    real_projects, lib.PROJECTS = lib.PROJECTS, bad
+    got = raised(lib.projects)
     if got != {"ok": {"project_path": "/x"}}:
-        failures.append("profiles() over bad profiles = %r, want only 'ok'" % (got,))
+        failures.append("projects() over bad projects = %r, want only 'ok'" % (got,))
     os.remove(os.path.join(bad, "broken.claude.json"))
     got = raised(lib.resolve_project, "/x/sub")
     if got != "ok":
-        failures.append("resolve_project beside a null profile = %r, want 'ok'" % (got,))
-    lib.PROFILES = real_profiles
+        failures.append("resolve_project beside a null project = %r, want 'ok'" % (got,))
+    lib.PROJECTS = real_projects
 
     # A linked worktree of forge writes nothing, whatever the scope; a dry-run there is untouched.
     lib.ROOT = os.path.join(dev, "app-wt")
@@ -1260,16 +1260,16 @@ def main():
     os.rmdir(settings)
 
     # A toy HOME only writes a toy world: the incident's agents set HOME to a scratch dir, so no
-    # settings.json named any checkout, and the copy's profiles still named the real projects.
-    guard["a toy HOME, every profile beside the checkout"] = (lib.may_write(), (True, ""))
+    # settings.json named any checkout, and the copy's projects still named the real projects.
+    guard["a toy HOME, every project beside the checkout"] = (lib.may_write(), (True, ""))
     outside = os.path.join(prof_dir, "outside.claude.json")
     with open(outside, "w") as f:
         f.write('{"project_path": "/nonexistent-forge-guard/outside"}')
-    guard["a toy HOME, one profile outside"] = (lib.may_write(), (False, "forge: HOME is a sandbox (%s) but profiles "
+    guard["a toy HOME, one project outside"] = (lib.may_write(), (False, "forge: HOME is a sandbox (%s) but projects "
                                                               "point outside it (outside) -- nothing written" % lib.HOME))
     real_pwd = getattr(lib, "pwd", None)
     lib.pwd = types.SimpleNamespace(getpwuid=lambda uid: types.SimpleNamespace(pw_dir=lib.HOME))
-    guard["the real HOME with no forge entry, profiles anywhere (a fresh machine)"] = (lib.may_write(), (True, ""))
+    guard["the real HOME with no forge entry, projects anywhere (a fresh machine)"] = (lib.may_write(), (True, ""))
 
     # A uid with no passwd entry (a container, `unshare` with no mapping) cannot say whether HOME
     # is a sandbox: it refuses, in the house style cli.CHANGED shows at session start. Red before
@@ -1277,7 +1277,7 @@ def main():
     # "'getpwuid(): uid not found: 4242'"), want (False, True, True)". The message is pinned: a fix
     # that falls through to the toy-HOME check instead (real_home = "/nonexistent") also refuses
     # here, as "HOME is a sandbox ... -- nothing written" (outside.claude.json is present), and is
-    # fail-open once every profile is in-world. Red on that mutation: "may_write with a
+    # fail-open once every project is in-world. Red on that mutation: "may_write with a
     # uid missing from passwd = (False, False, True), want (False, True, True)".
     def no_entry(uid):
         raise KeyError("getpwuid(): uid not found: 4242")
@@ -1381,9 +1381,9 @@ def main():
     if ran != project_steps or checks != check_args:
         failures.append("session start in forge ran %r and checked %r, want %r and %r" % (ran, checks, project_steps, check_args))
 
-    # A profile lib.profiles() leaves out is named at every session start. Left out silently, a
+    # A project lib.projects() leaves out is named at every session start. Left out silently, a
     # session in that project resolved to no project (or to a shallower one) and synced nothing
-    # with no sign why. Red before: "session start beside an unreadable profile showed ''".
+    # with no sign why. Red before: "session start beside an unreadable project showed ''".
     broken = os.path.join(prof_dir, "broken.claude.json")
     with open(broken, "w") as f:
         f.write("null")
@@ -1395,11 +1395,11 @@ def main():
     os.remove(broken)
     msg = json.loads(out.getvalue() or "{}").get("systemMessage", "")
     if "broken.claude.json" not in msg:
-        failures.append("session start beside an unreadable profile showed %r" % msg)
+        failures.append("session start beside an unreadable project showed %r" % msg)
     lib.run = real_run
 
     more = 0
-    for part in (read_cases, profile_type_cases, holds_cases, write_cases, git_cases, symlink_cases,
+    for part in (read_cases, project_type_cases, holds_cases, write_cases, git_cases, symlink_cases,
                  record_cases, cli_test_cases, settings_cases):
         f, n = part(tmp)
         failures += f

@@ -3,7 +3,7 @@
 forge generates the agent configuration of every project on a machine (Claude Code and, optionally,
 Codex) from one checkout: MCP servers, skill and plugin trims, hooks, permissions and the shared
 instruction document. This file is for an agent working **on the engine**. A user's own setup (skills,
-profiles, `config/forge.json`, credentials) lives in the same folder but is data, ignored by the engine's
+projects, `config/forge.json`, credentials) lives in the same folder but is data, ignored by the engine's
 git; `README.md` is the user guide.
 
 ## Layout
@@ -56,12 +56,12 @@ only rollback: a `.bak` file is written once, ever.
    nor a FAIL. A check that finds nothing to look at because the user switched that feature off is a SKIP with
    the same wording.
 5. **Nothing personal in an engine file.** Names, home paths, addresses and project names belong in the user's
-   `config/forge.json` and profiles, never in code, comments or tests, and neither is the date of a decision.
+   `config/forge.json` and projects, never in code, comments or tests, and neither is the date of a decision.
    Fixtures use neutral names, the documentation ranges `192.0.2.0/24` and `198.51.100.0/24`, and the
    documentation addresses under `example.com`, `example.org` and `example.test` (`EMAIL_OK` in `forge/publish.py`).
    A skill-bench task's dates are data: its files are exempt from the private list's date patterns only.
 6. **Generated files are never edited by hand:** `~/.claude.json`, any `.mcp.json`, a project's
-   `.claude/settings.local.json`. Edit the source (`config/`, a profile, `forge/`) and run the generator.
+   `.claude/settings.local.json`. Edit the source (`config/`, a project, `forge/`) and run the generator.
 7. **Never read, print or copy a value from `credentials/`.** `config/secrets.json` links to it and the
    registry refers to a secret as `${VAR}`.
 
@@ -98,7 +98,7 @@ ask only where the standard says to:
 
 - **Security**: a PR that touches the risky paths of `.coderabbit.yaml` or carries the label `security`. Ask BEFORE merge; its
   approval is required: the status `CodeRabbit approval` (`coderabbit-gate.yml`) stays pending until it approves the head commit.
-- **Architecture**: a PR that changes a contract between parts (the generator's sequence, profile fields, the stage table, the
+- **Architecture**: a PR that changes a contract between parts (the generator's sequence, project fields, the stage table, the
   `decide` rules, the `.fwx/` format, the configuration schema, a new CLI command). Ask while the PR is open and wait for the
   answer before merging (the approval status is not required).
 - **Logic**: code that decides with nobody watching (fwx core: verify, decide, stages, rounds; wave new/merge; workflows)
@@ -121,7 +121,7 @@ its gitleaks step, and so the script, fail); use it when Actions minutes are out
 ## Where things go
 
 - A new generator step goes in `forge/sync.py`'s sequence: the sequence is the output, and the output is an API.
-- A new profile field gets a row in `lib.PROFILE_FIELDS`, so `profile_error` checks its type once.
+- A new project field gets a row in `lib.PROJECT_FIELDS`, so `project_error` checks its type once.
 - A new hook row goes in `forge/hooks.py`; a row that belongs to an integration is also listed in
   `ROW_INTEGRATION`.
 - A skill is never part of the engine. Skills live in the user's `skills/<name>/SKILL.md`. (The skills under `plugins/fwx/skills/` belong to that plugin, not to the user's `skills/`.)

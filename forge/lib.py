@@ -1,4 +1,4 @@
-"""What every forge component shares: where forge is, the profiles, reads and writes, the git
+"""What every forge component shares: where forge is, the projects, reads and writes, the git
 helpers, a run's scope and the write guard, one lock, one result format."""
 import collections
 import contextlib
@@ -22,7 +22,10 @@ STATE = os.path.join(HOME, ".local", "state", "forge")
 LOCK = os.path.join(STATE, "sync.lock")
 JOURNAL = os.path.join(STATE, "journal.log")
 JOURNAL_KEEP = 10000
-PROFILES = os.path.join(ROOT, "config", "profiles")
+PROJECTS = os.path.join(ROOT, "config", "projects")
+# config/projects/ was named after "profile" until that word was left to mean the set of skills one session uses
+# (`forge start @profile`). A checkout whose data has not moved yet says so rather than find no projects (require_registry).
+RENAMED = "config/profiles/ was renamed config/projects/: mv config/profiles config/projects"
 # Codex's own convention for relocating ~/.codex. memory_doctor.py honoured it while the generator
 # wrote ~/.codex/hooks.json regardless, so the two could read and write different files.
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
@@ -86,27 +89,38 @@ def codex_harness():
     return on("codex") and settings().get("codex_harness") is True
 
 
-def profiles(skipped=None):
-    """{project name: profile} for every config/profiles/*.claude.json. A directory that is there
-    but cannot be listed raises: glob swallowed the PermissionError and answered "no projects".
-    One that is not there has none (a toy checkout, e.g. test_rotate_secret.py's).
+def require_registry():
+    """Exit 1 with RENAMED when the registry is still under its old name: the old folder there and
+    config/projects/ not (a link from the new name to the old, the bridge while the data moves, counts
+    as there). Without it every project vanished silently, and a project file written there started a
+    second, split registry."""
+    if not os.path.lexists(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
+        sys.exit(RENAMED)
 
-    A profile that cannot be read or is not a JSON object is left out: every caller calls .get on
-    each profile, and one `null` file raised AttributeError in may_write and resolve_project, so
+
+def projects(skipped=None):
+    """{project name: its file's contents} for every config/projects/*.claude.json. A directory that is
+    there but cannot be listed raises: glob swallowed the PermissionError and answered "no projects".
+    One that is not there has none (a toy checkout, e.g. test_rotate_secret.py's), unless the registry
+    is still under its old name (require_registry).
+
+    A project that cannot be read or is not a JSON object is left out: every caller calls .get on
+    each project, and one `null` file raised AttributeError in may_write and resolve_project, so
     in every session start. Left out is not silent: each one is appended to `skipped` as
     (file name, reason), which session start shows, and the generator names it too ('! could not
-    read'). So is one with a field of the wrong type (profile_error): a `project_path` of 5 raised
+    read'). So is one with a field of the wrong type (project_error): a `project_path` of 5 raised
     TypeError in resolve_project's realpath, in every session start too."""
+    require_registry()
     out = {}
     try:
-        names = sorted(os.listdir(PROFILES))
+        names = sorted(os.listdir(PROJECTS))
     except FileNotFoundError:
         names = []
     for n in names:
         if n.endswith(".claude.json"):
             try:
-                prof = read_owned(os.path.join(PROFILES, n))
-                why = profile_error(prof)
+                prof = read_owned(os.path.join(PROJECTS, n))
+                why = project_error(prof)
             except Unreadable as e:
                 why = e.reason
             if why is None:
@@ -116,12 +130,12 @@ def profiles(skipped=None):
     return out
 
 
-# The type of every profile field the generator reads, when the field is present: absent is each
+# The type of every project field the generator reads, when the field is present: absent is each
 # reader's own default, and null is never one. A pair is a container and the type of its items (a
-# list) or of its values (an object); a frozenset is a choice of types. profile_error checks a
-# profile against it once, so the components can trust what they .get(); a field forge starts
+# list) or of its values (an object); a frozenset is a choice of types. project_error checks a
+# project against it once, so the components can trust what they .get(); a field forge starts
 # reading gets its row here.
-PROFILE_FIELDS = {
+PROJECT_FIELDS = {
     "project": str, "project_path": str,
     "servers": (list, str), "skills_keep": (list, str), "plugins_keep": (list, str),
     "mcpjson_approved": (list, str), "mcpjson_disabled": (list, str),
@@ -130,7 +144,7 @@ PROFILE_FIELDS = {
     "worktree_guard": frozenset({bool, dict}),
     "verdict_command": str,
     # {"branches": [str], "commands": [str]}: what the consent window treats as production. The shape is the guard's
-    # (production_error), asked from profile_error so there is one definition.
+    # (production_error), asked from project_error so there is one definition.
     "production": dict,
     # The framework (2.2): `framework` is its level-1 switch, `factory` its mode, `factory_ui_bugs` sends mechanical UI
     # fixes to the factory, `checks` is the gate's recipe and `protected_paths` the globs that always go to a person.
@@ -160,14 +174,14 @@ APP_RUN_KEYS = (("up", str, True, False), ("run", str, True, True), ("down", str
                 ("login", str, False, False), ("container", bool, False, True),
                 ("ready", str, False, False), ("ready_timeout_s", float, False, True))
 UI_IMAGE_KEYS = (("dockerfile", str, True, False), ("expect", str, True, False))
-# The values a string field may hold, checked after its type. Kept beside PROFILE_FIELDS and read only for a field
+# The values a string field may hold, checked after its type. Kept beside PROJECT_FIELDS and read only for a field
 # that has a row there, so a field without its row is not checked at all.
-PROFILE_CHOICES = {"factory": ("off", "trial")}
+PROJECT_CHOICES = {"factory": ("off", "trial")}
 _TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object", float: "positive number"}
 
 
 def worktree_guard_on(prof):
-    """Whether forge wires the worktree guard for this profile: `"worktree_guard": true`, or an
+    """Whether forge wires the worktree guard for this project: `"worktree_guard": true`, or an
     object (its parameters, which hooks/worktree_guard.py reads) unless it says `"on": false`. An
     object with "on": false declares where the project's worktrees live without the guard."""
     v = prof.get("worktree_guard")
@@ -178,7 +192,7 @@ def worktree_guard_on(prof):
 def _production_error():
     """production_error of hooks/guard_tool_use.py, the one definition of a valid `production` (the guard reads
     the same field at run time). Loaded by path and not imported by name: hooks/ is not a package, and the module
-    is read only when a profile carries the field."""
+    is read only when a project carries the field."""
     spec = importlib.util.spec_from_file_location("forge_guard_tool_use", os.path.join(ROOT, "hooks", "guard_tool_use.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
@@ -186,7 +200,7 @@ def _production_error():
 
 
 def _object_error(field, obj, keys):
-    """None when the object `obj` of profile field `field` has exactly the `keys` rows' shape, else why not."""
+    """None when the object `obj` of project field `field` has exactly the `keys` rows' shape, else why not."""
     known = {k for k, *_ in keys}
     for key, kind, required, may_be_empty in keys:
         if key not in obj:
@@ -208,12 +222,12 @@ def _object_error(field, obj, keys):
     return None
 
 
-def profile_error(prof):
-    """None when every PROFILE_FIELDS field `prof` carries has its type, else the first that does
+def project_error(prof):
+    """None when every PROJECT_FIELDS field `prof` carries has its type, else the first that does
     not, as "<field> is not a <type>"."""
     if not isinstance(prof, dict):
-        return "the profile is not a JSON object"
-    for field, kind in PROFILE_FIELDS.items():
+        return "the project is not a JSON object"
+    for field, kind in PROJECT_FIELDS.items():
         if field not in prof:
             continue
         if isinstance(kind, frozenset):
@@ -225,8 +239,8 @@ def profile_error(prof):
         if not isinstance(v, kind) or (item and not all(isinstance(x, item) for x in (
                 v.values() if isinstance(v, dict) else v))):
             return "%s is not a %s%s" % (field, _TYPE_NAMES[kind], " of %ss" % _TYPE_NAMES[item] if item else "")
-        if field in PROFILE_CHOICES and v not in PROFILE_CHOICES[field]:
-            return "%s is not %s" % (field, " or ".join('"%s"' % c for c in PROFILE_CHOICES[field]))
+        if field in PROJECT_CHOICES and v not in PROJECT_CHOICES[field]:
+            return "%s is not %s" % (field, " or ".join('"%s"' % c for c in PROJECT_CHOICES[field]))
     if "production" in prof:
         why = _production_error()(prof["production"])
         if why:
@@ -254,7 +268,7 @@ def profile_error(prof):
     if isinstance(wt, dict) and "on" in wt and not isinstance(wt["on"], bool):
         return "worktree_guard.on is not a boolean"
     # A guard's command is `--project <project>` (skills.guard_command), and the hook reads the
-    # profile or guard config by that name: without it sync wrote `--project None`.
+    # project or guard config by that name: without it sync wrote `--project None`.
     for guard, on in (("command_guard", prof.get("command_guard") is True), ("worktree_guard", worktree_guard_on(prof))):
         if on and not prof.get("project"):
             return "project is missing, and %s is on (its command names the project)" % guard
@@ -284,7 +298,7 @@ class Unreadable(ValueError):
 
 
 def read_json(path, default=None, quiet=False):
-    """A source forge reads and does not rewrite (the registry, a profile): missing is `default`
+    """A source forge reads and does not rewrite (the registry, a project): missing is `default`
     ({} when None), and so is one that cannot be read or parsed, after a warning line -- one bad
     source must not stop the run. `quiet` drops the line, for a caller that must print nothing
     (a doctor's --hook). Never for a file forge merges into and writes back: that is read_owned."""
@@ -500,7 +514,7 @@ def write_text(path, text, mode=None, backup=False, fsync=False, check=None):
     `fsync` syncs the temp file before the rename and the directory after it: old content or new
     survives a power cut, not an empty file (rotate_secret.py's secrets.json, whose loss makes
     every SessionStart generator exit 1). `check(tmp)` sees the written temp file before it is
-    renamed into place, and raises to refuse it (register_project.py validates a profile that
+    renamed into place, and raises to refuse it (register_project.py validates a project that
     way); the retries rename the same bytes without checking them again. Whatever raises, no
     temp file is left behind: until S1 a write that raised left `path.tmp.<pid>`."""
     # One policy for a `path` that is a symlink: its target is replaced and the link kept, as
@@ -508,6 +522,8 @@ def write_text(path, text, mode=None, backup=False, fsync=False, check=None):
     # a regular file silently detaches, say, a dotfiles-managed ~/.claude.json from its
     # repository, and the target is the file the link says is meant. A secret-bearing file whose
     # link could be planted checks where it resolves before calling this (write_codex_project_mcp).
+    if os.path.dirname(os.path.abspath(path)) == os.path.abspath(PROJECTS):
+        require_registry()  # a project file written while the registry is still under its old name
     path = os.path.realpath(path)
     if mode == "keep":
         try:
@@ -638,7 +654,7 @@ def git_dir(path):
 
 def in_git_repo(path):
     """True when path sits inside a git working tree. Walks up rather than shelling out to git:
-    this runs once per profile on every SessionStart, and a subprocess per project to answer a
+    this runs once per project on every SessionStart, and a subprocess per project to answer a
     question about a directory entry is not worth 18 forks."""
     return git_dir(path)[0] is not None
 
@@ -670,7 +686,7 @@ def git_tracks(path, sub):
 def _read_gitignore(path):
     """<path>/.gitignore's text, or None when there is none. One that cannot be read (not UTF-8,
     a directory) raises Unreadable: whether an entry is ignored is then unknown, so the project
-    gets nothing under it. It used to abort the run before the next profile."""
+    gets nothing under it. It used to abort the run before the next project."""
     gi = os.path.join(path, ".gitignore")
     try:
         with open(gi, encoding="utf-8") as fh:
@@ -697,7 +713,7 @@ def gitignore_has(path, entry):
 
 
 def repo_owns_tracked_files(prof):
-    """True when the profile says forge must never write a file git tracks in this project
+    """True when the project says forge must never write a file git tracks in this project
     (`writes_tracked_files: false`). A project that opts out: its CLAUDE.md, AGENTS.md and
     .gitignore are versioned and owned by the repo, which must keep working without forge.
     Forge still writes the machine-local files the repo ignores."""
@@ -786,7 +802,7 @@ def ensure_ignored(apply, ppath, entry, repo_owned):
     neither belongs in a repo -- the dual-agent setup is one machine's setup, not
     something a teammate cloning the repo needs or should see in a diff.
 
-    A directory under no git repository gets nothing. Every profile was a checkout until the
+    A directory under no git repository gets nothing. Every project was a checkout until the
     ~/dev one, which is a plain directory holding the other projects; writing a
     .gitignore there creates a file that no git will ever read, to hide a directory from a
     repository that does not exist."""
@@ -827,26 +843,26 @@ def ensure_ignored(apply, ppath, entry, repo_owned):
 
 
 def resolve_project(path):
-    """The profile a session started in `path` belongs to, or None.
+    """The project a session started in `path` belongs to, or None.
 
-    The deepest profile whose project_path contains `path` wins (a project nested in another is its own, not
-    the outer one). A linked worktree belongs to no profile: a session there must not write the
-    main checkout's config. Neither does an unregistered repository nested inside a profile's
-    directory, e.g. a new repo under ~/dev, which the catch-all `dev` profile would otherwise
+    The deepest project whose project_path contains `path` wins (a project nested in another is its own, not
+    the outer one). A linked worktree belongs to no project: a session there must not write the
+    main checkout's config. Neither does an unregistered repository nested inside a project's
+    directory, e.g. a new repo under ~/dev, which the catch-all `dev` project would otherwise
     claim."""
     path = os.path.realpath(path)
     g, linked = git_dir(path)
     if linked:
         return None
     best = None
-    for name, prof in profiles().items():
+    for name, prof in projects().items():
         pp = os.path.realpath(prof.get("project_path") or "/nonexistent")
         if (path == pp or path.startswith(pp + os.sep)) and (best is None or len(pp) > len(best[1])):
             best = (name, pp)
     if best is None:
         return None
     if g and len(os.path.dirname(g)) > len(best[1]):
-        return None  # a repository of its own below the profile's directory
+        return None  # a repository of its own below the project's directory
     return best[0]
 
 
@@ -907,7 +923,7 @@ def may_write():
         return False, ("forge: %s is not the checkout this machine runs (%s) -- nothing written; apply from %s"
                        % (ROOT, installed, installed))
     # A toy HOME only writes a toy world. The incident's agents set HOME to a scratch dir, so no
-    # settings.json named a checkout, while the copy's profiles still named the real projects. The
+    # settings.json named a checkout, while the copy's projects still named the real projects. The
     # sandbox harness keeps forge/, home/ and projects/ side by side, which is the shape allowed.
     # (Under `unshare -r` the uid is 0, so the real HOME counts as a toy one there too.)
     # A uid with no passwd entry (a container, an unmapped namespace) has no real HOME to compare
@@ -919,10 +935,10 @@ def may_write():
                        "-- nothing written" % (os.getuid(), HOME))
     if os.path.realpath(HOME) != os.path.realpath(real_home):
         world = os.path.dirname(os.path.realpath(ROOT)) + os.sep
-        out = [n for n, p in profiles().items()
+        out = [n for n, p in projects().items()
                if p.get("project_path") and not os.path.realpath(p["project_path"]).startswith(world)]
         if out:
-            return False, ("forge: HOME is a sandbox (%s) but profiles point outside it (%s) -- nothing written"
+            return False, ("forge: HOME is a sandbox (%s) but projects point outside it (%s) -- nothing written"
                            % (HOME, ", ".join(out[:3])))
     return True, ""
 
@@ -968,7 +984,7 @@ def _project_arg(argv):
         return argv, None
     i = argv.index("--project")
     name = argv[i + 1] if i + 1 < len(argv) and not argv[i + 1].startswith("--") else None
-    known = profiles()
+    known = projects()
     if name not in known:
         sys.exit("forge: unknown project: %s (known: %s)" % (name or "(none given)", ", ".join(sorted(known))))
     return argv, name
@@ -984,7 +1000,7 @@ def context(argv, flag="--apply", invert=False):
     """A generator's Ctx from its argv: applying is `flag` given (absent, with `invert`:
     relink_skills applies unless --dry-run), downgraded by the one may_write() call, which prints
     the refusal once. sync_agent_config called may_write() a second time to downgrade its APPLY,
-    on the reasoning that two writes happen before any profile is looked at (the ~/.claude.json
+    on the reasoning that two writes happen before any project is looked at (the ~/.claude.json
     chmod and the key relocations). Only the chmod needed it: a refused apply writes nothing and
     looks at no project, and the relocations are already skipped by the Ctx's only=set().
 

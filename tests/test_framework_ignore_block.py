@@ -3,7 +3,7 @@
 
 The framework keeps a project's working documents (markdown and tsv) under <project>/.fwx/, and they must be tracked. A
 project's own `*.md` rule ignores every one of them, nothing ignores the worktrees the framework creates under
-.claude/worktrees/, and .claude/<plugin>.json is generated. For a profile with `framework: true`, `forge sync` keeps ONE
+.claude/worktrees/, and .claude/<plugin>.json is generated. For a project with `framework: true`, `forge sync` keeps ONE
 block at the END of the project's .gitignore (a negation only works after the rule it negates):
 
     # BEGIN FORGE-FWX (managed by forge, do not edit inside)
@@ -15,7 +15,7 @@ block at the END of the project's .gitignore (a negation only works after the ru
 
 (in .git/info/exclude, one block per project, the markers tagged with the project's place: `# BEGIN FORGE-FWX app/ (...)`)
 
-Everything runs in-process against a toy HOME, toy profiles and toy git repositories (tests/sandbox.py's temp dirs, removed
+Everything runs in-process against a toy HOME, toy projects and toy git repositories (tests/sandbox.py's temp dirs, removed
 at exit); PATH is the fake directory alone, python3 and git linked in (standing order 10).
 
 Seen failing on the base (97c3ec7, this file as it is, the framework step writing the single line `.claude/toyfw.json`):
@@ -31,14 +31,14 @@ Seen failing on the base (97c3ec7, this file as it is, the framework step writin
   same reason: no block. First messages: "4: the first apply writes the block -- None", "5: BEGIN without END: ... -- exit 0",
   "7: writes_tracked_files false: the block is in .git/info/exclude -- ...", "8: doctor row: FAIL naming .gitignore:1:*.md ...
   -- AttributeError: module 'forge.cli' has no attribute 'framework_ignore_row'".
-Review round (sections 10 to 16, seen failing on a11e284 before the fixes: 47 of 119 checks; section 17, the profile field
+Review round (sections 10 to 16, seen failing on a11e284 before the fixes: 47 of 119 checks; section 17, the project field
 framework_ignore_block, 22 checks red on that head):
   D1 two projects in one repository, writes_tracked_files false: "each keeps its own block ... -- ['# git ls-files ...', ...]" and
      every run printed "(updated; ..." for both. D1 with the tracked .gitignore did NOT fail: each project has its own file.
   D2 "exit 1 and a `!` line naming the root rule -- [] -- (0, ..." (exit 0, no `!`, with the root `.gitignore:1:*.md`).
   D3 "no scratch directory: exit 1 and a `!` line ... -- [] -- (0, ..." (exit 0, block written). D4 "(updated)" with no mention
   of the edit, uninstall "was edited, left in place". D5 "git still ignores .fwx/decisions.tsv (.gitignore:4:*.tsv) -- no line from the
-  end of the file can beat that rule". D6 two `git rev-parse` per profile with the framework off. D7 the block in LF after CRLF lines.
+  end of the file can beat that rule". D6 two `git rev-parse` per project with the framework off. D7 the block in LF after CRLF lines.
 Negative controls on the finished code, each mutation put back (the checks that went red are named in the commit message):
   M1 one shared tag, M2 probe without the parent .gitignore files, M3 "no answer" read as success, M4 a git call before the claims
   in drop, M5 line ending always LF, M6 no tsv line in the block, M7a an edited block not removable, M7b sync silent about the
@@ -167,7 +167,7 @@ def project(gitignore=None, commit=False, sub=None):
     return d
 
 
-def profile(ppath, name="toyapp", **over):
+def project_file(ppath, name="toyapp", **over):
     p = {"project": name, "project_path": ppath, "servers": [], "plugins_keep": ["keep@toy"], "skills_keep": ["*"], "framework": True}
     p.update(over)
     return p
@@ -182,7 +182,7 @@ class World:
         _w[0] += 1
         self.base = os.path.join(TOY, "world%d" % _w[0])
         self.cfg = os.path.join(self.base, "config")
-        self.pdir = os.path.join(self.cfg, "profiles")
+        self.pdir = os.path.join(self.cfg, "projects")
         os.makedirs(self.pdir)
         with open(os.path.join(self.cfg, "mcp-registry.json"), "w") as f:
             f.write('{"servers": {}}')
@@ -203,11 +203,11 @@ class World:
         self.names.discard(name)
 
     def run(self, apply=True):
-        sync.CFG, lib.PROFILES = self.cfg, self.pdir
+        sync.CFG, lib.PROJECTS = self.cfg, self.pdir
         for pf in os.listdir(self.pdir):
             pp = json.load(open(os.path.join(self.pdir, pf)))["project_path"]
             if not os.path.realpath(pp).startswith(TOY + os.sep):
-                sys.exit("FENCE: a toy profile points outside the toy world -- nothing run")
+                sys.exit("FENCE: a toy project points outside the toy world -- nothing run")
         real = lib.context
         lib.context = lambda argv: lib.Ctx(bool(argv), set(self.names), False)
         out, err = io.StringIO(), io.StringIO()
@@ -292,7 +292,7 @@ def seen(p):
 def fresh(gitignore, commit=False, name="toyapp", **over):
     p = project(gitignore, commit)
     w = World()
-    w.put(profile(p, name=name, **over))
+    w.put(project_file(p, name=name, **over))
     return p, w
 
 
@@ -316,7 +316,7 @@ check("1: the project's own `*.md` still ignores a note outside .fwx/", not note
 check("2: the block is last, whole and exact -- %s" % (text(gi(p)) or "").splitlines(), text(gi(p)) == STAR + btext(), text(gi(p)))
 check("2: no single `.claude/toyfw.json` line is written beside the block", ".claude/toyfw.json\n" not in (text(gi(p)) or "").replace("/.claude/toyfw.json\n", ""), text(gi(p)))
 c = [c for c in owned.previous(gi(p), "framework")[0]]
-check("2: the block is one claim of part framework, owner the profile, the digest of its text",
+check("2: the block is one claim of part framework, owner the project, the digest of its text",
       [(x["kind"], x["at"], x["owner"]) for x in c] == [("item", ["block", "FORGE-FWX"], "toyapp")]
       and c[0]["sum"] == owned.digest("\n".join(block())), c)
 
@@ -376,13 +376,13 @@ check("4: apply brings it current, in place", text(gi(p)) == STAR + btext() and 
 # no .gitignore at all: created whole
 p0 = project()
 w0 = World()
-w0.put(profile(p0, name="nogi"))
+w0.put(project_file(p0, name="nogi"))
 w0.run()
 check("4: a project with no .gitignore gets one holding exactly the block", text(gi(p0)) == btext(), text(gi(p0)))
 # A project that is a directory of a larger repository: its .gitignore, anchored there.
 p1 = project(STAR, sub="app")
 w1 = World()
-w1.put(profile(p1, name="sub"))
+w1.put(project_file(p1, name="sub"))
 w1.run()
 make_docs(p1)
 check("4: a project in a subdirectory of a repository gets the block in its own .gitignore and its documents track",
@@ -457,7 +457,7 @@ orig = "*.md\n" + OWN + "node_modules/\n"
 p, w = fresh(orig)
 w.run()
 check("6: setup, the block is there after the project's own lines", text(gi(p)) == orig + btext(), text(gi(p)))
-w.put(profile(p, name="toyapp", framework=False))
+w.put(project_file(p, name="toyapp", framework=False))
 code, out = w.run(apply=False)
 check("6: a dry-run of true -> false says it would remove the block", any("would remove" in l for l in blines(out)) and text(gi(p)) == orig + btext(), (blines(out), out))
 code, out = w.run()
@@ -468,7 +468,7 @@ check("6: no claim of the block is left", not owned.previous(gi(p), "framework")
 p, w = fresh(STAR)
 w.run()
 put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my-extra/"))
-w.put(profile(p, name="toyapp", framework=False))
+w.put(project_file(p, name="toyapp", framework=False))
 code, out = w.run()
 check("6: an edited block is removed with the rest of it, like sync rewrites it -- %s" % bang(out),
       text(gi(p)) == STAR and code == 0 and not bang(out), (text(gi(p)), out))
@@ -476,7 +476,7 @@ check("6: an edited block is removed with the rest of it, like sync rewrites it 
 p, w = fresh(orig)
 w.run()
 w.drop("toyapp")
-sync.CFG, lib.PROFILES = w.cfg, w.pdir
+sync.CFG, lib.PROJECTS = w.cfg, w.pdir
 o = io.StringIO()
 with contextlib.redirect_stdout(o):
     code = uninstall.main(argparse.Namespace(integration=None, project="toyapp", apply=True))
@@ -517,7 +517,7 @@ make_worktree(p)
 check("7: a repo with no `*.md`: exit 0, the documents show, fwx.json and worktree do not -- %s" % status(p),
       code == 0 and seen(p) == (True, True, False, False, True), (code, out))
 # turned off: only the block of the exclude goes
-w.put(profile(p, name="toyapp", framework=False, writes_tracked_files=False))
+w.put(project_file(p, name="toyapp", framework=False, writes_tracked_files=False))
 w.run()
 check("7: true -> false takes the block out of info/exclude", "FORGE-FWX" not in (text(os.path.join(p, ".git", "info", "exclude")) or ""),
       text(os.path.join(p, ".git", "info", "exclude")))
@@ -532,7 +532,7 @@ def row(only=None):
 
 p, w = fresh(STAR)
 w.run()
-w.run()  # lib.PROFILES points at this world
+w.run()  # lib.PROJECTS points at this world
 r = row()
 check("8: doctor row after the block: PASS naming how many projects it looked at -- %s %s" % (r.level, r.detail),
       r.level == "PASS" and "looked at 1 project" in r.detail, r)
@@ -546,18 +546,18 @@ r = row()
 check("8: a repo-owned project whose documents stay ignored: FAIL naming .gitignore:1:*.md -- %s %s" % (r.level, r.detail),
       r.level == "FAIL" and ".gitignore:1:*.md" in r.detail, r)
 w2 = World()
-sync.CFG, lib.PROFILES = w2.cfg, w2.pdir
-w2.put(profile(project(), name="off", framework=False))
+sync.CFG, lib.PROJECTS = w2.cfg, w2.pdir
+w2.put(project_file(project(), name="off", framework=False))
 r = row()
-check("8: no profile with the framework on: SKIP, NOT RUN, NOT ARMED -- %s %s" % (r.level, r.detail),
+check("8: no project with the framework on: SKIP, NOT RUN, NOT ARMED -- %s %s" % (r.level, r.detail),
       r.level == "SKIP" and r.detail.startswith("NOT RUN, NOT ARMED: "), r)
 w3 = World()
-sync.CFG, lib.PROFILES = w3.cfg, w3.pdir
+sync.CFG, lib.PROJECTS = w3.cfg, w3.pdir
 gone = os.path.join(TOY, "not-a-repo")
 os.makedirs(gone)
-w3.put(profile(gone, name="norepo"))
+w3.put(project_file(gone, name="norepo"))
 r = row()
-check("8: a framework profile whose project cannot be looked at: looking at zero is a FAIL -- %s %s" % (r.level, r.detail),
+check("8: a framework project whose project cannot be looked at: looking at zero is a FAIL -- %s %s" % (r.level, r.detail),
       r.level == "FAIL" and "looked at 0" in r.detail, r)
 check("8: the row is registered in forge doctor", "framework ignore" in [c[0] for c in cli.CHECKS], [c[0] for c in cli.CHECKS])
 
@@ -578,9 +578,9 @@ def mono(gitignore, *subs):
 
 
 def only(world_name, ppath, **over):
-    """A world holding the one profile `world_name`: a sync of it alone."""
+    """A world holding the one project `world_name`: a sync of it alone."""
     w_ = World()
-    w_.put(profile(ppath, name=world_name, **over))
+    w_.put(project_file(ppath, name=world_name, **over))
     return w_
 
 
@@ -590,8 +590,8 @@ ex0 = text(ex)
 pa, pb = os.path.join(top, "a"), os.path.join(top, "b")
 wa, wb = only("proja", pa, writes_tracked_files=False), only("projb", pb, writes_tracked_files=False)
 both = World()
-both.put(profile(pa, name="proja", writes_tracked_files=False))
-both.put(profile(pb, name="projb", writes_tracked_files=False))
+both.put(project_file(pa, name="proja", writes_tracked_files=False))
+both.put(project_file(pb, name="projb", writes_tracked_files=False))
 code, out = both.run()
 ta, tb = btext(prefix="a/", tag="a/"), btext(prefix="b/", tag="b/")
 # D1 on the base (a11e284): "framework -> .../exclude FORGE-FWX block (updated; ...)" for both on every run, and the exclude holds
@@ -612,23 +612,23 @@ for order in (wa, wb, wb, wa, wa, wb):
 check("D1: runs of each project alone, in any order, leave both blocks and the exclude as it was", raw(ex) == snapshot,
       (text(ex) or "").splitlines()[-14:])
 # one project is switched off: only its own lines go
-wa.put(profile(pa, name="proja", framework=False, writes_tracked_files=False))
+wa.put(project_file(pa, name="proja", framework=False, writes_tracked_files=False))
 code, out = wa.run()
 check("D1: proja with framework false takes out its own block and leaves projb's whole -- %s" % (text(ex) or "").splitlines()[-8:],
       code == 0 and ta not in text(ex) and tb in text(ex) and (text(ex) or "").count("# BEGIN FORGE-FWX") == 1, (code, out))
-wa.put(profile(pa, name="proja", writes_tracked_files=False))
+wa.put(project_file(pa, name="proja", writes_tracked_files=False))
 wa.run()
 check("D1: and turned on again it gets its block back beside projb's", ta in text(ex) and tb in text(ex), text(ex))
 # forge uninstall NAME of one
 wb.drop("projb")
-sync.CFG, lib.PROFILES = wb.cfg, wb.pdir
+sync.CFG, lib.PROJECTS = wb.cfg, wb.pdir
 o = io.StringIO()
 with contextlib.redirect_stdout(o):
     code = uninstall.main(argparse.Namespace(integration=None, project="projb", apply=True))
 check("D1: forge uninstall projb (a directory of the repository) removes projb's block only, exit 0 -- %s"
       % sandbox.tail(o.getvalue(), 3), code == 0 and tb not in text(ex) and ta in text(ex), (code, o.getvalue(), text(ex)))
 w_off = World()
-w_off.put(profile(pa, name="proja", framework=False, writes_tracked_files=False))
+w_off.put(project_file(pa, name="proja", framework=False, writes_tracked_files=False))
 w_off.run()
 check("D1: the last one off leaves the exclude as git made it", text(ex) == ex0, text(ex))
 
@@ -637,8 +637,8 @@ top = mono("*.md\n", "b")
 tb_ = os.path.join(top, "b")
 w1, w2 = only("projroot", top), only("projsub", tb_)
 both = World()
-both.put(profile(top, name="projroot"))
-both.put(profile(tb_, name="projsub"))
+both.put(project_file(top, name="projroot"))
+both.put(project_file(tb_, name="projsub"))
 code, out = both.run()
 check("D1 (tracked .gitignore): the project at the root and the one in b each carry their own block, exit 0 -- %s" % bang(out),
       code == 0 and all((text(f) or "").count("# BEGIN FORGE-FWX") == 1 and "/.claude/toyfw.json" in text(f).splitlines()
@@ -653,7 +653,7 @@ before = (raw(gi(top)), raw(gi(tb_)), REG())
 for order in (w1, w2, both, w2, w1):
     order.run()
 check("D1 (tracked .gitignore): runs in any order change nothing", before == (raw(gi(top)), raw(gi(tb_)), REG()), "")
-w2.put(profile(tb_, name="projsub", framework=False))
+w2.put(project_file(tb_, name="projsub", framework=False))
 w2.run()
 check("D1 (tracked .gitignore): the sub project off removes its block (its file is gone) and the root's stays whole",
       not os.path.exists(gi(tb_)) and text(gi(top)) == before[0].decode(), (text(gi(tb_)), text(gi(top))))
@@ -761,7 +761,7 @@ check("D4: a sync of a block that is right says already current and nothing of t
 check("D4: the BEGIN line tells the reader not to edit inside", "do not edit inside" in block()[0], block()[0])
 put(gi(p), text(gi(p)).replace("/.claude/worktrees/", "/.claude/worktrees/\n/.my-extra/"))
 w.drop("toyapp")
-sync.CFG, lib.PROFILES = w.cfg, w.pdir
+sync.CFG, lib.PROJECTS = w.cfg, w.pdir
 o = io.StringIO()
 with contextlib.redirect_stdout(o):
     code = uninstall.main(argparse.Namespace(integration=None, project="toyapp", apply=True))
@@ -785,7 +785,7 @@ check("D5: a rule the block cannot beat (`.fwx/`): exit 1 and a fix text that cl
       code == 1 and bang(out) and not any("no line from the end" in l for l in bang(out)) and any("un-ignores only" in l for l in bang(out)), (code, out))
 
 # ------------------------------------------------------------ 15. D6: a project without the framework forks no git of its own
-# D6 on the base: 2 `git rev-parse` calls per profile with the framework off (--git-common-dir, --show-prefix).
+# D6 on the base: 2 `git rev-parse` calls per project with the framework off (--git-common-dir, --show-prefix).
 p, w = fresh(STAR, framework=False)
 calls = []
 
@@ -801,18 +801,18 @@ try:
 finally:
     subprocess.run = real_run
 rp = [c for c in calls if "rev-parse" in c]
-check("D6: a profile with framework false, never given a block, runs no git rev-parse -- %s" % rp, code == 0 and not rp, (calls, out))
+check("D6: a project with framework false, never given a block, runs no git rev-parse -- %s" % rp, code == 0 and not rp, (calls, out))
 # ... and one that had a block is still cleaned (the registry tells where, not git)
 p, w = fresh(STAR, commit=True, writes_tracked_files=False)
 w.run()
-w.put(profile(p, name="toyapp", framework=False, writes_tracked_files=False))
+w.put(project_file(p, name="toyapp", framework=False, writes_tracked_files=False))
 subprocess.run = spy
 calls[:] = []
 try:
     code, out = w.run()
 finally:
     subprocess.run = real_run
-check("D6: a profile that had its block in .git/info/exclude loses it with no rev-parse either -- %s" % [c for c in calls if "rev-parse" in c],
+check("D6: a project that had its block in .git/info/exclude loses it with no rev-parse either -- %s" % [c for c in calls if "rev-parse" in c],
       "FORGE-FWX" not in (text(os.path.join(p, ".git", "info", "exclude")) or "") and not [c for c in calls if "rev-parse" in c], (calls, out))
 
 # ------------------------------------------------------------ 16. D7: the line ending the file uses
@@ -829,7 +829,7 @@ for why, orig_ in (("CRLF", b"*.md\r\nnode_modules/\r\n"), ("CRLF without a last
     w.run()
     check("D7: %s: the second run is byte-identical" % why, raw(gi(p)) == before, raw(gi(p)))
     if orig_.endswith(b"\r\n"):
-        w.put(profile(p, name="toyapp", framework=False))
+        w.put(project_file(p, name="toyapp", framework=False))
         w.run()
         check("D7: %s: framework false gives the original bytes back" % why, raw(gi(p)) == orig_, raw(gi(p)))
 p, w = fresh(STAR)
@@ -838,7 +838,7 @@ check("D7: control: an LF file stays LF", b"\r" not in (raw(gi(p)) or b""), raw(
 
 # ------------------------------------------------------------ 17. framework_ignore_block: false, a project that keeps .fwx out of this git
 # Seen failing on adb68b7 before the field existed: (a) "exit 0 ... -- (1, ..." (the D2 `!` line, exit 1, for a repo whose
-# `/*` ignores .fwx on purpose); (b) the block stayed; (d) "framework_ignore_block is refused by profile_error -- None";
+# `/*` ignores .fwx on purpose); (b) the block stayed; (d) "framework_ignore_block is refused by project_error -- None";
 # (e) the row said FAIL (`git still ignores .fwx/x/y.md (.gitignore:1:/*)`).
 SKIP_TXT = "NOT RUN, NOT ARMED: framework_ignore_block is false"
 
@@ -849,7 +849,7 @@ def fresh_all_ignored(rules, **over):
     sandbox.git(q, "add", "-f", ".gitignore")
     sandbox.git(q, "commit", "-q", "-m", "ignore")
     w_ = World()
-    w_.put(profile(q, **over))
+    w_.put(project_file(q, **over))
     return q, w_
 
 
@@ -875,7 +875,7 @@ for why, kw, site in (("tracked .gitignore", {}, gi), ("info/exclude", dict(writ
     gi_before = text(gi(p))
     w.run()
     check("17b: setup (%s): the block is there -- %s" % (why, (text(site(p)) or "").splitlines()[-7:]), "FORGE-FWX" in (text(site(p)) or ""), text(site(p)))
-    w.put(profile(p, name="toyapp", framework_ignore_block=False, **kw))
+    w.put(project_file(p, name="toyapp", framework_ignore_block=False, **kw))
     code, out = w.run(apply=False)
     check("17b: %s: a dry-run says it would remove the block and writes nothing" % why,
           any("would remove" in l for l in blines(out)) and "FORGE-FWX" in (text(site(p)) or ""), blines(out))
@@ -895,19 +895,19 @@ check("17c: field true is the same as absent", code == 1 and bool(bang(out)) and
 # the row with one managed and one switched-off project looks at the first only
 pm, wm = fresh(STAR)
 off_p, _ = fresh_all_ignored("/*\n")
-wm.put(profile(off_p, name="offproj", framework_ignore_block=False))
+wm.put(project_file(off_p, name="offproj", framework_ignore_block=False))
 wm.run()
 r = row()
 check("17e: one project looked at, one switched off: PASS, and the detail names the switched-off one -- %s %s" % (r.level, r.detail),
       r.level == "PASS" and "looked at 1 project" in r.detail and "offproj (framework_ignore_block is false: switched off)" in r.detail, r)
 # (d) the type
 for bad in ("no", 0, None, [], {}):
-    why = lib.profile_error(profile(project(), framework_ignore_block=bad))
-    check("17d: framework_ignore_block %r is a profile error naming the field -- %s" % (bad, why), bool(why) and "framework_ignore_block" in why, why)
-check("17d: true and false are accepted", all(lib.profile_error(profile(project(), framework_ignore_block=v)) is None for v in (True, False)), "")
+    why = lib.project_error(project_file(project(), framework_ignore_block=bad))
+    check("17d: framework_ignore_block %r is a project error naming the field -- %s" % (bad, why), bool(why) and "framework_ignore_block" in why, why)
+check("17d: true and false are accepted", all(lib.project_error(project_file(project(), framework_ignore_block=v)) is None for v in (True, False)), "")
 p, w = fresh(STAR, framework_ignore_block="no")
 code, out = w.run()
-check("17d: a sync of a profile with \"no\" exits non-zero and writes nothing to the project -- %s" % bang(out)[:2],
+check("17d: a sync of a project with \"no\" exits non-zero and writes nothing to the project -- %s" % bang(out)[:2],
       code != 0 and text(gi(p)) == STAR, (code, out))
 
 # ------------------------------------------------------------ 18. second review of the PR
@@ -1071,8 +1071,8 @@ for dirname in ("a+b(c)[d]", "sp ace\\back", "st*r?"):
 # Seen failing on 85c0c8b: every run "(updated; moved to the end of the file: a later line decided .fwx/x/y.md (.gitignore:1:*.md))", twice.
 q = mono("*.md\n", "a", "b")
 both = World()
-both.put(profile(os.path.join(q, "a"), name="proja", writes_tracked_files=False))
-both.put(profile(os.path.join(q, "b"), name="projb", writes_tracked_files=False))
+both.put(project_file(os.path.join(q, "a"), name="proja", writes_tracked_files=False))
+both.put(project_file(os.path.join(q, "b"), name="projb", writes_tracked_files=False))
 exq = os.path.join(q, ".git", "info", "exclude")
 both.run()
 writes = []
@@ -1087,18 +1087,18 @@ check("18.5: three more runs of two projects held by a rule they cannot beat wri
 check("18.5: and say `already current` for both, never `moved` -- %s" % blines(outs[0]),
       all(len([l for l in blines(o) if "already current" in l]) == 2 and not any("moved" in l for l in blines(o)) for o in outs), outs[0])
 
-# 18.7 two profiles with the same `project` name in different directories of a repository (nothing in forge refuses that)
+# 18.7 two projects with the same `project` name in different directories of a repository (nothing in forge refuses that)
 # Seen failing on 85c0c8b: the one that is off removed the block of the one that is on, on every sync, which put it back.
 q = mono("node_modules/\n", "a", "b")
 w7 = World()
 for nm, pp, on in (("proja", os.path.join(q, "a"), True), ("projb", os.path.join(q, "b"), False)):
     with open(os.path.join(w7.pdir, nm + ".claude.json"), "w") as fh:
-        json.dump(profile(pp, name="shared", writes_tracked_files=False, framework=on), fh)
+        json.dump(project_file(pp, name="shared", writes_tracked_files=False, framework=on), fh)
     w7.names.add(nm)
 exq = os.path.join(q, ".git", "info", "exclude")
 for i in range(3):
     code, out = w7.run()
-check("18.7: the profile that is off removes nothing of the one that is on (the same `project`) -- %s" % (text(exq) or "").splitlines()[-7:],
+check("18.7: the project that is off removes nothing of the one that is on (the same `project`) -- %s" % (text(exq) or "").splitlines()[-7:],
       code == 0 and btext(prefix="a/", tag="a/") in (text(exq) or "") and "FORGE-FWX b/" not in (text(exq) or ""), (code, out))
 
 # 18.8 the scratch repository is removed on every way out
@@ -1203,8 +1203,8 @@ check("18.11: a project in `my app`: the marker carries `my%%20app/`, exit 0 -- 
 # a block whose tag starts like another's (a project and one inside it)
 q = mono("node_modules/\n", "app", "app/sub")
 wn = World()
-wn.put(profile(os.path.join(q, "app"), name="outer", writes_tracked_files=False))
-wn.put(profile(os.path.join(q, "app", "sub"), name="inner", writes_tracked_files=False))
+wn.put(project_file(os.path.join(q, "app"), name="outer", writes_tracked_files=False))
+wn.put(project_file(os.path.join(q, "app", "sub"), name="inner", writes_tracked_files=False))
 exq = os.path.join(q, ".git", "info", "exclude")
 wn.run()
 before = raw(exq)

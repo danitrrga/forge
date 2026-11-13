@@ -7,7 +7,7 @@ on a sandbox and records what it did, so a refactor can be diffed against the co
 
 The sandbox is a plain-repo copy of this checkout's engine files as they are on disk (sandbox.copy_engine:
 tracked or staged, so an uncommitted new file reaches it only once it is `git add`ed) beside the fixtures of
-tests/fixtures/config (sandbox.seed), every profile pointed at a throwaway project, fake secrets, a toy HOME with stale and malformed
+tests/fixtures/config (sandbox.seed), every project pointed at a throwaway project, fake secrets, a toy HOME with stale and malformed
 files, no network and a systemctl that only logs. On it: a dry-run writes nothing; an --apply
 leaves no temp file and a second one writes nothing; --project, a session and a worktree write
 only their scope; the frozen Portal gets not a byte. --dump DIR saves every run's output and
@@ -54,14 +54,14 @@ from sandbox import NEVER_COPY, git  # noqa: E402
 GEN = os.path.join("scripts", "sync", "sync_agent_config.py")
 FIXTURES = os.path.join(sandbox.FORGE, "tests", "fixtures", "config")
 # The gate's fixture --dump/--compare is the proof that what the generator WRITES for this machine's real
-# profiles stays byte-identical (docs/archive/unify-plan.md, "Puntos ciegos"), so a checkout that carries the private data
-# builds its world as before T7, a full copy with the real profiles. The signal is config/fixture-world.json, a data
-# file of the private history (it names the profiles the cases drive); a copy without it (an engine copy) gets the
+# projects stays byte-identical (docs/archive/unify-plan.md, "Puntos ciegos"), so a checkout that carries the private data
+# builds its world as before T7, a full copy with the real projects. The signal is config/fixture-world.json, a data
+# file of the private history (it names the projects the cases drive); a copy without it (an engine copy) gets the
 # fixture world: the engine files plus tests/fixtures/config.
 WORLD = os.path.join(sandbox.FORGE, "config", "fixture-world.json")
 REAL = os.path.exists(WORLD)
 if REAL:
-    # app, dup, memapp, other and frozen: the profiles the cases seed, drive and freeze; OLD_KEY is a `from` key of
+    # app, dup, memapp, other and frozen: the projects the cases seed, drive and freeze; OLD_KEY is a `from` key of
     # config/project-relocations.json and NEW_KEY its `to`, all named by config/fixture-world.json.
     with open(WORLD, encoding="utf-8") as _f:
         _world = json.load(_f)
@@ -130,7 +130,7 @@ class Sandbox:
         # with it false in the real config/forge.json: "FileNotFoundError: ... projects/<app>/.codex/config.toml".
         doc["codex_harness"] = True
         write_json(settings, doc)
-        self._profiles()
+        self._registry()
         self._framework()
         self._local_plugins()
         self._secrets()
@@ -153,21 +153,21 @@ class Sandbox:
             write(p, read(p).replace(old, new))  # main() checked the anchor occurs once
 
     def _copy_fixture_world(self):
-        # The engine files plus the fixtures, for a copy that has no profiles and skills of this machine's.
+        # The engine files plus the fixtures, for a copy that has no projects and skills of this machine's.
         sandbox.copy_engine(self.forge)
         sandbox.seed(self.forge)
         # One toy skill, so relink has something to link and the stale links seeded for it to remove.
         write(os.path.join(self.forge, "skills", "toy-common", "SKILL.md"), "---\nname: toy-common\ndescription: stub\n---\n")
 
-    def _profiles(self):
-        self.profiles = {}
-        for p in sorted(glob.glob(os.path.join(self.forge, "config", "profiles", "*.claude.json"))):
+    def _registry(self):
+        self.registry = {}
+        for p in sorted(glob.glob(os.path.join(self.forge, "config", "projects", "*.claude.json"))):
             name = os.path.basename(p)[:-len(".claude.json")]
             prof = read_json(p)
             prof["project_path"] = self.pp(name)
             if name == FROZEN:
-                # No real profile is frozen since 0280905, but the freeze is still code in lib/sync, so
-                # the toy world freezes its own copy of a frozen project's profile. Without this line master's
+                # No real project is frozen since 0280905, but the freeze is still code in lib/sync, so
+                # the toy world freezes its own copy of a frozen project file. Without this line master's
                 # fixture dies at the unfrozen control with "KeyError: 'frozen'" (prof.pop("frozen")).
                 prof["frozen"] = True
             write_json(p, prof)
@@ -178,16 +178,16 @@ class Sandbox:
                 # not cover is not written: a published plugin's repo is one, so seed what it has.
                 write(os.path.join(self.pp(name), ".gitignore"),
                       ".claude/settings.local.json\n.claude/AGENT-SYSTEM.md\n.codex/\n.agents/\n")
-            self.profiles[name] = prof
+            self.registry[name] = prof
 
     def _framework(self):
-        """A profile with `framework: true` (config/profiles/fwx.claude.json on this machine) names a plugin source
+        """A project with `framework: true` (config/projects/fwx.claude.json on this machine) names a plugin source
         in config/forge.json, `~/dev/Projects/.../plugins/fwx`, which `~` reads from the toy HOME: nothing there, so the
         framework step printed "! framework -> ~/dev/.../marketplace.json does not exist" on every run, the second
         --apply exited 1 ("a second --apply writes nothing ...: exit 1, lines [], changed []") and no run reached the
         registration. The toy world gets a marketplace of its own and the generator its own `claude` (sandbox.stub_claude),
-        so what the machine's profiles say about the framework never decides what this world does."""
-        self.framework = any(prof.get("framework") is True for prof in self.profiles.values())
+        so what the machine's projects say about the framework never decides what this world does."""
+        self.framework = any(prof.get("framework") is True for prof in self.registry.values())
         if not self.framework:
             return
         self.plugin_src = os.path.join(self.root, "plugin-src")
@@ -216,8 +216,8 @@ class Sandbox:
         names = set()
         for rel in ("config/mcp-registry.json", "config/hindsight-coding-agents.json"):
             names |= set(re.findall(r"\$\{(\w+)\}", read(os.path.join(self.forge, rel))))
-        # A profile's `env` value of the form ${NAME} is resolved from the secrets too (skills.write_settings_local).
-        for p in glob.glob(os.path.join(self.forge, "config", "profiles", "*.claude.json")):
+        # A project's `env` value of the form ${NAME} is resolved from the secrets too (skills.write_settings_local).
+        for p in glob.glob(os.path.join(self.forge, "config", "projects", "*.claude.json")):
             env = read_json(p).get("env")
             names |= {m.group(1) for v in (env.values() if isinstance(env, dict) else ())
                       for m in [re.fullmatch(r"\$\{(\w+)\}", v) if isinstance(v, str) else None] if m}
@@ -229,7 +229,7 @@ class Sandbox:
 
     def _home(self):
         h, pp = self.home, self.pp
-        plugins = sorted({p for prof in self.profiles.values() for p in prof.get("plugins_keep") or []})
+        plugins = sorted({p for prof in self.registry.values() for p in prof.get("plugins_keep") or []})
         write_json(self.cjp, {
             "numStartups": 3,
             "mcpServers": {"leaky": {"command": "leaky"}},  # user scope: cleared every run
@@ -318,7 +318,7 @@ def exercise(sb, check):
     pp, cjp = sb.pp, sb.cjp
     tail = lambda out: sandbox.tail(out, 4)
 
-    def seed_local(name):  # a stale env: the profile's own env replaces it
+    def seed_local(name):  # a stale env: the project's own env replaces it
         p = os.path.join(pp(name), ".claude", "settings.local.json")
         d = read_json(p)
         d["env"] = {"STALE": "1"}
@@ -339,7 +339,7 @@ def exercise(sb, check):
         stray = [p for p in moved if not under(p, "projects/" + own) and p != "home/.claude.json" and p not in record]
         return code, out, moved, stray, [sb.norm(k) for k in cj_diff(cj0, read_json(cjp))]
 
-    check("%s's profile is frozen" % FROZEN, sb.profiles[FROZEN].get("frozen") is True, "config/profiles/%s.claude.json" % FROZEN)
+    check("%s's project is frozen" % FROZEN, sb.registry[FROZEN].get("frozen") is True, "config/projects/%s.claude.json" % FROZEN)
     m0 = sb.manifest()
     portal0 = {k: v for k, v in m0.items() if under(k, "projects/" + FROZEN)}
 
@@ -394,7 +394,7 @@ def exercise(sb, check):
     check("systemctl is the logging stub, called only with --user", all(c.startswith("--user ") for c in calls), calls)
     # The framework step registers the plugin's marketplace once per machine: the first --apply runs `claude plugin
     # marketplace add`, the second finds it in the registry. Only the stub runs (it is first on the toy PATH), and a
-    # world without a framework profile never calls it.
+    # world without a framework project never calls it.
     cc = read(sb.claude_log).splitlines() if os.path.exists(sb.claude_log) else []
     want_cc = ["plugin marketplace add %s --scope local" % d for d in ([sb.plugin_src] if sb.framework else []) + [sb.local_src]]
     check("claude is the logging stub, called once per marketplace (framework, local plugin) over both --apply runs", cc == want_cc,
@@ -461,7 +461,7 @@ def exercise(sb, check):
                or sb.portal_keys[s] != PORTAL_KEY or "forge/data/memory-lite/" + FROZEN in m]
     check("the frozen Portal gets not a byte, in any run (dir, ~/.claude.json key, lite store)", not touched, touched)
 
-    p = os.path.join(sb.forge, "config", "profiles", FROZEN + ".claude.json")
+    p = os.path.join(sb.forge, "config", "projects", FROZEN + ".claude.json")
     prof = read_json(p)
     prof.pop("frozen")
     write_json(p, prof)
@@ -594,7 +594,7 @@ def session_cases(sb, check):
     code, msg, logged, before, after = session_start(sb, FROZEN)
     check("a frozen project's session start logs nothing and writes nothing",
           code == 0 and not logged and not msg and not changed_by_forge(before, after), "logged %s, note %r" % (logged[:8], msg))
-    p = os.path.join(sb.forge, "config", "profiles", FROZEN + ".claude.json")
+    p = os.path.join(sb.forge, "config", "projects", FROZEN + ".claude.json")
     prof = read_json(p)
     prof.pop("frozen")
     write_json(p, prof)

@@ -22,7 +22,7 @@ file exists. A pattern check never closes every shape (the downstream project's 
 harness-security.md M1); the test suite next to this file pins the ones it
 does close, and the ones it does not are listed there too.
 
-Every check always ENFORCES. There is no off switch inside a tool call: the profile turns
+Every check always ENFORCES. There is no off switch inside a tool call: the project turns
 the guard off, and a command it refuses that the user wants run, the user runs himself.
 """
 import datetime
@@ -175,8 +175,8 @@ SECRET_FILES = [
     # A secret name built from pieces: `f=apps/web/.en; cat ${f}v.local`. The fragment
     # is a path segment that is exactly `.e` or `.en`, which no ordinary path has.
     r"(?:^|[\s=/'\"])\.en?(?=$|[\s;&|'\"}]|\$)",
-    # Addition 4, as in PROTECTED_FILES. `.claude.json` starts a path segment: forge's profiles
-    # are named `<project>.claude.json`. A quote before it does not count: forge's profile code
+    # Addition 4, as in PROTECTED_FILES. `.claude.json` starts a path segment: forge's projects
+    # are named `<project>.claude.json`. A quote before it does not count: forge's project code
     # quotes the suffix (`.replace('.claude.json', '')`, the replay of one project's commands), and the store is
     # in $HOME, so a quoted relative name is a store only after a `cd ~` (cd_resolved follows it).
     r"(?:^|[\s/=])\.claude\.json", r"\.aws/config\b", FORGE_CREDENTIALS, HINDSIGHT_STORE,
@@ -186,7 +186,7 @@ SECRET_FILES = [
 # the friction fixes, in the replay of its recorded commands, read ~/.claude.json
 # for MCP server definitions.
 HINTS = {p: " For MCP server definitions, read forge's config/mcp-registry.json and "
-            "config/profiles/<project>.claude.json, which hold ${VAR} placeholders, not values."
+            "config/projects/<project>.claude.json, which hold ${VAR} placeholders, not values."
          for p in SECRET_FILES if p.endswith(r"\.claude\.json")}
 # Commands that put a file's bytes on stdout. Used by inert_segment to tell a search
 # that prints names or counts from one that prints lines.
@@ -1954,7 +1954,7 @@ def _creates_issue(seg):
 
 # ------------------------------------------------------------------ per-project parameters
 #
-# `--project NAME` (the profile's `command_guard` line) reads <forge>/config/guard/NAME.json
+# `--project NAME` (the project's `command_guard` line) reads <forge>/config/guard/NAME.json
 # on each call; a project with no file runs the core alone. secret_paths join the Bash dump
 # check and the protected-file check; harness_paths join the paths a Bash call may not write
 # (relative to the project root, or ~/...). Each entry carries its reason, which the next
@@ -2016,11 +2016,11 @@ def project_config(argv):
 # ------------------------------------------------------------------ the consent window
 #
 # `--consent` (the user-scope hook row, written when integrations.consent is on) runs only the consent
-# rules, never the core: it loads <forge>/config/gateway.json and the `production` of the profile of the
+# rules, never the core: it loads <forge>/config/gateway.json and the `production` of the project of the
 # project the call runs in, validates both, and refuses EVERY call with CONSENT_ERROR when either is
 # invalid, as `--project` does for a bad config/guard/NAME.json. It never decides to ask a human on its
 # own authority from a half-read file. consent_config() and production_error() are the one definition of
-# what is valid: forge's lib.profile_error and `forge doctor` import them by path.
+# what is valid: forge's lib.project_error and `forge doctor` import them by path.
 CONSENT_TOP_KEYS = ("_doc", "consent", "notify")  # notify is the notice gateway's: not looked at here
 CONSENT_KEYS = ("adapter", "timeout_s", "rules")
 CONSENT_RULE_KEYS = ("id", "match", "label", "risks")
@@ -2040,7 +2040,7 @@ def _strings(where, items):
 
 
 def production_error(value):
-    """None when `value` is a valid profile `production` ({"branches": [str], "commands": [str]}, both
+    """None when `value` is a valid project `production` ({"branches": [str], "commands": [str]}, both
     optional, only those keys, every string non-empty), else what is wrong."""
     try:
         if not isinstance(value, dict):
@@ -2071,9 +2071,9 @@ def consent_adapter(root, value):
 
 def consent_config(forge_root):
     """The validated consent configuration of the forge at forge_root: {"adapter": real path, "timeout_s",
-    "rules", "notify", "profiles": [{"file", "project_path", "production"?}, ...]}. ValueError, with the
-    file in the message, when config/gateway.json is missing, unreadable or invalid. The profiles are only
-    loaded: a profile that does not parse is skipped, and its `production` is checked by production_error
+    "rules", "notify", "projects": [{"file", "project_path", "production"?}, ...]}. ValueError, with the
+    file in the message, when config/gateway.json is missing, unreadable or invalid. The projects are only
+    loaded: a project that does not parse is skipped, and its `production` is checked by production_error
     for the project that uses it."""
     root = os.path.realpath(forge_root)
     path = os.path.join(root, "config", "gateway.json")
@@ -2121,8 +2121,8 @@ def consent_config(forge_root):
             _strings("%s.risks" % where, r["risks"])
     except ValueError as e:
         raise ValueError("%s: %s" % (path, e))
-    profiles = []
-    for f in sorted(glob.glob(os.path.join(root, "config", "profiles", "*.claude.json"))):
+    projects = []
+    for f in sorted(glob.glob(os.path.join(root, "config", "projects", "*.claude.json"))):
         try:
             with open(f, encoding="utf-8") as fh:
                 prof = json.load(fh)
@@ -2132,14 +2132,14 @@ def consent_config(forge_root):
             entry = {"file": f, "project_path": os.path.realpath(prof["project_path"])}
             if "production" in prof:
                 entry["production"] = prof["production"]
-            profiles.append(entry)
-    return {"adapter": adapter, "timeout_s": t, "rules": rules, "notify": doc.get("notify"), "profiles": profiles}
+            projects.append(entry)
+    return {"adapter": adapter, "timeout_s": t, "rules": rules, "notify": doc.get("notify"), "projects": projects}
 
 
-def consent_profile(profiles, cwd):
-    """The profile of the project `cwd` is in: the one with the deepest project_path that contains it."""
+def consent_project(projects, cwd):
+    """The project `cwd` is in: the one with the deepest project_path that contains it."""
     cwd = os.path.realpath(cwd)
-    inside = [p for p in profiles if cwd == p["project_path"] or cwd.startswith(p["project_path"].rstrip("/") + "/")]
+    inside = [p for p in projects if cwd == p["project_path"] or cwd.startswith(p["project_path"].rstrip("/") + "/")]
     return max(inside, key=lambda p: len(p["project_path"])) if inside else None
 
 
@@ -2147,10 +2147,10 @@ def consent_profile(profiles, cwd):
 #
 # A Bash call matches when one of its commands is a `git push` to a production branch, or starts with an
 # entry of the project's `production.commands`; an MCP call matches when the tool is named by an entry.
-# The project of a command is the deepest profile that holds the directory it runs in (the payload's cwd,
-# moved by `cd`, `git -C`, `env -C`), or, for a worktree kept elsewhere, the profile of its main checkout.
+# The project of a command is the deepest project that holds the directory it runs in (the payload's cwd,
+# moved by `cd`, `git -C`, `env -C`), or, for a worktree kept elsewhere, the project of its main checkout.
 # A directory the guard cannot read (`cd $X`) is unknown, and an unknown directory fails closed: every
-# profile with a `production` is looked at. The commands come from the guard's own parsers (segments in
+# project with a `production` is looked at. The commands come from the guard's own parsers (segments in
 # both cuts, prefixes, nested shells); only the directory walk is new, because the write check's walk
 # answers a different question. Nothing here opens a window: U1c does.
 # Not read, by design or for want of a parser (each one is a way past the window; none is asserted): a git alias
@@ -2289,8 +2289,8 @@ def _consent_part(part, dirs, env, depth, items, seen):
 
 
 def _consent_entries(p):
-    """The strings of a profile's production.commands (a profile whose production is not valid has none:
-    the profile that is used is checked by production_error)."""
+    """The strings of a project's production.commands (a project whose production is not valid has none:
+    the project that is used is checked by production_error)."""
     prod = p.get("production")
     if isinstance(prod, dict) and isinstance(prod.get("commands"), list):
         return [c for c in prod["commands"] if isinstance(c, str)]
@@ -2302,19 +2302,19 @@ def _consent_name(p):
 
 
 def _consent_resolve(cfg, d):
-    """The profiles with a `production` that a command run in d belongs to: the one that holds d, else the
+    """The projects with a `production` that a command run in d belongs to: the one that holds d, else the
     one of the main checkout of the worktree d is in; with d unknown, all of them. ValueError when one of
     them has an invalid production."""
     if d in CONSENT_RESOLVED:
         return CONSENT_RESOLVED[d]
     if d is None:
-        found = [p for p in cfg["profiles"] if "production" in p]
+        found = [p for p in cfg["projects"] if "production" in p]
     else:
-        p = consent_profile(cfg["profiles"], d)
+        p = consent_project(cfg["projects"], d)
         if p is None:
             common = consent_git(d, "rev-parse", "--path-format=absolute", "--git-common-dir")
             if common:
-                p = consent_profile(cfg["profiles"], os.path.dirname(common.rstrip("/")))
+                p = consent_project(cfg["projects"], os.path.dirname(common.rstrip("/")))
         found = [p] if p else []
     for p in found:
         err = production_error(p["production"]) if "production" in p else None
@@ -2503,10 +2503,10 @@ def consent_command_hit(words, d, project_path, entry):
 
 def consent_match(cfg, payload):
     """The consent rules a tool call matches: a list of {"rule": the rule of gateway.json, "project": the
-    profile's name, "kind": push | command | mcp, "changes": [what it changes, one line each]}; [] when it
-    matches none. ValueError when the production of a profile it needs is invalid. The cheap exit comes first:
-    a Bash call with no `push` and no program of a production command in it, an MCP tool no profile names."""
-    tool, ti, profiles = payload.get("tool_name"), payload.get("tool_input"), cfg["profiles"]
+    project's name, "kind": push | command | mcp, "changes": [what it changes, one line each]}; [] when it
+    matches none. ValueError when the production of a project it needs is invalid. The cheap exit comes first:
+    a Bash call with no `push` and no program of a production command in it, an MCP tool no project names."""
+    tool, ti, projects = payload.get("tool_name"), payload.get("tool_input"), cfg["projects"]
     ti = ti if isinstance(ti, dict) else {}
     cwd = payload.get("cwd") if isinstance(payload.get("cwd"), str) and payload.get("cwd") else PROJECT
     rule_of = {}
@@ -2514,14 +2514,14 @@ def consent_match(cfg, payload):
         rule_of.setdefault(r["match"], r)
     CONSENT_GIT["dead"] = False
     CONSENT_RESOLVED.clear()
-    if not any("production" in p for p in profiles) or not isinstance(tool, str):
+    if not any("production" in p for p in projects) or not isinstance(tool, str):
         return []
     if tool.startswith("mcp__"):
         rule = rule_of.get("production.commands")
-        named = [p for p in profiles if tool in _consent_entries(p)]
+        named = [p for p in projects if tool in _consent_entries(p)]
         if not rule or not named:
             return []
-        mine = consent_profile(profiles, cwd)
+        mine = consent_project(projects, cwd)
         prof = mine if mine in named else named[0]
         problem = production_error(prof["production"])
         if problem:
@@ -2538,7 +2538,7 @@ def consent_match(cfg, payload):
     if tool not in SHELL_TOOLS or not isinstance(command, str) or not command.strip():
         return []
     needles = ["push"]
-    for p in profiles:
+    for p in projects:
         for e in _consent_entries(p):
             ew = [] if e.startswith("mcp__") else (split_words(e) or e.split())
             if ew:
@@ -2610,7 +2610,7 @@ def consent_main():
     except Exception:
         payload = {}
     cwd = payload.get("cwd") if isinstance(payload, dict) else None
-    prof = consent_profile(cfg["profiles"], cwd if isinstance(cwd, str) and cwd else PROJECT)
+    prof = consent_project(cfg["projects"], cwd if isinstance(cwd, str) and cwd else PROJECT)
     if prof and "production" in prof:
         err = production_error(prof["production"])
         if err:

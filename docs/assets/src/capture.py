@@ -18,7 +18,7 @@ import sandbox  # noqa: E402
 from test_fresh_install import World  # noqa: E402
 
 # The world a newcomer has after a week: one MCP server in the registry (no secret), one skill of their own, two projects,
-# and the api project's profile asking for both. Each step is a forge command or a file a user writes by hand.
+# and the api project file asking for both. Each step is a forge command or a file a user writes by hand.
 REGISTRY = {"servers": {"playwright": {"type": "stdio", "command": "playwright-mcp", "args": ["--headless"]},
                         "docs": {"type": "stdio", "command": "docs-mcp", "args": []}}}
 SKILLS = {"review": "Review a diff before it is pushed.", "release": "Cut a release: changelog, tag, notes."}
@@ -28,13 +28,13 @@ COMMANDS = (
     ("skills", ["skills", "--apply"]),
     ("add-api", ["new", "{projects}/api"]),
     ("add-site", ["new", "{projects}/site"]),
-    ("profile", None),
+    ("project", None),
     ("sync-dry", ["sync", "--all"]),
     ("sync", ["sync", "--apply", "--all"]),
     ("doctor", ["doctor"]),
 )
 # The files the images show, read back after the run.
-FILES = ("config/profiles/api.claude.json", "config/profiles/site.claude.json", "{projects}/api/.claude/settings.local.json",
+FILES = ("config/projects/api.claude.json", "config/projects/site.claude.json", "{projects}/api/.claude/settings.local.json",
          "{home}/.claude.json")
 
 
@@ -57,12 +57,12 @@ def main():
                 with open(w.path("skills", name, "SKILL.md"), "w") as fh:
                     fh.write("---\nname: %s\ndescription: %s\n---\n%s\n" % (name, desc, desc))
             continue
-        if key == "profile":
+        if key == "project":
             for name, extra in (("api", {"servers": ["playwright"], "skills_keep": ["review"]}), ("site", {"servers": ["docs"]})):
-                prof = w.path("config", "profiles", name + ".claude.json")
+                prof = w.path("config", "projects", name + ".claude.json")
                 with open(prof) as fh:
                     doc = json.load(fh)
-                doc.pop("_doc", None)  # the user writing their own profile drops the example's documentation key
+                doc.pop("_doc", None)  # the user writing their own project drops the example's documentation key
                 doc.update(extra)
                 with open(prof, "w") as fh:
                     json.dump(doc, fh, indent=2)

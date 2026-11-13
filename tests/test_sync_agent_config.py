@@ -88,13 +88,13 @@ def fence(pdir):
     """End the whole test before agent_config() runs unless every path it could write is inside TOY.
 
     run_ctx's apply=True skips lib.may_write, the rule that keeps a copy of forge off the real
-    projects, while lib.PROFILES names the real checkout's profiles. The generator lists its
-    profiles from lib.PROFILES, so left at the real directory it would write the 19 real projects;
+    projects, while lib.PROJECTS names the real checkout's projects. The generator lists its
+    projects from lib.PROJECTS, so left at the real directory it would write the 19 real projects;
     sync.CFG is still where it reads the registry, the secrets and the relocations. So both are the
-    toy ones, and no toy profile names a directory outside TOY."""
-    if lib.PROFILES != pdir or os.path.join(sync.CFG, "profiles") != pdir:
-        sys.exit("FENCE: profiles are read from %s and %s, not the toy %s -- nothing run"
-                 % (lib.PROFILES, os.path.join(sync.CFG, "profiles"), pdir))
+    toy ones, and no toy project names a directory outside TOY."""
+    if lib.PROJECTS != pdir or os.path.join(sync.CFG, "projects") != pdir:
+        sys.exit("FENCE: projects are read from %s and %s, not the toy %s -- nothing run"
+                 % (lib.PROJECTS, os.path.join(sync.CFG, "projects"), pdir))
     for f in sorted(os.listdir(pdir)):
         try:
             with open(os.path.join(pdir, f), encoding="utf-8") as fh:
@@ -102,19 +102,19 @@ def fence(pdir):
         except ValueError:
             continue  # the generator reads it as {}: no directory to write
         pp = prof.get("project_path") if isinstance(prof, dict) else None
-        # A path that is not a string names no directory: the generator skips that profile.
+        # A path that is not a string names no directory: the generator skips that project.
         if isinstance(pp, str) and pp and not os.path.realpath(pp).startswith(TOY + os.sep):
             sys.exit("FENCE: %s names %s, outside the toy world %s -- nothing run" % (f, pp, TOY))
 
 
-def case(name, profiles, relocations=(), only=None, globals_=False, secrets_link=True, registry=None):
+def case(name, projects, relocations=(), only=None, globals_=False, secrets_link=True, registry=None):
     """A fresh toy config/ and project dirs; returns (exit code, stdout, {name: project dir}).
-    A profile given as a string is written as that text, unparsed, and so is `relocations` given
+    A project given as a string is written as that text, unparsed, and so is `relocations` given
     as a string. `registry` is the registry's text, written unparsed; None is an empty servers
     object, False no registry file at all."""
     global run_ctx
     base = os.path.join(TOY, name)
-    cfg, pdir = os.path.join(base, "config"), os.path.join(base, "config", "profiles")
+    cfg, pdir = os.path.join(base, "config"), os.path.join(base, "config", "projects")
     os.makedirs(pdir)
     if registry is not False:
         seed(os.path.join(cfg, "mcp-registry.json"), '{"servers": {}}' if registry is None else registry)
@@ -132,7 +132,7 @@ def case(name, profiles, relocations=(), only=None, globals_=False, secrets_link
         with open(os.path.join(cfg, "project-relocations.json"), "w") as f:
             json.dump({"relocations": list(relocations)}, f)
     dirs = {}
-    for pname, prof in profiles.items():
+    for pname, prof in projects.items():
         if isinstance(prof, str):
             seed(os.path.join(pdir, pname + ".claude.json"), prof)
             continue
@@ -142,13 +142,13 @@ def case(name, profiles, relocations=(), only=None, globals_=False, secrets_link
         if "project_path" not in prof:
             prof["project_path"] = os.path.join(base, "projects", pname)
         if prof["project_path"] is None:
-            del prof["project_path"]  # a profile that names no directory
+            del prof["project_path"]  # a project that names no directory
         else:
             dirs[pname] = prof["project_path"]
         with open(os.path.join(pdir, pname + ".claude.json"), "w") as f:
             json.dump(prof, f)
     sync.CFG, run_ctx = cfg, lib.Ctx(run_ctx.apply, only, globals_)
-    lib.PROFILES = pdir
+    lib.PROJECTS = pdir
     fence(pdir)
     for d in dirs.values():
         os.makedirs(d, exist_ok=True)
@@ -244,7 +244,7 @@ for target in (CJ, os.path.join(HOME, ".claude", "settings.json"), os.path.join(
         check(any(l.lstrip().startswith("! %s unreadable" % short) for l in out.splitlines()),
               "corrupt %s: no '! %s unreadable' line in the output" % (what, short))
         # The closing line points at the '!' lines, an unreadable file among the causes: it used
-        # to blame only secrets or a profile.
+        # to blame only secrets or a project.
         check(any(l.startswith("ABORTED") and "'!' line" in l and "unreadable file" in l for l in out.splitlines()),
               "corrupt %s: the ABORTED line does not point at the '!' lines: %r"
               % (what, [l for l in out.splitlines() if l.startswith("ABORTED")]))
@@ -296,11 +296,11 @@ code, out, _ = case("reloc-frozen-scoped", {"portal": {"frozen": True}, "a": {}}
                     relocations=[{"from": a, "to": portal}], only={"a"})
 check(portal not in json.loads(read(CJ))["projects"], "a run scoped to 'a' relocated a's key onto the frozen one")
 
-# A frozen profile gets nothing from forge, so it need not even name a directory.
+# A frozen project gets nothing from forge, so it need not even name a directory.
 reset_home()
 code, out, _ = case("frozen-no-path", {"portal": {"frozen": True, "project_path": None}, "a": {}},
                     relocations=[{"from": "/old/a", "to": "/new/a"}])
-check(code == 0, "a frozen profile without project_path: exit %r\n%s" % (code, out[-300:]))
+check(code == 0, "a frozen project without project_path: exit %r\n%s" % (code, out[-300:]))
 
 for only, moved in (({"a"}, False), ({"b"}, True), (None, True)):
     reset_home()
@@ -312,7 +312,7 @@ for only, moved in (({"a"}, False), ({"b"}, True), (None, True)):
     check(("/old/b" not in got and got.get(b, {}).get("allowedTools") == ["y"]) == moved,
           "run scoped to %r: relocation of b's key %s" % (only, "not applied" if moved else "applied anyway"))
 
-# 4. One key per project, in the form Claude Code writes: a trailing slash in a profile does not
+# 4. One key per project, in the form Claude Code writes: a trailing slash in a project does not
 # become the key (that turned the real key into the "duplicate" and deleted it every session),
 # folding a duplicate keeps its whole entry, and on Linux a key differing only in case is
 # another directory, not a duplicate.
@@ -598,7 +598,7 @@ for label, rel, to in (("config.toml", os.path.join(".codex", "config.toml"), os
              os.path.islink(os.path.join(d, rel)), [l for l in out.splitlines() if "codex mcp" in l]))
 
 # 9. A .gitignore that cannot be read (not UTF-8, a directory) is that project's error, reported,
-# with nothing written under .codex/ or .agents/; it used to abort the run before the next profile.
+# with nothing written under .codex/ or .agents/; it used to abort the run before the next project.
 for label, make in (("not UTF-8", lambda gi: open(gi, "wb").write(b"*.pyc\n\xff\xfe\n")), ("a directory", os.makedirs)):
     reset_home()
     name = "gi-bad-" + label.split()[-1]
@@ -659,21 +659,21 @@ for label, link in (("a symlinked .gitignore", True), ("a plain .gitignore", Fal
               and len(line) == 1 and "+1" in line[0] and "+gitignore" in line[0])
     check(ok, "%s: .agents/skills/s1 %s, lines %r" % (label, "linked" if os.path.lexists(agents) else "absent", line))
 
-# 12. main() reads each profile once: for the relocation scope and again in the profile loop, a
+# 12. main() reads each project once: for the relocation scope and again in the project loop, a
 # malformed one printed its '! could not read' warning twice.
 reset_home()
-code, out, _ = case("bad-profile", {"a": {}, "bad": "{not json"})
+code, out, _ = case("bad-project", {"a": {}, "bad": "{not json"})
 said = [l for l in out.splitlines() if "could not read" in l and "bad.claude.json" in l]
-check(len(said) == 1, "a malformed profile: %d '! could not read' line(s), want 1: %r (exit %r)" % (len(said), said, code))
+check(len(said) == 1, "a malformed project: %d '! could not read' line(s), want 1: %r (exit %r)" % (len(said), said, code))
 
-# 13. A profile with no project_path -- malformed, or written without one -- is skipped with a '!'
-# line. It raised KeyError: 'project_path', and every later profile, the ~/.claude.json write and
+# 13. A project with no project_path -- malformed, or written without one -- is skipped with a '!'
+# line. It raised KeyError: 'project_path', and every later project, the ~/.claude.json write and
 # the user scope went with it.
 reset_home()
 code, out, dirs = case("no-path", {"a": {}, "bad": "{not json", "c": {}, "nopath": {"project_path": None}})
 skipped = [l for l in out.splitlines() if l.lstrip().startswith("! no project_path")]
 check(code == 1 and len(skipped) == 2 and "claude key: %s" % dirs["c"] in out and "== ~/.claude.json" in out,
-      "profiles with no project_path: exit %r, %d skip line(s), later profile and ~/.claude.json %s"
+      "projects with no project_path: exit %r, %d skip line(s), later project and ~/.claude.json %s"
       % (code, len(skipped), "reached" if "== ~/.claude.json" in out else "never reached"))
 
 # 14. A config/secrets.json that does not exist is named missing, not "a COPY": a worktree has
@@ -718,20 +718,20 @@ said = [l for l in out.splitlines() if "COPY" in l or "Missing here" in l]
 check(len(said) == 2 and said[1].strip() == "Missing here: ADDED_SINCE",
       "config/secrets.json a stale copy: %r (exit %r)" % (said, code))
 
-# 16. A profile field of the wrong type (lib.PROFILE_FIELDS) is that profile's error, like a
+# 16. A project field of the wrong type (lib.PROJECT_FIELDS) is that project's error, like a
 # missing project_path: one '!' line naming the field, nothing written for it, exit 1, and the
-# later profiles, ~/.claude.json and the user scope still run. Red before the table:
-# `"servers": null` raised "TypeError: 'NoneType' object is not iterable" in the profile loop and
+# later projects, ~/.claude.json and the user scope still run. Red before the table:
+# `"servers": null` raised "TypeError: 'NoneType' object is not iterable" in the project loop and
 # `[5]` "AttributeError: 'int' object has no attribute 'startswith'" in check_retired_memory, a
-# profile that is a JSON list raised "AttributeError: 'list' object has no attribute 'get'" in
-# relocations_in_scope, before any profile ran, and `"project_path": 5` "TypeError: _path_normpath:
+# project that is a JSON list raised "AttributeError: 'list' object has no attribute 'get'" in
+# relocations_in_scope, before any project ran, and `"project_path": 5` "TypeError: _path_normpath:
 # path should be string, bytes or os.PathLike, not int" there too; `"frozen": "false"` froze the
 # project with exit 0, and an env value 1 reached settings.local.json as a number with exit 0.
 # Each crash also skipped the user scope ("stub(s) ... never ran").
 for i, (label, bad, why) in enumerate((
         ("servers null", {"servers": None}, "servers is not a list of strings"),
         ("servers [5]", {"servers": [5]}, "servers is not a list of strings"),
-        ("a JSON list", "[1]", "the profile is not a JSON object"),
+        ("a JSON list", "[1]", "the project is not a JSON object"),
         ("project_path 5", '{"project": "bad", "servers": [], "project_path": 5}', "project_path is not a string"),
         ("frozen 'false'", {"frozen": "false"}, "frozen is not a boolean"),
         ("an env value 1", {"env": {"X": 1}}, "env is not a JSON object of strings"))):
@@ -740,10 +740,10 @@ for i, (label, bad, why) in enumerate((
     code, out, dirs = case(name, {"bad": bad, "c": {}}, globals_=True)
     lines = out.splitlines()
     check(code == 1 and "   ! %s -- nothing written for this project" % why in lines
-          and "claude key: %s" % dirs["c"] in out and "== ~/.claude.json (MCP servers, every profile) ==" in lines
+          and "claude key: %s" % dirs["c"] in out and "== ~/.claude.json (MCP servers, every project) ==" in lines
           and "== Hindsight coding-agents (config + runtime) ==" in lines
           and not os.path.exists(os.path.join(TOY, name, "projects", "bad", ".claude")),
-          "a profile with %s: exit %r, '!' lines %r, later profile %s, ~/.claude.json %s"
+          "a project with %s: exit %r, '!' lines %r, later project %s, ~/.claude.json %s"
           % (label, code, [l for l in lines if l.lstrip().startswith("!")],
              "reached" if "claude key: %s" % dirs.get("c") in out else "never reached",
              "reached" if "== ~/.claude.json" in out else "never reached"))
@@ -759,7 +759,7 @@ got = json.loads(read(CJ))["projects"]
 said = [l for l in out.splitlines() if l.lstrip().startswith("! relocation")]
 check(code == 1 and "/old/bad" in got and bad_dir not in got and len(said) == 1
       and "servers is not a list of strings" in said[0],
-      "a relocation onto a badly typed profile's key: exit %r, keys %r, relocation lines %r" % (code, sorted(got), said))
+      "a relocation onto a badly typed project's key: exit %r, keys %r, relocation lines %r" % (code, sorted(got), said))
 
 # 17. The Hindsight files are read as objects: a canonical config/hindsight-coding-agents.json that
 # is valid JSON but not an object is an unreadable source, a '!' line with nothing rendered, and the
@@ -837,7 +837,7 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
           % (agent, notes, ev, left, doc["hooks"].get("Foreign")))
 
 # 19. A project whose .agents (or .agents/skills) is a regular file gets no links and a '!' line,
-# in a dry-run as in an --apply: the file and the .gitignore are left alone and the next profile
+# in a dry-run as in an --apply: the file and the .gitignore are left alone and the next project
 # still runs. Red before: --apply "raised NotADirectoryError: [Errno 20] Not a
 # directory: '.../.agents/skills'" (".agents/skills" a file: "raised FileExistsError: [Errno 17]
 # File exists"), and the dry-run promised "(1 skill(s), +1) ... [dry-run]" for links it could not make.
@@ -862,23 +862,23 @@ for i, (sub, apply) in enumerate(((".agents", True), (".agents", False), (os.pat
              [l for l in out.splitlines() if "codex sees" in l] or out[-300:],
              read(gi) if os.path.exists(gi) else None))
 
-# 20. settings.local.json is generator-owned: a profile that stops trimming (skills_keep and
+# 20. settings.local.json is generator-owned: a project that stops trimming (skills_keep and
 # plugins_keep removed) loses the skillOverrides and enabledPlugins it was given, as it already
-# lost env, while what a session approved stays. Red before: a bare profile's
+# lost env, while what a session approved stays. Red before: a bare project's
 # stale keys all stayed, "keys ['enabledPlugins', 'env', 'permissions', 'skillOverrides']" with
 # no overrides line, because it returned before reading the file; with an env of its own, env
 # was replaced and "keys ['enabledPlugins', 'env', 'permissions', 'skillOverrides']" still; one
 # trimming skills with no plugins_keep kept the stale plugin map, "keys ['enabledPlugins',
 # 'permissions', 'skillOverrides']", and said "plugins unchanged". The second run's check was
-# seen to fail with the new early `return None` deleted: "a bare profile, second run: exit 0,
+# seen to fail with the new early `return None` deleted: "a bare project, second run: exit 0,
 # overrides lines ['   overrides -> .../settings.local.json (untrimmed (pass-through only))
 # (already current)']".
 STALE = {"skillOverrides": {"gsd-x": "off"}, "enabledPlugins": {"p@x": False}, "env": {"OLD": "1"},
          "permissions": {"allow": ["Bash(ls:*)"]}}
 for label, prof, keys, said in (
-        ("a bare profile", {}, ["permissions"], "enabledPlugins and skillOverrides removed, perms allow 1, env removed"),
-        ("a profile with env", {"env": {"K": "v"}}, ["env", "permissions"], "enabledPlugins and skillOverrides removed"),
-        ("a profile trimming skills only", {"skills_keep": []}, ["permissions", "skillOverrides"],
+        ("a bare project", {}, ["permissions"], "enabledPlugins and skillOverrides removed, perms allow 1, env removed"),
+        ("a project with env", {"env": {"K": "v"}}, ["env", "permissions"], "enabledPlugins and skillOverrides removed"),
+        ("a project trimming skills only", {"skills_keep": []}, ["permissions", "skillOverrides"],
          "plugins untrimmed, skills off 0, kept-global 0, enabledPlugins removed, perms allow 1, env removed")):
     reset_home()
     name = "untrim-" + label.split()[-1]
@@ -888,7 +888,7 @@ for label, prof, keys, said in (
     code, out, _ = case(name, {"a": prof})
     doc = json.loads(read(slp))
     line = [l for l in out.splitlines() if "overrides ->" in l]
-    # 3.6 U2c: every project but forge's own also gets the `deny` rules on forge, so a bare profile is no longer left alone and
+    # 3.6 U2c: every project but forge's own also gets the `deny` rules on forge, so a bare project is no longer left alone and
     # its permissions are the stale allow plus that one key (the run said "perms allow 1" where it said nothing before).
     perms = doc["permissions"]
     check(code == 0 and sorted(doc) == keys and perms.get("allow") == STALE["permissions"]["allow"] and sorted(perms) == ["allow", "deny"]
@@ -899,7 +899,7 @@ for label, prof, keys, said in (
     check(code == 0 and json.loads(read(slp)) == doc and (len(line) == 1 and "(already current)" in line[0]),
           "%s, second run: exit %r, overrides lines %r" % (label, code, line))
 
-# 21. A profile with no env still gives Codex MCPORTER_CONFIG, under this HOME: the value was the
+# 21. A project with no env still gives Codex MCPORTER_CONFIG, under this HOME: the value was the
 # author's home spelled out. Red before: the toy config.toml said
 # "MCPORTER_CONFIG" = "<the author's home>/.config/mcporter/mcporter.json".
 reset_home()
@@ -910,11 +910,11 @@ toml = os.path.join(d, ".codex", "config.toml")
 body = read(toml) if os.path.exists(toml) else ""
 said = [l for l in body.splitlines() if "MCPORTER_CONFIG" in l]
 check(code == 0 and said == ['"MCPORTER_CONFIG" = "%s"' % os.path.join(HOME, ".config", "mcporter", "mcporter.json")],
-      "a profile with no env: exit %r, MCPORTER_CONFIG lines %r" % (code, said))
+      "a project with no env: exit %r, MCPORTER_CONFIG lines %r" % (code, said))
 
-# 22. A .codex/config.toml that is not UTF-8 is rewritten 0600, and the profiles after it still
+# 22. A .codex/config.toml that is not UTF-8 is rewritten 0600, and the projects after it still
 # run. The unchanged-content read raised UnicodeDecodeError, which is not lib.Unreadable, so the
-# traceback skipped every later profile, the ~/.claude.json commit and the user scope.
+# traceback skipped every later project, the ~/.claude.json commit and the user scope.
 # Red before: "a non-UTF-8 config.toml: exit "raised UnicodeDecodeError: 'utf-8'
 # codec can't decode byte 0xff in position 0: invalid start byte", mode 644, a's lines [], b's
 # config.toml False".
@@ -954,7 +954,7 @@ check(code == 0 and len(said) == 1 and said[0].endswith("(updated)") and lf,
       "a CRLF config.toml: exit %r, lines %r, LF on disk %s" % (code, said, lf))
 
 # 24. A registry with no servers object refuses the run: one '!' line, exit 1, nothing written.
-# lib.read_json turns `{broken` (and a missing file) into {}, so every server the profiles list
+# lib.read_json turns `{broken` (and a missing file) into {}, so every server the projects list
 # was "not in registry", every project's mcpServers became {} and its .codex/config.toml held zero
 # servers, and the run exited 0 -- a session start did it to its own project, `forge sync --apply`
 # to all of them. A `[]` registry raised at the `.get` in mcp.load_inputs.
@@ -984,7 +984,7 @@ for i, text in enumerate(("{broken", "[]", "{}", '{"servers": []}', False)):
 # the file and the shape, and the run goes on and exits 1 under agent_config's exit rule -- as an
 # unreadable one does after lib.read_json's "could not read" line. Both exited 0 until the rule.
 # A bad entry is skipped alone: the valid one beside it still moves its key.
-# Red before, every run raised before any profile: "relocations '[]': exit "raised
+# Red before, every run raised before any project: "relocations '[]': exit "raised
 # AttributeError: 'list' object has no attribute 'get'", lines [], /old/a kept True, a's key
 # written False", the same for '42' and 'null'; '{"relocations": 5}' "raised TypeError: 'int'
 # object is not iterable" (and 'NoneType' for null); "relocation entry '/old/x': exit "raised
@@ -1169,16 +1169,16 @@ check(code == 0 and line == ["   ~/.claude.json -> already current"] and read(CJ
       "an entry holding the keys, rerun: exit %r, ~/.claude.json line %r, enabledMcpjsonServers %r (want ['sess'])"
       % (code, line, now.get("enabledMcpjsonServers")))
 
-# 27c. enableAllProjectMcpServers reaches settings.local.json whenever the profile declares it, with or
-# without `mcpjson_approved`: it was written only beside the approved list, so the profiles that
+# 27c. enableAllProjectMcpServers reaches settings.local.json whenever the project declares it, with or
+# without `mcpjson_approved`: it was written only beside the approved list, so the projects that
 # declare it alone would have it nowhere once ~/.claude.json stopped carrying it. enabledMcpjsonServers
-# stays written only with `mcpjson_approved`. Negative controls: a profile that does not declare the key,
+# stays written only with `mcpjson_approved`. Negative controls: a project that does not declare the key,
 # or declares false, gets no `true`.
 for label, prof, want, summary in (
-        ("a bare profile with the key", {"enableAllProjectMcpServers": True}, True, "(ALL: on)"),
-        ("a trimmed profile with the key", {"skills_keep": [], "enableAllProjectMcpServers": True}, True, "(ALL: on)"),
-        ("a trimmed profile with the key false", {"skills_keep": [], "enableAllProjectMcpServers": False}, False, None),
-        ("a trimmed profile without the key", {"skills_keep": []}, None, None),
+        ("a bare project with the key", {"enableAllProjectMcpServers": True}, True, "(ALL: on)"),
+        ("a trimmed project with the key", {"skills_keep": [], "enableAllProjectMcpServers": True}, True, "(ALL: on)"),
+        ("a trimmed project with the key false", {"skills_keep": [], "enableAllProjectMcpServers": False}, False, None),
+        ("a trimmed project without the key", {"skills_keep": []}, None, None),
         ("an approved list and the key", {"mcpjson_approved": ["x"], "enableAllProjectMcpServers": True}, True, "(ALL: on)"),
         ("an approved list, no key", {"mcpjson_approved": ["x"]}, None, None)):
     reset_home()

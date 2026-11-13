@@ -4,8 +4,8 @@
 Copied from the downstream project's .claude/hooks/test_worktree_guard.py at 77d2255e and made neutral
 (a research note on worktree guards, W1). It builds a
 real repository in a temp folder, with two linked worktrees under .claude/worktrees/, and a toy
-forge beside it: a copy of the hook under <toy>/hooks/ and toy profiles under
-<toy>/config/profiles/, which the hook reads through `--project NAME`. Each PreToolUse payload
+forge beside it: a copy of the hook under <toy>/hooks/ and toy projects under
+<toy>/config/projects/, which the hook reads through `--project NAME`. Each PreToolUse payload
 goes to the hook in a subprocess. A block case checks the exit code and the reason, so a case
 blocked by the wrong rule fails too.
 
@@ -14,19 +14,19 @@ hook's scratch list at a folder of its own (WORKTREE_GUARD_SCRATCH). One case ru
 without that override, to show the real /tmp is allowed. The write_roots cases judge
 the real home's paths (~/wtguard-notes, ~/.cache/wtguard-*), which need not exist; the symlink
 case needs a real link, so it runs with HOME set to a home folder inside the fixture.
-CLAUDE_PROJECT_DIR names another repository on every call: the project root is the profile's
+CLAUDE_PROJECT_DIR names another repository on every call: the project root is the project's
 project_path, and a hook that read the variable would fail the placement cases.
 
 The ALLOW half matters as much as the block half: a hook that blocks everything stops
 every agent. The MAIN half reruns every write block from the main checkout and from a
 folder in no repository, where only this repository's worktree placement is checked.
 
-Controls that stay in the suite, each the opposite verdict on a case the main profile passes:
-  * profile `bare` ("worktree_guard": true) refuses every write_roots allow and the
+Controls that stay in the suite, each the opposite verdict on a case the main project passes:
+  * project `bare` ("worktree_guard": true) refuses every write_roots allow and the
     worktree_dirs allow, so the parameters are seen to do something;
-  * profile `elsewhere` (project_path is another repository) allows the placement blocks run
+  * project `elsewhere` (project_path is another repository) allows the placement blocks run
     from the main checkout, since those are no longer this project's worktrees;
-  * an unusable profile (no file, not JSON, a wrong shape, no project_path, no --project) is
+  * an unusable project (no file, not JSON, a wrong shape, no project_path, no --project) is
     refused inside a worktree and allowed in the main checkout.
 
   WORKTREE_GUARD_UNDER_TEST=<file>  run the cases against another copy of the hook
@@ -67,12 +67,12 @@ BROKEN_ELSEWHERE = os.path.join(BASE, "broken-elsewhere")   # the same `.git` fi
 FAKE_HOME = os.path.join(BASE, "fake-home")
 ELP_X = os.path.join(FAKE_HOME, ".cache", "wtguard-x")
 REAL_HOME = os.path.expanduser("~")
-# The toy forge: the hook under test copied into <TOY>/hooks/, its profiles in <TOY>/config/profiles/.
+# The toy forge: the hook under test copied into <TOY>/hooks/, its projects in <TOY>/config/projects/.
 TOY = os.path.join(BASE, "forge")
 TOY_HOOK = os.path.join(TOY, "hooks", "worktree_guard.py")
-PARKED = os.path.join(BASE, "parked")           # an extra worktree_dirs folder of profile `toy`
-SV = os.path.join(BASE, "sv-")                  # a worktree_dirs prefix of profile `toy`, like GSD's /tmp/sv-
-PROFILES = {
+PARKED = os.path.join(BASE, "parked")           # an extra worktree_dirs folder of project `toy`
+SV = os.path.join(BASE, "sv-")                  # a worktree_dirs prefix of project `toy`, like GSD's /tmp/sv-
+PROJECTS = {
     # write_roots: a folder (the downstream project's shared notes) and a prefix (its ~/.cache/elp-<name>/).
     "toy": {"project_path": MAIN, "worktree_guard": {
         "write_roots": [{"path": "~/wtguard-notes", "why": "shared notes"},
@@ -81,7 +81,7 @@ PROFILES = {
                           {"prefix": SV, "why": "GSD's code fixer, mktemp -d /tmp/sv-<phase>-reviewfix-XXXXXX"}]}},
     "bare": {"project_path": MAIN, "worktree_guard": True},
     "elsewhere": {"project_path": OTHER, "worktree_guard": True},
-    # Guard off, its parameters declared (forge's own profile): the hook reads them alike.
+    # Guard off, its parameters declared (forge's own project): the hook reads them alike.
     "off": {"project_path": MAIN, "worktree_guard": {"on": False, "worktree_dirs": [{"path": PARKED, "why": "w"}]}},
     "nopath": {"worktree_guard": True},
     "norepo": {"project_path": NOREPO, "worktree_guard": True},
@@ -96,10 +96,10 @@ PROFILES = {
     "unknownkey": {"project_path": MAIN, "worktree_guard": {"write_root": []}},
     "bareprefix": {"project_path": MAIN, "worktree_guard": {"write_roots": [{"prefix": "~/.cache/", "why": "w"}]}},
 }
-# Arguments naming a profile the hook cannot use: refused inside a worktree, allowed outside.
+# Arguments naming a project the hook cannot use: refused inside a worktree, allowed outside.
 UNREADABLE = [("--project", n) for n in (
     "nopath", "norepo", "wrongtype", "onnotbool", "notalist", "nowhy", "emptywhy", "dirbareprefix", "dirboth", "relative",
-    "unknownkey", "bareprefix", "missing", "notjson", "../forge/config/profiles/toy")] + [(), ("--project",), ("--other", "toy")]
+    "unknownkey", "bareprefix", "missing", "notjson", "../forge/config/projects/toy")] + [(), ("--project",), ("--other", "toy")]
 
 
 # lefthook runs this suite inside a git hook, which exports GIT_DIR and GIT_INDEX_FILE. In a
@@ -117,13 +117,13 @@ def git(*args, cwd=MAIN):
 
 def build_fixture():
     for d in (MAIN, SCRATCH, ELSEWHERE, NOREPO, OTHER, PARKED, os.path.dirname(TOY_HOOK),
-              os.path.join(TOY, "config", "profiles")):
+              os.path.join(TOY, "config", "projects")):
         os.makedirs(d)
     shutil.copy(HOOK, TOY_HOOK)
-    for name, prof in PROFILES.items():
-        with open(os.path.join(TOY, "config", "profiles", name + ".claude.json"), "w") as fh:
+    for name, prof in PROJECTS.items():
+        with open(os.path.join(TOY, "config", "projects", name + ".claude.json"), "w") as fh:
             json.dump(dict(prof, project=name), fh)
-    with open(os.path.join(TOY, "config", "profiles", "notjson.claude.json"), "w") as fh:
+    with open(os.path.join(TOY, "config", "projects", "notjson.claude.json"), "w") as fh:
         fh.write("{nope")
     git("init", "-q")
     git("init", "-q", cwd=OTHER)
@@ -379,8 +379,8 @@ LOCATION_BLOCK = [
     ("git worktree add %s/x -b d" % SV, "Worktrees of this project live only"),
     ("git worktree add %s/svx-1 -b d" % BASE, "Worktrees of this project live only"),
 ]
-# The same mktemp shapes landing where profile `toy` allows them: directly under PARKED, as a
-# prefix folder SV<name>, or under .claude/worktrees; refused under profile `bare`, which has no
+# The same mktemp shapes landing where project `toy` allows them: directly under PARKED, as a
+# prefix folder SV<name>, or under .claude/worktrees; refused under project `bare`, which has no
 # PARKED and no prefix (the .claude/worktrees one stays allowed there).
 LOCATION_ALLOW = [
     ("wt=$(mktemp -d -p %s wt-XXXXXX) && git worktree add \"$wt\" -b mk1" % PARKED, True),
@@ -394,7 +394,7 @@ LOCATION_ALLOW = [
     ("git worktree add \"%s/agent-$WTGUARD_NEVER_SET\"" % os.path.join(MAIN, ".claude", "worktrees"), False),
 ]
 
-# worktree_dirs: profile `toy` adds PARKED, so a worktree may go directly under it, never deeper.
+# worktree_dirs: project `toy` adds PARKED, so a worktree may go directly under it, never deeper.
 PARKED_ALLOW = "git worktree add %s/wt1 -b parked1" % PARKED
 PARKED_BLOCK = "git worktree add %s/deeper/wt2" % PARKED
 
@@ -524,8 +524,8 @@ WT_ALLOW = [
     bash("cat a.txt | sed -n '/x/p' | grep -in y"),
 ]
 
-# From inside the worktree, allowed by profile `toy`'s write_roots only, and refused under
-# profile `bare`. Under the real HOME, as the real /tmp case is.
+# From inside the worktree, allowed by project `toy`'s write_roots only, and refused under
+# project `bare`. Under the real HOME, as the real /tmp case is.
 WRITE_ROOT_ALLOW = [
     write(os.path.join(os.path.expanduser("~"), "wtguard-notes", "PROGRESO.md")),
     bash("printf -- '- lane done\\n' >> ~/wtguard-notes/PROGRESO.md"),
@@ -559,10 +559,10 @@ def cases():
         out.append(("block", "Bash", {"command": cmd}, MAIN, why, None, toy))
         # Control: with project_path naming another repository, these are not this project's.
         out.append(("allow", "Bash", {"command": cmd}, MAIN, None, None, ("--project", "elsewhere")))
-    for cmd, by_profile in LOCATION_ALLOW:
+    for cmd, by_project in LOCATION_ALLOW:
         for cwd in (WT, MAIN):
             out.append(("allow", "Bash", {"command": cmd}, cwd, None, None, toy))
-            if by_profile:
+            if by_project:
                 out.append(("block", "Bash", {"command": cmd}, cwd, "Worktrees of this project live only", None, BARE))
     # A bare mktemp -d lands in $TMPDIR (or /tmp): the hook reads the session's TMPDIR.
     out.append(("block", "Bash", {"command": "wt=$(mktemp -d) && git worktree add \"$wt\""}, MAIN,
@@ -638,7 +638,7 @@ def cases():
     for cwd in (MAIN + "\u0000x", NOREPO + "\u0000x", BROKEN_ELSEWHERE):
         out.append(("allow", "Write", {"file_path": target, "content": "x"}, cwd, None, None, toy))
         out.append(("allow", "Bash", {"command": "echo x > %s" % target}, cwd, None, None, toy))
-    # A profile the hook cannot use: even a write inside the worktree is refused there, while the
+    # A project the hook cannot use: even a write inside the worktree is refused there, while the
     # main checkout goes on, its placement rule unread.
     for args in UNREADABLE:
         out.append(("block", "Write", {"file_path": os.path.join(WT, "x.ts"), "content": "x"}, WT,
