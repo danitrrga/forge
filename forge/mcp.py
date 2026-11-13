@@ -617,7 +617,7 @@ def relocations_in_scope(ctx, loaded, relocations):
         bad = lib.project_error(p)
         if bad or p.get("frozen"):
             held[project_key(p["project_path"])] = (
-                "its project is skipped (%s)" % bad if bad else "a frozen project's key is never touched")
+                "its project file is skipped (%s)" % bad if bad else "a frozen project's key is never touched")
     mine = None if ctx.only is None else {project_key(p["project_path"]) for n, p in every.items() if n in ctx.only}
     kept = []
     for item in relocations:

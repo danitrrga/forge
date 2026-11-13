@@ -640,7 +640,7 @@ def write_user_settings(ctx):
 
     ENABLE_CLAUDEAI_MCP_SERVERS=false. Every connector on the claude.ai account (15 on
     when measured: Gmail, Drive, Calendar, Claude Docs, Slack, Notion, Figma...) otherwise loads into
-    every project, whatever its project says, and the connected ones bring their tools and
+    every project, whatever its file says, and the connected ones bring their tools and
     instructions into context. Nothing here uses them -- the gmail and calendar skills go through
     forge's own `google` server. Measured: honoured from user-scope `env` (one project
     went from 15 claude.ai entries to 0), NOT overridable from a project's settings.local.json

@@ -2016,7 +2016,7 @@ def project_config(argv):
 # ------------------------------------------------------------------ the consent window
 #
 # `--consent` (the user-scope hook row, written when integrations.consent is on) runs only the consent
-# rules, never the core: it loads <forge>/config/gateway.json and the `production` of the project of the
+# rules, never the core: it loads <forge>/config/gateway.json and the `production` of the
 # project the call runs in, validates both, and refuses EVERY call with CONSENT_ERROR when either is
 # invalid, as `--project` does for a bad config/guard/NAME.json. It never decides to ask a human on its
 # own authority from a half-read file. consent_config() and production_error() are the one definition of
