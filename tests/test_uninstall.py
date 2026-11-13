@@ -345,6 +345,11 @@ prof = load(os.path.join(w.root, "config", "profiles", "app.claude.json"))
 prof["frozen"] = True
 write_json(os.path.join(w.root, "config", "profiles", "app.claude.json"), prof)
 code, out = w.forge("uninstall", "app")
+# The dry-run must have run: its exit 0 and its header, or a crash (or a parse error) with no "app/sub" in its text passes.
+# Seen passing with the dry-run of `uninstall NAME` replaced by a printed 'boom' and exit 1 (96 checks, 0 failed); now red:
+# "nested: the dry-run of app exits 0 and prints its plan -- exit 1: boom".
+check("nested: the dry-run of app exits 0 and prints its plan -- exit %d: %s" % (code, sandbox.tail(out, 2)),
+      code == 0 and "forge uninstall: project app (dry-run" in out, out)
 check("nested: the dry-run of app names nothing under the nested project -- %s"
       % [l for l in out.splitlines() if "app/sub" in l][:3], "app/sub" not in out, out)
 code, out = w.forge("uninstall", "app", "--apply")
