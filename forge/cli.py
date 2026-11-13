@@ -37,7 +37,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, skills, toolchain
+from forge import launch, lib, lockfile, mcp, owned, skills, toolchain, usage
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1710,8 +1710,79 @@ def transcript_key(project_path):
 METRICS = {"metrics": "harness-metrics.mjs", "baseline": "harness-baseline.mjs"}
 
 
+def metrics_usage(a, prof, projects, fail):
+    """forge metrics NAME --usage: forge/usage.py's report over every folder of the project's sessions. A FAIL (rc 1)
+    for what makes cmd_metrics fail today, and for zero sessions, which is never read as "0 uses"."""
+    path = prof.get("project_path")
+    if not path:
+        return fail("the profile has no project_path")
+    if a.baseline or a.session or a.until or a.events_until:
+        return fail("--usage takes only --since and --json")
+    if a.since and not usage.date_ok(a.since):
+        return fail("--since is not a YYYY-MM-DD date: %s" % a.since)
+    try:
+        names = usage.folders(projects, path, usage.worktree_dir_specs(prof, lib.HOME), usage.git_worktrees(path), transcript_key)
+        sessions, counts = usage.collect(projects, names, a.since)
+    except usage.UsageError as e:
+        return fail(str(e))
+    if not sessions:
+        return lib.report([lib.Result("FAIL", "usage", "%s: 0 sessions in %s, usage unknown" % (
+            a.project, ", ".join(names) or os.path.join(projects, transcript_key(path))))])
+    rep = usage.report(a.project, sessions, counts, names, usage.project_skill_names(path))
+    few = len(sessions) < usage.MIN_SESSIONS
+    rep["few_sessions"] = few
+    if a.json:
+        print(json.dumps(rep, indent=2))
+    else:
+        look = rep["looked_at"]
+        print("looked at %d sessions (%s to %s), %d subagent files, %d unreadable lines, in %d folders" % (
+            look["sessions"], look["first"], look["last"], look["subagent_files"], look["unreadable_lines"], len(names)))
+        print("%-14s %-34s %5s %8s  %-10s %s" % ("kind", "name", "calls", "sessions", "last seen", "listed bytes"))
+        for i in rep["items"]:
+            print("%-14s %-34s %5d %8d  %-10s %d" % (i["kind"], i["name"], i["calls"], i["sessions"], i["last_seen"] or "-", i["listed_bytes"]))
+        for p in rep["plugins"] or []:
+            print("plugin %s: %d bytes of SessionStart output" % (p["plugin"], p["startup_bytes"]))
+        if rep["unlisted_commands"]:
+            print("commands that are no listed skill (built-in, a plugin's or the project's): " + ", ".join(
+                "%s x%d" % kv for kv in rep["unlisted_commands"].items()))
+    if rep["plugins"] is None:
+        un = rep["startup_unattributed"]
+        print("NOT RUN, NOT ARMED: plugin startup_bytes: %d SessionStart hooks (%d bytes) and none names its plugin "
+              "(the transcript keeps ${CLAUDE_PLUGIN_ROOT} unexpanded), so no per-plugin cost" % (un["hooks"], un["bytes"]),
+              file=sys.stderr if a.json else sys.stdout)
+    if few:
+        print("few sessions (%d)" % len(sessions), file=sys.stderr if a.json else sys.stdout)
+    return 0
+
+
+def metrics_init_diff(a, init_diff, answers, use):
+    """forge metrics NAME --init-diff BEFORE AFTER --answers F: 0 when the applied profile is what the answers say, 1
+    for a fault, 2 for a usage error or an empty capture (see usage.init_diff)."""
+    def bad(why):
+        print("! forge metrics: %s" % why)
+        return 2
+    if use or a.baseline or a.session or a.since or a.until or a.events_until or a.json:
+        print("! forge metrics: --init-diff takes no other option than --answers")
+        return 1
+    if not init_diff or not answers:
+        return bad("--init-diff BEFORE AFTER needs --answers FILE (and --answers needs --init-diff)")
+    try:
+        before, after, marks = usage.load_capture(init_diff[0]), usage.load_capture(init_diff[1]), usage.load_answers(answers)
+    except usage.UsageError as e:
+        return bad(str(e))
+    print(usage.count_line("before", before))
+    print(usage.count_line("after", after))
+    code, lines = usage.init_diff(before, after, marks)
+    if code == 2:
+        return bad(lines[0])
+    return lib.report([lib.Result("FAIL", "init-diff", l) for l in lines] or [
+        lib.Result("PASS", "init-diff", "%s: %d dropped, %d kept, nothing else changed" % (
+            a.project, sum(m == "drop" for m in marks.values()), sum(m == "keep" for m in marks.values())))])
+
+
 def cmd_metrics(a):
     """forge metrics NAME: node scripts/metrics/<script> over NAME's transcripts and repository.
+    --usage and --init-diff are forge/usage.py's (metrics_usage, metrics_init_diff).
     Reads only. A profile with no project_path, a transcript folder that does not exist, or no node
     is a FAIL naming the project: the scripts would otherwise fail on a key nobody can see."""
     profs = lib.profiles()
@@ -1723,6 +1794,11 @@ def cmd_metrics(a):
 
     def fail(why):
         return lib.report([lib.Result("FAIL", "metrics", "%s: %s" % (a.project, why))])
+    init_diff, use, answers = getattr(a, "init_diff", None), getattr(a, "usage", False), getattr(a, "answers", None)
+    if init_diff or answers:
+        return metrics_init_diff(a, init_diff, answers, use)
+    if use:
+        return metrics_usage(a, profs[a.project], projects, fail)
     if not path:
         return fail("the profile has no project_path")
     key = transcript_key(path)
@@ -1988,6 +2064,9 @@ def main(argv=None):
     m.add_argument("--until", help="YYYY-MM-DD, sessions up to this day")
     m.add_argument("--events-until", help="ISO instant: drop every transcript line stamped after it")
     m.add_argument("--json", action="store_true")
+    m.add_argument("--usage", action="store_true", help="which skills, MCP servers, plugins and agents the project really uses, and what each costs at start-up (with --since, --json)")
+    m.add_argument("--init-diff", nargs=2, metavar=("BEFORE", "AFTER"), help="check an applied profile: two system/init captures of `claude -p` against --answers")
+    m.add_argument("--answers", help="with --init-diff: the review's answers (keep, drop, add per name)")
     m.set_defaults(fn=cmd_metrics)
     t = sub.add_parser("test", help="run every test except the on-demand suites")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
