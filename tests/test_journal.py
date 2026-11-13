@@ -108,8 +108,8 @@ check("(b) forge sync --all dry-run exits 0", code == 0, "exit %d: %s" % (code, 
 check("(b) a dry-run does not create the journal", not os.path.exists(JOURNAL), "%s exists" % JOURNAL)
 
 # (a) an apply leaves a `wrote` line naming the project's settings.local.json.
-code, out = forge("sync", "--apply", "--project", "toy-a")
-check("(a) sync --apply --project toy-a exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
+code, out = forge("sync", "--apply", "toy-a")
+check("(a) sync --apply toy-a exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
 check("(a) toy-a's settings.local.json exists", os.path.exists(sl("toy-a")), "missing %s" % sl("toy-a"))
 lines = journal_lines()
 mine = [fields(l) for l in lines if len(fields(l)) == 5 and fields(l)[3] == "wrote" and fields(l)[4] == sl("toy-a")]
@@ -131,8 +131,8 @@ after = (open(JOURNAL, "rb").read(), os.stat(JOURNAL).st_mtime_ns) if os.path.ex
 check("(b) a dry-run leaves an existing journal untouched", before is not None and before == after, "before/after differ or the journal is missing")
 
 # (c) forge log NAME prints that project's lines and not another project's.
-code, out = forge("sync", "--apply", "--project", "toy-b")
-check("(c) sync --apply --project toy-b exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
+code, out = forge("sync", "--apply", "toy-b")
+check("(c) sync --apply toy-b exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
 code, out = forge("log", "toy-a")
 check("(c) forge log toy-a exits 0 and prints toy-a's line", code == 0 and sl("toy-a") in out, "exit %d: %s" % (code, tail(out)))
 check("(c) forge log toy-a prints nothing of toy-b", sl("toy-b") not in out and projects["toy-b"] not in out, tail(out, 8))

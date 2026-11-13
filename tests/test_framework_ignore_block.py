@@ -472,7 +472,7 @@ w.put(profile(p, name="toyapp", framework=False))
 code, out = w.run()
 check("6: an edited block is removed with the rest of it, like sync rewrites it -- %s" % bang(out),
       text(gi(p)) == STAR and code == 0 and not bang(out), (text(gi(p)), out))
-# forge uninstall --project
+# forge uninstall NAME
 p, w = fresh(orig)
 w.run()
 w.drop("toyapp")
@@ -480,9 +480,9 @@ sync.CFG, lib.PROFILES = w.cfg, w.pdir
 o = io.StringIO()
 with contextlib.redirect_stdout(o):
     code = uninstall.main(argparse.Namespace(integration=None, project="toyapp", apply=True))
-check("6: forge uninstall --project: exit 0 -- %s" % sandbox.tail(o.getvalue(), 3), code == 0, o.getvalue())
-check("6: forge uninstall --project: removes exactly the block -- %s" % (text(gi(p)) or "").splitlines(), text(gi(p)) == orig, text(gi(p)))
-check("6: forge uninstall --project: no claim of the block is left", not [x for x in owned.previous(gi(p))[0] if x["at"][:1] == ["block"]], "")
+check("6: forge uninstall NAME: exit 0 -- %s" % sandbox.tail(o.getvalue(), 3), code == 0, o.getvalue())
+check("6: forge uninstall NAME: removes exactly the block -- %s" % (text(gi(p)) or "").splitlines(), text(gi(p)) == orig, text(gi(p)))
+check("6: forge uninstall NAME: no claim of the block is left", not [x for x in owned.previous(gi(p))[0] if x["at"][:1] == ["block"]], "")
 
 # ----------------------------------------------------------------------------------------- 7. writes_tracked_files: false
 p, w = fresh("*.md\n", commit=True, writes_tracked_files=False)
@@ -619,13 +619,13 @@ check("D1: proja with framework false takes out its own block and leaves projb's
 wa.put(profile(pa, name="proja", writes_tracked_files=False))
 wa.run()
 check("D1: and turned on again it gets its block back beside projb's", ta in text(ex) and tb in text(ex), text(ex))
-# forge uninstall --project of one
+# forge uninstall NAME of one
 wb.drop("projb")
 sync.CFG, lib.PROFILES = wb.cfg, wb.pdir
 o = io.StringIO()
 with contextlib.redirect_stdout(o):
     code = uninstall.main(argparse.Namespace(integration=None, project="projb", apply=True))
-check("D1: forge uninstall --project projb (a directory of the repository) removes projb's block only, exit 0 -- %s"
+check("D1: forge uninstall projb (a directory of the repository) removes projb's block only, exit 0 -- %s"
       % sandbox.tail(o.getvalue(), 3), code == 0 and tb not in text(ex) and ta in text(ex), (code, o.getvalue(), text(ex)))
 w_off = World()
 w_off.put(profile(pa, name="proja", framework=False, writes_tracked_files=False))

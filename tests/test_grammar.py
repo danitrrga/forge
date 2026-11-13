@@ -13,14 +13,20 @@ on the base and a run after can be compared with `cmp` (the dry-runs must not ch
 Seen failing on 5f69899 (the old flags only): "(a) sync --project toy-a: (exit, 'forge sync toy-a' in output): got
 (0, False), want (2, True)", "(b) sync toy-a: exit: got 2, want 0" (`forge: error: unrecognized arguments: toy-a`),
 "(c) uninstall --project toy-a: (exit, 'forge uninstall toy-a' in output): got (1, False), want (2, True)" and "(b) sync
-nope: refused, exit: got 2, want 1" (unrecognized arguments).
-Negative controls, each a throwaway edit of forge/cli.py in this worktree put back with `git checkout forge/cli.py`:
-  (a) a parser that still accepts `--project` (the old argument put back next to the new one) fails with
-      "old --project accepted: sync --project toy-a exited 0, want 2"; likewise for uninstall.
-  (b) a cmd_sync that ignores NAME and passes `--all` fails with "synced other projects: toy-b has generated files"; a
-      cmd_uninstall that ignores NAME fails with "uninstalled other projects: toy-b's settings.local.json is gone".
-  unknown name: a cmd_sync that skips its profile lookup fails with "(b) sync nope: refused, exit: got 0, want 1".
-The mutations are not kept; the messages are in the commit message."""
+nope: refused, exit: got 2, want 1" (unrecognized arguments); 22 of 34 checks FAILED.
+Negative controls, each a throwaway edit of forge/cli.py (a copy of it put back after):
+  (a) the refusal removed and `--project` put back as an option of both parsers: "(a) sync --project toy-a: (exit, 'forge
+      sync toy-a' in output) -- got (0, False): ... ; old --project accepted" (and the same for --project=toy-a and
+      --apply --project toy-a, and for uninstall: "(c) uninstall --project toy-a: ... got (0, False): old --project accepted"
+      is checked by the same mutant);
+  (b) cmd_sync ignoring NAME and passing `--all`: "(b) synced other projects: toy-b has no generated file -- toy-b has
+      ['.claude/AGENT-SYSTEM.md', '.claude/settings.local.json', 'AGENTS.md', 'CLAUDE.md']";
+  unknown name: cmd_sync without its profile lookup: "(b) sync nope: no generator ran -- forge sync: failed -- agent config,
+      system doc | forge: unknown project: nope (known: toy-a, toy-b)" (the two generators that check refuse it, the others
+      ran: the lookup is what makes it one clean line and no run);
+  (c) cmd_uninstall dropping NAME: "(c) uninstalled other projects: toy-b's settings.local.json is gone -- toy-b changed", and
+      "(c) uninstall toy-a of a live profile: refused, exit 1, nothing removed -- got 0".
+The mutations are not kept."""
 import json
 import os
 import re

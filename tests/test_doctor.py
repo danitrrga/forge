@@ -58,7 +58,7 @@ SKIP-agents-md(non-forge content):AGENTS.md'], want []"; the unreadable profile 
 a profile with a wrong type = (1, ['e doctor: unknown proj'], '', False), want (1, ['profile'], 'FAIL',
 True)"; skill_name_clashes unfiltered "a healthy project's rows = {... 'skill names': 'WARN' ...}";
 command_guard_smoke unfiltered "{... 'guard guarded': 'FAIL' ...}"; frozen not special-cased in the
-generated row "('PASS', 'the dry-run of forge sync --project frozen would write nothing'), want ('PASS',
+generated row "('PASS', 'the dry-run of forge sync frozen would write nothing'), want ('PASS',
 'frozen: forge writes nothing')"; frozen not said in the profile row "a frozen project's profile row says
 frozen = ('PASS', False)"; the hindsight row never shown "a healthy project's hindsight row names its
 bank = False"; the dry-run's exit code ignored "a dry-run that exits 1 with nothing to write = ('PASS',
@@ -964,7 +964,7 @@ def wtguard_cases(tmp):
 
 
 # 5. forge doctor NAME (the owner: "forge doctor <project>" to diagnose one stuck project).
-# A whole toy world, because one of its rows runs `forge sync --project NAME` as a subprocess:
+# A whole toy world, because one of its rows runs `forge sync NAME` as a subprocess:
 # this checkout copied without design/ beside a toy HOME and toy projects (the shape lib.may_write
 # lets a toy HOME write), its profiles replaced by toy ones, and an empty fake secrets.json.
 # `healthy` is mapped to a Hindsight bank and has an env (so it gets a settings.local.json),
@@ -1128,7 +1128,7 @@ def pending_cases():
 
 def project_cases(tmp):
     root, env, paths = project_world(tmp)
-    fix = "-- forge sync --apply --project healthy"
+    fix = "-- forge sync --apply healthy"
 
     code, lines = forge(root, env, "doctor", "nosuch")
     first = (lines or [""])[0]
@@ -1155,7 +1155,7 @@ def project_cases(tmp):
     generated = row(rows_of(lines), "generated")
     want("a never-synced project", (code, generated[0], generated[1].endswith(fix)), (1, "FAIL", True))
 
-    code, lines = forge(root, env, "sync", "--apply", "--project", "healthy")
+    code, lines = forge(root, env, "sync", "--apply", "healthy")
     want("the toy apply of healthy", (code, sandbox.tail("\n".join(lines))), (0, sandbox.tail("\n".join(lines))))
     code, lines = forge(root, env, "doctor", "healthy")
     rows = rows_of(lines)
@@ -1186,7 +1186,7 @@ def project_cases(tmp):
         fh.write(clean)
     generated = row(rows_of(lines), "generated")
     want("a dry-run that exits 1 with nothing to write", (generated[0], generated[1].startswith(
-        "the dry-run exits 1 with 1 '!' line(s), which forge sync --project healthy shows")), ("FAIL", True))
+        "the dry-run exits 1 with 1 '!' line(s), which forge sync healthy shows")), ("FAIL", True))
 
     # Stale: settings.local.json no longer what the generator writes.
     slp = os.path.join(paths["healthy"], ".claude", "settings.local.json")

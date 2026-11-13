@@ -508,14 +508,14 @@ def controls(w, before):
         prof = json.loads(good)
         prof["env"] = {"FORGE_TEST_HOME": REAL_HOME}
         write_json(pp, prof)
-        code, out = w.forge("sync", "--apply", "--project", "forge")
+        code, out = w.forge("sync", "--apply", "forge")
         leaks = real_home_in(w, changed_since(before, w.snapshot()))
         print("control (b), the real HOME in a profile env: files holding it: %s" % leaks)
         check("control (b): with the real HOME in a profile env the no-real-HOME assertion fails and names the settings file",
               os.path.join("forge", ".claude", "settings.local.json") in leaks, "sync exit %d, leaks %s; %s" % (code, leaks, tail(out)))
         with open(pp, "w") as fh:
             fh.write(good)
-        code, out = w.forge("sync", "--apply", "--project", "forge")
+        code, out = w.forge("sync", "--apply", "forge")
         for k in set(w.snapshot()) - set(pre_b):  # the once-ever .bak of a file the control rewrote holds it too
             os.remove(os.path.join(w.top, k))
         want("control (b) put back: no file holds the real HOME again", real_home_in(w, changed_since(before, w.snapshot())), [])

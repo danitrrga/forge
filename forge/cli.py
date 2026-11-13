@@ -1433,8 +1433,8 @@ def run_steps(command, steps, apply, scope):
 
 
 def cmd_sync(a):
-    """forge sync [NAME | --all] [--apply]. A NAME no profile has is refused here, before any generator runs: the
-    generators scope to a name they do not know by doing nothing, so a misspelling would look like a clean run.
+    """forge sync [NAME | --all] [--apply]. A NAME no profile has is refused here, before any generator runs: only some
+    generators refuse a name they do not know, so without this a misspelling would run the others for nothing.
     A profile that cannot be read is let through: the generators name it ('! could not read')."""
     if a.project:
         skipped = []

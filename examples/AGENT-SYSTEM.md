@@ -49,7 +49,7 @@ change), then with `--apply`, and restart the affected session.
 | Switch an integration on or off | `integrations` in `config/forge.json` | `python3 bin/forge sync --apply --all` |
 | Edit this document | `docs/AGENT-SYSTEM.md` in forge | `python3 scripts/sync/sync_system_doc.py --apply` |
 
-`forge sync` without `--apply` changes nothing. `--project NAME` limits it to one project and writes no
+`forge sync` without `--apply` changes nothing. `forge sync NAME` limits it to one project and writes no
 user-scope file; `--all` runs every project even from inside a session.
 
 ## Profiles: what each project loads

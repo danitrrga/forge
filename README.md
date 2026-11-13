@@ -182,7 +182,7 @@ Then it runs `forge skills --apply`, then `forge sync --apply --all`, which inst
 exits with `forge doctor`'s status.
 
 `forge new PATH [--name NAME] [--writes-tracked-files]` writes `config/profiles/NAME.claude.json` and runs
-`forge sync --apply --project NAME`. It refuses a path that is not a directory, a name already registered and
+`forge sync --apply NAME`. It refuses a path that is not a directory, a name already registered and
 a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
 `CLAUDE.md`, no `.gitignore` line. The flag allows it.
 
@@ -289,7 +289,7 @@ licences in `SOURCES.md`.
 ```
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
 forge new PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
-forge sync [--apply] [--project NAME | --all]               what would change (or change it), per project
+forge sync [NAME | --all] [--apply]                         what would change (or change it), per project
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
@@ -301,7 +301,7 @@ forge versions [--md]                                       those and the toolch
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
 forge lint [--root DIR] --all                               personal data in the files the engine publishes (--root: another repository's)
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
-forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)
+forge uninstall [NAME | --integration N] [--apply]          take out what forge wrote (see Uninstall)
 ```
 
 Every command takes `--help`. A doctor check with nothing to look at (no skills, an integration that is off,
@@ -347,7 +347,7 @@ default, nothing earlier is restored. Your own hooks, permission rules and `.git
 
 It leaves, and says so: GSD's agents and engine in `~/.claude` (with the command that removes them), any `.bak`
 older than the record, and the checkout, whose deletion command it prints and never runs.
-`--integration N` takes out one integration's share once it is off in `config/forge.json`; `--project N` one
+`--integration N` takes out one integration's share once it is off in `config/forge.json`; a project NAME (`forge uninstall NAME`) one
 project's, once its profile is frozen or deleted.
 
 ## Not a fit?
