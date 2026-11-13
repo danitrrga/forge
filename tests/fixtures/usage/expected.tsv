@@ -1,0 +1,8 @@
+kind	id	project	count	sessions	last_seen
+skill	alpha	toy	3	3	{D2}
+skill	unused-skill	toy	0	0	
+project-skill	proj-skill	toy	1	1	{D0}
+plugin-skill	toy-plugin:beta	toy	1	1	{D1}
+mcp	toy-db	toy	5	4	{D4}
+plugin-mcp	plugin_toyplug_srv	toy	1	1	{D0}
+agent	toy-agent	toy	2	2	{D1}
