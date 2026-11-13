@@ -91,10 +91,10 @@ def codex_harness():
 
 def require_registry():
     """Exit 1 with RENAMED when the registry is still under its old name: the old folder there and
-    config/projects/ not (a link from the new name to the old, the bridge while the data moves, counts
-    as there). Without it every project vanished silently, and a project file written there started a
-    second, split registry."""
-    if not os.path.lexists(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
+    config/projects/ resolving to nothing (absent, or a link that leads nowhere; a link to the old
+    folder, the bridge while the data moves, resolves and counts as there). Without it every project
+    vanished silently, and a project file written there started a second, split registry."""
+    if not os.path.exists(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
         sys.exit(RENAMED)
 
 

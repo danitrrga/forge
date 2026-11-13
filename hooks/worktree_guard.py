@@ -179,10 +179,10 @@ def _absolute(p, where):
 
 def load_config(argv):
     """The Config of the project named by `--project NAME`; ValueError says what is wrong. With the registry
-    still under its old name (config/profiles/ there, config/projects not), every call is refused with the
-    mv line, in the main checkout too: the guard does not import forge's lib (it runs alone, on every call),
-    so this is lib.require_registry's condition, written again."""
-    if not os.path.lexists(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
+    still under its old name (config/profiles/ there, config/projects absent or a link to nothing), every
+    call is refused with the mv line, in the main checkout too: the guard does not import forge's lib (it
+    runs alone, on every call), so this is lib.require_registry's condition, written again."""
+    if not os.path.exists(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
         deny("config/profiles/ was renamed config/projects/: mv config/profiles config/projects")
     if len(argv) != 2 or argv[0] != "--project":
         raise ValueError("arguments %r; the only ones are --project NAME" % (argv,))

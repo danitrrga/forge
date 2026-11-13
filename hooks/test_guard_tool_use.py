@@ -2661,12 +2661,14 @@ def flow_registry(name):
     folder refuses it (and every call) with the mv line; neither folder is pinned to what it did before
     (no project, nothing matches, rc 0) as the control that nothing else moved. Red before the check, only the
     old folder: "only old: wanted rc=2 and one line starting 'CONSENT_ERROR: <the mv line>', got rc=0 ''" --
-    the window was silently off."""
+    the window was silently off. A link that leads nowhere is refused the same way; red with lexists in the
+    condition: "dangling link: wanted rc=2 and one line starting 'CONSENT_ERROR: <the mv line>', got rc=0 ''"."""
     guard, root, f = forge = flow_forge()
     new, old = os.path.join(f, "config", "projects"), os.path.join(f, "config", "profiles")
     renamed = "CONSENT_ERROR: config/profiles/ was renamed config/projects/: mv config/profiles config/projects"
     states = (("folder", lambda: None, "CONSENT_UNATTENDED:"),
               ("link", lambda: (os.rename(new, old), os.symlink("profiles", new)), "CONSENT_UNATTENDED:"),
+              ("dangling link", lambda: (os.remove(new), os.symlink("gone", new)), renamed),
               ("only old", lambda: os.remove(new), renamed),
               ("neither", lambda: os.rename(old, os.path.join(f, "aside")), None))
     for state, arrange, want in states:

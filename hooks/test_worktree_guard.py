@@ -786,7 +786,10 @@ def registry_states():
     neither. Red before the check: with only the old folder the main checkout let
     `git worktree add <elsewhere>` through, "only old: main worktree add: rc=0 ''", and a worktree said
     "the project cannot be used (... config/projects/toy.claude.json cannot be read ...)" without the rename.
-    The other three states are pinned to what the hook did before, as the control that nothing else moved."""
+    A link config/projects that leads nowhere is refused the same way; red with lexists in the condition:
+    "dangling link: main worktree add: rc=0 ''" and "dangling link: worktree ls: rc=2 '... the project cannot
+    be used ...'". The other three states are pinned to what the hook did before, as the control that nothing
+    else moved."""
     new, old = os.path.join(TOY, "config", "projects"), os.path.join(TOY, "config", "profiles")
     aside = os.path.join(BASE, "registry-aside")
     probes = (("main worktree add", bash("git worktree add %s/x" % ELSEWHERE), MAIN),
@@ -796,6 +799,8 @@ def registry_states():
     states = (
         ("folder", lambda: None, folder_want),
         ("link", lambda: (os.rename(new, old), os.symlink("profiles", new)), folder_want),
+        ("dangling link", lambda: (os.remove(new), os.symlink("gone", new)),
+         {k: (2, "worktree_guard: BLOCKED - " + RENAMED) for k in folder_want}),
         ("only old", lambda: os.remove(new),
          {k: (2, "worktree_guard: BLOCKED - " + RENAMED) for k in folder_want}),
         ("neither", lambda: os.rename(old, aside),

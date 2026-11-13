@@ -24,7 +24,10 @@ After the rename, with `sys.exit(RENAMED)` taken out of lib.require_registry (ne
   FAIL old folder only: lib.projects() exits 1 naming the mv -- projects vanished silently: {}
   FAIL old folder only: write_text into config/projects/ exits 1 naming the mv -- split registry written silently:
   ['fresh.claude.json']
-  FAIL old folder only: the process exits 1 with the one line on stderr -- rc=0 stderr=''"""
+  FAIL old folder only: the process exits 1 with the one line on stderr -- rc=0 stderr=''
+A config/projects link that leads nowhere is no bridge; red while the condition used lexists:
+  FAIL dangling link: lib.projects() exits 1 naming the mv -- the projects read as {}
+  FAIL dangling link: write_text into config/projects/ exits 1 naming the mv -- wrote through it: None"""
 import os
 import re
 import subprocess
@@ -163,6 +166,17 @@ try:
               os.path.islink(new_dir) and sorted(os.listdir(old_dir)) == ["demo.claude.json", "fresh.claude.json"],
               repr(sorted(os.listdir(old_dir))))
         check("link: lib.projects() sees the new file", sorted(lib.projects()) == ["demo", "fresh"], repr(lib.projects()))
+
+        # A link that leads nowhere is no bridge: the registry would read as empty.
+        os.remove(new_dir)
+        os.symlink("gone", new_dir)
+        got = exits(lib.projects)
+        check("dangling link: lib.projects() exits 1 naming the mv", got == lib.RENAMED, "the projects read as %r" % (got,))
+        got = exits(lambda: lib.write_text(os.path.join(new_dir, "fresh2.claude.json"), "{}\n"))
+        check("dangling link: write_text into config/projects/ exits 1 naming the mv", got == lib.RENAMED,
+              "wrote through it: %r" % (got,))
+        os.remove(new_dir)
+        os.symlink("profiles", new_dir)
 
         # After the move: the new folder only, and neither (a toy checkout has none).
         os.remove(new_dir)
