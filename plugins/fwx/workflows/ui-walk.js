@@ -362,7 +362,7 @@ async function judge() {
   }
   st.control = { screen: typeof got.screen === 'string' && got.screen ? got.screen : ctl.screen, found: got.found, finding: got.finding || null }
   if (got.found === null) st.noCount = 'the control judge could not read the findings files (' + oneLine(got.why || 'no reason given', 200) + ')'
-  else if (got.found === false) st.noCount = 'the walkers did not find the fault planted on ' + st.control.screen
+  else if (got.found === false) st.noCount = 'the walkers did not report the fault planted on purpose on ' + st.control.screen + ', so their "no findings" proves nothing about the screens they walked'
 }
 
 // The control's init script runs in the walkers' `ab` browsers (`fwx walk ab` leaves it out of a verifier's `v*` session and of `fwx walk capture`'s),

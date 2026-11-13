@@ -960,6 +960,12 @@ def case_arm_control(R, S):
              "MutationObserver" in script_text and "attributes" not in script_text, script_text[:300])
         S.ok("arm-control: the main title takes the body's size and weight",
              "font-size" in script_text and "font-weight" in script_text and "h1" in script_text, script_text[:300])
+        # The weaker twin of tests/test_walk_control_browser.py (a real browser, where one is installed): the text of the script. The two styles are
+        # applied to the title and every element inside it, so a title whose inner element has a size of its own reads at body size throughout.
+        S.ok("arm-control: the size and weight reach every element inside the title", 'h.querySelectorAll("*")' in script_text, script_text[:400])
+        # The script's own handle on the title is not an attribute: a walker reading the DOM finds no tag that names the tooling.
+        S.ok("arm-control: the title gets no data attribute naming the plant", "dataset" not in script_text and "data-fwx" not in script_text and "setAttribute" not in script_text,
+             script_text[:400])
         sc.walk(R, "down", "--run", rd)
     finally:
         sc.stop()
@@ -1889,7 +1895,7 @@ def case_arm_control_root(R, S):
         c = jfile(os.path.join(rd, "control.json")) or {}
         S.eq("arm-control root: the plant's path", c.get("path"), "/")
         harness = ("let styled = {};\n"
-                   "const h = {dataset: {}, style: {setProperty(k, v) { styled[k] = v; }}};\n"
+                   "const h = {dataset: {}, querySelectorAll: () => [], style: {setProperty(k, v) { styled[k] = v; }}};\n"
                    "global.location = {pathname: process.argv[3]};\n"
                    "global.document = {querySelector: () => h, body: {}, addEventListener() {}};\n"
                    "global.getComputedStyle = () => ({fontSize: '16px', fontWeight: '400'});\n"
@@ -2416,6 +2422,10 @@ MUTANTS = [
     ("the control's pictures reach the fixer",case_findings_control_pictures, 'return dict(f, evidence=kept, evidence_dropped=left) if left else f', "return f",
      "control pictures: a finding on the control's screen keeps no walker picture"),
     ("firefox without the demo session", case_pw, 'if os.path.isfile(app["state"]):', "if False:", "pw: the config is Firefox, headless, 1309x818 at 1.1, with the demo session"),
+    ("the plant restyles the title element only", case_arm_control, "for (const e of [h, ...h.querySelectorAll(\"*\")]) {", "for (const e of [h]) {",
+     "arm-control: the size and weight reach every element inside the title"),
+    ("the plant tags the title with an attribute", case_arm_control, "planted.add(h);", "h.dataset.fwxCtl = \"1\"; planted.add(h);",
+     "arm-control: the title gets no data attribute naming the plant"),
     ("root route never matches", case_arm_control_root, '|| "/") !== PATH', ') !== PATH', "arm-control root: the plant restyles the title on /"),
     ("check-screens: any status is ok", case_check_screens, "ok = got.isdigit() and 200 <= int(got) < 300", "ok = got.isdigit()",
      "check-screens: one answers 404: exit: got 0, want 1"),

@@ -881,14 +881,17 @@ def cmd_pw(argv):
 TARGET = 'h1, [role="heading"][aria-level="1"]'  # what the plant restyles, and what the read-back reads
 CONTROL_JS = """(() => {
   const PATH = %(path)s;
+  const planted = new WeakSet();
   const apply = () => {
     if ((location.pathname.replace(/\\/+$/, "") || "/") !== PATH) return;
     const h = document.querySelector(%(target)s);
-    if (!h || h.dataset.fwxCtl === "1") return;
+    if (!h || planted.has(h)) return;
     const cs = getComputedStyle(document.body);
-    h.style.setProperty("font-size", cs.fontSize, "important");
-    h.style.setProperty("font-weight", cs.fontWeight, "important");
-    h.dataset.fwxCtl = "1";
+    for (const e of [h, ...h.querySelectorAll("*")]) {  // the whole title, whatever inner markup carries a size of its own
+      e.style.setProperty("font-size", cs.fontSize, "important");
+      e.style.setProperty("font-weight", cs.fontWeight, "important");
+    }
+    planted.add(h);  // the script's own handle, not an attribute: nothing in the DOM says what planted this
   };
   new MutationObserver(apply).observe(document, { childList: true, subtree: true });
   document.addEventListener("DOMContentLoaded", apply);
