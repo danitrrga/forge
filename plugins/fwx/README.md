@@ -72,8 +72,7 @@ name with no entry is used as it is.
 
 `limits` is the most agents at once, a fixed number that nothing measures: `default_cap` is `{"supervised": 3, "unattended": 4}` (the
 owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave new` prints the
-executor's as `cap` in the `args` of `execute`, `fwx walk start` the walkers' as `capacity.cap`, and the base context states them to every
-agent. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
+executor's as `cap` in the `args` of `execute`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
 are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
 
 `walk.browser_executable` (default `null`) is the path of the browser the UI walk uses instead of the one `agent-browser`

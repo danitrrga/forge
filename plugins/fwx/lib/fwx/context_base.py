@@ -5,9 +5,9 @@ The file is `<git-common-dir>/fwx/context-base/<phase>.md`, where `<phase>` is t
 holds `.fwx/`, with `/` turned into `__`. It is outside the work tree on purpose: `.fwx/` is committed before every wave and a
 derived file would dirty it, and every worktree reads the same place. Its parts, in order: the mark (`# Base context · <sha8 of
 everything after this line>`), `data/context-map.md` whole, `## Goal` (Intent and What success means of `context.md`, each cut
-at 1000 units with a pointer), `## Files` (the absolute paths that exist), `## Decided` (the `decision` column of the `chosen`
-and `approved` rows of `decisions.tsv`, none of the open ones and none that a closed row superseded), `## Limits` (one line: the
-cap of agents at once, read from the configuration, never measured) and the `<!-- built ... -->` line the check compares (it carries
+at 1000 units with a pointer), `## Files` (the absolute paths that exist), `## Limits` (one line: the cap of agents at once, read from the
+configuration, never measured; before Decided because the hook cuts the `map` kind there), `## Decided` (the `decision` column of the `chosen`
+and `approved` rows of `decisions.tsv`, none of the open ones and none that a closed row superseded) and the `<!-- built ... -->` line the check compares (it carries
 the sha of the Limits line, so a changed cap makes the base stale).
 
 Every length is counted in UTF-16 code units (`units`): Claude Code persists an `additionalContext` of more than 10,000 of them
@@ -206,7 +206,7 @@ def render(folder, map_path=None):
     goal, files, decided, limits = _goal(paths["context"]), _files(f), _decided(paths["decisions"]), _limits(f)
     built = "<!-- built stage=%s context=%s decisions=%s map=%s cap=%s -->\n" % (
         state.last_stage(f) or "discuss", _sha_of(paths["context"]), _sha_of(paths["decisions"]), _sha_of(map_path or MAP), sha8(limits.encode("utf-8")))
-    rest = "\n".join(b for b in (map_text.rstrip("\n") + "\n", goal, files, decided, limits, built) if b)
+    rest = "\n".join(b for b in (map_text.rstrip("\n") + "\n", goal, files, limits, decided, built) if b)
     text = MARK + sha8(rest) + "\n" + rest
     return text, {"map": units(map_text), "goal": units(goal), "decided": units(decided)}
 

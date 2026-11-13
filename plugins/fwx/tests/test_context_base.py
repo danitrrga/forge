@@ -143,7 +143,7 @@ s.ok("## Files names the existing files as absolute paths",
                                        os.path.join(repo, ".fwx", "PROJECT.md"))), text[text.find("## Files"):text.find("## Decided")])
 s.ok("## Files leaves out what does not exist (no demo/, no fwx.json)",
      os.path.join(d, "demo") not in text and "fwx.json" not in text)
-dec = text[text.find("## Decided"):text.find("## Limits")] if "## Decided" in text else ""
+dec = text[text.find("## Decided"):text.find("<!-- built")] if "## Decided" in text else ""
 s.ok("## Decided has the chosen and the approved rows", "- Use a plain TSV for the decisions." in dec and "- Ship on Friday." in dec, dec)
 s.ok("an agent-assumption row is not in Decided", "Maybe cache it." not in text, dec)
 s.ok("an unexamined row is not in Decided", "Unchecked guess." not in text, dec)
@@ -163,11 +163,11 @@ s.eq("a second build changes nothing: modification time kept", os.stat(base).st_
 
 # ---- the agent cap: the base says it in one line, from the configuration (D90) -------------------------------------
 # Seen red on master (the base had no `## Limits` and no `cap=` in its built line):
-#   FAIL: limits: the default cap, one line after ## Decided: ... (no `## Limits` section)
+#   FAIL: limits: the default cap, one line between ## Files and ## Decided: ... (no `## Limits` section)
 #   FAIL: the last line is the built marker with stage, context, decisions, map and cap: '<!-- built stage=discuss context=... map=... -->\n'
-lim = text[text.find("## Limits"):text.find("<!-- built")] if "## Limits" in text else ""
-s.ok("limits: the default cap, one line after ## Decided",
-     text.find("## Decided") < text.find("## Limits") < text.find("<!-- built") and len(lim.strip().splitlines()) == 2
+lim = text[text.find("## Limits"):text.find("## Decided")] if "## Limits" in text else ""
+s.ok("limits: the default cap, one line between ## Files and ## Decided",
+     text.find("## Files") < text.find("## Limits") < text.find("## Decided") and len(lim.strip().splitlines()) == 2
      and "3 with the owner present, 4 with nobody present" in lim, repr(lim))
 cap_repo, cap_d = phase()
 helpers.write(cap_repo, ".claude/fwx.json", json.dumps({"schema": 1, "limits": {"on": False, "ram_min_free_gb": 3, "ram_per_agent_mb": 512,
@@ -176,7 +176,7 @@ helpers.write(cap_repo, ".claude/fwx.json", json.dumps({"schema": 1, "limits": {
 r = cli(cap_repo, "new", cap_d, "--map", good_map)
 s.eq("limits: a file with the removed keys builds", r.returncode, 0)
 captext = read(base_of(cap_d)) if os.path.exists(base_of(cap_d)) else ""
-caplim = captext[captext.find("## Limits"):captext.find("<!-- built")] if "## Limits" in captext else ""
+caplim = captext[captext.find("## Limits"):captext.find("## Decided")] if "## Limits" in captext else ""
 s.ok("limits: the file's numbers, supervised, unattended and per role", "2 with the owner present, 6 with nobody present" in caplim and "executor 1, ui-walker 5" in caplim, repr(caplim))
 s.ok("limits: no word of RAM or memory in it", "ram" not in caplim.lower() and "memory" not in caplim.lower(), repr(caplim))
 # the line vouches for the configuration: a cap that changed makes the base stale, and `refresh` builds it again
@@ -257,7 +257,7 @@ for i in range(40):
     decide(d7, "Decision number %d: %s" % (i, "w" * 150))
 cli(repo7, "new", d7, "--map", good_map)
 t7 = read(base_of(d7))
-dec7 = t7[t7.find("## Decided"):t7.find("## Limits")]
+dec7 = t7[t7.find("## Decided"):t7.find("<!-- built")]
 s.ok("40 long decisions become one count line", "40" in dec7 and os.path.join(d7, "decisions.tsv") in dec7 and "Decision number 3" not in dec7, dec7)
 s.ok("the count line is the only content of Decided", len([l for l in dec7.splitlines() if l.strip() and l != "## Decided"]) == 1, dec7)
 repo7b, d7b = phase()

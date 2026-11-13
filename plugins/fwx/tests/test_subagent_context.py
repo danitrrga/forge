@@ -474,4 +474,20 @@ r = run(repo7, "fwx:planner", raw=json.dumps({"hook_event_name": "SubagentStart"
 s.eq("an input whose cwd is a list (a TypeError nobody planned for): exit 1, nothing on stdout", (r.returncode, r.stdout), (1, ""))
 s.ok("... one line, context-base: <the kind of error>", r.stderr.startswith("context-base: ") and len(r.stderr.strip().splitlines()) == 1, r.stderr)
 
+# ---- every kind of base carries the cap (D90) -----------------------------------------------------------------------------------
+# `## Limits` sat after `## Decided`, where the `map` kind is cut, so the planner got the cap and general-purpose, Plan, the reviewers and the
+# researchers did not. Seen red on the head of PR 140: general-purpose delivered a text with no `## Limits`:
+#   FAIL: cap in the base: `general-purpose` (map) is delivered the Limits line: got False, want True
+repo8, d8, _ = phase()
+for agent in sorted({a for a, k in EXPECT.items() if k in ("map", "map+decided") and a != "*"} | {"some-other-plugin:agent"}):
+    r = run(repo8, agent)
+    got = delivered(r)
+    s.eq("cap in the base: `%s` (%s) is delivered the Limits line" % (agent, EXPECT.get(agent, "map")),
+         got is not None and "## Limits\nAgents at once" in got and "with the owner present" in got, True)
+for agent in sorted(a for a, k in EXPECT.items() if k == "none"):
+    s.eq("cap in the base: `%s` (none) gets no base, so no Limits line" % agent, delivered(run(repo8, agent)), "")
+r = run(repo8, "fwx:planner")
+got = delivered(r) or ""
+s.ok("cap in the base: the Limits line comes before Decided, which the map kind is cut at", 0 <= got.find("## Limits") < got.find("## Decided"), repr(got[-300:]))
+
 s.done()
