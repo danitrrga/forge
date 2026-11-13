@@ -1150,6 +1150,25 @@ def check_fixed_cap(script, s):
         s.ok("cap %s: failed with a reason that says cap, and where it comes from" % what,
              str(result(rec).get("reason", "")).startswith("cap:") and "wave new" in str(result(rec).get("reason", "")), repr(result(rec).get("reason")))
         s.ok("cap %s: cleanup still runs" % what, labels(rec)[-1:] == ["executor:runner-cleanup"], repr(labels(rec)))
+    # the same on every entry path (review of PR 140): a run that enters at the gate launches a fixer after a red gate or a review finding, and the
+    # cap must be checked before the first launch, not only in a wave or in --fix. Seen red on the head of PR 140:
+    #   FAIL: cap missing, from gate with a red gate: no agent is launched before the cap is refused: got ['executor:runner-integrate', 'executor:runner-fix-round', 'executor:fix-1', ...]
+    def gate_red(a):
+        a["done"] = ["T1", "T2", "T3"]
+        a["from"] = "gate"
+    red = {"executor:runner-integrate": {"$seq": [final("h2", [], rc=1), final("h3", ["wt-fix"])]},
+           "executor:runner-fix-round": R({"ok": True, "spent": False, "rounds": "1/3", "why": "w"}),
+           "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix")}
+    for what, edit in (("missing", lambda a: a.pop("cap")), ("0", lambda a: a.update(cap=0))):
+        def both(a, edit=edit):
+            gate_red(a)
+            edit(a)
+        rec, err = go(script, args_over=both, answers_over=red)
+        rec = finish(s, "cap %s, from gate with a red gate" % what, rec, err)
+        s.eq("cap %s, from gate with a red gate: no agent is launched before the cap is refused" % what,
+             [l["label"] for l in rec["launches"] if l["label"] != "executor:runner-cleanup"], [])
+        s.ok("cap %s, from gate with a red gate: failed with a reason that says cap" % what,
+             result(rec).get("status") == "failed" and str(result(rec).get("reason", "")).startswith("cap:"), repr(result(rec).get("reason")))
 
 
 def check_all(script, s):
