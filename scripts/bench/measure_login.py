@@ -45,6 +45,8 @@ DROPPED = (
     # the owner's refresh token and its scopes: not part of the session's authentication, but the agent's own shell would see them, and a
     # spent refresh token is the failure this module exists to avoid
     "CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "CLAUDE_CODE_OAUTH_SCOPES",
+    # a service key for an account the measured session must not touch: the agent's own shell would see it
+    "LINEAR_API_KEY",
 )
 
 
