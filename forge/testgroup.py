@@ -1,30 +1,31 @@
-"""Run every tests/test_*.py of the working folder and summarise: PASS, FAIL, or NOT RUN, NOT ARMED.
+"""The groups of `forge test GROUP`: a suite that is run on its own, with its own exit codes. `fwx` is the plugin's suite (plugins/fwx/tests).
 
-The repo's checks recipe. Each test is a plain script that runs itself, prints its FAIL lines and
-exits 1 on any; one that cannot run (a tool, a key or the network is missing) prints
-`NOT RUN, NOT ARMED: <reason>` as its last line and exits 77.
+`forge test` with no group never reaches this file. A group runs every tests/test_*.py of its folder and summarises: PASS, FAIL, or
+NOT RUN, NOT ARMED. Each test is a plain script that runs itself, prints its FAIL lines and exits 1 on any; one that cannot run (a tool,
+a key or the network is missing) prints `NOT RUN, NOT ARMED: <reason>` as its last line and exits 77. Each test runs with the group's
+folder as working directory, so every path here (the listing, `--expect-not-run`) is relative to it: `tests/test_x.py`.
 
-Exit 0 when every file passed. Exit 1 when one failed, or when there was no test file at all
-(looking at zero is a failure). Exit 77 when none failed but one did not run: neither green nor red,
-because a CI job that skips its tests would otherwise end green. Whoever wants 0 lets them run.
+Exit 0 when every file passed. Exit 1 when one failed, or when there was no test file at all (looking at zero is a failure). Exit 77
+when none failed but one did not run: neither green nor red, because a CI job that skips its tests would otherwise end green. Whoever
+wants 0 lets them run. Exit 2 on a usage error. A group whose folder is absent (a checkout without the plugin) is one SKIP line,
+`NOT RUN, NOT ARMED`, exit 0, as with any optional part, unless a path was declared: that path is then no test file, which is 1.
 
-`--expect-not-run PATH[,PATH...]` (repeatable, also `--expect-not-run=PATH`) declares tests that cannot run
-where this is called from (CI has no key, no private tree). A declared test that exits 77 prints
-`EXPECTED NOT RUN: PATH: reason` and no longer turns the exit to 77; an undeclared 77 still does. A declared test that
-runs counts as any other, so a failing one is still 1. The declaration widens nothing else: a run in which no
-test passed is 1 (everything declared away proves nothing), and so is a declared path that is no test file (a typo
-would silently un-declare it). Why a flag and not a list file: the reason sits beside the command in the workflow,
-and there is no second file to forget. Exit 2 on a usage error.
+`--expect-not-run PATH[,PATH...]` (repeatable, also `--expect-not-run=PATH`) declares tests that cannot run where this is called from
+(CI has no key, no private tree). A declared test that exits 77 prints `EXPECTED NOT RUN: PATH: reason` and no longer turns the exit to
+77; an undeclared 77 still does. A declared test that runs counts as any other, so a failing one is still 1. The declaration widens
+nothing else: a run in which no test passed is 1 (everything declared away proves nothing), and so is a declared path that is no test
+file (a typo would silently un-declare it). Why a flag and not a list file: the reason sits beside the command in the workflow, and
+there is no second file to forget.
 
-`--jobs N` runs up to N files at once (default: the CPUs this process may use, at most 8; `--jobs 1` is one file after another,
-as before). Each file is still its own process with its own exit code, its output captured whole, so a failing file's lines are
-never mixed with another's. What a reader sees does not depend on N: the per-file lines and the summary are printed in the order
-of the file names, each as soon as it and every file before it has finished, so for a given set of results the output and the
-exit code are the same at any N. Start order is largest file first (the slowest files of a suite are mostly its largest; a
-longest-first order keeps the last worker from starting the one long file; a duration table would have to be written somewhere
-and would rot, and the size costs one `stat`). Each child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends
-SIGTERM to every running child's whole process group (the test's own cleanup runs), SIGKILL to what is left after 5 s, and exits
-128 + the signal, so nothing a test started outlives the run. SIGKILL of the runner itself cannot be caught and leaves them.
+`--jobs N` runs up to N files at once (default: the CPUs this process may use, at most 8; `--jobs 1` is one file after another).
+Each file is still its own process with its own exit code, its output captured whole, so a failing file's lines are never mixed with
+another's. What a reader sees does not depend on N: the per-file lines and the summary are printed in the order of the file names, each
+as soon as it and every file before it has finished, so for a given set of results the output and the exit code are the same at any N.
+Start order is largest file first (the slowest files of a suite are mostly its largest; a longest-first order keeps the last worker from
+starting the one long file; a duration table would have to be written somewhere and would rot, and the size costs one `stat`). Each
+child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends SIGTERM to every running child's whole process group (the
+test's own cleanup runs), SIGKILL to what is left after 5 s, and exits 128 + the signal, so nothing a test started outlives the run.
+SIGKILL of the runner itself cannot be caught and leaves them.
 """
 import os
 import signal
@@ -36,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 NOT_RUN = "NOT RUN, NOT ARMED"
 EXPECTED = "EXPECTED NOT RUN"
-USAGE = "usage: fwx test [--expect-not-run PATH[,PATH...]] [--jobs N]\n"
+NAME = "forge test fwx"  # what the messages say: the group is the only one there is
 MAX_DEFAULT_JOBS = 8
 GRACE_S = 5
 STOP = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
@@ -63,40 +64,21 @@ def reason(output):
     return last.split(NOT_RUN + ":", 1)[1].strip() if (NOT_RUN + ":") in last else "no reason printed"
 
 
-def parse(argv):
-    """(declared paths, jobs) or an error line. `jobs` is None when --jobs was not given."""
+def check(expect_values, jobs_values):
+    """(declared paths, jobs, None) from what argparse collected, or (None, None, one error line). `jobs` is None when --jobs was not given."""
     out = set()
-    jobs = None
-    i = 0
-    while i < len(argv):
-        a = argv[i]
-        if a == "--expect-not-run":
-            i += 1
-            if i >= len(argv):
-                return None, None, USAGE.strip()
-            value = argv[i]
-        elif a.startswith("--expect-not-run="):
-            value = a.split("=", 1)[1]
-        elif a == "--jobs" or a.startswith("--jobs="):
-            if jobs is not None:
-                return None, None, "fwx test: --jobs given twice"
-            if a == "--jobs":
-                i += 1
-                value = argv[i] if i < len(argv) else ""
-            else:
-                value = a.split("=", 1)[1]
-            if not (value.isascii() and value.isdigit() and int(value) >= 1):
-                return None, None, "fwx test: --jobs wants a whole number of 1 or more, got %r" % value
-            jobs = int(value)
-            i += 1
-            continue
-        else:
-            return None, None, USAGE.strip()
+    for value in expect_values or []:
         names = [n.strip() for n in value.split(",")]
         if not all(names):
-            return None, None, USAGE.strip()
+            return None, None, "%s: --expect-not-run takes PATH[,PATH...], got %r" % (NAME, value)
         out.update(names)
-        i += 1
+    jobs = None
+    if len(jobs_values or []) > 1:
+        return None, None, "%s: --jobs given twice" % NAME
+    for value in jobs_values or []:
+        if not (value.isascii() and value.isdigit() and int(value) >= 1):
+            return None, None, "%s: --jobs wants a whole number of 1 or more, got %r" % (NAME, value)
+        jobs = int(value)
     return out, jobs, None
 
 
@@ -170,24 +152,38 @@ def _group_alive(pgid):
     return True
 
 
-def main(argv):
-    expect, jobs, error = parse(argv)
+def main(root, expect_values, jobs_values, label):
+    """Run the group whose folder is `root` (an absolute path; `label` is its path as the listing names it, for the SKIP line)."""
+    expect, jobs, error = check(expect_values, jobs_values)
     if error:
         sys.stderr.write(error + "\n")
         return 2
     jobs = jobs or default_jobs()
     env = clean_env()
-    # The folder it is run from, not the repository's top level: this plugin is a folder of a bigger repository
-    # (forge's plugins/fwx), and the top level's tests are not its own. `git ls-files` run there lists only that folder.
-    root = os.getcwd()
-    if subprocess.run(["git", "-C", root, "rev-parse", "--git-dir"], env=env, capture_output=True).returncode:
-        sys.stderr.write("fwx test: not inside a git repository\n")
+    if not os.path.isdir(root):
+        # A checkout without the plugin: nothing to look at is a SKIP that says so, unless the caller named a test of it, which is
+        # a declared path that is no test file.
+        for rel in sorted(expect):
+            sys.stderr.write("%s: --expect-not-run names %s, which is no tests/test_*.py file: there is no %s folder here\n"
+                             % (NAME, rel, label))
+        if expect:
+            return 1
+        print("SKIP  %-22s %sno %s folder here, so its tests were not looked at" % (label, NOT_RUN + ": ", label))
+        return 0
+    # The group's folder, not the repository's top level: the plugin is a folder of a bigger repository (forge's plugins/fwx), and the
+    # top level's tests are not its own. `git ls-files` run there lists only that folder.
+    try:
+        if subprocess.run(["git", "-C", root, "rev-parse", "--git-dir"], env=env, capture_output=True).returncode:
+            sys.stderr.write("%s: %s is not inside a git repository\n" % (NAME, root))
+            return 1
+        files = test_files(root, env)
+    except (OSError, subprocess.CalledProcessError) as e:  # git missing, or a listing that failed: one line, never a green run
+        sys.stderr.write("%s: git could not list the tests of %s: %s\n" % (NAME, root, e))
         return 1
     passed = failed = not_run = expected = 0
-    files = test_files(root, env)
     unknown = sorted(expect - set(files))
     for rel in unknown:
-        sys.stderr.write("fwx test: --expect-not-run names %s, which is no tests/test_*.py file\n" % rel)
+        sys.stderr.write("%s: --expect-not-run names %s, which is no tests/test_*.py file\n" % (NAME, rel))
     children = Children()
     pool = ThreadPoolExecutor(max_workers=jobs)
 
@@ -221,7 +217,7 @@ def main(argv):
             signal.signal(s, signal.SIG_IGN)
         n = children.kill_all()
         pool.shutdown(wait=True, cancel_futures=True)
-        sys.stderr.write("fwx test: interrupted by %s; ended %d running test file(s)\n" % (signal.Signals(e.signum).name, n))
+        sys.stderr.write("%s: interrupted by %s; ended %d running test file(s)\n" % (NAME, signal.Signals(e.signum).name, n))
         return 128 + e.signum
     except BaseException:  # a child that could not start, a closed stdout: leave nothing running either
         children.kill_all()
