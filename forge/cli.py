@@ -2159,4 +2159,10 @@ def main(argv=None):
     scope.add_argument("project", nargs="?", help="only this project's, once its profile is frozen or deleted")
     u.set_defaults(fn=lambda a: _uninstall().main(a))
     a = p.parse_args(args)
+    if a.cmd in PROJECT_ARGUMENT and a.project is not None and not a.project.strip():
+        # An empty name is an unset variable (`forge uninstall "$NAME"`), not "no name": it must not widen the scope.
+        print("forge %s: the project name is empty: say 'forge %s NAME' or %s" % (
+            a.cmd, a.cmd, "'forge sync --all'" if a.cmd == "sync" else "'forge uninstall --integration N' (or no argument for everything)"),
+            file=sys.stderr)
+        return 2
     return a.fn(a)

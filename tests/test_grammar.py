@@ -100,6 +100,14 @@ try:
                 out[os.path.relpath(p, projects[name])] = open(p, "rb").read() if os.path.isfile(p) else b""
         return out
 
+    def tree_of(d):
+        out = {}
+        for dd, _, files in os.walk(d):
+            for f in files:
+                p = os.path.join(dd, f)
+                out[os.path.relpath(p, d)] = open(p, "rb").read() if os.path.isfile(p) else b""
+        return out
+
     def slp(name):
         return os.path.join(projects[name], ".claude", "settings.local.json")
 
@@ -152,6 +160,27 @@ try:
     check("(b) sync nope wrote nothing", {n: tree(n) for n in projects} == before)
     code, out = forge("sync", "toy-a", "--all")
     check("(b) sync toy-a --all: argparse refuses, exit 2", code == 2, tail(out))
+
+    # an empty name is an unset variable (`forge sync "$NAME"`), never "no name": refused before anything runs.
+    # Red on 76b3519: `sync "" --apply` equals `sync --all --apply` (toy-b's deleted settings.local.json is back) and
+    # `uninstall "" --apply` strips every project: "(e) sync '' --apply: nothing changed -- changed: ['home', 'toy-b']" and
+    # "(e) uninstall '' --apply: nothing changed -- changed: ['home', 'toy-a', 'toy-b']". Control: with the check removed
+    # the same two lines come back.
+    os.remove(slp("toy-b"))  # a stale project: a whole sync would regenerate it, a refused one leaves it missing
+    for empty in ("", "  "):
+        for cmd, more in (("sync", ["--apply"]), ("uninstall", ["--apply"]), ("sync", []), ("uninstall", [])):
+            snap = {n: tree(n) for n in projects}, tree_of(home)
+            code, out = forge(cmd, empty, *more)
+            now = {n: tree(n) for n in projects}, tree_of(home)
+            label = "(e) %s %r %s" % (cmd, empty, " ".join(more))
+            check(label + ": exit 2 and one line naming the two forms", code == 2 and "empty" in out and
+                  ("forge sync NAME" in out and "forge sync --all" in out if cmd == "sync" else
+                   "forge uninstall NAME" in out and "forge uninstall --integration" in out), "got %d: %s" % (code, tail(out)))
+            check(label + ": nothing ran", "== forge:" not in out and "looked at" not in out, tail(out))
+            check(label + ": nothing changed", snap == now, "changed: %s" % sorted(
+                [n for n in projects if snap[0][n] != now[0][n]] + (["home"] if snap[1] != now[1] else [])))
+    check("(e) the refused sync left toy-b's settings.local.json missing (it would regenerate it)", not os.path.exists(slp("toy-b")))
+    forge("sync", "--all", "--apply")  # put it back for what follows
 
     # ------------------------------------------------------------- uninstall
     code, out = forge("uninstall", "--project", "toy-a")
