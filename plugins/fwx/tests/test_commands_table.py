@@ -82,6 +82,7 @@ DEFAULTS = [
     (["linear", "--label", "L"], "linear", ["list", "--label", "L"]),
     (["linear", "--project", "P", "list", "--waiting"], "linear", ["waiting", "--project", "P"]),
     (["linear", "--project", "P", "new"], "linear", ["create", "--project", "P"]),
+    (["linear", "--project=P", "list", "--waiting"], "linear", ["waiting", "--project=P"]),
     (["discuss", "--json"], "discuss", ["start", "--json"]),
 ]
 OBJECT_OLD = {"context-base": "context", "playbooks": "playbook"}

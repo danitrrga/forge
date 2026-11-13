@@ -136,9 +136,10 @@ def route(argv):
     obj, rest = argv[0], list(argv[1:])
     verbs = {w[1] for w in new if len(w) > 1 and w[0] == obj and not w[1].startswith("--")}
     lead = []
-    while rest and rest[0] in LEADING.get(obj, ()):
-        lead += rest[:2]
-        rest = rest[2:]
+    while rest and (rest[0] in LEADING.get(obj, ()) or any(rest[0].startswith(o + "=") for o in LEADING.get(obj, ()))):
+        n = 1 if "=" in rest[0] else 2  # `--project NAME` or `--project=NAME`
+        lead += rest[:n]
+        rest = rest[n:]
     if verbs and rest and rest[0] in ("-h", "--help", "help"):
         return "help", obj
     if rest and rest[0] in verbs:

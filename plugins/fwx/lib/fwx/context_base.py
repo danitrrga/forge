@@ -21,12 +21,11 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from fwx import config, state
+from fwx import config, routes, state
 
 ROOT = Path(__file__).resolve().parents[2]
 MAP = ROOT / "data" / "context-map.md"
 TABLE = ROOT / "data" / "context-base.tsv"
-COMMANDS = ROOT / "lib" / "fwx" / "commands"
 CAP = 9000
 WARN = 6000
 SECTION = 1000
@@ -258,8 +257,8 @@ def seal(path, source=None):
 # ---- check --------------------------------------------------------------------------------------------------------
 
 def commands():
-    """The subcommands of bin/fwx: the files of lib/fwx/commands/, an underscore a dash."""
-    return {f[:-3].replace("_", "-") for f in os.listdir(str(COMMANDS)) if f.endswith(".py") and not f.startswith("_")}
+    """The first words of the commands of bin/fwx: the objects of the table in lib/fwx/routes.py (`phase` of `fwx phase new`)."""
+    return {r[0].split()[0] for r in routes.ROWS}
 
 
 def _unknown_commands(text):

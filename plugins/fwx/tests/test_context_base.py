@@ -282,6 +282,12 @@ s.ok("the message names the command", "unknown command: fwx frobnicate" in r.std
 cli(repo9, "new", d9, "--map", good_map)
 r = cli(repo9, "lint", d9, "--map", good_map)
 s.eq("the map with real commands only: exit 0", r.returncode, 0)
+# The commands are the objects of lib/fwx/routes.py, not the files of lib/fwx/commands/ (`phase` and `session` are no file).
+# Seen red with the commands read from the files: FAIL: a map naming objects of the table (`fwx phase new`, `fwx session`, `fwx review read`): exit 0: got 1, want 0
+named_map = write_map("named-map.md", "Run `fwx phase new`, `fwx session`, `fwx decision list`, `fwx review read` and `fwx walk start`.\n")
+cli(repo9, "new", d9, "--map", named_map)
+r = cli(repo9, "lint", d9, "--map", named_map)
+s.eq("a map naming objects of the table (`fwx phase new`, `fwx session`, `fwx review read`): exit 0", r.returncode, 0)
 real = cli(repo9, "new", d9)
 s.ok("the shipped data/context-map.md builds", real.returncode == 0, real.stderr)
 s.eq("the shipped data/context-map.md checks", cli(repo9, "lint", d9).returncode, 0)
