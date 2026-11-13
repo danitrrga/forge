@@ -6,3 +6,4 @@ plugin-skill	toy-plugin:beta	toy	1	1	{D1}
 mcp	toy-db	toy	5	4	{D4}
 plugin-mcp	plugin_toyplug_srv	toy	1	1	{D0}
 agent	toy-agent	toy	2	2	{D1}
+agent	early-agent	toy	1	1	{D2}

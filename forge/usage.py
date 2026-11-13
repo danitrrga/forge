@@ -22,10 +22,11 @@ Usage (`collect`, `report`)
              of its tool names in that session's `deferred_tools_delta` (added minus removed); `startup_bytes` of a
              plugin is the stdout of its SessionStart hooks, attributed by the `plugins/cache/<marketplace>/<plugin>/`
              in the hook's command (a hook outside a plugin directory is not a plugin's cost).
-  Format   : the attachment shapes (`skill_listing.content`, `skill_listing.isInitial`,
-             `deferred_tools_delta.addedNames` / `addedLines` / `removedNames`, `hook_success.command` /
-             `.stdout`) are Claude Code's transcript format as `scripts/metrics/harness-baseline.mjs` and the toy
-             fixtures know it; a shape it changes reads as 0 bytes, which the fixture's expected bytes catch.
+  Format   : the attachment fields read (`skill_listing.content` and `.isInitial`, `deferred_tools_delta.addedNames` /
+             `addedLines` / `removedNames`, `hook_success.command` and `.stdout`) are Claude Code's transcript format as
+             the toy fixture has it, NOT checked against a real transcript when this was written (only the type names
+             and `hookEvent` are the ones scripts/metrics/harness-baseline.mjs reads). A field that is named otherwise
+             reads as 0 bytes and an empty `listing`, visible in the report; the fixture cannot catch that.
 
 Zero sessions is an error (`usage unknown`), never "0 uses"; fewer than MIN_SESSIONS is reported as `few sessions`.
 
@@ -155,11 +156,11 @@ def read_file(path, sess, main, since, counts):
             ts = d.get("timestamp")
             if isinstance(ts, str) and _DATE.match(ts[:10]):
                 date = ts[:10]
+            if since and date and date < since:
+                continue
             if main and date:
                 sess.first = min(sess.first or date, date)
                 sess.last = max(sess.last or date, date)
-            if since and date and date < since:
-                continue
             if main:
                 _startup(d, sess)
             _uses(d, sess, date)

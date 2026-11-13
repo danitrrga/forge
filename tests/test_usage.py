@@ -205,6 +205,8 @@ def usage_cases(tmp):
     want("--since the fourth day reads the two sessions from that day on and says so on stderr",
          (code, rep2.get("looked_at", {}).get("sessions"), rep2.get("few_sessions"), "few sessions (2)" in err), (0, 2, True, True))
     want("--since: toy-db calls", next((i["calls"] for i in rep2.get("items", []) if i["name"] == "toy-db"), None), 2)
+    want("--since drops the line of a kept session that is older than the day (an agent called the day before)",
+         [i["name"] for i in rep2.get("items", []) if i["name"] == "early-agent"], [])
     code, out, err = run(home, profiles, since=day(20))
     want("--since after every session is zero sessions: FAIL, rc 1", (code, "toy: 0 sessions in" in out, "usage unknown" in out), (1, True, True))
     want("--since that is not a date", run(home, profiles, since="yesterday")[0], 1)
@@ -292,8 +294,11 @@ def init_cases(tmp):
 
 def main():
     tmp = sandbox.mkdtemp("usage-test-")
-    usage_cases(tmp)
-    init_cases(tmp)
+    for cases in (usage_cases, init_cases):
+        try:
+            cases(tmp)
+        except Exception as e:  # a case that cannot finish is a red line, not a traceback
+            failures.append("%s raised %s: %s" % (cases.__name__, type(e).__name__, e))
     for msg in failures:
         print("FAIL", msg)
     sandbox.cleanup()

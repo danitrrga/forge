@@ -1774,6 +1774,7 @@ def metrics_init_diff(a, init_diff, answers, use):
 
 def cmd_metrics(a):
     """forge metrics NAME: node scripts/metrics/<script> over NAME's transcripts and repository.
+    --usage and --init-diff are forge/usage.py's (metrics_usage, metrics_init_diff).
     Reads only. A profile with no project_path, a transcript folder that does not exist, or no node
     is a FAIL naming the project: the scripts would otherwise fail on a key nobody can see."""
     profs = lib.profiles()

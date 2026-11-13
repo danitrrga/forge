@@ -1,1 +1,2 @@
+{"type": "assistant", "timestamp": "{D2}T10:00:30.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-d0", "name": "Agent", "input": {"subagent_type": "early-agent", "prompt": "go"}}]}}
 {"type": "assistant", "timestamp": "{D3}T10:00:00.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-d1", "name": "mcp__toy-db__insert", "input": {}}]}}
