@@ -1740,8 +1740,16 @@ def metrics_usage(a, prof, projects, fail):
         print("%-14s %-34s %5s %8s  %-10s %s" % ("kind", "name", "calls", "sessions", "last seen", "listed bytes"))
         for i in rep["items"]:
             print("%-14s %-34s %5d %8d  %-10s %d" % (i["kind"], i["name"], i["calls"], i["sessions"], i["last_seen"] or "-", i["listed_bytes"]))
-        for p in rep["plugins"]:
+        for p in rep["plugins"] or []:
             print("plugin %s: %d bytes of SessionStart output" % (p["plugin"], p["startup_bytes"]))
+        if rep["unlisted_commands"]:
+            print("commands that are no listed skill (built-in, a plugin's or the project's): " + ", ".join(
+                "%s x%d" % kv for kv in rep["unlisted_commands"].items()))
+    if rep["plugins"] is None:
+        un = rep["startup_unattributed"]
+        print("NOT RUN, NOT ARMED: plugin startup_bytes: %d SessionStart hooks (%d bytes) and none names its plugin "
+              "(the transcript keeps ${CLAUDE_PLUGIN_ROOT} unexpanded), so no per-plugin cost" % (un["hooks"], un["bytes"]),
+              file=sys.stderr if a.json else sys.stdout)
     if few:
         print("few sessions (%d)" % len(sessions), file=sys.stderr if a.json else sys.stdout)
     return 0

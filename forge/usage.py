@@ -14,14 +14,16 @@ Usage (`collect`, `report`)
              is global, so it cannot say which project used what.
   Counted  : a `Skill` tool_use (`input.skill`; with `:` a plugin skill; a name found under
              `<project>/.claude/skills` a project skill), a `<command-name>` of a user message when the name is a
-             listed or project skill (built-in commands such as /clear are not), a `mcp__<server>__<tool>`
+             listed or project skill (any other /command, built-in or not, is only counted in `unlisted_commands`), a `mcp__<server>__<tool>`
              tool_use (a server named `plugin_<plugin>_<server>` is a plugin's), and the `subagent_type` of an
              `Agent` tool_use. One tool_use id counts once however many lines repeat it.
   Cost     : read from the most recent session that carries each piece, which is not always the same session:
              `listed_bytes` of a skill is its line in the last initial `skill_listing`; of an MCP server, the bytes
              of its tool names in that session's `deferred_tools_delta` (added minus removed); `startup_bytes` of a
              plugin is the stdout of its SessionStart hooks, attributed by the `plugins/cache/<marketplace>/<plugin>/`
-             in the hook's command (a hook outside a plugin directory is not a plugin's cost).
+             in the hook's command. Real transcripts keep `${CLAUDE_PLUGIN_ROOT}` unexpanded, which names no plugin: the
+             output of a hook that matches nothing is counted apart (`startup_unattributed`), and `plugins` is null
+             when no hook of the session matched, because the per-plugin cost was then not measured.
   Format   : the attachment fields read (`skill_listing.content` and `.isInitial`, `deferred_tools_delta.addedNames` /
              `addedLines` / `removedNames`, `hook_success.command` and `.stdout`) are Claude Code's transcript format as
              the toy fixture has it, NOT checked against a real transcript when this was written (only the type names
@@ -129,13 +131,14 @@ class Session:
         self.listing = None  # content of the last initial skill_listing
         self.names = None  # tool names live after the deferred_tools_delta lines
         self.hooks = collections.Counter()  # plugin -> SessionStart stdout bytes
+        self.hook_n = self.hook_n_attr = self.hook_bytes = 0  # every SessionStart hook, and the part that names a plugin
         self._ids = set()
 
 
 def read_file(path, sess, main, since, counts):
     """Fold one transcript file into `sess`. `main` False is a subagent file: its tool use counts, its start-up
-    attachments (which are its own, not the session's) do not. A line before `since` is dropped; a line with no
-    stamp takes the one before it."""
+    attachments (which are its own, not the session's) do not. With `since` a line before it counts as nothing and is
+    not dated, but the start-up attachments are read whatever it says; a line with no stamp takes the one before it."""
     date = None
     try:
         fh = open(path, encoding="utf-8", errors="replace")
@@ -156,13 +159,13 @@ def read_file(path, sess, main, since, counts):
             ts = d.get("timestamp")
             if isinstance(ts, str) and _DATE.match(ts[:10]):
                 date = ts[:10]
+            if main:
+                _startup(d, sess)  # whatever `since` says: the listing a later /command is judged against is read once, at the start
             if since and date and date < since:
                 continue
             if main and date:
                 sess.first = min(sess.first or date, date)
                 sess.last = max(sess.last or date, date)
-            if main:
-                _startup(d, sess)
             _uses(d, sess, date)
 
 
@@ -181,9 +184,13 @@ def _startup(d, sess):
         live -= {n for n in a.get("removedNames", []) if isinstance(n, str)}
         sess.names = live
     elif t == "hook_success" and str(a.get("hookEvent") or a.get("hookName") or "").startswith("SessionStart"):
+        size = len(str(a.get("stdout") or "").encode("utf-8"))
+        sess.hook_n += 1
+        sess.hook_bytes += size
         m = _PLUGIN_DIR.search(str(a.get("command") or ""))
         if m:
-            sess.hooks[m.group(1)] += len(str(a.get("stdout") or "").encode("utf-8"))
+            sess.hooks[m.group(1)] += size
+            sess.hook_n_attr += 1
 
 
 def _uses(d, sess, date):
@@ -231,10 +238,10 @@ def collect(projects_dir, names, since=None):
 
 
 def _listing_lines(content):
-    """{skill name: bytes of its line} of a skill_listing's content: lines `- <name>: <description>`."""
+    """{skill name: bytes of its line} of a skill_listing's content: lines `- <name>: <description>`, or `- <name>` alone when the description did not fit."""
     out = {}
     for line in content.splitlines():
-        m = re.match(r"^- (\S+?):( |$)", line)
+        m = re.match(r"^- (\S+?)(?::(?: |$)|$)", line)
         if m:
             out[m.group(1)] = len(line.encode("utf-8"))
     return out
@@ -280,9 +287,12 @@ def report(project, sessions, counts, folder_names, project_skills):
         if date:
             it["last_seen"] = max(it["last_seen"] or date, date)
 
+    unlisted = collections.Counter()  # a /command that is no listed skill: a built-in, a plugin's or the project's own command
     for s in sessions:
         for how, name, date in s.uses:
-            if how == "skill" or (how == "command" and name in listed):
+            if how == "command" and name not in listed:
+                unlisted[name] += 1
+            elif how == "skill" or how == "command":
                 kind, plugin = _skill_kind(name, project_skills)
                 use(item(kind, name, plugin), "tool" if how == "skill" else "command", s, date)
             elif how == "mcp":
@@ -307,7 +317,7 @@ def report(project, sessions, counts, folder_names, project_skills):
             kind, plugin = _server_kind(server)
             it = item(kind, server, plugin)
             it["listed_bytes"], it["tools"] = sum(len(t.encode("utf-8")) for t in tools), len(tools)
-    hooks_session = _newest(sessions, lambda s: s.hooks)
+    hooks_session = _newest(sessions, lambda s: s.hook_n)
     for it in items.values():
         it["sessions"] = len(it.pop("_s"))
     out_items = sorted(items.values(), key=lambda i: (KINDS.index(i["kind"]), -i["calls"], i["name"]))
@@ -322,7 +332,13 @@ def report(project, sessions, counts, folder_names, project_skills):
                      "skills_bytes": len(s.listing.encode("utf-8")),
                      "mcp_names_bytes": sum(len(n.encode("utf-8")) for n in (s.names or ()) if n.startswith("mcp__"))}
                     for s in recent],
-        "plugins": [{"plugin": p, "startup_bytes": b} for p, b in sorted(hooks_session.hooks.items())] if hooks_session else [],
+        # null, not []: hooks ran and none names its plugin (the transcript keeps `${CLAUDE_PLUGIN_ROOT}` unexpanded), so
+        # the cost per plugin was not measured; [] only when no session ran a SessionStart hook at all
+        "plugins": ([{"plugin": p, "startup_bytes": b} for p, b in sorted(hooks_session.hooks.items())] or None) if hooks_session else [],
+        "startup_unattributed": {"hooks": hooks_session.hook_n - hooks_session.hook_n_attr,
+                                 "bytes": hooks_session.hook_bytes - sum(hooks_session.hooks.values())} if hooks_session else
+                                {"hooks": 0, "bytes": 0},
+        "unlisted_commands": dict(sorted(unlisted.items(), key=lambda kv: (-kv[1], kv[0]))),
         "items": out_items,
     }
 
@@ -423,7 +439,9 @@ def init_diff(before, after, marks):
     keep = {n for n, m in marks.items() if m == "keep"}
     add = {n for n, m in marks.items() if m == "add"}
     lines = ["drop still in init: %s" % n for n in sorted(drop & a)]
+    lines += ["drop not in before: %s" % n for n in sorted(drop - b)]
     lines += ["keep missing from init: %s" % n for n in sorted(keep - a)]
+    lines += ["add missing from init: %s" % n for n in sorted(add - a)]
     lines += ["unexpected removal: %s" % n for n in sorted((b - a) - drop - keep)]
     lines += ["unexpected addition: %s" % n for n in sorted((a - b) - add)]
     return (1 if lines else 0), lines

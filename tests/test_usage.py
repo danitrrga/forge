@@ -188,6 +188,8 @@ def usage_cases(tmp):
     want("plugins: the SessionStart stdout of the plugin's hook in the newest session that has one, not the user's hook",
          rep["plugins"], [{"plugin": "toyplug", "startup_bytes": 5}])
     want("five sessions is not few", rep["few_sessions"], False)
+    want("the one hook outside a plugin directory is counted apart; /clear, not a skill, is listed apart",
+         (rep["startup_unattributed"], rep["unlisted_commands"]), ({"hooks": 1, "bytes": 21}, {"clear": 1}))
     # ~/.claude.json: its skillUsage is global; nothing of it comes out
     raw = run(home, profiles)[1]
     want("the decoy of ~/.claude.json is absent", DECOY in raw, False)
@@ -225,6 +227,73 @@ def usage_cases(tmp):
     want("--usage with a session id", run(home, profiles, session="s-a")[0], 1)
     want("--usage with --until", run(home, profiles, until=day(3))[0], 1)
     want("a decoy-only project does not exist: unknown project", run(home, profiles, project="nosuch")[0], 1)
+
+
+def mini(tmp, name, lines):
+    """(home, profiles) of a world with one project `p` and one session whose transcript is `lines`: the shapes of
+    real transcript objects (an attachment with `type`, `names`, `content`, `isInitial`; a user message whose
+    `message.content` is a string), built only from toy names."""
+    root = os.path.join(tmp, name)
+    project = os.path.join(root, "work", "p")
+    os.makedirs(project)
+    write(os.path.join(root, "home", ".claude", "projects", cli.transcript_key(project), "s1.jsonl"),
+          "".join(json.dumps(l) + "\n" for l in lines))
+    write(os.path.join(root, "profiles", "p.claude.json"), json.dumps({"project": "p", "project_path": project}))
+    return os.path.join(root, "home"), os.path.join(root, "profiles")
+
+
+def at(n, sec=0):
+    return day(n) + "T10:00:%02d.000Z" % sec
+
+
+def listing(n, content, names, initial=True):
+    return {"type": "attachment", "timestamp": at(n), "attachment": {"type": "skill_listing", "content": content,
+                                                                      "names": names, "isInitial": initial}}
+
+
+def typed(n, command, sec=1):
+    return {"type": "user", "timestamp": at(n, sec), "message": {"role": "user", "content":
+            "<command-message>%s</command-message>\n<command-name>/%s</command-name>" % (command, command)}}
+
+
+def review_cases(tmp):
+    """The five defects of the review of PR 135, each in a world of its own. Red before the fixes:
+    D1 name-only skills: "nameonly: no row" ; D2 an unlisted command: "unlisted_commands = None, want {'custom-cmd': 2, 'clear': 1}";
+    D3 --since: "listed-one: no row"; D4 plugins [] with an unexpanded plugin root: "plugins = [], want None";
+    D5 a drop or add that is in no capture: rc 0, want 1."""
+    body = "- nameonly\n- plug:nameonly\n- listed-one: described at length"
+    names = ["nameonly", "plug:nameonly", "listed-one"]
+    # D1: a listing line without a description is a skill too (real listings hold them when the budget is short)
+    h, p = mini(tmp, "d1", [listing(0, body, names), typed(1, "nameonly"), typed(1, "plug:nameonly", 2), typed(1, "listed-one", 3)])
+    by = {i["name"]: i for i in report_of(h, p, project="p")[1].get("items", [])}
+    for n, kind, size in (("nameonly", "skill", len("- nameonly")), ("plug:nameonly", "plugin-skill", len("- plug:nameonly")),
+                          ("listed-one", "skill", len("- listed-one: described at length"))):
+        want("%s: counted once by its /command, listed" % n, (by.get(n) or {}).get("calls") and
+             (by[n]["kind"], by[n]["calls"], by[n]["listed_bytes"]), (kind, 1, size))
+    # D2: a command that is no listed skill is counted in a list of its own, nothing is dropped without a trace
+    h, p = mini(tmp, "d2", [listing(0, body, names), typed(1, "custom-cmd"), typed(1, "custom-cmd", 2), typed(1, "clear", 3)])
+    rep = report_of(h, p, project="p")[1]
+    want("unlisted commands, counted", rep.get("unlisted_commands"), {"custom-cmd": 2, "clear": 1})
+    want("an unlisted command is not an item", [i["name"] for i in rep.get("items", []) if i["name"] in ("custom-cmd", "clear")], [])
+    code, out, err = run(h, p, project="p", json=False)
+    want("text mode names them", (code, "custom-cmd x2" in out), (0, True))
+    # D3: with --since the session's initial listing is still read (only the uses are dated)
+    h, p = mini(tmp, "d3", [listing(0, body, names), typed(4, "listed-one")])
+    rep = report_of(h, p, project="p", since=day(2))[1]
+    it = next((i for i in rep.get("items", []) if i["name"] == "listed-one"), None)
+    want("--since: the command after the day still counts, with its listed bytes",
+         it and (it["calls"], it["listed_bytes"]), (1, len("- listed-one: described at length")))
+    # D4: a SessionStart hook whose command carries an unexpanded plugin root names no plugin: not measured, not zero
+    hook = {"type": "attachment", "timestamp": at(0, 2), "attachment": {
+        "type": "hook_success", "hookEvent": "SessionStart", "hookName": "SessionStart:startup", "exitCode": 0,
+        "command": "bash ${CLAUDE_PLUGIN_ROOT}/hooks/start.sh", "stdout": "hello", "stderr": ""}}
+    h, p = mini(tmp, "d4", [listing(0, body, names), hook])
+    code, rep, err = report_of(h, p, project="p")
+    want("unattributed SessionStart output: plugins is null, the bytes are counted apart, and it says NOT RUN",
+         (code, rep.get("plugins"), rep.get("startup_unattributed"), "NOT RUN, NOT ARMED: plugin startup_bytes" in err),
+         (0, None, {"hooks": 1, "bytes": 5}, True))
+    h, p = mini(tmp, "d4b", [listing(0, body, names)])
+    want("no SessionStart hook at all is a true zero: plugins is []", report_of(h, p, project="p")[1].get("plugins"), [])
 
 
 def init_event(skills, plugins, servers):
@@ -290,11 +359,19 @@ def init_cases(tmp):
     want("--init-diff without --answers: rc 2", run(home, profiles, usage=False, json=False, init_diff=[f["before"], f["ok"]])[0], 2)
     want("--init-diff with --usage: rc 1", run(home, profiles, usage=True, json=False, init_diff=[f["before"], f["ok"]], answers=f["answers"])[0], 1)
     want("--init-diff of an unknown project: rc 1", diff("ok", project="nosuch")[0], 1)
+    # a mark that names something in no capture was not done, so it cannot be counted as done
+    write(f["answers"], json.dumps(dict(marks, ghost="drop")))
+    code, out, err = diff("ok")
+    want("a drop that was in no capture: rc 1 naming it", (code, "drop not in before: ghost" in out, "PASS" in out), (1, True, False))
+    write(f["answers"], json.dumps(dict(marks, ghost="add")))
+    code, out, err = diff("ok")
+    want("an add that never entered: rc 1 naming it", (code, "add missing from init: ghost" in out), (1, True))
+    write(f["answers"], json.dumps(marks))
 
 
 def main():
     tmp = sandbox.mkdtemp("usage-test-")
-    for cases in (usage_cases, init_cases):
+    for cases in (usage_cases, review_cases, init_cases):
         try:
             cases(tmp)
         except Exception as e:  # a case that cannot finish is a red line, not a traceback
