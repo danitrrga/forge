@@ -45,7 +45,7 @@ level (`python3 bin/forge test fwx`); the plugin has no test command of its own,
 (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary, and runs each file with this folder as working directory. It exits 0
 when every file passed, 1 when one failed or when there is no test file, and 77 when none failed but one could not run (a missing tool,
 key or network); without this folder (a checkout without the plugin) it prints one SKIP line and exits 0. `--expect-not-run PATH[,PATH...]`
-declares tests that cannot run where it is called (CI; paths relative to this folder, `tests/test_x.py`): each prints
+declares tests that cannot run where it is called (CI; paths relative to this folder, as the group prints them): each prints
 `EXPECTED NOT RUN: PATH: <reason>` and no longer makes the exit 77; an undeclared one still does, a declared one that fails is still 1,
 and a run where nothing passed or a declared path is no test file is 1. `--jobs N` runs up to N files at once (default: the CPUs the
 process may use, at most 8; `--jobs 1` is one file after another); the lines and the exit code are the same at any N, and a failing
