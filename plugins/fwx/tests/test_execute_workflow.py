@@ -44,10 +44,10 @@ its report under `.git` with `acceptEdits`); `check_wave_base` and `check_scratc
   FAIL: wave base: a new attempt of a wave-2 task checks the same head: got [[], []], want [['h1'], ['h1']]
   FAIL: scratch: the resolver is given no path under .git and none in the old reports/ or tmp/ of the run (it wrote the report there, and was refused): You are the conflict resolver ...
   FAIL: executor a report in the run folder under .git, where agents no longer write once: relaunched once: got 1, want 2
-  (the brief's side is in tests/test_wave_brief.py, `fwx wave scratch` in tests/test_wave_prepare.py)
+  (the brief's side is in tests/test_wave_brief.py, `fwx scratch new` in tests/test_wave_prepare.py)
 The live rerun then found a reviewer that wrote `report.json` in `tmp/` of its folder (the prompt said "in it" after naming `tmp/`);
 the wording check above is "report.json directly in that folder, not in tmp/", red on the first wording:
-  FAIL: scratch: the reviewer is told to run `fwx wave scratch ... r1` and to use its tmp/ and report.json: ...
+  FAIL: scratch: the reviewer is told to run `fwx scratch new ... r1` and to use its tmp/ and report.json: ...
 Controls added: a report outside a scratch folder, of another unit or with `..` in its path accepted; a later wave checking prepare's
 base; a fixer told to write under .git again.
 
@@ -105,7 +105,7 @@ def final(head, merged, rc=0, **kw):
 
 
 def report_at(unit):
-    """Where an agent's report is: in the folder `fwx wave scratch RUN UNIT` made in its own worktree, never under .git."""
+    """Where an agent's report is: in the folder `fwx scratch new RUN UNIT` made in its own worktree, never under .git."""
     return "/work/wt-%s/.fwx-agent/%s/%s/report.json" % (unit, os.path.basename(RUN_DIR), unit)
 
 
@@ -307,7 +307,7 @@ def check_green(script, s):
     s.ok("green: the first wave is not integrated with --final", "--final" not in ints[0]["prompt"], ints[0]["prompt"][-200:])
     s.ok("green: the last wave is integrated with --final", "--final" in ints[1]["prompt"], ints[1]["prompt"][-200:])
     s.ok("green: the branches go in task order", "--branches 'wt-t1' 'wt-t2'" in ints[0]["prompt"], ints[0]["prompt"][-200:])
-    s.ok("green: the runner is told the checkout and the run", "cd '/work/wt' && fwx wave integrate --part-dir '/work/.fwx/phases/01-toy' --run '01-toy-ab12cd3-1'" in ints[0]["prompt"],
+    s.ok("green: the runner is told the checkout and the run", "cd '/work/wt' && fwx wave merge --part-dir '/work/.fwx/phases/01-toy' --run '01-toy-ab12cd3-1'" in ints[0]["prompt"],
          ints[0]["prompt"][-300:])
     s.ok("green: the reviewer is asked for the diff base..head", HEAD0 in launched(rec, "reviewer:")[0]["prompt"] and "h2" in launched(rec, "reviewer:")[0]["prompt"],
          launched(rec, "reviewer:")[0]["prompt"][:300])
@@ -322,7 +322,7 @@ def check_green(script, s):
     s.eq("green: details keys", sorted(d), sorted(["run", "head", "evidence", "rounds", "plan_failures", "criteria", "findings", "outside", "protected",
                                                  "tried", "gaps", "kept_worktrees", "leftover", "agents"]))
     s.eq("green: the cleanup is the last launch", last(rec), "executor:runner-cleanup")
-    s.ok("green: cleanup names the run", "fwx wave cleanup --run '01-toy-ab12cd3-1'" in launched(rec, "executor:runner-cleanup")[0]["prompt"])
+    s.ok("green: cleanup names the run", "fwx wave remove --run '01-toy-ab12cd3-1'" in launched(rec, "executor:runner-cleanup")[0]["prompt"])
     s.eq("green: no fix-round, no fixer", (runner(rec, "fix-round"), [l for l in workers(rec) if not l["label"].startswith("executor:T")]), ([], []))
 
     rec, err = go(script, answers_over={"executor:runner-capacity": cap()}, args_over=lambda a: a.update(unattended=True))
@@ -444,7 +444,7 @@ def check_executor_misses(script, s):
 
 
 def check_setup_failed(script, s):
-    """A worktree setup that failed (exit 43 of `fwx wave check-base`, or `setup` in the result of `integrate` and `revert`) ends the job
+    """A worktree setup that failed (exit 43 of `fwx base`, or `setup` in the result of `integrate` and `revert`) ends the job
     with its own line: a new attempt would run the same setup and fail the same way, and the round it takes is one a real failure needs.
 
     The signal is a fact the code wrote, not words an agent chose: `check-base` leaves `.fwx-agent/worktree-setup-failed.json` in the
@@ -701,7 +701,7 @@ def check_review(script, s):
     rec = finish(s, "criterion no, no finding", rec, err)
     s.eq("criterion no that no finding names: the report lacks what it was asked for, relaunched once", len(launched(rec, "reviewer:")), 2)
     rv = (launched(rec, "reviewer:") or [{"prompt": ""}])[0]
-    s.ok("reviewer: the prompt carries the criteria, the intent files, the range and the report path", all(x in rv["prompt"] for x in ("C1", "g is exported", HEAD0, "/work/.fwx/phases/01-toy/plan.md", "/work/.fwx/phases/01-toy/context.md", "fwx wave scratch %s r1" % os.path.basename(RUN_DIR))),
+    s.ok("reviewer: the prompt carries the criteria, the intent files, the range and the report path", all(x in rv["prompt"] for x in ("C1", "g is exported", HEAD0, "/work/.fwx/phases/01-toy/plan.md", "/work/.fwx/phases/01-toy/context.md", "fwx scratch new %s r1" % os.path.basename(RUN_DIR))),
          rv["prompt"][:700])
     rec, err = go(script, answers_over={"reviewer:r1": review_line("r1", no=1, findings=1), "executor:runner-report-r1": review_report([finding("F1", claim="C1 is not met: g is missing")], crit("no", "yes")),
                                         "review-verifier:r1": verdicts(("r1-F1", "fix", "high", "check")),
@@ -853,13 +853,13 @@ def check_fix_scope(script, s):
 def check_wave_base(script, s):
     """3.4 U8 fix, F1: a later wave's worktrees are born from the phase head after the earlier wave merged, so the sha they check
     is the head when their wave launches (what the last `integrate` returned), never the one `prepare` saw. The check itself is
-    still exact (`fwx wave check-base`, tests/test_wave_prepare.py): a base that is not the head is `wrong-base`."""
+    still exact (`fwx base`, tests/test_wave_prepare.py): a base that is not the head is `wrong-base`."""
     rec, err = go(script)
     rec = finish(s, "wave base", rec, err)
 
     def says(label):
         p = launched(rec, label)[0]["prompt"]
-        return re.findall(r"`fwx wave check-base (\S+)`", p), p
+        return re.findall(r"`fwx base (\S+)`", p), p
     for tid in ("T1", "T2"):
         got, p = says("executor:" + tid)
         s.eq("wave base: wave 1's %s checks the head at prepare (%s)" % (tid, HEAD0[:7]), got, [HEAD0])
@@ -874,7 +874,7 @@ def check_wave_base(script, s):
         "executor:runner-report-T3": {"$seq": [exec_report("wt-t3", "failed", reason="x"), exec_report("wt-t3b")]},
         "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"})})
     rec = finish(s, "wave base, new attempt", rec, err)
-    s.eq("wave base: a new attempt of a wave-2 task checks the same head", [re.findall(r"check-base (\S+)`", l["prompt"]) for l in launched(rec, "executor:T3")], [["h1"], ["h1"]])
+    s.eq("wave base: a new attempt of a wave-2 task checks the same head", [re.findall(r"fwx base (\S+)`", l["prompt"]) for l in launched(rec, "executor:T3")], [["h1"], ["h1"]])
 
     def fixmode(a):
         a["fix"] = {"source": "/work/findings.json", "findings": [finding("W1", "high")], "brief": RUN_DIR + "/briefs/_fix.md"}
@@ -886,19 +886,19 @@ def check_wave_base(script, s):
         "executor:runner-integrate": {"$seq": [final("h2", ["wt-w"])]},
         "reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report(), "executor:runner-cleanup": CLEAN_CLEANUP})
     rec = finish(s, "wave base, fix", rec, err)
-    s.eq("wave base: the fixer of --fix checks the head at prepare", re.findall(r"check-base (\S+)`", workers(rec)[0]["prompt"]), [HEAD0])
+    s.eq("wave base: the fixer of --fix checks the head at prepare", re.findall(r"fwx base (\S+)`", workers(rec)[0]["prompt"]), [HEAD0])
 
 
 def check_scratch(script, s):
     """3.4 U8 fix, F2: no agent is told to write under .git (Claude Code asks permission for it under `acceptEdits` and refuses an
     isolated agent's write outside its worktree, and the `auto` classifier denied one fixer for building that path). Each one that
-    has no brief file makes its scratch folder with `fwx wave scratch RUN UNIT`, in its own worktree, and writes there."""
+    has no brief file makes its scratch folder with `fwx scratch new RUN UNIT`, in its own worktree, and writes there."""
     run = os.path.basename(RUN_DIR)
 
     def told(name, launch, unit):
         p = launch["prompt"]
-        s.ok("scratch: %s is told to run `fwx wave scratch %s %s` and to use its tmp/ and report.json" % (name, run, unit),
-             "`fwx wave scratch %s %s`" % (run, unit) in p and "tmp/ inside that folder" in p and "report.json directly in that folder, not in tmp/" in p, p[-420:])
+        s.ok("scratch: %s is told to run `fwx scratch new %s %s` and to use its tmp/ and report.json" % (name, run, unit),
+             "`fwx scratch new %s %s`" % (run, unit) in p and "tmp/ inside that folder" in p and "report.json directly in that folder, not in tmp/" in p, p[-420:])
         s.ok("scratch: %s is given no path under .git and none in the old reports/ or tmp/ of the run (it wrote the report there, and was refused)" % name,
              ".git" not in p and "/reports/" not in p and RUN_DIR not in p, p)
     conflict = integ("h1", ["wt-t1"], ok=False, conflict={"branch": "wt-t2", "files": ["a.py"]})
@@ -923,7 +923,7 @@ def check_scratch(script, s):
     told("the reviewer", launched(rec, "reviewer:")[0], "r1")
     told("the security reviewer", launched(rec, "security-reviewer:")[0], "r1-sec")
     p = launched(rec, "review-verifier:")[0]["prompt"]
-    s.ok("scratch: the verifier makes its TMPDIR with `fwx wave scratch %s r1-verifier` and is told no path under .git" % run, "`fwx wave scratch %s r1-verifier`" % run in p and ".git" not in p, p)
+    s.ok("scratch: the verifier makes its TMPDIR with `fwx scratch new %s r1-verifier` and is told no path under .git" % run, "`fwx scratch new %s r1-verifier`" % run in p and ".git" not in p, p)
     s.ok("scratch: the executor of a task is told nothing of it (its brief says it) and nothing under .git is in its prompt but the brief's own path",
          ".git" not in launched(rec, "executor:T1")[0]["prompt"].replace(RUN_DIR + "/briefs/T1.md", ""), launched(rec, "executor:T1")[0]["prompt"])
 
@@ -1029,7 +1029,7 @@ def check_gate_entry_and_stage(script, s):
     rec, err = go(script, args_over=lambda a: a.update(done=["T1", "T2", "T3"]))
     rec = finish(s, "all done, no from", rec, err)
     s.ok("all done without `from`: needs-owner, and the reason is the whole command that goes on (the orchestrator loads no playbook)",
-         result(rec).get("status") == "needs-owner" and "fwx wave prepare --part-dir '/work/.fwx/phases/01-toy' --plane session --branch 'phase-01' --from gate" in str(result(rec).get("reason")),
+         result(rec).get("status") == "needs-owner" and "fwx wave new --part-dir '/work/.fwx/phases/01-toy' --plane session --branch 'phase-01' --from gate" in str(result(rec).get("reason")),
          repr(result(rec).get("reason")))
 
 
@@ -1090,7 +1090,7 @@ def check_agents(s):
     for label in ("reviewer:r1", "security-reviewer:r1"):
         p = (launched(rec, label) or Launches())[0]["prompt"]
         s.ok("agents: %s gets its brief in the prompt: range, intent files, its scratch folder for TMPDIR and report, no file to open" % label,
-             all(x in p for x in ("DIFF:", "INTENT:", "Your TMPDIR is tmp/ inside that folder", "fwx wave scratch %s %s" % (os.path.basename(RUN_DIR), "r1" if label.startswith("reviewer") else "r1-sec")))
+             all(x in p for x in ("DIFF:", "INTENT:", "Your TMPDIR is tmp/ inside that folder", "fwx scratch new %s %s" % (os.path.basename(RUN_DIR), "r1" if label.startswith("reviewer") else "r1-sec")))
              and "brief file" not in p.replace("no brief file", ""), p[:300])
 
 
@@ -1151,7 +1151,7 @@ MUTANTS = [
     ("a report of another unit accepted", "if (!p.endsWith(reportTail(unit)) ||", "if (!p.endsWith('/report.json') ||", "FAIL: executor the report of another unit once"),
     ("a path that climbs accepted", " || /(^|\\/)\\.\\.(\\/|$)/.test(p)) return null", ") return null", "FAIL: executor a path that climbs out of a scratch folder once"),
     ("the later wave checks prepare's base", "const launchBase = () => st.head || A.base", "const launchBase = () => A.base", "FAIL: wave base: wave 2's T3 checks the head after wave 1's merge"),
-    ("the fixer writes under .git again", "'REPORT: run `fwx wave scratch ' + RUN + ' ' + unit + '`:", "'REPORT: run `fwx wave scratch ' + RUN + ' ' + unit + '` (the old place was /work/.git/fwx/runs/old/reports/x.json):",
+    ("the fixer writes under .git again", "'REPORT: run `fwx scratch new ' + RUN + ' ' + unit + '`:", "'REPORT: run `fwx scratch new ' + RUN + ' ' + unit + '` (the old place was /work/.git/fwx/runs/old/reports/x.json):",
      "FAIL: scratch: the resolver is given no path under .git"),
     ("trusted edit goes on", "if (Array.isArray(r.trusted) && r.trusted.length) {", "if (false) {", "FAIL: trusted: needs-owner"),
     ("verify rc 2 is failed on the session plane", "if (r.verify.rc !== 1) stop(A.plane === 'session' ? 'needs-owner' : 'failed',", "if (r.verify.rc !== 1) stop('failed',",

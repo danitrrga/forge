@@ -1,4 +1,4 @@
-"""Where a checkout stands: git, and `check-base`, step 0 of every agent that writes.
+"""Where a checkout stands: git, and `fwx base`, step 0 of every agent that writes.
 
 `check_base(sha, cwd, worktree)` says whether the directory is a linked worktree whose HEAD is exactly `sha`: an agent
 that starts from the default branch, from a moved phase branch or in the main checkout (a Bash call from an isolated agent
@@ -17,8 +17,8 @@ import os
 import re
 import subprocess
 
-WRONG_BASE = 42  # the exit of check-base for "do not start"
-SETUP_FAILED = 43  # the exit of check-base when the base is right but the worktree's setup failed: do not start either
+WRONG_BASE = 42  # the exit of `fwx base` for "do not start"
+SETUP_FAILED = 43  # the exit of `fwx base` when the base is right but the worktree's setup failed: do not start either
 SHA = re.compile(r"[0-9a-f]{7,40}\Z")
 AGENT_DIR = ".fwx-agent"
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")  # a run or a unit: one folder name, never a path

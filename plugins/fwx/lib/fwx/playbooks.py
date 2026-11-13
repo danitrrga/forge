@@ -114,7 +114,7 @@ def parse(playbook, text):
             head = HEADING.match(line)
             if not head:
                 problems.append((n, "the heading `%s` is not `### <id> · <title>`: the id is the element id that "
-                                    "`fwx playbooks tree` prints" % line.strip()))
+                                    "`fwx playbook list` prints" % line.strip()))
                 cur = field = None
                 continue
             cur = Block(playbook, head.group(1), head.group(2).strip(), n)
@@ -282,7 +282,7 @@ def check(pdir=PLAYBOOK_DIR, scope_path=None, stages_path=STAGES_FILE, tree_path
                     "Exits": "none` or one `  - <kind> <id>: <condition>` per arrow"}[f]))
         pb = scope.get(b.id)
         if pb is None:
-            problem(b.playbook, "%s is not in scope.tsv: add `%s<TAB>%s` (`fwx playbooks tree` lists the ids)"
+            problem(b.playbook, "%s is not in scope.tsv: add `%s<TAB>%s` (`fwx playbook list` lists the ids)"
                     % (at, b.id, b.playbook))
         elif pb == "connector":
             problem(b.playbook, "%s is a connector in scope.tsv, and a connector has no block: delete the block" % at)
@@ -330,7 +330,7 @@ def check(pdir=PLAYBOOK_DIR, scope_path=None, stages_path=STAGES_FILE, tree_path
                         % (b.playbook, line, b.id, kind, dest))
             seen.add((kind, dest))
             if dest not in scope:
-                problem(b.playbook, "%s.md:%d %s exits to %s, which is not in scope.tsv: fix the id (`fwx playbooks tree` "
+                problem(b.playbook, "%s.md:%d %s exits to %s, which is not in scope.tsv: fix the id (`fwx playbook list` "
                                     "lists them) or add its row" % (b.playbook, line, b.id, dest))
         for kind, dest, _, line in b.exits:
             to_stage = stage_of.get(dest)

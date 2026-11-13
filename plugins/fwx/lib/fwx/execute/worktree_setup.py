@@ -3,7 +3,7 @@
 A worktree is a checkout of the tracked files and nothing else: the project's installed dependencies (a `node_modules`, a
 virtual environment) are not in it, so its own checks cannot run and every task would fail its gate for a reason that has
 nothing to do with the task. `project.worktree_setup` is a list of shell commands (`["npm ci"]`); this module is the one place
-that runs them, and `fwx wave setup`, `fwx wave check-base` (the first step of every executor) and `fwx wave prepare` (the phase
+that runs them, and `fwx wave setup`, `fwx base` (the first step of every executor) and `fwx wave new` (the phase
 worktree, before its base runs) all call it, so that no agent has to remember it. It was chosen over a link to the main checkout's
 dependencies (a task that changes the dependency file would write through the link into the main tree, and the link is an
 untracked file that makes every clean-tree check refuse) and over a copy (hundreds of megabytes per worktree): a real install
@@ -43,7 +43,7 @@ something in it, and a change to the dependency file made after the setup in a w
 `npm install` is its own business). The phase worktree is covered: `prepare` calls this once at the start of a run and `integrate`
 and `revert` after the branch changed under it, before their checks, and `fwx wave setup` is the call anywhere else.
 
-When `check-base` ends 43 it also leaves the line in `.fwx-agent/worktree-setup-failed.json` (`record_failure`), the fact that ends
+When `fwx base` ends 43 it also leaves the line in `.fwx-agent/worktree-setup-failed.json` (`record_failure`), the fact that ends
 a job in `workflows/execute.js`.
 
 Imports only the standard library and execute.base.
@@ -161,8 +161,7 @@ def _remember(path, kept, before, top):
 
 
 def record_failure(cwd, line):
-    """Leaves the line of a failed setup in `<worktree>/.fwx-agent/worktree-setup-failed.json`, which the workflow reads (`fwx wave
-    check-base` calls this on exit 43): the end of a job on a failed setup is a fact the code wrote, not the words an agent chose
+    """Leaves the line of a failed setup in `<worktree>/.fwx-agent/worktree-setup-failed.json`, which the workflow reads (`fwx base` calls this on exit 43): the end of a job on a failed setup is a fact the code wrote, not the words an agent chose
     for its report. Best effort: no record means the workflow falls back to the start of the agent's reason."""
     top = toplevel(cwd)
     if top is None:

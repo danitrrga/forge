@@ -1,4 +1,4 @@
-"""What the discuss opens with, as one JSON: fwx discuss start [--json] [--phase PHASE_DIR]
+"""What the discuss opens with, as one JSON: fwx discuss [--json] [--phase PHASE_DIR]
 
 Read-only: it binds no session and creates nothing. It gives the orchestrator, before its first word to the owner, the
 configuration (`config.load`, no other way in), the subprojects, the phase the session is bound to (or `--phase`) with its
@@ -26,7 +26,7 @@ from fwx import config, linear, state
 WAIT_S = 5
 MAX_ITEMS = 5
 KEY = "LINEAR_API_KEY"
-USAGE = "usage: fwx discuss start [--json] [--phase PHASE_DIR]\n"
+USAGE = "usage: fwx discuss [--json] [--phase PHASE_DIR]\n"
 GROUPS = (("today", timedelta(hours=24)), ("week", timedelta(days=7)), ("older", None))
 FRACTION = re.compile(r"\.\d+")
 

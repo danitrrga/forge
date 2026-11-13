@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`fwx state decisions`: which rows of a decisions.tsv (or adr.tsv) are in force, and which rows a topic touches.
+"""`fwx decision list`: which rows of a decisions.tsv (or adr.tsv) are in force, and which rows a topic touches.
 
 The writer (`state.append_decision`) only adds rows; a later row names the id it replaces in `supersedes`. These
 checks are the read side: state.decisions_in_force (pure) and the CLI around it, in toy repos and toy files.
@@ -39,7 +39,7 @@ HEADER = "\t".join(state.DECISION_COLUMNS)
 def st(cwd, *args, session="sess-1", env=None):
     e = {"CLAUDE_CODE_SESSION_ID": session} if session else {"CLAUDE_CODE_SESSION_ID": ""}
     e.update(env or {})
-    return helpers.fwx(cwd, "state", *args, env=e)
+    return helpers.fwx(cwd, *args, env=e)
 
 
 def clean(label, r, code):
@@ -101,22 +101,22 @@ for label, bad, word in (
 
 # ---- a phase with a chain of three, through the session -----------------------------------------------------------
 repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"})
-clean("new-phase", st(repo, "new-phase", "alpha"), 0)
+clean("new-phase", st(repo, "phase", "new", "alpha"), 0)
 phase = os.path.join(repo, ".fwx", "milestones", "v1", "phases", "01-alpha")
 dec = os.path.join(phase, "decisions.tsv")
 
-r = st(repo, "decisions")
+r = st(repo, "decision", "list")
 clean("an empty log", r, 0)
 s.eq("an empty log: says it looked at nothing", lines(r), ["0 in force of 0 row(s)"])
-clean("an empty log, --json", st(repo, "decisions", "--json"), 0)
-s.eq("an empty log, --json: []", json.loads(st(repo, "decisions", "--json").stdout or "null"), [])
+clean("an empty log, --json", st(repo, "decision", "list", "--json"), 0)
+s.eq("an empty log, --json: []", json.loads(st(repo, "decision", "list", "--json").stdout or "null"), [])
 
 d1 = state.append_decision(dec, decision="use JSON for the logs", why="readable", support="chosen", rejected="CSV", source="chat 1")
 d2 = state.append_decision(dec, decision="use TSV for the logs", why="greppable and cheap", support="approved", supersedes=d1)
 d3 = state.append_decision(dec, decision="use TSV with a checked header", why="an old reader broke", support="chosen", supersedes=d2)
 s.eq("setup: the writer made D1, D2, D3", (d1, d2, d3), ("D1", "D2", "D3"))
 
-r = st(repo, "decisions")
+r = st(repo, "decision", "list")
 clean("a chain of three", r, 0)
 out = lines(r)
 s.eq("a chain of three: one row and the count line", len(out), 2)
@@ -124,7 +124,7 @@ s.ok("a chain of three: the row is D3, `id  date  support  decision`",
      re.fullmatch(r"D3  \d{4}-\d\d-\d\dT\S+  chosen  use TSV with a checked header", out[0] if out else "") is not None, repr(out))
 s.eq("a chain of three: the count line", out[-1] if out else "", "1 in force of 3 row(s)")
 
-r = st(repo, "decisions", "--all")
+r = st(repo, "decision", "list", "--all")
 clean("--all", r, 0)
 out = lines(r)
 s.eq("--all: three rows and the count line", len(out), 4)
@@ -133,115 +133,115 @@ s.ok("--all: D2 is marked with D3", len(out) > 1 and out[1].startswith("D2  ") a
 s.ok("--all: D3 is not marked", len(out) > 2 and out[2].startswith("D3  ") and "superseded" not in out[2], repr(out[2:3]))
 s.eq("--all: the count line", out[-1] if out else "", "1 in force of 3 row(s)")
 
-got = json.loads(st(repo, "decisions", "--all", "--json").stdout or "[]")
+got = json.loads(st(repo, "decision", "list", "--all", "--json").stdout or "[]")
 s.eq("--all --json: id, in_force, superseded_by", [(x.get("id"), x.get("in_force"), x.get("superseded_by")) for x in got],
      [("D1", False, "D2"), ("D2", False, "D3"), ("D3", True, "")])
 s.ok("--all --json: full rows (every column)", all(set(state.DECISION_COLUMNS) <= set(x) for x in got), repr(got[:1]))
-got = json.loads(st(repo, "decisions", "--json").stdout or "[]")
+got = json.loads(st(repo, "decision", "list", "--json").stdout or "[]")
 s.eq("--json: only what is in force", [(x.get("id"), x.get("in_force"), x.get("superseded_by")) for x in got], [("D3", True, "")])
 
 # --grep: words only the superseded row has lead to the row in force
-r = st(repo, "decisions", "--grep", "json")
+r = st(repo, "decision", "list", "--grep", "json")
 clean("--grep on words only D1 has", r, 0)
 out = lines(r)
 s.ok("--grep on D1's words: the row in force, D3, comes out", len(out) > 0 and out[0].startswith("D3  "), repr(out))
 s.ok("--grep on D1's words: D1 itself is not printed as a row", not any(l.startswith("D1  ") for l in out), repr(out))
 s.ok("--grep on D1's words: the matched superseded id is named", any("D1" in l and "match" in l for l in out[1:-1]), repr(out))
 s.eq("--grep on D1's words: D3 once, and the count", (sum(l.startswith("D3  ") for l in out), out[-1] if out else ""), (1, "1 in force of 3 row(s)"))
-j = json.loads(st(repo, "decisions", "--grep", "json", "--json").stdout or "[]")
+j = json.loads(st(repo, "decision", "list", "--grep", "json", "--json").stdout or "[]")
 s.eq("--grep --json: D3 and the superseded id that matched", [(x.get("id"), x.get("matched_superseded")) for x in j], [("D3", ["D1"])])
-s.ok("--grep: the match is on `rejected` (CSV)", any(l.startswith("D3  ") for l in lines(st(repo, "decisions", "--grep", "csv"))))
-s.ok("--grep: the match is on `source` (chat 1)", any(l.startswith("D3  ") for l in lines(st(repo, "decisions", "--grep", "CHAT 1"))))
-s.ok("--grep: the match is on `why` (greppable), case-insensitive", any(l.startswith("D3  ") for l in lines(st(repo, "decisions", "--grep", "GREPPABLE"))))
+s.ok("--grep: the match is on `rejected` (CSV)", any(l.startswith("D3  ") for l in lines(st(repo, "decision", "list", "--grep", "csv"))))
+s.ok("--grep: the match is on `source` (chat 1)", any(l.startswith("D3  ") for l in lines(st(repo, "decision", "list", "--grep", "CHAT 1"))))
+s.ok("--grep: the match is on `why` (greppable), case-insensitive", any(l.startswith("D3  ") for l in lines(st(repo, "decision", "list", "--grep", "GREPPABLE"))))
 
 # two terms: both must match, on the same row
-r = st(repo, "decisions", "--grep", "tsv", "--grep", "greppable")
+r = st(repo, "decision", "list", "--grep", "tsv", "--grep", "greppable")
 out = lines(r)
 s.ok("--grep tsv --grep greppable: only D2 has both, so D3 comes out naming D2",
      len(out) > 1 and out[0].startswith("D3  ") and any("D2" in l and "D1" not in l for l in out[1:-1]), repr(out))
-r = st(repo, "decisions", "--grep", "tsv", "--grep", "json")
+r = st(repo, "decision", "list", "--grep", "tsv", "--grep", "json")
 clean("--grep with two terms no row has together", r, 0)
 s.eq("--grep tsv --grep json: no single row has both: zero, said", lines(r), ["0 in force of 3 row(s)"])
-r = st(repo, "decisions", "--grep", "json", "--all")
+r = st(repo, "decision", "list", "--grep", "json", "--all")
 out = lines(r)
 s.eq("--grep --all: only the matching row, as written, marked", [l.split("  ")[0] for l in out[:-1]], ["D1"])
 s.eq("--grep --all: the count", out[-1] if out else "", "0 in force of 3 row(s)")
 
 # ---- two independent rows are both in force; a chain beside them ---------------------------------------------------
 f = planted(repo, "indep.tsv", [row("D1", "one"), row("D2", "two")])
-r = st(repo, "decisions", "--file", f)
+r = st(repo, "decision", "list", "--file", f)
 clean("two independent rows", r, 0)
 out = lines(r)
 s.eq("two independent rows: both are in force", ([l.split("  ")[0] for l in out[:-1]], out[-1] if out else ""), (["D1", "D2"], "2 in force of 2 row(s)"))
 f = planted(repo, "mixed.tsv", [row("D1", "old"), row("D2", "new", supersedes="D1"), row("D3", "apart")])
-s.eq("a chain and an independent row", [l.split("  ")[0] for l in lines(st(repo, "decisions", "--file", f))], ["D2", "D3", "2 in force of 3 row(s)"])
+s.eq("a chain and an independent row", [l.split("  ")[0] for l in lines(st(repo, "decision", "list", "--file", f))], ["D2", "D3", "2 in force of 3 row(s)"])
 
 # a branch: two rows replace the same row; the one written last is the row it points at, both stay in force
 f = planted(repo, "branch.tsv", [row("D1", "old"), row("D2", "left", supersedes="D1"), row("D3", "right", supersedes="D1")])
-out = lines(st(repo, "decisions", "--file", f))
+out = lines(st(repo, "decision", "list", "--file", f))
 s.eq("two rows replacing one: both are in force", ([l.split("  ")[0] for l in out[:-1]], out[-1] if out else ""), (["D2", "D3"], "2 in force of 3 row(s)"))
 
 # ---- --file reads any path, cells keep their text -------------------------------------------------------------------
 os.makedirs(os.path.join(repo, "elsewhere"))
 f = planted(repo, "elsewhere/log.tsv", [row("D1", "x"), row("D2", "y", supersedes="D1")])
 outside = helpers.mkdtemp("fwx-outside-")
-r = st(outside, "decisions", "--file", f, session=None)
+r = st(outside, "decision", "list", "--file", f, session=None)
 clean("--file from a folder that is no repository", r, 0)
 s.eq("--file from a folder that is no repository: the row", [l.split("  ")[0] for l in lines(r)], ["D2", "1 in force of 2 row(s)"])
 
 # ---- --phase and --adr resolve the way the writer does ---------------------------------------------------------------
-clean("a second phase", st(repo, "new-phase", "beta", session="sess-b"), 0)
+clean("a second phase", st(repo, "phase", "new", "beta", session="sess-b"), 0)
 state.append_decision(os.path.join(repo, ".fwx", "milestones", "v1", "phases", "02-beta", "decisions.tsv"), decision="in beta", why="w",
                       support="unexamined")
-s.eq("the session's phase, not beta, is read", [l.split("  ")[0] for l in lines(st(repo, "decisions", session="sess-b"))][:-1], ["D1"])
-r = st(repo, "decisions", "--phase", phase, session="sess-b")
+s.eq("the session's phase, not beta, is read", [l.split("  ")[0] for l in lines(st(repo, "decision", "list", session="sess-b"))][:-1], ["D1"])
+r = st(repo, "decision", "list", "--phase", phase, session="sess-b")
 s.eq("--phase reads that phase's file", [l.split("  ")[0] for l in lines(r)], ["D3", "1 in force of 3 row(s)"])
 
 adr = os.path.join(repo, ".fwx", "adr.tsv")
 a1 = state.append_decision(adr, decision="keep TSV", why="hard to undo", support="chosen")
 a2 = state.append_decision(adr, decision="keep TSV, checked", why="drift", support="chosen", supersedes=a1)
-r = st(repo, "decisions", "--adr", session="sess-b")
+r = st(repo, "decision", "list", "--adr", session="sess-b")
 clean("--adr", r, 0)
 s.eq("--adr: the scope's adr.tsv, A2 in force", ([l.split("  ")[0] for l in lines(r)], (a1, a2)), (["A2", "1 in force of 2 row(s)"], ("A1", "A2")))
 
 repo2 = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"})
-clean("new-phase in a second repo, then none is bound", st(repo2, "new-phase", "one", session="s1"), 0)
-clean("new-phase, a second one", st(repo2, "new-phase", "two", session="s1"), 0)
-r = st(repo2, "decisions", session="other")
+clean("new-phase in a second repo, then none is bound", st(repo2, "phase", "new", "one", session="s1"), 0)
+clean("new-phase, a second one", st(repo2, "phase", "new", "two", session="s1"), 0)
+r = st(repo2, "decision", "list", session="other")
 clean("no phase bound and two open", r, 1)
 s.ok("no phase bound: the message is the writer's", "no phase is bound" in r.stderr, r.stderr)
 
 # ---- errors: one line, exit 1 --------------------------------------------------------------------------------------
 f = planted(repo, "dangling.tsv", [row("D1", "a"), row("D2", "b", supersedes="D7")])
-r = st(repo, "decisions", "--file", f)
+r = st(repo, "decision", "list", "--file", f)
 clean("a supersedes naming an id that does not exist", r, 1)
 s.ok("a dangling supersedes: the line names the row and the missing id", "D2" in r.stderr and "D7" in r.stderr, r.stderr)
 s.eq("a dangling supersedes: nothing on stdout", r.stdout, "")
-r = st(repo, "decisions", "--file", f, "--all")
+r = st(repo, "decision", "list", "--file", f, "--all")
 clean("a dangling supersedes, --all", r, 1)
 f = planted(repo, "badhead.tsv", [row("D1", "a")], header="date\tid\tdecision")
-r = st(repo, "decisions", "--file", f)
+r = st(repo, "decision", "list", "--file", f)
 clean("a bad header", r, 1)
 s.ok("a bad header: the line names the file", "badhead.tsv" in r.stderr, r.stderr)
 f = planted(repo, "cycle.tsv", [row("D1", "a", supersedes="D2"), row("D2", "b", supersedes="D1")])
-clean("a supersedes cycle", st(repo, "decisions", "--file", f), 1)
-r = st(repo, "decisions", "--file", os.path.join(repo, "no-such.tsv"))
+clean("a supersedes cycle", st(repo, "decision", "list", "--file", f), 1)
+r = st(repo, "decision", "list", "--file", os.path.join(repo, "no-such.tsv"))
 clean("--file naming a file that does not exist", r, 1)
 s.ok("--file missing: the line names it", "no-such.tsv" in r.stderr, r.stderr)
 f = planted(repo, "empty.tsv", [])
-s.eq("a file with only its header", lines(st(repo, "decisions", "--file", f)), ["0 in force of 0 row(s)"])
+s.eq("a file with only its header", lines(st(repo, "decision", "list", "--file", f)), ["0 in force of 0 row(s)"])
 helpers.write(repo, "zero.tsv", "")
-r = st(repo, "decisions", "--file", os.path.join(repo, "zero.tsv"))
+r = st(repo, "decision", "list", "--file", os.path.join(repo, "zero.tsv"))
 clean("a file of zero bytes", r, 0)
 s.eq("a file of zero bytes: 0 of 0", lines(r), ["0 in force of 0 row(s)"])
-clean("--file with --phase", st(repo, "decisions", "--file", f, "--phase", phase), 2)
-clean("--file with --adr", st(repo, "decisions", "--file", f, "--adr"), 2)
-clean("an unknown flag", st(repo, "decisions", "--nope"), 2)
+clean("--file with --phase", st(repo, "decision", "list", "--file", f, "--phase", phase), 2)
+clean("--file with --adr", st(repo, "decision", "list", "--file", f, "--adr"), 2)
+clean("an unknown flag", st(repo, "decision", "list", "--nope"), 2)
 
 # ---- width: cut on a terminal only ----------------------------------------------------------------------------------
 LONG = "a very long decision that goes on and on " * 8
 f = planted(repo, "long.tsv", [row("D1", LONG.strip())])
-r = st(repo, "decisions", "--file", f, env={"COLUMNS": "40"})
+r = st(repo, "decision", "list", "--file", f, env={"COLUMNS": "40"})
 out = lines(r)
 s.eq("piped: the decision is whole, whatever COLUMNS says", out[0].endswith(LONG.strip()) if out else None, True)
 s.eq("piped: the count line", out[-1] if out else "", "1 in force of 1 row(s)")
@@ -254,7 +254,7 @@ if pty is None:
 else:
     master, slave = pty.openpty()
     e = helpers.clean_env(CLAUDE_CODE_SESSION_ID="", COLUMNS="40")
-    p = subprocess.run([sys.executable, os.path.join(helpers.ROOT, "bin", "fwx"), "state", "decisions", "--file", f], cwd=repo, env=e,
+    p = subprocess.run([sys.executable, os.path.join(helpers.ROOT, "bin", "fwx"), "decision", "list", "--file", f], cwd=repo, env=e,
                        stdout=slave, stderr=subprocess.PIPE, text=True)
     os.close(slave)
     raw = b""

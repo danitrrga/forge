@@ -1,14 +1,15 @@
 """Prepare a part for `execute`, check an executor's base, and join, fix, undo and clean up its waves:
-fwx wave prepare|check-base|integrate|fix-round|revert|cleanup|summary ...
+fwx wave [new|merge|fix|revert|remove|setup] ..., `fwx base`, `fwx scratch new`. `fwx wave` alone is the summary.
+The steps keep their old names inside: in the run's files (`<n>-<step>.json`), in the `step` of a call, in this file's functions.
 
-`prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
+`wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
 [--control-findings F] [--from gate]` validates the part `D` from the integration checkout (the current folder, on branch `W`) and prints
 the `args` of `execute` as one JSON object (execute/prepare.py says what it checks and what it leaves out). Exit 0, 1 when
 the base fails its own checks (a needs-owner JSON line on stdout, `rounds <used>/<cap>` on stderr, no round spent), 2 for
 anything that must stop the run before it starts, with the reason on stderr and nothing written. `--from gate` is the way back
 into the checks once every task is on the phase branch (the tree's n_C7F loops to n_C7): execute/prepare.py says what it changes.
 
-`check-base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
+`fwx base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
 (the one at `P`, when given) whose HEAD is `<sha>`, 42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
 worktree: <path>` on stderr), 2 for a usage error. `<sha>` is 7 to 40 hex digits. With the base right it then runs the project's
 `worktree_setup` (below), so that the agent's own checks find the dependencies: exit 43 when that fails, with `worktree setup
@@ -17,31 +18,31 @@ of the worktree, which the workflow reads to end the job; nothing configured pri
 that one field of the configuration (`config.setup_commands`) and no other value: a project that never set it behaves as before,
 and a configuration file that cannot be read is 43 too, naming the file (it cannot say whether a setup is owed).
 
-`setup [--force]` runs `project.worktree_setup` in the current linked worktree (execute/worktree_setup.py says how, and what it
+`wave setup [--force]` runs `project.worktree_setup` in the current linked worktree (execute/worktree_setup.py says how, and what it
 refuses): exit 0 with a line on stdout saying how many commands ran, that it was already done, or that none is configured; 1 when a
 command failed, ran past its limit or left files git does not ignore (the reason on stderr); 2 in the main checkout, outside a
-repository, for a configuration it cannot read and for a usage error. `prepare` calls it in the phase worktree before the base runs,
-and `integrate` after the merges and before its checks, and `revert` after the reverts (a merged or reverted lockfile needs the
+repository, for a configuration it cannot read and for a usage error. `wave new` calls it in the phase worktree before the base runs,
+and `wave merge` after the merges and before its checks, and `wave revert` after the reverts (a merged or reverted lockfile needs the
 dependencies again; a failure is exit 1 and `setup` in the JSON).
 
-`scratch <run> <unit>` makes the folder an agent writes its report and its TMPDIR in, inside its own worktree and ignored by git, and
+`fwx scratch new <run> <unit>` makes the folder an agent writes its report and its TMPDIR in, inside its own worktree and ignored by git, and
 prints its path (execute/base.py says why it is not under `.git`): exit 0, 2 for a usage error or outside a repository.
 
 The rest is 3.4 U3 (execute/integrate.py and execute/cleanup.py say what each does); each prints its result as one JSON
 object on stdout and also writes it, with the exit code and its arguments, to `<git-common-dir>/fwx/runs/<run>/<n>-<step>.json`
-(`n` counts the run's files; `prepare` and `check-base` write none, and neither does a call that stops on a usage error or on
+(`n` counts the run's files; `wave new` and `base` write none, and neither does a call that stops on a usage error or on
 something that must stop it before it starts, exit 2 with a reason on stderr):
-  integrate --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]
+  wave merge --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]
       with no branch (only with --final) nothing is merged and the gate runs on the head as it is;
       exit 0 merged and green, 1 a conflict or a red check, 2 refused (a live agent holds a branch, the commits are not one per
       finding, the checkout is dirty, a usage error), 77 NOT RUN, NOT ARMED: no /proc (a lock cannot be read)
-  fix-round --part-dir D --why TEXT [--run R]     (a file in the run only with --run; the factory's job has none)
+  wave fix --part-dir D --why TEXT [--run R]     (a file in the run only with --run; the factory's job has none)
       exit 0 the failure may be fixed (a round spent, or the evidence already counted), 1 the
       rounds are spent and nothing was spent now, 2 usage
-  revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
-  cleanup --run R     exit 0; 77 without /proc. It reads the branches `integrate` named from the run's files
-  summary --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
-      that merged branches passes only when its own last `integrate --final` was green (`why` says when it was not): the evidence
+  wave revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
+  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named from the run's files
+  wave --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
+      that merged branches passes only when its own last `wave merge --final` was green (`why` says when it was not): the evidence
       row is the part's, so another run's green gate on the same head is not this run's
 """
 import json
@@ -49,20 +50,20 @@ import os
 import re
 import sys
 
-from fwx import config, plan_step, state
+from fwx import config, plan_step, routes, state
 from fwx.execute import base, cleanup, integrate, prepare as prep, worktree_setup
 
-PREPARE_USAGE = ("usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] "
+PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
-CHECK_USAGE = "usage: fwx wave check-base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
+CHECK_USAGE = "usage: fwx base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
 SETUP_USAGE = "usage: fwx wave setup [--force]\n"
-SCRATCH_USAGE = "usage: fwx wave scratch <run> <unit>   (each one folder name: letters, digits, `.`, `_`, `-`)\n"
+SCRATCH_USAGE = "usage: fwx scratch new <run> <unit>   (each one folder name: letters, digits, `.`, `_`, `-`)\n"
 USAGES = {
-    "integrate": "usage: fwx wave integrate --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]\n",
-    "fix-round": "usage: fwx wave fix-round --part-dir D --why TEXT [--run R]\n",
+    "integrate": "usage: fwx wave merge --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]\n",
+    "fix-round": "usage: fwx wave fix --part-dir D --why TEXT [--run R]\n",
     "revert": "usage: fwx wave revert --part-dir D --run R --findings IDS\n",
-    "cleanup": "usage: fwx wave cleanup --run R\n",
-    "summary": "usage: fwx wave summary --run R [--part-dir D]\n",
+    "cleanup": "usage: fwx wave remove --run R\n",
+    "summary": "usage: fwx wave --run R [--part-dir D]\n",
 }
 _RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
@@ -107,16 +108,16 @@ def do_prepare(argv):
     revert = [i.strip() for i in got["--revert"].split(",") if i.strip()] if "--revert" in got else None
 
     def say(line):
-        sys.stderr.write("fwx wave prepare: %s\n" % line)
+        sys.stderr.write("fwx wave new: %s\n" % line)
     try:
         args = prep.prepare(".", got["--part-dir"], got["--plane"], got["--branch"], "--unattended" in got, "--security" in got,
                             got.get("--fix"), revert, got.get("--control-findings"), got.get("--from"), say=say)
     except prep.RedBase as e:
         print(json.dumps(e.status))
-        sys.stderr.write("fwx wave prepare: %s\n%s\nrounds %s\n" % (e, e.shown, e.status["rounds"]))
+        sys.stderr.write("fwx wave new: %s\n%s\nrounds %s\n" % (e, e.shown, e.status["rounds"]))
         return 1
     except (base.WaveError, config.ConfigError, state.StateError, plan_step.CannotRun) as e:
-        sys.stderr.write("fwx wave prepare: %s\n" % e)
+        sys.stderr.write("fwx wave new: %s\n" % e)
         return 2
     print(json.dumps(args))
     return 0
@@ -132,7 +133,7 @@ def do_check_base(argv):
     except base.WaveError as e:
         code, why = base.WRONG_BASE, str(e)
     if why:
-        sys.stderr.write("fwx wave check-base: %s\n" % why)
+        sys.stderr.write("fwx base: %s\n" % why)
     if code:
         return code
     # The base is right: the agent's checks need the project's dependencies in this worktree, so the setup is part of step 0.
@@ -183,7 +184,7 @@ def do_scratch(argv):
     try:
         print(base.scratch(os.getcwd(), *parsed[1]))
     except base.WaveError as e:
-        sys.stderr.write("fwx wave scratch: %s\n" % e)
+        sys.stderr.write("fwx scratch new: %s\n" % e)
         return 2
     return 0
 
@@ -261,7 +262,7 @@ def do_step(step, argv):
     findings = _ids(got["--findings"]) if "--findings" in got else []
 
     def say(line):
-        sys.stderr.write("fwx wave %s: %s\n" % (step, line))
+        sys.stderr.write("fwx %s: %s\n" % (routes.shown("wave", [step]), line))
     try:
         top = base.toplevel(os.getcwd())
         if top is None:
@@ -293,7 +294,7 @@ def do_step(step, argv):
         sys.stderr.write("%s\n" % e)
         return 77
     except (base.WaveError, config.ConfigError, state.StateError) as e:
-        sys.stderr.write("fwx wave %s: %s\n" % (step, e))
+        sys.stderr.write("fwx %s: %s\n" % (routes.shown("wave", [step]), e))
         return 2
     print(json.dumps(result))
     return code
@@ -310,5 +311,5 @@ def main(argv):
         return do_setup(argv[1:])
     if argv and argv[0] in USAGES:
         return do_step(argv[0], argv[1:])
-    sys.stderr.write("usage: fwx wave <prepare|check-base|scratch|setup|%s> ...\n" % "|".join(USAGES))
+    sys.stderr.write("usage: fwx wave [new|merge|fix|revert|remove|setup] ...   (fwx base and fwx scratch new are their own commands)\n")
     return 2

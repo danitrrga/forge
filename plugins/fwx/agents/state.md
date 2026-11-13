@@ -40,6 +40,6 @@ When it runs over, shorten Done and Assumptions; the Evidence line stays whole.
 
 ## Done
 
-Run `fwx state check state <state.md>` once. An error is a real defect: fix it and run the check again. A length warning only warns, so leave it: a second pass costs more than the extra lines.
+Run `fwx state lint <state.md>` once. An error is a real defect: fix it and run the check again. A length warning only warns, so leave it: a second pass costs more than the extra lines.
 
 Your final response is the report and nothing else: the text of the template filled in, from its `# Report` heading to the end of `## Diff`, with no preamble and no code fence around it, because the file is made from exactly what you return. Writing `report-<n>.md` yourself is not part of your task: the harness refuses a subagent's Write of a report and asks for the text as the response. After the report, if you noticed anything that is not state (a bug, an idea), add one last line that starts `Noticed:`; it is not part of the file.

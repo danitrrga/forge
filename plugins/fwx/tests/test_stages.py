@@ -253,7 +253,7 @@ s.eq("an unknown flag is a usage error", r.returncode, 2)
 r = helpers.fwx(repo, "stage", os.path.join(repo, "nowhere"), "premortem")
 s.eq("a folder that is not there: exit 2, not a refusal by the table", r.returncode, 2)
 r = helpers.fwx(repo, "help")
-s.ok("`fwx help` lists stage", any(line.split()[:1] == ["stage"] for line in r.stdout.splitlines()), r.stdout)
+s.ok("`fwx help` lists stage", any(line.split()[:2] == ["fwx", "stage"] for line in r.stdout.splitlines()), r.stdout)
 
 # ---- after the owner's review of a part, the walk can be repeated with no false stage rows ---------------------------
 
@@ -301,7 +301,7 @@ from fwx import context_base as cb  # noqa: E402
 
 base_repo = helpers.toy_repo()
 SESS = {"CLAUDE_CODE_SESSION_ID": "sess-base"}
-r = helpers.fwx(base_repo, "state", "new-phase", "alpha", env=SESS)
+r = helpers.fwx(base_repo, "phase", "new", "alpha", env=SESS)
 bphase = r.stdout.strip()
 bfile = cb.base_path(bphase)
 
@@ -319,8 +319,8 @@ r = helpers.fwx(base_repo, "stage", bphase, "premortem", "--why", "first pass", 
 s.eq("stage premortem: exit 0, nothing on stderr", (r.returncode, r.stderr), (0, ""))
 s.eq("stage premortem: the base is regenerated with stage=premortem", stage_in_base(bfile),
      "premortem")
-r = helpers.fwx(base_repo, "context-base", "check", bphase, env=SESS)
-s.eq("the regenerated base passes `context-base check`", r.returncode, 0)
+r = helpers.fwx(base_repo, "context", "lint", bphase, env=SESS)
+s.eq("the regenerated base passes `context lint`", r.returncode, 0)
 r = helpers.fwx(base_repo, "stage", bphase, "executing", env=SESS)
 s.eq("a refused stage: exit 1", r.returncode, 1)
 s.eq("a refused stage leaves the base as it was", stage_in_base(bfile), "premortem")
@@ -339,7 +339,7 @@ for sub in ("bin", "lib", "data", "templates"):
     shutil.copytree(os.path.join(ROOT, sub), os.path.join(big, sub), ignore=shutil.ignore_patterns("__pycache__"))
 helpers.write(big, "data/context-map.md", "x" * 9500 + "\n")
 big_repo = helpers.toy_repo()
-r = subprocess.run([sys.executable, os.path.join(big, "bin", "fwx"), "state", "new-phase", "alpha"], cwd=big_repo,
+r = subprocess.run([sys.executable, os.path.join(big, "bin", "fwx"), "phase", "new", "alpha"], cwd=big_repo,
                    env=helpers.clean_env(**SESS), capture_output=True, text=True)
 bigphase = r.stdout.strip()
 s.ok("the copy with a big map still makes the phase", r.returncode == 0 and os.path.isdir(bigphase), r.stdout + r.stderr)

@@ -1,4 +1,4 @@
-"""The form of the plan files and what a script can check in them: the second half of `fwx plan check`.
+"""The form of the plan files and what a script can check in them: the second half of `fwx plan lint`.
 
 referent: pstack plugins/pstack/skills/poteto-mode/scripts/check-plan.mjs @36885ea (the headings in order, the intro under ten
 lines, the code-fence logic) and the plan-form prototype (history, undefined ids, `file:line` cites, a budget). pstack's prose

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Excalidraw tree reader (lib/fwx/tree.py), `fwx playbooks tree`, and playbooks/scope.tsv.
+"""The Excalidraw tree reader (lib/fwx/tree.py), `fwx playbook list`, and playbooks/scope.tsv.
 
 The tree is the owner's drawing, kept in private data, so every check here reads a toy tree this test builds
 (six nodes, a connector, a note, a shape with no text, one arrow of each type, a legend arrow, neutral names).
@@ -262,11 +262,11 @@ toy_path = write_tree(toy())
 
 def cli(*args, cwd=None, **env):
     import subprocess
-    return subprocess.run([sys.executable, os.path.join(code, "bin", "fwx"), "playbooks"] + list(args),
+    return subprocess.run([sys.executable, os.path.join(code, "bin", "fwx"), "playbook"] + list(args),
                            cwd=cwd or code, env=helpers.clean_env(**ENV, **env), capture_output=True, text=True)
 
 
-r = cli("tree", "--tree", toy_path)
+r = cli("list", "--tree", toy_path)
 s.eq("tree: exit code", r.returncode, 0)
 lines = r.stdout.splitlines()
 s.eq("tree: a node line is `id | kind | scope | text`", lines[0], "n_owner | owner | session | Alex opens a chat")
@@ -276,38 +276,38 @@ s.ok("tree: a connector line", "n_conn | connector | connector | → goes to ano
 s.ok("tree: an exit with no label has no guillemets", "    later n_later" in lines, r.stdout)
 s.eq("tree: the counts close the output", lines[-1], "6 nodes, 1 connectors, 1 notes, 6 arrows (1 from a connector)")
 
-r = cli("tree", "--tree", toy_path, "--scope", "session")
+r = cli("list", "--tree", toy_path, "--scope", "session")
 s.eq("tree --scope: exit code", r.returncode, 0)
 ids = [ln.split(" | ")[0] for ln in r.stdout.splitlines() if " | " in ln]
 s.eq("tree --scope: only that playbook's nodes", ids, ["n_owner", "n_orch"])
-r = cli("tree", "--tree", toy_path, "--scope", "nosuch")
+r = cli("list", "--tree", toy_path, "--scope", "nosuch")
 s.ok("tree --scope nosuch: exit 2 and the valid names", r.returncode == 2 and "session" in r.stderr, r.stderr)
 
-r = cli("tree", "--tree", os.path.join(code, "absent"))
+r = cli("list", "--tree", os.path.join(code, "absent"))
 s.ok("tree: a missing file exits 2", r.returncode == 2 and "absent" in r.stderr and "Traceback" not in r.stderr, r.stderr)
 bad = toy()
 element(bad, "n_agent")["strokeColor"] = "#123456"
-r = cli("tree", "--tree", write_tree(bad))
+r = cli("list", "--tree", write_tree(bad))
 s.ok("tree: a tree with a fault exits 1 and says it",
      r.returncode == 1 and "unknown colour #123456 on node n_agent" in r.stderr and r.stdout == "", "%s %r" % (r.returncode, r.stderr))
 
 repo = helpers.toy_repo()
-r = cli("tree", cwd=repo)
+r = cli("list", cwd=repo)
 s.ok("tree: no path anywhere exits 2 and says how to give one",
      r.returncode == 2 and "--tree" in r.stderr and "paths.tree" in r.stderr, "%s %r" % (r.returncode, r.stderr))
 helpers.write(repo, ".claude/fwx.json", json.dumps({"schema": 1, "paths": {"tree": toy_path}}))
-r = cli("tree", cwd=repo)
+r = cli("list", cwd=repo)
 s.ok("tree: the path defaults to paths.tree", r.returncode == 0 and "n_owner | owner" in r.stdout, "%s %r" % (r.returncode, r.stderr))
 wt = helpers.add_worktree(repo, "side")
-r = cli("tree", cwd=wt)
+r = cli("list", cwd=wt)
 s.ok("tree: paths.tree is found from a worktree", r.returncode == 0 and "n_owner | owner" in r.stdout, "%s %r" % (r.returncode, r.stderr))
-r = cli("tree", "--tree", toy_path, cwd=repo)
+r = cli("list", "--tree", toy_path, cwd=repo)
 s.eq("tree: --tree wins over paths.tree", r.returncode, 0)
 
-for args, label in (([], "no subcommand"), (["nosuch"], "an unknown subcommand"), (["tree", "extra"], "a stray argument"),
-                    (["tree", "--tree"], "--tree with no value")):
+for args, label in (([], "no subcommand"), (["nosuch"], "an unknown subcommand"), (["list", "extra"], "a stray argument"),
+                    (["list", "--tree"], "--tree with no value")):
     r = cli(*args)
-    s.ok("playbooks %s: usage and exit 2" % label, r.returncode == 2 and "usage" in r.stderr and "Traceback" not in r.stderr,
+    s.ok("playbook %s: usage and exit 2" % label, r.returncode == 2 and ("verb" in r.stderr or "usage" in r.stderr) and "Traceback" not in r.stderr,
          "%s %r" % (r.returncode, r.stderr))
 
 # ---- the real scope.tsv, without the real tree: its shape (the tree is private; U7's check compares them)

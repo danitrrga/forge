@@ -27,7 +27,7 @@ Map the class onto `support`: Settled `user-directed` is `chosen`, Settled `user
 
 ## Write
 
-Write only with `fwx state decision --decision T --why T --support S [--rejected T] [--source T] [--supersedes ID] [--phase DIR]`. It stamps the date and the id and rejects a bad row with exit 1 and a one-line message. Report that message and stop: a retry with another `support` would hide what the check found.
+Write only with `fwx decision new --decision T --why T --support S [--rejected T] [--source T] [--supersedes ID] [--phase DIR]`. It stamps the date and the id and rejects a bad row with exit 1 and a one-line message. Report that message and stop: a retry with another `support` would hide what the check found.
 
 Write each entry the way you'd tell a teammate what you did. Plain words, concrete actions, no AI speak or abstract jargon. Cells stay single-line.
 
@@ -52,4 +52,4 @@ If any of the three is missing, write no ADR row.
 
 ## Reply
 
-For each row: its id, its `support`, the words of the exchange that justify that class, and the exit code of `fwx state decision`. If the exchange holds no decision, say "no decision" and write nothing: an empty result is correct then.
+For each row: its id, its `support`, the words of the exchange that justify that class, and the exit code of `fwx decision new`. If the exchange holds no decision, say "no decision" and write nothing: an empty result is correct then.

@@ -1,5 +1,5 @@
 # Which playbook describes each node and connector of the tree: `id<TAB>playbook`, one row per node.
-# The id is the Excalidraw element id (`fwx playbooks tree` lists them). The tree is the owner's drawing and
+# The id is the Excalidraw element id (`fwx playbook list` lists them). The tree is the owner's drawing and
 # carries no assignment, so it lives here. Whoever changes a node changes its row and its block in the same job.
 
 # session: supervised session lane, entry 1, and the shared plan nodes

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`fwx wave integrate|fix-round|revert|cleanup|summary` (3.4 U3): lib/fwx/commands/wave.py, execute/integrate.py, execute/cleanup.py.
+"""`fwx wave merge|fix|revert|remove` and `fwx wave` alone (3.4 U3): lib/fwx/commands/wave.py, execute/integrate.py, execute/cleanup.py.
 
 The run builds toy repos (tests/helpers.py `toy_repo`, with a linked worktree on the phase branch as the session has and one
 linked worktree per fake executor, on `worktree-agent-<name>` as Claude Code names them) and asks the command through `bin/fwx`.
@@ -8,12 +8,12 @@ live agent (its pid and the start time of /proc/<pid>/stat go into the lock, as 
 a dead agent.
 
 Seen red before the code existed (python3 tests/test_wave_integrate.py, first lines; the five subcommands exited 2 "not built yet"):
-  FAIL: integrate, two clean branches: exit: got (2, 'fwx wave integrate: not built yet (3.4 U3)'), want (0, '')
+  FAIL: integrate, two clean branches: exit: got (2, 'fwx wave merge: not built yet (3.4 U3)'), want (0, '')
   FAIL: integrate, two clean branches: stdout is JSON: got <not JSON: ''>, want an object
   FAIL: integrate: ok, merged in order: got (None, None), want (True, ['worktree-agent-one', 'worktree-agent-two'])
 
 Red before `integrate --final` took no branch (3.4 align):
-  FAIL: integrate --final with no branch: exit: got (2, 'usage: fwx wave integrate --part-dir D --run R --branches B... [--final]'), want (0, '')
+  FAIL: integrate --final with no branch: exit: got (2, 'usage: fwx wave merge --part-dir D --run R --branches B... [--final]'), want (0, '')
 
 Red before `summary` looked at the run's own gate (3.4 U8 fix, F3: `summary --run <earlier failed run>` said `pass`):
   FAIL: summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got 'pass': got ('pass', 0), want ('fail', 1)
@@ -65,6 +65,11 @@ SCENES = []  # every Scene made: stop_scenes() ends the agents a control run cut
 def stop_scenes():
     while SCENES:
         SCENES.pop().stop()
+
+
+# A step keeps its internal name (it is the `step` of the run's files); the words after `fwx` that run it are the grammar's.
+STEP_WORDS = {"integrate": ("wave", "merge"), "fix-round": ("wave", "fix"), "revert": ("wave", "revert"), "cleanup": ("wave", "remove"),
+              "summary": ("wave",), "scratch": ("scratch", "new")}
 
 
 class Scene:
@@ -128,7 +133,7 @@ class Scene:
         self.procs = []
 
     def call(self, R, step, *args, cwd=None):
-        return R(cwd or self.cwd, "wave", step, *args, env=IDENT)
+        return R(cwd or self.cwd, *STEP_WORDS[step], *args, env=IDENT)
 
     def integrate(self, R, *branches, extra=()):
         return self.call(R, "integrate", "--part-dir", self.part, "--run", self.run, "--branches", *branches, *extra)
@@ -358,7 +363,7 @@ def case_integrate_gate_only(R, S):
     S.eq("gate only: protected paths since the base", sorted(v.get("protected") or []), [".github/workflows/ci.yml", "src/secret/k.py"])
     S.eq("gate only: the evidence row is the head's", [(r.get("kind"), r.get("rc"), r.get("sha")) for r in sc.audit()], [("evidence", "0", sc.head())])
     r = sc.call(R, "integrate", "--part-dir", sc.part, "--run", sc.run)
-    S.eq("no branch and no --final: usage, exit %d" % r.returncode, (r.returncode, "usage: fwx wave integrate" in r.stderr, r.stdout), (2, True, ""))
+    S.eq("no branch and no --final: usage, exit %d" % r.returncode, (r.returncode, "usage: fwx wave merge" in r.stderr, r.stdout), (2, True, ""))
     sc.stop()
 
 
@@ -466,7 +471,7 @@ def case_cleanup(R, S):
 
 
 def case_cleanup_scratch(R, S):
-    """3.4 U8 fix: the reviewers are not isolated, so their scratch folder (`fwx wave scratch`) is in the integration checkout:
+    """3.4 U8 fix: the reviewers are not isolated, so their scratch folder (`fwx scratch new`) is in the integration checkout:
     `cleanup` removes the one of its own run, the folder of another run stays, and the checkout stays clean."""
     sc = Scene()
     other_run = "01-alpha-%s-2" % sc.base[:7]

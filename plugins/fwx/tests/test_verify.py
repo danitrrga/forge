@@ -550,6 +550,6 @@ finally:
             os.environ[k] = v
 
 r = helpers.fwx(ROOT, "help")
-s.ok("`fwx help` lists verify", any(line.split()[:1] == ["verify"] for line in r.stdout.splitlines()), r.stdout)
+s.ok("`fwx help` lists verify", any(line.split()[:2] == ["fwx", "verify"] for line in r.stdout.splitlines()), r.stdout)
 
 s.done()

@@ -11,7 +11,7 @@ what changes; nothing else here spells those names, and the template does not.
 
 A run's briefs live in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md` (written by `put`); the fixer's is `_fix.md`: no task
 id can start with an underscore (`ID`), so the name cannot clash. What an agent writes is not there: its report and its TMPDIR
-are in a folder of its own worktree that git ignores, made by `fwx wave scratch <run> <unit>` (execute/base.py), because Claude
+are in a folder of its own worktree that git ignores, made by `fwx scratch new <run> <unit>` (execute/base.py), because Claude
 Code asks permission for anything under `.git` and refuses an isolated agent's write outside its worktree. The brief does not
 hold the base sha either: a later wave's worktrees start from the head after the earlier waves merged, so the workflow gives it
 in the prompt when the wave launches.
@@ -37,7 +37,7 @@ TESTS_OF_FINDINGS = "the test files that cover each finding, new or existing"
 NO_TEST = "none: a UI task carries no test; the owner walks it"
 SEVERITY = ("low", "medium", "high")
 FINDING_KEYS = ("id", "file", "line", "claim", "evidence", "severity")
-# The rows `fwx walk findings` writes into fix.json (the verifier's rows, 3.5): `prepare --fix` takes them as they are, since the review
+# The rows `fwx walk converge` writes into fix.json (the verifier's rows, 3.5): `prepare --fix` takes them as they are, since the review
 # page needs their full text; `normalize` turns each into plan C.5's shape. A row is the walk's when it carries one of these keys.
 WALK_KEYS = ("source", "verdict", "screen", "steps", "expected", "type", "kind", "why", "evidence_after", "clip", "duplicate_of")
 
@@ -200,7 +200,7 @@ def finding_problems(items):
             found.append("finding %d has the key %r, which is not one of %s" % (i, k, ", ".join(FINDING_KEYS + (WALK_KEYS if walk else ()))))
         if walk and f.get("file") is None:
             found.append("finding %d (%s): file is null, the verifier named no file that holds the cause, so no fixer can be scoped to it; "
-                         "name the file in verified-*.json and run `fwx walk findings` again, or drop the finding from the file" % (i, f.get("id")))
+                         "name the file in verified-*.json and run `fwx walk converge` again, or drop the finding from the file" % (i, f.get("id")))
         for k in ("id", "file", "claim", "evidence"):
             if k == "file" and walk and f.get("file") is None:
                 continue

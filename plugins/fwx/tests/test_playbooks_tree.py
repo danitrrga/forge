@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`fwx playbooks check` against a tree (lib/fwx/playbooks.py): what compares a playbook with the Excalidraw drawing.
+"""`fwx playbook lint` against a tree (lib/fwx/playbooks.py): what compares a playbook with the Excalidraw drawing.
 
 Two parts. First a toy tree and a toy playbook of five nodes (plus a connector), with neutral names: the good pair
 passes, and each control is the pair with one change and must fail with the message the checker gives for it. Then the
@@ -238,7 +238,7 @@ repo = helpers.toy_repo()
 
 def cli(*args, cwd=None):
     import subprocess
-    return subprocess.run([sys.executable, os.path.join(code, "bin", "fwx"), "playbooks", "check"] + list(args),
+    return subprocess.run([sys.executable, os.path.join(code, "bin", "fwx"), "playbook", "lint"] + list(args),
                           cwd=cwd or repo, env=helpers.clean_env(**ENV), capture_output=True, text=True)
 
 

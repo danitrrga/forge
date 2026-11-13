@@ -72,6 +72,6 @@ s.ok("fwx model outside a git repo: no traceback", "Traceback" not in r.stderr, 
 
 # the listing says what it does
 h = helpers.fwx(main, "help")
-s.ok("fwx help lists model", any(line.split()[:1] == ["model"] for line in h.stdout.splitlines()), h.stdout)
+s.ok("fwx help lists model", any(line.split()[:2] == ["fwx", "model"] for line in h.stdout.splitlines()), h.stdout)
 
 s.done()

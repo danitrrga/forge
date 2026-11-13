@@ -21,12 +21,11 @@ import shlex
 import subprocess
 from pathlib import Path
 
-from fwx import config, state
+from fwx import config, routes, state
 
 ROOT = Path(__file__).resolve().parents[2]
 MAP = ROOT / "data" / "context-map.md"
 TABLE = ROOT / "data" / "context-base.tsv"
-COMMANDS = ROOT / "lib" / "fwx" / "commands"
 CAP = 9000
 WARN = 6000
 SECTION = 1000
@@ -37,7 +36,7 @@ MARK = "# Base context · "
 _MARK = re.compile(r"# Base context · ([0-9a-f]{8})\Z")
 _BUILT = re.compile(r"<!-- built stage=(\S+) context=(\S+) decisions=(\S+) map=(\S+) -->\Z")
 _SOURCE = re.compile(r"<!-- source: (.+) @([0-9a-f]{8}) -->\Z")
-_FWX_CMD = re.compile(r"`fwx ([a-z][a-z0-9-]*)")
+_FWX_CMD = re.compile(r"`fwx ([a-z][a-z0-9-]*)(?: ([a-z][a-z0-9-]*))?")
 _SECTIONS = ("map", "map+decided", "none")
 _NOT_CURRENT = ("stale", "edited", "no mark", "missing")  # the problems that make `refresh` build again
 
@@ -258,13 +257,32 @@ def seal(path, source=None):
 # ---- check --------------------------------------------------------------------------------------------------------
 
 def commands():
-    """The subcommands of bin/fwx: the files of lib/fwx/commands/, an underscore a dash."""
-    return {f[:-3].replace("_", "-") for f in os.listdir(str(COMMANDS)) if f.endswith(".py") and not f.startswith("_")}
+    """The first words of the commands of bin/fwx: the objects of the table in lib/fwx/routes.py (`phase` of `fwx phase new`)."""
+    return {r[0].split()[0] for r in routes.ROWS}
 
 
 def _unknown_commands(text):
-    known = commands()
-    return ["unknown command: fwx %s" % c for c in dict.fromkeys(_FWX_CMD.findall(text)) if c not in known]
+    """A problem for each `fwx <object> [<word>]` the text names that is no command of the table: an old name (and its new one), an
+    unknown object, or a verb the object does not have. An object with a default verb or with no verbs takes any word after it (a
+    positional argument: `fwx context DIR`, `fwx model executor small`)."""
+    objects = commands()
+    verbs = {}
+    for r in routes.ROWS:
+        w = r[0].split()
+        if len(w) > 1 and not w[1].startswith("--"):
+            verbs.setdefault(w[0], set()).add(w[1])
+    has_row = {tuple(r[0].split()) for r in routes.ROWS}
+    out = []
+    for obj, word in dict.fromkeys(_FWX_CMD.findall(text)):
+        name = "fwx %s" % obj + (" %s" % word if word else "")
+        old = routes.refusal([obj, word] if word else [obj])
+        if old:
+            out.append("old command: %s" % old)
+        elif obj not in objects:
+            out.append("unknown command: fwx %s" % obj)
+        elif word and obj in verbs and word not in verbs[obj] and (obj,) not in has_row and obj not in routes.DEFAULTS:
+            out.append("unknown command: %s (verbs of %s: %s)" % (name, obj, ", ".join(sorted(verbs[obj]))))
+    return out
 
 
 def inspect(path, folder=None, map_path=None, source=None):
@@ -281,7 +299,7 @@ def inspect(path, folder=None, map_path=None, source=None):
     first, _, rest = text.partition("\n")
     m = _MARK.match(first)
     if not m:
-        problems.append("no mark on the first line: `fwx context-base seal` it, or build it")
+        problems.append("no mark on the first line: `fwx context seal` it, or build it")
     elif m.group(1) != sha8(rest):
         problems.append("edited since sealed: the mark %s is not the sha of the rest (%s)" % (m.group(1), sha8(rest)))
     lines = [l for l in rest.splitlines() if l.strip()]

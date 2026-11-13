@@ -15,7 +15,7 @@ on the option lines (`a. <option>: <what it implies>` at line 13, `b.` at 14) or
   - "I would go with a here." under the question: FAIL: no recommendation in a question -> rounds.md:12 I would go with a here.
   - lettered option "b. drop it, suggest b" in SKILL.md: FAIL: no recommendation in a question -> SKILL.md:20 b. drop it, suggest b
   - "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'
-  - `models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx state new-phase <slug> [--subproject S]` and launch two or three `researcher`:
+  - `models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:
 Length is not checked here: it is measured and reported, not capped. Each change also has an in-file control on a toy (the "control:" checks).
 """
 import json

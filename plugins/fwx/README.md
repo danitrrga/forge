@@ -14,22 +14,32 @@ python3 bin/fwx model executor normal    # the model for a role and size
 python3 bin/fwx statusline    # the status-bar line, and saves the session budget
 python3 bin/fwx budget    # context and quota left
 python3 bin/fwx capacity --role executor --want 3    # how many agents of a role can start now
-python3 bin/fwx state resolve    # the session's phase; `state --help` lists the rest
+python3 bin/fwx phase new <slug>    # the next phase folder, the session bound to it; `phase list` shows them, `phase remove <dir>` deletes one whose discuss was cancelled; `session attach <phase dir>` binds the session to one
+python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
+python3 bin/fwx milestone new [vN]    # the next milestone of a scope
+python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv); `decision list` reads them, `--grep TEXT` and `--all`
+python3 bin/fwx state lint <state.md>    # a state.md against its rules; exit 1 on an error
+python3 bin/fwx report lint <report.md>    # a phase report against its rules, the same way
+python3 bin/fwx session    # the session's phase; `fwx --help` lists every command, grouped by object
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
-python3 bin/fwx plan check <dir>    # the structure of a phase's plan.md (and each subphase's), premortem.md and postmortem.md; exit 1 on an error; --json
-python3 bin/fwx context-base build <dir>    # the base-context file every agent of a phase starts with; `seal` marks a hand-written one, `check` fails on one over the cap, edited or stale
-python3 bin/fwx discuss start --json    # what the discuss opens with: the configuration, the phases, the models and what waits in Linear; read-only
+python3 bin/fwx plan lint <dir>    # the structure of a phase's plan.md (and each subphase's), premortem.md and postmortem.md; exit 1 on an error; --json
+python3 bin/fwx context new <dir>    # the base-context file every agent of a phase starts with; `context seal` marks a hand-written one, `context lint` fails on one over the cap, edited or stale
+python3 bin/fwx discuss --json    # what the discuss opens with: the configuration, the phases, the models and what waits in Linear; read-only
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx decide --facts <file>    # the merge decision for the facts of a PR: merge, handover or pending, with the rule behind each reason
-python3 bin/fwx wave prepare --part-dir <dir> --plane session --branch <phase branch>    # validates a part and prints the args of `execute`; `wave check-base <sha>` is an executor's step 0 (exit 42: wrong base, 43: the project's `worktree_setup` failed in its worktree); `wave setup [--force]` runs that setup in the current worktree (exit 1: it failed); `wave scratch <run> <unit>` makes the git-ignored folder in its own worktree where an agent writes its report
+python3 bin/fwx wave new --part-dir <dir> --plane session --branch <phase branch>    # validates a part and prints the args of `execute`; `wave merge`, `wave fix`, `wave revert` and `wave remove` are the steps after it, `wave` alone says whether the gate passed; `wave setup [--force]` runs the project's `worktree_setup` in the current worktree (exit 1: it failed)
+python3 bin/fwx base <sha>    # an executor's step 0: exit 0 when the worktree starts at that commit, 42 when not, 43 when the project's `worktree_setup` failed in it
+python3 bin/fwx scratch new <run> <unit>    # makes the folder git ignores, in its own worktree where an agent writes its report
 python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; exit 0 green, 1 red, 2 cannot prove the commit
-python3 bin/fwx playbooks tree    # the workflow tree (an Excalidraw file): each node and its exits; --tree PATH, --scope NAME
-python3 bin/fwx walk up --dir <phase dir> --part N --round R    # UI walk: starts the seeded local app (`up`), drives browsers with guards (`ab`, `pw`), checks that every screen answers (`check-screens`; not for an app that declares `app_run.login`), plants the control (`arm-control`), merges findings (`findings`), builds and reads the review (`review-page`, `review-answers`) and closes with a process count (`down`, `sweep`); NOT RUN, NOT ARMED without `app_run` or `agent_browser`
-python3 bin/fwx walk selftest [--json]    # proves the walk environment works, on the host or inside an image: `up`, the app answers 200, `agent-browser` opens it with the demo session (only an app that declares `app_run.login` has one), a non-blank capture, `down` leaves 0 processes; exit 0 all pass, 1 a check failed, 2 NOT RUN, NOT ARMED
-python3 bin/fwx screenshot --run <run dir> [--screens JSON] [--out DIR]    # one 1440-wide capture per walked screen, through `walk ab` and its guards, no model; one line each, exit 1 naming the missing ones
+python3 bin/fwx playbook list    # the workflow tree (an Excalidraw file): each node and its exits; --tree PATH, --scope NAME
+python3 bin/fwx walk start --dir <phase dir> --part N --round R    # UI walk: starts the seeded local app, drives browsers with guards (`walk ab`, `walk pw`), checks that every screen answers (`walk check-screens`; not for an app that declares `app_run.login`), merges findings (`walk converge`) and closes with a process count (`walk stop`, `walk stop --orphans`); NOT RUN, NOT ARMED without `app_run` or `agent_browser`
+python3 bin/fwx control new --run <run dir> --screen <url>    # plants the control the walkers must find
+python3 bin/fwx review new --run <run dir> --fixed <file>    # builds the review page of the fixes; `review read --run <run dir> <file>` sorts the owner's answers
+python3 bin/fwx walk selftest [--json]    # proves the walk environment works, on the host or inside an image: `walk start`, the app answers 200, `agent-browser` opens it with the demo session (only an app that declares `app_run.login` has one), a non-blank capture, `walk stop` leaves 0 processes; exit 0 all pass, 1 a check failed, 2 NOT RUN, NOT ARMED
+python3 bin/fwx walk capture --run <run dir> [--screens JSON] [--out DIR]    # one 1440-wide capture per walked screen, through `walk ab` and its guards, no model; one line each, exit 1 naming the missing ones
 python3 bin/fwx migrate-gsd plan [--json]    # what converting a GSD .planning/ to .fwx/ would keep, purge and move; read-only. `apply` (in a worktree, own branch) does it, staged, with its checks and a rollback; `refs --base SHA [--rewrite F...] [--prefix F...]` lists and fixes the references; `leftovers [--apply]` moves the ignored files after the merge
-python3 bin/fwx playbooks check    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
+python3 bin/fwx playbook lint    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
 ```
 
 Run these from this folder (`fwx test` lists the tests of the folder it is run from, not of forge's top level). `fwx test` prints one line per test file (`PASS`, `FAIL`, or `NOT RUN, NOT ARMED: <reason>`) and a summary. It exits 0
@@ -63,7 +73,7 @@ name with no entry is used as it is.
 
 `walk.browser_executable` (default `null`) is the path of the browser the UI walk uses instead of the one `agent-browser`
 finds, for a machine where that one goes through a wrapper (an extension, a window flag): `fwx walk ab` then adds
-`--executable-path <path>` to every call. If the file is not there, `fwx walk up` is `NOT RUN, NOT ARMED` (exit 0, `armed: false`).
+`--executable-path <path>` to every call. If the file is not there, `fwx walk start` is `NOT RUN, NOT ARMED` (exit 0, `armed: false`).
 It is ignored inside the factory image, which has its own browser.
 
 ## Install

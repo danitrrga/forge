@@ -20,7 +20,7 @@ Claude Code: "Subagents should return findings as text, not write report files")
 fields the code has. Run against the tree of 26a9c8b (the texts before the follow-up) the new checks gave:
   FAIL: agents/state.md returns the report from its template's first heading -> no '# Report' or no 'final response' in the agent text
   FAIL: agents/state.md and step 8 share the marker 'Noticed:' -> agent False, session False
-  FAIL: step 8 saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx state check report' in that order after the `state` launch
+  FAIL: step 8 saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch
 The rest of the follow-up checks read code that already holds, so they pass on the old tree; each has a control on a toy text (a cited
 field the code does not have, a step-8 text that checks before it saves).
 No static check is added for the three earlier text fixes, except where a named field is checked below: rule 8 (the line a called skill
@@ -191,7 +191,7 @@ def main():
 
     # What the review text must say.
     # Round two of the text review (the nine-point contract keys, the relayed open line, the fix round's findings file).
-    for word in ("review-answers", "redo", "not_defect", "contradicted_wanted", "open", "stale", "NOT OPENED", "--fix <file>"):
+    for word in ("review read", "redo", "not_defect", "contradicted_wanted", "open", "stale", "NOT OPENED", "--fix <file>"):
         check("ui-review.md names '%s'" % word, word in review, "missing")
     check("ui-review.md asks before the revert", asks_before_revert(review), "no 'revert it?' before the first '--revert'")
 
@@ -208,9 +208,9 @@ def main():
     check("step 8 found", "Review of the part" in s8, "not found")
     check("agents/state.md and the session's report text share the marker 'Noticed:'", "Noticed:" in agent and "Noticed:" in s8 and "Noticed:" in rep_ref,
           "agent %s, step 8 %s, part-report.md %s" % ("Noticed:" in agent, "Noticed:" in s8, "Noticed:" in rep_ref))
-    check("part-report.md saves the returned report with Write, then checks it", in_order(rep_ref, "`state`", "report-<n>.md", "`Write`", "fwx state check report"),
-          "no 'report-<n>.md' ... 'Write' ... 'fwx state check report' in that order after the `state` launch")
-    check("step 8 sends the owner to part-report.md and does not run the check itself", "references/part-report.md" in s8 and "fwx state check report" not in s8,
+    check("part-report.md saves the returned report with Write, then checks it", in_order(rep_ref, "`state`", "report-<n>.md", "`Write`", "fwx report lint"),
+          "no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch")
+    check("step 8 sends the owner to part-report.md and does not run the check itself", "references/part-report.md" in s8 and "fwx report lint" not in s8,
           "pointer or check misplaced")
     # Every `references/<file>.md` the session skill cites exists, and every file in references/ is cited.
     cited = set(re.findall(r"references/([a-z-]+\.md)", texts["SKILL.md"]))
@@ -237,7 +237,7 @@ def main():
     # Every command the two files name exists, or is skipped with its reason.
     out = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "--help"], capture_output=True, text=True)
     check("fwx --help ran", out.returncode == 0, out.stderr.strip())
-    known = {m.group(1) for m in re.finditer(r"^  ([a-z][a-z-]*)\s", out.stdout, re.M)}
+    known = {m.group(1) for m in re.finditer(r"^  fwx ([a-z][a-z-]*)\s", out.stdout, re.M)}
     check("fwx --help lists commands", len(known) > 5, "listed %d" % len(known))
     named = set()
     for text in texts.values():
@@ -251,19 +251,19 @@ def main():
         else:
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
 
-    # The playbook and the skill say the same of a rejected fix: `fwx walk review-answers` only sorts the answers (walk.py `cmd_review_answers`
+    # The playbook and the skill say the same of a rejected fix: `fwx review read` only sorts the answers (walk.py `cmd_review_answers`
     # writes review/answers.json and no decision), and the `decisions` agent records `not_defect` with support `approved` and `redo` with
     # support `chosen`. PR 125 made the playbook say a `redo` records nothing while this skill (what the session follows) records it.
     # Seen red on 93e43d9 (the playbook said `redo` records nothing; the skill did not say that the command writes no decision):
     #   FAIL: the playbook and ui-review.md both say what the decisions agent records for each rejection -> playbook {}, ui-review.md {'not_defect': 'approved', 'redo': 'chosen'}
-    #   FAIL: the playbook and ui-review.md both say `review-answers` writes no decision -> playbook False, ui-review.md False
+    #   FAIL: the playbook and ui-review.md both say `review read` writes no decision -> playbook False, ui-review.md False
     with open(os.path.join(ROOT, "playbooks", "ui-walk.md"), encoding="utf-8") as f:
         playbook = f.read()
     rej = playbook[playbook.index("### p_REJ"):]
     want = {"not_defect": "approved", "redo": "chosen"}
     check("the playbook and ui-review.md both say what the decisions agent records for each rejection",
           supports(rej) == want and supports(review) == want, "playbook %s, ui-review.md %s" % (supports(rej), supports(review)))
-    check("the playbook and ui-review.md both say `review-answers` writes no decision", "no decision" in rej and "no decision" in review,
+    check("the playbook and ui-review.md both say `review read` writes no decision", "no decision" in rej and "no decision" in review,
           "playbook %s, ui-review.md %s" % ("no decision" in rej, "no decision" in review))
     check("control: a text that records a `redo` as approved is not the wanted one", supports("`not_defect` with support `approved`, `redo` with support `approved`") != want)
 
@@ -281,7 +281,7 @@ def main():
     top, det = returned
     check("the workflow returns the top-level fields the session texts cite", {"status", "reason", "phase_dir", "details"} <= top, "top-level %s" % sorted(top))
     check("the workflow returns the details fields the session texts cite", {"gaps", "unverified", "fix_file", "lost_slots"} <= det, "details %s" % sorted(det))
-    # a walk with no `fix_file` has no `fix.json`, so `review-page` would stop: ui-review.md says to skip the command then (review of PR 125).
+    # a walk with no `fix_file` has no `fix.json`, so `fwx review new` would stop: ui-review.md says to skip the command then (review of PR 125).
     # Seen red on a11691f: FAIL: references/ui-review.md says what to do when `details.fix_file` is null -> missing
     check("references/ui-review.md says what to do when `details.fix_file` is null", "`details.fix_file` null" in review and "do not run the command" in review, "missing")
     check("control: `details.reason` is flagged, `reason` is a top-level field only", cited_missing("read `details.reason`", returned) == ["reason"], "got %s" % cited_missing("read `details.reason`", returned))
@@ -296,7 +296,7 @@ def main():
     check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
 
     # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when, and the
-    # playbook's block of the owner's review carries the matching exit. `fwx playbooks check` compares that exit with the table by itself.
+    # playbook's block of the owner's review carries the matching exit. `fwx playbook lint` compares that exit with the table by itself.
     # Seen red on 239aa07 (step 8 and the playbook did not mention it):
     #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
     # (reworded after the review of PR 129 into numbered sub-steps; the checks follow the new words)
@@ -424,13 +424,13 @@ def main():
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
-    check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx state check report on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx state check report"))
-    check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx state check report", "`state`", "report-<n>.md", "`Write`", "fwx state check report"))
+    check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx report lint on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
+    check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx report lint", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
     check("control: a cited field the code lacks is caught", missing_keys(["used_percentage", "usage_percentage"], '{"used_percentage": 1}') == ["usage_percentage"])
     check("control: step() cuts one numbered step", step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2).startswith("2. **B.**") and "z" not in step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2))
     check("control: 'verdict wait' is caught", files_naming("verdict wait", {"x.md": "run verdict wait in the background"}) == ["x.md"])
-    check("control: revert before the question fails", not asks_before_revert("run wave prepare --revert 1, then ask: revert it?"))
-    check("control: question before the revert passes", asks_before_revert("ask: revert it? Then wave prepare --revert 1"))
+    check("control: revert before the question fails", not asks_before_revert("run wave new --revert 1, then ask: revert it?"))
+    check("control: question before the revert passes", asks_before_revert("ask: revert it? Then wave new --revert 1"))
     check("control: a command that does not exist is not known", "frobnicate" not in known and "frobnicate" in fwx_commands("run fwx frobnicate now"))
 
 

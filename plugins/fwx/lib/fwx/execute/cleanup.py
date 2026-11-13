@@ -1,4 +1,4 @@
-"""Which worktrees a run owns, whether an agent still lives in one, and `fwx wave cleanup` (3.4 U3; shape in C.2 of the plan).
+"""Which worktrees a run owns, whether an agent still lives in one, and `fwx wave remove` (3.4 U3; shape in C.2 of the plan).
 
 Liveness is not `locked`. Claude Code locks the worktree of an agent with the reason `claude agent <id> (pid P start T)`, where
 `P` is the `claude` process and `T` is field 22 of `/proc/P/stat`; `kill -9` leaves the lock behind (research/execute-measures.md,
@@ -16,7 +16,7 @@ commits that are not merged and one whose lock could not be cleared stay, in `ke
 is inside a worktree of the run (a runaway shell of an agent was the largest thing left running); none is killed. The phase
 branch, the main checkout and a worktree of another run are never candidates.
 
-The folder `fwx wave scratch <run> <unit>` makes in the checkout (`<top>/.fwx-agent/<run>/`, where the reviewers, which have no
+The folder `fwx scratch new <run> <unit>` makes in the checkout (`<top>/.fwx-agent/<run>/`, where the reviewers, which have no
 worktree of their own, write) is removed with the run's worktrees: it is git-ignored, so nothing else would ever clear it. The
 folders of other runs and the ignore file stay; `scratch` in the result lists what was removed.
 

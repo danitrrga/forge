@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""`fwx screenshot` (3.5 U4): lib/fwx/commands/screenshot.py.
+"""`fwx walk capture` (3.5 U4): lib/fwx/commands/screenshot.py.
 
-Every case goes through `bin/fwx screenshot` against a run that the real `fwx walk up` made in a toy repo (test_walk.py's Scene: the
+Every case goes through `bin/fwx walk capture` against a run that the real `fwx walk start` made in a toy repo (test_walk.py's Scene: the
 toy HTTP app, the toy repo, the only-PATH directory of fakes; ORDERS.md rule 10). `agent-browser` is replaced by a fake that
 records its argv, writes one PNG per `screenshot` call, and fails on a given screen (FAKE_FAIL_URL, on `open`) or exits 0 without
 writing the file (FAKE_NOSHOT_URL). No browser is opened. Every temp dir is made by helpers.mkdtemp and removed at exit.
 
-Seen red before the command existed (python3 tests/test_screenshot.py; `fwx screenshot` was not a command, so every call exited 2):
+Seen red before the command existed (python3 tests/test_screenshot.py; `fwx walk capture` was not a command, so every call exited 2):
   FAIL: all captured: exit: got 2, want 0
   FAIL: all captured: no stderr: got "fwx: unknown command: screenshot\n\nusage: fwx <command> [args] ..."
   (and the same for each case: 45 FAILs, the 9 controls "built: ... screenshot.py ... No such file")
@@ -22,7 +22,7 @@ ignores errors", is the first; the FAIL lines the mutants produced:
   theme ignored / width not set: FAIL: all captured: the first screen is dark, at 1440 wide: [['set', 'viewport', '1440', '900'], ['open', ...
   run.json ignored:    FAIL: run.json screens: exit: got 2, want 0
   zero screens passes: FAIL: no screens anywhere: exit 2 and says so: rc 1 Traceback ...
-  77 as missing:       FAIL: no agent-browser: NOT RUN, NOT ARMED and exit 77, not a list of missing screens: rc 1 fwx screenshot: 1 of 1 missing ...
+  77 as missing:       FAIL: no agent-browser: NOT RUN, NOT ARMED and exit 77, not a list of missing screens: rc 1 fwx walk capture: 1 of 1 missing ...
 """
 import json
 import os
@@ -64,7 +64,7 @@ sys.exit(0)
 
 
 class Rig:
-    """A Scene with the screenshot fake in place of its agent-browser, and a run made by `fwx walk up`."""
+    """A Scene with the screenshot fake in place of its agent-browser, and a run made by `fwx walk start`."""
 
     def __init__(self, R):
         self.R = R
@@ -90,7 +90,7 @@ class Rig:
         return self.R(self.sc.repo, *args, env=dict(self.sc.env, **(env or {})))
 
     def shot(self, *args, env=None):
-        return self.fwx("screenshot", "--run", self.rd, *args, env=env)
+        return self.fwx("walk", "capture", "--run", self.rd, *args, env=env)
 
     def stop(self):
         try:
@@ -224,9 +224,9 @@ def case_guards(R, S):
             rig.sc.clear()
             r = rig.shot("--screens", arg)
             S.ok("bad --screens (%s): exit 2, nothing called" % label, r.returncode == 2 and rig.sc.calls("agent-browser") == [], "rc %d %s" % (r.returncode, r.stderr))
-        r = rig.fwx("screenshot", "--screens", "[]")
+        r = rig.fwx("walk", "capture", "--screens", "[]")
         S.eq("no --run: exit 2", r.returncode, 2)
-        r = rig.fwx("screenshot", "--run", "/srv/no-such-run", "--screens", screens_arg(rig, ("/a", None)))
+        r = rig.fwx("walk", "capture", "--run", "/srv/no-such-run", "--screens", screens_arg(rig, ("/a", None)))
         S.ok("unknown run: exit 2", r.returncode == 2, "rc %d %s" % (r.returncode, r.stderr))
         rig.sc.drop("agent-browser")
         r = rig.shot("--screens", screens_arg(rig, ("/a", None)))
@@ -310,7 +310,7 @@ def case_json(R, S):
     """`--json` prints one JSON object per screen, so a capture folder with a space in its path is not cut at the space the way the text
     line (`ok <path> <url> ...`, split on whitespace by its readers) is. Seen red on the base (`--json` was not an option):
       FAIL: json: exit (one screen is missing): got 2, want 1
-      FAIL: json: one object per screen, the path whole: got ['fwx screenshot: --json is not an option of this command, ...
+      FAIL: json: one object per screen, the path whole: got ['fwx walk capture: --json is not an option of this command, ...
     The text format without the flag is the control: unchanged (case_all_captured)."""
     rig = Rig(R)
     try:

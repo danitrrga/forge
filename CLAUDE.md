@@ -99,7 +99,7 @@ ask only where the standard says to:
 - **Architecture**: a PR that changes a contract between parts (the generator's sequence, profile fields, the stage table, the
   `decide` rules, the `.fwx/` format, the configuration schema, a new CLI command). Ask while the PR is open and wait for the
   answer before merging (the approval status is not required).
-- **Logic**: code that decides with nobody watching (fwx core: verify, decide, stages, rounds; wave prepare/integrate; workflows)
+- **Logic**: code that decides with nobody watching (fwx core: verify, decide, stages, rounds; wave new/merge; workflows)
   and the PR that closes a whole part. Same as Architecture.
 - **Never**: UI, documentation, data, texts for agents (prompts, playbooks, skills: they have their own review), test-only PRs,
   renames and moves, Dependabot.

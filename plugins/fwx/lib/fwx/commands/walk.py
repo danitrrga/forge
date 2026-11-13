@@ -1,10 +1,10 @@
-"""The UI walk's app, browsers, planted control, findings file, review and close: fwx walk up|ab|pw|check-screens|arm-control|findings|review-page|review-answers|down|sweep|selftest ...
+"""The UI walk's app, browsers, planted control, findings file, review and close: fwx walk start|stop|ab|pw|check-screens|converge|selftest ..., `fwx control new`, `fwx review new|read`
 
 Everything the walk does with the app and the browsers is code here, never a prompt. Each subcommand but `ab` and `pw` (which
 hand the program's own output through) prints one JSON object and leaves it in the run's folder. Exit 0 done, 1 something failed
 or is left, 2 refused or a usage error (the reason on stderr, nothing started), 77 `NOT RUN, NOT ARMED: <why>` for a missing tool.
 
-  up --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]
+  start --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]
       The run's folder is `<D>/ui-walk/<N>-<R>/` (D is the phase folder, or the job folder in the factory); the screenshots and
       clips go to `<git-common-dir>/fwx/walks/<namespace>/`. Without `app_run` (and no --app) or with integrations.agent_browser
       off: `NOT RUN, NOT ARMED`, exit 0, `{"armed": false, "reason": ...}`. `app_run.url` is the base address the walk appends each screen's
@@ -12,14 +12,14 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       address every screen becomes `<page>/<path>` and answers 404 (`check-screens` stops the walk there). Else: the app's URL must be local (localhost, 127.0.0.1,
       ::1, *.localhost), nothing may answer there yet (exit 2), then `app_run.up` runs in the repo with FWX_WALK_STATE (the file
       where it leaves the demo account's session: a Playwright storageState; no agent sees a password) and FWX_WALK_RUN (the
-      namespace, a mark every process of the app inherits, which `down` counts). `run.json` is written and printed:
+      namespace, a mark every process of the app inherits, which `stop` counts). `run.json` is written and printed:
       `{armed, run, run_dir, url, apps, namespace, capacity}`. `run` is `app_run.run` (a prefix that runs a command inside the app's
       network); the empty string is a valid value (the command runs in the repo's cwd), not an absent field. `capacity` is
-      A second `up` of the same part and round starts clean: it removes the earlier run's control.json (a recheck has no control) and
-      moves its verified-*.json and rechecked-*.json to `earlier/`, so `findings` and `review-page` read only this walk's. When an app's `up` fails, the `down` of each app already
+      A second `start` of the same part and round starts clean: it removes the earlier run's control.json (a recheck has no control) and
+      moves its verified-*.json and rechecked-*.json to `earlier/`, so `converge` and `fwx review new` read only this walk's. When an app's `up` fails, the `down` of each app already
       started runs with the environment that app's `up` had (FWX_WALK_NAME, FWX_WALK_RUN, FWX_WALK_STATE).
       `fwx capacity --role ui-walker --want <2 x --tramos, default 1> --per-agent-mb <PER_AGENT_MB>`; when it cannot answer the quota
-      is 1 and says so; allowed 0 stops before the app starts (exit 1). With `container: true` the quota is the number of walkers: `up` runs
+      is 1 and says so; allowed 0 stops before the app starts (exit 1). With `container: true` the quota is the number of walkers: `start` runs the app's `up`
       once per walker with FWX_WALK_NAME=<namespace>-w<k> (and `{name}` in `up`, `run`, `down` and `url`), and session `w<k>` of `ab`
       uses app k. With FWX_FACTORY_CONTAINER=1 the image's `up` and `down` (FACTORY_UI_DIR) run and `app_run` is not read; the URL
       is the last line of its output, `{"url": ...}`.
@@ -31,7 +31,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `up` (the ui-walk workflow: `up` runs first, the tramos come from an agent): prints the capacity object and rewrites `capacity` in
       `run.json`. With `container` the quota never passes the apps `up` already started.
   ab [--run R] <session> <args...>     agent-browser with the guards below; `pw [--run R] <session> <args...>`: the same with Playwright's CLI
-      (Firefox starts logged in too: the app's demo session file is the context's storageState when `up` left one; Playwright's
+      (Firefox starts logged in too: the app's demo session file is the context's storageState when `start` left one; Playwright's
       `network.allowedOrigins` being no boundary and blind to redirects, the config carries a proxy-autoconfig script (Firefox's
       `network.proxy.autoconfig_url`) that lets the run's hosts through, by exact name as `ab`'s list does, and sends every other host
       to PW_SINK, which refuses: redirects and links out of the app fail in the browser, `*.localhost` siblings included, and each session
@@ -49,10 +49,10 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       prints `{checked: 0, bad: 0, not_run: "NOT RUN, NOT ARMED: ...", screens: [{url, checked: false, status: null, ok: null}]}`, the same line on
       stderr, and exits 0 (the workflow goes on unchecked). A screen that does not answer 2xx, or is not on the app (its host and port are not one
       app's, or its scheme is not http or https: not asked at all), is on stderr as `screen <url> answers <status>` (`screen <url> is not answered: <why>` for no status), and the exit is 1. The
-      ui-walk workflow runs it once, for every screen, after the tramos and before `arm-control`, and ends `failed` on exit 1: a walk over pages
+      ui-walk workflow runs it once, for every screen, after the tramos and before `control new`, and ends `failed` on exit 1: a walk over pages
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
-  arm-control --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
+  fwx control new --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
       as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
       Before it leaves control.json it proves the plant visible where the walkers will meet it: it opens the screen in session w1 with no
       plant, reads the title's computed font-size, font-weight and rendered box (width and height in whole pixels) and closes the session; then
@@ -62,42 +62,42 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       `no visible change` (the plant did not reach the browser the walkers' way, or it changes no layout), whatever it did to the font (the
       owner's rule: what moves no layout is not worth a walker's attention). Either is exit 1 with the line on stderr and
       `{"armed": false, "reason": ...}` on stdout, and neither control.json nor init.js is left.
-  findings --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
+  converge --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
       pictures in its `evidence` (the walkers' browsers carried the plant; the text stays, the pictures are listed in `evidence_dropped`), and
       so does any finding for a picture `ab` listed in `control-pictures.txt` (below). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
-      (starting with a letter or digit) is exit 2, as in `wave prepare`.
-  review-page --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
+      (starting with a letter or digit) is exit 2, as in `wave new`.
+  fwx review new --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
       figures today/built; choices `ok`, `redo` and `not_defect`, the last two with `needs_note`) and one per CONTRADICTED
       ("¿Cambiar lo aprobado por esto?", yes/no), the item `id` being the finding's. A `.webm`
       clip becomes an animated WebP with ffmpeg; without it `NOT RUN, NOT ARMED: ffmpeg missing`, exit 0, the clip's path in the text.
       `review/map.json` says which id is a fix and which a contradicted one. F is a file with [{id, commit}]. The `built` figure of a fix
       is the `evidence_after` its recheck saved in `rechecked-*.json`, else the one fix.json holds.
-  review-answers --run R FILE        the text the owner pasted (the last JSON object with "v": 2 in it, prose around it allowed; none: exit 2),
+  fwx review read --run R FILE        the text the owner pasted (the last JSON object with "v": 2 in it, prose around it allowed; none: exit 2),
       as `{accepted, redo, not_defect, contradicted_wanted, open, stale, missing_note}` in `review/answers.json`, its only write. Only a
       fix answered "ok" and not stale is accepted; `redo` and `not_defect` are lists of {id, note, commit} (commit from the --fixed data the
       page was built from, null when it had none); one of them with a blank note is in `missing_note` and `open`, in neither list.
-  down --run R         `close --all` of the run's namespace, the app's `down` (per app; the image's in the factory; with `container`
+  stop --run R         `close --all` of the run's namespace, the app's `down` (per app; the image's in the factory; with `container`
       `docker rm -f` by exact name), then a count of the processes whose environment or command line carries the namespace:
-      `down.json` says how many it looked at and what is left; exit 1 if anything is, or a `down` or a container failed.
+      `down.json` says how many it looked at and what is left; exit 1 if anything is, or an app's `down` or a container failed.
       It also removes the `*.target` files agent-browser leaves in `<socket dir>/namespaces/<namespace>/run/` (that namespace's only), and
       the run's session marks (`sessions/ab-*`, `sessions/pw-*`), so the next `ab` of the same run launches and logs in again.
   selftest [--dir D] [--repo P] [--image-id ID] [--json]
-      Proves the environment: `up` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
+      Proves the environment: `start` (arms, gives a URL), the app answers 200 (asked from inside its network, through `app_run.run`),
       `agent-browser` opens the URL with the demo session (an app without `app_run.login`, read from the configuration, has none: `up` need
       leave no cookie and the app is opened as it is; one that declares a login and leaves none fails `snapshot` with `no demo session`) and the snapshot has an element (`open` returns before a cold dev server has
       drawn the app, so the snapshot is asked again every 0.5 s until it has one, for at most `app_run.ready_timeout_s` seconds, default 30;
       the optional `app_run.ready` is a text only the logged-in app shows in its snapshot, e.g. a nav label: a snapshot with elements but
       without it, such as the login screen's skeleton, fails; both keys are read from the project's configuration, not from --app, and
       not in the factory), a capture comes out (a PNG, not the
-      `about:blank` one at that size), `down` leaves 0 processes. Each check says how many things it looked at; looking at 0 is a
+      `about:blank` one at that size), `stop` leaves 0 processes. Each check says how many things it looked at; looking at 0 is a
       failure, and a check whose predecessor failed is "not reached". The run folder is `<D>/ui-walk/1-1/` (D defaults to
       `<git-common-dir>/fwx/selftest`); `selftest.json` there is `{image_id?, passed, checks: [{name, looked_at, ok, detail}]}`.
       Exit 0 all pass, 1 a check failed (named on stderr), 2 `NOT RUN, NOT ARMED` (no `app_run`, agent_browser off, no
-      agent-browser): 2 is not green. `down` always runs once `up` armed. With FWX_FACTORY_CONTAINER=1 the image's scripts are the app.
-  sweep        `down` of every open run of `<git-common-dir>/fwx/walks/` whose owner process is gone. The owner is the
-      `claude` process above `up` (FWX_WALK_OWNER_PID overrides); with no owner found the run is swept after STALE_H hours.
+      agent-browser): 2 is not green. `stop` always runs once `start` armed. With FWX_FACTORY_CONTAINER=1 the image's scripts are the app.
+  stop --orphans   `stop` of every open run of `<git-common-dir>/fwx/walks/` whose owner process is gone. The owner is the
+      `claude` process above `start` (FWX_WALK_OWNER_PID overrides); with no owner found the run is swept after STALE_H hours.
 
 What the guards of `ab`/`pw` do not see: a URL the page's own code builds when it runs, a click on a link that leaves the app, the
 code of a `batch` (refused) or read from stdin (refused). `--allowed-domains` (the app's host) covers them in the browser; in the
@@ -137,7 +137,7 @@ import urllib.error
 import urllib.request
 from urllib.parse import quote, urlsplit
 
-from fwx import config
+from fwx import config, routes
 from fwx.execute import base, brief
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
@@ -204,17 +204,17 @@ SET_VIEWPORT = set_viewport(VIEWPORT[0], VIEWPORT[1], SCALE)
 SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 URL_IN_CODE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s'\"`)\\<>]+")
 USAGES = {
-    "up": "usage: fwx walk up --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]",
+    "up": "usage: fwx walk start --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]",
     "ab": "usage: fwx walk ab [--run R] <session> <agent-browser args...>",
     "pw": "usage: fwx walk pw [--run R] <session> <playwright-cli args...>",
     "capacity": "usage: fwx walk capacity --run R --tramos T",
     "check-screens": "usage: fwx walk check-screens --run R --screens JSON   (JSON: a list of the screens' URLs)",
-    "arm-control": "usage: fwx walk arm-control --run R --screen URL",
-    "findings": "usage: fwx walk findings --run R",
-    "review-page": "usage: fwx walk review-page --run R --fixed FILE",
-    "review-answers": "usage: fwx walk review-answers --run R FILE",
-    "down": "usage: fwx walk down --run R",
-    "sweep": "usage: fwx walk sweep",
+    "arm-control": "usage: fwx control new --run R --screen URL",
+    "findings": "usage: fwx walk converge --run R",
+    "review-page": "usage: fwx review new --run R --fixed FILE",
+    "review-answers": "usage: fwx review read --run R FILE",
+    "down": "usage: fwx walk stop --run R",
+    "sweep": "usage: fwx walk stop --orphans",
     "selftest": "usage: fwx walk selftest [--dir D] [--repo P] [--image-id ID] [--json]",
 }
 
@@ -792,7 +792,7 @@ def cookies_of(path):
 
 def note_control_capture(run, common, prefix, args, out, ctl_file):
     """After a `screenshot` in a session that launched with the plant: list the picture in `control-pictures.txt` when the page it shows is
-    the control's route, or when that route cannot be read (a doubt is not a clean picture). `fwx walk findings` leaves every listed picture
+    the control's route, or when that route cannot be read (a doubt is not a clean picture). `fwx walk converge` leaves every listed picture
     out of a finding's evidence, whichever screen the finding names. The picture is the path the caller gave, else the one the tool printed
     (`Screenshot saved to <path>`); none found, nothing is listed."""
     ctl = read_json(ctl_file, "control.json")
@@ -841,7 +841,7 @@ def cmd_ab(argv):
     if sized_first:
         steps.append((common + SET_VIEWPORT, True))
     steps.append((common + args, False))
-    # `fwx screenshot` sets FWX_WALK_NO_CONTROL: a handoff capture is the page without the plant. A verifier (`v*`) never carries it either:
+    # `fwx walk capture` sets FWX_WALK_NO_CONTROL: a handoff capture is the page without the plant. A verifier (`v*`) never carries it either:
     # only the walkers are tested on the planted control, and a verifier that saw it would confirm it as a finding.
     ctl = os.path.join(run["run_dir"], "control.json")
     planted = not os.environ.get("FWX_WALK_NO_CONTROL") and not session.startswith("v") and os.path.isfile(ctl)
@@ -1147,7 +1147,7 @@ def cmd_findings(argv):
     if ctl is not None:  # a control.json that names no route cannot say which pictures to leave out: refused, not read as "none"
         route = ctl.get("path") if isinstance(ctl, dict) else None
         if not isinstance(route, str) or not route.startswith("/"):
-            raise Stop("%s names no route (a `path` starting with /): `fwx walk arm-control` writes it" % ctl_file)
+            raise Stop("%s names no route (a `path` starting with /): `fwx control new` writes it" % ctl_file)
         ctl_path = route
     listing = os.path.join(rd, "control-pictures.txt")
     taint = set()
@@ -1241,7 +1241,7 @@ def convert_clip(rd, rev, fid, f, notes):
 
 
 def check_id(fid, where):
-    """A finding id names the review's figure and clip files, so it is one path component: `brief.ID`, the rule `wave prepare` applies."""
+    """A finding id names the review's figure and clip files, so it is one path component: `brief.ID`, the rule `wave new` applies."""
     if not brief.ID.match(fid):
         raise Stop("%s: the finding id %r cannot name a file (letters, digits, `.`, `_` and `-`, starting with a letter or digit)" % (where, fid))
 
@@ -1290,7 +1290,7 @@ def cmd_review_page(argv):
     fixed = fixed.get("fixed") if isinstance(fixed, dict) else fixed
     if not isinstance(fixed, list) or not all(isinstance(x, dict) and isinstance(x.get("id"), str) for x in fixed):
         raise Stop("%s is not a list of {id, commit}" % o["--fixed"])
-    fix = {f["id"]: f for f in read_json(os.path.join(rd, "fix.json"), "fix.json (run `fwx walk findings` first)")}
+    fix = {f["id"]: f for f in read_json(os.path.join(rd, "fix.json"), "fix.json (run `fwx walk converge` first)")}
     contradicted = read_json(os.path.join(rd, "contradicted.json"), "contradicted.json")
     for x in fixed:
         if x["id"] not in fix:
@@ -1345,7 +1345,7 @@ def cmd_review_answers(argv):
     if "--run" not in o:
         raise usage("review-answers")
     rd = run_dir_of(o["--run"])
-    mapping = read_json(os.path.join(rd, "review", "map.json"), "review/map.json (run `fwx walk review-page` first)")
+    mapping = read_json(os.path.join(rd, "review", "map.json"), "review/map.json (run `fwx review new` first)")
     try:
         with open(pos[0], encoding="utf-8") as f:
             text = f.read()
@@ -1509,15 +1509,15 @@ def mark_closed(run):
 
 
 def report_down(res, code):
-    sys.stderr.write("fwx walk down: looked at %d processes (%d unreadable), %d left%s\n" % (
+    sys.stderr.write("fwx walk stop: looked at %d processes (%d unreadable), %d left%s\n" % (
         res["looked"], res["unreadable"], len(res["left"]),
         "".join("; pid %d: %s" % (p["pid"], p["cmd"][:80]) for p in res["left"])))
     for s_ in res["steps"]:
         if s_["rc"]:
-            sys.stderr.write("fwx walk down: %s exited %s\n" % (s_["step"], s_["rc"]))
+            sys.stderr.write("fwx walk stop: %s exited %s\n" % (s_["step"], s_["rc"]))
     c = res.get("containers")
     if c and c["left"] != []:
-        sys.stderr.write("fwx walk down: containers left: %s%s\n" % (c["left"], " (" + c["note"] + ")" if c.get("note") else ""))
+        sys.stderr.write("fwx walk stop: containers left: %s%s\n" % (c["left"], " (" + c["note"] + ")" if c.get("note") else ""))
 
 
 def cmd_down(argv):
@@ -1804,7 +1804,7 @@ COMMANDS = {"up": cmd_up, "capacity": cmd_capacity, "ab": cmd_ab, "pw": cmd_pw, 
 
 def main(argv):
     if not argv or argv[0] not in COMMANDS:
-        sys.stderr.write("usage: fwx walk <%s> ...\n" % "|".join(COMMANDS))
+        sys.stderr.write("usage: fwx walk <verb> ...   (fwx walk --help lists them)\n")
         return 2
     try:
         return COMMANDS[argv[0]](argv[1:])
@@ -1815,8 +1815,8 @@ def main(argv):
         elif msg.startswith("usage:") or "\nusage:" in msg:
             sys.stderr.write(msg + "\n")
         else:
-            sys.stderr.write("fwx walk %s: %s\n" % (argv[0], msg))
+            sys.stderr.write("fwx %s: %s\n" % (routes.shown("walk", [argv[0]]), msg))
         return e.code
     except (config.ConfigError, base.WaveError) as e:
-        sys.stderr.write("fwx walk %s: %s\n" % (argv[0], e))
+        sys.stderr.write("fwx %s: %s\n" % (routes.shown("walk", [argv[0]]), e))
         return 2

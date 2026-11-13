@@ -1,7 +1,7 @@
 <!-- referent: none, own text: no source has a milestone file of this shape -->
 # Milestone <vN>: <name>
 
-<!-- The list of phases is not written here: `fwx state list` derives it from the folders. -->
+<!-- The list of phases is not written here: `fwx phase list` derives it from the folders. -->
 
 ## Goal
 <What is true when this milestone is done, in a paragraph.>

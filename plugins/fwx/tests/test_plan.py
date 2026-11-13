@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""lib/fwx/plan.py and `fwx plan check`: the plan files of a phase read, validated and checked for structure.
+"""lib/fwx/plan.py and `fwx plan lint`: the plan files of a phase read, validated and checked for structure.
 
 Every case builds a phase folder in a temp dir from one valid base plan, changes one thing, and looks at what
-`plan.check_phase` returns and at what `bin/fwx plan check` prints and exits with (an error is exit 1 and a line
+`plan.check_phase` returns and at what `bin/fwx plan lint` prints and exits with (an error is exit 1 and a line
 `error: <file>: <field>: <reason>`, a warning is exit 0 and a `warning:` line, and the count line is always there).
 
 Seen red before the code existed (lib/fwx/plan.py absent; the test stops at the import):
@@ -105,7 +105,7 @@ def phase(fm=None, body=BODY, raw=None, extra=None):
 
 
 def cli(d, *args):
-    return subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "plan", "check", d] + list(args), cwd=WORK,
+    return subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "plan", "lint", d] + list(args), cwd=WORK,
                           env=helpers.clean_env(), capture_output=True, text=True)
 
 
