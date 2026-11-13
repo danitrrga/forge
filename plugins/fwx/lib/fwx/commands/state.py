@@ -1,7 +1,8 @@
-"""Make, find, bind, record in and check the project's `.fwx/` state: fwx state <subcommand> [args] (--help lists them).
+"""Make, find, bind, record in and check the project's `.fwx/` state: fwx session|phase|subphase|milestone|decision|state|report <verb> [args] (`fwx --help` lists them).
 
 A thin layer over lib/fwx/state.py, which holds every rule: this file parses the arguments, calls it, and prints. The
-subcommands are resolve, list, use, new-phase, new-subphase, new-milestone, cancel, decision, decisions and check. Exit 0 when it
+commands are `session` and `session attach`, `phase list|new|remove`, `subphase new`, `milestone new`, `decision new|list`,
+`state lint` and `report lint`. Exit 0 when it
 is done, 1 when the state layer refuses or the phase cannot be resolved (one line on stderr, `resolve` also lists the open
 phases), 2 when it cannot run: outside a git repository, a usage error, an unusable configuration. Never a traceback.
 """

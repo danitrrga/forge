@@ -395,6 +395,17 @@ def case_failures(s, root, repo, bare):
     for args in ([], ["nope"], ["list", "--label", "factory", "extra"], ["list", "--waiting", "--bogus"], ["--project"]):
         r = cli(root, repo, f, *args)
         s.eq("usage %r: exit 2" % (args,), r.returncode, 2)
+    # The usage and the refusals name the verbs of the grammar (`list --waiting`, `new`), not the ones that now exit 2 (`waiting`, `create`).
+    # Seen red with the old text: FAIL: the usage of `fwx linear list` names `list --waiting` and `new --template`: ...
+    # `fwx linear [--project NAME] waiting [--json]` ... `create --template T`
+    r = cli(root, repo, f, "list")
+    s.ok("the usage of `fwx linear list` names `list --waiting` and `new --template`",
+         "linear [--project NAME] list --waiting" in r.stderr and "linear [--project NAME] new --template" in r.stderr, r.stderr)
+    s.ok("the usage names no verb that now exits 2", " waiting [--json]" not in r.stderr.replace("list --waiting [--json]", "")
+         and "] create " not in r.stderr, r.stderr)
+    for argv, old_word in ((["new"], "linear: create needs"), (["list", "--waiting", "x"], "linear: waiting takes")):
+        r = cli(root, repo, f, *argv)
+        s.ok("`fwx linear %s`: the refusal does not say `%s`" % (" ".join(argv), old_word), r.returncode == 2 and old_word not in r.stderr, r.stderr)
     r = cli(root, repo, f, "--help")
     s.ok("--help: exit 0, the usage on stdout", r.returncode == 0 and "usage: fwx linear" in r.stdout, "exit %d" % r.returncode)
     s.eq("usage and help made no request", len(f.requests), 0)

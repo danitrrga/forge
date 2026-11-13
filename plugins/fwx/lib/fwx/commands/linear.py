@@ -1,10 +1,10 @@
-"""Read and write the Linear issues of this project: fwx linear [--project NAME] {list|comment|label|create|waiting} ...
+"""Read and write the Linear issues of this project: fwx linear [--project NAME] {list|list --waiting|comment|label|new} ...
 
   list --label L [--json]       the issues of the project with the neutral label L (state with its type, labels, updatedAt)
-  waiting [--json]              the issues waiting for the owner, and how many; --json is {"count": N, "issues": [...]}
+  list --waiting [--json]       the issues waiting for the owner, and how many; --json is {"count": N, "issues": [...]}
   comment ISSUE --kind K        stdin is the body; the comment starts with `<!-- fwx:K -->`; a repeat creates nothing
   label ISSUE +L -L ...         add and remove neutral labels (never `factory` or `review` off, never a label that is not ours)
-  create --template T           stdin is JSON: one issue {title, context, expected, ...} or a list of them; the keys are
+  new --template T              stdin is JSON: one issue {title, context, expected, ...} or a list of them; the keys are
                                 the ones lib/fwx/linear.py lists in FIELDS plus `title` and `labels`, and an issue gets
                                 exactly the neutral labels it names (none if it names none: `factory` is set apart)
 
@@ -23,10 +23,10 @@ import sys
 from fwx import config, linear
 
 USAGE = ("usage: fwx linear [--project NAME] list --label L [--json]\n"
-         "       fwx linear [--project NAME] waiting [--json]\n"
+         "       fwx linear [--project NAME] list --waiting [--json]\n"
          "       fwx linear [--project NAME] comment ISSUE --kind K   (body on stdin)\n"
          "       fwx linear [--project NAME] label ISSUE +LABEL -LABEL ...\n"
-         "       fwx linear [--project NAME] create --template T      (JSON on stdin: one issue or a list)\n")
+         "       fwx linear [--project NAME] new --template T         (JSON on stdin: one issue or a list)\n")
 KEY = "LINEAR_API_KEY"
 ENDPOINT = "FWX_LINEAR_ENDPOINT"
 REFUSED = ("forbidden", "usage", "no_template", "missing_label", "not_found")  # the request cannot be done: exit 2
@@ -100,7 +100,7 @@ def run(client, sub, args):
     elif sub == "waiting":
         as_json = take_flag(args, "--json")
         if args:
-            raise Usage("waiting takes only --json")
+            raise Usage("list --waiting takes only --json")
         issues = client.waiting()
         if as_json:
             print(json.dumps({"count": len(issues), "issues": issues}, indent=2))
@@ -123,14 +123,14 @@ def run(client, sub, args):
     elif sub == "create":
         template = take_value(args, "--template")
         if not template or args:
-            raise Usage("create needs --template T and takes nothing else")
+            raise Usage("new needs --template T and takes nothing else")
         try:
-            items = json.loads(read_stdin("create"))
+            items = json.loads(read_stdin("new"))
         except ValueError as e:
-            raise Usage("create: stdin is not JSON (%s): one issue as an object, or a list of them" % e)
+            raise Usage("new: stdin is not JSON (%s): one issue as an object, or a list of them" % e)
         items = [items] if isinstance(items, dict) else items
         if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
-            raise Usage("create: stdin is an issue (an object) or a list of issues")
+            raise Usage("new: stdin is an issue (an object) or a list of issues")
         for got in client.create(template, items):
             print("%s  %s  %s" % (got["identifier"], got["url"], "created" if got["created"] else "already there"))
     else:
