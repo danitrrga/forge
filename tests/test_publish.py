@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`forge check-public`, `forge commit`, the allowlist in publish/engine.gitignore and the three
+"""`forge lint`, `forge commit`, the allowlist in publish/engine.gitignore and the three
 githooks. Every world is a toy repository built under TMPDIR: the hooks are only ever wired
 (core.hooksPath) inside one, never in this checkout.
 
@@ -214,27 +214,27 @@ def public_cases():
         write(root, "docs/" + name, content)
         git_out(root, "add", "docs/" + name)
         for mode in ("--all", "--staged"):
-            code, out = forge(root, "check-public", mode)
+            code, out = forge(root, "lint", mode)
             want("%s, %s = exit" % (label, mode), code, 0 if rule is None else 1)
             if rule:
                 has("%s, %s" % (label, mode), out, "docs/" + name, "[" + rule + "]")
             else:
-                has("%s, %s" % (label, mode), out, "PASS check-public")
+                has("%s, %s" % (label, mode), out, "PASS lint")
     # A file is named with its line.
     root = toy("pub-line")
     write(root, "a.txt", "ok\nok\n" + HOME_DIR + "alice/x\n")
     git_out(root, "add", "a.txt")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     has("the hit names its line", out, "a.txt:3 [home path]")
     # Nothing checked is a FAIL for --all (an empty tree means a wrong root), not for --staged.
     root = toy("pub-empty")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     want("--all over no file = exit", code, 1)
-    has("--all over no file", out, "FAIL check-public", "0 file(s)")
-    code, out = forge(root, "check-public", "--staged")
+    has("--all over no file", out, "FAIL lint", "0 file(s)")
+    code, out = forge(root, "lint", "--staged")
     want("--staged over nothing staged = exit", code, 0)
-    has("--staged over nothing staged", out, "PASS check-public", "0 file(s)")
-    code, out = forge(root, "check-public")
+    has("--staged over nothing staged", out, "PASS lint", "0 file(s)")
+    code, out = forge(root, "lint")
     want("no mode = exit", code, 2)
 
 
@@ -276,7 +276,7 @@ def private_cases():
     write(root, "b.txt", "has other42 inside\n")
     write(root, "c.txt", "a clean line\n")
     git_out(root, "add", "a.txt", "b.txt", "c.txt")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     want("private list, two files hit = exit", code, 1)
     has("private list", out, "a.txt:1 [private list]", "b.txt:1 [private list]", "3 file(s) checked", "2 pattern(s)")
     lacks("private list", out, "c.txt")
@@ -285,11 +285,11 @@ def private_cases():
     write(root, "a.txt", "clean\n")
     write(root, "b.txt", "clean\n")
     git_out(root, "add", "a.txt", "b.txt", "LICENSE")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     want("LICENSE with a private word = exit", code, 0)
     write(root, "LICENSE", "Copyright (c) x\n" + HOME_DIR + "alice/x\n")
     git_out(root, "add", "LICENSE")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     want("LICENSE with a public hit = exit", code, 1)
     has("LICENSE with a public hit", out, "LICENSE:2 [home path]")
     # A skill-bench task holds dates as data (a calendar, a leap day): in its files a private pattern that matches a bare
@@ -305,7 +305,7 @@ def private_cases():
         write(root, "config/publish-deny.txt", "20\\d\\d-\\d\\d-\\d\\d\nsecret-word\n")
         write(root, rel, line + "\n")
         git_out(root, "add", rel)
-        code, out = forge(root, "check-public", "--all")
+        code, out = forge(root, "lint", "--all")
         want("dated data, %s = exit" % label, code, 1 if hits else 0)
         if hits:
             has("dated data, %s" % label, out, rel + ":1 [private list]")
@@ -325,14 +325,14 @@ def private_cases():
             ("the allowed token as the end of a longer name", "X" + marker, True)):
         write(root, "a.txt", line + "\n")
         git_out(root, "add", "a.txt")
-        code, out = forge(root, "check-public", "--all")
+        code, out = forge(root, "lint", "--all")
         want("private allow, %s = exit" % label, code, 1 if hits else 0)
         if hits:
             has("private allow, %s" % label, out, "a.txt:1 [private list]")
     # The allowance is for the private list only: the public list still runs over the line.
     write(root, "a.txt", marker + " " + HOME_DIR + "alice/x\n")
     git_out(root, "add", "a.txt")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     want("private allow, the public list still runs = exit", code, 1)
     has("private allow, the public list still runs", out, "a.txt:1 [home path]")
     # A broken list is an error, never a pass.
@@ -342,7 +342,7 @@ def private_cases():
         write(root, "config/publish-deny.txt", body)
         write(root, "a.txt", "clean\n")
         git_out(root, "add", "a.txt")
-        code, out = forge(root, "check-public", "--all")
+        code, out = forge(root, "lint", "--all")
         want("%s = exit" % label, code, 2)
         has(label, out, needle)
 
@@ -364,9 +364,9 @@ def real_deny_cases():
     root = toy("realdeny", deny=True)
     write(root, "README.md", passing)
     git_out(root, "add", "README.md")
-    code, out = forge(root, "check-public", "--all")
+    code, out = forge(root, "lint", "--all")
     want("the clone URL, the no-reply address and the copyright line = exit", code, 0)
-    has("the clone URL, the no-reply address and the copyright line", out, "PASS check-public", "private list")
+    has("the clone URL, the no-reply address and the copyright line", out, "PASS lint", "private list")
     # The handle alone is not on the list: the file's every pattern is run over it.
     import re
     bad = []
@@ -384,17 +384,17 @@ def real_deny_cases():
         root = toy("realdeny-hit", deny=True)
         write(root, "README.md", text + "\n")
         git_out(root, "add", "README.md")
-        code, out = forge(root, "check-public", "--all")
+        code, out = forge(root, "lint", "--all")
         want("%s = exit" % label, code, 1)
         has(label, out, "README.md:1")
     for label, text in probes[1:2] + probes[2:3] + probes[3:6]:
         root = toy("realdeny-only", deny=True)
         write(root, "README.md", text + "\n")
         git_out(root, "add", "README.md")
-        code, out = forge(root, "check-public", "--all")
+        code, out = forge(root, "lint", "--all")
         has("%s is named by the private list" % label, out, "[private list]")
         os.remove(os.path.join(root, "config", "publish-deny.txt"))
-        code, out = forge(root, "check-public", "--all")
+        code, out = forge(root, "lint", "--all")
         want("%s without the file = exit (the public list alone passes it)" % label, code, 0)
 
 
@@ -446,8 +446,8 @@ def allowlist_cases():
     if not os.path.exists(DENY):
         failures.append("config/publish-deny.txt does not exist")
         return
-    code, out = forge(FORGE, "check-public", "--all")
-    hits = [l for l in out.splitlines() if l.startswith("FAIL ") and ":" in l.split()[1] and not l.startswith("FAIL check-public:")]
+    code, out = forge(FORGE, "lint", "--all")
+    hits = [l for l in out.splitlines() if l.startswith("FAIL ") and ":" in l.split()[1] and not l.startswith("FAIL lint:")]
     want("today's engine files with the private list: no hit", hits, [])
     want("today's engine files with the private list = exit", code, 0)
     leaked = sorted(set(l.split()[1].rsplit(":", 1)[0] for l in hits
@@ -469,7 +469,7 @@ def own_files_cases():
                 return
             write(root, rel, open(os.path.join(FORGE, rel)).read())
         git_out(root, "add", "forge/publish.py", "tests/test_publish.py")
-        code, out = forge(root, "check-public", "--staged")
+        code, out = forge(root, "lint", "--staged")
         want("forge/publish.py and tests/test_publish.py, %s list = exit" % ("both" if deny else "public"), code, 0)
         if code:
             has("own files", out, "PASS")
@@ -487,21 +487,21 @@ def range_cases():
     write(root, "b.txt", "clean again\n")
     commit_files(root, "three", "b.txt")
     third = head(root)
-    code, out = forge(root, "check-public", "--range", first + ".." + third)
+    code, out = forge(root, "lint", "--range", first + ".." + third)
     want("a planted address in a commit that a later one fixes = exit", code, 1)
     has("range", out, second[:7] + ":b.txt:1 [email]", "2 commit(s)")
-    code, out = forge(root, "check-public", "--range", second + ".." + third)
+    code, out = forge(root, "lint", "--range", second + ".." + third)
     want("the same range starting after it = exit", code, 0)
-    has("range after the plant", out, "PASS check-public", "1 commit(s)")
-    code, out = forge(root, "check-public", "--range", "0" * 40 + ".." + third)
+    has("range after the plant", out, "PASS lint", "1 commit(s)")
+    code, out = forge(root, "lint", "--range", "0" * 40 + ".." + third)
     want("a new branch (all-zero remote) over the whole history = exit", code, 1)
     has("new branch", out, second[:7] + ":b.txt:1 [email]", "3 commit(s)")
-    code, out = forge(root, "check-public", "--range", "nosuchrev.." + third)
+    code, out = forge(root, "lint", "--range", "nosuchrev.." + third)
     want("an unknown revision = exit", code, 2)
     # A message is scanned too.
     write(root, "c.txt", "x\n")
     commit_files(root, "fix for bob@" + j("acme", ".io") + " (note)", "c.txt")
-    code, out = forge(root, "check-public", "--range", third + "..HEAD")
+    code, out = forge(root, "lint", "--range", third + "..HEAD")
     want("a planted address in a message = exit", code, 1)
     has("range message", out, ":(message):1 [email]")
     mf = os.path.join(TMP, "msg")
@@ -509,9 +509,9 @@ def range_cases():
                             ("a message with an address", "feat: x for bob@" + j("acme", ".io") + "\n", 1),
                             ("a message with a no-reply address", "Co-Authored-By: A <" + NOREPLY + ">\n", 0)):
         open(mf, "w").write(text)
-        code, out = forge(root, "check-public", "--message", mf)
+        code, out = forge(root, "lint", "--message", mf)
         want("%s = exit" % label, code, rc)
-    code, out = forge(root, "check-public", "--message", os.path.join(TMP, "nofile"))
+    code, out = forge(root, "lint", "--message", os.path.join(TMP, "nofile"))
     want("a missing message file = exit", code, 2)
 
 
@@ -538,26 +538,26 @@ def root_cases():
     write(other, "src/c.txt", "own-secret in the other repo's file\n")
     write(other, "untracked.txt", "path " + HOME_DIR + "bob/x\n")
     git_out(other, "add", "src/a.txt", "src/b.txt", "src/c.txt", "config/publish-deny.txt", "publish/engine.gitignore")
-    code, out = forge(fg, "check-public", "--root", other, "--staged")
+    code, out = forge(fg, "lint", "--root", other, "--staged")
     want("--root --staged, a planted home path = exit", code, 1)
     has("--root --staged", out, "FAIL src/a.txt:2 [home path]", "FAIL src/b.txt:1 [private list]", "5 file(s) checked",
         "private list, 1 pattern(s)")
     lacks("--root --staged", out, "src/c.txt", "untracked.txt")
-    code, out = forge(fg, "check-public", "--root", other, "--all")
+    code, out = forge(fg, "lint", "--root", other, "--all")
     want("--root --all, the engine's allowlist not applied = exit", code, 1)
     has("--root --all", out, "src/a.txt:2 [home path]", "src/b.txt:1 [private list]", "5 file(s) checked")
     lacks("--root --all", out, "src/c.txt", "untracked.txt")
     # --range and --message: the commits of the other repository, the message file anywhere.
     git_out(other, "rm", "-q", "--cached", "src/c.txt")
     commit_files(other, "feat: a for bob@" + j("acme", ".io"), "src/a.txt", "src/b.txt")
-    code, out = forge(fg, "check-public", "--root", other, "--range", "0" * 40 + ".." + head(other))
+    code, out = forge(fg, "lint", "--root", other, "--range", "0" * 40 + ".." + head(other))
     want("--root --range = exit", code, 1)
     has("--root --range", out, ":src/a.txt:2 [home path]", ":(message):1 [email]", "1 commit(s)")
     mf = os.path.join(TMP, "root-msg")
     for label, text, rc in (("a clean message", "feat: x\n", 0), ("a message with the private word", "feat: " + word + "\n", 1),
                             ("a message with an address", "feat: bob@" + j("acme", ".io") + "\n", 1)):
         open(mf, "w").write(text)
-        code, out = forge(fg, "check-public", "--root", other, "--message", mf)
+        code, out = forge(fg, "lint", "--root", other, "--message", mf)
         want("--root --message, %s = exit" % label, code, rc)
     # Controls: a clean repository passes and says how many files it looked at; an empty one is "0 file(s) checked", exit 1.
     clean = os.path.join(TMP, "root-clean-%d" % _n[0])
@@ -567,26 +567,26 @@ def root_cases():
     write(clean, "src/b.txt", "clean\n")
     git_out(clean, "add", "a.txt", "src/b.txt")
     for flag in ("--staged", "--all"):
-        code, out = forge(fg, "check-public", "--root", clean, flag)
+        code, out = forge(fg, "lint", "--root", clean, flag)
         want("--root, a clean repository %s = exit" % flag, code, 0)
-        has("--root, a clean repository %s" % flag, out, "PASS check-public: 2 file(s) checked", "private list, 1 pattern(s)")
+        has("--root, a clean repository %s" % flag, out, "PASS lint: 2 file(s) checked", "private list, 1 pattern(s)")
     empty = os.path.join(TMP, "root-empty-%d" % _n[0])
     os.makedirs(empty)
     git_out(empty, "init", "-q")
-    code, out = forge(fg, "check-public", "--root", empty, "--all")
+    code, out = forge(fg, "lint", "--root", empty, "--all")
     want("--root, an empty repository --all = exit", code, 1)
-    has("--root, an empty repository --all", out, "FAIL check-public: 0 file(s) checked")
+    has("--root, an empty repository --all", out, "FAIL lint: 0 file(s) checked")
     # Not a repository, or no such directory: the check could not run.
     notrepo = os.path.join(TMP, "root-notrepo")
     os.makedirs(notrepo)
     for label, d in (("a directory that is no repository", notrepo), ("a missing directory", os.path.join(TMP, "root-missing"))):
-        code, out = forge(fg, "check-public", "--root", d, "--all")
+        code, out = forge(fg, "lint", "--root", d, "--all")
         want("--root, %s = exit" % label, code, 2)
-        has("--root, %s" % label, out, "forge check-public:")
+        has("--root, %s" % label, out, "forge lint:")
         lacks("--root, %s" % label, out, "Traceback")
-    code, out = forge(fg, "check-public", "--root", os.path.join(TMP, "root-missing"), "--message", mf)
+    code, out = forge(fg, "lint", "--root", os.path.join(TMP, "root-missing"), "--message", mf)
     want("--root, a missing directory with --message = exit", code, 2)
-    has("--root, a missing directory with --message", out, "forge check-public: --root")
+    has("--root, a missing directory with --message", out, "forge lint: --root")
 
 
 # --- 5. forge commit
@@ -758,7 +758,7 @@ def hook_cases():
     want("pre-commit, a data path added with -f = (exit, moved)", (code, head(root) != before), (1, False))
     has("pre-commit, a data path added with -f", out, "pre-commit: refused", "config/profiles/a.claude.json", "ignored by .gitignore")
     git_out(root, "reset", "-q")
-    # pre-commit runs check-public: a planted address is refused with the finding, a no-reply form passes.
+    # pre-commit runs lint: a planted address is refused with the finding, a no-reply form passes.
     for label, text, rc in (("a planted address", "mail bob@" + j("acme", ".io") + "\n", 1), ("its no-reply form", "mail " + NOREPLY + "\n", 0)):
         write(root, "forge/extra.py", "# " + text)
         git_out(root, "add", "forge/extra.py")
@@ -766,9 +766,9 @@ def hook_cases():
         code, out = g(root, "commit", "-q", "-m", "x")
         want("pre-commit, %s = (exit, moved)" % label, (code, head(root) != before), (rc, rc == 0))
         if rc:
-            has("pre-commit, %s" % label, out, "forge/extra.py:1 [email]", "FAIL check-public")
+            has("pre-commit, %s" % label, out, "forge/extra.py:1 [email]", "FAIL lint")
         else:
-            has("pre-commit, %s" % label, out, "PASS check-public")
+            has("pre-commit, %s" % label, out, "PASS lint")
     # commit-msg: the same patterns over the message.
     write(root, "forge/extra.py", "X = 3\n")
     git_out(root, "add", "forge/extra.py")
@@ -844,14 +844,14 @@ def worktree_cases():
             failures.append("worktree case: the linked worktree holds the deny file itself, the case proves nothing")
         write(tree, "a.txt", "has a %s inside\n" % word)
         git_out(tree, "add", "a.txt")
-        code, out = forge(tree, "check-public", "--staged")
+        code, out = forge(tree, "lint", "--staged")
         if deny_in_main:
             want("private list, staged file in a linked worktree = exit", code, 1)
             has("private list in a linked worktree", out, "a.txt:1 [private list]", "1 pattern(s)")
         else:
             # no list anywhere: None as before, no crash, the public list alone
             want("no list in the main checkout, linked worktree = exit", code, 0)
-            has("no list in the main checkout, linked worktree", out, "PASS check-public: 1 file(s) checked (public list)")
+            has("no list in the main checkout, linked worktree", out, "PASS lint: 1 file(s) checked (public list)")
             lacks("no list in the main checkout, linked worktree", out, "private list")
 
 
@@ -869,7 +869,7 @@ def worktree_layout_cases():
 
     def check_message(tree, text):
         write(tree, "msg.txt", text + "\n")
-        return forge(tree, "check-public", "--message", os.path.join(tree, "msg.txt"))
+        return forge(tree, "lint", "--message", os.path.join(tree, "msg.txt"))
 
     def commit_base(main):
         git_out(main, "add", "bin", "forge", "githooks")
@@ -907,9 +907,9 @@ def worktree_layout_cases():
         main = toy("bad-deny")
         write(main, "config/publish-deny.txt", raw)
         write(main, "msg.txt", "clean\n")
-        code, out = forge(main, "check-public", "--message", os.path.join(main, "msg.txt"))
+        code, out = forge(main, "lint", "--message", os.path.join(main, "msg.txt"))
         want("deny file %s = exit" % label, code, 2)
-        has("deny file %s" % label, out, "forge check-public:", *needles)
+        has("deny file %s" % label, out, "forge lint:", *needles)
         lacks("deny file %s" % label, out, "Traceback")
 
 
@@ -959,7 +959,7 @@ def push_scope_cases():
     merged = head(root)
     code, out = g(root, "push", "origin", "feat")
     want("push of an existing branch that merged the default branch = exit", code, 0)
-    has("push of an existing branch that merged the default branch", out, "PASS check-public", "2 commit(s)")
+    has("push of an existing branch that merged the default branch", out, "PASS lint", "2 commit(s)")
     lacks("push of an existing branch that merged the default branch", out, "[private list]")
     want("the merge arrived", tip("feat"), merged)
 
@@ -1058,12 +1058,12 @@ def push_scope_cases():
     # 4. no new commit is reported as zero and passes; a range that cannot be computed fails closed
     code, out = g(root, "push", "origin", "master:ptr")
     want("a branch at an already-public commit = exit", code, 0)
-    has("a branch at an already-public commit", out, "PASS check-public", "0 commit(s)", "no new commit")
+    has("a branch at an already-public commit", out, "PASS lint", "0 commit(s)", "no new commit")
     r = subprocess.run(["sh", os.path.join(root, "githooks", "pre-push")], cwd=root, env=ENV, capture_output=True, text=True,
                        input="refs/heads/x %s refs/heads/x %s\n" % ("1" * 40, "0" * 40), timeout=60)
     out = r.stdout + r.stderr
     want("a tip git cannot list = exit (fail closed)", r.returncode != 0, True)
-    has("a tip git cannot list", out, "forge check-public: git rev-list", "pre-push: refused")
+    has("a tip git cannot list", out, "forge lint: git rev-list", "pre-push: refused")
     lacks("a tip git cannot list", out, "PASS", "no new commit")
 
 

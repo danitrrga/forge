@@ -2,7 +2,7 @@
 
   forge init             first run for a new checkout: config/forge.json, a profile for the checkout itself,
                          an empty registry and secrets file, then sync --apply --all and doctor
-  forge add PATH         register a project: config/profiles/NAME.claude.json, then sync --apply --project NAME
+  forge new PATH         register a project: config/profiles/NAME.claude.json, then sync --apply --project NAME
   forge sync [--apply]   regenerate every project's config, in a fixed order, one run at a time
   forge skills [--apply] the skill links (~/.claude/skills) and the GSD runtime, which belong to the machine, not to a project
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
@@ -10,13 +10,13 @@
   forge test             run every test_*.py in the repo
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
-  forge launch NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
+  forge start NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill, GSD and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, then a note if the GSD runtime or the toolchain is off;
                          silent unless it wrote or has one
-  forge check-public     [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
+  forge lint             [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
   forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
@@ -1827,7 +1827,7 @@ def cmd_metrics(a):
     return r.returncode
 
 
-# --- forge init and forge add (docs/portable-design.md section 6): what a new checkout and a new project
+# --- forge init and forge new (docs/portable-design.md section 6): what a new checkout and a new project
 # need before the generators have anything to read. Both only create: a file that is already there is kept.
 EXAMPLES = os.path.join(lib.ROOT, "examples")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -1999,26 +1999,26 @@ def cmd_init(a):
         print("! forge init: failed -- %s" % ", ".join("%s (exit %d)" % f for f in failed))
     print("put your own skills in %s/skills/<name>/SKILL.md (git ignores them; forge init --track versions them), "
           "then run forge skills --apply" % lib.ROOT)
-    print("next: forge add <path>")
+    print("next: forge new <path>")
     return 1 if failed else 0
 
 
-def cmd_add(a):
+def cmd_new(a):
     if not os.path.exists(lib.SETTINGS):
-        print("! forge add: config/forge.json missing -- run bin/forge init")
+        print("! forge new: config/forge.json missing -- run bin/forge init")
         return 1
     path = os.path.realpath(os.path.expanduser(a.path))
     if not os.path.isdir(path):
-        print("! forge add: %s is not a directory" % a.path)
+        print("! forge new: %s is not a directory" % a.path)
         return 1
     name = a.name or os.path.basename(path)
     if not KEBAB.match(name):
-        print("! forge add: %r is not a kebab-case name (lowercase letters and digits, single dashes between them) "
+        print("! forge new: %r is not a kebab-case name (lowercase letters and digits, single dashes between them) "
               "-- pass --name" % name)
         return 1
     target = os.path.join(lib.PROFILES, name + ".claude.json")
     if os.path.lexists(target):
-        print("! forge add: %s is already registered (config/profiles/%s.claude.json)" % (name, name))
+        print("! forge new: %s is already registered (config/profiles/%s.claude.json)" % (name, name))
         return 1
     ok, why = lib.may_write()
     if not ok:
@@ -2044,7 +2044,16 @@ def _uninstall():
     return uninstall
 
 
+# The names these commands had before the grammar of tool, object, verb. Removed, not aliased: an old name
+# refuses with one line naming the new one and runs nothing, so a script that still calls it fails loudly.
+RENAMED = {"add": "new", "launch": "start", "check-public": "lint"}
+
+
 def main(argv=None):
+    args = sys.argv[1:] if argv is None else list(argv)
+    if args and args[0] in RENAMED:
+        print("forge %s: now 'forge %s'" % (args[0], RENAMED[args[0]]), file=sys.stderr)
+        return 2
     p = argparse.ArgumentParser(prog="forge", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sync", help="regenerate every project's config")
@@ -2077,7 +2086,7 @@ def main(argv=None):
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
     t.set_defaults(fn=toolchain.cmd)
-    t = sub.add_parser("launch", help="start claude with the environment a named launcher of config/forge.json declares")
+    t = sub.add_parser("start", help="start claude with the environment a named launcher of config/forge.json declares")
     t.add_argument("name", nargs="?", help="a key of `launchers`; none lists them")
     t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
     t.set_defaults(fn=launch.cmd)
@@ -2092,14 +2101,14 @@ def main(argv=None):
     g.add_argument("--since", help="YYYY-MM-DD, changes from this day")
     g.set_defaults(fn=cmd_log)
     sub.add_parser("session-start", help="the SessionStart hook").set_defaults(fn=cmd_session_start)
-    c = sub.add_parser("check-public", help="scan for personal data that must not be published")
+    c = sub.add_parser("lint", help="scan for personal data that must not be published")
     mode = c.add_mutually_exclusive_group(required=True)
     mode.add_argument("--staged", action="store_true", help="the staged files (pre-commit)")
     mode.add_argument("--all", action="store_true", help="every engine file (CI, the gate)")
     mode.add_argument("--range", help="the commits in A..B, messages and content (pre-push)")
     mode.add_argument("--message", help="a commit message file (commit-msg)")
     c.add_argument("--root", help="scan this other git repository instead of the checkout (its tracked files, forge's lists)")
-    c.set_defaults(fn=lambda a: _publish().cmd_check_public(a))
+    c.set_defaults(fn=lambda a: _publish().cmd_lint(a))
     c = sub.add_parser("commit", help="commit each changed path to the history that owns it")
     c.add_argument("-m", "--message", required=True)
     c.add_argument("paths", nargs="*", help="only these paths")
@@ -2111,16 +2120,16 @@ def main(argv=None):
     i.add_argument("--without", dest="without_names", type=names_list, default=[], metavar="a,b", help="leave these integrations off")
     i.add_argument("--track", action="store_true", help="also make .forge-data.git, a local history of your data")
     i.set_defaults(fn=cmd_init)
-    i = sub.add_parser("add", help="register a project: its profile, then sync --apply --project")
+    i = sub.add_parser("new", help="register a project: its profile, then sync --apply --project")
     i.add_argument("path", help="the project's directory")
     i.add_argument("--name", help="the profile's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="let forge write files that are tracked in the project")
-    i.set_defaults(fn=cmd_add)
+    i.set_defaults(fn=cmd_new)
     u = sub.add_parser("uninstall", help="take out what forge wrote; a dry-run unless --apply")
     u.add_argument("--apply", action="store_true", help="remove; without it, only show what would go")
     scope = u.add_mutually_exclusive_group()
     scope.add_argument("--integration", choices=lib.INTEGRATIONS, help="only this integration's, once it is off in config/forge.json")
     scope.add_argument("--project", help="only this project's, once its profile is frozen or deleted")
     u.set_defaults(fn=lambda a: _uninstall().main(a))
-    a = p.parse_args(argv)
+    a = p.parse_args(args)
     return a.fn(a)

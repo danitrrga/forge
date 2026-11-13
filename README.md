@@ -33,7 +33,7 @@ git worktrees, reviews it and walks the finished UI. It is the part of forge thi
 - **An agentic workflow that forge installs and configures.** `plugins/fwx` is a Claude Code plugin that takes work
   from discuss to plan, parallel worktree execution, review and UI walk. One profile field, `framework`, turns it on
   (see [The agentic workflow](#the-agentic-workflow)).
-- **A personal-data guard.** `forge check-public` and the git hooks refuse a commit that carries a home path,
+- **A personal-data guard.** `forge lint` and the git hooks refuse a commit that carries a home path,
   an email address, a private IP or a private key, so your own config never leaks into a public repository.
 
 ## The agentic workflow
@@ -164,7 +164,7 @@ python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test le
 git clone https://github.com/danitrrga/forge ~/forge
 cd ~/forge
 python3 bin/forge init                  # checks your tools, writes your data, syncs, runs doctor
-python3 bin/forge add ~/code/myproject  # registers a project and syncs it
+python3 bin/forge new ~/code/myproject  # registers a project and syncs it
 python3 bin/forge doctor                # what is broken, and how to fix it
 python3 bin/forge sync                  # dry-run: what would change
 python3 bin/forge sync --apply          # write it
@@ -181,7 +181,7 @@ itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGEN
 Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
 exits with `forge doctor`'s status.
 
-`forge add PATH [--name NAME] [--writes-tracked-files]` writes `config/profiles/NAME.claude.json` and runs
+`forge new PATH [--name NAME] [--writes-tracked-files]` writes `config/profiles/NAME.claude.json` and runs
 `forge sync --apply --project NAME`. It refuses a path that is not a directory, a name already registered and
 a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
 `CLAUDE.md`, no `.gitignore` line. The flag allows it.
@@ -274,11 +274,11 @@ licences in `SOURCES.md`.
 
 - **Never writes outside its scope.** Only the installed checkout writes: a linked worktree or a plain copy of
   it writes nothing, and a toy HOME may only write its own toy world. Your own `CLAUDE.md`, `AGENTS.md` and
-  `.gitignore` in a project are never written by `forge add`.
+  `.gitignore` in a project are never written by `forge new`.
 - **Dry-run by default.** `forge sync` without `--apply` lists every file it would write and writes none.
 - **Secrets stay in one place.** The registry refers to a secret as `${VAR}`, resolved from the git-ignored
   `credentials/secrets.json`. A server whose secret is missing is not written.
-- **No personal data in the public history.** `forge check-public --all` scans every engine file for home
+- **No personal data in the public history.** `forge lint --all` scans every engine file for home
   paths, email addresses, private IPv4 ranges, tailnet host names, private-key headers, files over 1 MiB and
   font or image files, except an image pinned by path and sha256 in `PUBLIC_ASSETS` (`forge/publish.py`) after
   someone has looked at it. An optional `config/publish-deny.txt` adds your own patterns. The hooks in `githooks/`
@@ -288,18 +288,18 @@ licences in `SOURCES.md`.
 
 ```
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
-forge add PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
+forge new PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
 forge sync [--apply] [--project NAME | --all]               what would change (or change it), per project
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [--mutants]                                      every tracked test_*.py, at nice 19 (plugins/fwx has its own runner, `fwx test`)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
-forge launch NAME [ARGS...]                                 claude started with the environment a launcher of config/forge.json declares
+forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
-forge check-public [--root DIR] --all                       personal data in the files the engine publishes (--root: another repository's)
+forge lint [--root DIR] --all                               personal data in the files the engine publishes (--root: another repository's)
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
 forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)
 ```
@@ -311,10 +311,10 @@ The `project roots` row fails a project that has skills of its own and sits insi
 repository: Claude Code applies the outer project's settings there too, and the outer "off" wins over the inner
 "on". The fix is one repository per project.
 
-`forge launch NAME [ARGS...]` starts `claude` with the environment of the launcher NAME, declared in
+`forge start NAME [ARGS...]` starts `claude` with the environment of the launcher NAME, declared in
 `config/forge.json` as `"launchers": {"orq": {"env": {"CACHE_TAX_AUTOWARM": "on"}}}`: one kind of session carries a
 variable and the others do not. It replaces itself with `claude`, passes every argument after NAME untouched
-(`forge launch orq --model opus -c`), and lists the launchers when given no name. An unknown name or a malformed
+(`forge start orq --model opus -c`), and lists the launchers when given no name. An unknown name or a malformed
 table exits 2; no `claude` on PATH exits 127.
 
 The `research expiry` row reads each project's `.planning/research/**/*.md` (only the first 20 lines of a file, none
@@ -362,11 +362,11 @@ forge is a per-machine registry. If you want configuration that travels with eac
 ```sh
 python3 bin/forge test                    # every test, in sandboxes that never touch your HOME
 python3 plugins/fwx/bin/fwx test           # only when you touched plugins/fwx: its suite has its own runner
-python3 bin/forge check-public --all      # no personal data in the engine
+python3 bin/forge lint --all      # no personal data in the engine
 git config core.hooksPath githooks        # run the personal-data guard on every commit and push
 ```
 
-`forge init` sets `core.hooksPath` for you. CI runs `check-public`, a fresh-install test and fwx's suite on every push and
+`forge init` sets `core.hooksPath` for you. CI runs `lint`, a fresh-install test and fwx's suite on every push and
 pull request.
 
 ## License

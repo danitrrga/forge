@@ -13,7 +13,7 @@ if [ -z "$forge" ] || [ ! -x "$forge" ]; then
     echo "commit-msg: refused: forge not found; set FORGE_ROOT to the forge checkout or put its bin/forge on PATH" >&2
     exit 1
 fi
-"$forge" check-public --root "$root" --message "$1" || {
+"$forge" lint --root "$root" --message "$1" || {
     echo "commit-msg: refused: personal data in the message, listed above; reword it" >&2
     exit 1
 }

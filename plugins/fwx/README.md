@@ -84,7 +84,7 @@ A setup tool such as forge installs and configures the plugin. By hand, add this
 ## Contributing
 
 Work happens in forge's repository, and forge's hooks (`git config core.hooksPath githooks` at its root) run its
-personal-data guard, `forge check-public`, over every commit, message and push, this folder included. The three hooks
+personal-data guard, `forge lint`, over every commit, message and push, this folder included. The three hooks
 in this folder's `githooks/` are the form for a checkout that has only this folder: they call the same guard and find
 forge through `FORGE_ROOT` (the forge checkout) or, failing that, `forge` on `PATH`; with neither they refuse; forge's
 own hooks are the ones in force in a forge checkout. Tests are plain scripts, run with `python3 bin/fwx test` from this folder

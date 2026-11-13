@@ -7,7 +7,7 @@ if [ ! -x "$forge" ]; then
     echo "commit-msg: refused: $forge is missing, so the personal-data check cannot run" >&2
     exit 1
 fi
-"$forge" check-public --message "$1" || {
+"$forge" lint --message "$1" || {
     echo "commit-msg: refused: personal data in the message, listed above; reword it" >&2
     exit 1
 }
