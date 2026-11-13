@@ -15,7 +15,7 @@ field absent it writes nothing and takes out only what it wrote itself.
   * Branch B (measured in 2.2 U0): with --apply, a machine registry (~/.claude/plugins/known_marketplaces.json)
     without the marketplace at that path gets one `claude plugin marketplace add <path> --scope local`, run from the
     project's folder; a second apply makes no call, a dry-run none, and no `claude` on PATH is a `!` line.
-  * `forge uninstall --project` takes the file and the keys out.
+  * `forge uninstall NAME` takes the file and the keys out.
   * examples/forge.json's `framework.models` equal the framework repo's config.py DEFAULTS. The comparison runs over a
     toy repo in the temp world (equal, and one alias changed as its control); with FRAMEWORK_REPO set it also runs
     against the real repo, an extra and never a condition: the suite runs every check without it.
@@ -650,7 +650,7 @@ check("a plugin name that is not a plain identifier: `!`, exit 1, nothing writte
 forge_json(integrations=INTEGRATIONS_ON)
 plugin_dir()
 
-# ------------------------------------------------------------------------------------ 5. forge uninstall --project
+# ------------------------------------------------------------------------------------ 5. forge uninstall NAME
 w = World()
 pp = project()
 w.put(profile(pp, name="gone"))
@@ -661,11 +661,11 @@ sync.CFG, lib.PROFILES = w.cfg, w.pdir
 out = io.StringIO()
 with contextlib.redirect_stdout(out):
     code = uninstall.main(argparse.Namespace(integration=None, project="gone", apply=True))
-check("uninstall --project: exit 0 -- %s" % sandbox.tail(out.getvalue(), 3), code == 0, out.getvalue())
-check("uninstall --project: the file is gone", not os.path.exists(fwfile(pp)), out.getvalue())
+check("uninstall NAME: exit 0 -- %s" % sandbox.tail(out.getvalue(), 3), code == 0, out.getvalue())
+check("uninstall NAME: the file is gone", not os.path.exists(fwfile(pp)), out.getvalue())
 en, mk, ev = sl_keys(pp)
-check("uninstall --project: the marketplace and the plugin entry are gone", NAME not in mk and "toyfw@toyfw" not in en, (en, mk))
-check("uninstall --project: no claim of the file or of the keys is left",
+check("uninstall NAME: the marketplace and the plugin entry are gone", NAME not in mk and "toyfw@toyfw" not in en, (en, mk))
+check("uninstall NAME: no claim of the file or of the keys is left",
       claims_of(fwfile(pp)) == [] and not [c for c in claims_of(slp(pp)) if c["at"][:1] == ["extraKnownMarketplaces"]], "")
 
 # ------------------------------------------------------------------------------------------- 6. branch B: the registry

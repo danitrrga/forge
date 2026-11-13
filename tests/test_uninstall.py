@@ -13,7 +13,7 @@ Assertions:
   the doctor row: PASS over a record holding .gitignore lines, a config.toml, a link and .bak files; WARN
   naming settings.local.json ["env"] (never its value) after the hand edit;
   a dry-run changes no byte (manifest of home and projects, mtimes included) and says how much it looked at;
-  `--integration hindsight` while hindsight is on and `--project app` (a live profile) are refused, exit 1,
+  `--integration hindsight` while hindsight is on and `app` (a live profile) are refused, exit 1,
   writing nothing; with hindsight switched off in the toy config/forge.json, `--integration hindsight --apply`
   takes out hindsight's claims only;
   `--apply`: every claim of the record is gone but the edited env, which is named on a '  ! ' line; the
@@ -240,8 +240,8 @@ check("dry-run: says how many claims and by-construction items it looked at -- %
 code, out = w.forge("uninstall", "--integration", "hindsight", "--apply")
 check("--integration hindsight while on: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
       code == 1 and "! hindsight is on in config/forge.json: set it false first" in out, out)
-code, out = w.forge("uninstall", "--project", "app", "--apply")
-check("--project of a live profile: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)), code == 1 and "!" in out, out)
+code, out = w.forge("uninstall", "app", "--apply")
+check("NAME of a live profile: refused, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 2)), code == 1 and "!" in out, out)
 diff = sorted(k for k in set(before) | set(w.manifest()) if before.get(k) != w.manifest().get(k))
 check("the refusals wrote nothing -- %s" % diff[:8], not diff)
 
@@ -326,9 +326,9 @@ def bang_lines(out, *words):
     return [l for l in out.splitlines() if l.startswith("  ! ") and all(x in l for x in words)]
 
 
-# F1 and F4: --project N on a frozen parent leaves a live profile nested under N's project_path alone.
+# F1 and F4: uninstall NAME on a frozen parent leaves a live profile nested under NAME's project_path alone.
 # Red on 34c191b: the dry-run listed '.../projects/app/sub/.claude/settings.local.json -> would remove 3 claim(s)'
-# and `--project app --apply` deleted sub's settings.local.json and .codex/config.toml.
+# and `app --apply` deleted sub's settings.local.json and .codex/config.toml.
 w = World("nested")
 sub = os.path.join(w.app, "sub")
 write(os.path.join(sub, "CLAUDE.md"), "# sub\n")
@@ -344,11 +344,16 @@ sub_manifest = {k: v for k, v in w.manifest().items() if k.startswith("projects/
 prof = load(os.path.join(w.root, "config", "profiles", "app.claude.json"))
 prof["frozen"] = True
 write_json(os.path.join(w.root, "config", "profiles", "app.claude.json"), prof)
-code, out = w.forge("uninstall", "--project", "app")
-check("nested: the dry-run of --project app names nothing under the nested project -- %s"
+code, out = w.forge("uninstall", "app")
+# The dry-run must have run: its exit 0 and its header, or a crash (or a parse error) with no "app/sub" in its text passes.
+# Seen passing with the dry-run of `uninstall NAME` replaced by a printed 'boom' and exit 1 (96 checks, 0 failed); now red:
+# "nested: the dry-run of app exits 0 and prints its plan -- exit 1: boom".
+check("nested: the dry-run of app exits 0 and prints its plan -- exit %d: %s" % (code, sandbox.tail(out, 2)),
+      code == 0 and "forge uninstall: project app (dry-run" in out, out)
+check("nested: the dry-run of app names nothing under the nested project -- %s"
       % [l for l in out.splitlines() if "app/sub" in l][:3], "app/sub" not in out, out)
-code, out = w.forge("uninstall", "--project", "app", "--apply")
-check("nested: --project app --apply exits 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+code, out = w.forge("uninstall", "app", "--apply")
+check("nested: app --apply exits 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
 after = {k: v for k, v in w.manifest().items() if k.startswith("projects/app/sub")}
 check("nested: not a byte under the nested live project changed -- %s" % sorted(k for k in set(sub_manifest) | set(after) if sub_manifest.get(k) != after.get(k))[:6],
       sub_manifest == after)

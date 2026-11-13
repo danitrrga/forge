@@ -1292,15 +1292,15 @@ def main():
     os.remove(outside)
     failures += ["may_write %s = %r, want %r" % (k, got, want) for k, (got, want) in guard.items() if got != want]
 
-    # `forge sync --project X --all` contradicts itself: argparse refuses it.
+    # `forge sync X --all` contradicts itself: argparse refuses it.
     cli.cmd_sync = lambda a: 0  # never run the real generators
     try:
         with contextlib.redirect_stderr(io.StringIO()):
-            got = cli.main(["sync", "--project", "app", "--all"])
-        failures.append("forge sync --project app --all returned %r, want a usage error" % got)
+            got = cli.main(["sync", "app", "--all"])
+        failures.append("forge sync app --all returned %r, want a usage error" % got)
     except SystemExit as e:
         if e.code != 2:
-            failures.append("forge sync --project app --all exited %r, want 2" % e.code)
+            failures.append("forge sync app --all exited %r, want 2" % e.code)
 
     lib.STATE, lib.LOCK = tmp, os.path.join(tmp, "sync.lock")
     held = subprocess.Popen([sys.executable, "-c", "import fcntl,time; f=open(%r,'a'); fcntl.flock(f, fcntl.LOCK_EX); print(1, flush=True); time.sleep(5)" % lib.LOCK],
