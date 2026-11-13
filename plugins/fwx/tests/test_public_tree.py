@@ -13,7 +13,7 @@ Checked on a toy scene with its own tables (the module's tables are replaced for
   - `index` is unique, sorted and valid, and the output is the same bytes on a second run;
   - the input is not changed.
 And on the committed output: it is a sound scene with the nodes of the tree (rectangles, ellipses, diamonds,
-frames), and a toy repo holding it passes `forge check-public` (no person, no private project, no home path), while
+frames), and a toy repo holding it passes `forge lint` (no person, no private project, no home path), while
 a toy repo with a home path in the same file fails it. NOT RUN, NOT ARMED when forge is not at FORGE_ROOT or two
 folders above this plugin. With FWX_PRIVATE_TREE set to the private tree, the committed output must also equal
 what the script derives from it now (drift); without it that check prints NOT RUN, NOT ARMED.
@@ -306,18 +306,18 @@ else:
     forge_root = os.environ.get("FORGE_ROOT") or os.path.dirname(os.path.dirname(ROOT))
     forge = os.path.join(forge_root, "bin", "forge")
     if not os.access(forge, os.X_OK):
-        print("NOT RUN, NOT ARMED: forge check-public on the committed tree (no bin/forge at %s)" % forge_root)
+        print("NOT RUN, NOT ARMED: forge lint on the committed tree (no bin/forge at %s)" % forge_root)
     else:
         def public_check(files):
             repo = helpers.toy_repo(files)
-            r = subprocess.run([sys.executable, "-I", forge, "check-public", "--root", repo, "--all"],
+            r = subprocess.run([sys.executable, "-I", forge, "lint", "--root", repo, "--all"],
                                capture_output=True, text=True, env=helpers.clean_env(PYTHONDONTWRITEBYTECODE="1"))
             helpers.remove(repo)
             return r
         r = public_check({"docs/workflow-tree.excalidraw": open(OUTPUT, encoding="utf-8").read()})
-        s.eq("forge check-public on the committed tree: exit code", r.returncode, 0)
+        s.eq("forge lint on the committed tree: exit code", r.returncode, 0)
         r = public_check({"docs/workflow-tree.excalidraw": dump.replace('"The fwx workflow"', '"%s"' % os.path.expanduser("~"), 1)})
-        s.ok("control: the same file with a home path in it fails forge check-public", r.returncode != 0,
+        s.ok("control: the same file with a home path in it fails forge lint", r.returncode != 0,
              "exit code %d, output %r" % (r.returncode, (r.stdout + r.stderr)[:200]))
 
 s.done()

@@ -41,7 +41,7 @@ change), then with `--apply`, and restart the affected session.
 | Give a project an MCP server | add the server to `config/mcp-registry.json` if it is new, and list it in the project's profile under `servers` | `python3 bin/forge sync --apply` |
 | Add or rotate a secret | `credentials/secrets.json` (git-ignored, the only place a real token lives; `config/secrets.json` links to it). The registry refers to it as `${VAR}` | `python3 bin/forge sync --apply` |
 | Keep a skill or a plugin in a project | add its name to the profile's `skills_keep` or `plugins_keep` | `python3 bin/forge sync --apply` |
-| Add a managed project | `python3 bin/forge add <path>`, which writes `config/profiles/<name>.claude.json` | (`add` runs the sync for it) |
+| Add a managed project | `python3 bin/forge new <path>`, which writes `config/profiles/<name>.claude.json` | (`new` runs the sync for it) |
 | Add or edit a skill | `skills/<name>/SKILL.md` in forge; forge links it into `~/.claude/skills` | `python3 bin/forge sync --apply` |
 | Add a skill to one project only | `<project>/.claude/skills/<name>/SKILL.md`. Claude Code reads it directly; for Codex forge mirrors it into `<project>/.agents/skills/<name>` | `python3 bin/forge sync --apply` |
 | Add a hook for every session | a row in `user_hooks` in `config/forge.json` (forge writes `~/.claude/settings.json`, and `~/.codex/hooks.json` for a row that lists `codex` while `codex_harness` is true) | `python3 bin/forge sync --apply --all` |

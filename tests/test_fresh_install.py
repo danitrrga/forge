@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """T9 of docs/portable-design.md (sections 6 and 10, point 3): what a stranger gets from `forge init` and
-`forge add`, run in a world the way a stranger has it.
+`forge new`, run in a world the way a stranger has it.
 
 The world is W/forge (an engine-only copy: sandbox.copy_engine, `git init`, one commit), W/home (the HOME
 of every command) and W/projects/demo (a repository with one commit), side by side, which is the shape
@@ -16,7 +16,7 @@ at a count of 0):
   command in the world's ~/.claude/settings.json names a script that exists; zero skills are linked and the
   relink step says SKIP; no file init changed or created holds the real HOME; `forge doctor` exits 0 with
   no FAIL or WARN line, and the rows a stranger has nothing to run for say NOT RUN, NOT ARMED; a second
-  `forge sync --all` dry-run has no pending write; `forge add` leaves the project's tracked files alone
+  `forge sync --all` dry-run has no pending write; `forge new` leaves the project's tracked files alone
   and its untracked files are exactly the set pinned below; init twice, and add of a missing directory, a
   registered name and a name that is not kebab-case are each refused and write nothing.
 Controls, run every time in the same world and put back afterwards:
@@ -58,7 +58,7 @@ failures, notrun, n_checks = [], [], [0]
 GIT_ENV = dict(os.environ, XDG_CONFIG_HOME=sandbox.mkdtemp("fresh-install-xdg-"), **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
 INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
-# What `forge add` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
+# What `forge new` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # profile with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
 # repo-owned project only where the repo's own ignore rules already cover it (it prints SKIP-doc, and that is
@@ -433,8 +433,8 @@ def main_world():
     check("the relink step says SKIP, with nothing to link", "relink_skills: SKIP -- skills/ holds no skill, so there is nothing to link" in out, tail(out, 12))
     check("the gsd step says NOT RUN, NOT ARMED", "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)" in out, tail(out, 12))
 
-    code, out = w.forge("add", w.demo)
-    check("forge add exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
+    code, out = w.forge("new", w.demo)
+    check("forge new exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     ok, names = only_forge_and_demo(w.path("config", "profiles"))
     check("only the forge and demo profiles", ok, "found %s" % names)
     dp = read_json(w.path("config", "profiles", "demo.claude.json")) or {}
@@ -442,7 +442,7 @@ def main_world():
          {"project": "demo", "project_path": w.demo, "writes_tracked_files": False})
     want("the demo profile is untrimmed (no skills_keep, no plugins_keep)", [k for k in ("skills_keep", "plugins_keep") if k in dp], [])
     fresh, others = untracked_files(w.demo)
-    want("forge add leaves the project's tracked files alone (git status)", others, [])
+    want("forge new leaves the project's tracked files alone (git status)", others, [])
     want("the project's untracked files are the pinned set (%d)" % len(DEMO_UNTRACKED), fresh, DEMO_UNTRACKED)
     sl = read_json(os.path.join(w.demo, ".claude", "settings.local.json")) or {}
     deny = (sl.get("permissions") or {}).get("deny") or []
@@ -450,13 +450,13 @@ def main_world():
          (sorted(sl), sorted(sl.get("permissions") or {}), bool(deny) and all(r.startswith("Edit(//") and w.root in r for r in deny)),
          (["permissions"], ["deny"], True))
     keys = (read_json(os.path.join(w.home, ".claude.json")) or {}).get("projects", {})
-    check("forge add put the project's key in the world's ~/.claude.json", w.demo in keys, "keys: %s" % sorted(keys))
+    check("forge new put the project's key in the world's ~/.claude.json", w.demo in keys, "keys: %s" % sorted(keys))
     check("the add output names the profile it wrote", "config/profiles/demo.claude.json" in out, tail(out))
 
     refusals = (("a second init", ["init", "--yes", "--without", "codex,gsd"], "already initialised -- run forge doctor"),
-                ("add of a directory that is not there", ["add", os.path.join(w.top, "projects", "nope")], "is not a directory"),
-                ("add of a registered project", ["add", w.demo], "already registered"),
-                ("add under a name that is not kebab-case", ["add", w.home, "--name", "My_Project"], "kebab-case"))
+                ("new of a directory that is not there", ["new", os.path.join(w.top, "projects", "nope")], "is not a directory"),
+                ("new of a registered project", ["new", w.demo], "already registered"),
+                ("new under a name that is not kebab-case", ["new", w.home, "--name", "My_Project"], "kebab-case"))
     for label, argv, needle in refusals:
         snap = w.snapshot()
         code, out = w.forge(*argv)

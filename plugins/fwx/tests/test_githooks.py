@@ -71,7 +71,7 @@ def run(hook, path, forge_root=None, rc=0):
 
 def expected(hook):
     """The arguments forge gets from each hook, one list per call."""
-    base = ["check-public", "--root", repo]
+    base = ["lint", "--root", repo]
     return {"pre-commit": [base + ["--staged"]], "commit-msg": [base + ["--message", msgfile]],
             "pre-push": [base + ["--range", "b" * 40 + ".." + A], base + ["--range", Z + ".." + A]]}[hook]
 

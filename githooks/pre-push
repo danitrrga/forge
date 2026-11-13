@@ -15,7 +15,7 @@ while read -r local_ref local_sha remote_ref _remote_sha; do
     case "$local_sha" in *[!0]*) ;; *) continue ;; esac
     # "remote:URL..TIP": TIP's commits that the destination does not advertise. Tracking refs prove nothing
     # about it: another remote can write under the same name and a changed URL leaves the old ones behind.
-    "$forge" check-public --range "remote:$2..$local_sha" || rc=1
+    "$forge" lint --range "remote:$2..$local_sha" || rc=1
 done
 if [ "$rc" -ne 0 ]; then
     echo "pre-push: refused: personal data in the commits being pushed, listed above" >&2

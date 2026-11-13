@@ -18,7 +18,7 @@ fi
 rc=0
 while read -r local_ref local_sha remote_ref remote_sha; do
     case "$local_sha" in *[!0]*) ;; *) continue ;; esac
-    "$forge" check-public --root "$root" --range "$remote_sha..$local_sha" || rc=1
+    "$forge" lint --root "$root" --range "$remote_sha..$local_sha" || rc=1
 done
 if [ "$rc" -ne 0 ]; then
     echo "pre-push: refused: personal data in the commits being pushed, listed above" >&2

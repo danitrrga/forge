@@ -84,7 +84,7 @@
    "SUMMARY: 9 passed, 0 warnings, 0 failures",
    "",
    "put your own skills in ~/forge/skills/<name>/SKILL.md (git ignores them; forge init --track versions them), then run forge skills --apply",
-   "next: forge add <path>"
+   "next: forge new <path>"
   ]
  },
  "skills": {
@@ -108,7 +108,7 @@
  "add-api": {
   "argv": [
    "forge",
-   "add",
+   "new",
    "~/code/api"
   ],
   "exit": 0,
@@ -143,7 +143,7 @@
  "add-site": {
   "argv": [
    "forge",
-   "add",
+   "new",
    "~/code/site"
   ],
   "exit": 0,

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""`forge launch NAME [ARGS...]` (forge/launch.py): claude started with the environment a named launcher declares in
+"""`forge start NAME [ARGS...]` (forge/launch.py): claude started with the environment a named launcher declares in
 config/forge.json (`launchers`: {name: {"env": {VAR: value}}}), so one kind of session can carry a variable (the
 keepwarm switch of an orchestrator) without every session carrying it.
 
+The command was `forge launch` until it was renamed `forge start`; the red below is from when it was written.
 Written first and run against the code that did not yet have the subcommand: 24 FAIL lines, the first "FAIL exit of a
 launch (the fake exits 0): (2, \"usage: forge [-h] ... forge: error: argument cmd: invalid choice: 'launch'", then "env
 reaches claude: CACHE_TAX_AUTOWARM: None, want on" and "claude not on PATH: (exit, says so): (2, False), want (127, True)"
@@ -75,31 +76,31 @@ def main():
             d = os.path.join(tmp, str(n[0]))
             os.makedirs(d)
             return launch(d, *a, **k)
-        code, _, err, out = run(LAUNCHERS, ["launch", "orq"])
+        code, _, err, out = run(LAUNCHERS, ["start", "orq"])
         want("exit of a launch (the fake exits 0)", (code, err), (0, ""))
         want("env reaches claude: CACHE_TAX_AUTOWARM", out and out["orq"], "on")
         want("the caller's variables stay", out and out["kept"], "mine")
         want("a variable of another launcher is not added", out and out["other"], None)
-        code, _, _, out = run(LAUNCHERS, ["launch", "plain"])
+        code, _, _, out = run(LAUNCHERS, ["start", "plain"])
         want("the other launcher: its variable", out and out["other"], "x")
         want("the other launcher: orq's variable is absent", out and out["orq"], None)
         argv = ["--model", "opus", "-c", "--", "-p", "two words", ""]
-        code, _, _, out = run(LAUNCHERS, ["launch", "orq"] + argv)
+        code, _, _, out = run(LAUNCHERS, ["start", "orq"] + argv)
         want("args after NAME arrive untouched", out and out["argv"], argv)
-        code, _, _, out = run(LAUNCHERS, ["launch", "orq", "--help"])
+        code, _, _, out = run(LAUNCHERS, ["start", "orq", "--help"])
         want("--help after NAME goes to claude", out and out["argv"], ["--help"])
-        code, so, _, out = run(LAUNCHERS, ["launch"])
+        code, so, _, out = run(LAUNCHERS, ["start"])
         want("no name lists (exit, claude not run)", (code, out), (0, None))
         want("no name lists: names and env keys", ("orq" in so and "CACHE_TAX_AUTOWARM" in so and "plain" in so
                                                    and "OTHER_VAR" in so), True)
         want("no name lists: the key of a third launcher, never a value", ("SECRET_VAR" in so, "hunter2" in so), (True, False))
         for label, doc in (("none configured", None), ("empty", {})):
-            code, so, _, out = run(doc, ["launch"])
+            code, so, _, out = run(doc, ["start"])
             want("no name, %s: (exit, says so, claude not run)" % label, (code, "no launchers" in so, out), (0, True, None))
-        code, _, err, out = run(LAUNCHERS, ["launch", "nope"])
+        code, _, err, out = run(LAUNCHERS, ["start", "nope"])
         want("unknown name: (exit, claude not run)", (code, out), (2, None))
         want("unknown name: names the known ones", ("orq" in err and "plain" in err and "nope" in err), True)
-        code, _, err, out = run(None, ["launch", "orq"])
+        code, _, err, out = run(None, ["start", "orq"])
         want("unknown name with none configured: exit", code, 2)
         bad = (("launchers not an object", ["orq"], "launchers"),
                ("launcher not an object", {"orq": "on"}, "orq"),
@@ -108,11 +109,11 @@ def main():
                ("a key with =", {"orq": {"env": {"A=B": "1"}}}, "A=B"),
                ("a key forge does not know", {"orq": {"envs": {}}}, "envs"))
         for label, launchers, key in bad:
-            for args in (["launch", "orq"], ["launch"]):
+            for args in (["start", "orq"], ["start"]):
                 code, _, err, out = run(launchers, args)
                 want("malformed (%s), %s: (exit, claude not run, names %r)" % (label, args, key),
                      (code, out, key in err), (2, None, True))
-        code, _, err, out = run(LAUNCHERS, ["launch", "orq"], with_claude=False)
+        code, _, err, out = run(LAUNCHERS, ["start", "orq"], with_claude=False)
         want("claude not on PATH: (exit, says so)", (code, "claude" in err and "PATH" in err), (127, True))
     if failures:
         print("\n".join("FAIL " + f for f in failures))

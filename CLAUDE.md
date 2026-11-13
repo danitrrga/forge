@@ -30,7 +30,7 @@ python3 bin/forge skills        # dry-run of the user-scope steps (online skills
 python3 bin/forge doctor        # one PASS/FAIL/SKIP line per check, exit 1 on a FAIL; `doctor NAME` scopes it to a project
 python3 bin/forge test          # every tracked test_*.py at nice 19; `--mutants` runs only the on-demand guard mutants
 python3 tests/test_<name>.py    # one suite: each is a plain script (no pytest) that prints its FAILs and exits 1 on any
-python3 bin/forge check-public --all   # personal data in the engine files
+python3 bin/forge lint --all   # personal data in the engine files
 python3 scripts/bench/skill_bench.py validate   # every skill-bench task: its oracle fails at base and on the naive answer, passes the ideal and alt ones
 ```
 
@@ -79,7 +79,7 @@ row of `forge doctor` follows the switch.
 ## Committing
 
 `forge commit -m MESSAGE (PATH... | --all)` sends each changed path to the history that owns it (the engine's, or the
-user's own data history if they keep one) and prints each hash. With no path it refuses unless given `--all`, so one commit never sweeps in unrelated changes. The `githooks/` run `forge check-public` on the
+user's own data history if they keep one) and prints each hash. With no path it refuses unless given `--all`, so one commit never sweeps in unrelated changes. The `githooks/` run `forge lint` on the
 staged files, the message and the pushed range, and refuse a commit that carries personal data. Use a
 `docs(...)`, `fix(...)`, `test(...)` or `feat(...)` prefix, and describe what changed and why.
 

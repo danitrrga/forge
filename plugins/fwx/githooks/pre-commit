@@ -21,7 +21,7 @@ if [ -n "$ignored" ]; then
     echo "  unstage with: git reset -q -- <path>" >&2
     exit 1
 fi
-"$forge" check-public --root "$root" --staged || {
+"$forge" lint --root "$root" --staged || {
     echo "pre-commit: refused: personal data in the staged files, listed above" >&2
     exit 1
 }

@@ -7,7 +7,7 @@ cd "$(git rev-parse --show-toplevel)" || exit 1
 base=${1:-origin/master}
 rc=0
 step() { name=$1; echo "== $name"; shift; "$@" || { echo "FAIL: $name" >&2; rc=1; }; }
-step check-public python3 bin/forge check-public --all
+step lint python3 bin/forge lint --all
 step fresh-install python3 tests/test_fresh_install.py
 step fwx sh -c 'cd plugins/fwx && python3 bin/fwx test --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py'
 step actionlint mise x actionlint@1.7.12 -- actionlint

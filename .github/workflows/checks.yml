@@ -1,7 +1,7 @@
 name: Project checks
 
 # The engine's checks, called by ci.yml's `project` job. They run on a bare runner: no private deny
-# file (config/publish-deny.txt, so check-public applies the public list alone), no credentials,
+# file (config/publish-deny.txt, so lint applies the public list alone), no credentials,
 # and a toy HOME that the fresh-install test builds for itself.
 # Add jobs here, not in ci.yml: every job in this file is already inside "All checks". No trigger
 # but workflow_call and workflow_dispatch, and no top-level `concurrency` (ci.yml owns both).
@@ -28,8 +28,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: check-public
-        run: python3 bin/forge check-public --all
+      - name: lint
+        run: python3 bin/forge lint --all
       # The second step runs even when the first fails, so one run reports both.
       - name: fresh install
         if: ${{ !cancelled() }}

@@ -1,4 +1,4 @@
-"""forge launch NAME [ARGS...]: claude started with the environment a named launcher declares in config/forge.json
+"""forge start NAME [ARGS...]: claude started with the environment a named launcher declares in config/forge.json
 (`launchers`: {name: {"env": {VAR: value}}}). The process is replaced (os.execvpe), so the terminal that ran it holds
 claude and nothing of forge stays behind."""
 import os
@@ -33,7 +33,7 @@ def _launchers(doc):
 def cmd(a):
     table, bad = _launchers(lib.settings())
     if bad:
-        print("! forge launch: %s" % bad, file=sys.stderr)
+        print("! forge start: %s" % bad, file=sys.stderr)
         return 2
     if not a.name:
         if not table:
@@ -42,13 +42,13 @@ def cmd(a):
             print("%s  %s" % (name, " ".join(sorted(launcher.get("env", {}))) or "(no env)"))
         return 0
     if a.name not in table:
-        print("! forge launch: unknown launcher %r (known: %s)" % (a.name, ", ".join(sorted(table)) or "none"),
+        print("! forge start: unknown launcher %r (known: %s)" % (a.name, ", ".join(sorted(table)) or "none"),
               file=sys.stderr)
         return 2
     env = dict(os.environ, **table[a.name].get("env", {}))
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
-        print("! forge launch: claude is not on PATH", file=sys.stderr)
+        print("! forge start: claude is not on PATH", file=sys.stderr)
         return 127
     sys.stdout.flush()
     os.execvpe(claude, ["claude"] + a.args, env)

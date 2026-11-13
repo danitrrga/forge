@@ -1,6 +1,6 @@
 """Keeping personal data out of the public history, and committing to the right one.
 
-`forge check-public` scans text for what must not be published. Four sources, one per
+`forge lint` scans text for what must not be published. Four sources, one per
 git moment: the staged files (pre-commit), a commit message file (commit-msg), a range of
 commits (pre-push) and the whole engine tree (CI, the merge gate). With `--root DIR` the
 files and commits are those of another repository (`--all` is then every file it tracks, the
@@ -223,7 +223,7 @@ def nul_list(out):
 
 
 def engine_files(root=None):
-    """The files check-public --all covers. With one history that holds everything (before the split),
+    """The files lint --all covers. With one history that holds everything (before the split),
     the allowlist picks the engine's; with two, the engine history tracks the engine and nothing else.
     Another repository (`root`) has no allowlist of forge's: every file it tracks."""
     files = nul_list(git(["ls-files", "-c", "-z"], root=root))
@@ -318,7 +318,7 @@ def read(src, root=None):
     return git(["cat-file", "blob", v], binary=True, root=root)
 
 
-def cmd_check_public(a):
+def cmd_lint(a):
     try:
         # --root: another repository's files and commits, scanned with this checkout's two lists.
         root = os.path.abspath(a.root) if a.root else None
@@ -346,24 +346,24 @@ def cmd_check_public(a):
                 hits.append("FAIL %s%s [%s] %s" % (label, ":%d" % n if n else "", rule, text[:80]))
                 bad_files.add(label)
     except CheckError as e:
-        print("forge check-public: %s" % e, file=sys.stderr)
+        print("forge lint: %s" % e, file=sys.stderr)
         return 2
     except OSError as e:
-        print("forge check-public: %s" % e, file=sys.stderr)
+        print("forge lint: %s" % e, file=sys.stderr)
         return 2
     lists = "public list" + (" + private list, %d pattern(s)" % len(deny) if deny else "")
     where = ", %d commit(s)" % ncommits if a.range else ""
     for h in hits:
         print(h)
     if hits:
-        print("FAIL check-public: %d hit(s) in %d of %d file(s) checked (%s%s)" % (len(hits), len(bad_files), len(items), lists, where))
+        print("FAIL lint: %d hit(s) in %d of %d file(s) checked (%s%s)" % (len(hits), len(bad_files), len(items), lists, where))
         return 1
     if a.all and not items:
-        print("FAIL check-public: 0 file(s) checked: an empty tree means a wrong root (%s)" % lists)
+        print("FAIL lint: 0 file(s) checked: an empty tree means a wrong root (%s)" % lists)
         return 1
-    print("PASS check-public: %d file(s) checked (%s%s)" % (len(items), lists, where))
+    print("PASS lint: %d file(s) checked (%s%s)" % (len(items), lists, where))
     if a.range and not ncommits:
-        print("check-public: no new commit in the range, so nothing was scanned (a range that cannot be listed is exit 2, not this)")
+        print("lint: no new commit in the range, so nothing was scanned (a range that cannot be listed is exit 2, not this)")
     return 0
 
 
