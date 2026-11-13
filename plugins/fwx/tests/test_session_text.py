@@ -327,6 +327,14 @@ def main():
           "no branch" in amend3 and all(w in amend3 for w in ("already exist", "git worktree add")), "sub-step 3 is: %r" % amend3)
     check("control: a sub-step 2 without the fix rounds and a sub-step 3 without a reason are caught",
           "fix rounds of step 6" not in "2. No execute. Then this step again." and "git worktree add" not in "3. At step 4 give the status line, but make no branch and write no `executing` row.")
+    # Review of PR 130, second reviewer: a session cut during an amendment resumes at step 2 or 3 from its last row (`planning` or `postmortem`)
+    # and runs on into step 4, which makes the branch the amendment already has. Step 0 says it in one sentence.
+    # Seen red on 31ceb02: FAIL: step 0 says a `planning` or `postmortem` row after an `executing` row is an amendment with no branch at step 4 -> step 0 has no 'amendment'
+    s0 = step(texts["SKILL.md"], 0)
+    check("step 0 says a `planning` or `postmortem` row after an `executing` row is an amendment with no branch at step 4",
+          all(w in s0 for w in ("amendment", "`planning` or `postmortem` row", "after an `executing` row", "make no branch at step 4")),
+          "step 0 has %s" % ("no 'amendment'" if "amendment" not in s0 else "the sentence without one of its parts"))
+    check("control: a step 0 without the sentence is caught", "amendment" not in "Go to the step of the last stage: none or `discuss` 1; `planning` 2; `postmortem` 3.")
     l8 = block(session_pb, "n_L8")
     check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
     # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
