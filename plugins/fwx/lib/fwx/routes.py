@@ -144,16 +144,17 @@ def route(argv):
         return "help", obj
     if rest and rest[0] in verbs:
         verb, rest = rest[0], rest[1:]
-        row = new[(obj, verb)]
-        for key, r in new.items():  # a row that needs a flag: `linear list --waiting`, `walk stop --orphans`
-            if len(key) == 3 and key[:2] == (obj, verb) and key[2] in rest:
-                rest.remove(key[2])
-                row = r
-                break
-        return row[2], row[3] + lead + rest
-    row = new.get((obj,)) or new.get((obj, DEFAULTS.get(obj, "")))
-    if row is None:
-        return ("verb?", obj) if verbs else None
+    else:
+        verb = DEFAULTS.get(obj)  # no verb: the object's default, with the options that were given
+        if (obj,) not in new and verb is None:
+            return ("verb?", obj) if verbs else None
+    key = (obj, verb) if verb else (obj,)
+    row = new[key]
+    for k, r in new.items():  # a row that needs a flag: `linear list --waiting`, `walk stop --orphans`
+        if len(k) == len(key) + 1 and k[:len(key)] == key and k[-1].startswith("--") and k[-1] in rest:
+            rest.remove(k[-1])
+            row = r
+            break
     return row[2], row[3] + lead + rest
 
 
