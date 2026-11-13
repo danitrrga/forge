@@ -357,8 +357,8 @@ def denial_of(mine, result):
         src, rule = classify_denial(t, kind, denied_event=had_event)
         if src:
             return src, rule, " ".join(t.split())[:200]
-    if texts:
-        return "unknown", "", " ".join(texts[0].split())[:200]
+    if texts:   # an error that no permission check produced (an Edit whose text is not in the file): the call failed before it was asked
+        return "failed", "", "the call failed with no permission decision: " + " ".join(texts[0].split())[:160]
     return None, None, ""
 
 
@@ -397,6 +397,8 @@ def decide(target, events, uses, results, wrappers=""):
         src, rule, evidence = denial_of(mine, r)
         if src == "unjudged":   # the classifier never ruled on it: nothing was allowed and nothing was denied by policy
             denied = _verdict("not-run", tool, "classifier gave no verdict (%s)" % rule, decision=label)
+        elif src == "failed":   # attempted, refused by nobody, did not run
+            denied = _verdict("not-run", tool, evidence, decision=label)
         elif src:
             denied = _verdict("denied/" + src, tool, evidence, source=src, rule=rule, decision=label)
     return denied or _verdict("not-run", target["tool"], "a call was made and nothing says what happened to it")
@@ -449,7 +451,7 @@ def build_world(base, flavor, forge_root):
     write(os.path.join(repo, "NOTE.txt"), "a note\n")
     write(os.path.join(repo, "src", "probe.txt"), "before\n" * 6)
     write(os.path.join(repo, "tests", "test_probe.py"), "print('ok')\n")
-    write(os.path.join(repo, "hooks", "guard_tool_use.py"), "# stub\n")
+    write(os.path.join(repo, "hooks", "guard_tool_use.py"), "# stub: the word before is here so an Edit of it can run\n")
     write(os.path.join(repo, "tools", "verdict.py"), FAKE_PY % (wrappers, "verdict.py"))
     write(os.path.join(repo, "bin", "forge"), FAKE_PY % (wrappers, "bin/forge"))
     write(os.path.join(repo, ".fwx", "p1", "state.md"), "# state\n")
