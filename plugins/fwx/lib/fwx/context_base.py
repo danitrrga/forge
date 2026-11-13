@@ -281,7 +281,7 @@ def inspect(path, folder=None, map_path=None, source=None):
     first, _, rest = text.partition("\n")
     m = _MARK.match(first)
     if not m:
-        problems.append("no mark on the first line: `fwx context-base seal` it, or build it")
+        problems.append("no mark on the first line: `fwx context seal` it, or build it")
     elif m.group(1) != sha8(rest):
         problems.append("edited since sealed: the mark %s is not the sha of the rest (%s)" % (m.group(1), sha8(rest)))
     lines = [l for l in rest.splitlines() if l.strip()]

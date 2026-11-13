@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """hooks/hooks.json, hooks/subagent_context.py and data/context-base.tsv (2.5 U3): the plugin's SubagentStart hook, which
-reads the phase's base-context file (the one writer is `fwx context-base build`, U2) and hands it to the agent that starts,
+reads the phase's base-context file (the one writer is `fwx context new`, U2) and hands it to the agent that starts,
 by the table of cases (Apéndice C of plan/2.5-contexto-base.md), and never writes.
 
 Not covered here: the live run with Claude Code and Haiku (it is in the PR; the transcript is its evidence, not the model's
@@ -120,7 +120,7 @@ def phase(repo=None, decisions=True):
         dec = os.path.join(d, "decisions.tsv")
         state.append_decision(dec, decision=DECIDED_WORD, why="because", support="chosen")
         state.append_decision(dec, decision=OPEN_WORD, why="because", support="agent-assumption")
-    r = helpers.fwx(repo, "context-base", "build", d, "--map", toy_map)
+    r = helpers.fwx(repo, "context", "new", d, "--map", toy_map)
     s.eq("the toy base builds", r.returncode, 0)
     with open(cb.base_path(d), encoding="utf-8") as f:
         return repo, d, f.read()
@@ -226,7 +226,7 @@ repo_m, folder_m, base_m = phase(repo=helpers.toy_repo(), decisions=False)
 for i in range(40):
     state.append_decision(os.path.join(folder_m, "decisions.tsv"), decision="%s %d %s" % (DECIDED_WORD, i, "z" * 100),
                           why="w", support="chosen")
-r = helpers.fwx(repo_m, "context-base", "build", folder_m, "--map", toy_map)
+r = helpers.fwx(repo_m, "context", "new", folder_m, "--map", toy_map)
 s.eq("a base with 40 long decisions builds", r.returncode, 0)
 for agent in INDEPENDENT:
     got = delivered(run(repo_m, agent)) or ""
@@ -243,7 +243,7 @@ state.append_decision(dec, decision="GUESS-memcached", why="w", support="agent-a
 state.append_decision(dec, decision="MID-v1", why="w", support="chosen")                                   # D5 -> D6 -> D7
 state.append_decision(dec, decision="MID-v2", why="w", support="chosen", supersedes="D5")                  # D6
 state.append_decision(dec, decision="MID-v3", why="w", support="chosen", supersedes="D6")                  # D7
-helpers.fwx(repo_s, "context-base", "build", folder_s, "--map", toy_map)
+helpers.fwx(repo_s, "context", "new", folder_s, "--map", toy_map)
 got = delivered(run(repo_s, "fwx:planner")) or ""
 decided = got[got.index("## Decided"):] if "## Decided" in got else ""
 s.ok("a superseded decision is not in Decided: OLDCHOICE-postgres", "OLDCHOICE-postgres" not in decided, decided)
@@ -259,7 +259,7 @@ for i in range(20):
     state.append_decision(os.path.join(folder_c, "decisions.tsv"), decision="OLD %d %s" % (i, "q" * 100), why="w", support="chosen")
 for i in range(20):
     state.append_decision(os.path.join(folder_c, "decisions.tsv"), decision="NEW %d" % i, why="w", support="chosen", supersedes="D%d" % (i + 1))
-helpers.fwx(repo_c, "context-base", "build", folder_c, "--map", toy_map)
+helpers.fwx(repo_c, "context", "new", folder_c, "--map", toy_map)
 got = delivered(run(repo_c, "fwx:planner")) or ""
 s.ok("20 long rows replaced by 20 short ones: listed one by one, no count line",
      "closed decisions" not in got and "OLD 0 " not in got and "NEW 19" in got, got[got.find("## Decided"):])
@@ -281,7 +281,7 @@ for slug in ("alpha", "beta"):
     d = str(state.new_phase(slug, cwd=repo2))
     helpers.write(d, "context.md", CONTEXT)
     state.append_decision(os.path.join(d, "decisions.tsv"), decision="%s-%s" % (DECIDED_WORD, slug), why="w", support="chosen")
-    helpers.fwx(repo2, "context-base", "build", d, "--map", toy_map)
+    helpers.fwx(repo2, "context", "new", d, "--map", toy_map)
     folders.append(d)
 r = run(repo2, "fwx:planner")
 s.eq("two open phases and none bound: injected with 2 open phases", (r.returncode, r.stdout, r.stderr), (0, "", ""))

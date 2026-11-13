@@ -45,7 +45,7 @@ _STAGE_WORD = re.compile(r"[a-z][a-z-]*(\s|\Z)")
 _SESSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _FORMULA = "=+-@\""
 _SLUG = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*\Z")
-# `.fwx/[subprojects/<name>/]milestones/vN/phases/NN-slug`: the only folders cancel and new-subphase act on
+# `.fwx/[subprojects/<name>/]milestones/vN/phases/NN-slug`: the only folders `phase remove` and `subphase new` act on
 _PHASE_PATH = re.compile(r"(^|/)" + re.escape(PLAN_DIR) + r"/(subprojects/[^/]+/)?milestones/v\d+/phases/\d+(\.\d+)*-[^/]+\Z")
 _SCOPE_PATH = re.compile(r"(^|/)" + re.escape(PLAN_DIR) + r"(/subprojects/[^/]+)?\Z")
 _TEMPLATES = Path(__file__).resolve().parents[2] / "templates"
@@ -208,9 +208,9 @@ def read_session(cwd=None, session=None):
     except FileNotFoundError:
         return None
     except (ValueError, OSError) as e:
-        raise StateError("%s cannot be read (%s); delete it or run `fwx state use` again" % (path, e))
+        raise StateError("%s cannot be read (%s); delete it or run `fwx session attach` again" % (path, e))
     if not isinstance(data, dict) or set(data) != {"subproject", "phase_dir"}:
-        raise StateError("%s is not {subproject, phase_dir}; delete it or run `fwx state use` again" % path)
+        raise StateError("%s is not {subproject, phase_dir}; delete it or run `fwx session attach` again" % path)
     return data
 
 
@@ -566,7 +566,7 @@ def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
     if m is None:
         m = new_milestone(scope).name
     elif not (scope / "milestones" / m).is_dir():
-        raise StateError("milestone %s does not exist in %s: `fwx state new-milestone` makes it" % (m, scope))
+        raise StateError("milestone %s does not exist in %s: `fwx milestone new` makes it" % (m, scope))
     parent = scope / "milestones" / m / "phases"
     d = _claim(parent, lambda n: "%02d-%s" % (n, slug), _next_number(parent))
     _write_new(d / "context.md", texts["phase/context.md"].replace("<phase folder name>", d.name))

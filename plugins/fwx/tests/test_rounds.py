@@ -201,7 +201,7 @@ s.ok("a read makes no audit file", not os.path.exists(state.phase_paths(d)["audi
 s.eq("--use in a folder with no rows yet counts 1", run(d, "--use", "first")[:2], (0, "rounds 1/3"))
 
 r = helpers.fwx(repo, "help")
-s.ok("`fwx help` lists rounds", any(line.split()[:1] == ["rounds"] for line in r.stdout.splitlines()), r.stdout)
+s.ok("`fwx help` lists rounds", any(line.split()[:2] == ["fwx", "rounds"] for line in r.stdout.splitlines()), r.stdout)
 
 # ---- no one else writes or names the audit file --------------------------------------------------------------------
 

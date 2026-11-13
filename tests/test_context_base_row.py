@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Part 2.5 (base context), unit U8: the `context base` row of `forge doctor` (forge/cli.py context_base_row).
 
-The row runs fwx's `context-base check` and `context-base audit` for each target: every ~/.claude/settings.json entry
+The row runs fwx's `context lint` and `context audit` for each target: every ~/.claude/settings.json entry
 whose command runs `subagent_context.py --file F [--source S]`, and every profile with `framework: true`. One result
 per target: any exit other than 0 and 77 is a FAIL (naming the target, what fwx printed and the `python3 <fwx>/bin/fwx
 context-base ...` command that reproduces it), 77 is a SKIP that starts `NOT RUN, NOT ARMED`, 0 is a PASS with fwx's
@@ -158,28 +158,28 @@ r = one("no framework.plugin_source", rows(), "SKIP")
 check("no plugin_source: says NOT RUN, NOT ARMED", r.detail.startswith(cli.NOT_ARMED), r)
 
 # ---- a hook entry: what fwx is asked, and each exit code
-d = world(plan=[{"match": "check", "rc": 0, "out": "checked 1 file, 5 units, sources current\n"},
+d = world(plan=[{"match": "lint", "rc": 0, "out": "checked 1 file, 5 units, sources current\n"},
                 {"match": "audit", "rc": 0, "out": "audited 3 subagent(s) in 1 session(s): 3 ok, 0 stale, 0 not armed\n"}])
 r = one("both exit 0", rows(), "PASS")
 check("PASS carries both last lines", "sources current" in r.detail and "audited 3 subagent(s)" in r.detail, r)
 asked = calls(d)
 check("check gets the file, the source and the hook's whole command",
-      ["context-base", "check", "--file", FILE, "--source", SOURCE, "--hook-command", CMD] in asked, asked)
+      ["context", "lint", "--file", FILE, "--source", SOURCE, "--hook-command", CMD] in asked, asked)
 check("audit gets forge, the last 3 sessions and the file",
-      len(asked) == 2 and asked[1][:3] == ["context-base", "audit", "--project"] and asked[1][4:] == ["--last", "3", "--file", FILE], asked)
+      len(asked) == 2 and asked[1][:3] == ["context", "audit", "--project"] and asked[1][4:] == ["--last", "3", "--file", FILE], asked)
 check("audit's project is forge's own root (the toy one)", len(asked) == 2 and asked[1][3].endswith("/forge") and "/case-" in asked[1][3], asked)
 
-world(plan=[{"match": "check", "rc": 1, "out": "checked 1 file, 5 units, 1 problem(s)\n", "err": "context-base: stale: the source moved on\n"}])
+world(plan=[{"match": "lint", "rc": 1, "out": "checked 1 file, 5 units, 1 problem(s)\n", "err": "context-base: stale: the source moved on\n"}])
 r = one("exit 1 of a hook check is a FAIL", rows(), "FAIL")
 check("FAIL names the target", "context-base.md" in r.detail, r)
 check("FAIL quotes what fwx said", "stale: the source moved on" in r.detail and "1 problem(s)" in r.detail, r)
 check("FAIL names the command that reproduces it",
-      "python3 " in r.detail and "/bin/fwx context-base check --file %s" % FILE in r.detail and shlex.quote(CMD) in r.detail, r)
+      "python3 " in r.detail and "/bin/fwx context lint --file %s" % FILE in r.detail and shlex.quote(CMD) in r.detail, r)
 
 world(plan=[{"match": "context-base", "rc": 1, "out": "FAIL a1 general-purpose: missing\n"}])
 one("FAIL swallowed as SKIP: every step of the target exits 1", rows(), "FAIL")
 
-world(plan=[{"match": "check", "rc": 2, "err": "fwx context-base: bad usage\n"}])
+world(plan=[{"match": "lint", "rc": 2, "err": "fwx context: bad usage\n"}])
 r = one("exit 2 (usage) is a FAIL, not swallowed", rows(), "FAIL")
 check("exit 2: says what fwx said and the exit code", "bad usage" in r.detail and "exit 2" in r.detail, r)
 
@@ -188,7 +188,7 @@ world(plan=[{"match": "audit", "rc": 1, "out": "FAIL a1b2c3 general-purpose: mis
 r = one("exit 1 of the audit is a FAIL", rows(), "FAIL")
 check("the audit's FAIL names each agent and its type",
       all(w in r.detail for w in ("a1b2c3", "general-purpose", "missing", "d4e5f6", "Plan", "wrong")), r)
-check("the audit's FAIL names the reproducing command", "/bin/fwx context-base audit --project" in r.detail and "--last 3" in r.detail, r)
+check("the audit's FAIL names the reproducing command", "/bin/fwx context audit --project" in r.detail and "--last 3" in r.detail, r)
 
 # the audit prints its summary first and its FAIL lines after: the summary is quoted whatever its place, and the FAIL lines are capped
 world(plan=[{"match": "audit", "rc": 1, "out": "audited 7 subagent(s) in 3 session(s): 0 ok, 0 stale, 0 not armed\n" +
@@ -197,15 +197,15 @@ r = one("an audit with the summary first and 7 FAIL lines", rows(), "FAIL")
 check("the summary is quoted, five FAIL lines and the count of the rest",
       "audited 7 subagent(s)" in r.detail and "id4 " in r.detail and "id5 " not in r.detail and "+2 more FAIL line(s)" in r.detail, r)
 
-world(plan=[{"match": "check", "rc": 77, "out": "NOT RUN, NOT ARMED: no open phase\n"}, {"match": "audit", "rc": 77, "out": "NOT RUN, NOT ARMED: no subagent transcript\n"}])
+world(plan=[{"match": "lint", "rc": 77, "out": "NOT RUN, NOT ARMED: no open phase\n"}, {"match": "audit", "rc": 77, "out": "NOT RUN, NOT ARMED: no subagent transcript\n"}])
 r = one("both exit 77", rows(), "SKIP")
 check("77: the SKIP starts NOT RUN, NOT ARMED and carries fwx's line", r.detail.startswith(cli.NOT_ARMED) and "no open phase" in r.detail, r)
 
-world(plan=[{"match": "audit", "rc": 77, "out": "audit: no subagent transcript found\n"}, {"match": "check", "rc": 0, "out": "checked 1 file, 5 units, sources current\n"}])
+world(plan=[{"match": "audit", "rc": 77, "out": "audit: no subagent transcript found\n"}, {"match": "lint", "rc": 0, "out": "checked 1 file, 5 units, sources current\n"}])
 r = one("check 0, audit 77", rows(), "PASS")
 check("the PASS says the audit did not run", "sources current" in r.detail and "NOT RUN, NOT ARMED" in r.detail and "no subagent transcript" in r.detail, r)
 
-world(plan=[{"match": "check", "rc": 0, "out": "ok\n"}, {"match": "audit", "rc": 1, "out": "FAIL zz9 Explore: double\n"}])
+world(plan=[{"match": "lint", "rc": 0, "out": "ok\n"}, {"match": "audit", "rc": 1, "out": "FAIL zz9 Explore: double\n"}])
 r = one("check 0, audit 1: the failure is not hidden by the pass", rows(), "FAIL")
 
 # ---- a command without --file cannot be checked; two entries are two results
@@ -220,13 +220,13 @@ check("each result names its own file", "context-base.md" in got[0].detail and "
 # ---- profiles
 d = world(commands=(), profiles={"app": {"framework": True}, "off": {"framework": False}, "plain": {}},
           plan=[{"match": "audit", "rc": 0, "out": "audited 1 subagent(s) in 1 session(s): 1 ok, 0 stale, 0 not armed\n"},
-                {"match": "check", "rc": 0, "out": "checked 1 file, 4 units, sources current\n"}])
+                {"match": "lint", "rc": 0, "out": "checked 1 file, 4 units, sources current\n"}])
 r = one("one framework profile", rows(), "PASS")
 check("the profile is named", "app" in r.detail, r)
 asked = calls(d)
 check("check --project P, then audit --project P --last 3, on the project's path (and only that profile)",
-      len(asked) == 2 and asked[0][:2] == ["context-base", "check"] and asked[0][2] == "--project" and asked[0][3].endswith("/app") and
-      asked[1][:2] == ["context-base", "audit"] and asked[1][2:3] == ["--project"] and asked[1][3] == asked[0][3] and
+      len(asked) == 2 and asked[0][:2] == ["context", "lint"] and asked[0][2] == "--project" and asked[0][3].endswith("/app") and
+      asked[1][:2] == ["context", "audit"] and asked[1][2:3] == ["--project"] and asked[1][3] == asked[0][3] and
       asked[1][4:] == ["--last", "3"], asked)
 world(commands=(), profiles={"app": {"framework": True}}, plan=[{"match": "audit", "rc": 1, "out": "FAIL q1 general-purpose: missing\n"}])
 r = one("a framework profile whose audit fails", rows(), "FAIL")
@@ -238,7 +238,7 @@ check("a hook entry and a profile: two results, entry first", [("hook" in x.deta
 # ---- fwx that never returns
 saved = getattr(cli, "CONTEXT_BASE_TIMEOUT", None)
 cli.CONTEXT_BASE_TIMEOUT = 1
-world(plan=[{"match": "check", "rc": 0, "sleep": 30}])
+world(plan=[{"match": "lint", "rc": 0, "sleep": 30}])
 r = one("fwx that does not answer", rows(), "FAIL")
 check("the timeout is named", "1 s" in r.detail, r)
 cli.CONTEXT_BASE_TIMEOUT = saved

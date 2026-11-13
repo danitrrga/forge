@@ -1,4 +1,4 @@
-"""The audit of what each subagent was handed: `fwx context-base audit`, read from the transcripts, never from what a model says.
+"""The audit of what each subagent was handed: `fwx context audit`, read from the transcripts, never from what a model says.
 
 Claude Code writes one transcript per subagent, `<projects-dir>/<folder>/<session>/subagents/agent-<id>.jsonl` (a Workflow agent
 under `subagents/workflows/wf_<id>/`) with an `agent-<id>.meta.json` beside it, and records a SubagentStart hook's context as an

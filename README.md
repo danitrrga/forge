@@ -94,7 +94,7 @@ behind every "built".
    work you did not ask for. A post-mortem comes after: much harder, and it asks how each requirement of the plan will be
    verified. An objection is a claim to judge, not something to build: it is checked against the code before the plan
    changes (Every's rule: risk has no natural limit, any design has one more way to fail). A script checks the plan's
-   structure first (`fwx plan check`). Built.
+   structure first (`fwx plan lint`). Built.
 5. **You are asked only what is yours.** A question to you is about taste or direction. It comes with the options and
    what each one implies, and with no recommendation, so you decide without pressure. What the system can settle alone
    it settles, notes and goes on. Built in the discuss skill.
@@ -104,7 +104,7 @@ behind every "built".
 7. **Every agent starts from the same base context.** Once the problem is stated, one text, built once per phase and
    capped in size, says what the codebase holds, what you want and how the machinery fits. A `SubagentStart` hook hands
    it to every agent that is launched, by agent type, so a prompt carries only its own part and agents do not each read
-   the same documents. Built (`fwx context-base`, `plugins/fwx/hooks/subagent_context.py`).
+   the same documents. Built (`fwx context`, `plugins/fwx/hooks/subagent_context.py`).
 8. **Delete before adding.** What always loads costs the most: a study of repository context files (arXiv 2602.11988)
    found that they tend to lower task success and raise cost. The improvement pass deletes before it simplifies and simplifies before it
    automates. The orchestrator also keeps its own context small by delegating: if it compacts before the post-mortem,
@@ -152,7 +152,7 @@ source in a `referent:` line.
 
 ```sh
 python3 plugins/fwx/bin/fwx --help              # every command, one line each
-python3 plugins/fwx/bin/fwx playbooks tree      # the workflow tree: each node and its exits
+python3 plugins/fwx/bin/fwx playbook list      # the workflow tree: each node and its exits
 python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test leaves it to this; CI runs it as the fwx job)
 ```
 

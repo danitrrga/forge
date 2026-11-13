@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""The executor's brief and `fwx wave prepare` refusing to launch what is not delimited (3.4 U9):
+r"""The executor's brief and `fwx wave new` refusing to launch what is not delimited (3.4 U9):
 lib/fwx/execute/brief.py, data/executor-brief.md, lib/fwx/execute/prepare.py.
 
 Builds on the toy world of tests/test_wave_prepare.py (its Scene, its runner, its mutant_tree): a toy repo with a linked
@@ -16,7 +16,7 @@ Seen red before the code existed (python3 tests/test_wave_brief.py, `brief` was 
 
 Red before the 3.4 U8 fix (the brief held the prepare-time sha, wrong for every later wave, and a report path under `.git`):
   FAIL: briefs: the base is the prompt's BASE line, and no sha is in the brief (a later wave starts from a later head: 3.4 U8 fix, F1): ...
-  FAIL: briefs: SCOPE gives the scratch folder (`fwx wave scratch <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2): ...
+  FAIL: briefs: SCOPE gives the scratch folder (`fwx scratch new <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2): ...
   FAIL: briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply: Write it as JSON to <repo>/.git/fwx/runs/01-alpha-97f1a0d-1/reports/T1.json, with Bash (a heredoc)...
 
 Controls: each case also runs on a copy of bin/, lib/, data/ and templates/ with one line of the code changed (`MUTANTS`, each
@@ -134,11 +134,11 @@ def case_briefs(R, S):
     S.ok("briefs: SCOPE lists its file, the run and both trailers",
          "src/a.py" in scope and run in scope and "Fwx-Task: %s/T1" % PHASE in scope and "Fwx-Run: %s" % run in scope, scope)
     S.ok("briefs: the base is the prompt's BASE line, and no sha is in the brief (a later wave starts from a later head: 3.4 U8 fix, F1)",
-         "`BASE` line of your prompt" in scope and "fwx wave check-base" in scope and not re.search(r"\b[0-9a-f]{40}\b", t1) and base not in t1, scope)
+         "`BASE` line of your prompt" in scope and "fwx base" in scope and not re.search(r"\b[0-9a-f]{40}\b", t1) and base not in t1, scope)
     S.ok("briefs: SCOPE names the other task of the wave, as a path it may not write", "src/b.py" in scope and "may not" in scope.lower(), scope)
     S.ok("briefs: SCOPE says nothing of wave 2's files (they run later)", "README" not in scope, scope)
-    S.ok("briefs: SCOPE gives the scratch folder (`fwx wave scratch <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2)",
-         "fwx wave scratch %s T1" % run in scope and "`tmp/` inside it" in scope and "TMPDIR" in scope and ".git/" not in t1 and os.path.join(folder, "tmp") not in t1, scope)
+    S.ok("briefs: SCOPE gives the scratch folder (`fwx scratch new <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2)",
+         "fwx scratch new %s T1" % run in scope and "`tmp/` inside it" in scope and "TMPDIR" in scope and ".git/" not in t1 and os.path.join(folder, "tmp") not in t1, scope)
     ctx = f1.get("CONTEXT", "")
     for name in ("context.md", "decisions.tsv", "plan.md"):
         S.ok("briefs: CONTEXT has the absolute path of %s" % name,
@@ -296,7 +296,7 @@ def case_fix(R, S):
     S.eq("fix: --control-findings alone keeps the plan's briefs", all(isinstance(t["brief"], str) for t in tasks_of(ok).values()), True)
 
 
-# The shape `fwx walk findings` writes into fix.json (3.5 acceptance, second pass, D5): the verifier's row, with `line: null`.
+# The shape `fwx walk converge` writes into fix.json (3.5 acceptance, second pass, D5): the verifier's row, with `line: null`.
 WALK = {"id": "T1-7", "source": "w1-F2", "verdict": "CONFIRMED", "severity": "medium", "file": "src/a.py", "line": None,
         "claim": "ArrowRight steps the month and drops keyboard focus.", "evidence": "Tab x3, ArrowRight: activeElement BODY. screenshot-1.png",
         "screen": "?view=calendar", "steps": "Open calendar, Tab 3 times, press ArrowRight", "expected": "Keyboard user keeps a visible focus",
@@ -304,9 +304,9 @@ WALK = {"id": "T1-7", "source": "w1-F2", "verdict": "CONFIRMED", "severity": "me
 
 
 def case_fix_walk(R, S):
-    """D5: the file `fwx walk findings` writes is the one `prepare --fix` takes, and the review page keeps reading the full file.
+    """D5: the file `fwx walk converge` writes is the one `prepare --fix` takes, and the review page keeps reading the full file.
     Red before the change, with WALK fed to `--fix` (python3 tests/test_wave_brief.py):
-      FAIL: fix walk: the walk's fix.json: exit: got (2, "fwx wave prepare: --fix <file>: finding 1 has the key 'expected', which is not one of id, file, line, claim, evidence, severity; finding 1 has the key 'kind', ..."), want (0, '')
+      FAIL: fix walk: the walk's fix.json: exit: got (2, "fwx wave new: --fix <file>: finding 1 has the key 'expected', which is not one of id, file, line, claim, evidence, severity; finding 1 has the key 'kind', ..."), want (0, '')
       FAIL: fix walk: a walk finding with file null: says the file, the id and what to do: ... finding 2: file is not a non-empty string ... (refused for its keys, not named for its file)"""
     sc = wp.Scene(tasks=[wp.task("T1", 1, ["src/a.py"]), wp.task("T2", 2, ["src/b.py"])])
     f = findings_file([WALK, dict(WALK, id="T1-8", file="src/b.py", line=12, evidence=["one.png", "two.png"])])

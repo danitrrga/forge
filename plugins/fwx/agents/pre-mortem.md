@@ -45,4 +45,4 @@ objections: one row rests on an unchecked claim.
 small, 1 part.
 ```
 
-With `ok`, `## Failure reasons` holds `None.`. Then run `fwx plan check` on the phase folder once and fix any error it names about `premortem.md`; the missing `plan.md` it reports is expected. A claim you could not read or run goes in a closing `## Unproven` section, `None.` if there is none. Your whole reply is one line, `<verdict> <path> reasons=<n> unproven=<n>` and nothing after it: everything else is in the file.
+With `ok`, `## Failure reasons` holds `None.`. Then run `fwx plan lint` on the phase folder once and fix any error it names about `premortem.md`; the missing `plan.md` it reports is expected. A claim you could not read or run goes in a closing `## Unproven` section, `None.` if there is none. Your whole reply is one line, `<verdict> <path> reasons=<n> unproven=<n>` and nothing after it: everything else is in the file.

@@ -239,7 +239,7 @@ def case_waiting(s, root, repo, bare):
     f.add_issue("TOY-5", labels=["factory-review"], ago=60)
     f.add_issue("TOY-6", labels=["factory"])
     f.add_issue("OTH-1", project="other-project", labels=["factory-failed"])
-    r = cli(root, repo, f, "waiting", "--json")
+    r = cli(root, repo, f, "list", "--waiting", "--json")
     s.eq("waiting --json: exit 0", r.returncode, 0)
     try:
         got = json.loads(r.stdout)
@@ -249,7 +249,7 @@ def case_waiting(s, root, repo, bare):
     s.eq("waiting --json: the count", got["count"], 2)
     s.eq("waiting --json: the issues, all of this project", sorted(i["identifier"] for i in got["issues"]), ["TOY-4", "TOY-5"])
     s.ok("waiting --json: updatedAt on each", all(i.get("updatedAt") for i in got["issues"]), "got %r" % got)
-    r = cli(root, repo, f, "waiting")
+    r = cli(root, repo, f, "list", "--waiting")
     s.ok("waiting: the text says how many", r.returncode == 0 and r.stdout.startswith("2 waiting"), "stdout %r" % r.stdout)
     f.close()
 
@@ -283,7 +283,7 @@ def case_create(s, root, repo, bare):
     f = Fake()
     two = [{"title": "first", "context": "c1", "expected": "e1"},
            {"title": "second", "context": "c2", "expected": "e2", "labels": ["mini-plan"]}]
-    r = cli(root, repo, f, "create", "--template", "general", stdin=json.dumps(two))
+    r = cli(root, repo, f, "new", "--template", "general", stdin=json.dumps(two))
     s.eq("create two: exit 0", r.returncode, 0)
     ids = [l.split()[0] for l in r.stdout.splitlines() if l.strip()]
     s.eq("create two: two identifiers", ids, ["TOY-101", "TOY-102"])
@@ -293,12 +293,12 @@ def case_create(s, root, repo, bare):
          f.issues.get("TOY-101", {}).get("description", "").startswith("## Context\n\nc1"),
          "got %r" % f.issues.get("TOY-101"))
     n = len(f.created)
-    r = cli(root, repo, f, "create", "--template", "general", stdin=json.dumps(two))
+    r = cli(root, repo, f, "new", "--template", "general", stdin=json.dumps(two))
     s.ok("create replayed: nothing new, said so", r.returncode == 0 and len(f.created) == n and "already there" in r.stdout,
          "exit %d, created %d, stdout %r" % (r.returncode, len(f.created), r.stdout))
-    r = cli(root, repo, f, "create", "--template", "general", stdin=json.dumps({"title": "one", "context": "c", "expected": "e"}))
+    r = cli(root, repo, f, "new", "--template", "general", stdin=json.dumps({"title": "one", "context": "c", "expected": "e"}))
     s.ok("create one issue as an object", r.returncode == 0 and r.stdout.startswith("TOY-103"), "stdout %r" % r.stdout)
-    r = cli(root, repo, f, "create", "--template", "general",
+    r = cli(root, repo, f, "new", "--template", "general",
             stdin=json.dumps({"title": "entry", "context": "c", "expected": "e", "labels": ["factory", "needs-owner"]}))
     sent = [m["variables"]["input"]["labelIds"] for m in f.mutations() if "issueCreate" in m["query"]][-1]
     s.eq("create: the labels the issue names, by their Linear names", (r.returncode, sent),
@@ -306,9 +306,9 @@ def case_create(s, root, repo, bare):
     n += 1
     for label, text in (("not JSON", "title: x"), ("empty", ""), ("a number", "3"),
                         ("an issue with no expected", json.dumps({"title": "t", "context": "c"}))):
-        r = cli(root, repo, f, "create", "--template", "general", stdin=text)
+        r = cli(root, repo, f, "new", "--template", "general", stdin=text)
         s.eq("create with stdin %s: exit 2" % label, r.returncode, 2)
-    r = cli(root, repo, f, "create", "--template", "nope", stdin=json.dumps(two[0]))
+    r = cli(root, repo, f, "new", "--template", "nope", stdin=json.dumps(two[0]))
     s.eq("create with an unknown template: exit 2", r.returncode, 2)
     s.eq("create refused: nothing more was created", len(f.created), n + 1)
     f.close()
@@ -392,7 +392,7 @@ def case_failures(s, root, repo, bare):
                        cwd=repo, env=e, capture_output=True, text=True, timeout=60)
     s.ok("Linear unreachable: exit 1, says so", r.returncode == 1 and "cannot reach" in r.stderr, "exit %d stderr %r" % (r.returncode, r.stderr))
     f = Fake()
-    for args in ([], ["nope"], ["list", "--label", "factory", "extra"], ["waiting", "--bogus"], ["--project"]):
+    for args in ([], ["nope"], ["list", "--label", "factory", "extra"], ["list", "--waiting", "--bogus"], ["--project"]):
         r = cli(root, repo, f, *args)
         s.eq("usage %r: exit 2" % (args,), r.returncode, 2)
     r = cli(root, repo, f, "--help")
@@ -400,7 +400,7 @@ def case_failures(s, root, repo, bare):
     s.eq("usage and help made no request", len(f.requests), 0)
     f.close()
     r = helpers.fwx(repo, "help")
-    s.ok("fwx lists linear", any(l.split()[:1] == ["linear"] for l in r.stdout.splitlines()), "stdout %r" % r.stdout)
+    s.ok("fwx lists linear", any(l.split()[:2] == ["fwx", "linear"] for l in r.stdout.splitlines()), "stdout %r" % r.stdout)
 
 
 CASES = [case_list, case_waiting, case_comment, case_create, case_label, case_no_key, case_endpoint, case_project,

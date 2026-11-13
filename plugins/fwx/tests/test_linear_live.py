@@ -158,13 +158,13 @@ def live(s, key, project):
 
     # 1. the fixed issue
     ident = None
-    rc, out, err = cli("create", "--template", "general", stdin=json.dumps(ISSUE))
+    rc, out, err = cli("new", "--template", "general", stdin=json.dumps(ISSUE))
     first = out.split()
     if s.ok("1. create: exit", rc == 0, "exit %d: %s" % (rc, err.strip()[:300])) and first:
         ident = first[0]
         s.ok("1. create: an issue identifier", bool(linear.IDENT.match(ident)), "stdout %r" % out)
         print("1. the test issue %s was %s" % (ident, "made now" if "created" in out.split("  ")[-1] else "found by its fixed id"))
-        rc2, out2, err2 = cli("create", "--template", "general", stdin=json.dumps(ISSUE))
+        rc2, out2, err2 = cli("new", "--template", "general", stdin=json.dumps(ISSUE))
         s.ok("1. create again: the same issue, already there", rc2 == 0 and out2.split()[:1] == [ident] and "already there" in out2,
              "exit %d, stdout %r, stderr %r" % (rc2, out2, err2.strip()[:200]))
         got = client.issue(ident)

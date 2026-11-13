@@ -41,9 +41,9 @@ def _dump(obj):
 
 def _unresolved(r):
     if r["candidates"]:
-        return ("no phase is bound to this session and %d are open: %s (bind one with `fwx state use PHASE_DIR`)"
+        return ("no phase is bound to this session and %d are open: %s (bind one with `fwx session attach PHASE_DIR`)"
                 % (len(r["candidates"]), ", ".join(r["candidates"])))
-    return "no open phase in %s (`fwx state new-phase SLUG` makes one)" % r["plan_root"]
+    return "no open phase in %s (`fwx phase new SLUG` makes one)" % r["plan_root"]
 
 
 def _bound_to(r, bound):
@@ -124,7 +124,7 @@ def cmd_new_subphase(a):
 def cmd_new_milestone(a):
     root = state.plan_root()
     if not root.exists():
-        raise state.StateError("%s does not exist: `fwx state new-phase SLUG` makes it with its PROJECT.md" % root)
+        raise state.StateError("%s does not exist: `fwx phase new SLUG` makes it with its PROJECT.md" % root)
     print(state.new_milestone(state.scope_root(root, a.subproject), a.name))
     return 0
 

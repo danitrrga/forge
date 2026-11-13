@@ -1,4 +1,4 @@
-"""`fwx wave prepare`: validate a part and give `execute` its `args` (3.4 U2; the shape is C.3 of the plan).
+"""`fwx wave new`: validate a part and give `execute` its `args` (3.4 U2; the shape is C.3 of the plan).
 
 `prepare(cwd, ...)` works on the integration checkout `cwd` is in (the session's worktree, on the phase branch) and returns
 the args dict; it raises WaveError (exit 2) for anything that must stop the run before it starts, and RedBase (exit 1) when
@@ -35,7 +35,7 @@ the head: the review and the trusted-edit report diff from it. The run id contin
 
 The briefs (3.4 U9, execute/brief.py): one file per task in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md`, its path in
 `waves[].tasks[].brief`. They hold no base sha (a later wave starts from a later head: the workflow names it in the prompt) and
-no path for a report: an agent writes in the folder `fwx wave scratch` makes in its own worktree. They are built, and checked, before the base is run: a field that
+no path for a report: an agent writes in the folder `fwx scratch new` makes in its own worktree. They are built, and checked, before the base is run: a field that
 is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
 so a refusal and a red base leave nothing behind. With `--fix` the one brief is the fixer's (`fix.brief`) and the tasks of the
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
@@ -331,7 +331,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     _write(made, folder, gating)
     if not gating and not revert and not fixing and tasks and len(_done(top, branch, name, tasks)) == len(tasks):
         say("every task is already on %s: `execute` has nothing to run; to run the gate and the review on it: "
-            "fwx wave prepare --part-dir %s --plane %s --branch %s --from gate" % (branch, shlex.quote(part_dir), plane, shlex.quote(branch)))
+            "fwx wave new --part-dir %s --plane %s --branch %s --from gate" % (branch, shlex.quote(part_dir), plane, shlex.quote(branch)))
     clashes = plan._clashes("plan.md", data)
     waves = []
     for n in sorted({t["wave"] for t in tasks}):

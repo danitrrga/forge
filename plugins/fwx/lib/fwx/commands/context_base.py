@@ -1,9 +1,9 @@
-"""Build, seal, check and audit the base-context file every agent of a phase is handed: fwx context-base build|seal|check|audit.
+"""Build, seal, check and audit the base-context file every agent of a phase is handed: fwx context new|seal|lint|audit.
 
-  build <dir> [--map F]      write the base of a phase, subphase or job folder (`<git-common-dir>/fwx/context-base/<phase>.md`)
+  new <dir> [--map F]        write the base of a phase, subphase or job folder (`<git-common-dir>/fwx/context-base/<phase>.md`)
                              when it changed; prints `wrote <path> <n> units (map <m>, goal <g>, decided <d>)`, or `unchanged ...`
   seal <file> [--source F]   put the mark on a file written by hand, and with --source the sha of the document it shortens
-  check <dir> | --file F | --project P   [--source F] [--map F] [--hook-command CMD]
+  lint <dir> | --file F | --project P   [--source F] [--map F] [--hook-command CMD]
                              exit 1 when the base is missing (with a context.md), over the cap, edited since sealed, stale
                              (stage, context.md, decisions.tsv, the map or --source moved on) or names an `fwx` command that
                              does not exist; --hook-command runs CMD with a toy SubagentStart input and wants the base for
@@ -18,7 +18,7 @@
                              --projects-dir defaults to ${CLAUDE_CONFIG_DIR:-~/.claude}/projects. Exit 1 on any FAIL.
 
 Lengths are UTF-16 units, cap 9000 (lib/fwx/context_base.py says why). --map points at another map than data/context-map.md.
-Exit 0 ok, 1 refused or failed, 2 usage or an unusable folder, 77 `NOT RUN, NOT ARMED` (check --project: no open phase; audit: no
+Exit 0 ok, 1 refused or failed, 2 usage or an unusable folder, 77 `NOT RUN, NOT ARMED` (lint --project: no open phase; audit: no
 subagent transcript found).
 """
 import os
@@ -26,10 +26,10 @@ import sys
 
 from fwx import config, context_audit as ca, context_base as cb, state
 
-USAGE = ("usage: fwx context-base build <dir> [--map F]\n"
-         "       fwx context-base seal <file> [--source F]\n"
-         "       fwx context-base check (<dir> | --file F | --project P) [--source F] [--map F] [--hook-command CMD]\n"
-         "       fwx context-base audit (--session ID | --project P [--last N]) [--projects-dir D] [--file F]\n")
+USAGE = ("usage: fwx context new <dir> [--map F]\n"
+         "       fwx context seal <file> [--source F]\n"
+         "       fwx context lint (<dir> | --file F | --project P) [--source F] [--map F] [--hook-command CMD]\n"
+         "       fwx context audit (--session ID | --project P [--last N]) [--projects-dir D] [--file F]\n")
 NOT_RUN = "NOT RUN, NOT ARMED"
 
 
@@ -52,7 +52,7 @@ def _options(args, names):
 
 
 def _usage(why=""):
-    sys.stderr.write((("fwx context-base: %s\n" % why) if why else "") + USAGE)
+    sys.stderr.write((("fwx context: %s\n" % why) if why else "") + USAGE)
     return 2
 
 
@@ -102,7 +102,7 @@ def _check(args):
     else:
         path = opts["--file"]
         if cb._text(path) is None:
-            sys.stderr.write("fwx context-base: %s is not there\n" % path)
+            sys.stderr.write("fwx context: %s is not there\n" % path)
             return 2
     n, problems = cb.inspect(path, folder=folder, map_path=map_path, source=source)
     if "--hook-command" in opts and not problems:
@@ -131,7 +131,7 @@ def _audit(args):
                                     project=opts.get("--project"), last=int(last))
         lines, rc = ca.report(ca.audit(sessions, file=opts.get("--file"), project=opts.get("--project")))
     except ca.AuditError as e:
-        sys.stderr.write("fwx context-base: %s\n" % e)
+        sys.stderr.write("fwx context: %s\n" % e)
         return 2
     print("\n".join(lines))
     return rc
@@ -146,5 +146,5 @@ def main(argv):
         sys.stderr.write("context-base: %s\n" % e)
         return 1 if argv[0] == "build" and "over the cap" in str(e) else 2
     except (state.StateError, config.ConfigError) as e:
-        sys.stderr.write("fwx context-base: %s\n" % e)
+        sys.stderr.write("fwx context: %s\n" % e)
         return 2

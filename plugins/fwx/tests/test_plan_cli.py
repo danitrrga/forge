@@ -487,8 +487,8 @@ for args, label in (((), "nothing"), ((ph,), "no step"), ((ph, "plans"), "unknow
 nogit = helpers.mkdtemp("fwx-nogit-")
 r = run(nogit, "status", nogit, "premortem")
 s.eq("status outside a git repository: exit", r.returncode, 2)
-r = helpers.fwx(repo, "plan", "check", ph)
-s.ok("`plan check` is still there", r.returncode in (0, 1) and "checked" in r.stdout, r.stdout + r.stderr)
-s.ok("plan help names the three", all(w in run(repo).stderr for w in ("check", "brief", "status")), run(repo).stderr)
+r = helpers.fwx(repo, "plan", "lint", ph)
+s.ok("`plan lint` is still there", r.returncode in (0, 1) and "checked" in r.stdout, r.stdout + r.stderr)
+s.ok("plan alone names the three verbs", all(w in run(repo).stderr for w in ("lint", "brief", "status")), run(repo).stderr)
 
 s.done()

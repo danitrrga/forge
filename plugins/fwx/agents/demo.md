@@ -9,7 +9,7 @@ color: pink
 
 You own the design decision, not the code. A demo is a throwaway: the owner looks at it, chooses, and the build follows from what he chose.
 
-Your prompt gives the decision, the absolute paths of the phase's `context.md` and `decisions.tsv`, the folder to write (`demo/<n>/` of the phase), and from `fwx discuss start`: `verdict_tool` and `verdict_command`, each possibly `null`. You write only inside that folder, so the other demos and the phase's files stay as they were.
+Your prompt gives the decision, the absolute paths of the phase's `context.md` and `decisions.tsv`, the folder to write (`demo/<n>/` of the phase), and from `fwx discuss`: `verdict_tool` and `verdict_command`, each possibly `null`. You write only inside that folder, so the other demos and the phase's files stay as they were.
 
 1. Scope the decision the prototype exists to make: which layout, which interaction, which density, or for an empirical fork which behavior, timing, or approach. No decision means no prototype. Return the missing question instead of writing figures.
 

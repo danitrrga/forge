@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`fwx playbooks check` without the tree (lib/fwx/playbooks.py): the block format of every playbook and what
+"""`fwx playbook lint` without the tree (lib/fwx/playbooks.py): the block format of every playbook and what
 the blocks say to each other, on a toy playbook of five nodes and a toy scope.tsv. The tree is the owner's drawing in
 private data, so what compares a block with it is tests/test_playbooks_tree.py.
 
@@ -248,35 +248,35 @@ repo = helpers.toy_repo()  # the command reads paths.tree of the repo it runs in
 
 def cli(*args, cwd=None):
     import subprocess
-    return subprocess.run([sys.executable, os.path.join(code, "bin", "fwx"), "playbooks"] + list(args),
+    return subprocess.run([sys.executable, os.path.join(code, "bin", "fwx"), "playbook"] + list(args),
                           cwd=cwd or repo, env=helpers.clean_env(**ENV), capture_output=True, text=True)
 
 
-r = cli("check")
+r = cli("lint")
 s.ok("check with no playbook and no tree: NOT RUN and exit 77",
      r.returncode == 77 and "NOT RUN, NOT ARMED: no playbook has nodes yet" in r.stdout
      and "NOT CHECKED: 5 nodes of session (playbook not written yet)" in r.stdout, "%s %r" % (r.returncode, r.stdout))
 helpers.write(code, "playbooks/session.md", doc(good()))
-r = cli("check")
+r = cli("lint")
 s.ok("check with one playbook and no tree: it ran what it could, exit 77, and says what it looked at",
      r.returncode == 77 and "5 blocks" in r.stdout and "no tree" in r.stdout and "NOT RUN, NOT ARMED" in r.stdout
      and "NOT CHECKED: 2 nodes of execute" in r.stdout, "%s %r" % (r.returncode, r.stdout))
 b = good()
 b[1]["stage"] = "nosuchstage"
 helpers.write(code, "playbooks/session.md", doc(b))
-r = cli("check")
+r = cli("lint")
 s.ok("check with a problem exits 1 and prints it", r.returncode == 1 and "nosuchstage" in r.stdout, "%s %r" % (r.returncode, r.stdout))
-r = cli("check", "--only", "execute")
+r = cli("lint", "--only", "execute")
 s.ok("--only keeps to one playbook: the problem of the other is not shown",
      r.returncode == 77 and "nosuchstage" not in r.stdout, "%s %r" % (r.returncode, r.stdout))
-r = cli("check", "--only", "session")
+r = cli("lint", "--only", "session")
 s.ok("--only session shows the problem of session", r.returncode == 1 and "nosuchstage" in r.stdout, "%s %r" % (r.returncode, r.stdout))
 for args, label in ((["check", "--only", "nosuch"], "an unknown playbook"), (["check", "--only"], "--only with no value"),
                     (["check", "extra"], "a stray argument"), (["check", "--tree", os.path.join(code, "absent")], "a tree that is not there")):
     r = cli(*args)
     s.ok("check %s: exit 2, a message, no traceback" % label, r.returncode == 2 and r.stderr and "Traceback" not in r.stderr,
          "%s %r" % (r.returncode, r.stderr))
-r = cli("check", "--only", "nosuch")
+r = cli("lint", "--only", "nosuch")
 s.ok("check --only nosuch names the valid playbooks", "session" in r.stderr and "execute" in r.stderr, r.stderr)
 
 s.done()

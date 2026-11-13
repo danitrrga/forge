@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """`project.worktree_setup`: the commands that make a fresh worktree able to run the project's checks (`fwx wave setup`,
-lib/fwx/execute/worktree_setup.py), and where they are called: `fwx wave check-base` (every executor's step 0) and `fwx wave
-prepare` (the phase worktree, before its base runs).
+lib/fwx/execute/worktree_setup.py), and where they are called: `fwx base` (every executor's step 0) and `fwx wave new` (the phase worktree, before its base runs).
 
 Toy repos only, commands like `touch` and `sh -c`: no package manager, no network, no real project. The user's Claude Code
 folder is a toy one (`CLAUDE_CONFIG_DIR`).
@@ -224,7 +223,7 @@ def case_timeout(R, S):
 
 def check_after(R, sc, sha):
     """What an executor does: `check-base`, then its checks. Returns (check-base result, whether the check ran, its exit)."""
-    r = R(sc.wt, "wave", "check-base", sha, env=sc.env)
+    r = R(sc.wt, "base", sha, env=sc.env)
     if r.returncode != 0:
         return r, False, None
     c = subprocess.run(["sh", "-c", "test -f deps/installed"], cwd=sc.wt)
@@ -245,22 +244,22 @@ def case_check_base(R, S):
     S.eq("check-base: a failing setup: exit 43, and the task's check did not run", (r.returncode, ran), (43, False))
     S.ok("check-base: the line is the reason: `worktree setup failed: <command>`", r.stderr.startswith("worktree setup failed: sh -c 'exit 7'") and "exit 7" in r.stderr and "worktree-setup.log" in r.stderr, r.stderr)
     stray = Scene(setup=["touch stray.txt"])
-    S.eq("check-base: a setup that leaves a stray file: exit 43", R(stray.wt, "wave", "check-base", stray.head(), env=stray.env).returncode, 43)
+    S.eq("check-base: a setup that leaves a stray file: exit 43", R(stray.wt, "base", stray.head(), env=stray.env).returncode, 43)
     wrong = Scene()
-    r = R(wrong.wt, "wave", "check-base", "abcdef1", env=wrong.env)
+    r = R(wrong.wt, "base", "abcdef1", env=wrong.env)
     S.eq("check-base: a wrong base is still 42, and runs no setup", (r.returncode, wrong.has("deps/installed")), (42, False))
-    r = R(wrong.repo, "wave", "check-base", wrong.head(), env=wrong.env)
+    r = R(wrong.repo, "base", wrong.head(), env=wrong.env)
     S.eq("check-base: the main checkout is still 42, and runs no setup", (r.returncode, wrong.has("deps/installed", wrong.repo)), (42, False))
     none = Scene(setup=[])
-    r = R(none.wt, "wave", "check-base", none.head(), env=none.env)
+    r = R(none.wt, "base", none.head(), env=none.env)
     S.eq("check-base: nothing configured: silent, as before", (r.returncode, r.stdout, r.stderr), (0, "", ""))
     broken = Scene(setup="npm ci")
-    r = R(broken.wt, "wave", "check-base", broken.head(), env=broken.env)
+    r = R(broken.wt, "base", broken.head(), env=broken.env)
     S.ok("check-base: a configuration that cannot be read: exit 43 and the setup is the reason", r.returncode == 43 and r.stderr.startswith("worktree setup failed:") and "worktree_setup" in r.stderr, "%d %r" % (r.returncode, r.stderr))
     helpers.write(sc.wt, "package-lock.json", "{}\n")
     helpers.git(sc.wt, "add", "-A")
     helpers.git(sc.wt, "commit", "-q", "-m", "lock")
-    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    r = R(sc.wt, "base", sc.head(), env=sc.env)
     S.ok("check-base: the head moved to a commit that changes a dependency file: setup runs again", r.returncode == 0 and "worktree setup: 1 command ran" in r.stderr, r.stderr)
 
 
@@ -293,7 +292,7 @@ def tolerant(R, S, label, cfg_text, want):
         os.remove(os.path.join(sc.repo, ".claude", "fwx.json"))
     else:
         helpers.write(sc.repo, ".claude/fwx.json", cfg_text)
-    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    r = R(sc.wt, "base", sc.head(), env=sc.env)
     S.eq("config tolerance, %s: check-base exit" % label, r.returncode, want[0])
     S.ok("config tolerance, %s: check-base prints no traceback%s" % (label, ", and nothing at all" if want[0] == 0 else ""),
          "Traceback" not in r.stderr and (want[0] != 0 or r.stderr == ""), r.stderr)
@@ -324,7 +323,7 @@ def case_unrelated_config(R, S):
         r = tolerant(R, S, label, text, (43, 2))
     sc = Scene(setup=[MK])
     helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 2, "models": {"foo": {}}, "project": {"worktree_setup": [MK]}}))
-    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    r = R(sc.wt, "base", sc.head(), env=sc.env)
     S.ok("config tolerance: with a setup configured, an unrelated bad value does not stop it", r.returncode == 0 and sc.has("deps/installed"), r.stderr)
 
 
@@ -378,7 +377,7 @@ def case_io_errors(R, S):
     S.ok("log is a directory: setup: a one-line error, exit 2, no traceback: got %d %r" % (r.returncode, r.stderr[-200:]),
          r.returncode == 2 and "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1 and "worktree-setup.log" in r.stderr, r.stderr)
     S.ok("log is a directory: the command did not run", not sc.has("deps/installed"))
-    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    r = R(sc.wt, "base", sc.head(), env=sc.env)
     S.ok("log is a directory: check-base: exit 43, the reason on one line, no traceback: got %d %r" % (r.returncode, r.stderr[-200:]),
          r.returncode == 43 and "Traceback" not in r.stderr and r.stderr.startswith("worktree setup failed:"), r.stderr)
     if os.geteuid() == 0:
@@ -592,7 +591,7 @@ def case_failure_record(R, S):
     Red before the fix: FAIL: failure record: exit 43 leaves .fwx-agent/worktree-setup-failed.json: no such file
     """
     sc = Scene(setup=["sh -c 'exit 7'"])
-    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    r = R(sc.wt, "base", sc.head(), env=sc.env)
     rec = os.path.join(os.path.realpath(sc.wt), ".fwx-agent", "worktree-setup-failed.json")
     try:
         with open(rec, encoding="utf-8") as f:
@@ -604,10 +603,10 @@ def case_failure_record(R, S):
          isinstance(got, dict) and got.get("setup_failed") == r.stderr.splitlines()[0] and got["setup_failed"].startswith("worktree setup failed:"), repr(got))
     S.ok("failure record: the worktree is still clean (the record is ignored)", sc.clean(), helpers.git(sc.wt, "status", "--porcelain"))
     helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"worktree_setup": [MK]}}))
-    r = R(sc.wt, "wave", "check-base", sc.head(), env=sc.env)
+    r = R(sc.wt, "base", sc.head(), env=sc.env)
     S.ok("failure record: a later success removes it", r.returncode == 0 and not os.path.exists(rec), r.stderr)
     wrong = Scene()
-    R(wrong.wt, "wave", "check-base", "abcdef1", env=wrong.env)
+    R(wrong.wt, "base", "abcdef1", env=wrong.env)
     S.ok("failure record: a wrong base (42) leaves none", not os.path.exists(os.path.join(wrong.wt, ".fwx-agent", "worktree-setup-failed.json")))
 
 
@@ -659,7 +658,7 @@ def case_symlink_root(R, S):
     S.ok("`.fwx-agent` a symlink: setup refused with one line and exit 2: got %d %r" % (r.returncode, r.stderr[-160:]),
          r.returncode == 2 and "Traceback" not in r.stderr and len(r.stderr.strip().splitlines()) == 1 and "symbolic link" in r.stderr, r.stderr)
     S.eq("`.fwx-agent` a symlink: nothing written in its target, the command did not run", (os.listdir(target), sc.has("deps/installed")), ([], False))
-    r = R(sc.wt, "wave", "scratch", "run1", "unit1", env=sc.env)
+    r = R(sc.wt, "scratch", "new", "run1", "unit1", env=sc.env)
     S.ok("`.fwx-agent` a symlink: scratch refuses it too (exit 2, nothing in the target)", r.returncode == 2 and os.listdir(target) == [], "%d %s %s" % (r.returncode, r.stderr, os.listdir(target)))
 
 
@@ -714,7 +713,7 @@ def case_gaps(R, S):
              r.returncode == 2 and "failed in" in r.stderr and "Traceback" not in r.stderr, r.stderr)
         S.ok("git failing: %s: no marker, and the commands %s" % (label, "ran" if ran else "did not run"),
              not sc.has(".fwx-agent/worktree-setup.json") and sc.has("deps/installed") == ran, "marker %s, deps %s" % (sc.has(".fwx-agent/worktree-setup.json"), sc.has("deps/installed")))
-        r = R(sc.wt, "wave", "check-base", sc.head(), env=dict(sc.env, PATH=fake, FWX_STUB_FAIL=pattern))
+        r = R(sc.wt, "base", sc.head(), env=dict(sc.env, PATH=fake, FWX_STUB_FAIL=pattern))
         S.ok("git failing: %s: check-base: not a pass (43 or 42)" % label, r.returncode in (42, 43), "%d %s" % (r.returncode, r.stderr[-120:]))
     # stdin: the command reads and gets EOF at once, though the caller's stdin is an open pipe that never closes
     sc = Scene(setup=["read x; mkdir -p deps && touch deps/after-read"])

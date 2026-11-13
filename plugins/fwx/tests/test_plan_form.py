@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lib/fwx/plan_form.py through `plan.check_phase` and `fwx plan check`: the form of the plan files and what a script can check.
+"""lib/fwx/plan_form.py through `plan.check_phase` and `fwx plan lint`: the form of the plan files and what a script can check.
 
 Every case builds a phase folder inside a toy repo from one valid base (plan.md, premortem.md, postmortem.md, decisions.tsv),
 changes one thing, and wants one exact message in `errors` (or `warnings`), on the command's output, and exit 1 (0 for a
@@ -112,7 +112,7 @@ def task(fm, tid):
 
 
 def cli(d, *args):
-    return subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "plan", "check", d] + list(args), cwd=WORK,
+    return subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "plan", "lint", d] + list(args), cwd=WORK,
                           env=helpers.clean_env(), capture_output=True, text=True)
 
 

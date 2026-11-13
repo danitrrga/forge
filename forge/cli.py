@@ -1067,7 +1067,7 @@ def doctor_extra_row():
     return out
 
 
-# How long the `context base` row waits for one `fwx context-base` call. The audit reads subagent transcripts, which are
+# How long the `context base` row waits for one `fwx context` call. The audit reads subagent transcripts, which are
 # megabytes, and a check with --hook-command runs the hook once.
 CONTEXT_BASE_TIMEOUT = 120
 CONTEXT_BASE_HOOK = "subagent_context.py"
@@ -1075,9 +1075,9 @@ CONTEXT_BASE_LAST = "3"  # sessions the audit reads: enough to see a regression,
 
 
 def _fwx_context_base(fwx, args):
-    """(exit code or None on a timeout, stdout lines, stderr lines) of `python3 <fwx> context-base ARGS`."""
+    """(exit code or None on a timeout, stdout lines, stderr lines) of `python3 <fwx> context ARGS`."""
     try:
-        r = subprocess.run([sys.executable, fwx, "context-base"] + args, cwd=lib.ROOT, text=True, capture_output=True,
+        r = subprocess.run([sys.executable, fwx, "context"] + args, cwd=lib.ROOT, text=True, capture_output=True,
                            stdin=subprocess.DEVNULL, timeout=CONTEXT_BASE_TIMEOUT)
     except subprocess.TimeoutExpired:
         return None, [], []
@@ -1104,7 +1104,7 @@ def _context_base_target(label, fwx, steps):
                 ["+%d more FAIL line(s)" % (len(fails) - 5)] if len(fails) > 5 else []) + err[:5]
             why = "did not answer in %d s" % CONTEXT_BASE_TIMEOUT if code is None else "exit %d" % code
             failed.append("%s %s (%s) -- %s" % (kind, why, " | ".join(said) or "no output",
-                                               shlex.join(["python3", fwx, "context-base"] + args)))
+                                               shlex.join(["python3", fwx, "context"] + args)))
     if failed:
         return lib.Result("FAIL", "context base", "%s: %s" % (label, "; ".join(failed)))
     if not passed:
@@ -1115,10 +1115,10 @@ def _context_base_target(label, fwx, steps):
 def context_base_row():
     """The `context base` row (2.5): did every subagent get the base context it should? Targets, one result each:
     every entry of ~/.claude/settings.json whose command runs `subagent_context.py --file F [--source S]`, and every
-    profile with `framework: true`. For an entry, `fwx context-base check --file F --source S --hook-command CMD` (the
+    profile with `framework: true`. For an entry, `fwx context lint --file F --source S --hook-command CMD` (the
     file is sealed and current, the hook answers a general-purpose agent and not an Explore one) and `audit --project
     <this checkout> --last 3 --file F` (the subagent transcripts of the last three sessions here); for a profile,
-    `check --project P` and `audit --project P --last 3`. fwx is `bin/fwx` of framework.plugin_source.path. Exit 0 is a
+    `lint --project P` and `audit --project P --last 3`. fwx is `bin/fwx` of framework.plugin_source.path. Exit 0 is a
     PASS, 77 a SKIP, anything else a FAIL naming the command to run by hand. No fwx, or nothing to look at: a SKIP, NOT RUN,
     NOT ARMED. The audit reads transcripts written before the hook existed, so it FAILs until three newer sessions with
     subagents have passed; that is the row working, not a reason to weaken it."""
@@ -1149,14 +1149,14 @@ def context_base_row():
             out.append(lib.Result("FAIL", "context base", "the %s entry under %s in %s has no --file, so there is no base to check -- "
                                   "forge sync --apply, or add --file F to the entry" % (CONTEXT_BASE_HOOK, event, where)))
             continue
-        check = ["check", "--file", opts["--file"]] + (["--source", opts["--source"]] if "--source" in opts else []) + ["--hook-command", command]
+        check = ["lint", "--file", opts["--file"]] + (["--source", opts["--source"]] if "--source" in opts else []) + ["--hook-command", command]
         audit = ["audit", "--project", lib.ROOT, "--last", CONTEXT_BASE_LAST, "--file", opts["--file"]]
         out.append(_context_base_target("hook %s" % lib.short(opts["--file"]), fwx, [("check", check), ("audit", audit)]))
     for name, prof in sorted(lib.profiles().items()):
         if prof.get("framework") is True and prof.get("project_path"):
             project = prof["project_path"]
             out.append(_context_base_target("profile %s" % name, fwx, [
-                ("check", ["check", "--project", project]), ("audit", ["audit", "--project", project, "--last", CONTEXT_BASE_LAST])]))
+                ("check", ["lint", "--project", project]), ("audit", ["audit", "--project", project, "--last", CONTEXT_BASE_LAST])]))
     return out or lib.Result("SKIP", "context base", NOT_ARMED + "no %s entry in %s and no profile with framework true, so no subagent's base "
                              "context was looked at" % (CONTEXT_BASE_HOOK, where))
 

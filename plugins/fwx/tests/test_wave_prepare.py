@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""`fwx wave prepare` and `fwx wave check-base` (3.4 U2): lib/fwx/commands/wave.py, lib/fwx/execute/prepare.py, base.py.
+"""`fwx wave new` and `fwx base` (3.4 U2): lib/fwx/commands/wave.py, lib/fwx/execute/prepare.py, base.py.
 
 The run builds toy repos (tests/helpers.py `toy_repo`, with a linked worktree on the phase branch as the session has) and
 asks the command through `bin/fwx`. The user's Claude Code folder is a toy one (`CLAUDE_CONFIG_DIR`), so no real setting
@@ -11,10 +11,10 @@ Seen red before the code existed (python3 tests/test_wave_prepare.py, first line
   FAIL: args: run: got None, want '01-alpha-fe27f07-1'
 
 Red before `--from gate` existed (3.4 align):
-  FAIL: from gate: exit: got (2, 'usage: fwx wave prepare --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] [--control-findings F]'), want (0, '')
+  FAIL: from gate: exit: got (2, 'usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] [--control-findings F]'), want (0, '')
   FAIL: run_dir: a normal run has from null and run_dir above its briefs: got (None, '.../.git/fwx/runs/01-alpha-b93c090-1'), want (None, None)
 
-Red before `fwx wave scratch` existed (3.4 U8 fix, F2; `case_scratch`):
+Red before `fwx scratch new` existed (3.4 U8 fix, F2; `case_scratch`):
   FAIL: scratch: exit, stderr: got (2, 'usage: fwx wave <prepare|check-base|integrate|fix-round|revert|cleanup|summary> ...\n'), want (0, '')
   FAIL: scratch: with a report and a TMPDIR file in it the worktree is clean: got '?? .fwx-agent/\n', want ''
 Controls added: the folder not ignored, the folder under `.git`.
@@ -22,8 +22,8 @@ Controls added: the folder not ignored, the folder under `.git`.
 Red before `prepare` read a subphase's postmortem.md from the phase folder (the post-mortem step writes it there; the contract
 keeps a subphase's own plan.md, state.md, report and audit.tsv only; `case_subphase`; the toy post-mortem is written where
 `fwx plan brief <phase> postmortem` says, not where the reader looks):
-  FAIL: subphase: exit: got (2, 'fwx wave prepare: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read (No such file or directory)'), want (0, '')
-  FAIL: subphase security: exit: got (2, 'fwx wave prepare: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read ...
+  FAIL: subphase: exit: got (2, 'fwx wave new: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read (No such file or directory)'), want (0, '')
+  FAIL: subphase security: exit: got (2, 'fwx wave new: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read ...
 Control: a subphase with no postmortem.md anywhere is still refused, and the refusal names the phase's file.
 
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
@@ -37,7 +37,7 @@ line of each, seen red:
   baseRef not from user:   FAIL: baseRef from the user's settings: exit: got 2, want 0
   unattended never set:    FAIL: unattended: factory args.unattended False, want True: got False, want True
   done from every branch:  FAIL: done: a trailer on another branch is not done: got ['T1', 'T3'], want ['T1']
-  checks of the checkout:  FAIL: from a worktree: exit: got (2, 'fwx wave prepare: no checks defined: ...'), want (0, '')
+  checks of the checkout:  FAIL: from a worktree: exit: got (2, 'fwx wave new: no checks defined: ...'), want (0, '')
   subphase as a phase:     FAIL: subphase: context.md is the parent's: got '.../03-alpha/03.1-beta/context.md', want '.../03-alpha/context.md'
   check-base by merge-base: FAIL: check-base: an ancestor of HEAD is another base: exit 0, want 42: got 0, want 42
   check-base, main checkout: FAIL: check-base: the main checkout: exit 0, want 42: got 0, want 42
@@ -140,7 +140,7 @@ class Scene:
     def prepare(self, R, *extra, plane="session", branch="phase", cwd=None, env=None):
         e = dict(self.env)
         e.update(env or {})
-        return R(cwd or self.cwd, "wave", "prepare", "--part-dir", self.part, "--plane", plane, "--branch", branch, *extra, env=e)
+        return R(cwd or self.cwd, "wave", "new", "--part-dir", self.part, "--plane", plane, "--branch", branch, *extra, env=e)
 
     def audit_exists(self):
         return os.path.exists(os.path.join(self.part, "audit.tsv"))
@@ -400,7 +400,7 @@ def case_from_gate(R, S):
     alld.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: %s-%s-1" % (PHASE, PHASE, alld.head()[:7]))
     r = alld.prepare(R)
     S.ok("all done without --from: prepare still exits 0 and says on stderr what goes on (the orchestrator loads no playbook): exit %d, stderr %r" % (r.returncode, r.stderr[:200]),
-         r.returncode == 0 and "wave prepare --part-dir %s --plane session --branch phase --from gate" % alld.part in r.stderr)
+         r.returncode == 0 and "wave new --part-dir %s --plane session --branch phase --from gate" % alld.part in r.stderr)
     nrun = Scene(tasks=[task("T1", 1, ["src/a.py"])])
     nrun.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1" % PHASE)
     refused(S, "from gate, no Fwx-Run on the branch", nrun, nrun.prepare(R, "--from", "gate"), "Fwx-Run")
@@ -411,7 +411,7 @@ def case_from_gate(R, S):
 def case_check_base(R, S):
     sc = Scene()
     base = sc.head()
-    cb = lambda cwd, *a: R(cwd, "wave", "check-base", *a, env=sc.env)  # noqa: E731
+    cb = lambda cwd, *a: R(cwd, "base", *a, env=sc.env)  # noqa: E731
     r = cb(sc.cwd, base)
     S.eq("check-base: the HEAD of a linked worktree: exit", (r.returncode, r.stderr), (0, ""))
     S.eq("check-base: a short sha", cb(sc.cwd, base[:7]).returncode, 0)
@@ -439,10 +439,10 @@ def case_check_base(R, S):
 def case_scratch(R, S):
     """3.4 U8 fix, F2: an agent writes its report and its TMPDIR in `<worktree>/.fwx-agent/<run>/<unit>/`, a folder of its own
     worktree that git ignores (it holds its own `.gitignore`), never under `.git`: Claude Code asks permission for `.git` and
-    refuses an isolated agent's write outside its worktree. `fwx wave scratch RUN UNIT` makes it and prints it."""
+    refuses an isolated agent's write outside its worktree. `fwx scratch new RUN UNIT` makes it and prints it."""
     sc = Scene()
     run = "%s-%s-1" % (PHASE, sc.head()[:7])
-    sc2 = lambda *a, cwd=None: R(cwd or sc.cwd, "wave", "scratch", *a, env=sc.env)  # noqa: E731
+    sc2 = lambda *a, cwd=None: R(cwd or sc.cwd, "scratch", "new", *a, env=sc.env)  # noqa: E731
     r = sc2(run, "T1")
     want = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", run, "T1")
     S.eq("scratch: exit, stderr", (r.returncode, r.stderr), (0, ""))
@@ -472,7 +472,7 @@ def case_scratch(R, S):
     for label, argv in (("no unit", [run]), ("a run with a slash", ["a/b", "T1"]), ("a unit that climbs", [run, ".."]), ("a unit with a slash", [run, "a/b"]),
                         ("an empty unit", [run, ""]), ("a third word", [run, "T1", "x"])):
         r = sc2(*argv)
-        S.eq("scratch: %s: usage error, nothing printed" % label, (r.returncode, r.stdout, "usage: fwx wave scratch" in r.stderr), (2, "", True))
+        S.eq("scratch: %s: usage error, nothing printed" % label, (r.returncode, r.stdout, "usage: fwx scratch new" in r.stderr), (2, "", True))
     outside = helpers.mkdtemp("fwx-nogit-")
     r = sc2(run, "T1", cwd=outside)
     S.eq("scratch: outside a repository: exit 2, nothing made", (r.returncode, r.stdout, os.listdir(outside)), (2, "", []))
@@ -480,14 +480,15 @@ def case_scratch(R, S):
 
 def case_dispatch(R, S):
     sc = Scene()
-    for sub in ("integrate", "fix-round", "revert", "cleanup", "summary", "scratch"):
-        r = R(sc.cwd, "wave", sub, env=sc.env)
-        S.eq("wave %s: built in U3, no options is a usage error" % sub, (r.returncode, "usage: fwx wave %s" % sub in r.stderr, r.stdout), (2, True, ""))
+    for words in (("wave", "merge"), ("wave", "fix"), ("wave", "revert"), ("wave", "remove"), ("wave",), ("scratch", "new")):
+        name = " ".join(words)
+        r = R(sc.cwd, *words, env=sc.env)
+        S.eq("%s: built in U3, no options is a usage error" % name, (r.returncode, "usage: fwx %s" % name in r.stderr, r.stdout), (2, True, ""))
     for argv in ([], ["bogus"]):
         r = R(sc.cwd, "wave", *argv, env=sc.env)
         S.ok("wave %s: usage, exit 2" % (argv or "(none)"), r.returncode == 2 and "usage: fwx wave" in r.stderr, r.stderr)
-    r = R(sc.cwd, "wave", "prepare", env=sc.env)
-    S.ok("wave prepare with no options: usage, exit 2", r.returncode == 2 and "usage: fwx wave prepare" in r.stderr, r.stderr)
+    r = R(sc.cwd, "wave", "new", env=sc.env)
+    S.ok("wave new with no options: usage, exit 2", r.returncode == 2 and "usage: fwx wave new" in r.stderr, r.stderr)
     h = R(sc.cwd, "help")
     S.ok("`fwx help` lists wave", "wave" in h.stdout, h.stdout)
 

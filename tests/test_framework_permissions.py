@@ -220,7 +220,7 @@ def row(rule, roles=("orchestrator",), **extra):
     return dict({"rule": rule, "roles": list(roles), "why": "toy", "measured": "toy-run/O7"}, **extra)
 
 
-R1, R2 = "Bash(fwx linear comment:*)", "Bash(fwx linear create:*)"
+R1, R2 = "Bash(fwx linear comment:*)", "Bash(fwx linear new:*)"
 LIST = {"_doc": "toy", "schema": 1,
         "allow": [row(R1), row(R2, ("orchestrator", "executor"))],
         "not_allowed": [{"action": "C2", "lever": "classifier", "owner": "3.x", "why": "toy", "measured": "toy-run/C2"}],

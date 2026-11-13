@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""`fwx discuss start`: the JSON the discuss opens with, in a toy repo with the Linear client replaced in the module.
+"""`fwx discuss`: the JSON the discuss opens with, in a toy repo with the Linear client replaced in the module.
 
 The decision checks call `discuss.build(...)` / `discuss.waiting(...)` in this process, with a fake Linear client and a
 fixed clock; the wiring checks (exit codes, one line when off, the JSON on stdout, under 1 s with no network) go through
-`bin/fwx discuss start`. The fake client builds each issue with the real `linear.Client._shape`, so the `url` check is
+`bin/fwx discuss`. The fake client builds each issue with the real `linear.Client._shape`, so the `url` check is
 against the client's own shape and not against a copy of it.
 
 Seen red before the command existed (lib/fwx/commands/discuss.py absent; the test stops at the import):
@@ -114,17 +114,18 @@ def group_of(w, ident):
 
 # ---- the framework flag: exit 1 and one line ----
 off = toy({"framework": False})
-r = helpers.fwx(off, "discuss", "start", "--json")
+r = helpers.fwx(off, "discuss", "--json")
 s.ok("framework off but exit 0", r.returncode == 1, "exit %d, stdout %r" % (r.returncode, r.stdout))
 s.eq("framework off: one line, nothing else", (len(r.stdout.splitlines()), r.stderr), (1, ""))
 on = toy()
-r = helpers.fwx(on, "discuss", "start", "--json")
+r = helpers.fwx(on, "discuss", "--json")
 s.eq("framework on: exit", r.returncode, 0)
 outside = helpers.mkdtemp("fwx-nogit-")
-r = helpers.fwx(outside, "discuss", "start", "--json")
+r = helpers.fwx(outside, "discuss", "--json")
 s.eq("outside a repository: exit 2", (r.returncode, r.stdout, "git repository" in r.stderr), (2, "", True))
-s.eq("an unknown flag: exit 2", helpers.fwx(on, "discuss", "start", "--nope").returncode, 2)
-s.eq("no subcommand: exit 2", helpers.fwx(on, "discuss").returncode, 2)
+s.eq("an unknown flag: exit 2", helpers.fwx(on, "discuss", "--nope").returncode, 2)
+r = helpers.fwx(on, "discuss", "start")
+s.eq("the old name `discuss start`: exit 2 and one line naming `fwx discuss`", (r.returncode, r.stderr), (2, "fwx discuss start: now 'fwx discuss'\n"))
 
 # ---- no Linear is NOT RUN, never 0 ----
 with_key(False)
@@ -216,7 +217,7 @@ s.eq("open phases cover the root and every subproject", [(p["subproject"], p["st
      [(None, "discuss"), ("api", None)])
 d2 = discuss.build(cfg, cwd=repo, session="other", phase=fresh, now=NOW)
 s.eq("--phase finds its subproject by the path", d2["bound"]["subproject"], "api")
-r = helpers.fwx(repo, "discuss", "start", "--json", "--phase", os.path.join(repo, "nowhere"))
+r = helpers.fwx(repo, "discuss", "--json", "--phase", os.path.join(repo, "nowhere"))
 s.eq("--phase that is no phase: exit 2", (r.returncode, r.stdout), (2, ""))
 state.cancel_phase(fresh)
 s.eq("a cancelled phase is not open", [p["dir"] for p in discuss.build(cfg, cwd=repo, session="x", now=NOW)["open_phases"]], [phase])
@@ -247,15 +248,15 @@ s.eq("read-only: no session file, no .fwx/ made", (os.path.exists(os.path.join(o
 # ---- the command line: the JSON on stdout, in under 1 s, with no network ----
 with_key(False)
 t0 = time.time()
-r = helpers.fwx(on, "discuss", "start", "--json")
+r = helpers.fwx(on, "discuss", "--json")
 took = time.time() - t0
 j = json.loads(r.stdout) if r.returncode == 0 else {}
 s.eq("--json: exit 0 and the waiting block says NOT RUN", (r.returncode, j.get("waiting", {}).get("status")), (0, "NOT RUN"))
 s.ok("--json: under 1 s", took < 1, "took %.2f s" % took)
 s.eq("--json: framework true, no phase bound", (j.get("framework"), j.get("bound", {}).get("phase_dir")), (True, None))
-r = helpers.fwx(on, "discuss", "start")
+r = helpers.fwx(on, "discuss")
 s.ok("without --json: lines to read", r.returncode == 0 and r.stdout.startswith("project: ") and "NOT RUN" in r.stdout, r.stdout[:200])
-r = helpers.fwx(repo, "discuss", "start", "--json", env={"CLAUDE_CODE_SESSION_ID": "sess-1"})
+r = helpers.fwx(repo, "discuss", "--json", env={"CLAUDE_CODE_SESSION_ID": "sess-1"})
 j = json.loads(r.stdout)
 s.eq("the session of the environment is the bound one", (j["bound"]["phase_dir"], j["bound"]["reentry"]), (phase, True))
 

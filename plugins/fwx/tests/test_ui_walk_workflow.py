@@ -22,11 +22,11 @@ Red before the workflow read the refusal of arm-control's read-back (D14; the re
   FAIL: control refused (no visible change): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
   FAIL: control refused (target not found): the run does not count, and the reason says which it was: 'The run does not count: the control could not be planted on http://localhost:3000/settings.'
 
-Red before a failed `fwx walk findings` changed the final status (it ran in the close, after the gaps were read, and the run stayed `done` with no fix.json):
-  FAIL: findings rc 1: failed, and the reason names `fwx walk findings`: ('done', '')
-  FAIL: findings no answer: failed, and the reason names `fwx walk findings`: ('done', '')
-  FAIL: findings not JSON: failed, and the reason names `fwx walk findings`: ('done', '')
-  FAIL: findings and down fail: both are in the reason: 'fwx walk down exited 1: a browser or the app may be left, .../down.json says how many'
+Red before a failed `fwx walk converge` changed the final status (it ran in the close, after the gaps were read, and the run stayed `done` with no fix.json):
+  FAIL: findings rc 1: failed, and the reason names `fwx walk converge`: ('done', '')
+  FAIL: findings no answer: failed, and the reason names `fwx walk converge`: ('done', '')
+  FAIL: findings not JSON: failed, and the reason names `fwx walk converge`: ('done', '')
+  FAIL: findings and down fail: both are in the reason: 'fwx walk stop exited 1: a browser or the app may be left, .../down.json says how many'
 
 Red before a job closed its own browser before freeing its slot (a browser stays up after its agent returns, so the quota limited agents, not browsers):
   FAIL: close: every job's browser is closed after it returned: [('ui-walker:T1-breaker', 'w1', None), ('ui-walker:T1-critic', 'w2', None), ...]
@@ -43,7 +43,7 @@ Red before a recheck reply had to hold a row for each finding it was given (`{"f
 Controls (each on a copy of workflows/ui-walk.js with one branch taken out, `MUTANTS`; the anchor must be in the script exactly
 once; the first matching FAIL line of each, seen red):
   the `finally` removed (scenario 1: the breaker of a tramo returns null):
-      FAIL: breaker null: walk down not called after a walker returned nothing: ['ui-verifier:T1', 'ui-verifier:T2', 'executor:runner-save-T1', ...]
+      FAIL: breaker null: walk stop not called after a walker returned nothing: ['ui-verifier:T1', 'ui-verifier:T2', 'executor:runner-save-T1', ...]
   the `recheck` branch removed (scenario 2: recheck with a fix.json):
       FAIL: recheck: no breaker or critic launched (critic launched in recheck): ['ui-walker:T1-breaker', 'ui-walker:T1-critic', ...]
   not armed carries on:      FAIL: not armed: status: got 'failed', want 'done'
@@ -100,7 +100,7 @@ UP = {"armed": True, "run": "", "run_dir": RUN_DIR, "url": APP, "apps": [{"name"
 FINDINGS_OUT = {"fix_file": RUN_DIR + "/fix.json", "contradicted_file": RUN_DIR + "/contradicted.json",
                 "counts": {"confirmed": 1, "plausible": 1, "contradicted": 0, "dropped": 1}}
 def shots_out(rows):
-    """What `fwx screenshot --json` prints (lib/fwx/commands/screenshot.py): one JSON object per screen, `ok` with its `path` or `missing` with its `why`."""
+    """What `fwx walk capture --json` prints (lib/fwx/commands/screenshot.py): one JSON object per screen, `ok` with its `path` or `missing` with its `why`."""
     return "".join(json.dumps(dict(r, url=APP + r["url"], theme="light", width=1440)) + "\n" for r in rows)
 
 
@@ -225,11 +225,11 @@ def check_green(script, s):
     s.eq("green: the control judge is the ui-verifier on the small model", (launched(rec, "ui-verifier:control")[0]["opts"].get("model"),
          launched(rec, "ui-verifier:control")[0]["opts"].get("agentType")), ("m-run", "fwx:ui-verifier"))
     up = runner(rec, "up")[0]["prompt"]
-    s.ok("green: up is told the repo, the folder, the part and the round", "cd '%s' && fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (REPO, PHASE, REPO) in up
+    s.ok("green: up is told the repo, the folder, the part and the round", "cd '%s' && fwx walk start --dir '%s' --part 1 --round 1 --repo '%s'" % (REPO, PHASE, REPO) in up
          and "--app" not in up, up[-300:])
     arm = runner(rec, "arm-control")[0]["prompt"]
     s.ok("green: the control is planted on the first screen of the first tramo, as a URL of the app and the run's folder",
-         "fwx walk arm-control --run '%s' --screen '%s/settings'" % (RUN_DIR, APP) in arm, arm[-300:])
+         "fwx control new --run '%s' --screen '%s/settings'" % (RUN_DIR, APP) in arm, arm[-300:])
     ws = collections.defaultdict(str, {l["label"]: l["prompt"] for l in walkers(rec)})
     s.ok("green: a walker's session and findings file are its own", "w1" in ws["ui-walker:T1-breaker"] and RUN_DIR + "/findings-w1.md" in ws["ui-walker:T1-breaker"]
          and RUN_DIR + "/findings-w4.md" in ws["ui-walker:T2-critic"], ws["ui-walker:T1-breaker"][:400])
@@ -247,10 +247,10 @@ def check_green(script, s):
     s.ok("green: a verifier's reply is saved as verified-<tramo>.json in the run's folder", RUN_DIR + "/verified-T1.json" in saves and "T1-1" in saves, saves[-300:])
     s.ok("green: the verifier is told the findings files of its tramo", RUN_DIR + "/findings-w1.md" in launched(rec, "ui-verifier:T1")[0]["prompt"]
          and RUN_DIR + "/findings-w3.md" not in launched(rec, "ui-verifier:T1")[0]["prompt"], launched(rec, "ui-verifier:T1")[0]["prompt"][:500])
-    s.ok("green: findings, down name the run's folder", "fwx walk findings --run '%s'" % RUN_DIR in runner(rec, "findings")[0]["prompt"]
-         and "fwx walk down --run '%s'" % RUN_DIR in runner(rec, "down")[0]["prompt"])
+    s.ok("green: findings, down name the run's folder", "fwx walk converge --run '%s'" % RUN_DIR in runner(rec, "findings")[0]["prompt"]
+         and "fwx walk stop --run '%s'" % RUN_DIR in runner(rec, "down")[0]["prompt"])
     shot = runner(rec, "screenshot")[0]["prompt"]
-    s.ok("green: screenshot is given the walked screens", "fwx screenshot --run '%s' --screens " % RUN_DIR in shot and APP + "/settings" in shot and APP + "/billing" in shot, shot[-400:])
+    s.ok("green: screenshot is given the walked screens", "fwx walk capture --run '%s' --screens " % RUN_DIR in shot and APP + "/settings" in shot and APP + "/billing" in shot, shot[-400:])
     s.ok("green: the screenshot is asked for `--json` (a path with a space cannot be read from the text line)", " --json" in shot, shot[-200:])
     # Red on the base (the reader took `\S+` after `ok `, and the command had no --json, so the JSON line read as no capture):
     #   FAIL: green: details.shots are the paths the screenshots were written to: got [], want [...s1.png, ...s2.png]
@@ -295,7 +295,7 @@ def check_up_fails(script, s):
     r = result(rec)
     s.eq("up with no report: failed, and no `down` is run on a guess", (r.get("status"), labels(rec)), ("failed", ["executor:runner-up"]))
     s.ok("up with no report: the reason names the command that closes a run `up` may have started: %r" % r.get("reason"),
-         "fwx walk down --run '%s'" % RUN_DIR in str(r.get("reason")), repr(r.get("reason")))
+         "fwx walk stop --run '%s'" % RUN_DIR in str(r.get("reason")), repr(r.get("reason")))
 
 
 def check_breaker_null(script, s):
@@ -304,7 +304,7 @@ def check_breaker_null(script, s):
     rec, err = go(script, answers_over={"ui-walker:T1-breaker": None})
     rec = finish(s, "breaker null", rec, err)
     ls = labels(rec)
-    s.ok("breaker null: walk down not called after a walker returned nothing", "executor:runner-down" in ls, repr(ls[-5:]))
+    s.ok("breaker null: walk stop not called after a walker returned nothing", "executor:runner-down" in ls, repr(ls[-5:]))
     s.eq("breaker null: the breaker was launched once more and no more", ls.count("ui-walker:T1-breaker"), 2)
     s.eq("breaker null: failed, naming the walker", (result(rec).get("status"), "T1-breaker" in str(result(rec).get("reason"))), ("failed", True))
     s.ok("breaker null: the tramo is still verified from its critic's file and the findings are still collected", "ui-verifier:T1" in ls and "executor:runner-findings" in ls, repr(ls))
@@ -424,18 +424,18 @@ def check_down_fails(script, s):
 
 
 def check_findings_fails(script, s):
-    """`fwx walk findings` runs in the close, after the gaps were read: a run that collected no fix.json must still end failed, and `down` still runs."""
+    """`fwx walk converge` runs in the close, after the gaps were read: a run that collected no fix.json must still end failed, and `down` still runs."""
     for what, ans in (("rc 1", R("", 1)), ("no answer", None), ("not JSON", R("nope"))):
         rec, err = go(script, answers_over={"executor:runner-findings": ans})
         rec = finish(s, "findings %s" % what, rec, err)
         r = result(rec)
-        s.ok("findings %s: failed, and the reason names `fwx walk findings`" % what, r.get("status") == "failed" and "fwx walk findings" in str(r.get("reason")),
+        s.ok("findings %s: failed, and the reason names `fwx walk converge`" % what, r.get("status") == "failed" and "fwx walk converge" in str(r.get("reason")),
              repr((r.get("status"), r.get("reason"))))
         s.ok("findings %s: the browsers are closed all the same" % what, labels(rec)[-1:] == ["executor:runner-down"], repr(labels(rec)[-4:]))
         s.ok("findings %s: no fix file is reported" % what, details(rec).get("fix_file") is None, repr(details(rec).get("fix_file")))
     rec, err = go(script, answers_over={"executor:runner-findings": R("", 1), "executor:runner-down": R(DOWN, 1)})
     rec = finish(s, "findings and down fail", rec, err)
-    s.ok("findings and down fail: both are in the reason", "fwx walk findings" in str(result(rec).get("reason")) and "down.json" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
+    s.ok("findings and down fail: both are in the reason", "fwx walk converge" in str(result(rec).get("reason")) and "down.json" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
 
 
 # the browser session each job of the green scenario drives (makeJobs numbers the walkers; a verifier takes the number of its tramo)
@@ -569,7 +569,7 @@ def check_close(script, s):
 
 def check_control_rows(script, s):
     """The planted fault is restyled by an init script that every `ab` browser of the run takes, the verifiers' too: a verifier confirms the title
-    that reads like body text and `fwx walk findings` would hand it to the fixer as a defect of the repository. The judge names the walker's
+    that reads like body text and `fwx walk converge` would hand it to the fixer as a defect of the repository. The judge names the walker's
     finding (`<session>-F<n>`, as agents/ui-verifier.md says); its verified row, and the rows tied to it by `duplicate_of`, are taken out of the
     verified file before `findings` reads it and kept in control-<tramo>.json. Rows are shaped by the keys of the agent text.
 
@@ -797,11 +797,11 @@ def check_recheck(script, s):
     s.eq("recheck: status", r.get("status"), "done")
     s.eq("recheck: a judgement finding still there (PLAUSIBLE) counts as still there, not as other", (d.get("recheck") or {}).get("still"), 1)
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
-    # `fwx walk up` removes control.json on a restart, so a recheck round has no control: it must not be armed, judged or reported as "not found"
+    # `fwx walk start` removes control.json on a restart, so a recheck round has no control: it must not be armed, judged or reported as "not found"
     s.ok("recheck: no control is expected: no judge, found null, and the reason does not say the run does not count",
          "ui-verifier:control" not in ls and d.get("control", {}).get("found") is None and "does not count" not in str(r.get("reason")), repr((d.get("control"), r.get("reason"))))
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
-    s.eq("recheck: the up was run on the work branch's checkout", "fwx walk up --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
+    s.eq("recheck: the up was run on the work branch's checkout", "fwx walk start --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
     # `uniqueIds` appends `.x` to an id the run already used (T1-1 twice): the finding still belongs to its tramo (3.5 U3d). Against the
     # grouping as first written (`id.replace(/-\d+$/, '')`; the `.x` was left in the tramo id, so the verifier was `ui-verifier:T1-1.x`):
     #   FAIL: recheck suffixed ids: one verifier per tramo, the suffixed ids with their tramo: got ['ui-verifier:T1-1.x', 'ui-verifier:T2-2.x.x'], want ['ui-verifier:T1', 'ui-verifier:T2']
@@ -929,7 +929,7 @@ def check_all(script, s):
 
 # (what is wrong with the script, text in it, text instead, the check that must go red). Each anchor is in the script exactly once.
 MUTANTS = [
-    ("the finally removed", "  } finally {\n    await closeRun()\n  }", "  } catch (e0) {\n    throw e0\n  }\n  await closeRun()", "FAIL: breaker null: walk down not called after a walker returned nothing"),
+    ("the finally removed", "  } finally {\n    await closeRun()\n  }", "  } catch (e0) {\n    throw e0\n  }\n  await closeRun()", "FAIL: breaker null: walk stop not called after a walker returned nothing"),
     ("the recheck branch removed", "if (A.recheck) {", "if (false) {", "FAIL: recheck: no breaker or critic launched (critic launched in recheck)"),
     ("not armed carries on", "if (up.armed !== true) {", "if (false) {", "FAIL: not armed: status"),
     ("the walkers are not capped", "const SLOTS = () => quota", "const SLOTS = () => 99", "FAIL: quota 1: no two walkers at once"),

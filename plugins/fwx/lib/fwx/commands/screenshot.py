@@ -1,4 +1,4 @@
-"""One capture per walked screen of a UI-walk run, with no model: fwx screenshot --run R [--screens JSON] [--out DIR].
+"""One capture per walked screen of a UI-walk run, with no model: fwx walk capture --run R [--screens JSON] [--out DIR].
 
 `--run` is a run folder or a namespace, as for `fwx walk ab`. The screens are `--screens` (a JSON text, or the path of a file holding
 it) or, without it, the `screens` of the run's `run.json`: a list of URLs or of `{url, theme}` (theme `light` or `dark`, default
@@ -37,7 +37,7 @@ from fwx.commands import walk
 WIDTH = 1440
 HEIGHT = 900
 THEMES = ("light", "dark")
-USAGE = "usage: fwx screenshot --run R [--screens JSON|FILE] [--out DIR] [--json]"
+USAGE = "usage: fwx walk capture --run R [--screens JSON|FILE] [--out DIR] [--json]"
 
 
 def parse_screens(raw):
@@ -203,7 +203,7 @@ def cmd(argv):
         if state["launched"]:
             ab(run_dir, session, ["close"])
     if miss:
-        sys.stderr.write("fwx screenshot: %d of %d missing: %s\n" % (len(miss), len(screens), ", ".join(miss)))
+        sys.stderr.write("fwx walk capture: %d of %d missing: %s\n" % (len(miss), len(screens), ", ".join(miss)))
         return 1
     return 0
 
@@ -212,8 +212,8 @@ def main(argv):
     try:
         return cmd(argv)
     except walk.Stop as e:
-        sys.stderr.write("fwx screenshot: %s\n" % e)
+        sys.stderr.write("fwx walk capture: %s\n" % e)
         return e.code
     except config.ConfigError as e:
-        sys.stderr.write("fwx screenshot: %s\n" % e)
+        sys.stderr.write("fwx walk capture: %s\n" % e)
         return 2

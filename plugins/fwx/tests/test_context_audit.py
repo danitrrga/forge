@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""lib/fwx/context_audit.py and `fwx context-base audit` (2.5 U5): from the subagent transcripts, which agent did not get the base
+"""lib/fwx/context_audit.py and `fwx context audit` (2.5 U5): from the subagent transcripts, which agent did not get the base
 context its type should get. The transcript is the evidence, never what a model says it received.
 
 Fixtures (tests/fixtures/context_audit/<verdict>/projects/...): transcripts in the shapes measured in 2.5 U1
@@ -72,7 +72,7 @@ SCRATCH = helpers.mkdtemp("fwx-ca-")
 
 
 def audit(*args, cwd=None, env=None):
-    return helpers.fwx(cwd or ROOT, "context-base", "audit", *args, env=env)
+    return helpers.fwx(cwd or ROOT, "context", "audit", *args, env=env)
 
 
 def case(name, *extra):

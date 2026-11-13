@@ -4,7 +4,7 @@
 referent: forge hooks/ponytail_subagent.py @f8a9efb (the shape: one allowlist-by-type, read from the input's agent_type;
 the hook is the one place that decides who gets what, so a matcher in hooks.json would split the decision in two)
 
-The file is written by `fwx context-base build` (lib/fwx/context_base.py); this hook only reads it. What each `agent_type`
+The file is written by `fwx context new` (lib/fwx/context_base.py); this hook only reads it. What each `agent_type`
 gets is the row of data/context-base.tsv (the exact type, else the `*` row): `map` is the text up to `## Decided`,
 `map+decided` the whole file, `none` nothing. The hook sees the agent_type, session_id, cwd and agent_id and never the
 model or the prompt (measured), so the table is by type.

@@ -247,7 +247,7 @@ def brief(dir, step, unattended=False, diff=None):
     extra = _variants(f, step, unattended, rows)
     if step == "postmortem":
         r, lines = _check_output(d)
-        extra.append("`fwx plan check` already ran; do not repeat what it checked:\n" + "\n".join("    " + l for l in lines))
+        extra.append("`fwx plan lint` already ran; do not repeat what it checked:\n" + "\n".join("    " + l for l in lines))
         if diff:
             extra.append("A job came back: review structurally what is left of the plan against the work. Run `git diff %s` in %s."
                          % (diff, config.main_checkout(d)))
@@ -255,7 +255,7 @@ def brief(dir, step, unattended=False, diff=None):
         out += ["", "## This round"] + extra
     out += ["", "## Write", "%s%s" % (target, ", with `\"round\": %d` in its frontmatter" % f["round"] if step != "plan" else "")]
     out += ["", "## Return",
-            "The path of `plan.md` and the last line of `fwx plan check`, in under 100 words." if step == "plan" else
+            "The path of `plan.md` and the last line of `fwx plan lint`, in under 100 words." if step == "plan" else
             "Your verdict and the path you wrote, in under 100 words."]
     return "\n".join(out) + "\n"
 

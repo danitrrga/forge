@@ -63,26 +63,36 @@ NOT_COPIED = shutil.ignore_patterns("__pycache__", ".git", ".claude")
 
 
 def commands(root):
-    """The subcommands the code at `root` has: what its own `bin/fwx help` lists, plus the built-in help."""
+    """The commands the code at `root` has, as word tuples: what its own `bin/fwx help` lists (`fwx phase new` is ("phase", "new")),
+    plus the built-in help."""
     r = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "help"], capture_output=True, text=True,
                        env=helpers.clean_env(PYTHONDONTWRITEBYTECODE="1"))
-    listed = set(re.findall(r"^  (\S+)  ", r.stdout, re.M))
-    return listed | BUILTIN if r.returncode == 0 else set()
+    listed = {tuple(m.split()) for m in re.findall(r"^  fwx ([a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*)(?: --[a-z]+)?  ", r.stdout, re.M)}
+    return listed | {(b,) for b in BUILTIN} if r.returncode == 0 else set()
+
+
+WORDS = r"([a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*)"
 
 
 def use_block(text):
+    """The commands of the `## Use` code block, as word tuples: the words after `bin/fwx` up to the first flag or placeholder."""
     m = re.search(r"^## Use\n+```\n(.*?)\n```", text, re.S | re.M)
-    return set(re.findall(r"\bbin/fwx ([a-z][a-z0-9-]*)", m.group(1))) if m else set()
+    return {tuple(w.split()) for w in re.findall(r"\bbin/fwx " + WORDS, m.group(1))} if m else set()
 
 
 def named_commands(text):
-    """What the README says to run: the code block, and any backticked `fwx <name>` or `bin/fwx <name>`."""
+    """What the README says to run: the code block, and any backticked `fwx <words>` or `bin/fwx <words>`."""
     out = use_block(text)
     for tok in re.findall(r"`([^`\n]+)`", text):
-        m = re.match(r"(?:python3 )?(?:bin/)?fwx ([a-z][a-z0-9-]*)\b", tok)
+        m = re.match(r"(?:python3 )?(?:bin/)?fwx " + WORDS, tok)
         if m:
-            out.add(m.group(1))
+            out.add(tuple(m.group(1).split()))
     return out
+
+
+def exists(name, have):
+    """A named command exists when a listed command is the start of it (`migrate-gsd plan` starts with `migrate-gsd`)."""
+    return any(name[:len(h)] == h for h in have)
 
 
 def named_paths(text):
@@ -123,10 +133,12 @@ def problems(root, readme):
     out = []
     if len(have) <= len(BUILTIN):
         out.append("read no subcommand from the code: bin/fwx help listed %r" % sorted(have))
-    if named - have:
-        out.append("subcommands named but not in the code: %s" % sorted(named - have))
-    if have - block:
-        out.append("subcommands missing from the README's code block: %s" % sorted(have - block))
+    missing = sorted(" ".join(n) for n in named if not exists(n, have))
+    if missing:
+        out.append("subcommands named but not in the code: %s" % missing)
+    unblocked = sorted({h[0] for h in have} - {b[0] for b in block})
+    if unblocked:
+        out.append("subcommands missing from the README's code block: %s" % unblocked)
     dead = sorted(p for p in paths if not os.path.exists(os.path.join(root, p.rstrip("/"))))
     if dead:
         out.append("paths named and missing: %s" % dead)
@@ -169,8 +181,13 @@ control("a constant that does not exist", real + "\nSet `NO_SUCH_TABLE`.\n", "ne
 control("a README with no path", re.sub(r"`[^`\s]*/[^`\s]*`", "`x`", real), "read zero paths")
 control("a README with no constant", real.replace("`FORGE_ROOT`", "`forge checkout`"), "read zero constants")
 
-helpers.write(toy, "lib/fwx/commands/extra.py", '"""A command the README does not know."""\n\n\ndef main(argv):\n    return 0\n')
-control("a command added to the code only", real, "extra")
-os.remove(os.path.join(toy, "lib", "fwx", "commands", "extra.py"))
+routes = os.path.join(toy, "lib", "fwx", "routes.py")
+with open(routes, encoding="utf-8") as fh:
+    routes_text = fh.read()
+with open(routes, "w", encoding="utf-8") as fh:
+    fh.write(routes_text.replace("ROWS = [\n", 'ROWS = [\n    ("extra", None, "extra", [], "A command the README does not know"),\n', 1))
+control("a command added to the table only", real, "extra")
+with open(routes, "w", encoding="utf-8") as fh:
+    fh.write(routes_text)
 s.eq("the README against the code again, the command gone", problems(toy, real), [])
 s.done()

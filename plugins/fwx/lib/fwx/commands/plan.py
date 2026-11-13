@@ -1,4 +1,4 @@
-"""Check, brief and judge the plan files of a phase: fwx plan check|brief|status <dir> ...
+"""Check, brief and judge the plan files of a phase: fwx plan lint|brief|status <dir> ...
 
 `brief` and `status` are the plan block's steps (plan_step.py), after the text on `check`.
 
@@ -21,7 +21,7 @@ import sys
 
 from fwx import plan, plan_step
 
-USAGE = "usage: fwx plan check <dir> [--json]\n"
+USAGE = "usage: fwx plan lint <dir> [--json]\n"
 
 
 def check(argv):

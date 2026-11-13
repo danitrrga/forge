@@ -174,6 +174,19 @@ if os.path.exists(pidfile):
 """
 
 
+# The calls below name a walk command by its key in walk.COMMANDS (`up`, `down`, `findings`, ...), the name its function has; these are the
+# words after `fwx` that run it (the grammar's; tests/test_commands_table.py holds the table itself).
+WALK_WORDS = {"up": ("walk", "start"), "down": ("walk", "stop"), "sweep": ("walk", "stop", "--orphans"), "findings": ("walk", "converge"),
+              "arm-control": ("control", "new"), "review-page": ("review", "new"), "review-answers": ("review", "read")}
+
+
+def walk_words(args):
+    """The argv after `fwx` of a call written as walk.COMMANDS names it: the words of the grammar for that command, else `walk ...`."""
+    if args and args[0] in WALK_WORDS:
+        return WALK_WORDS[args[0]] + tuple(args[1:])
+    return ("walk",) + tuple(args)
+
+
 def runner(root):
     def run(cwd, *args, env=None):
         return subprocess.run([sys.executable, os.path.join(root, "bin", "fwx")] + list(args), cwd=cwd,
@@ -272,14 +285,14 @@ class Scene:
                 os.remove(f)
 
     def up(self, R, *extra, part=1, rnd=1, env=None, tramos=None):
-        args = ["walk", "up", "--dir", self.run_dir_root, "--part", str(part), "--round", str(rnd), "--repo", self.repo]
+        args = ["walk", "start", "--dir", self.run_dir_root, "--part", str(part), "--round", str(rnd), "--repo", self.repo]
         if tramos:
             args += ["--tramos", str(tramos)]
         r = R(self.repo, *args, *extra, env=dict(self.env, **(env or {})))
         return r, obj(r.stdout)
 
     def walk(self, R, *args, env=None):
-        return R(self.repo, "walk", *args, env=dict(self.env, **(env or {})))
+        return R(self.repo, *walk_words(args), env=dict(self.env, **(env or {})))
 
     def stop(self):
         """Kill what `up` left behind, whatever the case did."""
@@ -367,8 +380,8 @@ def case_run_prefix(R, S):
     """An app brought up through a `run` prefix lives where the prefix says (a private network), so `up` asks from there, never from
     the host. `fakens run --` stands for the prefix: it answers the probe from FAKE_NS (none: nothing answers there, always: the app is
     there, after: the app answers once `up` has run). Seen red on the code that asked from the host (FWX_WALK_WAIT_S=6 keeps the wait short):
-      FAIL: run prefix: a host server the prefix cannot see: up armed: rc 2: fwx walk up: http://127.0.0.1:N is already answering before up: another app (or a run that was not closed) is there
-      FAIL: run prefix: the app answers inside the prefix only after up: up armed: rc 1: fwx walk up: nothing answered at http://127.0.0.1:N within 6 s after up
+      FAIL: run prefix: a host server the prefix cannot see: up armed: rc 2: fwx walk start: http://127.0.0.1:N is already answering before up: another app (or a run that was not closed) is there
+      FAIL: run prefix: the app answers inside the prefix only after up: up armed: rc 1: fwx walk start: nothing answered at http://127.0.0.1:N within 6 s after up
       FAIL: run prefix: an app already answering inside the prefix: exit: got 1, want 2   (the host saw nothing, so the guard never bit)"""
     def scene(mode):
         sc = Scene(prefix="fakens run --")
@@ -1481,7 +1494,7 @@ def case_findings_control_pictures(R, S):
 
 def runner_walk(R, *args, env=None):
     """`fwx walk ...` from a toy folder with the fakes' PATH (ffmpeg is added by the case that needs it)."""
-    return R(CWD[0], "walk", *args, env=env or {"PATH": FAKE_DIR_FOR[0]})
+    return R(CWD[0], *walk_words(args), env=env or {"PATH": FAKE_DIR_FOR[0]})
 
 
 FAKE_DIR_FOR = [None]
@@ -1719,7 +1732,7 @@ def case_usage(R, S):
     for argv in ([], ["bogus"], ["up"], ["ab"], ["ab", "w1"], ["pw"], ["arm-control"], ["findings"], ["review-page"], ["review-answers"], ["down"],
                   ["check-screens"], ["up", "--bogus"], ["capacity"], ["up", "--dir", "x", "--part", "x", "--round", "1"]):
         r = sc.walk(R, *argv)
-        S.ok("usage: walk %s: exit 2 and a usage line" % " ".join(argv), r.returncode == 2 and "usage: fwx walk" in r.stderr, "rc %d %s" % (r.returncode, r.stderr))
+        S.ok("usage: walk %s: exit 2 and a usage line" % " ".join(argv), r.returncode == 2 and any(w in r.stderr for w in ("usage: fwx", "needs a verb", "unknown verb")), "rc %d %s" % (r.returncode, r.stderr))
     h = R(sc.repo, "help")
     S.ok("`fwx help` lists walk", "walk" in h.stdout, h.stdout)
 

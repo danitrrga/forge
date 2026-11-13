@@ -1,7 +1,7 @@
 // referent: own .claude/skills/ui-walk/SKILL.md @76eca414 (the orchestration flow of a project's skill: the app up, the screens the part changed, a planted fault the walkers are not told about, one walker per axis, a verifier per tramo, the close that leaves no browser)
-// Differs: the referent has one walker per slice and a known bug of the app as its control; here there is one walker per axis per tramo (a group of one to four screens) and `fwx walk arm-control` plants the fault.
+// Differs: the referent has one walker per slice and a known bug of the app as its control; here there is one walker per axis per tramo (a group of one to four screens) and `fwx control new` plants the fault.
 // The flow is the UI-walk nodes of the tree; every command is run by a runner that returns {stdout, rc} and the script reads the JSON a command prints, never a summary;
-// the close is in a `finally`; the walkers are held to the quota `fwx walk up` returns; a `recheck` run launches only verifiers; fixing and the owner's review happen in the session, outside this script.
+// the close is in a `finally`; the walkers are held to the quota `fwx walk start` returns; a `recheck` run launches only verifiers; fixing and the owner's review happen in the session, outside this script.
 //
 // The output is {status: done|failed, reason, phase_dir, details} with paths and counts, never the text of a finding.
 // Every agent() goes through ask(): model and agentType are always named. The script has no filesystem and no shell.
@@ -256,7 +256,7 @@ async function sizeQuota(tramos) {
 const abs = (u) => {
   const s = String(u)
   if (/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) return s
-  if (!st.url) stop('failed', 'a screen is a path (' + oneLine(s, 60) + ') and `fwx walk up` printed no url of the app')
+  if (!st.url) stop('failed', 'a screen is a path (' + oneLine(s, 60) + ') and `fwx walk start` printed no url of the app')
   return st.url.replace(/\/+$/, '') + (s.startsWith('/') ? s : '/' + s)
 }
 const safe = (id, i) => (typeof id === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) ? id : 'T' + (i + 1))
@@ -330,10 +330,10 @@ async function armControl(tramos) {
   const screen = tramos[0].screens[0].url
   st.ctl = { tramo: tramos[0].id, screen, armed: false }
   st.control.screen = screen
-  const v = await must('arm-control', 'fwx walk arm-control --run ' + sh(st.runDir) + ' --screen ' + sh(screen), true)
+  const v = await must('arm-control', 'fwx control new --run ' + sh(st.runDir) + ' --screen ' + sh(screen), true)
   st.ctl.armed = !!v && v.rc === 0
   if (!st.ctl.armed) {
-    // arm-control reads the plant back on the screen and refuses with `{"armed": false, "reason": ...}` (no target, or the plant changes nothing)
+    // `fwx control new` reads the plant back on the screen and refuses with `{"armed": false, "reason": ...}` (no target, or the plant changes nothing)
     const why = v ? parseAny(v.stdout) : null
     st.ctl.why = why && typeof why.reason === 'string' ? oneLine(why.reason, 300) : null
     log(PHASE + ': the control could not be planted on ' + screen + (v ? ' (exit ' + v.rc + ')' : ' (no answer)') + (st.ctl.why ? ': ' + st.ctl.why : '') + '; the walk goes on and does not count')
@@ -370,11 +370,11 @@ async function judge() {
   else if (got.found === false) st.noCount = 'the walkers did not find the fault planted on ' + st.control.screen
 }
 
-// The control's init script runs in the walkers' `ab` browsers (`fwx walk ab` leaves it out of a verifier's `v*` session and of `fwx screenshot`'s),
-// so a walker files the planted title and a verifier that is told about it could confirm it, and `fwx walk findings` would hand it to the fixer as
+// The control's init script runs in the walkers' `ab` browsers (`fwx walk ab` leaves it out of a verifier's `v*` session and of `fwx walk capture`'s),
+// so a walker files the planted title and a verifier that is told about it could confirm it, and `fwx walk converge` would hand it to the fixer as
 // a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a row's own id is read too): that row,
 // the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json. (The pictures the walkers took of the control's
-// screen that a genuine finding carries are left out by `fwx walk findings`.)
+// screen that a genuine finding carries are left out by `fwx walk converge`.)
 async function dropControl() {
   const fid = st.control.found === true ? st.control.finding : null
   if (!fid) return
@@ -627,17 +627,17 @@ async function walkRun(up) {
 
 async function main() {
   phase(PHASE)
-  const v = await must('up', 'fwx walk up --dir ' + sh(A.phase_dir) + ' --part ' + A.part + ' --round ' + A.round + ' --repo ' + sh(A.repo) +
+  const v = await must('up', 'fwx walk start --dir ' + sh(A.phase_dir) + ' --part ' + A.part + ' --round ' + A.round + ' --repo ' + sh(A.repo) +
     (A.app ? ' --app ' + sh(JSON.stringify(A.app)) : ''), false)
   // `up` may have started the app and lost its report; this script cannot tell that app from an earlier open run of the same folder, so it names the command
-  if (!v) stop('failed', 'runner did not return: up. If the app came up, `fwx walk down --run ' + sh(A.phase_dir + '/ui-walk/' + A.part + '-' + A.round) + '` closes it')
+  if (!v) stop('failed', 'runner did not return: up. If the app came up, `fwx walk stop --run ' + sh(A.phase_dir + '/ui-walk/' + A.part + '-' + A.round) + '` closes it')
   const up = parseAny(v.stdout)
-  if (v.rc === 77) stop('done', 'NOT RUN, NOT ARMED: fwx walk up exited 77 (a tool it needs is missing)')
-  if (v.rc !== 0 || !up || typeof up !== 'object') stop('failed', 'fwx walk up exited ' + v.rc + ': the app did not come up (the reason is on its stderr; run the command by hand)')
+  if (v.rc === 77) stop('done', 'NOT RUN, NOT ARMED: fwx walk start exited 77 (a tool it needs is missing)')
+  if (v.rc !== 0 || !up || typeof up !== 'object') stop('failed', 'fwx walk start exited ' + v.rc + ': the app did not come up (the reason is on its stderr; run the command by hand)')
   if (up.armed !== true) {
-    stop('done', 'NOT RUN, NOT ARMED: ' + (up.reason || 'fwx walk up said armed: false and gave no reason'))
+    stop('done', 'NOT RUN, NOT ARMED: ' + (up.reason || 'fwx walk start said armed: false and gave no reason'))
   }
-  if (typeof up.run_dir !== 'string' || !up.run_dir) stop('failed', 'fwx walk up printed no run_dir')
+  if (typeof up.run_dir !== 'string' || !up.run_dir) stop('failed', 'fwx walk start printed no run_dir')
   st.runDir = up.run_dir
   st.url = typeof up.url === 'string' && up.url ? up.url : null
   const allowed = up.capacity && up.capacity.allowed
@@ -654,15 +654,15 @@ async function main() {
 // ---- the close ------------------------------------------------------------------------------------------------------------------
 async function collect() {
   if (st.saved.length === 0) {
-    log(PHASE + ': no verdict file was saved, `fwx walk findings` is not run')
+    log(PHASE + ': no verdict file was saved, `fwx walk converge` is not run')
     return
   }
-  const v = await exec('findings', inRepo('fwx walk findings --run ' + sh(st.runDir)), true)
+  const v = await exec('findings', inRepo('fwx walk converge --run ' + sh(st.runDir)), true)
   const j = v ? parseAny(v.stdout) : null
   if (!v || v.rc !== 0 || !j || typeof j !== 'object') {
-    st.gaps.push('fwx walk findings ' + (v ? 'exited ' + v.rc : 'did not return'))
+    st.gaps.push('fwx walk converge ' + (v ? 'exited ' + v.rc : 'did not return'))
     // the close runs after the gaps were read, so a run with no fix.json to hand over fails here
-    st.closeFails.push('fwx walk findings ' + (v ? 'exited ' + v.rc : 'did not return') + ': no fix.json was collected')
+    st.closeFails.push('fwx walk converge ' + (v ? 'exited ' + v.rc : 'did not return') + ': no fix.json was collected')
     return
   }
   st.fixFile = j.fix_file || null
@@ -678,9 +678,9 @@ async function shoot() {
     for (const s of t.screens) if (!urls.includes(s.url)) urls.push(s.url)
   }
   if (urls.length === 0) return
-  const v = await exec('screenshot', inRepo('fwx screenshot --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls.map((u) => ({ url: u, theme: 'light' })))) + ' --json'), true)
+  const v = await exec('screenshot', inRepo('fwx walk capture --run ' + sh(st.runDir) + ' --screens ' + sh(JSON.stringify(urls.map((u) => ({ url: u, theme: 'light' })))) + ' --json'), true)
   if (!v) {
-    log(PHASE + ': fwx screenshot did not return: no capture of the walked screens')
+    log(PHASE + ': fwx walk capture did not return: no capture of the walked screens')
     return
   }
   for (const line of String(v.stdout).split('\n')) {
@@ -710,13 +710,13 @@ async function coverage() {
 }
 
 async function down() {
-  const down = await exec('down', inRepo('fwx walk down --run ' + sh(st.runDir)), true)
+  const down = await exec('down', inRepo('fwx walk stop --run ' + sh(st.runDir)), true)
   st.downFile = st.runDir + '/down.json'
   if (!down) {
-    st.closeFails.push('fwx walk down did not return: browsers or the app may be left; `fwx walk sweep` closes a walk whose owner is gone')
+    st.closeFails.push('fwx walk stop did not return: browsers or the app may be left; `fwx walk stop --orphans` closes a walk whose owner is gone')
     return
   }
-  if (down.rc !== 0) st.closeFails.push('fwx walk down exited ' + down.rc + ': a browser or the app may be left, ' + st.downFile + ' says how many')
+  if (down.rc !== 0) st.closeFails.push('fwx walk stop exited ' + down.rc + ': a browser or the app may be left, ' + st.downFile + ' says how many')
 }
 
 // Each step of the close is tried on its own: a failing one never keeps `down` from running.
