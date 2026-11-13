@@ -710,10 +710,10 @@ def check_review(script, s):
     s.ok("criterion no with its finding: goes to the verifier", len(launched(rec, "review-verifier:")) == 1, repr(labels(rec)))
 
 
-def check_fix(script, s):
-    f1 = finding("F1", "high")
-    first = {
-        "reviewer:r1": review_line("r1", findings=2), "executor:runner-report-r1": review_report([f1, finding("F2")]),
+def fix_scenario():
+    """A run with one review finding to fix (r1-F1, in a.py), fixed by one fixer, whose diff the second review lets through."""
+    return {
+        "reviewer:r1": review_line("r1", findings=2), "executor:runner-report-r1": review_report([finding("F1", "high"), finding("F2")]),
         "review-verifier:r1": verdicts(("r1-F1", "fix", "high", "check"), ("r1-F2", "note", "low", "none")),
         "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3", "why": "w"}),
         "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix"),
@@ -722,6 +722,10 @@ def check_fix(script, s):
         "reviewer:r2": review_line("r2", findings=1), "executor:runner-report-r2": review_report([finding("F1", "low", claim="a nit")]),
         "review-verifier:r2": verdicts(("r2-F1", "dismiss", "none", None)),
     }
+
+
+def check_fix(script, s):
+    first = fix_scenario()
     rec, err = go(script, base={**green(), **first})
     rec = finish(s, "fix", rec, err)
     s.eq("fix: status", result(rec).get("status"), "done")
@@ -784,6 +788,66 @@ def check_fix(script, s):
     s.ok("control findings: sent to the verifier with the reviewer's, under the pass prefix", len(launched(rec, "review-verifier:")) == 1 and "r1-CF1" in launched(rec, "review-verifier:")[0]["prompt"],
          repr(labels(rec)))
     s.eq("control findings: counted as reported, the false one dismissed", ((details(rec).get("findings") or {}).get("reported"), [d["id"] for d in (details(rec).get("findings") or {}).get("dismissed", [])]), (1, ["r1-CF1"]))
+
+
+def check_fix_scope(script, s):
+    """The fixer's brief is its prompt, so its SCOPE is in the prompt too: the finding's file and the files of the part's tasks (named in
+    the plan), and a test file only where a task of the part lists tests. A UI task carries none (`brief.missing`: only a task with ui
+    false must have ACCEPTANCE and VERIFY), and `args` has the id and the `ui` flag of every task and the path of the plan, but no brief
+    path the fixer may be given (the scratch check above keeps every path under the run's git folder out of its prompt).
+
+    Red before the fix (the fixer prompt of a part whose tasks are all UI, `tests: []`; first line of each FAIL, the prompt follows it):
+      FAIL: fixer scope (no task lists tests): a SCOPE line names the finding's file and the plan's files of the part's tasks: You are the fixer of run ...
+      FAIL: fixer scope (no task lists tests): no unconditional test demand in the goal: You are the fixer of run ... GOAL: fix each finding below, one commit per finding, the test in that commit and seen failing first. ...
+      FAIL: fixer scope (no task lists tests): no test file, and the report says so and why: You are the fixer of run ...
+      FAIL: fixer scope (gate red, no task lists tests): the test rule follows the part: ... GOAL: make this failure pass, test first when a test can express it. ...
+      (and, with tests listed, FAIL: fixer scope (tests listed): a SCOPE line names the finding's file ... : the SCOPE line was missing)
+      FAIL: agents: ... got ['executor: the test of a fix has no exception for a UI task or a plan that lists no tests'], want []
+    A first version that named the briefs in the SCOPE line went red on the older check `scratch: the fixer is given no path under .git`."""
+    def ui(on):
+        def edit(a):
+            for w in a["waves"]:
+                for t in w["tasks"]:
+                    t["ui"] = on
+        return edit
+
+    def fixer(over, what):
+        rec, err = go(script, args_over=over, base={**green(), **fix_scenario()})
+        rec = finish(s, "fixer scope, " + what, rec, err)
+        return (launched(rec, "executor:fix-") or [{"prompt": ""}])[0]["prompt"]
+
+    for what, over, tests in (("tests listed", ui(False), True), ("no task lists tests", ui(True), False)):
+        p = fixer(over, what)
+        s.ok("fixer scope (%s): a SCOPE line names the finding's file and the plan's files of the part's tasks" % what,
+             re.search(r"^SCOPE: .*finding.*plan\.md.*T1, T2, T3", p, re.M) is not None, p[:900])
+        s.ok("fixer scope (%s): the fixer is told to write no other path" % what, re.search(r"^SCOPE: .*no other path", p, re.M) is not None, p[:900])
+        if tests:
+            s.ok("fixer scope (%s): the test in the commit, seen failing first, is still asked for" % what,
+                 "the test in that commit and seen failing first" in p, p[:900])
+            s.ok("fixer scope (%s): a test file only where a task lists tests" % what, "no test file" not in p, p[:900])
+        else:
+            s.ok("fixer scope (%s): no unconditional test demand in the goal" % what,
+                 "the test in that commit" not in p and "seen failing first" not in p, p[:900])
+            s.ok("fixer scope (%s): no test file, and the report says so and why" % what,
+                 "write no test file" in p and "could_not_run" in p, p[:900])
+    # args with no task at all: nothing says the part lists no tests, so the old demand stands (a missing fact is not "no tests")
+    rec, err = go(script, args_over=lambda a: a.update(waves=[], done=[], **{"from": "gate"}), base={**green(), **fix_scenario(),
+                  "executor:runner-integrate": {"$seq": [final("h2", []), final("h3", ["wt-fix"])]}})
+    rec = finish(s, "fixer scope, no task in args", rec, err)
+    p = (launched(rec, "executor:fix-") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("fixer scope (no task in args): the test is still asked for", "the test in that commit and seen failing first" in p and "write no test file" not in p, p[:900])
+    # a failing gate or a refused merge sends the plain fixer (no finding): same scope, same rule on tests
+    for what, over, tests in (("gate red, tests listed", ui(False), True), ("gate red, no task lists tests", ui(True), False)):
+        rec, err = go(script, args_over=over, answers_over={
+            "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"], rc=1), final("h3", ["wt-fix"])]},
+            "executor:runner-fix-round": R({"ok": True, "spent": False, "rounds": "1/3", "why": "w"}),
+            "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix")})
+        rec = finish(s, "fixer scope, " + what, rec, err)
+        p = (launched(rec, "executor:fix-") or [{"prompt": ""}])[0]["prompt"]
+        s.ok("fixer scope (%s): a SCOPE line, without the finding's file it has none" % what,
+             re.search(r"^SCOPE: .*plan\.md.*T1, T2, T3", p, re.M) is not None and not re.search(r"^SCOPE: .*finding", p, re.M), p[:900])
+        s.ok("fixer scope (%s): the test rule follows the part" % what,
+             ("test first when a test can express it" in p and "no test file" not in p) if tests else ("test first" not in p and "write no test file" in p), p[:900])
 
 
 def check_wave_base(script, s):
@@ -992,6 +1056,9 @@ def agent_problems(texts):
     # an isolated agent's Bash refuses compound commands and heredocs (measured, 3.4 U8 fix): the executor is told what to do instead
     if "plain, separate commands" not in texts.get("executor", ""):
         found.append("executor: is not told that an isolated agent's Bash refuses joined commands and heredocs (plain, separate commands, Write for files)")
+    # a fix comes with its test, except where the task is UI or the plan lists no tests (a fixer wrote tests/x.test.mjs for a part with `tests: []`)
+    if not re.search(r"The test goes in that same commit.*except where the task is UI or the plan lists no tests", texts.get("executor", "")):
+        found.append("executor: the test of a fix has no exception for a UI task or a plan that lists no tests")
     v = texts.get("review-verifier", "")
     if "structured output" not in v:
         found.append("review-verifier: does not say it answers through the structured output")
@@ -1012,6 +1079,8 @@ def check_agents(s):
          any("criterion it marks" in p for p in agent_problems({**texts, "reviewer": texts["reviewer"].replace("must contain the criterion's `id`", "names the fault")})), "")
     s.ok("agents: control, an executor not told to run plain, separate commands is found",
          any("plain, separate" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("plain, separate commands", "commands")})), "")
+    s.ok("agents: control, an executor whose fix test has no exception is found",
+         any("test of a fix" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("except where the task is UI or the plan lists no tests", "always")})), "")
     s.ok("agents: control, an executor that knows no promptless fixer is found",
          any("executor" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("no brief file", "no file")})), "")
     # what the script gives each one, so the agent files cannot drift from it
@@ -1051,6 +1120,7 @@ def check_all(script, s):
     check_gate(script, s)
     check_review(script, s)
     check_fix(script, s)
+    check_fix_scope(script, s)
     check_args_fix_and_revert(script, s)
     check_wave_base(script, s)
     check_scratch(script, s)
@@ -1118,6 +1188,11 @@ MUTANTS = [
     ("no branch still passes --branches", "(pending.length ? ' --branches ' + pending.map(sh).join(' ') : '')", "' --branches ' + pending.map(sh).join(' ')",
      "FAIL: from gate: one integrate, with --final and no --branches"),
     ("unproven rejected as malformed", "['yes', 'no', 'unproven'].includes(c.met)", "['yes', 'no'].includes(c.met)", "FAIL: criterion unproven"),
+    ("the fixer has no SCOPE line", "  lines.push(scope.line)\n", "", "FAIL: fixer scope (tests listed): a SCOPE line names"),
+    ("no task in args reads as no tests", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = tasks.some((t) => !t.ui)",
+     "FAIL: fixer scope (no task in args): the test is still asked for"),
+    ("the fixer's test is asked for whatever the part lists", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = true", "FAIL: fixer scope (no task lists tests): no unconditional test demand"),
+    ("the fixer is never told to ask for the test", "(scope.tests ? ', the test in that commit and seen failing first' : '')", "''", "FAIL: fixer scope (tests listed): the test in the commit"),
 ]
 
 
