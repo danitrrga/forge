@@ -274,7 +274,7 @@ def real_copy(script, s):
                        env=helpers.clean_env(), capture_output=True, text=True)
     s.eq("real copy: bin/forjax help exits 0", r.returncode, 0)
     s.ok("real copy: help is in the new name", r.stdout.startswith("usage: forjax"), r.stdout[:80])
-    r = subprocess.run([sys.executable, "-c", "import forjax.commands.test as t; print(t.main.__name__)"],
+    r = subprocess.run([sys.executable, "-c", "import forjax.commands.rounds as t; print(t.main.__name__)"],
                        cwd=copy, env=helpers.clean_env(PYTHONPATH=os.path.join(copy, "lib")),
                        capture_output=True, text=True)
     s.ok("real copy: the renamed package imports", r.returncode == 0 and r.stdout.strip() == "main", r.stderr[-300:])

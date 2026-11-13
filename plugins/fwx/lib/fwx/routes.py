@@ -22,7 +22,6 @@ ROWS = [
     ("stage", None, "stage", [], "change the stage of a phase or a job, only where data/stages.json allows it: <dir> <stage> [--why TEXT]"),
     ("decide", None, "decide", [], "the merge decision for the facts of a PR: --facts FILE"),
     ("verify", None, "verify", [], "run the project's checks on a clean tree at the exact commit and record the evidence: [--json] [--pr N] [--dir PATH]"),
-    ("test", None, "test", [], "run every tests/test_*.py of the working folder and summarise"),
     ("discuss", "discuss start", "discuss", ["start"], "what the discuss opens with, as one JSON: [--json] [--phase PHASE_DIR]"),
     ("migrate-gsd", None, "migrate_gsd", [], "convert a project's GSD `.planning/` to `.fwx/`: plan|refs|apply|leftovers [...]"),
     # the session, the phases, the milestones, the decisions and the files of the state
@@ -80,8 +79,9 @@ ROWS = [
 
 # An old name of a whole object that no longer exists (any verb of it): the object that replaced it.
 OLD_OBJECTS = {"context-base": "context", "playbooks": "playbook"}
-# An old name that two new ones replaced.
-OLD_EXTRA = {("state", "check"): "'fwx state lint' or 'fwx report lint'"}
+# An old name that two new ones replaced, or that is now a command of another tool: the text after "now", whole.
+OLD_EXTRA = {("state", "check"): "'fwx state lint' or 'fwx report lint'",
+             ("test",): "'forge test fwx'"}
 # Options that come before the verb and take a value: `fwx linear --project NAME list`.
 LEADING = {"linear": ("--project",)}
 # The verb that `fwx OBJECT` alone runs, for an object whose default is one of its verbs (an object with a row of its own, such as
@@ -118,8 +118,10 @@ def refusal(argv):
         key = tuple(argv[:n])
         if len(key) == n and key in old:
             return "fwx %s: now 'fwx %s'" % (" ".join(key), old[key])
-    if len(argv) >= 2 and tuple(argv[:2]) in OLD_EXTRA:
-        return "fwx %s: now %s" % (" ".join(argv[:2]), OLD_EXTRA[tuple(argv[:2])])
+    for n in (2, 1):
+        key = tuple(argv[:n])
+        if len(key) == n and key in OLD_EXTRA:
+            return "fwx %s: now %s" % (" ".join(key), OLD_EXTRA[key])
     if argv and argv[0] in OLD_OBJECTS:
         return "fwx %s: now 'fwx %s'" % (argv[0], OLD_OBJECTS[argv[0]])
     return None

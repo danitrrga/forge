@@ -35,11 +35,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tests/test_fresh_install.py
 
-  # fwx, the framework imported under plugins/fwx, has its own runner and its own suite (43 test files, about six minutes);
-  # `forge test` leaves them to it, so this job is where they run in CI. `fwx test` exits 1 when no test file
-  # ran and 77 when none failed but one could not run, so an empty or unarmed suite is red here, not falsely
-  # green. The two tests below can never run in CI, and are declared so: each prints `EXPECTED NOT RUN` with
-  # its reason and does not turn the exit to 77. Any other test that cannot run is still 77, so still red.
+  # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (51 test files, about four minutes);
+  # `forge test` with no group leaves them out, so this job is where they run in CI. `forge test fwx` exits 1 when no test
+  # file ran (and when the plugin folder is missing and a path is declared, as here) and 77 when none failed but one could
+  # not run, so an empty or unarmed suite is red here, not falsely green. The two tests below can never run in CI, and are
+  # declared so: each prints `EXPECTED NOT RUN` with its reason and does not turn the exit to 77. Any other test that cannot
+  # run is still 77, so still red. The paths are relative to plugins/fwx, as the group lists them.
   #   tests/test_linear_live.py: asks the real Linear API and has no LINEAR_API_KEY here (a secret this job
   #     is not given).
   #   tests/test_playbooks_tree.py: reads the private workflow tree, which is not in this repository.
@@ -57,5 +58,4 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - run: python3 bin/fwx test --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py
-        working-directory: plugins/fwx
+      - run: python3 bin/forge test fwx --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py

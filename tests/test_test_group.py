@@ -6,29 +6,33 @@ plugins/fwx/tests folder with test_ok.py (exit 0), test_bad.py (exit 1), test_sk
 test_new.py (exit 0, never added to git). The plugin's own runner, `fwx test`, was this code before it moved here; its tests
 (test_runner.py of the plugin) are this file's cases, run through `forge test fwx` instead.
 
-Written first, run on master (`forge test` took no group, no --expect-not-run and no --jobs; the first lines of the 118 FAIL):
+Written first, run on master (`forge test` took no group, no --expect-not-run and no --jobs; 95 of 167 checks failed, the first lines):
   FAIL: all four: exit code: got 2, want 1
   FAIL: all four: summary: got '', want '4 test file(s): 2 passed, 1 failed, 1 not run'
-  FAIL: unknown group: stderr names the groups: got 'usage: forge test [-h] [--mutants]\\nforge test: error: unrecognized arguments: nosuch\\n'
+  FAIL: unknown group nosuch: one line on stderr that names it and lists the groups: 'usage: forge [-h]\\n ... forge: error: unrecognized arguments: nosuch\\n'
   FAIL: --jobs 2: two files running at once see each other: exit code: got 2, want 0
-The no-group cases passed on master but for the SKIP line, which named `python3 plugins/fwx/bin/fwx test`.
-Controls, each on the toy's copy of forge/testgroup.py changed in one place, seen red (the mutation is not kept):
-  - a declared 77 and any 77 count as expected (`and rel in expect` dropped):
-      FAIL: all four ... 'an undeclared skip still exits 77: summary': got '4 test file(s): 2 passed, 0 failed, 0 not run, 2 expected not run', want '... 1 not run, 1 expected not run'
-  - zero passed allowed when something was declared (`(expect and passed == 0)` dropped):
+On master the no-group cases passed but for the SKIP line, which named `python3 plugins/fwx/bin/fwx test`:
+  FAIL: no group: one SKIP line says the plugin's 3 files were left to `forge test fwx`
+Controls, each on a copy of forge/testgroup.py (or forge/cli.py) changed in one place, the suite run on the copy, first FAIL of each
+(the mutations are not kept; the count is how many checks failed):
+  - any 77 counts as expected (`elif code == 77 and rel in expect:` -> `elif code == 77:`), 12:
+      FAIL: all four: summary: got '4 test file(s): 2 passed, 1 failed, 0 not run, 1 expected not run', want '4 test file(s): 2 passed, 1 failed, 1 not run'
+  - zero passed allowed when something was declared (` or (expect and passed == 0)` dropped), 1:
       FAIL: only declared skips ran: zero tests ran is 1: exit code: got 0, want 1
-  - the runner ignores the exit code (every file counts as passed):
+  - the runner ignores the exit code (`if code == 0:` -> `if True:`), 46:
       FAIL: all four: exit code: got 0, want 1
-  - 77 counted green (the `return 77 if not_run` line gone):
+  - 77 counted green (`return 77 if not_run else 0` -> `return 0`), 3:
       FAIL: ok + skip: exit code: got 0, want 77
-  - one worker (`max_workers=jobs` -> 1):
+  - one worker (`max_workers=jobs` -> 1), 6:
       FAIL: --jobs 2: two files running at once see each other: exit code: got 1, want 0
-  - printed in start order (`for rel in files:` -> `for rel in start:`):
-      FAIL: --jobs 4, set 1: everything: the lines are in the order of the file names
-  - the group runs in the repository's top folder, not the plugin's (`root` -> the toy's top):
-      FAIL: a repository with tests of its own at the top: the plugin's own test ran, the top level's did not
-  - the folder absent is a PASS-free exit 0 even with a declaration (the `unknown` check skipped for an absent folder):
+  - printed in start order (`for rel in files:` -> `for rel in start:`), 3:
+      FAIL: --jobs 4, set 1: everything: the lines are in the order of the file names: got ['tests/test_big.py', 'tests/test_zeta.py', ...]
+  - the group runs in the repository's top folder (cli.py: the group's folder -> lib.ROOT), 73:
+      FAIL: all four: summary: got '0 test file(s): 0 passed, 0 failed, 0 not run', want '4 test file(s): 2 passed, 1 failed, 1 not run'
+  - an absent folder with a declared path is a SKIP (`if expect: return 1` dropped), 1:
       FAIL: plugin folder absent, a path declared: exit code: got 0, want 1
+  - an unknown group is not refused (cli.py: `if group not in GROUPS:` -> `if False:`), 6:
+      FAIL: unknown group nosuch: exit code: got 1, want 2
 """
 import os
 import shutil

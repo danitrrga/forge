@@ -88,7 +88,7 @@ behind every "built".
    failure message is kept. A check that looked at zero things fails. A check that could not run prints
    `NOT RUN, NOT ARMED` and is neither a pass nor a fail; a skipped, neutral or cancelled result from an outside check is
    not green either. The reason: CodeRabbit reports success when it skips a review, and a CI job that times out ends as
-   cancelled, not failed. Built: this is the rule of forge's own test suite, and `fwx test` exits 77 for a run where a
+   cancelled, not failed. Built: this is the rule of forge's own test suite, and `forge test fwx` exits 77 for a run where a
    test could not run.
 4. **Two critiques of every plan.** A pre-mortem comes before the plan: small, fast and cheap, it stops you planning
    work you did not ask for. A post-mortem comes after: much harder, and it asks how each requirement of the plan will be
@@ -153,7 +153,7 @@ source in a `referent:` line.
 ```sh
 python3 plugins/fwx/bin/fwx --help              # every command, one line each
 python3 plugins/fwx/bin/fwx playbook list      # the workflow tree: each node and its exits
-python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test leaves it to this; CI runs it as the fwx job)
+python3 bin/forge test fwx                      # fwx's own suite, a group of forge test (forge test with no group leaves it out; CI runs it as the fwx job)
 ```
 
 `plugins/fwx/README.md` has the command list, the configuration file and the install steps.
@@ -293,7 +293,7 @@ forge sync [--apply] [--project NAME | --all]               what would change (o
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
-forge test [--mutants]                                      every tracked test_*.py, at nice 19 (plugins/fwx has its own runner, `fwx test`)
+forge test [fwx] [--mutants]                                every tracked test_*.py but plugins/fwx's, at nice 19; `fwx`: that suite alone, in parallel (--jobs N, --expect-not-run P,..)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
@@ -360,8 +360,8 @@ forge is a per-machine registry. If you want configuration that travels with eac
 `CLAUDE.md` (also `AGENTS.md`) is the guide for working on the engine. Before you open a pull request:
 
 ```sh
-python3 bin/forge test                    # every test, in sandboxes that never touch your HOME
-python3 plugins/fwx/bin/fwx test           # only when you touched plugins/fwx: its suite has its own runner
+python3 bin/forge test                    # every test but plugins/fwx's, in sandboxes that never touch your HOME
+python3 bin/forge test fwx                # only when you touched plugins/fwx: its suite is a group of its own
 python3 bin/forge lint --all      # no personal data in the engine
 git config core.hooksPath githooks        # run the personal-data guard on every commit and push
 ```

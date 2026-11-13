@@ -21,7 +21,7 @@ O16	orchestrator	main-step	git worktree remove {wt} && git branch -D fwx/own	all
 X1	executor	workflow	git log --oneline -1	allow
 X2	executor	workflow	@Edit src/probe.txt	allow
 X3	executor	workflow	python3 tests/test_probe.py	allow
-X4	executor	workflow	fwx test	allow
+X4	executor	workflow	python3 bin/forge test fwx	allow
 X5	executor	workflow	git commit -am probe	allow
 RV1	reviewer	workflow	git diff master...HEAD	allow
 RV2	review-verifier	workflow	python3 tests/test_probe.py	allow
