@@ -288,6 +288,27 @@ named_map = write_map("named-map.md", "Run `fwx phase new`, `fwx session`, `fwx 
 cli(repo9, "new", d9, "--map", named_map)
 r = cli(repo9, "lint", d9, "--map", named_map)
 s.eq("a map naming objects of the table (`fwx phase new`, `fwx session`, `fwx review read`): exit 0", r.returncode, 0)
+# The lint checks object and verb: an old or unknown `fwx <object> <verb>` fails and names itself (an old one, its new name too).
+# Seen red with only the object word looked at (the base was sealed and linted clean):
+#   FAIL: a base naming `fwx state decisions`: exit 1: got 0, want 1  (and the same for `fwx wave prepare`, `fwx linear create`)
+for old_name, new_name in (("state decisions", "fwx decision list"), ("wave prepare", "fwx wave new"), ("linear create", "fwx linear new")):
+    old_map = write_map("old-map.md", "Run `fwx %s` first.\n" % old_name)
+    cli(repo9, "new", d9, "--map", old_map)
+    r = cli(repo9, "lint", d9, "--map", old_map)
+    s.ok("a base naming `fwx %s`: exit 1, naming it and `%s`" % (old_name, new_name),
+         r.returncode == 1 and "fwx %s" % old_name in r.stderr and new_name in r.stderr, "%d %r" % (r.returncode, r.stderr))
+unknown_map = write_map("unknown-verb-map.md", "Run `fwx phase nwe` first.\n")
+cli(repo9, "new", d9, "--map", unknown_map)
+r = cli(repo9, "lint", d9, "--map", unknown_map)
+s.ok("a base naming `fwx phase nwe`: exit 1, naming it", r.returncode == 1 and "fwx phase nwe" in r.stderr, "%d %r" % (r.returncode, r.stderr))
+cur_map = write_map("current-map.md", "Run `fwx wave merge`, `fwx linear list`, `fwx context DIR`, `fwx model executor small` and `fwx walk stop`.\n")
+cli(repo9, "new", d9, "--map", cur_map)
+r = cli(repo9, "lint", d9, "--map", cur_map)
+s.eq("a base with only current names (a default verb, a positional word): exit 0", r.returncode, 0)
+oldhand = helpers.write(SCRATCH, "oldhand.md", "Map. Use `fwx state decisions`.\n")
+cli(repo9, "seal", oldhand)
+r = cli(repo9, "lint", "--file", oldhand)
+s.ok("a sealed hand-written file naming `fwx state decisions`: exit 1 and its new name", r.returncode == 1 and "fwx decision list" in r.stderr, "%d %r" % (r.returncode, r.stderr))
 real = cli(repo9, "new", d9)
 s.ok("the shipped data/context-map.md builds", real.returncode == 0, real.stderr)
 s.eq("the shipped data/context-map.md checks", cli(repo9, "lint", d9).returncode, 0)
