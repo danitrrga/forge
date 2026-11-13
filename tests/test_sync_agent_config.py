@@ -272,7 +272,7 @@ check(os.path.exists(hooks.USER_SETTINGS) and os.path.exists(os.path.join(CODEX_
       "clean toy run did not create settings.json and $CODEX_HOME/hooks.json, or wrote ~/.codex: "
       "the generator's hooks.json is %s" % hooks.CODEX_HOOKS.replace(HOME, "~"))
 
-# 3. A key relocation never touches a frozen project's key (unify-plan rule 1: forge writes El
+# 3. A key relocation never touches a frozen project's key (docs/archive/unify-plan.md rule 1: forge writes El
 # Portal not one byte), and a scoped run relocates only its own projects' keys.
 reset_home()
 portal = os.path.join(TOY, "reloc-frozen", "projects", "portal")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The two `forge doctor` checks added in docs/unify-plan.md (steps 2 and 3), and the
+"""The two `forge doctor` checks added in docs/archive/unify-plan.md (steps 2 and 3), and the
 row shape they needed. Each case builds its own world: nothing here reads or writes the real
 machine's profiles, skills or HOME.
 
