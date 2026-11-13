@@ -119,28 +119,44 @@ def block(playbook, node):
     return m.group(0) if m else ""
 
 
-def commit_effect(line):
-    """Run rule 4's commit line in a toy repo holding the documents of a phase beside what the UI walk leaves, and say what it tracked and
-    what it left untracked: (tracked files under .fwx/, untracked ones). `<main_checkout>` is the toy, `<message>` is `m`."""
+def commit_effect(line, stale=False, demo=True, twice=False):
+    """Run rule 4's commit line in a toy repo holding the documents of a phase beside what the UI walk leaves, and say what it did:
+    (exit code, tracked files under .fwx/, untracked ones, files of the last commit, exit code of a second run or None). `<main_checkout>` is
+    the toy, `<message>` is `m`. `stale`: an older session tracked a walk's `demo-state.json` (not a document) and it has changed since;
+    `demo` False: the phase has no demo page; `twice`: the line runs a second time with nothing new."""
     with tempfile.TemporaryDirectory(prefix="fwx-rule4-") as toy:
-        return _commit_effect(line, toy)
+        return _commit_effect(line, toy, stale, demo, twice)
 
 
-def _commit_effect(line, toy):
+def _commit_effect(line, toy, stale, demo, twice):
     env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.test", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.test", GIT_CONFIG_GLOBAL=os.devnull,
                GIT_CONFIG_NOSYSTEM="1")
     env = {k: v for k, v in env.items() if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")}
     phase = ".fwx/milestones/v1/phases/01-a"
-    subprocess.run("git init -q -b master && echo x > README && git add -A && git commit -q -m toy", shell=True, cwd=toy, env=env, capture_output=True)
+    old_state = phase + "/ui-walk/0-0/demo-state.json"
+    run = lambda cmd: subprocess.run(cmd, shell=True, cwd=toy, env=env, capture_output=True, text=True)
+    run("git init -q -b master && echo x > README && git add -A && git commit -q -m toy")
+    if stale:
+        os.makedirs(os.path.dirname(os.path.join(toy, old_state)))
+        with open(os.path.join(toy, old_state), "w") as f:
+            f.write("old\n")
+        run("git add -A && git commit -q -m older-session")
+        with open(os.path.join(toy, old_state), "w") as f:
+            f.write("changed\n")
     for rel in (".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
                 phase + "/demo/shot.png", phase + "/ui-walk/1-1/demo-state.json", phase + "/ui-walk/1-1/up.log", phase + "/ui-walk/1-1/shot.png"):
+        if not demo and "/demo/page.html" in rel:
+            continue
         os.makedirs(os.path.dirname(os.path.join(toy, rel)), exist_ok=True)
         with open(os.path.join(toy, rel), "w") as f:
             f.write("x\n")
-    r = subprocess.run(line.replace("<main_checkout>", toy).replace("<message>", "m"), shell=True, cwd=toy, env=env, capture_output=True, text=True)
-    tracked = subprocess.run("git ls-tree -r --name-only HEAD", shell=True, cwd=toy, env=env, capture_output=True, text=True).stdout.split()
-    untracked = subprocess.run("git status --porcelain -uall", shell=True, cwd=toy, env=env, capture_output=True, text=True).stdout.split("\n")
-    return r.returncode, [f for f in tracked if f.startswith(".fwx/")], [u[3:] for u in untracked if u.startswith("?? ")]
+    cmd = line.replace("<main_checkout>", toy).replace("<message>", "m")
+    r = run(cmd)
+    again = run(cmd).returncode if twice else None
+    tracked = run("git ls-tree -r --name-only HEAD").stdout.split()
+    untracked = run("git status --porcelain -uall").stdout.split("\n")
+    last = run("git show --name-only --format= HEAD").stdout.split()
+    return r.returncode, [f for f in tracked if f.startswith(".fwx/")], [u[3:] for u in untracked if u.startswith("?? ")], last, again
 
 
 def in_order(text, *words):
@@ -340,7 +356,7 @@ def main():
     lines = re.findall(r"`(cd <main_checkout> && find [^`]*)`", rule4)
     check("rule 4 has one commit line built on `find`", len(lines) == 1, "found %d" % len(lines))
     if len(lines) == 1:
-        rc, tracked, untracked = commit_effect(lines[0])
+        rc, tracked, untracked, _, _ = commit_effect(lines[0])
         phase = ".fwx/milestones/v1/phases/01-a"
         check("rule 4's commit line adds the documents and the demo pages", rc == 0 and all(f in tracked for f in (
             ".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
@@ -348,8 +364,25 @@ def main():
         check("rule 4's commit line leaves demo-state.json, a log and a screenshot untracked", all(any(u.endswith(n) for u in untracked) for n in (
             "demo-state.json", "up.log", "ui-walk/1-1/shot.png", "demo/shot.png")) and not [f for f in tracked if f.endswith(("demo-state.json", ".log", ".png"))],
               "untracked %s, tracked %s" % (untracked, tracked))
+    # Review of PR 130: the commit took `-- .fwx`, which records the working-tree contents of every tracked file under it, so a `demo-state.json`
+    # tracked by an older session and changed since went into the commit although `find` left it out of `git add`. The line is run in a toy
+    # whose older session tracked such a file, in a phase with no demo page, and a second time with nothing new.
+    # Seen red on fc1cd49: FAIL: rule 4's commit line leaves a changed, previously tracked walk file out of the commit -> rc 0, the commit holds [...ui-walk/0-0/demo-state.json...]
+    if len(lines) == 1:
+        rc, _, _, last, _ = commit_effect(lines[0], stale=True)
+        check("rule 4's commit line leaves a changed, previously tracked walk file out of the commit", rc == 0 and bool(last) and not [f for f in last if f.endswith("demo-state.json")],
+              "rc %s, the commit holds %s" % (rc, last))
+        rc, tracked, _, last, _ = commit_effect(lines[0], demo=False)
+        check("rule 4's commit line works in a phase with no demo page", rc == 0 and ".fwx/milestones/v1/phases/01-a/context.md" in last and not [f for f in tracked if "/demo/" in f],
+              "rc %s, the commit holds %s" % (rc, last))
+        rc, _, _, _, again = commit_effect(lines[0], twice=True)
+        check("rule 4's commit line run again with nothing new exits 1 (git: nothing to commit) and makes no empty commit", rc == 0 and again == 1, "rc %s, second rc %s" % (rc, again))
     old = commit_effect("git -C <main_checkout> add .fwx && git -C <main_checkout> commit -m \"<message>\" -- .fwx")
     check("control: the old line `git add .fwx` tracks the walk's session file", any(f.endswith("demo-state.json") for f in old[1]), "tracked %s" % old[1])
+    # control: the old text's own commit part (`-- .fwx`) records a tracked, changed non-document
+    check("control: `commit -- .fwx` after the find-built add commits a previously tracked walk file", any(f.endswith("demo-state.json") for f in commit_effect(
+        "cd <main_checkout> && find .fwx -type f ! -name '.*' \\( -name '*.md' -o -name '*.tsv' -o -path '*/demo/*.html' \\) -print0 | git add --pathspec-from-file=- --pathspec-file-nul && git commit -m \"<message>\" -- .fwx",
+        stale=True)[3]), "the control line did not commit it")
     check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.
