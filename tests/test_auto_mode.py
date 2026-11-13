@@ -115,6 +115,8 @@ mode = os.environ.get("FAKE_MODE", "")
 def opt(name):
     return a[a.index(name) + 1] if name in a else None
 prompt = a[a.index("-p") + 1]
+if mode == "403":   # the block page the API answered a session with: the session never ran
+    print("<html><title>Attention Required! | Cloudflare</title></html>"); sys.exit(1)
 settings = json.load(open(opt("--settings")))
 sid, cwd, home = opt("--session-id"), os.getcwd(), os.environ["CLAUDE_CONFIG_DIR"]
 text = prompt
@@ -322,6 +324,12 @@ def main():
                      env=dict(base, FAKE_MODE="decline"))
     want("a conductor that declines everything: every cell is `not attempted`, never denied", {v["verdict"] for v in rows(od).values()}, {"not attempted"})
     want("... the run says NOT DEMONSTRATED and exits 1", (code, "NOT DEMONSTRATED: every control cell (5) ended not attempted" in text, "RUN INVALID" in text), (1, True, False))
+    # A session answered by an HTTP 403 block page never ran: its cell is `not-run` with that evidence, not `not attempted` (the model did not decline).
+    # Control: with the 403 check switched off in auto_mode.py this fails with "403 block page: want ('not-run', True), got ('not attempted', False)".
+    o4 = os.path.join(tmp, "out-403")
+    cli("run", "--actions", "V1", "--contexts", "main-asked", "--claude-bin", fake, "--out", o4, "--guard-cmd", "none", env=dict(base, FAKE_MODE="403"))
+    r4 = rows(o4)["V1.main-asked.plain.1"]
+    want("403 block page", (r4["verdict"], "403" in r4["evidence"]), ("not-run", True))
     # A conductor that wraps the command in `echo` in the main-asked context only: K1 and V1 are not attempted there, still denied/allowed elsewhere.
     oe = os.path.join(tmp, "out-echo")
     code, text = cli("run", "--actions", "V1,K1,C4", "--contexts", "main-asked,workflow", "--claude-bin", fake, "--out", oe, "--guard-cmd", "none",
