@@ -57,7 +57,7 @@ Your argument is `$ARGUMENTS`: a phase folder (absolute path), `retake <KEY>`, o
    A rejection on the page stops you there; with none, treat the part as good.
    His answer: good: next part (step 5 for part N+1) or step 9 after the last. An implementation problem: `fwx rounds <part> --reset "<his words>"`, stage `executing` (`part <N> corrections`) and `execute` with the correction (step 5). A problem of intention: step 7. Two more answers have steps of their own, below. Asynchronous review: a late objection is recorded at once with `fwx rounds <part> --reset "<his words>"` (on disk, so a cut keeps it) and runs as a correction of that part at the next boundary. The phase closes only when no part has a reset after its last `phase-review` row. An accepted proposer patch goes to `execute` as a correction of the last part.
    The walk again: he asks for it, or a walk did not count.
-   1. Step 6 again (it writes its own stage `ui-walk`, which the table allows from `phase-review`), with the `args` of the part's last walk.
+   1. Step 6 again (it writes its own stage `ui-walk`, which the table allows from `phase-review`), with the `args` of the part's last walk but `recheck` null: a walk with a `recheck` runs only the verifiers, and this one is a full walk.
    2. His answer itself starts no `execute`; the fix rounds of step 6 stay as they are. Then this step again.
    A decision after the plan: he decides something that is not a defect of the code, such as another value, size or wording than the one decided before. You do not read the plan to judge it: the planner and the post-mortem get the decision.
    1. The `decisions` agent records it (`source` `review of part <N>`), then `fwx rounds <part> --reset "<his words>"`.

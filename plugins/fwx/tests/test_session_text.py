@@ -313,6 +313,15 @@ def main():
     walk2 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("2. ") and "Then this step again" in ln), "")
     check("step 8's 'No execute' sub-step names the fix rounds of step 6",
           "execute" in walk2 and "fix rounds of step 6" in walk2, "sub-step 2 of 'The walk again' is: %r" % walk2)
+    # Review of PR 130: step 6's last walk may have been a recheck (`recheck` the path of a fix.json), and `workflows/ui-walk.js` then runs only the
+    # verifiers, so repeating "the args of the last walk" would walk nothing. The sub-step says `recheck` is null. The name and meaning are
+    # the workflow's own (`recheck (null, or the path of a fix.json: only the verifiers run)`), pinned below against its `whenToUse`.
+    # Seen red on df27f7e: FAIL: step 8's 'Step 6 again' sub-step says the repeated walk is a full one, `recheck` null -> sub-step 1 is: '1. Step 6 again (it writes its own stage `ui-walk`, which the table allows from `phase-review`), with the `args` of the part's last walk.'
+    walk1 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("1. Step 6 again")), "")
+    check("step 8's 'Step 6 again' sub-step says the repeated walk is a full one, `recheck` null",
+          "`recheck` null" in walk1 and "only the verifiers" in walk1, "sub-step 1 is: %r" % walk1)
+    check("the workflow has the arg `recheck` that runs only the verifiers", "recheck (null, or the path of a fix.json: only the verifiers run)" in js, "the `whenToUse` of workflows/ui-walk.js changed")
+    check("control: a sub-step 1 without it is caught", "`recheck` null" not in "1. Step 6 again, with the `args` of the part's last walk.")
     amend3 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("3. At step 4")), "")
     check("step 8's amendment sub-step 3 gives the reason for no branch and no `executing` row",
           "no branch" in amend3 and all(w in amend3 for w in ("already exist", "git worktree add")), "sub-step 3 is: %r" % amend3)
