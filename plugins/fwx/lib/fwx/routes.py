@@ -16,7 +16,6 @@ A row is (new name, old name, module, handler arguments, help):
 ROWS = [
     # one word
     ("budget", None, "budget", [], "the session's context and weekly quota budget: [--json] [--transcript PATH]"),
-    ("capacity", None, "capacity", [], "how many agents of a role can start now: --role R --want N [--per-agent-mb M] [--wait S] [--unattended] [--json]"),
     ("model", None, "model", [], "the model for a role and size: <role> <size>"),
     ("statusline", None, "statusline", [], "the status-bar line, saving the session's budget"),
     ("rounds", None, "rounds", [], "count a job's implement-verify rounds against the cap: <dir> [--use MOTIVE | --reset MOTIVE]"),
@@ -71,7 +70,6 @@ ROWS = [
     ("walk ab", None, "walk", ["ab"], "agent-browser, guarded to the run's own app"),
     ("walk pw", None, "walk", ["pw"], "Playwright, guarded to the run's own app"),
     ("walk check-screens", None, "walk", ["check-screens"], "check the screens a part changed against the walk's own list"),
-    ("walk capacity", None, "walk", ["capacity"], "how many walkers can start now"),
     ("walk converge", "walk findings", "walk", ["findings"], "the walkers' verdicts into fix.json and contradicted.json"),
     ("walk selftest", None, "walk", ["selftest"], "the walk's own check on a toy app"),
     ("walk capture", "screenshot", "screenshot", [], "one capture per walked screen of a run, with no model: --run R [--screens JSON] [--out DIR]"),

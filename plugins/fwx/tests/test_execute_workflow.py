@@ -14,7 +14,7 @@ Red before the script existed (python3 tests/test_execute_workflow.py, first lin
 Controls: each behaviour is also run on a copy of workflows/execute.js with its branch taken out (`MUTANTS`; the anchor must
 be in the script exactly once), and must go red with the text given. The first FAIL line of each, seen red:
   serial wave ignored:        FAIL: clash: the two executors never run at once: T1 3-5 overlaps T2 4-7
-  capacity 0 not checked:     FAIL: no capacity: the script ended: {'message': 'killed after 25 s: the script did not end', ...}
+  a cap that is no number not refused: FAIL: cap missing: no executor launched: got ['executor:T1', 'executor:T2', 'executor:T3'], want []
   conflict to the plain fixer: FAIL: conflict: the resolver ran (conflict sent to the plain fixer): [...]
   a miss spends a round:      FAIL: executor null once: no round spent (fix-round called for a null): [...]
   second miss counted as done: FAIL: two nulls: failed: got 'done', want 'failed'
@@ -28,7 +28,7 @@ be in the script exactly once), and must go red with the text given. The first F
   finding ids not prefixed:   FAIL: fix: the fixer is given the finding under its unique id and not the one it was written with
   and 21 more rows of MUTANTS, each seen red with the text in its fourth column. A control run stops at the first FAIL it waits
   for (helpers.FirstFail: the rest of the run could only add FAILs the control does not read). A mutant that makes the script
-  loop (capacity 0) is cut off by the stub after 400 launches (exit 124); `run_capped` cuts a script that does not even launch
+  loop is cut off by the stub after 400 launches (exit 124); `run_capped` cuts a script that does not even launch
   after 25 s.
 
 Red before 3.4 align (the gate's stage, the re-entry at the gate, the agents' wording; first lines of this file on the old script):
@@ -88,10 +88,6 @@ def R(obj, rc=0):
     return {"stdout": obj if isinstance(obj, str) else json.dumps(obj), "rc": rc}
 
 
-def cap(allowed=3, want=2):
-    return R({"role": "executor", "want": want, "allowed": allowed, "running": 0, "limit": 3, "reasons": []}, 0 if allowed else 1)
-
-
 def integ(head, merged, ok=True, **kw):
     d = {"ok": ok, "head": head, "merged": merged, "conflict": None, "locked": [], "findings_check": {"ok": True, "problems": []},
          "quick": {"ran": True, "cmds": ["t"], "rc": 0}, "verify": {"ran": False, "rc": None, "line": ""}, "trusted": [], "protected": []}
@@ -147,7 +143,6 @@ CLEAN_CLEANUP = R({"removed": ["wt-t1", "wt-t2", "wt-t3"], "kept": [], "leftover
 def green():
     """The answers of a run in which nothing goes wrong: wave 1 (T1, T2), wave 2 (T3, the last), a clean review."""
     return {
-        "executor:runner-capacity": cap(),
         "executor:T1": exec_line("T1"), "executor:runner-report-T1": exec_report("wt-t1"),
         "executor:T2": exec_line("T2"), "executor:runner-report-T2": exec_report("wt-t2"),
         "executor:T3": exec_line("T3"), "executor:runner-report-T3": exec_report("wt-t3"),
@@ -274,8 +269,8 @@ def check_green(script, s):
     s.eq("green: status", r.get("status"), "done")
     s.eq("green: reason", r.get("reason"), "")
     s.eq("green: phase_dir", r.get("phase_dir"), "/work/.fwx/phases/01-toy")
-    want = ["executor:runner-capacity", "executor:T1", "executor:T2", "executor:runner-report-T1", "executor:runner-report-T2",
-            "executor:runner-integrate", "executor:runner-capacity", "executor:T3", "executor:runner-report-T3",
+    want = ["executor:T1", "executor:T2", "executor:runner-report-T1", "executor:runner-report-T2",
+            "executor:runner-integrate", "executor:T3", "executor:runner-report-T3",
             "executor:runner-integrate", "reviewer:r1", "executor:runner-report-r1", "executor:runner-cleanup"]
     s.eq("green: launch order", labels(rec), want)
     s.eq("green: phases", rec.get("phases"), ["executing", "reviewing"])
@@ -299,10 +294,6 @@ def check_green(script, s):
                  ("m-rev", "fwx:reviewer", False))
     t1, t2 = launched(rec, "executor:T1")[0], launched(rec, "executor:T2")[0]
     s.ok("green: the two tasks of a wave with no clash run at once", overlap(t1, t2), "T1 %s-%s, T2 %s-%s" % (t1["start"], t1["end"], t2["start"], t2["end"]))
-    caps = runner(rec, "capacity")
-    s.ok("green: capacity asked for the wave's two tasks, role executor, waiting", all(
-        "fwx capacity --role executor --want %d --wait 540" % w in c["prompt"] for c, w in zip(caps, (2, 1))), repr([c["prompt"][-120:] for c in caps]))
-    s.ok("green: no --unattended with the owner present", all("--unattended" not in c["prompt"] for c in caps))
     ints = runner(rec, "integrate")
     s.ok("green: the first wave is not integrated with --final", "--final" not in ints[0]["prompt"], ints[0]["prompt"][-200:])
     s.ok("green: the last wave is integrated with --final", "--final" in ints[1]["prompt"], ints[1]["prompt"][-200:])
@@ -325,11 +316,6 @@ def check_green(script, s):
     s.ok("green: cleanup names the run", "fwx wave remove --run '01-toy-ab12cd3-1'" in launched(rec, "executor:runner-cleanup")[0]["prompt"])
     s.eq("green: no fix-round, no fixer", (runner(rec, "fix-round"), [l for l in workers(rec) if not l["label"].startswith("executor:T")]), ([], []))
 
-    rec, err = go(script, answers_over={"executor:runner-capacity": cap()}, args_over=lambda a: a.update(unattended=True))
-    rec = finish(s, "unattended", rec, err)
-    s.ok("unattended: capacity carries --unattended (unattended run capped at 3)", all("--unattended" in c["prompt"] for c in runner(rec, "capacity")),
-         repr([c["prompt"][-80:] for c in runner(rec, "capacity")]))
-
     def skip_t1(a):
         a["done"] = ["T1", "T2"]
     rec, err = go(script, args_over=skip_t1, answers_over={"executor:runner-integrate": {"$seq": [final("h2", ["wt-t3"])]}})
@@ -340,7 +326,7 @@ def check_green(script, s):
 
     def one_done(a):
         a["done"] = ["T1"]
-    rec, err = go(script, args_over=one_done, answers_over={"executor:runner-capacity": cap(3, 1)})
+    rec, err = go(script, args_over=one_done)
     rec = finish(s, "one task done", rec, err)
     s.ok("done tasks: in a wave half done only the other task is launched and merged",
          not launched(rec, "executor:T1") and len(launched(rec, "executor:T2")) == 1 and "--branches 'wt-t2'" in runner(rec, "integrate")[0]["prompt"]
@@ -354,31 +340,17 @@ def check_green(script, s):
          ("needs-owner", []))
 
 
-def check_clash_and_capacity(script, s):
+def check_clash(script, s):
     def clash(a):
         a["waves"][0]["serial"] = True
         a["plan_failures"] = [{"wave": 1, "tasks": ["T1", "T2"], "files": ["a.py"]}]
-    rec, err = go(script, args_over=clash, answers_over={"executor:runner-capacity": cap(3, 1)})
+    rec, err = go(script, args_over=clash)
     rec = finish(s, "clash", rec, err)
     t1, t2 = launched(rec, "executor:T1")[0], launched(rec, "executor:T2")[0]
     s.ok("clash: the two executors never run at once", not overlap(t1, t2), "T1 %s-%s overlaps T2 %s-%s" % (t1["start"], t1["end"], t2["start"], t2["end"]))
-    s.ok("clash: one task per batch, capacity asked for one", all("--want 1 " in c["prompt"] for c in runner(rec, "capacity")[:2]),
-         repr([c["prompt"][-100:] for c in runner(rec, "capacity")]))
+    s.eq("clash: one task per batch whatever the cap (3)", peak(launched(rec, "executor:T")), 1)
     s.eq("clash: plan_failures reach the output", details(rec).get("plan_failures"), [{"wave": 1, "tasks": ["T1", "T2"], "files": ["a.py"]}])
     s.eq("clash: the run still ends done", result(rec).get("status"), "done")
-
-    rec, err = go(script, answers_over={"executor:runner-capacity": cap(0)})
-    rec = finish(s, "no capacity", rec, err)
-    s.eq("no capacity: no executor launched", workers(rec), [])
-    s.eq("no capacity: failed", result(rec).get("status"), "failed")
-    s.ok("no capacity: the reason is capacity", str(result(rec).get("reason", "")).startswith("capacity"), repr(result(rec).get("reason")))
-    s.ok("no capacity: cleanup still runs", labels(rec)[-1:] == ["executor:runner-cleanup"], repr(labels(rec)))
-
-    rec, err = go(script, answers_over={"executor:runner-capacity": cap(1, 2)})
-    rec = finish(s, "capacity 1 of 2", rec, err)
-    t1, t2 = launched(rec, "executor:T1")[0], launched(rec, "executor:T2")[0]
-    s.ok("capacity 1 of 2: batches of what is allowed, one then the other", not overlap(t1, t2), "T1 and T2 overlap with allowed 1")
-    s.eq("capacity 1 of 2: status", result(rec).get("status"), "done")
 
 
 def check_executor_misses(script, s):
@@ -882,7 +854,7 @@ def check_wave_base(script, s):
             for t in w["tasks"]:
                 t["brief"] = None
     rec, err = go(script, args_over=fixmode, base={
-        "executor:runner-capacity": cap(3, 1), "executor:fix": exec_line("fix"), "executor:runner-report-fix": exec_report("wt-w"),
+        "executor:fix": exec_line("fix"), "executor:runner-report-fix": exec_report("wt-w"),
         "executor:runner-integrate": {"$seq": [final("h2", ["wt-w"])]},
         "reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report(), "executor:runner-cleanup": CLEAN_CLEANUP})
     rec = finish(s, "wave base, fix", rec, err)
@@ -935,7 +907,7 @@ def check_args_fix_and_revert(script, s):
             for t in w["tasks"]:
                 t["brief"] = None
     rec, err = go(script, args_over=fixmode, base={
-        "executor:runner-capacity": cap(3, 1), "executor:fix": exec_line("fix"), "executor:runner-report-fix": exec_report("wt-w"),
+        "executor:fix": exec_line("fix"), "executor:runner-report-fix": exec_report("wt-w"),
         "executor:runner-integrate": {"$seq": [final("h2", ["wt-w"])]},
         "reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report(), "executor:runner-cleanup": CLEAN_CLEANUP})
     rec = finish(s, "args.fix", rec, err)
@@ -1000,7 +972,7 @@ def check_gate_entry_and_stage(script, s):
     def gate_entry(a):
         a["done"] = ["T1", "T2", "T3"]
         a["from"] = "gate"
-    entry = {"executor:runner-integrate": {"$seq": [final("h2", [])]}, "executor:runner-capacity": cap(3, 1)}
+    entry = {"executor:runner-integrate": {"$seq": [final("h2", [])]}}
     rec, err = go(script, args_over=gate_entry, answers_over=entry)
     rec = finish(s, "from gate", rec, err)
     s.eq("from gate: the gate, then the review: done (a second run of finished tasks returned needs-owner)", (result(rec).get("status"), result(rec).get("reason")), ("done", ""))
@@ -1011,7 +983,7 @@ def check_gate_entry_and_stage(script, s):
     s.eq("from gate: the gate and the review run in reviewing, the reviewed range starts at the part's base",
          (rec.get("phases"), HEAD0 in launched(rec, "reviewer:")[0]["prompt"]), (["reviewing"], True))
     s.eq("from gate: cleanup is last", last(rec), "executor:runner-cleanup")
-    s.eq("from gate: no capacity asked", list(runner(rec, "capacity")), [])
+    s.eq("from gate: no executor, so no cap is read", [l["label"] for l in workers(rec)], [])
 
     rec, err = go(script, args_over=gate_entry, answers_over={**entry, "executor:runner-integrate": {"$seq": [final("h2", [], rc=1), final("h3", ["wt-fix"])]},
                                                                 "executor:runner-fix-round": R({"ok": True, "spent": False, "rounds": "1/3", "why": "w"}),
@@ -1111,9 +1083,98 @@ def check_lint_and_shape(s):
          "fixture-only %s, prepare-only %s" % (sorted(top - keys), sorted({"run", "plane", "waves", "models", "control_findings", "revert", "fix"} - keys)))
 
 
+def peak(units):
+    """The most of `units` (launches with a start and an end tick) running at one moment: at each start, the intervals that hold that tick."""
+    return max([sum(1 for b in units if b["start"] <= a["start"] < b["end"]) for a in units] or [0])
+
+
+def tasks_of(n):
+    return [{"id": "T%d" % i, "type": "feature", "size": "normal", "ui": False, "brief": "%s/briefs/T%d.md" % (RUN_DIR, i), "trailer": "01-toy/T%d" % i}
+            for i in range(1, n + 1)]
+
+
+def one_wave(n, cap_value):
+    """`args` edit: one wave of `n` tasks and the cap `cap_value` in `args.cap`; answers for them."""
+    def edit(a):
+        a["cap"] = cap_value
+        a["waves"] = [{"n": 1, "serial": False, "tasks": tasks_of(n)}]
+        a["models"]["executor"] = {"T%d" % i: "m-t%d" % i for i in range(1, n + 1)}
+    return edit
+
+
+def wave_answers(n):
+    ans = {"executor:runner-integrate": {"$seq": [final("h2", ["wt-t%d" % i for i in range(1, n + 1)])]}}
+    for i in range(1, n + 1):
+        ans["executor:T%d" % i] = exec_line("T%d" % i)
+        ans["executor:runner-report-T%d" % i] = exec_report("wt-t%d" % i)
+        ans["executor:runner-setup-T%d" % i] = R("", 1)
+    return ans
+
+
+def check_fixed_cap(script, s):
+    """The number of executors at once is `args.cap`, a fixed number of the configuration that `fwx wave new` prints (D90): no command is asked
+    how many can start, nothing measures the RAM, and a cap that is not a positive whole number ends the run, never "all at once".
+
+    Red on master (the script asked `fwx capacity` before each batch, and read nothing of `args.cap`):
+      FAIL: cap 2, 5 tasks: never more than 2 executors at once, and as many as the cap and the tasks allow run together: got 3, want 2
+      FAIL: cap 2, 5 tasks: no capacity command is run: ['executor:runner-capacity', 'executor:runner-capacity']
+      FAIL: cap 0: no executor launched: got ['executor:T1', 'executor:T2', 'executor:T3'], want []
+      FAIL: args fixture: every top-level key of prepare's return is in the fixture: fixture-only ['cap'], prepare-only []
+    (the 3 is the old green answer's `allowed`, which master asked for; the fixture's `cap` is read by the prepare test as well)
+    """
+    for n, c, want in ((5, 2, 2), (5, 1, 1), (3, 8, 3)):
+        name = "cap %d, %d tasks" % (c, n)
+        rec, err = go(script, args_over=one_wave(n, c), answers_over=wave_answers(n))
+        rec = finish(s, name, rec, err)
+        ex = [l for l in launched(rec, "executor:T")]
+        s.eq("%s: every task is launched once" % name, sorted(l["label"] for l in ex), sorted("executor:T%d" % i for i in range(1, n + 1)))
+        s.eq("%s: never more than %d executors at once, and as many as the cap and the tasks allow run together" % (name, want), peak(ex), want)
+        s.ok("%s: no capacity command is run" % name, not any("capacity" in l["label"] or "fwx capacity" in l["prompt"] for l in rec["launches"]),
+             repr([l["label"] for l in rec["launches"] if "capacity" in l["label"] or "fwx capacity" in l["prompt"]]))
+        s.eq("%s: done" % name, result(rec).get("status"), "done")
+    # a serial wave is one at a time whatever the cap
+    def serial(a):
+        one_wave(3, 5)(a)
+        a["waves"][0]["serial"] = True
+    rec, err = go(script, args_over=serial, answers_over=wave_answers(3))
+    rec = finish(s, "cap 5, serial wave", rec, err)
+    s.eq("cap 5, serial wave: one executor at a time", peak(launched(rec, "executor:T")), 1)
+    # no cap, or one that cannot be a cap: no executor starts and the run says so (never "unlimited"); the cleanup still runs
+    for what, edit in (("missing", lambda a: a.pop("cap")), ("null", lambda a: a.update(cap=None)), ("0", lambda a: a.update(cap=0)),
+                       ("negative", lambda a: a.update(cap=-2)), ("text", lambda a: a.update(cap="3")), ("a fraction", lambda a: a.update(cap=2.5)),
+                       ("true", lambda a: a.update(cap=True))):
+        rec, err = go(script, args_over=edit, answers_over=wave_answers(3))
+        rec = finish(s, "cap %s" % what, rec, err)
+        s.eq("cap %s: no executor launched" % what, [l["label"] for l in workers(rec)], [])
+        s.eq("cap %s: failed" % what, result(rec).get("status"), "failed")
+        s.ok("cap %s: failed with a reason that says cap, and where it comes from" % what,
+             str(result(rec).get("reason", "")).startswith("cap:") and "wave new" in str(result(rec).get("reason", "")), repr(result(rec).get("reason")))
+        s.ok("cap %s: cleanup still runs" % what, labels(rec)[-1:] == ["executor:runner-cleanup"], repr(labels(rec)))
+    # the same on every entry path (review of PR 140): a run that enters at the gate launches a fixer after a red gate or a review finding, and the
+    # cap must be checked before the first launch, not only in a wave or in --fix. Seen red on the head of PR 140:
+    #   FAIL: cap missing, from gate with a red gate: no agent is launched before the cap is refused: got ['executor:runner-integrate', 'executor:runner-fix-round', 'executor:fix-1', ...]
+    def gate_red(a):
+        a["done"] = ["T1", "T2", "T3"]
+        a["from"] = "gate"
+    red = {"executor:runner-integrate": {"$seq": [final("h2", [], rc=1), final("h3", ["wt-fix"])]},
+           "executor:runner-fix-round": R({"ok": True, "spent": False, "rounds": "1/3", "why": "w"}),
+           "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix")}
+    for what, edit in (("missing", lambda a: a.pop("cap")), ("0", lambda a: a.update(cap=0))):
+        def both(a, edit=edit):
+            gate_red(a)
+            edit(a)
+        rec, err = go(script, args_over=both, answers_over=red)
+        rec = finish(s, "cap %s, from gate with a red gate" % what, rec, err)
+        s.eq("cap %s, from gate with a red gate: no agent is launched before the cap is refused" % what,
+             [l["label"] for l in rec["launches"] if l["label"] != "executor:runner-cleanup"], [])
+        s.ok("cap %s, from gate with a red gate: failed with a reason that says cap" % what,
+             result(rec).get("status") == "failed" and str(result(rec).get("reason", "")).startswith("cap:"), repr(result(rec).get("reason")))
+
+
 def check_all(script, s):
+    check_fixed_cap(script, s)
     check_green(script, s)
-    check_clash_and_capacity(script, s)
+    check_clash(script, s)
     check_executor_misses(script, s)
     check_setup_failed(script, s)
     check_join(script, s)
@@ -1136,8 +1197,10 @@ MUTANTS = [
      "FAIL: setup failed at the join (session)"),
     ("a failed setup after a revert takes the gate", "if (r.head) st.head = r.head\n    if (typeof r.setup === 'string' && r.setup.trim())", "if (r.head) st.head = r.head\n    if (false)",
      "FAIL: setup failed after a revert"),
-    ("serial wave ignored", "rest.slice(0, wave.serial ? 1 : allowed)", "rest.slice(0, allowed)", "FAIL: clash: the two executors never run at once"),
-    ("capacity 0 not checked", "if (!(Number.isInteger(c.allowed) && c.allowed > 0)) {", "if (false) {", "FAIL: no capacity: the script ended"),
+    ("serial wave ignored", "rest.slice(0, wave.serial ? 1 : most)", "rest.slice(0, most)", "FAIL: clash: the two executors never run at once"),
+    ("a cap that is no number is not refused", "if (!(Number.isInteger(A.cap) && A.cap > 0)) {", "if (false) {", "FAIL: cap missing: no executor launched"),
+    ("the cap is not applied", "rest.slice(0, wave.serial ? 1 : most)", "rest.slice(0, wave.serial ? 1 : rest.length)",
+     "FAIL: cap 2, 5 tasks: never more than 2 executors at once"),
     ("rounds not honoured", "if (r.ok !== true) return { end: ['failed', 'rounds exhausted'] }", "if (false) return { end: ['failed', 'rounds exhausted'] }",
      "FAIL: three attempts spent: failed, rounds exhausted"),
     ("conflict to the plain fixer", "const mine = await resolverJob(r.conflict, r.head)", "const mine = await fixerJob({ why: text, head: r.head })",
@@ -1166,13 +1229,12 @@ MUTANTS = [
     ("every real finding is fixed", "if (d.verdict === 'fix') {", "if (d.verdict !== 'dismiss') {", "FAIL: no fix verdict: no fixer, no round (note finding was fixed)"),
     ("wrong-base is integrated", "if (rep.status === 'done') {", "if (rep.status === 'done' || rep.status === 'wrong-base') {", "FAIL: wrong-base:"),
     ("the last attempt is not passed on", "      prev = rep\n", "", "FAIL: wrong-base: the new attempt is told what the last one returned"),
-    ("cleanup only after done", "st.cleanup = await run('cleanup',", "if (outcome[0] === 'done') st.cleanup = await run('cleanup',", "FAIL: no capacity: cleanup still runs"),
+    ("cleanup only after done", "st.cleanup = await run('cleanup',", "if (outcome[0] === 'done') st.cleanup = await run('cleanup',", "FAIL: cap missing: cleanup still runs"),
     ("the runner's rc decides", "const r = await run('integrate', cmd)",
      "const r0 = await exec('integrate', inCheckout(cmd))\n    const r = Object.assign(parseJson(r0.stdout), { ok: r0.rc === 0 })", "FAIL: rc 1 with ok true"),
     ("--revert reviewed", ["st.evidence)\n    return\n"], ["st.evidence)\n"], "FAIL: revert: done, with no executor and no reviewer"),
     ("catchable_by maybe allowed", "enum: ['code', 'check', 'rule', 'none']", "enum: ['code', 'check', 'rule', 'none', 'maybe']", "FAIL: verifier schema: catchable_by"),
     ("verdict ask allowed", "enum: ['fix', 'consider', 'note', 'dismiss']", "enum: ['fix', 'consider', 'note', 'dismiss', 'ask']", "FAIL: verifier schema: verdict"),
-    ("unattended not passed to capacity", "(A.unattended ? ' --unattended' : '')", "''", "FAIL: unattended: capacity carries --unattended"),
     ("finding ids not prefixed", "let id = tag + '-' + String(f.id)", "let id = String(f.id)", "FAIL: fix: the fixer is given the finding under its unique id"),
     ("--final on every wave", "(o.final ? ' --final' : '')", "' --final'", "FAIL: green: the first wave is not integrated with --final"),
     ("review fix not gated by the rounds", ["    if (fr.end) stop(fr.end[0], fr.end[1])\n    const before"], ["    const before"], "FAIL: fix with the rounds spent: failed, no fixer"),

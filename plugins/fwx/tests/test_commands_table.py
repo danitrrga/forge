@@ -26,6 +26,7 @@ Controls, each a copy of lib/fwx/routes.py changed in one place, seen red on the
   - the default of `wave` gone:
       FAIL: default of `wave --run R`: routes to wave ['summary', '--run', 'R']: got ['fwx wave: unknown verb: --run'], want 'STUB wave ["summary", "--run", "R"]'
 """
+import glob
 import importlib.util
 import json
 import os
@@ -41,7 +42,7 @@ s = helpers.Suite()
 
 # (new name, old name or None, module, handler argv before the user's own) -- gramatica-decidida.md, "fwx: hoy -> decidido"
 DECIDED = [
-    ("budget", None, "budget", []), ("capacity", None, "capacity", []), ("model", None, "model", []),
+    ("budget", None, "budget", []), ("model", None, "model", []),
     ("statusline", None, "statusline", []), ("rounds", None, "rounds", []), ("stage", None, "stage", []),
     ("decide", None, "decide", []), ("verify", None, "verify", []), ("test", None, "test", []),
     ("walk capture", "screenshot", "screenshot", []),
@@ -70,7 +71,7 @@ DECIDED = [
     ("walk selftest", None, "walk", ["selftest"]),
     ("migrate-gsd", None, "migrate_gsd", []),
     # not in the table, kept under the name they have (their units are others', or the table does not name them)
-    ("walk capacity", None, "walk", ["capacity"]), ("walk check-screens", None, "walk", ["check-screens"]),
+    ("walk check-screens", None, "walk", ["check-screens"]),
     ("wave setup", None, "wave", ["setup"]),
 ]
 # what `fwx OBJECT` with no verb runs: (words, handler module, handler argv)
@@ -155,7 +156,12 @@ def scenario(work):
     check("old `state check` names both new names", (r.returncode, r.stderr), (2, "fwx state check: now 'fwx state lint' or 'fwx report lint'\n"))
     # unknown names and verbs
     for args, text in ((("nosuch",), "unknown command: nosuch"), (("phase", "nwe"), "unknown verb: nwe"), (("phase",), "needs a verb"),
-                       (("../commands/budget",), "unknown command"), (("Budget",), "unknown command")):
+                       (("../commands/budget",), "unknown command"), (("Budget",), "unknown command"),
+                       # the cap of agents is a number of the configuration (D90): no command answers how many can start now, and the old
+                       # names are not refused with a "now ...": there is no natural target. Red on master (both were rows of the table):
+                       #   FAIL: fwx capacity: exit 2 and 'unknown command: capacity': got (0, False, ...)
+                       #   FAIL: fwx walk capacity: exit 2 and 'unknown verb: capacity': got (0, False, ...)
+                       (("capacity",), "unknown command: capacity"), (("walk", "capacity"), "unknown verb: capacity")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing
@@ -167,6 +173,9 @@ def scenario(work):
         if old and old != new:
             check("--help does not list `fwx %s`" % old, old in listed, False)
             check("--help: no line says `fwx %s`" % old, bool(re.search(r"\bfwx " + re.escape(old) + r"(?![\w-])", r.stdout)), False)
+    check("--help names no capacity command", "capacity" in r.stdout, False)
+    r = run(work, "walk", "--help")
+    check("`fwx walk --help` names no capacity verb", "capacity" in r.stdout, False)
     r = run(work, "wave", "--help")
     verbs = {re.split(r"\s{2,}", line.strip()[4:], maxsplit=1)[0] for line in r.stdout.splitlines() if line.startswith("  fwx ")}
     check("`fwx wave --help` lists the verbs of wave and no other object",
@@ -212,5 +221,25 @@ CONTROLS = (
 for name, mutate, label in CONTROLS if os.path.exists(ROUTES) else ():
     bad = failures(scenario(build(mutate)))
     s.ok("control (%s) is seen red on `%s...` (%d failed)" % (name, label, len(bad)), any(b[0].startswith(label) for b in bad), bad[:2])
+
+# ---- the texts agents read name no command that is gone ------------------------------------------------------------------
+# A removed command (`fwx capacity`, D90) lived on in a playbook line nothing read, and the workflow no longer did what it said. The base
+# context's own check (`context_base._unknown_commands`, which knows the table and its old names) is run over every playbook, agent,
+# skill, reference and the README: each `fwx <object> [word]` they name must be a command. Seen red on the head of PR 140
+# (playbooks/execute.md still said the workflow runs `fwx capacity --role executor --want N --wait 540`):
+#   FAIL: playbooks/execute.md names no command that is gone: ['unknown command: fwx capacity']
+sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
+from fwx import context_base as _cb  # noqa: E402
+
+texts = sorted(glob.glob(os.path.join(helpers.ROOT, "playbooks", "*.md")) + glob.glob(os.path.join(helpers.ROOT, "agents", "*.md"))
+               + glob.glob(os.path.join(helpers.ROOT, "skills", "*", "SKILL.md")) + glob.glob(os.path.join(helpers.ROOT, "skills", "*", "references", "*.md"))
+               + [os.path.join(helpers.ROOT, "README.md")])
+s.ok("the scan looks at the playbooks, the agents, the skills and the README (%d files)" % len(texts),
+     any("playbooks" + os.sep in p for p in texts) and any("agents" + os.sep in p for p in texts) and any(p.endswith("SKILL.md") for p in texts) and len(texts) > 20, len(texts))
+for p in texts:
+    with open(p, encoding="utf-8") as f:
+        s.eq("%s names no command that is gone" % os.path.relpath(p, helpers.ROOT), _cb._unknown_commands(f.read()), [])
+# control: the scan does see a removed command
+s.eq("control: a text that names `fwx capacity` is caught", _cb._unknown_commands("it runs `fwx capacity --role executor`"), ["unknown command: fwx capacity"])
 
 s.done()

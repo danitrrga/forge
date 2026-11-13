@@ -309,6 +309,31 @@ def case_unattended(R, S):
     S.eq("unattended: the plane stays", f.get("plane"), "factory")
 
 
+def case_cap(R, S):
+    """`args.cap` is the most executors at once, read from the configuration (D90): `limits.per_project.executor`, else `limits.default_cap`
+    of the run's kind (`supervised` 3, `unattended` 4: --unattended and the factory plane). Nothing measured. The execute workflow reads
+    only this number.
+
+    Red on master (no `cap` in the args: the workflow asked `fwx capacity`):
+      FAIL: cap: no limits in the file: 3 with the owner present, 4 with nobody: got (None, None, None), want (3, 4, 4)
+    """
+    sc = Scene()
+    got = (ok_args(S, "cap default", sc.prepare(R)).get("cap"), ok_args(S, "cap default unattended", sc.prepare(R, "--unattended")).get("cap"),
+           ok_args(S, "cap default factory", sc.prepare(R, plane="factory")).get("cap"))
+    S.eq("cap: no limits in the file: 3 with the owner present, 4 with nobody", got, (3, 4, 4))
+    sc = Scene(config={"limits": {"default_cap": {"supervised": 5, "unattended": 7}}})
+    S.eq("cap: default_cap of the file", (ok_args(S, "cap file", sc.prepare(R)).get("cap"), ok_args(S, "cap file u", sc.prepare(R, "--unattended")).get("cap")), (5, 7))
+    sc = Scene(config={"limits": {"per_project": {"executor": 2}, "default_cap": {"supervised": 5, "unattended": 7}}})
+    S.eq("cap: per_project.executor wins in both kinds", (ok_args(S, "cap per", sc.prepare(R)).get("cap"), ok_args(S, "cap per u", sc.prepare(R, "--unattended")).get("cap")), (2, 2))
+    sc = Scene(config={"limits": {"on": False, "ram_min_free_gb": 3, "ram_per_agent_mb": 512}})
+    S.eq("cap: the removed keys are ignored and `on: false` is no \"unlimited\"", ok_args(S, "cap old keys", sc.prepare(R)).get("cap"), 3)
+    for what, limits, needle in (("per_project.executor 0", {"per_project": {"executor": 0}}, "limits.per_project.executor"),
+                                 ("default_cap null", {"default_cap": None}, "limits.default_cap"),
+                                 ("supervised text", {"default_cap": {"supervised": "3"}}, "limits.default_cap.supervised")):
+        sc = Scene(config={"limits": limits})
+        refused(S, "cap %s" % what, sc, sc.prepare(R), needle)
+
+
 def case_security(R, S):
     sc = Scene(security=True)
     sec = ok_args(S, "security from the postmortem", sc.prepare(R)).get("security") or {}
@@ -494,7 +519,7 @@ def case_dispatch(R, S):
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
-         case_unattended, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
+         case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
          case_scratch, case_dispatch]
 
 # ---------------------------------------------------------------------------------------------------- the controls
@@ -511,6 +536,10 @@ MUTANTS = [
     ("baseRef only from local", case_base_ref, P, 'os.path.join(conf, "settings.json"),', 'os.path.join(conf, "none.json"),', "baseRef from the user's settings: exit"),
     ("unattended never set", case_unattended, P, '"unattended": plane == "factory" or unattended,', '"unattended": False,',
      "factory args.unattended False, want True"),
+    ("cap not read", case_cap, P, 'cap = _cap(cfg, plane == "factory" or unattended)', "cap = 3",
+     "cap: per_project.executor wins in both kinds"),
+    ("cap: the kind is always supervised", case_cap, P, 'cap = _cap(cfg, plane == "factory" or unattended)', "cap = _cap(cfg, False)",
+     "cap: no limits in the file: 3 with the owner present, 4 with nobody"),
     ("done from every branch", case_done, P, '"log", "refs/heads/" + branch,', '"log", "--all",', "a trailer on another branch is not done"),
     ("checks from the checkout", case_worktree_checks, P, "return config.load(top)",
      'return dict(config.DEFAULTS, project=dict(config.DEFAULTS["project"], checks=[]))', "from a worktree: exit: got (2,"),

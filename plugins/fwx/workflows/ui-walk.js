@@ -236,20 +236,15 @@ function unverified() {
     .filter((x) => x.files.length > 0)
 }
 
-// `up` runs before the tramos are known, so it asked capacity for one tramo (a quota of 2 at most). Once they are, ask again for them
-// (`fwx walk capacity`, which keeps the browser's memory figure and the container rule) and take that answer; when it gives none, the
-// quota `up` gave stays. Called before any walker holds a slot.
-async function sizeQuota(tramos) {
-  const v = await must('capacity', 'fwx walk capacity --run ' + sh(st.runDir) + ' --tramos ' + tramos, true)
-  const c = v && v.rc === 0 ? parseAny(v.stdout) : null
-  const allowed = c && typeof c === 'object' ? c.allowed : null
-  if (!Number.isInteger(allowed)) {
-    log(PHASE + ': capacity for ' + tramos + ' tramo(s) gave no answer' + (v ? ' (exit ' + v.rc + ')' : '') + ': the quota of ' + quota + ' that `up` allowed stays')
-    return
-  }
-  quota = allowed >= 1 ? allowed : 1
-  if (quota !== allowed) log(PHASE + ': capacity allowed ' + allowed + ' for ' + tramos + ' tramo(s): a quota of 1')
+// The quota of browsers is the cap of the configuration, which `fwx walk start` prints as `capacity.cap` (`limits.per_project.ui-walker`, else
+// `limits.default_cap`): nothing is measured and no command is asked. `start` runs before the tramos are known, so its `allowed` is for one
+// tramo; once they are, the quota is the cap, never more than 2 walkers per tramo (a breaker and a critic), and in a `container` run never
+// more than the apps `start` made. Called before any walker holds a slot.
+function sizeQuota(tramos) {
+  quota = Math.min(st.cap, 2 * tramos)
+  if (st.container) quota = Math.min(quota, st.apps)
   st.sem.free = SLOTS()
+  log(PHASE + ': cap ' + st.cap + ' from the configuration: a quota of ' + quota + ' for ' + tramos + ' tramo(s)')
 }
 
 // ---- tramos ---------------------------------------------------------------------------------------------------------------------
@@ -570,7 +565,7 @@ async function recheckRun() {
     }
     return { tramo: t, items: groups[id] }
   })
-  await sizeQuota(tramos.length)
+  sizeQuota(tramos.length)
   st.tramos = tramos.map((x) => x.tramo)
   log(PHASE + ': recheck of ' + list.length + ' finding(s) in ' + tramos.length + ' tramo(s), verifiers only; no walker, no control')
   st.fixFile = A.recheck
@@ -593,7 +588,7 @@ async function recheckRun() {
 async function walkRun(up) {
   const tramos = await getTramos()
   await checkScreens(tramos)
-  await sizeQuota(tramos.length)
+  sizeQuota(tramos.length)
   st.tramos = tramos
   st.jobs = makeJobs(tramos)
   const verifiers = tramos.length
@@ -640,10 +635,15 @@ async function main() {
   if (typeof up.run_dir !== 'string' || !up.run_dir) stop('failed', 'fwx walk start printed no run_dir')
   st.runDir = up.run_dir
   st.url = typeof up.url === 'string' && up.url ? up.url : null
-  const allowed = up.capacity && up.capacity.allowed
-  quota = Number.isInteger(allowed) && allowed >= 1 ? allowed : 1
-  if (quota !== allowed) log(PHASE + ': capacity allowed ' + allowed + ': a quota of 1')
-  st.sem.free = SLOTS()
+  const c = up.capacity && typeof up.capacity === 'object' ? up.capacity : {}
+  // a cap that is no positive whole number ends the run: there is no "unlimited" to fall back on (the app is closed by the `finally`)
+  if (!(Number.isInteger(c.cap) && c.cap > 0)) {
+    stop('failed', 'cap: `fwx walk start` printed capacity.cap ' + JSON.stringify(c.cap === undefined ? null : c.cap) + ', not a positive whole number: it comes from the configuration (limits), so fix it there')
+  }
+  st.cap = c.cap
+  st.container = c.container === true
+  st.apps = Array.isArray(up.apps) ? up.apps.length : 1
+  sizeQuota(1)
   if (A.recheck) {
     await recheckRun()
     return

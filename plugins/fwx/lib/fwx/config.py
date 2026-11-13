@@ -48,8 +48,7 @@ DEFAULTS = {
     "weekly": {"on": True, "min_sessions": 5, "trigger": None, "precision_low": 0.7, "precision_min_marks": 20,
                "cost_target": 0.05, "improve": {}, "projects": []},
     "models": _seed(),
-    "limits": {"on": True, "per_project": {}, "ram_min_free_gb": 3, "ram_per_agent_mb": 512,
-               "default_cap": {"supervised": 3, "unattended": 4}},
+    "limits": {"per_project": {}, "default_cap": {"supervised": 3, "unattended": 4}},
     "rounds": 3,
     "critique_rounds_unattended": 2,
     "linear": {"labels": {}},
@@ -172,9 +171,9 @@ def _check_walk(cfg, path):
         raise _bad(path, "walk.browser_executable is %r, not null or the path of a browser" % (exe,))
 
 
-def load(cwd=None):
+def load(cwd=None, quiet=False):
     """The configuration: the main checkout's .claude/fwx.json laid over DEFAULTS, validated. `_source` is the
-    path read, or None when the file is missing (then one line on stderr, once per process)."""
+    path read, or None when the file is missing (then one line on stderr, once per process, unless `quiet`)."""
     global _warned
     main = main_checkout(cwd)
     path = os.path.join(main, FILE)
@@ -186,7 +185,7 @@ def load(cwd=None):
         with open(path, encoding="utf-8") as f:
             text = f.read()
     except FileNotFoundError:
-        if not _warned:
+        if not _warned and not quiet:
             _warned = True
             sys.stderr.write("fwx: no %s at %s; using defaults\n" % (FILE.replace(os.sep, "/"), path))
     except OSError as e:
@@ -214,6 +213,62 @@ def model(cfg, role, size):
     if size not in SIZES:
         raise ConfigError("unknown size %r (sizes: %s)" % (size, ", ".join(SIZES)))
     return cfg["models"][role][size]
+
+
+def _count(v):
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
+
+def cap(cfg, role, unattended=False):
+    """The most agents of `role` that run at once: a fixed number of the configuration, never measured (nothing reads the free RAM,
+    and the agents of other sessions are not counted). `limits.per_project[role]` when the role has a row, else `limits.default_cap`
+    for a run with the owner present (`supervised`) or with nobody (`unattended`); the defaults are 3 and 4, and a file that
+    says nothing about `limits` gets them. A value that is not a positive whole number is a ConfigError naming the key: a cap that
+    cannot be read is never "no cap". The keys `limits` used to carry (`on`, `ram_min_free_gb`, `ram_per_agent_mb`) are ignored."""
+    if role not in ROLES:
+        raise ConfigError("unknown role %r (roles: %s)" % (role, ", ".join(ROLES)))
+    source = cfg.get("_source")
+    lim = cfg.get("limits")
+    if not isinstance(lim, dict):
+        raise _bad(source, "limits is %r, not a table" % (lim,))
+    per = lim.get("per_project")
+    if not isinstance(per, dict):
+        raise _bad(source, "limits.per_project is %r, not a table of role to a positive whole number" % (per,))
+    if role in per:
+        if not _count(per[role]):
+            raise _bad(source, "limits.per_project.%s is %r, not a positive whole number" % (role, per[role]))
+        return per[role]
+    caps = lim.get("default_cap")
+    if not isinstance(caps, dict):
+        raise _bad(source, "limits.default_cap is %r, not {supervised: N, unattended: N}" % (caps,))
+    kind = "unattended" if unattended else "supervised"
+    if not _count(caps.get(kind)):
+        raise _bad(source, "limits.default_cap.%s is %r, not a positive whole number" % (kind, caps.get(kind)))
+    return caps[kind]
+
+
+def caps(cfg):
+    """Every number of the cap, each checked: `(supervised, unattended, {role: n})`, for the text the agents are given. The same
+    errors as `cap`, for any of the keys."""
+    source = cfg.get("_source")
+    lim = cfg.get("limits")
+    if not isinstance(lim, dict):
+        raise _bad(source, "limits is %r, not a table" % (lim,))
+    default = lim.get("default_cap")
+    if not isinstance(default, dict):
+        raise _bad(source, "limits.default_cap is %r, not {supervised: N, unattended: N}" % (default,))
+    for kind in ("supervised", "unattended"):
+        if not _count(default.get(kind)):
+            raise _bad(source, "limits.default_cap.%s is %r, not a positive whole number" % (kind, default.get(kind)))
+    per = lim.get("per_project")
+    if not isinstance(per, dict):
+        raise _bad(source, "limits.per_project is %r, not a table of role to a positive whole number" % (per,))
+    for role, n in per.items():
+        if role not in ROLES:
+            raise _bad(source, "limits.per_project has the unknown role %r (roles: %s)" % (role, ", ".join(ROLES)))
+        if not _count(n):
+            raise _bad(source, "limits.per_project.%s is %r, not a positive whole number" % (role, n))
+    return default["supervised"], default["unattended"], dict(per)
 
 
 def _labels(cfg):
