@@ -270,7 +270,13 @@ r = forge(repo, "fwx", "--jobs", "1")
 eq("--jobs 1: the files run one after the other (the first cannot see the second): exit code", r.returncode, 1)
 eq("--jobs 1: summary", last(r), "2 test file(s): 1 passed, 1 failed, 0 not run")
 eq("--jobs 1: each file was launched once", launches(d), ["launch-a", "launch-b"])
-if (os.cpu_count() or 1) > 1:
+# The runner's default is the CPUs this process may use (sched_getaffinity), not the host's: gate on the same count. Red under
+# `taskset -c 0` with the host count: FAIL: no --jobs on a machine with several cores: parallel: exit code: got 1, want 0
+try:
+    usable_cpus = len(os.sched_getaffinity(0))
+except AttributeError:
+    usable_cpus = os.cpu_count() or 1
+if usable_cpus > 1:
     repo, d = pair(60)
     eq("no --jobs on a machine with several cores: parallel: exit code", forge(repo, "fwx").returncode, 0)
 
