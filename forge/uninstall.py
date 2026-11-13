@@ -14,13 +14,13 @@ record does not hold it, and last the state directory, the record with it.
 
 Scopes: everything (the default), with forge's SessionStart row second-to-last and the state directory last,
 both only when nothing before them failed; `--integration N`, refused while N is on in config/forge.json:
-N's claims and what N has by construction; `--project N`, refused unless the profile is frozen or gone: what
+N's claims and what N has by construction; a project NAME (`forge uninstall NAME`), refused unless the profile is frozen or gone: what
 lies under its project_path and its part of ~/.claude.json. A dry-run unless --apply, and a dry-run writes
 nothing at all; --apply writes through lib (lib.may_write) under lib.lock, ~/.claude.json only when nobody
 wrote it since it was read. It never reads config/secrets.json or credentials/: it decides by digests.
 An ownership record that cannot be read stops every scope (exit 1, the record stays for repair); no record at
 all is "only what forge makes by construction", and a whole uninstall that finds nothing says nothing is left
-(exit 0). `--project N` leaves what lies under another profile's project_path inside N's. A link where a
+(exit 0). `forge uninstall NAME` leaves what lies under another profile's project_path inside NAME's. A link where a
 directory was (~/.cache/forge, the state directory) is removed as a link; a settings.local.json or hooks.json
 that is a link and is left empty is written through, never unlinked.
 
@@ -470,7 +470,7 @@ def _plan(a):
 
 
 def main(a):
-    """forge uninstall [--integration N | --project N] [--apply]: 0, or 1 on a FAIL or a refusal."""
+    """forge uninstall [NAME | --integration N] [--apply]: 0, or 1 on a FAIL or a refusal."""
     scope, claims, stop = _plan(a)
     print("forge uninstall: %s (%s)" % (scope.name, "APPLY" if a.apply else "dry-run: nothing is written; --apply removes"), flush=True)
     if not stop and a.apply:

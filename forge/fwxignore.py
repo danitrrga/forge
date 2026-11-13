@@ -58,7 +58,7 @@ file), found through the registry by its owner and its place, so a profile that 
 
 Limits, stated and not fixed: with `framework_ignore_block: false` nothing ignores the generated .claude/<plugin>.json
 or .claude/worktrees/ (the project's own ignore rules do, or its owner adds the lines); a project moved to another
-directory of its repository leaves its old block in .git/info/exclude until `forge uninstall --project` or a hand edit
+directory of its repository leaves its old block in .git/info/exclude until `forge uninstall NAME` or a hand edit
 (an owner that is the same in two profiles cannot be told apart, so a sync does not guess); two profiles that name the
 same project path and the same `project` are one project to the ownership record, and nothing validates against that."""
 import collections

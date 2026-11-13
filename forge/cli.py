@@ -2,8 +2,8 @@
 
   forge init             first run for a new checkout: config/forge.json, a profile for the checkout itself,
                          an empty registry and secrets file, then sync --apply --all and doctor
-  forge new PATH         register a project: config/profiles/NAME.claude.json, then sync --apply --project NAME
-  forge sync [--apply]   regenerate every project's config, in a fixed order, one run at a time
+  forge new PATH         register a project: config/profiles/NAME.claude.json, then sync --apply NAME
+  forge sync [NAME | --all] [--apply]  regenerate every project's config (or NAME's), in a fixed order, one run at a time
   forge skills [--apply] the skill links (~/.claude/skills) and the GSD runtime, which belong to the machine, not to a project
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
                          with a project's name, only the checks that concern it, scoped to it
@@ -18,7 +18,7 @@
                          silent unless it wrote or has one
   forge lint             [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
-  forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
+  forge uninstall [NAME | --integration N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
 Every step is still the script it was (scripts/sync/*.py and the doctors); this is the one place
 that says which runs, in what order, and what "healthy" means.
@@ -1253,7 +1253,7 @@ CHECKS = [
     ("local plugins", local_plugins_row, ""),
 ]
 
-# What `forge sync --project NAME` (a dry-run) prints for a file its --apply would change: one
+# What `forge sync NAME` (a dry-run) prints for a file its --apply would change: one
 # alternative per line, beside where it is printed and a sample of the text (grep the text: line
 # numbers move). The generators' wording is an API, as for CHANGED below.
 WOULD = re.compile(r"""
@@ -1280,17 +1280,17 @@ def pending_writes(lines):
 
 
 def generated_current(name, prof):
-    """PASS when the dry-run of `forge sync --project NAME` exits 0 and would write nothing. Only
-    counts are shown, never the generator's lines: `forge sync --project NAME` prints them."""
+    """PASS when the dry-run of `forge sync NAME` exits 0 and would write nothing. Only
+    counts are shown, never the generator's lines: `forge sync NAME` prints them."""
     if prof.get("frozen"):
         return lib.Result("PASS", "generated", "frozen: forge writes nothing")
-    r = lib.run(["bin/forge", "sync", "--project", name], capture=True)
+    r = lib.run(["bin/forge", "sync", name], capture=True)
     lines = (r.stdout + r.stderr).splitlines()
     writes, bangs = pending_writes(lines), sum(1 for l in lines if lib.BANG.match(l))
     if not writes and not r.returncode:
-        return lib.Result("PASS", "generated", "the dry-run of forge sync --project %s would write nothing" % name)
+        return lib.Result("PASS", "generated", "the dry-run of forge sync %s would write nothing" % name)
     problems = (["%d pending write(s)" % writes] if writes else []) + (
-        ["the dry-run exits %d with %d '!' line(s), which forge sync --project %s shows" % (r.returncode, bangs, name)]
+        ["the dry-run exits %d with %d '!' line(s), which forge sync %s shows" % (r.returncode, bangs, name)]
         if r.returncode else [])
     return lib.Result("FAIL", "generated", "; ".join(problems))
 
@@ -1307,7 +1307,7 @@ def project_checks(name, prof, why):
     frozen = "; frozen: forge writes nothing for it" if prof.get("frozen") else ""
     rows = [
         ("profile", lambda: lib.Result("PASS", "profile", "%s reads, every field well-typed%s" % (where, frozen)), ""),
-        ("generated", lambda: generated_current(name, prof), "forge sync --apply --project " + name),
+        ("generated", lambda: generated_current(name, prof), "forge sync --apply " + name),
         ("skill names", lambda: skill_name_clashes(name), fix["skill names"]),
         ("project roots", lambda: nested_project_roots(name), fix["project roots"]),
         ("instruction files", lambda: instruction_file_blocks(name), fix["instruction files"]),
@@ -1433,6 +1433,15 @@ def run_steps(command, steps, apply, scope):
 
 
 def cmd_sync(a):
+    """forge sync [NAME | --all] [--apply]. A NAME no profile has is refused here, before any generator runs: the
+    generators scope to a name they do not know by doing nothing, so a misspelling would look like a clean run.
+    A profile that cannot be read is let through: the generators name it ('! could not read')."""
+    if a.project:
+        skipped = []
+        known = lib.profiles(skipped)
+        if a.project not in known and a.project not in {f[:-len(".claude.json")] for f, _ in skipped}:
+            print("! forge sync: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(known))))
+            return 1
     return run_steps("sync", SYNC, a.apply, (["--project", a.project] if a.project else []) + (["--all"] if a.all else []))
 
 
@@ -2028,7 +2037,7 @@ def cmd_new(a):
     profile.update(project=name, project_path=path, writes_tracked_files=bool(a.writes_tracked_files))
     lib.write_text(target, lib.dumps(profile) + "\n")
     print("wrote  %s" % os.path.relpath(target, lib.ROOT), flush=True)
-    return lib.run(["bin/forge", "sync", "--apply", "--project", name]).returncode
+    return lib.run(["bin/forge", "sync", "--apply", name]).returncode
 
 
 def _publish():
@@ -2047,6 +2056,20 @@ def _uninstall():
 # The names these commands had before the grammar of tool, object, verb. Removed, not aliased: an old name
 # refuses with one line naming the new one and runs nothing, so a script that still calls it fails loudly.
 RENAMED = {"add": "new", "launch": "start", "check-public": "lint"}
+# `--project NAME` of these two commands is now the argument NAME, as in doctor, metrics and log. Cut, not aliased.
+PROJECT_ARGUMENT = ("sync", "uninstall")
+
+
+def old_project_flag(args):
+    """The one line refusing `forge sync|uninstall --project NAME` (also `--project=NAME` and any abbreviation of the flag), or None."""
+    if not args or args[0] not in PROJECT_ARGUMENT:
+        return None
+    for i, arg in enumerate(args[1:], 1):
+        flag, eq, value = arg.partition("=")
+        if len(flag) >= 3 and "--project".startswith(flag):
+            given = value if eq else args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("-") else None
+            return "forge %s --project%s: now 'forge %s %s'" % (args[0], " " + given if given else "", args[0], given or "NAME")
+    return None
 
 
 def main(argv=None):
@@ -2054,12 +2077,16 @@ def main(argv=None):
     if args and args[0] in RENAMED:
         print("forge %s: now 'forge %s'" % (args[0], RENAMED[args[0]]), file=sys.stderr)
         return 2
+    refusal = old_project_flag(args)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
     p = argparse.ArgumentParser(prog="forge", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sync", help="regenerate every project's config")
     s.add_argument("--apply", action="store_true", help="write; without it, only show what would change")
     scope = s.add_mutually_exclusive_group()
-    scope.add_argument("--project", help="this project only, no user-scope files")
+    scope.add_argument("project", nargs="?", help="this project only, no user-scope files")
     scope.add_argument("--all", action="store_true", help="every project, even inside a session")
     s.set_defaults(fn=cmd_sync)
     k = sub.add_parser("skills", help="the skill links and the GSD runtime (a dry-run unless --apply)")
@@ -2120,7 +2147,7 @@ def main(argv=None):
     i.add_argument("--without", dest="without_names", type=names_list, default=[], metavar="a,b", help="leave these integrations off")
     i.add_argument("--track", action="store_true", help="also make .forge-data.git, a local history of your data")
     i.set_defaults(fn=cmd_init)
-    i = sub.add_parser("new", help="register a project: its profile, then sync --apply --project")
+    i = sub.add_parser("new", help="register a project: its profile, then sync --apply NAME")
     i.add_argument("path", help="the project's directory")
     i.add_argument("--name", help="the profile's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="let forge write files that are tracked in the project")
@@ -2129,7 +2156,7 @@ def main(argv=None):
     u.add_argument("--apply", action="store_true", help="remove; without it, only show what would go")
     scope = u.add_mutually_exclusive_group()
     scope.add_argument("--integration", choices=lib.INTEGRATIONS, help="only this integration's, once it is off in config/forge.json")
-    scope.add_argument("--project", help="only this project's, once its profile is frozen or deleted")
+    scope.add_argument("project", nargs="?", help="only this project's, once its profile is frozen or deleted")
     u.set_defaults(fn=lambda a: _uninstall().main(a))
     a = p.parse_args(args)
     return a.fn(a)
