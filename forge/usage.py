@@ -6,7 +6,9 @@ Usage (`collect`, `report`)
   Folders  : under the projects directory, the transcript folder of the project path, of every worktree
              `git worktree list --porcelain` names, of every `<project>/.claude/worktrees/*` and of the
              `worktree_guard.worktree_dirs` of the profile (a `path` holds worktrees directly under it, a `prefix`
-             names the folder itself). They are found by listing the projects directory, not by guessing each key,
+             names the folder itself; a child of such a folder that is, or is under, another profile's project is
+             that project's and is left out, counted in `looked_at.left_out_other_projects`). They are found by
+             listing the projects directory, not by guessing each key,
              because a worktree that was removed has no entry in git and its transcripts stay. A folder that only
              shares the project's key as a prefix (`<key>-other`) is another project and is not read.
   Files    : the top-level `*.jsonl` of each folder (one session each) and `<session>/subagents/*.jsonl`, which
@@ -97,16 +99,36 @@ def worktree_dir_specs(prof, home):
     return out
 
 
-def folders(projects_dir, project_path, specs, registered, key):
-    """The folder names under projects_dir that hold this project's sessions (see the module text)."""
+def folders(projects_dir, project_path, specs, registered, key, others=()):
+    """(the folder names under projects_dir that hold this project's sessions, how many folders were left out as
+    another project's). A folder that is the project's own, a registered worktree or under `.claude/worktrees` is
+    admitted outright. A folder that only matches a `worktree_dirs` entry is admitted unless it is, or is under, the
+    path of one of `others` (the other profiles' projects) and no more specific path of this project claims it: the
+    entry names the folder that holds every project, so its direct children include the sibling projects."""
     try:
         names = sorted(os.listdir(projects_dir))
     except FileNotFoundError:
-        return []
-    exact = {key(project_path)} | {key(p) for p in registered}
-    prefixes = [key(project_path) + WORKTREES] + [key(p) + ("-" if k == "path" else "") for k, p in specs]
-    return [n for n in names if os.path.isdir(os.path.join(projects_dir, n))
-            and (n in exact or any(n.startswith(p) for p in prefixes))]
+        return [], 0
+    own = key(project_path)
+    exact = {own} | {key(p) for p in registered}
+    own_pref = own + WORKTREES
+    prefixes = [key(p) + ("-" if k == "path" else "") for k, p in specs]
+    other_keys = [key(o) for o in others if o != project_path]
+
+    def claim(n, k):
+        return len(k) if n == k or n.startswith(k + "-") else -1
+    out, left_out = [], 0
+    for n in names:
+        if not os.path.isdir(os.path.join(projects_dir, n)):
+            continue
+        if n in exact or n.startswith(own_pref):
+            out.append(n)
+        elif any(n.startswith(p) for p in prefixes):
+            if max((claim(n, k) for k in other_keys), default=-1) > claim(n, own):
+                left_out += 1
+            else:
+                out.append(n)
+    return out, left_out
 
 
 def _blocks(d):
@@ -266,7 +288,7 @@ def _newest(sessions, has):
     return max((s for s in sessions if has(s)), key=lambda s: (s.last or "", s.id), default=None)
 
 
-def report(project, sessions, counts, folder_names, project_skills):
+def report(project, sessions, counts, folder_names, project_skills, left_out=0):
     """The JSON of schema 1 (plan 4.2, appendix C) for the sessions read."""
     project_skills = set(project_skills)
     listed = set(project_skills)
@@ -324,7 +346,7 @@ def report(project, sessions, counts, folder_names, project_skills):
     recent = sorted((s for s in sessions if s.listing), key=lambda s: (s.last or "", s.id), reverse=True)[:LISTING_SESSIONS]
     return {
         "schema": 1, "project": project,
-        "looked_at": {"folders": list(folder_names), "sessions": len(sessions),
+        "looked_at": {"folders": list(folder_names), "left_out_other_projects": left_out, "sessions": len(sessions),
                       "subagent_files": counts["subagent_files"], "unreadable_lines": counts["unreadable_lines"],
                       "first": min((s.first for s in sessions if s.first), default=None),
                       "last": max((s.last for s in sessions if s.last), default=None)},

@@ -1710,7 +1710,7 @@ def transcript_key(project_path):
 METRICS = {"metrics": "harness-metrics.mjs", "baseline": "harness-baseline.mjs"}
 
 
-def metrics_usage(a, prof, projects, fail):
+def metrics_usage(a, prof, projects, fail, others):
     """forge metrics NAME --usage: forge/usage.py's report over every folder of the project's sessions. A FAIL (rc 1)
     for what makes cmd_metrics fail today, and for zero sessions, which is never read as "0 uses"."""
     path = prof.get("project_path")
@@ -1721,14 +1721,15 @@ def metrics_usage(a, prof, projects, fail):
     if a.since and not usage.date_ok(a.since):
         return fail("--since is not a YYYY-MM-DD date: %s" % a.since)
     try:
-        names = usage.folders(projects, path, usage.worktree_dir_specs(prof, lib.HOME), usage.git_worktrees(path), transcript_key)
+        names, left_out = usage.folders(projects, path, usage.worktree_dir_specs(prof, lib.HOME), usage.git_worktrees(path),
+                                        transcript_key, others)
         sessions, counts = usage.collect(projects, names, a.since)
     except usage.UsageError as e:
         return fail(str(e))
     if not sessions:
         return lib.report([lib.Result("FAIL", "usage", "%s: 0 sessions in %s, usage unknown" % (
             a.project, ", ".join(names) or os.path.join(projects, transcript_key(path))))])
-    rep = usage.report(a.project, sessions, counts, names, usage.project_skill_names(path))
+    rep = usage.report(a.project, sessions, counts, names, usage.project_skill_names(path), left_out)
     few = len(sessions) < usage.MIN_SESSIONS
     rep["few_sessions"] = few
     if a.json:
@@ -1737,6 +1738,8 @@ def metrics_usage(a, prof, projects, fail):
         look = rep["looked_at"]
         print("looked at %d sessions (%s to %s), %d subagent files, %d unreadable lines, in %d folders" % (
             look["sessions"], look["first"], look["last"], look["subagent_files"], look["unreadable_lines"], len(names)))
+        if look["left_out_other_projects"]:
+            print("left out as other projects' folders: %d" % look["left_out_other_projects"])
         print("%-14s %-34s %5s %8s  %-10s %s" % ("kind", "name", "calls", "sessions", "last seen", "listed bytes"))
         for i in rep["items"]:
             print("%-14s %-34s %5d %8d  %-10s %d" % (i["kind"], i["name"], i["calls"], i["sessions"], i["last_seen"] or "-", i["listed_bytes"]))
@@ -1798,7 +1801,7 @@ def cmd_metrics(a):
     if init_diff or answers:
         return metrics_init_diff(a, init_diff, answers, use)
     if use:
-        return metrics_usage(a, profs[a.project], projects, fail)
+        return metrics_usage(a, profs[a.project], projects, fail, [p.get("project_path") for n, p in profs.items() if n != a.project and p.get("project_path")])
     if not path:
         return fail("the profile has no project_path")
     key = transcript_key(path)

@@ -165,7 +165,8 @@ def usage_cases(tmp):
         want("expected.tsv, read back from the report", tsv(rep), dated(fh.read()))
     want("schema and project", (rep["schema"], rep["project"]), (1, "toy"))
     want("looked_at", {k: v for k, v in rep["looked_at"].items() if k != "folders"},
-         {"sessions": 5, "subagent_files": 1, "unreadable_lines": 1, "first": day(0), "last": day(4)})
+         {"sessions": 5, "subagent_files": 1, "unreadable_lines": 1, "first": day(0), "last": day(4),
+          "left_out_other_projects": 0})
     want("the folders read: the four of this project and not the decoy that shares its key as a prefix",
          sorted(rep["looked_at"]["folders"]), sorted(folders))
     want("the six kinds", {i["kind"] for i in rep["items"]}, set(usage.KINDS))
@@ -296,6 +297,44 @@ def review_cases(tmp):
     want("no SessionStart hook at all is a true zero: plugins is []", report_of(h, p, project="p")[1].get("plugins"), [])
 
 
+def sibling_cases(tmp):
+    """Projects that live side by side under one folder, the first with that folder in worktree_guard.worktree_dirs
+    (its linked worktrees may be direct children of it). Red before the fix: asking for the first project read the
+    second's sessions too, "sessions = 6, want 3" (its own folder, its `.claude/worktrees/w1` and the sibling folder
+    all swept in by the folder-wide prefix). Worktrees of the first: `a-wt` (registered in git) and `a-old` (a removed one:
+    no profile, no git entry, counted because nothing else owns it)."""
+    root = os.path.join(tmp, "siblings")
+    work = os.path.join(root, "work")
+    a, b = os.path.join(work, "a"), os.path.join(work, "b")
+    os.makedirs(a)
+    os.makedirs(b)
+    sandbox.git(a, "init", "-q")
+    sandbox.git(a, "commit", "-q", "--allow-empty", "-m", "one")
+    sandbox.git(a, "worktree", "add", "-q", "-b", "wt", os.path.join(work, "a-wt"))
+    projects = os.path.join(root, "home", ".claude", "projects")
+    key = cli.transcript_key
+    mine = [key(a), key(os.path.join(work, "a-wt")), key(os.path.join(work, "a-old"))]
+    theirs = [key(b), key(b) + "--claude-worktrees-w1"]
+    for i, folder in enumerate(mine + theirs):
+        write(os.path.join(projects, folder, "s%d.jsonl" % i), json.dumps(
+            {"type": "assistant", "timestamp": at(i), "message": {"role": "assistant", "content": [
+                {"type": "tool_use", "id": "t%d" % i, "name": "mcp__toy-db__query", "input": {}}]}}) + "\n")
+    guard = {"worktree_dirs": [{"path": work, "why": "toy"}]}
+    for name, path in (("a", a), ("b", b)):
+        write(os.path.join(root, "profiles", name + ".claude.json"),
+              json.dumps({"project": name, "project_path": path, "worktree_guard": guard}))
+    home, profiles = os.path.join(root, "home"), os.path.join(root, "profiles")
+    code, rep, err = report_of(home, profiles, project="a")
+    look = rep.get("looked_at", {})
+    want("the first project reads its own folder and the two worktrees beside it, not the sibling project's",
+         (code, sorted(look.get("folders", [])), look.get("sessions")), (0, sorted(mine), 3))
+    want("and says how many folders of other projects it left out", look.get("left_out_other_projects"), 2)
+    code, rep, err = report_of(home, profiles, project="b")
+    look = rep.get("looked_at", {})
+    want("control: the second project never counts the first's folders, its worktrees included",
+         (code, sorted(look.get("folders", [])), look.get("sessions"), look.get("left_out_other_projects")), (0, sorted(theirs), 2, 3))
+
+
 def init_event(skills, plugins, servers):
     return {"type": "system", "subtype": "init", "skills": skills, "plugins": [{"name": n, "path": "/srv/" + n} for n in plugins],
             "mcp_servers": [{"name": n, "status": "connected"} for n in servers], "tools": ["Bash"]}
@@ -371,7 +410,7 @@ def init_cases(tmp):
 
 def main():
     tmp = sandbox.mkdtemp("usage-test-")
-    for cases in (usage_cases, review_cases, init_cases):
+    for cases in (usage_cases, review_cases, sibling_cases, init_cases):
         try:
             cases(tmp)
         except Exception as e:  # a case that cannot finish is a red line, not a traceback
