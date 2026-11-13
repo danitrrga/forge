@@ -1686,7 +1686,7 @@ def cmd_test(a):
         r = lib.run([f], capture=True, low=True)  # nice 19 and idle I/O: a foreground tool keeps its cores
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
-            # (docs/unify-plan.md, non-negotiable 7). Its last line is why, after "NOT RUN: ".
+            # (CLAUDE.md, rule 4). Its last line is why, after "NOT RUN: ".
             why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
             results.append(lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why))
             continue

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """scripts/sync/sync_agent_config.py writes ~/.claude.json, ~/.claude/settings.json,
 ~/.codex/hooks.json, ~/.hindsight/coding-agent.json and, in every project, settings.local.json,
-.codex/ and .agents/. docs/unify-plan.md is about to cut it into forge/ components, and the gate
+.codex/ and .agents/. docs/archive/unify-plan.md is about to cut it into forge/ components, and the gate
 for every step is that nothing it prints or writes changes. This proves the generator's contract
 on a sandbox and records what it did, so a refactor can be diffed against the code before it.
 
@@ -54,7 +54,7 @@ from sandbox import NEVER_COPY, git  # noqa: E402
 GEN = os.path.join("scripts", "sync", "sync_agent_config.py")
 FIXTURES = os.path.join(sandbox.FORGE, "tests", "fixtures", "config")
 # The gate's fixture --dump/--compare is the proof that what the generator WRITES for this machine's real
-# profiles stays byte-identical (docs/unify-plan.md, "Puntos ciegos"), so a checkout that carries the private data
+# profiles stays byte-identical (docs/archive/unify-plan.md, "Puntos ciegos"), so a checkout that carries the private data
 # builds its world as before T7, a full copy with the real profiles. The signal is config/fixture-world.json, a data
 # file of the private history (it names the profiles the cases drive); a copy without it (an engine copy) gets the
 # fixture world: the engine files plus tests/fixtures/config.
