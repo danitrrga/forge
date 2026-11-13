@@ -90,6 +90,19 @@ s.eq("main_checkout from the main checkout", config.main_checkout(main), main)
 cfg2, _ = load(main)
 s.eq("load from the main checkout: the same file", cfg2.get("_source") if isinstance(cfg2, dict) else cfg2, path)
 
+# --- a generated file that still carries a key fwx no longer has (`project.surface_context`, dropped by the owner's decision)
+# loads: an unknown key under `project` is ignored. The default table has no such key either.
+# Seen red on the code before the key was removed from DEFAULTS:
+#   FAIL: DEFAULTS.project has no surface_context key: present: {}
+old = helpers.toy_repo()
+put(old, {"schema": 1, "project": {"name": "toyfw", "surface_context": {"a": 1}}})
+cfg_old, _ = load(old)
+s.ok("an old file with project.surface_context loads", isinstance(cfg_old, dict), "load raised: %s" % cfg_old)
+if isinstance(cfg_old, dict):
+    s.eq("an old file's other project keys are still read", cfg_old["project"]["name"], "toyfw")
+s.ok("DEFAULTS.project has no surface_context key", "surface_context" not in config.DEFAULTS["project"],
+     "present: %r" % config.DEFAULTS["project"].get("surface_context"))
+
 # --- no file: defaults, one line per process
 bare = helpers.toy_repo()
 bare_wt = helpers.add_worktree(bare, "side")

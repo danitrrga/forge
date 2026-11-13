@@ -42,7 +42,7 @@ DEFAULTS = {
     "project": {"name": None, "main_checkout": None, "linear_project": None, "default_branch": None,
                 "factory_branch": "factory", "checks": [], "protected_paths": [],
                 "production": {"branches": [], "commands": []}, "verdict_command": None, "ui": False,
-                "checks_quick": [], "app_run": None, "surface_context": {}, "worktree_setup": []},
+                "checks_quick": [], "app_run": None, "worktree_setup": []},
     "factory": {"mode": "off", "ui_bugs": False, "watchdog_nudge_min": 30, "watchdog_fail_min": 30,
                 "cost_warn_x_median": 3, "tick_trigger": None, "classifier": "suggest"},
     "weekly": {"on": True, "min_sessions": 5, "trigger": None, "precision_low": 0.7, "precision_min_marks": 20,

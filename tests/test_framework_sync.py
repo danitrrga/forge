@@ -341,7 +341,11 @@ check("true: checks, protected_paths, production, verdict_command and ui come fr
       and proj.get("production") == {"branches": ["release"], "commands": ["deploy "]}
       and proj.get("verdict_command") == "python3 verdict.py" and proj.get("ui") is True, proj)
 check("true: the later phases' project fields are the schema's defaults",
-      proj.get("checks_quick") == [] and proj.get("app_run") is None and proj.get("surface_context") == {}, proj)
+      proj.get("checks_quick") == [] and proj.get("app_run") is None, proj)
+# The owner decided against `surface_context` (a profile and its skill set specialise UI work): the key is not generated.
+# Seen red on master: FAIL true: the generated project table has no surface_context key -- key present: {}
+check("true: the generated project table has no surface_context key", "surface_context" not in proj,
+      "key present: %r" % (proj.get("surface_context"),))
 fac = doc.get("factory", {})
 check("true: factory.mode and factory.ui_bugs come from the profile", fac.get("mode") == "trial" and fac.get("ui_bugs") is True, fac)
 check("true: factory carries the framework section's keys", fac.get("watchdog_nudge_min") == 7 and fac.get("classifier") == "apply", fac)
