@@ -3,7 +3,7 @@
 forge generates the agent configuration of every project on a machine (Claude Code and, optionally,
 Codex) from one checkout: MCP servers, skill and plugin trims, hooks, permissions and the shared
 instruction document. This file is for an agent working **on the engine**. A user's own setup (skills,
-projects, `config/forge.json`, credentials) lives in the same folder but is data, ignored by the engine's
+project files, `config/forge.json`, credentials) lives in the same folder but is data, ignored by the engine's
 git; `README.md` is the user guide.
 
 ## Layout
@@ -56,12 +56,12 @@ only rollback: a `.bak` file is written once, ever.
    nor a FAIL. A check that finds nothing to look at because the user switched that feature off is a SKIP with
    the same wording.
 5. **Nothing personal in an engine file.** Names, home paths, addresses and project names belong in the user's
-   `config/forge.json` and projects, never in code, comments or tests, and neither is the date of a decision.
+   `config/forge.json` and project files, never in code, comments or tests, and neither is the date of a decision.
    Fixtures use neutral names, the documentation ranges `192.0.2.0/24` and `198.51.100.0/24`, and the
    documentation addresses under `example.com`, `example.org` and `example.test` (`EMAIL_OK` in `forge/publish.py`).
    A skill-bench task's dates are data: its files are exempt from the private list's date patterns only.
 6. **Generated files are never edited by hand:** `~/.claude.json`, any `.mcp.json`, a project's
-   `.claude/settings.local.json`. Edit the source (`config/`, a project, `forge/`) and run the generator.
+   `.claude/settings.local.json`. Edit the source (`config/`, a project file, `forge/`) and run the generator.
 7. **Never read, print or copy a value from `credentials/`.** `config/secrets.json` links to it and the
    registry refers to a secret as `${VAR}`.
 
