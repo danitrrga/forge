@@ -1,0 +1,9 @@
+{"type": "attachment", "timestamp": "{D0}T10:00:00.000Z", "attachment": {"type": "skill_listing", "content": "- alpha: the first skill, described at some length\n- toy-plugin:beta: a skill a plugin ships\n- unused-skill: nobody calls this\n- proj-skill: the project's own skill", "isInitial": true, "skillCount": 4}}
+{"type": "attachment", "timestamp": "{D0}T10:00:01.000Z", "attachment": {"type": "deferred_tools_delta", "addedNames": ["mcp__toy-db__query", "mcp__plugin_toyplug_srv__ping", "WebFetch"], "removedNames": []}}
+{"type": "attachment", "timestamp": "{D0}T10:00:02.000Z", "attachment": {"type": "hook_success", "hookName": "SessionStart:startup", "hookEvent": "SessionStart", "command": "bash /srv/home/.claude/plugins/cache/toy-market/toyplug/1.0.0/hooks/start.sh", "stdout": "older hook output", "stderr": "", "exitCode": 0}}
+{"type": "user", "timestamp": "{D0}T10:00:03.000Z", "message": {"role": "user", "content": "<command-message>proj-skill</command-message>\n<command-name>/proj-skill</command-name>"}}
+{"type": "user", "timestamp": "{D0}T10:00:04.000Z", "message": {"role": "user", "content": "<command-name>/clear</command-name>"}}
+{"type": "assistant", "timestamp": "{D0}T10:00:05.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-a1", "name": "Skill", "input": {"skill": "alpha"}}]}}
+{"type": "assistant", "timestamp": "{D0}T10:00:06.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-a2", "name": "mcp__toy-db__query", "input": {"sql": "select 1"}}]}}
+{"type": "assistant", "timestamp": "{D0}T10:00:07.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-a3", "name": "Agent", "input": {"subagent_type": "toy-agent", "prompt": "go"}}]}}
+{"type": "assistant", "timestamp": "{D0}T10:00:08.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-a2", "name": "mcp__toy-db__query", "input": {"sql": "select 1"}}]}}

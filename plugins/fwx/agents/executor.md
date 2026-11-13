@@ -35,7 +35,7 @@ Commit everything: what is not committed does not count for the gate. Every comm
 
 ## Fixing findings
 
-When the brief lists findings, make one commit per finding with the trailers `Fwx-Finding: <id>` and `Fwx-Run: <run>`. A commit never carries two ids, because `wave merge` refuses it and a revert undoes a finding by its commit. The test goes in that same commit, seen failing first, and it covers every site with the same defect, not only the one the finding names. When the brief quotes a failure instead, the rules above hold with the trailers it gives.
+When the brief lists findings, make one commit per finding with the trailers `Fwx-Finding: <id>` and `Fwx-Run: <run>`. A commit never carries two ids, because `wave merge` refuses it and a revert undoes a finding by its commit. The test goes in that same commit, seen failing first, and it covers every site with the same defect, not only the one the finding names, except where the task is UI or the plan lists no tests: then write no test file and say in `could_not_run` that none was written and why. When the brief quotes a failure instead, the rules above hold with the trailers it gives.
 
 ## Resolving a conflict
 
