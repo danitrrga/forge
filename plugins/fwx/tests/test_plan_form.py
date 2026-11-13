@@ -198,7 +198,10 @@ case("an id in a fence is not looked at", phase(body=BODY + "```\nT9 C9 D9\n```\
 case("a file name is not an id", phase(body=BODY.replace("D1.", "D1; see `t.py` and `T7.py` and x_T8.")), exact=(0, 0))
 case("T1-T3 names both ends", phase(body=BODY.replace("T1 and T2 first, T3 after", "T1-T4 first")), ["plan.md: body: T4 is not defined in tasks"])
 sub_decisions = DECISIONS + "day-1\tD2\tnew a\tbecause\t\tchosen\tturn 2\tD1\n"
-case("a replaced decision is still defined", phase(body=BODY.replace("D1.", "D1 and D2."), decisions=sub_decisions), exact=(0, 0))
+# still defined (no error about an undefined id); the one warning is the plan check's own, `cites D1, superseded by D2` (it was (0, 0)
+# before that warning existed: FAIL: only these: a replaced decision is still defined: got (0, 1), want (0, 0))
+case("a replaced decision is still defined", phase(body=BODY.replace("D1.", "D1 and D2."), decisions=sub_decisions),
+     warnings=["plan.md: body: cites D1, superseded by D2"], exact=(0, 1))
 
 # ---- citations to a file and line of the main checkout
 case("a cite to a file that does not exist", phase(body=BODY + "See `lib/nope.py:3`.\n"), ["plan.md: body: cited file not found: lib/nope.py"])

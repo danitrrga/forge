@@ -27,7 +27,11 @@ STAGE = {"premortem": "premortem", "plan": "planning", "postmortem": "postmortem
 NEEDS = "Needs from the owner before executing"
 REPLAN_UNATTENDED = "Address every blocker in postmortem.md and send every warning to `later` with its why."
 PREMORTEM_UNATTENDED = "Address the objections in premortem.md."
+REVIEWED = {"plan": "Amend the plan where it states what they replaced, the criteria first, and cite the new rows; keep the rest as it is.",
+            "postmortem": "Check that the amended plan states their values in every criterion and approach line they touch, "
+                          "and that none still states what they replaced."}
 _ACCEPTED = re.compile(r"(post|pre)mortem r\d+")
+_REVIEWED = re.compile(r"review of part \d+")  # the source of a decision the owner took in his review of a part, after the plan
 _DIFF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_./~^@-]*\.\.\.?[A-Za-z0-9_][A-Za-z0-9_./~^@-]*\Z")
 
 
@@ -216,6 +220,10 @@ def _variants(f, step, unattended, rows):
             out.append("The plan being replaced: " + _check_output(d)[1][-1].replace("checked ", "", 1) + ".")
     elif step == "plan" and unattended and f["premortem"] and f["premortem"]["verdict"] == "objections":
         out.append(PREMORTEM_UNATTENDED)
+    reviewed = ["%s%s" % (r["id"], " (replaces %s)" % r["supersedes"] if r.get("supersedes") else "")
+                for r in rows if _REVIEWED.match(r.get("source", "")) and r.get("id")]
+    if reviewed and step != "premortem" and _exists(paths["plan"]):
+        out.append("The owner decided after the plan, in his review of a part: %s. %s" % (", ".join(reviewed), REVIEWED[step]))
     return out
 
 

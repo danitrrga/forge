@@ -34,6 +34,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 ROOT = os.path.realpath(sys.argv[1]) if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 SESSION = os.path.join(ROOT, "skills", "session")
@@ -110,6 +111,52 @@ def step(text, n):
     text = text[text.find("## Steps"):] if "## Steps" in text else text
     m = re.search(r"^%d\. \*\*.*?(?=^\d+\. \*\*|\Z)" % n, text, re.S | re.M)
     return m.group(0) if m else ""
+
+
+def block(playbook, node):
+    """The block of `node` in a playbook: from its `### <id> ·` heading to the next heading."""
+    m = re.search(r"^### %s ·.*?(?=^### |\Z)" % re.escape(node), playbook, re.S | re.M)
+    return m.group(0) if m else ""
+
+
+def commit_effect(line, stale=False, demo=True, twice=False):
+    """Run rule 4's commit line in a toy repo holding the documents of a phase beside what the UI walk leaves, and say what it did:
+    (exit code, tracked files under .fwx/, untracked ones, files of the last commit, exit code of a second run or None). `<main_checkout>` is
+    the toy, `<message>` is `m`. `stale`: an older session tracked a walk's `demo-state.json` (not a document) and it has changed since;
+    `demo` False: the phase has no demo page; `twice`: the line runs a second time with nothing new."""
+    with tempfile.TemporaryDirectory(prefix="fwx-rule4-") as toy:
+        return _commit_effect(line, toy, stale, demo, twice)
+
+
+def _commit_effect(line, toy, stale, demo, twice):
+    env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.test", GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.test", GIT_CONFIG_GLOBAL=os.devnull,
+               GIT_CONFIG_NOSYSTEM="1")
+    env = {k: v for k, v in env.items() if k not in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE")}
+    phase = ".fwx/milestones/v1/phases/01-a"
+    old_state = phase + "/ui-walk/0-0/demo-state.json"
+    run = lambda cmd: subprocess.run(cmd, shell=True, cwd=toy, env=env, capture_output=True, text=True)
+    run("git init -q -b master && echo x > README && git add -A && git commit -q -m toy")
+    if stale:
+        os.makedirs(os.path.dirname(os.path.join(toy, old_state)))
+        with open(os.path.join(toy, old_state), "w") as f:
+            f.write("old\n")
+        run("git add -A && git commit -q -m older-session")
+        with open(os.path.join(toy, old_state), "w") as f:
+            f.write("changed\n")
+    for rel in (".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
+                phase + "/demo/shot.png", phase + "/ui-walk/1-1/demo-state.json", phase + "/ui-walk/1-1/up.log", phase + "/ui-walk/1-1/shot.png"):
+        if not demo and "/demo/page.html" in rel:
+            continue
+        os.makedirs(os.path.dirname(os.path.join(toy, rel)), exist_ok=True)
+        with open(os.path.join(toy, rel), "w") as f:
+            f.write("x\n")
+    cmd = line.replace("<main_checkout>", toy).replace("<message>", "m")
+    r = run(cmd)
+    again = run(cmd).returncode if twice else None
+    tracked = run("git ls-tree -r --name-only HEAD").stdout.split()
+    untracked = run("git status --porcelain -uall").stdout.split("\n")
+    last = run("git show --name-only --format= HEAD").stdout.split()
+    return r.returncode, [f for f in tracked if f.startswith(".fwx/")], [u[3:] for u in untracked if u.startswith("?? ")], last, again
 
 
 def in_order(text, *words):
@@ -247,6 +294,113 @@ def main():
         check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
         check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
     check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
+
+    # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when, and the
+    # playbook's block of the owner's review carries the matching exit. `fwx playbooks check` compares that exit with the table by itself.
+    # Seen red on 239aa07 (step 8 and the playbook did not mention it):
+    #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
+    # (reworded after the review of PR 129 into numbered sub-steps; the checks follow the new words)
+    #   FAIL: playbooks/session.md n_L8 exits `loop n_C12` -> missing
+    from fwx.core import stages  # noqa: E402
+    check("the stage table allows phase-review -> ui-walk", stages.allowed("session", "phase-review", "ui-walk"), "refused")
+    check("step 8 says when the walk is repeated from `phase-review`",
+          all(w in s8 for w in ("The walk again", "did not count", "Step 6 again", "from `phase-review`")),
+          "no 'The walk again' with 'did not count', 'Step 6 again' and 'from `phase-review`'")
+    # Two wording defects of the PR 130 review (the walk again re-runs step 6, which ends in fix rounds through `execute`; and the amendment's
+    # "no branch, no `executing` row" gave no reason). Seen red on 1166a3d:
+    #   FAIL: step 8's 'No execute' sub-step names the fix rounds of step 6 -> sub-step 2 of 'The walk again' is: 'No execute. Then this step again.'
+    #   FAIL: step 8's amendment sub-step 3 gives the reason for no branch and no `executing` row -> sub-step 3 is: '3. At step 4 give the status line and the stop for objections, but make no branch and write no `executing` row.'
+    walk2 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("2. ") and "Then this step again" in ln), "")
+    check("step 8's 'No execute' sub-step names the fix rounds of step 6",
+          "execute" in walk2 and "fix rounds of step 6" in walk2, "sub-step 2 of 'The walk again' is: %r" % walk2)
+    # Review of PR 130: step 6's last walk may have been a recheck (`recheck` the path of a fix.json), and `workflows/ui-walk.js` then runs only the
+    # verifiers, so repeating "the args of the last walk" would walk nothing. The sub-step says `recheck` is null. The name and meaning are
+    # the workflow's own (`recheck (null, or the path of a fix.json: only the verifiers run)`), pinned below against its `whenToUse`.
+    # Seen red on df27f7e: FAIL: step 8's 'Step 6 again' sub-step says the repeated walk is a full one, `recheck` null -> sub-step 1 is: '1. Step 6 again (it writes its own stage `ui-walk`, which the table allows from `phase-review`), with the `args` of the part's last walk.'
+    walk1 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("1. Step 6 again")), "")
+    check("step 8's 'Step 6 again' sub-step says the repeated walk is a full one, `recheck` null",
+          "`recheck` null" in walk1 and "only the verifiers" in walk1, "sub-step 1 is: %r" % walk1)
+    check("the workflow has the arg `recheck` that runs only the verifiers", "recheck (null, or the path of a fix.json: only the verifiers run)" in js, "the `whenToUse` of workflows/ui-walk.js changed")
+    check("control: a sub-step 1 without it is caught", "`recheck` null" not in "1. Step 6 again, with the `args` of the part's last walk.")
+    amend3 = next((ln.strip() for ln in s8.splitlines() if ln.strip().startswith("3. At step 4")), "")
+    check("step 8's amendment sub-step 3 gives the reason for no branch and no `executing` row",
+          "no branch" in amend3 and all(w in amend3 for w in ("already exist", "git worktree add")), "sub-step 3 is: %r" % amend3)
+    check("control: a sub-step 2 without the fix rounds and a sub-step 3 without a reason are caught",
+          "fix rounds of step 6" not in "2. No execute. Then this step again." and "git worktree add" not in "3. At step 4 give the status line, but make no branch and write no `executing` row.")
+    # Review of PR 130, second reviewer: a session cut during an amendment resumes at step 2 or 3 from its last row (`planning` or `postmortem`)
+    # and runs on into step 4, which makes the branch the amendment already has. Step 0 says it in one sentence.
+    # Seen red on 31ceb02: FAIL: step 0 says a `planning` or `postmortem` row after an `executing` row is an amendment with no branch at step 4 -> step 0 has no 'amendment'
+    s0 = step(texts["SKILL.md"], 0)
+    check("step 0 says a `planning` or `postmortem` row after an `executing` row is an amendment with no branch at step 4",
+          all(w in s0 for w in ("amendment", "`planning` or `postmortem` row", "after an `executing` row", "make no branch at step 4")),
+          "step 0 has %s" % ("no 'amendment'" if "amendment" not in s0 else "the sentence without one of its parts"))
+    check("control: a step 0 without the sentence is caught", "amendment" not in "Go to the step of the last stage: none or `discuss` 1; `planning` 2; `postmortem` 3.")
+    l8 = block(session_pb, "n_L8")
+    check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
+    # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
+    # `phase-review -> planning`); the `source` the skill tells the `decisions` agent to use is the one `plan_step.py` looks for, and the
+    # playbook's block of the review and of the plan carry the matching exit and sentence.
+    # Seen red on 83c37cb (step 8 and the playbook said nothing of it):
+    #   FAIL: step 8 sends a post-plan decision back to the planner -> no 'planning' with 'steps 2 and 3' and 'review of part <N>'
+    #   FAIL: playbooks/session.md n_L8 exits `loop n_C2` -> missing
+    from fwx import plan_step  # noqa: E402
+    check("the stage table allows phase-review -> planning", stages.allowed("session", "phase-review", "planning"), "refused")
+    check("step 8 sends a post-plan decision back to the planner",
+          all(w in s8 for w in ("A decision after the plan", "the planner and the post-mortem get the decision", "Step 2 and step 3 again", "allowed from `phase-review`")),
+          "no 'A decision after the plan', 'the planner and the post-mortem get the decision', 'Step 2 and step 3 again' and 'allowed from `phase-review`'")
+    # Seen red on bd44ce6 (the sentence told the session to write stage `planning` while step 2 writes it, and to judge a fact of the plan):
+    #   FAIL: step 8 does not write stage `planning` itself and does not ask the session to read the plan -> a stage `planning` of its own, or no 'You do not read the plan'
+    check("step 8 does not write stage `planning` itself and does not ask the session to read the plan",
+          "stage `planning`" not in s8 and "You do not read the plan" in s8, "a stage `planning` of its own, or no 'You do not read the plan'")
+    check("step 2 writes stage `planning` and step 3 stage `postmortem`", "Stage `planning`" in step(texts["SKILL.md"], 2) and "Stage `postmortem`" in step(texts["SKILL.md"], 3), "missing")
+    check("step 8 gives the decision the source the briefs look for",
+          "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
+    check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
+    check("playbooks/session.md n_C2 names the decision of the review as what a replan attends", "his review" in block(session_pb, "n_C2"), "missing")
+    # Rule 4: the documents are always committed in the main checkout, never on the phase branch (the old exception for a default branch that
+    # takes changes by pull request could not be followed: in the rehearsal nothing was committed), and only the documents: `.md` and `.tsv`
+    # files and the `demo/` pages, so the walk's `demo-state.json` (demo session cookies), logs and screenshots stay untracked. The command
+    # line is run here as written. A `:(glob)` pathspec per pattern was tried first: `git add` fails outright when one pattern matches nothing
+    # (`fatal: pathspec ':(glob).fwx/**/demo/*.html' did not match any files`, a phase with no demo page), so the list comes from `find`.
+    # Seen red on 769589c (rule 4 said `git add .fwx` and named the phase branch):
+    #   FAIL: rule 4 commits in the main checkout and no longer names the phase branch as a place -> 'requires a pull request' still in rule 4
+    #   FAIL: rule 4's commit line adds the documents and leaves the walk's files untracked -> no line `cd <main_checkout> && find ...`
+    rule4 = next((ln for ln in texts["SKILL.md"].splitlines() if ln.startswith("4. **Commits of `.fwx/`**")), "")
+    check("rule 4 found", "forge commit" in rule4, "not found")
+    check("rule 4 commits in the main checkout and no longer names the phase branch as a place",
+          "requires a pull request" not in rule4 and "in its worktree" not in rule4 and "never on the phase branch" in rule4,
+          "'requires a pull request' or 'in its worktree' still in rule 4, or no 'never on the phase branch'")
+    lines = re.findall(r"`(cd <main_checkout> && find [^`]*)`", rule4)
+    check("rule 4 has one commit line built on `find`", len(lines) == 1, "found %d" % len(lines))
+    if len(lines) == 1:
+        rc, tracked, untracked, _, _ = commit_effect(lines[0])
+        phase = ".fwx/milestones/v1/phases/01-a"
+        check("rule 4's commit line adds the documents and the demo pages", rc == 0 and all(f in tracked for f in (
+            ".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
+              "rc %s, tracked %s" % (rc, tracked))
+        check("rule 4's commit line leaves demo-state.json, a log and a screenshot untracked", all(any(u.endswith(n) for u in untracked) for n in (
+            "demo-state.json", "up.log", "ui-walk/1-1/shot.png", "demo/shot.png")) and not [f for f in tracked if f.endswith(("demo-state.json", ".log", ".png"))],
+              "untracked %s, tracked %s" % (untracked, tracked))
+    # Review of PR 130: the commit took `-- .fwx`, which records the working-tree contents of every tracked file under it, so a `demo-state.json`
+    # tracked by an older session and changed since went into the commit although `find` left it out of `git add`. The line is run in a toy
+    # whose older session tracked such a file, in a phase with no demo page, and a second time with nothing new.
+    # Seen red on fc1cd49: FAIL: rule 4's commit line leaves a changed, previously tracked walk file out of the commit -> rc 0, the commit holds [...ui-walk/0-0/demo-state.json...]
+    if len(lines) == 1:
+        rc, _, _, last, _ = commit_effect(lines[0], stale=True)
+        check("rule 4's commit line leaves a changed, previously tracked walk file out of the commit", rc == 0 and bool(last) and not [f for f in last if f.endswith("demo-state.json")],
+              "rc %s, the commit holds %s" % (rc, last))
+        rc, tracked, _, last, _ = commit_effect(lines[0], demo=False)
+        check("rule 4's commit line works in a phase with no demo page", rc == 0 and ".fwx/milestones/v1/phases/01-a/context.md" in last and not [f for f in tracked if "/demo/" in f],
+              "rc %s, the commit holds %s" % (rc, last))
+        rc, _, _, _, again = commit_effect(lines[0], twice=True)
+        check("rule 4's commit line run again with nothing new exits 1 (git: nothing to commit) and makes no empty commit", rc == 0 and again == 1, "rc %s, second rc %s" % (rc, again))
+    old = commit_effect("git -C <main_checkout> add .fwx && git -C <main_checkout> commit -m \"<message>\" -- .fwx")
+    check("control: the old line `git add .fwx` tracks the walk's session file", any(f.endswith("demo-state.json") for f in old[1]), "tracked %s" % old[1])
+    # control: the old text's own commit part (`-- .fwx`) records a tracked, changed non-document
+    check("control: `commit -- .fwx` after the find-built add commits a previously tracked walk file", any(f.endswith("demo-state.json") for f in commit_effect(
+        "cd <main_checkout> && find .fwx -type f ! -name '.*' \\( -name '*.md' -o -name '*.tsv' -o -path '*/demo/*.html' \\) -print0 | git add --pathspec-from-file=- --pathspec-file-nul && git commit -m \"<message>\" -- .fwx",
+        stale=True)[3]), "the control line did not commit it")
+    check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})

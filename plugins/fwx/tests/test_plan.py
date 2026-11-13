@@ -281,6 +281,29 @@ r = plan.check_phase(phase(body=BODY, extra={"decisions.tsv": decisions}))
 s.eq("unexamined, assumed and replaced decisions are not asked for", sorted(w.split()[2] for w in r["warnings"]), ["D2", "D3", "D7"])
 s.ok("D10 does not cite D1", any("D1 (chosen)" in w for w in plan.check_phase(phase(body=BODY.replace("D1.", "D10."), extra={"decisions.tsv": decisions}))["warnings"]))
 
+# a plan that still cites a decision a later row replaced (the owner decided after the plan: D10 replaces D2) says so, naming the
+# decision it should cite now; a plan that cites the new one says nothing.
+# Seen red on master (no such warning; the rehearsal's criterion C2 kept stating the replaced value):
+#   FAIL: warning: a plan that cites a replaced decision: 'plan.md: body: cites D2, superseded by D10' not in [...]
+after = ("date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n"
+         "day-1\tD1\td\tw\t\tchosen\t\t\nday-1\tD2\td\tw\t\tchosen\t\t\nday-2\tD10\td\tw\t\tchosen\treview of part 1\tD2\n")
+case("a plan that cites a replaced decision", phase(body=BODY.replace("D1.", "D1 and D2."), extra={"decisions.tsv": after}),
+     warnings=["plan.md: body: cites D2, superseded by D10"])
+fresh = phase(body=BODY.replace("D1.", "D1 and D10."), extra={"decisions.tsv": after})
+# a chain D1 <- D2 <- D3 names the row in force; `D1` alone is not found in a text that only has `D10`
+# Seen red on bd44ce6: FAIL: warning: a plan that cites a decision replaced twice: 'plan.md: body: cites D1, superseded by D3' not in [...cites D1, superseded by D2]
+chain = ("date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n"
+         "day-1\tD1\td\tw\t\tchosen\t\t\nday-2\tD2\td\tw\t\tchosen\t\tD1\nday-3\tD3\td\tw\t\tchosen\t\tD2\n")
+case("a plan that cites a decision replaced twice", phase(body=BODY, extra={"decisions.tsv": chain}), warnings=["plan.md: body: cites D1, superseded by D3"])
+only10 = ("date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n"
+          "day-1\tD1\td\tw\t\tchosen\t\t\nday-1\tD10\td\tw\t\tchosen\t\t\nday-2\tD11\td\tw\t\tchosen\t\tD1\n")
+s.ok("a text with `D10` and no `D1` has no warning about D1",
+     not any("cites D1," in w for w in plan.check_phase(phase(body=BODY.replace("D1.", "D10."), extra={"decisions.tsv": only10}))["warnings"]))
+s.ok("a plan that cites the replacing decision has no such warning",
+     not any("superseded by" in w for w in plan.check_phase(fresh)["warnings"]), str(plan.check_phase(fresh)["warnings"]))
+s.ok("the same for a plan that cites neither",
+     not any("superseded by" in w for w in plan.check_phase(phase(body=BODY, extra={"decisions.tsv": after}))["warnings"]))
+
 # ---- a phase with two subphases
 SUB = lambda part, n: {"size": {"tag": "small", "parts": 1, "agents": 1}, "criteria": base()["criteria"], "not_built": [], "later": [],
                        "tasks": [{"id": "S%d" % n, "part": part, "type": "feature", "wave": 1, "files": ["s%d.py" % n], "depends_on": [],
@@ -295,6 +318,9 @@ parts = phase(top(), body=TBODY, extra=subs())
 r = case("two subphases", parts, exact=(0, 0))
 s.eq("two subphases: counts", (r["plans"], r["tasks"], r["waves"], r["parts"]), (3, 4, 4, 2))
 s.ok("two subphases: the count line", "checked 3 plan file(s): 4 tasks, 4 waves, 2 parts; 0 errors, 0 warnings" in cli(parts).stdout)
+case("a subphase plan that cites a replaced decision names its file",
+     phase(top(), body=TBODY, extra=dict(subs(), **{"decisions.tsv": after, "01.2-b/plan.md": fm_text(SUB(2, 2)) + SBODY.replace("D1.", "D1 and D2.")})),
+     warnings=["01.2-b/plan.md: body: cites D2, superseded by D10"])
 case("a subphase without a folder", phase(top(), extra={"01.2-b/plan.md": fm_text(SUB(2, 2)) + BODY}), ["plan.md: tasks[T1].subphase: 01.1-a has no folder"])
 case("a subphase folder without plan.md", phase(top(), extra={"01.1-a/plan.md": fm_text(SUB(1, 1)) + BODY, "01.2-b/x": "x"}), ["01.2-b/plan.md: file: missing"])
 case("a subphase with an invalid plan.md", phase(top(), extra=dict(subs(), **{"01.2-b/plan.md": fm_text(dict(SUB(2, 2), tasks=[])) + BODY})), ["01.2-b/plan.md: tasks: empty"])
