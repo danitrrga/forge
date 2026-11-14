@@ -10,20 +10,20 @@
 </style></head><body>
 <div class="stage">
   <div class="title" style="position:absolute;left:64px;top:40px">Which skills each project loads<i></i></div>
-  <div class="sub" style="position:absolute;left:64px;top:82px">A profile with skills_keep loads only those; one without it loads every skill.</div>
+  <div class="sub" style="position:absolute;left:64px;top:82px">A project with skills_keep loads only those; one without it loads every skill.</div>
   <table class="grid" id="t" style="position:absolute;left:64px;top:148px"></table>
   <div class="note" style="top:304px">With GSD on, <code>skill_keep.gsd_exclude</code> drops a <code>gsd-*</code> skill from every project, and <code>gsd_opt_in</code> keeps one only where an <code>extras</code> row names it.</div>
-  <div class="file" style="left:784px;top:148px"><div class="h"><span>config/profiles/api.claude.json</span><span>you write</span></div><div class="code" id="prof"></div></div>
+  <div class="file" style="left:784px;top:148px"><div class="h"><span>config/projects/api.claude.json</span><span>you write</span></div><div class="code" id="prof"></div></div>
   <div class="file" style="left:784px;top:300px"><div class="h"><span>~/code/api/.claude/settings.local.json</span><span>forge writes</span></div><div class="code" id="set"></div></div>
   <svg class="links" width="1280" height="480" viewBox="0 0 1280 480" id="links"></svg>
 </div>
 <script>
 const F=window.FORGE, M=F.matrix, esc=s=>s.replace(/&/g,"&amp;").replace(/</g,"&lt;");
 const sk=M.cols.map((c,i)=>[c,i]).filter(([c,i])=>M.kinds[i]==="skill");
-document.getElementById("t").innerHTML=`<tr><td class="cap">project</td><td class="cap">profile</td><td class="cap" colspan="2">skills it loads</td></tr>`+
+document.getElementById("t").innerHTML=`<tr><td class="cap">project</td><td class="cap">file</td><td class="cap" colspan="2">skills it loads</td></tr>`+
   M.rows.map(([n,v])=>`<tr><td class="p">${n}</td><td class="n">${n==="~/forge"?"forge":n.split("/").pop()}.claude.json</td>${sk.map(([c,i])=>`<td class="${v[i]?"":"off"}" ${v[i]?"":'id="off"'}>${c}</td>`).join("")}</tr>`).join("");
-// the keys the table follows from: the api profile's skills_keep, and the override forge wrote for the skill it leaves out
-const prof=F.files["config/profiles/api.claude.json"].trimEnd().split("\n"), a=prof.findIndex(l=>l.includes('"skills_keep"'));
+// the keys the table follows from: the api project's skills_keep, and the override forge wrote for the skill it leaves out
+const prof=F.files["config/projects/api.claude.json"].trimEnd().split("\n"), a=prof.findIndex(l=>l.includes('"skills_keep"'));
 document.getElementById("prof").innerHTML=esc(prof.slice(a,a+3).join("\n")).replace('"skills_keep"','<span class="ko">"skills_keep"</span>');
 document.getElementById("set").innerHTML=esc(F.files["~/code/api/.claude/settings.local.json"].trimEnd()).replace(/"release": "off"/,'<span class="ko">"release": "off"</span>');
 document.fonts.ready.then(()=>{

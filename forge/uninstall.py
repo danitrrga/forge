@@ -14,13 +14,13 @@ record does not hold it, and last the state directory, the record with it.
 
 Scopes: everything (the default), with forge's SessionStart row second-to-last and the state directory last,
 both only when nothing before them failed; `--integration N`, refused while N is on in config/forge.json:
-N's claims and what N has by construction; a project NAME (`forge uninstall NAME`), refused unless the profile is frozen or gone: what
+N's claims and what N has by construction; a project NAME (`forge uninstall NAME`), refused unless the project is frozen or gone: what
 lies under its project_path and its part of ~/.claude.json. A dry-run unless --apply, and a dry-run writes
 nothing at all; --apply writes through lib (lib.may_write) under lib.lock, ~/.claude.json only when nobody
 wrote it since it was read. It never reads config/secrets.json or credentials/: it decides by digests.
 An ownership record that cannot be read stops every scope (exit 1, the record stays for repair); no record at
 all is "only what forge makes by construction", and a whole uninstall that finds nothing says nothing is left
-(exit 0). `forge uninstall NAME` leaves what lies under another profile's project_path inside NAME's. A link where a
+(exit 0). `forge uninstall NAME` leaves what lies under another project's project_path inside NAME's. A link where a
 directory was (~/.cache/forge, the state directory) is removed as a link; a settings.local.json or hooks.json
 that is a link and is left empty is written through, never unlinked.
 
@@ -182,15 +182,15 @@ class Scope:
         self.whole = not (a.integration or a.project)
         self.name = "integration " + a.integration if a.integration else "project " + a.project if a.project else "everything"
         self.refusal = None
-        profs = lib.profiles()
+        profs = lib.projects()
         if a.integration and lib.on(a.integration):
             self.refusal = "%s is on in config/forge.json: set it false first" % a.integration
         prof = profs.get(a.project) if a.project else None
-        # Who owns an ignore block of this project: its claims carry the profile's `project` (else its name).
+        # Who owns an ignore block of this project: its claims carry the project's `project` (else its name).
         self.owners = {a.project, (prof or {}).get("project") or a.project} if a.project else set()
         if prof is not None and not prof.get("frozen"):
-            self.refusal = ("%s is a live profile, which the next forge sync writes again: set \"frozen\": true in "
-                            "config/profiles/%s.claude.json, or delete it, first" % (a.project, a.project))
+            self.refusal = ("%s is a live project, which the next forge sync writes again: set \"frozen\": true in "
+                            "config/projects/%s.claude.json, or delete it, first" % (a.project, a.project))
         if a.project and prof is None:  # gone: its paths are where its claims are
             keys = {c["part"][len("mcp:"):] for cs in (claims or {}).values() for c in cs
                     if c["owner"] == a.project and c.get("part", "").startswith("mcp:")}
@@ -202,9 +202,9 @@ class Scope:
         else:
             self.ppaths = sorted({os.path.normpath(p["project_path"]) for p in profs.values() if p.get("project_path")})
         if a.project and not self.ppaths and not self.refusal:
-            self.refusal = "%s: no profile with a project_path and no claim of it in the record" % a.project
+            self.refusal = "%s: no project with a project_path and no claim of it in the record" % a.project
         self.real = [os.path.realpath(p) for p in self.ppaths]
-        # Another profile's tree inside this project's is its own: a path belongs to the longest project_path.
+        # Another project's tree inside this project's is its own: a path belongs to the longest project_path.
         others = {os.path.realpath(p["project_path"]) for n, p in profs.items() if n != a.project and p.get("project_path")}
         self.nested = [o for o in others if any(o != d and _inside(o, d) for d in self.real)] if a.project else []
         self.keys = {"mcp:" + mcp.project_key(p) for p in self.ppaths}

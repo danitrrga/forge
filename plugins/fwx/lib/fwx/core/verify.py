@@ -39,7 +39,7 @@ TAIL_LINES = 40
 TAIL_CHARS = 4000
 COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
-_NO_ROOT = os.devnull  # a root with no package.json: `plan_checks` then returns only the profile's checks
+_NO_ROOT = os.devnull  # a root with no package.json: `plan_checks` then returns only the project's checks
 
 
 def redact(text, environ=None):
@@ -161,7 +161,7 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=CHECK_TIMEOUT_S, enviro
         return 2, None
     source = "profile" if evidence.plan_checks(cfg["project"]["checks"], _NO_ROOT) else "package"
     say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",
-                                                   "profile" if source == "profile" else "package.json scripts", sha[:7]))
+                                                   "project" if source == "profile" else "package.json scripts", sha[:7]))
     results = [run_check(command, root, timeout) for command in recipe]
     moved = head(root) != sha
     if moved:

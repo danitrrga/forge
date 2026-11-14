@@ -2,7 +2,7 @@
 """The project is an argument, not a flag: `forge sync [NAME | --all] [--apply]` and `forge uninstall [NAME |
 --integration N] [--apply]`, like `doctor`, `metrics` and `log`. `--project NAME` is cut, not aliased: it exits 2 with one
 line on stderr naming the new form (`forge sync --project toy: now 'forge sync toy'`), the same way the renamed commands
-of tests/test_command_grammar.py refuse their old names, and runs nothing. `forge sync NAME` with a name no profile has
+of tests/test_command_grammar.py refuse their old names, and runs nothing. `forge sync NAME` with a name no project has
 refuses (exit 1, the known names) and runs no generator: a misspelled name must never fall through to "everything".
 `cmd_sync` still hands `--project NAME` to the generators of scripts/sync/ (they are machine scripts, not commands).
 
@@ -21,11 +21,11 @@ Negative controls, each a throwaway edit of forge/cli.py (a copy of it put back 
       is checked by the same mutant);
   (b) cmd_sync ignoring NAME and passing `--all`: "(b) synced other projects: toy-b has no generated file -- toy-b has
       ['.claude/AGENT-SYSTEM.md', '.claude/settings.local.json', 'AGENTS.md', 'CLAUDE.md']";
-  unknown name: cmd_sync without its profile lookup: "(b) sync nope: no generator ran -- forge sync: failed -- agent config,
+  unknown name: cmd_sync without its project lookup: "(b) sync nope: no generator ran -- forge sync: failed -- agent config,
       system doc | forge: unknown project: nope (known: toy-a, toy-b)" (the two generators that check refuse it, the others
       ran: the lookup is what makes it one clean line and no run);
   (c) cmd_uninstall dropping NAME: "(c) uninstalled other projects: toy-b's settings.local.json is gone -- toy-b changed", and
-      "(c) uninstall toy-a of a live profile: refused, exit 1, nothing removed -- got 0".
+      "(c) uninstall toy-a of a live project: refused, exit 1, nothing removed -- got 0".
 The mutations are not kept."""
 import json
 import os
@@ -73,10 +73,10 @@ try:
     fj["integrations"] = {n: False for n in fj["integrations"]}
     fj["codex_harness"] = False
     write_json(os.path.join(cfg, "forge.json"), fj)
-    for f in os.listdir(os.path.join(cfg, "profiles")):  # the fixture's profiles name /srv/toy/*, outside the world
-        os.remove(os.path.join(cfg, "profiles", f))
+    for f in os.listdir(os.path.join(cfg, "projects")):  # the fixture's projects name /srv/toy/*, outside the world
+        os.remove(os.path.join(cfg, "projects", f))
     for name in projects:
-        write_json(os.path.join(cfg, "profiles", name + ".claude.json"),
+        write_json(os.path.join(cfg, "projects", name + ".claude.json"),
                    {"project": name, "project_path": projects[name], "enableAllProjectMcpServers": True, "servers": [],
                     "env": {"PLAIN": "1"}, "plugins_keep": [], "skills_keep": ["*"], "permissions": {}})
     write_json(os.path.join(root, "credentials", "secrets.json"), {})
@@ -197,11 +197,11 @@ try:
     code, out = forge("uninstall", "--project=toy-a", "--apply")
     check("(c) uninstall --project=toy-a --apply: exit 2 and nothing removed",
           code == 2 and os.path.isfile(slp("toy-a")) and os.path.isfile(slp("toy-b")), tail(out))
-    # a live profile is refused by uninstall itself (its own rule), through the new form too
+    # a live project is refused by uninstall itself (its own rule), through the new form too
     code, out = forge("uninstall", "toy-a", "--apply")
-    check("(c) uninstall toy-a of a live profile: refused, exit 1, nothing removed",
+    check("(c) uninstall toy-a of a live project: refused, exit 1, nothing removed",
           code == 1 and "!" in out and os.path.isfile(slp("toy-a")), "got %d: %s" % (code, tail(out)))
-    pf = os.path.join(cfg, "profiles", "toy-a.claude.json")
+    pf = os.path.join(cfg, "projects", "toy-a.claude.json")
     prof = json.load(open(pf))
     prof["frozen"] = True
     write_json(pf, prof)

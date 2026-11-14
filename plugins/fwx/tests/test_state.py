@@ -146,7 +146,7 @@ except state.config.ConfigError as e:
     s.ok("plan_root outside a git repository raises ConfigError naming the folder", "not in a git repository" in str(e))
 
 # ---- plan_root, the protected-default-branch variant ---------------------------------------------------------------
-# `.fwx/` is tracked and the profile says the default branch is protected: the session's worktree holds the live copy.
+# `.fwx/` is tracked and the project says the default branch is protected: the session's worktree holds the live copy.
 pmain = helpers.toy_repo({"README": "toy\n", ".fwx/PROJECT.md": "# toy\n"})
 pwt = helpers.add_worktree(pmain, "phase-branch")
 psub = mk(pwt, "src")

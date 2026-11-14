@@ -35,7 +35,7 @@ BOTH = (CLAUDE, CODEX)
 #
 # WHY USER SCOPE, for all of them: hooks in ~/.claude/settings.json fire in EVERY session
 # whatever the project dir, and hook arrays concatenate across scopes, so one entry covers
-# every project without touching twenty profiles, and a gate cannot be dodged by opening a
+# every project without touching twenty projects, and a gate cannot be dodged by opening a
 # repo that lacks it (D-03). Emitting them from the generator makes the wiring reproducible on
 # a fresh machine and survive SessionStart regeneration (D-04). Every command is an ABSOLUTE
 # interpreter + path (Linux interpreter rule, AGENT-SYSTEM.md -- relative paths broke
@@ -139,7 +139,7 @@ _CODE_ROWS = [
      "'{\"systemMessage\": \"forge session-start could not run (is python3 on PATH?)\"}'" % ROOT, lib.SESSION_START_TIMEOUT,
      "forge session-start", "startup", (CLAUDE,)),
 
-    # Memory health gate. It sweeps all nineteen profiles in under a second (--hook took 978 and
+    # Memory health gate. It sweeps all nineteen projects in under a second (--hook took 978 and
     # 831 ms, measured), so running it only in forge would cover the machine -- but
     # the failure is discovered working in another project, when the agent does not know
     # something it knew yesterday, so it fires everywhere like its two sisters above. --hook:
@@ -187,7 +187,7 @@ _CODE_ROWS += [(event, "%s %s/%s" % ("bash" if script.endswith(".sh") else "node
                for event, script, matcher, timeout in GSD_CORE_ROWS]
 
 # Rows written per project, never at user scope: one project uses one memory system, so Hindsight's
-# Claude hooks go only into the .claude/settings.local.json of a profile that uses Hindsight (its
+# Claude hooks go only into the .claude/settings.local.json of a project that uses Hindsight (its
 # `servers` holds hindsight-coding-agents, SCOPES), through skills.write_settings_local, which owns
 # them by exact command there. At user scope they fired on every prompt of every project and only
 # Hindsight's own config made them inert outside its projects. config/forge.json's `user_hooks` rows
@@ -200,7 +200,7 @@ _PROJECT_CODE_ROWS = [
      "coding-agents", None, (CLAUDE,)),
 ]
 # A project scope's name (a `user_hooks` row's `scope`, and the integration that gates it) -> whether
-# a profile is in it.
+# a project is in it.
 SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or [])}
 
 # The integration (lib.INTEGRATIONS) each gated row belongs to, by marker. A row whose integration
@@ -246,7 +246,7 @@ def _config_rows(scopes=None):
     only for "on": false. A row that is not an object with the five keys is an exit 1 with a "!"
     line: a half-read row would write a hook that cannot start. `scopes`, a list, gets each row's
     optional `scope`, in order: None for a user-scope row, or a SCOPES name for one written per
-    project instead (`"scope": "hindsight"`: only into the settings.local.json of the profiles that
+    project instead (`"scope": "hindsight"`: only into the settings.local.json of the projects that
     use Hindsight, see _PROJECT_CODE_ROWS). A scoped row is Claude's alone: forge writes no
     per-project Codex hooks."""
     rows = []
@@ -305,8 +305,8 @@ _PER_PROJECT = {row[1] for row, _, _ in PROJECT_ROWS}
 
 
 def project_hooks(prof):
-    """The rows skills.write_settings_local owns in this profile's settings.local.json, as
-    (event, command, timeout, marker, matcher, wanted): `wanted` when the row is on and the profile
+    """The rows skills.write_settings_local owns in this project's settings.local.json, as
+    (event, command, timeout, marker, matcher, wanted): `wanted` when the row is on and the project
     is in its scope. One not wanted is taken out of the file by its exact command."""
     return [(event, cmd, timeout, marker, matcher, on and SCOPES[scope](prof))
             for (event, cmd, timeout, marker, matcher, _), scope, on in PROJECT_ROWS]
@@ -640,7 +640,7 @@ def write_user_settings(ctx):
 
     ENABLE_CLAUDEAI_MCP_SERVERS=false. Every connector on the claude.ai account (15 on
     when measured: Gmail, Drive, Calendar, Claude Docs, Slack, Notion, Figma...) otherwise loads into
-    every project, whatever its profile says, and the connected ones bring their tools and
+    every project, whatever its file says, and the connected ones bring their tools and
     instructions into context. Nothing here uses them -- the gmail and calendar skills go through
     forge's own `google` server. Measured: honoured from user-scope `env` (one project
     went from 15 claude.ai entries to 0), NOT overridable from a project's settings.local.json

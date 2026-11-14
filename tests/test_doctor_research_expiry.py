@@ -7,8 +7,8 @@ malformed date is an `unreadable expiry`, a WARN too; zero files anywhere is a P
 is skipped and said; the scan writes nothing.
 
 Every date is built from a fixed base with timedelta, and `cli.today` is replaced, so no date is written in this
-file and the run does not depend on the day it runs. Each case builds a toy forge (config/profiles) with toy
-projects; the real profiles and projects are never read.
+file and the run does not depend on the day it runs. Each case builds a toy forge (config/projects) with toy
+projects; the real projects and projects are never read.
 Red before the row, run on the code that did not have it (19 failures, exit 1; only "11 the row writes nothing" passed,
 vacuously): "the row is registered = False, want
 True"; "1 an expired file: WARN naming it = ('raised', \"AttributeError: module 'forge.cli' has no attribute
@@ -43,7 +43,7 @@ def day(offset):
 
 
 def project(tmp, name, files, forge="forge"):
-    """A toy project `name` holding `files` ({path under the project: text}), and its profile in the toy forge."""
+    """A toy project `name` holding `files` ({path under the project: text}), and its project in the toy forge."""
     root = os.path.join(tmp, "proj-" + name)
     for rel, text in files.items():
         full = os.path.join(root, rel)
@@ -51,17 +51,17 @@ def project(tmp, name, files, forge="forge"):
         with open(full, "w", encoding="utf-8") as fh:
             fh.write(text)
     os.makedirs(root, exist_ok=True)
-    profiles = os.path.join(tmp, forge, "config", "profiles")
-    os.makedirs(profiles, exist_ok=True)
-    with open(os.path.join(profiles, name + ".claude.json"), "w", encoding="utf-8") as fh:
+    projects = os.path.join(tmp, forge, "config", "projects")
+    os.makedirs(projects, exist_ok=True)
+    with open(os.path.join(projects, name + ".claude.json"), "w", encoding="utf-8") as fh:
         json.dump({"project": name, "project_path": root}, fh)
     return root
 
 
 def row(tmp, only=None, forge="forge"):
     """The row over the toy forge at tmp/forge, as (level, detail); today is BASE."""
-    saved = lib.PROFILES, getattr(cli, "today", None)
-    lib.PROFILES = os.path.join(tmp, forge, "config", "profiles")
+    saved = lib.PROJECTS, getattr(cli, "today", None)
+    lib.PROJECTS = os.path.join(tmp, forge, "config", "projects")
     cli.today = lambda: BASE
     try:
         res = cli.research_expiry(only) if only else cli.research_expiry()
@@ -69,7 +69,7 @@ def row(tmp, only=None, forge="forge"):
     except Exception as e:
         return ("raised", "%s: %s" % (type(e).__name__, e))
     finally:
-        lib.PROFILES = saved[0]
+        lib.PROJECTS = saved[0]
         if saved[1] is None:
             del cli.today
         else:
@@ -85,7 +85,7 @@ def main():
     registered = {n: (c, f) for n, c, f in cli.CHECKS}.get("research expiry")
     want("the row is registered, with its fix", registered, (getattr(cli, "research_expiry", 0), FIX))
 
-    # One toy forge per case: tmp/<case>/config/profiles, projects beside it.
+    # One toy forge per case: tmp/<case>/config/projects, projects beside it.
     def world(case, projects):
         base = os.path.join(tmp, case)
         for name, files in projects.items():
@@ -127,7 +127,7 @@ def main():
     want("6 no research directory, or no markdown in it: PASS with zero", row(base),
          ("PASS", "0 research file(s) in 0 project(s), no .planning/research/*.md to check"))
     base = os.path.join(tmp, "c6-none")
-    os.makedirs(os.path.join(base, "forge", "config", "profiles"))
+    os.makedirs(os.path.join(base, "forge", "config", "projects"))
     want("6 no project at all: PASS with zero", row(base),
          ("PASS", "0 research file(s) in 0 project(s), no .planning/research/*.md to check"))
 

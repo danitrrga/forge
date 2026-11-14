@@ -4,7 +4,7 @@ framework generates or creates out of `git status`.
 The framework keeps a project's working documents (markdown and tsv) under <project>/.fwx/. They are the project's
 memory and must be tracked, but a project's own `*.md` rule ignores every one of them, and nothing ignores the
 worktrees the framework creates under .claude/worktrees/, so the main checkout looks dirty and the framework's own
-"clean tree" checks refuse to run. For a profile with `framework: true`, forge/framework.py has this module keep ONE
+"clean tree" checks refuse to run. For a project with `framework: true`, forge/framework.py has this module keep ONE
 block (forge/gitblock.py) at the END of the project's .gitignore, because a negation only works after the rule it
 negates:
 
@@ -17,7 +17,7 @@ negates:
     # END FORGE-FWX
 
 Everything between the markers is forge's: a sync rewrites a block that differs from what forge writes (and says so),
-an uninstall or a profile going back to `framework: false` removes it. The lines the project has outside are never
+an uninstall or a project going back to `framework: false` removes it. The lines the project has outside are never
 touched.
 
 Where the block sits is the project's to decide about everything but its end. Lines the project added after the block
@@ -39,27 +39,27 @@ says so as the cause, since no block in the project can change it and another cl
 line saying what was not checked and nothing is written, never a success. The scratch directory is removed on every way
 out, SIGTERM and Ctrl-C included.
 
-A profile with `framework_ignore_block: false` has none of this: its framework documents are kept out of the repository's
+A project with `framework_ignore_block: false` has none of this: its framework documents are kept out of the repository's
 history on purpose (a second history, say), so forge writes no block, runs no probe, removes one it wrote earlier and prints one
 SKIP line (`switched_off`); the exit code does not depend on it.
 
-A profile with `writes_tracked_files: false` owns its .gitignore: forge never writes it. The block goes to
+A project with `writes_tracked_files: false` owns its .gitignore: forge never writes it. The block goes to
 .git/info/exclude (anchored to the project's place in the repository), which only this clone reads, and git ranks
 a .gitignore rule above one there, so a `*.md` of the repo's .gitignore, or of one above it, still wins over the `!`
 line (measured: git check-ignore says `.gitignore:N:*.md`). The un-ignore then holds only if the repo's own
 .gitignore carries the block, and the step says so with a `!` line naming the fix. When the repo's own rules already
 give the wanted answer, nothing is written to the exclude file. The exclude file is one for the whole repository, so
 each project keeps its own block in it, tagged with its place (forge/gitblock.py), and a run, an uninstall or a
-profile going back to `framework: false` touches only its own.
+project going back to `framework: false` touches only its own.
 
 Markers that are not one complete pair are a `!` line naming `file:line` and nothing is written (forge/gitblock.py).
 The block is a claim (forge/owned.py, item ["block", "FORGE-FWX"], with the tag as a third element in the exclude
-file), found through the registry by its owner and its place, so a profile that never had one costs no git call.
+file), found through the registry by its owner and its place, so a project that never had one costs no git call.
 
 Limits, stated and not fixed: with `framework_ignore_block: false` nothing ignores the generated .claude/<plugin>.json
 or .claude/worktrees/ (the project's own ignore rules do, or its owner adds the lines); a project moved to another
 directory of its repository leaves its old block in .git/info/exclude until `forge uninstall NAME` or a hand edit
-(an owner that is the same in two profiles cannot be told apart, so a sync does not guess); two profiles that name the
+(an owner that is the same in two projects cannot be told apart, so a sync does not guess); two projects that name the
 same project path and the same `project` are one project to the ownership record, and nothing validates against that."""
 import collections
 import contextlib
@@ -289,11 +289,11 @@ def _says(wrong):
     return ", ".join("git %s %s (%s)" % ("does not ignore" if w.want else "still ignores", w.path, w.rule) for w in wrong)
 
 
-SWITCHED_OFF = ("   framework -> ignore block: NOT RUN, NOT ARMED: framework_ignore_block is false in the profile (the project keeps "
+SWITCHED_OFF = ("   framework -> ignore block: NOT RUN, NOT ARMED: framework_ignore_block is false in the project (the project keeps "
                 "its framework documents out of this git on purpose), so forge writes and checks no FORGE-FWX block; the generated "
                 "file is written as always, and ignoring it and .claude/worktrees/ is the project's own")
 OWN_WAY_OUT = ('; or, if the repository keeps .fwx out of its history on purpose, set "framework_ignore_block": false in the '
-               'profile')
+               'project')
 
 
 def advice(wrong, repo_owned):
@@ -311,7 +311,7 @@ def advice(wrong, repo_owned):
 
 
 def switched_off(apply, ppath, owner):
-    """The lines for a profile with `framework_ignore_block: false`: one SKIP line (a feature the user switched off), then
+    """The lines for a project with `framework_ignore_block: false`: one SKIP line (a feature the user switched off), then
     what drop says about a block forge wrote earlier, which goes as it does for `framework: false`. No probe, no block
     written, and nothing here counts as an error."""
     return [SWITCHED_OFF] + drop(apply, ppath, owner)

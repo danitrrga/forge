@@ -3,7 +3,7 @@
 
 main() runs with every path it reads pointed into a temp dir: the Codex config and hooks.json, the
 rendered hindsight config (by default one whose top-level server is a loopback stand-in answering
-/health, so nothing leaves the machine), the known-empty backlog (absent) and the profile list
+/health, so nothing leaves the machine), the known-empty backlog (absent) and the project list
 (empty, or one toy project). Nothing under the real HOME is opened; the module is imported, never
 run as a script, because the paths are module globals fixed at import time and setting HOME in a
 worktree is refused by the permission classifier (round 7, S2's own evidence).
@@ -109,7 +109,7 @@ def run_full(manifest, trusted=False, hind=None, known=None, hook=False, setting
         os.makedirs(os.path.join(proj, ".claude"))
         write(os.path.join(proj, ".claude", "settings.local.json"), settings)
         profs = {"toy": {"project_path": proj, "plugins_keep": [md.memory.LITE_PLUGIN]}}
-    md.lib.profiles = lambda: profs
+    md.lib.projects = lambda: profs
     md.COLOR = {k: "" for k in md.COLOR}
     md.DIM = md.OFF = ""
     for state in (md.fails, md.warns, md.backlog, md.known_still_failing):

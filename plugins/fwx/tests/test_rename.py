@@ -60,7 +60,7 @@ TEXT = {
 BINARY = {"assets/fwx-logo.bin": b"\x00fwx\x00", "assets/fwx-latin.dat": b"fwx \xe9\xff fwx"}
 FORGE = {
     "config/forge.json": '{"framework": {"plugin_source": {"path": "~/projects/fwx"}}}\n',
-    "config/profiles/fwx.claude.json": '{"name": "fwx", "framework": true}\n',
+    "config/projects/fwx.claude.json": '{"name": "fwx", "framework": true}\n',
 }
 # what each text file must read after the rename
 AFTER = {
@@ -149,7 +149,7 @@ def scenario(script, s):
     s.eq("dry run: git status is clean", status(repo), "")
     s.eq("dry run: totals", total_line(r.stdout), want_before)
     for line in ("rename bin/fwx -> bin/forjax", "rename dir lib/fwx -> lib/forjax",
-                 "rename dir .fwx -> .forjax", "rename config/profiles/fwx.claude.json -> config/profiles/forjax.claude.json",
+                 "rename dir .fwx -> .forjax", "rename config/projects/fwx.claude.json -> config/projects/forjax.claude.json",
                  "README.md: 5 occurrence(s)", "kept (marker): scripts/kept.py", "skipped (binary): assets/fwx-logo.bin", "skipped (binary): assets/fwx-latin.dat"):
         s.ok("dry run: prints %r" % line, line in r.stdout, r.stdout)
     for line in ("not done by this script", "move the folder", "rename the GitHub repo", "forge sync --apply --all"):
@@ -177,9 +177,9 @@ def scenario(script, s):
     s.ok("after: git mv staged the renames (no untracked file)", "??" not in status(repo), status(repo))
     s.eq("after: forge.json", read(forge, "config/forge.json"),
          b'{"framework": {"plugin_source": {"path": "~/projects/forjax"}}}\n')
-    s.eq("after: the profile moved and changed", read(forge, "config/profiles/forjax.claude.json"),
+    s.eq("after: the project moved and changed", read(forge, "config/projects/forjax.claude.json"),
          b'{"name": "forjax", "framework": true}\n')
-    s.eq("after: the old profile is gone", read(forge, "config/profiles/fwx.claude.json"), None)
+    s.eq("after: the old project is gone", read(forge, "config/projects/fwx.claude.json"), None)
 
     # a second --apply does nothing
     again = (snapshot(repo), snapshot(forge))

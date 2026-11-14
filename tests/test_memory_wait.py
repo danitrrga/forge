@@ -72,7 +72,7 @@ def run(project, port, wait):
     cli.SYNC = []
     cli.check_and_tell = lambda: []  # the machine's checks are test_skills_split's
     lib.resolve_project = lambda path: project
-    lib.profiles = lambda skipped=None: {project: {}}
+    lib.projects = lambda skipped=None: {project: {}}
     lib.lock = lambda timeout=20: contextlib.nullcontext()
     out = io.StringIO()
     t = time.monotonic()

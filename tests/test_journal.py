@@ -6,7 +6,7 @@ content, so never a secret. The journal keeps its last 10000 lines. A dry-run ne
 
 The world is W/forge (an engine-only copy, git init'd), W/home (the HOME of every command) and
 W/projects/toy-a, toy-b (the shape lib.may_write allows a toy HOME to write). Every integration is off,
-so nothing reaches for npm or the network. toy-a's profile resolves ${FAKE_TOKEN} into its env; the value
+so nothing reaches for npm or the network. toy-a's project resolves ${FAKE_TOKEN} into its env; the value
 is fake and nothing real is read or written. Case (d) calls lib.journal in a subprocess of the toy checkout,
 because lib.may_write() refuses an in-process write from a linked worktree or against the real HOME.
 
@@ -71,10 +71,10 @@ fj = json.load(open(os.path.join(cfg, "forge.json")))
 fj["integrations"] = {n: False for n in fj["integrations"]}
 fj["codex_harness"] = False
 write_json(os.path.join(cfg, "forge.json"), fj)
-for f in os.listdir(os.path.join(cfg, "profiles")):  # the fixture's profiles name /srv/toy/*, outside the world
-    os.remove(os.path.join(cfg, "profiles", f))
+for f in os.listdir(os.path.join(cfg, "projects")):  # the fixture's projects name /srv/toy/*, outside the world
+    os.remove(os.path.join(cfg, "projects", f))
 for name, env in (("toy-a", {"FAKE_TOKEN": "${FAKE_TOKEN}"}), ("toy-b", {"PLAIN": "1"})):
-    write_json(os.path.join(cfg, "profiles", name + ".claude.json"),
+    write_json(os.path.join(cfg, "projects", name + ".claude.json"),
                {"project": name, "project_path": projects[name], "enableAllProjectMcpServers": True, "servers": [],
                 "env": env, "plugins_keep": [], "skills_keep": ["*"], "permissions": {}})
 write_json(os.path.join(root, "credentials", "secrets.json"), {"FAKE_TOKEN": FAKE_TOKEN})
@@ -119,7 +119,7 @@ check("(a) the line is `<ISO8601 time> sync <step> wrote <path>`", bool(mine) an
       "fields %s" % (mine[:1],))
 check("(a) every line of the journal has the five fields and a stamp", bool(lines) and all(STAMP.match(l) and len(fields(l)) == 5 for l in lines), "lines: %s" % lines[:3])
 
-# (e) a secret the profile resolves into env reaches the file, and never the journal.
+# (e) a secret the project resolves into env reaches the file, and never the journal.
 body = open(sl("toy-a")).read() if os.path.exists(sl("toy-a")) else ""
 check("(e) precondition: the fake token is in toy-a's settings.local.json (else the check looks at nothing)", FAKE_TOKEN in body, "not resolved")
 check("(e) the journal never holds the token", bool(lines) and FAKE_TOKEN not in "\n".join(lines), "found in the journal")
@@ -147,11 +147,11 @@ check("(c) forge log of an unknown project exits 1 and says so", code == 1 and "
 code, out = forge("log", "--since", "yesterday")
 check("(c) forge log --since a non-date exits nonzero and says so", code != 0 and "--since" in out, "exit %d: %s" % (code, tail(out)))
 
-# (c, again) --since is strictly YYYY-MM-DD, an empty one included, and an unreadable profile is not "unknown".
+# (c, again) --since is strictly YYYY-MM-DD, an empty one included, and an unreadable project is not "unknown".
 # Red on 34c191b: "(c) --since 1999-3-1 is refused, not a silent empty answer -- exit 0: " (strptime accepted the
 # unpadded date and the filter compared raw text, so 1999-03-10 sorted before it), "(c) --since '' is refused --
 # exit 0: <every line>" (an empty string is falsy, so neither the check nor the filter ran) and "(c) forge log of a
-# profile that cannot be read says so -- exit 1: ! forge log: unknown project: broken (known: toy-a, toy-b)".
+# project that cannot be read says so -- exit 1: ! forge log: unknown project: broken (known: toy-a, toy-b)".
 # Controls: the padded date still filters, the unknown project is still unknown.
 with open(JOURNAL, "w", encoding="utf-8") as fh:
     fh.write("\n".join("1999-%s %s sync agent-config wrote /some/path" % (d, "T") for d in ("01-06", "03-10", "10-20")) + "\n")
@@ -162,10 +162,10 @@ for bad in ("1999-3-1", "1999-1-5", "", "1999-03-1", "99-03-01", "1999-13-01"):
 code, out = forge("log", "--since", "1999-03-01")
 check("(c) --since a padded date keeps the lines from that day on", code == 0 and out.count("\n") == 2 and "1999-01-06" not in out,
       "exit %d: %s" % (code, tail(out)))
-broken = os.path.join(cfg, "profiles", "broken.claude.json")
-write_json(broken, {"project": "broken", "project_path": 5})  # a field of the wrong type: the profile is skipped
+broken = os.path.join(cfg, "projects", "broken.claude.json")
+write_json(broken, {"project": "broken", "project_path": 5})  # a field of the wrong type: the project is skipped
 code, out = forge("log", "broken")
-check("(c) forge log of a profile that cannot be read says so", code == 1 and "broken" in out and "cannot be read" in out
+check("(c) forge log of a project that cannot be read says so", code == 1 and "broken" in out and "cannot be read" in out
       and "unknown project" not in out, "exit %d: %s" % (code, tail(out)))
 code, out = forge("log", "no-such-project")
 check("(c) a project that is neither known nor skipped is still unknown", code == 1 and "unknown project: no-such-project" in out,

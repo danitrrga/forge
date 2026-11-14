@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """A plain copy of forge writes nothing, however its scripts are run. Once,
 two test agents copied forge to /tmp and ran scripts from the copies. The copies still held the
-real profiles, so sync_system_doc.py --apply rewrote CLAUDE.md pointers and AGENT-SYSTEM.md in
+real projects, so sync_system_doc.py --apply rewrote CLAUDE.md pointers and AGENT-SYSTEM.md in
 ~20 real projects with the copy's path, and register_project.py, whose ROOT was hardcoded to
-master, wrote a profile and an EXTRAS row into master. The worktree guard did not fire: a copy
+master, wrote a project and an EXTRAS row into master. The worktree guard did not fire: a copy
 is not a linked worktree.
 
-This copies the tracked files into a temp dir (not a worktree), points every profile at a
+This copies the tracked files into a temp dir (not a worktree), points every project at a
 throwaway project so a broken guard can only write inside the temp dir, and runs the scripts
 with a temp HOME whose settings.json names another checkout as the installed one. Each refused
 run must leave the whole temp dir byte-identical, and the real checkouts must not gain the
 probe project. Each has a positive run beside it, the same command with the copy named as
 installed, that does write -- so none can pass by writing nothing anywhere.
 
-register_project.py is first run dry: its plan must name the copy's own profile path. If it
+register_project.py is first run dry: its plan must name the copy's own project path. If it
 names any other checkout, no write case runs at all, because it would write there.
 
 Every script runs in an empty network namespace with a PATH whose systemctl only logs: if the
@@ -22,11 +22,11 @@ reach for the host's systemd and network.
 
 Seen failing on 3c8f6a2: sync_system_doc.py --apply from the copy "wrote
 ['projects/forge', 'projects/forge/.claude', 'projects/forge/.claude/AGENT-SYSTEM.md', ...]",
-register_project.py's dry-run "plans its profile at ['/home/user/dev/Projects/forge/config/
-profiles/guard-probe.claude.json']" (so no write case ran), and sync_skill_keep.py --apply "wrote
-['forge/config/profiles/app.claude.json', ...]: 18 profile(s) updated". With ROOT derived but
+register_project.py's dry-run "plans its project at ['/home/user/dev/Projects/forge/config/
+projects/guard-probe.claude.json']" (so no write case ran), and sync_skill_keep.py --apply "wrote
+['forge/config/projects/app.claude.json', ...]: 18 project(s) updated". With ROOT derived but
 its guard removed, register_project.py --apply-fs "exit 0 (want 1), no refusal message, wrote
-['forge/config/profiles/guard-probe.claude.json', 'forge/scripts/sync/sync_skill_keep.py',
+['forge/config/projects/guard-probe.claude.json', 'forge/scripts/sync/sync_skill_keep.py',
 'projects/guard-probe', ...]". The two tripwires, seen firing the same day: with the copy counted as a
 real checkout, "/tmp/forge-guard-.../forge gained the probe project 'guard-probe'"; with lib's
 copy check removed, register_project --apply ran the copy's sync_agent_config.py and "systemctl
@@ -35,7 +35,7 @@ in the empty namespace. refused() asserts the whole refusal, "; apply from <inst
 with lib printing the older text, "sync_system_doc.py --apply from a copy: exit 0 (want 0), no
 refusal message, wrote []".
 
-The incident itself is a second copy that keeps the real profiles, run with HOME set to a scratch
+The incident itself is a second copy that keeps the real projects, run with HOME set to a scratch
 dir that names no checkout. It runs under `unshare -rmn` with an empty tmpfs mounted over every
 real project tree and checked before the command starts. Its positive control is the same run
 with HOME set to the namespace's own home, which is also tmpfs-covered and counts as a fresh
@@ -106,7 +106,7 @@ def main():
     stub, log = os.path.join(tmp, "bin"), os.path.join(tmp, "systemctl.log")
     failures = []
 
-    # The copy is the engine files plus the fixtures, never this machine's profiles and skills: a copy_engine copy
+    # The copy is the engine files plus the fixtures, never this machine's projects and skills: a copy_engine copy
     # has neither. Red there before, M1: "FileNotFoundError: .../config/forge.json" at test_write_guard.py:242
     # (the append of the probe check), and `os.listdir(.../skills)`-style reads once forge.json was seeded.
     sandbox.copy_engine(copy)
@@ -118,11 +118,11 @@ def main():
     if HAVE_REGISTER:
         files = sandbox.ls_files("--", "skills/new-project")
         sandbox._copy_files([f for f in files if f], copy, set())
-    incident = os.path.join(tmp, "incident", "forge")  # a second copy whose profiles name projects outside its world
+    incident = os.path.join(tmp, "incident", "forge")  # a second copy whose projects name projects outside its world
     shutil.copytree(copy, incident, symlinks=True)
-    # Its profiles name trees outside the world (tmp/incident/), the way the incident's real ones did. They are
+    # Its projects name trees outside the world (tmp/incident/), the way the incident's real ones did. They are
     # toy trees made here, because the namespace mounts a tmpfs over each and a mount point must exist.
-    for p in sorted(glob.glob(os.path.join(incident, "config", "profiles", "*.claude.json"))):
+    for p in sorted(glob.glob(os.path.join(incident, "config", "projects", "*.claude.json"))):
         name = os.path.basename(p)[:-len(".claude.json")]
         with open(p, encoding="utf-8") as f:
             prof = json.load(f)
@@ -130,7 +130,7 @@ def main():
         os.makedirs(prof["project_path"])
         with open(p, "w", encoding="utf-8") as f:
             json.dump(prof, f, indent=2)
-    for p in sorted(glob.glob(os.path.join(copy, "config", "profiles", "*.claude.json"))):
+    for p in sorted(glob.glob(os.path.join(copy, "config", "projects", "*.claude.json"))):
         name = os.path.basename(p)[:-len(".claude.json")]
         with open(p, encoding="utf-8") as f:
             prof = json.load(f)
@@ -139,7 +139,7 @@ def main():
             prof["skills_keep"] = [k for k in prof["skills_keep"] if not k.startswith("gsd-")]
         with open(p, "w", encoding="utf-8") as f:
             json.dump(prof, f, indent=2)
-    for name in ("forge", "app"):  # the other profiles' dirs are missing: skipped, never created
+    for name in ("forge", "app"):  # the other projects' dirs are missing: skipped, never created
         os.makedirs(os.path.join(projects, name))
         git(os.path.join(projects, name), "init", "-q")
         with open(os.path.join(projects, name, "CLAUDE.md"), "w") as f:
@@ -178,11 +178,11 @@ def main():
         sandbox.cleanup(True)
         sys.exit(1)
 
-    # The incident itself: a copy whose profiles name the real projects, run with HOME set to a
+    # The incident itself: a copy whose projects name the real projects, run with HOME set to a
     # scratch dir that names no installed checkout. The real project trees are covered by tmpfs
     # mounts inside the namespace, so even with the guard gone nothing reaches the disk.
     real = []
-    for p in sorted(glob.glob(os.path.join(incident, "config", "profiles", "*.claude.json"))):
+    for p in sorted(glob.glob(os.path.join(incident, "config", "projects", "*.claude.json"))):
         with open(p, encoding="utf-8") as f:
             pp = json.load(f).get("project_path")
         if pp:
@@ -209,9 +209,9 @@ def main():
         failures.append("the incident case cannot cover the real project trees safely: tops %s, unsafe %s" % (tops, unsafe))
     else:
         got = covered(False)
-        msg = "forge: HOME is a sandbox (%s) but profiles point outside it (" % ihome
+        msg = "forge: HOME is a sandbox (%s) but projects point outside it (" % ihome
         if got["moved"] != [] or msg not in got["out"] or "-- nothing written" not in got["out"]:
-            failures.append("the incident (a copy with the real profiles, HOME a scratch dir): exit %s, wrote %s: %s"
+            failures.append("the incident (a copy with the real projects, HOME a scratch dir): exit %s, wrote %s: %s"
                             % (got["rc"], (got["moved"] or [])[:6], tail(got["out"])))
         got = covered(True)  # the namespace's own home, empty: a fresh machine, which may write
         if not got["moved"]:
@@ -223,7 +223,7 @@ def main():
     refused("sync_system_doc.py --apply from a copy", "scripts/sync/sync_system_doc.py", "--apply")
     install(copy)
     rc, out = run("scripts/sync/sync_system_doc.py", "--apply")
-    # Exit 1: every profile but forge's and app's names a directory left missing on purpose, and
+    # Exit 1: every project but forge's and app's names a directory left missing on purpose, and
     # each is a "! <dir> missing on disk -- skipping" line (forge/sync.py agent_config's exit rule,
     # which sync_system_doc.py keeps; it exited 0 before).
     if rc != 1 or not os.path.exists(doc):
@@ -234,10 +234,10 @@ def main():
         install(other)
         rc, out = run(REGISTER, "--name", NAME,
                       "--path", os.path.join(projects, NAME), "--no-git")
-        plan = [l.split()[-1] for l in out.splitlines() if l.strip().startswith("- profile")]
-        want = os.path.join(copy, "config", "profiles", NAME + ".claude.json")
+        plan = [l.split()[-1] for l in out.splitlines() if l.strip().startswith("- project")]
+        want = os.path.join(copy, "config", "projects", NAME + ".claude.json")
         if rc or plan != [want]:
-            failures.append("register_project.py dry-run from a copy plans its profile at %s, want %s -- "
+            failures.append("register_project.py dry-run from a copy plans its project at %s, want %s -- "
                             "no write case run, it would write there" % (plan, want))
         else:
             for flag in ("--apply-fs", "--apply"):
@@ -250,22 +250,22 @@ def main():
             with open(os.path.join(copy, "config", "forge.json"), encoding="utf-8") as f:
                 extras = '"%s.claude.json"' % NAME in f.read()
             if rc or not (os.path.exists(want) and extras and os.path.isdir(os.path.join(projects, NAME))):
-                failures.append("control: register_project.py --apply-fs with the copy installed wrote profile %s, "
+                failures.append("control: register_project.py --apply-fs with the copy installed wrote project %s, "
                                 "EXTRAS row %s: %s" % (os.path.exists(want), extras, tail(out)))
     else:
         print("NOT RUN: register_project.py from a copy (four cases) -- no skills/new-project in this checkout")
 
-    # sync_skill_keep.py had no guard at all; app's profile was seeded without its gsd-* skills.
+    # sync_skill_keep.py had no guard at all; app's project was seeded without its gsd-* skills.
     install(other)
     refused("sync_skill_keep.py --apply from a copy", "scripts/sync/sync_skill_keep.py", "--apply")
     install(copy)
     rc, out = run("scripts/sync/sync_skill_keep.py", "--apply")
-    if rc or "0 profile(s) updated" in out:
+    if rc or "0 project(s) updated" in out:
         failures.append("control: sync_skill_keep.py --apply with the copy installed updated nothing: %s"
                         % tail(out))
 
     for root in real_checkouts():
-        gained = os.path.exists(os.path.join(root, "config", "profiles", NAME + ".claude.json"))
+        gained = os.path.exists(os.path.join(root, "config", "projects", NAME + ".claude.json"))
         for rel in (("scripts", "sync", "sync_skill_keep.py"), ("config", "forge.json")):
             if os.path.exists(os.path.join(root, *rel)):  # a stranger's checkout has no config/forge.json
                 with open(os.path.join(root, *rel), encoding="utf-8") as f:

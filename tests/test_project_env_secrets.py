@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A profile `env` value of the exact form `${NAME}` is resolved from the secrets the generator
+"""A project `env` value of the exact form `${NAME}` is resolved from the secrets the generator
 already loads (mcp.resolve_secrets) when skills.write_settings_local writes
 <project>/.claude/settings.local.json; before, it arrived as literal `${NAME}` text. A NAME the
 secrets lack is a `!` line (the run exits 1) and that key is not written; a file that received a
@@ -36,7 +36,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
 
-TOY = sandbox.mkdtemp("profile-env-secrets-test-")
+TOY = sandbox.mkdtemp("project-env-secrets-test-")
 HOME = os.path.join(TOY, "home")
 os.makedirs(HOME)
 os.environ["HOME"] = HOME  # before the import: HOME-derived constants are computed there
@@ -172,7 +172,7 @@ BANG = re.compile(r"(?m)^\s*!")
 
 def sync_run(name, secrets_doc, apply=True):
     base = os.path.join(TOY, name)
-    cfg, pdir, proj = (os.path.join(base, "config"), os.path.join(base, "config", "profiles"), os.path.join(base, "toy"))
+    cfg, pdir, proj = (os.path.join(base, "config"), os.path.join(base, "config", "projects"), os.path.join(base, "toy"))
     os.makedirs(pdir)
     os.makedirs(proj)
     with open(os.path.join(cfg, "mcp-registry.json"), "w") as f:
@@ -184,9 +184,9 @@ def sync_run(name, secrets_doc, apply=True):
         f.write('{"relocations": []}')
     with open(os.path.join(pdir, "toy.claude.json"), "w") as f:
         json.dump({"project": "toy", "project_path": proj, "servers": [], "env": ENV}, f)
-    sync.CFG, lib.PROFILES = cfg, pdir
-    if not (os.path.realpath(proj).startswith(TOY + os.sep) and lib.PROFILES.startswith(TOY + os.sep)):
-        sys.exit("FENCE: the toy profile is outside the toy world -- nothing run")
+    sync.CFG, lib.PROJECTS = cfg, pdir
+    if not (os.path.realpath(proj).startswith(TOY + os.sep) and lib.PROJECTS.startswith(TOY + os.sep)):
+        sys.exit("FENCE: the toy project is outside the toy world -- nothing run")
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = sync.agent_config(["--apply"] if apply else [])
@@ -208,7 +208,7 @@ check("resolved: sync wrote the secrets, 0600", json.load(open(slp(proj))).get("
       and mode_of(proj) == 0o600, "env %r, mode %s" % (sorted(json.load(open(slp(proj))).get("env", {})), oct(mode_of(proj))))
 check("resolved: sync prints no resolved value, and counts them", not leaks(out) and "env 3 (2 from secrets)" in out,
       "leaked %r, counted %s" % (leaks(out), "env 3 (2 from secrets)" in out))
-# Codex reads the same profile `env`: its config.toml (already 0600, git-ignored, holding resolved MCP
+# Codex reads the same project `env`: its config.toml (already 0600, git-ignored, holding resolved MCP
 # secrets) must hold the value, never the literal ${NAME} text, and the missing key is left out.
 cx = os.path.join(proj, ".codex", "config.toml")
 toml = open(cx).read() if os.path.exists(cx) else ""

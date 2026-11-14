@@ -111,7 +111,7 @@ The playbooks are the spec the owner reads and the checker compares; the orchest
 - **Stage:** discuss
 - **Writes:** nothing
 - **Invokes:** nothing
-- **Does:** Runs only when the work is UI and the project's profile has a command that starts the app with seeded data and captures it (the orchestrator proposes it and the owner confirms); otherwise the step is skipped and the discuss's HTML page stands. A `demo` agent runs that command on the phase's `demo/` folder, which the discuss block writes, checks that it leaves no process alive and hands back the `xdg-open` line of the captures, never opening a browser itself. The framework does not create that command in a project. A UI change found here goes back to the discuss's demos, and the strong playback is given again before the next approval.
+- **Does:** Runs only when the work is UI and the project file has a command that starts the app with seeded data and captures it (the orchestrator proposes it and the owner confirms); otherwise the step is skipped and the discuss's HTML page stands. A `demo` agent runs that command on the phase's `demo/` folder, which the discuss block writes, checks that it leaves no process alive and hands back the `xdg-open` line of the captures, never opening a browser itself. The framework does not create that command in a project. A UI change found here goes back to the discuss's demos, and the strong playback is given again before the next approval.
 - **Exits:**
   - to n_L6: the demo is fine, or the step was skipped for lack of UI or of a command
   - loop n_L4: the owner wants a UI change

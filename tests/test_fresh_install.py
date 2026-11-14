@@ -6,7 +6,7 @@ The world is W/forge (an engine-only copy: sandbox.copy_engine, `git init`, one 
 of every command) and W/projects/demo (a repository with one commit), side by side, which is the shape
 lib.may_write allows a toy HOME to write. npm, pnpm, codex and systemctl are logging stubs first on PATH, so a
 run that reaches for any of them leaves a line in W/log. Nothing is read from or written to the real
-HOME or this checkout's data: the copy has no config/forge.json, no profile and no credentials. There is
+HOME or this checkout's data: the copy has no config/forge.json, no project and no credentials. There is
 no `unshare`: with every integration off nothing connects, and runners that restrict user namespaces
 could not run it.
 
@@ -20,18 +20,18 @@ at a count of 0):
   and its untracked files are exactly the set pinned below; init twice, and add of a missing directory, a
   registered name and a name that is not kebab-case are each refused and write nothing.
 Controls, run every time in the same world and put back afterwards:
-  (a) integrations.hindsight true and the demo profile granted hindsight-coding-agents: the hook-path assertion,
+  (a) integrations.hindsight true and the demo project granted hindsight-coding-agents: the hook-path assertion,
       over ~/.claude/settings.json and demo's settings.local.json (where those rows are written per project),
       fails and names the world's ~/.hindsight/coding-agents/dist/claude-hook.js, then passes again once both
       are put back (the put-back sync takes the rows out of demo's file);
-  (b) the real HOME in a profile env: the no-real-HOME assertion fails and names the file, then passes again;
-  (c) on a machine that has the private data (config/profiles/ beside publish/engine.gitignore or
+  (b) the real HOME in a project env: the no-real-HOME assertion fails and names the file, then passes again;
+  (c) on a machine that has the private data (config/projects/ beside publish/engine.gitignore or
       config/publish-deny.txt): a world built with sandbox.copy_checkout(untracked=True), which carries every
-      profile, fails the `only the forge and demo profiles` assertion; elsewhere NOT RUN;
+      project, fails the `only the forge and demo projects` assertion; elsewhere NOT RUN;
   (d) a user_hooks row that names no script: the integrations row is a FAIL (something is configured and
       nothing could be checked), where the same world without the row is a SKIP.
 Also: the choice logic (--yes, --with, --without, the two questions) as a pure function; `--track` in a
-second world; and the doctor rows that FAIL on a legitimate zero (no profile asks for the worktree guard, no
+second world; and the doctor rows that FAIL on a legitimate zero (no project asks for the worktree guard, no
 config/toolchain.json while GSD is off) as SKIP, with the zero where something is configured still a FAIL.
 
 Seen failing before `init` existed (this file as it is): the first command died with
@@ -59,12 +59,12 @@ GIT_ENV = dict(os.environ, XDG_CONFIG_HOME=sandbox.mkdtemp("fresh-install-xdg-")
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
 INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
 # What `forge new` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
-# profile with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
+# project with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
 # repo-owned project only where the repo's own ignore rules already cover it (it prints SKIP-doc, and that is
 # not a pending write). The one thing add does for such a project is its key in ~/.claude.json.
 # 3.6 U2c: the one exception is .claude/settings.local.json, which holds only the `permissions.deny` rules that keep a project's agents
-# out of forge (every profile but forge's own gets them, a fresh install's demo project included); the test below pins its keys.
+# out of forge (every project but forge's own gets them, a fresh install's demo project included); the test below pins its keys.
 DEMO_UNTRACKED = {".claude/settings.local.json"}
 REAL_HOME = pwd.getpwuid(os.getuid()).pw_dir
 ASK_CODEX = "Codex found: manage its config too? [Y/n]"
@@ -230,9 +230,9 @@ def real_home_in(world, files):
     return out
 
 
-def only_forge_and_demo(profiles_dir):
-    """(whether the profiles are exactly forge and demo, the names found)."""
-    names = sorted(n[:-len(".claude.json")] for n in os.listdir(profiles_dir) if n.endswith(".claude.json")) if os.path.isdir(profiles_dir) else []
+def only_forge_and_demo(projects_dir):
+    """(whether the projects are exactly forge and demo, the names found)."""
+    names = sorted(n[:-len(".claude.json")] for n in os.listdir(projects_dir) if n.endswith(".claude.json")) if os.path.isdir(projects_dir) else []
     return names == ["demo", "forge"], names
 
 
@@ -292,25 +292,25 @@ def level_of(result):
 
 def doctor_row_cases():
     """The rows M1 recorded as FAIL on a fresh world, as results, each next to the zero that stays a
-    FAIL because something is configured. In process, against a toy config/profiles and a toy
-    config/forge.json (lib.PROFILES and lib.SETTINGS, put back afterwards)."""
+    FAIL because something is configured. In process, against a toy config/projects and a toy
+    config/forge.json (lib.PROJECTS and lib.SETTINGS, put back afterwards)."""
     top = sandbox.mkdtemp("fresh-install-rows-")
-    real = (lib.PROFILES, lib.SETTINGS, toolchain.MANIFEST)
+    real = (lib.PROJECTS, lib.SETTINGS, toolchain.MANIFEST)
     try:
-        lib.PROFILES = os.path.join(top, "profiles")
-        os.makedirs(lib.PROFILES)
+        lib.PROJECTS = os.path.join(top, "projects")
+        os.makedirs(lib.PROJECTS)
 
-        def profile(name, **extra):
-            write_json(os.path.join(lib.PROFILES, name + ".claude.json"), dict({"project": name, "project_path": os.path.join(top, name)}, **extra))
-        profile("plain")
+        def project(name, **extra):
+            write_json(os.path.join(lib.PROJECTS, name + ".claude.json"), dict({"project": name, "project_path": os.path.join(top, name)}, **extra))
+        project("plain")
         res = cli.worktree_guard_smoke()
-        want("worktree guard: no profile asks for it is a SKIP, saying NOT RUN, NOT ARMED",
+        want("worktree guard: no project asks for it is a SKIP, saying NOT RUN, NOT ARMED",
              (level_of(res), res.detail.startswith(cli.NOT_ARMED) if not isinstance(res, list) else None), ("SKIP", True))
-        profile("off", worktree_guard={"on": False, "worktree_dirs": []})
-        want("worktree guard: a profile that declares it off is still a SKIP", level_of(cli.worktree_guard_smoke()), "SKIP")
-        profile("frozen", worktree_guard=True, frozen=True)
+        project("off", worktree_guard={"on": False, "worktree_dirs": []})
+        want("worktree guard: a project that declares it off is still a SKIP", level_of(cli.worktree_guard_smoke()), "SKIP")
+        project("frozen", worktree_guard=True, frozen=True)
         res = cli.worktree_guard_smoke()
-        want("worktree guard: a frozen profile that asks for it stays a FAIL, saying checked 0 and frozen",
+        want("worktree guard: a frozen project that asks for it stays a FAIL, saying checked 0 and frozen",
              (level_of(res), "checked 0" in res.detail and "frozen" in res.detail), ("FAIL", True))
 
         lib.SETTINGS = os.path.join(top, "forge.json")
@@ -342,7 +342,7 @@ def doctor_row_cases():
         toolchain.MANIFEST = os.path.join(top, "no-such-toolchain.json")
         want("toolchain: no config/forge.json is a SKIP, not an exit", toolchain.row().level, "SKIP")
     finally:
-        lib.PROFILES, lib.SETTINGS, toolchain.MANIFEST = real
+        lib.PROJECTS, lib.SETTINGS, toolchain.MANIFEST = real
         lib.settings.cache_clear()
 
 
@@ -350,7 +350,7 @@ def doctor_row_cases():
 
 def main_world():
     w = World("main")
-    want("the world has no config/profiles yet", os.path.exists(w.path("config", "profiles")), False)
+    want("the world has no config/projects yet", os.path.exists(w.path("config", "projects")), False)
     before = w.snapshot()
     # caveman was an integration until its removal: init refuses it as it refuses any unknown name, and writes
     # nothing. Red with "caveman" put back in lib.INTEGRATIONS: "init --with caveman is refused as an unknown integration, exit 1, nothing written -- exit 1: ! forge init: failed -- doctor (exit 1) | ..." (init ran and wrote config/forge.json).
@@ -372,13 +372,13 @@ def main_world():
     outside = [p for p in logged if not os.path.realpath(p).startswith(w.top + os.sep)]
     check("every path forge logged lies under the world (%d logged)" % len(logged), len(logged) > 0 and not outside,
           "logged %d, outside: %s" % (len(logged), outside[:3]))
-    named = ("config/forge.json", "config/profiles/forge.claude.json", "config/mcp-registry.json", "credentials/secrets.json", "docs/AGENT-SYSTEM.md")
+    named = ("config/forge.json", "config/projects/forge.claude.json", "config/mcp-registry.json", "credentials/secrets.json", "docs/AGENT-SYSTEM.md")
     check("the init output names what it wrote", all(s in out for s in named), "missing %s in: %s" % ([s for s in named if s not in out], tail(out, 30)))
 
     fj = read_json(w.path("config", "forge.json")) or {}
     want("forge.json: every integration off", fj.get("integrations"), {k: False for k in INTEGRATIONS})
-    prof = read_json(w.path("config", "profiles", "forge.claude.json")) or {}
-    want("the checkout's own profile", {k: prof.get(k) for k in ("project", "project_path", "servers", "writes_tracked_files")},
+    prof = read_json(w.path("config", "projects", "forge.claude.json")) or {}
+    want("the checkout's own project", {k: prof.get(k) for k in ("project", "project_path", "servers", "writes_tracked_files")},
          {"project": "forge", "project_path": w.root, "servers": [], "writes_tracked_files": False})
     want("the registry is empty", (read_json(w.path("config", "mcp-registry.json")) or {}).get("servers"), {})
     sec = w.path("credentials", "secrets.json")
@@ -435,12 +435,12 @@ def main_world():
 
     code, out = w.forge("new", w.demo)
     check("forge new exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
-    ok, names = only_forge_and_demo(w.path("config", "profiles"))
-    check("only the forge and demo profiles", ok, "found %s" % names)
-    dp = read_json(w.path("config", "profiles", "demo.claude.json")) or {}
-    want("the demo profile", {k: dp.get(k) for k in ("project", "project_path", "writes_tracked_files")},
+    ok, names = only_forge_and_demo(w.path("config", "projects"))
+    check("only the forge and demo projects", ok, "found %s" % names)
+    dp = read_json(w.path("config", "projects", "demo.claude.json")) or {}
+    want("the demo project", {k: dp.get(k) for k in ("project", "project_path", "writes_tracked_files")},
          {"project": "demo", "project_path": w.demo, "writes_tracked_files": False})
-    want("the demo profile is untrimmed (no skills_keep, no plugins_keep)", [k for k in ("skills_keep", "plugins_keep") if k in dp], [])
+    want("the demo project is untrimmed (no skills_keep, no plugins_keep)", [k for k in ("skills_keep", "plugins_keep") if k in dp], [])
     fresh, others = untracked_files(w.demo)
     want("forge new leaves the project's tracked files alone (git status)", others, [])
     want("the project's untracked files are the pinned set (%d)" % len(DEMO_UNTRACKED), fresh, DEMO_UNTRACKED)
@@ -451,7 +451,7 @@ def main_world():
          (["permissions"], ["deny"], True))
     keys = (read_json(os.path.join(w.home, ".claude.json")) or {}).get("projects", {})
     check("forge new put the project's key in the world's ~/.claude.json", w.demo in keys, "keys: %s" % sorted(keys))
-    check("the add output names the profile it wrote", "config/profiles/demo.claude.json" in out, tail(out))
+    check("the add output names the project it wrote", "config/projects/demo.claude.json" in out, tail(out))
 
     refusals = (("a second init", ["init", "--yes", "--without", "codex,gsd"], "already initialised -- run forge doctor"),
                 ("new of a directory that is not there", ["new", os.path.join(w.top, "projects", "nope")], "is not a directory"),
@@ -472,13 +472,13 @@ def controls(w, before):
     fj_path = w.path("config", "forge.json")
     good_fj = open(fj_path).read()
 
-    # (a) hindsight on and demo using it: its hook rows, written into demo's settings.local.json (a profile
+    # (a) hindsight on and demo using it: its hook rows, written into demo's settings.local.json (a project
     # uses Hindsight when its servers list hindsight-coding-agents), name files under the world's HOME that
     # do not exist. The world's registry lacks the server: sync says so and still writes the file.
     fj = json.loads(good_fj)
     fj["integrations"]["hindsight"] = True
     write_json(fj_path, fj)
-    dp_path = w.path("config", "profiles", "demo.claude.json")
+    dp_path = w.path("config", "projects", "demo.claude.json")
     good_dp = open(dp_path).read()
     dp = json.loads(good_dp)
     dp["servers"] = dp.get("servers", []) + ["hindsight-coding-agents"]
@@ -499,19 +499,19 @@ def controls(w, before):
     check("control (a) put back: the hook-path assertion passes again (%d checked)" % checked, checked > 0 and not missing,
           "sync exit %d, missing %s" % (code, missing[:2]))
 
-    # (b) the real HOME in a profile's env: the no-real-HOME assertion must see it.
+    # (b) the real HOME in a project's env: the no-real-HOME assertion must see it.
     if w.top.startswith(REAL_HOME + os.sep):
         notrun.append("control (b): the world lies under the real HOME, so the assertion cannot be shown")
     else:
-        pp = w.path("config", "profiles", "forge.claude.json")
+        pp = w.path("config", "projects", "forge.claude.json")
         good, pre_b = open(pp).read(), w.snapshot()
         prof = json.loads(good)
         prof["env"] = {"FORGE_TEST_HOME": REAL_HOME}
         write_json(pp, prof)
         code, out = w.forge("sync", "--apply", "forge")
         leaks = real_home_in(w, changed_since(before, w.snapshot()))
-        print("control (b), the real HOME in a profile env: files holding it: %s" % leaks)
-        check("control (b): with the real HOME in a profile env the no-real-HOME assertion fails and names the settings file",
+        print("control (b), the real HOME in a project env: files holding it: %s" % leaks)
+        check("control (b): with the real HOME in a project env the no-real-HOME assertion fails and names the settings file",
               os.path.join("forge", ".claude", "settings.local.json") in leaks, "sync exit %d, leaks %s; %s" % (code, leaks, tail(out)))
         with open(pp, "w") as fh:
             fh.write(good)
@@ -520,18 +520,18 @@ def controls(w, before):
             os.remove(os.path.join(w.top, k))
         want("control (b) put back: no file holds the real HOME again", real_home_in(w, changed_since(before, w.snapshot())), [])
 
-    # (c) a world with every profile: only where the data is.
+    # (c) a world with every project: only where the data is.
     root = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    have_data = os.path.isdir(os.path.join(root, "config", "profiles")) and any(
+    have_data = os.path.isdir(os.path.join(root, "config", "projects")) and any(
         os.path.exists(os.path.join(root, *p)) for p in (("config", "publish-deny.txt"), ("publish", "engine.gitignore")))
     if not have_data:
-        notrun.append("control (c): this checkout has no profiles beside its data, so there is no full world to show the assertion on")
+        notrun.append("control (c): this checkout has no projects beside its data, so there is no full world to show the assertion on")
     else:
         full = sandbox.mkdtemp("fresh-install-full-")
-        sandbox.copy_checkout(full, untracked=True)  # never run in: it holds every profile, pointing at real projects
-        ok, names = only_forge_and_demo(os.path.join(full, "config", "profiles"))
-        print("control (c), a world built with copy_checkout(untracked=True): %d profiles (%s ...)" % (len(names), ", ".join(names[:4])))
-        check("control (c): a world with every profile fails `only the forge and demo profiles`", not ok and len(names) > 2, "found %s" % names)
+        sandbox.copy_checkout(full, untracked=True)  # never run in: it holds every project, pointing at real projects
+        ok, names = only_forge_and_demo(os.path.join(full, "config", "projects"))
+        print("control (c), a world built with copy_checkout(untracked=True): %d projects (%s ...)" % (len(names), ", ".join(names[:4])))
+        check("control (c): a world with every project fails `only the forge and demo projects`", not ok and len(names) > 2, "found %s" % names)
 
     # (d) a user_hooks row that names no script: configured, and nothing to check, so a FAIL and not a SKIP.
     fj = json.loads(good_fj)
@@ -570,12 +570,12 @@ def track_world():
     code, out = w.forge("commit", "--all", "-m", "my data")
     check("forge commit puts the data in the data history", code == 0 and "private" in out, "exit %d: %s" % (code, tail(out)))
     tracked = git_out("--git-dir", data, "--work-tree", w.root, "ls-files").split()
-    check("the data history holds config/forge.json and the profile", {"config/forge.json", "config/profiles/forge.claude.json"} <= set(tracked),
+    check("the data history holds config/forge.json and the project", {"config/forge.json", "config/projects/forge.claude.json"} <= set(tracked),
           "tracked: %s" % tracked[:10])
     want("the data history never holds the secrets or a generated settings file",
          [t for t in tracked if t.startswith("credentials") or t == "config/secrets.json" or t.endswith("settings.local.json")], [])
     eng = git_out("-C", w.root, "ls-files").split()
-    want("the engine history took no data file", [t for t in eng if t.startswith(("config/forge.json", "config/profiles", "credentials"))], [])
+    want("the engine history took no data file", [t for t in eng if t.startswith(("config/forge.json", "config/projects", "credentials"))], [])
 
 
 def gsd_world():

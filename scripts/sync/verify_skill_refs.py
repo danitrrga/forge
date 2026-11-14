@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Fail if any profile's skills_keep names a skill that is not installed, or keeps nothing.
+"""Fail if any project's skills_keep names a skill that is not installed, or keeps nothing.
 
 Set subtraction in forge/skills.py write_settings_local makes a dangling entry a silent no-op, so a
-renamed or deleted skill would otherwise sit in the profiles forever while the
+renamed or deleted skill would otherwise sit in the projects forever while the
 SessionStart banner kept counting it in "kept-global N". Exit 0 = every name resolves.
 
 An EMPTY skills_keep fails too. `[]` is not "keep nothing on purpose", it
 is trimming switched on with nothing behind it: every global skill off, no message anywhere.
 One project was created that way by the new-project skill and ran its whole life with all 25
 GSD skills and the entire COMMON layer dark, the only symptom being a command that did
-nothing. A profile that really wants no trimming drops the key instead.
+nothing. A project that really wants no trimming drops the key instead.
 """
 import os, sys
 
@@ -23,10 +23,10 @@ def main():
     # is not one, so `skills_keep: [".trash"]` passed here while the generator never kept it.
     installed = skills.global_skills()
     bad = 0
-    # A profile lib cannot read is skipped by lib.profiles(); it is counted here, so a broken
-    # profile still exits 1 as the json.load traceback did, now on its own line.
+    # A project lib cannot read is skipped by lib.projects(); it is counted here, so a broken
+    # project still exits 1 as the json.load traceback did, now on its own line.
     skipped = []
-    for name, prof in lib.profiles(skipped).items():
+    for name, prof in lib.projects(skipped).items():
         keep = prof.get("skills_keep")
         if keep is None:
             print("  - %-28s no skills_keep (untrimmed pass-through)" % name)

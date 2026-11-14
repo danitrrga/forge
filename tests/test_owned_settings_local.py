@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
-"""skills.write_settings_local prunes from <project>/.claude/settings.local.json what the profile no
+"""skills.write_settings_local prunes from <project>/.claude/settings.local.json what the project no
 longer declares (step 10, increment I2, task T2). It records, per file, each permissions allow/deny/ask
-rule, each additionalDirectories entry and each profile hook entry it wrote (forge/owned.py), so the next
+rule, each additionalDirectories entry and each project hook entry it wrote (forge/owned.py), so the next
 run can tell its own leftovers from the user's in-session approvals and take out only the former. An
 element forge never claimed is never touched; with no previous record nothing is pruned; a hook entry
 edited by hand after it was written stays and is named on a '  ! ' line; a dry-run prunes nothing on
 disk, does not write the registry, and says ', pruned N' in the pending ('would write') line.
 
-Runs in-process against a toy HOME and toy projects; the fake token is the one a toy profile's env
+Runs in-process against a toy HOME and toy projects; the fake token is the one a toy project's env
 resolves, and the registry must never hold it. lib.may_write() is stubbed to allow, because this
 checkout may be a linked worktree, which never writes.
 
 Seen failing on bcab228 (write_settings_local only adds), 19 of 37 checks red; the first two:
   FAIL allow: X is claimed -- {}
-  FAIL allow rule removed from the profile: X is gone -- X still in the file: ['Bash(x:*)', 'Bash(z:*)', 'Bash(y:*)']
+  FAIL allow rule removed from the project: X is gone -- X still in the file: ['Bash(x:*)', 'Bash(z:*)', 'Bash(y:*)']
 and likewise: additionalDirectories entry stays, hook entry stays, no ', pruned 1' in the line, the
 dry-run's 'would write' line has no ', pruned 1', no claim recorded, the registry never written.
 Negative controls on the finished code, each put back from a copy of forge/skills.py: see the commit
@@ -76,7 +76,7 @@ def doc(p):
 
 
 def run(p, ctx=APPLY, **keys):
-    """(the line, what the call printed): a toy profile of `keys`, always with the fake token in env."""
+    """(the line, what the call printed): a toy project of `keys`, always with the fake token in env."""
     prof = dict({"project": "toy", "project_path": p, "env": {"TOKEN": "${FAKE_TOKEN}"}}, **keys)
     out = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
@@ -101,19 +101,19 @@ def perms(**k):
     return {"permissions": k}
 
 
-# 1. An allow rule: written and claimed; taken out of the profile, it goes; the user's own stays.
+# 1. An allow rule: written and claimed; taken out of the project, it goes; the user's own stays.
 drop_registry()
 p = project()
 line, _ = run(p, **perms(allow=["Bash(x:*)", "Bash(z:*)"]))
 check("allow: X is in the file", "Bash(x:*)" in doc(p)["permissions"]["allow"], doc(p))
 check("allow: X is claimed", ("item", ("permissions", "allow", "Bash(x:*)")) in claimed(p), claimed(p))
-check("allow: the claim's owner is the profile", all(c["owner"] == "toy" for c in claimed(p).values()), claimed(p))
+check("allow: the claim's owner is the project", all(c["owner"] == "toy" for c in claimed(p).values()), claimed(p))
 check("allow: a first run prunes nothing", ", pruned" not in line, line)
 d = doc(p)
 d["permissions"]["allow"].append("Bash(y:*)")  # the user's in-session approval
 lib.write_json(slp(p), d)
 line, _ = run(p, **perms(allow=["Bash(z:*)"]))
-check("allow rule removed from the profile: X is gone", "Bash(x:*)" not in doc(p)["permissions"]["allow"],
+check("allow rule removed from the project: X is gone", "Bash(x:*)" not in doc(p)["permissions"]["allow"],
       "X still in the file: %s" % doc(p)["permissions"]["allow"])
 check("allow: the user's rule Y stays", "Bash(y:*)" in doc(p)["permissions"]["allow"], doc(p))
 check("allow: the still-declared rule Z stays", "Bash(z:*)" in doc(p)["permissions"]["allow"], doc(p))
@@ -136,16 +136,16 @@ run(p, **perms(allow=["Bash(a:*)"], additionalDirectories=["/opt/toy/one", "/opt
 check("dirs: written and claimed", doc(p)["permissions"]["additionalDirectories"] == ["/opt/toy/one", "/opt/toy/two"]
       and ("item", ("permissions", "additionalDirectories", "/opt/toy/one")) in claimed(p), doc(p))
 run(p, **perms(allow=["Bash(a:*)"], additionalDirectories=["/opt/toy/two"]))
-check("dirs: an entry taken out of the profile goes", doc(p)["permissions"]["additionalDirectories"] == ["/opt/toy/two"], doc(p))
+check("dirs: an entry taken out of the project goes", doc(p)["permissions"]["additionalDirectories"] == ["/opt/toy/two"], doc(p))
 d = doc(p)
 d["permissions"]["additionalDirectories"].append("/opt/user/own")
 lib.write_json(slp(p), d)
 line, _ = run(p, **perms(allow=["Bash(a:*)"]))
-check("dirs: the key gone from the profile takes its entry, not the user's",
+check("dirs: the key gone from the project takes its entry, not the user's",
       doc(p)["permissions"].get("additionalDirectories") == ["/opt/user/own"], doc(p))
 check("dirs: says pruned 1", ", pruned 1)" in line, line)
 
-# 4. Hooks: a profile hook entry goes when undeclared and unchanged; an edited one stays and is named.
+# 4. Hooks: a project hook entry goes when undeclared and unchanged; an edited one stays and is named.
 drop_registry()
 p = project()
 run(p, hooks={"PostToolUse": [{"hooks": [HOOK, HOOK2]}]})
@@ -171,7 +171,7 @@ run(p, hooks={"Stop": [{"hooks": [HOOK]}]}, **perms(allow=["Bash(a:*)"]))
 run(p, **perms(allow=["Bash(a:*)"]))
 check("hooks: an emptied event and hooks key are removed", "hooks" not in doc(p), doc(p))
 
-# 6. A profile that dropped everything it declared still prunes (no early return).
+# 6. A project that dropped everything it declared still prunes (no early return).
 drop_registry()
 p = project()
 run(p, env=None, **perms(allow=["Bash(x:*)"]))  # no env key: nothing else keeps the run going
@@ -207,7 +207,7 @@ drop_registry()
 run(project(), DRY, **perms(allow=["Bash(x:*)"]))
 check("dry-run on a first run: no registry written", not os.path.exists(REGISTRY), REGISTRY)
 
-# 10. The registry never holds a secret the toy profile resolves into env.
+# 10. The registry never holds a secret the toy project resolves into env.
 drop_registry()
 p = project()
 run(p, hooks={"Stop": [{"hooks": [HOOK]}]}, **perms(allow=["Bash(x:*)"]))
@@ -227,7 +227,7 @@ line, printed = run(p, **perms(allow=["Bash(z:*)"]))
 check("broken registry: nothing pruned", "Bash(x:*)" in doc(p)["permissions"]["allow"] and "pruned" not in line, (doc(p), line))
 check("broken registry: the warning is printed", "  ! could not read" in printed, printed)
 
-# 12. A profile that declares nothing, with no record, leaves the file alone (None).
+# 12. A project that declares nothing, with no record, leaves the file alone (None).
 drop_registry()
 p = project()
 check("nothing declared, no record: None",
@@ -247,10 +247,10 @@ check("in-memory computation: the document is the settings file's",
 check("in-memory computation: the registry is not written", not os.path.exists(REGISTRY), REGISTRY)
 check("in-memory computation: the file is not written", not os.path.exists(slp(p)), slp(p))
 
-# 14. A hand-edited `permissions` of the wrong shape is left alone and named, the rest of the profile still written,
+# 14. A hand-edited `permissions` of the wrong shape is left alone and named, the rest of the project still written,
 # and nothing is claimed for what was not merged. Red on 34c191b: write_settings_local raised "AttributeError: 'list'
 # object has no attribute 'get'" at cur[k] = list(dict.fromkeys((cur.get(k) or []) + ...)), which ends sync's loop over
-# every later profile. The control: a well-formed file is merged as before (sections 1 to 13).
+# every later project. The control: a well-formed file is merged as before (sections 1 to 13).
 def run_errors(p, **keys):
     errors = []
     prof = dict({"project": "toy", "project_path": p, "env": {"A": "1"}}, **keys)
@@ -269,7 +269,7 @@ line, errors = run_errors(p, **perms(allow=["Bash(ls)"]))
 check("permissions not an object: no crash", not line.startswith("raised"), line)
 check("permissions not an object: left alone", doc(p).get("permissions") == ["not", "an", "object"], doc(p))
 check("permissions not an object: named on a '!' line", any("permissions" in e and "not an object" in e for e in errors), errors)
-check("permissions not an object: the rest of the profile is written", doc(p).get("env") == {"A": "1"}, doc(p))
+check("permissions not an object: the rest of the project is written", doc(p).get("env") == {"A": "1"}, doc(p))
 check("permissions not an object: nothing is claimed for the rules", not any(k[0] == "item" for k in claimed(p)), claimed(p))
 p = project({"permissions": {"allow": "Bash(ls)", "deny": ["Bash(rm:*)"]}})
 line, errors = run_errors(p, **perms(allow=["Bash(pwd)"], deny=["Bash(dd:*)"]))

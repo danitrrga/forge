@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """The two `forge doctor` checks added in docs/archive/unify-plan.md (steps 2 and 3), and the
 row shape they needed. Each case builds its own world: nothing here reads or writes the real
-machine's profiles, skills or HOME.
+machine's projects, skills or HOME.
 
-1. `sync_skill_keep.py --check`: the dry-run, exiting 1 when a profile would change. Until it
-   existed nothing watched that drift; the doctor row runs it. The toy world is the real profiles
+1. `sync_skill_keep.py --check`: the dry-run, exiting 1 when a project would change. Until it
+   existed nothing watched that drift; the doctor row runs it. The toy world is the real projects
    copied beside a toy HOME and toy project dirs (the layout lib.may_write allows a toy HOME to
-   write), --apply'd once so it is clean, then drifted by removing a skill from one profile.
+   write), --apply'd once so it is clean, then drifted by removing a skill from one project.
 2. A CHECKS row that is a Python callable returning a lib.Result, so a check can be a WARN: a
    command row maps exit code to PASS/FAIL only, and hindsight_doctor exits with its failure
    count, argparse with 2.
@@ -15,7 +15,7 @@ machine's profiles, skills or HOME.
 Seen failing on the code before the change, as the cases printed it:
   --check (the script ignored the unknown flag, so --check --apply even wrote): "--check on a
   never-synced world = 0, want 1"; "--check on a drifted world = (0, 'Re-run with --apply, then:
-  python scripts/sync/sync_agent_config.py --apply'), want (1, '1 profile(s) would change.')";
+  python scripts/sync/sync_agent_config.py --apply'), want (1, '1 project(s) would change.')";
   "--check with --apply = (0, False), want (1, True)".
   rows (cmd_doctor ran every row as a command): "doctor with a WARN row = (None, 'TypeError: can
   only concatenate list (not "function") to list', ''), want (0, None, 'SUMMARY: 0 passed, 1
@@ -29,22 +29,22 @@ The MIT skills (mit-skills), run with skills/fixing-* moved aside: "forge ships 
 skills = [], want ['fixing-accessibility', 'fixing-motion-performance']"; "a local copy of the MIT skills =
 ('PASS', 'skill names', \"no project skill shares a global skill's name\"), want ('WARN', 'skill names',
 'hero:fixing-accessibility, hero:fixing-motion-performance')". With them present all pass.
-Each mutation of the new code fails a case. A frozen profile skipped: "a seeded clash =
+Each mutation of the new code fails a case. A frozen project skipped: "a seeded clash =
 ('WARN', 'skill names', 'a:gsd-fast, b:design-taste'), want (... 'fz:gsd-fast')". WARN returned as
 FAIL: "a seeded clash = ('FAIL', ...)". --check always exiting 0: "--check on a drifted world = (0,
-'1 profile(s) would change.'), want (1, ...)". A raising check not caught: "doctor with a raising
+'1 project(s) would change.'), want (1, ...)". A raising check not caught: "doctor with a raising
 row = (None, 'OSError: unreadable', ...)". The fix text not appended: "the WARN row's line =
 ['WARN', 'w', 'a clash'], want [..., 'a clash -- rename it']".
 
 4. The command guard smoke check (T3 of docs/command-guard-design.md). Seen failing on the
-code before it (20 cases): "no profile turns the guard on = (['raised'], 'AttributeError'), want
+code before it (20 cases): "no project turns the guard on = (['raised'], 'AttributeError'), want
 (['PASS'], 'command guard')", "the entry removed = (['raised'], False), want (['FAIL'], True)",
 "doctor over a guard with no entry = (0, None, False, False), want (1, None, True, True)". Each mutation
-of the new code fails a case: CLAUDE_PROJECT_DIR not passed "a guarded profile, entry and config in
+of the new code fails a case: CLAUDE_PROJECT_DIR not passed "a guarded project, entry and config in
 order = (['FAIL'], 'guard ok'), want (['PASS'], 'guard ok')"; any entry accepted "two guard entries =
 ['PASS'], want ['FAIL']"; the harmless command not required to exit 0 "a guard that refuses everything =
 ['PASS'], want ['FAIL']"; config never read "a config that does not parse = (['PASS'], False), want
-(['FAIL'], True)"; a list result cut to its first line "doctor prints a line per guarded profile".
+(['FAIL'], True)"; a list result cut to its first line "doctor prints a line per guarded project".
 
 5. `forge doctor NAME` (the owner): one project's checks, each scoped to it. Seen failing on
 the code before it (17 cases), every doctor case on argparse's "forge: error: unrecognized arguments:
@@ -54,12 +54,12 @@ False), want (1, 'FAIL', True)", "a frozen project's generated row = None, want 
 writes nothing')"; and "each write line = [None, ...], want [1, ...]" (no cli.pending_writes). Each
 mutation of the new code fails a case: WOULD and DOC_CHANGES never matching "a stale settings.local.json
 = (1, 'PASS', False), want (1, 'FAIL', True)"; SKIP- items counted "lines that write nothing = ['  ~ p
-SKIP-agents-md(non-forge content):AGENTS.md'], want []"; the unreadable profile not looked up "doctor of
-a profile with a wrong type = (1, ['e doctor: unknown proj'], '', False), want (1, ['profile'], 'FAIL',
+SKIP-agents-md(non-forge content):AGENTS.md'], want []"; the unreadable project not looked up "doctor of
+a project with a wrong type = (1, ['e doctor: unknown proj'], '', False), want (1, ['project'], 'FAIL',
 True)"; skill_name_clashes unfiltered "a healthy project's rows = {... 'skill names': 'WARN' ...}";
 command_guard_smoke unfiltered "{... 'guard guarded': 'FAIL' ...}"; frozen not special-cased in the
 generated row "('PASS', 'the dry-run of forge sync frozen would write nothing'), want ('PASS',
-'frozen: forge writes nothing')"; frozen not said in the profile row "a frozen project's profile row says
+'frozen: forge writes nothing')"; frozen not said in the project row "a frozen project file row says
 frozen = ('PASS', False)"; the hindsight row never shown "a healthy project's hindsight row names its
 bank = False"; the dry-run's exit code ignored "a dry-run that exits 1 with nothing to write = ('PASS',
 False), want ('FAIL', True)". Added after the simplify pass: exit 1 only on a FAIL, red on the code before
@@ -81,18 +81,18 @@ project(s), ...')], want [('FAIL', ...)]". `only` first filtered before the attr
 project alone = [('WARN', 'outer:vault/CLAUDE.md:4 ...')...], want [('PASS', 'read 1 ...')]".
 
 7. The `worktree guard` row (W3 of research/21-para-forge/04-guarda-de-worktrees.md): per guarded
-profile, exactly the canonical group (matcher included) and a toy-worktree probe of the wired command; zero
-guarded profiles, unscoped, is a FAIL. Seen failing on the code before it, 22 cases, every smoke case on
-"AttributeError" ("worktree guard: no profile turns it on = (['raised'], 'AttributeError', False), want
+project, exactly the canonical group (matcher included) and a toy-worktree probe of the wired command; zero
+guarded projects, unscoped, is a FAIL. Seen failing on the code before it, 22 cases, every smoke case on
+"AttributeError" ("worktree guard: no project turns it on = (['raised'], 'AttributeError', False), want
 (['FAIL'], 'worktree guard', True)"), "worktree guard: through doctor = (0, None, False), want (1, None, True)",
 and "a healthy project's rows" without the row. Each mutation of the new code fails a case: scratch left to
-the hook "a guarded profile, entry in order = (['FAIL'] ...), want (['PASS'] ...)"; zero a pass "no profile
+the hook "a guarded project, entry in order = (['FAIL'] ...), want (['PASS'] ...)"; zero a pass "no project
 turns it on = (['PASS'] ...)"; matcher not compared "no matcher = ['PASS'], want ['FAIL']"; BLOCKED not
 required "exit 2 without BLOCKED = ['PASS']"; frozen checked and "on": false wired, each "... is not checked
-= (['FAIL'], 'worktree guard frozen' / 'isoff')"; the probe run from the main checkout "a guarded profile,
+= (['FAIL'], 'worktree guard frozen' / 'isoff')"; the probe run from the main checkout "a guarded project,
 entry in order = (['FAIL'] ...)".
 
-8. `skill names` skips frozen profiles (docs/archive/orchestration-history.md decided it; a frozen project's audit). Seen
+8. `skill names` skips frozen projects (docs/archive/orchestration-history.md decided it; a frozen project's audit). Seen
 failing on the code before it, 6 cases: "a seeded clash = ('WARN', 'skill names', 'a:gsd-fast, b:design-taste,
 fz:gsd-fast'), want ('WARN', 'skill names', 'a:gsd-fast, b:design-taste')", "a frozen project, by name = ('WARN',
 'skill names'), want ('SKIP', 'skill names')", "only a frozen project = ('WARN', 'skill names'), want ('FAIL',
@@ -100,21 +100,21 @@ fz:gsd-fast'), want ('WARN', 'skill names', 'a:gsd-fast, b:design-taste')", "a f
 skip removed, 4 cases fail ("a frozen clash beside a clean project = ('WARN', 'skill names', 'fz:gsd-fast'), want
 ('PASS', ...)").
 
-9. The `frozen drift` row (a frozen project's audit, ENTREGA-A-FORGE.md): per frozen profile, the
+9. The `frozen drift` row (a frozen project's audit, ENTREGA-A-FORGE.md): per frozen project, the
 settings.local.json keys that differ from what forge would write there if it were not frozen, computed in
 memory (skills.write_settings_local with lib.write_json swapped for a recorder), never written. Seen failing on
 the code before it, 15 cases, every one on "('raised', 'AttributeError', \"module 'forge.cli' has no attribute
-'frozen_drift'\")", e.g. "a frozen file that approves what the profile does not = ('raised', ...), want ('WARN',
-'frozen drift', 'p: enabledMcpjsonServers (2 on disk, 0 from forge); compared 1 frozen profile(s)')", "a frozen
+'frozen_drift'\")", e.g. "a frozen file that approves what the project does not = ('raised', ...), want ('WARN',
+'frozen drift', 'p: enabledMcpjsonServers (2 on disk, 0 from forge); compared 1 frozen project(s)')", "a frozen
 project's doctor rows = False, want True", "a frozen project's frozen drift row = ('', False, False), want
 ('WARN', True, True)". Each mutation of the new code fails a case: the recorder removed so the write happens
 "the drift check writes nothing = False, want True" and "...not even a .bak = ['settings.local.json',
 'settings.local.json.bak'], want ['settings.local.json']"; the deny rows dropped "a deny row forge would add =
-'compared 1 frozen profile(s), each settings.local.json is what forge would write', want 'p: permissions ...'";
+'compared 1 frozen project(s), each settings.local.json is what forge would write', want 'p: permissions ...'";
 keys only on disk ignored "a key forge would remove = ('PASS', 'frozen drift'), want ('WARN', 'frozen drift')";
-zero compared a pass "a frozen profile whose directory is gone = ('WARN', 'frozen drift'), want ('FAIL', ...)";
-unfrozen profiles compared "an unfrozen profile is not compared = ('WARN', ..., 'fz: ...; live: ...; compared
-2 frozen profile(s)')"; the sizes dropped "p: enabledMcpjsonServers (? on disk, ? from forge)"; the recorder not
+zero compared a pass "a frozen project whose directory is gone = ('WARN', 'frozen drift'), want ('FAIL', ...)";
+unfrozen projects compared "an unfrozen project is not compared = ('WARN', ..., 'fz: ...; live: ...; compared
+2 frozen project(s)')"; the sizes dropped "p: enabledMcpjsonServers (? on disk, ? from forge)"; the recorder not
 restored "lib.write_json is back after the call = '<lambda>', want 'write_json'".
 
 10. T6 of docs/portable-design.md: the doctor reads config/forge.json. Each case below runs on a
@@ -134,10 +134,10 @@ toy forge.json (`settings_world`, `toy_settings`), never the real one. Seen fail
   forge doctor NAME: "a healthy project's rows = {..., 'hindsight': 'SKIP'}, want {...}" and "a healthy project has
   no hindsight row = True, want False".
 
-11. The `ponytail` row: per profile whose own `hooks` run hooks/ponytail_subagent.py, one entry under each
+11. The `ponytail` row: per project whose own `hooks` run hooks/ponytail_subagent.py, one entry under each
 of SubagentStart and UserPromptSubmit (red before that rule: "UserPromptSubmit missing = ['PASS'], want
 ['FAIL']"), the SubagentStart one giving gsd-executor the ruleset and gsd-planner nothing; none wiring it is a SKIP. Seen
-failing before the row (12 cases): "no profile wires the hook = (['raised'], 'AttributeError', False), want
+failing before the row (12 cases): "no project wires the hook = (['raised'], 'AttributeError', False), want
 (['SKIP'], 'ponytail', True)", "the row is in forge doctor = False, want True". Each mutation fails a case:
 the planner probe dropped, "a hook that answers all = (['PASS'], True), want (['FAIL'], True)"; the event
 check dropped, "wired under PreToolUse = ['PASS'], want ['FAIL']" and "wired twice = ['PASS'], want ['FAIL']"."""
@@ -180,36 +180,36 @@ def want(label, got, expected):
 def toy(root, home=None):
     """lib pointed at the toy `root` (and HOME at `home`, when given), restored on the way out: a
     toy ROOT left behind would leak into every later case."""
-    real = lib.ROOT, lib.PROFILES, lib.HOME
-    lib.ROOT, lib.PROFILES = root, os.path.join(root, "config", "profiles")
+    real = lib.ROOT, lib.PROJECTS, lib.HOME
+    lib.ROOT, lib.PROJECTS = root, os.path.join(root, "config", "projects")
     if home is not None:
         lib.HOME = home
     try:
         yield
     finally:
-        lib.ROOT, lib.PROFILES, lib.HOME = real
+        lib.ROOT, lib.PROJECTS, lib.HOME = real
 
 
-def put_profile(root, name, prof):
-    with open(os.path.join(root, "config", "profiles", name + ".claude.json"), "w") as fh:
+def put_project(root, name, prof):
+    with open(os.path.join(root, "config", "projects", name + ".claude.json"), "w") as fh:
         json.dump(prof, fh)
 
 
 def keep_world(tmp):
-    """(root, env): a toy forge with the fixture profiles (project_path moved into the toy), a toy HOME
+    """(root, env): a toy forge with the fixture projects (project_path moved into the toy), a toy HOME
     holding TOY_SKILLS, and a settings.json naming the toy checkout so --apply may write."""
     base = os.path.join(tmp, "keep")
     root, home = os.path.join(base, "forge"), os.path.join(base, "home")
     sandbox.mini_root(root, SCRIPT)
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     # The skill tables live in config/forge.json (T3 of docs/portable-design.md): a toy root without it exits 1.
     shutil.copy(os.path.join(FIXTURES, "forge.json"), os.path.join(root, "config", "forge.json"))
-    for f in glob.glob(os.path.join(FIXTURES, "profiles", "*.claude.json")):
+    for f in glob.glob(os.path.join(FIXTURES, "projects", "*.claude.json")):
         with open(f, encoding="utf-8") as fh:
             prof = json.load(fh)
         prof["project_path"] = os.path.join(base, "projects", os.path.basename(f)[:-len(".claude.json")])
         os.makedirs(prof["project_path"])
-        with open(os.path.join(root, "config", "profiles", os.path.basename(f)), "w", encoding="utf-8") as fh:
+        with open(os.path.join(root, "config", "projects", os.path.basename(f)), "w", encoding="utf-8") as fh:
             json.dump(prof, fh)
     for name in TOY_SKILLS:
         os.makedirs(os.path.join(home, ".claude", "skills", name))
@@ -224,12 +224,12 @@ def keep(root, env, *flags):
 
 def keep_cases(tmp):
     root, env = keep_world(tmp)
-    profiles = os.path.join(root, "config", "profiles")
-    drifted = os.path.join(profiles, "app.claude.json")
-    # A world that was never synced is drift too: every profile lacks COMMON_ENV.
+    projects = os.path.join(root, "config", "projects")
+    drifted = os.path.join(projects, "app.claude.json")
+    # A world that was never synced is drift too: every project lacks COMMON_ENV.
     want("--check on a never-synced world", keep(root, env, "--check")[0], 1)
     want("--apply on the toy world", keep(root, env, "--apply")[0], 0)
-    want("--check on a clean world", keep(root, env, "--check"), (0, "0 profile(s) would change."))
+    want("--check on a clean world", keep(root, env, "--check"), (0, "0 project(s) would change."))
     want("a dry-run on a clean world", keep(root, env)[0], 0)
 
     with open(drifted, encoding="utf-8") as fh:
@@ -238,7 +238,7 @@ def keep_cases(tmp):
     with open(drifted, "w", encoding="utf-8") as fh:
         json.dump(prof, fh)
     before = sandbox.manifest(root, tops=("config",))
-    want("--check on a drifted world", keep(root, env, "--check"), (1, "1 profile(s) would change."))
+    want("--check on a drifted world", keep(root, env, "--check"), (1, "1 project(s) would change."))
     want("--check wrote nothing", sandbox.manifest(root, tops=("config",)) == before, True)
     # What the flag must not change: the plain dry-run still reports and exits 0.
     want("a dry-run on a drifted world", keep(root, env)[0], 0)
@@ -307,31 +307,31 @@ def row_cases():
 
 def toy_cases(tmp):
     # The restore is the point of `toy`, and no other case can see it go missing: each one that reads
-    # lib swaps its own world in first. Control: leave lib.ROOT and lib.PROFILES at the toy in toy's
+    # lib swaps its own world in first. Control: leave lib.ROOT and lib.PROJECTS at the toy in toy's
     # `finally` and "toy restores on exit" goes red.
-    real = lib.ROOT, lib.PROFILES, lib.HOME
+    real = lib.ROOT, lib.PROJECTS, lib.HOME
     home = os.path.join(tmp, "toy-home")
     with toy(tmp, home):
-        want("toy points lib at the world", (lib.ROOT, lib.PROFILES, lib.HOME),
-             (tmp, os.path.join(tmp, "config", "profiles"), home))
-    want("toy restores on exit", (lib.ROOT, lib.PROFILES, lib.HOME), real)
+        want("toy points lib at the world", (lib.ROOT, lib.PROJECTS, lib.HOME),
+             (tmp, os.path.join(tmp, "config", "projects"), home))
+    want("toy restores on exit", (lib.ROOT, lib.PROJECTS, lib.HOME), real)
     try:
         with toy(tmp, home):
             raise ValueError
     except ValueError:
         pass
-    want("toy restores on an exception", (lib.ROOT, lib.PROFILES, lib.HOME), real)
+    want("toy restores on an exception", (lib.ROOT, lib.PROJECTS, lib.HOME), real)
     with toy(tmp):
         want("toy leaves HOME alone without home", lib.HOME, real[2])
 
 
 def clash_world(tmp, name, projects, global_skills, frozen=()):
-    """A toy ROOT with skills/<global_skills> and one profile per project in `projects`
-    ({project: [skill dirs in its .claude/skills]}), pointed at by lib.ROOT and lib.PROFILES."""
+    """A toy ROOT with skills/<global_skills> and one project per project in `projects`
+    ({project: [skill dirs in its .claude/skills]}), pointed at by lib.ROOT and lib.PROJECTS."""
     root = os.path.join(tmp, name)
     for s in global_skills:
         os.makedirs(os.path.join(root, "skills", s))
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     for proj, skills in projects.items():
         path = os.path.join(root, "projects", proj)
         os.makedirs(path)
@@ -340,7 +340,7 @@ def clash_world(tmp, name, projects, global_skills, frozen=()):
         prof = {"project": proj, "project_path": path}
         if proj in frozen:
             prof["frozen"] = True
-        put_profile(root, proj, prof)
+        put_project(root, proj, prof)
     return root
 
 
@@ -380,23 +380,23 @@ def clash_cases(tmp):
     # name\"), want ('PASS', 'skill names', \"read 1 project skill(s) in 2 project(s), none shares a global skill's name\")".
     want("a clean world", clashes(clean), ("PASS", "skill names",
          "read 1 project skill(s) in 2 project(s), none shares a global skill's name"))
-    # A project with no .claude/skills is read and clean (most real ones have none). A profile without
+    # A project with no .claude/skills is read and clean (most real ones have none). A project without
     # project_path or whose directory is gone is not read: a WARN naming it, never a silent pass.
-    # Red on 77ba24d: "FAIL a profile without project_path = ('PASS', ...), want ('WARN', 'skill names', ...)".
-    put_profile(clean, "nopath", {"project": "nopath"})
-    want("a profile without project_path", clashes(clean), ("WARN", "skill names",
+    # Red on 77ba24d: "FAIL a project without project_path = ('PASS', ...), want ('WARN', 'skill names', ...)".
+    put_project(clean, "nopath", {"project": "nopath"})
+    want("a project without project_path", clashes(clean), ("WARN", "skill names",
          "not read, no project_path or no such directory: nopath; read 1 project skill(s) in 2 project(s)"))
-    put_profile(clean, "gone", {"project": "gone", "project_path": os.path.join(clean, "projects", "gone")})
-    want("a profile whose project directory is gone", clashes(clean)[:2], ("WARN", "skill names"))
+    put_project(clean, "gone", {"project": "gone", "project_path": os.path.join(clean, "projects", "gone")})
+    want("a project whose project directory is gone", clashes(clean)[:2], ("WARN", "skill names"))
     want("...and it names both", ["gone, nopath" in clashes(clean)[2]], [True])
     for gone in ("gone", "nopath"):
-        os.remove(os.path.join(clean, "config", "profiles", gone + ".claude.json"))
-    # Zero projects read is a FAIL where zero is impossible: only the unreadable profile in scope.
+        os.remove(os.path.join(clean, "config", "projects", gone + ".claude.json"))
+    # Zero projects read is a FAIL where zero is impossible: only the unreadable project in scope.
     only = clash_world(tmp, "unreadable", {}, ["gsd-fast"])
-    put_profile(only, "nopath", {"project": "nopath"})
+    put_project(only, "nopath", {"project": "nopath"})
     want("no project read at all", clashes(only), ("FAIL", "skill names",
          "no project read; not read, no project_path or no such directory: nopath"))
-    want("no profile at all", clashes(clash_world(tmp, "noprofile", {}, ["gsd-fast"]))[:2], ("FAIL", "skill names"))
+    want("no project at all", clashes(clash_world(tmp, "noproject", {}, ["gsd-fast"]))[:2], ("FAIL", "skill names"))
     # Hidden dirs are not skills (skill_dirs), and a plain file named like a global skill is not one.
     os.makedirs(os.path.join(clean, "projects", "a", ".claude", "skills", ".gsd-fast"))
     open(os.path.join(clean, "projects", "a", ".claude", "skills", "gsd-fast"), "w").close()
@@ -409,10 +409,10 @@ def clash_cases(tmp):
     want("a seeded clash", clashes(seeded),
          ("WARN", "skill names", "a:gsd-fast, b:design-taste"))
     # An unread project beside a clash is named after it, so the clash text stays what it was.
-    put_profile(seeded, "nopath", {"project": "nopath"})
+    put_project(seeded, "nopath", {"project": "nopath"})
     want("a clash beside an unread project", clashes(seeded),
          ("WARN", "skill names", "a:gsd-fast, b:design-taste; not read, no project_path or no such directory: nopath"))
-    os.remove(os.path.join(seeded, "config", "profiles", "nopath.claude.json"))
+    os.remove(os.path.join(seeded, "config", "projects", "nopath.claude.json"))
     # By name, a frozen project is a SKIP (as the instruction files row is); beside a clean project its
     # clash is not counted; and a world of frozen projects alone read 0 projects, a FAIL.
     want("a frozen project, by name", clashes_only(seeded, "fz")[:2], ("SKIP", "skill names"))
@@ -430,7 +430,7 @@ def clash_cases(tmp):
 
     # The two MIT frontend review skills forge ships (mit-skills). The global names are the
     # real checkout's skills/, so this fails until forge ships them; a project that keeps a local copy
-    # (a frozen project's hero profile had one of each, git-ignored) is flagged, and the same project without it is clean.
+    # (a frozen project's hero project had one of each, git-ignored) is flagged, and the same project without it is clean.
     mit = ["fixing-accessibility", "fixing-motion-performance"]
     if os.path.isdir(os.path.join(sandbox.FORGE, "skills")):
         real = os.listdir(os.path.join(sandbox.FORGE, "skills"))
@@ -450,10 +450,10 @@ DRIFT_REGISTRY = {"servers": {"s": {"deny_tools": ["t"]}}}
 
 
 def drift_world(tmp, name, projects, registry=DRIFT_REGISTRY):
-    """A toy ROOT with a registry and one profile per project in `projects`: {project: (profile fields,
+    """A toy ROOT with a registry and one project per project in `projects`: {project: (project fields,
     settings.local.json content, or None for no file)}. The project's directory is root/projects/<project>."""
     root = os.path.join(tmp, name)
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     with open(os.path.join(root, "config", "mcp-registry.json"), "w") as fh:
         json.dump(registry, fh)
     for proj, (extra, settings) in projects.items():
@@ -462,7 +462,7 @@ def drift_world(tmp, name, projects, registry=DRIFT_REGISTRY):
         if settings is not None:
             with open(os.path.join(path, ".claude", "settings.local.json"), "w") as fh:
                 json.dump(settings, fh)
-        put_profile(root, proj, dict({"project": proj, "project_path": path}, **extra))
+        put_project(root, proj, dict({"project": proj, "project_path": path}, **extra))
     return root
 
 
@@ -483,12 +483,12 @@ def drift(root, only=None):
 def drift_cases(tmp):
     """The `frozen drift` row (a frozen project's audit, ENTREGA-A-FORGE.md, point 9 and the closing list): what forge would write into a frozen project's settings.local.json, computed in memory,
     against what is on disk."""
-    # A frozen project's real case in miniature: the profile approves no .mcp.json server, the file approves two.
+    # A frozen project's real case in miniature: the project approves no .mcp.json server, the file approves two.
     portal = drift_world(tmp, "drift-portal", {
         "p": ({"frozen": True, "mcpjson_approved": []}, {"enabledMcpjsonServers": ["a", "b"], "x": 1})})
     before = sandbox.manifest(portal)
-    want("a frozen file that approves what the profile does not", drift(portal), (
-        "WARN", "frozen drift", "p: enabledMcpjsonServers (2 on disk, 0 from forge); compared 1 frozen profile(s)"))
+    want("a frozen file that approves what the project does not", drift(portal), (
+        "WARN", "frozen drift", "p: enabledMcpjsonServers (2 on disk, 0 from forge); compared 1 frozen project(s)"))
     # Nothing is written: not the file, and not the once-ever .bak that write_json(backup=True) makes.
     want("the drift check writes nothing", sandbox.manifest(portal) == before, True)
     want("...not even a .bak", sorted(os.listdir(os.path.join(portal, "projects", "p", ".claude"))),
@@ -501,9 +501,9 @@ def drift_cases(tmp):
     same = drift_world(tmp, "drift-same", {
         "p": ({"frozen": True, "mcpjson_approved": ["a"]}, {"enabledMcpjsonServers": ["a"], "x": 1})})
     want("a frozen file that is what forge would write", drift(same),
-         ("PASS", "frozen drift", "compared 1 frozen profile(s), each settings.local.json is what forge would write"))
+         ("PASS", "frozen drift", "compared 1 frozen project(s), each settings.local.json is what forge would write"))
 
-    # A key forge removes because the profile does not declare it (env is generator-owned both ways),
+    # A key forge removes because the project does not declare it (env is generator-owned both ways),
     # while a permission Claude Code added is merged into, not drift.
     stale = drift_world(tmp, "drift-env", {
         "p": ({"frozen": True}, {"env": {"STALE": "1"}, "permissions": {"allow": ["Bash(ls)"]}})})
@@ -517,19 +517,19 @@ def drift_cases(tmp):
         "p": ({"frozen": True, "servers": ["s"]}, {"permissions": {"deny": ["mcp__s__t"]}})})
     want("a deny row already there", drift(deny_ok)[0], "PASS")
 
-    # Only frozen profiles are compared; an unfrozen one with the same drift is the generated row's.
+    # Only frozen projects are compared; an unfrozen one with the same drift is the generated row's.
     mixed = drift_world(tmp, "drift-mixed", {
         "fz": ({"frozen": True, "mcpjson_approved": []}, {"enabledMcpjsonServers": ["a"]}),
         "live": ({"mcpjson_approved": []}, {"enabledMcpjsonServers": ["a"]})})
-    want("an unfrozen profile is not compared", drift(mixed),
-         ("WARN", "frozen drift", "fz: enabledMcpjsonServers (1 on disk, 0 from forge); compared 1 frozen profile(s)"))
+    want("an unfrozen project is not compared", drift(mixed),
+         ("WARN", "frozen drift", "fz: enabledMcpjsonServers (1 on disk, 0 from forge); compared 1 frozen project(s)"))
 
-    # Zero compared is a FAIL only when something is frozen (non-negotiable 7); no frozen profile at all is
+    # Zero compared is a FAIL only when something is frozen (non-negotiable 7); no frozen project at all is
     # nothing to compare.
-    want("no profile is frozen", drift(drift_world(tmp, "drift-none", {"live": ({}, {})}))[:2], ("PASS", "frozen drift"))
+    want("no project is frozen", drift(drift_world(tmp, "drift-none", {"live": ({}, {})}))[:2], ("PASS", "frozen drift"))
     gone = drift_world(tmp, "drift-gone", {"p": ({"frozen": True}, {})})
     shutil.rmtree(os.path.join(gone, "projects", "p"))
-    want("a frozen profile whose directory is gone", drift(gone)[:2], ("FAIL", "frozen drift"))
+    want("a frozen project whose directory is gone", drift(gone)[:2], ("FAIL", "frozen drift"))
     bad = drift_world(tmp, "drift-bad", {"p": ({"frozen": True}, {})})
     with open(os.path.join(bad, "projects", "p", ".claude", "settings.local.json"), "w") as fh:
         fh.write("{not json")
@@ -538,7 +538,7 @@ def drift_cases(tmp):
     beside = drift_world(tmp, "drift-beside", {"ok": ({"frozen": True}, {}), "gone": ({"frozen": True}, {})})
     shutil.rmtree(os.path.join(beside, "projects", "gone"))
     res = drift(beside)
-    want("an unread frozen profile beside a compared one", (res[:2], "gone" in res[2], "compared 1 frozen profile(s)" in res[2]),
+    want("an unread frozen project beside a compared one", (res[:2], "gone" in res[2], "compared 1 frozen project(s)" in res[2]),
          (("WARN", "frozen drift"), True, True))
     # By name: the frozen project's own row; an unfrozen project is a SKIP that says so.
     want("by name, the frozen project", drift(mixed, "fz")[0], "WARN")
@@ -561,10 +561,10 @@ OWN = "# The project's own text\n\nRun the tests before a commit.\n"
 
 
 def inst_world(tmp, name, projects, frozen=()):
-    """A toy ROOT with one profile per project in `projects` ({project: {relative file: text}}); a text
+    """A toy ROOT with one project per project in `projects` ({project: {relative file: text}}); a text
     that is ("link", target) makes the file a symlink to that sibling."""
     root = os.path.join(tmp, name)
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     for proj, files in projects.items():
         base = os.path.join(root, "projects", proj)
         os.makedirs(base)
@@ -578,12 +578,12 @@ def inst_world(tmp, name, projects, frozen=()):
         prof = {"project": proj, "project_path": base}
         if proj in frozen:
             prof["frozen"] = True
-        put_profile(root, proj, prof)
+        put_project(root, proj, prof)
     return root
 
 
 def inst(root, only=None):
-    """instruction_file_blocks over the toy `root`, as [(level, detail)]; the real profiles are never read."""
+    """instruction_file_blocks over the toy `root`, as [(level, detail)]; the real projects are never read."""
     try:
         with toy(root):
             res = cli.instruction_file_blocks(only)
@@ -639,11 +639,11 @@ def instruction_cases(tmp):
          [("PASS", "read 1 instruction file(s) in 1 project(s), no tool-managed block")])
     want("9 no file to read", inst(world({"README.md": "x"})), [("FAIL", "read 0 instruction files in 1 project(s), and a check "
                                                                     "that saw nothing is not a pass (does project_path hold an AGENTS.md or CLAUDE.md?)")])
-    want("9 no profile at all", inst(inst_world(tmp, "inst-empty", {}))[0][0], "FAIL")
+    want("9 no project at all", inst(inst_world(tmp, "inst-empty", {}))[0][0], "FAIL")
     want("a block four levels down is not seen", inst(world({"CLAUDE.md": OWN, "a/b/c/d/AGENTS.md": TURBO}))[0][0], "PASS")
     want("a block three levels down is", inst(world({"CLAUDE.md": OWN, "a/b/c/AGENTS.md": TURBO}))[0][0], "WARN")
 
-    # Orchestrator decisions: frozen profiles are skipped (and a world of only frozen ones read 0), the
+    # Orchestrator decisions: frozen projects are skipped (and a world of only frozen ones read 0), the
     # deepest project owns a nested file, `dev` is not a project, and `only` scopes to one project.
     frozen = inst_world(tmp, "inst-frozen", {"fz": {"CLAUDE.md": TURBO}, "ok": {"CLAUDE.md": OWN}}, frozen=("fz",))
     want("a frozen project is skipped", inst(frozen), [("PASS", "read 1 instruction file(s) in 1 project(s), no tool-managed block")])
@@ -653,11 +653,11 @@ def instruction_cases(tmp):
     os.makedirs(inner)
     with open(os.path.join(inner, "CLAUDE.md"), "w") as fh:
         fh.write(OWN + TURBO)
-    put_profile(nested, "inner", {"project": "inner", "project_path": inner})
-    put_profile(nested, "dev", {"project": "dev", "project_path": os.path.join(nested, "projects")})
+    put_project(nested, "inner", {"project": "inner", "project_path": inner})
+    put_project(nested, "dev", {"project": "dev", "project_path": os.path.join(nested, "projects")})
     want("a nested file belongs to the deepest project, dev reads nothing", [d for _, d in inst(nested)][0],
          "inner:CLAUDE.md:4 BEGIN:turborepo-agent-rules: " + tfix)
-    want("read counts once across nested profiles", inst(nested)[-1][1].startswith("read 2 instruction file(s) in 2 project(s)"), True)
+    want("read counts once across nested projects", inst(nested)[-1][1].startswith("read 2 instruction file(s) in 2 project(s)"), True)
     want("only: the outer project alone", inst(nested, "outer"), [("PASS", "read 1 instruction file(s) in 1 project(s), no tool-managed block")])
     # "dev" is a name instruction_files_skip lists (this machine's forge.json does; the fixture's list is empty).
     with toy_settings(settings_world(tmp, "inst-dev-skip", dict(integrations=OFF, instruction_files_skip=["dev"]))):
@@ -665,7 +665,7 @@ def instruction_cases(tmp):
     # Wired as a row, and into forge doctor NAME.
     want("the row is registered", [c for n_, c, _ in cli.CHECKS if n_ == "instruction files"], [getattr(cli, "instruction_file_blocks", None)])
     with toy(turbo):
-        rows = [n_ for n_, _, _ in cli.project_checks("p", lib.profiles()["p"], None)]
+        rows = [n_ for n_, _, _ in cli.project_checks("p", lib.projects()["p"], None)]
     want("the row is in forge doctor NAME", "instruction files" in rows, True)
 
 
@@ -682,14 +682,14 @@ if os.environ.get("CLAUDE_PROJECT_DIR") and "~/.npmrc" in d["tool_input"].get("c
 
 def guard_world(tmp, name, entry="canonical", config=None, guard=STUB_GUARD, hooks=None, frozen=False, root=None,
                 hook_extra=None, matcher=None):
-    """A toy ROOT (`root`, or tmp/name) with a stub guard and a profile `name` that turns the guard
+    """A toy ROOT (`root`, or tmp/name) with a stub guard and a project `name` that turns the guard
     on, whose project's settings.local.json holds `entry`: "canonical" (the command the check
     expects), "none" (no guard entry, only another hook), "twice" (the canonical entry in two
     groups), "missing" (no settings.local.json), or any other string, taken as the command.
     `config` is the text of config/guard/<name>.json, absent when None; `matcher` is the group's matcher."""
     root = root or os.path.join(tmp, name)
     os.makedirs(os.path.join(root, "hooks"), exist_ok=True)
-    os.makedirs(os.path.join(root, "config", "profiles"), exist_ok=True)
+    os.makedirs(os.path.join(root, "config", "projects"), exist_ok=True)
     project = os.path.join(root, "projects", name)
     os.makedirs(os.path.join(project, ".claude"))
     with open(os.path.join(root, "hooks", "guard_tool_use.py"), "w") as fh:
@@ -699,7 +699,7 @@ def guard_world(tmp, name, entry="canonical", config=None, guard=STUB_GUARD, hoo
         prof["hooks"] = hooks
     if frozen:
         prof["frozen"] = True
-    put_profile(root, name, prof)
+    put_project(root, name, prof)
     if config is not None:
         os.makedirs(os.path.join(root, "config", "guard"), exist_ok=True)
         with open(os.path.join(root, "config", "guard", name + ".json"), "w") as fh:
@@ -746,17 +746,17 @@ def hooks_world(root, name, hooks):
 def guard_cases(tmp):
     good = json.dumps({"_doc": "x", "secret_paths": [{"pattern": "\\.guardkey\\b", "why": "the key"}],
                        "harness_paths": [{"path": "a/b", "why": "w"}]})
-    # No profile turns the guard on: one PASS line, as on this machine today.
+    # No project turns the guard on: one PASS line, as on this machine today.
     off = os.path.join(tmp, "off")
-    os.makedirs(os.path.join(off, "config", "profiles"))
+    os.makedirs(os.path.join(off, "config", "projects"))
     for n, extra in (("a", {"command_guard": False}), ("b", {})):
-        put_profile(off, n, dict(extra, project=n, project_path=os.path.join(off, n)))
+        put_project(off, n, dict(extra, project=n, project_path=os.path.join(off, n)))
     rows = smoke(off, "command_guard_smoke")
-    want("no profile turns the guard on", (levels(rows), rows[0][1]), (["PASS"], "command guard"))
+    want("no project turns the guard on", (levels(rows), rows[0][1]), (["PASS"], "command guard"))
 
     rows = smoke(guard_world(tmp, "ok", config=good), "command_guard_smoke")
-    want("a guarded profile, entry and config in order", (levels(rows), rows[0][1]), (["PASS"], "guard ok"))
-    want("a guarded profile with no config file", levels(smoke(guard_world(tmp, "nocfg"), "command_guard_smoke")), ["PASS"])
+    want("a guarded project, entry and config in order", (levels(rows), rows[0][1]), (["PASS"], "guard ok"))
+    want("a guarded project with no config file", levels(smoke(guard_world(tmp, "nocfg"), "command_guard_smoke")), ["PASS"])
 
     # The negative control of the design: the same world with the entry removed must be a FAIL.
     rows = smoke(guard_world(tmp, "noentry", entry="none"), "command_guard_smoke")
@@ -791,23 +791,23 @@ def guard_cases(tmp):
             ("a harness_paths entry without a path", '{"harness_paths": [{"why": "w"}]}'))):
         rows = smoke(guard_world(tmp, "cfg%d" % i, config=text), "command_guard_smoke")
         want(label, (levels(rows), "config/guard/cfg%d.json" % i in rows[0][2]), (["FAIL"], True))
-    # A profile that declares the guard in its hooks block as well, and a frozen one (nothing is written there).
+    # A project that declares the guard in its hooks block as well, and a frozen one (nothing is written there).
     both = {"PreToolUse": [{"hooks": [{"type": "command", "command": "python3 /x/hooks/guard_tool_use.py"}]}]}
     want("the guard in the hooks block too", levels(smoke(guard_world(tmp, "dup", hooks=both), "command_guard_smoke")), ["FAIL"])
-    want("a frozen profile", levels(smoke(guard_world(tmp, "frozen", entry="none", frozen=True), "command_guard_smoke")), ["PASS"])
+    want("a frozen project", levels(smoke(guard_world(tmp, "frozen", entry="none", frozen=True), "command_guard_smoke")), ["PASS"])
     # A settings.local.json whose `hooks` is not an object holds no guard entry: a FAIL that says so,
     # never "cannot be read". The worktree row's twin is in wtguard_cases; this one already passed.
     for i, hooks in enumerate(("x", [1], 5)):
         rows = smoke(hooks_world(guard_world(tmp, "hk%d" % i), "hk%d" % i, hooks), "command_guard_smoke")
         want("a settings file whose hooks is %r" % (hooks,), (levels(rows), "holds 0 guard entries" in rows[0][2]),
              (["FAIL"], True))
-    # One line per guarded profile, in name order, the good one still a PASS beside the bad one.
+    # One line per guarded project, in name order, the good one still a PASS beside the bad one.
     two = guard_world(tmp, "two_a")
     guard_world(tmp, "two_b", entry="none", root=two)
     rows = smoke(two, "command_guard_smoke")
-    want("two guarded profiles", [(r[0], r[1]) for r in rows], [("PASS", "guard two_a"), ("FAIL", "guard two_b")])
-    # command_guard on and no project (round 10): the profile is left out, and the row names it.
-    put_profile(two, "two_np", {"project_path": os.path.join(two, "projects", "two_a"), "command_guard": True})
+    want("two guarded projects", [(r[0], r[1]) for r in rows], [("PASS", "guard two_a"), ("FAIL", "guard two_b")])
+    # command_guard on and no project (round 10): the project is left out, and the row names it.
+    put_project(two, "two_np", {"project_path": os.path.join(two, "projects", "two_a"), "command_guard": True})
     rows = smoke(two, "command_guard_smoke")
     want("a guard on and no project", [(r[0], r[1]) for r in rows[-1:]], [("FAIL", "guard two_np")])
 
@@ -820,7 +820,7 @@ def guard_cases(tmp):
     first = lines[0] if lines else ""
     want("doctor over a guard with no entry", (code, err, first.startswith("FAIL  guard viadoctor "), "forge sync" in first),
          (1, None, True, True))
-    want("doctor prints a line per guarded profile", ([l.split()[:3] for l in lines[:2]], summary(lines)),
+    want("doctor prints a line per guarded project", ([l.split()[:3] for l in lines[:2]], summary(lines)),
          ([["FAIL", "guard", "viadoctor"], ["PASS", "guard", "viadoctor2"]], "SUMMARY: 1 passed, 0 warnings, 1 failures"))
 
 
@@ -842,13 +842,13 @@ WT_MATCHER = "Write|Edit|MultiEdit|NotebookEdit|Bash"
 
 def wtguard_world(tmp, name, entry="canonical", guard=STUB_WT_GUARD, value=True, frozen=False, root=None, path=True,
                   hook_extra=None):
-    """A toy ROOT (`root`, or tmp/name) with a stub worktree guard and a profile `name` whose
+    """A toy ROOT (`root`, or tmp/name) with a stub worktree guard and a project `name` whose
     worktree_guard is `value`, and whose settings.local.json holds `entry`: "canonical", "none"
     (only another hook), "twice", "nomatcher", "matcher Write", "missing" (no file), or any other
     string, taken as the command behind the canonical matcher."""
     root = root or os.path.join(tmp, name)
     os.makedirs(os.path.join(root, "hooks"), exist_ok=True)
-    os.makedirs(os.path.join(root, "config", "profiles"), exist_ok=True)
+    os.makedirs(os.path.join(root, "config", "projects"), exist_ok=True)
     project = os.path.join(root, "projects", name)
     os.makedirs(os.path.join(project, ".claude"))
     with open(os.path.join(root, "hooks", "worktree_guard.py"), "w") as fh:
@@ -858,7 +858,7 @@ def wtguard_world(tmp, name, entry="canonical", guard=STUB_WT_GUARD, value=True,
         prof["project_path"] = project
     if frozen:
         prof["frozen"] = True
-    put_profile(root, name, prof)
+    put_project(root, name, prof)
     canonical = "python3 %s --project %s" % (os.path.join(root, "hooks", "worktree_guard.py"), name)
     hook = lambda c: dict({"type": "command", "command": c, "timeout": 10}, **(hook_extra or {}))  # noqa: E731
     group = lambda c, m=WT_MATCHER: dict({"matcher": m} if m else {}, hooks=[hook(c)])  # noqa: E731
@@ -873,21 +873,21 @@ def wtguard_world(tmp, name, entry="canonical", guard=STUB_WT_GUARD, value=True,
 
 def wtguard_cases(tmp):
     tmp = os.path.join(tmp, "wt")
-    # No profile asks for it: a stranger's legitimate zero, a SKIP that says NOT RUN, NOT ARMED (T9 of
+    # No project asks for it: a stranger's legitimate zero, a SKIP that says NOT RUN, NOT ARMED (T9 of
     # docs/portable-design.md; red before: "(['FAIL'], 'worktree guard', True)"). One that asks for it and is frozen
-    # is configured and checked by nothing, and stays a FAIL (below, "a frozen profile is not checked").
+    # is configured and checked by nothing, and stays a FAIL (below, "a frozen project is not checked").
     off = os.path.join(tmp, "off")
-    os.makedirs(os.path.join(off, "config", "profiles"))
+    os.makedirs(os.path.join(off, "config", "projects"))
     for n, extra in (("a", {"worktree_guard": False}), ("b", {}), ("c", {"worktree_guard": {"on": False}})):
-        put_profile(off, n, dict(extra, project=n, project_path=os.path.join(off, n)))
+        put_project(off, n, dict(extra, project=n, project_path=os.path.join(off, n)))
     rows = smoke(off, "worktree_guard_smoke")
-    want("worktree guard: no profile turns it on", (levels(rows), rows[0][1], rows[0][2].startswith("NOT RUN, NOT ARMED: ")),
+    want("worktree guard: no project turns it on", (levels(rows), rows[0][1], rows[0][2].startswith("NOT RUN, NOT ARMED: ")),
          (["SKIP"], "worktree guard", True))
     # Scoped to a project that does not turn it on, zero is expected: a PASS, as the command guard's.
     want("worktree guard: one project that does not turn it on", levels(smoke(off, "worktree_guard_smoke", "a")), ["PASS"])
 
     rows = smoke(wtguard_world(tmp, "ok"), "worktree_guard_smoke")
-    want("worktree guard: a guarded profile, entry in order", (levels(rows), rows[0][1], "1 guarded" in rows[0][2]),
+    want("worktree guard: a guarded project, entry in order", (levels(rows), rows[0][1], "1 guarded" in rows[0][2]),
          (["PASS"], "worktree guard ok", True))
     want("worktree guard: the object form", levels(smoke(wtguard_world(tmp, "obj", value={"write_roots": []}), "worktree_guard_smoke")), ["PASS"])
     # The negative control of the design: the same world with the entry removed is a FAIL.
@@ -915,23 +915,23 @@ def wtguard_cases(tmp):
     # Exit 2 without the hook's refusal: what python3 prints for a script that is not there.
     want("worktree guard: exit 2 without BLOCKED", levels(smoke(wtguard_world(
         tmp, "noblock", guard="import json, sys\nd = json.load(sys.stdin)\nsys.exit(0 if d['cwd'] in d['tool_input']['file_path'] else 2)\n"), "worktree_guard_smoke")), ["FAIL"])
-    # Frozen is not checked, so a world with only a frozen profile that asks for the guard is the zero FAIL; "on": false
+    # Frozen is not checked, so a world with only a frozen project that asks for the guard is the zero FAIL; "on": false
     # asks for nothing, and is the SKIP.
     rows = smoke(wtguard_world(tmp, "frozen", entry="none", frozen=True), "worktree_guard_smoke")
-    want("worktree guard: a frozen profile is not checked", (levels(rows), rows[0][1]), (["FAIL"], "worktree guard"))
+    want("worktree guard: a frozen project is not checked", (levels(rows), rows[0][1]), (["FAIL"], "worktree guard"))
     rows = smoke(wtguard_world(tmp, "isoff", entry="none", value={"on": False, "worktree_dirs": []}), "worktree_guard_smoke")
     want("worktree guard: on false is not checked, and asks for nothing", (levels(rows), rows[0][1]), (["SKIP"], "worktree guard"))
-    # One line per guarded profile, in name order, each with the count.
+    # One line per guarded project, in name order, each with the count.
     two = wtguard_world(tmp, "w2a")
     wtguard_world(tmp, "w2b", entry="none", root=two)
     rows = smoke(two, "worktree_guard_smoke")
-    want("worktree guard: two guarded profiles", [(r[0], r[1], "2 guarded" in r[2]) for r in rows],
+    want("worktree guard: two guarded projects", [(r[0], r[1], "2 guarded" in r[2]) for r in rows],
          [("PASS", "worktree guard w2a", True), ("FAIL", "worktree guard w2b", True)])
     want("worktree guard: scoped to one of two", [r[1] for r in smoke(two, "worktree_guard_smoke", "w2b")], ["worktree guard w2b"])
 
-    # A guard the profile asked for, in a profile lib.profiles leaves out for its type (round 10): the
+    # A guard the project asked for, in a project lib.projects leaves out for its type (round 10): the
     # unscoped row names it and FAILs. It was silently absent, so with "on": "true" the row PASSed.
-    # (forge doctor NAME already shows the profile row for it.) Red before: "worktree guard: an on that is a
+    # (forge doctor NAME already shows the project row for it.) Red before: "worktree guard: an on that is a
     # string, beside a good one = [('PASS', 'worktree guard w3ok')], want [..., ('FAIL', 'worktree guard
     # w3bad')]", and the same for a guard on with no project; the command guard's twin: "a guard on and no
     # project = [('FAIL', 'guard two_b')], want [('FAIL', 'guard two_np')]".
@@ -944,21 +944,21 @@ def wtguard_cases(tmp):
     want("worktree guard: scoped to the good one beside it", [r[1] for r in smoke(bad, "worktree_guard_smoke", "w3ok")],
          ["worktree guard w3ok"])
     noproj = wtguard_world(tmp, "w4")
-    put_profile(noproj, "w4np", {"project_path": os.path.join(noproj, "projects", "w4"), "worktree_guard": True})
+    put_project(noproj, "w4np", {"project_path": os.path.join(noproj, "projects", "w4"), "worktree_guard": True})
     rows = smoke(noproj, "worktree_guard_smoke")
     want("worktree guard: a guard on and no project", [(r[0], r[1]) for r in rows],
          [("PASS", "worktree guard w4"), ("FAIL", "worktree guard w4np")])
-    # Only the guard's own profiles: a profile left out for another field is not this row's business.
+    # Only the guard's own projects: a project left out for another field is not this row's business.
     other = wtguard_world(tmp, "w5")
-    put_profile(other, "w5x", {"project": "w5x", "project_path": 5})
-    want("worktree guard: a profile left out for another field is not a row", [r[1] for r in smoke(other, "worktree_guard_smoke")],
+    put_project(other, "w5x", {"project": "w5x", "project_path": 5})
+    want("worktree guard: a project left out for another field is not a row", [r[1] for r in smoke(other, "worktree_guard_smoke")],
          ["worktree guard w5"])
 
     # Through cmd_doctor: the FAIL reaches the exit code, with the fix appended; and the row is in
     # forge doctor and forge doctor NAME.
     with toy(two):
         code, lines, err = doctor([r for r in cli.CHECKS if r[0] == "worktree guard"])
-        names = [n_ for n_, _, _ in cli.project_checks("w2a", lib.profiles()["w2a"], None)]
+        names = [n_ for n_, _, _ in cli.project_checks("w2a", lib.projects()["w2a"], None)]
     want("worktree guard: through doctor", (code, err, len(lines) > 1 and "forge sync" in lines[1]), (1, None, True))
     want("worktree guard: in forge doctor NAME", "worktree guard" in names, True)
 
@@ -966,13 +966,13 @@ def wtguard_cases(tmp):
 # 5. forge doctor NAME (the owner: "forge doctor <project>" to diagnose one stuck project).
 # A whole toy world, because one of its rows runs `forge sync NAME` as a subprocess:
 # this checkout copied without design/ beside a toy HOME and toy projects (the shape lib.may_write
-# lets a toy HOME write), its profiles replaced by toy ones, and an empty fake secrets.json.
+# lets a toy HOME write), its projects replaced by toy ones, and an empty fake secrets.json.
 # `healthy` is mapped to a Hindsight bank and has an env (so it gets a settings.local.json),
 # `clash` holds a project skill named like a global one, `guarded` turns the command guard on with
 # no settings.local.json (its smoke check FAILs). The other projects' trouble must not reach
-# healthy's lines. A profile with a field of the wrong type is added only for its own case: every
+# healthy's lines. A project with a field of the wrong type is added only for its own case: every
 # generator names it with a '!' line, so the sync of any project exits 1 while it is there.
-TOY_PROFILES = {
+TOY_PROJECTS = {
     "healthy": {"servers": [], "env": {"TOY": "1"}},
     "frozen": {"frozen": True},
     "clash": {},
@@ -990,15 +990,15 @@ def project_world(tmp):
     # of its own: without this index every toy project would get the `!` line "tracks no entry to protect" and nothing written.
     sandbox.git(root, "init", "-q")
     sandbox.git(root, "add", "-A")
-    profiles = os.path.join(root, "config", "profiles")
-    for f in os.listdir(profiles):
-        os.remove(os.path.join(profiles, f))
+    projects = os.path.join(root, "config", "projects")
+    for f in os.listdir(projects):
+        os.remove(os.path.join(projects, f))
     paths = {}
-    for name, extra in TOY_PROFILES.items():
+    for name, extra in TOY_PROJECTS.items():
         paths[name] = os.path.join(base, "projects", name)
         os.makedirs(os.path.join(paths[name], ".claude"))
         sandbox.git(paths[name], "init", "-q")
-        with open(os.path.join(profiles, name + ".claude.json"), "w") as fh:
+        with open(os.path.join(projects, name + ".claude.json"), "w") as fh:
             json.dump(dict(extra, project=name, project_path=paths[name]), fh)
     os.makedirs(os.path.join(paths["clash"], ".claude", "skills", "gsd-fast"))
     os.makedirs(os.path.join(root, "skills", "gsd-fast"))  # the global skill it clashes with: a copy_engine copy has no skills/
@@ -1059,11 +1059,11 @@ if MODE == "all" or (MODE == "ok" and agent == "gsd-executor"):
 
 
 def ponytail_world(tmp, name, stub="ok", events=("SubagentStart", "UserPromptSubmit"), frozen=False, others=()):
-    """A toy ROOT with a stub hooks/ponytail_subagent.py and a profile `name` whose own `hooks` run it
-    once under each of `events`; `others` are profiles that wire nothing."""
+    """A toy ROOT with a stub hooks/ponytail_subagent.py and a project `name` whose own `hooks` run it
+    once under each of `events`; `others` are projects that wire nothing."""
     root = os.path.join(tmp, "pt-" + name)
     os.makedirs(os.path.join(root, "hooks"))
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     with open(os.path.join(root, "hooks", "ponytail_subagent.py"), "w") as fh:
         fh.write(STUB_PONYTAIL % stub)
     cmd = "python3 " + os.path.join(root, "hooks", "ponytail_subagent.py")
@@ -1071,18 +1071,18 @@ def ponytail_world(tmp, name, stub="ok", events=("SubagentStart", "UserPromptSub
             "hooks": {e: [{"hooks": [{"type": "command", "command": cmd, "timeout": 10}]}] for e in events}}
     if frozen:
         prof["frozen"] = True
-    put_profile(root, name, prof)
+    put_project(root, name, prof)
     for o in others:
-        put_profile(root, o, {"project": o, "project_path": os.path.join(root, o)})
+        put_project(root, o, {"project": o, "project_path": os.path.join(root, o)})
     return root
 
 
 def ponytail_cases(tmp):
     rows = smoke(ponytail_world(tmp, "skip", events=()), "ponytail_row")
-    want("no profile wires the hook", (levels(rows), rows[0][1], rows[0][2].startswith(cli.NOT_ARMED)),
+    want("no project wires the hook", (levels(rows), rows[0][1], rows[0][2].startswith(cli.NOT_ARMED)),
          (["SKIP"], "ponytail", True))
     rows = smoke(ponytail_world(tmp, "ok", others=("plain",)), "ponytail_row")
-    want("a wired profile whose hook answers right", (levels(rows), rows[0][1], "1 wired" in rows[0][2]),
+    want("a wired project whose hook answers right", (levels(rows), rows[0][1], "1 wired" in rows[0][2]),
          (["PASS"], "ponytail ok", True))
     # The negative controls: a hook that gives every agent the ruleset, none, or crashes is a FAIL.
     for stub, says in (("all", "gsd-planner"), ("none", "gsd-executor"), ("crash", "not installed")):
@@ -1095,10 +1095,10 @@ def ponytail_cases(tmp):
         rows = smoke(ponytail_world(tmp, label.replace(" ", "-"), **kw), "ponytail_row")
         want(label, levels(rows), ["FAIL"])
     root = ponytail_world(tmp, "scoped", others=("plain",))
-    want("doctor NAME, a profile that wires nothing", levels(smoke(root, "ponytail_row", "plain")), ["PASS"])
-    want("doctor NAME, the wired profile", [r[1] for r in smoke(root, "ponytail_row", "scoped")], ["ponytail scoped"])
+    want("doctor NAME, a project that wires nothing", levels(smoke(root, "ponytail_row", "plain")), ["PASS"])
+    want("doctor NAME, the wired project", [r[1] for r in smoke(root, "ponytail_row", "scoped")], ["ponytail scoped"])
     with toy(root):
-        names = [n for n, _, _ in cli.project_checks("scoped", lib.profiles()["scoped"], None)]
+        names = [n for n, _, _ in cli.project_checks("scoped", lib.projects()["scoped"], None)]
     want("the row is in forge doctor NAME", "ponytail" in names, True)
     want("the row is in forge doctor", "ponytail" in [n for n, _, _ in cli.CHECKS], True)
 
@@ -1140,15 +1140,15 @@ def project_cases(tmp):
     want("doctor of an empty project name", (code, first.startswith("! "), "unknown project: " in first, len(lines)),
          (1, True, True, 1))
 
-    bad = os.path.join(root, "config", "profiles", "bad.claude.json")
+    bad = os.path.join(root, "config", "projects", "bad.claude.json")
     with open(bad, "w") as fh:
         json.dump({"project": "bad", "project_path": os.path.join(root, "..", "projects", "bad"), "frozen": "yes"}, fh)
     code, lines = forge(root, env, "doctor", "bad")
     os.remove(bad)
     rows = rows_of(lines)
-    want("doctor of a profile with a wrong type", (code, list(rows), row(rows, "profile")[0],
-                                                   "frozen is not a boolean" in row(rows, "profile")[1]),
-         (1, ["profile"], "FAIL", True))
+    want("doctor of a project with a wrong type", (code, list(rows), row(rows, "project")[0],
+                                                   "frozen is not a boolean" in row(rows, "project")[1]),
+         (1, ["project"], "FAIL", True))
 
     # Never synced: the dry-run would write healthy's files, so the row is a FAIL with its fix.
     code, lines = forge(root, env, "doctor", "healthy")
@@ -1160,7 +1160,7 @@ def project_cases(tmp):
     code, lines = forge(root, env, "doctor", "healthy")
     rows = rows_of(lines)
     levels = {k: v[0] for k, v in rows.items()}
-    want("a healthy project's rows", levels, {"profile": "PASS", "generated": "PASS", "skill names": "PASS",
+    want("a healthy project's rows", levels, {"project": "PASS", "generated": "PASS", "skill names": "PASS",
                                               "project roots": "PASS", "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS", "research expiry": "PASS",
                                               "memory": levels.get("memory", "(none)")})
     want("a healthy project's memory row", "memory" in rows, True)
@@ -1176,7 +1176,7 @@ def project_cases(tmp):
     want("the guarded project's guard row", (code, row(rows_of(lines), "guard guarded")[0]), (1, "FAIL"))
 
     # Nothing to write, but the dry-run exits 1: a server the registry does not have is a '!' line.
-    hp = os.path.join(root, "config", "profiles", "healthy.claude.json")
+    hp = os.path.join(root, "config", "projects", "healthy.claude.json")
     with open(hp, encoding="utf-8") as fh:
         clean = fh.read()
     with open(hp, "w", encoding="utf-8") as fh:
@@ -1205,30 +1205,30 @@ def project_cases(tmp):
     code, lines = forge(root, env, "doctor", "frozen")
     rows = rows_of(lines)
     want("a frozen project's generated row", rows.get("generated"), ("PASS", "frozen: forge writes nothing"))
-    want("a frozen project's profile row says frozen", (row(rows, "profile")[0], row(rows, "profile")[1].endswith(
+    want("a frozen project file row says frozen", (row(rows, "project")[0], row(rows, "project")[1].endswith(
         "; frozen: forge writes nothing for it")), ("PASS", True))
     want("a frozen project's other rows", [k for k in ("skill names", "command guard", "memory", "hindsight") if k in rows],
          ["skill names", "command guard", "memory"])
     want("a frozen project's instruction files row", row(rows, "instruction files")[0], "SKIP")
     want("a frozen project is left as it was", sandbox.manifest(paths["frozen"]) == before, True)
-    # The toy frozen file holds an env its profile does not declare, which an unfrozen run would remove.
+    # The toy frozen file holds an env its project does not declare, which an unfrozen run would remove.
     drift_row = row(rows, "frozen drift")
     want("a frozen project's frozen drift row", (drift_row[0], drift_row[1].startswith("frozen: env"),
-                                                  "compared 1 frozen profile(s)" in drift_row[1]), ("WARN", True, True))
+                                                  "compared 1 frozen project(s)" in drift_row[1]), ("WARN", True, True))
     want("a frozen project's skill names row", row(rows, "skill names")[0], "SKIP")
 
     # Exit 1 only on a FAIL: in the toy world the memory row always FAILs (no rendered Hindsight
-    # config), so this runs cmd_doctor in-process over one WARN row, the toy profiles and a CHECKS
+    # config), so this runs cmd_doctor in-process over one WARN row, the toy projects and a CHECKS
     # whose only row FAILs (what the default doctor would run instead).
-    real = lib.PROFILES, cli.CHECKS, getattr(cli, "project_checks", None)
-    lib.PROFILES = os.path.join(root, "config", "profiles")
+    real = lib.PROJECTS, cli.CHECKS, getattr(cli, "project_checks", None)
+    lib.PROJECTS = os.path.join(root, "config", "projects")
     cli.CHECKS = [("f", lambda: lib.Result("FAIL", "f", "the default doctor ran"), "")]
     cli.project_checks = lambda name, prof, why: [("w", lambda: lib.Result("WARN", "w", "only a warning"), "")]
     try:
         with contextlib.redirect_stdout(io.StringIO()):
             code = cli.cmd_doctor(argparse.Namespace(project="healthy"))
     finally:
-        lib.PROFILES, cli.CHECKS, cli.project_checks = real
+        lib.PROJECTS, cli.CHECKS, cli.project_checks = real
     want("doctor NAME with only a WARN", code, 0)
 
 
@@ -1531,18 +1531,18 @@ def skip_cases(tmp):
             # real ~/.config/mise/conf.d/forge.toml ("toolchain: 1 failing: file:mise" when they differ). It is
             # stubbed whole, like the sync steps; the row itself is test_toolchain.py's. toolchain.row is also forced
             # to FAIL as a tripwire: if the stub stops covering it, "another project is not special" goes red.
-            saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
+            saved = (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.projects, lib.lock,
                      cli.toolchain.row, cli.check_and_tell)
             cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state = [], 0.3, 0.1, lambda: "activating"
             cli.toolchain.row, cli.check_and_tell = toolchain_row, lambda: []
-            lib.resolve_project, lib.profiles = (lambda path: project), (lambda skipped=None: {project: {}})
+            lib.resolve_project, lib.projects = (lambda path: project), (lambda skipped=None: {project: {}})
             lib.lock = lambda timeout=20: contextlib.nullcontext()
             out = io.StringIO()
             try:
                 with contextlib.redirect_stdout(out):
                     cli.cmd_session_start(None)
             finally:
-                (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.profiles, lib.lock,
+                (cli.SYNC, cli.MEMORY_WAIT, cli.MEMORY_POLL, cli.unit_state, lib.resolve_project, lib.projects, lib.lock,
                  cli.toolchain.row, cli.check_and_tell) = saved
             return json.loads(out.getvalue())["systemMessage"] if out.getvalue().strip() else ""
         msg = session("toyproj")
@@ -1552,8 +1552,8 @@ def skip_cases(tmp):
         os.remove(lib.SETTINGS)
         lib.settings.cache_clear()
         # A session start exits 0 whatever happens: lib.settings() exits on a missing file.
-        saved = (cli.SYNC, lib.resolve_project, lib.profiles, lib.lock)
-        cli.SYNC, lib.resolve_project, lib.profiles = [], (lambda path: "p"), (lambda skipped=None: {"p": {}})
+        saved = (cli.SYNC, lib.resolve_project, lib.projects, lib.lock)
+        cli.SYNC, lib.resolve_project, lib.projects = [], (lambda path: "p"), (lambda skipped=None: {"p": {}})
         lib.lock = lambda timeout=20: contextlib.nullcontext()
         out = io.StringIO()
         try:
@@ -1562,7 +1562,7 @@ def skip_cases(tmp):
         except BaseException as e:
             code = "raised %s" % type(e).__name__
         finally:
-            cli.SYNC, lib.resolve_project, lib.profiles, lib.lock = saved
+            cli.SYNC, lib.resolve_project, lib.projects, lib.lock = saved
         want("a session start with no config/forge.json still exits 0, and says why", (code, "config/forge.json missing" in out.getvalue()), (0, True))
 
     # forge skills: a step whose integration is off is said, not run.

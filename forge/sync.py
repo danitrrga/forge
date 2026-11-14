@@ -9,7 +9,7 @@ It writes for Claude Code and Codex (Antigravity/Gemini support was removed).
 Source of truth:
   config/mcp-registry.json    -- one def per server, secret env as ${VAR}
   config/secrets.json         -- the only place real tokens live (git-ignored)
-  config/profiles/*.claude.json -- which server/skill/plugin subset each project gets
+  config/projects/*.claude.json -- which server/skill/plugin subset each project gets
 
 Targets written:
   ~/.claude.json  projects["<forward-slash path>"].mcpServers (+ enable flags)
@@ -30,10 +30,10 @@ Writes are atomic (temp -> replace) with a one-time .bak backup. Idempotent.
 Invariants (from a split-brain bug):
   * Claude project key is ALWAYS the forward-slash path; never create a backslash dup.
   * Never emit a server whose secret resolves empty -> abort that server, warn loudly.
-  * The agents of a project never write in forge: every profile but forge's own gets `permissions.deny` rules
+  * The agents of a project never write in forge: every project but forge's own gets `permissions.deny` rules
     (Edit and Write) on the top-level entries git tracks in this checkout, `plugins/` and `design/` left out (forge_deny).
   * claude-mem-lite's store dir is DERIVED from the project name -- see forge/memory.py.
-    claude-mem itself (thedotmack) was retired; RETIRED_MEMORY refuses a profile
+    claude-mem itself (thedotmack) was retired; RETIRED_MEMORY refuses a project
     that still grants it.
 """
 import contextlib
@@ -54,7 +54,7 @@ CFG = os.path.join(lib.ROOT, "config")
 # come and go and would rewrite every project's file on each sync; the few untracked ones that always matter are named in
 # FORGE_DENY_ALWAYS. A new tracked entry is covered at the next sync, which
 # runs at the start of each project's session.
-FORGE_PROFILE = "forge"
+FORGE_PROJECT = "forge"
 FORGE_DENY_KEEP = ("plugins", "design")
 # `Edit` alone: an Edit rule covers every built-in file-writing tool, and Claude Code 2.1.308 prints a warning at each session start for a
 # `Write` rule ("never matches, use Edit"); with the Edit rules alone Write was denied too (tests/test_forge_write_deny.py).
@@ -64,7 +64,7 @@ DATA_GIT = ".forge-data.git"  # the private data history over the same work tree
 # Untracked, so git does not list them, yet always denied when the checkout has them: both histories, the secrets, the memory stores.
 FORGE_DENY_ALWAYS = (".git", DATA_GIT, "credentials", "data")
 # `data/` is made by the generator itself (memory.derive_lite_env, the first project that uses claude-mem-lite), in the middle of a
-# run: a checkout without it would give the profiles read before that no rule for it and the next run one more, a rewrite of every
+# run: a checkout without it would give the projects read before that no rule for it and the next run one more, a rewrite of every
 # settings.local.json. So it is denied whether or not it is there yet, as a directory.
 FORGE_DENY_MADE = ("data",)
 
@@ -91,14 +91,14 @@ def _tracked_entries(root):
 
 
 def forge_deny(name, prof):
-    """(rules, error) for the profile `name`: `Edit` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
+    """(rules, error) for the project `name`: `Edit` `deny` rules on each top-level entry the checkout (`lib.ROOT`,
     read at call time, never written in the engine) tracks in git, plus those of FORGE_DENY_ALWAYS it has (FORGE_DENY_MADE ones even before they exist), but FORGE_DENY_KEEP, `<Tool>(//<root>/<dir>/**)` for a
-    directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own profile (by name, or whose project is
+    directory and `<Tool>(//<root>/<file>)` for a file, sorted by entry. Forge's own project (by name, or whose project is
     the checkout) gets none, and so does a project whose folder does not exist. `error` is the `!` line of a checkout whose
     history cannot be read or has nothing to deny."""
     root = os.path.realpath(lib.ROOT)
     ppath = prof.get("project_path") or ""
-    if name == FORGE_PROFILE or os.path.realpath(ppath) == root or not os.path.isdir(ppath):
+    if name == FORGE_PROJECT or os.path.realpath(ppath) == root or not os.path.isdir(ppath):
         # a project folder that is not there gets nothing: writing the file would make the folder and hide the `!` line
         # the codex step prints for it
         return [], None
@@ -118,7 +118,7 @@ def forge_deny(name, prof):
 
 
 def with_forge_deny(prof, rules):
-    """`prof` with `rules` added to its `permissions.deny`, after what the profile declares itself (as framework.with_permissions
+    """`prof` with `rules` added to its `permissions.deny`, after what the project declares itself (as framework.with_permissions
     does for allow, so forge/skills.py claims them item by item); `prof` itself with nothing to add."""
     if not rules:
         return prof
@@ -160,7 +160,7 @@ def load_relocations(cfg):
     line. Like the unreadable file's line, each exits 1 under agent_config's rule, while the run
     goes on: moving no key loses nothing (the old key stays and a fixed file moves it next run).
     It once failed: a `[]` or `42` file raised at the `.get`, `{"relocations": 5}` in
-    relocations_in_scope's loop, and a bad entry at item.get or at project_key: every profile,
+    relocations_in_scope's loop, and a bad entry at item.get or at project_key: every project,
     ~/.claude.json and the user scope went down with the run."""
     where = "config/project-relocations.json"
     doc = lib.read_json(os.path.join(cfg, "project-relocations.json"))
@@ -191,7 +191,7 @@ def agent_config(argv):
     """One generator run: every step in its order, printing what it did or would do. Returns the
     exit code, by one rule: a line whose first non-space character is '!' means the run exits 1,
     and no other line does. A '!' line says something was not done, or was found wrong and
-    repaired -- a write skipped, a profile or a relocation skipped, a server missing from the
+    repaired -- a write skipped, a project or a relocation skipped, a server missing from the
     registry, a file unreadable, a foreign write undone (the user-scope mcpServers cleared, a
     duplicate project key folded in: exit 1 for the one run that repairs it). The run still goes
     on past it wherever the rest can be done. Since then; before it, nine hand-set flags
@@ -233,32 +233,33 @@ def _run(argv, rule):
         print("! config/mcp-registry.json has no servers object (unreadable, missing or malformed) -- nothing written")
         return
 
-    # lib.PROFILES read here, at call time: the in-process test points it at a toy directory.
-    profiles = [os.path.join(lib.PROFILES, f) for f in os.listdir(lib.PROFILES) if f.endswith(".claude.json")]
+    # lib.PROJECTS read here, at call time: the in-process test points it at a toy directory.
+    lib.require_registry()
+    projects =[os.path.join(lib.PROJECTS, f) for f in os.listdir(lib.PROJECTS) if f.endswith(".claude.json")]
     print("MODE:", "APPLY" if ctx.apply else "DRY-RUN (no files written; pass --apply to write)")
-    print("registry servers: %d | secrets: %d | profiles: %d\n" % (len(registry), len(secrets), len(profiles)))
+    print("registry servers: %d | secrets: %d | projects: %d\n" % (len(registry), len(secrets), len(projects)))
     hindsight_errors = []
 
     # The run's inputs, in the order their lines print: ~/.claude.json (its chmod line), the
-    # relocations, every profile, then the relocations applied (their skipped and moved lines).
+    # relocations, every project, then the relocations applied (their skipped and moved lines).
     cj = mcp.ClaudeJson.open(ctx)
     # Relocated repositories need an explicit migration because unrelated Claude project keys
     # are intentionally preserved. This is canonical/configured here rather than hand-editing
     # the generated ~/.claude.json.
     relocations = load_relocations(CFG)
-    # Each profile is read once, here, for the relocation scope and for the loop below. Keyed and
+    # Each project is read once, here, for the relocation scope and for the loop below. Keyed and
     # ordered by path, as the loop always ran: by name, `app` would come before `app-hero`.
-    loaded = {pf: lib.read_json(pf) for pf in sorted(profiles)}
+    loaded = {pf: lib.read_json(pf) for pf in sorted(projects)}
     cj.relocate(ctx, loaded, relocations)
 
     for pf, prof in loaded.items():
         name = os.path.basename(pf)[:-len(".claude.json")]
         if not ctx.wants(name):
             continue
-        bad = lib.profile_error(prof)
+        bad = lib.project_error(prof)
         if bad:
-            # Checked before anything reads the profile, `frozen` included ("false" is truthy): a
-            # wrong type raised in whichever component met it first and took every later profile,
+            # Checked before anything reads the project, `frozen` included ("false" is truthy): a
+            # wrong type raised in whichever component met it first and took every later project,
             # ~/.claude.json and the user scope with it.
             print("== %s ==\n   ! %s -- nothing written for this project\n" % (os.path.basename(pf), bad))
             continue
@@ -278,24 +279,24 @@ def _run(argv, rule):
             continue
         if not prof.get("project_path"):
             # Malformed (lib.read_json gave {}) or written without one: no directory, no key. Skipping it
-            # keeps the later profiles, ~/.claude.json and the user scope; a KeyError took them all.
+            # keeps the later projects, ~/.claude.json and the user scope; a KeyError took them all.
             print("   ! no project_path -- nothing written for this project\n")
             continue
 
-        # Memory invariant is checked BEFORE any write for this profile. Unlike a secret error
+        # Memory invariant is checked BEFORE any write for this project. Unlike a secret error
         # (which only blocks ~/.claude.json and still lets skill trimming through), a memory
         # mismatch must also block settings.local.json -- that file is where the capture env
         # lands, so writing it while inconsistent is precisely the failure being prevented.
         mem_errs = memory.invariant(ctx, prof, pf)
         if mem_errs:
-            print("   ! memory INVARIANT VIOLATED -- no writes for this profile:")
+            print("   ! memory INVARIANT VIOLATED -- no writes for this project:")
             for e in mem_errs:
                 print("     - " + e)
             print()
             continue
 
         # What the framework step wants of this project, decided before anything is written: a permissions list that
-        # fails its lint writes nothing for the profile (framework.permissions), as the memory invariant above.
+        # fails its lint writes nothing for the project (framework.permissions), as the memory invariant above.
         fw = framework.plan(prof, name)
         fp = framework.permissions(prof, fw, os.path.join(CFG, framework.PERMISSIONS_FILE))
         if fp.errors:
@@ -356,7 +357,7 @@ def _run(argv, rule):
         print()
 
 
-    print("== ~/.claude.json (MCP servers, every profile) ==")
+    print("== ~/.claude.json (MCP servers, every project) ==")
     try:
         print(cj.commit(ctx))
     except lib.Unreadable as e:
@@ -401,6 +402,6 @@ def _run(argv, rule):
         # Not "writes were skipped": a repaired foreign write (user-scope mcpServers) is written
         # and still exits 1 for that run.
         print("ABORTED: each '!' line above names a failure or a repair, and what it left unwritten. "
-              "Fix what they name -- config/secrets.json, a profile or an unreadable file -- and rerun.")
+              "Fix what they name -- config/secrets.json, a project or an unreadable file -- and rerun.")
     else:
         print("OK." + ("" if ctx.apply else "  (dry-run — rerun with --apply after a clean Claude restart)"))

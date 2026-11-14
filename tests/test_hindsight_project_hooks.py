@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Each project uses one memory system, so Hindsight's Claude Code hooks are written only where a
-project uses Hindsight. A profile uses it when its `servers` list holds `hindsight-coding-agents`
-(derived, no profile field). With the `hindsight` integration on, the two rows (UserPromptSubmit
+project uses Hindsight. A project uses it when its `servers` list holds `hindsight-coding-agents`
+(derived, no project field). With the `hindsight` integration on, the two rows (UserPromptSubmit
 claude-hook.js, Stop claude-stop-hook.js) and every config/forge.json `user_hooks` row with
 `"scope": "hindsight"` land in that project's .claude/settings.local.json, through
 skills.write_settings_local, and never at user scope: the exact-command reconcile takes forge's old
@@ -13,10 +13,10 @@ Runs in-process against a toy forge.json (lib.SETTINGS), a toy HOME and toy proj
 is written.
 
 Seen failing on d2e7df0 (the rows at user scope), 19 of 27 checks red; the 8 that passed are controls
-true before as after (the non-Hindsight profile, the foreign hook, the Codex rows, no scope = user row,
+true before as after (the non-Hindsight project, the foreign hook, the Codex rows, no scope = user row,
 and the integration-off and "on": false cases, where the old code wrote nothing either):
-  on: a Hindsight profile's settings.local.json gains the two rows, the line says so, a second run is
-    already current, a profile that declares nothing else is still written, and off: the line counts
+  on: a Hindsight project's settings.local.json gains the two rows, the line says so, a second run is
+    already current, a project that declares nothing else is still written, and off: the line counts
     what it took out -- each ('raised', 'TypeError', 'write_settings_local() takes from 2 to 4 positional
     arguments but 5 were given')
   on: USER_HOOKS holds no Claude coding-agents row -- markers [('UserPromptSubmit', 'claude'), ('Stop', 'claude')]
@@ -24,20 +24,20 @@ and the integration-off and "on": false cases, where the old code wrote nothing 
   on: the note says the rows are written per project -- notes ['appended SessionStart <forge row>.py', ...]
   on: the doctor's would-write matches the file after the run -- would write {'permissions': {'allow': ['Bash(ls)']}}
   on: the doctor's would-write for a Hindsight project not yet written holds the two rows -- would write None
-  a profile `hooks` entry with the same command is never taken out -- Stop []
-  off: nobody gets them, the seeded rows go / a profile that declared only the server loses them too /
+  a project `hooks` entry with the same command is never taken out -- Stop []
+  off: nobody gets them, the seeded rows go / a project that declared only the server loses them too /
     server dropped: the rows a run wrote before go -- the seeded file kept both rows
   scope hindsight: the user_hooks row is not a user-scope row -- it was the last USER_HOOKS row
-  scope hindsight: lands only in the Hindsight profile -- hs [], plain []
+  scope hindsight: lands only in the Hindsight project -- hs [], plain []
   scope hindsight: its old user-scope entry goes -- the entry stayed
   scope "elsewhere" / scope hindsight with codex in agents: refused -- reload gave <module 'forge.hooks' ...>
 Negative controls on the finished code, each put back from a copy of the file:
   `wanted` forced False in write_settings_local -- 4 red (gains the two rows, the line, declares
-    nothing else, scope hindsight lands only in the Hindsight profile)
+    nothing else, scope hindsight lands only in the Hindsight project)
   project rows not added to OFF_HOOKS -- 4 red (user scope loses the two rows, the note, off: user
     scope, the scoped row's old user-scope entry)
-  early return blind to an owned command -- 1 red: a profile that declared only the server loses them too
-  a wanted row not counted as declared -- 1 red: a profile that declares nothing else is still written
+  early return blind to an owned command -- 1 red: a project that declared only the server loses them too
+  a wanted row not counted as declared -- 1 red: a project that declares nothing else is still written
   cli.settings_forge_would_write passing no rows -- 1 red: would write None for a project not yet written
   scope not validated -- 1 red: ValueError "unknown integration 'elsewhere'" instead of a "!" line
   codex allowed on a scoped row -- 1 red; scope ignored -- 3 red (the three scope hindsight checks).
@@ -157,15 +157,15 @@ AUDIT = {"event": "SessionStart", "command": "python3 <ROOT>/scripts/toy_injecti
          "marker": "toy_injection_audit.py", "matcher": None, "agents": ["claude"]}
 AUDIT_CMD = AUDIT["command"].replace("<ROOT>", lib.ROOT)
 
-# 1. Integration on. A Hindsight profile's file gains the two rows, a second run leaves it as it is,
-# a profile without the server gets none, and one that declares nothing else is still written.
+# 1. Integration on. A Hindsight project's file gains the two rows, a second run leaves it as it is,
+# a project without the server gets none, and one that declares nothing else is still written.
 toy_settings(1)
 hs = project("hs", [SERVER, "other"], permissions={"allow": ["Bash(ls)"]})
 bare = project("bare", [SERVER])
 plain = project("plain", ["other"], permissions={"allow": ["Bash(ls)"]})
 line = run(hs)
 doc = read(slp(hs))
-check("on: a Hindsight profile's settings.local.json gains the two rows",
+check("on: a Hindsight project's settings.local.json gains the two rows",
       entries(doc, "UserPromptSubmit") == [(UP, None, 30)] and entries(doc, "Stop") == [(STOP, None, 60)],
       "UserPromptSubmit %r, Stop %r; line %r" % (entries(doc, "UserPromptSubmit"), entries(doc, "Stop"), line))
 check("on: the Hindsight project's line says so",
@@ -175,10 +175,10 @@ again = run(hs)
 check("on: a second run is already current",
       isinstance(again, str) and "already current" in again and open(slp(hs), "rb").read() == before, "line %r" % (again,))
 line = run(bare)
-check("on: a Hindsight profile that declares nothing else is still written",
+check("on: a Hindsight project that declares nothing else is still written",
       entries(read(slp(bare)), "Stop") == [(STOP, None, 60)], "line %r, file %r" % (line, read(slp(bare))))
 line = run(plain)
-check("on: a profile without the server gets none (control)",
+check("on: a project without the server gets none (control)",
       not ({UP, STOP} & all_commands(read(slp(plain)))), "file %r" % (read(slp(plain)),))
 claude_rows = [(r[0], "claude") for r in hooks.USER_HOOKS if r[3] == "coding-agents" and hooks.CLAUDE in r[5]]
 check("on: USER_HOOKS holds no Claude coding-agents row", not claude_rows, "markers %r" % (claude_rows,))
@@ -207,12 +207,12 @@ check("on: the doctor's would-write for a Hindsight project not yet written hold
       isinstance(want, dict) and entries(want, "UserPromptSubmit") == [(UP, None, 30)] and entries(want, "Stop") == [(STOP, None, 60)]
       and not os.path.exists(slp(unwritten)), "would write %r" % (want,))
 
-# 2. A profile's own `hooks` that names the same command keeps it, whatever the integration says.
+# 2. A project's own `hooks` that names the same command keeps it, whatever the integration says.
 declared = project("declared", ["other"], hooks={"Stop": [group(STOP, 60)]})
 run(declared)
 toy_settings(2, integrations=dict(INTEGRATIONS, hindsight=False))
 run(declared)
-check("a profile `hooks` entry with the same command is never taken out",
+check("a project `hooks` entry with the same command is never taken out",
       entries(read(slp(declared)), "Stop") == [(STOP, None, 60)], "Stop %r" % (entries(read(slp(declared)), "Stop"),))
 
 # 3. Integration off: nobody gets them, the entries an earlier run wrote go (seeded here as that run
@@ -227,14 +227,14 @@ check("off: nobody gets them, the seeded rows go",
       not ({UP, STOP} & all_commands(doc)) and (doc or {}).get("permissions"), "file %r, line %r" % (doc, line))
 check("off: the line counts what it took out", isinstance(line, str) and line.count("coding-agents entries removed 1") == 2, "line %r" % (line,))
 line = run(bare)
-check("off: a profile that declared only the server loses them too", not ({UP, STOP} & all_commands(read(slp(bare)))),
+check("off: a project that declared only the server loses them too", not ({UP, STOP} & all_commands(read(slp(bare)))),
       "file %r, line %r" % (read(slp(bare)), line))
 user = {"hooks": {"UserPromptSubmit": [group(UP, 30), group(FOREIGN, 5)], "Stop": [group(STOP, 60)]}}
 attempt(hooks.reconcile, user, hooks.CLAUDE)
 check("off: user scope loses them too, the foreign hook stays",
       not ({UP, STOP} & all_commands(user)) and FOREIGN in all_commands(user), "%r" % (user,))
 
-# 4. On again, then the profile drops the server: what the earlier run wrote goes.
+# 4. On again, then the project drops the server: what the earlier run wrote goes.
 toy_settings(3)
 write(slp(hs), SEEDED)
 dropped = dict(hs, servers=["other"])
@@ -242,7 +242,7 @@ line = run(dropped)
 check("server dropped: the rows a run wrote before go", not ({UP, STOP} & all_commands(read(slp(hs)))),
       "file %r, line %r" % (read(slp(hs)), line))
 
-# 5. A user_hooks row with "scope": "hindsight" is written per project, to Hindsight profiles only.
+# 5. A user_hooks row with "scope": "hindsight" is written per project, to Hindsight projects only.
 toy_settings(4, user_hooks=[AUDIT])
 check("no scope: the user_hooks row is a user-scope row (control)", AUDIT_CMD in [r[1] for r in hooks.USER_HOOKS],
       "USER_HOOKS commands %r" % ([r[1] for r in hooks.USER_HOOKS][-3:],))
@@ -251,7 +251,7 @@ check("scope hindsight: the user_hooks row is not a user-scope row", AUDIT_CMD n
       "USER_HOOKS commands %r" % ([r[1] for r in hooks.USER_HOOKS][-3:],))
 run(hs)
 run(plain)
-check("scope hindsight: lands only in the Hindsight profile",
+check("scope hindsight: lands only in the Hindsight project",
       entries(read(slp(hs)), "SessionStart") == [(AUDIT_CMD, None, 10)] and AUDIT_CMD not in all_commands(read(slp(plain))),
       "hs %r, plain %r" % (entries(read(slp(hs)), "SessionStart"), entries(read(slp(plain)), "SessionStart")))
 user = {"hooks": {"SessionStart": [group(AUDIT_CMD, 10), group(FOREIGN, 5)]}}

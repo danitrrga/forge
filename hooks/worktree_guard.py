@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """worktree_guard.py — PreToolUse hook. An agent in a linked worktree writes only inside
-that worktree, to scratch (/tmp, $TMPDIR) or to a folder its profile names, and a worktree it
-creates goes under the main checkout's .claude/worktrees/ (or a folder its profile names).
+that worktree, to scratch (/tmp, $TMPDIR) or to a folder its project names, and a worktree it
+creates goes under the main checkout's .claude/worktrees/ (or a folder its project names).
 Outside a linked worktree it only keeps the project's new worktrees there. Exit 2 + stderr blocks.
 
 forge's copy of the downstream project's .claude/hooks/worktree_guard.py at 77d2255e, made
 neutral (a research note on worktree guards). Run as
-`python3 <forge>/hooks/worktree_guard.py --project NAME`, the entry the profile's
-`worktree_guard` line wires (forge/skills.py). Each call reads <forge>/config/profiles/NAME.claude.json:
+`python3 <forge>/hooks/worktree_guard.py --project NAME`, the entry the project's
+`worktree_guard` line wires (forge/skills.py). Each call reads <forge>/config/projects/NAME.claude.json:
   * project_path: the project's main checkout, whose worktrees the placement rule keeps. Not
     CLAUDE_PROJECT_DIR, and not this file's folder, which is forge.
   * worktree_guard: true, or an object (its `on` decides only whether forge wires the hook):
@@ -22,7 +22,7 @@ neutral (a research note on worktree guards). Run as
                      its worktree with `mktemp -d /tmp/sv-<phase>-reviewfix-XXXXXX`).
     Paths are absolute or ~/..., compared resolved, so a symlink inside one that points out is
     refused like any other outside write.
-A profile that cannot be read or has a wrong shape is a crash of this hook: refused inside a
+A project that cannot be read or has a wrong shape is a crash of this hook: refused inside a
 worktree, allowed outside.
 
 Ported from GSD Core's worktree path guard (MIT, Copyright (c) 2026 Open GSD):
@@ -43,7 +43,7 @@ Changed, each on purpose:
     in any worktree whose branch was renamed, the downstream project's day-5 worktree among them. Here
     every linked worktree counts: each one has a single writer.
   * GSD allows any write outside a git repository (~/anything). Here only the worktree,
-    scratch, the profile's write_roots and the /dev sinks a redirect uses are allowed.
+    scratch, the project's write_roots and the /dev sinks a redirect uses are allowed.
   * GSD reads only Edit, Write and MultiEdit. NotebookEdit (`notebook_path`) and the Bash
     tool's writes are read too: redirects, tee, cp, mv (both ends), ln, rsync, install,
     rm, touch, truncate, mkdir, sed -i, dd of=, and a nested `sh -c '...'`; since Codex's
@@ -65,7 +65,7 @@ Changed, each on purpose:
     or not UTF-8), the cwd's spelling decides: under a .claude/worktrees/ folder it
     blocks, elsewhere it allows. A worktree made outside that folder and whose `.git` file
     is unreadable is therefore let through.
-  * The location rule is new: `git worktree add` and `git worktree move` in THE PROFILE'S
+  * The location rule is new: `git worktree add` and `git worktree move` in THE PROJECT'S
     project repository must land directly under <main checkout>/.claude/worktrees/ or a
     worktree_dirs folder, from a worktree and from the main checkout alike (Portal,
     supervising session). It is the only thing this hook does outside a
@@ -89,7 +89,7 @@ Changed, each on purpose:
     on a path entry (`{"path": "~/gsd-workspaces", "depth": 2, "why": ...}`) fits them and keeps
     the rule exact; a prefix spanning any depth would also admit a worktree nested in another.
     Not built: no ~/gsd-workspaces folder exists on this machine.
-  * Folders outside the worktree are writable only when the profile's write_roots names
+  * Folders outside the worktree are writable only when the project's write_roots names
     them. Claude's memory folder stays blocked.
 
 The Bash reading copies the shell parser of the downstream project's guard_tool_use.py at d8cc6912 (the
@@ -146,19 +146,19 @@ HOME = os.path.realpath(os.path.expanduser("~"))
 # Redirect sinks that are not files. Judged by spelling, before realpath: /dev/stdout
 # resolves through /proc to wherever fd 1 points.
 DEV_SINKS = re.compile(r"^/dev/(?:null|stdout|stderr|tty|fd/\d+)$")
-PROFILES = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "config", "profiles")
-PROFILE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
-# The profile's worktree_guard keys, and the fields each entry of a list may name besides "why".
+PROJECTS = os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "config", "projects")
+PROJECT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+# The project's worktree_guard keys, and the fields each entry of a list may name besides "why".
 PARAM_KEYS = {"on": None, "write_roots": ("path", "prefix"), "worktree_dirs": ("path", "prefix")}
 
 
-# What the profile says: root (the main checkout), write_roots and write_prefixes (resolved, a
+# What the project says: root (the main checkout), write_roots and write_prefixes (resolved, a
 # prefix as <resolved parent>/<stem>), worktree_dirs (resolved, .claude/worktrees first) and
 # worktree_prefixes (as write_prefixes).
 Config = collections.namedtuple("Config", "root write_roots write_prefixes worktree_dirs worktree_prefixes")
 
 
-CFG = None  # set in main() from the profile, before any rule reads it
+CFG = None  # set in main() from the project, before any rule reads it
 
 
 def tilde(p):
@@ -178,12 +178,21 @@ def _absolute(p, where):
 
 
 def load_config(argv):
-    """The Config of the profile named by `--project NAME`; ValueError says what is wrong."""
+    """The Config of the project named by `--project NAME`; ValueError says what is wrong. With the registry
+    still under its old name (config/profiles/ there, config/projects absent, a link to nothing or a plain
+    file), every call is refused with the mv line, in the main checkout too: the guard does not import
+    forge's lib (it runs alone, on every call), so this is lib.require_registry's condition and its two
+    lines, written again."""
+    if not os.path.isdir(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
+        if os.path.lexists(PROJECTS):
+            deny("config/profiles/ was renamed config/projects/ and config/projects is not a folder: "
+                 "rm config/projects, then mv config/profiles config/projects")
+        deny("config/profiles/ was renamed config/projects/: mv config/profiles config/projects")
     if len(argv) != 2 or argv[0] != "--project":
         raise ValueError("arguments %r; the only ones are --project NAME" % (argv,))
-    if not PROFILE_NAME.match(argv[1]):
-        raise ValueError("%r is not a profile name" % argv[1])
-    path = os.path.join(PROFILES, argv[1] + ".claude.json")
+    if not PROJECT_NAME.match(argv[1]):
+        raise ValueError("%r is not a project name" % argv[1])
+    path = os.path.join(PROJECTS, argv[1] + ".claude.json")
     try:
         with open(path, encoding="utf-8") as fh:
             prof = json.load(fh)
@@ -309,7 +318,7 @@ def outside_reason(raw, base, wt):
             or any(inside(real, s) for s in scratch_roots())):
         return None
     return ("%s resolves to %s, outside this worktree (%s). An agent in a worktree writes "
-            "only inside it, to /tmp scratch or to a folder the profile's worktree_guard.write_roots "
+            "only inside it, to /tmp scratch or to a folder the project's worktree_guard.write_roots "
             "names. If the path came from the main checkout, rebuild it from this worktree's root."
             % (raw, real, root))
 
@@ -1132,7 +1141,7 @@ def check_worktree_location(piece, base, env):
     if (os.path.dirname(real) not in CFG.worktree_dirs
             and not any(in_prefix(real, p) and "/" not in real[len(p):] for p in CFG.worktree_prefixes)):
         deny("git worktree %s puts a worktree at %s. Worktrees of this project live only %s; the "
-             "profile's worktree_guard.worktree_dirs names any other folder or prefix."
+             "project's worktree_guard.worktree_dirs names any other folder or prefix."
              % (sub[1], real, where_ok))
 
 
@@ -1179,7 +1188,7 @@ def main(argv=None):
     try:
         CFG = load_config(argv)
     except Exception as e:
-        deny("the profile cannot be used (%s), so every call is refused inside a worktree" % e)
+        deny("the project cannot be used (%s), so every call is refused inside a worktree" % e)
     try:
         if tool in FILE_TOOLS:
             p = ti.get(FILE_TOOLS[tool])

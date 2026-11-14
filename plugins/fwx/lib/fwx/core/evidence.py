@@ -2,8 +2,8 @@
 # checks are the recipe's commands (marshal also named them), and the evidence is the row `facts.evidence` carries.
 """The checks a project defines, and what its evidence proves about the head commit.
 
-`plan_checks(project_checks, repo_root)` is the effective recipe: the commands of the profile (`project.checks` in
-`.claude/fwx.json`, plain commands or dicts with a `command`), and, when the profile has none, the package.json scripts
+`plan_checks(project_checks, repo_root)` is the effective recipe: the commands of the project (`project.checks` in
+`.claude/fwx.json`, plain commands or dicts with a `command`), and, when the project has none, the package.json scripts
 `test`, `lint`, `typecheck` and `build` run with the package manager of the lockfile (bun, then pnpm, yarn, npm; npm when
 there is none). Empty when neither exists. Setup (an install) is not part of it: a checkout installs before it checks.
 
@@ -53,7 +53,7 @@ def _commands(checks):
 
 
 def plan_checks(project_checks, repo_root):
-    """The effective recipe, a list of commands: the profile's, else the package.json scripts, else []."""
+    """The effective recipe, a list of commands: the project's, else the package.json scripts, else []."""
     recipe = _commands(project_checks)
     if recipe:
         return recipe
