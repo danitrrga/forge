@@ -14,6 +14,8 @@ Seen red on the untouched branch (text before this change; the five FAIL lines, 
 Round two (a review of the text found the open line not relayed and the fix round without `--fix`); run against the first version of
 ui-review.md the two new checks gave:
   FAIL: ui-review.md names 'NOT OPENED' -> missing
+  (since the opener moved to the user's instructions the word checked is "the user's instructions"; with ui-review.md's
+  sentence on opening the page taken out: FAIL: ui-review.md names "the user's instructions" -> missing)
   FAIL: ui-review.md names '--fix <file>' -> missing
 3.2 U5 follow-up. The `state` agent returns the report as text and the session saves it (a subagent's Write of a report is refused by
 Claude Code: "Subagents should return findings as text, not write report files"), and the fields the session's steps read are
@@ -191,7 +193,7 @@ def main():
 
     # What the review text must say.
     # Round two of the text review (the nine-point contract keys, the relayed open line, the fix round's findings file).
-    for word in ("review read", "redo", "not_defect", "contradicted_wanted", "open", "stale", "NOT OPENED", "--fix <file>"):
+    for word in ("review read", "redo", "not_defect", "contradicted_wanted", "open", "stale", "the user's instructions", "--fix <file>"):
         check("ui-review.md names '%s'" % word, word in review, "missing")
     check("ui-review.md asks before the revert", asks_before_revert(review), "no 'revert it?' before the first '--revert'")
 
