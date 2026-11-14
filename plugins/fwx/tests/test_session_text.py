@@ -29,6 +29,16 @@ No static check is added for the three earlier text fixes, except where a named 
 ends with is a result, not the end of the turn) and the stop of step 8 are behaviour of a model reading prose, and a grep for the words
 would only prove the words are there.
 
+DTC-34, the owner's rule: a phase worktree is removed only once its PR is merged and nothing in it is unsaved. Run against origin/master 315324b
+(closing.md step 4 removed the worktree at close, SKILL.md step 0 had no sweep), the new checks gave:
+  FAIL: closing.md step 4 does not remove the phase worktree -> `git worktree remove` is in it
+  FAIL: closing.md step 4 says the worktree stays until its PR is merged -> no 'stays' or no 'merged'
+  FAIL: SKILL.md step 0 clears merged worktrees: merged PR, clean, no force -> missing: ['--state merged', 'status --porcelain', '.claude/worktrees/', 'no force', 'git branch -d']
+  FAIL: SKILL.md step 0 clears worktrees before the retake and the resume -> order is not sweep, retake, resume
+  FAIL: playbooks/session.md n_L3 clears merged worktrees (--state merged) -> missing
+  FAIL: playbooks/session.md n_L10 no longer removes the phase worktree -> 'removes only the phase worktree' still in it
+(the `branch -D` check passes on master; the control "a step 0 with `git branch -D` is caught" shows it can fail.)
+
 Each check also has a control on a toy text (the "control:" checks): a text with 'verdict wait' must fail the removed-string check, and a text
 that reverts before it asks must fail the ask-first check.
 """
@@ -423,6 +433,25 @@ def main():
         "cd <main_checkout> && find .fwx -type f ! -name '.*' \\( -name '*.md' -o -name '*.tsv' -o -path '*/demo/*.html' \\) -print0 | git add --pathspec-from-file=- --pathspec-file-nul && git commit -m \"<message>\" -- .fwx",
         stale=True)[3]), "the control line did not commit it")
     check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
+
+    # DTC-34: the worktree of a phase is removed by the next session, once its PR is merged and it is clean, never at the close.
+    closing = read(os.path.join("references", "closing.md"))
+    cleanup = next((ln for ln in closing.splitlines() if ln.startswith("4. **Cleanup.**")), "")
+    check("closing.md step 4 found", "fwx walk stop --orphans" in cleanup, "not found")
+    check("closing.md step 4 does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
+    check("closing.md step 4 says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    s0 = step(texts["SKILL.md"], 0)
+    need = ["--state merged", "status --porcelain", ".claude/worktrees/", "no force", "git branch -d"]
+    check("SKILL.md step 0 clears merged worktrees: merged PR, clean, no force", all(w in s0 for w in need), "missing: %s" % [w for w in need if w not in s0])
+    check("SKILL.md step 0 never uses `git branch -D`", "branch -D" not in s0, "`git branch -D` is in it")
+    check("SKILL.md step 0 clears worktrees before the retake and the resume", in_order(s0, "--state merged", "retake", "fwx session --json"), "order is not sweep, retake, resume")
+    check("playbooks/session.md n_L3 clears merged worktrees (--state merged)", "--state merged" in block(session_pb, "n_L3"), "missing")
+    check("playbooks/session.md n_L10 no longer removes the phase worktree", "removes only the phase worktree" not in block(session_pb, "n_L10"), "'removes only the phase worktree' still in it")
+    # controls: the old closing step and a step 0 without the rule fail, a step 0 with `-D` fails.
+    check("control: the old closing step 4 is caught", "git worktree remove" in "4. **Cleanup.** Remove it with `git worktree remove <path>` and no force.")
+    check("control: a step 0 without the rule is caught", not all(w in "0. **Where you are.** Run `fwx session --json`." for w in need))
+    check("control: a step 0 with `git branch -D` is caught", "branch -D" in "then `git branch -D <branch>`")
+    check("control: step 0 is cut by step()", step("## Steps\n0. **A.** x\n1. **B.** y\n", 0).startswith("0. **A.**") and "y" not in step("## Steps\n0. **A.** x\n1. **B.** y\n", 0))
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
