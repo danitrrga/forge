@@ -16,11 +16,15 @@ on the option lines (`a. <option>: <what it implies>` at line 13, `b.` at 14) or
   - lettered option "b. drop it, suggest b" in SKILL.md: FAIL: no recommendation in a question -> SKILL.md:20 b. drop it, suggest b
   - "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'
   - `models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:
-No verdict page is waited on or served, and no opener is named: no .md under skills/discuss/ and agents/ names `verdict wait`, `--serve` or
-`xdg-open` (how a page is opened for the owner is in his own instructions; skills/session still names `xdg-open` and is another unit's).
+No verdict page is waited on or served, and no opener is named: no .md under skills/, agents/ and playbooks/ names `verdict wait`,
+`--serve` or `xdg-open` (how a page is opened for the owner is in his own instructions).
 Seen red on master before the texts changed (first match per file; 18 .md files looked at):
   FAIL: no verdict wait, serve or opener in the discuss and the agents -> agents/demo.md names '--serve'
   FAIL: no verdict wait, serve or opener in the discuss and the agents -> skills/discuss/SKILL.md names 'xdg-open'
+Widened to every skill and playbook, red before the session texts changed (32 .md files looked at):
+  FAIL: ... -> playbooks/session.md names 'xdg-open'
+  FAIL: ... -> skills/session/SKILL.md names 'xdg-open'
+  FAIL: ... -> skills/session/references/ui-review.md names 'xdg-open'
 Length is not checked here: it is measured and reported, not capped. Each change also has an in-file control on a toy (the "control:" checks).
 """
 import json
@@ -76,7 +80,7 @@ WAITS = re.compile(r"verdict wait|--serve|xdg-open")
 
 def waiting(texts):
     """texts: {name: text}. Returns [(check, detail)] for each file that names a verdict wait, a serve or an opener."""
-    return [("no verdict wait, serve or opener in the discuss and the agents", "%s names %r" % (n, m.group(0)))
+    return [("no verdict wait, serve or opener in the skills, agents and playbooks", "%s names %r" % (n, m.group(0)))
             for n, t in sorted(texts.items()) for m in [WAITS.search(t)] if m]
 
 
@@ -91,15 +95,15 @@ for f in ("rounds.md", "playback.md", "reentry.md"):
 demo = read("agents", "demo.md")
 
 agent_texts = {}
-for sub in (os.path.join("skills", "discuss"), "agents"):
+for sub in ("skills", "agents", "playbooks"):
     for dirpath, _, names in os.walk(os.path.join(ROOT, sub)):
         for n in names:
             if n.endswith(".md"):
                 full = os.path.join(dirpath, n)
                 with open(full, encoding="utf-8") as fh:
                     agent_texts[os.path.relpath(full, ROOT)] = fh.read()
-print("looked at %d .md files under skills/discuss/ and agents/" % len(agent_texts))
-check("the discuss and agent texts are looked at (zero is a failure)", len(agent_texts) > 0)
+print("looked at %d .md files under skills/, agents/ and playbooks/" % len(agent_texts))
+check("the skill, agent and playbook texts are looked at (zero is a failure)", len(agent_texts) > 0)
 for name, detail in waiting(agent_texts):
     check(name, False, detail)
 
