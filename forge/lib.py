@@ -26,6 +26,9 @@ PROJECTS = os.path.join(ROOT, "config", "projects")
 # config/projects/ was named after "profile" until that word was left to mean the set of skills one session uses
 # (`forge start @profile`). A checkout whose data has not moved yet says so rather than find no projects (require_registry).
 RENAMED = "config/profiles/ was renamed config/projects/: mv config/profiles config/projects"
+# config/projects is there and is no folder (a link that leads nowhere, a plain file): the mv alone fails onto it.
+RENAMED_BLOCKED = ("config/profiles/ was renamed config/projects/ and config/projects is not a folder: "
+                   "rm config/projects, then mv config/profiles config/projects")
 # Codex's own convention for relocating ~/.codex. memory_doctor.py honoured it while the generator
 # wrote ~/.codex/hooks.json regardless, so the two could read and write different files.
 CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
@@ -91,11 +94,12 @@ def codex_harness():
 
 def require_registry():
     """Exit 1 with RENAMED when the registry is still under its old name: the old folder there and
-    config/projects/ resolving to nothing (absent, or a link that leads nowhere; a link to the old
-    folder, the bridge while the data moves, resolves and counts as there). Without it every project
-    vanished silently, and a project file written there started a second, split registry."""
-    if not os.path.exists(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
-        sys.exit(RENAMED)
+    config/projects not a folder (absent; or, with RENAMED_BLOCKED, a link that leads nowhere or a plain
+    file; a link to the old folder, the bridge while the data moves, is a folder and counts as there).
+    Without it every project vanished silently, and a project file written there started a second,
+    split registry."""
+    if not os.path.isdir(PROJECTS) and os.path.isdir(os.path.join(os.path.dirname(PROJECTS), "profiles")):
+        sys.exit(RENAMED_BLOCKED if os.path.lexists(PROJECTS) else RENAMED)
 
 
 def projects(skipped=None):

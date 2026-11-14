@@ -27,7 +27,11 @@ After the rename, with `sys.exit(RENAMED)` taken out of lib.require_registry (ne
   FAIL old folder only: the process exits 1 with the one line on stderr -- rc=0 stderr=''
 A config/projects link that leads nowhere is no bridge; red while the condition used lexists:
   FAIL dangling link: lib.projects() exits 1 naming the mv -- the projects read as {}
-  FAIL dangling link: write_text into config/projects/ exits 1 naming the mv -- wrote through it: None"""
+  FAIL dangling link: write_text into config/projects/ exits 1 naming the mv -- wrote through it: None
+Onto such a link the mv alone fails, and a plain file under the new name is no registry either; red while
+the condition used exists and there was one line:
+  FAIL dangling link: lib.projects() exits 1 naming the rm and the mv -- got '... : mv config/... config/projects'
+  NotADirectoryError: [Errno 20] Not a directory: '.../config/projects'   (the plain file)"""
 import os
 import re
 import subprocess
@@ -170,11 +174,19 @@ try:
         # A link that leads nowhere is no bridge: the registry would read as empty.
         os.remove(new_dir)
         os.symlink("gone", new_dir)
+        # The mv alone fails onto a link (ENOTDIR), so the line says to remove what is in the way first.
+        blocked = ("config/" + "profiles/ was renamed config/projects/ and config/projects is not a folder: "
+                   "rm config/projects, then mv config/" + "profiles config/projects")
         got = exits(lib.projects)
-        check("dangling link: lib.projects() exits 1 naming the mv", got == lib.RENAMED, "the projects read as %r" % (got,))
+        check("dangling link: lib.projects() exits 1 naming the rm and the mv", got == blocked, "got %r" % (got,))
         got = exits(lambda: lib.write_text(os.path.join(new_dir, "fresh2.claude.json"), "{}\n"))
-        check("dangling link: write_text into config/projects/ exits 1 naming the mv", got == lib.RENAMED,
+        check("dangling link: write_text into config/projects/ exits 1 naming the rm and the mv", got == blocked,
               "wrote through it: %r" % (got,))
+        # A plain file under the new name is no registry either: it would read as no projects.
+        os.remove(new_dir)
+        open(new_dir, "w").close()
+        got = exits(lib.projects)
+        check("plain file: lib.projects() exits 1 naming the rm and the mv", got == blocked, "the projects read as %r" % (got,))
         os.remove(new_dir)
         os.symlink("profiles", new_dir)
 

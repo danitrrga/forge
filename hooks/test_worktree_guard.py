@@ -778,6 +778,8 @@ def scaling_checks():
 
 
 RENAMED = "config/profiles/ was renamed config/projects/: mv config/profiles config/projects"
+RENAMED_BLOCKED = ("config/profiles/ was renamed config/projects/ and config/projects is not a folder: "
+                   "rm config/projects, then mv config/profiles config/projects")
 
 
 def registry_states():
@@ -788,7 +790,8 @@ def registry_states():
     "the project cannot be used (... config/projects/toy.claude.json cannot be read ...)" without the rename.
     A link config/projects that leads nowhere is refused the same way; red with lexists in the condition:
     "dangling link: main worktree add: rc=0 ''" and "dangling link: worktree ls: rc=2 '... the project cannot
-    be used ...'". The other three states are pinned to what the hook did before, as the control that nothing
+    be used ...'". So is a plain file under the new name, and both get the line that removes it first; red
+    with exists in the condition: "plain file: main worktree add: rc=0 ''". The other three states are pinned to what the hook did before, as the control that nothing
     else moved."""
     new, old = os.path.join(TOY, "config", "projects"), os.path.join(TOY, "config", "profiles")
     aside = os.path.join(BASE, "registry-aside")
@@ -800,7 +803,9 @@ def registry_states():
         ("folder", lambda: None, folder_want),
         ("link", lambda: (os.rename(new, old), os.symlink("profiles", new)), folder_want),
         ("dangling link", lambda: (os.remove(new), os.symlink("gone", new)),
-         {k: (2, "worktree_guard: BLOCKED - " + RENAMED) for k in folder_want}),
+         {k: (2, "worktree_guard: BLOCKED - " + RENAMED_BLOCKED) for k in folder_want}),
+        ("plain file", lambda: (os.remove(new), open(new, "w").close()),
+         {k: (2, "worktree_guard: BLOCKED - " + RENAMED_BLOCKED) for k in folder_want}),
         ("only old", lambda: os.remove(new),
          {k: (2, "worktree_guard: BLOCKED - " + RENAMED) for k in folder_want}),
         ("neither", lambda: os.rename(old, aside),
