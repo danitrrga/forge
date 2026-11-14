@@ -644,6 +644,12 @@ def check_control(script, s):
     r = result(rec)
     s.eq("control missed: still done, found false", (r.get("status"), details(rec).get("control", {}).get("found")), ("done", False))
     s.ok("control missed: the reason says first that the run does not count", str(r.get("reason")).lower().startswith("the run does not count"), repr(r.get("reason")))
+    # The owner reads this line (the session shows the `reason` as printed): plain words, no "control" or "fault planted" of the walk's own jargon.
+    # Seen red on the base: FAIL: control missed: the reason tells the owner, in plain words, that the walkers missed the fault planted on purpose on
+    # the screen and that "no findings" proves nothing: 'The run does not count: the walkers did not find the fault planted on /settings.'
+    why = str(r.get("reason"))
+    s.ok("control missed: the reason tells the owner, in plain words, that the walkers missed the fault planted on purpose on the screen and that \"no findings\" proves nothing",
+         "did not report the fault planted on purpose on /settings" in why and 'their "no findings" proves nothing about the screens they walked' in why, repr(why))
     # the critic of the control tramo never returned: the control tramo was not walked, so found is null without a judge
     rec, err = go(script, answers_over={"ui-walker:T1-critic": None})
     rec = finish(s, "control not walked", rec, err)
@@ -966,6 +972,8 @@ MUTANTS = [
     ("the control is armed after the walkers", "await armControl(tramos)", "/* armed later */", "FAIL: green: the control is armed before any walker"),
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
     ("a missed control still counts", "The run does not count", "Run", "FAIL: control missed: the reason says first that the run does not count"),
+    ("a missed control's reason in the walk's jargon", "did not report the fault planted on purpose on ' + st.control.screen + ', so their \"no findings\" proves nothing about the screens they walked'",
+     "did not find the fault planted on ' + st.control.screen", "FAIL: control missed: the reason tells the owner, in plain words"),
     ("a refused control's reason dropped", "(ctl.why ? ' (' + ctl.why + ')' : '')", "''", "FAIL: control refused (no visible change): the run does not count, and the reason says which it was"),
     ("a control tramo not walked is judged", "walked = st.walked[ctl.tramo] === true", "walked = true", "FAIL: control not walked: no judge launched"),
     ("a down that exits 1 is done", "if (down.rc !== 0)", "if (false)", "FAIL: down fails: status failed"),
