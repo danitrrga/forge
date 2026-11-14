@@ -27,7 +27,7 @@ Your prompt gives the decision, the absolute paths of the phase's `context.md` a
      "figures": [{"html": "a.html", "caption": "a"}, {"html": "b.html", "caption": "b"}]}]}
    ```
 
-5. Serve it: `python3 <verdict_tool> verdict <dir> --serve`. It starts the server detached and prints the `xdg-open` line. Read what it prints: it warns of a field it does not know and stops on a missing figure. Fix what it names and run it again. With `verdict_tool` null, skip this step and return one `xdg-open <absolute path>` line per figure; the owner answers by letter.
+5. Build the page without serving or opening it: `python3 <verdict_tool> verdict <dir> --no-open`. Read what it prints: it warns of a field it does not know and stops on a missing figure. Fix what it names and run it again. You cannot wait across turns, so this ends your work. With `verdict_tool` null, skip this step.
 
 ## In the app
 
@@ -35,4 +35,4 @@ Only when your prompt gives `verdict_command` and asks for the demo in the app. 
 
 ## Return
 
-The `xdg-open` line or lines, then under 100 words: one line per variant (its letter and what it shows), the variants you dropped and why, and for the app demo the capture folder and what the status command printed.
+The absolute path of the page (with `verdict_tool` null, of each figure instead), and the question with its lettered options, then under 100 words: one line per variant (its letter and what it shows), the variants you dropped and why, and for the app demo the capture folder and what the status command printed.

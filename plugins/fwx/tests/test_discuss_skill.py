@@ -16,6 +16,11 @@ on the option lines (`a. <option>: <what it implies>` at line 13, `b.` at 14) or
   - lettered option "b. drop it, suggest b" in SKILL.md: FAIL: no recommendation in a question -> SKILL.md:20 b. drop it, suggest b
   - "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'
   - `models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:
+No verdict page is waited on or served, and no opener is named: no .md under skills/discuss/ and agents/ names `verdict wait`, `--serve` or
+`xdg-open` (how a page is opened for the owner is in his own instructions; skills/session still names `xdg-open` and is another unit's).
+Seen red on master before the texts changed (first match per file; 18 .md files looked at):
+  FAIL: no verdict wait, serve or opener in the discuss and the agents -> agents/demo.md names '--serve'
+  FAIL: no verdict wait, serve or opener in the discuss and the agents -> skills/discuss/SKILL.md names 'xdg-open'
 Length is not checked here: it is measured and reported, not capped. Each change also has an in-file control on a toy (the "control:" checks).
 """
 import json
@@ -66,6 +71,15 @@ def problems(files, demo_text):
     return out
 
 
+WAITS = re.compile(r"verdict wait|--serve|xdg-open")
+
+
+def waiting(texts):
+    """texts: {name: text}. Returns [(check, detail)] for each file that names a verdict wait, a serve or an opener."""
+    return [("no verdict wait, serve or opener in the discuss and the agents", "%s names %r" % (n, m.group(0)))
+            for n, t in sorted(texts.items()) for m in [WAITS.search(t)] if m]
+
+
 def read(*p):
     with open(os.path.join(ROOT, *p), encoding="utf-8") as f:
         return f.read()
@@ -75,6 +89,19 @@ files = {"SKILL.md": read("skills", "discuss", "SKILL.md")}
 for f in ("rounds.md", "playback.md", "reentry.md"):
     files[f] = read("skills", "discuss", "references", f)
 demo = read("agents", "demo.md")
+
+agent_texts = {}
+for sub in (os.path.join("skills", "discuss"), "agents"):
+    for dirpath, _, names in os.walk(os.path.join(ROOT, sub)):
+        for n in names:
+            if n.endswith(".md"):
+                full = os.path.join(dirpath, n)
+                with open(full, encoding="utf-8") as fh:
+                    agent_texts[os.path.relpath(full, ROOT)] = fh.read()
+print("looked at %d .md files under skills/discuss/ and agents/" % len(agent_texts))
+check("the discuss and agent texts are looked at (zero is a failure)", len(agent_texts) > 0)
+for name, detail in waiting(agent_texts):
+    check(name, False, detail)
 
 check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```json" in demo)
 for name, detail in problems(files, demo):
@@ -94,6 +121,10 @@ for label, files2, demo2, want in [
 ]:
     got = [c for c, _ in problems(files2, demo2)]
     check("control: " + label, want in got, "got %s" % got)
+
+check("control: a text with no wait passes", waiting({"a.md": "show the page."}) == [])
+for bad in ("verdict wait <dir>", "verdict <dir> --serve", "end with its `xdg-open` line"):
+    check("control: %r fails" % bad, len(waiting({"a.md": "x " + bad})) == 1)
 
 print("looked at %d checks" % looked[0])
 for f in fails:
