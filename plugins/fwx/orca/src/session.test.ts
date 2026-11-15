@@ -15,15 +15,15 @@ const PHASES = JSON.stringify({
 })
 const snap = (s: object = SESSION, p: string = PHASES) => snapshot(parseSession(JSON.stringify(s)), parsePhases(p))
 
-test('the chip is project, then a bar, with no stage word', () => {
+test('the chip is project, phase, stage, then a bar (D155)', () => {
   const v = snap()!
-  assert.equal(chipText(v), 'atlas · ▰▰▰▰▰▱▱▱')
+  assert.equal(chipText(v), 'atlas · 03-billing · executing · ▰▰▰▰▰▱▱▱')
 })
 
 test('the profile slot shows nothing until there is a profile, then sits after the project', () => {
   const v = snap()!
   assert.equal(v.profile, null)
-  assert.equal(chipText({ ...v, profile: 'web' }), 'atlas · web · ▰▰▰▰▰▱▱▱')
+  assert.equal(chipText({ ...v, profile: 'web' }), 'atlas · web · 03-billing · executing · ▰▰▰▰▰▱▱▱')
 })
 
 test('no phase: `<project> · sin fase`, and the bar is not drawn', () => {
@@ -69,7 +69,7 @@ test('a long milestone is cut to two phases each side of the current one', () =>
 
 test('without the phase list the chip and the current phase still show', () => {
   const v = snap(SESSION, 'broken')!
-  assert.equal(chipText(v), 'atlas · ▰▰▰▰▰▱▱▱')
+  assert.equal(chipText(v), 'atlas · 03-billing · executing · ▰▰▰▰▰▱▱▱')
   assert.deepEqual(v.phases, [])
   assert.equal(tooltip(v), 'Hito v1 · Rama fwx/billing')
 })

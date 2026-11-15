@@ -46,7 +46,7 @@ test('the chip shows the focused workspace, read where it lives', async () => {
     await w.request('session.get')
     const last = updates(h).at(-1)!
     assert.equal(last.visible, true)
-    assert.equal(last.text, 'atlas · ▰▰▰▰▱▱▱▱')
+    assert.equal(last.text, 'atlas · 01-a · executing · ▰▰▰▰▱▱▱▱')
     assert.equal(last.tone, 'accent')
     assert.match(String(last.tooltip), /▶ 01-a \(executing\)/)
     const ran = (await import('node:fs')).readFileSync(calls, 'utf8')

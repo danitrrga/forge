@@ -134,7 +134,8 @@ export function bar(progress: number): string {
 export function chipText(v: Snapshot): string {
   const head = [v.project, v.profile].filter(Boolean).join(' · ')
   if (!v.phase) return `${head} · sin fase`
-  return v.progress === null ? head : `${head} · ${bar(v.progress)}`
+  const where = [head, v.phase, v.stage].filter(Boolean).join(' · ')
+  return v.progress === null ? where : `${where} · ${bar(v.progress)}`
 }
 
 const MARK: Record<State, string> = { done: '✓', current: '▶', next: '○' }

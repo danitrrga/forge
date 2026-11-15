@@ -20,7 +20,7 @@
       {
         "id": "session",
         "text": "fwx",
-        "icon": "layers",
+        "icon": "hammer",
         "tooltip": "fwx session",
         "command": "open"
       }
@@ -29,7 +29,7 @@
       {
         "id": "session",
         "title": "Sesión",
-        "icon": "layers",
+        "icon": "hammer",
         "entry": "panel.html",
         "ui": "html"
       }
