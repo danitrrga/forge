@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Sesión</title>
+<!-- The look is this one block; the data is the plain markup `render` builds below it (header, bar, roadmap), so a restyle
+     touches only the CSS. Colours are Orca's theme variables, so the panel follows the theme. data-state is done|current|next. -->
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; padding: 14px; background: var(--orca-background); color: var(--orca-foreground);
+         font: 13px/1.45 system-ui, sans-serif; }
+  .muted { color: var(--orca-muted-foreground); }
+  header .project { font-size: 15px; font-weight: 600; }
+  header .meta { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; font-size: 12px; }
+  .bar { height: 6px; margin: 12px 0 4px; border-radius: 3px; background: var(--orca-muted); overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--orca-primary); }
+  .bar-label { display: flex; justify-content: space-between; font-size: 12px; }
+  h2 { margin: 18px 0 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+       color: var(--orca-muted-foreground); }
+  .row { display: flex; align-items: baseline; gap: 8px; padding: 3px 0; }
+  .row .mark { width: 14px; text-align: center; flex: none; }
+  .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .row .tag { font-size: 11px; color: var(--orca-muted-foreground); }
+  .row[data-state="done"] { color: var(--orca-muted-foreground); }
+  .row[data-state="done"] .mark { color: var(--orca-primary); }
+  .row[data-state="current"] { font-weight: 600; }
+  .row[data-state="current"] .mark, .row[data-state="current"] .tag { color: var(--orca-primary); }
+  .row[data-state="next"] { color: var(--orca-foreground); opacity: .75; }
+  .parts { margin: 2px 0 6px 22px; padding-left: 10px; border-left: 1px solid var(--orca-border); }
+  .empty { padding: 24px 0; text-align: center; }
+</style>
+</head>
+<body>
+<div id="root" class="muted">Leyendo…</div>
+<script>
+  const root = document.getElementById('root')
+  const MARK = { done: '✓', current: '▶', next: '○' }
+
+  function el(tag, attrs, ...kids) {
+    const e = document.createElement(tag)
+    for (const [k, v] of Object.entries(attrs || {})) e.setAttribute(k, v)
+    for (const k of kids) if (k) e.append(k)
+    return e
+  }
+  const span = (cls, text) => el('span', { class: cls }, text)
+  const item = (state, name, tag) =>
+    el('div', { class: 'row', role: 'listitem', 'data-state': state }, span('mark', MARK[state]), span('name', name), tag ? span('tag', tag) : null)
+
+  function render(s) {
+    root.replaceChildren()
+    root.className = ''
+    if (!s) {
+      root.className = 'empty muted'
+      root.textContent = 'Este workspace no tiene una sesión fwx.'
+      return
+    }
+    const pct = s.progress === null ? null : Math.round(s.progress * 100)
+    root.append(
+      el('header', {},
+        el('div', { class: 'project' }, s.project),
+        el('div', { class: 'meta muted' },
+          s.profile ? span('', s.profile) : null,
+          s.branch ? span('', s.branch) : null)),
+      el('div', { class: 'bar' }, pct === null ? null : el('i', { style: 'width:' + pct + '%' })),
+      el('div', { class: 'bar-label' },
+        span('', s.phase ? (s.stage || 'sin etapa') + (s.part && s.parts ? ' · parte ' + s.part + '/' + s.parts : '') : 'sin fase'),
+        span('muted', pct === null ? '' : pct + '%')))
+
+    if (s.phases.length) {
+      const list = el('div', { role: 'list' })
+      for (const p of s.phases) {
+        list.append(item(p.state, p.name, p.stage))
+        if (p.state === 'current' && s.partList.length) {
+          const parts = el('div', { class: 'parts', role: 'list' })
+          s.partList.forEach((x, i) => parts.append(item(x.state, 'Parte ' + (i + 1) + ' · ' + x.name)))
+          list.append(parts)
+        }
+      }
+      root.append(el('h2', {}, s.milestone ? 'Hito ' + s.milestone : 'Fases'), list)
+    }
+  }
+
+  orca.plugin.request('session.get').then((a) => render(a.snapshot))
+  orca.plugin.on('session.changed', (a) => render(a.snapshot))
+</script>
+</body>
+</html>
