@@ -58,7 +58,7 @@ def cmd_resolve(a):
     if r["phase_dir"] and sid and not _bound_to(r, bound):  # the one open phase, found with nothing bound: bind it
         state.write_session(session=sid, subproject=r["subproject"], phase_dir=r["phase_dir"])
     if a.json:
-        _dump(r)
+        _dump(dict(r, **state.summary(r)))
     elif r["phase_dir"]:
         print("phase_dir: %s" % r["phase_dir"])
         print("subproject: %s" % (r["subproject"] or "root"))
