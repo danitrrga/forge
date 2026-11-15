@@ -152,3 +152,28 @@ def advance(dir, to, why="", cwd=None, table=None):
     detail = ("%s %s" % (to, why or "")).strip()
     state.append_audit(dir, "stage", detail=detail, cwd=str(dir) if cwd is None else cwd)
     return frm
+
+
+# ---- progress ---------------------------------------------------------------------------------------------------------
+
+BEFORE_EXECUTION = ("discuss", "premortem", "planning", "postmortem")
+IN_A_PART = {"executing": 0.0, "reviewing": 0.5, "ui-walk": 0.5, "phase-review": 0.5}  # how far into its part's unit
+
+
+def progress(stage, part=None, parts=None):
+    """How far a session phase is, 0.0 to 1.0, for a status bar. The phase is `4 + P` units: one for each stage of
+    BEFORE_EXECUTION, done when it is left, and one for each of its P parts (`parts`, 1 when none is named). The stage says
+    how many units are done: a stage before execution, its index; `executing` in part N, `4 + (N - 1)`; `reviewing`, `ui-walk`
+    and `phase-review` (a part's checks, so the part is half done), half a unit more; `closed` is 1.0. The result is that
+    over `4 + P`. None where the stage has no place on that line: `cancelled`, a factory stage, a stage not in the table.
+    `part` None in an execution stage counts as part 1."""
+    if stage == "closed":
+        return 1.0
+    total_parts = max(parts or 1, 1)
+    if stage in BEFORE_EXECUTION:
+        done = BEFORE_EXECUTION.index(stage)
+    elif stage in IN_A_PART:
+        done = len(BEFORE_EXECUTION) + min(max((part or 1) - 1, 0), total_parts - 1) + IN_A_PART[stage]
+    else:
+        return None
+    return round(done / (len(BEFORE_EXECUTION) + total_parts), 3)
