@@ -14,6 +14,7 @@ import shutil
 import sys
 
 from fwx import config, context_base, routes, state
+from fwx.core import stages
 
 PROG = "fwx state"  # main() sets it to the name the command ran under (`fwx phase new`), for the messages
 SUB_OF_PATH = re.compile(r"/" + re.escape(state.PLAN_DIR) + r"/subprojects/([^/]+)/")
@@ -58,7 +59,10 @@ def cmd_resolve(a):
     if r["phase_dir"] and sid and not _bound_to(r, bound):  # the one open phase, found with nothing bound: bind it
         state.write_session(session=sid, subproject=r["subproject"], phase_dir=r["phase_dir"])
     if a.json:
-        _dump(r)
+        extra = state.summary(r)
+        extra["progress"] = (
+            stages.progress(stages.current(r["phase_dir"]), extra["part"], extra["parts"]) if r["phase_dir"] else None)
+        _dump(dict(r, **extra))
     elif r["phase_dir"]:
         print("phase_dir: %s" % r["phase_dir"])
         print("subproject: %s" % (r["subproject"] or "root"))

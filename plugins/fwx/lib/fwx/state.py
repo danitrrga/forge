@@ -271,6 +271,36 @@ def resolve(cwd=None, session=None):
             "paths": {k: str(v) for k, v in phase_paths(phase).items()} if phase else {}}
 
 
+_PART = re.compile(r"(?:^|\s)part (\d+)(?:\s|$)")
+_BRANCH = re.compile(r"(?:^|\s)branch (\S+)")
+
+
+def summary(resolved, cwd=None):
+    """What a status chip shows, for a `resolve()` result: `{project, stage, part, parts, branch}`. `project` is the
+    `project.name` of `.claude/fwx.json`, None where that file is missing or cannot be read. With no phase the rest is None. `stage` is
+    `last_stage`. `part` is N of the last stage row whose detail says `part <N>`, `parts` the phase's subphases or 1, and
+    both are None while no stage row names a part. `branch` is B of the last stage row that says `branch <B>`, else None."""
+    try:
+        cfg = config.load(cwd, quiet=True)
+    except config.ConfigError:  # a broken fwx.json must not stop `fwx session`, which never read it before
+        cfg = {}
+    out = {"project": cfg["project"]["name"] if cfg.get("_source") else None,
+           "stage": None, "part": None, "parts": None, "branch": None}
+    phase = resolved.get("phase_dir")
+    if not phase:
+        return out
+    out["stage"] = last_stage(phase)
+    for row in read_rows(os.path.join(phase, "audit.tsv")):
+        if row.get("kind") != "stage":
+            continue
+        part, branch = _PART.search(row.get("detail", "")), _BRANCH.search(row.get("detail", ""))
+        if part:
+            out["part"], out["parts"] = int(part.group(1)), len(resolved.get("subphases") or []) or 1
+        if branch:
+            out["branch"] = branch.group(1)
+    return out
+
+
 # ---- TSV ----------------------------------------------------------------------------------------------------------
 
 def _clean(v):

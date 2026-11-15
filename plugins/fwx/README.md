@@ -52,6 +52,12 @@ process may use, at most 8; `--jobs 1` is one file after another); the lines and
 file's output is shown whole. `python3 bin/forge test` with no group runs forge's own tests and leaves this suite out. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
+## Orca plugin
+
+`orca/` is an Orca plugin (Orca 1.4.259 or later): a status bar chip (`<project> · <profile> · ▰▰▰▱▱▱▱▱`, the bar being `progress` of `fwx session --json`; hover shows the roadmap, click opens the «Sesión» panel) for the fwx session of the workspace in view.
+Load it with `orca plugin dev load plugins/fwx/orca` (Orca prints a fingerprint and the access it asks for: read the workspaces, run `fwx` in them; approve with `--approve <fingerprint>`), remove it with `orca plugin dev unload plugins/fwx/orca`.
+Its tests are `orca plugin test plugins/fwx/orca` and `orca plugin check plugins/fwx/orca`; `fwx` must be on Orca's own PATH,; loaded from a folder its key is `local.fwx-session` (the worker opens its own panel by that key).
+
 ## Configuration
 
 The plugin reads one file, `.claude/fwx.json` of the project's main checkout, and only through `lib/fwx/config.py`.
