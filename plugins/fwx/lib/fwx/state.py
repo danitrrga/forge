@@ -277,10 +277,13 @@ _BRANCH = re.compile(r"(?:^|\s)branch (\S+)")
 
 def summary(resolved, cwd=None):
     """What a status chip shows, for a `resolve()` result: `{project, stage, part, parts, branch}`. `project` is the
-    `project.name` of `.claude/fwx.json`, None where that file is missing. With no phase the rest is None. `stage` is
+    `project.name` of `.claude/fwx.json`, None where that file is missing or cannot be read. With no phase the rest is None. `stage` is
     `last_stage`. `part` is N of the last stage row whose detail says `part <N>`, `parts` the phase's subphases or 1, and
     both are None while no stage row names a part. `branch` is B of the last stage row that says `branch <B>`, else None."""
-    cfg = config.load(cwd, quiet=True)
+    try:
+        cfg = config.load(cwd, quiet=True)
+    except config.ConfigError:  # a broken fwx.json must not stop `fwx session`, which never read it before
+        cfg = {}
     out = {"project": cfg["project"]["name"] if cfg.get("_source") else None,
            "stage": None, "part": None, "parts": None, "branch": None}
     phase = resolved.get("phase_dir")
