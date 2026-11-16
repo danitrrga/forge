@@ -455,7 +455,8 @@ def main():
     bad = [(n, ln.strip()[:90]) for n, ln in enumerate(texts["SKILL.md"].splitlines(), 1) if leave_re.search(ln)]
     check("no line of SKILL.md tells the session to pass --unattended", not bad, ("line %d: %r" % bad[0]) if bad else "")
     check("SKILL.md says the owner leaving changes nothing",
-          any("he is leaving, nothing changes" in ln and "no `--unattended`" in ln for ln in texts["SKILL.md"].splitlines()),
+          any("he is leaving, nothing changes" in ln and "no `--unattended`" in ln and "end your turn for his answer" in ln
+              and "no recommendation unasked; when he asks what you recommend" in ln for ln in texts["SKILL.md"].splitlines()),
           "no line with 'he is leaving, nothing changes' and 'no `--unattended`'")
     check("control: 'add `--unattended` when the owner says he is leaving' is caught", leave_re.search("(add `--unattended` when the owner says he is leaving)") is not None)
     check("control: 'you pass no `--unattended`' is not caught", leave_re.search("you pass no `--unattended` (only the factory does)") is None)

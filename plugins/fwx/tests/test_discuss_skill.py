@@ -118,11 +118,13 @@ check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```js
 #   FAIL: rounds.md does not state the no-recommendation rule without its exception -> '- Never recommend an option or mark one as better: the owner' has no 'unasked' and 'asks'
 rules = next((l for l in files["SKILL.md"].splitlines() if l.startswith("Rules.")), "")
 check("the Rules paragraph of SKILL.md says both never unasked and give it when asked",
-      "Never recommend" in rules and "unasked" in rules and re.search(r"owner asks[^.]*\bsay it\b", rules) is not None,
+      "Never recommend" in rules and "unasked" in rules and re.search(r"owner asks[^.]*\bsay it\b", rules) is not None
+      and "no row of its own" in rules,
       "no 'unasked' and 'asks' in: %s" % rules[:60])
 never = [l for l in files["rounds.md"].splitlines() if "Never recommend" in l]
 check("rounds.md does not state the no-recommendation rule without its exception",
-      len(never) == 1 and "unasked" in never[0] and re.search(r"he asks[^.]*\bsay it\b", never[0]) is not None,
+      len(never) == 1 and "unasked" in never[0] and re.search(r"he asks[^.]*\bsay it\b", never[0]) is not None
+      and "no row of its own" in never[0],
       "%r has no 'unasked' and 'asks'" % (never[0][:60] if never else "no 'Never recommend' line"))
 
 # the verdict keys reach the demo: the launch sentence of step 7 names both, and the demo gets them itself when its prompt lacks them

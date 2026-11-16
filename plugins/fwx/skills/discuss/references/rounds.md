@@ -30,7 +30,7 @@ Finding _facts_ is your job, never the owner's. When a frontier question needs a
 The owner won't always answer outright - they may push back, think out loud, or ask a clarifying question of their own. That's still part of the conversation, not a decision: answer it, keep the discussion going, and leave `decisions.tsv` alone.
 
 - Never ask in the abstract: name the concrete choice and its options.
-- Never recommend an option or mark one as better unasked: the owner decides without pressure. When he asks what you recommend or would do, say it plainly in the chat. A choice that is clearly better and is neither a matter of taste nor of the owner's direction is not asked: decide it, record it as `agent-assumption`, and it comes back in the playback's call outs for the owner to overturn.
+- Never recommend an option or mark one as better unasked: the owner decides without pressure. When he asks what you recommend or would do, say it plainly in the chat; his asking gets no row of its own, the decision he then takes is recorded as always. A choice that is clearly better and is neither a matter of taste nor of the owner's direction is not asked: decide it, record it as `agent-assumption`, and it comes back in the playback's call outs for the owner to overturn.
 - Questions go only in the orchestrator's own message: the owner does not read an agent's report or file, so a question there is never answered.
 - A pending question is not repeated every turn, because the repeat buries the new check. Ask it again only when the next round depends on it.
 - The check goes at the top of the message and the round below it, so the owner reads what you understood before the questions.
