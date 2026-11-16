@@ -1196,22 +1196,23 @@ for label, prof, want, summary in (
 
 # 28. reconcile() owns a marker's entries on EVERY event, per agent: an entry carrying the marker of one
 # of this agent's rows, on an event where none of this agent's rows with that marker lives, is dropped
-# with a note naming the event. Without it, deleting the UserPromptSubmit gsd_output_discipline.py row
+# with a note naming the event. Without it, deleting a row of the read scanner's marker from an event
 # (T1, docs/archive/designs/hooks-phase-design.md) leaves the old entry firing on every prompt forever, because
 # reconcile never touched an event that has no row. Controls in the same case: a foreign entry beside
-# it, omarchy_notify.py (a Claude-only row) in a Codex Notification event, and the PostToolUse and Stop
-# discipline entries, all left as they were; a second run says nothing. Red before, both agents:
+# it, omarchy_notify.py (a Claude-only row) in a Codex Notification event, and the PostToolUse
+# read-scanner entry, all left as they were; a second run says nothing. Red before, both agents:
 # "notes ['dropped 1 stale UserPromptSubmit gsd_output_discipline.py'], UserPromptSubmit still carries
 # ['python3 .../hooks/gsd_output_discipline.py'], SessionEnd left ['python3 .../hooks/gsd_output_discipline.py',
 # 'some-foreign-hook --flag']" (the UserPromptSubmit row still existed, so the stray copy was only a
 # duplicate; the SessionEnd entry, on an event with no row, survived). The event was PreCompact until gsd-core's
 # context monitor got a row there: a stray on an event WITH a row is the other case, tested above.
-GSD_CMD = "python3 %s/gsd_output_discipline.py" % hooks.HOOK_DIR
+# The case then ran on gsd_output_discipline.py; when GSD's rows left forge/hooks.py it moved to the read scanner's
+# row (PostToolUse only), red on the hooks.py without GSD's rows: "KeyError: 'Stop'" at keep_stop, there being no Stop row.
+GSD_CMD = "node %s/read-injection-scanner.js" % hooks.HOOK_DIR
 for agent in (hooks.CLAUDE, hooks.CODEX):
     doc = {"hooks": {}}
     attempt(hooks.reconcile, doc, agent)  # every row in place; the controls below start from here
     keep_post = json.loads(json.dumps(doc["hooks"]["PostToolUse"]))
-    keep_stop = json.loads(json.dumps(doc["hooks"]["Stop"]))
     stray = {"type": "command", "command": GSD_CMD, "timeout": 10}
     foreign = {"type": "command", "command": "some-foreign-hook --flag", "timeout": 5}
     doc["hooks"].setdefault("UserPromptSubmit", []).append({"hooks": [dict(stray)]})
@@ -1222,17 +1223,17 @@ for agent in (hooks.CLAUDE, hooks.CODEX):
     notes = attempt(hooks.reconcile, doc, agent)
     cmds = lambda ev: [h.get("command") for g in doc["hooks"].get(ev) or [] for h in g.get("hooks", [])]
     again = attempt(hooks.reconcile, doc, agent)
-    gsd_prompt = [c for c in cmds("UserPromptSubmit") if "gsd_output_discipline.py" in c]
-    check(notes == ["dropped 1 gsd_output_discipline.py (UserPromptSubmit: no row on this event)",
-                    "dropped 1 gsd_output_discipline.py (SessionEnd: no row on this event)"]
+    gsd_prompt = [c for c in cmds("UserPromptSubmit") if "read-injection-scanner.js" in c]
+    check(notes == ["dropped 1 hooks/read-injection-scanner.js (UserPromptSubmit: no row on this event)",
+                    "dropped 1 hooks/read-injection-scanner.js (SessionEnd: no row on this event)"]
           and gsd_prompt == [] and cmds("SessionEnd") == ["some-foreign-hook --flag"]
-          and doc["hooks"]["PostToolUse"] == keep_post and doc["hooks"]["Stop"] == keep_stop
+          and doc["hooks"]["PostToolUse"] == keep_post
           and (agent == hooks.CLAUDE or cmds("Notification") == ["python3 /x/omarchy_notify.py"])
           and again == [],
           "%s: notes %r, UserPromptSubmit still carries %r, SessionEnd left %r, PostToolUse kept %s, "
-          "Stop kept %s, Notification %r, second run %r"
+          "Notification %r, second run %r"
           % (agent, notes, gsd_prompt, cmds("SessionEnd"), doc["hooks"]["PostToolUse"] == keep_post,
-             doc["hooks"]["Stop"] == keep_stop, cmds("Notification"), again))
+             cmds("Notification"), again))
 
 # 29. Native deny rules for secret files (T3, docs/archive/designs/hooks-phase-design.md): write_user_settings unions
 # twenty-three Read rules (nine of forge's own, fourteen machine credential stores) into
