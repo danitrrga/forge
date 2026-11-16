@@ -424,7 +424,7 @@ def allowlist_cases():
                "skills/new-project/SKILL.md", j("mcp-servers/vdw", "aals-mcp.py"), "scripts/dev/gate.py",
                "scripts/backup/t7-backup.sh", ".claude/settings.json", "publish/engine.gitignore"]
     public = ["bin/forge", "forge/cli.py", "forge/publish.py", "hooks/guard_tool_use.py", "hooks/test_guard_tool_use.py",
-              "hooks/worktree_guard.py", "hooks/gsd-prompt-guard.js", "hooks/omarchy_notify.py",
+              "hooks/worktree_guard.py", "hooks/read-injection-scanner.js", "hooks/omarchy_notify.py",
               "hooks/test_guard_mutants.py", "config/gsd/defaults.json", "scripts/sync/sync_skill_keep.py",
               "scripts/sync/test_sync_skill_keep.py", "scripts/sync/memory_doctor.py", "scripts/metrics/harness-metrics.mjs",
               "githooks/pre-commit", "githooks/commit-msg", "githooks/pre-push", "tests/sandbox.py",

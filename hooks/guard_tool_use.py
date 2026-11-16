@@ -1923,22 +1923,15 @@ def commit_n(seg):
     return False
 
 
-BACKLOG_SCRIPT = os.path.join("scripts", "backlog", "backlog.mjs")
-
-
 def issue_create_refusal(pcmd):
-    """A refusal when pcmd runs `gh issue create` in a project that has scripts/backlog/backlog.mjs
-    (under PROJECT or the directory the call runs in): that script opens the issue and the backlog
-    item together, and plain `gh issue create` leaves the two out of step. Read like commit_n: any
-    wrapper prefix, `command gh`, nested shells. `-R/--repo` anywhere passes, it names another
-    repository. A nudge, not a wall: `gh api` still creates an issue, and only Claude Code runs this guard."""
-    if not any(os.path.isfile(os.path.join(d, BACKLOG_SCRIPT)) for d in (PROJECT, CWD[0])):
-        return None
+    """A refusal when pcmd runs `gh issue create`, in every project: agents do not open GitHub issues, the
+    issue goes to Linear or the owner is asked. Read like commit_n: any wrapper prefix, `command gh`, nested
+    shells. `-R/--repo` anywhere passes, it names another repository. A nudge, not a wall: `gh api` still
+    creates an issue, and only Claude Code runs this guard."""
     for seg in pieces(pcmd):
         if _creates_issue(seg):
-            return ("gh issue create is refused here: this project opens issues through its backlog script, "
-                    "which creates the issue and the backlog item together. Instead run: "
-                    'node scripts/backlog/backlog.mjs add "<title>" [--body-file FILE]')
+            return ("gh issue create is refused: agents do not open GitHub issues. Instead put the issue in "
+                    "Linear, or ask the owner")
     return None
 
 

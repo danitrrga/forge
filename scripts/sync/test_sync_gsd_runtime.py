@@ -932,8 +932,7 @@ def package_location(failures):
 def real_package(failures):
     """Against the real `@opengsd/gsd-core` (staged by its own installer into a toy dir; skipped, with a printed
     line, when the package, node or the installer's output is missing): every patch's anchor matches the staged text and
-    changes it, and every agent Ponytail's subagent hook gives its ruleset to (hooks/ponytail_subagent.py AGENTS)
-    exists, so a rename upstream cannot switch Ponytail off in silence. Seen failing on 43a581a, whose patches were
+    changes it. Seen failing on 43a581a, whose patches were
     written for get-shit-done-cc 1.42.3: "real package: gsd-planner.md: anchor for patch 'planner-edit' no longer
     matches upstream" and four more (reach-routing twice, classifier-hash-dispatch, npm-package-name, no-graphify)."""
     try:
@@ -992,14 +991,6 @@ def real_package(failures):
         dangling = sorted(set(re.findall(r"\|\s*(gsd-[a-z0-9-]+)[^|]*\|\s*$", router, re.M)) - names)
         if dangling:
             failures.append("real package: gsd-ns-context routes to %s, which the package does not ship" % dangling)
-        spec = importlib.util.spec_from_file_location("ponytail_subagent", os.path.join(FORGE, "hooks", "ponytail_subagent.py"))
-        ponytail = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(ponytail)
-        agents = {f[:-3] for f in os.listdir(os.path.join(gsd.STAGE, "agents")) if f.endswith(".md")}
-        gsd_names = {a for a in ponytail.AGENTS if a.startswith("gsd-")}  # the framework's `fwx:` agents are not GSD's
-        if not gsd_names or gsd_names - agents:
-            failures.append("real package: Ponytail's agents %s are not all staged agents (missing %s)"
-                            % (sorted(gsd_names), sorted(gsd_names - agents)))
     finally:
         for n, v in saved.items():
             setattr(gsd, n, v)

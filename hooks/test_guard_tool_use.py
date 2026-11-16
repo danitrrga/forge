@@ -1746,12 +1746,16 @@ ROOTED = [
     ("grep -r foo ..", 2),
     ("grep -r foo ~", 2),
 ]
-# The backlog rule: `gh issue create` is refused in a project holding scripts/backlog/backlog.mjs (under
-# the project dir or the directory the call runs in), which opens the issue and the backlog item together.
+# The issue rule: `gh issue create` is refused in every project: agents do not open GitHub issues, the issue goes
+# to Linear (or the owner is asked). It used to hold only where scripts/backlog/backlog.mjs existed (under the project
+# dir or the directory the call runs in); the BL_* directories keep that old layout to show it no longer matters.
 # (command, project, cwd, want rc). BL_WITH holds the script as a file, BL_WITHOUT does not, BL_DIRONLY has
 # a directory of that name, BL_ELSE is a project without it whose call runs inside BL_WITH.
 # Red before the rule, the 6 refused cases of the 20 (the 14 others pass without it, as they must): "backlog
 # 'gh issue create' in guard-test-backlog-with-... (project guard-test-backlog-with-...): wanted rc=2, got rc=0 ()".
+# Red before the rule went to every project (the 2 cases without a script, BL_WITHOUT and BL_DIRONLY, were 0): "backlog
+# 'gh issue create --title t' in guard-test-backlog-without-... (project guard-test-backlog-without-...): wanted rc=2,
+# got rc=0 ()" and the same for guard-test-backlog-dir-.... The message must not name backlog.mjs any more.
 # Plain, --title/--body, command gh, env/sudo/time prefixes, nested bash -c and the cwd-only case fail alike.
 # A nudge, not a wall: `gh api` still creates an issue, and only Claude Code runs this guard.
 BL_WITH = sandbox.mkdtemp("guard-test-backlog-with-")
@@ -1777,8 +1781,8 @@ BACKLOG_CASES = [
     ("gh api repos/o/r/issues -f title=t", BL_WITH, BL_WITH, 0),
     ("echo gh issue create", BL_WITH, BL_WITH, 0),
     ("grep 'gh issue create' notes.md", BL_WITH, BL_WITH, 0),
-    ("gh issue create --title t", BL_WITHOUT, BL_WITHOUT, 0),
-    ("gh issue create --title t", BL_DIRONLY, BL_DIRONLY, 0),
+    ("gh issue create --title t", BL_WITHOUT, BL_WITHOUT, 2),
+    ("gh issue create --title t", BL_DIRONLY, BL_DIRONLY, 2),
     ("gh issue create -R other/repo --title t", BL_WITH, BL_WITH, 0),
     ("gh issue create --title t --repo other/repo", BL_WITH, BL_WITH, 0),
     ("gh issue create --repo=other/repo --title t", BL_WITH, BL_WITH, 0),
@@ -3228,7 +3232,7 @@ def check(case):
             return "backlog %r in %s (project %s): wanted rc=%s, got rc=%s (%s)" % (
                 cmd, os.path.basename(cwd), os.path.basename(project), want, rc, err.strip()[16:90])
         if rc == 2:
-            if "gh issue create is refused" not in err:
+            if "gh issue create is refused" not in err or "backlog" in err:
                 return "backlog %r blocked for the wrong reason: %s" % (cmd, err.strip()[16:90])
             return bad_message(err)
     elif kind == "bypass-env":
