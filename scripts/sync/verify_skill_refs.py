@@ -7,8 +7,8 @@ SessionStart banner kept counting it in "kept-global N". Exit 0 = every name res
 
 An EMPTY skills_keep fails too. `[]` is not "keep nothing on purpose", it
 is trimming switched on with nothing behind it: every global skill off, no message anywhere.
-One project was created that way by the new-project skill and ran its whole life with all 25
-GSD skills and the entire COMMON layer dark, the only symptom being a command that did
+One project was created that way by the new-project skill and ran its whole life with every
+global skill and the entire COMMON layer dark, the only symptom being a command that did
 nothing. A project that really wants no trimming drops the key instead.
 """
 import os, sys

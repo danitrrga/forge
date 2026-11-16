@@ -6,31 +6,18 @@ WHY THIS EXISTS
   sync_agent_config.py full-replaces each project's settings.local.json `skillOverrides`
   every SessionStart (incl. /clear, resume, compact): "all global skills off EXCEPT
   project-local skills + this project's skills_keep". So a skill absent from skills_keep
-  gets disabled on the next /clear -- the flapping that silently killed GSD in one project.
+  gets disabled on the next /clear -- the flapping that once switched a whole stack off in one project.
 
-  The fix is declarative: list the skills a project must keep in its skills_keep.
-  With the gsd integration on, every trimmed project keeps all gsd-*, no exception. This script
-  regenerates those gsd-* lists from disk so new/removed gsd skills are picked up automatically
-  -- run it after GSD adds or drops a skill, then run sync_agent_config.py. With the integration
-  off no project names a gsd-* skill at all: held names are stripped (note "gsd off -[...]"), extras
-  rows lose theirs, and switching it back on gives the baseline back on the next --apply.
+  The fix is declarative: list the skills a project must keep in its skills_keep, and this script
+  keeps those lists complete (the COMMON layer) and free of names no skill answers to.
 
   Project-LOCAL skills (.claude/skills/<name>/) are auto-kept by sync_agent_config.py and
   must NOT be listed here. Only GLOBAL skills (~/.claude/skills) need an entry.
 
-THREE LAYERS (added for the agent-reach research stack; the tables named below are
-config/forge.json skill_keep since T3 of docs/portable-design.md, and the gsd-* layers need the gsd integration on)
-  1. gsd-* baseline   -- regenerated from disk. Full replace for projects listed in EXTRAS,
-                         union for every other trimmed project; registering a project is not what
-                         decides whether it keeps up with GSD. Only with the gsd integration on: off,
-                         the layer strips every gsd-* name from every trimmed project and from every
-                         EXTRAS row (before check_declared, which would refuse a row naming a gsd-* skill
-                         relink_skills.py no longer links).
-  2. EXTRAS           -- per-project additions beyond that baseline.
-  2c. GSD_EXCLUDE / GSD_OPT_IN -- the user's own trim of the gsd-* names (skill_keep.gsd_exclude: in no
-                         project and not linked by relink_skills.py; gsd_opt_in: kept only by a project whose
-                         EXTRAS row names it). Applied last to the gsd-* names, authoritative.
-  3. COMMON_*         -- the capability baseline that belongs in EVERY project:
+THE LAYERS (the tables named below are config/forge.json skill_keep, see docs/portable-design.md)
+  1. EXTRAS           -- per-project skills_keep, a full replace for the projects listed in it (a project
+                         with no row keeps the names it holds).
+  2. COMMON_*         -- the capability baseline that belongs in EVERY project:
                          COMMON_SKILLS / COMMON_PERMISSIONS / COMMON_ENV, UNION-merged
                          into every project except COMMON_EXCLUDE. Union (not replace) so
                          hand-curated projects (a study-skill set, an ssh permission set)
@@ -83,12 +70,7 @@ def expand_extras(rows, sets):
     return out
 
 
-# The gsd-* names are the gsd integration's. Off, no project and no extras row names one: they are stripped below
-# and in main(), and nothing is added.
-TRACK_GSD = lib.on("gsd")
 EXTRAS = expand_extras(SKILL_KEEP.get("extras") or {}, SKILL_KEEP.get("sets") or {})
-if not TRACK_GSD:  # before check_declared: a row naming a gsd-* skill that is no longer installed is not an error
-    EXTRAS = {fn: [n for n in names if not n.startswith("gsd-")] for fn, names in EXTRAS.items()}
 DESIGN_PERMISSIONS = SKILL_KEEP.get("design_permissions") or {"allow": [], "additionalDirectories": []}
 COMMON_SKILLS = SKILL_KEEP.get("common_skills") or []
 COMMON_PERMISSIONS = SKILL_KEEP.get("common_permissions") or {"allow": []}
@@ -96,10 +78,6 @@ COMMON_ENV = {k: os.path.expanduser(v) for k, v in (SKILL_KEEP.get("common_env")
 COMMON_PLUGINS = SKILL_KEEP.get("common_plugins") or []
 COMMON_OPT_OUT = {fn: set(names) for fn, names in (SKILL_KEEP.get("common_opt_out") or {}).items()}
 COMMON_EXCLUDE = set(SKILL_KEEP.get("common_exclude") or [])
-# gsd_exclude: skills this user does not want at all (relink_skills.py also stops linking them).
-# gsd_opt_in: skills linked but in no baseline, kept only by a project whose extras row names them.
-GSD_EXCLUDE = set(SKILL_KEEP.get("gsd_exclude") or [])
-GSD_OPT_IN = set(SKILL_KEEP.get("gsd_opt_in") or [])
 
 
 def union(existing, additions):
@@ -209,46 +187,6 @@ def installed_skills():
                if os.path.isdir(os.path.join(GLOBAL_SKILLS, d)))
 
 
-def gsd_skills(installed):
-    skills = sorted(d for d in installed if d.startswith("gsd-") and d not in GSD_EXCLUDE | GSD_OPT_IN)
-    if not skills:
-        sys.exit("! no gsd-* skills found in %s -- aborting (refusing to wipe keep-lists)" % GLOBAL_SKILLS)
-    return skills
-
-
-def check_gsd_tables(installed):
-    """Exit 1 on a gsd_exclude / gsd_opt_in table that cannot mean what it says: a name that no skill
-    answers to (a typo trims nothing), a name in both tables, or an extras row asking for a skill the
-    user excluded. A name counts as existing when skills/ holds it, since an excluded skill is no
-    longer in the mirror."""
-    src = os.path.join(ROOT, "skills")
-    known = installed | (set(os.listdir(src)) if os.path.isdir(src) else set())
-    bad = []
-    for table, names in (("gsd_exclude", GSD_EXCLUDE), ("gsd_opt_in", GSD_OPT_IN)):
-        bad += ["skill_keep.%s names %s, which is in neither skills/ nor %s" % (table, n, GLOBAL_SKILLS)
-                for n in sorted(names - known)]
-    bad += ["skill_keep.gsd_exclude and skill_keep.gsd_opt_in both name %s" % n
-            for n in sorted(GSD_EXCLUDE & GSD_OPT_IN)]
-    bad += ["skill_keep.extras[%s] names %s, which skill_keep.gsd_exclude drops" % (fn, n)
-            for fn, names in sorted(EXTRAS.items()) for n in sorted(set(names) & GSD_EXCLUDE)]
-    if bad:
-        sys.exit("! config/forge.json:\n    " + "\n    ".join(bad))
-
-
-def apply_gsd_trim(fn, d):
-    """Authoritative, as strip_opted_out is for COMMON: an excluded name is removed from every
-    trimmed project, an opt-in name from every project whose extras row does not name it."""
-    cur = d.get("skills_keep")
-    if not isinstance(cur, list) or "*" in cur:
-        return []
-    own = set(EXTRAS.get(fn, []))
-    kept = [n for n in cur if n not in GSD_EXCLUDE and (n not in GSD_OPT_IN or n in own)]
-    if kept == cur:
-        return []
-    d["skills_keep"] = kept
-    return ["gsd trim -%s" % sorted(set(cur) - set(kept))]
-
-
 def check_declared(installed):
     """Fail loudly on a skill name this script would write that no longer exists.
 
@@ -293,8 +231,8 @@ def audit_trim(projects):
     """A state that looks like configuration and is really an accident.
 
     EMPTY skills_keep: trimming is ON and nothing is kept, so every global skill is off. That
-    is what one project shipped with from the day the new-project skill created it -- 25 GSD
-    skills and the whole COMMON layer dark for its entire life, surfacing only as "that command
+    is what one project shipped with from the day the new-project skill created it -- every
+    global skill and the whole COMMON layer dark for its entire life, surfacing only as "that command
     does nothing". Nobody has ever wanted this state on purpose."""
     notes = []
     for fn, d in projects.items():
@@ -310,13 +248,11 @@ def audit_trim(projects):
 
 def main():
     installed = installed_skills()
-    check_gsd_tables(installed)
     check_declared(installed)
-    gsd = gsd_skills(installed) if TRACK_GSD else []
     print("MODE:", "APPLY" if APPLY else "DRY-RUN (pass --apply to write)")
-    print("gsd-* skills on disk: %d | COMMON: %d skills, %d perms, %d env, %d plugins | excluded: %d | gsd excluded: %d, opt-in: %d\n"
-          % (len(gsd), len(COMMON_SKILLS), len(COMMON_PERMISSIONS["allow"]),
-             len(COMMON_ENV), len(COMMON_PLUGINS), len(COMMON_EXCLUDE), len(GSD_EXCLUDE), len(GSD_OPT_IN)))
+    print("COMMON: %d skills, %d perms, %d env, %d plugins | excluded: %d\n"
+          % (len(COMMON_SKILLS), len(COMMON_PERMISSIONS["allow"]),
+             len(COMMON_ENV), len(COMMON_PLUGINS), len(COMMON_EXCLUDE)))
 
     for fn in EXTRAS:
         if not os.path.exists(os.path.join(PROF, fn)):
@@ -339,57 +275,27 @@ def main():
         # Layer 0: drop names no installed skill answers to (self-heals after a deletion)
         notes += prune_dangling(d, installed)
 
-        # Layer 1+2: gsd-* baseline + per-project extras (full replace, EXTRAS projects only)
+        # Layer 1: per-project extras (full replace, EXTRAS projects only)
         if fn in EXTRAS:
             # COMMON_SKILLS folded in HERE too -- this branch full-replaces skills_keep, so
             # leaving them to apply_common's union below would strip and re-add them every
             # run (a rewrite + churn on each invocation instead of a clean no-op).
-            # Integration off: no gsd-* name at all (EXTRAS holds none either), so the full replace drops the held ones.
-            base = gsd if TRACK_GSD else []
-            want = base + sorted(EXTRAS[fn])
+            want = sorted(EXTRAS[fn])
             if fn not in COMMON_EXCLUDE:
                 want = union(want, common_for(fn, COMMON_SKILLS))
             old = d.get("skills_keep", [])
             if sorted(old) != sorted(want):
                 add = sorted(set(want) - set(old)); rem = sorted(set(old) - set(want))
-                notes.append("gsd/extras +%s -%s" % (add or "[]", rem or "[]"))
+                notes.append("extras +%s -%s" % (add or "[]", rem or "[]"))
                 d["skills_keep"] = want
 
-        # Layer 2b: every OTHER trimmed project tracks the gsd-* baseline, by union.
-        #
-        # WHY THIS EXISTS. Layer 1 only ever ran for projects listed in EXTRAS, so
-        # a project got new GSD skills only if somebody had remembered to register it. Nobody
-        # remembers: one project sat on the GSD of the day it was written (25 skills, August), the
-        # another on one, a third on two, and two more would have missed
-        # gsd-map-codebase the day it appeared. The registration step was load-bearing and
-        # invisible, which is the same shape as the bug that left one project with nothing.
-        #
-        # So the default inverted: a trimmed project tracks GSD, with no way out of it but the
-        # integration being off. Union, never replace -- this branch must not touch a single
-        # hand-curated name, it only adds what the baseline gained.
-        elif "skills_keep" in d and "*" not in (d["skills_keep"] or []):
-            if TRACK_GSD:
-                want = union(d["skills_keep"], gsd)
-                if want != d["skills_keep"]:
-                    notes.append("gsd baseline +%s" % sorted(set(want) - set(d["skills_keep"])))
-                    d["skills_keep"] = want
-            else:
-                # Integration off: the sibling of the full replace above, for a project with no extras row.
-                kept = [n for n in d["skills_keep"] if not n.startswith("gsd-")]
-                if kept != d["skills_keep"]:
-                    notes.append("gsd off -%s" % sorted(set(d["skills_keep"]) - set(kept)))
-                    d["skills_keep"] = kept
-
-        # Layer 2c: the user's own trim of the gsd-* names (gsd_exclude, gsd_opt_in), after the union above
-        notes += apply_gsd_trim(fn, d)
-
-        # Layer 3: the common capability baseline (union, every project but COMMON_EXCLUDE)
+        # Layer 2: the common capability baseline (union, every project but COMMON_EXCLUDE)
         notes += apply_common(fn, d)
 
-        # Layer 4: plugins every project keeps on (union, every trimmed project, no exclude)
+        # Layer 3: plugins every project keeps on (union, every trimmed project, no exclude)
         notes += apply_common_plugins(fn, d)
 
-        # Layer 5: file access for the design set, on the projects that carry it. Runs after
+        # Layer 4: file access for the design set, on the projects that carry it. Runs after
         # layers 1-2 so it sees the skills_keep those wrote, not the one on disk.
         notes += apply_design(d)
 

@@ -5,8 +5,7 @@ COMMON_OPT_OUT used to name COMMON_SKILLS / COMMON_PLUGINS entries only, and che
 1 on anything else. It now also names COMMON_ENV keys: apply_common neither adds an opted-out key
 nor keeps one that is there, and check_declared accepts it.
 
-With the gsd integration off no project names a gsd-* skill and no extras row does either; on, every trimmed project
-gets the baseline (there is no per-project opt-out any more).
+A skill named gsd-* is trimmed like any other, whatever integrations.gsd says (see the last paragraph).
 
 Two worlds. The mechanism runs on a copy of the script patched to carry a toy env key (TOY_KEY) and
 to opt one project out of it, so it does not depend on what the real COMMON_ENV holds. The real
@@ -43,26 +42,19 @@ False, False), want (1, True, False)", "~: expanded to the toy HOME = None, want
 perms +0": an empty table was a change forever. With TRACK_GSD = True patched in: both "gsd off"
 cases and "stranger: --check, exit and its project line = (1, False, False), want (0, True, True)".
 
-skill_keep.gsd_exclude and gsd_opt_in. Seen failing before the change: "gsd trim: the excluded name is in no project =
-[True, True], want [False, False]", "opt-in only where the extras row names it = [True, True], want [True, False]" and,
-for a typo in either table, a name in both and an excluded name in an extras row, "(1, False, False), want (1, True,
-False)" (exit 1 came from a pending change, not from a refusal: the check needs the '!' line naming skill_keep.gsd_).
-
-gsd off strips every gsd-* name (this unit). Seen failing on d595a08 (gsd off left every held name, and an extras row
-naming a gsd-* skill that is no longer installed was the exit 1 of check_declared): "gsd off: --check, a gsd-* name in an
-extras row is not an exit 1 for a missing skill = (1, ['! declared skill(s) not installed in <home>/.claude/skills:']),
-want (1, [])", "gsd off: --apply = 1, want 0", "gsd off: plain.claude.json keeps its gsd-fast = True, want False" (the
-same for zzz and named, and "has no gsd-* name = ['gsd-fast'], want []"), "gsd off: the extras row keeps its non-gsd name
-= False, want True" and "gsd off: --check after the apply = (1, '    EXTRAS[named.claude.json] -> gsd-gone'), want (0,
-'0 project(s) would change.')". The gsd back on and gsd on worlds pass on both: they pin the rollback and what gsd on
-still does. Controls, each on the fixed script: with the extras filter off (`if False:`) the first two and the last
-checks fail with that same `EXTRAS[named.claude.json] -> gsd-gone` and the held-name ones fail too (10 failures, the
-red above); with the strip of a project that has no extras row disabled, "gsd off: zzz.claude.json keeps its gsd-fast =
-True, want False" fails alone (2); with the extras branch keeping the held gsd-* names, plain and named fail (4) and zzz
-passes.
+A skill named gsd-* is any other name: no baseline read off the disk, no table of its own, no strip with the integration
+off. Seen failing on 61083ab (the layers were still there): "gsd on: extras project got from the gsd baseline =
+['gsd-fast', 'gsd-toy', 'gsd-toy-0', ...], want []" (a project with an extras row), and, for the rest of that block,
+"gsd off: the union project keeps its held gsd-fast, prunes gsd-gone, gains no baseline = [], want ['gsd-fast']" (a held
+name stripped), "gsd on: ... = ['gsd-fast', 'gsd-toy', ...], want ['gsd-fast']" (a baseline gained), "gsd off: an extras
+row naming a missing gsd-* skill is refused = (1, False), want (1, True)", "no gsd-* skill installed: --apply = (1,
+[...]), want (0, [])" ("! no gsd-* skills found ... refusing to wipe keep-lists") and "gsd flipped on after an apply
+with it off: --check = (1, '...'), want (0, '0 project(s) would change.')". Each world runs with the integration on and
+off and must give the same result.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -130,7 +122,7 @@ N = PINNED if REAL else TOY
 PLAIN, PLAIN2, OPTOUT, QUIET, EXCLUDED = (N[k] for k in ("plain", "plain2", "optout", "quiet", "excluded"))
 # The mechanism worlds are on toy names always; EXTRAS_FILE is the fixture's own extras row.
 PLAIN_FILE, EXTRAS_FILE = TOY["plain"], "app.claude.json"
-TOY_SKILLS = ["toy-common", "omarchy", "defuddle", "summarize", "watch", "gsd-fast"] + ["gsd-toy-%d" % i for i in range(12)]
+TOY_SKILLS = ["toy-common", "omarchy", "defuddle", "summarize", "watch", "gsd-fast", "gsd-toy"] + ["gsd-toy-%d" % i for i in range(12)]
 
 
 def want(label, got, expected):
@@ -224,15 +216,14 @@ def main():
 
     # The real declaration: the unpatched script, projects named like the real ones.
     names = [PLAIN, QUIET, OPTOUT, EXCLUDED, PLAIN2]
-    root, env = world(tmp, "real", {fn: trimmed() for fn in names}, real=REAL)
+    root, env = world(tmp, "real", {fn: trimmed(skills_keep=["omarchy"]) for fn in names}, real=REAL)
     if not REAL:
         print("NOT RUN: this machine's declaration (the tables the real: world pins are not in config/forge.json), "
               "so the real: world ran on the toy declaration of the same shape")
     want("real: --apply", run(root, env, "--apply")[0], 0)
-    # With gsd on every trimmed project gets the baseline, the common-excluded one too (COMMON_EXCLUDE is the common
-    # layer's own, and there is no other way out of the baseline).
-    want("real: the excluded project is topped up with gsd-*", len(skills_of(root, EXCLUDED)) > 10, True)
-    want("real: a plain project is topped up with gsd-*", len(skills_of(root, PLAIN)) > 10, True)
+    # The excluded project takes no common layer, and no other layer adds a skill: it is as it was.
+    want("real: the excluded project keeps what it held", skills_of(root, EXCLUDED), ["omarchy"])
+    want("real: a plain project keeps what it held", "omarchy" in skills_of(root, PLAIN2), True)
     want("real: plain project", env_of(root, PLAIN).get(KEY), "sonnet")
     want("real: another plain project", env_of(root, PLAIN2).get(KEY), "sonnet")
     want("real: the quiet project is opted out", KEY in env_of(root, QUIET), False)
@@ -267,7 +258,7 @@ def main():
     for fn, text in bad.items():
         with open(os.path.join(pdir, fn), encoding="utf-8") as fh:
             want("bad projects: %s is left byte-identical by --apply" % fn, fh.read(), text)
-    want("bad projects: --apply still wrote the good project", len(skills_of(root, PLAIN_FILE)) > 10, True)
+    want("bad projects: --apply still wrote the good project", "toy-common" in skills_of(root, PLAIN_FILE), True)
 
     # T3 (docs/portable-design.md section 4): the tables are config/forge.json's skill_keep, not code.
     def line_of(lines, fn):
@@ -279,14 +270,15 @@ def main():
     code, lines = run_full(root, env, "--check")
     got = line_of(lines, EXTRAS_FILE)
     want("extras row: --check exit", code, 1)
-    want("extras row: the project is a full replace, defuddle removed", ("gsd/extras" in got, "-['defuddle']" in got), (True, True))
-    # The same project out of extras is only unioned: --check reports the baseline it lacks and keeps defuddle.
+    want("extras row: the project is a full replace, defuddle removed",
+         (re.match(r"~ \S+\s+extras \+", got) is not None, "-['defuddle'" in got), (True, True))
+    # The same project out of extras is only unioned: --check reports the COMMON skills it lacks and keeps defuddle.
     root, env = world(tmp, "extras-out", dict(extras_prof, **OPT_OUT_PROJECTS),
                       lambda sk: sk["extras"].pop(EXTRAS_FILE))
     code, lines = run_full(root, env, "--check")
     got = line_of(lines, EXTRAS_FILE)
     want("no extras row: --check exit", code, 1)
-    want("no extras row: the project is only unioned", ("gsd baseline" in got, "gsd/extras" in got, "defuddle" in got), (True, False, False))
+    want("no extras row: the project is only unioned", ("gsd" in got, "extras" in got, "defuddle" in got), (False, False, False))
     want("no extras row: --apply keeps defuddle", run(root, env, "--apply")[0], 0)
     want("no extras row: defuddle kept", "defuddle" in skills_of(root, EXTRAS_FILE), True)
 
@@ -310,86 +302,51 @@ def main():
     want("~: --apply", run(root, env, "--apply")[0], 0)
     want("~: expanded to the toy HOME", env_of(root, PLAIN_FILE).get("TOY_PATH"), os.path.join(env["HOME"], "toy"))
 
-    # The gsd-* names belong to the gsd integration: off, no project names one (a held name is stripped, none is added)
-    # and no extras row does either, so an extras row naming a gsd-* skill that is no longer installed (relink pruned
-    # it) is not the exit 1 that check_declared gives any other missing name. The plain project is in extras (a full
-    # replace), zzz is not (a union), NAMED is in extras with a row that names gsd-fast and a gsd-* name that is not
-    # installed, and STAR keeps every skill.
-    NAMED, STAR = "named.claude.json", "star.claude.json"
-    off = dict({PLAIN_FILE: trimmed(skills_keep=["gsd-fast", "defuddle"]),
-                "zzz.claude.json": trimmed(skills_keep=["gsd-fast", "defuddle"]),
-                NAMED: trimmed(skills_keep=["gsd-fast", "gsd-toy-1", "defuddle"]),
-                STAR: trimmed(skills_keep=["*"])}, **OPT_OUT_PROJECTS)
-    named_row = lambda sk: sk["extras"].update({NAMED: ["gsd-fast", "gsd-gone", "summarize"]})
-    root, env = world(tmp, "gsd-off", off, named_row, gsd=False)
-    code, lines = run_full(root, env, "--check")
-    want("gsd off: --check, a gsd-* name in an extras row is not an exit 1 for a missing skill",
-         (code, [l for l in lines if "not installed" in l]), (1, []))
-    want("gsd off: --apply", run(root, env, "--apply")[0], 0)
-    for fn in (PLAIN_FILE, "zzz.claude.json", NAMED):
-        got = skills_of(root, fn)
-        want("gsd off: %s keeps its gsd-fast" % fn, "gsd-fast" in got, False)
-        want("gsd off: %s has no gsd-* name" % fn, [n for n in got if n.startswith("gsd-")], [])
-    want("gsd off: the union keeps defuddle", "defuddle" in skills_of(root, "zzz.claude.json"), True)
-    want("gsd off: the extras row keeps its non-gsd name", "summarize" in skills_of(root, NAMED), True)
-    want("gsd off: the keep-all project is untouched", skills_of(root, STAR)[0], "*")
-    want("gsd off: --check after the apply", run(root, env, "--check"), (0, "0 project(s) would change."))
-    # Reversible: the integration back on and one apply give the baseline back (the extras row's own gsd-fast with it).
+    # A gsd-* name is any other name, with integrations.gsd on or off. The extras project (a full replace) holds no gsd-*
+    # name afterwards and gets nothing from the disk's gsd-* skills; the union project (no extras row) keeps the gsd-*
+    # name it holds, drops the one with no skill behind it (dangling, like any other) and gains none; the project
+    # whose extras row names an installed gsd-* skill keeps it; the keep-all project is untouched.
+    NAMED, STAR, ZZZ = "named.claude.json", "star.claude.json", "zzz.claude.json"
+    held = dict({PLAIN_FILE: trimmed(skills_keep=["defuddle"]),
+                 ZZZ: trimmed(skills_keep=["gsd-fast", "gsd-gone", "defuddle"]),
+                 NAMED: trimmed(skills_keep=["gsd-toy-1", "defuddle"]),
+                 STAR: trimmed(skills_keep=["*"])}, **OPT_OUT_PROJECTS)
+    named_row = lambda sk: sk["extras"].update({NAMED: ["gsd-fast", "summarize"]})
+    gsd_roots = {}
+    for label, on in (("gsd on", True), ("gsd off", False)):
+        root, env = world(tmp, "gsd-" + label.split()[1], held, named_row, gsd=on)
+        gsd_roots[on] = (root, env)
+        want("%s: --apply" % label, run(root, env, "--apply")[0], 0)
+        want("%s: extras project got from the gsd baseline" % label,
+             [n for n in skills_of(root, PLAIN_FILE) if n.startswith("gsd-")], [])
+        want("%s: the union project keeps its held gsd-fast, prunes gsd-gone, gains no baseline" % label,
+             [n for n in skills_of(root, ZZZ) if n.startswith("gsd-")], ["gsd-fast"])
+        want("%s: the union project keeps defuddle" % label, "defuddle" in skills_of(root, ZZZ), True)
+        want("%s: the extras row naming an installed gsd-* skill keeps it" % label,
+             [n for n in skills_of(root, NAMED) if n.startswith("gsd-")], ["gsd-fast"])
+        want("%s: the keep-all project is untouched" % label, skills_of(root, STAR), ["*"])
+        want("%s: --check after the apply" % label, run(root, env, "--check"), (0, "0 project(s) would change."))
+        # An extras row naming a gsd-* skill that is not installed is refused, as any missing name is.
+        root, env = world(tmp, "gsd-gone-" + label.split()[1], held,
+                          lambda sk: sk["extras"].update({NAMED: ["gsd-fast", "gsd-gone"]}), gsd=on)
+        code, lines = run_full(root, env, "--check")
+        want("%s: an extras row naming a missing gsd-* skill is refused" % label,
+             (code, [l for l in lines if "EXTRAS[%s] -> gsd-gone" % NAMED in l] != []), (1, True))
+    # Flipping the integration changes nothing: the apply with it off is in sync with it on.
+    root, env = gsd_roots[False]
     fjson = os.path.join(root, "config", "forge.json")
     doc = load(fjson)
     doc["integrations"]["gsd"] = True
     with open(fjson, "w", encoding="utf-8") as fh:
         json.dump(doc, fh)
-    want("gsd back on: --apply, gsd-gone is not installed so the extras row is refused (exit 1)", run(root, env, "--apply")[0], 1)
-    doc["skill_keep"]["extras"][NAMED] = ["gsd-fast", "summarize"]
-    with open(fjson, "w", encoding="utf-8") as fh:
-        json.dump(doc, fh)
-    want("gsd back on: --apply", run(root, env, "--apply")[0], 0)
-    for fn in (PLAIN_FILE, "zzz.claude.json", NAMED):
-        want("gsd back on: %s has the baseline again" % fn,
-             len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5, True)
-    want("gsd back on: --check after the apply", run(root, env, "--check"), (0, "0 project(s) would change."))
-    root, env = world(tmp, "gsd-on", off, lambda sk: sk["extras"].update({NAMED: ["gsd-fast", "summarize"]}))
-    run(root, env, "--apply")
-    for fn in (PLAIN_FILE, "zzz.claude.json", NAMED):
-        want("gsd on (control): %s gets the baseline" % fn,
-             len([n for n in skills_of(root, fn) if n.startswith("gsd-")]) > 5, True)
-    # gsd on, an extras row naming a gsd-* name that is not installed: still refused, as any missing name is.
-    root, env = world(tmp, "gsd-on-gone", off, named_row)
-    code, lines = run_full(root, env, "--check")
-    want("gsd on (control): an extras row naming a missing gsd-* skill is refused",
-         (code, [l for l in lines if "EXTRAS[%s] -> gsd-gone" % NAMED in l] != []), (1, True))
-
-    # skill_keep.gsd_exclude and gsd_opt_in. toy-0 is excluded: in no project, extras or not, though it is installed
-    # (relink has not run in this world). toy-1 is opt-in: in the baseline of nobody, kept only by the project whose
-    # extras row names it, and stripped from a union project that holds it. The baseline is what is left.
-    def trim(sk):
-        sk["gsd_exclude"] = ["gsd-toy-0"]
-        sk["gsd_opt_in"] = ["gsd-toy-1"]
-        sk["extras"][PLAIN_FILE] = ["gsd-toy-1"]
-    holds = ["gsd-fast", "gsd-toy-0", "gsd-toy-1"]
-    root, env = world(tmp, "trim", dict({PLAIN_FILE: trimmed(skills_keep=holds), "zzz.claude.json": trimmed(skills_keep=holds)},
-                                        **OPT_OUT_PROJECTS), trim)
-    want("gsd trim: --apply", run(root, env, "--apply")[0], 0)
-    plain, union_ = skills_of(root, PLAIN_FILE), skills_of(root, "zzz.claude.json")
-    want("gsd trim: the excluded name is in no project", ["gsd-toy-0" in plain, "gsd-toy-0" in union_], [False, False])
-    want("gsd trim: opt-in only where the extras row names it", ["gsd-toy-1" in plain, "gsd-toy-1" in union_], [True, False])
-    want("gsd trim: the baseline is the rest", ["gsd-toy-2" in plain, "gsd-toy-2" in union_], [True, True])
-    want("gsd trim: --check after the apply", run(root, env, "--check"), (0, "0 project(s) would change."))
-    # A name in a table that skills/ and the mirror both lack is a typo; a name in both tables, or in an extras row
-    # and excluded, is a contradiction. Each exits 1 and says which.
-    for label, edit, needle in (
-            ("a typo in gsd_exclude", lambda sk: sk.update({"gsd_exclude": ["gsd-no-such"]}), "gsd-no-such"),
-            ("a typo in gsd_opt_in", lambda sk: sk.update({"gsd_opt_in": ["gsd-no-such"]}), "gsd-no-such"),
-            ("a name in both tables", lambda sk: sk.update({"gsd_exclude": ["gsd-toy-0"], "gsd_opt_in": ["gsd-toy-0"]}), "gsd-toy-0"),
-            ("an excluded name in an extras row", lambda sk: (sk.update({"gsd_exclude": ["gsd-toy-0"]}),
-                                                             sk["extras"].update({PLAIN_FILE: ["gsd-toy-0"]})), "gsd-toy-0")):
-        root, env = world(tmp, "trim-bad-%d" % sum(map(ord, label)), dict({PLAIN_FILE: trimmed()}, **OPT_OUT_PROJECTS), edit)
-        r = subprocess.run([sys.executable, SCRIPT, "--check"], cwd=root, env=env, capture_output=True, text=True)
-        # "! ... skill_keep.gsd_..." is the refusal itself: exit 1 alone is also what any pending change gives.
-        text = r.stdout + r.stderr
-        want("gsd trim: %s" % label, (r.returncode, "! " in text and "skill_keep.gsd_" in text and needle in text,
-                                      "Traceback" in r.stderr), (1, True, False))
+    want("gsd flipped on after an apply with it off: --check", run(root, env, "--check"), (0, "0 project(s) would change."))
+    # No gsd-* skill installed at all is not an abort (the baseline it used to refuse to wipe is gone).
+    root, env = world(tmp, "no-gsd", {PLAIN_FILE: trimmed(skills_keep=["defuddle"]), **OPT_OUT_PROJECTS})
+    skills_dir = os.path.join(env["HOME"], ".claude", "skills")
+    for n in [d for d in os.listdir(skills_dir) if d.startswith("gsd-")]:
+        shutil.rmtree(os.path.join(skills_dir, n))
+    code, lines = run_full(root, env, "--apply")
+    want("no gsd-* skill installed: --apply", (code, [l for l in lines if "no gsd-* skills found" in l]), (0, []))
 
     # A stranger's forge: examples/forge.json (every table empty, gsd off) and no ~/.claude/skills.
     with open(os.path.join(sandbox.FORGE, "examples", "forge.json"), encoding="utf-8") as fh:
