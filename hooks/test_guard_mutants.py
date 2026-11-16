@@ -71,8 +71,12 @@ MUTANTS = {
     # Rules added after the independent review.
     "drop the lefthook bypass checks":
         ("            reason = hook_bypass(pcmd)\n            if reason:", "            reason = None\n            if reason:"),
-    "drop the backlog rule (gh issue create passes where backlog.mjs exists)":
+    "drop the issue-create rule (gh issue create passes in every project)":
         ("            reason = issue_create_refusal(pcmd)\n            if reason:", "            reason = None\n            if reason:"),
+    "issue-create rule needs a backlog script again (gh issue create passes where there is none)":
+        ("    for seg in pieces(pcmd):\n        if _creates_issue(seg):\n            return (\"gh issue create is refused:",
+         "    if not any(os.path.isfile(os.path.join(d, \"scripts\", \"backlog\", \"backlog.mjs\")) for d in (PROJECT, CWD[0])):\n"
+         "        return None\n    for seg in pieces(pcmd):\n        if _creates_issue(seg):\n            return (\"gh issue create is refused:"),
     "drop git commit -n":
         ('        if re.match(r"^-[a-zA-Z]+$", a) and "n" in a[1:]:', "        if False:"),
     "drop .env.example exclusion (over-block)":
