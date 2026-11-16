@@ -447,6 +447,19 @@ def main():
     check("SKILL.md step 0 clears worktrees before the retake and the resume", in_order(s0, "--state merged", "retake", "fwx session --json"), "order is not sweep, retake, resume")
     check("playbooks/session.md n_L3 clears merged worktrees (--state merged)", "--state merged" in block(session_pb, "n_L3"), "missing")
     check("playbooks/session.md n_L10 no longer removes the phase worktree", "removes only the phase worktree" not in block(session_pb, "n_L10"), "'removes only the phase worktree' still in it")
+    # The owner leaving changes nothing: the session passes no `--unattended` (the factory's flag) and says so.
+    # Seen red on the text before the change (rc=1):
+    #   FAIL: no line of SKILL.md tells the session to pass --unattended -> line 46: '5. **Execute a part.** ... (add `--unattended` when the owner says he is leaving); it prints ...'
+    #   FAIL: SKILL.md says the owner leaving changes nothing -> no line with 'he is leaving, nothing changes' and 'no `--unattended`'
+    leave_re = re.compile(r"\b(add|pass)\w*\s+`--unattended`")
+    bad = [(n, ln.strip()[:90]) for n, ln in enumerate(texts["SKILL.md"].splitlines(), 1) if leave_re.search(ln)]
+    check("no line of SKILL.md tells the session to pass --unattended", not bad, ("line %d: %r" % bad[0]) if bad else "")
+    check("SKILL.md says the owner leaving changes nothing",
+          any("he is leaving, nothing changes" in ln and "no `--unattended`" in ln and "end your turn for his answer" in ln
+              and "no recommendation unasked; when he asks what you recommend" in ln for ln in texts["SKILL.md"].splitlines()),
+          "no line with 'he is leaving, nothing changes' and 'no `--unattended`'")
+    check("control: 'add `--unattended` when the owner says he is leaving' is caught", leave_re.search("(add `--unattended` when the owner says he is leaving)") is not None)
+    check("control: 'you pass no `--unattended`' is not caught", leave_re.search("you pass no `--unattended` (only the factory does)") is None)
     # controls: the old closing step and a step 0 without the rule fail, a step 0 with `-D` fails.
     check("control: the old closing step 4 is caught", "git worktree remove" in "4. **Cleanup.** Remove it with `git worktree remove <path>` and no force.")
     check("control: a step 0 without the rule is caught", not all(w in "0. **Where you are.** Run `fwx session --json`." for w in need))
