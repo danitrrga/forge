@@ -19,6 +19,8 @@ arrow that joins two nodes, with its bindings; the title, the lane headings and 
   - Free text stays only when FREE_TEXTS says so. Each frame keeps its title and one short paragraph (FRAMES);
     its tables and lists go, and the frame is fitted to what is left.
   - The frame far off to the side is moved under another frame, so the canvas is not twice as wide as the tree.
+  - Elements marked `customData.fwx == "map"` are a second drawing in the file (a map of the system) and are
+    skipped as if absent: not checked against the tables, not in the output.
   - `index` is rewritten as a clean sequence in drawing order, so Excalidraw never has to repair it.
 Titles are by element id: when a node's meaning changes in the private tree, its title here has to be reviewed
 by hand; the script cannot tell. What it can tell it refuses: a node with text and no title, a title or label
@@ -346,9 +348,14 @@ def ends(arrow):
     return [(arrow.get(k) or {}).get("elementId") for k in ("startBinding", "endBinding")]
 
 
+def is_map(e):
+    c = e.get("customData")
+    return isinstance(c, dict) and c.get("fwx") == "map"
+
+
 def derive(scene):
     """The public scene (a new dict) of the private `scene`; PublicTreeError says what to fix."""
-    live = [e for e in scene["elements"] if not e.get("isDeleted")]
+    live = [e for e in scene["elements"] if not e.get("isDeleted") and not is_map(e)]
     by_id = {e["id"]: e for e in live}
     errors = check_tables(live, by_id)
     if errors:
