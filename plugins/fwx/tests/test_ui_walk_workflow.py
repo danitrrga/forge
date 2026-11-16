@@ -97,7 +97,8 @@ ARGS = {
     "recheck": None,
 }
 TRAMOS = [
-    {"id": "T1", "screens": [{"url": "/settings", "states": ["empty", "dark"], "why": "the save bar", "reference": "demo/settings.png"}],
+    {"id": "T1", "screens": [{"url": "/settings", "states": ["empty", "dark"], "why": "the save bar", "reference": "demo/settings.png",
+                                       "changed": ".save-bar button"}],
      "files": ["src/SaveBar.tsx"], "firefox": False},
     {"id": "T2", "screens": [{"url": "/billing", "states": ["with 3 items"], "why": "the invoice list", "reference": "/settings"}],
      "files": ["src/Invoices.tsx"], "firefox": True},
@@ -242,8 +243,8 @@ def check_green(script, s):
     s.ok("green: up is told the repo, the folder, the part and the round", "cd '%s' && fwx walk start --dir '%s' --part 1 --round 1 --repo '%s'" % (REPO, PHASE, REPO) in up
          and "--app" not in up, up[-300:])
     arm = runner(rec, "arm-control")[0]["prompt"]
-    s.ok("green: the control is planted on the first screen of the first tramo, as a URL of the app and the run's folder",
-         "fwx control new --run '%s' --screen '%s/settings'" % (RUN_DIR, APP) in arm, arm[-300:])
+    s.ok("green: the control is planted on the first screen that has a changed element, as a URL of the app and the run's folder, with that element as its target",
+         "fwx control new --run '%s' --screen '%s/settings' --target '.save-bar button'" % (RUN_DIR, APP) in arm, arm[-300:])
     ws = collections.defaultdict(str, {l["label"]: l["prompt"] for l in walkers(rec)})
     s.ok("green: a walker's session and findings file are its own", "w1" in ws["ui-walker:T1-breaker"] and RUN_DIR + "/findings-w1.md" in ws["ui-walker:T1-breaker"]
          and RUN_DIR + "/findings-w4.md" in ws["ui-walker:T2-critic"], ws["ui-walker:T1-breaker"][:400])
@@ -677,6 +678,65 @@ def check_control(script, s):
              str(r.get("reason")).lower().startswith("the run does not count") and tag in str(r.get("reason")), repr(r.get("reason")))
 
 
+def sh_quote(x):
+    """What the workflow's `sh()` makes of a word: single-quoted, a quote inside as '\\''."""
+    return "'" + x.replace("'", "'\\''") + "'"
+
+
+def check_control_target(script, s):
+    """The control is planted inside what the part changed: on the element the `tramos` reply names in `changed`, never on the title of the
+    first screen (the critics judge what the part changed, and in 8 live walks none of them reported a fault planted outside it).
+    The reply is the example of agents/ui-verifier.md, mode `tramos`, as committed.
+
+    Seen red on the code before the change (the script planted on the first screen of the first tramo, with no element named; the tramos
+    example had no `changed`):
+      FAIL: control target: the example of the tramos reply names a `changed` element on a screen: []
+      FAIL: control target: a screen with no `changed` is passed over for the first that has one: <the tail of the arm-control runner's prompt, `--screen '.../settings'` with no --target>
+      FAIL: control none: the run does not count, and the reason says there was no changed element to plant on: ''
+      FAIL: control none: nothing is planted: no `fwx control new` is launched, so nothing lands on the title, and no judge runs: ['executor:runner-up', ..., 'executor:runner-arm-control', ...]
+      FAIL: control none: the walk went on (five walkers) and the control is not found: (5, {'screen': '/settings', 'found': True, 'finding': 'w2-F1'})
+    """
+    section = agent_section("ui-verifier.md", "tramos")
+    block = re.search(r"```\n(.*?)\n```", section, re.S)
+    tramos = json.loads(block.group(1)) if block else []
+    named = [(x["url"], x["changed"]) for t in tramos for x in t.get("screens", []) if isinstance(x.get("changed"), str) and x["changed"].strip()]
+    s.ok("control target: the example of the tramos reply names a `changed` element on a screen", len(named) >= 1, repr(named))
+    if named:
+        url, sel = named[0]
+        seen = list(dict.fromkeys(APP + x["url"] for t in tramos for x in t.get("screens", [])))
+        rec, err = go(script, answers_over={"ui-verifier:tramos": "```json\n%s\n```" % json.dumps(tramos),
+                                            "executor:runner-check-screens": R(screens_out(*[(u, 200) for u in seen]))})
+        rec = finish(s, "control target", rec, err, allow_unanswered=True)
+        arm = runner(rec, "arm-control")[0]["prompt"] if runner(rec, "arm-control") else ""
+        s.ok("control target: the control is planted with `--target` set to that element, on its screen",
+             "fwx control new --run '%s' --screen '%s%s' --target %s" % (RUN_DIR, APP, url, sh_quote(sel)) in arm, arm[-300:])
+    # the first screen that has one: a screen with none, in the first tramo, is passed over; the first tramo's second screen wins over the second tramo's
+    mixed = json.loads(json.dumps(TRAMOS))
+    mixed[0]["screens"] = [dict(mixed[0]["screens"][0], changed=None), dict(mixed[0]["screens"][0], url="/profile", changed="main .name")]
+    mixed[1]["screens"][0]["changed"] = "table.invoices th:first-child"
+    rec, err = go(script, answers_over={"ui-verifier:tramos": json.dumps(mixed),
+                                        "executor:runner-check-screens": R(screens_out((APP + "/settings", 200), (APP + "/profile", 200), (APP + "/billing", 200)))})
+    rec = finish(s, "control target order", rec, err, allow_unanswered=True)
+    arm = runner(rec, "arm-control")[0]["prompt"] if runner(rec, "arm-control") else ""
+    s.ok("control target: a screen with no `changed` is passed over for the first that has one",
+         "--screen '%s/profile' --target 'main .name'" % APP in arm and "--screen '%s/settings'" % APP not in arm, arm[-300:])
+    # no screen has one: the control is not armed, nothing is planted anywhere, the walk goes on and does not count
+    none = json.loads(json.dumps(TRAMOS))
+    for t in none:
+        for x in t["screens"]:
+            x.pop("changed", None)
+    rec, err = go(script, answers_over={"ui-verifier:tramos": json.dumps(none)})
+    rec = finish(s, "control none", rec, err)
+    r = result(rec)
+    why = str(r.get("reason"))
+    s.ok("control none: the run does not count, and the reason says there was no changed element to plant on",
+         why.lower().startswith("the run does not count") and "changed" in why, repr(why))
+    s.ok("control none: nothing is planted: no `fwx control new` is launched, so nothing lands on the title, and no judge runs",
+         not runner(rec, "arm-control") and "ui-verifier:control" not in labels(rec), repr(labels(rec)))
+    s.ok("control none: the walk went on (five walkers) and the control is not found", len(walkers(rec)) == 5 and details(rec).get("control", {}).get("found") is None,
+         repr((len(walkers(rec)), details(rec).get("control"))))
+
+
 def peak(w):
     """The most walkers running at one moment: for each walker's start, the intervals that hold that tick."""
     return max([sum(1 for b in w if b["start"] <= a["start"] < b["end"]) for a in w] or [0])
@@ -950,6 +1010,7 @@ def check_all(script, s):
     check_close(script, s)
     check_control_rows(script, s)
     check_control(script, s)
+    check_control_target(script, s)
     check_quota(script, s)
     check_tramos(script, s)
     check_screens(script, s)
@@ -982,7 +1043,9 @@ MUTANTS = [
     ("recheck overwrites fix.json", "if (!A.recheck) await collect()", "await collect()", "FAIL: recheck: nothing overwrites fix.json"),
     ("a null severity refused by the schema", "severity: { type: ['string', 'null'], enum: ['blocker', 'major', 'minor', 'cosmetic', null] },",
      "severity: { type: 'string', enum: ['blocker', 'major', 'minor', 'cosmetic'] },", "FAIL: real verify reply: a NOT REPRODUCED row with severity null is accepted"),
-    ("the screen's reference dropped", "reference: String(x.reference || 'none') })),", "reference: 'none' })),", "FAIL: real tramos reply: the critic is given the reference its screen carries"),
+    ("the screen's reference dropped", "reference: String(x.reference || 'none'),", "reference: 'none',", "FAIL: real tramos reply: the critic is given the reference its screen carries"),
+    ("the target is not passed to `control new`", " + ' --target ' + sh(target)", "", "FAIL: green: the control is planted on the first screen that has a changed element"),
+    ("no changed element still plants (on the first screen)", "if (!target) {\n    st.ctl", "if (false) {\n    st.ctl", "FAIL: control none: the run does not count"),
     ("a judgement still there counted as other", "if (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE') rc.still += 1", "if (f.verdict === 'CONFIRMED') rc.still += 1",
      "FAIL: recheck: a judgement finding still there"),
     ("the walkers are not told the run", "`fwx walk ab --run ' + st.runDir + ' ' + job.session", "`fwx walk ab ' + job.session", "FAIL: green: every walker command names the run"),

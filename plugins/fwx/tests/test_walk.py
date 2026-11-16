@@ -971,6 +971,61 @@ def case_arm_control(R, S):
         sc.stop()
 
 
+def case_arm_control_target(R, S):
+    """`fwx control new --target SELECTOR` plants on the element the part changed, not on the title; a selector that matches nothing, or whose
+    box does not change, is a refusal and never a fall-back to the title (that would put the fault outside what the critics judge again).
+    Seen red on the code before `--target` (arm-control knew only the title; the lines below are that run):
+      FAIL: arm-control target: the plant on an element the part changed: exit: got 2, want 0
+      FAIL: arm-control target: a selector that matches nothing: exit: got 2, want 1
+      FAIL: arm-control target: a selector whose box does not change: exit: got 2, want 1"""
+    sc = Scene()
+    sc.env.update(FAKE_READ="changes", FWX_WALK_CONTROL_WAIT_S="1")
+    sel = ".save-bar button"
+    try:
+        o = armed(sc, R, S, "arm-control target")
+        if not o:
+            return
+        rd = o["run_dir"]
+        screen = sc.url + "/board"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen, "--target", sel)
+        S.eq("arm-control target: the plant on an element the part changed: exit", r.returncode, 0)
+        c = jfile(os.path.join(rd, "control.json")) or {}
+        script = open(c["script"], encoding="utf-8").read() if c.get("script") and os.path.isfile(c["script"]) else ""
+        S.ok("arm-control target: the init script looks the element up and does not look for the title", json.dumps(sel) in script and "h1" not in script, script[:300])
+        calls = [x["argv"] for x in sc.calls("agent-browser")]
+        reads = [a[-1] for a in calls if "eval" in a and "fwx:" in a[-1]]
+        S.ok("arm-control target: both readings are of that element and none of the title", len(reads) == 2 and all(json.dumps(sel) in x and "h1" not in x for x in reads), repr(reads))
+        S.eq("arm-control target: control.json records the selector read back and the one planted", ((c.get("readback") or {}).get("selector"), c.get("target")), (sel, sel))
+        S.ok("arm-control target: and what was planted says that element, for the judge", sel in str(c.get("planted")) and "title" not in str(c.get("planted")), str(c.get("planted")))
+        # no --target: the title, as before (the positive control of the lines above: the same call without the option)
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen)
+        c = jfile(os.path.join(rd, "control.json")) or {}
+        S.ok("arm-control target: without --target the plant is on the title as before", r.returncode == 0 and "h1" in str((c.get("readback") or {}).get("selector"))
+             and "title" in str(c.get("planted")), "rc %d: %s" % (r.returncode, c))
+        # a selector that matches nothing: a refusal in one plain line, nothing planted, no look at the title
+        sc.env["FAKE_READ"] = "missing"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen, "--target", sel)
+        S.eq("arm-control target: a selector that matches nothing: exit", r.returncode, 1)
+        S.ok("arm-control target: and it says target not found, the selector and the screen, in one line",
+             "target not found" in r.stderr and sel in r.stderr and screen in r.stderr and len(r.stderr.strip().splitlines()) == 1, "rc %d: %s" % (r.returncode, r.stderr))
+        S.ok("arm-control target: nothing planted, and the title was never read instead",
+             not os.path.exists(os.path.join(rd, "control.json")) and not any("--init-script" in x["argv"] for x in sc.calls("agent-browser"))
+             and not any("h1" in x["argv"][-1] for x in sc.calls("agent-browser") if "eval" in x["argv"]), r.stderr)
+        # a selector whose box does not change by the minimum: the same refusal as for the title, naming the selector
+        sc.env["FAKE_READ"] = "same"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen, "--target", sel)
+        S.eq("arm-control target: a selector whose box does not change: exit", r.returncode, 1)
+        S.ok("arm-control target: and it says no visible change and the selector",
+             "no visible change" in r.stderr and sel in r.stderr and not os.path.exists(os.path.join(rd, "control.json")), "rc %d: %s" % (r.returncode, r.stderr))
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
 def case_arm_control_readback(R, S):
     """D14: the control is proved visible on the screen it is armed on, or the arming fails. Seen red on the branch before the read-back
     (arm-control wrote control.json without opening the page; the lines below are that run, FAKE_READ naming what the page holds):
@@ -2248,7 +2303,7 @@ def case_poll(R, S):
         S.eq("poll: the module reads FWX_WALK_POLL_S: %s" % label, got, want)
 
 
-CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
+CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_arm_control_target, case_down_count,
          case_off, case_container, case_cap, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
          case_arm_control_launch_path, case_check_screens, case_check_screens_apps, case_poll]
@@ -2356,6 +2411,8 @@ MUTANTS = [
      "arm-control read-back: the boxes are recorded beside the styles"),
     ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
      "arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched"),
+    ("arm-control: --target ignored, the title is planted", case_arm_control_target, 'target = o.get("--target", TARGET)', "target = TARGET",
+     "arm-control target: the init script looks the element up and does not look for the title"),
     ("arm-control: an old control.json kept", case_arm_control_launch_path, "os.remove(ctl_file)", "pass",
      "arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant"),
     ("arm-control: the reason not on stdout", case_arm_control_readback, 'say({"armed": False, "reason": str(e)})', "pass",
@@ -2440,7 +2497,7 @@ MUTANTS = [
     ("check-screens: a screen listed twice is asked twice", case_check_screens, "urls = list(dict.fromkeys(screens))", "urls = list(screens)",
      "check-screens: a screen listed twice is asked once"),
     ("check-screens: an empty list is a pass", case_check_screens, "or not screens or not all(", "or not all(", "check-screens: an empty list: exit 2 and a usage line"),
-    ("arm-control: the plant is written after the proof", case_arm_control_launch_path, "    arm()\n    after = read_fresh(run, screen)", "    after = read_fresh(run, screen)",
+    ("arm-control: the plant is written after the proof", case_arm_control_launch_path, "    arm()\n    after = read_fresh(run, screen, target)", "    after = read_fresh(run, screen, target)",
      "arm-control launch path: a browser that takes the script: exit"),
     ("arm-control: control.json left after a refusal", case_arm_control_launch_path, "for left in (ctl_file, script):", "for left in (script,):",
      "arm-control launch path: a browser that ignores --init-script: no control.json is left"),

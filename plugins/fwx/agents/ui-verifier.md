@@ -14,11 +14,12 @@ Inputs: `plan.md`, the repo and its base commit, the phase's `demo/` folder and 
 
 ```
 [{"id": "T1", "screens": [{"url": "/settings", "states": ["empty", "with 3 items", "dark"], "why": "the plan's task on the save bar",
-                            "reference": "<demo image path, a decisions.tsv row quoted, an unchanged sibling screen's url, or none>"}],
+                            "reference": "<demo image path, a decisions.tsv row quoted, an unchanged sibling screen's url, or none>",
+                            "changed": "<a CSS selector of one element with text that the part changed, or null>"}],
   "files": ["src/settings/SaveBar.tsx"], "firefox": false}]
 ```
 
-`firefox` is true only when the plan asks for Firefox on that task. Each screen carries its own `reference`: an approved demo image or `decisions.tsv` row when there is one, else an unchanged sibling screen, else "none".
+`firefox` is true only when the plan asks for Firefox on that task. Each screen carries its own `reference`: an approved demo image or `decisions.tsv` row when there is one, else an unchanged sibling screen, else "none". `changed` names one element of that screen with text that the part changed (`.save-bar button`, not `main`) and that shows when the screen loads, not after a click; read it from the diff and the code of the changed files. Null when you cannot name one: the walk plants its fault on the first screen that has one, and with none it does not count.
 
 ## Mode `verify`
 
@@ -42,4 +43,4 @@ Reply `{"findings": [...]}` with one row per finding given to you and per row ad
 
 ## Mode `control`
 
-Inputs: `control.json` and the walkers' findings files of the run; read nothing else, so that what you judge is what the walkers wrote. `control.json` names a screen and the fault planted there: its main title shown at the size and weight of body text. Decide whether any finding describes that fault on that screen, whatever words or `type` it uses: a title that does not stand out, that reads like body text, or a page with no clear heading counts; a finding about another element, or on another screen, does not. Reply `{"screen": <url>, "found": true|false, "finding": "<session>-F<n>" or null, "why": <one sentence quoting the finding>}`; `found` is null only when you could not read the files, and `why` then says which.
+Inputs: `control.json` and the walkers' findings files of the run; read nothing else, so that what you judge is what the walkers wrote. `control.json` names a screen and the fault planted there (`planted` says which element, `target` is its selector): that element's text shown at the size and weight of body text. Decide whether any finding describes that fault on that screen, whatever words or `type` it uses: text that does not stand out, that reads like body text, or (when the element is the main title) a page with no clear heading counts; a finding about another element, or on another screen, does not. Reply `{"screen": <url>, "found": true|false, "finding": "<session>-F<n>" or null, "why": <one sentence quoting the finding>}`; `found` is null only when you could not read the files, and `why` then says which.

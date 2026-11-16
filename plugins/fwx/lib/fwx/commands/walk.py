@@ -54,8 +54,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       ui-walk workflow runs it once, for every screen, after the tramos and before `control new`, and ends `failed` on exit 1: a walk over pages
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
-  fwx control new --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
-      as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
+  fwx control new --run R --screen URL [--target SELECTOR]     plants the control: an init script that makes the element SELECTOR names (default:
+      the main title) of that route as large and light as body text (a hierarchy defect), registered by `ab` at launch with --init-script;
+      control.json. The workflow passes the element the part changed, so the critics are looking at it. No walker sees it named.
       Before it leaves control.json it proves the plant visible where the walkers will meet it: it opens the screen in session w1 with no
       plant, reads the title's computed font-size, font-weight and rendered box (width and height in whole pixels) and closes the session; then
       writes init.js and control.json and opens the screen in a fresh w1, launched by `ab` like any walker's session (with --init-script),
@@ -208,7 +209,7 @@ USAGES = {
     "ab": "usage: fwx walk ab [--run R] <session> <agent-browser args...>",
     "pw": "usage: fwx walk pw [--run R] <session> <playwright-cli args...>",
     "check-screens": "usage: fwx walk check-screens --run R --screens JSON   (JSON: a list of the screens' URLs)",
-    "arm-control": "usage: fwx control new --run R --screen URL",
+    "arm-control": "usage: fwx control new --run R --screen URL [--target SELECTOR]",
     "findings": "usage: fwx walk converge --run R",
     "review-page": "usage: fwx review new --run R --fixed FILE",
     "review-answers": "usage: fwx review read --run R FILE",
@@ -921,12 +922,12 @@ def browser_must(run, args):
     return out
 
 
-def read_target(run):
+def read_target(run, target=TARGET):
     """The target's (font-size, font-weight, width, height) on the page the probe session has open (the box in whole pixels), or None while
     there is no target. The page may still be drawing (a cold dev server), so it is asked again every SETTLE_POLL_S for CONTROL_WAIT_S."""
     end = time.monotonic() + CONTROL_WAIT_S
     while True:
-        m = READ_LINE.search(browser_must(run, ["eval", READ_JS % json.dumps(TARGET)]))
+        m = READ_LINE.search(browser_must(run, ["eval", READ_JS % json.dumps(target)]))
         if m and not m.group(1):
             return m.group(2), m.group(3), int(m.group(4)), int(m.group(5))
         if time.monotonic() >= end:
@@ -934,53 +935,62 @@ def read_target(run):
         time.sleep(SETTLE_POLL_S)
 
 
-def read_fresh(run, screen):
+def read_fresh(run, screen, target=TARGET):
     """The target's reading on the screen in a session of its own (session w1, closed after), None when it has no title: the walk's own
     browser, so the launch is the one the walkers' sessions get (the plant rides on it when control.json is there)."""
     try:
         browser_must(run, ["open", screen])
-        return read_target(run)
+        return read_target(run, target)
     finally:
         browser_call(run, ["close"])
 
 
-def read_back(run, screen, arm):
+def read_back(run, screen, arm, target=TARGET):
     """(before, after): the target's computed style and rendered box without and with the plant, on the screen. `before` is read in a session
     launched while no control.json exists, so it is the page as the app draws it; `arm()` then writes init.js and control.json, and `after`
     is read in a fresh session launched through `ab` as a walker's is, so it is the init script's own run that is measured, not the plant's
     code run on the page by hand (a browser that drops the script would pass that). It lives here and not in `up` because only arm-control
     knows the screen (the tramos come from an agent after `up`). Stops, exit 1, when there is no target or the plant does not move the box by
     CONTROL_MIN_BOX_PX: the owner's rule is that what changes no layout is not worth a walker's attention, whatever it does to the text."""
-    before = read_fresh(run, screen)
+    before = read_fresh(run, screen, target)
     if before is None:
-        raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, TARGET, CONTROL_WAIT_S), 1)
+        raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, target, CONTROL_WAIT_S), 1)
     arm()
-    after = read_fresh(run, screen)
+    after = read_fresh(run, screen, target)
     if after is None:
-        raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no `%s` after %g s" % (screen, TARGET, CONTROL_WAIT_S), 1)
+        raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no `%s` after %g s" % (screen, target, CONTROL_WAIT_S), 1)
     if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:
         raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px without the plant and %dx%d px in a fresh walker session launched with it "
                    "(the plant did not reach the browser, or it changes no layout), and the box must change by at least %d px"
-                   % (screen, TARGET, before[2], before[3], after[2], after[3], CONTROL_MIN_BOX_PX), 1)
+                   % (screen, target, before[2], before[3], after[2], after[3], CONTROL_MIN_BOX_PX), 1)
     return before, after
 
 
+def control_code(path, target):
+    """The init script that plants the control on `target` (a CSS selector) of the route `path`."""
+    return CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(target)}
+
+
 def cmd_arm_control(argv):
-    o, _ = opts("arm-control", argv, ("--run", "--screen"))
+    o, _ = opts("arm-control", argv, ("--run", "--screen", "--target"))
     if "--run" not in o or "--screen" not in o:
         raise usage("arm-control")
     run = load_run(o["--run"])
     screen = o["--screen"]
+    target = o.get("--target", TARGET)  # a selector that matches nothing is a refusal below, never a fall-back to the title
+    if not target.strip():
+        raise usage("arm-control", "--target is empty")
     if host_of(screen) not in run["hosts"]:
         raise Stop("screen %s is not on the app (%s)" % (screen, ", ".join(run["hosts"])))
     path = urlsplit(screen if "://" in screen else "http://" + screen).path.rstrip("/") or "/"
     ctl_file = os.path.join(run["run_dir"], "control.json")
     if os.path.isfile(ctl_file):
         os.remove(ctl_file)  # an earlier plant is not the one being armed: a failure below must leave none
-    code = CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(TARGET)}
+    code = control_code(path, target)
     script = os.path.join(run["shots"], "init.js")
-    ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script,
-           "planted": "the main title of the screen has the size and weight of body text"}
+    what = "the main title of the screen" if target == TARGET else "the element `%s` of the screen (text the part changed)" % target
+    ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script, "target": target,
+           "planted": "%s has the size and weight of body text" % what}
 
     def arm():  # what the walkers' launch reads: control.json names the script, and `ab` adds it to a fresh walker session
         os.makedirs(run["shots"], exist_ok=True)
@@ -988,7 +998,7 @@ def cmd_arm_control(argv):
             f.write(code)
         write_json(ctl_file, ctl)
     try:
-        before, after = read_back(run, screen, arm)
+        before, after = read_back(run, screen, arm, target)
     except BaseException as e:
         for left in (ctl_file, script):  # a plant that was not proved visible stays nowhere a walker could meet it
             if os.path.exists(left):
@@ -998,7 +1008,7 @@ def cmd_arm_control(argv):
         raise
     names = ("font-size", "font-weight")
     box = lambda t: {"width": t[2], "height": t[3]}  # noqa: E731
-    ctl = dict(ctl, readback={"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
+    ctl = dict(ctl, readback={"selector": target, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
                               "box": {"before": box(before), "after": box(after)}, "min_box_px": CONTROL_MIN_BOX_PX},
                armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     write_json(ctl_file, ctl)

@@ -9,11 +9,17 @@ socket dir of its own), and measures the computed font size and weight of every 
 Cases: the page without the plant reads at its own sizes (so the measurement can tell a plant from none: the negative control of the
 others); with the plant every text node of the title computes to the body's size and weight, inner element included; the plant leaves no
 attribute on the element (a walker that reads the DOM must not find a self-describing tag) and no more than the inline style.
+With a target (`walk.control_code(path, selector)`, what `fwx control new --target` writes) the element the selector names is the one whose
+box changes (a paragraph at 40px bold goes to the body's size), and the title keeps its size and its box: the fault lands inside what the part
+changed and not on the first title of the screen.
 
 Seen red against the script before the change (the plant restyled the `h1` element only):
   FAIL: plant: every text node of the title reads at the body's size: got ['16px', '60px'], want ['16px', '16px']
   FAIL: plant: every text node of the title reads at the body's weight: got ['400', '700'], want ['400', '400']
   FAIL: plant: the title carries no attribute that names the tooling: got ['data-fwx-ctl'], want []
+
+Seen red against the script before `--target` (`walk` had no `control_code`; the same toy page):
+  FAIL: target: the browser measured the page: AttributeError: module 'fwx.commands.walk' has no attribute 'control_code'
 
 Needs `agent-browser` on the PATH and a Chromium-family browser (FWX_TEST_BROWSER, else chromium, google-chrome or chromium-browser on the PATH);
 without either it prints `NOT RUN, NOT ARMED` and exits 77. Every process it starts is closed and every temp dir removed in a `finally`.
@@ -36,13 +42,15 @@ from fwx.commands import walk  # noqa: E402
 s = helpers.Suite()
 PAGE = """<!doctype html><html><head><meta charset="utf-8"></head>
 <body style="font-size:16px;font-weight:400"><h1 style="font-size:60px;font-weight:700">Student<br>
-<span style="font-size:60px;font-weight:700;color:#06c">and Content Creator</span></h1><p>Body text.</p></body></html>"""
+<span style="font-size:60px;font-weight:700;color:#06c">and Content Creator</span></h1><p>Body text.</p>
+<p class="lede" style="font-size:40px;font-weight:700">What the part changed.</p></body></html>"""
 # The title's text nodes, each as its parent element's computed style; the title's attribute names; the body's own style.
 MEASURE = """(() => {
   const h = document.querySelector("h1"), w = document.createTreeWalker(h, NodeFilter.SHOW_TEXT), out = [];
   for (let n = w.nextNode(); n; n = w.nextNode()) if (n.textContent.trim()) { const c = getComputedStyle(n.parentElement); out.push([c.fontSize, c.fontWeight]); }
   const b = getComputedStyle(document.body);
-  return JSON.stringify({text: out, attrs: h.getAttributeNames(), body: [b.fontSize, b.fontWeight]});
+  const box = (e) => { const r = e.getBoundingClientRect(), c = getComputedStyle(e); return [c.fontSize, c.fontWeight, Math.round(r.width), Math.round(r.height)]; };
+  return JSON.stringify({text: out, attrs: h.getAttributeNames(), body: [b.fontSize, b.fontWeight], h1: box(h), lede: box(document.querySelector(".lede"))});
 })()"""
 
 
@@ -117,6 +125,23 @@ def main():
         s.eq("plant: every text node of the title reads at the body's weight", [t[1] for t in planted["text"]], [weight] * len(planted["text"]))
         s.ok("plant: the title has the two text nodes of the toy (the walk looked at both)", len(planted["text"]) == 2, "got %r" % planted["text"])
         s.eq("plant: the title carries no attribute that names the tooling", [a for a in planted["attrs"] if "fwx" in a or "ctl" in a], [])
+        # a target: the planted element is the paragraph the part changed, and the title is as the app draws it
+        tscript = os.path.join(work, "init-target.js")
+        try:
+            code = walk.control_code("/", ".lede")
+        except AttributeError as e:
+            s.ok("target: the browser measured the page", False, "AttributeError: %s" % e)
+            return
+        with open(tscript, "w", encoding="utf-8") as f:
+            f.write(code)
+        hit, why = measure(ab, exe, sock, url, tscript)
+        if hit is None:
+            s.ok("target: the browser measured the page", False, why)
+            return
+        s.eq("target: the title's size, weight and box are as the app draws them (the plant is not on the title)", hit["h1"], plain["h1"])
+        s.eq("target: the element the part changed takes the body's size and weight", hit["lede"][:2], ["16px", "400"])
+        s.ok("target: and its box changes (it was %r without the plant)" % (plain["lede"],), hit["lede"][3] < plain["lede"][3], "got %r" % (hit["lede"],))
+        s.eq("target: no plant, the element is at its own 40px (the measurement can tell a plant from none)", plain["lede"][:2], ["40px", "700"])
     finally:
         server.shutdown()
         server.server_close()

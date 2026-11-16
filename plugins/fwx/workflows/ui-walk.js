@@ -270,7 +270,7 @@ function readTramos(reply) {
     while (seen.has(id)) id += 'x'
     seen.add(id)
     out.push({
-      id, screens: screens.map((x) => ({ url: abs(x.url), states: Array.isArray(x.states) ? x.states : [], why: String(x.why || ''), reference: String(x.reference || 'none') })),
+      id, screens: screens.map((x) => ({ url: abs(x.url), states: Array.isArray(x.states) ? x.states : [], why: String(x.why || ''), reference: String(x.reference || 'none'), changed: typeof x.changed === 'string' && x.changed.trim() ? x.changed.trim() : null })),
       files: Array.isArray(t.files) ? t.files.filter((f) => typeof f === 'string') : [], firefox: t.firefox === true,
     })
   })
@@ -321,11 +321,19 @@ async function checkScreens(tramos) {
 }
 
 // ---- the control ----------------------------------------------------------------------------------------------------------------
+// The fault goes on an element the part changed, so the critics (who judge what the part changed) are looking where it is: the first screen of the
+// tramos whose `changed` names one. With none, nothing is planted (the title of the first screen is outside what the critics judge) and the walk does not count.
 async function armControl(tramos) {
-  const screen = tramos[0].screens[0].url
-  st.ctl = { tramo: tramos[0].id, screen, armed: false }
+  let tramo = null, screen = null, target = null
+  for (const t of tramos) for (const x of t.screens) if (!target && x.changed) { tramo = t.id; screen = x.url; target = x.changed }
+  if (!target) {
+    st.ctl = { tramo: null, screen: null, target: null, armed: false, none: true }
+    log(PHASE + ': no screen of the part has a changed element to plant the control on; the walk goes on and does not count')
+    return
+  }
+  st.ctl = { tramo, screen, target, armed: false }
   st.control.screen = screen
-  const v = await must('arm-control', 'fwx control new --run ' + sh(st.runDir) + ' --screen ' + sh(screen), true)
+  const v = await must('arm-control', 'fwx control new --run ' + sh(st.runDir) + ' --screen ' + sh(screen) + ' --target ' + sh(target), true)
   st.ctl.armed = !!v && v.rc === 0
   if (!st.ctl.armed) {
     // `fwx control new` reads the plant back on the screen and refuses with `{"armed": false, "reason": ...}` (no target, or the plant changes nothing)
@@ -337,6 +345,10 @@ async function armControl(tramos) {
 
 async function judge() {
   const ctl = st.ctl
+  if (ctl.none) {
+    st.noCount = 'the control was not planted: no screen the part changed names an element it changed that shows when the screen loads, so no fault could be put where the critics look'
+    return
+  }
   if (!ctl.armed) {
     st.noCount = 'the control could not be planted on ' + ctl.screen + (ctl.why ? ' (' + ctl.why + ')' : '')
     return
@@ -698,7 +710,7 @@ function coverageText() {
     rows.push('', '## Tramo ' + t.id + (t.firefox ? ' (Firefox)' : ''), 'Screens: ' + t.screens.map((s) => s.url + ' [' + s.states.join(', ') + ']').join('; '))
     for (const j of st.jobs.filter((x) => x.tramo === t)) rows.push('- ' + j.tag + ' (session ' + j.session + '): ' + (j.returned ? 'returned, ' + j.file : 'did not return'))
   }
-  rows.push('', '## Control', st.ctl ? 'Planted on ' + st.ctl.screen + ': ' + (st.control.found === true ? 'found' : st.control.found === false ? 'not found' : 'not judged') + '.' : 'No control in this run.')
+  rows.push('', '## Control', st.ctl && st.ctl.none ? 'Not planted: no screen has a changed element.' : st.ctl ? 'Planted on ' + st.ctl.screen + ' at `' + st.ctl.target + '`: ' + (st.control.found === true ? 'found' : st.control.found === false ? 'not found' : 'not judged') + '.' : 'No control in this run.')
   rows.push('', '## Gaps', st.gaps.length ? st.gaps.map((g) => '- ' + g).join('\n') : 'none')
   return rows.join('\n')
 }
