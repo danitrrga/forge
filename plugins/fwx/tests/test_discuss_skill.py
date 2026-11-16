@@ -25,6 +25,9 @@ Widened to every skill and playbook, red before the session texts changed (32 .m
   FAIL: ... -> playbooks/session.md names 'xdg-open'
   FAIL: ... -> skills/session/SKILL.md names 'xdg-open'
   FAIL: ... -> skills/session/references/ui-review.md names 'xdg-open'
+The verdict keys reach the demo (16 checks); red on the texts before the fix (rc=1, 32 .md files looked at):
+  FAIL: step 7 names verdict_tool and verdict_command in the sentence that launches demo -> step 7 launch clause: ' (`models.demo.normal`)'
+  FAIL: demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them -> agents/demo.md has no line with 'fwx discuss --json' and both keys
 Length is not checked here: it is measured and reported, not capped. Each change also has an in-file control on a toy (the "control:" checks).
 """
 import json
@@ -108,6 +111,15 @@ for name, detail in waiting(agent_texts):
     check(name, False, detail)
 
 check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```json" in demo)
+
+# the verdict keys reach the demo: the launch sentence of step 7 names both, and the demo gets them itself when its prompt lacks them
+step7 = [l for l in files["SKILL.md"].splitlines() if l.startswith("7. ")]
+launch7 = step7[0].split("launch `demo`", 1)[-1].split(";", 1)[0] if step7 and "launch `demo`" in step7[0] else ""
+check("step 7 names verdict_tool and verdict_command in the sentence that launches demo",
+      "`verdict_tool`" in launch7 and "`verdict_command`" in launch7, "step 7 launch clause: %r" % launch7[:90])
+gets = [l for l in demo.splitlines() if "fwx discuss --json" in l and "`verdict_tool`" in l and "`verdict_command`" in l]
+check("demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them",
+      len(gets) == 1, "agents/demo.md has no line with 'fwx discuss --json' and both keys")
 for name, detail in problems(files, demo):
     check(name, False, detail)
 
