@@ -496,10 +496,10 @@ def worktree_guard_smoke(only=None):
     return lib.Result("SKIP", "worktree guard", NOT_ARMED + "no project turns on worktree_guard")
 
 
-# Ponytail for GSD's executing, debugging and reviewing agents (hooks/ponytail_subagent.py), which a
+# Ponytail for the framework's reviewing agents (hooks/ponytail_subagent.py), which a
 # project wires in its own `hooks` block. For each project that does: exactly one entry under each of
 # SubagentStart and UserPromptSubmit (without the second a manual /ponytail never reaches the agents), and
-# the SubagentStart command gives gsd-executor Ponytail's ruleset and gsd-planner nothing. The probe runs
+# the SubagentStart command gives fwx:reviewer Ponytail's ruleset and fwx:executor nothing. The probe runs
 # the real install, so a Ponytail update that moved its builder is a FAIL, not a silent no-op.
 PONYTAIL_SCRIPT, PONYTAIL_TIMEOUT = "ponytail_subagent.py", 15
 PONYTAIL_EVENTS = ("SubagentStart", "UserPromptSubmit")
@@ -518,7 +518,7 @@ def ponytail_problem(prof, entries):
     if sorted(e for e, _ in entries) != list(PONYTAIL_EVENTS):
         return "the project runs %s under %s, want once under each of %s" % (PONYTAIL_SCRIPT, [e for e, _ in entries], list(PONYTAIL_EVENTS))
     command = dict(entries)["SubagentStart"]
-    for agent, wanted in (("gsd-executor", True), ("gsd-planner", False)):
+    for agent, wanted in (("fwx:reviewer", True), ("fwx:executor", False)):
         payload = json.dumps({"hook_event_name": "SubagentStart", "agent_type": agent})
         try:
             r = subprocess.run(command, shell=True, input=payload, text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
@@ -545,7 +545,7 @@ def ponytail_row(only=None):
         if only in (None, name):
             why = ponytail_problem(prof, entries)
             rows.append(lib.Result("FAIL", "ponytail " + name, "%s (%d wired)" % (why, len(wired))) if why
-                        else lib.Result("PASS", "ponytail " + name, "gsd-executor gets the ruleset, gsd-planner "
+                        else lib.Result("PASS", "ponytail " + name, "fwx:reviewer gets the ruleset, fwx:executor "
                                         "nothing (%d wired)" % len(wired)))
     if rows:
         return rows

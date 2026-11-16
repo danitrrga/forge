@@ -136,7 +136,10 @@ toy forge.json (`settings_world`, `toy_settings`), never the real one. Seen fail
 
 11. The `ponytail` row: per project whose own `hooks` run hooks/ponytail_subagent.py, one entry under each
 of SubagentStart and UserPromptSubmit (red before that rule: "UserPromptSubmit missing = ['PASS'], want
-['FAIL']"), the SubagentStart one giving gsd-executor the ruleset and gsd-planner nothing; none wiring it is a SKIP. Seen
+['FAIL']"), the SubagentStart one giving fwx:reviewer the ruleset and fwx:executor nothing; none wiring it is a SKIP. (The probe moved from
+gsd-executor/gsd-planner to fwx:reviewer/fwx:executor; red on the old probe, 3 cases: "a wired project whose hook answers
+right = (['FAIL'], 'ponytail ok', True), want (['PASS'], 'ponytail ok', True)", "a hook that answers all = (['FAIL'], False),
+want (['FAIL'], True)" and the same for "none".) Seen
 failing before the row (12 cases): "no project wires the hook = (['raised'], 'AttributeError', False), want
 (['SKIP'], 'ponytail', True)", "the row is in forge doctor = False, want True". Each mutation fails a case:
 the planner probe dropped, "a hook that answers all = (['PASS'], True), want (['FAIL'], True)"; the event
@@ -1046,14 +1049,14 @@ def row(rows, name):
 
 
 # A stand-in for hooks/ponytail_subagent.py: what is under test is the check, not the hook. It answers
-# gsd-executor with a ruleset; MODE "all" answers every agent, "none" answers none, "crash" exits 1.
+# fwx:reviewer with a ruleset; MODE "all" answers every agent, "none" answers none, "crash" exits 1.
 STUB_PONYTAIL = """import json, sys
 MODE = %r
 agent = json.load(sys.stdin).get("agent_type")
 if MODE == "crash":
     print("ponytail_subagent: LookupError: ponytail@ponytail is not installed", file=sys.stderr)
     sys.exit(1)
-if MODE == "all" or (MODE == "ok" and agent == "gsd-executor"):
+if MODE == "all" or (MODE == "ok" and agent == "fwx:reviewer"):
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": "PONYTAIL MODE ACTIVE"}}))
 """
 
@@ -1085,7 +1088,7 @@ def ponytail_cases(tmp):
     want("a wired project whose hook answers right", (levels(rows), rows[0][1], "1 wired" in rows[0][2]),
          (["PASS"], "ponytail ok", True))
     # The negative controls: a hook that gives every agent the ruleset, none, or crashes is a FAIL.
-    for stub, says in (("all", "gsd-planner"), ("none", "gsd-executor"), ("crash", "not installed")):
+    for stub, says in (("all", "fwx:executor"), ("none", "fwx:reviewer"), ("crash", "not installed")):
         rows = smoke(ponytail_world(tmp, stub, stub=stub), "ponytail_row")
         want("a hook that answers %s" % stub, (levels(rows), says in rows[0][2]), (["FAIL"], True))
     for label, kw in (("wired under PreToolUse", {"events": ("PreToolUse",)}),
