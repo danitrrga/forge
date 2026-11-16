@@ -132,6 +132,16 @@ want("a stale gsd key in the lock: --apply drops it", (code, json.load(open(LOCK
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
 want("a stale gsd key dropped: up to date", (code, "up to date" in out), (0, True))
 
+# The lock on disk is the clean one. Put the legacy `gsd` key back first, so "no gsd row" is asserted against a lock
+# that carries one (a clean lock has nothing to show), and the other rows are compared with the clean lock's.
+# Control: with rows() appending ("gsd", "gsd", lock["gsd"]) this printed
+#   FAIL versions with a legacy gsd key in the lock: no gsd row, the other rows unchanged = (False, [('gsd', 'gsd', '1.42.3')], False), want (True, [], False)
+clean_rows, clean_out = lockfile.rows(), run(lockfile.cmd_versions, argparse.Namespace(md=False))[1]
+put(LOCK, lockfile.dumps(dict(doc, gsd="1.42.3")))
+want("versions with a legacy gsd key in the lock: no gsd row, the other rows unchanged",
+     (lockfile.rows() == clean_rows, [r for r in lockfile.rows() if "gsd" in r[0] + r[1]], "1.42.3" in clean_out), (True, [], False))
+code, out = run(lockfile.cmd_versions, argparse.Namespace(md=False))
+want("versions with a legacy gsd key: the printed table is the clean one", (code, out == clean_out, "gsd" in out, "1.42.3" in out), (0, True, False, False))
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=False))
 want("versions: tools, pip and the lock together",
      (code, "node 26.12.1" in out, "PyYAML 6.0.3" in out, "alpha@market 1.5.0" in out, "one " in out, "gsd" in out, "pkg-p 1.3.0" in out), (0, True, True, True, True, False, True))
