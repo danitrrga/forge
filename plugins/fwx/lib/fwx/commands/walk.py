@@ -55,15 +55,14 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
   fwx control new --run R --screen URL [--target SELECTOR]     plants the control: an init script that makes the element SELECTOR names (default:
-      the main title) of that route as large and light as body text (a hierarchy defect), registered by `ab` at launch with --init-script;
+      the main title) of that route half its own size (8px at least) and normal weight (a hierarchy defect), registered by `ab` at launch with --init-script;
       control.json. The workflow passes the element the part changed, so the critics are looking at it. No walker sees it named.
       Before it leaves control.json it proves the plant visible where the walkers will meet it: it opens the screen in session w1 with no
       plant, reads the title's computed font-size, font-weight and rendered box (width and height in whole pixels) and closes the session; then
       writes init.js and control.json and opens the screen in a fresh w1, launched by `ab` like any walker's session (with --init-script),
       reads them again (both readings go to control.json `readback`, the boxes under `box`) and closes it. No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default
-      30; the pause between two looks is `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app): `target not found`; a box that changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels (default 1) in both width and height:
-      `no visible change` (the plant did not reach the browser the walkers' way, or it changes no layout), whatever it did to the font (the
-      owner's rule: what moves no layout is not worth a walker's attention). Either is exit 1 with the line on stderr and
+      30; the pause between two looks is `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app): `target not found`; a height that falls by less than a quarter and a font size that falls by less than a third: `no visible change` (the plant did
+      not reach the browser the walkers' way, or the text is already so small that half its size changes little): the owner's rule is that a change nobody sees is not worth a walker's attention. Either is exit 1 with the line on stderr and
       `{"armed": false, "reason": ...}` on stdout, and neither control.json nor init.js is left.
   converge --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
@@ -898,10 +897,10 @@ CONTROL_JS = """(() => {""" + PICK_JS + """
     let h = null;
     try { h = fwxPick(%(target)s); } catch (e) { return; }  // an invalid selector plants nothing (the read-back refuses it before this runs)
     if (!h || planted.has(h)) return;
-    const cs = getComputedStyle(document.body);
-    for (const e of [h, ...h.querySelectorAll("*")]) {  // the whole title, whatever inner markup carries a size of its own
-      e.style.setProperty("font-size", cs.fontSize, "important");
-      e.style.setProperty("font-weight", cs.fontWeight, "important");
+    const fs = parseFloat(getComputedStyle(h).fontSize);  // relative to the element itself, so it shows on any text: half its size, 8px at most down
+    for (const e of [h, ...h.querySelectorAll("*")]) {  // the whole element, whatever inner markup carries a size of its own
+      e.style.setProperty("font-size", Math.max(8, fs / 2) + "px", "important");
+      e.style.setProperty("font-weight", "400", "important");
     }
     planted.add(h);  // the script's own handle, not an attribute: nothing in the DOM says what planted this
   };
@@ -920,9 +919,10 @@ READ_JS = """(() => {""" + PICK_JS + """
   return "fwx:" + c.fontSize + "|" + c.fontWeight + "|" + Math.round(r.width) + "x" + Math.round(r.height);
 })()"""
 READ_LINE = re.compile(r"fwx:(?:(missing)|(invalid)|([^|\s\"']+)\|([^|\s\"']+)\|(\d+)x(\d+))")  # the answer may come back bare or quoted
-# The plant counts as visible when the title's box changes by at least this many pixels, in width or in height. The owner's rule: a change
-# nobody can see is not important, and neither is a change of text as long as the layout of the page does not move. One place, one number.
-CONTROL_MIN_BOX_PX = int(os.environ.get("FWX_WALK_CONTROL_MIN_BOX_PX") or 1)
+# The plant counts as seen when the element's rendered height falls by at least a quarter or its font size by at least a third: half its own
+# size (8px at least) is a third off at 12px and under, a half from 16px up, so a refusal means the text was already small. One place, two numbers.
+CONTROL_MIN_HEIGHT_DROP = 0.25
+CONTROL_MIN_FONT_DROP = 1 / 3
 CONTROL_WAIT_S = float(os.environ.get("FWX_WALK_CONTROL_WAIT_S") or 30)  # how long the screen may take to draw its title
 
 
@@ -959,13 +959,20 @@ def read_fresh(run, screen, target=TARGET):
         browser_call(run, ["close"])
 
 
+def seen_change(before, after):
+    """Whether a person sees the plant: `before` and `after` are read_target's (font-size, font-weight, width, height); the rendered height fell by
+    CONTROL_MIN_HEIGHT_DROP of itself, or the font size by CONTROL_MIN_FONT_DROP of itself (0.01 px of slack for the rounding of a size)."""
+    fb, fa = float(before[0][:-2]), float(after[0][:-2])
+    return before[3] - after[3] >= CONTROL_MIN_HEIGHT_DROP * before[3] or fb - fa >= CONTROL_MIN_FONT_DROP * fb - 0.01
+
+
 def read_back(run, screen, arm, target=TARGET):
     """(before, after): the target's computed style and rendered box without and with the plant, on the screen. `before` is read in a session
     launched while no control.json exists, so it is the page as the app draws it; `arm()` then writes init.js and control.json, and `after`
     is read in a fresh session launched through `ab` as a walker's is, so it is the init script's own run that is measured, not the plant's
     code run on the page by hand (a browser that drops the script would pass that). It lives here and not in `up` because only arm-control
-    knows the screen (the tramos come from an agent after `up`). Stops, exit 1, when there is no target or the plant does not move the box by
-    CONTROL_MIN_BOX_PX: the owner's rule is that what changes no layout is not worth a walker's attention, whatever it does to the text."""
+    knows the screen (the tramos come from an agent after `up`). Stops, exit 1, when there is no target or `seen_change` says a person would not
+    see the plant: the owner's rule is that a change nobody can see is not worth a walker's attention."""
     before = read_fresh(run, screen, target)
     if before is None:
         raise Stop("arm-control: target not found on %s: no `%s` that is rendered and on screen after %g s, so a plant there would change nothing" % (screen, target, CONTROL_WAIT_S), 1)
@@ -973,10 +980,10 @@ def read_back(run, screen, arm, target=TARGET):
     after = read_fresh(run, screen, target)
     if after is None:
         raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no `%s` that is rendered and on screen after %g s" % (screen, target, CONTROL_WAIT_S), 1)
-    if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:
-        raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px without the plant and %dx%d px in a fresh walker session launched with it "
-                   "(the plant did not reach the browser, or it changes no layout), and the box must change by at least %d px"
-                   % (screen, target, before[2], before[3], after[2], after[3], CONTROL_MIN_BOX_PX), 1)
+    if not seen_change(before, after):
+        raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px at %s without the plant and %dx%d px at %s in a fresh walker session launched with it "
+                   "(the plant did not reach the browser, or the text is already so small that half its size changes little): a person sees it only when the height "
+                   "falls by a quarter or the font size by a third" % (screen, target, before[2], before[3], before[0], after[2], after[3], after[0]), 1)
     return before, after
 
 
@@ -1002,7 +1009,7 @@ def cmd_arm_control(argv):
     script = os.path.join(run["shots"], "init.js")
     what = "the main title of the screen" if target == TARGET else "the element `%s` of the screen (text the part changed)" % target
     ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script, "target": target,
-           "planted": "%s has the size and weight of body text" % what}
+           "planted": "%s is shown at half its own font size (8px at least) and normal weight" % what}
 
     def arm():  # what the walkers' launch reads: control.json names the script, and `ab` adds it to a fresh walker session
         os.makedirs(run["shots"], exist_ok=True)
@@ -1020,8 +1027,11 @@ def cmd_arm_control(argv):
         raise
     names = ("font-size", "font-weight")
     box = lambda t: {"width": t[2], "height": t[3]}  # noqa: E731
-    ctl = dict(ctl, readback={"selector": target, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
-                              "box": {"before": box(before), "after": box(after)}, "min_box_px": CONTROL_MIN_BOX_PX},
+    planted = ("%s was set to half its own font size (8px at least) and normal weight: its text went from %s, weight %s to %s, weight %s, and its box from %dx%d to %dx%d px, "
+               "so it reads as tiny or squeezed next to the text around it" % (what, before[0], before[1], after[0], after[1], before[2], before[3], after[2], after[3]))
+    ctl = dict(ctl, planted=planted, readback={"selector": target, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
+                                               "box": {"before": box(before), "after": box(after)},
+                                               "rule": {"height_drop": CONTROL_MIN_HEIGHT_DROP, "font_drop": CONTROL_MIN_FONT_DROP}},
                armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     write_json(ctl_file, ctl)
     say(ctl)

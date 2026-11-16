@@ -106,7 +106,9 @@ if _a[_i:] == ["screenshot"] and os.environ.get("FAKE_SHOT_PATH"):
 # back quoted: measured live). FAKE_READ says what the page holds, as (without the plant, with it):
 #   changes (the default): 24px/700 in 300x40, then 16px/400 in 300x30      same: 16px/400 in 300x30 both times (the title already has the
 #   planted style)      weight: 16px/500, then 16px/400, the box 300x30 both times (a style that changes nothing a reader can see)
-#   grow10: the box goes from 300x30 to 310x30     missing: no title     vanish: a title without the plant, none with it
+#   grow10: the box goes from 300x30 to 310x30     half: 36px/700 in 300x60, then 18px/400 in 300x30
+#   under: 16px in 300x40, then 13px in 300x31 (a font size 19% down and a height 23% down: neither a third nor a quarter)
+#   fontonly: 16px to 10px, the box 300x30 both times     heightonly: 16px to 15px, the height 40 to 28     missing: no title     vanish: a title without the plant, none with it
 #   invalid: the page says the selector is not valid CSS (`fwx:invalid`)
 # FAKE_QUOTE=1 wraps the line in quotes (the shape of a string result is not measured; the parser takes both).
 # The plant is on from the moment the session was launched with --init-script, or the plant's code was run on the page by eval, until a
@@ -122,6 +124,8 @@ if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
     mode = os.environ.get("FAKE_READ", "changes")
     reads = {"changes": ("fwx:24px|700|300x40", "fwx:16px|400|300x30"), "same": ("fwx:16px|400|300x30",) * 2,
              "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30"),
+             "half": ("fwx:36px|700|300x60", "fwx:18px|400|300x30"), "under": ("fwx:16px|400|300x40", "fwx:13px|400|300x31"),
+             "fontonly": ("fwx:16px|400|300x30", "fwx:10px|400|300x30"), "quarter": ("fwx:16px|400|300x40", "fwx:15px|400|300x30"), "heightonly": ("fwx:16px|400|300x40", "fwx:15px|400|300x28"),
              "vanish": ("fwx:24px|700|300x40", "fwx:missing")}
     line = "fwx:" + mode if mode in ("missing", "invalid") else reads[mode][1 if os.path.exists(planted) else 0]
     print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
@@ -959,10 +963,10 @@ def case_arm_control(R, S):
         S.ok("arm-control: the init script acts on that route only", '"/board"' in script_text and "location.pathname" in script_text, script_text[:200])
         S.ok("arm-control: with a MutationObserver that watches no attribute",
              "MutationObserver" in script_text and "attributes" not in script_text, script_text[:300])
-        S.ok("arm-control: the main title takes the body's size and weight",
-             "font-size" in script_text and "font-weight" in script_text and "h1" in script_text, script_text[:300])
+        S.ok("arm-control: the main title takes half its own size (8px at least) and normal weight",
+             "font-size" in script_text and "font-weight" in script_text and "h1" in script_text and "Math.max(8, fs / 2)" in script_text and '"400"' in script_text, script_text[:300])
         # The weaker twin of tests/test_walk_control_browser.py (a real browser, where one is installed): the text of the script. The two styles are
-        # applied to the title and every element inside it, so a title whose inner element has a size of its own reads at body size throughout.
+        # applied to the title and every element inside it, so a title whose inner element has a size of its own is halved throughout.
         S.ok("arm-control: the size and weight reach every element inside the title", 'h.querySelectorAll("*")' in script_text, script_text[:400])
         # The script's own handle on the title is not an attribute: a walker reading the DOM finds no tag that names the tooling.
         S.ok("arm-control: the title gets no data attribute naming the plant", "dataset" not in script_text and "data-fwx" not in script_text and "setAttribute" not in script_text,
@@ -998,7 +1002,9 @@ def case_arm_control_target(R, S):
         reads = [a[-1] for a in calls if "eval" in a and "fwx:" in a[-1]]
         S.ok("arm-control target: both readings are of that element and none of the title", len(reads) == 2 and all(json.dumps(sel) in x and "h1" not in x for x in reads), repr(reads))
         S.eq("arm-control target: control.json records the selector read back and the one planted", ((c.get("readback") or {}).get("selector"), c.get("target")), (sel, sel))
-        S.ok("arm-control target: and what was planted says that element, for the judge", sel in str(c.get("planted")) and "title" not in str(c.get("planted")), str(c.get("planted")))
+        S.ok("arm-control target: and what was planted says that element and both sizes, for the judge",
+             sel in str(c.get("planted")) and "title" not in str(c.get("planted")) and "half" in str(c.get("planted")) and "24px" in str(c.get("planted")) and "16px" in str(c.get("planted")),
+             str(c.get("planted")))
         # no --target: the title, as before (the positive control of the lines above: the same call without the option)
         sc.clear()
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen)
@@ -1075,6 +1081,12 @@ def case_arm_control_readback(R, S):
         S.eq("arm-control read-back: control.json records both readings", [rb.get("before"), rb.get("after")],
              [{"font-size": "24px", "font-weight": "700"}, {"font-size": "16px", "font-weight": "400"}])
         S.ok("arm-control read-back: and the selector they were read from", "h1" in str(rb.get("selector")), str(rb))
+        # `planted` is what the judge reads: it says what was really done, with both sizes, so a walker's "tiny" or "illegible" matches it.
+        # Seen red on head 4e9c350 (it said "the size and weight of body text", whatever the page held):
+        #   FAIL: arm-control read-back: planted says what was done: half its own size and normal weight, 24px before and 16px after: 'the main title of the screen has the size and weight of body text'
+        pl = str(c.get("planted"))
+        S.ok("arm-control read-back: planted says what was done: half its own size and normal weight, 24px before and 16px after",
+             "half" in pl and "24px" in pl and "16px" in pl and "normal weight" in pl and "main title" in pl and "body text" not in pl, pl)
         S.eq("arm-control read-back: the boxes are recorded beside the styles", rb.get("box"),
              {"before": {"width": 300, "height": 40}, "after": {"width": 300, "height": 30}})
         calls = [x["argv"] for x in sc.calls("agent-browser")]
@@ -1125,25 +1137,30 @@ def case_arm_control_readback(R, S):
         S.ok("arm-control read-back: and the reason says no visible change, where, and both boxes",
              "no visible change" in r.stderr and sc.url + screen in r.stderr and r.stderr.count("300x30") == 2 and len(r.stderr.strip().splitlines()) == 1, r.stderr)
         S.ok("arm-control read-back: and nothing is written", not os.path.exists(os.path.join(rd, "control.json")))
-        # (e) a box that changes by the constant (default 1 px, so any change) arms it, both boxes recorded
+        # (e) what a person can see: the height falls by a quarter or the font size by a third, nothing less. Seen red on head 4e9c350 (the minimum was
+        # a box change of one pixel in either direction, so a paragraph 18px to 16px, 53 px to 47 px high, armed it, and a 10 px wider box too):
+        #   FAIL: arm-control read-back: a box that grew 10 px is not a change a person sees: exit: got 0, want 1
+        #   FAIL: arm-control read-back: a font size 19% and a height 23% down are under both thresholds: exit: got 0, want 1
         sc.env["FAKE_READ"] = "grow10"
         sc.clear()
         r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
-        S.eq("arm-control read-back: a box that grew 10 px arms it (the default is 1 px): exit", r.returncode, 0)
+        S.eq("arm-control read-back: a box that grew 10 px is not a change a person sees: exit", r.returncode, 1)
+        sc.env["FAKE_READ"] = "under"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        S.eq("arm-control read-back: a font size 19% and a height 23% down are under both thresholds: exit", r.returncode, 1)
+        S.ok("arm-control read-back: and the reason is one plain line with both boxes and the rule",
+             len(r.stderr.strip().splitlines()) == 1 and "no visible change" in r.stderr and "300x40" in r.stderr and "300x31" in r.stderr and "a quarter" in r.stderr and "a third" in r.stderr, r.stderr)
+        S.ok("arm-control read-back: and nothing is written", not os.path.exists(os.path.join(rd, "control.json")))
+        for mode, what in (("half", "36px to 18px, the height halved"), ("quarter", "the height down exactly a quarter with a font size 6% down"), ("fontonly", "the font size down 37% in a box that keeps its height"), ("heightonly", "the height down 30% with a font size 6% down")):
+            sc.env["FAKE_READ"] = mode
+            sc.clear()
+            r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+            S.eq("arm-control read-back: %s arms it: exit" % what, r.returncode, 0)
         rb = (jfile(os.path.join(rd, "control.json")) or {}).get("readback") or {}
         S.eq("arm-control read-back: the boxes are recorded beside the styles", rb.get("box"),
-             {"before": {"width": 300, "height": 30}, "after": {"width": 310, "height": 30}})
-        S.eq("arm-control read-back: and the number the change was measured against", rb.get("min_box_px"), 1)
-        # (f) the number is one constant read from the environment: 50 refuses the same 10 px, 10 still arms it (at least, not more than)
-        sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "50"})
-        S.eq("arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=50: exit", r.returncode, 1)
-        S.ok("arm-control read-back: and the reason names the number and both boxes",
-             "no visible change" in r.stderr and "50" in r.stderr and "300x30" in r.stderr and "310x30" in r.stderr, r.stderr)
-        sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "10"})
-        S.eq("arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=10: armed", r.returncode, 0)
-        S.eq("arm-control read-back: and the number recorded is the one in force", ((jfile(os.path.join(rd, "control.json")) or {}).get("readback") or {}).get("min_box_px"), 10)
+             {"before": {"width": 300, "height": 40}, "after": {"width": 300, "height": 28}})
+        S.eq("arm-control read-back: and the rule the change was measured against", rb.get("rule"), {"height_drop": 0.25, "font_drop": 1 / 3})
         # a string result may come back quoted
         sc.env.update(FAKE_READ="changes", FAKE_QUOTE="1")
         sc.clear()
@@ -1949,7 +1966,7 @@ def case_arm_control_root(R, S):
     """The plant's route test is the same for `/` as for any route: the page's pathname with its trailing slashes cut is `""` for the
     root, and the plant stores `/`. Seen red on the base (the script compared `""` with `"/"`, so on the root screen it never applied
     and arm-control's read-back refused it as `no visible change`):
-      FAIL: arm-control root: the plant restyles the title on /: got {}, want {'font-size': '16px', 'font-weight': '400'}
+      FAIL: arm-control root: the plant restyles the title on /: got {}, want {'font-size': '16px', 'font-weight': '400'}   (round 3: want 8px, half of the harness's 16px)
     The same script on another route is the negative control: it leaves the title alone."""
     if not shutil.which("node"):
         sys.stderr.write("NOT RUN, NOT ARMED: node missing: the plant's route match for the root screen was not run\n")
@@ -1977,7 +1994,7 @@ def case_arm_control_root(R, S):
         hp = os.path.join(helpers.mkdtemp("fwx-walk-node-"), "harness.js")
         with open(hp, "w", encoding="utf-8") as f:
             f.write(harness)
-        for pathname, want in (("/", {"font-size": "16px", "font-weight": "400"}), ("/other", {})):
+        for pathname, want in (("/", {"font-size": "8px", "font-weight": "400"}), ("/other", {})):  # the harness's title is 16px: half
             out = subprocess.run(["node", hp, c["script"], pathname], capture_output=True, text=True)
             got = json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else out.stderr[-200:]
             S.eq("arm-control root: the plant restyles the title on %s" % pathname if want else "arm-control root: it leaves the title alone on %s" % pathname, got, want)
@@ -2416,15 +2433,17 @@ MUTANTS = [
     ("pw: not offline", case_pw, '"npx", "--offline", "--no-install", ', '"npx", "--no-install", ', "pw: offline, no install, the pinned CLI"),
     ("pw: no Firefox check", case_pw, "if not os.path.isdir(os.path.join(pw_browsers(), PW_FIREFOX)):", "if False:", "pw: no Firefox"),
     ("arm-control: any screen", case_arm_control, 'if host_of(screen) not in run["hosts"]:', "if False:", "arm-control: a screen outside the app is refused"),
-    ("arm-control: no visible change accepted", case_arm_control_readback, "if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:", "if False:",
+    ("arm-control: no visible change accepted", case_arm_control_readback, "if not seen_change(before, after):", "if False:",
      "arm-control read-back: the title already has the planted style: exit"),
-    ("arm-control: the styles decide, not the box", case_arm_control_readback, "if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:",
-     "if after[:2] == before[:2]:", "arm-control read-back: a weight-only change that leaves the box as it was: exit"),
-    ("arm-control: the box number is not from the environment", case_arm_control_readback, 'int(os.environ.get("FWX_WALK_CONTROL_MIN_BOX_PX") or 1)', "1",
-     "arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=50: exit"),
-    ("arm-control: the box must change by more than the number", case_arm_control_readback, ") < CONTROL_MIN_BOX_PX:", ") <= CONTROL_MIN_BOX_PX:",
-     "arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=10: armed"),
-    ("arm-control: the boxes not recorded", case_arm_control_readback, '"box": {"before": box(before), "after": box(after)}, ', "",
+    ("arm-control: a height drop alone does not arm", case_arm_control_readback, "CONTROL_MIN_FONT_DROP = 1 / 3", "CONTROL_MIN_FONT_DROP = 9",
+     "arm-control read-back: the font size down 37% in a box that keeps its height arms it: exit"),
+    ("arm-control: a font drop alone does not arm", case_arm_control_readback, "CONTROL_MIN_HEIGHT_DROP = 0.25", "CONTROL_MIN_HEIGHT_DROP = 9",
+     "arm-control read-back: the height down 30% with a font size 6% down arms it: exit"),
+    ("arm-control: a quarter is not enough", case_arm_control_readback, "before[3] - after[3] >= CONTROL_MIN_HEIGHT_DROP * before[3]", "before[3] - after[3] > CONTROL_MIN_HEIGHT_DROP * before[3]",
+     "arm-control read-back: the height down exactly a quarter with a font size 6% down arms it: exit"),
+    ("arm-control: any change arms it", case_arm_control_readback, "if not seen_change(before, after):", "if before[2:] == after[2:]:",
+     "arm-control read-back: a font size 19% and a height 23% down are under both thresholds: exit"),
+    ("arm-control: the boxes not recorded", case_arm_control_readback, '"box": {"before": box(before), "after": box(after)},', "",
      "arm-control read-back: the boxes are recorded beside the styles"),
     ("arm-control: a missing target accepted", case_arm_control_readback, "if before is None:", "if False:",
      "arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched"),

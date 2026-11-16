@@ -729,7 +729,7 @@ def check_control_target(script, s):
     arm = runner(rec, "arm-control")[0]["prompt"] if runner(rec, "arm-control") else ""
     s.ok("control target: a screen with no `changed` is passed over for the first that has one",
          "--screen '%s/profile' --target 'main .name'" % APP in arm and "--screen '%s/settings'" % APP not in arm, arm[-300:])
-    # a refusal on one screen (body-size text, no visible change) is tried again on the next screen that has a `changed`, in order
+    # a refusal on one screen (text so small that half its size shows no change) is tried again on the next screen that has a `changed`, in order
     # Red on head 21222d1 (only the first screen with a `changed` was tried):
     #   FAIL: control retry: the second screen with a changed element is tried after the first refused it: [] (one arm-control launch, no second)
     two = json.loads(json.dumps(TRAMOS))

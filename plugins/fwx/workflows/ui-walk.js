@@ -322,7 +322,7 @@ async function checkScreens(tramos) {
 
 // ---- the control ----------------------------------------------------------------------------------------------------------------
 // The fault goes on an element the part changed, so the critics (who judge what the part changed) are looking where it is: the first screen of the
-// tramos whose `changed` names one, and when `fwx control new` refuses it there (body-size text changes no box; no match shows on load) the next such
+// tramos whose `changed` names one, and when `fwx control new` refuses it there (the text is already so small that half its size changes little; no match shows on load) the next such
 // screen, in order. With none, or all refused, nothing is planted (the title of the first screen is outside what the critics judge) and the walk does not count.
 async function armControl(tramos) {
   const cands = []

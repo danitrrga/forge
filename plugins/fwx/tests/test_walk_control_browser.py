@@ -7,10 +7,10 @@ launches the real `agent-browser` with the control's init script exactly as `fwx
 socket dir of its own), and measures the computed font size and weight of every text node of the title.
 
 Cases: the page without the plant reads at its own sizes (so the measurement can tell a plant from none: the negative control of the
-others); with the plant every text node of the title computes to the body's size and weight, inner element included; the plant leaves no
+others); with the plant every text node of the title computes to half the title's own size and normal weight, inner element included; the plant leaves no
 attribute on the element (a walker that reads the DOM must not find a self-describing tag) and no more than the inline style.
 With a target (`walk.control_code(path, selector)`, what `fwx control new --target` writes) the element the selector names is the one whose
-box changes (a paragraph at 40px bold goes to the body's size), and the title keeps its size and its box: the fault lands inside what the part
+box changes (a paragraph at 40px bold goes to 20px normal), and the title keeps its size and its box: the fault lands inside what the part
 changed and not on the first title of the screen.
 
 Seen red against the script before the change (the plant restyled the `h1` element only):
@@ -27,6 +27,14 @@ selector reads as. Seen red on head 21222d1 (the plant and the read-back took `d
   FAIL: invalid selector "a'b": the read-back says invalid (one line, no stack): got "eval exited 1: ... SyntaxError: Failed to execute 'querySelector' ... at <anonymous>:6:3", want 'fwx:invalid'
   (the same for "h3:not(" and "")
 (three visible siblings: the first is planted, green on both: the positive control of the cases above.)
+
+The fault is relative (round 3): half the element's own font size, 8px at least, weight 400, so it shows on any text. Seen red on head 4e9c350
+(the plant set the body's 16px / 400):
+  FAIL: plant: every text node of the title reads at half its own size (60px to 30px, inner element included): got ['16px', '16px'], want ['30px', '30px']
+  FAIL: target: the element the part changed takes half its own size and normal weight (40px/700 to 20px/400): got ['16px', '400'], want ['20px', '400']
+  FAIL: half a paragraph at 18px/300: after the plant the font size and weight: got ['16px', '400'], want ['9px', '400']
+  FAIL: half a heading at 36px/700: after the plant the font size and weight: got ['16px', '400'], want ['18px', '400']
+  FAIL: half text at 12px: ...: got ['16px', '400'], want ['8px', '400']   (and walk.seen_change does not exist)
 
 Seen red against the script before `--target` (`walk` had no `control_code`; the same toy page):
   FAIL: target: the browser measured the page: AttributeError: module 'fwx.commands.walk' has no attribute 'control_code'
@@ -77,6 +85,10 @@ PAGES = {
     "/fold": HEAD + '<div style="height:3000px"></div>' + T % ("", "A") + T % (";position:absolute;top:10px;left:10px", "B") + "</body></html>",
     "/details": HEAD + "<details><summary>more</summary>" + T % ("", "A") + "</details>" + T % ("", "B") + "</body></html>",
     "/siblings": HEAD + T % ("", "A") + T % ("", "B") + T % ("", "C") + "</body></html>",
+    "/para": HEAD + '<p class="t" style="width:300px;font-size:18px;font-weight:300">Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor.</p></body></html>',
+    "/head": HEAD + '<h2 class="t" style="font-size:36px;font-weight:700">A heading</h2></body></html>',
+    "/small": HEAD + '<p class="t" style="font-size:12px;font-weight:400">Small print that wraps over a few words of text.</p></body></html>',
+    "/tiny": HEAD + '<p class="t" style="font-size:9px;font-weight:400">Tiny print that wraps over a few words of text.</p></body></html>',
     "/none": HEAD + T % (";position:absolute;left:-9999px", "A") + "<details><summary>more</summary>" + T % ("", "B") + "</details></body></html>",
 }
 
@@ -121,10 +133,45 @@ def sizes_js(sel):
             % (json.dumps(sel), walk.READ_JS % json.dumps(sel)))
 
 
+def boxes_js(sel):
+    """Each match as [font-size, font-weight, width, height] (whole pixels), the tuple walk.read_target gives the read-back."""
+    return ('(() => JSON.stringify(Array.from(document.querySelectorAll(%s)).map(e => { const c = getComputedStyle(e), r = e.getBoundingClientRect(); '
+            'return [c.fontSize, c.fontWeight, Math.round(r.width), Math.round(r.height)]; })))()' % json.dumps(sel))
+
+
+def half_cases(ab, exe, sock, work, base):
+    """The fault is relative to the element: half its own font size (8px at least) and normal weight, and the read-back (walk.seen_change) says
+    whether a person can see it: the height falls by a quarter or the font size by a third."""
+    seen = getattr(walk, "seen_change", None)
+    for path, before_want, after_want, visible, why in (
+            ("/para", ["18px", "300"], ["9px", "400"], True, "a paragraph at 18px/300"),
+            ("/head", ["36px", "700"], ["18px", "400"], True, "a heading at 36px/700"),
+            ("/small", ["12px", "400"], ["8px", "400"], True, "text at 12px: the 8px floor is reached, a third off, so it is seen"),
+            ("/tiny", ["9px", "400"], ["8px", "400"], False, "text at 9px: the 8px floor leaves 1px, so the read-back refuses it")):
+        url = base.rstrip("/") + path
+        script = os.path.join(work, "init-half%s.js" % path.replace("/", "-"))
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(walk.control_code(path, ".t"))
+        plain, why1 = measure(ab, exe, sock, url, None, boxes_js(".t"))
+        hit, why2 = measure(ab, exe, sock, url, script, boxes_js(".t"))
+        if plain is None or hit is None:
+            s.ok("half %s: the browser measured the page" % why, False, why1 or why2)
+            continue
+        b, a = plain[0], hit[0]
+        s.eq("half %s: before the plant" % why, b[:2], before_want)
+        s.eq("half %s: after the plant the font size and weight" % why, a[:2], after_want)
+        if path == "/para":
+            s.ok("half %s: its height fell by at least a quarter (%d to %d px)" % (why, b[3], a[3]), a[3] <= 0.75 * b[3], "before %r after %r" % (b, a))
+        if seen is None:
+            s.ok("half %s: walk.seen_change exists" % why, False, "AttributeError: module 'fwx.commands.walk' has no attribute 'seen_change'")
+        else:
+            s.eq("half %s: the read-back says visible=%s" % (why, visible), seen(tuple(b), tuple(a)), visible)
+
+
 def pick_cases(ab, exe, sock, work, base):
     """Which of several matches is planted: the first that is rendered, has a box and shows in the viewport when the screen loads."""
-    for path, want, why in (("/off", ["40px", "16px"], "off-screen"), ("/fold", ["40px", "16px"], "below the fold"),
-                            ("/details", ["40px", "16px"], "closed details"), ("/siblings", ["16px", "40px", "40px"], "three visible siblings: the first"),
+    for path, want, why in (("/off", ["40px", "20px"], "off-screen"), ("/fold", ["40px", "20px"], "below the fold"),
+                            ("/details", ["40px", "20px"], "closed details"), ("/siblings", ["20px", "40px", "40px"], "three visible siblings: the first"),
                             ("/none", ["40px", "40px"], "no visible match")):
         url = base.rstrip("/") + path
         script = os.path.join(work, "init-pick%s.js" % path.replace("/", "-"))
@@ -144,7 +191,7 @@ def pick_cases(ab, exe, sock, work, base):
         else:
             s.eq("%s: the plant is on the second match, the one a walker sees" % label, hit["sizes"], want)
             s.ok("%s: the read-back reads the visible match too (its font size), not the first" % label, plain["read"].startswith("fwx:40px|700|"), "plain %r" % plain["read"])
-            s.ok("%s: and it moved with the plant (40px before, 16px after)" % label, hit["read"].startswith("fwx:16px|400|"), "hit %r" % hit["read"])
+            s.ok("%s: and it moved with the plant (40px before, 20px after)" % label, hit["read"].startswith("fwx:20px|400|"), "hit %r" % hit["read"])
     # an invalid selector reads as `invalid`, with no exception on the page
     for sel in ("a'b", "h3:not(", ""):
         got, why = measure(ab, exe, sock, base, None, walk.READ_JS % json.dumps(sel), raw=True)
@@ -178,10 +225,9 @@ def main():
         if planted is None:
             s.ok("plant: the browser measured the page", False, why)
             return
-        size, weight = planted["body"]
         s.eq("plant: the page's body is 16px / 400 (the toy's own)", planted["body"], ["16px", "400"])
-        s.eq("plant: every text node of the title reads at the body's size", [t[0] for t in planted["text"]], [size] * len(planted["text"]))
-        s.eq("plant: every text node of the title reads at the body's weight", [t[1] for t in planted["text"]], [weight] * len(planted["text"]))
+        s.eq("plant: every text node of the title reads at half its own size (60px to 30px, inner element included)", [t[0] for t in planted["text"]], ["30px"] * len(planted["text"]))
+        s.eq("plant: every text node of the title reads at normal weight (700 to 400)", [t[1] for t in planted["text"]], ["400"] * len(planted["text"]))
         s.ok("plant: the title has the two text nodes of the toy (the walk looked at both)", len(planted["text"]) == 2, "got %r" % planted["text"])
         s.eq("plant: the title carries no attribute that names the tooling", [a for a in planted["attrs"] if "fwx" in a or "ctl" in a], [])
         # a target: the planted element is the paragraph the part changed, and the title is as the app draws it
@@ -198,9 +244,10 @@ def main():
             s.ok("target: the browser measured the page", False, why)
             return
         s.eq("target: the title's size, weight and box are as the app draws them (the plant is not on the title)", hit["h1"], plain["h1"])
-        s.eq("target: the element the part changed takes the body's size and weight", hit["lede"][:2], ["16px", "400"])
+        s.eq("target: the element the part changed takes half its own size and normal weight (40px/700 to 20px/400)", hit["lede"][:2], ["20px", "400"])
         s.ok("target: and its box changes (it was %r without the plant)" % (plain["lede"],), hit["lede"][3] < plain["lede"][3], "got %r" % (hit["lede"],))
         pick_cases(ab, exe, sock, work, url)
+        half_cases(ab, exe, sock, work, url)
         s.eq("target: no plant, the element is at its own 40px (the measurement can tell a plant from none)", plain["lede"][:2], ["40px", "700"])
     finally:
         server.shutdown()
