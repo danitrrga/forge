@@ -87,6 +87,9 @@ LEADING = {"linear": ("--project",)}
 # The verb that `fwx OBJECT` alone runs, for an object whose default is one of its verbs (an object with a row of its own, such as
 # `wave` or `session`, is that row's default).
 DEFAULTS = {"decision": "list", "context": "lint", "linear": "list"}
+# The one module whose handlers print their own argparse help for `-h` and `--help` after a verb: `route` leaves them that. For every
+# other module the router answers with the object's table, so no handler runs (and none needs a key, a project or a configuration).
+OWN_HELP = "state"
 
 
 def words(name):
@@ -129,7 +132,7 @@ def refusal(argv):
 
 def route(argv):
     """(module, handler argv) for argv without the leading `fwx`. None when the first word is no object; ("verb?", object) when
-    the object is known and its verb is not, or it has no default and none was given; ("help", object) for `fwx OBJECT --help`."""
+    the object is known and its verb is not, or it has no default and none was given; ("help", object) for `fwx OBJECT --help` and for `-h` or `--help` right after a verb."""
     new, _ = table()
     if not argv:
         return None
@@ -155,6 +158,8 @@ def route(argv):
             rest.remove(k[-1])
             row = r
             break
+    if rest and rest[0] in ("-h", "--help") and row[2] != OWN_HELP:  # `fwx walk selftest --help`: help, and the handler never runs
+        return "help", obj
     return row[2], row[3] + lead + rest
 
 
