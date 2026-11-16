@@ -29,19 +29,13 @@ no directory. Seen failing on f62e1b6: "dry-run vs apply, fresh HOME: dry (0, 0)
 failure rather than counting links it could never make ("dry exit 0, (0, 0), apply exit 1, (4, 0)"
 on f62e1b6, the dry-run silent).
 
-skill_keep.gsd_exclude: a listed skill is not linked and an earlier link into skills/ is pruned, in both mirrors,
-a real directory of that name is left alone. Seen failing before the change: "gsd_exclude: dry (3, 0), apply (3, 0),
-want both (3, 1)" and "claude links ['alpha', 'beta', 'delta', 'gamma'], beta still there True" (beta, listed, was
-linked and kept; the codex real directory beta was reported BLOCKED).
-
-integrations.gsd off: every gsd-* of skills/ counts as excluded. skills/ holds gsd-a, gsd-b and four plain skills, both
-mirrors already link gsd-a and gsd-b. Seen failing on cd4a210 and d595a08 (the script never read lib.on("gsd")): "gsd off:
-dry (8, 0), apply (8, 0), want both (8, 4); the dry-run left the links [['gsd-a', 'gsd-b'], ['gsd-a', 'gsd-b']]",
-"gsd off: gsd-* links left = ['gsd-a', 'gsd-b'], want [] (.claude)" (the same for .codex) and "gsd off: the plain skills
-are linked in both mirrors = (['alpha', ..., 'gsd-a', 'gsd-b'], [...]), want ['alpha', 'beta', 'delta', 'gamma']". The
-gsd back on and gsd on worlds pass on both. Control: with the exclusion applied whatever the integration says
-(`if os.path.isdir(SRC):`), the gsd off cases pass and "gsd back on: exit 0, gsd-* links [[], []], want both mirrors
-[gsd-a, gsd-b]" and "gsd on (control): exit 0, counts (8, 4), gsd-* links [[], []], want (8, 0) ..." fail."""
+A skill named gsd-* is linked like any other, whatever integrations.gsd says: skills/ holds gsd-a, gsd-b (both mirrors
+already link them) and gsd-toy (linked in neither), plus the four plain skills, with the integration off and on. Red
+against the script before this change, which excluded every gsd-* of skills/ with the integration off and pruned
+their links: "gsd off: gsd-toy not linked, want linked (.claude)" (the same for .codex), "gsd off: dry (8, 4), apply
+(8, 4), want both (10, 0); the dry-run left the links [['gsd-a', 'gsd-b'], ['gsd-a', 'gsd-b']]" (the dry-run counted
+the 4 prunes and the 8 links of the plain skills only) and "gsd off: gsd-* links = [[], []], want both mirrors
+[gsd-a, gsd-b, gsd-toy]" and "gsd off: the claude mirror links ['alpha', 'beta', 'delta', 'gamma']". The gsd on world passes on both; it is the control that the world itself is sound."""
 import os
 import json
 import re
@@ -238,92 +232,50 @@ def main():
                         "named %s: %s | %s" % (rc_dry, counts(dry), named[0], rc, counts(out), named[1],
                                                tail(dry, 1), tail(out, 1)))
 
-    # skill_keep.gsd_exclude: a name listed there is not linked, and a link into skills/ that an earlier run made
-    # is pruned, in both mirrors; a real directory of that name is left alone (the dry-run counts the same).
-    # claude mirror: all four linked already; codex mirror: beta is a real directory, the rest absent.
-    tmp = bare_root()
-    tmps.append(tmp)
-    cfg = os.path.join(tmp, "forge", "config", "forge.json")
-    with open(cfg) as f:
-        doc = json.load(f)
-    doc["skill_keep"]["gsd_exclude"] = ["beta"]
-    with open(cfg, "w") as f:
-        json.dump(doc, f)
-    mirror = os.path.join(tmp, "home", ".claude", "skills")
-    os.makedirs(mirror)
-    for n in SKILLS:
-        os.symlink(os.path.join(tmp, "forge", "skills", n), os.path.join(mirror, n))
-    cbeta = os.path.join(tmp, "home", ".codex", "skills", "beta")
-    os.makedirs(cbeta)
-    with open(os.path.join(cbeta, "SKILL.md"), "w") as f:
-        f.write("a real directory\n")
-    rc_dry, dry = run(tmp, "--dry-run")
-    kept_dry = os.path.islink(os.path.join(mirror, "beta"))
-    rc, out = run(tmp)
-    if (rc_dry, rc) != (0, 0) or counts(dry) != counts(out) or counts(out) != (3, 1) or not kept_dry:
-        failures.append("gsd_exclude: dry %s, apply %s, want both (3, 1); the dry-run kept the link %s: %s | %s"
-                        % (counts(dry), counts(out), kept_dry, tail(dry, 1), tail(out, 1)))
-    if (links(tmp, ".claude") != ["alpha", "delta", "gamma"] or os.path.lexists(os.path.join(mirror, "beta"))
-            or links(tmp, ".codex") != ["alpha", "delta", "gamma"]
-            or not os.path.isfile(os.path.join(cbeta, "SKILL.md"))):
-        failures.append("gsd_exclude: claude links %s, beta still there %s, codex links %s, codex real dir intact %s"
-                        % (links(tmp, ".claude"), os.path.lexists(os.path.join(mirror, "beta")),
-                           links(tmp, ".codex"), os.path.isfile(os.path.join(cbeta, "SKILL.md"))))
-
-    # integrations.gsd off: every gsd-* of skills/ counts as excluded, so none is linked and the links an earlier run
-    # made are pruned, in both mirrors; gsd on, the same world links them (the control), and switching it back on
-    # links them again (the rollback). skills/ holds gsd-a, gsd-b and the four plain ones; both mirrors already link
-    # gsd-a and gsd-b.
+    # A gsd-* skill is linked like any other, with integrations.gsd off or on. skills/ holds gsd-a, gsd-b (both mirrors
+    # already link them), gsd-toy (linked in neither) and the four plain skills: 5 + 5 links to make, 0 to prune.
     def gsd_world(gsd_on):
         t = bare_root()
         tmps.append(t)
+        os.makedirs(os.path.join(t, "forge", "skills", "gsd-toy"))
         for n in ("gsd-a", "gsd-b"):
             os.makedirs(os.path.join(t, "forge", "skills", n))
             for m in (".claude", ".codex"):
                 d = os.path.join(t, "home", m, "skills")
                 os.makedirs(d, exist_ok=True)
                 os.symlink(os.path.join(t, "forge", "skills", n), os.path.join(d, n))
-        set_gsd(t, gsd_on)
-        return t
-
-    def set_gsd(t, on):
         cfg = os.path.join(t, "forge", "config", "forge.json")
         with open(cfg) as f:
             doc = json.load(f)
-        doc["integrations"]["gsd"] = on
+        doc["integrations"]["gsd"] = gsd_on
         with open(cfg, "w") as f:
             json.dump(doc, f)
+        return t
 
     def gsd_links(t):
         return [[n for n in links(t, m) if n.startswith("gsd-")] for m in (".claude", ".codex")]
 
-    tmp = gsd_world(False)
-    rc_dry, dry = run(tmp, "--dry-run")
-    kept_dry = gsd_links(tmp)
-    rc, out = run(tmp)
-    if (rc_dry, rc) != (0, 0) or counts(dry) != counts(out) or counts(out) != (8, 4) or kept_dry != [["gsd-a", "gsd-b"]] * 2:
-        failures.append("gsd off: dry %s, apply %s, want both (8, 4); the dry-run left the links %s: %s | %s"
-                        % (counts(dry), counts(out), kept_dry, tail(dry, 1), tail(out, 1)))
-    for m, left in zip((".claude", ".codex"), gsd_links(tmp)):
-        if left:
-            failures.append("gsd off: gsd-* links left = %s, want [] (%s)" % (left, m))
-    if links(tmp, ".claude") != sorted(SKILLS) or links(tmp, ".codex") != sorted(SKILLS):
-        failures.append("gsd off: the plain skills are linked in both mirrors = %s, want %s"
-                        % ((links(tmp, ".claude"), links(tmp, ".codex")), sorted(SKILLS)))
-    set_gsd(tmp, True)
-    rc, out = run(tmp)
-    if rc != 0 or gsd_links(tmp) != [["gsd-a", "gsd-b"]] * 2:
-        failures.append("gsd back on: exit %d, gsd-* links %s, want both mirrors [gsd-a, gsd-b]" % (rc, gsd_links(tmp)))
-    tmp = gsd_world(True)
-    rc, out = run(tmp)
-    if rc != 0 or counts(out) != (8, 0) or gsd_links(tmp) != [["gsd-a", "gsd-b"]] * 2:
-        failures.append("gsd on (control): exit %d, counts %s, gsd-* links %s, want (8, 0) and both mirrors [gsd-a, gsd-b]"
-                        % (rc, counts(out), gsd_links(tmp)))
+    want_gsd = [["gsd-a", "gsd-b", "gsd-toy"]] * 2
+    for label, on in (("gsd off", False), ("gsd on (control)", True)):
+        tmp = gsd_world(on)
+        rc_dry, dry = run(tmp, "--dry-run")
+        left_dry = gsd_links(tmp)
+        rc, out = run(tmp)
+        if (rc_dry, rc) != (0, 0) or counts(dry) != counts(out) or counts(out) != (10, 0) or left_dry != [["gsd-a", "gsd-b"]] * 2:
+            failures.append("%s: dry %s, apply %s, want both (10, 0); the dry-run left the links %s: %s | %s"
+                            % (label, counts(dry), counts(out), left_dry, tail(dry, 1), tail(out, 1)))
+        for m, got in zip((".claude", ".codex"), gsd_links(tmp)):
+            if "gsd-toy" not in got:
+                failures.append("%s: gsd-toy not linked, want linked (%s)" % (label, m))
+        if gsd_links(tmp) != want_gsd:
+            failures.append("%s: gsd-* links = %s, want both mirrors [gsd-a, gsd-b, gsd-toy]" % (label, gsd_links(tmp)))
+        if links(tmp, ".claude") != sorted(SKILLS + ("gsd-a", "gsd-b", "gsd-toy")):
+            failures.append("%s: the claude mirror links %s" % (label, links(tmp, ".claude")))
 
     failures += RULE
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 11 cases" % len(failures))
+    print("%d failure(s) over 8 cases" % len(failures))
     for t in tmps:  # writable again, so a kept dir can be removed too
         m = os.path.join(t, "home", ".claude", "skills")
         if os.path.isdir(m):

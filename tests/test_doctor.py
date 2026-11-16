@@ -234,7 +234,7 @@ def keep_cases(tmp):
 
     with open(drifted, encoding="utf-8") as fh:
         prof = json.load(fh)
-    prof["skills_keep"].remove("gsd-fast")
+    prof["skills_keep"].remove("toy-common")
     with open(drifted, "w", encoding="utf-8") as fh:
         json.dump(prof, fh)
     before = sandbox.manifest(root, tops=("config",))
