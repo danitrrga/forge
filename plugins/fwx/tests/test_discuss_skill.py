@@ -112,6 +112,19 @@ for name, detail in waiting(agent_texts):
 
 check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```json" in demo)
 
+# The owner asks for a recommendation: the rule has its exception where it is always read (the Rules paragraph) and in rounds.md.
+# Seen red on the text before the change (rc=1):
+#   FAIL: the Rules paragraph of SKILL.md says both never unasked and give it when asked -> no 'unasked' and 'asks' in: Rules. Only the owner and you speak. ...
+#   FAIL: rounds.md does not state the no-recommendation rule without its exception -> '- Never recommend an option or mark one as better: the owner' has no 'unasked' and 'asks'
+rules = next((l for l in files["SKILL.md"].splitlines() if l.startswith("Rules.")), "")
+check("the Rules paragraph of SKILL.md says both never unasked and give it when asked",
+      "Never recommend" in rules and "unasked" in rules and re.search(r"owner asks[^.]*\bsay it\b", rules) is not None,
+      "no 'unasked' and 'asks' in: %s" % rules[:60])
+never = [l for l in files["rounds.md"].splitlines() if "Never recommend" in l]
+check("rounds.md does not state the no-recommendation rule without its exception",
+      len(never) == 1 and "unasked" in never[0] and re.search(r"he asks[^.]*\bsay it\b", never[0]) is not None,
+      "%r has no 'unasked' and 'asks'" % (never[0][:60] if never else "no 'Never recommend' line"))
+
 # the verdict keys reach the demo: the launch sentence of step 7 names both, and the demo gets them itself when its prompt lacks them
 step7 = [l for l in files["SKILL.md"].splitlines() if l.startswith("7. ")]
 launch7 = step7[0].split("launch `demo`", 1)[-1].split(";", 1)[0] if step7 and "launch `demo`" in step7[0] else ""
