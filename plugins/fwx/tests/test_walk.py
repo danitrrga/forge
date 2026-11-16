@@ -107,6 +107,7 @@ if _a[_i:] == ["screenshot"] and os.environ.get("FAKE_SHOT_PATH"):
 #   changes (the default): 24px/700 in 300x40, then 16px/400 in 300x30      same: 16px/400 in 300x30 both times (the title already has the
 #   planted style)      weight: 16px/500, then 16px/400, the box 300x30 both times (a style that changes nothing a reader can see)
 #   grow10: the box goes from 300x30 to 310x30     missing: no title     vanish: a title without the plant, none with it
+#   invalid: the page says the selector is not valid CSS (`fwx:invalid`)
 # FAKE_QUOTE=1 wraps the line in quotes (the shape of a string result is not measured; the parser takes both).
 # The plant is on from the moment the session was launched with --init-script, or the plant's code was run on the page by eval, until a
 # `close`; FAKE_INIT=ignore is a browser that drops the --init-script (the launch path the walkers use does not plant: the F-3 defect).
@@ -122,7 +123,7 @@ if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
     reads = {"changes": ("fwx:24px|700|300x40", "fwx:16px|400|300x30"), "same": ("fwx:16px|400|300x30",) * 2,
              "weight": ("fwx:16px|500|300x30", "fwx:16px|400|300x30"), "grow10": ("fwx:16px|400|300x30", "fwx:16px|400|310x30"),
              "vanish": ("fwx:24px|700|300x40", "fwx:missing")}
-    line = "fwx:missing" if mode == "missing" else reads[mode][1 if os.path.exists(planted) else 0]
+    line = "fwx:" + mode if mode in ("missing", "invalid") else reads[mode][1 if os.path.exists(planted) else 0]
     print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
 sys.exit(int(os.environ.get("FAKE_RC", "0")))
 """,
@@ -1021,6 +1022,20 @@ def case_arm_control_target(R, S):
         S.eq("arm-control target: a selector whose box does not change: exit", r.returncode, 1)
         S.ok("arm-control target: and it says no visible change and the selector",
              "no visible change" in r.stderr and sel in r.stderr and not os.path.exists(os.path.join(rd, "control.json")), "rc %d: %s" % (r.returncode, r.stderr))
+        # an invalid selector (the page says so: `fwx:invalid`): one plain line that says it is not valid CSS and quotes it; the empty one too.
+        # Seen red on head 21222d1 (`fwx:invalid` was not read, so it waited 1 s and said "target not found"; an empty --target was a usage error):
+        #   FAIL: arm-control target: an invalid selector "a'b": says it is not valid CSS and quotes it, in one line: rc 1: arm-control: target not found on ...
+        #   FAIL: arm-control target: an empty selector: exit: got 2, want 1
+        sc.env["FAKE_READ"] = "invalid"
+        for bad in ("a'b", "h3:not(", ""):
+            sc.clear()
+            r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen, "--target", bad)
+            S.eq("arm-control target: an invalid selector %s: exit" % json.dumps(bad), r.returncode, 1)
+            S.ok("arm-control target: an invalid selector %s: says it is not valid CSS and quotes it, in one line" % json.dumps(bad),
+                 "not valid CSS" in r.stderr and json.dumps(bad) in r.stderr and len(r.stderr.strip().splitlines()) == 1 and "<anonymous>" not in r.stderr,
+                 "rc %d: %s" % (r.returncode, r.stderr))
+            S.ok("arm-control target: an invalid selector %s: the same reason on stdout, nothing planted" % json.dumps(bad),
+                 (obj(r.stdout) or {}).get("armed") is False and not os.path.exists(os.path.join(rd, "control.json")), r.stdout)
         sc.walk(R, "down", "--run", rd)
     finally:
         sc.stop()
@@ -1950,9 +1965,11 @@ def case_arm_control_root(R, S):
         c = jfile(os.path.join(rd, "control.json")) or {}
         S.eq("arm-control root: the plant's path", c.get("path"), "/")
         harness = ("let styled = {};\n"
-                   "const h = {dataset: {}, querySelectorAll: () => [], style: {setProperty(k, v) { styled[k] = v; }}};\n"
+                   "const h = {dataset: {}, querySelectorAll: () => [], getBoundingClientRect: () => ({width: 90, height: 30, top: 5, left: 5, bottom: 35, right: 95}),\n"
+                   "           style: {setProperty(k, v) { styled[k] = v; }}};\n"
+                   "global.innerWidth = 1309; global.innerHeight = 818;\n"
                    "global.location = {pathname: process.argv[3]};\n"
-                   "global.document = {querySelector: () => h, body: {}, addEventListener() {}};\n"
+                   "global.document = {querySelectorAll: () => [h], body: {}, addEventListener() {}};\n"
                    "global.getComputedStyle = () => ({fontSize: '16px', fontWeight: '400'});\n"
                    "global.MutationObserver = class { observe() {} };\n"
                    "eval(require('fs').readFileSync(process.argv[2], 'utf8'));\n"

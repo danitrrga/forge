@@ -322,24 +322,27 @@ async function checkScreens(tramos) {
 
 // ---- the control ----------------------------------------------------------------------------------------------------------------
 // The fault goes on an element the part changed, so the critics (who judge what the part changed) are looking where it is: the first screen of the
-// tramos whose `changed` names one. With none, nothing is planted (the title of the first screen is outside what the critics judge) and the walk does not count.
+// tramos whose `changed` names one, and when `fwx control new` refuses it there (body-size text changes no box; no match shows on load) the next such
+// screen, in order. With none, or all refused, nothing is planted (the title of the first screen is outside what the critics judge) and the walk does not count.
 async function armControl(tramos) {
-  let tramo = null, screen = null, target = null
-  for (const t of tramos) for (const x of t.screens) if (!target && x.changed) { tramo = t.id; screen = x.url; target = x.changed }
-  if (!target) {
+  const cands = []
+  for (const t of tramos) for (const x of t.screens) if (x.changed) cands.push({ tramo: t.id, screen: x.url, target: x.changed })
+  if (cands.length === 0) {
     st.ctl = { tramo: null, screen: null, target: null, armed: false, none: true }
     log(PHASE + ': no screen of the part has a changed element to plant the control on; the walk goes on and does not count')
     return
   }
-  st.ctl = { tramo, screen, target, armed: false }
-  st.control.screen = screen
-  const v = await must('arm-control', 'fwx control new --run ' + sh(st.runDir) + ' --screen ' + sh(screen) + ' --target ' + sh(target), true)
-  st.ctl.armed = !!v && v.rc === 0
-  if (!st.ctl.armed) {
+  for (const c of cands) {
+    st.ctl = { tramo: c.tramo, screen: c.screen, target: c.target, armed: false }
+    st.control.screen = c.screen
+    const v = await must('arm-control', 'fwx control new --run ' + sh(st.runDir) + ' --screen ' + sh(c.screen) + ' --target ' + sh(c.target), true)
+    st.ctl.armed = !!v && v.rc === 0
+    if (st.ctl.armed) return
     // `fwx control new` reads the plant back on the screen and refuses with `{"armed": false, "reason": ...}` (no target, or the plant changes nothing)
     const why = v ? parseAny(v.stdout) : null
     st.ctl.why = why && typeof why.reason === 'string' ? oneLine(why.reason, 300) : null
-    log(PHASE + ': the control could not be planted on ' + screen + (v ? ' (exit ' + v.rc + ')' : ' (no answer)') + (st.ctl.why ? ': ' + st.ctl.why : '') + '; the walk goes on and does not count')
+    log(PHASE + ': the control could not be planted on ' + c.screen + (v ? ' (exit ' + v.rc + ')' : ' (no answer)') + (st.ctl.why ? ': ' + st.ctl.why : '') +
+      (c === cands[cands.length - 1] ? '; the walk goes on and does not count' : '; the next screen with a changed element is tried'))
   }
 }
 
@@ -378,16 +381,19 @@ async function judge() {
 }
 
 // The control's init script runs in the walkers' `ab` browsers (`fwx walk ab` leaves it out of a verifier's `v*` session and of `fwx walk capture`'s),
-// so a walker files the planted title and a verifier that is told about it could confirm it, and `fwx walk converge` would hand it to the fixer as
-// a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a row's own id is read too): that row,
-// the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json. (The pictures the walkers took of the control's
-// screen that a genuine finding carries are left out by `fwx walk converge`.)
+// so a walker files the planted element and a verifier's browser, which has no plant, does not reproduce it: `fwx walk converge` would still hand the
+// row to the fixer as a defect of the repository unless it is taken out. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a row's
+// own id is read too): that row, when its verdict is not CONFIRMED or PLAUSIBLE, and the rows tied to it by `duplicate_of` either way, leave the verified
+// file for control-<tramo>.json. The fault sits on an element the part changed, where real findings land too: a row the verifier reproduced in its own
+// browser is a real finding, stays for the fixer, and the control still counts as found. (The pictures the walkers took of the control's screen that a
+// genuine finding carries are left out by `fwx walk converge`.)
 async function dropControl() {
   const fid = st.control.found === true ? st.control.finding : null
   if (!fid) return
   for (const v of st.verified) {
     const rows = v.rep.findings
-    const out = new Set(rows.filter((r) => r.source === fid || r.id === fid).map((r) => r.id))
+    const real = (r) => r.verdict === 'CONFIRMED' || r.verdict === 'PLAUSIBLE'  // the verifier saw it without the plant
+    const out = new Set(rows.filter((r) => (r.source === fid || r.id === fid) && !real(r)).map((r) => r.id))
     const ties = rows.filter((r) => typeof r.duplicate_of === 'string' && r.duplicate_of).map((r) => [r.id, r.duplicate_of])
     for (let grew = out.size > 0; grew;) {
       grew = false
@@ -398,19 +404,15 @@ async function dropControl() {
         }
       }
     }
-    if (out.size === 0) continue
-    const gone = rows.filter((r) => out.has(r.id))
-    const keep = rows.filter((r) => !out.has(r.id))
+    const gone = rows.filter((r) => out.has(r.id) && !real(r))
+    if (gone.length === 0) continue
+    const keep = rows.filter((r) => !gone.includes(r))
     const put = (o, f) => 'printf ' + sh('%s\n') + ' ' + sh(JSON.stringify(o)) + ' > ' + sh(f)
     const cf = st.runDir + '/control-' + v.tramo + '.json'
     const done = await exec('control-' + v.tramo, inRepo(put({ findings: keep }, v.file) + ' && ' + put({ findings: gone }, cf)), true)
     if (!done || done.rc !== 0) {
       st.gaps.push('the planted control\'s finding could not be taken out of ' + v.file + ': the fixer would get it')
       continue
-    }
-    for (const r of gone) {
-      const i = typeof r.clip === 'string' ? st.clips.indexOf(r.clip) : -1
-      if (i >= 0) st.clips.splice(i, 1)
     }
   }
 }

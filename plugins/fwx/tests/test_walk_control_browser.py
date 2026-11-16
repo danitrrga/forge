@@ -18,6 +18,16 @@ Seen red against the script before the change (the plant restyled the `h1` eleme
   FAIL: plant: every text node of the title reads at the body's weight: got ['400', '700'], want ['400', '400']
   FAIL: plant: the title carries no attribute that names the tooling: got ['data-fwx-ctl'], want []
 
+Which element is planted when a selector matches several (`querySelector` took the first match, seen or not), and what an invalid
+selector reads as. Seen red on head 21222d1 (the plant and the read-back took `document.querySelector`'s first match):
+  FAIL: pick off-screen: the plant is on the second match, the one a walker sees: got ['16px', '40px'], want ['40px', '16px']
+  (the same for "below the fold" and "closed details")
+  FAIL: pick no visible match: nothing is planted: got ['16px', '40px'], want ['40px', '40px']
+  FAIL: pick no visible match: the read-back says missing (one plain refusal follows): got 'fwx:16px|400|12x18', want 'fwx:missing'
+  FAIL: invalid selector "a'b": the read-back says invalid (one line, no stack): got "eval exited 1: ... SyntaxError: Failed to execute 'querySelector' ... at <anonymous>:6:3", want 'fwx:invalid'
+  (the same for "h3:not(" and "")
+(three visible siblings: the first is planted, green on both: the positive control of the cases above.)
+
 Seen red against the script before `--target` (`walk` had no `control_code`; the same toy page):
   FAIL: target: the browser measured the page: AttributeError: module 'fwx.commands.walk' has no attribute 'control_code'
 
@@ -58,9 +68,22 @@ def browser_exe():
     return os.environ.get("FWX_TEST_BROWSER") or next((p for p in map(shutil.which, ("chromium", "google-chrome", "chromium-browser")) if p), None)
 
 
+# Pages whose selector `.t` matches several elements; the body is 16px / 400, each `.t` is 40px / 700 unless the plant restyles it.
+T = '<p class="t" style="font-size:40px;font-weight:700%s">%s</p>'
+HEAD = '<!doctype html><html><head><meta charset="utf-8"></head><body style="font-size:16px;font-weight:400;margin:0">'
+PAGES = {
+    "/": PAGE,
+    "/off": HEAD + T % (";position:absolute;left:-9999px", "A") + T % ("", "B") + "</body></html>",
+    "/fold": HEAD + '<div style="height:3000px"></div>' + T % ("", "A") + T % (";position:absolute;top:10px;left:10px", "B") + "</body></html>",
+    "/details": HEAD + "<details><summary>more</summary>" + T % ("", "A") + "</details>" + T % ("", "B") + "</body></html>",
+    "/siblings": HEAD + T % ("", "A") + T % ("", "B") + T % ("", "C") + "</body></html>",
+    "/none": HEAD + T % (";position:absolute;left:-9999px", "A") + "<details><summary>more</summary>" + T % ("", "B") + "</details></body></html>",
+}
+
+
 class Quiet(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        body = PAGE.encode()
+        body = PAGES.get(self.path.split("?")[0], PAGE).encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -71,7 +94,7 @@ class Quiet(http.server.BaseHTTPRequestHandler):
         pass
 
 
-def measure(ab, exe, sock, url, script=None):
+def measure(ab, exe, sock, url, script=None, js=MEASURE, raw=False):
     """The measurement JSON of the toy page in a fresh browser session, launched with the init script when there is one; the session is closed."""
     ns = "fwxctl" + uuid.uuid4().hex[:8]
     common = [ab, "--namespace", ns, "--session", "t", "--executable-path", exe]
@@ -80,16 +103,52 @@ def measure(ab, exe, sock, url, script=None):
         r = subprocess.run(common + (["--init-script", script] if script else []) + ["open", url], env=env, capture_output=True, text=True, timeout=90, stdin=subprocess.DEVNULL)
         if r.returncode:
             return None, "open exited %d: %s" % (r.returncode, (r.stderr or r.stdout).strip()[-300:])
-        r = subprocess.run(common + ["eval", MEASURE], env=env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+        r = subprocess.run(common + ["eval", js], env=env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
         if r.returncode:
             return None, "eval exited %d: %s" % (r.returncode, (r.stderr or r.stdout).strip()[-300:])
         out = r.stdout.strip()
         got = json.loads(out)
-        return (json.loads(got) if isinstance(got, str) else got), None
+        return (got if raw else json.loads(got) if isinstance(got, str) else got), None
     except (subprocess.TimeoutExpired, ValueError) as e:
         return None, "%s: %s" % (type(e).__name__, e)
     finally:
         subprocess.run(common + ["close", "--all"], env=env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL, check=False)
+
+
+def sizes_js(sel):
+    """Every match's computed font size, and what the read-back (walk.READ_JS) reads for the selector."""
+    return ('(() => JSON.stringify({sizes: Array.from(document.querySelectorAll(%s)).map(e => getComputedStyle(e).fontSize), read: %s}))()'
+            % (json.dumps(sel), walk.READ_JS % json.dumps(sel)))
+
+
+def pick_cases(ab, exe, sock, work, base):
+    """Which of several matches is planted: the first that is rendered, has a box and shows in the viewport when the screen loads."""
+    for path, want, why in (("/off", ["40px", "16px"], "off-screen"), ("/fold", ["40px", "16px"], "below the fold"),
+                            ("/details", ["40px", "16px"], "closed details"), ("/siblings", ["16px", "40px", "40px"], "three visible siblings: the first"),
+                            ("/none", ["40px", "40px"], "no visible match")):
+        url = base.rstrip("/") + path
+        script = os.path.join(work, "init-pick%s.js" % path.replace("/", "-"))
+        with open(script, "w", encoding="utf-8") as f:
+            f.write(walk.control_code(path, ".t"))
+        plain, why1 = measure(ab, exe, sock, url, None, sizes_js(".t"))
+        hit, why2 = measure(ab, exe, sock, url, script, sizes_js(".t"))
+        if plain is None or hit is None:
+            s.ok("pick %s: the browser measured the page" % why, False, why1 or why2)
+            continue
+        label = "pick %s" % why
+        if path == "/siblings":
+            s.eq("%s: the plant is on the first of three visible matches" % label, hit["sizes"], want)
+        elif path == "/none":
+            s.eq("%s: nothing is planted" % label, hit["sizes"], want)
+            s.eq("%s: the read-back says missing (one plain refusal follows)" % label, hit["read"], "fwx:missing")
+        else:
+            s.eq("%s: the plant is on the second match, the one a walker sees" % label, hit["sizes"], want)
+            s.ok("%s: the read-back reads the visible match too (its font size), not the first" % label, plain["read"].startswith("fwx:40px|700|"), "plain %r" % plain["read"])
+            s.ok("%s: and it moved with the plant (40px before, 16px after)" % label, hit["read"].startswith("fwx:16px|400|"), "hit %r" % hit["read"])
+    # an invalid selector reads as `invalid`, with no exception on the page
+    for sel in ("a'b", "h3:not(", ""):
+        got, why = measure(ab, exe, sock, base, None, walk.READ_JS % json.dumps(sel), raw=True)
+        s.eq("invalid selector %s: the read-back says invalid (one line, no stack)" % json.dumps(sel), got if got is not None else why, "fwx:invalid")
 
 
 def main():
@@ -141,6 +200,7 @@ def main():
         s.eq("target: the title's size, weight and box are as the app draws them (the plant is not on the title)", hit["h1"], plain["h1"])
         s.eq("target: the element the part changed takes the body's size and weight", hit["lede"][:2], ["16px", "400"])
         s.ok("target: and its box changes (it was %r without the plant)" % (plain["lede"],), hit["lede"][3] < plain["lede"][3], "got %r" % (hit["lede"],))
+        pick_cases(ab, exe, sock, work, url)
         s.eq("target: no plant, the element is at its own 40px (the measurement can tell a plant from none)", plain["lede"][:2], ["40px", "700"])
     finally:
         server.shutdown()

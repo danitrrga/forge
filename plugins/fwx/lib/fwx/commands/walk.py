@@ -880,12 +880,23 @@ def cmd_pw(argv):
 
 # ---------------------------------------------------------------------------------------------------------- arm-control
 TARGET = 'h1, [role="heading"][aria-level="1"]'  # what the plant restyles, and what the read-back reads
-CONTROL_JS = """(() => {
+# Which element a selector means: the first match that is rendered, has a box and shows in the viewport when the screen loads, since a walker
+# can see no other. The plant and the read-back both take their element from here, so they cannot disagree. No `%` in it: it is pasted into
+# two templates that are formatted.
+PICK_JS = """
+  const fwxPick = (sel) => Array.from(document.querySelectorAll(sel)).find((e) => {
+    if (e.checkVisibility && !e.checkVisibility({ checkVisibilityCSS: true })) return false;  // display:none, a closed <details>, content-visibility
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+  }) || null;
+"""
+CONTROL_JS = """(() => {""" + PICK_JS + """
   const PATH = %(path)s;
   const planted = new WeakSet();
   const apply = () => {
     if ((location.pathname.replace(/\\/+$/, "") || "/") !== PATH) return;
-    const h = document.querySelector(%(target)s);
+    let h = null;
+    try { h = fwxPick(%(target)s); } catch (e) { return; }  // an invalid selector plants nothing (the read-back refuses it before this runs)
     if (!h || planted.has(h)) return;
     const cs = getComputedStyle(document.body);
     for (const e of [h, ...h.querySelectorAll("*")]) {  // the whole title, whatever inner markup carries a size of its own
@@ -900,14 +911,15 @@ CONTROL_JS = """(() => {
 })();
 """
 # What the plant alters, as the page's own computed style and rendered box (whole pixels) of the target:
-# `fwx:<font-size>|<font-weight>|<width>x<height>`, or `fwx:missing`.
-READ_JS = """(() => {
-  const h = document.querySelector(%s);
+# `fwx:<font-size>|<font-weight>|<width>x<height>`, `fwx:missing` (no match that shows) or `fwx:invalid` (the selector is not valid CSS).
+READ_JS = """(() => {""" + PICK_JS + """
+  let h;
+  try { h = fwxPick(%s); } catch (e) { return "fwx:invalid"; }
   if (!h) return "fwx:missing";
   const c = getComputedStyle(h), r = h.getBoundingClientRect();
   return "fwx:" + c.fontSize + "|" + c.fontWeight + "|" + Math.round(r.width) + "x" + Math.round(r.height);
 })()"""
-READ_LINE = re.compile(r"fwx:(?:(missing)|([^|\s\"']+)\|([^|\s\"']+)\|(\d+)x(\d+))")  # the answer may come back bare or quoted
+READ_LINE = re.compile(r"fwx:(?:(missing)|(invalid)|([^|\s\"']+)\|([^|\s\"']+)\|(\d+)x(\d+))")  # the answer may come back bare or quoted
 # The plant counts as visible when the title's box changes by at least this many pixels, in width or in height. The owner's rule: a change
 # nobody can see is not important, and neither is a change of text as long as the layout of the page does not move. One place, one number.
 CONTROL_MIN_BOX_PX = int(os.environ.get("FWX_WALK_CONTROL_MIN_BOX_PX") or 1)
@@ -928,8 +940,10 @@ def read_target(run, target=TARGET):
     end = time.monotonic() + CONTROL_WAIT_S
     while True:
         m = READ_LINE.search(browser_must(run, ["eval", READ_JS % json.dumps(target)]))
+        if m and m.group(2):
+            raise Stop("arm-control: the selector %s is not valid CSS, so no element can be found with it" % json.dumps(target), 1)
         if m and not m.group(1):
-            return m.group(2), m.group(3), int(m.group(4)), int(m.group(5))
+            return m.group(3), m.group(4), int(m.group(5)), int(m.group(6))
         if time.monotonic() >= end:
             return None
         time.sleep(SETTLE_POLL_S)
@@ -954,11 +968,11 @@ def read_back(run, screen, arm, target=TARGET):
     CONTROL_MIN_BOX_PX: the owner's rule is that what changes no layout is not worth a walker's attention, whatever it does to the text."""
     before = read_fresh(run, screen, target)
     if before is None:
-        raise Stop("arm-control: target not found on %s: no `%s` after %g s, so a plant there would change nothing" % (screen, target, CONTROL_WAIT_S), 1)
+        raise Stop("arm-control: target not found on %s: no `%s` that is rendered and on screen after %g s, so a plant there would change nothing" % (screen, target, CONTROL_WAIT_S), 1)
     arm()
     after = read_fresh(run, screen, target)
     if after is None:
-        raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no `%s` after %g s" % (screen, target, CONTROL_WAIT_S), 1)
+        raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no `%s` that is rendered and on screen after %g s" % (screen, target, CONTROL_WAIT_S), 1)
     if max(abs(after[2] - before[2]), abs(after[3] - before[3])) < CONTROL_MIN_BOX_PX:
         raise Stop("arm-control: no visible change on %s: the `%s` is %dx%d px without the plant and %dx%d px in a fresh walker session launched with it "
                    "(the plant did not reach the browser, or it changes no layout), and the box must change by at least %d px"
@@ -978,8 +992,6 @@ def cmd_arm_control(argv):
     run = load_run(o["--run"])
     screen = o["--screen"]
     target = o.get("--target", TARGET)  # a selector that matches nothing is a refusal below, never a fall-back to the title
-    if not target.strip():
-        raise usage("arm-control", "--target is empty")
     if host_of(screen) not in run["hosts"]:
         raise Stop("screen %s is not on the app (%s)" % (screen, ", ".join(run["hosts"])))
     path = urlsplit(screen if "://" in screen else "http://" + screen).path.rstrip("/") or "/"

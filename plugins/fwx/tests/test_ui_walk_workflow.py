@@ -599,31 +599,40 @@ def check_control_rows(script, s):
         cmd = (runner(rec, "control-T1") or [{"prompt": ""}])[0]["prompt"]
         return (cmd.split(" && ")[-2:] + ["", ""])[:2] + [cmd[-500:] or "no executor:runner-control-T1 launched"]
     judged = {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"}
-    rows = [row("T1-1", "w1-F1", clip=RUN_DIR + "/clip-1.webm"), row("T1-2", "w1-F2", "NOT REPRODUCED"), row("T1-3", "w2-F1")]
+    rows = [row("T1-1", "w1-F1", clip=RUN_DIR + "/clip-1.webm"), row("T1-2", "w1-F2", "NOT REPRODUCED"), row("T1-3", "w2-F1", "NOT REPRODUCED")]
     over = {"ui-verifier:T1": {"findings": rows}, "ui-verifier:control": judged, "executor:runner-control-T1": R("saved")}
     rec, err = go(script, answers_over=over)
     rec = finish(s, "control row", rec, err)
     ls = labels(rec)
     keep, gone, shown = split(rec)
-    s.ok("control row: the verifier confirmed the planted title: it leaves verified-T1.json and goes to control-T1.json",
+    s.ok("control row: the verifier did not reproduce the planted fault (its browser has no plant): it leaves verified-T1.json and goes to control-T1.json",
          RUN_DIR + "/verified-T1.json" in keep and '"T1-3"' not in keep and '"T1-1"' in keep and '"T1-2"' in keep
          and RUN_DIR + "/control-T1.json" in gone and '"T1-3"' in gone and '"T1-1"' not in gone, shown)
     s.ok("control row: it is taken out after the judge and before `findings` reads the files",
          at(ls, "ui-verifier:control") < at(ls, "executor:runner-control-T1") < at(ls, "executor:runner-findings"), repr(ls))
     s.ok("control row: a tramo with no control row is not rewritten", "executor:runner-control-T2" not in ls, repr(ls))
     s.eq("control row: the run is done and the clips are those of the rows kept", (result(rec).get("status"), details(rec).get("clips")), ("done", [RUN_DIR + "/clip-1.webm"]))
-    # the control row carries a clip: it is not a clip of a finding the fixer gets
-    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", clip=RUN_DIR + "/control.webm")]}})
-    rec = finish(s, "control row clip", rec, err)
-    s.eq("control row clip: the clip of the control row is not listed", details(rec).get("clips"), [])
+    # a judged row the verifier reproduced without the plant is a real finding on the changed element: it stays for the fixer (the control still counts)
+    # Red on head 21222d1 (the judged row left whatever the verifier said):
+    #   FAIL: control row reproduced: a judged row the verifier confirmed stays in verified-T1.json, nothing is rewritten: ['executor:runner-up', ..., 'executor:runner-control-T1', ...]
+    for v in ("CONFIRMED", "PLAUSIBLE"):
+        rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", v)]}})
+        rec = finish(s, "control row reproduced " + v, rec, err)
+        s.ok("control row reproduced: a judged row the verifier %s stays in verified-T1.json, nothing is rewritten, the control still counts" % v.lower(),
+             "executor:runner-control-T1" not in labels(rec) and details(rec).get("control", {}).get("found") is True, repr((labels(rec)[-5:], details(rec).get("control"))))
     # the verifier grouped the sightings: the control walker's row is a DUPLICATE of the first one, which carries the verdict; and the other way round
-    for what, dup in (("the judged row duplicates a kept sighting", [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", "DUPLICATE", duplicate_of="T1-1")]),
-                      ("a row duplicates the judged one", [row("T1-1", "w1-F1", "DUPLICATE", duplicate_of="T1-3"), row("T1-3", "w2-F1")])):
-        rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": dup + [row("T1-4", "w1-F9")]}})
-        rec = finish(s, "control row, " + what, rec, err)
-        keep, gone, shown = split(rec)
-        s.ok("control row, %s: both rows of the one defect leave, the other finding stays" % what,
-             '"T1-1"' in gone and '"T1-3"' in gone and '"T1-1"' not in keep and '"T1-3"' not in keep and '"T1-4"' in keep, shown)
+    # (the verifier reproduced the head of the group without the plant: that head is a real finding and stays, the judged duplicate leaves)
+    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": [row("T1-1", "w1-F1"), row("T1-3", "w2-F1", "DUPLICATE", duplicate_of="T1-1"), row("T1-4", "w1-F9")]}})
+    rec = finish(s, "control row, the judged row duplicates a kept sighting", rec, err)
+    keep, gone, shown = split(rec)
+    s.ok("control row, the judged row duplicates a kept sighting: the judged row leaves, the reproduced sighting and the other finding stay",
+         '"id":"T1-3"' in gone and '"id":"T1-1"' not in gone and '"id":"T1-1"' in keep and '"id":"T1-3"' not in keep and '"id":"T1-4"' in keep, shown)
+    # the judged row not reproduced and a row that duplicates it: both leave
+    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": [row("T1-1", "w1-F1", "DUPLICATE", duplicate_of="T1-3"), row("T1-3", "w2-F1", "NOT REPRODUCED"), row("T1-4", "w1-F9")]}})
+    rec = finish(s, "control row, a row duplicates the judged one", rec, err)
+    keep, gone, shown = split(rec)
+    s.ok("control row, a row duplicates the judged one: both rows leave, the other finding stays",
+         '"id":"T1-1"' in gone and '"id":"T1-3"' in gone and '"id":"T1-1"' not in keep and '"id":"T1-3"' not in keep and '"id":"T1-4"' in keep, shown)
     # the id the judge names may also be the verified row's own
     rec, err = go(script, answers_over={**over, "ui-verifier:control": dict(judged, finding="T1-3")})
     rec = finish(s, "control row by id", rec, err)
@@ -720,6 +729,29 @@ def check_control_target(script, s):
     arm = runner(rec, "arm-control")[0]["prompt"] if runner(rec, "arm-control") else ""
     s.ok("control target: a screen with no `changed` is passed over for the first that has one",
          "--screen '%s/profile' --target 'main .name'" % APP in arm and "--screen '%s/settings'" % APP not in arm, arm[-300:])
+    # a refusal on one screen (body-size text, no visible change) is tried again on the next screen that has a `changed`, in order
+    # Red on head 21222d1 (only the first screen with a `changed` was tried):
+    #   FAIL: control retry: the second screen with a changed element is tried after the first refused it: [] (one arm-control launch, no second)
+    two = json.loads(json.dumps(TRAMOS))
+    two[0]["screens"][0]["changed"] = ".save-bar button"
+    two[1]["screens"][0]["changed"] = "table.invoices th"
+    refusal = lambda why: R({"armed": False, "reason": "arm-control: " + why}, 1)
+    nochange = "no visible change on %s/settings: the `.save-bar button` is 80x20 px without the plant and 80x20 px in a fresh walker session" % APP
+    rec, err = go(script, answers_over={"ui-verifier:tramos": json.dumps(two), "executor:runner-arm-control": {"$seq": [refusal(nochange), R({"screen": APP + "/billing", "kind": "hierarchy"})]}})
+    rec = finish(s, "control retry", rec, err)
+    arms = [l["prompt"] for l in runner(rec, "arm-control")]
+    s.ok("control retry: the second screen with a changed element is tried after the first refused it, with its own target",
+         len(arms) == 2 and "--screen '%s/settings' --target '.save-bar button'" % APP in arms[0] and "--screen '%s/billing' --target 'table.invoices th'" % APP in arms[1],
+         repr([a[-160:] for a in arms]))
+    s.ok("control retry: armed on the second: the judge runs and the walk counts", "ui-verifier:control" in labels(rec) and not str(result(rec).get("reason")), repr((labels(rec)[-4:], result(rec).get("reason"))))
+    # every screen refused: not armed, no judge, the run does not count, and the reason is the last refusal's
+    last = "target not found on %s/billing: no visible `table.invoices th` after 30 s" % APP
+    rec, err = go(script, answers_over={"ui-verifier:tramos": json.dumps(two), "executor:runner-arm-control": {"$seq": [refusal(nochange), refusal(last)]}})
+    rec = finish(s, "control retry all refused", rec, err)
+    why = str(result(rec).get("reason"))
+    s.ok("control retry all refused: both tried, no judge, the run does not count and the reason is the last refusal's",
+         len(runner(rec, "arm-control")) == 2 and "ui-verifier:control" not in labels(rec) and why.lower().startswith("the run does not count") and "table.invoices th" in why
+         and ".save-bar button" not in why and details(rec).get("control", {}).get("found") is None, repr((len(runner(rec, "arm-control")), why)))
     # no screen has one: the control is not armed, nothing is planted anywhere, the walk goes on and does not count
     none = json.loads(json.dumps(TRAMOS))
     for t in none:
@@ -1044,8 +1076,8 @@ MUTANTS = [
     ("a null severity refused by the schema", "severity: { type: ['string', 'null'], enum: ['blocker', 'major', 'minor', 'cosmetic', null] },",
      "severity: { type: 'string', enum: ['blocker', 'major', 'minor', 'cosmetic'] },", "FAIL: real verify reply: a NOT REPRODUCED row with severity null is accepted"),
     ("the screen's reference dropped", "reference: String(x.reference || 'none'),", "reference: 'none',", "FAIL: real tramos reply: the critic is given the reference its screen carries"),
-    ("the target is not passed to `control new`", " + ' --target ' + sh(target)", "", "FAIL: green: the control is planted on the first screen that has a changed element"),
-    ("no changed element still plants (on the first screen)", "if (!target) {\n    st.ctl", "if (false) {\n    st.ctl", "FAIL: control none: the run does not count"),
+    ("the target is not passed to `control new`", " + ' --target ' + sh(c.target)", "", "FAIL: green: the control is planted on the first screen that has a changed element"),
+    ("no changed element still plants (on the first screen)", "if (cands.length === 0) {\n    st.ctl", "if (false) {\n    st.ctl", "FAIL: control none: the run does not count"),
     ("a judgement still there counted as other", "if (f.verdict === 'CONFIRMED' || f.verdict === 'PLAUSIBLE') rc.still += 1", "if (f.verdict === 'CONFIRMED') rc.still += 1",
      "FAIL: recheck: a judgement finding still there"),
     ("the walkers are not told the run", "`fwx walk ab --run ' + st.runDir + ' ' + job.session", "`fwx walk ab ' + job.session", "FAIL: green: every walker command names the run"),
@@ -1081,9 +1113,12 @@ MUTANTS = [
     ("the slot is freed before the browser is closed", "      if (after) closed = (await after()) !== false\n    } finally {\n      if (closed) release()\n      else lose(tag)\n    }",
      "      release()\n      if (after) await after()\n    } finally {\n    }",
      "FAIL: close quota 1: the next job starts only after the previous one's browser was closed"),
-    ("the planted control's row goes to the fixer", "if (!fid) return", "return", "FAIL: control row: the verifier confirmed the planted title"),
-    ("the rows tied to the control's row stay", "if (out.has(a) !== out.has(b)) {", "if (false) {", "FAIL: control row, the judged row duplicates a kept sighting"),
-    ("the control's clip is listed", "if (i >= 0) st.clips.splice(i, 1)", "", "FAIL: control row clip: the clip of the control row is not listed"),
+    ("the planted control's row goes to the fixer", "if (!fid) return", "return", "FAIL: control row: the verifier did not reproduce the planted fault"),
+    ("the rows tied to the control's row stay", "if (out.has(a) !== out.has(b)) {", "if (false) {", "FAIL: control row, a row duplicates the judged one"),
+    ("a reproduced judged row is moved to the control's file", "r.verdict === 'CONFIRMED' || r.verdict === 'PLAUSIBLE'  // the verifier", "false  // the verifier", "FAIL: control row reproduced: a judged row the verifier confirmed stays"),
+    ("a reproduced head of the judged row's group is moved", "const gone = rows.filter((r) => out.has(r.id) && !real(r))", "const gone = rows.filter((r) => out.has(r.id))",
+     "FAIL: control row, the judged row duplicates a kept sighting"),
+    ("only the first screen with a changed element is tried", "if (st.ctl.armed) return\n", "return\n", "FAIL: control retry: the second screen with a changed element is tried"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),
     ("the runner may name its stderr file", "never a fixed name in /tmp. ", "", "FAIL: green: the runner is told to keep stderr in a mktemp file"),
     ("the verifier is not told where captures go", "A path in /tmp is refused.", "", "FAIL: green: the verifier is told a screenshot with no path lands"),

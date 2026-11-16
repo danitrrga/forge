@@ -19,7 +19,7 @@ Inputs: `plan.md`, the repo and its base commit, the phase's `demo/` folder and 
   "files": ["src/settings/SaveBar.tsx"], "firefox": false}]
 ```
 
-`firefox` is true only when the plan asks for Firefox on that task. Each screen carries its own `reference`: an approved demo image or `decisions.tsv` row when there is one, else an unchanged sibling screen, else "none". `changed` names one element of that screen with text that the part changed (`.save-bar button`, not `main`) and that shows when the screen loads, not after a click; read it from the diff and the code of the changed files. Null when you cannot name one: the walk plants its fault on the first screen that has one, and with none it does not count.
+`firefox` is true only when the plan asks for Firefox on that task. Each screen carries its own `reference`: an approved demo image or `decisions.tsv` row when there is one, else an unchanged sibling screen, else "none". `changed` names one element of that screen with text that the part changed (`.save-bar button`, not `main`) and that is on screen when it loads, not below the fold or after a click; read it from the diff and the code of the changed files. Among the elements the part changed on a screen, name the one whose text is largest or boldest (a heading or emphasised text before a paragraph, a label or a button): the walk shrinks it to body text, and text already at body size shows no change. Null when you cannot name one: the walk plants its fault on the first screen that has one, and with none it does not count.
 
 ## Mode `verify`
 
