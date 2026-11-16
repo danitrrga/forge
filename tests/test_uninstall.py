@@ -18,10 +18,10 @@ Assertions:
   takes out hindsight's claims only;
   `--apply`: every claim of the record is gone but the edited env, which is named on a '  ! ' line; the
   by-construction items are gone (skill links in both mirrors, the .agents link, the guard entry, the copy of
-  AGENT-SYSTEM.md, the pointer block, ~/.gsd/defaults.json, ~/.cache/forge, the state dir), the claimed
-  ~/.claude.json.bak too; the four hand things stay; the keys of ~/.claude.json forge never claimed are
-  byte-identical; the old .bak is listed and kept; a link into another tree stays; the output names GSD's
-  removal command and the command that deletes the checkout.
+  AGENT-SYSTEM.md, the pointer block, ~/.cache/forge, the state dir), the claimed
+  ~/.claude.json.bak too; the four hand things stay, and so does ~/.gsd/defaults.json (GSD's, not forge's); the keys of
+  ~/.claude.json forge never claimed are byte-identical; the old .bak is listed and kept; a link into another tree
+  stays; the output names no GSD command and ends with the command that deletes the checkout.
 Negative controls, run every time, each in a world of its own:
   removable() made to ignore the digest (in the world's copy of forge/owned.py): the edited env is deleted,
   and the env check of the main world would have failed;
@@ -144,11 +144,10 @@ class World:
         bin_dir = sandbox.stub_systemctl(os.path.join(self.top, "bin"), os.path.join(self.top, "systemctl.log"))
         self.env = sandbox.bare_env(self.home, self.tmp, bin_dir)
         if sync:
-            # What GSD and the gsd runtime step leave, put there by hand (GSD is off in the world): a copy of the
-            # defaults forge ships, byte for byte, and the staging cache.
-            os.makedirs(os.path.join(self.home, ".gsd"))
-            shutil.copy(os.path.join(self.root, "config", "gsd", "defaults.json"), os.path.join(self.home, ".gsd", "defaults.json"))
-            write(os.path.join(self.home, ".cache", "forge", "gsd-stage", "x"), "staged\n")
+            # What an older forge left in the world, put there by hand: a defaults file of GSD's own, which uninstall no
+            # longer knows (it stays), and a staging cache under ~/.cache/forge (it goes with the directory).
+            write(os.path.join(self.home, ".gsd", "defaults.json"), "{}\n")
+            write(os.path.join(self.home, ".cache", "forge", "stage", "x"), "staged\n")
             code, out = self.forge("sync", "--all", "--apply")
             check("%s: the sync builds the world" % tag, code == 0 and os.path.exists(self.registry), sandbox.tail(out, 6))
 
@@ -302,14 +301,17 @@ gone = {"~/.claude/skills/toy-common": os.path.join(w.home, ".claude", "skills",
         "app/.claude/AGENT-SYSTEM.md": os.path.join(w.app, ".claude", "AGENT-SYSTEM.md"),
         "app/.codex/config.toml": os.path.join(w.app, ".codex", "config.toml"),
         "~/.hindsight/coding-agent.json": os.path.join(w.home, ".hindsight", "coding-agent.json"),
-        "~/.gsd/defaults.json": os.path.join(w.home, ".gsd", "defaults.json"),
         "~/.cache/forge": os.path.join(w.home, ".cache", "forge"),
         "~/.local/state/forge": os.path.join(w.home, ".local", "state", "forge")}
 check("apply: every by-construction item is gone -- left %s" % [k for k, p in gone.items() if os.path.lexists(p)],
       not any(os.path.lexists(p) for p in gone.values()))
 check("apply: a skill link into another tree stays", os.path.islink(os.path.join(w.home, ".claude", "skills", FOREIGN)))
 check("apply: the target of forge's skill links stays", os.path.isfile(os.path.join(w.root, "skills", "toy-common", "SKILL.md")))
-check("apply: the output names GSD's removal command", "@opengsd/gsd-core" in out and "--uninstall" in out, out)
+# GSD is not forge's to uninstall any more. Red on the code that still knew it: "apply: ~/.gsd/defaults.json stays and the
+# output names no GSD command" with the file gone and the output ending "GSD's agents and engine stay installed in
+# ~/.claude; to remove them: npx @opengsd/gsd-core@latest --claude --global --uninstall".
+check("apply: ~/.gsd/defaults.json stays and the output names no GSD command",
+      os.path.isfile(os.path.join(w.home, ".gsd", "defaults.json")) and "gsd" not in out.lower(), out)
 check("apply: the output ends with the command that deletes the checkout, never run",
       "rm -rf %s" % w.root in out.strip().splitlines()[-1] and os.path.isdir(w.root), sandbox.tail(out, 2))
 

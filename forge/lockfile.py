@@ -2,12 +2,11 @@
 
 `forge lock` reads what is on this machine and writes the file; `forge versions [--md]` prints it next to the
 pins of config/toolchain.json, for release notes. A release is a commit of both, so a newcomer gets the versions
-the maintainer runs. Four sections:
+the maintainer runs. Three sections:
 
   plugins  Claude Code plugins: the newest install of each (installed_plugins.json lists one per project), less
            the names in config/forge.json `lock_exclude`: the lock is published, and a plugin of the user's own is not
   skills   outside skills, from each skills/<name>/NOTICE.md: a repository and a commit, or an npm package
-  gsd      the GSD runtime's VERSION file
   mcp      the package each `npx` server in config/mcp-registry.json launches, by package (a server's name can
            carry a project's), with the version as written or "floating" (resolving it needs the network, and
            step 5 turns these into pinned tools)
@@ -18,7 +17,7 @@ import re
 
 from forge import lib, toolchain
 
-SECTIONS = ("plugins", "skills", "gsd", "mcp")
+SECTIONS = ("plugins", "skills", "mcp")
 # The three forms of a NOTICE.md in skills/: "From <repo> at commit <sha>", a "- Repository:" and "- Commit:" list,
 # and "From the npm package <name>@<version> (".
 FROM_COMMIT = re.compile(r"From (https://\S+) at commit ([0-9a-f]{40})")
@@ -94,23 +93,19 @@ def collect():
     """(the lock document, problems): what this machine has, sorted. A section with nothing in it is left out."""
     problems = []
     doc = {"plugins": plugins(), "skills": skills(problems), "mcp": mcp()}
-    try:
-        with open(os.path.join(lib.HOME, ".claude", "gsd-core", "VERSION"), encoding="utf-8") as fh:
-            doc["gsd"] = fh.read().strip()
-    except FileNotFoundError:
-        pass
     return {k: v for k, v in sorted(doc.items()) if v}, problems
 
 
 def summary(doc):
-    return "%d plugin(s), %d skill(s), gsd %s, %d mcp package(s)" % (
-        len(doc.get("plugins", {})), len(doc.get("skills", {})), doc.get("gsd", "absent"), len(doc.get("mcp", {})))
+    return "%d plugin(s), %d skill(s), %d mcp package(s)" % (
+        len(doc.get("plugins", {})), len(doc.get("skills", {})), len(doc.get("mcp", {})))
 
 
 def changes(old, new):
-    """One line per entry that differs between two lock documents."""
+    """One line per entry that differs between two lock documents. A key outside SECTIONS (a section a release used to
+    carry, which collect no longer makes) is a line too, so that `forge lock --apply` is what drops it."""
     out = []
-    for sec in SECTIONS:
+    for sec in SECTIONS + tuple(sorted((set(old) | set(new)) - set(SECTIONS))):
         a, b = old.get(sec), new.get(sec)
         if isinstance(a, dict) or isinstance(b, dict):
             a, b = a or {}, b or {}
@@ -149,17 +144,15 @@ def cmd_lock(a):
 
 
 def rows():
-    """[(section, name, version)]: the mise pins of config/toolchain.json, then the lock's four sections."""
+    """[(section, name, version)]: the mise pins of config/toolchain.json, then the lock's three sections."""
     manifest, _ = toolchain.entries()
     out = [(sec, e["name"], e["version"]) for sec in toolchain.SECTIONS for e in manifest.get(sec, [])
-           if sec != "tools" or toolchain.wanted(e)[0]]  # a tool whose GSD default is off is not installed
+           if sec != "tools" or toolchain.wanted(e)[0]]  # a tool whose `when` is off is not installed
     lock = lib.read_json(path())
     for name, p in lock.get("plugins", {}).items():
         out.append(("plugins", name, p["version"] + (" (%s)" % p["sha"][:7] if p.get("sha") else "")))
     for name, p in lock.get("skills", {}).items():
         out.append(("skills", name, p["npm"] if "npm" in p else "%s@%s" % (p["repo"].rsplit("github.com/", 1)[-1], p["commit"][:7])))
-    if "gsd" in lock:
-        out.append(("gsd", "gsd", lock["gsd"]))
     out += [("mcp", name, version) for name, version in lock.get("mcp", {}).items()]
     return out
 

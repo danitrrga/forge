@@ -9,8 +9,8 @@ restored: a key forge set falls back to Claude Code's default. The rest is forge
 no claim: the links in ~/.claude/skills and $CODEX_HOME/skills that resolve into <forge>/skills/ (never their
 target), a project's .agents/skills links (skills._agents_link), the guard entries of a settings.local.json
 (skills._runs_forge_guard), the copy of AGENT-SYSTEM.md and the pointer block sync_system_doc.py writes,
-~/.gsd/defaults.json while it is forge's copy, ~/.cache/forge/, this checkout's SessionStart row when the
-record does not hold it, and last the state directory, the record with it.
+~/.cache/forge/, this checkout's SessionStart row when the record does not hold it, and last the state
+directory, the record with it.
 
 Scopes: everything (the default), with forge's SessionStart row second-to-last and the state directory last,
 both only when nothing before them failed; `--integration N`, refused while N is on in config/forge.json:
@@ -24,9 +24,8 @@ all is "only what forge makes by construction", and a whole uninstall that finds
 directory was (~/.cache/forge, the state directory) is removed as a link; a settings.local.json or hooks.json
 that is a link and is left empty is written through, never unlinked.
 
-Left in place and said: GSD's agents and engine in ~/.claude (the command that removes them is printed), a
-.bak older than the record, a project's `.codex/` and `.agents/skills/` that forge made (they stay, empty and
-unnamed), and the checkout itself (the command that deletes it is printed, never run)."""
+Left in place and said: a .bak older than the record, a project's `.codex/` and `.agents/skills/` that forge made
+(they stay, empty and unnamed), and the checkout itself (the command that deletes it is printed, never run)."""
 import collections
 import json
 import os
@@ -38,10 +37,8 @@ USER_SETTINGS = os.path.join(lib.HOME, ".claude", "settings.json")
 CLAUDE_JSON = os.path.join(lib.HOME, ".claude.json")
 CODEX_HOOKS = os.path.join(lib.CODEX_HOME, "hooks.json")
 HINDSIGHT = os.path.join(lib.HOME, ".hindsight", "coding-agent.json")
-GSD_DEFAULTS = os.path.join(lib.HOME, ".gsd", "defaults.json")
 CACHE = os.path.join(lib.HOME, ".cache", "forge")
 SKILL_DIRS = {"claude": os.path.join(lib.HOME, ".claude", "skills"), "codex": os.path.join(lib.CODEX_HOME, "skills")}
-GSD_REMOVE = "npx @opengsd/gsd-core@latest --claude --global --uninstall"
 SLP = os.path.join(".claude", "settings.local.json")
 
 
@@ -210,7 +207,7 @@ class Scope:
         self.keys = {"mcp:" + mcp.project_key(p) for p in self.ppaths}
 
     def has(self, *what):
-        """Whether a by-construction item belonging to any of `what` (whole, codex, gsd, project) is in scope."""
+        """Whether a by-construction item belonging to any of `what` (whole, codex, project) is in scope."""
         return (self.whole and "whole" in what) or (self.integration in what) or (bool(self.project) and "project" in what)
 
     def under(self, path):
@@ -339,19 +336,10 @@ def _by_construction(run, scope):
         if not scope.has("whole", "project"):
             continue
         n += _project_files(run, pp)
-    if scope.has("whole", "gsd") and os.path.lexists(GSD_DEFAULTS):
+    if scope.whole and os.path.isdir(CACHE):
         n += 1
-        src = os.path.join(lib.ROOT, "config", "gsd", "defaults.json")
-        if not os.path.islink(GSD_DEFAULTS) and os.path.isfile(src) and lib.holds(GSD_DEFAULTS, _read(src)):
-            run.delete(GSD_DEFAULTS)
-            run.say("   %s -> %s" % (lib.short(GSD_DEFAULTS), run.verb("remove")))
-        else:
-            run.say("  ! %s is not forge's copy of config/gsd/defaults.json, left in place" % lib.short(GSD_DEFAULTS))
-    cache = CACHE if scope.whole else os.path.join(CACHE, "gsd-stage") if scope.integration == "gsd" else None
-    if cache and os.path.isdir(cache):
-        n += 1
-        run.delete(cache, tree=True)
-        run.say("   %s -> %s" % (lib.short(cache), run.verb("remove")))
+        run.delete(CACHE, tree=True)
+        run.say("   %s -> %s" % (lib.short(CACHE), run.verb("remove")))
     return n
 
 
@@ -532,8 +520,6 @@ def _uninstall(run, scope, claims, had_state):
             run.say("FAIL: looked at zero: no ownership record and nothing forge made by construction")
             return 1
         run.say("nothing left of forge on this machine: no ownership record, no state directory, nothing made by construction")
-    if scope.whole or scope.integration == "gsd":
-        run.say("GSD's agents and engine stay installed in ~/.claude; to remove them: " + GSD_REMOVE)
     if scope.whole:
         run.say("To delete the forge checkout itself (never run by forge): rm -rf %s" % lib.ROOT)
     return 1 if run.failed else 0

@@ -319,12 +319,12 @@ def doctor_row_cases():
             lib.settings.cache_clear()
             toolchain.MANIFEST = os.path.join(top, "no-such-toolchain.json")
             results, todo, where = toolchain.check()
-            if gsd:
-                want("toolchain: no file with gsd on stays a FAIL", [r.level for r in results], ["FAIL"])
-            else:
-                want("toolchain: no file with gsd off is a SKIP, saying NOT RUN, NOT ARMED, with nothing to install",
-                     ([r.level for r in results], results[0].detail.startswith(cli.NOT_ARMED), any(todo.values())), (["SKIP"], True, False))
-            want("toolchain row, no file, gsd %s" % ("on" if gsd else "off"), toolchain.row().level, "FAIL" if gsd else "SKIP")
+            # No toolchain file is a SKIP whether or not gsd is on (nothing is pinned). Red on the code that still made it a FAIL with gsd on:
+            # "FAIL toolchain: no file with gsd on stays a FAIL -- ['SKIP'], want ['FAIL']" and
+            # "FAIL toolchain row, no file, gsd on -- 'SKIP', want 'FAIL'" are the old assertions on the new code.
+            want("toolchain: no file, gsd %s, is a SKIP, saying NOT RUN, NOT ARMED, with nothing to install" % ("on" if gsd else "off"),
+                 ([r.level for r in results], results[0].detail.startswith(cli.NOT_ARMED), any(todo.values())), (["SKIP"], True, False))
+            want("toolchain row, no file, gsd %s" % ("on" if gsd else "off"), toolchain.row().level, "SKIP")
             toolchain.MANIFEST = os.path.join(top, "empty-toolchain.json")
             write_json(toolchain.MANIFEST, {"tools": [], "pip": []})
             want("toolchain: a file that lists nothing is a FAIL, gsd %s" % ("on" if gsd else "off"), toolchain.row().level, "FAIL")
