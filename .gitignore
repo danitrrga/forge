@@ -27,14 +27,12 @@
 !/tests/
 /tests/test_gate.py
 
-# hooks/: the guards, the output discipline, the router, the notifier, Ponytail's scoping, and their tests.
+# hooks/: the guards, the read scanner, the router, the notifier, Ponytail's scoping, and their tests.
 !/hooks/
 /hooks/*
 !/hooks/guard_tool_use.py
 !/hooks/worktree_guard.py
-!/hooks/gsd-prompt-guard.js
 !/hooks/read-injection-scanner.js
-!/hooks/gsd_output_discipline.py
 !/hooks/ref_corpus_router.py
 !/hooks/omarchy_notify.py
 !/hooks/ponytail_subagent.py
@@ -42,7 +40,6 @@
 !/hooks/test_guard_tool_use.py
 !/hooks/test_guard_mutants.py
 !/hooks/test_worktree_guard.py
-!/hooks/test_gsd_output_discipline.py
 !/hooks/test_read_injection_scanner.py
 !/hooks/test_read_injection_scanner.mjs
 
