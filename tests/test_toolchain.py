@@ -38,12 +38,9 @@ that differs ignored "pin installed, another version active = (exit, level, inst
 5. The `toolchain` row of forge doctor: the check without --fix, how many it looked at, the fix named.
 
 The suite never reads a checkout's config/forge.json: `toy_settings` points lib.SETTINGS at the fixture's file
-with GSD on (a missing config/toolchain.json is a FAIL) and `gsd_off_cases` at the same file with GSD off (the
-row is a SKIP `NOT RUN, NOT ARMED`). Seen failing on a toy copy of the fixture with GSD off standing in for the
-machine's file, before the change: "FAIL no file = (exit, levels) = (0, []), want (1, ['FAIL'])", "FAIL row, no
-file = (exit, level, installs) = (0, [''], []), want (1, ['FAIL'], [])", "FAIL row, no file: names the fix =
-False, want True"; and the SKIP case with `_gsd_pinned` forced True: "FAIL row, GSD off and no file = (exit,
-one line) = (1, 1), want (0, 1)".
+(with `agent_browser` as the case says, which a tool's `when` reads). No config/toolchain.json is a SKIP
+`NOT RUN, NOT ARMED` (`no_file_cases`), and a `when` that is not an `integration` is a manifest error
+(`removed_when_cases`; the condition on a GSD default is gone): the red of both is in their docstrings.
 """
 import contextlib
 import io
@@ -159,14 +156,9 @@ class World:
     two generated files in the state `files` says: "current" (what toolchain.render_* makes of `doc`),
     None (absent), "stale" (forge's header over other content) or "foreign" (no header)."""
 
-    def __init__(self, base, doc, mise_have=None, pip_have=None, files="current", with_mise=True, gsd_defaults=None):
+    def __init__(self, base, doc, mise_have=None, pip_have=None, files="current", with_mise=True):
         self.base = base
         os.makedirs(base, exist_ok=True)
-        # the user's GSD defaults (~/.gsd/defaults.json), which a tool's `when` reads; absent when None
-        self.gsd_defaults = os.path.join(base, "gsd-defaults.json")
-        if gsd_defaults is not None:
-            with open(self.gsd_defaults, "w") as fh:
-                fh.write(gsd_defaults if isinstance(gsd_defaults, str) else json.dumps(gsd_defaults))
         os.makedirs(os.path.join(base, "bin"), exist_ok=True)
         for name, body in (("mise", MISE_STUB), ("python3", PY_STUB)):
             if name == "mise" and not with_mise:
@@ -198,11 +190,7 @@ class World:
                     return toolchain.wanted(e)[0]
                 except (AttributeError, TypeError):
                     return True
-            real_gd, toolchain.GSD_DEFAULTS = toolchain.GSD_DEFAULTS, self.gsd_defaults  # the `when` reads this world's
-            try:
-                on = [e for e in doc.get("tools", []) if _on(e)]
-            finally:
-                toolchain.GSD_DEFAULTS = real_gd
+            on = [e for e in doc.get("tools", []) if _on(e)]
             texts = {"current": (toolchain.render_mise(on), toolchain.render_pips(doc.get("pip", []))),
                      "stale": (HEADER + "[tools]\n", HEADER + "PyYAML==1.0\n"),
                      "foreign": ("[tools]\n", "left-pad==1\n")}[files]
@@ -225,9 +213,8 @@ class World:
         `only_row`, forge doctor runs that CHECKS row alone: the others would ask the real machine."""
         env = self.env(**extra)
         saved = {k: os.environ.get(k) for k in env}
-        real = (toolchain.MANIFEST, cli.CHECKS, lib.may_write, getattr(toolchain, "GSD_DEFAULTS", None))
+        real = (toolchain.MANIFEST, cli.CHECKS, lib.may_write)
         toolchain.MANIFEST = self.config
-        toolchain.GSD_DEFAULTS = self.gsd_defaults
         lib.may_write = lambda: may_write
         if only_row:
             cli.CHECKS = [r for r in cli.CHECKS if r[0] == only_row]
@@ -244,7 +231,7 @@ class World:
                     os.environ.pop(k, None)
                 else:
                     os.environ[k] = v
-            toolchain.MANIFEST, cli.CHECKS, lib.may_write, toolchain.GSD_DEFAULTS = real
+            toolchain.MANIFEST, cli.CHECKS, lib.may_write = real
         return code, out.getvalue().splitlines()
 
     def installs(self):
@@ -293,64 +280,38 @@ def render_cases():
 
 
 GRAPH = {"name": "pipx:graphifyy", "version": "0.9.93", "why": "w", "when": {"gsd_default": "graphify.enabled"}}
-DOC_G = {"tools": DOC["tools"] + [GRAPH], "pip": DOC["pip"]}
-GRAPH_ON = {"graphify": {"enabled": True}}
 
 
-def when_cases(tmp):
-    """A tool with `when: {"gsd_default": "graphify.enabled"}` is installed, written to mise's file and checked only while the
-    user's GSD defaults (~/.gsd/defaults.json) hold that key as the JSON true: graphify (the `graphifyy` package, which
-    GSD's /gsd-graphify needs) comes with mise but only for a user who turned it on. Off, the entry is a
-    SKIP that says NOT RUN, NOT ARMED, never a FAIL, never in the file, never installed, and never uninstalled when it is
-    already there. Seen failing on 3c608bc: "when off: pipx:graphifyy = ... FAIL missing, pinned 0.9.93" (the old check
-    knew no `when`) and "when: a manifest with a bad when: ... want a FAIL naming `when`"."""
-    n = [0]
-
-    def world(*a, **k):
-        n[0] += 100
-        return World(os.path.join(tmp, "when%d" % n[0]), *a, **k)
-
-    for label, defaults in (("no defaults file", None), ("graphify off", {"graphify": {"enabled": False}}),
-                            ("the string true", {"graphify": {"enabled": "true"}}), ("an empty object", {})):
-        w = world(DOC_G, ALL_TOOLS, ALL_PIP, gsd_defaults=defaults)
-        code, lines = w.run("toolchain")
-        got = line_of(lines, "pipx:graphifyy")
-        want("when off (%s): exit 0, a SKIP that says NOT RUN, NOT ARMED" % label,
-             (code, got.startswith("SKIP"), "NOT RUN, NOT ARMED" in got), (0, True, True))
-        want("when off (%s): the rest passes and mise's file lacks the tool" % label,
-             (levels(lines), "graphifyy" in (w.read(w.mise_file) or "")), (ALL, False))
+def removed_when_cases(tmp):
+    """The condition `gsd_default` of a tool's `when` is gone: an entry that carries it (config/toolchain.json is the user's
+    own file, and an old copy of the template had one) is a manifest error, ONE `FAIL toolchain` line that names the entry and
+    says what to do (remove it, or use `integration`), never a traceback, and --fix installs and writes nothing. An entry
+    with an `integration` condition is still valid. Seen failing against the code that still knew the condition:
+    "when: gsd_default = (exit, FAIL lines, ...) = (0, 0, ...), want (1, 1, ...)" (the entry was accepted: with its default
+    off it was a SKIP row and the file was green)."""
+    for i, bad in enumerate(({"gsd_default": "graphify.enabled"}, {"gsd_default": ""}, {"nope": "x"}, "graphify",
+                             {"gsd_default": "a", "x": 1})):
+        w = World(os.path.join(tmp, "gone%d" % i), dict(DOC, tools=DOC["tools"] + [dict(GRAPH, when=bad)]), ALL_TOOLS, ALL_PIP, files=None)
         code, lines = w.run("toolchain", "--fix")
-        want("when off (%s): --fix installs nothing" % label, (code, w.installs()), (0, []))
-
-    w = world(DOC_G, ALL_TOOLS, ALL_PIP, gsd_defaults={})
-    code, lines = w.run("doctor", only_row="toolchain")
-    want("when off: the doctor row says how many it looked at and what is off",
-         (code, any(l.startswith("PASS") and "3 tool(s), 2 pip package(s), 2 file(s), 1 off by their `when`: pipx:graphifyy" in l for l in lines)), (0, True))
-
-    # on and missing: a FAIL naming the pin, --fix installs it with the rest in one call and writes it to the file
-    w = world(DOC_G, ALL_TOOLS, ALL_PIP, files=None, gsd_defaults=GRAPH_ON)
-    code, lines = w.run("toolchain")
-    want("when on, missing = (exit, level, detail)", (code, levels(lines).get("pipx:graphifyy"), line_of(lines, "pipx:graphifyy").endswith("missing, pinned 0.9.93")), (1, "FAIL", True))
-    code, lines = w.run("toolchain", "--fix")
-    want("when on: --fix installs it", (code, w.installs()), (0, ["mise install pipx:graphifyy@0.9.93"]))
-    want("when on: the file holds it", '"pipx:graphifyy" = "0.9.93"' in (w.read(w.mise_file) or ""), True)
-
-    # on and present: PASS. Off again while installed: a SKIP, the file loses the line, nothing is uninstalled.
-    w = world(DOC_G, dict(ALL_TOOLS, **{"pipx:graphifyy": "0.9.93"}), ALL_PIP, gsd_defaults=GRAPH_ON)
-    code, lines = w.run("toolchain")
-    want("when on, installed = (exit, level)", (code, levels(lines).get("pipx:graphifyy")), (0, "PASS"))
-    w = world(DOC_G, dict(ALL_TOOLS, **{"pipx:graphifyy": "0.9.93"}), ALL_PIP, files="current", gsd_defaults={})
-    code, lines = w.run("toolchain", "--fix")
-    want("when off but installed: --fix removes nothing", (code, [c for c in open(w.log) if "uninstall" in c or " rm " in c]), (0, []))
-
-    # a `when` that is not {"gsd_default": "<key>"} is a manifest error, named
-    for bad in ({"nope": "x"}, {"gsd_default": ""}, "graphify", {"gsd_default": "a", "x": 1}):
-        w = world(dict(DOC_G, tools=DOC["tools"] + [dict(GRAPH, when=bad)]), ALL_TOOLS, ALL_PIP, gsd_defaults=GRAPH_ON)
-        code, lines = w.run("toolchain")
-        want("when: a bad when %r = (exit, a FAIL naming `when`)" % (bad,), (code, any(l.startswith("FAIL") and "when" in l for l in lines)), (1, True))
+        fails = [l for l in lines if l.startswith("FAIL")]
+        want("when %r = (exit, FAIL lines, names the entry, says what to do, no traceback, installs, file)" % (bad,),
+             (code, len(fails), all(s in fails[0] for s in ("pipx:graphifyy", "`when`", "or use `integration`")) if fails else None,
+              "Traceback" in "\n".join(lines), w.installs(), w.read(w.mise_file)), (1, 1, True, False, [], None))
+    # the same entry with an `integration` condition is valid: asked for while the integration is on, a SKIP while it is off
+    for on, level in ((True, "PASS"), (False, "SKIP")):
+        base = os.path.join(tmp, "kept%d" % on)
+        os.makedirs(base)
+        restore = toy_settings(base, agent_browser=on)
+        try:
+            w = World(os.path.join(base, "world"), dict(DOC, tools=DOC["tools"] + [dict(GRAPH, when={"integration": "agent_browser"})]),
+                      dict(ALL_TOOLS, **{"pipx:graphifyy": "0.9.93"}), ALL_PIP)
+            code, lines = w.run("toolchain")
+        finally:
+            restore()
+        want("an integration `when`, integration on=%s = (exit, level)" % on, (code, levels(lines).get("pipx:graphifyy") or line_of(lines, "pipx:graphifyy")[:4]), (0, level))
 
 
-AB = {"name": "aqua:toy-org/toy-browser", "version": "0.1.0", "why": "w", "when": {"integration": "agent_browser"}}
+AB ={"name": "aqua:toy-org/toy-browser", "version": "0.1.0", "why": "w", "when": {"integration": "agent_browser"}}
 DOC_AB = {"tools": DOC["tools"] + [AB], "pip": DOC["pip"]}
 
 
@@ -550,8 +511,8 @@ def check_cases(tmp):
     want("mise ls fails = (exit, levels of tools, installs)", (code, [levels(lines)[k] for k in ALL_TOOLS], w.installs()),
          (1, ["FAIL"] * 3, []))
 
-    # An empty list sees nothing, and seeing nothing is a FAIL (non-negotiable 7); so is no file, and a bad one.
-    bad = (("empty lists", {"tools": [], "pip": []}), ("no keys", {}), ("no file", None), ("not JSON", "{tools: ["),
+    # An empty list sees nothing, and seeing nothing is a FAIL (non-negotiable 7); so is a bad file (no file is a SKIP, below).
+    bad = (("empty lists", {"tools": [], "pip": []}), ("no keys", {}), ("not JSON", "{tools: ["),
            ("a list", [1]), ("an entry without a version", {"tools": [{"name": "x", "why": "w"}], "pip": DOC["pip"]}),
            ("a version that is latest", {"tools": [{"name": "x", "version": "latest", "why": "w"}], "pip": DOC["pip"]}),
            ("an unknown track", {"tools": [dict(DOC["tools"][0], track="always")], "pip": DOC["pip"]}),
@@ -622,11 +583,10 @@ def row_cases(tmp):
     want("row, failing and differing: the failing lead, the differing follow", lines[0].startswith(
         "FAIL toolchain 3 failing: pip:google-api-python-client, file:mise, file:pip (checked 3 tool(s), 2 pip package(s), "
         "2 file(s)); also at another version: pip:PyYAML"), True)
-    for label, doc in (("empty lists", {"tools": [], "pip": []}), ("no file", None)):
-        w = world(doc, ALL_TOOLS, ALL_PIP)
-        code, lines, installs = doctor(w)
-        want("row, %s = (exit, level, installs)" % label, (code, [l[:4] for l in lines], installs), (1, ["FAIL"], []))
-        want("row, %s: names the fix" % label, lines[0].endswith(fix), True)
+    w = world({"tools": [], "pip": []}, ALL_TOOLS, ALL_PIP)
+    code, lines, installs = doctor(w)
+    want("row, empty lists = (exit, level, installs)", (code, [l[:4] for l in lines], installs), (1, ["FAIL"], []))
+    want("row, empty lists: names the fix", lines[0].endswith(fix), True)
     w = world({"tools": DOC["tools"], "pips": DOC["pip"]}, ALL_TOOLS, {})
     code, lines, installs = doctor(w)
     want("row, a misspelled section = (exit, level, installs)", (code, [l[:4] for l in lines], installs), (1, ["FAIL"], []))
@@ -639,15 +599,12 @@ def row_cases(tmp):
     want("row, mise ls fails = (exit, level)", (code, lines[0][:4]), (1, "FAIL"))
 
 
-def toy_settings(tmp, gsd=True, agent_browser=False):
+def toy_settings(tmp, agent_browser=False):
     """Points lib.SETTINGS at a toy forge.json under `tmp`, whatever the checkout holds, and returns what
-    restores the real path and the settings cache. The toy file is the fixture's with GSD patched `gsd` (on by
-    default, the machine this suite is written for): a missing config/toolchain.json is then a FAIL. A checkout
-    with its own config/forge.json used to be read as it stood, so switching GSD off there turned the three
-    "no file" cases into a SKIP and failed them (`no file = (exit, levels) = (0, []), want (1, ['FAIL'])`)."""
+    restores the real path and the settings cache. The toy file is the fixture's with the integration
+    `agent_browser` set to `agent_browser`: a tool whose `when` names it is then asked for or a SKIP."""
     with open(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "forge.json"), encoding="utf-8") as fh:
         doc = json.load(fh)
-    doc["integrations"]["gsd"], doc["gsd_patches"] = gsd, gsd
     doc["integrations"]["agent_browser"] = agent_browser
     real = lib.SETTINGS
     lib.SETTINGS = os.path.join(tmp, "forge.json")
@@ -661,16 +618,21 @@ def toy_settings(tmp, gsd=True, agent_browser=False):
     return restore
 
 
-def gsd_off_cases(tmp):
-    """With GSD off no config/toolchain.json is a SKIP `NOT RUN, NOT ARMED`, not a FAIL: nothing is pinned."""
-    os.makedirs(os.path.join(tmp, "gsd-off"), exist_ok=True)
-    restore = toy_settings(os.path.join(tmp, "gsd-off"), gsd=False)
+def no_file_cases(tmp):
+    """No config/toolchain.json is always a SKIP `NOT RUN, NOT ARMED`, not a FAIL: nothing is pinned, whatever else is on
+    in config/forge.json. Seen failing against the code that made it a FAIL while an integration was on (the toy file has
+    every integration of the fixture on): "row, no file = (exit, one line) = (1, 1), want (0, 1)"."""
+    base = os.path.join(tmp, "no-file")
+    os.makedirs(base, exist_ok=True)
+    restore = toy_settings(base, agent_browser=True)
     try:
-        w = World(os.path.join(tmp, "gsd-off-world"), None, ALL_TOOLS, ALL_PIP)
+        w = World(os.path.join(tmp, "no-file-world"), None, ALL_TOOLS, ALL_PIP)
         code, out = w.run("doctor", only_row="toolchain")
         rows = [" ".join(l.split()) for l in out if l[:4] in ("PASS", "WARN", "FAIL", "SKIP")]
-        want("row, GSD off and no file = (exit, one line)", (code, len(rows)), (0, 1))
-        want("row, GSD off and no file: SKIP NOT RUN, NOT ARMED", rows[0].startswith("SKIP toolchain NOT RUN, NOT ARMED: "), True)
+        want("row, no file = (exit, one line)", (code, len(rows)), (0, 1))
+        want("row, no file: SKIP NOT RUN, NOT ARMED", rows[0].startswith("SKIP toolchain NOT RUN, NOT ARMED: "), True)
+        code, out = w.run("toolchain", "--fix")
+        want("no file: --fix = (exit, installs, file)", (code, w.installs(), w.read(w.mise_file)), (0, [], None))
     finally:
         restore()
 
@@ -683,10 +645,10 @@ def main():
         file_cases(REAL, "this machine's")
     render_cases()
     check_cases(tmp)
-    when_cases(tmp)
+    removed_when_cases(tmp)
     integration_when_cases(tmp)
     row_cases(tmp)
-    gsd_off_cases(tmp)
+    no_file_cases(tmp)
     restore()
     for msg in failures:
         print("FAIL", msg)

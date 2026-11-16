@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Step 3a of docs/toolchain-design.md: `forge lock` records, in config/forge.lock.json, the versions mise does not
-install (Claude Code plugins, outside skills, the GSD runtime, the npx MCP packages), and `forge versions [--md]`
+install (Claude Code plugins, outside skills, the npx MCP packages), and `forge versions [--md]`
 prints those and the mise tool pins together, for release notes.
 
 The world is a toy HOME and a toy checkout under /tmp, set into lib.ROOT, lib.HOME and toolchain.MANIFEST: nothing
@@ -10,7 +10,12 @@ nothing cannot match.
 Seen failing on 94fab40, before forge/lockfile.py existed: "ImportError: cannot import name 'lockfile' from
 'forge'" (every case). Controls on the finished code, each put back afterwards, are in the commit message:
 newest plugin entry chosen by the wrong key, a NOTICE form left unparsed, the unparsable-skill failure removed,
-the sort removed, the dry-run writing."""
+the sort removed, the dry-run writing.
+
+GSD is not part of the lock. Seen failing against the code that still read the runtime's VERSION file, with one
+(9.9.9) in the toy HOME: "no gsd key, whatever a gsd-core/VERSION holds = {'gsd': '9.9.9'}, want {}". And, with
+SECTIONS already without `gsd` but `changes` unchanged, a lock file that still carries a `gsd` key was "up to date"
+and the key could never leave: "a stale gsd key in the lock: the dry-run names it = (0, False), want (0, True)"."""
 import contextlib
 import io
 import json
@@ -63,7 +68,7 @@ put(os.path.join(root, "skills", "two", "NOTICE.md"),
 put(os.path.join(root, "skills", "three", "NOTICE.md"),
     "From the npm package pkg-x@6.5.0 (https://www.npmjs.com/package/pkg-x/v/6.5.0, dist.integrity sha512-abc==), skills/three.\n")
 put(os.path.join(root, "skills", "mine", "SKILL.md"), "forge's own\n")
-put(os.path.join(home, ".claude", "gsd-core", "VERSION"), "1.42.3")
+put(os.path.join(home, ".claude", "gsd-core", "VERSION"), "9.9.9")  # bait: the lock no longer reads it
 put(os.path.join(root, "config", "mcp-registry.json"), json.dumps({"servers": {
     "pinned": {"command": "npx", "args": ["-y", "@scope/pkg-p@1.3.0"]},
     "floating": {"command": "npx", "args": ["-y", "@scope/pkg-f@latest", "--flag"]},
@@ -72,9 +77,8 @@ put(os.path.join(root, "config", "mcp-registry.json"), json.dumps({"servers": {
     "script": {"command": "python", "args": ["x.py"]}, "url": {"url": "https://example.invalid"}}}))
 # the lock is published, so a plugin of the user's own is left out by name (config/forge.json lock_exclude)
 put(lib.SETTINGS, json.dumps({"lock_exclude": ["private@market"]}))
-toolchain.GSD_DEFAULTS = os.path.join(home, ".gsd", "defaults.json")  # absent: every `when` is off
 put(toolchain.MANIFEST, json.dumps({"tools": [{"name": "node", "version": "26.12.1", "why": "runtime"},
-                                              {"name": "pipx:optional", "version": "1.0", "why": "w", "when": {"gsd_default": "graphify.enabled"}}],
+                                              {"name": "pipx:optional", "version": "1.0", "why": "w", "when": {"integration": "agent_browser"}}],
                                     "pip": [{"name": "PyYAML", "version": "6.0.3", "why": "yaml"}]}))
 
 doc, problems = lockfile.collect()
@@ -85,7 +89,7 @@ want("skills: the three NOTICE forms, and not a skill with none", doc.get("skill
     "one": {"repo": "https://github.com/o/r", "commit": SHA_A},
     "two": {"repo": "https://github.com/o/s", "commit": SHA_B},
     "three": {"npm": "pkg-x@6.5.0"}})
-want("gsd: the runtime's VERSION file", doc.get("gsd"), "1.42.3")
+want("no gsd key, whatever a gsd-core/VERSION holds", {k: v for k, v in doc.items() if k == "gsd"}, {})
 want("mcp: by package, not by the server's name (a project's name must not reach the lock); a version as written, else floating",
      doc.get("mcp"), {"@scope/pkg-p": "1.3.0", "@scope/pkg-f": "floating", "pkg-b": "floating", "mcp-remote": "floating"})
 want("collect is deterministic: the same document twice, keys sorted", (lockfile.dumps(doc) == lockfile.dumps(lockfile.collect()[0]),
@@ -112,24 +116,31 @@ os.remove(os.path.join(root, "skills", "odd", "NOTICE.md"))
 
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
 want("lock (a dry-run): exit 0, writes nothing, says how much it saw",
-     (code, os.path.exists(LOCK), "3 plugin(s), 3 skill(s), gsd 1.42.3, 4 mcp package(s)" in out, "would write" in out), (0, False, True, True))
+     (code, os.path.exists(LOCK), "3 plugin(s), 3 skill(s), 4 mcp package(s)" in out and "gsd" not in out, "would write" in out), (0, False, True, True))
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=True))
 written = json.load(open(LOCK)) if os.path.exists(LOCK) else {}
 want("lock --apply writes the document, plugins in sorted order on disk", (code, written, list(written.get("plugins", {}))),
      (0, doc, ["alpha@market", "beta@market", "zeta@market"]))
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
 want("lock again: up to date", (code, "up to date" in out), (0, True))
-put(os.path.join(home, ".claude", "gsd-core", "VERSION"), "1.43.0")
+# A lock written before GSD left carries a `gsd` key: the next lock names it and drops it, and is then up to date.
+put(LOCK, lockfile.dumps(dict(doc, gsd="1.42.3")))
 code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
-want("lock after GSD moved: the dry-run names the change", (code, "gsd: 1.42.3 -> 1.43.0" in out), (0, True))
+want("a stale gsd key in the lock: the dry-run names it", (code, "gsd: 1.42.3 -> absent" in out), (0, True))
+code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=True))
+want("a stale gsd key in the lock: --apply drops it", (code, json.load(open(LOCK))), (0, doc))
+code, out = run(lockfile.cmd_lock, argparse.Namespace(apply=False))
+want("a stale gsd key dropped: up to date", (code, "up to date" in out), (0, True))
 
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=False))
 want("versions: tools, pip and the lock together",
-     (code, "node 26.12.1" in out, "PyYAML 6.0.3" in out, "alpha@market 1.5.0" in out, "one " in out, "gsd 1.42.3" in out, "pkg-p 1.3.0" in out), (0, True, True, True, True, True, True))
+     (code, "node 26.12.1" in out, "PyYAML 6.0.3" in out, "alpha@market 1.5.0" in out, "one " in out, "gsd" in out, "pkg-p 1.3.0" in out), (0, True, True, True, True, False, True))
 want("versions: a tool whose `when` is off is not listed (it is not installed)", "pipx:optional" in out, False)
-put(toolchain.GSD_DEFAULTS, '{"graphify": {"enabled": true}}')
-want("versions: ... and is listed once the GSD default is on", "pipx:optional 1.0" in run(lockfile.cmd_versions, argparse.Namespace(md=False))[1], True)
-os.remove(toolchain.GSD_DEFAULTS)
+put(lib.SETTINGS, json.dumps({"lock_exclude": ["private@market"], "integrations": {"agent_browser": True}}))
+lib.settings.cache_clear()
+want("versions: ... and is listed once its integration is on", "pipx:optional 1.0" in run(lockfile.cmd_versions, argparse.Namespace(md=False))[1], True)
+put(lib.SETTINGS, json.dumps({"lock_exclude": ["private@market"]}))
+lib.settings.cache_clear()
 code, out = run(lockfile.cmd_versions, argparse.Namespace(md=True))
 want("versions --md: a markdown table", (code, "| node | 26.12.1 |" in out, "| alpha@market | 1.5.0 (bbbbbbb) |" in out), (0, True, True))
 if os.path.exists(LOCK):
