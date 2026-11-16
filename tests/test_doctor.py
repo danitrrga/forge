@@ -1104,6 +1104,11 @@ def ponytail_cases(tmp):
         names = [n for n, _, _ in cli.project_checks("scoped", lib.projects()["scoped"], None)]
     want("the row is in forge doctor NAME", "ponytail" in names, True)
     want("the row is in forge doctor", "ponytail" in [n for n, _, _ in cli.CHECKS], True)
+    # The `gsd isolation guard` row left with GSD's hook rows. Red before the row was removed:
+    # "forge doctor has no gsd isolation guard row = ['gsd isolation guard', 'gsd_isolation_guard_row'], want []".
+    want("forge doctor has no gsd isolation guard row",
+         [n for n, _, _ in cli.CHECKS if n == "gsd isolation guard"] + (["gsd_isolation_guard_row"] if hasattr(cli, "gsd_isolation_guard_row") else []),
+         [])
 
 
 def pending_cases():
