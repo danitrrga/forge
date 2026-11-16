@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """skills.write_settings_local and skills.mirror_for_codex claim more of what they write (step 10,
 increment I3, task T1), so a coming `forge uninstall` can take out everything forge put in a project's
-settings.local.json and in the ignore file it edited. Beyond the permission items and profile hooks of
-test_owned_settings_local.py, a run now also claims (forge/owned.py), owner the profile's name unless said:
+settings.local.json and in the ignore file it edited. Beyond the permission items and project hooks of
+test_owned_settings_local.py, a run now also claims (forge/owned.py), owner the project's name unless said:
   kind key  ["skillOverrides"], ["enabledPlugins"], ["env"] (hash only: it holds resolved secrets),
             ["permissions", k] for each non-list key forge writes (defaultMode), and
             ["enableAllProjectMcpServers"], ["enabledMcpjsonServers"], ["disabledMcpjsonServers"]
   kind hook ["hooks", event, command], owner "hindsight", for each per-project row forge keeps (project_hooks)
   kind item ["line", entry] on the .gitignore (or .git/info/exclude) forge added `.agents/` to, part "skills";
             a line that was already there is never claimed, and a claim stays while the line stays.
-Only what forge writes in that run is claimed (a key the profile does not declare is not). A key claim is never
+Only what forge writes in that run is claimed (a key the project does not declare is not). A key claim is never
 pruned by sync (those keys already go by declaration). The registry never holds the secret, a dry-run records
 nothing, and a hand-edited env is no longer removable.
 
@@ -28,11 +28,11 @@ ones, one per claim:
 and the checks that read them after: owner, the digest of the value written, removable() of an unedited and an
 edited env, the claim kept on a second apply.
 The controls that pass there on purpose: no secret in the registry, a dry-run records nothing, a line that was
-already there is not claimed, a key the profile does not declare is not claimed. A Hindsight row deleted from the
+already there is not claimed, a key the project does not declare is not claimed. A Hindsight row deleted from the
 code is now taken out through its claim (before: left firing), and one edited by hand is named; both are red there.
 Negative controls on the finished code (74 checks), each mutation put back from a copy of forge/skills.py, each
 seen red: skillOverrides, enabledPlugins, permissions key, each of the three mcpjson claims and the hook row's claim
-dropped (1 red each, 3 for the row); env claiming the unresolved profile value (2: the sum is not the digest of what
+dropped (1 red each, 3 for the row); env claiming the unresolved project value (2: the sum is not the digest of what
 was written); the row's owner not hindsight (1); a row claimed though it was not merged (1); an existing .agents/
 line claimed (1); the claim dropped by a run that adds nothing (3); the part's other claims not kept in a shared
 exclude file (2); the claim recorded in a dry-run (1); no exclude file ever looked for (5); the prune loop acting
@@ -96,7 +96,7 @@ def doc(p):
         return json.load(fh)
 
 
-def profile(p, **keys):
+def project_file(p, **keys):
     return dict({"project": "toy", "project_path": p}, **keys)
 
 
@@ -106,10 +106,10 @@ FULL = dict(skills_keep=["g1"], plugins_keep=["plug@toy"], env={"TOKEN": "${FAKE
 
 
 def run(p, ctx=APPLY, rows=(HS_ROW,), **keys):
-    """(the line, what the call printed) for a toy profile of `keys`."""
+    """(the line, what the call printed) for a toy project of `keys`."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
-        line = skills.write_settings_local(ctx, profile(p, **keys), {"FAKE_TOKEN": FAKE_TOKEN}, [], rows)
+        line = skills.write_settings_local(ctx, project_file(p, **keys), {"FAKE_TOKEN": FAKE_TOKEN}, [], rows)
     return line, out.getvalue()
 
 
@@ -137,7 +137,7 @@ def want(file, kind, at, label, owner="toy", value=None, part=None):
     return c
 
 
-# 1. A profile that declares everything: each key claim, the Hindsight row, nothing else odd.
+# 1. A project that declares everything: each key claim, the Hindsight row, nothing else odd.
 drop_registry()
 p = project()
 line, _ = run(p, **FULL)
@@ -166,14 +166,14 @@ d = doc(p)
 d["env"]["PLAIN"] = "edited by hand"
 check("removable: an env edited by hand is not removable", not owned.removable(env_claim, d["env"]), env_claim)
 
-# 3. Only what the run writes is claimed: a bare profile claims no key, and a key the profile does not declare
+# 3. Only what the run writes is claimed: a bare project claims no key, and a key the project does not declare
 # is not claimed even when the file holds it.
 drop_registry()
 p = project()
 lib.write_json(slp(p), {"enabledMcpjsonServers": ["by-hand"], "permissions": {"defaultMode": "plan"}})
 run(p, rows=(), permissions={"allow": ["Bash(a:*)"]})
 got = claimed(slp(p))
-check("a key the profile does not declare is not claimed, though the file holds it",
+check("a key the project does not declare is not claimed, though the file holds it",
       not any(k[0] == "key" for k in got) and doc(p)["enabledMcpjsonServers"] == ["by-hand"]
       and doc(p)["permissions"]["defaultMode"] == "plan", (sorted(got), doc(p)))
 
@@ -187,7 +187,7 @@ before = slurp(REGISTRY)
 run(p, DRY, **dict(FULL, mcpjson_approved=["other"]))
 check("dry-run: the registry is untouched", slurp(REGISTRY) == before and before != b"", "registry changed")
 
-# 5. Key claims are never pruned by sync: the profile stops declaring the keys, they go by declaration (as
+# 5. Key claims are never pruned by sync: the project stops declaring the keys, they go by declaration (as
 # before), their claims go with them, and the line says nothing was pruned.
 drop_registry()
 p = project()
@@ -204,7 +204,7 @@ check("keys no longer declared: the keys that stay in the file keep theirs (defa
       (sorted(claimed(slp(p))), doc(p)))
 
 # 5b. The three .mcp.json keys (and permissions.<k>) are written only while declared and never taken out (a
-# value approved in a session may sit there), so a key forge wrote stays in the file after the profile stops declaring it, and its
+# value approved in a session may sit there), so a key forge wrote stays in the file after the project stops declaring it, and its
 # claim must stay with it while it is still what forge wrote (a Codex review: "the claim disappears"); one
 # edited by hand since is the user's and loses the claim.
 drop_registry()
@@ -226,7 +226,7 @@ check("a second run keeps the carried claims", claimed(slp(p)).keys() == got.key
 
 # 6. The Hindsight row: claimed while wanted; when the row goes off, _own_hook takes it out and the prune loop
 # finds nothing more to do (they do not fight): one entry removed, no ', pruned', the claim gone. A row of
-# the profile's own `hooks` with the same command keeps its (profile) claim.
+# the project's own `hooks` with the same command keeps its (project) claim.
 drop_registry()
 p = project()
 run(p, **FULL)
@@ -255,7 +255,7 @@ check("hindsight row deleted from the code, entry edited by hand: it stays and i
 own = {"UserPromptSubmit": [{"hooks": [skills.canonical_hook(HS_CMD, 10)]}]}
 run(p, rows=(HS_ROW,), hooks=own, **FULL)
 run(p, rows=(HS_OFF,), hooks=own, **FULL)
-check("hindsight row off but the profile declares the command: entry kept, claimed for the profile",
+check("hindsight row off but the project declares the command: entry kept, claimed for the project",
       HS_CMD in json.dumps(doc(p)["hooks"]) and claimed(slp(p)).get(("hook", ("hooks", "UserPromptSubmit", HS_CMD)), {}).get("owner") == "toy",
       (doc(p), sorted(claimed(slp(p)))))
 
@@ -278,7 +278,7 @@ def with_skill(p):
 
 
 def mirror(p, ctx=APPLY, **keys):
-    return skills.mirror_for_codex(ctx, profile(p, **keys))
+    return skills.mirror_for_codex(ctx, project_file(p, **keys))
 
 
 LINE = ["line", ".agents/"]

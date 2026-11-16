@@ -81,7 +81,7 @@ check("cli.SYNC names agent config and system doc", [s[0] for s in cli.SYNC] == 
       "%s" % [s[0] for s in cli.SYNC])
 
 # --- 2. what a session start says, with the steps, the lock and the project resolver stubbed out
-REAL = (lib.run, lib.on, lib.lock, lib.resolve_project, lib.profiles, cli.session_wait, toolchain.row, cli.SYNC)
+REAL = (lib.run, lib.on, lib.lock, lib.resolve_project, lib.projects, cli.session_wait, toolchain.row, cli.SYNC)
 
 
 def session(gsd_exit=0, gsd_out="", row=lib.Result("PASS", "toolchain", "all present"), gsd_on=True):
@@ -100,14 +100,14 @@ def session(gsd_exit=0, gsd_out="", row=lib.Result("PASS", "toolchain", "all pre
         held.append(locked[0])
         return subprocess.CompletedProcess(args, gsd_exit, gsd_out, "")
     lib.run, lib.on, lib.lock = run, (lambda name: gsd_on and name == "gsd"), (lambda timeout=20: Lock())
-    lib.resolve_project, lib.profiles = (lambda path: "p"), (lambda skipped=None: {"p": {}})
+    lib.resolve_project, lib.projects = (lambda path: "p"), (lambda skipped=None: {"p": {}})
     cli.session_wait, toolchain.row, cli.SYNC = (lambda: None), (lambda: row), []
     out = io.StringIO()
     try:
         with contextlib.redirect_stdout(out):
             cli.cmd_session_start(None)
     finally:
-        lib.run, lib.on, lib.lock, lib.resolve_project, lib.profiles, cli.session_wait, toolchain.row, cli.SYNC = REAL
+        lib.run, lib.on, lib.lock, lib.resolve_project, lib.projects, cli.session_wait, toolchain.row, cli.SYNC = REAL
     msg = json.loads(out.getvalue())["systemMessage"] if out.getvalue().strip() else ""
     return msg, ran, held
 

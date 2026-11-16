@@ -17,8 +17,6 @@ HOME = lib.HOME
 USER_SETTINGS = os.path.join(HOME, ".claude", "settings.json")
 CODEX_HOOKS = os.path.join(lib.CODEX_HOME, "hooks.json")
 HOOK_DIR = os.path.join(ROOT, "hooks")
-# Where scripts/sync/sync_gsd_runtime.py puts gsd-core's own hook scripts (gsd-core's place for them).
-GSD_HOOK_DIR = os.path.join(lib.HOME, ".claude", "hooks")
 SYNC_DIR = os.path.join(ROOT, "scripts", "sync")
 HINDSIGHT_DIST = os.path.join(HOME, ".hindsight", "coding-agents", "dist")
 CLAUDE, CODEX = "claude", "codex"
@@ -35,7 +33,7 @@ BOTH = (CLAUDE, CODEX)
 #
 # WHY USER SCOPE, for all of them: hooks in ~/.claude/settings.json fire in EVERY session
 # whatever the project dir, and hook arrays concatenate across scopes, so one entry covers
-# every project without touching twenty profiles, and a gate cannot be dodged by opening a
+# every project without touching twenty projects, and a gate cannot be dodged by opening a
 # repo that lacks it (D-03). Emitting them from the generator makes the wiring reproducible on
 # a fresh machine and survive SessionStart regeneration (D-04). Every command is an ABSOLUTE
 # interpreter + path (Linux interpreter rule, AGENT-SYSTEM.md -- relative paths broke
@@ -56,57 +54,18 @@ _CODE_ROWS = [
     ("UserPromptSubmit", "python3 %s/ref_corpus_router.py" % HOOK_DIR, 10,
      "ref_corpus_router.py", None, BOTH),
 
-    # Prompt-injection guards, which shipped installed but unwired. The write guard is GSD's
-    # and follows the `gsd` integration; the read scanner is forge's own (derived from GSD's,
-    # MIT, see NOTICE) and a core row, so it protects every project with `gsd` off too.
+    # Prompt-injection guard: the read scanner is forge's own (derived from GSD's, MIT, see NOTICE) and a core row.
     # one project reads a 32 MB third-party corpus under ref/, routed into context automatically
     # -- someone else's repository entering an agent's context is the exact threat
-    # these were written for, and CLAUDE.md had a "prompt-injection posture" heading with no
+    # this was written for, and CLAUDE.md had a "prompt-injection posture" heading with no
     # mechanism under it. Segner: a "never do this" needs a deterministic hook,
     # because a prompted rule fails under prompt injection, which is precisely when it is being
-    # attacked. Only these two of the twelve gsd-* hook scripts on disk: the other ten
-    # re-litigate a decision this project made (workflow-guard and phase-boundary enforce "no
-    # edits outside a GSD workflow", which CLAUDE.md's "Ritmo de trabajo" overrules), duplicate
-    # the harness (read-guard: Claude Code already refuses Edit without a prior Read), depend on
-    # a statusline that is not installed (context-monitor, statusline, update-banner,
-    # check-update x2), or guard a rule with no observed violation (validate-commit). Wiring a
-    # hook that fires on nothing is how a warning learns to be ignored. Both are ADVISORY
-    # (additionalContext, never block, exit 0 on any internal error): a guard that can deadlock
-    # the workflow gets disabled the first time it is wrong, and then guards nothing.
-    ("PreToolUse", "node %s/gsd-prompt-guard.js" % HOOK_DIR, 10,
-     "gsd-prompt-guard.js", "Write|Edit", BOTH),
+    # attacked. It is ADVISORY (additionalContext, never block, exit 0 on any internal error): a guard that can
+    # deadlock the workflow gets disabled the first time it is wrong, and then guards nothing.
     # The marker carries "hooks/" so it does not match GSD's own gsd-read-injection-scanner.js entry,
     # which GSD's installer may have written into ~/.claude/settings.json (reconcile matches by marker).
     ("PostToolUse", "node %s/read-injection-scanner.js" % HOOK_DIR, 10,
      "hooks/read-injection-scanner.js", "Read", BOTH),
-
-    # GSD output discipline: names the thing, and cuts repetition. The two rules live in
-    # ~/.claude/gsd-core/references/mandatory-initial-read.md, imported by the five GSD
-    # agents that write documents; that is doctrine competing with everything else in context,
-    # and a stated rule fails exactly under pressure, which is when it matters.
-    # It measures only the two mechanical failures on the text just written: an identifier
-    # with no meaning next to it (`Blocked on D-48.`) and a long sentence repeated in the same
-    # document. Whether a paragraph is a reworded copy stays the agent's judgement.
-    # Tuned against the real corpus: a first version required `words (D-20)` and flagged 3778
-    # sites across 1220 .planning documents, including correct prose like `D-20 capped guest
-    # fields at {status, name, vmid}`; counting adjacent content, treating a code span as
-    # content and requiring BOTH signals brought it to 728 with 75% of documents clean.
-    # Two surfaces, one detector. PostToolUse(Write|Edit) reads the document. Stop reads the
-    # reply: the same failure was corrected twice in one session, both
-    # times a chat status table with rows `06-07`, `26R001`, `D6-3` -- a surface no Write
-    # touches. (A third, a UserPromptSubmit reminder of ~40 tokens on every prompt, was dropped
-    # afterwards: the rule stays in the house rules' "Say the thing" section, and reconcile()
-    # removes the entry it left in both agents' files.) Stop is post-display
-    # (anthropics/claude-code#83229: no pre-emit event, a Stop block cannot retract streamed
-    # text). Advisory on documents, exit 0 on any internal error. On chat
-    # it blocks, since Stop has no advisory channel -- only on the unambiguous signal (the
-    # identifier is the SUBJECT of a line, bullet, heading or cell) and at most once per turn
-    # (`stop_hook_active` lets the retry through). Measured over 3597 real assistant messages:
-    # 154 would have been cut, 4.3%. Inert outside .planning/.
-    ("PostToolUse", "python3 %s/gsd_output_discipline.py" % HOOK_DIR, 10,
-     "gsd_output_discipline.py", "Write|Edit", BOTH),
-    ("Stop", "python3 %s/gsd_output_discipline.py" % HOOK_DIR, 10,
-     "gsd_output_discipline.py", None, BOTH),
 
     # Omarchy desktop toast on Notification. Claude Code's inputNeededNotifEnabled /
     # agentPushNotifEnabled push to Anthropic's apps; neither reaches the local desktop, so a
@@ -139,7 +98,7 @@ _CODE_ROWS = [
      "'{\"systemMessage\": \"forge session-start could not run (is python3 on PATH?)\"}'" % ROOT, lib.SESSION_START_TIMEOUT,
      "forge session-start", "startup", (CLAUDE,)),
 
-    # Memory health gate. It sweeps all nineteen profiles in under a second (--hook took 978 and
+    # Memory health gate. It sweeps all nineteen projects in under a second (--hook took 978 and
     # 831 ms, measured), so running it only in forge would cover the machine -- but
     # the failure is discovered working in another project, when the agent does not know
     # something it knew yesterday, so it fires everywhere like its two sisters above. --hook:
@@ -161,33 +120,8 @@ _CODE_ROWS = [
      "coding-agents", None, (CODEX,)),
 ]
 
-# gsd-core's own hooks, wired from GSD_HOOK_DIR (the owner's call: GSD with no cap). Every hook its installer
-# registers in settings.json, less six: the two forge keeps its own, hardened files of (above), and four each judged
-# on its own -- read-guard (Claude Code enforces read-before-edit itself, so the advisory would be noise on every Edit),
-# secret-read-guard (a hard block on reading .env files in EVERY project, not gated to GSD ones), check-update and
-# update-banner (`forge update` is the update path, and the banner needs GSD's own statusline). Each of these is gated
-# by .planning/config.json or by the project being a GSD one (measured: ~22 ms for a node hook and 3 ms for a shell one,
-# silent outside a GSD project), so they cost nothing elsewhere. Claude only. (event, script, matcher, timeout).
-GSD_CORE_ROWS = [
-    ("SessionStart", "gsd-session-state.sh", None, 10),
-    ("PostToolUse", "gsd-context-monitor.js", "Bash|Edit|Write|MultiEdit|Agent|Task", 10),
-    ("SubagentStop", "gsd-context-monitor.js", None, 10),
-    ("Stop", "gsd-context-monitor.js", None, 10),
-    ("PreCompact", "gsd-context-monitor.js", None, 10),
-    ("PostToolUse", "gsd-graphify-update.sh", "Bash", 5),
-    ("PostToolUse", "gsd-phase-boundary.sh", "Write|Edit", 5),
-    ("PreToolUse", "gsd-workflow-guard.js", "Bash|Edit|Write|MultiEdit", 120),
-    ("PreToolUse", "gsd-worktree-path-guard.js", "Write|Edit|MultiEdit", 120),
-    ("PreToolUse", "gsd-agent-isolation-guard.js", "Agent|Task", 120),
-    ("PreToolUse", "gsd-write-guard.js", "Write", 120),
-    ("PreToolUse", "gsd-validate-commit.sh", "Bash", 120),
-    ("FileChanged", "gsd-config-reload.js", "config.json", 8),
-]
-_CODE_ROWS += [(event, "%s %s/%s" % ("bash" if script.endswith(".sh") else "node", GSD_HOOK_DIR, script), timeout, script, matcher, (CLAUDE,))
-               for event, script, matcher, timeout in GSD_CORE_ROWS]
-
 # Rows written per project, never at user scope: one project uses one memory system, so Hindsight's
-# Claude hooks go only into the .claude/settings.local.json of a profile that uses Hindsight (its
+# Claude hooks go only into the .claude/settings.local.json of a project that uses Hindsight (its
 # `servers` holds hindsight-coding-agents, SCOPES), through skills.write_settings_local, which owns
 # them by exact command there. At user scope they fired on every prompt of every project and only
 # Hindsight's own config made them inert outside its projects. config/forge.json's `user_hooks` rows
@@ -200,7 +134,7 @@ _PROJECT_CODE_ROWS = [
      "coding-agents", None, (CLAUDE,)),
 ]
 # A project scope's name (a `user_hooks` row's `scope`, and the integration that gates it) -> whether
-# a profile is in it.
+# a project is in it.
 SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or [])}
 
 # The integration (lib.INTEGRATIONS) each gated row belongs to, by marker. A row whose integration
@@ -208,35 +142,18 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # by marker: `coding-agents` is also what Hindsight's own installer writes, and one a person
 # installed themselves stays. HOOK_WARDS, by marker, is for retired rows only.
 #
-# Two more gates, both off unless the JSON true. The three gsd rows are forge's GSD patches (the same
-# file names are GSD's own hooks, which its installer writes with its own commands): they are written
-# only with `gsd_patches` true as well (lib.gsd_patched), and with it off they are not written and
-# not taken out either, an off row going only by forge's exact command and never by file name.
-# `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE). `gsd_isolation_guard` is the one
-# gate that is on unless the JSON false: the key absent or any other value leaves its row written (forge
-# doctor's `gsd isolation guard` row FAILs on a value that is not a boolean), and false drops the row
-# ROW_OPTIONAL names, whose entry reconcile() then takes out by forge's exact command like any off row.
-ROW_INTEGRATION = {"gsd-prompt-guard.js": "gsd", "gsd_output_discipline.py": "gsd", "coding-agents": "hindsight",
-                   "memory_doctor.py": "hindsight", "guard_tool_use.py --consent": "consent"}
-ROW_PATCHED = ("gsd-prompt-guard.js", "gsd_output_discipline.py") + tuple(
-    dict.fromkeys(script for _, script, _, _ in GSD_CORE_ROWS))
-ROW_INTEGRATION.update({m: "gsd" for m in ROW_PATCHED})
+# One more gate, off unless the JSON true: `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
+ROW_INTEGRATION = {"coding-agents": "hindsight", "memory_doctor.py": "hindsight", "guard_tool_use.py --consent": "consent"}
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
 # marker -> the `onFailure` value of the row's entries. reconcile() writes it and compares it, so an entry that is
 # right but for it is repaired and not kept for ever; a row not listed is compared as before (command, timeout, matcher).
 ROW_ON_FAILURE = {"guard_tool_use.py --consent": "block"}
-ISOLATION_GUARD = "gsd-agent-isolation-guard.js"
-ROW_OPTIONAL = {ISOLATION_GUARD: "gsd_isolation_guard"}  # marker -> the forge.json key that switches it off
 
 
 def _row_on(marker):
     """Whether forge's own row with this marker is written."""
     name = ROW_INTEGRATION.get(marker)
     if name and not lib.on(name):
-        return False
-    if marker in ROW_PATCHED and not lib.gsd_patched():
-        return False
-    if marker in ROW_OPTIONAL and lib.settings().get(ROW_OPTIONAL[marker]) is False:
         return False
     return not (marker in ROW_HOUSE and lib.settings().get("house_hooks") is not True)
 
@@ -246,7 +163,7 @@ def _config_rows(scopes=None):
     only for "on": false. A row that is not an object with the five keys is an exit 1 with a "!"
     line: a half-read row would write a hook that cannot start. `scopes`, a list, gets each row's
     optional `scope`, in order: None for a user-scope row, or a SCOPES name for one written per
-    project instead (`"scope": "hindsight"`: only into the settings.local.json of the profiles that
+    project instead (`"scope": "hindsight"`: only into the settings.local.json of the projects that
     use Hindsight, see _PROJECT_CODE_ROWS). A scoped row is Claude's alone: forge writes no
     per-project Codex hooks."""
     rows = []
@@ -305,8 +222,8 @@ _PER_PROJECT = {row[1] for row, _, _ in PROJECT_ROWS}
 
 
 def project_hooks(prof):
-    """The rows skills.write_settings_local owns in this profile's settings.local.json, as
-    (event, command, timeout, marker, matcher, wanted): `wanted` when the row is on and the profile
+    """The rows skills.write_settings_local owns in this project's settings.local.json, as
+    (event, command, timeout, marker, matcher, wanted): `wanted` when the row is on and the project
     is in its scope. One not wanted is taken out of the file by its exact command."""
     return [(event, cmd, timeout, marker, matcher, on and SCOPES[scope](prof))
             for (event, cmd, timeout, marker, matcher, _), scope, on in PROJECT_ROWS]
@@ -640,7 +557,7 @@ def write_user_settings(ctx):
 
     ENABLE_CLAUDEAI_MCP_SERVERS=false. Every connector on the claude.ai account (15 on
     when measured: Gmail, Drive, Calendar, Claude Docs, Slack, Notion, Figma...) otherwise loads into
-    every project, whatever its profile says, and the connected ones bring their tools and
+    every project, whatever its file says, and the connected ones bring their tools and
     instructions into context. Nothing here uses them -- the gmail and calendar skills go through
     forge's own `google` server. Measured: honoured from user-scope `env` (one project
     went from 15 claude.ai entries to 0), NOT overridable from a project's settings.local.json

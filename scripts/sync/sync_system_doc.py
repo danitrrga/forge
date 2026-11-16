@@ -12,7 +12,7 @@ WHY
 
 WHAT IT DOES (idempotent, dry-run by default)
   Canonical doc: forge/docs/AGENT-SYSTEM.md
-  For each managed project (derived from config/profiles/*.claude.json project_path):
+  For each managed project (derived from config/projects/*.claude.json project_path):
     1. copy the doc -> <project>/.claude/AGENT-SYSTEM.md  (with a GENERATED banner)
     2. ensure <project>/.gitignore ignores .claude/AGENT-SYSTEM.md
     3. ensure <project>/CLAUDE.md exists and contains the pointer block
@@ -65,9 +65,9 @@ POINTER = (
 
 
 def ui_paragraph(proj_dir, profs):
-    """The paragraph a project with a user interface (`"ui": true` in its profile) gets: a visual choice goes on a verdict page,
+    """The paragraph a project with a user interface (`"ui": true` in its file) gets: a visual choice goes on a verdict page,
     never into a chat question. Written only when this checkout has the tool that builds the page; a checkout without it has
-    nothing to point at, and a pointer to a missing command is worse than none. A profile that names its own `verdict_command`
+    nothing to point at, and a pointer to a missing command is worse than none. A project that names its own `verdict_command`
     gets a paragraph naming that command instead, and needs nothing from this checkout."""
     mine = [p for p in profs.values()
             if p.get("ui") is True and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir]
@@ -94,7 +94,7 @@ def ui_paragraph(proj_dir, profs):
 def pointer(proj_dir, profs):
     """POINTER, plus a note when a frozen project lies below proj_dir. Claude Code loads a parent
     directory's CLAUDE.md in every session below it, so every session of a frozen project reads the dev
-    profile's ~/dev/CLAUDE.md, whose "overwritten on every SessionStart" and AGENT-SYSTEM.md
+    project's ~/dev/CLAUDE.md, whose "overwritten on every SessionStart" and AGENT-SYSTEM.md
     pointer are false for a frozen project: forge writes nothing there (a study of that project,
     section 1.3 point 3; plan step 4)."""
     frozen = sorted(n for n, p in profs.items() if p.get("frozen") and p.get("project_path")
@@ -106,20 +106,20 @@ def pointer(proj_dir, profs):
     note = "".join(
         "**Not in `%s`, a frozen project:** forge writes nothing there, so its files are not "
         "regenerated at SessionStart and a `.claude/AGENT-SYSTEM.md` in it, if any, is a stale "
-        "copy. Why, and how to lift it: `_frozen_doc` in `%s/config/profiles/%s.claude.json`.\n"
+        "copy. Why, and how to lift it: `_frozen_doc` in `%s/config/projects/%s.claude.json`.\n"
         % (os.path.normpath(profs[n]["project_path"]), ROOT_FS, n) for n in frozen)
     return base[:-len(END)] + "\n" + note + END
 
 
-def read_profiles():
-    """({file name: profile} for every profile, read once; whether one was left out). One that
+def read_projects():
+    """({file name: project} for every project, read once; whether one was left out). One that
     cannot be read or is not a JSON object is named on a '!' line and left out: until attack round
     3 each of this script's three readers json.loaded every file unguarded, so one `{broken`,
-    `null` or list profile aborted the whole run with a traceback and no project got its doc."""
+    `null` or list project aborted the whole run with a traceback and no project got its doc."""
     skipped = []
-    profs = lib.profiles(skipped)
+    profs = lib.projects(skipped)
     for name, reason in skipped:
-        print("  ! could not read %s: %s" % (os.path.join(lib.PROFILES, name), reason))
+        print("  ! could not read %s: %s" % (os.path.join(lib.PROJECTS, name), reason))
     return profs, bool(skipped)
 
 
@@ -276,12 +276,12 @@ def ensure_agents_md(proj_dir, changes):
 
 def main():
     """Returns the exit code by forge/sync.py agent_config's rule: 1 exactly when a line printed
-    here starts with '!' (a profile left out, a project missing on disk, one that raised), and the
+    here starts with '!' (a project left out, a project missing on disk, one that raised), and the
     other projects still run. It once returned None, so every one of those exited 0."""
     if not os.path.exists(CANON):
         sys.exit("! canonical doc missing: %s" % CANON)
     print("MODE:", "APPLY" if CTX.apply else "DRY-RUN (pass --apply to write)")
-    profs, failed = read_profiles()
+    profs, failed = read_projects()
     # Named by file, as --project and the session scope name them, in the order of their paths.
     managed = sorted(((n, p) for n, p in profs.items() if p.get("project_path")),
                      key=lambda kv: os.path.normpath(kv[1]["project_path"]))

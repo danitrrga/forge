@@ -4,7 +4,7 @@ Two memory systems are live. claude-mem-lite keeps one store per project, and th
 derived here from the project name, never declared (invariant). Hindsight's client config is
 rendered from git with any `${VAR}` resolved (write_hindsight_config), and its staged runtime is
 checked against what that config asks for (check_hindsight_runtime). A memory mismatch blocks
-every write for its profile; a runtime that cannot honour the config is an error of the run."""
+every write for its project; a runtime that cannot honour the config is an error of the run."""
 import os
 
 from forge import lib, mcp, owned
@@ -13,7 +13,7 @@ ROOT = lib.ROOT
 
 # claude-mem-lite is a plugin, not a registry server: it brings its own hooks and its own MCP
 # server, and the only thing it takes from the outside is where to put the database. So a
-# profile opts in by listing the plugin, and the directory is DERIVED from the project name
+# project opts in by listing the plugin, and the directory is DERIVED from the project name
 # rather than restated: a per-project store named by hand in two places is how 235 claude-mem
 # observations spent four months in the wrong database. The path must be absolute; the package rejects a relative one loudly and
 # a missing one silently resolves to the single shared default.
@@ -23,20 +23,20 @@ LITE_ROOT = os.path.join(ROOT, "data", "memory-lite")
 # claude-mem (thedotmack) was retired: some projects remember
 # through Hindsight, others have their own systems, and every
 # other project uses claude-mem-lite. Its stores stay on disk under data/memory/ as an archive.
-# A profile that grants either half again would bring back a worker per store and capture hooks
+# A project that grants either half again would bring back a worker per store and capture hooks
 # in every session, so it is refused rather than quietly wired.
 RETIRED_MEMORY = {"server_prefix": "claude-mem", "plugin": "claude-mem@thedotmack"}
 
 
-def invariant(ctx, prof, profile_file):
-    """The memory errors of one profile, [] when it is consistent: a retired claude-mem grant, or a
-    CLAUDE_MEM_DIR that disagrees with the derived one. Only a profile that passes the first check
+def invariant(ctx, prof, project_file):
+    """The memory errors of one project, [] when it is consistent: a retired claude-mem grant, or a
+    CLAUDE_MEM_DIR that disagrees with the derived one. Only a project that passes the first check
     gets derive_lite_env's changes (its env, its store directory)."""
-    return check_retired_memory(prof, profile_file) or derive_lite_env(ctx, prof, profile_file)
+    return check_retired_memory(prof, project_file) or derive_lite_env(ctx, prof, project_file)
 
 
-def check_retired_memory(prof, profile_file):
-    where = os.path.basename(profile_file)
+def check_retired_memory(prof, project_file):
+    where = os.path.basename(project_file)
     errs = ["%s grants retired claude-mem server %s -- drop it from `servers`" % (where, s)
             for s in prof.get("servers", []) if s.startswith(RETIRED_MEMORY["server_prefix"])]
     if RETIRED_MEMORY["plugin"] in (prof.get("plugins_keep") or []):
@@ -46,14 +46,14 @@ def check_retired_memory(prof, profile_file):
 
 
 def lite_store_name(prof, default=None):
-    """The directory name, under LITE_ROOT, of the store this profile writes to: its own project
-    name (`default` when the profile dict does not carry one), or the one named by `memory_lite_store`, or "" when that key is malformed.
+    """The directory name, under LITE_ROOT, of the store this project writes to: its own project
+    name (`default` when the project dict does not carry one), or the one named by `memory_lite_store`, or "" when that key is malformed.
 
     The key exists so projects that are one body of work can remember into ONE store: the Omarchy
     plugins are separate git repositories (each is published on its own), so they cannot be one
     project, but a lesson from one is a lesson for the next. It names another project's store, so
     the path is still derived and never typed, and claude-mem-lite's own cross-project search
-    (MEM_CROSS_PROJECT_BOOST, set in the profile's env) is what lets one project read what the
+    (MEM_CROSS_PROJECT_BOOST, set in the project's env) is what lets one project read what the
     others wrote: the plugin scopes a row to the project it came from, and sharing the file only
     makes the rows visible to each other's searches."""
     store = prof.get("memory_lite_store")
@@ -64,11 +64,11 @@ def lite_store_name(prof, default=None):
     return store if ok else ""
 
 
-def derive_lite_env(ctx, prof, profile_file):
-    """Give a profile that enables claude-mem-lite its store directory.
+def derive_lite_env(ctx, prof, project_file):
+    """Give a project that enables claude-mem-lite its store directory.
 
     Derived from the project name (or from `memory_lite_store`, see lite_store_name), never
-    declared: see LITE_ROOT. A profile that states the
+    declared: see LITE_ROOT. A project that states the
     key itself is an error rather than a silent overwrite -- two answers to one question is the
     failure this generator exists to prevent.
 
@@ -76,7 +76,7 @@ def derive_lite_env(ctx, prof, profile_file):
     otherwise create whatever path it is handed at whatever moment a hook first fires, which
     puts the one irreversible step (the schema migration) somewhere nobody is watching."""
     errs = []
-    where = os.path.basename(profile_file)
+    where = os.path.basename(project_file)
     if LITE_PLUGIN not in (prof.get("plugins_keep") or []):
         return errs
     store = lite_store_name(prof)
@@ -88,7 +88,7 @@ def derive_lite_env(ctx, prof, profile_file):
     got = env.get("CLAUDE_MEM_DIR")
     if got is not None and got != want:
         errs.append("%s declares CLAUDE_MEM_DIR = %s but the project name says %s -- remove "
-                    "the line from the profile. The generator will not choose between them."
+                    "the line from the project. The generator will not choose between them."
                     % (where, got, want))
         return errs
     env["CLAUDE_MEM_DIR"] = want

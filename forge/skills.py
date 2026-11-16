@@ -1,7 +1,7 @@
 """Skills and plugins: which of them each project sees, for Claude Code and for Codex.
 
 The global skills live in forge's skills/ and reach ~/.claude/skills through relink_skills.py's
-links; a profile trims them, and the plugins, per project in <project>/.claude/settings.local.json
+links; a project trims them, and the plugins, per project in <project>/.claude/settings.local.json
 (write_settings_local). A project's own .claude/skills are Claude Code's alone until they are
 linked into .agents/skills, the root Codex reads (mirror_for_codex)."""
 import copy
@@ -19,7 +19,7 @@ def skill_dirs(path):
 
 @functools.lru_cache(maxsize=None)
 def global_skills():
-    """~/.claude/skills, read once per run rather than once per profile (20 x ~140 stats)."""
+    """~/.claude/skills, read once per run rather than once per project (20 x ~140 stats)."""
     return frozenset(skill_dirs(os.path.join(lib.HOME, ".claude", "skills")))
 
 
@@ -36,18 +36,18 @@ def _repo_root(path):
 
 
 def neighbour_skills(ppath):
-    """The project skills of every other profile nested with ppath in ONE git repository: an
+    """The project skills of every other project nested with ppath in ONE git repository: an
     ancestor's, which Claude Code's startup walk loads (cwd up to the git root), and a
     descendant's, which a session meets once it reads a file under it. skillOverrides matches by
     name, project skills included, so these must be switched off too, or the outer project's skills reach
-    the nested project and its skills reach the outer one. A profile in no repository (~/dev) or in another
+    the nested project and its skills reach the outer one. A project in no repository (~/dev) or in another
     repository is no neighbour, whatever its path says. docs/archive/designs/skill-placement-design.md, B2."""
     here = os.path.realpath(ppath)
     root = _repo_root(here)
     if root is None:
         return frozenset()
     found = set()
-    for prof in lib.profiles().values():
+    for prof in lib.projects().values():
         if not prof.get("project_path"):
             continue
         other = os.path.realpath(prof["project_path"])
@@ -70,7 +70,7 @@ GUARD_SCRIPT = "guard_tool_use.py"
 PROJECT_ROW_OWNER = "hindsight"  # whose claim a per-project hook row is (hooks.SCOPES has the one scope)
 GUARD_TIMEOUT = 10  # the guard entry's own timeout in settings.local.json, and the doctor's probes'
 # forge's guards, each one PreToolUse entry it owns: (script in hooks/, the group's matcher or None,
-# whether the profile turns it on, its name in the summary line's "<name> on", its name in "<name>
+# whether the project turns it on, its name in the summary line's "<name> on", its name in "<name>
 # not merged" and "<name> entries removed N"). The command guard's second name, "guard", predates
 # the table and the line is an API (cli.WOULD). The command guard is docs/command-guard-design.md;
 # the worktree guard is research/21-para-forge/04-guarda-de-worktrees.md, and its matcher is every
@@ -83,8 +83,8 @@ GUARDS = (
 
 
 def guard_command(name, script=GUARD_SCRIPT):
-    """The one command a forge guard runs as, for the profile `name`: the command guard reads
-    config/guard/<name>.json itself, the worktree guard config/profiles/<name>.claude.json."""
+    """The one command a forge guard runs as, for the project `name`: the command guard reads
+    config/guard/<name>.json itself, the worktree guard config/projects/<name>.claude.json."""
     return "python3 %s --project %s" % (os.path.join(lib.ROOT, "hooks", script), name)
 
 
@@ -117,10 +117,10 @@ def _has_forge_guard(sl):
 
 def _own_guard(sl, prof, row):
     """forge owns every hook entry that runs one of its guards (docs/command-guard-design.md), one
-    GUARDS row per call. With the row's profile line on, the file ends with exactly one: the
+    GUARDS row per call. With the row's project line on, the file ends with exactly one: the
     canonical PreToolUse group, the row's matcher (none for the command guard), timeout 10; any
     other that runs the guard goes, whichever event, matcher or argument. Without it every one
-    goes, except a command the profile's own `hooks` block declares (one project's, until its profile
+    goes, except a command the project's own `hooks` block declares (one project's, until it
     moved to the line). Entries that do not run the guard are never touched. Runs after the
     `hooks` merge, so what the merge appended is judged too. Returns the summary text."""
     script, matcher, is_on, label, short = row
@@ -132,7 +132,7 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
     """_own_guard's ownership, for any one entry forge owns in the file: every hook whose command
     `ours` accepts is forge's. On, the file ends with exactly one, `entry` in a `want_event` group
     with `matcher`, the first one whose command is entry's kept whatever its timeout or type; off,
-    only a command the profile's own `hooks` declares stays. Returns the summary text."""
+    only a command the project's own `hooks` declares stays. Returns the summary text."""
     hooks = sl.get("hooks")
     if hooks is not None and not isinstance(hooks, dict):
         return ", %s not merged (the file's hooks is not an object)" % short if on else ""
@@ -152,7 +152,7 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
                 cmd = h.get("command")
                 if ours(cmd):
                     # On, only the first canonical entry of the wanted event, in a group with the
-                    # row's matcher, stays; off, what the profile declares.
+                    # row's matcher, stays; off, what the project declares.
                     if on:
                         stays = cmd == canon and event == want_event and g.get("matcher") == matcher and not seen
                         seen = seen or stays
@@ -192,13 +192,13 @@ def _own_hook(sl, prof, ours, want_event, entry, matcher, on, label, short):
 
 
 def _claims(prof, written=()):
-    """What forge puts in settings.local.json because the profile declares it, as owned claims: each
+    """What forge puts in settings.local.json because the project declares it, as owned claims: each
     permissions allow/deny/ask rule and additionalDirectories entry (located by the string itself), each
-    hook entry of the profile's `hooks` (located by event and command). Owner: the profile's name.
-    `written` is what the run wrote besides, as (kind, at, value, owner or None for the profile): the keys
+    hook entry of the project's `hooks` (located by event and command). Owner: the project's name.
+    `written` is what the run wrote besides, as (kind, at, value, owner or None for the project): the keys
     (skillOverrides, enabledPlugins, env, permissions.<k>, the mcpjson ones) and forge's per-project hook
     rows, claimed only when this run wrote them. Identities are unique, so a rule listed twice is one
-    claim, and a profile's own claim of a hook row comes before the row's."""
+    claim, and a project's own claim of a hook row comes before the row's."""
     owner, now = prof.get("project") or "", {}
 
     def add(kind, at, value, who=None):
@@ -295,29 +295,29 @@ def _prune_base_ref(sl, c, slp_short):
 
 
 def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(), framework=None):
-    """Owns <project>/.claude/settings.local.json: everything the profile says goes there, merged
-    into the file. For a claude profile carrying `plugins_keep` and/or `skills_keep`, that is:
+    """Owns <project>/.claude/settings.local.json: everything the project says goes there, merged
+    into the file. For a claude project carrying `plugins_keep` and/or `skills_keep`, that is:
       * enabledPlugins -- full canonical map (kept=True, rest=False; whole-object,
         because CC ignores per-key partial overrides). Written ONLY if `plugins_keep` set.
       * skillOverrides -- every user-global standalone skill, and every project skill of an
-        ancestor or nested profile in the same git repository (neighbour_skills), set to
+        ancestor or nested project in the same git repository (neighbour_skills), set to
         "off", EXCEPT the project's own .claude/skills/ names AND any in `skills_keep` (an
         allowlist of global skills to keep available in this project; empty -> hide them all).
-      * permissions -- union-merged from the profile's `permissions` key, if present.
-      * env -- session environment variables from the profile's `env` key, if present.
+      * permissions -- union-merged from the project's `permissions` key, if present.
+      * env -- session environment variables from the project's `env` key, if present.
         Claude Code passes these to the session AND to every subprocess it spawns, so this
         is the supported way to give plugin hooks (which get no env of their own) per-project
         configuration -- see the comment at the env block below.
-      * hooks -- the profile's `hooks` ({event: [group, ...]}) appended to the file's, never
+      * hooks -- the project's `hooks` ({event: [group, ...]}) appended to the file's, never
         removing anything: a command already in that event is not added again, and a hook written
         by hand beside it stays. How a project's own forge hooks reach that project only.
       * command guard -- `command_guard: true` adds forge's guard as one PreToolUse entry, and
         forge owns every entry that runs hooks/guard_tool_use.py: others go, and all go when the
-        line is absent, except what the profile's own `hooks` declares (_own_guard).
+        line is absent, except what the project's own `hooks` declares (_own_guard).
       * worktree guard -- `worktree_guard` (lib.worktree_guard_on) does the same for
         hooks/worktree_guard.py, its group behind the matcher of every writing tool (GUARDS).
       * project_hooks -- the rows forge writes per project instead of at user scope
-        (forge.hooks.project_hooks: Hindsight's, for a profile that uses it), each owned by its
+        (forge.hooks.project_hooks: Hindsight's, for a project that uses it), each owned by its
         exact command the same way: a wanted row ends as one entry, one not wanted goes. The
         callers pass them, so this module never reads config/forge.json.
       * framework -- the Plan of forge/framework.py when it is on (its `.plugin`, `.name` and `.source`): the
@@ -326,13 +326,13 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         stays and is named) while the whole enabledPlugins map goes by declaration as ever. The same plan sets
         worktree.baseRef to "head", also an owned claim: without it a worktree starts from origin's default branch,
         not from the checkout's HEAD, and the framework's wave refuses to run.
-    Returns a one-line summary string, or None if the profile carries none of those keys and the
+    Returns a one-line summary string, or None if the project carries none of those keys and the
     file holds none of the three written only while declared (skillOverrides, enabledPlugins, env),
-    which go when the profile stops declaring them.
+    which go when the project stops declaring them.
 
     TRIMMING vs PASS-THROUGH (fixed): `skillOverrides` is written only when the
-    profile asks to be trimmed (`plugins_keep` and/or `skills_keep`). `permissions` and `env`
-    are independent pass-throughs and now work on their own. Before this, an UNTRIMMED profile
+    project asks to be trimmed (`plugins_keep` and/or `skills_keep`). `permissions` and `env`
+    are independent pass-throughs and now work on their own. Before this, an UNTRIMMED project
     (one project) that declared permissions/env had them silently dropped -- and the obvious
     workaround (adding an empty `skills_keep` to make the guard pass) would have turned
     trimming ON and hidden all ~136 global skills from that project."""
@@ -351,11 +351,11 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
                 or prof.get("worktree_guard") or prof.get("mcpjson_approved") is not None or prof.get("mcpjson_disabled") is not None
                 or prof.get("enableAllProjectMcpServers") is not None
                 or any(row[5] for row in project_hooks))
-    # A profile that declares none of it still owns the keys written only while declared: read
+    # A project that declares none of it still owns the keys written only while declared: read
     # the file, and leave early only when it holds none of them. Returning first, as it once did,
     # kept a stale skillOverrides hiding skills in a project that had stopped trimming.
     sl = lib.read_owned(slp)
-    # What the last run recorded for this file (forge/owned.py): a profile that dropped everything it
+    # What the last run recorded for this file (forge/owned.py): a project that dropped everything it
     # declared still has leftovers to prune, so a record keeps the run going.
     prev, warn = owned.previous(slp)
     if warn:
@@ -369,7 +369,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
                  else {s: "off" for s in sorted(on_machine - proj_skills - skills_keep)})
 
     sl_before = lib.dumps(sl)
-    written = []  # what this run writes into the file besides the profile's lists and hooks: _claims
+    written = []  # what this run writes into the file besides the project's lists and hooks: _claims
     pl_summary = "plugins unchanged"
     removed = []
     if keep:
@@ -413,14 +413,14 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     elif sl.pop("skillOverrides", None) is not None and not trim:
         # Under the wildcard, dropped silently as it always was: writing an empty map is harmless,
         # but a STALE one left from before would keep every skill off. Absent == all available.
-        # Untrimmed, the same stale map hid the skills of a profile that stopped trimming.
+        # Untrimmed, the same stale map hid the skills of a project that stopped trimming.
         removed.append("skillOverrides")
 
     # permissions pass-through (ADR-010): persist a per-project
-    # permission allowlist via the profile so it survives SessionStart, instead of hand-editing
+    # permission allowlist via the project so it survives SessionStart, instead of hand-editing
     # settings.local.json (which AGENT-SYSTEM.md forbids). Union-merge allow/deny/ask so
     # CLI-approved permissions and repeated runs never duplicate or clobber; any other
-    # permission key (e.g. defaultMode) overwrites. Profiles without "permissions" are untouched.
+    # permission key (e.g. defaultMode) overwrites. Projects without "permissions" are untouched.
     perm_summary = ""
     perms = prof.get("permissions")
     unmerged = set()  # the permissions keys left alone because the file's shape is wrong: claimed as nothing
@@ -458,13 +458,13 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     # claude-mem-lite's hooks find CLAUDE_MEM_DIR. Plugin hooks are invoked with no environment of
     # their own, so without this they fall back to one shared default store (the failure that
     # sent claude-mem's capture into another project's store for months). Whole-key overwrite is
-    # intentional: stale memory variables must disappear when dropped from the profile -- which is
+    # intentional: stale memory variables must disappear when dropped from the project -- which is
     # how the retired CLAUDE_MEM_DATA_DIR / CLAUDE_MEM_WORKER_PORT left every project when claude-mem was retired.
     env_summary, from_secrets = "", 0
     prof_env = prof.get("env")
     if prof_env:
         # Sorted, not insertion-ordered: CLAUDE_MEM_DIR is derived and appended by
-        # derive_lite_env(), so insertion order would depend on whether a profile happened to
+        # derive_lite_env(), so insertion order would depend on whether a project happened to
         # declare it and where. Sorting makes the output a function of the content alone.
         #
         # A value of the exact form ${NAME} is a secret, resolved here from the same secrets the
@@ -482,15 +482,15 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         env_summary = ", env %d%s" % (len(prof_env), " (%d from secrets)" % from_secrets if from_secrets else "")
         written.append(("key", ["env"], sl["env"], None))  # only its digest is kept (owned.claim): it holds secrets
     elif sl.pop("env", None) is not None:
-        # The key is generator-owned in both directions: a profile with no env gets none. Only
-        # overwriting when the profile had one left a project capturing into a retired
-        # claude-mem store for days after its profile stopped declaring it (found in use).
+        # The key is generator-owned in both directions: a project with no env gets none. Only
+        # overwriting when the project had one left a project capturing into a retired
+        # claude-mem store for days after it stopped declaring it (found in use).
         env_summary = ", env removed"
 
     # hooks pass-through (T4 of docs/archive/designs/hooks-phase-design.md): one project's guard, audit and skill-tracking
     # hooks were written by hand into this git-ignored file, so a fresh machine never got them, and
     # at user scope they would have run in every project. Appending only, like permissions: removing
-    # an entry is a hand edit of profile and file. The file's own hooks (that project's two cache
+    # an entry is a hand edit of project and file. The file's own hooks (that project's two cache
     # refreshers) are never ours to touch, so the key is merged into, not replaced.
     hooks_summary = ""
     prof_hooks = prof.get("hooks")
@@ -530,7 +530,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         if wanted and _holds(sl, lambda c, cmd=cmd: c == cmd):  # not merged into a hooks that is not an object: not claimed
             written.append(("hook", ["hooks", event, cmd], canonical_hook(cmd, timeout), PROJECT_ROW_OWNER))
 
-    # What the profile declared last time and no longer does goes, if it is still what forge wrote: forge
+    # What the project declared last time and no longer does goes, if it is still what forge wrote: forge
     # cannot tell its leftovers from the user's in-session approvals in the same lists, so only an element
     # it claimed (forge/owned.py) is ever removed, and only unchanged. A hook entry edited since stays and
     # is named. With no record nothing is stale. Runs after both merges, so a rule still declared stays.
@@ -549,22 +549,22 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
             pruned += _prune_base_ref(sl, c, slp_short)
     pruned_summary = (", pruned %d" % pruned if pruned else "") + market_summary
 
-    # .mcp.json approval, owned by the profile when it declares `mcpjson_approved` (the list) or
+    # .mcp.json approval, owned by the project when it declares `mcpjson_approved` (the list) or
     # `enableAllProjectMcpServers` (that key alone, with or without a list). Claude Code
     # reads enableAllProjectMcpServers and enabledMcpjsonServers from settings.local.json, and
     # the generator once wrote them only into ~/.claude.json -- so whatever a session
     # had once approved in-session stayed approved. One project's file said
     # enableAllProjectMcpServers true and approved a server (one that writes to a real
     # account, meant for a single project only) and a retired claude-mem entry, while its
-    # profile said false. With the key declared, the list is written whole (never merged) and
-    # the profile's enableAllProjectMcpServers lands here too. Registry servers need no entry:
+    # project said false. With the key declared, the list is written whole (never merged) and
+    # the project's enableAllProjectMcpServers lands here too. Registry servers need no entry:
     # they are local scope in ~/.claude.json, not .mcp.json servers. .mcp.json itself is never
-    # read -- it can hold tokens, and the list is the profile's decision, not the file's.
+    # read -- it can hold tokens, and the list is the project's decision, not the file's.
     #
     # Approval alone does not keep a server out. Measured on 2.1.280 in print mode,
     # which is how an unattended agent runs: a .mcp.json server with enableAllProjectMcpServers
     # false and an empty approved list still started (init status "pending"), exactly as with no
-    # keys at all; only disabledMcpjsonServers kept it out (init listed no server). So a profile
+    # keys at all; only disabledMcpjsonServers kept it out (init listed no server). So a project
     # can also name servers in `mcpjson_disabled`, written whole into disabledMcpjsonServers.
     mcp_summary = ""
     approved = prof.get("mcpjson_approved")
@@ -585,7 +585,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         mcp_summary += ", .mcp.json disabled %d" % len(disabled)
 
     now = _claims(claim_prof, written)  # again, now that the .mcp.json keys are written too
-    # A key forge wrote and the profile stopped declaring may stay in the file (the .mcp.json keys and the
+    # A key forge wrote and the project stopped declaring may stay in the file (the .mcp.json keys and the
     # permissions keys are never taken out), so its claim is carried forward while the file still holds exactly
     # what forge wrote; an edited or removed one is the user's and drops out.
     now += [c for c in owned.stale(prev, now) if c["kind"] == "key" and owned.unchanged(slp, c, sl)]
@@ -646,7 +646,7 @@ def mirror_for_codex(ctx, prof):
     REPOINTS links, and PRUNES a link of ours whose skill is gone. A real directory or file in
     .agents/skills is never touched -- if a project ever keeps a real skill there, it stays.
     """
-    ppath = prof["project_path"]  # sync.py skips a profile without one before calling this
+    ppath = prof["project_path"]  # sync.py skips a project without one before calling this
     src = os.path.join(ppath, ".claude", "skills")
     if not os.path.isdir(src):
         return ""

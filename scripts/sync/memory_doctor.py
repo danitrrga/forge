@@ -265,7 +265,7 @@ def check_project(name: str, prof: dict) -> None:
 
     # ---------------------------------------------------------------- claude-mem-lite
     # A plugin rather than a registry server, so there is no registry entry to compare
-    # against: the profile opting in IS the grant, and the only outside input is where the
+    # against: the project opting in IS the grant, and the only outside input is where the
     # database goes. The failure this catches is the loudest-quiet one in the package --
     # CLAUDE_MEM_DIR unset resolves to the single shared default at ~/.claude-mem-lite and
     # every project's memory silently lands in one file together.
@@ -341,7 +341,7 @@ def main() -> int:
 
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--project", help="check only this profile")
+    ap.add_argument("--project", help="check only this project")
     ap.add_argument("--bank", action="store_true", help="also recall from the hindsight bank")
     ap.add_argument("--verbose", action="store_true", help="show projects with no memory too")
     ap.add_argument("--all", action="store_true", dest="show_all",
@@ -360,20 +360,20 @@ def main() -> int:
     except lib.Unreadable as e:
         check("machine", "known-empty", False, str(e))
 
-    # Through lib, like every other profile reader: a profile that is not an object or carries a
+    # Through lib, like every other project reader: a project that is not an object or carries a
     # field of the wrong type is skipped instead of raising AttributeError here (`[1]`) or being
     # substring-matched (`"servers": "hindsight-coding-agents"`). Skipped silently, as the
     # unreadable ones always were: session start and verify_skill_refs already name them, and
     # --hook must print nothing.
-    profiles = [(n, p) for n, p in lib.profiles().items() if not args.project or n == args.project]
+    projects = [(n, p) for n, p in lib.projects().items() if not args.project or n == args.project]
 
-    if args.project and not profiles:
-        print("no profile named %r under %s" % (args.project, lib.PROFILES))
+    if args.project and not projects:
+        print("no project named %r under %s" % (args.project, lib.PROJECTS))
         return 1
 
-    for name, prof in profiles:
+    for name, prof in projects:
         has_hindsight = "hindsight-coding-agents" in prof.get("servers", [])
-        # claude-mem-lite grants nothing in `servers` -- it is a plugin, and the profile
+        # claude-mem-lite grants nothing in `servers` -- it is a plugin, and the project
         # listing it IS the grant. Without this a lite-only project (the vault) was skipped
         # entirely and its checks never ran, which looked exactly like passing.
         has_lite = memory.LITE_PLUGIN in (prof.get("plugins_keep") or [])

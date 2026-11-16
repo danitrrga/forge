@@ -1,13 +1,13 @@
-"""The framework step of the generator: for a profile with `framework: true`, forge turns the framework's plugin
+"""The framework step of the generator: for a project with `framework: true`, forge turns the framework's plugin
 on in that project; with `false` or the field absent it writes nothing and takes out what it wrote itself.
 
-What a `true` profile gets, all of it per project and none of it at user scope:
+What a `true` project gets, all of it per project and none of it at user scope:
   * <project>/.claude/<plugin>.json, the one file the plugin reads (schema 1: project, factory, weekly, models,
     limits, rounds, linear.labels, integrations, paths). It is generated and rewritten on every sync.
   * one managed block at the end of the project's ignore file (forge/fwxignore.py): it ignores that file and
     .claude/worktrees/, and un-ignores `.fwx/**/*.md` after the project's own `*.md`, so the framework's documents are
-    tracked (it goes to .git/info/exclude for a profile with `writes_tracked_files: false`, whose own ignore file forge
-    never writes). A profile that turns the framework off has exactly the block taken out, and `framework_ignore_block:
+    tracked (it goes to .git/info/exclude for a project with `writes_tracked_files: false`, whose own ignore file forge
+    never writes). A project that turns the framework off has exactly the block taken out, and `framework_ignore_block:
     false` (the project keeps its documents out of its git on purpose) writes and checks no block and takes one out too.
   * in settings.local.json, `enabledPlugins["<plugin>@<plugin>"] = true` and `extraKnownMarketplaces.<plugin>`
     (written by skills.write_settings_local, which this module feeds through a Plan), both owned claims; and
@@ -15,11 +15,11 @@ What a `true` profile gets, all of it per project and none of it at user scope:
   * in settings.local.json, `permissions.allow` gets the `allow` rules of config/framework-permissions.json (3.6, schema 1:
     narrow rules measured as denied by the auto-mode classifier, each with the roles that use it), and
     `permissions.additionalDirectories` the main checkout, so a session in a linked worktree may reach it. Both go in
-    as the profile's own permissions do (with_permissions), so forge/skills.py claims them item by item, writes them and
-    takes them out when the profile turns the framework off; a rule put by hand stays. The list is linted first
+    as the project's own permissions do (with_permissions), so forge/skills.py claims them item by item, writes them and
+    takes them out when the project turns the framework off; a rule put by hand stays. The list is linted first
     (permission_errors): a rule that is too broad, one that overlaps an `only_daniel` prefix or a `production.commands`
-    of the profile, a role that is not a key of `framework.models`, or a file that is not schema 1 is one `!` line and
-    nothing is written for that profile. Without the file the step prints `NOT RUN, NOT ARMED` and writes only the
+    of the project, a role that is not a key of `framework.models`, or a file that is not schema 1 is one `!` line and
+    nothing is written for that project. Without the file the step prints `NOT RUN, NOT ARMED` and writes only the
     main checkout.
   * on --apply, one `claude plugin marketplace add <path> --scope local` per machine, run from the project's
     folder, while ~/.claude/plugins/known_marketplaces.json does not hold the marketplace at that path. Declaring
@@ -32,10 +32,10 @@ The plugin's name is not in this code. It is the `name` of <plugin_source.path>/
 (config/forge.json `framework.plugin_source`, a `directory` source until the repository is published), and that
 marketplace must list a plugin of the same name. The file is `.claude/<name>.json` and the plugin `<name>@<name>`.
 
-A `true` profile that cannot be served gets one `!` line and nothing written for the framework: no `plugins_keep`
+A `true` project that cannot be served gets one `!` line and nothing written for the framework: no `plugins_keep`
 (enabledPlugins is written whole, and only with plugins_keep), no plugin_source, a source that is not a directory,
 a folder without a marketplace.json, a marketplace without a plugin of its name, a name that is not a plain
-identifier (it becomes a file name). Such a profile is read as off by settings.local.json (the two keys go,
+identifier (it becomes a file name). Such a project is read as off by settings.local.json (the two keys go,
 because the plugin cannot load from a source that is wrong anyway), and its generated file is left where it is.
 
 Removal is by claim (forge/owned.py): the generated file is a `file` claim of part "framework", and is deleted
@@ -60,7 +60,7 @@ RUNNERS = frozenset("""python python3 node nodejs deno bun ruby perl php lua bas
                        npm npx pnpm pnpx yarn pip pip3 pipx uv uvx poetry cargo gem bundle composer mise""".split())
 RULE = re.compile(r"^([A-Za-z0-9_.*-]+)(?:\((.*)\))?$", re.S)
 
-# `on` False and `error` None is a profile that does not use the framework; `error` set is one that cannot be served.
+# `on` False and `error` None is a project that does not use the framework; `error` set is one that cannot be served.
 Plan = collections.namedtuple("Plan", "on error name plugin source path file doc")
 OFF = Plan(False, None, None, None, None, None, None, None)
 
@@ -108,10 +108,10 @@ def _default_branch(ppath):
 
 
 def _document(prof, name, ppath):
-    """The text of .claude/<plugin>.json as a dict: the profile's fields (a field it lacks is the default), the
+    """The text of .claude/<plugin>.json as a dict: the project's fields (a field it lacks is the default), the
     `framework` section of config/forge.json (a key it lacks is left out, so the plugin's own defaults apply), and
-    the integrations' switches. `project.linear_project` is the profile's `linear_project`, else the remote's name.
-    The file has no slot for a label a project's issues carry, so a profile can move the Linear project only."""
+    the integrations' switches. `project.linear_project` is the project's `linear_project`, else the remote's name.
+    The file has no slot for a label a project's issues carry, so a project can move the Linear project only."""
     section = lib.settings().get("framework")
     section = section if isinstance(section, dict) else {}
 
@@ -137,7 +137,7 @@ def _document(prof, name, ppath):
             "production": copy.deepcopy(prof.get("production") or {"branches": [], "commands": []}),
             "verdict_command": prof.get("verdict_command"),
             "ui": prof.get("ui") is True,
-            # Fields the later parts of the framework add to profiles: the schema's defaults until a profile has them.
+            # Fields the later parts of the framework add to projects: the schema's defaults until a project has them.
             "checks_quick": list(prof.get("checks_quick") or []),
             "app_run": copy.deepcopy(prof.get("app_run")),
             "default_branch_protected": prof.get("default_branch_protected") is True,
@@ -148,7 +148,7 @@ def _document(prof, name, ppath):
         "models": table("models"),
         "limits": table("limits"),
     }
-    if prof.get("worktree_setup"):  # written only when set: a profile without it leaves the file as it was (fwx reads the empty list)
+    if prof.get("worktree_setup"):  # written only when set: a project without it leaves the file as it was (fwx reads the empty list)
         doc["project"]["worktree_setup"] = list(prof["worktree_setup"])
     for key in ("rounds", "critique_rounds_unattended"):
         if key in section:
@@ -164,12 +164,12 @@ def _document(prof, name, ppath):
 
 
 def plan(prof, name):
-    """What the framework step does for this profile, decided without writing anything. `name` is the profile's
-    file name, the project's name when the profile has none."""
+    """What the framework step does for this project, decided without writing anything. `name` is the project's
+    file name, the project's name when the project has none."""
     if prof.get("framework") is not True:
         return OFF
     if not prof.get("plugins_keep"):
-        return _error("framework is true but the profile has no plugins_keep: the plugin is turned on through "
+        return _error("framework is true but the project has no plugins_keep: the plugin is turned on through "
                       "enabledPlugins, which forge writes whole and only with plugins_keep")
     src, why = _source()
     if why:
@@ -190,9 +190,9 @@ def with_env(prof, p, secrets):
     return dict(prof, env=dict(prof.get("env") or {}, **{LINEAR_KEY: "${%s}" % LINEAR_KEY}))
 
 
-# What the permissions step does for one profile, decided without writing: the rules to add as (rule, roles), the
+# What the permissions step does for one project, decided without writing: the rules to add as (rule, roles), the
 # directories to add, the lines to print once settings.local.json is written, and the `!` lines of a list that failed
-# the lint (then nothing is written for the profile).
+# the lint (then nothing is written for the project).
 Perms = collections.namedtuple("Perms", "rules dirs lines errors")
 NO_PERMS = Perms((), (), (), ())
 
@@ -232,7 +232,7 @@ def _broad(rule):
 
 def permission_errors(doc, roles, production):
     """The errors of a framework-permissions list, as text, [] when it is clean (3.6 Appendix C): `doc` is the parsed
-    file, `roles` the keys of `framework.models`, `production` the profile's `production.commands`. Shape (schema 1,
+    file, `roles` the keys of `framework.models`, `production` the project's `production.commands`. Shape (schema 1,
     `allow` a list of rows with a `rule` string and non-empty `roles`), then per rule: too broad, overlapping an
     `only_daniel` prefix or a production command (one is a prefix of the other), a role that is not in `roles`."""
     if not isinstance(doc, dict):
@@ -268,7 +268,7 @@ def permission_errors(doc, roles, production):
             body = head[len("Bash("):]
             for cmd in production:
                 if isinstance(cmd, str) and cmd and (body.startswith(cmd) or cmd.startswith(body)):
-                    errs.append("`%s` overlaps the production command `%s` of the profile" % (rule, cmd))
+                    errs.append("`%s` overlaps the production command `%s` of the project" % (rule, cmd))
         have = r.get("roles")
         if not (isinstance(have, list) and have and all(isinstance(x, str) for x in have)):
             errs.append("`%s` has no `roles` (a non-empty list of keys of framework.models)" % rule)
@@ -280,10 +280,10 @@ def permission_errors(doc, roles, production):
 
 
 def permissions(prof, p, path):
-    """The permissions step for this profile: the main checkout always (a session in a linked worktree reaches the
+    """The permissions step for this project: the main checkout always (a session in a linked worktree reaches the
     main checkout through `permissions.additionalDirectories`), and the `allow` rules of the list at `path`. The
     list missing is one NOT RUN, NOT ARMED line; a list that fails permission_errors (or does not parse) is the
-    `!` lines of `errors`, and the caller writes nothing for the profile. `lines` are the `+ allow` and
+    `!` lines of `errors`, and the caller writes nothing for the project. `lines` are the `+ allow` and
     `+ additionalDirectories` lines for what the file does not hold yet, printed once settings.local.json is written."""
     if not p.on:
         return NO_PERMS
@@ -322,7 +322,7 @@ def permissions(prof, p, path):
 
 def with_permissions(prof, perms):
     """`prof` with the step's rules added to its `permissions.allow` and its directories to
-    `permissions.additionalDirectories`, after what the profile declares itself; `prof` itself with nothing to add."""
+    `permissions.additionalDirectories`, after what the project declares itself; `prof` itself with nothing to add."""
     if not perms.rules and not perms.dirs:
         return prof
     cur = dict(prof.get("permissions") or {})
@@ -395,7 +395,7 @@ def _drop_stale(ctx, ppath, keep):
 
 
 def write(ctx, prof, p, name, secrets):
-    """The framework step after settings.local.json is written: the lines to print. A profile that is off has the
+    """The framework step after settings.local.json is written: the lines to print. A project that is off has the
     files it wrote earlier taken out; one that cannot be served says why and is left as it is."""
     ppath = prof["project_path"]
     if p.error:

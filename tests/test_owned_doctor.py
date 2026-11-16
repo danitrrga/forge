@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """forge doctor's `owned` row reads the hook claims of both writers. forge/hooks.py (user scope) records a
-hook at [event, matcher, command]; forge/skills.py (a profile's hooks in <project>/.claude/settings.local.json)
+hook at [event, matcher, command]; forge/skills.py (a project's hooks in <project>/.claude/settings.local.json)
 records it at ["hooks", event, command], with no matcher. The row once read every 3-element hook claim in
-the first layout, looked for the event "hooks" and WARNed on every profile hook nobody had touched.
+the first layout, looked for the event "hooks" and WARNed on every project hook nobody had touched.
 
 Runs in-process against a toy HOME and a toy project; lib.may_write() is stubbed to allow, because this
 checkout may be a linked worktree, which never writes.
@@ -82,7 +82,7 @@ check("a hand edit: WARN naming the file and the at -- %r" % (r,),
       level == "WARN" and lib.short(slp) in detail and at in detail, r)
 check("a hand edit: the WARN names no value -- %r" % (r,), "99" not in detail, r)
 
-# 3. A hook under a matcher the profile declared: PASS when unedited.
+# 3. A hook under a matcher the project declared: PASS when unedited.
 # (a fresh project and record: the edited entry of case 2 would stay beside the new one)
 os.remove(owned.path())
 p = os.path.join(TOY, "proj2")

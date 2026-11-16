@@ -1,8 +1,8 @@
 # forge
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.png"><img src="docs/assets/banner.png" alt="forge: the word forge drawn as block letters on a grid of characters taken from the real profile files, beside the tagline One source of truth for the Claude Code and Codex setup of every project on your machine, and what each project gets: ~/code/api gets the playwright MCP server with review on and release off; ~/code/site gets docs with both skills; ~/forge has no MCP server and both skills. Below, forge sync --apply --all reports 2 change(s) applied and forge doctor reports 9 passed, 0 warnings, 0 failures." width="100%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.png"><img src="docs/assets/banner.png" alt="forge: the word forge drawn as block letters on a grid of characters taken from the real project files, beside the tagline One source of truth for the Claude Code and Codex setup of every project on your machine, and what each project gets: ~/code/api gets the playwright MCP server with review on and release off; ~/code/site gets docs with both skills; ~/forge has no MCP server and both skills. Below, forge sync --apply --all reports 2 change(s) applied and forge doctor reports 9 passed, 0 warnings, 0 failures." width="100%"></picture>
 
-**An agentic development platform for Claude Code: it sets up every project from one checkout (skills, MCP servers, hooks, profiles) and takes each change from discuss to plan, parallel worktree execution, review and UI walk.**
+**An agentic development platform for Claude Code: it sets up every project from one checkout (skills, MCP servers, hooks, project files) and takes each change from discuss to plan, parallel worktree execution, review and UI walk.**
 
 [![ci](https://github.com/danitrrga/forge/actions/workflows/ci.yml/badge.svg)](https://github.com/danitrrga/forge/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -11,7 +11,7 @@ forge does two jobs, and they are one product.
 
 **It sets up the agents of every project.** Every project you work on with an agent grows its own skills, MCP servers,
 hooks and permissions. Copy them by hand and they drift: one project has the new server, another still has the old
-token, a third lost a hook months ago. forge keeps all of it in one checkout. Each project gets a small profile, one
+token, a third lost a hook months ago. forge keeps all of it in one checkout. Each project gets a small file, one
 generator writes every project's files from it, and a SessionStart hook brings the project you open up to date before
 the session starts.
 
@@ -22,7 +22,7 @@ git worktrees, reviews it and walks the finished UI. It is the part of forge thi
 ## Why forge
 
 - **One command.** `forge sync --apply --all` regenerates every project's configuration from the same source.
-- **Per-project profiles.** Each project picks its MCP servers, skills, plugins, permissions, env and hooks in
+- **Per-project files.** Each project picks its MCP servers, skills, plugins, permissions, env and hooks in
   one JSON file. Untrimmed, it loads everything you have.
 - **Dry-run first, every write declared.** Without `--apply`, `forge sync` only lists what would change. With
   it, every file written is named.
@@ -31,7 +31,7 @@ git worktrees, reviews it and walks the finished UI. It is the part of forge thi
 - **Optional integrations that switch off cleanly.** Codex, GSD and Hindsight are each one switch.
   Turning one off removes only the entries forge wrote.
 - **An agentic workflow that forge installs and configures.** `plugins/fwx` is a Claude Code plugin that takes work
-  from discuss to plan, parallel worktree execution, review and UI walk. One profile field, `framework`, turns it on
+  from discuss to plan, parallel worktree execution, review and UI walk. One project field, `framework`, turns it on
   (see [The agentic workflow](#the-agentic-workflow)).
 - **A personal-data guard.** `forge lint` and the git hooks refuse a commit that carries a home path,
   an email address, a private IP or a private key, so your own config never leaks into a public repository.
@@ -39,7 +39,7 @@ git worktrees, reviews it and walks the finished UI. It is the part of forge thi
 ## The agentic workflow
 
 fwx lives in `plugins/fwx/`: a Claude Code plugin with a command line, `plugins/fwx/bin/fwx`. It is how forge runs
-work, not only how it sets it up. forge installs and configures it per project: `"framework": true` in a profile, then
+work, not only how it sets it up. forge installs and configures it per project: `"framework": true` in its project file, then
 `forge sync --apply` enables the plugin there and writes the one file it reads, `.claude/fwx.json` (models per role,
 round cap, limits, Linear labels, checks). Set the field back to `false` and forge takes it all out again. fwx
 replaces the GSD integration, and its changes are reviewed in the same pull requests as the engine's.
@@ -88,7 +88,7 @@ behind every "built".
    failure message is kept. A check that looked at zero things fails. A check that could not run prints
    `NOT RUN, NOT ARMED` and is neither a pass nor a fail; a skipped, neutral or cancelled result from an outside check is
    not green either. The reason: CodeRabbit reports success when it skips a review, and a CI job that times out ends as
-   cancelled, not failed. Built: this is the rule of forge's own test suite, and `fwx test` exits 77 for a run where a
+   cancelled, not failed. Built: this is the rule of forge's own test suite, and `forge test fwx` exits 77 for a run where a
    test could not run.
 4. **Two critiques of every plan.** A pre-mortem comes before the plan: small, fast and cheap, it stops you planning
    work you did not ask for. A post-mortem comes after: much harder, and it asks how each requirement of the plan will be
@@ -153,7 +153,7 @@ source in a `referent:` line.
 ```sh
 python3 plugins/fwx/bin/fwx --help              # every command, one line each
 python3 plugins/fwx/bin/fwx playbook list      # the workflow tree: each node and its exits
-python3 plugins/fwx/bin/fwx test                # fwx's own suite (forge test leaves it to this; CI runs it as the fwx job)
+python3 bin/forge test fwx                      # fwx's own suite, a group of forge test (forge test with no group leaves it out; CI runs it as the fwx job)
 ```
 
 `plugins/fwx/README.md` has the command list, the configuration file and the install steps.
@@ -175,33 +175,33 @@ To type `forge` instead, link it onto your PATH: `ln -s ~/forge/bin/forge ~/.loc
 `forge init` checks python, git, `claude`, `pnpm` and `codex`, one line each. It asks at most two questions,
 and only for tools it found: manage Codex's config too, and install GSD. `--yes` takes every detected default,
 `--with a,b` and `--without a,b` switch integrations, and `--track` gives your data its own local git history.
-It then writes your data into the checkout: `config/forge.json` (your switches), a profile for the checkout
+It then writes your data into the checkout: `config/forge.json` (your switches), a project file for the checkout
 itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGENT-SYSTEM.md` and an empty
 `skills/`. With GSD on, it runs GSD's own installer (`pnpm dlx @opengsd/gsd-core@latest --claude --global`).
 Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
 exits with `forge doctor`'s status.
 
-`forge new PATH [--name NAME] [--writes-tracked-files]` writes `config/profiles/NAME.claude.json` and runs
-`forge sync --apply --project NAME`. It refuses a path that is not a directory, a name already registered and
+`forge new PATH [--name NAME] [--writes-tracked-files]` writes `config/projects/NAME.claude.json` and runs
+`forge sync --apply NAME`. It refuses a path that is not a directory, a name already registered and
 a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
 `CLAUDE.md`, no `.gitignore` line. The flag allows it.
 
 ## How it works
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-sync-dark.png"><img src="docs/assets/fig-sync.png" alt="What forge writes: the profiles, the MCP registry and the git-ignored secrets file feed forge sync, which a SessionStart hook runs for the project you open and which writes each project's .claude/settings.local.json, its MCP servers in ~/.claude.json and, with Codex on, its .codex/config.toml; skills/ feeds forge skills, which links each skill into ~/.claude/skills; forge doctor checks both sides." width="100%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-sync-dark.png"><img src="docs/assets/fig-sync.png" alt="What forge writes: the projects, the MCP registry and the git-ignored secrets file feed forge sync, which a SessionStart hook runs for the project you open and which writes each project's .claude/settings.local.json, its MCP servers in ~/.claude.json and, with Codex on, its .codex/config.toml; skills/ feeds forge skills, which links each skill into ~/.claude/skills; forge doctor checks both sides." width="100%"></picture>
 
-A profile, `config/profiles/<name>.claude.json`, holds a project's path, the MCP servers it gets from
+A project file, `config/projects/<name>.claude.json`, holds the project's path, the MCP servers it gets from
 `config/mcp-registry.json`, the skills and plugins it keeps, permissions, env and hooks. The accepted fields
-and their types are `PROFILE_FIELDS` in `forge/lib.py`, and `forge sync` names a field of the wrong type
+and their types are `PROJECT_FIELDS` in `forge/lib.py`, and `forge sync` names a field of the wrong type
 instead of guessing.
 
 `forge sync` writes the per-project keys in `~/.claude.json`, each project's `.claude/settings.local.json`,
 the hook rows in `~/.claude/settings.json` (merged, never replaced) and, with Codex on, `~/.codex/` and each
 project's `.codex/config.toml`. `forge skills` writes what belongs to the user rather than to a project: the
 online skills, the GSD runtime and the links in `~/.claude/skills`. These files are generated and overwritten on
-every run, so edit the profile, not them. The SessionStart hook runs `forge session-start`, which syncs only
+every run, so edit the project file, not them. The SessionStart hook runs `forge session-start`, which syncs only
 the project you opened, reports only what changed or failed, and always exits 0: a broken sync never blocks a
-session. A profile marked `frozen` gets nothing.
+session. A project marked `frozen` gets nothing.
 
 `forge/hooks.py` also writes a few hook rows that are safe on any machine and need no switch: the SessionStart
 sync, the memory check, a desktop notifier that exits quietly without `omarchy-notification-send`, and a router
@@ -219,7 +219,7 @@ installed another way.
 | `codex` | `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills; with `codex_harness` true in `config/forge.json` also its hook rows in `~/.codex/hooks.json` and each project's MCP servers in `.codex/config.toml`, with it false (the default, Codex as a reviewer) neither, and forge takes out only what it wrote | `codex` on PATH | off; `init` offers it when `codex` is found |
 | `gsd` | the `gsd-*` skills, agents and engine from `@opengsd/gsd-core`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
-| `consent` | one user-scope `PreToolUse` hook row (`hooks/guard_tool_use.py --consent`, `onFailure: block`) that makes a push to a production branch, a command, or an MCP tool that acts on production wait for a yes in a window of its own; production is each profile's `production` field and the rules are in `config/gateway.json` | Omarchy and `gum` for the built-in adapter, `python3` | off. Roll back: set `integrations.consent` to `false` and run `forge sync --apply`, which removes the row even when `config/gateway.json` is broken |
+| `consent` | one user-scope `PreToolUse` hook row (`hooks/guard_tool_use.py --consent`, `onFailure: block`) that makes a push to a production branch, a command, or an MCP tool that acts on production wait for a yes in a window of its own; production is each project's `production` field and the rules are in `config/gateway.json` | Omarchy and `gum` for the built-in adapter, `python3` | off. Roll back: set `integrations.consent` to `false` and run `forge sync --apply`, which removes the row even when `config/gateway.json` is broken |
 | `agent_browser` | asks for the `agent-browser` browser tool: a `config/toolchain.json` entry whose `when` is `{"integration": "agent_browser"}` is installed by `forge toolchain --fix` only while this is `true`, and `forge doctor` FAILs, naming that command, when the binary is not on PATH | `agent-browser`, installed by mise from that toolchain entry | off. Roll back: set `integrations.agent_browser` to `false`; the entry is then a SKIP and nothing is uninstalled |
 | `mempalace` | nothing yet: the switch for the MemPalace memory part | the MemPalace part's own check, which arrives with that part | off; `forge doctor` shows a SKIP, `NOT RUN, NOT ARMED`, whether it is on or off, until then |
 
@@ -231,7 +231,7 @@ With `gsd_patches` true, `"gsd_isolation_guard": false` in `config/forge.json` s
 ## Bring your own skills
 
 forge ships **no skills**. Put yours in `skills/<name>/SKILL.md` inside the checkout and run
-`forge skills --apply`. forge links each one into `~/.claude/skills`, and each profile's `skills_keep` decides
+`forge skills --apply`. forge links each one into `~/.claude/skills`, and each project's `skills_keep` decides
 which of them a project loads (`["*"]` for all). The engine's git ignores `skills/`, so `git pull` never
 conflicts with them. `forge init --track` gives your data a second, local history when you want it versioned.
 
@@ -239,11 +239,11 @@ Third-party skills come from their own repositories, for example Anthropic's `sk
 `kepano/obsidian-skills`, `pbakaus/impeccable` and `Panniantong/Agent-Reach`. The `gsd-*` skills are GSD's own,
 installed unpatched from its package when the `gsd` integration is on. forge does not touch them afterwards
 (`gsd_patches` in `config/forge.json` is false, which is what `forge init` writes). To trim them, name skills in
-`skill_keep.gsd_exclude` (no profile keeps them, and forge does not link them) or `skill_keep.gsd_opt_in` (kept
-only by a profile whose `skill_keep.extras` row names them); `forge doctor`'s `skill keep` row fails on a name
+`skill_keep.gsd_exclude` (no project keeps them, and forge does not link them) or `skill_keep.gsd_opt_in` (kept
+only by a project whose `skill_keep.extras` row names them); `forge doctor`'s `skill keep` row fails on a name
 no skill has, a name in both lists, or an excluded name in an `extras` row.
 
-<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-trim-dark.png"><img src="docs/assets/fig-trim.png" alt="Which skills each project loads: the api profile keeps only review, so forge writes release off into ~/code/api/.claude/settings.local.json; site and the forge checkout have no skills_keep and load both review and release." width="100%"></picture>
+<picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-trim-dark.png"><img src="docs/assets/fig-trim.png" alt="Which skills each project loads: the api project keeps only review, so forge writes release off into ~/code/api/.claude/settings.local.json; site and the forge checkout have no skills_keep and load both review and release." width="100%"></picture>
 
 ## Measure a skill: skill-bench
 
@@ -289,11 +289,11 @@ licences in `SOURCES.md`.
 ```
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
 forge new PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
-forge sync [--apply] [--project NAME | --all]               what would change (or change it), per project
+forge sync [NAME | --all] [--apply]                         what would change (or change it), per project
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
-forge test [--mutants]                                      every tracked test_*.py, at nice 19 (plugins/fwx has its own runner, `fwx test`)
+forge test [fwx] [--mutants]                                every tracked test_*.py but plugins/fwx's, at nice 19; `fwx`: that suite alone, in parallel (--jobs N, --expect-not-run P,..)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
@@ -301,7 +301,7 @@ forge versions [--md]                                       those and the toolch
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
 forge lint [--root DIR] --all                               personal data in the files the engine publishes (--root: another repository's)
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
-forge uninstall [--integration N | --project N] [--apply]   take out what forge wrote (see Uninstall)
+forge uninstall [NAME | --integration N] [--apply]          take out what forge wrote (see Uninstall)
 ```
 
 Every command takes `--help`. A doctor check with nothing to look at (no skills, an integration that is off,
@@ -347,8 +347,8 @@ default, nothing earlier is restored. Your own hooks, permission rules and `.git
 
 It leaves, and says so: GSD's agents and engine in `~/.claude` (with the command that removes them), any `.bak`
 older than the record, and the checkout, whose deletion command it prints and never runs.
-`--integration N` takes out one integration's share once it is off in `config/forge.json`; `--project N` one
-project's, once its profile is frozen or deleted.
+`--integration N` takes out one integration's share once it is off in `config/forge.json`; a project NAME (`forge uninstall NAME`) one
+project's, once it is frozen or its file deleted.
 
 ## Not a fit?
 
@@ -360,8 +360,8 @@ forge is a per-machine registry. If you want configuration that travels with eac
 `CLAUDE.md` (also `AGENTS.md`) is the guide for working on the engine. Before you open a pull request:
 
 ```sh
-python3 bin/forge test                    # every test, in sandboxes that never touch your HOME
-python3 plugins/fwx/bin/fwx test           # only when you touched plugins/fwx: its suite has its own runner
+python3 bin/forge test                    # every test but plugins/fwx's, in sandboxes that never touch your HOME
+python3 bin/forge test fwx                # only when you touched plugins/fwx: its suite is a group of its own
 python3 bin/forge lint --all      # no personal data in the engine
 git config core.hooksPath githooks        # run the personal-data guard on every commit and push
 ```

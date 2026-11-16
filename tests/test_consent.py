@@ -7,7 +7,7 @@
   `"onFailure": "block"`) is written only with `integrations.consent` true, for Claude Code only. With it off the
   row is not written and an entry holding exactly its command is taken out (by command, never by marker).
 - reconcile compares and writes `onFailure` too: an entry that is right except for it is repaired, not kept.
-- the profile field `production` has a row in lib.PROFILE_FIELDS and lib.profile_error asks the guard's single
+- the project field `production` has a row in lib.PROJECT_FIELDS and lib.project_error asks the guard's single
   production_error (imported by importlib: hooks/ is not edited from here).
 - rollback (I8): with consent on, the row written and config/gateway.json broken, `consent: false` and
   `forge sync --apply` exits 0 and removes the entry, because forge sync never reads gateway.json.
@@ -30,7 +30,7 @@ forge/lib.py and forge/hooks.py, README.md and examples/ with the new files abse
     reconcile, so nothing takes its entry out)
   repair, onFailure missing / wrong: it now says "block" -- the entry stayed as seeded (no onFailure / "allow"), and
     the note says repaired -- it said nothing of the sort
-  PROFILE_FIELDS has a row for production -- None; profile_error rejects production 'main' / None / [] /
+  PROJECT_FIELDS has a row for production -- None; project_error rejects production 'main' / None / [] /
     {"branches": "main"} / {"branches": [""]} / ... (got None), and says the guard's own words -- forge: None
   examples/forge.json has "consent": false -- {'codex': False, 'gsd': False, 'hindsight': False}; its _doc names
     consent; examples/gateway.json exists / has the plan's rules / passes consent_config -- missing; README row --
@@ -45,8 +45,8 @@ Negative controls on the finished code, each mutation put back from a copy of th
   onFailure left out of the comparison in reconcile (4: both repair cases, "it now says block" and "repaired")
   onFailure not written into a fresh entry (8: "onFailure is block", the second run not current, both repairs)
   row not listed in ROW_INTEGRATION (8: the off and absent rows are written, the entry is not taken out)
-  profile_error not asking the guard (12: every object-shaped bad production is accepted)
-  production not in PROFILE_FIELDS (1)
+  project_error not asking the guard (12: every object-shaped bad production is accepted)
+  production not in PROJECT_FIELDS (1)
   write_user_settings reading config/gateway.json when consent is on (2: the rollback's exit 0 and its entry
     written; this is the check that a broken gateway.json cannot stop the rollback)
 The rollback also carries its own control: the same broken gateway.json makes `guard_tool_use.py --consent` exit 2
@@ -220,26 +220,26 @@ before = json.dumps(doc, sort_keys=True)
 check("control: an entry that is right is left byte-for-byte (the repair test is not just rewriting)",
       "already current" in str(run(h)) and json.dumps(load(SETTINGS), sort_keys=True) == before, "rewritten")
 
-# ---------------------------------------------------------------- the profile field `production`
-check("PROFILE_FIELDS has a row for production", lib.PROFILE_FIELDS.get("production") is dict, lib.PROFILE_FIELDS.get("production"))
+# ---------------------------------------------------------------- the project field `production`
+check("PROJECT_FIELDS has a row for production", lib.PROJECT_FIELDS.get("production") is dict, lib.PROJECT_FIELDS.get("production"))
 guard = guard_module()
 GOOD = [{"branches": ["main", "production"], "commands": ["vercel --prod", "mcp__supabase-toy__execute_sql"]},
         {"branches": ["main"]}, {"commands": ["npm publish"]}, {}]
 BAD = ["main", None, [], {"branches": "main"}, {"branches": [""]}, {"branches": ["main", 3]}, {"commands": [" "]},
        {"branches": ["main"], "extra": []}, {"branch": ["main"]}]
 for v in GOOD:
-    check("profile_error accepts production %r" % (v,), lib.profile_error({"project": "toy", "production": v}) is None,
-          lib.profile_error({"project": "toy", "production": v}))
+    check("project_error accepts production %r" % (v,), lib.project_error({"project": "toy", "production": v}) is None,
+          lib.project_error({"project": "toy", "production": v}))
 for v in BAD:
-    why = lib.profile_error({"project": "toy", "production": v})
-    check("profile_error rejects production %r (got %r)" % (v, why), isinstance(why, str) and "production" in why, why)
-    if isinstance(v, dict):  # a non-object is the PROFILE_FIELDS type message; an object is judged by the guard alone
+    why = lib.project_error({"project": "toy", "production": v})
+    check("project_error rejects production %r (got %r)" % (v, why), isinstance(why, str) and "production" in why, why)
+    if isinstance(v, dict):  # a non-object is the PROJECT_FIELDS type message; an object is judged by the guard alone
         expect = guard.production_error(v)
-        check("profile_error says the guard's own words for %r" % (v,), isinstance(why, str) and expect in why,
+        check("project_error says the guard's own words for %r" % (v,), isinstance(why, str) and expect in why,
               "guard: %r, forge: %r" % (expect, why))
 check("control: the guard itself rejects every BAD value (the parity above compares against something)",
       all(guard.production_error(v) is not None for v in BAD if not isinstance(v, (str, type(None), list))), "")
-check("profile_error is silent about a profile without production", lib.profile_error({"project": "toy"}) is None, "")
+check("project_error is silent about a project without production", lib.project_error({"project": "toy"}) is None, "")
 
 # ---------------------------------------------------------------- the example files and the README
 ex = load(os.path.join(REPO, "examples", "forge.json"))
@@ -289,9 +289,9 @@ sandbox.git(root, "init", "-q")
 sandbox.git(root, "add", "-A")
 sandbox.git(root, "commit", "-q", "-m", "engine")
 cfg_dir = os.path.join(root, "config")
-for f in os.listdir(os.path.join(cfg_dir, "profiles")):  # the fixture's profiles name /srv/toy/*, outside the world
-    os.remove(os.path.join(cfg_dir, "profiles", f))
-with open(os.path.join(cfg_dir, "profiles", "toy.claude.json"), "w", encoding="utf-8") as fh:
+for f in os.listdir(os.path.join(cfg_dir, "projects")):  # the fixture's projects name /srv/toy/*, outside the world
+    os.remove(os.path.join(cfg_dir, "projects", f))
+with open(os.path.join(cfg_dir, "projects", "toy.claude.json"), "w", encoding="utf-8") as fh:
     json.dump({"project": "toy", "project_path": proj, "enableAllProjectMcpServers": True, "servers": [],
                "plugins_keep": [], "skills_keep": ["*"], "permissions": {}}, fh)
 os.makedirs(os.path.join(root, "credentials"))

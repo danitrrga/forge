@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """skills.write_settings_local's `skillOverrides` list must switch off the project skills of an
-ancestor or nested profile in the same git repository (docs/archive/designs/skill-placement-design.md, batch B2).
+ancestor or nested project in the same git repository (docs/archive/designs/skill-placement-design.md, batch B2).
 
 Claude Code loads `<ancestor>/.claude/skills` at startup (the walk up to the git root) and
 `<descendant>/.claude/skills` once a file under it is read, and `skillOverrides` is matched by
 name, so a skill of the parent project leaked into vault sessions and the vault's into the parent. This builds a
-toy HOME with repository R (profile a at R, profile b at R/sub), a second repository C (profile
-c), and a plain directory P that is no repository (profile d at P, profile e at P/inner, itself a
+toy HOME with repository R (project a at R, project b at R/sub), a second repository C (project
+c), and a plain directory P that is no repository (project d at P, project e at P/inner, itself a
 repository): it calls write_settings_local in-process and reads the settings.local.json it wrote.
 
 Red on master (forge/skills.py before the fix), the first assertion of each case:
@@ -34,8 +34,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from forge import lib, skills  # noqa: E402
 
 assert lib.HOME == HOME, "forge/lib.py saw the real HOME"
-lib.PROFILES = os.path.join(TOY, "profiles")  # read at call time by lib.profiles()
-os.makedirs(lib.PROFILES)
+lib.PROJECTS = os.path.join(TOY, "projects")  # read at call time by lib.projects()
+os.makedirs(lib.PROJECTS)
 CTX = lib.context([])._replace(apply=True)
 
 failures = []
@@ -56,15 +56,15 @@ def skill(project, name):
         f.write("---\nname: %s\n---\n" % name)
 
 
-def profile(name, path, **extra):
+def project(name, path, **extra):
     prof = dict({"project_path": path, "skills_keep": []}, **extra)
-    with open(os.path.join(lib.PROFILES, name + ".claude.json"), "w") as f:
+    with open(os.path.join(lib.PROJECTS, name + ".claude.json"), "w") as f:
         json.dump(prof, f)
     return prof
 
 
 def off(prof):
-    """The skillOverrides the generator wrote for this profile: the names set to off."""
+    """The skillOverrides the generator wrote for this project: the names set to off."""
     assert skills.write_settings_local(CTX, prof), "write_settings_local wrote nothing"
     with open(os.path.join(prof["project_path"], ".claude", "settings.local.json")) as f:
         return sorted(k for k, v in (json.load(f).get("skillOverrides") or {}).items() if v == "off")
@@ -88,22 +88,22 @@ skill(SIB, "s")    # b's sibling: in the same repository, but neither an ancesto
 skill(C, "z")
 skill(P, "w")      # P is no repository, like ~/dev: its skills must stay out of every other list
 skill(INNER, "v")
-a = profile("a", R)
-b = profile("b", SUB)
-f = profile("f", SIB)
-g = profile("g", SUB2)
-c = profile("c", C)
-d = profile("d", P)
-e = profile("e", INNER)
+a = project("a", R)
+b = project("b", SUB)
+f = project("f", SIB)
+g = project("g", SUB2)
+c = project("c", C)
+d = project("d", P)
+e = project("e", INNER)
 
 got_a, got_b, got_c, got_d, got_e, got_f, got_g = off(a), off(b), off(c), off(d), off(e), off(f), off(g)
 check("x" in got_a, "a (R): x: off missing from a's skillOverrides, got %r" % got_a)
 check("y" in got_b, "b (R/sub): y: off missing from b's skillOverrides, got %r" % got_b)
 check("z" not in got_a + got_b + got_d + got_e,
       "z, a skill of another repository, was switched off: a %r, b %r" % (got_a, got_b))
-# What does not move. A profile's own skills stay on, the global ones stay off, and a repository
+# What does not move. A project's own skills stay on, the global ones stay off, and a repository
 # that is neither an ancestor nor a descendant gets nothing from the others.
-check("y" not in got_a and "x" not in got_b, "a profile's own skill was switched off: a %r, b %r" % (got_a, got_b))
+check("y" not in got_a and "x" not in got_b, "a project's own skill was switched off: a %r, b %r" % (got_a, got_b))
 check("g1" in got_a and "g1" in got_b, "the global skill g1 is no longer off: a %r, b %r" % (got_a, got_b))
 check("s" in got_a and "s" not in got_b and "x" not in got_f,
       "a sibling counted as a neighbour, or a descendant did not: a %r, b %r, f %r" % (got_a, got_b, got_f))
@@ -116,7 +116,7 @@ check(got_c == ["g1"], "c (own repository) is not just the global list: %r" % go
 # P is an ancestor of INNER on disk but not in INNER's repository, and P is in no repository at all.
 check(got_e == ["g1"] and got_d == ["g1"],
       "a directory outside the repository counted as a neighbour: d %r, e %r" % (got_d, got_e))
-# A name both owned and held by a neighbour stays on: the profile's own skill wins.
+# A name both owned and held by a neighbour stays on: the project's own skill wins.
 skill(R, "x")
 check("x" not in off(a), "a owns x and a neighbour holds it, yet a switched x off")
 

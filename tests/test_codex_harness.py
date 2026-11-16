@@ -8,7 +8,7 @@ integrations.codex on, and only the JSON true counts (absent, false and "yes" ar
   off: neither is written. On --apply forge takes out only what it wrote: the hook entries whose command
        EQUALS one it wrote, and in config.toml the [mcp_servers.<name>] tables (and their .env tables)
        whose name is a registry server, the [shell_environment_policy] table of the shape forge writes (it
-       holds the profile's env as resolved) and the once-ever config.toml.bak when it holds forge's; a
+       holds the project's env as resolved) and the once-ever config.toml.bak when it holds forge's; a
        foreign hook, a foreign table, a foreign key and a policy table of another shape stay, and the file
        stays too. Kept in both states: the .agents/skills links.
 
@@ -52,7 +52,7 @@ foreign set keys accepted (2), MCPORTER_CONFIG not accepted (2), parse-and-compa
 the edit writing a .bak again (3), the .bak removed in a dry-run too (2), the policy never taken out (10), the
 .bak never removed (5), inherit-only accepted while forge would write a set (1).
 The .bak is judged by shape and not by today's registry or env, because it holds the OLDEST content and its names
-drift (a retired server, a key the profile dropped): a regular file, not behind a link, whose only top-level
+drift (a retired server, a key the project dropped): a regular file, not behind a link, whose only top-level
 keys are mcp_servers and a policy with `inherit = "core"`, or that names a registry server. Seen failing on the
 commit that matched names: "false, a .bak drifted: removed, the line says so -- ... (codex_harness off: no MCP
 server written, none of forge's in it)" (1 of 88 red, the three foreign .bak controls pass there). Negative
@@ -290,7 +290,7 @@ def generate(name, apply=True, prepare=None, servers=("toy-a", "toy-b"), env=Non
     <TOY>/<name>/projects/p). Returns (exit code, output, the project's directory). `prepare(dir)`
     makes the project before the run. The toy forge.json in force is the last world() call's."""
     base = os.path.join(TOY, name)
-    cfg, pdir = os.path.join(base, "config"), os.path.join(base, "config", "profiles")
+    cfg, pdir = os.path.join(base, "config"), os.path.join(base, "config", "projects")
     project = os.path.join(base, "projects", "p")
     os.makedirs(pdir, exist_ok=True)
     seed(os.path.join(cfg, "mcp-registry.json"), json.dumps(REGISTRY))
@@ -302,7 +302,7 @@ def generate(name, apply=True, prepare=None, servers=("toy-a", "toy-b"), env=Non
     if prepare:
         prepare(project)
     seed(os.path.join(pdir, "p.claude.json"), json.dumps(dict({"project": "p", "servers": list(servers), "project_path": project}, **({"env": env} if env else {}))))
-    sync.CFG, lib.PROFILES = cfg, pdir
+    sync.CFG, lib.PROJECTS = cfg, pdir
     if not os.path.realpath(project).startswith(TOY + os.sep):
         sys.exit("FENCE: %s is outside the toy world -- nothing run" % project)
     ctx = lib.Ctx(apply, None, False)
@@ -407,7 +407,7 @@ for label, body in (("not TOML", "[mcp_servers\nbroken"),
           code == 0 and read(cfg_path) == body and any("left alone" in l for l in mcp_line(out)),
           "exit %r, bytes %r, lines %r" % (code, read(cfg_path), mcp_line(out)))
 
-# 9.0 A profile whose project_path is not a directory is an error in both states, as it was before the
+# 9.0 A project whose project_path is not a directory is an error in both states, as it was before the
 # switch: the '!' line and exit 1 (write_codex_project_mcp's message, kept by drop_codex_project_mcp).
 # Red before the line was kept: "false, project_path missing: exit 0, lines []" (the drop said nothing).
 for label, value in (("true", True), ("false", False)):
@@ -478,11 +478,11 @@ check("codex off, codex_harness true: no .codex/, no .agents/, and NOT RUN, NOT 
       and any("NOT RUN, NOT ARMED" in l and "codex" in l for l in out.splitlines()), out)
 
 # 12. [shell_environment_policy] and the .bak. With the switch off Codex gets nothing Claude-style from
-# forge: the policy table forge wrote (it holds the profile's env as resolved, secrets included) goes with
+# forge: the policy table forge wrote (it holds the project's env as resolved, secrets included) goes with
 # the servers, and so does the once-ever .bak forge wrote, which holds the old values. Forge's table is
 # recognised by its SHAPE, not its name: `inherit = "core"` and nothing else but a `set` table whose keys
-# are all ones forge would write for the profile (the profile's env keys and MCPORTER_CONFIG), or no `set`
-# at all when forge would write none. Values are not compared: a rotated secret or an edited profile leaves
+# are all ones forge would write for the project (the project's env keys and MCPORTER_CONFIG), or no `set`
+# at all when forge would write none. Values are not compared: a rotated secret or an edited project leaves
 # a table whose values are stale and still forge's, and still the one that must go. A table of any other
 # shape is a person's, and stays. A .bak is forge's when it is a regular file, not a link, and holds a
 # registry server or a table of that shape: what forge's first write replaced. The names below are the
@@ -575,10 +575,10 @@ for label, body in FOREIGN_POLICIES:
           and any("[shell_environment_policy] left alone" in l and "forge's out: toy-a" in l for l in mcp_line(out)),
           "exit %r, lines %r, text %r" % (code, mcp_line(out), toml_text(proj)))
 
-# 12c. forge's table alone (no servers in the file), and a profile with no env, where forge writes the
+# 12c. forge's table alone (no servers in the file), and a project with no env, where forge writes the
 # inherit key only: that table is forge's too. The line names it and no server.
 for label, env, body in (("with a set", ENV, '[shell_environment_policy]\ninherit = "core"\n\n[shell_environment_policy.set]\nTOY_PLAIN = "p"\n'),
-                         ("inherit only, a profile with no env", {}, '[shell_environment_policy]\ninherit = "core"\n')):
+                         ("inherit only, a project with no env", {}, '[shell_environment_policy]\ninherit = "core"\n')):
     code, out, proj = fresh(with_config('model = "m"\n\n' + body), env=env)
     check("false, only forge's policy %s: it goes, the rest stays, the line names it alone" % label,
           code == 0 and toml_of(proj) == {"model": "m"}
@@ -593,12 +593,12 @@ new, taken, why = dcp(PT, {"A"})
 check("policy edit: both tables go whatever the spelling, every other line and comment stays",
       why is None and taken and tomllib.loads(new or "") == {"model": "m", "profiles": {"x": {"y": 1}}}
       and all(c in (new or "") for c in ("# top", "# about the env", "# keep me", "[profiles.x]")) and "inherit" not in (new or ""), "%r %r\n%s" % (taken, why, new))
-check("policy edit: MCPORTER_CONFIG is a key forge writes whatever the profile says",
+check("policy edit: MCPORTER_CONFIG is a key forge writes whatever the project says",
       dcp('[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nMCPORTER_CONFIG = "x"\n', set())[1] is True, "")
 check("policy edit: no table is no change, byte for byte",
       dcp('[profiles.x]\ny = 1\n', {"A"}) == ('[profiles.x]\ny = 1\n', False, None), "")
 new, taken, why = dcp(PT, {"B"})
-check("policy edit: a key that is not the profile's keeps the table, and the reason names the key and no value",
+check("policy edit: a key that is not the project's keeps the table, and the reason names the key and no value",
       new == PT and not taken and why and "A" in why and '"1"' not in why, "%r %r" % (taken, why))
 new, taken, why = dcp('shell_environment_policy.inherit = "core"\n', set())
 check("policy edit: dotted keys cannot be taken out whole, so nothing is changed",
@@ -612,7 +612,7 @@ check("policy edit: a set written inline is part of the table's block and goes w
 for label, body, gone in (("registry", '[mcp_servers.toy-a]\ncommand = "node"\n', True),
                           ("policy", '[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nTOY_PLAIN = "old"\n', True),
                           # The oldest content: a server since retired from the registry and a policy key the
-                          # profile no longer carries. Forge's all the same (the writer always wrote the policy).
+                          # project no longer carries. Forge's all the same (the writer always wrote the policy).
                           ("drifted", '[shell_environment_policy]\ninherit = "core"\n[shell_environment_policy.set]\nGONE_KEY = "old"\n\n'
                                       '[mcp_servers.retired]\ncommand = "x"\n[mcp_servers.retired.env]\nK = "v"\n', True),
                           ("foreign", 'model = "mine"\n[mcp_servers.mine]\ncommand = "z"\n', False),

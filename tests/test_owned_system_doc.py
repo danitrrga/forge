@@ -12,7 +12,7 @@ task T5; forge/owned.py), so a coming `forge uninstall` can remove it:
   The copied .claude/AGENT-SYSTEM.md and the pointer block of CLAUDE.md need no claim: content and markers
   say who wrote them.
 
-The script is imported in-process over a toy HOME, toy projects (git repositories) and a toy profiles
+The script is imported in-process over a toy HOME, toy projects (git repositories) and a toy projects
 directory, with the module's CTX set per case; lib.may_write() is stubbed to allow, because this checkout may
 be a linked worktree, which never writes. A dry-run records nothing, and a repo-owned project (forge writes
 nothing git tracks there) and a directory under no git record nothing either.
@@ -56,8 +56,8 @@ import sync_system_doc as sd  # noqa: E402
 DOC = os.path.join(TOY, "AGENT-SYSTEM.md")
 shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"), DOC)
 sd.CANON = DOC
-lib.PROFILES = os.path.join(TOY, "profiles")
-os.makedirs(lib.PROFILES)
+lib.PROJECTS = os.path.join(TOY, "projects")
+os.makedirs(lib.PROJECTS)
 LINE = ".claude/AGENT-SYSTEM.md"
 failures, n_checks, n_proj = [], [0], [0]
 
@@ -70,7 +70,7 @@ def check(label, ok, detail=""):
 
 
 def project(repo=True, gitignore=None, claude_md=None, agents=None, link=None, **keys):
-    """A toy project with its profile; returns (name, directory). `agents` is the text of a real AGENTS.md,
+    """A toy project with its project; returns (name, directory). `agents` is the text of a real AGENTS.md,
     `link` a symlink target for it."""
     n_proj[0] += 1
     name = "p%d" % n_proj[0]
@@ -84,7 +84,7 @@ def project(repo=True, gitignore=None, claude_md=None, agents=None, link=None, *
                 fh.write(text)
     if link is not None:
         os.symlink(link, os.path.join(d, "AGENTS.md"))
-    with open(os.path.join(lib.PROFILES, name + ".claude.json"), "w", encoding="utf-8") as fh:
+    with open(os.path.join(lib.PROJECTS, name + ".claude.json"), "w", encoding="utf-8") as fh:
         json.dump(dict({"project_path": d}, **keys), fh)
     return name, d
 

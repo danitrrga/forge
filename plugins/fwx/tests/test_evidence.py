@@ -2,7 +2,7 @@
 """core.evidence: the effective checks recipe, and what the evidence proves about the head commit.
 
 Ports marshal's pure cases of evidence-regressions.ts:75-152 (what to run, and `headEvidence`) onto the facts shape
-`{sha, clean, commands: [{cmd, rc}]}`, with the profile's recipe (`project.checks`) in place of `.factory/setup.json`.
+`{sha, clean, commands: [{cmd, rc}]}`, with the project's recipe (`project.checks`) in place of `.factory/setup.json`.
 Not ported: the output-tail redaction (lines 105-123), which belongs to `verify` (2.4 U6), and `requiredChecks`, which
 reads marshal's database. Added: the recipe that wins over package.json, one package manager per lockfile, a recipe of
 plain commands, the substituted command that must not verify, and the failure of a malformed evidence row.

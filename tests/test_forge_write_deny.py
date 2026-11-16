@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The generator denies a project's agents the right to write in forge (forge/sync.py `forge_deny`, `with_forge_deny`), 3.6 U2c.
 
-For every profile except forge's own, `forge sync` writes into the project's settings.local.json `permissions.deny` one `Edit` rule
+For every project except forge's own, `forge sync` writes into the project's settings.local.json `permissions.deny` one `Edit` rule
 per top-level entry of the checkout (`lib.ROOT`) that git tracks (the engine's history and the data history,
 `git ls-files`; an untracked folder such as `logs/` comes and goes and would rewrite every project's file on each sync) except
 `plugins` and `design`: `<Tool>(//<root>/<dir>/**)` for a directory,
@@ -9,7 +9,7 @@ per top-level entry of the checkout (`lib.ROOT`) that git tracks (the engine's h
 rule the file does not hold yet. `plugins/` is left out because the plugin repos (`plugins/fwx`) live
 there and their sessions write in their own folder, `design/` because the taste library stays shared (design-taste's `analyse`
 edits `design/taste/entries/*.md` from any project). A new tracked top-level entry is covered at the next sync, which runs at
-the start of each project's session. The rules go in as the profile's own `deny` does (union, one owned item claim each), so a rule put by hand
+the start of each project's session. The rules go in as the project's own `deny` does (union, one owned item claim each), so a rule put by hand
 stays, and what forge wrote goes when the entry or the rule stops being wanted.
 
 Why one pair per entry and not one pair on the whole checkout: a `deny` beats any `allow`, and the permission pattern has no way to
@@ -32,16 +32,16 @@ Seen failing on master (40d20f1), this file as it is: every check about a rule r
   "deny rules missing after --apply -- None"
   "dry-run: `+ deny Edit(//.../hooks/**)  (agents of a project do not write in forge)` is printed -- []"
   "claimed: every rule is an owned item claim -- []"
-the controls that pass there (forge's profile gets nothing, a hand-set rule is kept, a frozen profile gets nothing, nothing is written
+the controls that pass there (forge's project gets nothing, a hand-set rule is kept, a frozen project gets nothing, nothing is written
 by a dry-run) stay green. Against a version that writes one pair on the whole checkout instead of one per entry:
   "plugin repo write denied -- <root>/plugins/toy/probe.txt matches ['Edit(//<root>/**)', ...]"
 Against a version that puts the path in the code instead of reading lib.ROOT: "forge path hard-coded -- ...".
-Against a version that writes the rules into every profile: "deny written into the forge profile -- ...".
-Against a version without the folder guard (a profile whose project folder is gone): "missing folder: the project folder is not created -- True"
+Against a version that writes the rules into every project: "deny written into the forge project -- ...".
+Against a version without the folder guard (a project whose project folder is gone): "missing folder: the project folder is not created -- True"
 (the rules made the folder again and hid the `!` line the codex step prints for it; test_codex_harness caught it first).
-Three suites that ran a toy profile over the real checkout (test_sync_agent_config 20, test_framework_permissions, test_codex_harness)
+Three suites that ran a toy project over the real checkout (test_sync_agent_config 20, test_framework_permissions, test_codex_harness)
 saw the new key and were adjusted; each is named in the commit.
-Everything runs in-process against a toy HOME, a toy forge.json, toy profiles, a toy config/ and a toy forge root."""
+Everything runs in-process against a toy HOME, a toy forge.json, toy projects, a toy config/ and a toy forge root."""
 import contextlib
 import io
 import json
@@ -186,7 +186,7 @@ def project():
     return d
 
 
-def profile(ppath, name, **over):
+def project_file(ppath, name, **over):
     p = {"project": name, "project_path": ppath, "servers": [], "plugins_keep": ["keep@toy"], "skills_keep": ["*"]}
     p.update(over)
     return {k: v for k, v in p.items() if v != "DROP"}
@@ -196,13 +196,13 @@ _w = [0]
 
 
 class World:
-    """A toy config/ (registry, secrets link, profiles)."""
+    """A toy config/ (registry, secrets link, projects)."""
 
     def __init__(self):
         _w[0] += 1
         self.base = os.path.join(TOY, "world%d" % _w[0])
         self.cfg = os.path.join(self.base, "config")
-        self.pdir = os.path.join(self.cfg, "profiles")
+        self.pdir = os.path.join(self.cfg, "projects")
         os.makedirs(self.pdir)
         with open(os.path.join(self.cfg, "mcp-registry.json"), "w") as f:
             f.write('{"servers": {}}')
@@ -219,12 +219,12 @@ class World:
             json.dump(prof, f)
 
     def run(self, apply=True, root=None):
-        """One generator run over this world's profiles, with `lib.ROOT` as the toy forge checkout `root` (the real one when None)."""
-        sync.CFG, lib.PROFILES = self.cfg, self.pdir
+        """One generator run over this world's projects, with `lib.ROOT` as the toy forge checkout `root` (the real one when None)."""
+        sync.CFG, lib.PROJECTS = self.cfg, self.pdir
         for pf in os.listdir(self.pdir):
             pp = json.load(open(os.path.join(self.pdir, pf)))["project_path"]
             if not os.path.realpath(pp).startswith(TOY + os.sep):
-                sys.exit("FENCE: a toy profile points outside the toy world -- nothing run")
+                sys.exit("FENCE: a toy project points outside the toy world -- nothing run")
         real_ctx, real_root = lib.context, lib.ROOT
         lib.context = lambda argv: lib.Ctx(bool(argv), set(self.names), False)
         lib.ROOT = root or real_root
@@ -287,7 +287,7 @@ check("fixture: the hand-written expectation is 8 rules (5 tracked entries but p
 check("fixture: logs/ is on disk, untracked", os.path.isdir(os.path.join(ROOT1, "logs")) and "logs" not in TRACKED[ROOT1], TRACKED[ROOT1])
 pp = project()
 w = World()
-w.put(profile(pp, "app"))
+w.put(project_file(pp, "app"))
 code, out = w.run(apply=False, root=ROOT1)
 want_lines = ["  + deny %s  %s" % (r, WHY) for r in WANT1]
 check("dry-run: exit 0 and no `!` -- %s" % bang(out), code == 0 and not bang(out), out)
@@ -349,37 +349,37 @@ check("forge path hard-coded -- %s" % deny_of(pp), deny_of(pp) == WANT2 and not 
 check("forge path hard-coded: no rule names the real checkout -- %s" % [r for r in deny_of(pp) or [] if REAL_ROOT in r],
       not any(REAL_ROOT in r for r in deny_of(pp) or []), deny_of(pp))
 
-# ------------------------------------------------------------------------------------------ 2. forge's own profile gets none
+# ------------------------------------------------------------------------------------------ 2. forge's own project gets none
 ppf = project()
 wf = World()
-wf.put(profile(ppf, "forge"))
+wf.put(project_file(ppf, "forge"))
 code, out = wf.run(root=ROOT1)
-check("deny written into the forge profile -- %s" % deny_of(ppf), not deny_of(ppf) and "+ deny" not in out and code == 0, (deny_of(ppf), out))
-# the same rule by path: a profile of another name whose project is the checkout is forge's own too (the toy root is inside the toy world)
+check("deny written into the forge project -- %s" % deny_of(ppf), not deny_of(ppf) and "+ deny" not in out and code == 0, (deny_of(ppf), out))
+# the same rule by path: a project of another name whose project is the checkout is forge's own too (the toy root is inside the toy world)
 wo = World()
-wo.put(profile(ROOT1, "mirror"))
+wo.put(project_file(ROOT1, "mirror"))
 code, out = wo.run(root=ROOT1)
-check("deny written into the forge profile: one whose project is the checkout -- %s" % deny_of(ROOT1), not deny_of(ROOT1) and "+ deny" not in out, (deny_of(ROOT1), out))
-# and a profile whose project is inside plugins/ (fwx) is a project like any other: it gets the rules, none of them on plugins/
+check("deny written into the forge project: one whose project is the checkout -- %s" % deny_of(ROOT1), not deny_of(ROOT1) and "+ deny" not in out, (deny_of(ROOT1), out))
+# and a project whose project is inside plugins/ (fwx) is a project like any other: it gets the rules, none of them on plugins/
 ppp = os.path.join(ROOT1, "plugins", "toy")
 wp = World()
-wp.put(profile(ppp, "toyplugin"))
+wp.put(project_file(ppp, "toyplugin"))
 code, out = wp.run(root=ROOT1)
-check("plugin profile: gets the rules of the other entries -- %s" % deny_of(ppp), deny_of(ppp) == WANT1, (deny_of(ppp), out))
-check("plugin profile: its own folder is not denied -- %s" % denied(deny_of(ppp) or [], os.path.join(ppp, "probe.txt")),
+check("plugin project: gets the rules of the other entries -- %s" % deny_of(ppp), deny_of(ppp) == WANT1, (deny_of(ppp), out))
+check("plugin project: its own folder is not denied -- %s" % denied(deny_of(ppp) or [], os.path.join(ppp, "probe.txt")),
       not denied(deny_of(ppp) or [], os.path.join(ppp, "probe.txt")), deny_of(ppp))
 
-# a frozen profile and one with no project_path get nothing, as before
+# a frozen project and one with no project_path get nothing, as before
 ppz = project()
 wz = World()
-wz.put(profile(ppz, "frozen", frozen=True))
+wz.put(project_file(ppz, "frozen", frozen=True))
 wz.run(root=ROOT1)
 check("frozen: nothing written -- %s" % os.path.exists(slp(ppz)), not os.path.exists(slp(ppz)), "")
 
 # a project whose folder is gone gets nothing: writing the file would make the folder again and hide the `!` line of the codex step
 gone = os.path.join(TOY, "gone-project")
 wg = World()
-wg.put(profile(gone, "gone", plugins_keep="DROP", skills_keep="DROP"))
+wg.put(project_file(gone, "gone", plugins_keep="DROP", skills_keep="DROP"))
 code, out = wg.run(root=ROOT1)
 check("missing folder: the project folder is not created -- %s" % os.path.exists(gone), not os.path.exists(gone) and "+ deny" not in out, out)
 
@@ -387,13 +387,13 @@ check("missing folder: the project folder is not created -- %s" % os.path.exists
 ppm = project()
 wm = World()
 HAND = "Bash(rm -rf /:*)"
-wm.put(profile(ppm, "mixed", permissions={"allow": ["Bash(git status:*)"], "deny": ["Edit(//somewhere/else/**)"],
+wm.put(project_file(ppm, "mixed", permissions={"allow": ["Bash(git status:*)"], "deny": ["Edit(//somewhere/else/**)"],
                                           "additionalDirectories": ["/design/one"]}))
 os.makedirs(os.path.dirname(slp(ppm)), exist_ok=True)
 lib.write_json(slp(ppm), {"permissions": {"deny": [HAND], "allow": ["Bash(ls:*)"], "additionalDirectories": ["/by/hand"]}})
 code, out = wm.run(root=ROOT1)
 d = deny_of(ppm) or []
-check("union: the hand-set rule, the profile's own and the generated ones are all there -- %s" % d,
+check("union: the hand-set rule, the project's own and the generated ones are all there -- %s" % d,
       d[:1] == [HAND] and "Edit(//somewhere/else/**)" in d and set(WANT1) <= set(d) and len(d) == len(set(d)) == len(WANT1) + 2, d)
 check("union: allow and additionalDirectories are not disturbed -- %s" % perms_of(ppm),
       (perms_of(ppm) or {}).get("allow") == ["Bash(ls:*)", "Bash(git status:*)"]
@@ -405,9 +405,9 @@ d = deny_of(ppm) or []
 gone = [r for r in WANT1 if "/skills/" in r]
 check("entry removed: its rule goes and the others stay -- %s" % [r for r in WANT1 if r in d and "/skills/" in r],
       len(gone) == 1 and not any(r in d for r in gone) and all(r in d for r in WANT1 if r not in gone), d)
-check("entry removed: the hand-set rule and the profile's own stay", HAND in d and "Edit(//somewhere/else/**)" in d, d)
+check("entry removed: the hand-set rule and the project's own stay", HAND in d and "Edit(//somewhere/else/**)" in d, d)
 # the entry comes back: the rules come back
-wm.put(profile(ppm, "mixed", permissions={"allow": ["Bash(git status:*)"], "deny": ["Edit(//somewhere/else/**)"]}))
+wm.put(project_file(ppm, "mixed", permissions={"allow": ["Bash(git status:*)"], "deny": ["Edit(//somewhere/else/**)"]}))
 os.makedirs(os.path.join(ROOT1, "skills", "x"), exist_ok=True)
 with open(os.path.join(ROOT1, "skills", "x", "SKILL.md"), "w") as f:
     f.write("x\n")
@@ -449,7 +449,7 @@ with open(os.path.join(BIN, "claude"), "w") as f:
 os.chmod(os.path.join(BIN, "claude"), 0o755)
 with open(os.path.join(sandbox_cfg.cfg, "framework-permissions.json"), "w") as f:
     json.dump({"schema": 1, "allow": [{"rule": "Bash(fwx linear comment:*)", "roles": ["orchestrator"], "why": "t", "measured": "t"}]}, f)
-sandbox_cfg.put(profile(ppf2, "fwapp", framework=True, checks=["make test"], permissions={"additionalDirectories": ["/design/one"]}))
+sandbox_cfg.put(project_file(ppf2, "fwapp", framework=True, checks=["make test"], permissions={"additionalDirectories": ["/design/one"]}))
 code, out = sandbox_cfg.run(root=ROOT1)
 pf = perms_of(ppf2) or {}
 check("framework on: exit 0, no `!` -- %s" % bang(out), code == 0 and not bang(out), out)
@@ -461,8 +461,8 @@ code, out = sandbox_cfg.run(root=ROOT1)
 check("framework on: a second apply is byte-identical -- %s" % [l for l in out.splitlines() if l.startswith("  + ")], raw(slp(ppf2)) == before, out)
 
 # ------------------------------------------------------------------------------------------ 5. a second apply writes nothing
-# The first --apply of a profile that uses claude-mem-lite creates data/memory-lite/<store> in the checkout (memory.derive_lite_env),
-# a checkout that had no data/ before. A profile run earlier in the same apply (here `a5`, no lite) read the checkout before that, so
+# The first --apply of a project that uses claude-mem-lite creates data/memory-lite/<store> in the checkout (memory.derive_lite_env),
+# a checkout that had no data/ before. A project run earlier in the same apply (here `a5`, no lite) read the checkout before that, so
 # its first apply wrote no rule for data/ and the second one added them: a rewrite of settings.local.json and owned.json on the next session start (the fixture of tests/test_sync_fixture.py on
 # the installed checkout: "a second --apply writes nothing (no write lines, every mtime unchanged): exit 0, lines [], changed
 # ['home/.local/state/forge', 'home/.local/state/forge/owned.json', ...]"). data/ is now denied whether or not it exists yet.
@@ -472,8 +472,8 @@ check("idempotent: the toy checkout has no data/ before the first apply", not os
 pp5 = project()
 w5 = World()
 pp5a = project()
-w5.put(profile(pp5a, "a5"))  # profiles run in file order: a5 before memapp5
-w5.put(profile(pp5, "memapp5", plugins_keep=[memory.LITE_PLUGIN]))
+w5.put(project_file(pp5a, "a5"))  # projects run in file order: a5 before memapp5
+w5.put(project_file(pp5, "memapp5", plugins_keep=[memory.LITE_PLUGIN]))
 real_lite = memory.LITE_ROOT
 memory.LITE_ROOT = os.path.join(ROOT5, "data", "memory-lite")
 try:
@@ -492,7 +492,7 @@ check("second apply: byte-identical and no `+ deny` -- %s" % plus_deny(out2),
 # a project whose file was written when forge still made Write rules: the next apply takes the Write rules out and keeps the Edit ones
 ppo = project()
 wo = World()
-wo.put(profile(ppo, "old"))
+wo.put(project_file(ppo, "old"))
 sync.FORGE_DENY_TOOLS = ("Edit", "Write")
 try:
     wo.run(root=ROOT1)

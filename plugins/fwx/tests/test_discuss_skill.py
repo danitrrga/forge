@@ -16,6 +16,18 @@ on the option lines (`a. <option>: <what it implies>` at line 13, `b.` at 14) or
   - lettered option "b. drop it, suggest b" in SKILL.md: FAIL: no recommendation in a question -> SKILL.md:20 b. drop it, suggest b
   - "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'
   - `models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:
+No verdict page is waited on or served, and no opener is named: no .md under skills/, agents/ and playbooks/ names `verdict wait`,
+`--serve` or `xdg-open` (how a page is opened for the owner is in his own instructions).
+Seen red on master before the texts changed (first match per file; 18 .md files looked at):
+  FAIL: no verdict wait, serve or opener in the discuss and the agents -> agents/demo.md names '--serve'
+  FAIL: no verdict wait, serve or opener in the discuss and the agents -> skills/discuss/SKILL.md names 'xdg-open'
+Widened to every skill and playbook, red before the session texts changed (32 .md files looked at):
+  FAIL: ... -> playbooks/session.md names 'xdg-open'
+  FAIL: ... -> skills/session/SKILL.md names 'xdg-open'
+  FAIL: ... -> skills/session/references/ui-review.md names 'xdg-open'
+The verdict keys reach the demo (16 checks); red on the texts before the fix (rc=1, 32 .md files looked at):
+  FAIL: step 7 names verdict_tool and verdict_command in the sentence that launches demo -> step 7 launch clause: ' (`models.demo.normal`)'
+  FAIL: demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them -> agents/demo.md has no line with 'fwx discuss --json' and both keys
 Length is not checked here: it is measured and reported, not capped. Each change also has an in-file control on a toy (the "control:" checks).
 """
 import json
@@ -66,6 +78,15 @@ def problems(files, demo_text):
     return out
 
 
+WAITS = re.compile(r"verdict wait|--serve|xdg-open")
+
+
+def waiting(texts):
+    """texts: {name: text}. Returns [(check, detail)] for each file that names a verdict wait, a serve or an opener."""
+    return [("no verdict wait, serve or opener in the skills, agents and playbooks", "%s names %r" % (n, m.group(0)))
+            for n, t in sorted(texts.items()) for m in [WAITS.search(t)] if m]
+
+
 def read(*p):
     with open(os.path.join(ROOT, *p), encoding="utf-8") as f:
         return f.read()
@@ -76,7 +97,29 @@ for f in ("rounds.md", "playback.md", "reentry.md"):
     files[f] = read("skills", "discuss", "references", f)
 demo = read("agents", "demo.md")
 
+agent_texts = {}
+for sub in ("skills", "agents", "playbooks"):
+    for dirpath, _, names in os.walk(os.path.join(ROOT, sub)):
+        for n in names:
+            if n.endswith(".md"):
+                full = os.path.join(dirpath, n)
+                with open(full, encoding="utf-8") as fh:
+                    agent_texts[os.path.relpath(full, ROOT)] = fh.read()
+print("looked at %d .md files under skills/, agents/ and playbooks/" % len(agent_texts))
+check("the skill, agent and playbook texts are looked at (zero is a failure)", len(agent_texts) > 0)
+for name, detail in waiting(agent_texts):
+    check(name, False, detail)
+
 check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```json" in demo)
+
+# the verdict keys reach the demo: the launch sentence of step 7 names both, and the demo gets them itself when its prompt lacks them
+step7 = [l for l in files["SKILL.md"].splitlines() if l.startswith("7. ")]
+launch7 = step7[0].split("launch `demo`", 1)[-1].split(";", 1)[0] if step7 and "launch `demo`" in step7[0] else ""
+check("step 7 names verdict_tool and verdict_command in the sentence that launches demo",
+      "`verdict_tool`" in launch7 and "`verdict_command`" in launch7, "step 7 launch clause: %r" % launch7[:90])
+gets = [l for l in demo.splitlines() if "fwx discuss --json" in l and "`verdict_tool`" in l and "`verdict_command`" in l]
+check("demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them",
+      len(gets) == 1, "agents/demo.md has no line with 'fwx discuss --json' and both keys")
 for name, detail in problems(files, demo):
     check(name, False, detail)
 
@@ -94,6 +137,10 @@ for label, files2, demo2, want in [
 ]:
     got = [c for c, _ in problems(files2, demo2)]
     check("control: " + label, want in got, "got %s" % got)
+
+check("control: a text with no wait passes", waiting({"a.md": "show the page."}) == [])
+for bad in ("verdict wait <dir>", "verdict <dir> --serve", "end with its `xdg-open` line"):
+    check("control: %r fails" % bad, len(waiting({"a.md": "x " + bad})) == 1)
 
 print("looked at %d checks" % looked[0])
 for f in fails:

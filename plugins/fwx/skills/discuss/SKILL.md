@@ -15,7 +15,7 @@ Context. Read no long file or investigation yourself: a `researcher` returns sum
 
 3. **What does the owner ask?** Unsure: ask in round one.
    - Work on the project: the subproject from the message and `subprojects` (unsure: ask, research waits). Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher` (`models.researcher.small`): code map, `.fwx/` state, for UI the design documents and component skill. Do not wait. First check: what you understood, the subproject and why, what waits in Linear (`waiting.groups` by age, each issue with its URL; "Linear: not checked (reason)" if NOT RUN).
-   - Improve the system, or a new model: give `/fwx:improve`.
+   - Improve the system, or a new model: not built yet. Say so in one line and offer nothing for it.
    - Trivial: only the owner calls a change trivial, by no threshold of yours; when it could be, offer "plain Claude, no workflow" in round one. Picked: one line, no phase; if it passes the closed list (step 9), give `/fwx:factory-issue`.
    - Continue: with no phase bound, `fwx:session`; for an issue the factory returned (a `needs-owner` or `factory-failed` one he picks), `fwx:session retake <KEY>`; a `factory-review` one, its URL only.
 
@@ -25,7 +25,7 @@ Context. Read no long file or investigation yourself: a `researcher` returns sum
 
 6. **Research.** A fact you can look up goes to a `researcher` without holding the round; a bigger investigation, after his yes, to one on `models.researcher.normal`.
 
-7. **UI with demos.** For a bounded UI decision launch `demo` (`models.demo.normal`); when it returns, end your message with its `xdg-open` line and run `python3 <verdict_tool> verdict wait <dir>` in the background. His pick goes into `Approved UI` of `context.md`. No UI choice is closed in chat. Without `verdict_tool`, give each `xdg-open`; he answers by letter.
+7. **UI with demos.** For a bounded UI decision launch `demo` (`models.demo.normal`) with `verdict_tool` and `verdict_command` as `fwx discuss --json` printed them; when it returns, open the page for the owner the way the user's instructions say, say in one line it is ready and end the turn, never waiting on it. His pasted answer's pick and note go into `Approved UI` of `context.md`. No UI choice is closed in chat. Without `verdict_tool`, hand him each figure the same way; he answers by letter.
 
 8. **Playback and sign-off.** When all is said, wait for every `decisions` to return, then give the playback per `${CLAUDE_PLUGIN_ROOT}/skills/discuss/references/playback.md`. He may correct, want more research, split into phases (`references/reentry.md`) or sign off; only that ends it.
 

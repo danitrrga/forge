@@ -7,7 +7,9 @@ its text.
 Node: a rectangle, ellipse or diamond with text of its own, deleted elements ignored. Its kind is the border
 colour of the tree's legend (NODE_COLOURS); a colour outside it is an error. A node whose text starts with an
 arrow character is a `connector` (it carries no block and is a legal destination of an exit); a light grey
-figure is a note, counted and otherwise ignored. A figure with no text (a zone, a legend swatch) is nothing.
+figure is a note, counted and otherwise ignored. A figure with no text (a zone, a legend swatch) is nothing. An element marked `customData.fwx == "map"` belongs to a
+second drawing in the same file (a map of the system, not the workflow) and is not read at all: not a node, a note,
+an arrow, a text, nor an error.
 Arrow: joins two nodes by its bindings; its kind is read from its stroke (ARROW_STROKES). An arrow between
 two figures with no text is the legend's and does not count. Anything else wrong with an arrow is an error.
 
@@ -62,6 +64,11 @@ class Tree:
         return [a for a in self.arrows if a.src == id]
 
 
+def _is_map(e):
+    c = e.get("customData")
+    return isinstance(c, dict) and c.get("fwx") == "map"
+
+
 def _one_line(text):
     return re.sub(r"\s+", " ", text or "").strip()
 
@@ -89,7 +96,7 @@ def parse(data):
     """The Tree of a loaded Excalidraw document; TreeError lists every fault found."""
     if not isinstance(data, dict) or data.get("type") != "excalidraw" or not isinstance(data.get("elements"), list):
         raise TreeError("not an Excalidraw file: expected a JSON object with type \"excalidraw\" and an elements list")
-    live = [e for e in data["elements"] if isinstance(e, dict) and not e.get("isDeleted")]
+    live = [e for e in data["elements"] if isinstance(e, dict) and not e.get("isDeleted") and not _is_map(e)]
     by_id = {e["id"]: e for e in live if "id" in e}
     texts = [e for e in live if e.get("type") == "text"]
     own_text = {}

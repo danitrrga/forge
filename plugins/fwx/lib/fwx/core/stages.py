@@ -152,3 +152,38 @@ def advance(dir, to, why="", cwd=None, table=None):
     detail = ("%s %s" % (to, why or "")).strip()
     state.append_audit(dir, "stage", detail=detail, cwd=str(dir) if cwd is None else cwd)
     return frm
+
+
+# ---- progress ---------------------------------------------------------------------------------------------------------
+
+SESSION_ORDER = ("discuss", "premortem", "planning", "postmortem", "executing", "reviewing", "ui-walk", "phase-review", "closed")
+_EXECUTING = SESSION_ORDER.index("executing")
+
+
+def progress(stage, part=None, parts=None):
+    """How far a session phase is, 0.0 to 1.0, for a status bar: the owner's rule. The line is the nine stages of
+    SESSION_ORDER (the session machine of data/stages.json without `cancelled`); each finished stage counts 1, and `executing`
+    counts by its parts: the parts finished over `parts`. The result is the units done over 9.
+      - a stage before `executing`: its index (`premortem` is 1 of 9).
+      - `executing` in part N of P (`part`, `parts`; 1 and 1 when not named): the parts before N are finished, so 4 + (N - 1) / P
+        (4 stages done and part 1 of 2 finished, that is part 2 in hand, is 4.5 of 9; part 1 in hand is 4 of 9).
+      - `reviewing`, `ui-walk` and `phase-review` are a part's checks and come once per part: until the last part they add
+        nothing past that part's share of `executing` (4 + N / P), so the bar never goes back when the next part starts; on the
+        last part `executing` is finished (5) and each of the three is one more (5, 6, 7).
+      - `closed`: 9 of 9.
+    None where the stage has no place on that line: `cancelled`, a factory stage, a stage not in the table."""
+    if stage not in SESSION_ORDER:
+        return None
+    i = SESSION_ORDER.index(stage)
+    if stage == "closed":
+        done = len(SESSION_ORDER)
+    elif i < _EXECUTING:
+        done = i
+    else:
+        total = max(parts or 1, 1)
+        n = min(max(part or 1, 1), total)
+        if stage == "executing":
+            done = _EXECUTING + (n - 1) / total
+        else:
+            done = _EXECUTING + n / total + ((i - _EXECUTING - 1) if n == total else 0)
+    return round(done / len(SESSION_ORDER), 3)

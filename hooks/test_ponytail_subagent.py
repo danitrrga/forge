@@ -1,8 +1,11 @@
-"""hooks/ponytail_subagent.py against a toy Ponytail install: the eight GSD agents that execute, debug
-or review and the framework's two reviewers (fwx:reviewer, fwx:security-reviewer) get the ruleset, every
-other agent gets nothing (fwx:executor, fwx:review-verifier and workflow-subagent included), a broken install is a visible error, and a
+"""hooks/ponytail_subagent.py against a toy Ponytail install: the framework's two reviewers (fwx:reviewer,
+fwx:security-reviewer) get the ruleset, every other agent gets nothing (the eight gsd-* agents, fwx:executor,
+fwx:review-verifier and workflow-subagent included), a broken install is a visible error, and a
 manual /ponytail change holds for its own session and no other.
 
+Seen to fail first for the gsd-* names leaving AGENTS, on the hook as it was: "gsd-executor: want no output, got the
+ruleset" (the brief's "got PONYTAIL MODE ACTIVE" is the first words of that ruleset) and the same for the other seven
+gsd-* names, 8 of 37 cases failed.
 Seen to fail first for the framework's reviewers (3.4 U6), on the hook as it was: "fwx:reviewer: want the full
 ruleset, got exit 0, stdout ''" and the same for fwx:security-reviewer, 2 of 40 cases failed; the OFF names
 already passed, as they must. Earlier: before the hook existed every case failed ("can't open file .../ponytail_subagent.py",
@@ -20,12 +23,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "..
 import sandbox  # noqa: E402
 
 HOOK = os.path.join(os.path.dirname(os.path.realpath(__file__)), "ponytail_subagent.py")
-ON = ["gsd-executor", "gsd-debugger", "gsd-code-fixer", "gsd-code-reviewer", "gsd-verifier",
-      "gsd-security-auditor", "gsd-nyquist-auditor", "gsd-integration-checker",
-      "fwx:reviewer", "fwx:security-reviewer"]
+ON = ["fwx:reviewer", "fwx:security-reviewer"]
 # The framework's executor and review-verifier never get it (ponytail only when reviewing), and neither does a
 # framework agent launched without agentType, which reaches the hook as "workflow-subagent".
-OFF = ["gsd-planner", "gsd-phase-researcher", "general-purpose", "Explore", "gsd-executor-x", "x-gsd-executor", "",
+OFF = ["gsd-executor", "gsd-debugger", "gsd-code-fixer", "gsd-code-reviewer", "gsd-verifier", "gsd-security-auditor",
+       "gsd-nyquist-auditor", "gsd-integration-checker", "gsd-planner", "general-purpose", "Explore", "",
        "fwx:executor", "fwx:review-verifier", "workflow-subagent", "fwx:reviewer-x", "x-fwx:reviewer", "reviewer"]
 # The toy plugin's builder answers like Ponytail's: the header, then the level it was asked for.
 STUB = "exports.getPonytailInstructions = m => 'PONYTAIL MODE ACTIVE — level: ' + m + '\\n\\nrules';\n"
@@ -62,7 +64,7 @@ def prompt(text, session):
     return json.dumps({"hook_event_name": "UserPromptSubmit", "session_id": session, "prompt": text})
 
 
-def level(cfg, session, agent="gsd-executor"):
+def level(cfg, session, agent="fwx:reviewer"):
     """The level the session's `agent` gets, "-" for none."""
     r = run(cfg, start(agent, session))
     if not r.stdout.strip():
@@ -97,7 +99,7 @@ if r.returncode != 0 or r.stdout.strip():
 
 # An allowlisted agent with Ponytail not installed: no output, a non-blocking error that names the fix.
 checked += 1
-r = run(toy(with_plugin=False), start("gsd-executor"))
+r = run(toy(with_plugin=False), start("fwx:reviewer"))
 if r.stdout.strip() or r.returncode != 1 or "ponytail@ponytail" not in r.stderr:
     fails.append("no plugin: want exit 1, no stdout, stderr naming ponytail@ponytail; got exit %d, stdout %r, stderr %r"
                  % (r.returncode, r.stdout[:120], r.stderr[-200:]))
@@ -126,7 +128,7 @@ for i, (label, texts, want_level) in enumerate(SEQUENCES):
     for t in texts:
         r = run(cfg, prompt(t, sid))
         quiet = quiet and r.returncode == 0 and not r.stdout.strip()
-    got = (quiet, level(cfg, sid), level(cfg, sid, "gsd-planner"), level(cfg, "fresh-%d" % i))
+    got = (quiet, level(cfg, sid), level(cfg, sid, "fwx:executor"), level(cfg, "fresh-%d" % i))
     if got != (True, want_level, "-", "full"):
         fails.append("%s: (silent, executor, planner, a new session) = %r, want %r" % (label, got, (True, want_level, "-", "full")))
 

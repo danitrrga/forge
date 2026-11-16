@@ -149,6 +149,43 @@ t, err = read(alive)
 s.ok("control: the same elements not deleted do count", t is not None and len(t.nodes) == 8 and len(t.arrows) == 7,
      "err=%s nodes=%s arrows=%s" % (err, t and len(t.nodes), t and len(t.arrows)))
 
+# ---- a second drawing in the same file, marked customData.fwx == "map", is not read at all.
+# Seen red before tree.py skipped it, on the toy plus a map-marked rectangle in the note colour, one in a colour the
+# legend lacks, a free text and a line:
+#   FAIL: a map-marked drawing is not read: err=unknown colour #123456 on node m_odd «Map odd»: the legend has #047857, ...
+#   (the note-coloured map rectangle alone is counted as a second note; the unknown-colour one is an error)
+def with_map(data):
+    mark = {"customData": {"fwx": "map"}}
+    data["elements"] += shape("m_note", "rectangle", NOTE, "Map box", 1200, 0)
+    data["elements"] += shape("m_odd", "rectangle", "#123456", "Map odd", 1200, 100)
+    data["elements"] += shape("m_ell", "ellipse", AGENT, "Map ellipse", 1200, 200)
+    data["elements"].append({"type": "text", "id": "m_free", "x": 1200, "y": 300, "width": 80, "height": 20,
+                             "text": "Map free text", "originalText": "Map free text", "containerId": None,
+                             "isDeleted": False, "strokeColor": "#1f2937"})
+    data["elements"].append({"type": "line", "id": "m_line", "x": 1200, "y": 340, "width": 100, "height": 0,
+                             "strokeColor": "#374151", "strokeStyle": SOLID, "isDeleted": False,
+                             "points": [[0, 0], [100, 0]]})
+    for x in data["elements"]:
+        if x["id"].startswith("m_"):
+            x.update(mark)
+    return data
+
+
+def summary(t):
+    return ([(n.id, n.kind, n.text) for n in t.nodes], [(a.id, a.kind, a.src, a.dst, a.label) for a in t.arrows], t.notes)
+
+
+plain, _ = read(toy())
+marked, err = read(with_map(toy()))
+s.ok("a map-marked drawing is not read", marked is not None and plain is not None and summary(marked) == summary(plain),
+     "err=%s notes=%s" % (err, marked and marked.notes))
+bad = with_map(toy())
+for x in bad["elements"]:
+    x.pop("customData", None)
+_, err = read(bad)
+s.ok("control: the same unknown-colour rectangle without the mark is still an error",
+     err and "unknown colour #123456 on node m_odd" in err, "got %r" % err)
+
 # ---- mutations: each must fail with its message
 bad = toy()
 element(bad, "n_agent")["strokeColor"] = "#123456"

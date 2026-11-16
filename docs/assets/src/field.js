@@ -3,7 +3,7 @@
 // after the e. The letters are drawn on a hidden canvas one pixel per cell, so their shape is the typeface's.
 window.drawField = async function (el, o) {
   const F = window.FORGE, CW = o.cw, RH = o.rh, COLS = o.cols, ROWS = o.rows;
-  const src = ["config/profiles/api.claude.json", "config/profiles/site.claude.json", "~/code/api/.claude/settings.local.json"]
+  const src = ["config/projects/api.claude.json", "config/projects/site.claude.json", "~/code/api/.claude/settings.local.json"]
     .map(k => F.files[k]).join("").replace(/\s+/g, "");
   el.style.gridTemplateColumns = "repeat(" + COLS + "," + CW + "px)";
   el.style.gridAutoRows = RH + "px";

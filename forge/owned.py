@@ -1,7 +1,7 @@
 """The record of what forge wrote.
 
 forge decides what in a shared file is its own without state (an exact command, a file shape, a
-declaration), so something it wrote outlives its source: a permission taken out of a profile stays in
+declaration), so something it wrote outlives its source: a permission taken out of a project stays in
 settings.local.json, a hook row deleted from forge/hooks.py keeps its entry in ~/.claude/settings.json.
 This module remembers, per file, what the last run put there, so the next run can tell what it
 stopped wanting and take only that out.
@@ -17,7 +17,7 @@ row, `file` the file itself. `at` locates it, and (kind, at) is the claim's iden
 two claims with the same kind and `at` are the same claim, whatever their sums. So for an item `at` ends in
 a locator the caller picks that names the element and is not a secret (a permission string, a hook's
 command), never a list index, which moves. `owner` is core, an
-integration's name or a profile. `part` is optional and names one writer's share of a file, so several writers
+integration's name or a project. `part` is optional and names one writer's share of a file, so several writers
 can claim in the same file without erasing each other: record(file, claims, apply, part="skills") replaces only
 the claims of that part and previous(file, part) returns only those. Without `part` (None) a call means the
 whole file's claims, and a claim without a "part" field (every registry written before parts

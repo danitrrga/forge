@@ -62,7 +62,7 @@ def identities(claims):
 
 perm1 = owned.claim("item", ["permissions", "allow", "Bash(ls:*)"], "Bash(ls:*)", "core")
 perm2 = owned.claim("item", ["permissions", "allow", "Bash(git status:*)"], "Bash(git status:*)", "core")
-env = owned.claim("key", ["env", "TOKEN"], FAKE_TOKEN, "toy-profile")
+env = owned.claim("key", ["env", "TOKEN"], FAKE_TOKEN, "toy-project")
 hook = owned.claim("hook", ["hooks", "SessionStart", 0], {"type": "command", "command": "x"}, "gsd")
 lnk = owned.claim("file", [], "skills/x -> /forge/skills/x", "core")
 
@@ -128,7 +128,7 @@ now = [owned.claim("item", ["permissions", "allow", "Bash(ls:*)"], "Bash(ls:*)",
 check("stale is exactly the claims whose identity is not claimed now",
       owned.stale(prev, now) == [perm2, hook], "got %r" % identities(owned.stale(prev, now)))
 check("a claim whose value changed but identity stays is not stale",
-      owned.stale([env], [owned.claim("key", ["env", "TOKEN"], "new", "toy-profile")]) == [])
+      owned.stale([env], [owned.claim("key", ["env", "TOKEN"], "new", "toy-project")]) == [])
 check("nothing claimed now makes every previous claim stale", owned.stale(prev, []) == prev)
 check("the same JSON path under another kind is a different identity",
       owned.stale([env], [owned.claim("item", ["env", "TOKEN"], FAKE_TOKEN, "core")]) == [env])

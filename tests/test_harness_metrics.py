@@ -16,7 +16,7 @@ test-harness-metrics.mjs at a981164f; the transcript-folder key became a paramet
    same world without the ancestor file must fail the same check on the ancestor row (the defect 8b5b27ad
    fixed in the source project).
 4. `forge metrics NAME` (cmd_metrics) in a toy world whose project path has a dot and a space: the unknown
-   project, a profile without project_path and a missing transcript folder are FAILs naming the project; the
+   project, a project without project_path and a missing transcript folder are FAILs naming the project; the
    metrics and the baseline reach the right folder.
 
 Seen failing before the change: 1 on "no such file: scripts/metrics/test-harness-metrics.mjs";
@@ -192,9 +192,9 @@ def baseline_cases(tmp):
 
 
 def commit_world(tmp):
-    """(toy HOME, repo path, profiles dir): a repo at a path with a dot and a space holding one commit,
+    """(toy HOME, repo path, projects dir): a repo at a path with a dot and a space holding one commit,
     one session in the transcript folder cli.transcript_key names whose Bash call made that commit, and
-    profiles for it, for one with no project_path and for one whose transcripts are missing."""
+    projects for it, for one with no project_path and for one whose transcripts are missing."""
     home = os.path.join(tmp, "cli", "home")
     repo = os.path.join(tmp, "cli", "work", "my.repo x")
     os.makedirs(repo)
@@ -213,19 +213,19 @@ def commit_world(tmp):
          "toolUseResult": {"stdout": "[main %s] feat: one" % short, "stderr": "", "interrupted": False, "isImage": False}},
     ]
     write(os.path.join(home, ".claude", "projects", key, "s1.jsonl"), "".join(json.dumps(l) + "\n" for l in turn))
-    profiles = os.path.join(tmp, "cli", "profiles")
+    projects = os.path.join(tmp, "cli", "projects")
     for name, prof in {"toy": {"project_path": repo}, "nopath": {}, "notranscripts": {"project_path": os.path.join(tmp, "cli", "elsewhere")}}.items():
-        write(os.path.join(profiles, name + ".claude.json"), json.dumps(dict(prof, project=name)))
+        write(os.path.join(projects, name + ".claude.json"), json.dumps(dict(prof, project=name)))
     os.makedirs(os.path.join(tmp, "cli", "elsewhere"))
-    return home, repo, profiles
+    return home, repo, projects
 
 
-def forge_metrics(home, profiles, **kw):
-    """(exit code, stdout, stderr) of cli.cmd_metrics over the toy world (the real HOME and profiles are never read)."""
+def forge_metrics(home, projects, **kw):
+    """(exit code, stdout, stderr) of cli.cmd_metrics over the toy world (the real HOME and projects are never read)."""
     args = dict(project="toy", session=None, baseline=False, since=None, until=None, events_until=None, json=True)
     args.update(kw)
-    real = lib.HOME, lib.PROFILES
-    lib.HOME, lib.PROFILES = home, profiles
+    real = lib.HOME, lib.PROJECTS
+    lib.HOME, lib.PROJECTS = home, projects
     out, err = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
@@ -233,31 +233,31 @@ def forge_metrics(home, profiles, **kw):
     except Exception as e:
         code = "raised %s: %s" % (type(e).__name__, e)
     finally:
-        lib.HOME, lib.PROFILES = real
+        lib.HOME, lib.PROJECTS = real
     return code, out.getvalue(), err.getvalue()
 
 
 def metrics_cases(tmp):
-    home, repo, profiles = commit_world(tmp)
+    home, repo, projects = commit_world(tmp)
     if not hasattr(cli, "cmd_metrics"):
         want("forge metrics exists", "no cmd_metrics", "cmd_metrics")
         return
-    code, out, err = forge_metrics(home, profiles)
+    code, out, err = forge_metrics(home, projects)
     report = json.loads(out) if code == 0 else {}
     want("forge metrics over a toy project", (code, report.get("metric2_tokensPerChange", {}).get("totalCommits")), (0, 1))
-    want("forge metrics --since after the session: zero sessions is a FAIL", forge_metrics(home, profiles, since=stamp(days=30)[:10])[0], 1)
-    code, out, err = forge_metrics(home, profiles, baseline=True)
+    want("forge metrics --since after the session: zero sessions is a FAIL", forge_metrics(home, projects, since=stamp(days=30)[:10])[0], 1)
+    code, out, err = forge_metrics(home, projects, baseline=True)
     want("forge metrics --baseline", (code, json.loads(out)["session"].endswith("s1.jsonl") if code == 0 else None), (0, True))
-    code, out, err = forge_metrics(home, profiles, baseline=True, session="nosuch")
+    code, out, err = forge_metrics(home, projects, baseline=True, session="nosuch")
     want("forge metrics --baseline with an unknown session", (code, "No session transcript found" in err), (1, True))
-    code, out, err = forge_metrics(home, profiles, project="nosuch")
+    code, out, err = forge_metrics(home, projects, project="nosuch")
     want("forge metrics of an unknown project", (code, "unknown project: nosuch" in out), (1, True))
-    code, out, err = forge_metrics(home, profiles, project="nopath")
-    want("forge metrics of a profile without project_path", (code, "nopath: the profile has no project_path" in out), (1, True))
-    code, out, err = forge_metrics(home, profiles, project="notranscripts")
+    code, out, err = forge_metrics(home, projects, project="nopath")
+    want("forge metrics of a project without project_path", (code, "nopath: the project has no project_path" in out), (1, True))
+    code, out, err = forge_metrics(home, projects, project="notranscripts")
     want("forge metrics of a project with no transcript folder", (code, "FAIL" in out, "notranscripts: no transcript folder" in out), (1, True, True))
-    want("forge metrics --baseline with --since", forge_metrics(home, profiles, baseline=True, since=stamp()[:10])[0], 1)
-    want("forge metrics with a session id and no --baseline", forge_metrics(home, profiles, session="s1")[0], 1)
+    want("forge metrics --baseline with --since", forge_metrics(home, projects, baseline=True, since=stamp()[:10])[0], 1)
+    want("forge metrics with a session id and no --baseline", forge_metrics(home, projects, session="s1")[0], 1)
 
 
 def main():

@@ -138,12 +138,12 @@ def lines_of(path):
     return read(path).splitlines() if os.path.exists(path) else None
 
 
-def generate(name, profile, apply=True, globals_=False, prepare=None):
+def generate(name, project_file, apply=True, globals_=False, prepare=None):
     """One agent_config run over a toy config/ holding the one project `name` (its directory is
     <TOY>/<name>/projects/p). Returns (exit code, output, the project's directory). `prepare(dir)`
     makes the project before the run."""
     base = os.path.join(TOY, name)
-    cfg, pdir = os.path.join(base, "config"), os.path.join(base, "config", "profiles")
+    cfg, pdir = os.path.join(base, "config"), os.path.join(base, "config", "projects")
     project = os.path.join(base, "projects", "p")
     os.makedirs(pdir)
     seed(os.path.join(cfg, "mcp-registry.json"), '{"servers": {}}')
@@ -153,9 +153,9 @@ def generate(name, profile, apply=True, globals_=False, prepare=None):
     os.makedirs(project, exist_ok=True)
     if prepare:
         prepare(project)
-    prof = dict({"project": "p", "servers": [], "project_path": project}, **profile)
+    prof = dict({"project": "p", "servers": [], "project_path": project}, **project_file)
     seed(os.path.join(pdir, "p.claude.json"), json.dumps(prof))
-    sync.CFG, lib.PROFILES = cfg, pdir
+    sync.CFG, lib.PROJECTS = cfg, pdir
     if not os.path.realpath(project).startswith(TOY + os.sep):
         sys.exit("FENCE: %s is outside the toy world -- nothing run" % project)
     ctx = lib.Ctx(apply, None, globals_)
@@ -353,7 +353,7 @@ def toy_root(name, integrations, *scripts):
     """A toy checkout with a config/forge.json, next to its own empty HOME; returns (root, home)."""
     base = os.path.join(TOY, name)
     root, home = os.path.join(base, "forge"), os.path.join(base, "home")
-    os.makedirs(os.path.join(root, "config", "profiles"))
+    os.makedirs(os.path.join(root, "config", "projects"))
     os.makedirs(home)
     sandbox.mini_root(root, *scripts)
     with open(os.path.join(root, "config", "forge.json"), "w", encoding="utf-8") as fh:

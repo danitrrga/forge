@@ -295,11 +295,18 @@ r = doctor()
 n_claims = sum(len(v) for v in load(REGISTRY)["claims"].values()) if os.path.exists(REGISTRY) else 0
 check("doctor after an apply: PASS saying how many files and claims it looked at -- %r" % (r,),
       r.level == "PASS" and "2 file" in r.detail and "%d claim" % n_claims in r.detail and n_claims > 0, r)
-edit(SETTINGS, lambda e: e.update(timeout=99) if e.get("command") == GONE_CMD else None)
+# The edited value must not be able to occur in the text by chance. It was 99, and "99" not in r.detail failed on
+# any checkout whose path holds those two characters, because GONE_CMD carries the checkout path (seen on a linked
+# worktree under .claude/worktrees/agent-<hex id with 99>: "FAIL doctor after a hand edit: WARN naming the file
+# and `at`, no value -- Result(level='WARN', name='owned', detail='changed since forge wrote them ... python3
+# <worktree path>/hooks/retired_router.py ..."; rc=1, 0 on a path without it). Now a value no path holds, looked
+# for in the detail with the one place the path appears (the claimed command) taken out first.
+EDITED = 424242
+edit(SETTINGS, lambda e: e.update(timeout=EDITED) if e.get("command") == GONE_CMD else None)
 r = doctor()
 check("doctor after a hand edit: WARN naming the file and `at`, no value -- %r" % (r,),
-      r.level == "WARN" and "settings.json" in r.detail and GONE_CMD in r.detail and "99" not in r.detail
-      and "PreToolUse" in r.detail, r)
+      r.level == "WARN" and "settings.json" in r.detail and GONE_CMD in r.detail
+      and str(EDITED) not in r.detail.replace(GONE_CMD, "") and "PreToolUse" in r.detail, r)
 break_registry()
 r = doctor()
 check("doctor over a record that does not read: FAIL, reading it as the cause -- %r" % (r,),

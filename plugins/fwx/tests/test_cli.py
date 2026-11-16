@@ -29,7 +29,7 @@ work = helpers.mkdtemp("fwx-cli-")
 os.makedirs(os.path.join(work, "bin"))
 shutil.copy(os.path.join(helpers.ROOT, "bin", "fwx"), os.path.join(work, "bin", "fwx"))
 shutil.copytree(os.path.join(helpers.ROOT, "lib", "fwx"), os.path.join(work, "lib", "fwx"),
-                ignore=shutil.ignore_patterns("__pycache__", "test.py"))
+                ignore=shutil.ignore_patterns("__pycache__"))
 commands = os.path.join(work, "lib", "fwx", "commands")
 for f in os.listdir(commands):  # the toy world has only the commands of its own table
     if f.endswith(".py") and f != "__init__.py":

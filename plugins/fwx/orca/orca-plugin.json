@@ -1,0 +1,49 @@
+{
+  "manifestVersion": 2,
+  "id": "fwx-session",
+  "name": "fwx session",
+  "version": "0.1.0",
+  "description": "Where the fwx session of the workspace in view stands: project, stage and part.",
+  "engines": {
+    "orca": ">=1.4.259"
+  },
+  "execution": "trusted-worker",
+  "pluginApi": 1,
+  "main": "src/worker.ts",
+  "contributes": {
+    "events": [
+      {
+        "on": "workspace.changed"
+      }
+    ],
+    "statusBarItems": [
+      {
+        "id": "session",
+        "text": "fwx",
+        "icon": "hammer",
+        "tooltip": "fwx session",
+        "command": "open"
+      }
+    ],
+    "panels": [
+      {
+        "id": "session",
+        "title": "Sesión",
+        "icon": "hammer",
+        "entry": "panel.html",
+        "ui": "html"
+      }
+    ],
+    "commands": [
+      {
+        "id": "open",
+        "title": "Abrir la sesión fwx"
+      }
+    ]
+  },
+  "capabilities": [
+    {
+      "kind": "workspace:read"
+    }
+  ]
+}

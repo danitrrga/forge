@@ -213,7 +213,7 @@ UI_RESEARCHER_NEW = (
     "`mcporter call exa.web_search_exa query=\"...\" numResults=8`, with "
     "`curl -s \"https://r.jina.ai/<url>\"` for a clean page read. Full routing table at "
     "@$HOME/.claude/skills/agent-reach/SKILL.md. Firecrawl stays flag-gated: it exists only in "
-    "the projects whose profile lists it. Prefer both over "
+    "the projects whose project lists it. Prefer both over "
     "WebSearch/WebFetch."
 )
 
@@ -587,7 +587,7 @@ def check_skill_refs(errors):
 
     WHY: the codebase-intelligence router sent three of its six rows to `gsd-map-codebase`, a
     skill never packaged into forge. It read as if it worked; invoking it did nothing.
-    verify_skill_refs.py only checks profile -> installed skill, the other direction.
+    verify_skill_refs.py only checks project -> installed skill, the other direction.
 
     A directory that is not there counts as empty: a fresh HOME, or a dry-run before the mirror
     exists, once raised FileNotFoundError here."""

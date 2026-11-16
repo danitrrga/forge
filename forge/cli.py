@@ -1,9 +1,9 @@
 """forge -- one command for the agent-config platform.
 
-  forge init             first run for a new checkout: config/forge.json, a profile for the checkout itself,
+  forge init             first run for a new checkout: config/forge.json, a project file for the checkout itself,
                          an empty registry and secrets file, then sync --apply --all and doctor
-  forge new PATH         register a project: config/profiles/NAME.claude.json, then sync --apply --project NAME
-  forge sync [--apply]   regenerate every project's config, in a fixed order, one run at a time
+  forge new PATH         register a project: config/projects/NAME.claude.json, then sync --apply NAME
+  forge sync [NAME | --all] [--apply]  regenerate every project's config (or NAME's), in a fixed order, one run at a time
   forge skills [--apply] the skill links (~/.claude/skills) and the GSD runtime, which belong to the machine, not to a project
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
                          with a project's name, only the checks that concern it, scoped to it
@@ -18,7 +18,7 @@
                          silent unless it wrote or has one
   forge lint             [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
-  forge uninstall [--integration N | --project N] [--apply]  take out what forge wrote (forge/uninstall.py)
+  forge uninstall [NAME | --integration N] [--apply]  take out what forge wrote (forge/uninstall.py)
 
 Every step is still the script it was (scripts/sync/*.py and the doctors); this is the one place
 that says which runs, in what order, and what "healthy" means.
@@ -63,14 +63,14 @@ def skill_name_clashes(only=None):
     """A WARN when a project skill (<project_path>/.claude/skills/<name>) is named like a global
     skill, else a PASS saying how many project skills in how many projects it read. The global names
     are forge's skills/ plus ~/.claude/skills, because some global skills live only there (omarchy and
-    diagnose-crash link into /usr/share/omarchy). Frozen profiles are skipped (docs/archive/orchestration-history.md,
+    diagnose-crash link into /usr/share/omarchy). Frozen projects are skipped (docs/archive/orchestration-history.md,
     because a frozen project's own copies of a global skill kept warning); the frozen drift row reports a
     frozen project's divergence. By name a frozen project is a SKIP. The name is project:skill, in
-    sorted order. A profile with no project_path, or whose directory is gone, is not read: a WARN naming it, and a FAIL when no project at all was read
+    sorted order. A project with no project_path, or whose directory is gone, is not read: a WARN naming it, and a FAIL when no project at all was read
     (non-negotiable 7). A project with no .claude/skills is read, and clean. With `only`, that
     project's skills alone (forge doctor NAME)."""
     shared = set(skills.skill_dirs(os.path.join(lib.ROOT, "skills"))) | skills.global_skills()
-    profs = lib.profiles()
+    profs = lib.projects()
     if only and profs.get(only, {}).get("frozen"):
         return lib.Result("SKIP", "skill names", "%s: frozen, forge does not read it (the frozen drift row reports it)" % only)
     clashes, unread, read, count = [], [], 0, 0
@@ -95,14 +95,14 @@ def skill_name_clashes(only=None):
 
 
 def nested_project_roots(only=None, profs=None):
-    """A FAIL when a project with skills of its own lives inside the git repository of another profile. forge switches the
+    """A FAIL when a project with skills of its own lives inside the git repository of another project. forge switches the
     enclosing project's neighbours' skills off (skills.neighbour_skills), Claude Code applies those settings inside the nested
     directory too, and an inner "on" does not override an outer "off" (tested with claude -p), so the nested
     project's own skills never appear. The standard is one git repository per project. A nested project without skills of its
-    own, one with its own repository, and one nested in a repository no profile owns are fine. Frozen profiles and profiles with
+    own, one with its own repository, and one nested in a repository no project owns are fine. Frozen projects and projects with
     no directory are not read, and a run that read no project at all is a FAIL (non-negotiable 7). With `only`, that project
     alone."""
-    profs = lib.profiles() if profs is None else profs
+    profs = lib.projects() if profs is None else profs
     bad, read, unread = [], 0, []
     for name, prof in sorted(profs.items()):
         if only not in (None, name) or prof.get("frozen"):
@@ -127,12 +127,12 @@ def nested_project_roots(only=None, profs=None):
         return lib.Result("FAIL", "project roots", "no project read" + note)
     if bad:
         return lib.Result("FAIL", "project roots", "; ".join(bad) + note)
-    return lib.Result("PASS", "project roots", "read %d project(s), none hides its own skills behind an enclosing profile%s" % (read, note))
+    return lib.Result("PASS", "project roots", "read %d project(s), none hides its own skills behind an enclosing project%s" % (read, note))
 
 
 def settings_forge_would_write(name, prof, registry):
     """The settings.local.json document the generator would write for `prof` (the dict forge/sync.py
-    hands skills.write_settings_local, as if the profile were not frozen), or None when it would write
+    hands skills.write_settings_local, as if the project were not frozen), or None when it would write
     nothing because the file is already what it says. Computed in memory: lib.write_json is replaced by
     a recorder for the call, so no byte reaches the project, no .bak and no ownership record either; the
     document is the last one recorded for a path other than the record's (owned.path()). The recorder is
@@ -162,21 +162,21 @@ def drift_size(doc, key):
 
 
 def frozen_drift(only=None):
-    """A WARN naming, per frozen profile, the settings.local.json keys whose value differs from what
-    forge would write there if the profile were not frozen (settings_forge_would_write); a PASS when
-    none differs. Always says how many frozen profiles it compared. A frozen profile that cannot be
+    """A WARN naming, per frozen project, the settings.local.json keys whose value differs from what
+    forge would write there if the project were not frozen (settings_forge_would_write); a PASS when
+    none differs. Always says how many frozen projects it compared. A frozen project that cannot be
     compared (no project_path, no such directory, a settings file that does not parse) is named in
-    a WARN, and when some profile is frozen and none could be compared the row is a FAIL (non-negotiable
-    7); with no frozen profile there is nothing to compare, a PASS. Frozen means forge writes nothing,
+    a WARN, and when some project is frozen and none could be compared the row is a FAIL (non-negotiable
+    7); with no frozen project there is nothing to compare, a PASS. Frozen means forge writes nothing,
     not that the file does not change: Claude Code rewrites settings.local.json itself (approvals,
-    permissions), and one frozen project's file approved 5 .mcp.json servers where its profile said none
+    permissions), and one frozen project's file approved 5 .mcp.json servers where its project said none
     (measured). Read-only. With `only`, that project's row (forge doctor NAME)."""
-    profs = lib.profiles()
+    profs = lib.projects()
     if only and not profs.get(only, {}).get("frozen"):
         return lib.Result("SKIP", "frozen drift", "%s is not frozen, so forge writes its settings and the generated row covers them" % only)
     frozen = {n: p for n, p in profs.items() if p.get("frozen") and only in (None, n)}
     if not frozen:
-        return lib.Result("PASS", "frozen drift", "no profile is frozen, nothing to compare")
+        return lib.Result("PASS", "frozen drift", "no project is frozen, nothing to compare")
     doc = lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json"), quiet=True)
     registry = doc.get("servers") if isinstance(doc, dict) else None
     if not isinstance(registry, dict):
@@ -199,7 +199,7 @@ def frozen_drift(only=None):
         if keys:
             drifts.append("%s: %s" % (name, ", ".join("%s (%s on disk, %s from forge)" % (k, drift_size(disk, k), drift_size(wanted, k))
                                                       for k in keys)))
-    count = "compared %d frozen profile(s)" % compared
+    count = "compared %d frozen project(s)" % compared
     note = "not read, no project_path, no such directory or an unreadable settings file: %s" % ", ".join(unread) if unread else ""
     if not compared:
         return lib.Result("FAIL", "frozen drift", "%s, and a check that saw nothing is not a pass; %s" % (count, note))
@@ -227,8 +227,8 @@ INSTRUCTION_SKIP = {"node_modules", "dist", "build", "venv", "env", "__pycache__
 
 
 def instruction_not_project():
-    """The profile names the instruction-file row does not read: config/forge.json's
-    `instruction_files_skip` (a machine's lists `dev`, all of ~/dev: it would repeat every other profile)."""
+    """The project names the instruction-file row does not read: config/forge.json's
+    `instruction_files_skip` (a machine's lists `dev`, all of ~/dev: it would repeat every other project)."""
     return set(lib.settings().get("instruction_files_skip") or [])
 
 
@@ -246,11 +246,11 @@ def instruction_paths(root):
 def instruction_file_blocks(only=None):
     """WARN lines, one per block a tool wrote into an instruction file of a project (project:file:line
     marker: fix), else a PASS that says how many files it read; a FAIL when it read none, since a
-    check that saw nothing is not a pass (non-negotiable 7). Frozen profiles are skipped, and so is
+    check that saw nothing is not a pass (non-negotiable 7). Frozen projects are skipped, and so is
     `dev`; nothing is written. A file read through two paths is one, named by its real path, and
     belongs to the deepest project that holds it (a project nested in another's tree is its own, not the outer one's). With `only`, that
     project's files alone."""
-    profs, skip = lib.profiles(), instruction_not_project()
+    profs, skip = lib.projects(), instruction_not_project()
     if only and (profs.get(only, {}).get("frozen") or only in skip):
         return lib.Result("SKIP", "instruction files", "%s: frozen or not a project, forge does not read it" % only)
     roots = sorted(((os.path.realpath(p["project_path"]), n) for n, p in profs.items()
@@ -286,7 +286,7 @@ def instruction_file_blocks(only=None):
     return lib.Result("PASS", "instruction files", count + ", no tool-managed block")
 
 
-# The smoke check of docs/command-guard-design.md ("Tests"): for every profile with
+# The smoke check of docs/command-guard-design.md ("Tests"): for every project with
 # `"command_guard": true`, the guard is wired, its config parses, and the wired command refuses a
 # canary and allows a harmless command.
 GUARD_KEYS = {"_doc", "secret_paths", "harness_paths"}
@@ -341,7 +341,7 @@ def guard_hook_entries(hooks, script):
 
 
 def settings_guard_entries(prof, script):
-    """The guard entries of the profile's project's settings.local.json: (path, entries, None), the
+    """The guard entries of the project's settings.local.json: (path, entries, None), the
     entries as guard_hook_entries lists them, or (path, None, why) when the file cannot be read."""
     slp = os.path.join(prof["project_path"], ".claude", "settings.local.json")
     try:
@@ -357,12 +357,12 @@ GUARD_ALL_TOOLS = (None, "", "*")
 
 
 def guard_problem(name, prof):
-    """Why this guarded profile's guard would not hold in a session, or None: the first thing wrong
-    among the profile's own hooks block, the settings file, the config file and the live command."""
+    """Why this guarded project's guard would not hold in a session, or None: the first thing wrong
+    among the project's own hooks block, the settings file, the config file and the live command."""
     if guard_hook_entries(prof.get("hooks"), skills.GUARD_SCRIPT):
-        return "the profile's hooks block also runs %s; command_guard is the one way to turn it on" % skills.GUARD_SCRIPT
+        return "the project's hooks block also runs %s; command_guard is the one way to turn it on" % skills.GUARD_SCRIPT
     if not prof.get("project_path"):
-        return "the profile has no project_path"
+        return "the project has no project_path"
     slp, entries, why = settings_guard_entries(prof, skills.GUARD_SCRIPT)
     if why:
         return why
@@ -391,36 +391,36 @@ def guard_problem(name, prof):
     return None
 
 
-def guard_profile_errors(field, only=None):
-    """[(project, why)], by name, for every profile lib.profiles leaves out for an error that names
-    `field` (command_guard, worktree_guard): a guard the profile asked for must not read as one it
+def guard_project_errors(field, only=None):
+    """[(project, why)], by name, for every project lib.projects leaves out for an error that names
+    `field` (command_guard, worktree_guard): a guard the project asked for must not read as one it
     did not ask for, so the guard's smoke check FAILs a row for each. `only` scopes it to one."""
     skipped = []
-    lib.profiles(skipped)
+    lib.projects(skipped)
     return sorted((f[:-len(".claude.json")], why) for f, why in skipped
                   if field in why and only in (None, f[:-len(".claude.json")]))
 
 
 def command_guard_smoke(only=None):
-    """One result per profile that sets command_guard (a frozen one gets no settings, so it is not
-    guarded), named `guard <project>`; one PASS when none does. With `only`, that profile alone."""
+    """One result per project that sets command_guard (a frozen one gets no settings, so it is not
+    guarded), named `guard <project>`; one PASS when none does. With `only`, that project alone."""
     rows = []
-    for name, prof in sorted(lib.profiles().items()):
+    for name, prof in sorted(lib.projects().items()):
         if only in (None, name) and prof.get("command_guard") is True and not prof.get("frozen"):
             why = guard_problem(name, prof)
             rows.append(lib.Result("FAIL", "guard " + name, why) if why else lib.Result(
                 "PASS", "guard " + name, "one canonical entry, config ok, `%s` refused, `%s` allowed" % (GUARD_CANARY, GUARD_BENIGN)))
-    rows += [lib.Result("FAIL", "guard " + n, why) for n, why in guard_profile_errors("command_guard", only)]
+    rows += [lib.Result("FAIL", "guard " + n, why) for n, why in guard_project_errors("command_guard", only)]
     return rows or lib.Result("PASS", "command guard", "%s does not turn it on, or is frozen" % only if only
-                              else "no profile turns it on")
+                              else "no project turns it on")
 
 
 # The worktree guard's smoke check (W3 of research/21-para-forge/04-guarda-de-worktrees.md): for
-# every profile that turns it on (lib.worktree_guard_on, not frozen), its settings.local.json holds
+# every project that turns it on (lib.worktree_guard_on, not frozen), its settings.local.json holds
 # exactly the canonical group, matcher included, and the wired command, run from a toy linked
 # worktree, refuses a Write into the toy's main checkout and allows one inside the worktree. Unlike
-# the command guard's, a profile that asks for it and is frozen is a FAIL (non-negotiable 7); no
-# profile asking for it is a SKIP.
+# the command guard's, a project that asks for it and is frozen is a FAIL (non-negotiable 7); no
+# project asking for it is a SKIP.
 WT_SCRIPT, WT_MATCHER = next(row[:2] for row in skills.GUARDS if row[0] == "worktree_guard.py")
 
 
@@ -456,9 +456,9 @@ def worktree_probe(command):
 
 
 def worktree_guard_problem(name, prof):
-    """Why this profile's worktree guard would not hold in a session, or None."""
+    """Why this project's worktree guard would not hold in a session, or None."""
     if not prof.get("project_path"):
-        return "the profile has no project_path"
+        return "the project has no project_path"
     slp, found, why = settings_guard_entries(prof, WT_SCRIPT)
     if why:
         return why
@@ -471,10 +471,10 @@ def worktree_guard_problem(name, prof):
 
 
 def worktree_guard_smoke(only=None):
-    """One result per profile that turns the worktree guard on (a frozen one gets no settings),
+    """One result per project that turns the worktree guard on (a frozen one gets no settings),
     named `worktree guard <project>`, each saying how many it checked; a FAIL when none does. With
-    `only`, that profile alone, and a PASS when it does not turn the guard on."""
-    guarded = [(n, p) for n, p in sorted(lib.profiles().items()) if lib.worktree_guard_on(p) and not p.get("frozen")]
+    `only`, that project alone, and a PASS when it does not turn the guard on."""
+    guarded = [(n, p) for n, p in sorted(lib.projects().items()) if lib.worktree_guard_on(p) and not p.get("frozen")]
     rows = []
     for name, prof in guarded:
         if only in (None, name):
@@ -482,43 +482,43 @@ def worktree_guard_smoke(only=None):
             rows.append(lib.Result("FAIL", "worktree guard " + name, "%s (%d guarded)" % (why, len(guarded))) if why
                         else lib.Result("PASS", "worktree guard " + name, "one canonical entry; from a toy worktree a Write "
                                         "into its main checkout refused, one inside allowed (%d guarded)" % len(guarded)))
-    rows += [lib.Result("FAIL", "worktree guard " + n, why) for n, why in guard_profile_errors("worktree_guard", only)]
+    rows += [lib.Result("FAIL", "worktree guard " + n, why) for n, why in guard_project_errors("worktree_guard", only)]
     if rows:
         return rows
     if only:
         return lib.Result("PASS", "worktree guard", "%s does not turn it on, or is frozen" % only)
-    # A profile that asks for the guard and is frozen is configured and checked by nothing: a FAIL. No
-    # profile asking for it is a stranger's legitimate zero, a SKIP (docs/portable-design.md section 6).
-    frozen = [n for n, p in sorted(lib.profiles().items()) if lib.worktree_guard_on(p) and p.get("frozen")]
+    # A project that asks for the guard and is frozen is configured and checked by nothing: a FAIL. No
+    # project asking for it is a stranger's legitimate zero, a SKIP (docs/portable-design.md section 6).
+    frozen = [n for n, p in sorted(lib.projects().items()) if lib.worktree_guard_on(p) and p.get("frozen")]
     if frozen:
-        return lib.Result("FAIL", "worktree guard", "checked 0 profiles: %s turn(s) it on but frozen, so forge wires "
+        return lib.Result("FAIL", "worktree guard", "checked 0 projects: %s turn(s) it on but frozen, so forge wires "
                           "nothing for them, and a check that saw nothing is not a pass" % ", ".join(frozen))
-    return lib.Result("SKIP", "worktree guard", NOT_ARMED + "no profile turns on worktree_guard")
+    return lib.Result("SKIP", "worktree guard", NOT_ARMED + "no project turns on worktree_guard")
 
 
-# Ponytail for GSD's executing, debugging and reviewing agents (hooks/ponytail_subagent.py), which a
-# profile wires in its own `hooks` block. For each profile that does: exactly one entry under each of
+# Ponytail for the framework's reviewing agents (hooks/ponytail_subagent.py), which a
+# project wires in its own `hooks` block. For each project that does: exactly one entry under each of
 # SubagentStart and UserPromptSubmit (without the second a manual /ponytail never reaches the agents), and
-# the SubagentStart command gives gsd-executor Ponytail's ruleset and gsd-planner nothing. The probe runs
+# the SubagentStart command gives fwx:reviewer Ponytail's ruleset and fwx:executor nothing. The probe runs
 # the real install, so a Ponytail update that moved its builder is a FAIL, not a silent no-op.
 PONYTAIL_SCRIPT, PONYTAIL_TIMEOUT = "ponytail_subagent.py", 15
 PONYTAIL_EVENTS = ("SubagentStart", "UserPromptSubmit")
 
 
 def ponytail_entries(prof):
-    """[(event, command)] of the profile's own hooks that run forge's hooks/ponytail_subagent.py."""
+    """[(event, command)] of the project's own hooks that run forge's hooks/ponytail_subagent.py."""
     return [(e, h["command"]) for e, groups in (prof.get("hooks") or {}).items() if skills._groups_ok(groups)
             for g in groups for h in g.get("hooks", []) if skills._runs_forge_guard(h.get("command"), PONYTAIL_SCRIPT)]
 
 
 def ponytail_problem(prof, entries):
-    """Why this profile's Ponytail hook would not scope Ponytail in a session, or None."""
+    """Why this project's Ponytail hook would not scope Ponytail in a session, or None."""
     if prof.get("frozen"):
-        return "the profile wires it but is frozen, so forge writes none of its hooks"
+        return "the project wires it but is frozen, so forge writes none of its hooks"
     if sorted(e for e, _ in entries) != list(PONYTAIL_EVENTS):
-        return "the profile runs %s under %s, want once under each of %s" % (PONYTAIL_SCRIPT, [e for e, _ in entries], list(PONYTAIL_EVENTS))
+        return "the project runs %s under %s, want once under each of %s" % (PONYTAIL_SCRIPT, [e for e, _ in entries], list(PONYTAIL_EVENTS))
     command = dict(entries)["SubagentStart"]
-    for agent, wanted in (("gsd-executor", True), ("gsd-planner", False)):
+    for agent, wanted in (("fwx:reviewer", True), ("fwx:executor", False)):
         payload = json.dumps({"hook_event_name": "SubagentStart", "agent_type": agent})
         try:
             r = subprocess.run(command, shell=True, input=payload, text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
@@ -536,22 +536,22 @@ def ponytail_problem(prof, entries):
 
 
 def ponytail_row(only=None):
-    """One result per profile that wires hooks/ponytail_subagent.py, named `ponytail <project>`, each
-    saying how many are wired; a SKIP when none does. With `only`, that profile alone, and a PASS when it
+    """One result per project that wires hooks/ponytail_subagent.py, named `ponytail <project>`, each
+    saying how many are wired; a SKIP when none does. With `only`, that project alone, and a PASS when it
     does not wire it."""
-    wired = [(n, p, e) for n, p in sorted(lib.profiles().items()) for e in [ponytail_entries(p)] if e]
+    wired = [(n, p, e) for n, p in sorted(lib.projects().items()) for e in [ponytail_entries(p)] if e]
     rows = []
     for name, prof, entries in wired:
         if only in (None, name):
             why = ponytail_problem(prof, entries)
             rows.append(lib.Result("FAIL", "ponytail " + name, "%s (%d wired)" % (why, len(wired))) if why
-                        else lib.Result("PASS", "ponytail " + name, "gsd-executor gets the ruleset, gsd-planner "
+                        else lib.Result("PASS", "ponytail " + name, "fwx:reviewer gets the ruleset, fwx:executor "
                                         "nothing (%d wired)" % len(wired)))
     if rows:
         return rows
     if only:
         return lib.Result("PASS", "ponytail", "%s does not wire hooks/%s" % (only, PONYTAIL_SCRIPT))
-    return lib.Result("SKIP", "ponytail", NOT_ARMED + "no profile wires hooks/" + PONYTAIL_SCRIPT)
+    return lib.Result("SKIP", "ponytail", NOT_ARMED + "no project wires hooks/" + PONYTAIL_SCRIPT)
 
 
 # What each integration needs that forge itself does not ship: a check returning the problem or None,
@@ -586,7 +586,7 @@ def _agent_browser_missing():
 
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
                      "hindsight": (None, "no dependency checked here"),
-                     "consent": (None, "its own row, `consent`, looks at the adapter, the profiles and the hook"),
+                     "consent": (None, "its own row, `consent`, looks at the adapter, the projects and the hook"),
                      "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
 # An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
 # nothing. The value says when the check arrives (7.1 of the framework plan puts MemPalace's).
@@ -684,7 +684,7 @@ CONSENT_SMOKE_BENIGN = "git status"
 
 def _consent_guard():
     """hooks/guard_tool_use.py of this checkout, loaded by path: it holds consent_config and production_error,
-    the one definition of what gateway.json and a profile's `production` may say."""
+    the one definition of what gateway.json and a project's `production` may say."""
     import importlib.util
     spec = importlib.util.spec_from_file_location("forge_consent_guard", os.path.join(lib.ROOT, "hooks", "guard_tool_use.py"))
     mod = importlib.util.module_from_spec(spec)
@@ -721,7 +721,7 @@ def consent_probe(command, cwd, payload_command, timeout, want_code, want_text=N
 def consent_row():
     """The `consent` row: SKIP (NOT RUN, NOT ARMED) while integrations.consent is off. On, the first problem found is
     a FAIL that names its fix, in this order: config/gateway.json missing or invalid (the guard's consent_config);
-    the adapter missing or not executable, or the built-in one without `gum` or the Omarchy launcher; no profile
+    the adapter missing or not executable, or the built-in one without `gum` or the Omarchy launcher; no project
     declares `production` (looking at zero is a failure: the window would never open); ~/.claude/settings.json
     without the `--consent` entry or with it lacking "onFailure": "block"; consent.timeout_s not below the entry's
     timeout; the smoke test, which runs the entry's exact command on `git status` (must exit 0) and on a push to
@@ -745,14 +745,14 @@ def consent_row():
         for tool, fix in (("gum", "install gum (pacman -S gum)"), ("omarchy-launch-floating-terminal-with-presentation", "this is not an Omarchy session: use another adapter")):
             if not shutil.which(tool):
                 return fail("the omarchy adapter needs `%s` on PATH and it is not there -- %s" % (tool, fix))
-    declared = [p for p in cfg["profiles"] if "production" in p]
+    declared = [p for p in cfg["projects"] if "production" in p]
     if not declared:
-        return fail("no profile in config/profiles declares `production`, so no call would ever match and the window would never open -- "
-                    'add "production": {"branches": [...], "commands": [...]} to the profile of a project that deploys')
+        return fail("no project in config/projects declares `production`, so no call would ever match and the window would never open -- "
+                    'add "production": {"branches": [...], "commands": [...]} to the file of a project that deploys')
     for p in declared:
         why = guard.production_error(p["production"])
         if why:
-            return fail("%s: %s -- fix the profile; the guard refuses every call from that project while it is invalid" % (lib.short(p["file"]), why))
+            return fail("%s: %s -- fix the project file; the guard refuses every call from that project while it is invalid" % (lib.short(p["file"]), why))
     where = lib.short(hooks.USER_SETTINGS)
     try:
         doc = lib.read_owned(hooks.USER_SETTINGS, None)
@@ -770,13 +770,13 @@ def consent_row():
         return fail("consent.timeout_s is %d and the hook entry's timeout is %s: the adapter must give up before the hook is killed, so "
                     "timeout_s must be below it -- lower timeout_s in %s, or forge sync --apply to restore the entry's 300"
                     % (limit, json.dumps(cap), lib.short(gateway)))
-    branch_profile = next((p for p in declared if p["production"].get("branches")), None)
-    if branch_profile:
-        cwd, push = branch_profile["project_path"], "git push origin %s" % branch_profile["production"]["branches"][0]
+    branch_project = next((p for p in declared if p["production"].get("branches")), None)
+    if branch_project:
+        cwd, push = branch_project["project_path"], "git push origin %s" % branch_project["production"]["branches"][0]
     else:  # production lists commands only: a command entry stands in for the push
         stand_in = next(((p, c) for p in declared for c in p["production"].get("commands", []) if not c.startswith("mcp__")), None)
         if not stand_in:
-            return fail("no profile's `production` lists a branch or a command the smoke test can send, so the --consent entry was not run -- "
+            return fail("no project's `production` lists a branch or a command the smoke test can send, so the --consent entry was not run -- "
                         "list a branch in production.branches")
         cwd, push = stand_in[0]["project_path"], stand_in[1]
     for text, code, marker in ((CONSENT_SMOKE_BENIGN, 0, None), (push, 2, "CONSENT_UNATTENDED:")):
@@ -784,7 +784,7 @@ def consent_row():
         if why:
             return fail("the installed command `%s` fails its smoke test: %s -- forge sync --apply; if the entry is right, "
                         "hooks/guard_tool_use.py --consent itself does not answer" % (command, why))
-    return lib.Result("PASS", "consent", "adapter %s, timeout_s %d below the hook's %d s, %d profile(s) with production, `%s` exits 0 and "
+    return lib.Result("PASS", "consent", "adapter %s, timeout_s %d below the hook's %d s, %d project(s) with production, `%s` exits 0 and "
                       "`%s` exits 2 with CONSENT_UNATTENDED: through `%s`" % (lib.short(adapter), limit, cap, len(declared),
                                                                             CONSENT_SMOKE_BENIGN, push, command))
 
@@ -827,46 +827,6 @@ def codex_hooks_row():
     if found:
         return lib.Result("FAIL", "codex hooks", "%s still holds %d hook(s) forge wrote: %s" % (where, len(found), "; ".join(found)))
     return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
-
-
-def gsd_isolation_guard_row():
-    """The `gsd isolation guard` row: config/forge.json's `gsd_isolation_guard` switches off the one user-scope
-    row `gsd-agent-isolation-guard.js` (forge.hooks.ROW_OPTIONAL). A value that is not true or false is a
-    FAIL (forge reads it as true). SKIP (NOT RUN, NOT ARMED) while forge writes no GSD row at all (gsd off, or
-    gsd_patches not true) and while the key is false, the line naming how to turn it on. Otherwise the entry
-    with forge's exact command must be in ~/.claude/settings.json: PASS says it was there, a missing file, a
-    file that does not parse or an entry that is not in it is a FAIL naming `forge sync --apply`."""
-    from forge import hooks  # not at import: it reads config/forge.json
-    marker = hooks.ISOLATION_GUARD
-    key = hooks.ROW_OPTIONAL[marker]
-    value = lib.settings().get(key)
-    if key in lib.settings() and not isinstance(value, bool):
-        return lib.Result("FAIL", "gsd isolation guard", "%s is %s in config/forge.json, not true or false, so forge reads it as true -- "
-                          "set it to true or false" % (key, json.dumps(value)))
-    if not lib.on("gsd") or not lib.gsd_patched():
-        return lib.Result("SKIP", "gsd isolation guard", NOT_ARMED + "forge writes no GSD hook row (the gsd integration is off, "
-                          "or gsd_patches is not true, in config/forge.json), so %s was not looked at" % key)
-    if value is False:
-        return lib.Result("SKIP", "gsd isolation guard", NOT_ARMED + "%s is false in config/forge.json, so forge writes no %s row "
-                          "and takes its entry out; set it to true (or delete the key) and run forge sync --apply to wire it"
-                          % (key, marker))
-    row = next((r for r in hooks.USER_HOOKS if r[3] == marker), None)
-    where = lib.short(hooks.USER_SETTINGS)
-    if row is None:  # unreachable while the gates above agree with forge.hooks._row_on
-        return lib.Result("FAIL", "gsd isolation guard", "forge.hooks holds no %s row although %s is not false" % (marker, key))
-    try:
-        doc = lib.read_owned(hooks.USER_SETTINGS, None)
-    except lib.Unreadable as e:
-        return lib.Result("FAIL", "gsd isolation guard", "%s is unreadable, so %s was not looked for: %s" % (where, marker, e))
-    if doc is None:
-        return lib.Result("FAIL", "gsd isolation guard", "%s is not there, so the %s entry is missing -- forge sync --apply" % (where, marker))
-    entries, _ = lib.hook_entries(doc)
-    found = [e for e in entries if e[0] == row[0] and e[3].get("command") == row[1]]
-    if not found:
-        return lib.Result("FAIL", "gsd isolation guard", "%s holds no %s entry under %s with forge's command -- forge sync --apply "
-                          "(or set %s to false to leave it out)" % (where, marker, row[0], key))
-    return lib.Result("PASS", "gsd isolation guard", "%d %s entr%s under %s in %s" % (
-        len(found), marker, "y" if len(found) == 1 else "ies", row[0], where))
 
 
 # How long the `gsd engine` row waits for `gsd-tools.cjs --help`, which prints its usage and returns in well under a second.
@@ -943,8 +903,8 @@ def research_header(path):
 
 
 def research_expiry(only=None):
-    """The `research expiry` row: every markdown file under <project_path>/.planning/research/ of each profile
-    (frozen ones too, since stale research is not forge drift; a path two profiles share is read once, by the
+    """The `research expiry` row: every markdown file under <project_path>/.planning/research/ of each project
+    (frozen ones too, since stale research is not forge drift; a path two projects share is read once, by the
     first) with an `expires: YYYY-MM-DD` line in its first 20 lines (a bare line, any case, or inside `---`
     front matter; an optional `volatility: high|medium|low`). The date is the last day the research stands, so
     a file is expired the day after, by today(). WARN names each expired file as `project/path (expired DATE,
@@ -953,7 +913,7 @@ def research_expiry(only=None):
     in the scope is a PASS that says so (zero is possible here). Reads only; with `only`, that project alone."""
     seen, files, dated, skipped, projects = set(), 0, 0, 0, set()
     expired, unreadable = [], []  # (project/relative path, text)
-    for name, prof in lib.profiles().items():
+    for name, prof in lib.projects().items():
         root = prof.get("project_path")
         if only not in (None, name) or not root or not os.path.isdir(os.path.join(root, RESEARCH_DIR)):
             continue
@@ -1115,9 +1075,9 @@ def _context_base_target(label, fwx, steps):
 def context_base_row():
     """The `context base` row (2.5): did every subagent get the base context it should? Targets, one result each:
     every entry of ~/.claude/settings.json whose command runs `subagent_context.py --file F [--source S]`, and every
-    profile with `framework: true`. For an entry, `fwx context lint --file F --source S --hook-command CMD` (the
+    project with `framework: true`. For an entry, `fwx context lint --file F --source S --hook-command CMD` (the
     file is sealed and current, the hook answers a general-purpose agent and not an Explore one) and `audit --project
-    <this checkout> --last 3 --file F` (the subagent transcripts of the last three sessions here); for a profile,
+    <this checkout> --last 3 --file F` (the subagent transcripts of the last three sessions here); for a project,
     `lint --project P` and `audit --project P --last 3`. fwx is `bin/fwx` of framework.plugin_source.path. Exit 0 is a
     PASS, 77 a SKIP, anything else a FAIL naming the command to run by hand. No fwx, or nothing to look at: a SKIP, NOT RUN,
     NOT ARMED. The audit reads transcripts written before the hook existed, so it FAILs until three newer sessions with
@@ -1152,30 +1112,30 @@ def context_base_row():
         check = ["lint", "--file", opts["--file"]] + (["--source", opts["--source"]] if "--source" in opts else []) + ["--hook-command", command]
         audit = ["audit", "--project", lib.ROOT, "--last", CONTEXT_BASE_LAST, "--file", opts["--file"]]
         out.append(_context_base_target("hook %s" % lib.short(opts["--file"]), fwx, [("check", check), ("audit", audit)]))
-    for name, prof in sorted(lib.profiles().items()):
+    for name, prof in sorted(lib.projects().items()):
         if prof.get("framework") is True and prof.get("project_path"):
             project = prof["project_path"]
-            out.append(_context_base_target("profile %s" % name, fwx, [
+            out.append(_context_base_target("project %s" % name, fwx, [
                 ("check", ["lint", "--project", project]), ("audit", ["audit", "--project", project, "--last", CONTEXT_BASE_LAST])]))
-    return out or lib.Result("SKIP", "context base", NOT_ARMED + "no %s entry in %s and no profile with framework true, so no subagent's base "
+    return out or lib.Result("SKIP", "context base", NOT_ARMED + "no %s entry in %s and no project with framework true, so no subagent's base "
                              "context was looked at" % (CONTEXT_BASE_HOOK, where))
 
 
 def framework_ignore_row(only=None):
-    """The `framework ignore` row: in every profile with `framework: true` (just `only`, when given) git answers as the
+    """The `framework ignore` row: in every project with `framework: true` (just `only`, when given) git answers as the
     framework needs for four sample paths (.fwx/x/y.md and .fwx/decisions.tsv not ignored, .claude/<plugin>.json and
     .claude/worktrees/x ignored), by `git check-ignore -v --no-index` asked of a scratch repository with the project's real
     layout (forge/fwxignore.py: the same function the sync uses, so the two agree). A FAIL names the path and the rule
     with file:line, and says when the rule is the machine's global ignore file. How many projects it looked at is in the detail; zero where a framework
-    profile exists is a FAIL, and no framework profile at all is a SKIP, NOT RUN, NOT ARMED. A profile with
+    project exists is a FAIL, and no framework project at all is a SKIP, NOT RUN, NOT ARMED. A project with
     `framework_ignore_block: false` is switched off: not looked at, and a SKIP of the same wording when no other is."""
     from forge import framework, fwxignore
-    wanted = {n: p for n, p in sorted(lib.profiles().items()) if p.get("framework") is True and (only is None or n == only)}
+    wanted = {n: p for n, p in sorted(lib.projects().items()) if p.get("framework") is True and (only is None or n == only)}
     off = [n for n, p in wanted.items() if p.get("framework_ignore_block") is False]
     wanted = {n: p for n, p in wanted.items() if n not in off}
     if not wanted:
         why = ("framework_ignore_block is false in %s (the project keeps its framework documents out of its git on purpose)" % ", ".join(off)
-               if off else "no profile has framework: true")
+               if off else "no project has framework: true")
         return lib.Result("SKIP", "framework ignore", NOT_ARMED + "%s, so no project's ignore rules were looked at" % why)
     looked, bad, skipped = [], [], []
     for name, prof in wanted.items():
@@ -1221,15 +1181,15 @@ def local_plugins_row():
 # (hindsight_doctor exits with its failure count, argparse with 2). The fix is appended to the
 # detail of any result that is not a PASS.
 CHECKS = [
-    ("skill refs", ["scripts/sync/verify_skill_refs.py"], "fix the profile's skills_keep"),
+    ("skill refs", ["scripts/sync/verify_skill_refs.py"], "fix the project's skills_keep"),
     ("skill keep", ["scripts/sync/sync_skill_keep.py", "--check"], "python3 scripts/sync/sync_skill_keep.py --apply"),
     ("skill names", skill_name_clashes, "rename the project skill, or delete it if it was meant to be the global one"),
-    ("project roots", nested_project_roots, "git init in the nested project's directory and ignore it from the outer repository: an outer profile's skill overrides switch the inner project's skills off, and an inner 'on' does not win (skills/new-project makes every project its own repository)"),
-    ("frozen drift", frozen_drift, "forge writes nothing there, and Claude Code rewrites the file itself (approvals, permissions); lift `frozen` in the profile to bring it back to the generator's output"),
+    ("project roots", nested_project_roots, "git init in the nested project's directory and ignore it from the outer repository: an outer project's skill overrides switch the inner project's skills off, and an inner 'on' does not win (skills/new-project makes every project its own repository)"),
+    ("frozen drift", frozen_drift, "forge writes nothing there, and Claude Code rewrites the file itself (approvals, permissions); lift `frozen` in the project file to bring it back to the generator's output"),
     ("instruction files", instruction_file_blocks, "forge never writes in a project: the change is in that project's repo"),
     ("command guard", command_guard_smoke, "forge sync --apply; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
     ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
-    ("ponytail", ponytail_row, "the profile's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
+    ("ponytail", ponytail_row, "the project's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
     ("toolchain", toolchain.row, "forge toolchain --fix (writes mise's forge.toml, installs what is missing; a pip version that differs is only reported)"),
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
@@ -1239,7 +1199,6 @@ CHECKS = [
     ("consent", consent_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
     # Its failures and its SKIP carry their own fix, so the row's is empty.
-    ("gsd isolation guard", gsd_isolation_guard_row, ""),
     # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
     ("gsd engine", gsd_engine_row, ""),
     ("research expiry", research_expiry, RESEARCH_FIX),
@@ -1253,7 +1212,7 @@ CHECKS = [
     ("local plugins", local_plugins_row, ""),
 ]
 
-# What `forge sync --project NAME` (a dry-run) prints for a file its --apply would change: one
+# What `forge sync NAME` (a dry-run) prints for a file its --apply would change: one
 # alternative per line, beside where it is printed and a sample of the text (grep the text: line
 # numbers move). The generators' wording is an API, as for CHANGED below.
 WOULD = re.compile(r"""
@@ -1280,34 +1239,34 @@ def pending_writes(lines):
 
 
 def generated_current(name, prof):
-    """PASS when the dry-run of `forge sync --project NAME` exits 0 and would write nothing. Only
-    counts are shown, never the generator's lines: `forge sync --project NAME` prints them."""
+    """PASS when the dry-run of `forge sync NAME` exits 0 and would write nothing. Only
+    counts are shown, never the generator's lines: `forge sync NAME` prints them."""
     if prof.get("frozen"):
         return lib.Result("PASS", "generated", "frozen: forge writes nothing")
-    r = lib.run(["bin/forge", "sync", "--project", name], capture=True)
+    r = lib.run(["bin/forge", "sync", name], capture=True)
     lines = (r.stdout + r.stderr).splitlines()
     writes, bangs = pending_writes(lines), sum(1 for l in lines if lib.BANG.match(l))
     if not writes and not r.returncode:
-        return lib.Result("PASS", "generated", "the dry-run of forge sync --project %s would write nothing" % name)
+        return lib.Result("PASS", "generated", "the dry-run of forge sync %s would write nothing" % name)
     problems = (["%d pending write(s)" % writes] if writes else []) + (
-        ["the dry-run exits %d with %d '!' line(s), which forge sync --project %s shows" % (r.returncode, bangs, name)]
+        ["the dry-run exits %d with %d '!' line(s), which forge sync %s shows" % (r.returncode, bangs, name)]
         if r.returncode else [])
     return lib.Result("FAIL", "generated", "; ".join(problems))
 
 
 def project_checks(name, prof, why):
     """forge doctor NAME's rows, in CHECKS' shape, each scoped to project `name`. `prof` is its
-    profile, or None when lib.profiles left it out for `why`: the profile row is then the only one,
-    since every other row reads the profile."""
-    where = "config/profiles/%s.claude.json" % name
+    file's contents, or None when lib.projects left it out for `why`: the project row is then the only one,
+    since every other row reads the file."""
+    where = "config/projects/%s.claude.json" % name
     if prof is None:
-        return [("profile", lambda: lib.Result("FAIL", "profile", "%s: %s" % (where, why)),
+        return [("project", lambda: lib.Result("FAIL", "project", "%s: %s" % (where, why)),
                  "fix the file by hand; until then every sync leaves the project out")]
     fix = {row: f for row, _, f in CHECKS}
     frozen = "; frozen: forge writes nothing for it" if prof.get("frozen") else ""
     rows = [
-        ("profile", lambda: lib.Result("PASS", "profile", "%s reads, every field well-typed%s" % (where, frozen)), ""),
-        ("generated", lambda: generated_current(name, prof), "forge sync --apply --project " + name),
+        ("project", lambda: lib.Result("PASS", "project", "%s reads, every field well-typed%s" % (where, frozen)), ""),
+        ("generated", lambda: generated_current(name, prof), "forge sync --apply " + name),
         ("skill names", lambda: skill_name_clashes(name), fix["skill names"]),
         ("project roots", lambda: nested_project_roots(name), fix["project roots"]),
         ("instruction files", lambda: instruction_file_blocks(name), fix["instruction files"]),
@@ -1433,6 +1392,15 @@ def run_steps(command, steps, apply, scope):
 
 
 def cmd_sync(a):
+    """forge sync [NAME | --all] [--apply]. A NAME no project has is refused here, before any generator runs: only some
+    generators refuse a name they do not know, so without this a misspelling would run the others for nothing.
+    A project that cannot be read is let through: the generators name it ('! could not read')."""
+    if a.project:
+        skipped = []
+        known = lib.projects(skipped)
+        if a.project not in known and a.project not in {f[:-len(".claude.json")] for f, _ in skipped}:
+            print("! forge sync: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(known))))
+            return 1
     return run_steps("sync", SYNC, a.apply, (["--project", a.project] if a.project else []) + (["--all"] if a.all else []))
 
 
@@ -1456,11 +1424,11 @@ def cmd_log(a):
     roots = ()
     if a.project:
         skipped = []
-        profs = lib.profiles(skipped)
+        profs = lib.projects(skipped)
         if a.project not in profs:
             why = {f[:-len(".claude.json")]: (f, w) for f, w in skipped}.get(a.project)
             if why:
-                print("! forge log: profile %s cannot be read (%s)" % why)
+                print("! forge log: project %s cannot be read (%s)" % why)
             else:
                 print("! forge log: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(profs))))
             return 1
@@ -1561,8 +1529,8 @@ def cmd_session_start(a):
     try:
         session = os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd()
         skipped = []
-        profs = lib.profiles(skipped)  # a profile nobody can read: this session may be its project
-        notes += ["! config/profiles/%s unreadable (%s) -- left out of every sync" % s for s in skipped]
+        profs = lib.projects(skipped)  # a project nobody can read: this session may be its project
+        notes += ["! config/projects/%s unreadable (%s) -- left out of every sync" % s for s in skipped]
         name = lib.resolve_project(session)
         if name and not profs[name].get("frozen"):
             fd, log = tempfile.mkstemp(prefix="forge-writes-")
@@ -1608,7 +1576,7 @@ def cmd_doctor(a):
     rows, project = CHECKS, getattr(a, "project", None)
     if project is not None:
         skipped = []
-        known = lib.profiles(skipped)
+        known = lib.projects(skipped)
         unreadable = {f[:-len(".claude.json")]: why for f, why in skipped}
         if project not in known and project not in unreadable:
             print("! forge doctor: unknown project: %s (known: %s)" % (project, ", ".join(sorted(known))))
@@ -1621,7 +1589,7 @@ def cmd_doctor(a):
                 res = cmd()
             except Exception as e:  # a check that cannot run is a failure, and must not hide the rest
                 res = lib.Result("FAIL", name, "%s: %s" % (type(e).__name__, e))
-            # A callable gives one result, or a list of them (one line per guarded profile).
+            # A callable gives one result, or a list of them (one line per guarded project).
             results += [r if r.level == "PASS" or not fix or r.detail.startswith(NOT_ARMED)
                         else r._replace(detail="%s -- %s" % (r.detail, fix))
                         for r in (res if isinstance(res, list) else [res])]
@@ -1637,10 +1605,31 @@ def cmd_doctor(a):
 # to ROOT, and the reason. hooks/test_guard_mutants.py runs 326 mutants on max(2, cpu_count) workers, each a
 # test_guard_tool_use.py of about six cores: it once took a voice detector from 0.3 s to 50+ s.
 ON_DEMAND = {"hooks/test_guard_mutants.py": "326 mutants on every core, minutes of full CPU; it stalls the machine"}
-FWX_PREFIX = "plugins/fwx/"
+# The groups of `forge test GROUP`: a suite with its own runner (forge/testgroup.py), named by the folder it lives in.
+GROUPS = {"fwx": "plugins/fwx"}
+FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
 def cmd_test(a):
+    """forge test [GROUP [--expect-not-run PATH[,PATH...]] [--jobs N]] [--mutants]: every test but the ones of a group, or one group.
+
+    A group is a suite run on its own, with its own exit codes (forge/testgroup.py); `fwx` is the plugin's (plugins/fwx/tests). The
+    options belong to a group, and --mutants to the run with no group; combined otherwise they exit 2, as does a group nobody has."""
+    group = getattr(a, "group", None)
+    expect, jobs = getattr(a, "expect_not_run", None), getattr(a, "jobs", None)
+    if group is not None:
+        if group not in GROUPS:
+            print("forge test: unknown group %s (groups: %s)" % (group, ", ".join(GROUPS)), file=sys.stderr)
+            return 2
+        if getattr(a, "mutants", False):
+            print("forge test: --mutants runs only the on-demand suites of the run with no group", file=sys.stderr)
+            return 2
+        from forge import testgroup  # not at the top: threads and signals that every other command (session-start) never needs
+        return testgroup.main(os.path.join(lib.ROOT, GROUPS[group]), expect, jobs, GROUPS[group])
+    if expect or jobs:
+        print("forge test: %s needs a group (groups: %s)" % ("--expect-not-run" if expect else "--jobs", ", ".join(GROUPS)),
+              file=sys.stderr)
+        return 2
     # A git that fails (not a repository, not installed) or a list with no tests is a FAIL: until
     # an attack round either ran zero tests and printed "0 failures" with exit 0.
     # Two histories own the files once the engine and the private data are split (forge/publish.py): the
@@ -1664,7 +1653,7 @@ def cmd_test(a):
     # The pathspec's leading * also matches a prefix (contest_helper.py), so the basename is checked here.
     found = sorted(f for f in listed if not f.startswith("benchmarks/")
                    and os.path.basename(f).startswith("test_") and f.endswith(".py"))
-    # fwx (plugins/fwx) has its own runner, `fwx test`: its exit codes (77, --expect-not-run) and its minutes of work
+    # fwx (plugins/fwx) is a group of its own, `forge test fwx`: its exit codes (77, --expect-not-run) and its minutes of work
     # are its own, and CI runs it as a job of its own.
     fwx_owned = [f for f in found if f.startswith(FWX_PREFIX)]
     files = [f for f in found if f not in fwx_owned]
@@ -1673,8 +1662,8 @@ def cmd_test(a):
     mutants = getattr(a, "mutants", False)
     results = []
     if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
-        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) with their own runner: run "
-                                  "`python3 %sbin/fwx test`" % (len(fwx_owned), FWX_PREFIX)))
+        results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) that are a group of their own: "
+                                  "run `forge test fwx`" % len(fwx_owned)))
     for f in files:
         if f in ON_DEMAND:
             if not mutants:  # said, never a PASS, and not counted in the summary (non-negotiable 7)
@@ -1715,7 +1704,7 @@ def metrics_usage(a, prof, projects, fail, others):
     for what makes cmd_metrics fail today, and for zero sessions, which is never read as "0 uses"."""
     path = prof.get("project_path")
     if not path:
-        return fail("the profile has no project_path")
+        return fail("the project has no project_path")
     if a.baseline or a.session or a.until or a.events_until:
         return fail("--usage takes only --since and --json")
     if a.since and not usage.date_ok(a.since):
@@ -1759,7 +1748,7 @@ def metrics_usage(a, prof, projects, fail, others):
 
 
 def metrics_init_diff(a, init_diff, answers, use):
-    """forge metrics NAME --init-diff BEFORE AFTER --answers F: 0 when the applied profile is what the answers say, 1
+    """forge metrics NAME --init-diff BEFORE AFTER --answers F: 0 when the applied project is what the answers say, 1
     for a fault, 2 for a usage error or an empty capture (see usage.init_diff)."""
     def bad(why):
         print("! forge metrics: %s" % why)
@@ -1786,9 +1775,9 @@ def metrics_init_diff(a, init_diff, answers, use):
 def cmd_metrics(a):
     """forge metrics NAME: node scripts/metrics/<script> over NAME's transcripts and repository.
     --usage and --init-diff are forge/usage.py's (metrics_usage, metrics_init_diff).
-    Reads only. A profile with no project_path, a transcript folder that does not exist, or no node
+    Reads only. A project with no project_path, a transcript folder that does not exist, or no node
     is a FAIL naming the project: the scripts would otherwise fail on a key nobody can see."""
-    profs = lib.profiles()
+    profs = lib.projects()
     if a.project not in profs:
         print("! forge metrics: unknown project: %s (known: %s)" % (a.project, ", ".join(sorted(profs))))
         return 1
@@ -1803,7 +1792,7 @@ def cmd_metrics(a):
     if use:
         return metrics_usage(a, profs[a.project], projects, fail, [p.get("project_path") for n, p in profs.items() if n != a.project and p.get("project_path")])
     if not path:
-        return fail("the profile has no project_path")
+        return fail("the project has no project_path")
     key = transcript_key(path)
     if not os.path.isdir(os.path.join(projects, key)):
         return fail("no transcript folder %s (project_path %s)" % (os.path.join(projects, key), path))
@@ -1915,9 +1904,9 @@ def init_write(integrations, track):
     forge_json["integrations"].update(integrations)
     lib.write_text(lib.SETTINGS, lib.dumps(forge_json) + "\n")
     print("wrote  %s" % rel(lib.SETTINGS))
-    profile = json.loads(example_text("profile.claude.json"))
-    profile.update(project="forge", project_path=lib.ROOT, writes_tracked_files=False)
-    put(os.path.join(lib.PROFILES, "forge.claude.json"), lib.dumps(profile) + "\n")
+    project = json.loads(example_text("project.claude.json"))
+    project.update(project="forge", project_path=lib.ROOT, writes_tracked_files=False)
+    put(os.path.join(lib.PROJECTS, "forge.claude.json"), lib.dumps(project) + "\n")
     put(os.path.join(lib.ROOT, "config", "mcp-registry.json"), example_text("mcp-registry.json"))
     put(os.path.join(lib.ROOT, "config", "gateway.json"), example_text("gateway.json"))
     secrets = os.path.join(lib.ROOT, "credentials", "secrets.json")
@@ -2016,19 +2005,19 @@ def cmd_new(a):
         print("! forge new: %r is not a kebab-case name (lowercase letters and digits, single dashes between them) "
               "-- pass --name" % name)
         return 1
-    target = os.path.join(lib.PROFILES, name + ".claude.json")
+    target = os.path.join(lib.PROJECTS, name + ".claude.json")
     if os.path.lexists(target):
-        print("! forge new: %s is already registered (config/profiles/%s.claude.json)" % (name, name))
+        print("! forge new: %s is already registered (config/projects/%s.claude.json)" % (name, name))
         return 1
     ok, why = lib.may_write()
     if not ok:
         print(why)
         return 1
-    profile = json.loads(example_text("profile.claude.json"))
-    profile.update(project=name, project_path=path, writes_tracked_files=bool(a.writes_tracked_files))
-    lib.write_text(target, lib.dumps(profile) + "\n")
+    project = json.loads(example_text("project.claude.json"))
+    project.update(project=name, project_path=path, writes_tracked_files=bool(a.writes_tracked_files))
+    lib.write_text(target, lib.dumps(project) + "\n")
     print("wrote  %s" % os.path.relpath(target, lib.ROOT), flush=True)
-    return lib.run(["bin/forge", "sync", "--apply", "--project", name]).returncode
+    return lib.run(["bin/forge", "sync", "--apply", name]).returncode
 
 
 def _publish():
@@ -2047,6 +2036,20 @@ def _uninstall():
 # The names these commands had before the grammar of tool, object, verb. Removed, not aliased: an old name
 # refuses with one line naming the new one and runs nothing, so a script that still calls it fails loudly.
 RENAMED = {"add": "new", "launch": "start", "check-public": "lint"}
+# `--project NAME` of these two commands is now the argument NAME, as in doctor, metrics and log. Cut, not aliased.
+PROJECT_ARGUMENT = ("sync", "uninstall")
+
+
+def old_project_flag(args):
+    """The one line refusing `forge sync|uninstall --project NAME` (also `--project=NAME` and any abbreviation of the flag), or None."""
+    if not args or args[0] not in PROJECT_ARGUMENT:
+        return None
+    for i, arg in enumerate(args[1:], 1):
+        flag, eq, value = arg.partition("=")
+        if len(flag) >= 3 and "--project".startswith(flag):
+            given = value if eq else args[i + 1] if i + 1 < len(args) and not args[i + 1].startswith("-") else None
+            return "forge %s --project%s: now 'forge %s %s'" % (args[0], " " + given if given else "", args[0], given or "NAME")
+    return None
 
 
 def main(argv=None):
@@ -2054,12 +2057,16 @@ def main(argv=None):
     if args and args[0] in RENAMED:
         print("forge %s: now 'forge %s'" % (args[0], RENAMED[args[0]]), file=sys.stderr)
         return 2
+    refusal = old_project_flag(args)
+    if refusal:
+        print(refusal, file=sys.stderr)
+        return 2
     p = argparse.ArgumentParser(prog="forge", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sync", help="regenerate every project's config")
     s.add_argument("--apply", action="store_true", help="write; without it, only show what would change")
     scope = s.add_mutually_exclusive_group()
-    scope.add_argument("--project", help="this project only, no user-scope files")
+    scope.add_argument("project", nargs="?", help="this project only, no user-scope files")
     scope.add_argument("--all", action="store_true", help="every project, even inside a session")
     s.set_defaults(fn=cmd_sync)
     k = sub.add_parser("skills", help="the skill links and the GSD runtime (a dry-run unless --apply)")
@@ -2069,7 +2076,7 @@ def main(argv=None):
     d.add_argument("project", nargs="?", help="this project only: each check scoped to it")
     d.set_defaults(fn=cmd_doctor)
     m = sub.add_parser("metrics", help="a project's harness metrics, read from its Claude Code transcripts")
-    m.add_argument("project", help="a profile name; its project_path is the repository and gives the transcript folder")
+    m.add_argument("project", help="a project name; its project_path is the repository and gives the transcript folder")
     m.add_argument("session", nargs="?", help="with --baseline: a session id (default: the newest)")
     m.add_argument("--baseline", action="store_true", help="what one session loads before the first user message")
     m.add_argument("--since", help="YYYY-MM-DD, sessions from this day")
@@ -2077,10 +2084,15 @@ def main(argv=None):
     m.add_argument("--events-until", help="ISO instant: drop every transcript line stamped after it")
     m.add_argument("--json", action="store_true")
     m.add_argument("--usage", action="store_true", help="which skills, MCP servers, plugins and agents the project really uses, and what each costs at start-up (with --since, --json)")
-    m.add_argument("--init-diff", nargs=2, metavar=("BEFORE", "AFTER"), help="check an applied profile: two system/init captures of `claude -p` against --answers")
+    m.add_argument("--init-diff", nargs=2, metavar=("BEFORE", "AFTER"), help="check an applied project: two system/init captures of `claude -p` against --answers")
     m.add_argument("--answers", help="with --init-diff: the review's answers (keep, drop, add per name)")
     m.set_defaults(fn=cmd_metrics)
-    t = sub.add_parser("test", help="run every test except the on-demand suites")
+    t = sub.add_parser("test", help="run every test except the on-demand suites and the group fwx, or one group: forge test fwx")
+    t.add_argument("group", nargs="?", help="a group: fwx (plugins/fwx/, which the run with no group leaves out)")
+    t.add_argument("--expect-not-run", action="append", metavar="PATH[,PATH...]",
+                   help="with a group: tests that cannot run where this is called from, as the group lists them (repeatable); with it a test "
+                        "that exits 77 and is not declared makes the run exit 77, and a run in which nothing passed exits 1")
+    t.add_argument("--jobs", action="append", metavar="N", help="with a group: how many test files run at once (default: the CPUs, at most 8)")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
     t.set_defaults(fn=cmd_test)
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
@@ -2120,16 +2132,22 @@ def main(argv=None):
     i.add_argument("--without", dest="without_names", type=names_list, default=[], metavar="a,b", help="leave these integrations off")
     i.add_argument("--track", action="store_true", help="also make .forge-data.git, a local history of your data")
     i.set_defaults(fn=cmd_init)
-    i = sub.add_parser("new", help="register a project: its profile, then sync --apply --project")
+    i = sub.add_parser("new", help="register a project: its file, then sync --apply NAME")
     i.add_argument("path", help="the project's directory")
-    i.add_argument("--name", help="the profile's name (kebab-case; default: the directory's name)")
+    i.add_argument("--name", help="the project's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="let forge write files that are tracked in the project")
     i.set_defaults(fn=cmd_new)
     u = sub.add_parser("uninstall", help="take out what forge wrote; a dry-run unless --apply")
     u.add_argument("--apply", action="store_true", help="remove; without it, only show what would go")
     scope = u.add_mutually_exclusive_group()
     scope.add_argument("--integration", choices=lib.INTEGRATIONS, help="only this integration's, once it is off in config/forge.json")
-    scope.add_argument("--project", help="only this project's, once its profile is frozen or deleted")
+    scope.add_argument("project", nargs="?", help="only this project's, once it is frozen or its file deleted")
     u.set_defaults(fn=lambda a: _uninstall().main(a))
     a = p.parse_args(args)
+    if a.cmd in PROJECT_ARGUMENT and a.project is not None and not a.project.strip():
+        # An empty name is an unset variable (`forge uninstall "$NAME"`), not "no name": it must not widen the scope.
+        print("forge %s: the project name is empty: say 'forge %s NAME' or %s" % (
+            a.cmd, a.cmd, "'forge sync --all'" if a.cmd == "sync" else "'forge uninstall --integration N' (or no argument for everything)"),
+            file=sys.stderr)
+        return 2
     return a.fn(a)

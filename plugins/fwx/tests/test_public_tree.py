@@ -271,6 +271,32 @@ worse["elements"][1]["index"] = worse["elements"][2]["index"]
 s.ok("control a duplicate index: the script's check reports it", any("index" in p for p in mod.problems(worse)))
 s.ok("control a bad index: valid_index refuses 'd01k' (4 characters under head d)", not valid_index("d01k"))
 
+# a second drawing in the same file, marked customData.fwx == "map", is not part of the tree: the derived scene is the
+# same as without it, and nothing of it is in the output. Seen red before derive() skipped it:
+#   FAIL: a map-marked drawing is skipped: refused: node m_box «Map box text» has no entry in TITLES
+mapped = toy()
+mapped["elements"] += [el("m_box", "rectangle", 3000, 0, 200, 80, customData={"fwx": "map"}),
+                       text("m_box_t", "m_box", "Map box text", customData={"fwx": "map"}),
+                       el("m_free", "text", 3000, 200, 100, 20, text="Map free text", originalText="Map free text",
+                          fontSize=16, containerId=None, customData={"fwx": "map"}),
+                       el("m_line", "line", 3000, 300, 100, 0, points=[[0, 0], [100, 0]], customData={"fwx": "map"})]
+bind(mapped["elements"], "m_box", "m_box_t")
+try:
+    got = mod.derive(mapped)
+except mod.PublicTreeError as e:
+    got = None
+    s.ok("a map-marked drawing is skipped", False, "refused: %s" % e)
+if got is not None:
+    s.eq("a map-marked drawing changes nothing in the derived scene", json.dumps(got), json.dumps(out))
+    s.eq("none of the map's elements or texts is in the derived scene",
+         [e["id"] for e in got["elements"] if e["id"].startswith("m_")], [])
+    s.ok("the map's texts are not in the derived file", "Map " not in json.dumps(got))
+unmarked = toy()
+unmarked["elements"] += [el("m_box", "rectangle", 3000, 0, 200, 80), text("m_box_t", "m_box", "Map box text")]
+bind(unmarked["elements"], "m_box", "m_box_t")
+refused("a map figure without the mark", lambda sc: sc["elements"].extend(unmarked["elements"][-2:]), {},
+        "node m_box «Map box text» has no entry in TITLES")
+
 # the committed output
 if not os.path.isfile(OUTPUT):
     s.ok("docs/workflow-tree.excalidraw exists", False, "docs/workflow-tree.excalidraw does not exist")
@@ -298,7 +324,9 @@ else:
             src_real = json.load(fh)
         derived = real_mod.derive(src_real)
         s.ok("the committed tree is what the script derives from the private tree now (drift)", derived == real)
-        want = {k: sum(1 for e in src_real["elements"] if e["type"] == k and not e.get("isDeleted")) for k in NODES}
+        # the map (customData.fwx == "map") is not part of the tree, so it is not counted
+        want = {k: sum(1 for e in src_real["elements"] if e["type"] == k and not e.get("isDeleted")
+                       and not real_mod.is_map(e)) for k in NODES}
         s.eq("the committed tree has as many nodes as the private one", {k: kinds.get(k, 0) for k in NODES}, want)
     else:
         print("NOT RUN, NOT ARMED: drift against the private tree (FWX_PRIVATE_TREE is not set)")

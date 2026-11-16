@@ -1,5 +1,5 @@
 {
-  "_doc": "A toy profile for a project whose session a suite starts on its own. project_path is a placeholder: a suite moves it into its own toy world.",
+  "_doc": "A toy project for a project whose session a suite starts on its own. project_path is a placeholder: a suite moves it into its own toy world.",
   "project": "memapp",
   "project_path": "/srv/toy/memapp",
   "enableAllProjectMcpServers": true,

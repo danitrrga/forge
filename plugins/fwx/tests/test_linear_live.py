@@ -2,7 +2,7 @@
 
 Armed by two variables: LINEAR_API_KEY (forge puts it in the environment of a project with the framework) and
 FWX_LINEAR_TEST_PROJECT (the name of the Linear project the test may write in). Without either it prints
-`NOT RUN, NOT ARMED: <reason>` as its last line and exits 77, which `fwx test` counts as not run (exit 0 would count as a
+`NOT RUN, NOT ARMED: <reason>` as its last line and exits 77, which `forge test fwx` counts as not run (exit 0 would count as a
 PASS that never ran). The key is never printed, and no failure message carries it.
 
 The five points, with a fixed `[test]` issue the test makes or finds again by its fixed id (the client derives a create's

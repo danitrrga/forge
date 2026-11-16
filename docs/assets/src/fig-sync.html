@@ -24,7 +24,7 @@
 <script>
 const g=document.getElementById("g"), put=(x,y,w,h,cls,html)=>{const d=document.createElement("div");d.className=cls;Object.assign(d.style,{left:x+"px",top:y+"px",width:w+"px",height:h?h+"px":""});d.innerHTML=html;g.appendChild(d)};
 const Y=152, H=84;
-const S=[["config/profiles/&lt;name&gt;.claude.json","one per project: servers, skills, permissions, env",""],
+const S=[["config/projects/&lt;name&gt;.claude.json","one per project: servers, skills, permissions, env",""],
          ["config/mcp-registry.json","one entry per MCP server, a secret as ${VAR}",""],
          ["credentials/secrets.json","the only place real tokens live","git-ignored"],
          ["skills/&lt;name&gt;/SKILL.md","your own skills","git-ignored"]];

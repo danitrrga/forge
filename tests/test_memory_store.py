@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""A profile's claude-mem-lite store: its own project's by default, or the one `memory_lite_store`
+"""A project's claude-mem-lite store: its own project's by default, or the one `memory_lite_store`
 names, so projects that are one body of work remember into one store (forge/memory.py).
 
-Seen failing before the key existed: the profile with `memory_lite_store` still got its own
+Seen failing before the key existed: the project with `memory_lite_store` still got its own
 project's directory, so three Omarchy plugin repos kept three stores and shared nothing.
 """
 import os

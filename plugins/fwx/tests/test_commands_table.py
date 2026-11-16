@@ -44,7 +44,7 @@ s = helpers.Suite()
 DECIDED = [
     ("budget", None, "budget", []), ("model", None, "model", []),
     ("statusline", None, "statusline", []), ("rounds", None, "rounds", []), ("stage", None, "stage", []),
-    ("decide", None, "decide", []), ("verify", None, "verify", []), ("test", None, "test", []),
+    ("decide", None, "decide", []), ("verify", None, "verify", []),
     ("walk capture", "screenshot", "screenshot", []),
     ("session", "state resolve", "state", ["resolve"]), ("session attach", "state use", "state", ["use"]),
     ("phase list", "state list", "state", ["list"]), ("phase new", "state new-phase", "state", ["new-phase"]),
@@ -89,6 +89,8 @@ DEFAULTS = [
     (["discuss", "--json"], "discuss", ["start", "--json"]),
 ]
 OBJECT_OLD = {"context-base": "context", "playbooks": "playbook"}
+# the module whose handlers print their own argparse help for `--help`: the router leaves its rows to them
+OWN_HELP = "state"
 
 
 def build(mutate=None):
@@ -154,6 +156,35 @@ def scenario(work):
               (2, "", "fwx %s: now 'fwx %s'\n" % (old, new)))
     r = run(work, "state", "check")
     check("old `state check` names both new names", (r.returncode, r.stderr), (2, "fwx state check: now 'fwx state lint' or 'fwx report lint'\n"))
+    # `fwx test` left the table: the suite is run by forge as a group (`forge test fwx`), and the refusal names that, outside fwx. Red on master
+    # (the command was a row and ran the suite of the working folder):
+    #   FAIL: old `fwx test` is refused with one line naming `forge test fwx`: got (0, 'STUB test []\n', ''), want (2, '', "fwx test: now 'forge test fwx'\n")
+    #   FAIL: fwx test: no command of the table runs it: got 'STUB test []', want ''
+    for args in (("test",), ("test", "--jobs", "2"), ("test", "--expect-not-run", "tests/test_x.py")):
+        r = run(work, *args)
+        check("old `fwx %s` is refused with one line naming `forge test fwx`" % " ".join(args), (r.returncode, r.stdout, r.stderr),
+              (2, "", "fwx test: now 'forge test fwx'\n"))
+    r = run(work, "--help")
+    check("--help does not list `fwx test`", bool(re.search(r"^  fwx test\b", r.stdout, re.M)), False)
+    # `--help` and `-h` after a verb ask for help and run nothing: the router answers with the object's verb table on stdout, exit 0,
+    # for every row but the rows of OWN_HELP (their real handler is checked below). A stub that prints STUB is a handler that ran.
+    # Seen red on the router before this (`--help` went to the handler after a verb), and the same for `-h`:
+    #   FAIL: `--help` after a verb prints help and runs nothing, on 55 rows: 43 failed, e.g. ['budget --help (exit 0, reached the handler)',
+    #         'model --help (exit 0, reached the handler)']
+    #   FAIL: real `fwx walk selftest --help`: exit 0, usage on stdout, nothing on stderr: got (2, False, '--help is not an option of this
+    #         command\nusage: fwx walk selftest [--dir D] [--repo P] [--image-id ID] [--json]\n'), want (0, True, '')
+    # Control: routes.py with the interception made inert (`and row[2] != OWN_HELP` -> `and False`) is seen red on the same check.
+    for flagword in ("--help", "-h"):
+        bad = []
+        for new, old, module, prefix in DECIDED:
+            for given in dict.fromkeys((tuple(w for w in new.split() if not w.startswith("--")), tuple(new.split()))):  # a flag row also with its flag
+                r = run(work, *(list(given) + [flagword]))
+                reached = "STUB" in r.stdout
+                if r.returncode != 0 or not r.stdout.strip() or (reached and module != OWN_HELP):
+                    bad.append("%s %s (exit %d%s)" % (" ".join(given), flagword, r.returncode, ", reached the handler" if reached else ""))
+                    break
+        check("`%s` after a verb prints help and runs nothing, on %d rows: %d failed, e.g. %s" % (flagword, len(DECIDED), len(bad), bad[:2]),
+              bad, [])
     # unknown names and verbs
     for args, text in ((("nosuch",), "unknown command: nosuch"), (("phase", "nwe"), "unknown verb: nwe"), (("phase",), "needs a verb"),
                        (("../commands/budget",), "unknown command"), (("Budget",), "unknown command"),
@@ -214,6 +245,10 @@ CONTROLS = (
                                                              '("wave merge", "wave integrate", "wave", ["cleanup"]'),
      "wave merge: routes to"),
     ("an old name forgotten", lambda t: t.replace('("wave new", "wave prepare"', '("wave new", None'), "old name `wave prepare` is refused"),
+    ("the refusal of `fwx test` forgotten", lambda t: t.replace('("test",): "\'forge test fwx\'"', '("testx",): "\'forge test fwx\'"'),
+     "old `fwx test` is refused"),
+    ("`--help` after a verb left to the handler", lambda t: t.replace("and row[2] != OWN_HELP", "and False"),
+     "`--help` after a verb prints help"),
     ("a flag row gone", lambda t: re.sub(r'    \("linear list --waiting".*\n', "", t), "linear list --waiting: routes to"),
     ("the default of an object gone", lambda t: t.replace('("wave", "wave summary", "wave", ["summary"]', '("wave summary", None, "wave", ["summary"]'),
      "default of `wave --run R`"),
@@ -241,5 +276,63 @@ for p in texts:
         s.eq("%s names no command that is gone" % os.path.relpath(p, helpers.ROOT), _cb._unknown_commands(f.read()), [])
 # control: the scan does see a removed command
 s.eq("control: a text that names `fwx capacity` is caught", _cb._unknown_commands("it runs `fwx capacity --role executor`"), ["unknown command: fwx capacity"])
+
+# ---- `--help` after a verb, on the real handlers --------------------------------------------------------------------------
+# The reported case: `fwx walk selftest --help` printed "--help is not an option of this command" on stderr and exited 2. Run as the
+# real command in an empty folder with an empty environment, so it needs no project, no key and no configuration.
+empty = helpers.mkdtemp("fwx-help-")
+REAL_FWX = os.path.join(helpers.ROOT, "bin", "fwx")
+
+
+def real_help(*args):
+    return subprocess.run([sys.executable, REAL_FWX] + list(args), cwd=empty, env={}, capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                          timeout=60)
+
+
+r = real_help("walk", "selftest", "--help")
+s.eq("real `fwx walk selftest --help`: exit 0, usage on stdout, nothing on stderr",
+     (r.returncode, "usage: fwx walk" in r.stdout and "fwx walk selftest" in r.stdout, r.stderr), (0, True, ""))
+# the rows left to their own handler print real help too
+own = [n for n, o, m, a in DECIDED if m == OWN_HELP]
+bad = []
+for n in own:
+    r = real_help(*([w for w in n.split() if not w.startswith("--")] + ["--help"]))
+    if r.returncode != 0 or "usage:" not in r.stdout:
+        bad.append("%s (exit %d)" % (n, r.returncode))
+s.eq("the %d rows of module `%s` print their own help on `--help`" % (len(own), OWN_HELP), bad, [])
+s.ok("that loop looked at rows", len(own) > 5, len(own))
+
+# ---- the skills the texts offer exist ------------------------------------------------------------------------------------
+# The discuss offered `/fwx:improve` for a request, and no skill of that name exists (it is a planned part): nothing read it. Every
+# `/fwx:<name>` in a skill, agent, playbook or workflow must be a folder of skills/ or a file of workflows/. Seen red on master:
+#   FAIL: skills/discuss/SKILL.md names no skill or workflow: write it or remove the line: ['skills/discuss/SKILL.md:18: /fwx:improve']
+SLASH = re.compile(r"(?<![\w/.:-])/fwx:([a-z][a-z0-9-]*)")
+
+
+def _unknown_slash(text, known):
+    """['LINE: /fwx:name', ...] for each `/fwx:<name>` of text that is not in known, and the number of names looked at."""
+    bad, seen = [], 0
+    for n, line in enumerate(text.splitlines(), 1):
+        for m in SLASH.finditer(line):
+            seen += 1
+            if m.group(1) not in known:
+                bad.append("%d: /fwx:%s" % (n, m.group(1)))
+    return bad, seen
+
+
+known = ({d for d in os.listdir(os.path.join(helpers.ROOT, "skills")) if os.path.isfile(os.path.join(helpers.ROOT, "skills", d, "SKILL.md"))}
+         | {f[:-3] for f in os.listdir(os.path.join(helpers.ROOT, "workflows")) if f.endswith(".js")})
+slash_texts = texts + sorted(glob.glob(os.path.join(helpers.ROOT, "workflows", "*.js")))
+looked = 0
+for p in slash_texts:
+    with open(p, encoding="utf-8") as f:
+        bad, seen = _unknown_slash(f.read(), known)
+    looked += seen
+    rel = os.path.relpath(p, helpers.ROOT)
+    s.eq("%s names no skill or workflow: write it or remove the line" % rel, ["%s:%s" % (rel, b) for b in bad], [])
+s.ok("the `/fwx:` scan looked at %d names in %d files (zero is a failure)" % (looked, len(slash_texts)), looked > 0 and "execute" in known, looked)
+# control: a text that names `/fwx:nope` is caught, and a real name is not
+s.eq("control: a text that names `/fwx:nope` is caught", _unknown_slash("a\nthen give `/fwx:nope`", known), (["2: /fwx:nope"], 1))
+s.eq("control: a text that names a skill and a workflow is not", _unknown_slash("`/fwx:discuss` and /fwx:execute", known), ([], 2))
 
 s.done()

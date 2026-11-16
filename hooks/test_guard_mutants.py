@@ -71,8 +71,12 @@ MUTANTS = {
     # Rules added after the independent review.
     "drop the lefthook bypass checks":
         ("            reason = hook_bypass(pcmd)\n            if reason:", "            reason = None\n            if reason:"),
-    "drop the backlog rule (gh issue create passes where backlog.mjs exists)":
+    "drop the issue-create rule (gh issue create passes in every project)":
         ("            reason = issue_create_refusal(pcmd)\n            if reason:", "            reason = None\n            if reason:"),
+    "issue-create rule needs a backlog script again (gh issue create passes where there is none)":
+        ("    for seg in pieces(pcmd):\n        if _creates_issue(seg):\n            return (\"gh issue create is refused:",
+         "    if not any(os.path.isfile(os.path.join(d, \"scripts\", \"backlog\", \"backlog.mjs\")) for d in (PROJECT, CWD[0])):\n"
+         "        return None\n    for seg in pieces(pcmd):\n        if _creates_issue(seg):\n            return (\"gh issue create is refused:"),
     "drop git commit -n":
         ('        if re.match(r"^-[a-zA-Z]+$", a) and "n" in a[1:]:', "        if False:"),
     "drop .env.example exclusion (over-block)":
@@ -291,9 +295,9 @@ MUTANTS = {
         ('"lefthook-local.yml", "guard", ', '"lefthook-local.yml", '),
     "4. Bash may print ~/.claude.json":
         (r'''    r"(?:^|[\s/=])\.claude\.json", r"\.aws/config\b", FORGE_CREDENTIALS,''', r'''    r"\.aws/config\b", FORGE_CREDENTIALS,'''),
-    "4. .claude.json anywhere in a name (forge's profiles refused)":
+    "4. .claude.json anywhere in a name (forge's projects refused)":
         (r'''    r"(?:^|[\s/=])\.claude\.json", r"\.aws/config\b",''', r'''    r"\.claude\.json", r"\.aws/config\b",'''),
-    "8d. a quote before .claude.json counts again (forge's profile code refused)":
+    "8d. a quote before .claude.json counts again (forge's project code refused)":
         (r'''    r"(?:^|[\s/=])\.claude\.json", r"\.aws/config\b",''', r'''    r"(?:^|[\s/'\"=])\.claude\.json", r"\.aws/config\b",'''),
     "4. Bash may print ~/.aws/config":
         (r''', r"\.aws/config\b", FORGE_CREDENTIALS,''', r''', FORGE_CREDENTIALS,'''),
@@ -536,9 +540,9 @@ MUTANTS = {
         ('or r["id"] in seen:', ":"),
     "consent: production's keys not checked":
         ('        _only_keys("production", value, PRODUCTION_KEYS)', "        pass"),
-    "consent: production of the project's profile not checked":
+    "consent: production of the project file not checked":
         ('        err = production_error(prof["production"])', "        err = None"),
-    "consent: the shallowest profile is the project's":
+    "consent: the shallowest project is the project's":
         ("    return max(inside, key=lambda p: len(p[\"project_path\"])) if inside else None",
          "    return min(inside, key=lambda p: len(p[\"project_path\"])) if inside else None"),
     "consent: a bad configuration lets the call through":
@@ -557,7 +561,7 @@ MUTANTS = {
     "consent: shells anidados no mirados":
         ("    for body in consent_bodies(words):\n        if depth >= CONSENT_DEPTH:", "    for body in []:\n        if depth >= CONSENT_DEPTH:"),
     "consent: herramienta MCP nunca comparada":
-        ("        named = [p for p in profiles if tool in _consent_entries(p)]", "        named = []"),
+        ("        named = [p for p in projects if tool in _consent_entries(p)]", "        named = []"),
     "consent: the source of a refspec decides, not its destination":
         ("        if dst not in branches:\n            continue", "        if src not in branches:\n            continue"),
     "consent: --dry-run is a push":
@@ -571,7 +575,7 @@ MUTANTS = {
     "consent: git -C is not followed":
         ("                    wd = _consent_dir(d, where, env)", "                    wd = d"),
     "consent: a worktree outside the project is not resolved":
-        ("            if common:\n                p = consent_profile", "            if False:\n                p = consent_profile"),
+        ("            if common:\n                p = consent_project", "            if False:\n                p = consent_project"),
     "consent: a rule missing from gateway.json still matches":
         ('    push_rule, cmd_rule = rule_of.get("production.branches"), rule_of.get("production.commands")',
          '    push_rule, cmd_rule = rule_of.get("production.branches") or cfg["rules"][0], rule_of.get("production.commands") or cfg["rules"][0]'),

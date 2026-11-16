@@ -175,14 +175,14 @@ _w = [0]
 
 
 class World:
-    """A toy config/ with no profile (the step is machine-wide), and a run in the scope of `forge sync` / `--all`
+    """A toy config/ with no project (the step is machine-wide), and a run in the scope of `forge sync` / `--all`
     (user-scope files included), which is where the step belongs."""
 
     def __init__(self):
         _w[0] += 1
         self.base = os.path.join(TOY, "world%d" % _w[0])
         self.cfg = os.path.join(self.base, "config")
-        self.pdir = os.path.join(self.cfg, "profiles")
+        self.pdir = os.path.join(self.cfg, "projects")
         os.makedirs(self.pdir)
         with open(os.path.join(self.cfg, "mcp-registry.json"), "w") as f:
             f.write('{"servers": {}}')
@@ -194,7 +194,7 @@ class World:
 
     def run(self, apply=True):
         """(exit code, everything the run printed)."""
-        sync.CFG, lib.PROFILES = self.cfg, self.pdir
+        sync.CFG, lib.PROJECTS = self.cfg, self.pdir
         real = lib.context
         lib.context = lambda argv: lib.Ctx(bool(argv), None, True)
         out, err = io.StringIO(), io.StringIO()
