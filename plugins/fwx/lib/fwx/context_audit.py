@@ -8,12 +8,17 @@ with the base file as it is today.
 
 Per agent, one verdict:
   ok          got what its type gets (or got nothing and its type gets nothing)
-  stale       got the base, but its mark is not today's (a warning, not a failure)
+  stale       got the base, but none of the marks it was handed is today's (a warning, not a failure)
   not armed   got nothing, and there is no base file today (no `--file`, no open phase with a base): counted, not a failure
   missing     should have got the base, there is one today, and no attachment carries it (with the hook's stderr when it failed)
   over-cap    an entry starts with `<persisted-output>`: Claude Code stored a context over 10,000 units instead of delivering it
   wrong       a type that gets nothing was handed the base, or a type without `map+decided` was handed `## Decided`
-  double      two `# Base context` marks in what one agent was handed
+  double      the same `# Base context` mark twice in what one agent was handed
+
+An agent may be handed two bases with different marks on purpose (the open phase's and a construction's hand-written `--file`
+one, two registrations of the one hook): that is not a `double`. The base audited is the one whose mark is today's; `stale` asks
+whether any mark handed is today's, and `wrong` reads only that base's text (with no base of today, or none matching it, every
+base handed).
 
 Only the entries that carry the base's mark count as ours: another hook's `hook_additional_context` (a memory plugin's, say) is
 ignored. A hook that exits 0 with no output leaves no attachment at all (measured), so silence is judged by the file of today and
@@ -28,6 +33,7 @@ import re
 
 from fwx import config, context_base as cb, state
 
+MARK_PREFIX = "# Base context · "
 MARK_LINE = re.compile(r"^# Base context · [0-9a-f]{8}$", re.M)
 PERSISTED = "<persisted-output>"
 DECIDED = re.compile(r"^## Decided$", re.M)
@@ -171,15 +177,24 @@ def judge(agent_type_, read, today):
         return "missing", ("hook error: " + err) if err else "no hook_additional_context carries the base"
     if want == "none":
         return "wrong", "its type gets nothing and it was handed the base"
-    if want == "map" and DECIDED.search(got):
+    if want == "map" and DECIDED.search(_audited(got, today)):
         return "wrong", "handed `## Decided`, its type gets the map only"
-    n = len(MARK_LINE.findall(got))
-    if n > 1:
-        return "double", "%d `# Base context` marks in what it was handed" % n
-    if today is not None and MARK_LINE.search(got).group(0) != today.split("\n", 1)[0]:
-        return "stale", "its mark %s is not today's %s" % (MARK_LINE.search(got).group(0)[len("# Base context · "):],
-                                                        today.split("\n", 1)[0][len("# Base context · "):])
+    marks = MARK_LINE.findall(got)
+    twice = sorted({m for m in marks if marks.count(m) > 1})
+    if twice:
+        return "double", "the base %s was handed %d times" % (twice[0][len(MARK_PREFIX):], marks.count(twice[0]))
+    if today is not None and today.split("\n", 1)[0] not in marks:
+        return "stale", "its mark %s is not today's %s" % (", ".join(m[len(MARK_PREFIX):] for m in marks),
+                                                        today.split("\n", 1)[0][len(MARK_PREFIX):])
     return "ok", ""
+
+
+def _audited(got, today):
+    """The text of the base audited: the one whose mark is today's, else (no base of today, or none matches) all of `got`."""
+    first = today.split("\n", 1)[0] if today is not None else None
+    parts = re.split(r"(?m)^(?=# Base context · [0-9a-f]{8}$)", got)
+    mine = [p for p in parts if p.split("\n", 1)[0] == first]
+    return "\n".join(mine) if mine else got
 
 
 def _today(cwd, session_id, fixed):

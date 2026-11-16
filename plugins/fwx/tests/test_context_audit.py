@@ -286,4 +286,31 @@ s.eq("judge: a persisted entry of a type owed the base is over-cap even if its p
 s.eq("judge: a persisted entry of another hook for a type that gets nothing is not ours",
      judged("Explore", ["<persisted-output>\nOutput too large"], built), "ok")
 
+# Two bases with different marks are delivered on purpose (the phase's base and a hand-written `--file` base): not a double.
+# The audited base is the one whose mark is today's; `double` is one mark twice. Seen red on the code before (the marks counted, not
+# compared; `## Decided` looked for in everything handed):
+#   FAIL: judge: two bases with different marks, one of them today's: ok: got 'double', want 'ok'
+#   FAIL: judge: two bases, the audited one older than today's: stale, not ok and not double: got 'double', want 'stale'
+#   FAIL: judge: a map type, `## Decided` only in the other base, the audited one is the map: ok: got 'wrong', want 'ok'
+# The same-mark-twice checks passed before and after: they are the control that `double` still fails. A pair of bases "neither of
+# the audited one's family" has no meaning (a mark is a hash, there is no family), so it is the plain stale case.
+other = "# Base context · 0badf00d\nA hand-written base.\n"
+other2 = "# Base context · 0ddba11c\nAnother older base.\n"
+older = maponly.replace(maponly.split("\n", 1)[0], "# Base context · 0badf00d", 1)
+s.eq("judge: two bases with different marks, one of them today's: ok", judged("general-purpose", [maponly, other], built), "ok")
+s.eq("judge: the same two bases in the other order: ok", judged("general-purpose", [other, maponly], built), "ok")
+s.eq("judge: two bases with different marks in one attachment: ok", judged("general-purpose", [other + "\n" + maponly], built), "ok")
+s.eq("judge: the same mark twice is still double", judged("general-purpose", [maponly, maponly], built), "double")
+s.eq("judge: the same mark twice beside another base is still double", judged("general-purpose", [maponly, other, maponly], built), "double")
+s.eq("judge: two bases, the audited one older than today's: stale, not ok and not double",
+     judged("general-purpose", [older, other2], built), "stale")
+s.eq("judge: two bases, neither is today's (a mark has no family, so this is the same case): stale",
+     judged("general-purpose", [other, other2], built), "stale")
+s.eq("judge: two bases and no file today: nothing to compare, ok", judged("general-purpose", [other, other2], None), "ok")
+decided = "# Base context · 0badf00d\n## Decided\nan old decision\n"
+s.eq("judge: a map type, `## Decided` only in the other base, the audited one is the map: ok",
+     judged("fwx:reviewer", [decided, maponly], built), "ok")
+s.eq("judge: a map type, `## Decided` in the audited base: wrong",
+     judged("fwx:reviewer", [other, maponly + "\n## Decided\nx\n"], built), "wrong")
+
 s.done()
