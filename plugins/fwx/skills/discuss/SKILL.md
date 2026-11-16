@@ -15,7 +15,7 @@ Context. Read no long file or investigation yourself: a `researcher` returns sum
 
 3. **What does the owner ask?** Unsure: ask in round one.
    - Work on the project: the subproject from the message and `subprojects` (unsure: ask, research waits). Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher` (`models.researcher.small`): code map, `.fwx/` state, for UI the design documents and component skill. Do not wait. First check: what you understood, the subproject and why, what waits in Linear (`waiting.groups` by age, each issue with its URL; "Linear: not checked (reason)" if NOT RUN).
-   - Improve the system, or a new model: give `/fwx:improve`.
+   - Improve the system, or a new model: not built yet. Say so in one line and offer nothing for it.
    - Trivial: only the owner calls a change trivial, by no threshold of yours; when it could be, offer "plain Claude, no workflow" in round one. Picked: one line, no phase; if it passes the closed list (step 9), give `/fwx:factory-issue`.
    - Continue: with no phase bound, `fwx:session`; for an issue the factory returned (a `needs-owner` or `factory-failed` one he picks), `fwx:session retake <KEY>`; a `factory-review` one, its URL only.
 

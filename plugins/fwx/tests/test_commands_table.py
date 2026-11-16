@@ -302,4 +302,37 @@ for n in own:
 s.eq("the %d rows of module `%s` print their own help on `--help`" % (len(own), OWN_HELP), bad, [])
 s.ok("that loop looked at rows", len(own) > 5, len(own))
 
+# ---- the skills the texts offer exist ------------------------------------------------------------------------------------
+# The discuss offered `/fwx:improve` for a request, and no skill of that name exists (it is a planned part): nothing read it. Every
+# `/fwx:<name>` in a skill, agent, playbook or workflow must be a folder of skills/ or a file of workflows/. Seen red on master:
+#   FAIL: skills/discuss/SKILL.md names no skill or workflow: write it or remove the line: ['skills/discuss/SKILL.md:18: /fwx:improve']
+SLASH = re.compile(r"(?<![\w/.:-])/fwx:([a-z][a-z0-9-]*)")
+
+
+def _unknown_slash(text, known):
+    """['LINE: /fwx:name', ...] for each `/fwx:<name>` of text that is not in known, and the number of names looked at."""
+    bad, seen = [], 0
+    for n, line in enumerate(text.splitlines(), 1):
+        for m in SLASH.finditer(line):
+            seen += 1
+            if m.group(1) not in known:
+                bad.append("%d: /fwx:%s" % (n, m.group(1)))
+    return bad, seen
+
+
+known = ({d for d in os.listdir(os.path.join(helpers.ROOT, "skills")) if os.path.isfile(os.path.join(helpers.ROOT, "skills", d, "SKILL.md"))}
+         | {f[:-3] for f in os.listdir(os.path.join(helpers.ROOT, "workflows")) if f.endswith(".js")})
+slash_texts = texts + sorted(glob.glob(os.path.join(helpers.ROOT, "workflows", "*.js")))
+looked = 0
+for p in slash_texts:
+    with open(p, encoding="utf-8") as f:
+        bad, seen = _unknown_slash(f.read(), known)
+    looked += seen
+    rel = os.path.relpath(p, helpers.ROOT)
+    s.eq("%s names no skill or workflow: write it or remove the line" % rel, ["%s:%s" % (rel, b) for b in bad], [])
+s.ok("the `/fwx:` scan looked at %d names in %d files (zero is a failure)" % (looked, len(slash_texts)), looked > 0 and "execute" in known, looked)
+# control: a text that names `/fwx:nope` is caught, and a real name is not
+s.eq("control: a text that names `/fwx:nope` is caught", _unknown_slash("a\nthen give `/fwx:nope`", known), (["2: /fwx:nope"], 1))
+s.eq("control: a text that names a skill and a workflow is not", _unknown_slash("`/fwx:discuss` and /fwx:execute", known), ([], 2))
+
 s.done()
