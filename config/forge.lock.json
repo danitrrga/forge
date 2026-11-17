@@ -1,13 +1,4 @@
 {
-  "gsd": "1.18.0",
-  "mcp": {
-    "@21st-dev/magic": "floating",
-    "@conorbronsdon/substack-mcp": "1.3.0",
-    "@playwright/mcp": "floating",
-    "firecrawl-mcp": "floating",
-    "mcp-remote": "floating",
-    "rea-agents": "6.5.0"
-  },
   "plugins": {
     "claude-code-setup@claude-plugins-official": {
       "version": "1.0.0"
@@ -20,19 +11,19 @@
       "version": "6.30.1"
     },
     "code-review@claude-plugins-official": {
-      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
-      "version": "af59ee3a1051"
+      "sha": "b5b01ac4f889fec0c4c6bb89f27ca7c8574473f6",
+      "version": "1.0.1"
     },
     "code-simplifier@claude-plugins-official": {
       "version": "1.0.0"
     },
     "context7@claude-plugins-official": {
-      "sha": "d1adba47161a271799de7b548225d929310046bd",
-      "version": "d1adba47161a"
+      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
+      "version": "fd30cee3ecd5"
     },
     "frontend-design@claude-plugins-official": {
-      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
-      "version": "af59ee3a1051"
+      "sha": "f8c5e7a1dcb71b10cb74586224b5401f3de5db28",
+      "version": "1.1.1"
     },
     "hindsight-memory@hindsight": {
       "sha": "54226f62afb7ce3d4ff858e470aa09bea09b8875",
@@ -43,8 +34,8 @@
       "version": "0.4.5"
     },
     "playwright@claude-plugins-official": {
-      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
-      "version": "af59ee3a1051"
+      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
+      "version": "fd30cee3ecd5"
     },
     "ponytail@ponytail": {
       "sha": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
@@ -54,12 +45,12 @@
       "version": "1.0.0"
     },
     "skill-creator@claude-plugins-official": {
-      "sha": "af59ee3a1051a29dda4a2e7a2af221aa457ae08b",
-      "version": "af59ee3a1051"
+      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
+      "version": "fd30cee3ecd5"
     },
     "superpowers@claude-plugins-official": {
-      "sha": "bb92a77741419a4ab5f06e711a283343f1ada0c3",
-      "version": "7.0.0"
+      "sha": "22f0b463e7a5e579904dd6211a520321035526f7",
+      "version": "7.0.2"
     },
     "tex-display@claude-code-latex": {
       "sha": "836203075a301868c2f70e17f0638acdaa54bc26",
@@ -82,6 +73,10 @@
     "domain-modeling": {
       "commit": "49dd158d1076134a641b33efb035946536778336",
       "repo": "https://github.com/mattpocock/skills"
+    },
+    "excalidraw-diagram": {
+      "commit": "8646fcc9f74f38539c6cdb4c969723336a96ddcd",
+      "repo": "https://github.com/coleam00/excalidraw-diagram-skill"
     },
     "fixing-accessibility": {
       "commit": "df4eb34c5dee830e8e36490d6fde3451c187339b",
