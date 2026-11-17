@@ -130,10 +130,10 @@ export function bar(progress: number): string {
   return '▰'.repeat(filled) + '▱'.repeat(BAR_CELLS - filled)
 }
 
-/** The chip's text: `<project> · <profile> · ▰▰▰▱▱▱▱▱`, the profile only when there is one; `<project> · sin fase` with no phase. */
+/** The chip's text: `<project> · <profile> · ▰▰▰▱▱▱▱▱`, the profile only when there is one; `<project> · no phase` with no phase. */
 export function chipText(v: Snapshot): string {
   const head = [v.project, v.profile].filter(Boolean).join(' · ')
-  if (!v.phase) return `${head} · sin fase`
+  if (!v.phase) return `${head} · no phase`
   const where = [head, v.phase, v.stage].filter(Boolean).join(' · ')
   return v.progress === null ? where : `${where} · ${bar(v.progress)}`
 }
@@ -144,13 +144,13 @@ const AROUND = 2
 /** The roadmap on one line: Orca's tooltip is `text-balance` with no `white-space: pre`, so a line break would collapse to a
  *  space. Phases around the current one (AROUND each side, `…` beyond), then the parts, then the branch. */
 export function tooltip(v: Snapshot): string {
-  if (!v.phase) return 'Sin fase abierta'
+  if (!v.phase) return 'No phase open'
   const at = Math.max(0, v.phases.findIndex((p) => p.state === 'current'))
   const from = Math.max(0, at - AROUND)
   const to = Math.min(v.phases.length, at + AROUND + 1)
   const phases = v.phases.slice(from, to).map((p) => `${MARK[p.state]} ${p.name}${p.state === 'current' && p.stage ? ` (${p.stage})` : ''}`)
-  const out = [v.milestone ? `Hito ${v.milestone}` : null, ...(from > 0 ? ['…'] : []), ...phases, ...(to < v.phases.length ? ['…'] : [])]
-  if (v.partList.length) out.push(`Partes ${v.partList.map((p, i) => `${MARK[p.state]}${i + 1}`).join(' ')}`)
-  if (v.branch) out.push(`Rama ${v.branch}`)
+  const out = [v.milestone ? `Milestone ${v.milestone}` : null, ...(from > 0 ? ['…'] : []), ...phases, ...(to < v.phases.length ? ['…'] : [])]
+  if (v.partList.length) out.push(`Parts ${v.partList.map((p, i) => `${MARK[p.state]}${i + 1}`).join(' ')}`)
+  if (v.branch) out.push(`Branch ${v.branch}`)
   return out.filter(Boolean).join(' · ')
 }

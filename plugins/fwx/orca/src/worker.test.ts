@@ -62,7 +62,7 @@ test('no phase (fwx exits 1 and still prints): the chip says so', async () => {
     const h = host([WS])
     const w = await mountWorker(main, { host: h })
     await w.request('session.get')
-    assert.equal(updates(h).at(-1)!.text, 'atlas · sin fase')
+    assert.equal(updates(h).at(-1)!.text, 'atlas · no phase')
     await w.deactivate()
   }, true)
 })
