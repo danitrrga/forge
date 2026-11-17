@@ -208,13 +208,16 @@ def resolve(project, prof, profile):
             raise fail("server '%s' (kind '%s') is not in config/mcp-registry.json" % (row["servers"][kind], kind))
         servers.append(row["servers"][kind])
     out = {"skills_keep": _union(skills), "plugins_keep": _union(d["plugins"], row.get("plugins", [])),
-           "permissions": json.loads(json.dumps(d["permissions"])), "env": dict(d["env"])}
+           "permissions": json.loads(json.dumps(d["permissions"]))}
     fn = project + ".claude.json"
     sk.apply_common(fn, out)
     sk.apply_common_plugins(fn, out)
     sk.apply_design(out)
+    for n in out["skills_keep"]:  # after the common layer: a common skill that is not installed is no better than one of the definition
+        if n != "*" and n not in installed:
+            raise fail("unknown skill '%s' (no folder of that name in %s)" % (n, lib.short(sk.GLOBAL_SKILLS)))
     out.setdefault("permissions", {})
-    out.setdefault("env", {})
+    out["env"] = {**out.get("env", {}), **d["env"]}  # the definition's env last: it wins over the common layer's
     return {"description": d["description"], "color": d["color"], "skills_keep": out["skills_keep"],
             "plugins_keep": out["plugins_keep"], "servers": servers, "permissions": out["permissions"], "env": out["env"]}
 

@@ -85,7 +85,7 @@ def read_json(p):
 
 DEFS = {
     "toy-b": {"description": "toy B", "color": "red", "skills": ["@TOYSET"], "plugins": ["p-def@m"], "server_kinds": ["analytics"],
-              "permissions": {"allow": ["Read"]}, "env": {"TOY_B": "1"}},
+              "permissions": {"allow": ["Read"]}, "env": {"TOY_B": "1", "TOY_ENV": "from-def"}},  # TOY_ENV is a common env key too: the definition wins
     "list": {"description": "named like the command", "color": "blue", "skills": ["toy-a"]},
     "err-set": {"skills": ["@NOPE"]},
     "err-skill": {"skills": ["toy-missing"]},
@@ -101,7 +101,7 @@ ERRS_ROWS = {"from-example": {}, "err-set": {}, "err-skill": {}, "err-kind": {"s
              "err-extra": {"servers": {"analytics": "toy-echo", "search": "toy-echo"}}, "err-nodef": {},
              "perm-str": {}, "perm-int": {}, "perm-mixed": {}, "perm-deny": {}, "perm-dirs": {}, "err-registry": {"servers": {"analytics": "no-such-server"}}}
 PROJECTS = {
-    "multi": {"skills_keep": ["toy-common", "toy-a"], "plugins_keep": ["p-def@m"], "servers": [], "env": {"TOY": "1"},
+    "multi": {"skills_keep": ["toy-common", "toy-a"], "plugins_keep": ["p-def@m", "p-only-default@m"], "servers": [], "env": {"TOY": "1"},
               "profiles": {"default": "code", "offered": {
                   "toy-b": {"skills": ["toy-c"], "plugins": ["toy-plugin@x"], "servers": {"analytics": "toy-echo"}},
                   "list": {}}}},
@@ -116,7 +116,7 @@ class World:
     """An engine copy, a toy HOME and the projects `names`; `extra` is added to each project file, `mutate` is one text
     replacement (file, old, new) in the copy."""
 
-    def __init__(self, names, extra=None, mutate=None):
+    def __init__(self, names, extra=None, mutate=None, skills=SKILLS):
         self.root = sandbox.mkdtemp("forge-prof-")
         self.forge, self.home = os.path.join(self.root, "forge"), os.path.join(self.root, "home")
         sandbox.copy_engine(self.forge)
@@ -129,7 +129,7 @@ class World:
             assert text.count(old) == 1, "the control's anchor is not in %s" % rel
             with open(p, "w", encoding="utf-8") as fh:
                 fh.write(text.replace(old, new))
-        for s in SKILLS:
+        for s in skills:
             os.makedirs(os.path.join(self.home, ".claude", "skills", s))
         cfg = os.path.join(self.forge, "config")
         doc = read_json(os.path.join(cfg, "forge.json"))
@@ -217,17 +217,20 @@ def main():
     mcporter = os.path.join(w.home, ".config", "mcporter", "mcporter.json").replace(w.root, "@S@")
     want = {"skills_keep": ["toy-a", "toy-b", "toy-c", "toy-common"], "plugins_keep": ["p-def@m", "toy-plugin@x"],
             "servers": ["toy-echo"], "permissions": {"allow": ["Read"]},
-            "env": {"TOY_B": "1", "TOY_ENV": "1", "MCPORTER_CONFIG": mcporter}}
+            "env": {"TOY_B": "1", "TOY_ENV": "from-def", "MCPORTER_CONFIG": mcporter}}
     check("b: toy-b resolves to the expected lists", code == 0 and all(
         json.loads(json.dumps(got.get(k)).replace(w.root, "@S@")) == v for k, v in want.items()), "got %r (%s), want %r" % (got, err, want))
     check("b: the card says who it is", got and (got["project"], got["profile"], got["description"], got["color"]) == ("multi", "toy-b", "toy B", "red"), got)
-    # The profile does not inherit from the default: the default's own skill `toy-a` is there only because the set has it.
-    check("b: the plugin the default has comes from the definition, not from the default",
-          got and "p-def@m" in got["plugins_keep"], got)
+    # The profile does not inherit from the default: `p-only-default@m` is a plugin only the default has. Mutant (resolve() unions
+    # prof["plugins_keep"] into the profile's plugins), run once and restored: "FAIL b: the plugin only the default has is not in
+    # the profile -- ['p-def@m', 'toy-plugin@x', 'p-only-default@m']".
+    check("b: the plugin only the default has is not in the profile",
+          got and "p-only-default@m" not in got["plugins_keep"], got and got["plugins_keep"])
+    # The definition's env wins over the common layer's (TOY_ENV is in both). Red on 720a93d: the want of case b above, "TOY_ENV": "1".
     check("b: the difference with the default", got and got["differs_from_default"] == {
-        "skills_keep": {"added": ["toy-b", "toy-c"], "removed": []}, "plugins_keep": {"added": ["toy-plugin@x"], "removed": []},
+        "skills_keep": {"added": ["toy-b", "toy-c"], "removed": []}, "plugins_keep": {"added": ["toy-plugin@x"], "removed": ["p-only-default@m"]},
         "servers": {"added": ["toy-echo"], "removed": []}, "permissions": {"added": ["allow:Read"], "removed": []},
-        "env": {"added": ["MCPORTER_CONFIG=" + mcporter, "TOY_B=1", "TOY_ENV=1"], "removed": ["TOY=1"]}}, got and got["differs_from_default"])
+        "env": {"added": ["MCPORTER_CONFIG=" + mcporter, "TOY_B=1", "TOY_ENV=from-def"], "removed": ["TOY=1"]}}, got and got["differs_from_default"])
 
     # c: each way a resolution fails is exit 2 naming the profile and the cause.
     for profile, cause in (("err-set", "unknown skill set '@NOPE'"), ("err-skill", "unknown skill 'toy-missing'"),
@@ -252,6 +255,12 @@ def main():
     code, got, err = lists_of(w, "from-example", "errs")
     check("c: the example, copied as it is, is a definition (its _doc is documentation)", code == 0 and got["skills_keep"] == ["toy-common"]
           and got["servers"] == [], (code, got, err))
+
+    # A skill the common layer adds is checked too. Red on 720a93d: "FAIL c: a common skill that is not installed is exit 2 -- exit 0".
+    w2 = World(["multi"], skills=("toy-a", "toy-b", "toy-c"))
+    code, out, err = w2.forge_cmd(["list", "@list"], cwd=w2.pp("multi"))
+    check("c: a common skill that is not installed is exit 2", code == 2, "exit %d, stdout %r" % (code, out))
+    check("c: and names the profile and the skill", "profile 'list' of project 'multi'" in err and "unknown skill 'toy-common'" in err, err)
 
     # d: a malformed `profiles` leaves the project out of lib.projects() and names it.
     r = subprocess.run([sys.executable, "-c", "import json; from forge import lib; s = []; p = lib.projects(s); print(json.dumps([sorted(p), s]))"],
