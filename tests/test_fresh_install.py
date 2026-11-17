@@ -426,12 +426,17 @@ def main_world():
     check("a second `forge sync --all` dry-run exits 0 with no pending write", code == 0 and pending == 0,
           "exit %d, %d pending: %s" % (code, pending, tail(out, 12)))
     # The two user-scope steps left forge sync for forge skills (docs/toolchain-design.md section 5).
-    check("forge sync --all runs neither of them", "skill links" not in out and "gsd runtime" not in out, tail(out, 12))
+    # Control: ("online skills", "scripts/sync/materialise_skills.py", None, "--apply", []) put into cli.SYNC makes it
+    # FAIL: "FAIL forge sync --all runs neither of them -- ... == forge: online skills == | NOT RUN, NOT ARMED ...";
+    # restored, exit 0.
+    check("forge sync --all runs neither of them", "skill links" not in out and "online skills" not in out, tail(out, 12))
     code, out = w.forge("skills")
     check("forge skills exits 0", code == 0, "exit %d: %s" % (code, tail(out, 12)))
     # docs/portable-design.md section 10 says the relink line reads NOT RUN, NOT ARMED; the code (T5) prints a SKIP line.
     check("the relink step says SKIP, with nothing to link", "relink_skills: SKIP -- skills/ holds no skill, so there is nothing to link" in out, tail(out, 12))
-    check("the gsd step says NOT RUN, NOT ARMED", "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)" in out, tail(out, 12))
+    # Control: a ("gsd runtime", ...) step put back into cli.SKILLS gives "111 check(s), 2 failure(s)": "FAIL forge skills
+    # has no gsd runtime step" and "FAIL forge skills with gsd on has no gsd runtime step and no '!' line".
+    check("forge skills has no gsd runtime step", "gsd runtime" not in out, tail(out, 12))
 
     code, out = w.forge("new", w.demo)
     check("forge new exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
@@ -582,7 +587,7 @@ def gsd_world():
     """init with GSD left on and `gsd_patches` false, the stranger's value: GSD comes
     unpatched from its own package, installed by GSD's own installer through pnpm, and npm is never called. The
     pnpm stub logs its argv and installs nothing. No config/toolchain.json is written (no npm package is pinned),
-    forge.json says gsd_patches false, and the gsd runtime step of forge sync is the one-line unpatched note."""
+    forge.json says gsd_patches false, and forge skills has no gsd step."""
     w = World("gsd")
     code, out = w.forge("init", "--yes", "--without", "codex")
     calls = w.stub_calls()
@@ -603,8 +608,12 @@ def gsd_world():
     want("forge.json: gsd on, codex off, gsd_patches false", (doc.get("integrations", {}).get("gsd"), doc.get("integrations", {}).get("codex"), doc.get("gsd_patches")),
          (True, False, False))
     code, out = w.forge("skills")
-    check("forge skills says the gsd runtime is the user's own unpatched install, with no '!' line",
-          "GSD is your own unpatched install" in out and not any(l.lstrip().startswith("!") and "gsd" in l.lower() for l in out.splitlines()), tail(out, 12))
+    # Control of the '!' half: `print("! gsd planted line")` after each step header in cli.run_steps makes it FAIL:
+    # "FAIL forge skills with gsd on has no gsd runtime step and no '!' line -- == forge: online skills == | ! gsd
+    # planted line | NOT RUN, NOT ARMED: no `skills` in config/toolchain.json ..." (111 check(s), 1 failure(s)); restored, exit 0.
+    check("forge skills with gsd on has no gsd runtime step and no '!' line",
+          "gsd runtime" not in out and "== forge: online skills ==" in out
+          and not any(l.lstrip().startswith("!") and "gsd" in l.lower() for l in out.splitlines()), tail(out, 12))
     want("forge skills touched neither npm nor pnpm again", (w.stub_calls()["npm"], w.stub_calls()["pnpm"]), ([], [GSD_DLX]))
 
 

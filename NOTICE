@@ -3,15 +3,6 @@ Copyright 2026 danitrrga, Apache License 2.0 (see LICENSE). This covers the whol
 
 This product includes software from other projects, under their own licences.
 
-@opengsd/gsd-core (GSD Core)
-  https://github.com/open-gsd/gsd-core, MIT licence.
-  Copyright (c) 2026 Open GSD
-
-  - scripts/sync/sync_gsd_runtime.py quotes passages of the package's own text (its agents, engine
-    files and skills) as the anchors of the patches it applies. The package is not shipped in this
-    repository: the script runs GSD's installer into a staging directory on the user's machine and
-    patches the result.
-
 get-shit-done-cc (GSD, the package GSD Core continues)
   https://github.com/gsd-build/get-shit-done, MIT licence.
   Copyright (c) 2025 Lex Christopherson

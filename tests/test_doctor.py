@@ -1535,7 +1535,7 @@ def skip_cases(tmp):
 
         def session(project):
             """What a session start in `project` prints, with the sync steps, lock, resolver and machine check stubbed out."""
-            # cli.check_and_tell reads machine state: the GSD runtime and the real config/toolchain.json against the
+            # cli.check_and_tell reads machine state: the real config/toolchain.json against the
             # real ~/.config/mise/conf.d/forge.toml ("toolchain: 1 failing: file:mise" when they differ). It is
             # stubbed whole, like the sync steps; the row itself is test_toolchain.py's. toolchain.row is also forced
             # to FAIL as a tripwire: if the stub stops covering it, "another project is not special" goes red.
@@ -1572,30 +1572,6 @@ def skip_cases(tmp):
         finally:
             cli.SYNC, lib.resolve_project, lib.projects, lib.lock = saved
         want("a session start with no config/forge.json still exits 0, and says why", (code, "config/forge.json missing" in out.getvalue()), (0, True))
-
-    # forge skills: a step whose integration is off is said, not run.
-    root = os.path.join(tmp, "sync-world")
-    os.makedirs(os.path.join(root, "scripts"))
-    marker = os.path.join(root, "ran.txt")
-    with open(os.path.join(root, "scripts", "step.py"), "w") as fh:
-        fh.write("open(%r, 'a').write('x')\n" % marker)
-
-    def sync(integrations):
-        saved = cli.SKILLS
-        cli.SKILLS = [("gsd runtime", "scripts/step.py", None, "--apply", [])]
-        out = io.StringIO()
-        try:
-            with toy_settings(settings_world(tmp, "sync-%s" % integrations["gsd"], dict(integrations=integrations))), toy(root):
-                with contextlib.redirect_stdout(out):
-                    code = cli.cmd_skills(argparse.Namespace(apply=False))
-        finally:
-            cli.SKILLS = saved
-        return code, out.getvalue()
-    code, out = sync(dict(OFF))
-    want("gsd off: forge skills says NOT RUN", (code, "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)" in out), (0, True))
-    want("gsd off: the step did not run", os.path.exists(marker), False)
-    code, out = sync(dict(OFF, gsd=True))
-    want("control, gsd on: the step runs", (code, os.path.exists(marker), "NOT RUN" in out), (0, True, False))
 
 
 def test_cases(tmp):

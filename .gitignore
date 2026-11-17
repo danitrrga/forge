@@ -54,13 +54,11 @@
 !/scripts/sync/relink_skills.py
 !/scripts/sync/materialise_skills.py
 !/scripts/sync/verify_skill_refs.py
-!/scripts/sync/sync_gsd_runtime.py
 !/scripts/sync/sync_skill_keep.py
 !/scripts/sync/sync_agent_config.py
 !/scripts/sync/sync_system_doc.py
 !/scripts/sync/memory_doctor.py
 !/scripts/sync/test_relink_skills.py
-!/scripts/sync/test_sync_gsd_runtime.py
 !/scripts/sync/test_sync_skill_keep.py
 !/scripts/sync/test_sync_system_doc.py
 !/scripts/sync/test_memory_doctor.py
@@ -70,10 +68,9 @@
 /docs/*
 !/docs/assets/
 
-# config/: the GSD patch payloads only.
+# config/: the lock only.
 !/config/
 /config/*
-!/config/gsd/
 # The lock records the versions a release ships (forge lock); the engine publishes it.
 !/config/forge.lock.json
 

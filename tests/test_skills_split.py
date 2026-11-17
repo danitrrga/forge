@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Step 2 of docs/toolchain-design.md: `forge sync` syncs projects only, `forge skills` owns the skill links
-and the GSD runtime, and session start checks and tells without fixing.
+"""Step 2 of docs/toolchain-design.md: `forge sync` syncs projects only, `forge skills` owns the skill links,
+and session start checks and tells without fixing.
 
-1. `forge sync --all` runs agent config and system doc and nothing else; `forge skills` runs skill links and
-   the GSD runtime (with gsd off, the second says NOT RUN, NOT ARMED).
-2. A session start asks `sync_gsd_runtime.py --check --all` (never `--apply`, never run under the lock) and
-   prints one note when it exits 2 (the runtime differs: names `forge skills --apply`) or 1 (the check
-   failed: its '!' lines and `forge skills`); an in-sync runtime and gsd off are silent. A failing
-   `toolchain` row adds one note naming `forge toolchain --fix`; a passing, warning or skipped one adds none.
+1. `forge sync --all` runs agent config and system doc and nothing else; `forge skills` runs online skills and
+   skill links, and no GSD runtime step whether the `gsd` integration is off or on.
+2. A session start runs no command that names the GSD runtime script and prints no GSD note, with `gsd` on or
+   off. A failing `toolchain` row adds one note naming `forge toolchain --fix`; a passing, warning or skipped one
+   adds none.
 
-Seen failing on 26a3ed5 (before the split), each by the message the check printed:
-  (1) "forge sync --all still runs skill links, gsd runtime"; "forge skills: exit 2, `forge: error: argument
-      cmd: invalid choice: 'skills'`"; "cli.SKILLS: AttributeError: module 'forge.cli' has no attribute 'SKILLS'"
-  (2) "gsd differs: no note" (the old session start ran the step with --apply and printed nothing for it);
-      "gsd differs: lib.run was called with --apply"; "toolchain FAIL: no note".
-Controls: (2)'s silent cases and the gsd-off case pass on the old code and are the controls on the notes
-(each note must appear only for its own cause); (1)'s `forge skills` case is armed by its own precondition,
-that its output holds both headers, so an empty run never passes. The result of each mutation of the finished
-code is in the commit message that added this file."""
+Seen failing on the code that still built and watched the GSD runtime (c0309a2), each by the message the check printed:
+  (1) "forge skills prints the gsd runtime step: ... steps ['== forge: online skills ==', '== forge: gsd runtime ==',
+      '== forge: skill links ==']" (gsd on) and, with gsd off, "forge skills (a dry-run) runs its two steps and exits 0"
+      with the `NOT RUN, NOT ARMED (gsd off)` line among them
+  (2) "gsd on: a session start runs no command naming sync_gsd_runtime.py: ran
+      [['scripts/sync/sync_gsd_runtime.py', '--check', '--all']]"; "... prints no GSD note: message
+      \"GSD runtime differs from forge's patched copy -- run `forge skills --apply`\""
+Controls: the toolchain cases pass on the old code and are the controls on the notes (each note must appear
+only for its own cause); (1)'s `forge skills` cases are armed by their own precondition, that the output holds
+both remaining headers, so an empty run never passes."""
 import contextlib
 import io
 import json
@@ -71,11 +71,21 @@ check("forge sync --all runs agent config and system doc, in that order",
 
 code, out = forge("skills")
 steps = [l for l in out.splitlines() if l.startswith("== forge:")]
-check("forge skills (a dry-run) runs its three steps and exits 0",
-      code == 0 and steps == ["== forge: online skills ==", "== forge: gsd runtime == NOT RUN, NOT ARMED (gsd off)", "== forge: skill links =="],
+check("forge skills (a dry-run) runs its two steps and exits 0",
+      code == 0 and steps == ["== forge: online skills ==", "== forge: skill links =="],
       "exit %d: %s" % (code, tail(out)))
 
-check("cli.SKILLS names online skills, gsd runtime and skill links, in that order", [s[0] for s in getattr(cli, "SKILLS", [])] == ["online skills", "gsd runtime", "skill links"],
+# The same world with the gsd integration ON: the step used to run (and, in a toy home, report on the runtime).
+doc["integrations"]["gsd"] = True
+json.dump(doc, open(fj, "w"))
+code, out = forge("skills")
+steps = [l for l in out.splitlines() if l.startswith("== forge:")]
+check("forge skills with gsd on has no gsd runtime step", not any("gsd runtime" in l for l in steps),
+      "forge skills prints the gsd runtime step: steps %s" % steps)
+check("forge skills with gsd on still runs online skills and skill links, in that order",
+      steps == ["== forge: online skills ==", "== forge: skill links =="], "exit %d, steps %s" % (code, steps))
+
+check("cli.SKILLS names online skills and skill links, in that order", [s[0] for s in getattr(cli, "SKILLS", [])] == ["online skills", "skill links"],
       "%s" % [s[0] for s in getattr(cli, "SKILLS", [])])
 check("cli.SYNC names agent config and system doc", [s[0] for s in cli.SYNC] == ["agent config", "system doc"],
       "%s" % [s[0] for s in cli.SYNC])
@@ -112,21 +122,15 @@ def session(gsd_exit=0, gsd_out="", row=lib.Result("PASS", "toolchain", "all pre
     return msg, ran, held
 
 
-msg, ran, held = session(gsd_exit=2)
-check("gsd differs: one note naming forge skills --apply", "forge skills --apply" in msg and msg.count("GSD runtime") == 1, "message %r" % msg)
-check("gsd differs: the check is `sync_gsd_runtime.py --check --all`, read-only, outside the lock",
-      ran == [["scripts/sync/sync_gsd_runtime.py", "--check", "--all"]] and held == [False], "ran %s, lock held %s" % (ran, held))
-check("gsd differs: lib.run was given something, and never --apply", bool(ran) and all("--apply" not in a for a in ran), "ran %s" % ran)
-
-msg, ran, _ = session(gsd_exit=0)
-check("gsd in sync and toolchain passing: silent", msg == "", "message %r" % msg)
-
-msg, ran, _ = session(gsd_exit=1, gsd_out="! @opengsd/gsd-core not found under mise or `npm root -g` -- run `forge toolchain --fix`\nnoise\n")
-check("gsd check failed: its '!' line and forge skills, once", msg.count("@opengsd/gsd-core not found") == 1 and "forge skills" in msg and "noise" not in msg,
-      "message %r" % msg)
-
-msg, ran, _ = session(gsd_exit=2, gsd_on=False)
-check("gsd off: no check is run and nothing is said", msg == "" and ran == [], "message %r, ran %s" % (msg, ran))
+# Whatever the stubbed lib.run would answer for a GSD check (exit 2: "differs", exit 1: failed), a session start
+# no longer asks it: no command names the script, and no GSD note is printed. Gsd on and off alike.
+for gsd_on in (True, False):
+    for gsd_exit in (2, 1, 0):
+        msg, ran, _ = session(gsd_exit=gsd_exit, gsd_out="! some check failed\n", gsd_on=gsd_on)
+        check("gsd %s, a check that would exit %d: a session start runs no command naming sync_gsd_runtime.py" % ("on" if gsd_on else "off", gsd_exit),
+              not any("sync_gsd_runtime.py" in a for argv in ran for a in argv), "ran %s" % ran)
+        check("gsd %s, a check that would exit %d: a session start prints no GSD note and runs nothing" % ("on" if gsd_on else "off", gsd_exit),
+              msg == "" and ran == [], "message %r, ran %s" % (msg, ran))
 
 msg, _, _ = session(row=lib.Result("FAIL", "toolchain", "1 failing: pip:PyYAML (checked 1 tool(s))"))
 check("toolchain FAIL: one note with the row's detail and forge toolchain --fix",

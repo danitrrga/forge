@@ -425,7 +425,7 @@ def allowlist_cases():
                "scripts/backup/t7-backup.sh", ".claude/settings.json", "publish/engine.gitignore"]
     public = ["bin/forge", "forge/cli.py", "forge/publish.py", "hooks/guard_tool_use.py", "hooks/test_guard_tool_use.py",
               "hooks/worktree_guard.py", "hooks/read-injection-scanner.js", "hooks/omarchy_notify.py",
-              "hooks/test_guard_mutants.py", "config/gsd/defaults.json", "scripts/sync/sync_skill_keep.py",
+              "hooks/test_guard_mutants.py", "scripts/sync/sync_skill_keep.py",
               "scripts/sync/test_sync_skill_keep.py", "scripts/sync/memory_doctor.py", "scripts/metrics/harness-metrics.mjs",
               "githooks/pre-commit", "githooks/commit-msg", "githooks/pre-push", "tests/sandbox.py",
               "tests/test_publish.py", "tests/test_sync_agent_config.py", ".gitignore", "CLAUDE.md", "README.md", "AGENTS.md",
@@ -435,12 +435,12 @@ def allowlist_cases():
     want("tracked and not ignored, of the engine paths", sorted(p for p in public if p in tracked and p in ignored), [])
     want("every named engine path is tracked", sorted(p for p in public if p not in tracked), [])
     # docs/assets/ holds the README's images and benchmarks/skill-bench/ the benchmark, which are public; the rest of
-    # docs/ and benchmarks/ is not. Of config/, gsd/ and the lock (the versions a release ships) are.
+    # docs/ and benchmarks/ is not. Of config/, only the lock (the versions a release ships) is.
     want("no skill, doc, design file or project in the engine",
          sorted(p for p in engine if (p.split("/")[0] in ("skills", "docs", "design", "benchmarks", "mcp-servers", "repo-kit", ".claude")
                                       and not p.startswith(("docs/assets/", "benchmarks/skill-bench/")))
                 or p.startswith("config/projects/")
-                or (p.startswith("config/") and not p.startswith("config/gsd/") and p != "config/forge.lock.json")), [])
+                or (p.startswith("config/") and p != "config/forge.lock.json")), [])
     # The private list runs over today's engine files: exit 0, no hit in any file. The gate's `public tree` row
     # holds the same state from the other side.
     if not os.path.exists(DENY):

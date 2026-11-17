@@ -37,7 +37,7 @@ lib.SETTINGS = os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "forge
 from forge import cli  # noqa: E402
 
 failures = []
-FIX = "python3 bin/forge skills --apply"
+FIX = "pnpm dlx @opengsd/gsd-core@latest --claude --global"
 
 
 def want(label, got, expected):
