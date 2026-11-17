@@ -95,14 +95,13 @@ def shape_error(profiles):
 
 def parse_at(text):
     """The profile name of the command-line argument `@name` ('' for a bare `@`). ValueError, with the reason, for any other
-    argument or for a name that cannot be a profile's."""
+    argument or for a name that starts with @ or -. A name that is merely not kebab-case is let through: no profile has it, so
+    the lookup answers with the closest one (`@toy-` proposes `@toy-b`)."""
     if not text.startswith("@"):
         raise ValueError("%r is not a profile: a profile is written @NAME" % text)
     name = text[1:]
-    if name:
-        why = name_error(name)
-        if why:
-            raise ValueError(why)
+    if name.startswith(("@", "-")):
+        raise ValueError(name_error(name))
     return name
 
 
@@ -125,7 +124,7 @@ def definition(name):
         raise ProfileError("%s is not valid JSON (%s)" % (rel, e))
     if not isinstance(doc, dict):
         raise ProfileError("%s is not a JSON object" % rel)
-    extra = sorted(set(doc) - set(DEFINITION))
+    extra = sorted(k for k in doc if k not in DEFINITION and not k.startswith("_"))  # `_...` keys are documentation
     if extra:
         raise ProfileError("%s: %s is not a key of a definition (known: %s)" % (rel, extra[0], ", ".join(DEFINITION)))
     for key, kind in DEFINITION.items():
@@ -136,7 +135,8 @@ def definition(name):
             raise ProfileError("%s: %s is not a list of strings" % (rel, key))
     if not all(isinstance(v, str) for v in doc.get("env", {}).values()):
         raise ProfileError("%s: env is not an object of strings" % rel)
-    return {"description": "", "color": "", "skills": [], "plugins": [], "server_kinds": [], "permissions": {}, "env": {}, **doc}
+    return {"description": "", "color": "", "skills": [], "plugins": [], "server_kinds": [], "permissions": {}, "env": {},
+            **{k: v for k, v in doc.items() if k in DEFINITION}}
 
 
 @functools.lru_cache(maxsize=None)
@@ -326,10 +326,10 @@ def cmd_list(a):
     """forge list @ | forge list @NAME [--json] [--names]: the profiles of the project of this directory, or one of them. Exit 0
     it did, 1 the project has no profiles (or is frozen), 2 a bad argument, a folder that is no project or a profile it has not."""
     def usage(why):
-        _say("forge list: %s (forge list @ shows this project's profiles, forge list @NAME one of them)" % why, err=True)
+        _say("forge list: %s; it takes @ (this project's profiles) or @NAME (one profile)" % why, err=True)
         return 2
     if a.target is None:
-        return usage("a profile is written @NAME, and a bare @ lists them all")
+        return usage("no argument")
     try:
         profile = parse_at(a.target)
     except ValueError as e:

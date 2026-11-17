@@ -1,0 +1,10 @@
+{
+  "_doc": "The shape of a profile definition, config/profile-defs/<name>.json: one file per kind of session, shared by every project that offers it (a project's `profiles.offered` row of the same name adds its own skills, plugins and the server of each kind). The name is kebab-case and does not start with @ or -. description and color are what `forge list @` shows (color: black, red, green, yellow, blue, magenta, cyan or white paints it on a terminal; anything else is only printed). skills: skill names, or @NAME for the set skill_keep.sets.NAME of config/forge.json. plugins: plugin names, as in a project's plugins_keep. server_kinds: the kinds of MCP server the profile needs (for example \"analytics\"); the project's row says which registry server each kind is there, and a kind with none is an error. permissions and env are added to the base every project gets. A profile is complete: it does not inherit from the project's own lists. Keys that start with _ are documentation.",
+  "description": "",
+  "color": "",
+  "skills": [],
+  "plugins": [],
+  "server_kinds": [],
+  "permissions": {},
+  "env": {}
+}

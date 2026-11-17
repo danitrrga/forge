@@ -26,19 +26,26 @@ Cases (the plan's control list of 4.3 U3, `show` read as `list @NAME`):
   and: none of it writes a file in the world.
 
 Written first, run against the code that had forge/profiles.py and forge/suggest.py but no `list` subcommand and no
-`profiles` row in lib: every case that runs `forge list` failed ("f: list @ exits 0: got 2, want 0 ... forge: error: argument
-cmd: invalid choice: 'list'"), `profiles` was not checked by project_error ("d: a profiles that is not an object is
-refused: None"), and (a) passed, as it should.
-Negative controls, each a mutation made by hand, run once and not kept (the message each one produced):
-  a  the generator's loop (forge/sync.py) adding a key to a project that has `profiles` ->
-     "a: projects/app/.claude/settings.local.json differs between the branch point and this checkout"
-  b  resolve() without the `@SET` expansion -> "c: unknown set ..." no: "b: toy-b resolves ...: got error, want lists"
-     ("unknown skill '@TOYSET' (no folder of that name in ~/.claude/skills)")
-  e  name_error() keeping the old reserved words (`list`, `shim`) -> "e: a profile named 'list' is valid ... rejected"
-     and accepting a name that starts with `@` -> "e: profile named '@x' accepted"
-  f  _list() returning 0 with no rows -> "f: list @ exits 0 with no profiles"
-  g  suggest.message() without the suggestion -> "g: no suggestion in: no profile '@toy-' in project 'multi'. There are: ..."
-  h  _list() printing "@" + name for --names -> "h: @ in --names output"
+`profiles` row in lib: 47 FAIL, among them "b: toy-b resolves to the expected lists -- got None (usage: forge [-h] ... forge:
+error: argument cmd: invalid choice: 'list', maybe you meant 'lint'?", "d: a profiles that is not an object is refused --
+accepted" and "e: profile named '@x' is refused with the reason -- ... accepted"; case a passed, as it should.
+Negative controls, each a mutation made by hand, run once and not kept (the first message each produced):
+  a  the generator's loop (forge/sync.py) adding a key to a project that has `profiles` -> "FAIL a: a project with `profiles`
+     generates the same as one without -- output of doctor differs; projects/app/.claude/settings.local.json differs; ...".
+     The case also carries its own control, a world with that mutation in its engine copy, which must differ from the plain one
+     ("a: the control ... is seen"); aimed first at lib.projects(), which sync.py bypasses, it turned red with
+     "projects/app/.claude/settings.local.json did not differ: the comparison cannot fail ([])".
+  b  resolve() without the `@SET` expansion -> "FAIL b: toy-b resolves to the expected lists -- got None (forge list: profile
+     'toy-b' of project 'multi': unknown skill '@TOYSET' (no folder of that name in ~/.claude/skills)"
+  c  the server-kind check taken out -> "FAIL c: err-kind is exit 2 -- exit 1, stderr 'Traceback (most recent call last): ..."
+  d  project_error not asking profiles.shape_error -> "FAIL d: an offered that is a list is refused -- accepted"
+  e  name_error keeping the old reserved words -> "FAIL e: a profile named 'list' is valid (and 'shim') -- profile named 'list'
+     rejected: profiles.offered: 'list' is reserved"; accepting a name that starts with @ -> "FAIL e: profile named '@x' is
+     refused with the reason -- profile named '@x' accepted or the reason is missing: None"
+  f  _list() exiting 0 with no rows -> "FAIL f: no profiles is exit 1 -- list @ exits 0 with no profiles"
+  g  suggest.message() without the suggestion -> "FAIL g: @toy- proposes @toy-b -- no suggestion in: forge list: no profile
+     '@toy-' in project 'multi'. There are: @code, @list, @toy-b"
+  h  --names printing "@" + name -> "FAIL h: no @ in the --names output -- @ in --names output: '@code, @toy-b, @list, one per line'"
 """
 import json
 import os
@@ -82,7 +89,8 @@ DEFS = {
     "err-kind": {"server_kinds": ["analytics", "search"]},
     "err-extra": {"server_kinds": ["analytics"]},
 }
-ERRS_ROWS = {"err-set": {}, "err-skill": {}, "err-kind": {"servers": {"analytics": "toy-echo"}},
+DEFS["from-example"] = read_json(os.path.join(ROOT, "examples", "profile-def.json"))  # the shape a stranger copies
+ERRS_ROWS = {"from-example": {}, "err-set": {}, "err-skill": {}, "err-kind": {"servers": {"analytics": "toy-echo"}},
              "err-extra": {"servers": {"analytics": "toy-echo", "search": "toy-echo"}}, "err-nodef": {}}
 PROJECTS = {
     "multi": {"skills_keep": ["toy-common", "toy-a"], "plugins_keep": ["p-def@m"], "servers": [], "env": {"TOY": "1"},
@@ -222,6 +230,13 @@ def main():
         check("c: %s is exit 2" % profile, code == 2, "exit %d, stderr %r" % (code, err))
         check("c: %s names the profile and the cause" % profile, ("profile '%s' of project 'errs'" % profile) in err and cause in err,
               "stderr %r, want it to name the profile and %r" % (err, cause))
+
+    ex = DEFS["from-example"]
+    check("c: examples/profile-def.json has every key of a definition and no other", {k for k in ex if not k.startswith("_")} == set(profiles.DEFINITION),
+          sorted(ex))
+    code, got, err = lists_of(w, "from-example", "errs")
+    check("c: the example, copied as it is, is a definition (its _doc is documentation)", code == 0 and got["skills_keep"] == ["toy-common"]
+          and got["servers"] == [], (code, got, err))
 
     # d: a malformed `profiles` leaves the project out of lib.projects() and names it.
     skipped = []
