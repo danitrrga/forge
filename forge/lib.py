@@ -38,7 +38,7 @@ SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` and `mempalace`
 # are the framework's: the first asks for the `agent-browser` tool in config/toolchain.json (a `when` of
 # {"integration": "agent_browser"}), the second has no check until the MemPalace part and is a SKIP either way.
-INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
+INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser", "mempalace")
 
 
 @functools.lru_cache(maxsize=None)
@@ -75,13 +75,6 @@ def on(name):
         raise ValueError("unknown integration %r (one of %s)" % (name, ", ".join(INTEGRATIONS)))
     table = settings().get("integrations")
     return isinstance(table, dict) and table.get(name) is True
-
-
-def gsd_patched():
-    """Whether GSD is forge's own patched, staged copy: the key `gsd_patches` is the JSON true, and
-    anything else, absent included, is off. Off is a stranger's GSD, installed by GSD's own installer
-    (pnpm dlx), which forge does not touch. Meaningful only with the `gsd` integration on."""
-    return settings().get("gsd_patches") is True
 
 
 def codex_harness():

@@ -1109,6 +1109,14 @@ def ponytail_cases(tmp):
     want("forge doctor has no gsd isolation guard row",
          [n for n, _, _ in cli.CHECKS if n == "gsd isolation guard"] + (["gsd_isolation_guard_row"] if hasattr(cli, "gsd_isolation_guard_row") else []),
          [])
+    # D5: `gsd` is no longer an integration of the engine, so its two rows are out of forge doctor and of a project's doctor.
+    # Red on 987388c, before the rows were removed: "doctor rows include 'gsd engine' = True, want False" and
+    # "doctor rows include 'research expiry' = True, want False".
+    with toy(root):
+        every = [n for n, _, _ in cli.CHECKS] + [n for n, _, _ in cli.project_checks("scoped", lib.projects()["scoped"], None)]
+    for removed in ("gsd engine", "research expiry"):
+        want("doctor rows include %r" % removed, removed in every, False)
+    want("doctor rows looked at something (the control that this list is not empty)", "ponytail" in every and "integrations" in every, True)
 
 
 def pending_cases():
@@ -1169,7 +1177,7 @@ def project_cases(tmp):
     rows = rows_of(lines)
     levels = {k: v[0] for k, v in rows.items()}
     want("a healthy project's rows", levels, {"project": "PASS", "generated": "PASS", "skill names": "PASS",
-                                              "project roots": "PASS", "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS", "research expiry": "PASS",
+                                              "project roots": "PASS", "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS",
                                               "memory": levels.get("memory", "(none)")})
     want("a healthy project's memory row", "memory" in rows, True)
     want("a healthy project has no hindsight row", "hindsight" in rows, False)
@@ -1264,7 +1272,7 @@ def toy_settings(path):
         lib.settings.cache_clear()
 
 
-OFF = {"codex": False, "gsd": False, "hindsight": False}
+OFF = {"codex": False, "hindsight": False}
 
 
 def lines_of(results):
@@ -1333,7 +1341,7 @@ def integrations_cases(tmp):
     want("a missing script is a checked one: the closing line counts it", at(got, -1), ("PASS", "checked 1: 0 integration(s) on, 1 user_hooks script(s)"))
     got = run("hook-present", OFF, [hook(present, "here.py")])
     want("control: the same row naming a script that exists PASSes", got,
-         [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"), ("SKIP", "NOT RUN, NOT ARMED: gsd is off in config/forge.json"),
+         [("SKIP", "NOT RUN, NOT ARMED: codex is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: hindsight is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: consent is off in config/forge.json"),
           ("SKIP", "NOT RUN, NOT ARMED: agent_browser is off in config/forge.json"),
@@ -1374,15 +1382,12 @@ def integrations_cases(tmp):
     try:
         got = run("codex-gone", dict(OFF, codex=True), [])
         want("codex on and not on PATH", at(got, 0), ("FAIL", "codex is on in config/forge.json but not on PATH -- install it or set integrations.codex false"))
-        got = run("gsd-gone", dict(OFF, gsd=True), [], gsd_patches=True)
-        want("gsd on, patched, and no npm on PATH", at(got, 1), ("FAIL", "gsd is on in config/forge.json but npm is not on PATH -- install node or set integrations.gsd false"))
-        # GSD unpatched comes from pnpm dlx, so pnpm is what it needs. Red before:
-        # "gsd on, unpatched, and no pnpm on PATH = ('FAIL', 'gsd is on in config/forge.json but npm is not on PATH -- ...'), want
-        # ('FAIL', 'gsd is on in config/forge.json but pnpm is not on PATH -- install pnpm or set integrations.gsd false')".
-        for label, extra in (("gsd_patches false", dict(gsd_patches=False)), ("gsd_patches absent", {})):
-            got = run("gsd-gone-" + label.replace(" ", "-"), dict(OFF, gsd=True), [], **extra)
-            want("gsd on, unpatched (%s), and no pnpm on PATH" % label, at(got, 1),
-                 ("FAIL", "gsd is on in config/forge.json but pnpm is not on PATH -- install pnpm or set integrations.gsd false"))
+        # D5: a leftover `gsd` key (and `gsd_patches`) in forge.json is ignored: no row names gsd, whether npm and pnpm are
+        # on PATH or not. Red on 987388c: "a leftover gsd key, nothing on PATH, is ignored = [('FAIL', 'gsd is on in
+        # config/forge.json but npm is not on PATH -- install node or set integrations.gsd false')], want []" and, with npm
+        # and pnpm on PATH, "a leftover gsd key, npm and pnpm on PATH, is ignored = [('PASS', 'gsd is on, npm found on PATH')], want []".
+        got = run("gsd-leftover-gone", dict(OFF, gsd=True), [], gsd_patches=True)
+        want("a leftover gsd key, nothing on PATH, is ignored", [l for l in got if "gsd" in l[1]], [])
     finally:
         os.environ["PATH"] = real_path
     fake_bin = os.path.join(tmp, "integ-bin")
@@ -1393,11 +1398,10 @@ def integrations_cases(tmp):
         os.chmod(os.path.join(fake_bin, tool), 0o755)
     os.environ["PATH"] = fake_bin
     try:
-        got = run("codex-here", dict(OFF, codex=True, gsd=True), [], gsd_patches=True)
-        want("control: codex and gsd (patched) on, found on PATH", got[:2], [("PASS", "codex is on, codex found on PATH"),
-                                                                             ("PASS", "gsd is on, npm found on PATH")])
-        got = run("pnpm-here", dict(OFF, gsd=True), [], gsd_patches=False)
-        want("control: gsd on, unpatched, found on PATH", at(got, 1), ("PASS", "gsd is on, pnpm found on PATH"))
+        got = run("codex-here", dict(OFF, codex=True), [])
+        want("control: codex on, found on PATH", got[:1], [("PASS", "codex is on, codex found on PATH")])
+        got = run("gsd-leftover-here", dict(OFF, codex=True, gsd=True), [], gsd_patches=True)
+        want("a leftover gsd key, npm and pnpm on PATH, is ignored", [l for l in got if "gsd" in l[1]], [])
     finally:
         os.environ["PATH"] = real_path
     got = run("quiet", dict(OFF, hindsight=True), [])

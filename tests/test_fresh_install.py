@@ -10,7 +10,7 @@ HOME or this checkout's data: the copy has no config/forge.json, no project and 
 no `unshare`: with every integration off nothing connects, and runners that restrict user namespaces
 could not run it.
 
-Run: `init --yes --without codex,gsd`, then `add demo`. Assertions (each prints what it counted, and fails
+Run: `init --yes --without codex`, then `add demo`. Assertions (each prints what it counted, and fails
 at a count of 0):
   init exits 0 and no stub was called; every path forge logged (FORGE_WRITE_LOG) lies under W; every hook
   command in the world's ~/.claude/settings.json names a script that exists; zero skills are linked and the
@@ -30,9 +30,9 @@ Controls, run every time in the same world and put back afterwards:
       project, fails the `only the forge and demo projects` assertion; elsewhere NOT RUN;
   (d) a user_hooks row that names no script: the integrations row is a FAIL (something is configured and
       nothing could be checked), where the same world without the row is a SKIP.
-Also: the choice logic (--yes, --with, --without, the two questions) as a pure function; `--track` in a
+Also: the choice logic (--yes, --with, --without, the one question) as a pure function; `--track` in a
 second world; and the doctor rows that FAIL on a legitimate zero (no project asks for the worktree guard, no
-config/toolchain.json while GSD is off) as SKIP, with the zero where something is configured still a FAIL.
+config/toolchain.json) as SKIP, with the zero where something is configured still a FAIL.
 
 Seen failing before `init` existed (this file as it is): the first command died with
 `forge: error: argument cmd: invalid choice: 'init' (choose from 'sync', 'doctor', 'metrics', 'test',
@@ -57,7 +57,7 @@ failures, notrun, n_checks = [], [], [0]
 # ignore of `.claude/settings.local.json` hid a file from `git status` here while CI listed it (3.6 U2c: ci-local passed, CI failed).
 GIT_ENV = dict(os.environ, XDG_CONFIG_HOME=sandbox.mkdtemp("fresh-install-xdg-"), **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
-INTEGRATIONS = ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace")
+INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser", "mempalace")
 # What `forge new` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # project with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
@@ -69,8 +69,6 @@ DEMO_UNTRACKED = {".claude/settings.local.json"}
 REAL_HOME = pwd.getpwuid(os.getuid()).pw_dir
 ASK_CODEX = "Codex found: manage its config too? [Y/n]"
 ASK_GSD = "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx @opengsd/gsd-core)? [Y/n]"
-# What init runs for GSD: GSD's own installer, through pnpm, for Claude Code, global.
-GSD_DLX = "dlx @opengsd/gsd-core@latest --claude --global"
 
 
 def check(label, ok, detail=""):
@@ -258,19 +256,29 @@ def choice_cases():
 
     both, neither = {"codex": True, "pnpm": True}, {"codex": False, "pnpm": False}
     off = {k: False for k in INTEGRATIONS}
-    want("init_choices --yes takes what it found, and asks nothing", run(True, [], [], both), (dict(off, codex=True, gsd=True), None, []))
+    # D5: `gsd` is no longer an integration, so init neither asks about GSD nor returns a `gsd` key, whatever is on PATH.
+    # Red on 987388c (as the checks printed there):
+    #   "FAIL init_choices --yes with pnpm on PATH asks nothing and returns no gsd key -- ({'codex': False, 'gsd': True,
+    #    'hindsight': False, ...}, None, []), want ({'codex': False, 'hindsight': False, ...}, None, [])"
+    #   "FAIL init_choices asks the one question, and takes `no` -- ({... 'gsd': False ...}, [ASK_CODEX, ASK_GSD]), want (..., [ASK_CODEX])",
+    #   "... asks only about what --without left open" and "... asks only about the tools it found" (each still asked ASK_GSD), and
+    #   "FAIL init_choices --with gsd is refused as an unknown integration is refused, naming gsd -- got {... 'gsd': True ...}, None".
+    got, why, q = run(True, [], [], {"codex": False, "pnpm": True})
+    want("init_choices --yes with pnpm on PATH asks nothing and returns no gsd key", (got, why, q), (off, None, []))
+    check("init_choices --yes with pnpm on PATH never offers GSD", "gsd" not in (got or {}) and ASK_GSD not in q, "got %r, asked %r" % (got, q))
+    want("init_choices --yes takes what it found, and asks nothing", run(True, [], [], both), (dict(off, codex=True), None, []))
     want("init_choices --yes with nothing found: everything off", run(True, [], [], neither), (off, None, []))
-    want("init_choices --without codex,gsd", run(True, [], ["codex", "gsd"], both), (off, None, []))
+    want("init_choices --without codex", run(True, [], ["codex"], both), (off, None, []))
     got, why, q = run(False, [], [], both, answer=False)
-    want("init_choices asks the two questions, and takes `no`", (got, q), (off, [ASK_CODEX, ASK_GSD]))
+    want("init_choices asks the one question, and takes `no`", (got, q), (off, [ASK_CODEX]))
     got, why, q = run(False, [], ["codex"], both)
-    want("init_choices asks only about what --without left open", (got, q), (dict(off, gsd=True), [ASK_GSD]))
+    want("init_choices asks only about what --without left open", (got, q), (off, []))
     got, why, q = run(False, [], [], {"codex": False, "pnpm": True})
-    want("init_choices asks only about the tools it found", (got, q), (dict(off, gsd=True), [ASK_GSD]))
+    want("init_choices asks only about the tools it found", (got, q), (off, []))
     want("init_choices --with switches on what is not detected", run(True, ["hindsight"], [], neither),
          (dict(off, hindsight=True), None, []))
     for label, with_names, have, names, in (("--with codex without codex on PATH", ["codex"], neither, "codex"),
-                                           ("--with gsd without pnpm on PATH", ["gsd"], neither, "pnpm"),
+                                           ("--with gsd is refused as an unknown integration", ["gsd"], both, "gsd"),
                                            ("--with an unknown name", ["nope"], both, "nope")):
         got, why, q = run(True, with_names, [], have)
         check("init_choices %s is refused, naming %s" % (label, names), got is None and names in (why or ""), "got %r, %r" % (got, why))
@@ -279,7 +287,7 @@ def choice_cases():
     for flag, with_names, without_names in (("--with", ["caveman"], []), ("--without", [], ["caveman"])):
         got, why, q = run(True, with_names, without_names, both)
         want("init_choices %s caveman is refused as an unknown integration" % flag, (got, why),
-             (None, "unknown integration 'caveman' (one of codex, gsd, hindsight, consent, agent_browser, mempalace)"))
+             (None, "unknown integration 'caveman' (one of codex, hindsight, consent, agent_browser, mempalace)"))
     got, why, q = run(True, ["hindsight"], ["hindsight"], both)
     check("init_choices a name in both lists is refused", got is None and "hindsight" in (why or ""), "got %r, %r" % (got, why))
 
@@ -356,10 +364,10 @@ def main_world():
     # nothing. Red with "caveman" put back in lib.INTEGRATIONS: "init --with caveman is refused as an unknown integration, exit 1, nothing written -- exit 1: ! forge init: failed -- doctor (exit 1) | ..." (init ran and wrote config/forge.json).
     code, out = w.forge("init", "--yes", "--with", "caveman")
     check("init --with caveman is refused as an unknown integration, exit 1, nothing written",
-          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, gsd, hindsight, consent, agent_browser, mempalace)" in out
+          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, hindsight, consent, agent_browser, mempalace)" in out
           and not os.path.exists(w.path("config", "forge.json")), "exit %d: %s" % (code, tail(out, 3)))
-    code, out = w.forge("init", "--yes", "--without", "codex,gsd")
-    check("init --yes --without codex,gsd exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
+    code, out = w.forge("init", "--yes", "--without", "codex")
+    check("init --yes --without codex exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     # Control of the init exit rules below: every step passed or was not run (the SKIP and NOT RUN rows
     # of this world), and nothing says it failed.
     check("init with nothing broken prints no '! forge init' line and has NOT RUN rows",
@@ -458,7 +466,7 @@ def main_world():
     check("forge new put the project's key in the world's ~/.claude.json", w.demo in keys, "keys: %s" % sorted(keys))
     check("the add output names the project it wrote", "config/projects/demo.claude.json" in out, tail(out))
 
-    refusals = (("a second init", ["init", "--yes", "--without", "codex,gsd"], "already initialised -- run forge doctor"),
+    refusals = (("a second init", ["init", "--yes", "--without", "codex"], "already initialised -- run forge doctor"),
                 ("new of a directory that is not there", ["new", os.path.join(w.top, "projects", "nope")], "is not a directory"),
                 ("new of a registered project", ["new", w.demo], "already registered"),
                 ("new under a name that is not kebab-case", ["new", w.home, "--name", "My_Project"], "kebab-case"))
@@ -562,7 +570,7 @@ def controls(w, before):
 
 def track_world():
     w = World("track")
-    code, out = w.forge("init", "--yes", "--without", "codex,gsd", "--track")
+    code, out = w.forge("init", "--yes", "--without", "codex", "--track")
     check("init --track exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     want("--track leaves every integration off", (read_json(w.path("config", "forge.json")) or {}).get("integrations"),
          {k: False for k in INTEGRATIONS})
@@ -583,51 +591,35 @@ def track_world():
     want("the engine history took no data file", [t for t in eng if t.startswith(("config/forge.json", "config/projects", "credentials"))], [])
 
 
-def gsd_world():
-    """init with GSD left on and `gsd_patches` false, the stranger's value: GSD comes
-    unpatched from its own package, installed by GSD's own installer through pnpm, and npm is never called. The
-    pnpm stub logs its argv and installs nothing. No config/toolchain.json is written (no npm package is pinned),
-    forge.json says gsd_patches false, and forge skills has no gsd step."""
-    w = World("gsd")
+def pnpm_world():
+    """init with a pnpm on PATH: `gsd` is no longer an integration, so init never calls pnpm, has no gsd step, writes no `gsd`
+    or `gsd_patches` key into forge.json and forge skills touches neither npm nor pnpm. Negative control, in the same world made
+    with a pnpm that exits 3: nothing runs it, so init still exits 0 and names no failed step (a gsd step that ran and broke
+    used to give "! forge init: failed -- gsd (exit 3)").
+    Red on 987388c, as the checks printed it: "FAIL init with pnpm on PATH never calls pnpm or npm -- (['dlx @opengsd/gsd-core@latest
+    --claude --global'], []), want ([], [])", "FAIL forge.json has no gsd key and no gsd_patches key -- (True, True, True), want
+    (False, False, False)", "FAIL forge skills touched neither npm nor pnpm", and, in the broken world, "FAIL a pnpm that exits 3 is
+    never run: init exits 0 and names no failed step -- exit 1: ... ! forge init: failed -- gsd (exit 3), doctor (exit 1)"."""
+    w = World("pnpm")
     code, out = w.forge("init", "--yes", "--without", "codex")
-    calls = w.stub_calls()
-    want("init with gsd on calls pnpm once, with GSD's non-interactive flags for a global Claude Code install", calls["pnpm"], [GSD_DLX])
-    want("init with gsd on never calls npm", calls["npm"], [])
-    # Red before the skills step: "the init output has the skills step" (init ran gsd, sync, doctor).
-    for step in ("gsd", "skills", "sync", "doctor"):
-        check("the init output has the %s step" % step, "== forge init: %s ==" % step in out, tail(out, 12))
-    check("there is no toolchain or gsd skills step", "== forge init: toolchain ==" not in out and "== forge init: gsd skills ==" not in out, tail(out, 12))
-    check("a pnpm that exits 0 is not named as a failed step", "failed -- gsd" not in out, tail(out, 12))
-    # The pnpm stub installs nothing, so the doctor's skill keep row FAILs: a step that ran and broke exits 1,
-    # with its reason on a '!' line. Red before this change: exit 1 with no '! forge init' line at all ("exit 1,
-    # no failed line: ... SUMMARY: 8 passed, 0 warnings, 1 failures | put your own skills in ...").
-    check("a doctor that FAILs exits init 1, and a '!' line names it",
-          code == 1 and "! forge init: failed -- doctor (exit 1)" in out, "exit %d: %s" % (code, tail(out, 6)))
-    want("no config/toolchain.json: no npm package is pinned", os.path.exists(w.path("config", "toolchain.json")), False)
+    want("init with pnpm on PATH never calls pnpm or npm", (w.stub_calls()["pnpm"], w.stub_calls()["npm"]), ([], []))
+    check("the init output has no gsd step and the others", "== forge init: gsd ==" not in out
+          and all("== forge init: %s ==" % s in out for s in ("skills", "sync", "doctor")), tail(out, 12))
+    check("init exits 0 and names no failed step", code == 0 and "! forge init" not in out, "exit %d: %s" % (code, tail(out, 6)))
     doc = read_json(w.path("config", "forge.json")) or {}
-    want("forge.json: gsd on, codex off, gsd_patches false", (doc.get("integrations", {}).get("gsd"), doc.get("integrations", {}).get("codex"), doc.get("gsd_patches")),
-         (True, False, False))
+    want("forge.json has no gsd key and no gsd_patches key",
+         ("gsd" in doc.get("integrations", {}), "gsd_patches" in doc, "gsd_isolation_guard" in doc), (False, False, False))
+    want("no config/toolchain.json: no npm package is pinned", os.path.exists(w.path("config", "toolchain.json")), False)
     code, out = w.forge("skills")
-    # Control of the '!' half: `print("! gsd planted line")` after each step header in cli.run_steps makes it FAIL:
-    # "FAIL forge skills with gsd on has no gsd runtime step and no '!' line -- == forge: online skills == | ! gsd
-    # planted line | NOT RUN, NOT ARMED: no `skills` in config/toolchain.json ..." (111 check(s), 1 failure(s)); restored, exit 0.
-    check("forge skills with gsd on has no gsd runtime step and no '!' line",
-          "gsd runtime" not in out and "== forge: online skills ==" in out
-          and not any(l.lstrip().startswith("!") and "gsd" in l.lower() for l in out.splitlines()), tail(out, 12))
-    want("forge skills touched neither npm nor pnpm again", (w.stub_calls()["npm"], w.stub_calls()["pnpm"]), ([], [GSD_DLX]))
+    check("forge skills has no gsd step and no '!' line", "gsd" not in out.lower() and "== forge: online skills ==" in out
+          and not any(l.lstrip().startswith("!") for l in out.splitlines()), tail(out, 12))
+    want("forge skills touched neither npm nor pnpm", (w.stub_calls()["npm"], w.stub_calls()["pnpm"]), ([], []))
 
-
-def broken_gsd_world():
-    """init with GSD on and a pnpm that exits 3: the installer ran and broke, which is a failure (the machine has
-    the tool, so it is not a NOT RUN). The later steps still run, and the '!' line says which step and its exit
-    code. Negative control: the same world with a pnpm that exits 0 has no 'failed -- gsd' (gsd_world)."""
-    w = World("gsd-broken")
-    stub(os.path.join(w.top, "stubs"), w.logs, "pnpm", "exit 3")
-    code, out = w.forge("init", "--yes", "--without", "codex")
-    # Red before this change: the line was "! forge init: failed -- gsd" (no exit code).
-    check("a pnpm that exits 3: init exits 1 and the '!' line names the gsd step and its exit code",
-          code == 1 and "! forge init: failed -- gsd (exit 3)" in out, "exit %d: %s" % (code, tail(out, 6)))
-    check("a failed gsd step does not stop skills, sync and doctor", all("== forge init: %s ==" % s in out for s in ("skills", "sync", "doctor")), tail(out, 12))
+    broken = World("pnpm-broken")
+    stub(os.path.join(broken.top, "stubs"), broken.logs, "pnpm", "exit 3")
+    code, out = broken.forge("init", "--yes", "--without", "codex")
+    check("a pnpm that exits 3 is never run: init exits 0 and names no failed step",
+          code == 0 and "! forge init" not in out and broken.stub_calls()["pnpm"] == [], "exit %d: %s" % (code, tail(out, 6)))
 
 
 def kept_world():
@@ -639,7 +631,7 @@ def kept_world():
     for rel, text in mine.items():
         with open(w.path(rel), "w") as fh:
             fh.write(text)
-    code, out = w.forge("init", "--yes", "--without", "codex,gsd")
+    code, out = w.forge("init", "--yes", "--without", "codex")
     check("init over existing data exits 0", code == 0, "exit %d: %s" % (code, tail(out)))
     for rel, text in mine.items():
         check("init keeps %s" % rel, open(w.path(rel)).read() == text and "kept   %s" % rel in out, "now %r; %s" % (open(w.path(rel)).read(), tail(out, 20)))
@@ -653,14 +645,14 @@ def other_checkout_world():
     open(os.path.join(other, "bin", "forge"), "w").close()
     sandbox.installed_settings(w.home, other)
     before = w.snapshot()
-    code, out = w.forge("init", "--yes", "--without", "codex,gsd")
+    code, out = w.forge("init", "--yes", "--without", "codex")
     check("init from a checkout the machine does not run is refused, naming the one it runs", code == 1 and "is not the checkout this machine runs" in out and other in out,
           "exit %d: %s" % (code, tail(out)))
     check("and writes nothing", changed_since(before, w.snapshot()) == [], "changed: %s" % changed_since(before, w.snapshot())[:5])
 
 
 def main():
-    for part in (choice_cases, doctor_row_cases, main_world, track_world, gsd_world, broken_gsd_world, kept_world, other_checkout_world):
+    for part in (choice_cases, doctor_row_cases, main_world, track_world, pnpm_world, kept_world, other_checkout_world):
         try:
             part()
         except Exception as e:  # a part that cannot run is a failure of its own, and the others still run
