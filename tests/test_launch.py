@@ -318,8 +318,8 @@ def profile_cases():
         ma, mb = flag(da["argv"], "--mcp-config"), flag(db["argv"], "--mcp-config")
         want("5: different settings files, servers files and session ids",
              (fa != fb, ma != mb, flag(da["argv"], "--session-id") != flag(db["argv"], "--session-id")), (True, True, True))
-        want("5: each file holds its own profile's lists", (json.loads(da["settings"])["skillOverrides"].get("toy-b"),
-                                                            json.loads(db["settings"])["skillOverrides"].get("toy-b")), ("on", "off"))
+        want("5: each file holds its own profile's lists", tuple((json.loads(x["settings"] or "{}").get("skillOverrides") or {}).get("toy-b")
+                                                                 for x in (da, db)), ("on", "off"))
         recs = {os.path.basename(x): tp.read_json(os.path.join(state, "profile-sessions", x)) for x in lists("profile-sessions")}
         profs = sorted(r["profile"] for r in recs.values() if r["launcher_pid"] in (pa.pid, pb.pid))
         want("5: two records, one per profile", profs, ["list", "toy-b"])
