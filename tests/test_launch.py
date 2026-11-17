@@ -97,6 +97,17 @@ sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 SECRET = "fake-secret-value-123"
 
 
+def flag(argv, name):
+    """The value after `name` in the dumped arguments, or None (no such flag, or no dump): a missing flag is a FAIL line, never a traceback."""
+    return argv[argv.index(name) + 1] if argv and name in argv and argv.index(name) + 1 < len(argv) else None
+
+
+def gap(argv, n_user):
+    """How many arguments stand between the value of --mcp-config and the user's n_user arguments: --mcp-config takes any number of
+    values (measured, 4.3 U0), so at 0 a prompt at the head of the user's arguments would be swallowed as one."""
+    return len(argv) - n_user - (argv.index("--mcp-config") + 2) if argv and "--mcp-config" in argv else None
+
+
 def sha(p):
     import hashlib
     with open(p, "rb") as fh:
@@ -177,12 +188,12 @@ def profile_cases():
     want("1: exit of a profile launch (the fake exits 0)", (code, se), (0, ""))
     argv = d and d["argv"]
     want("1: the arguments carry --settings, --strict-mcp-config, --mcp-config and --session-id",
-         d and [f in argv for f in ("--settings", "--strict-mcp-config", "--mcp-config", "--session-id")], [True] * 4)
+         [f for f in ("--settings", "--strict-mcp-config", "--mcp-config", "--session-id") if f not in (argv or [])], [])
+    want("1: --settings has a value", bool(flag(argv, "--settings")), True)
     want("1: the user's arguments arrive last, untouched", argv and argv[-3:], user)
-    # --mcp-config is variadic: with its value right before the prompt it would swallow it (measured, 4.3 U0).
     want("1: a flag with one value stands between --mcp-config's value and the prompt (else the prompt is swallowed)",
-         argv and argv[len(argv) - len(user) - 2] != "--mcp-config", True)
-    sid = argv and argv[argv.index("--session-id") + 1]
+         (gap(argv, len(user)) or 0) > 0, True)
+    sid = flag(argv, "--session-id")
     try:
         uuid.UUID(sid)
         valid = True
@@ -201,7 +212,7 @@ def profile_cases():
          d and json.loads(d["mcp"]) if d and d["mcp"] else None, {"mcpServers": {"toy-echo": {"type": "stdio", "command": "toy-echo", "args": []}}})
     want("1: FORGE_PROFILE and FORGE_PROJECT reach claude", d and (d["env"].get("FORGE_PROFILE"), d["env"].get("FORGE_PROJECT")), ("toy-b", "multi"))
     want("1: claude runs in the directory the command ran in", d and d["cwd"], os.path.realpath(multi))
-    under_state = [x for x in (argv[argv.index("--settings") + 1], argv[argv.index("--mcp-config") + 1])] if d else []
+    under_state = [x for x in (flag(argv, "--settings"), flag(argv, "--mcp-config")) if x]
     want("1: both files are under lib.STATE, regenerated per project and profile",
          [os.path.relpath(x, state) for x in under_state],
          [os.path.join("profile-settings", "multi", "toy-b.json"), os.path.join("profile-settings", "multi", "toy-b.mcp.json")])
@@ -228,6 +239,10 @@ def profile_cases():
         want("1: %s: no --session-id of forge's own" % flags, (code, d and [a for a in d["argv"] if a.startswith("--session-id")]),
              (0, [f for f in flags if f.startswith("--session-id")]))
         want("1: %s: the user's flags arrive, the profile's too" % flags, d and (d["argv"][-len(flags):] == flags, "--settings" in d["argv"]), (True, True))
+    # A prompt at the head of a resume's arguments: no --session-id of ours stands behind --mcp-config's value.
+    code, so, se, d, _ = start(["@toy-b", "the prompt", "--resume", "abc"])
+    want("1: a prompt before --resume arrives as one, not swallowed by --mcp-config", (d and d["argv"][-3:], (gap(d and d["argv"], 3) or 0) > 0),
+         (["the prompt", "--resume", "abc"], True))
     want("1: a resume or a given id writes no record", len(lists("profile-sessions")), n_records)
     code, so, se, d, _ = start(["@toy-b", "--model", "haiku", "--resume", "abc"])
     want("1: a resume among other flags is a resume", d and "--session-id" not in d["argv"], True)
@@ -299,15 +314,24 @@ def profile_cases():
     da, db = (json.load(open(o)) if os.path.exists(o) else None for o in (oa, ob))
     want("5: both launches ran", (pa.returncode, pb.returncode, da is not None, db is not None), (0, 0, True, True))
     if da and db:
-        fa, fb = da["argv"][da["argv"].index("--settings") + 1], db["argv"][db["argv"].index("--settings") + 1]
-        ma, mb = da["argv"][da["argv"].index("--mcp-config") + 1], db["argv"][db["argv"].index("--mcp-config") + 1]
-        want("5: different settings files, servers files and session ids", (fa != fb, ma != mb, da["argv"][da["argv"].index("--session-id") + 1]
-             != db["argv"][db["argv"].index("--session-id") + 1]), (True, True, True))
+        fa, fb = flag(da["argv"], "--settings"), flag(db["argv"], "--settings")
+        ma, mb = flag(da["argv"], "--mcp-config"), flag(db["argv"], "--mcp-config")
+        want("5: different settings files, servers files and session ids",
+             (fa != fb, ma != mb, flag(da["argv"], "--session-id") != flag(db["argv"], "--session-id")), (True, True, True))
         want("5: each file holds its own profile's lists", (json.loads(da["settings"])["skillOverrides"].get("toy-b"),
                                                             json.loads(db["settings"])["skillOverrides"].get("toy-b")), ("on", "off"))
         recs = {os.path.basename(x): tp.read_json(os.path.join(state, "profile-sessions", x)) for x in lists("profile-sessions")}
         profs = sorted(r["profile"] for r in recs.values() if r["launcher_pid"] in (pa.pid, pb.pid))
         want("5: two records, one per profile", profs, ["list", "toy-b"])
+
+    # A state folder that cannot be written is one line and claude is not started, never a traceback.
+    sessions = os.path.join(state, "profile-sessions")
+    shutil.rmtree(sessions)
+    open(sessions, "w").close()  # a file where the folder of the records goes
+    code, so, se, d, _ = start(["@toy-b"])
+    want("4: state that cannot be written: exit 2, one line, no traceback, claude not run",
+         (code, len(se.strip().splitlines()), "cannot write" in se and "Traceback" not in se, d), (2, 1, True, None))
+    os.remove(sessions)
 
     # (6) --dry-run: the arguments, the environment and the files; nothing written.
     before_d = tree_of()

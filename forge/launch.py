@@ -201,11 +201,14 @@ def _profile(a):
         else:
             print("  no session record: this session is resumed or has an id of the user's")
         return 0
-    if settings is not None:
-        lib.write_text(settings_path, json.dumps(settings, indent=2) + "\n", mode=0o600)
-        lib.write_text(mcp_path, json.dumps(mcp_file, indent=2) + "\n", mode=0o600)
-    if record:
-        profiles.write_session(sid, record)
+    try:
+        if settings is not None:
+            lib.write_text(settings_path, json.dumps(settings, indent=2) + "\n", mode=0o600)
+            lib.write_text(mcp_path, json.dumps(mcp_file, indent=2) + "\n", mode=0o600)
+        if record:
+            profiles.write_session(sid, record)
+    except OSError as e:
+        return _refuse("cannot write the session's files under %s: %s" % (lib.STATE, e.strerror or e))
     return _run(claude, argv, env)
 
 
