@@ -910,12 +910,21 @@ def installed_root():
     return roots[0] if roots else None
 
 
+# The environment variables a write destination is taken from: toolchain.mise_file and pip_file (the mise
+# config and python packages files) and CODEX_HOME (the Codex hooks and MCP files). A toy HOME that has
+# one of them pointing outside its world writes nothing (may_write). Add a variable here when the engine
+# starts deriving another write destination from one.
+WRITE_ENV = ("MISE_CONFIG_DIR", "XDG_CONFIG_HOME", "MISE_PYTHON_DEFAULT_PACKAGES_FILE", "CODEX_HOME")
+
+
 def may_write():
     """(whether this checkout may write, why not). On a machine where forge is installed only the
     installed checkout writes: every generated file names the checkout that wrote it. A linked
     worktree never does -- relink_skills run from one repointed all 176 skill links at it.
     Nor does a plain copy: two copies in /tmp rewrote ~20 projects' CLAUDE.md
-    pointers with their own path, and one registered a project in master."""
+    pointers with their own path, and one registered a project in master.
+    A toy HOME (one that is not the uid's own) writes a toy world only: its projects, and every
+    variable of WRITE_ENV that is set, must lie under the HOME or beside the checkout."""
     if git_dir(ROOT)[1]:
         return False, "forge: %s is a linked worktree -- nothing written; apply from the main checkout" % ROOT
     try:
@@ -944,6 +953,15 @@ def may_write():
         if out:
             return False, ("forge: HOME is a sandbox (%s) but projects point outside it (%s) -- nothing written"
                            % (HOME, ", ".join(out[:3])))
+        # The environment can point a write outside the world too: a toy HOME that kept the real
+        # XDG_CONFIG_HOME had `forge toolchain --fix` replace the real mise file. Whole path components:
+        # /a/b is not inside /a/bc.
+        inside = (os.path.realpath(HOME), os.path.dirname(os.path.realpath(ROOT)))
+        for var in WRITE_ENV:
+            val = os.environ.get(var)
+            if val and not any(os.path.commonpath((os.path.realpath(val), d)) == d for d in inside):
+                return False, ("forge: HOME is a sandbox (%s) but %s points outside it (%s) -- nothing written"
+                               % (HOME, var, val))
     return True, ""
 
 

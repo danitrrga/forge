@@ -130,10 +130,15 @@ if signal.getsignal(signal.SIGTERM) == signal.SIG_DFL:
 def bare_env(home, tmp, bin_dir=None, **extra):
     """An environment built from nothing: no CLAUDE_PROJECT_DIR, which scopes every generator to
     one project, and no DBUS_SESSION_BUS_ADDRESS or XDG_RUNTIME_DIR, since a network namespace
-    does not stop a unix socket to the real bus. `bin_dir` (stub_systemctl's) goes first on PATH."""
+    does not stop a unix socket to the real bus. `bin_dir` (stub_systemctl's) goes first on PATH.
+    XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_CACHE_HOME and MISE_CONFIG_DIR are the toy HOME's own, under `home`: a
+    toy HOME is not a toy world while a real one can still be named by the environment (toolchain.mise_file
+    replaced the real mise file from a toy HOME that kept the real XDG_CONFIG_HOME). `extra` wins."""
     path = os.environ.get("PATH", "/usr/bin:/bin")
     e = {"HOME": home, "PATH": bin_dir + os.pathsep + path if bin_dir else path,
-         "LANG": "C.UTF-8", "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": tmp}
+         "LANG": "C.UTF-8", "PYTHONUTF8": "1", "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": tmp,
+         "XDG_CONFIG_HOME": os.path.join(home, ".config"), "XDG_DATA_HOME": os.path.join(home, ".local", "share"),
+         "XDG_CACHE_HOME": os.path.join(home, ".cache"), "MISE_CONFIG_DIR": os.path.join(home, ".config", "mise")}
     e.update(GIT_ENV)
     e.update(extra)
     return e

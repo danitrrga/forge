@@ -1017,6 +1017,16 @@ def main():
     lib.PROJECTS = prof_dir
     lib.ROOT = tmp  # not a worktree, wherever the test itself is run from
     lib.HOME = os.path.join(tmp, "home")  # no settings.json yet: the real one names the real checkout
+    # A toy HOME is not a toy world while the environment names this machine's directories: may_write refuses a toy
+    # HOME whose XDG_CONFIG_HOME (or another lib.WRITE_ENV variable) points outside it. Red before this line, run
+    # from a session that has the real XDG_CONFIG_HOME set: "may_write names this checkout = (False, 'forge: HOME is
+    # a sandbox (...) but XDG_CONFIG_HOME points outside it (...) -- nothing written'), want (True, '')" (14 cases).
+    toy = sandbox.bare_env(lib.HOME, tmp)
+    for var in lib.WRITE_ENV:
+        if var in toy:
+            os.environ[var] = toy[var]
+        else:
+            os.environ.pop(var, None)
 
     cases = {
         os.path.join(dev, "app"): "app",
