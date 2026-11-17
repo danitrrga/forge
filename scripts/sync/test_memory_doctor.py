@@ -185,11 +185,32 @@ def main():
                           in l for l in lines):
         failures.append("one trusted hook: exit %s, output %r" % (rc, " | ".join(lines)))
 
+    # With `codex_harness` true a hook in the manifest with no trust record WARNs (control: it is not "never
+    # warn"; set explicitly here, the case used to lean on the harness(True) left by the block above).
+    harness(True)
     rc, lines = run(json.dumps(HOOK))
     want = ("1 hook(s) registered with no trust record, so they do not fire until the next "
             "Codex session approves them: SessionStart echo toy")
     if rc != 0 or not any(l.lstrip().startswith("WARN") and want in l for l in lines):
         failures.append("one untrusted hook: exit %s, output %r" % (rc, " | ".join(lines)))
+
+    # With `codex_harness` false, absent or not a boolean forge registers no Codex hook, so a hook in the
+    # manifest with no trust record is another program's: a PASS line with both counts, not a WARN. Red before:
+    # "untrusted hook, codex_harness false: exit 0, output ['  WARN  codex-untrusted   1 hook(s) registered with
+    # no trust record, so they do not fire until the next Codex session approves them: SessionStart echo toy']".
+    # Negative control: the new condition removed (the branch always a WARN) reproduces that failure. An
+    # unreadable manifest still FAILs whatever the switch says (the bad-manifest cases below, run with each value).
+    for label, value in (("codex_harness false", False), ("codex_harness absent", None), ("codex_harness \"yes\"", "yes")):
+        harness(value)
+        rc, lines = run(json.dumps(HOOK))
+        if rc != 0 or any(l.lstrip().startswith("WARN") for l in lines) or not any(
+                l.lstrip().startswith("PASS") and "1 hook(s) registered with no trust record" in l and "(1 examined)" in l
+                for l in lines):
+            failures.append("untrusted hook, %s: exit %s, output %r" % (label, rc, " | ".join(lines)))
+        rc, lines = run("{bad")
+        if rc != 1 or not any(l.lstrip().startswith("FAIL") and "hooks.json unreadable" in l for l in lines):
+            failures.append("unreadable manifest, %s: exit %s, output %r" % (label, rc, " | ".join(lines)))
+    harness(True)
 
     cases = [6]
 
