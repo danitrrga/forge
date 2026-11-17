@@ -239,8 +239,6 @@ def main():
           and got["servers"] == [], (code, got, err))
 
     # d: a malformed `profiles` leaves the project out of lib.projects() and names it.
-    skipped = []
-    code, out, err = w.forge_cmd(["doctor", "bad"])
     r = subprocess.run([sys.executable, "-c", "import json; from forge import lib; s = []; p = lib.projects(s); print(json.dumps([sorted(p), s]))"],
                        cwd=w.forge, env=sandbox.bare_env(w.home, w.root), capture_output=True, text=True, timeout=60)
     names, skipped = json.loads(r.stdout) if r.returncode == 0 else (None, None)
