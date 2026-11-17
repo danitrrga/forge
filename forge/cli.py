@@ -11,7 +11,7 @@
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge start NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
-  forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill, GSD and MCP package versions this machine runs
+  forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, then a note if the toolchain is off;
@@ -26,7 +26,6 @@ that says which runs, in what order, and what "healthy" means.
 import argparse
 import contextlib
 import copy
-import datetime
 import json
 import os
 import re
@@ -561,26 +560,13 @@ def _codex_missing():
         "codex is on in config/forge.json but not on PATH -- install it or set integrations.codex false")
 
 
-def _gsd_tool():
-    """The tool GSD's install needs: npm for forge's patched copy, pnpm for the unpatched one forge init
-    installs with `pnpm dlx @opengsd/gsd-core`."""
-    return "npm" if lib.gsd_patched() else "pnpm"
-
-
-def _gsd_missing():
-    tool = _gsd_tool()
-    return None if shutil.which(tool) else (
-        "gsd is on in config/forge.json but %s is not on PATH -- install %s or set integrations.gsd false"
-        % (tool, "node" if tool == "npm" else "pnpm"))
-
-
 def _agent_browser_missing():
     return None if shutil.which("agent-browser") else (
         "agent_browser is on in config/forge.json but agent-browser is not on PATH -- run `forge toolchain --fix`, then "
         "open a new shell, or set integrations.agent_browser false")
 
 
-INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"), "gsd": (_gsd_missing, lambda: "%s found on PATH" % _gsd_tool()),
+INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"),
                      "hindsight": (None, "no dependency checked here"),
                      "consent": (None, "its own row, `consent`, looks at the adapter, the projects and the hook"),
                      "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
@@ -825,133 +811,6 @@ def codex_hooks_row():
     return lib.Result("PASS", "codex hooks", "%d entr%s in %s, none is forge's" % (len(entries), "y" if len(entries) == 1 else "ies", where))
 
 
-# How long the `gsd engine` row waits for `gsd-tools.cjs --help`, which prints its usage and returns in well under a second.
-GSD_ENGINE_TIMEOUT = 20
-GSD_ENGINE_FIX = "pnpm dlx @opengsd/gsd-core@latest --claude --global"  # what forge init runs (GSD_INSTALL)
-
-
-def gsd_engine_row():
-    """The `gsd engine` row: with the gsd integration on, `node <HOME>/.claude/gsd-core/bin/gsd-tools.cjs --help`
-    (it renders the usage and exits 0 without reading a project) must exit 0. Nothing else ran the installed
-    engine, and a gsd-tools.cjs that died on a missing required module was green in every other row. A non-zero
-    exit, a timeout or a missing gsd-core is a FAIL naming the fix, with the first error line of what node
-    printed. SKIP while gsd is off, and SKIP (NOT RUN, NOT ARMED) with no node on PATH, as neither looked at
-    the engine."""
-    if not lib.on("gsd"):
-        return lib.Result("SKIP", "gsd engine", NOT_ARMED + "gsd is off in config/forge.json")
-    script = os.path.join(lib.HOME, ".claude", "gsd-core", "bin", "gsd-tools.cjs")
-    where = lib.short(script)
-    node = shutil.which("node")
-    if not node:
-        return lib.Result("SKIP", "gsd engine", NOT_ARMED + "node is not on PATH, so the engine was not run")
-    if not os.path.isfile(script):
-        return lib.Result("FAIL", "gsd engine", "gsd is on and %s is not there -- %s" % (where, GSD_ENGINE_FIX))
-    try:
-        r = subprocess.run([node, script, "--help"], capture_output=True, text=True, timeout=GSD_ENGINE_TIMEOUT,
-                           stdin=subprocess.DEVNULL)
-    except subprocess.TimeoutExpired:
-        return lib.Result("FAIL", "gsd engine", "node %s --help did not return in %s s -- %s" % (where, GSD_ENGINE_TIMEOUT, GSD_ENGINE_FIX))
-    except OSError as e:
-        return lib.Result("FAIL", "gsd engine", "node %s --help could not start: %s -- %s" % (where, e, GSD_ENGINE_FIX))
-    if r.returncode == 0:
-        return lib.Result("PASS", "gsd engine", "node %s --help exited 0" % where)
-    lines = [l.strip() for l in (r.stderr or r.stdout).splitlines() if l.strip()]
-    first = next((l for l in lines if "Error" in l), lines[0] if lines else "no output")
-    return lib.Result("FAIL", "gsd engine", "node %s --help exited %d: %s -- %s" % (where, r.returncode, first, GSD_ENGINE_FIX))
-
-
-# The `research expiry` row: a research file under <project>/.planning/research/ may say, in its first
-# HEADER_LINES lines, when it must be re-checked (README.md, "research expiry").
-RESEARCH_DIR = os.path.join(".planning", "research")
-RESEARCH_HEADER_LINES = 20
-RESEARCH_MAX_BYTES = 1024 * 1024
-RESEARCH_NAMED = 10
-RESEARCH_FIX = "re-check the research and move its expires date, or delete it"
-EXPIRES_LINE = re.compile(r"^\s*expires\s*:\s*(.*?)\s*$", re.I)
-VOLATILITY_LINE = re.compile(r"^\s*volatility\s*:\s*(high|medium|low)\s*$", re.I)
-ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
-
-
-def today():
-    """The day the `research expiry` row compares with; a test replaces it."""
-    return datetime.date.today()
-
-
-def research_header(path):
-    """(expires, volatility, raw) of a research file's first RESEARCH_HEADER_LINES lines: `expires` a date, or
-    None with `raw` the text after `expires:` when it is not a YYYY-MM-DD date, or None with no `expires:` line
-    at all; `volatility` high, medium or low, lower-cased, or None. The first `expires:` line wins. Raises OSError."""
-    expires = volatility = raw = None
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for _, line in zip(range(RESEARCH_HEADER_LINES), fh):
-            m = EXPIRES_LINE.match(line)
-            if m and raw is None:
-                raw = m.group(1).strip("'\"")
-                if ISO_DATE.fullmatch(raw):
-                    try:
-                        expires = datetime.date.fromisoformat(raw)
-                    except ValueError:
-                        pass
-            m = VOLATILITY_LINE.match(line)
-            if m and volatility is None:
-                volatility = m.group(1).lower()
-    return expires, volatility, raw
-
-
-def research_expiry(only=None):
-    """The `research expiry` row: every markdown file under <project_path>/.planning/research/ of each project
-    (frozen ones too, since stale research is not forge drift; a path two projects share is read once, by the
-    first) with an `expires: YYYY-MM-DD` line in its first 20 lines (a bare line, any case, or inside `---`
-    front matter; an optional `volatility: high|medium|low`). The date is the last day the research stands, so
-    a file is expired the day after, by today(). WARN names each expired file as `project/path (expired DATE,
-    volatility V)` and each malformed date as `(unreadable expiry: 'text')`, ten at most and then `and N more`;
-    a file with no header is only counted. A file over 1 MB and a link are skipped, and said. No research file
-    in the scope is a PASS that says so (zero is possible here). Reads only; with `only`, that project alone."""
-    seen, files, dated, skipped, projects = set(), 0, 0, 0, set()
-    expired, unreadable = [], []  # (project/relative path, text)
-    for name, prof in lib.projects().items():
-        root = prof.get("project_path")
-        if only not in (None, name) or not root or not os.path.isdir(os.path.join(root, RESEARCH_DIR)):
-            continue
-        real = os.path.realpath(root)
-        if real in seen:
-            continue
-        seen.add(real)
-        for d, dirs, names in os.walk(os.path.join(root, RESEARCH_DIR)):
-            dirs.sort()
-            for n in sorted(names):
-                path = os.path.join(d, n)
-                if not n.lower().endswith(".md"):
-                    continue
-                label = "%s/%s" % (name, os.path.relpath(path, root).replace(os.sep, "/"))
-                try:
-                    if os.path.islink(path) or os.path.getsize(path) > RESEARCH_MAX_BYTES:
-                        skipped += 1
-                        continue
-                    expires, volatility, raw = research_header(path)
-                except OSError as e:
-                    files, projects = files + 1, projects | {name}
-                    unreadable.append((label, "could not be read: %s" % e.strerror))
-                    continue
-                files, projects = files + 1, projects | {name}
-                if raw is not None and expires is None:
-                    unreadable.append((label, "unreadable expiry: %r" % raw))
-                elif expires is not None:
-                    dated += 1
-                    if expires < today():
-                        expired.append((label, "expired %s%s" % (expires.isoformat(), ", volatility " + volatility if volatility else "")))
-    if not files and not skipped:
-        return lib.Result("PASS", "research expiry", "0 research file(s) in 0 project(s), no .planning/research/*.md to check")
-    seen_n = "%d research file(s) in %d project(s), %d with an expiry" % (files, len(projects), dated)
-    note = ", %d skipped (over 1 MB or a link)" % skipped if skipped else ""
-    if not (expired or unreadable):
-        return lib.Result("PASS", "research expiry", seen_n + ", none expired" + note)
-    named = ["%s (%s)" % row for row in sorted(expired) + sorted(unreadable)]
-    more = ["and %d more" % (len(named) - RESEARCH_NAMED)] if len(named) > RESEARCH_NAMED else []
-    return lib.Result("WARN", "research expiry", "; ".join(
-        ["%s, %d expired, %d unreadable expiry%s" % (seen_n, len(expired), len(unreadable), note)] + named[:RESEARCH_NAMED] + more))
-
-
 def _loaded(loaded, file, c):
     """The document owned.current wants for claim `c` of `file`, read into `loaded` the first time and reused:
     the parsed JSON for a key, item or hook claim, the text for an ignore line, None for a whole-file claim
@@ -1194,10 +1053,7 @@ CHECKS = [
     # Its failures carry their own fix, so the row's is empty.
     ("consent", consent_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
-    # Its failures and its SKIP carry their own fix, so the row's is empty.
     # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
-    ("gsd engine", gsd_engine_row, ""),
-    ("research expiry", research_expiry, RESEARCH_FIX),
     # Its failures carry the command that reproduces them, so the row's fix is empty.
     ("context base", context_base_row, ""),
     # Its failures carry their own fix, so the row's is empty.
@@ -1269,7 +1125,6 @@ def project_checks(name, prof, why):
         ("command guard", lambda: command_guard_smoke(name), fix["command guard"]),
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
         ("ponytail", lambda: ponytail_row(name), fix["ponytail"]),
-        ("research expiry", lambda: research_expiry(name), RESEARCH_FIX),
         ("memory", ["scripts/sync/memory_doctor.py", "--project", name],
          "python3 scripts/sync/memory_doctor.py --project %s --verbose" % name),
     ]
@@ -1800,12 +1655,7 @@ def cmd_metrics(a):
 EXAMPLES = os.path.join(lib.ROOT, "examples")
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 # What init asks about, and what it asks. The others are switched on by hand with --with.
-QUESTIONS = {"codex": "Codex found: manage its config too? [Y/n]",
-             "gsd": "pnpm found: install GSD (planning skills, unpatched from its package with pnpm dlx @opengsd/gsd-core)? [Y/n]"}
-# GSD's own installer, run by init through pnpm: the package's README names npx
-# @opengsd/gsd-core [options] and bin/install.js's --help lists `--claude` (Claude Code only) and `-g, --global`
-# (the config directory); with a runtime and a location given it asks nothing.
-GSD_INSTALL = ["pnpm", "dlx", "@opengsd/gsd-core@latest", "--claude", "--global"]
+QUESTIONS = {"codex": "Codex found: manage its config too? [Y/n]"}
 # Local, never shared: the data history must not take a secret or a file the generators rewrite.
 DATA_EXCLUDE = ("credentials/", "config/secrets.json", "config/secrets.*.json", ".claude/settings.local.json", ".claude/AGENT-SYSTEM.md", ".codex/", ".mcp.json", "*.bak")
 
@@ -1824,18 +1674,18 @@ def ask_yes(question):
 
 
 def init_choices(yes, with_names, without_names, have, ask):
-    """({integration: bool} for every name in lib.INTEGRATIONS, None), or (None, why not). Codex and GSD
-    default to on when `have` says codex and pnpm were found, and each is asked about (`ask`, True for yes)
-    unless --yes, --with or --without already decided it; --with switches on any other offered integration,
-    but not what the machine lacks: codex needs codex and gsd needs pnpm on PATH. Pure: no I/O but `ask`."""
+    """({integration: bool} for every name in lib.INTEGRATIONS, None), or (None, why not). Codex defaults
+    to on when `have` says codex was found, and is asked about (`ask`, True for yes) unless --yes, --with or
+    --without already decided it; --with switches on any other offered integration, but not what the machine
+    lacks: codex needs codex on PATH. Pure: no I/O but `ask`."""
     for n in with_names + without_names:
         if n not in lib.INTEGRATIONS:
             return None, "unknown integration %r (one of %s)" % (n, ", ".join(lib.INTEGRATIONS))
     both = sorted(set(with_names) & set(without_names))
     if both:
         return None, "%s is in both --with and --without" % ", ".join(both)
-    found = {"codex": have["codex"], "gsd": have["pnpm"]}
-    needs = {"codex": "codex", "gsd": "pnpm"}
+    found = {"codex": have["codex"]}
+    needs = {"codex": "codex"}
     for n in with_names:
         if n in found and not found[n]:
             return None, "--with %s needs %s on PATH, and it is not" % (n, needs[n])
@@ -1854,7 +1704,7 @@ def init_preflight():
     rows = [("PASS" if new_enough else "FAIL", "python", "%d.%d.%d%s" % (py[0], py[1], py[2], "" if new_enough else ", 3.10 or newer is needed")),
             ("PASS" if shutil.which("git") else "FAIL", "git", shutil.which("git") or "not on PATH: forge needs it"),
             ("PASS" if shutil.which("claude") else "WARN", "claude", shutil.which("claude") or "not on PATH: install Claude Code to use what forge writes"),
-            ("PASS" if shutil.which("pnpm") else "SKIP", "pnpm", shutil.which("pnpm") or "not on PATH: GSD stays off"),
+            ("PASS" if shutil.which("pnpm") else "SKIP", "pnpm", shutil.which("pnpm") or "not on PATH"),
             ("PASS" if shutil.which("codex") else "SKIP", "codex", shutil.which("codex") or "not on PATH: Codex's config stays off")]
     for level, name, detail in rows:
         print("%-4s  %-8s %s" % (level, name, detail))
@@ -1919,11 +1769,10 @@ def init_write(integrations, track):
             print("made   .forge-data.git (your data's own history, no remote; forge commit puts each path in the history that owns it)")
 
 
-def init_step(label, argv, tool=False):
-    """Runs one init step and returns its exit code: a forge script by default, an external command
-    (argv as given, from the checkout) with tool=True."""
+def init_step(label, argv):
+    """Runs one init step, a forge script, and returns its exit code."""
     print("== forge init: %s ==" % label, flush=True)
-    code = (subprocess.run(argv, cwd=lib.ROOT) if tool else lib.run(argv)).returncode
+    code = lib.run(argv).returncode
     print(flush=True)
     return code
 
@@ -1946,14 +1795,9 @@ def cmd_init(a):
         return 1
     init_write(integrations, a.track)
     # A step that ran and broke exits non-zero and lands here with its code. What could not run (a tool that
-    # is not there, an integration that is off) never gets this far: init_choices leaves GSD off without pnpm,
+    # is not there, an integration that is off) never gets this far: init_choices leaves Codex off without codex,
     # and the generators and the doctor print NOT RUN, NOT ARMED / SKIP and exit 0.
     failed = []
-    if integrations["gsd"]:
-        # The example's gsd_patches is false: GSD straight from its package, nothing staged, patched or pinned.
-        code = init_step("gsd", GSD_INSTALL, tool=True)
-        if code:
-            failed.append(("gsd", code))
     code = init_step("skills", ["bin/forge", "skills", "--apply"])  # the skill mirror used to come from sync
     if code:
         failed.append(("skills", code))
@@ -2081,7 +1925,7 @@ def main(argv=None):
     t.add_argument("name", nargs="?", help="a key of `launchers`; none lists them")
     t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
     t.set_defaults(fn=launch.cmd)
-    t = sub.add_parser("lock", help="record the plugin, outside-skill, GSD and MCP package versions (a dry-run unless --apply)")
+    t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
     t.set_defaults(fn=lockfile.cmd_lock)
     t = sub.add_parser("versions", help="the toolchain pins and the lock together, for release notes")
@@ -2106,7 +1950,7 @@ def main(argv=None):
     c.add_argument("--all", action="store_true", help="every change, when no path is named")
     c.set_defaults(fn=lambda a: _publish().cmd_commit(a))
     i = sub.add_parser("init", help="first run for a new checkout: its data, sync --apply --all, doctor")
-    i.add_argument("--yes", action="store_true", help="take what init found (Codex, pnpm) without asking")
+    i.add_argument("--yes", action="store_true", help="take what init found (Codex) without asking")
     i.add_argument("--with", dest="with_names", type=names_list, default=[], metavar="a,b", help="switch these integrations on")
     i.add_argument("--without", dest="without_names", type=names_list, default=[], metavar="a,b", help="leave these integrations off")
     i.add_argument("--track", action="store_true", help="also make .forge-data.git, a local history of your data")

@@ -28,7 +28,7 @@ git worktrees, reviews it and walks the finished UI. It is the part of forge thi
   it, every file written is named.
 - **`forge doctor` names what is broken and the command that fixes it.** One PASS / FAIL / SKIP / WARN line
   per check, exit 1 on a FAIL.
-- **Optional integrations that switch off cleanly.** Codex, GSD and Hindsight are each one switch.
+- **Optional integrations that switch off cleanly.** Codex and Hindsight are each one switch.
   Turning one off removes only the entries forge wrote.
 - **An agentic workflow that forge installs and configures.** `plugins/fwx` is a Claude Code plugin that takes work
   from discuss to plan, parallel worktree execution, review and UI walk. One project field, `framework`, turns it on
@@ -172,13 +172,12 @@ python3 bin/forge sync --apply          # write it
 
 To type `forge` instead, link it onto your PATH: `ln -s ~/forge/bin/forge ~/.local/bin/forge`.
 
-`forge init` checks python, git, `claude`, `pnpm` and `codex`, one line each. It asks at most two questions,
-and only for tools it found: manage Codex's config too, and install GSD. `--yes` takes every detected default,
+`forge init` checks python, git, `claude`, `pnpm` and `codex`, one line each. It asks at most one question,
+and only for a tool it found: manage Codex's config too. `--yes` takes every detected default,
 `--with a,b` and `--without a,b` switch integrations, and `--track` gives your data its own local git history.
 It then writes your data into the checkout: `config/forge.json` (your switches), a project file for the checkout
 itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGENT-SYSTEM.md` and an empty
-`skills/`. With GSD on, it runs GSD's own installer (`pnpm dlx @opengsd/gsd-core@latest --claude --global`).
-Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
+`skills/`. Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
 exits with `forge doctor`'s status.
 
 `forge new PATH [--name NAME] [--writes-tracked-files]` writes `config/projects/NAME.claude.json` and runs
@@ -198,7 +197,7 @@ instead of guessing.
 `forge sync` writes the per-project keys in `~/.claude.json`, each project's `.claude/settings.local.json`,
 the hook rows in `~/.claude/settings.json` (merged, never replaced) and, with Codex on, `~/.codex/` and each
 project's `.codex/config.toml`. `forge skills` writes what belongs to the user rather than to a project: the
-online skills, the GSD runtime and the links in `~/.claude/skills`. These files are generated and overwritten on
+online skills and the links in `~/.claude/skills`. These files are generated and overwritten on
 every run, so edit the project file, not them. The SessionStart hook runs `forge session-start`, which syncs only
 the project you opened, reports only what changed or failed, and always exits 0: a broken sync never blocks a
 session. A project marked `frozen` gets nothing.
@@ -217,16 +216,10 @@ installed another way.
 | Integration | What it adds | What it needs | Default |
 |---|---|---|---|
 | `codex` | `~/.codex/skills`, each project's `.codex/config.toml` and `.agents/skills` links, so Codex sees the same skills; with `codex_harness` true in `config/forge.json` also its hook rows in `~/.codex/hooks.json` and each project's MCP servers in `.codex/config.toml`, with it false (the default, Codex as a reviewer) neither, and forge takes out only what it wrote | `codex` on PATH | off; `init` offers it when `codex` is found |
-| `gsd` | the `gsd-*` skills, agents and engine from `@opengsd/gsd-core`, installed unpatched by `forge init`, and its three hooks | `pnpm`, `node` | off; `init` offers it when `pnpm` is found |
 | `hindsight` | the Hindsight coding-agent memory hooks and its rendered config | Hindsight's coding-agents package, `config/hindsight-coding-agents.json`, `node`; written for one machine's layout, so read `forge/memory.py` first | off |
 | `consent` | one user-scope `PreToolUse` hook row (`hooks/guard_tool_use.py --consent`, `onFailure: block`) that makes a push to a production branch, a command, or an MCP tool that acts on production wait for a yes in a window of its own; production is each project's `production` field and the rules are in `config/gateway.json` | Omarchy and `gum` for the built-in adapter, `python3` | off. Roll back: set `integrations.consent` to `false` and run `forge sync --apply`, which removes the row even when `config/gateway.json` is broken |
 | `agent_browser` | asks for the `agent-browser` browser tool: a `config/toolchain.json` entry whose `when` is `{"integration": "agent_browser"}` is installed by `forge toolchain --fix` only while this is `true`, and `forge doctor` FAILs, naming that command, when the binary is not on PATH | `agent-browser`, installed by mise from that toolchain entry | off. Roll back: set `integrations.agent_browser` to `false`; the entry is then a SKIP and nothing is uninstalled |
 | `mempalace` | nothing yet: the switch for the MemPalace memory part | the MemPalace part's own check, which arrives with that part | off; `forge doctor` shows a SKIP, `NOT RUN, NOT ARMED`, whether it is on or off, until then |
-
-With `gsd_patches` true, `"gsd_isolation_guard": false` in `config/forge.json` switches off the one GSD hook row
-`gsd-agent-isolation-guard.js`: the next `forge sync --apply` takes forge's entry out of `~/.claude/settings.json`
-(GSD's own entry for that file stays), and `forge doctor`'s `gsd isolation guard` row is a SKIP. A missing key or
-`true` writes it; any other value is read as `true` and the doctor row FAILs on it.
 
 ## Bring your own skills
 
@@ -236,12 +229,7 @@ which of them a project loads (`["*"]` for all). The engine's git ignores `skill
 conflicts with them. `forge init --track` gives your data a second, local history when you want it versioned.
 
 Third-party skills come from their own repositories, for example Anthropic's `skill-creator`,
-`kepano/obsidian-skills`, `pbakaus/impeccable` and `Panniantong/Agent-Reach`. The `gsd-*` skills are GSD's own,
-installed unpatched from its package when the `gsd` integration is on. forge does not touch them afterwards
-(`gsd_patches` in `config/forge.json` is false, which is what `forge init` writes). To trim them, name skills in
-`skill_keep.gsd_exclude` (no project keeps them, and forge does not link them) or `skill_keep.gsd_opt_in` (kept
-only by a project whose `skill_keep.extras` row names them); `forge doctor`'s `skill keep` row fails on a name
-no skill has, a name in both lists, or an excluded name in an `extras` row.
+`kepano/obsidian-skills`, `pbakaus/impeccable` and `Panniantong/Agent-Reach`.
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-trim-dark.png"><img src="docs/assets/fig-trim.png" alt="Which skills each project loads: the api project keeps only review, so forge writes release off into ~/code/api/.claude/settings.local.json; site and the forge checkout have no skills_keep and load both review and release." width="100%"></picture>
 
@@ -290,13 +278,13 @@ licences in `SOURCES.md`.
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
 forge new PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
 forge sync [NAME | --all] [--apply]                         what would change (or change it), per project
-forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills, the GSD runtime
+forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
 forge test [fwx] [--mutants]                                every tracked test_*.py but plugins/fwx's, at nice 19; `fwx`: that suite alone, in parallel (--jobs N, --expect-not-run P,..)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
-forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, GSD, MCP packages)
+forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
 forge lint [--root DIR] --all                               personal data in the files the engine publishes (--root: another repository's)
@@ -317,13 +305,6 @@ variable and the others do not. It replaces itself with `claude`, passes every a
 (`forge start orq --model opus -c`), and lists the launchers when given no name. An unknown name or a malformed
 table exits 2; no `claude` on PATH exits 127.
 
-The `research expiry` row reads each project's `.planning/research/**/*.md` (only the first 20 lines of a file, none
-over 1 MB) and warns about the ones whose header says they are stale. A research file may carry `expires: YYYY-MM-DD`
-(bare, or inside `---` front matter; any case) and `volatility: high|medium|low`: the date is the last day the
-research stands, and the row names the file the day after. A file without the header is counted and never flagged; a
-date that is not YYYY-MM-DD is an `unreadable expiry`, also a warning. The fix is to re-check the research and move
-the date, or delete the file.
-
 `forge commit` stages each changed path in the history that owns it: a path the engine's `.gitignore` does not
 ignore goes to the engine history, every other path to your data history when you have one (`--track`).
 
@@ -331,7 +312,7 @@ ignore goes to the engine history, every other path to your data history when yo
 
 - Linux.
 - Python 3.10 or newer, git, and Claude Code (`claude`).
-- Optional: `codex` for the Codex integration, `pnpm` for GSD, `node` for the GSD and Hindsight hooks.
+- Optional: `codex` for the Codex integration, `node` for the Hindsight hooks.
 
 `forge init` checks each one and says which are missing.
 

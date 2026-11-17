@@ -908,7 +908,12 @@ def settings_cases(tmp):
 
         lib.SETTINGS = put("off.json", '{"integrations": {"codex": false, "gsd": true, "hindsight": "false"}}')
         want("on('codex') on a file holding false", lib.on("codex"), False)
-        want("on('gsd') on a file holding true", lib.on("gsd"), True)
+        # D5: `gsd` is no longer an integration, so even a file that still holds the key true cannot make it one, and a
+        # caller that names it fails loudly. Red on 987388c: "on('gsd') on a file still holding the leftover key true is
+        # a ValueError = False, want True" (lib.on returned the file's True), and "lib.gsd_patched is gone = True, want False".
+        want("on('gsd') on a file still holding the leftover key true is a ValueError",
+             str(raised(lib.on, "gsd")).startswith("('raised', 'ValueError'"), True)
+        want("lib.gsd_patched is gone", hasattr(lib, "gsd_patched"), False)
         want("on('hindsight') on the string 'false'", lib.on("hindsight"), False)
         want("on('codeX'), a name that is no integration", str(raised(lib.on, "codeX")).startswith("('raised', 'ValueError'"), True)
 
@@ -950,10 +955,10 @@ def settings_cases(tmp):
         lib.SETTINGS = real
         lib.settings.cache_clear()
 
-    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "gsd", "hindsight", "consent", "agent_browser", "mempalace"))
+    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "hindsight", "consent", "agent_browser", "mempalace"))
     ours = json.load(open(os.path.join(FIXTURES, "forge.json")))
     want("tests/fixtures/config/forge.json integrations, all on",
-         ours["integrations"], {"codex": True, "gsd": True, "hindsight": True})  # consent is absent from the fixture: off
+         ours["integrations"], {"codex": True, "hindsight": True})  # consent is absent from the fixture: off
     theirs = json.load(open(os.path.join(REPO, "examples", "forge.json")))
     want("examples/forge.json integrations, all off", theirs["integrations"], {n: False for n in lib.INTEGRATIONS})
     for key, empty in (("user_settings", {}), ("user_hooks", []), ("instruction_files_skip", []),

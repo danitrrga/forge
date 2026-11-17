@@ -26,7 +26,7 @@ Negative controls, run every time, each in a world of its own:
   removable() made to ignore the digest (in the world's copy of forge/owned.py): the edited env is deleted,
   and the env check of the main world would have failed;
   owned.json removed: the claim part says NOT RUN, NOT ARMED and the by-construction count is above 0;
-  a world where nothing ran: a whole uninstall says nothing is left of forge, exit 0; --integration gsd there is
+  a world where nothing ran: a whole uninstall says nothing is left of forge, exit 0; --integration consent there is
   still FAIL, looked at zero, exit 1.
 The round-11 findings (docs/archive/audits/round-11.md) each have a world of their own below the main one, every comment
 quoting what was seen on 34c191b: 23 of 89 checks red on that code.
@@ -554,9 +554,14 @@ check("an empty world, whole: exit 0, nothing left of forge -- exit %d: %s" % (c
       code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
 code, out = e.forge("uninstall", "--integration", "caveman")  # removed: no longer a choice. Red with "caveman" put back in lib.INTEGRATIONS: "exit 1: looked at 0 claim(s) and 0 item(s) forge made by construction | FAIL: looked at zero"
 check("--integration caveman: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
-      code == 2 and "invalid choice: 'caveman' (choose from 'codex', 'gsd', 'hindsight', 'consent', 'agent_browser', 'mempalace')" in out, out)
+      code == 2 and "invalid choice: 'caveman' (choose from 'codex', 'hindsight', 'consent', 'agent_browser', 'mempalace')" in out, out)
+# D5: gsd is no longer an integration either. On 987388c it was a valid choice and this command exited 1 with "looked at zero" (the old
+# assertion of this line), so this check read "FAIL --integration gsd: argparse refuses it, exit 2 -- exit 1: ... looked at zero".
 code, out = e.forge("uninstall", "--integration", "gsd")
-check("an empty world, --integration gsd: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
+check("--integration gsd: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
+      code == 2 and "invalid choice: 'gsd' (choose from 'codex', 'hindsight', 'consent', 'agent_browser', 'mempalace')" in out, out)
+code, out = e.forge("uninstall", "--integration", "consent")
+check("an empty world, --integration consent: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 1 and "FAIL" in out and "looked at zero" in out, out)
 
 print("%d checks, %d failed" % (n_checks[0], len(failures)))
