@@ -26,10 +26,10 @@ test('the profile slot shows nothing until there is a profile, then sits after t
   assert.equal(chipText({ ...v, profile: 'web' }), 'atlas · web · 03-billing · executing · ▰▰▰▰▰▱▱▱')
 })
 
-test('no phase: `<project> · sin fase`, and the bar is not drawn', () => {
+test('no phase: `<project> · no phase`, and the bar is not drawn', () => {
   const v = snap({ ...SESSION, phase_dir: null, stage: null, part: null, parts: null, branch: null, progress: null })!
-  assert.equal(chipText(v), 'atlas · sin fase')
-  assert.equal(tooltip(v), 'Sin fase abierta')
+  assert.equal(chipText(v), 'atlas · no phase')
+  assert.equal(tooltip(v), 'No phase open')
 })
 
 test('a folder with no .claude/fwx.json (project null), an fwx without the keys and garbage show nothing', () => {
@@ -57,19 +57,19 @@ test('the roadmap: phases done, current, next; the parts of the current phase by
 })
 
 test('the tooltip is one line: the milestone, the phases with the current stage, the parts, the branch', () => {
-  assert.equal(tooltip(snap()!), 'Hito v1 · ✓ 01-login · ✓ 02-search · ▶ 03-billing (executing) · Partes ▶1 ○2 · Rama fwx/billing')
+  assert.equal(tooltip(snap()!), 'Milestone v1 · ✓ 01-login · ✓ 02-search · ▶ 03-billing (executing) · Parts ▶1 ○2 · Branch fwx/billing')
 })
 
 test('a long milestone is cut to two phases each side of the current one', () => {
   const many = { milestones: [{ name: 'v2', phases: Array.from({ length: 9 }, (_, i) => ({
     name: `0${i + 1}-p`, stage: i < 5 ? 'closed' : null, open: i >= 5, subphases: [] })) }] }
   const v = snap({ ...SESSION, milestone: 'v2', phase_dir: '/x/phases/06-p', stage: null, part: null, parts: null, branch: null }, JSON.stringify(many))!
-  assert.equal(tooltip(v), 'Hito v2 · … · ✓ 04-p · ✓ 05-p · ▶ 06-p · ○ 07-p · ○ 08-p · …')
+  assert.equal(tooltip(v), 'Milestone v2 · … · ✓ 04-p · ✓ 05-p · ▶ 06-p · ○ 07-p · ○ 08-p · …')
 })
 
 test('without the phase list the chip and the current phase still show', () => {
   const v = snap(SESSION, 'broken')!
   assert.equal(chipText(v), 'atlas · 03-billing · executing · ▰▰▰▰▰▱▱▱')
   assert.deepEqual(v.phases, [])
-  assert.equal(tooltip(v), 'Hito v1 · Rama fwx/billing')
+  assert.equal(tooltip(v), 'Milestone v1 · Branch fwx/billing')
 })

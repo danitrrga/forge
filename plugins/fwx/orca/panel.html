@@ -1,8 +1,8 @@
 <!doctype html>
-<html lang="es">
+<html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Sesión</title>
+<title>Session</title>
 <!-- The look is this one block; the data is the plain markup `render` builds below it (header, bar, roadmap), so a restyle
      touches only the CSS. Colours are Orca's theme variables, so the panel follows the theme. data-state is done|current|next. -->
 <style>
@@ -31,7 +31,7 @@
 </style>
 </head>
 <body>
-<div id="root" class="muted">Leyendo…</div>
+<div id="root" class="muted">Reading…</div>
 <script>
   const root = document.getElementById('root')
   const MARK = { done: '✓', current: '▶', next: '○' }
@@ -51,7 +51,7 @@
     root.className = ''
     if (!s) {
       root.className = 'empty muted'
-      root.textContent = 'Este workspace no tiene una sesión fwx.'
+      root.textContent = 'This workspace has no fwx session.'
       return
     }
     const pct = s.progress === null ? null : Math.round(s.progress * 100)
@@ -63,7 +63,7 @@
           s.branch ? span('', s.branch) : null)),
       el('div', { class: 'bar' }, pct === null ? null : el('i', { style: 'width:' + pct + '%' })),
       el('div', { class: 'bar-label' },
-        span('', s.phase ? (s.stage || 'sin etapa') + (s.part && s.parts ? ' · parte ' + s.part + '/' + s.parts : '') : 'sin fase'),
+        span('', s.phase ? (s.stage || 'no stage') + (s.part && s.parts ? ' · part ' + s.part + '/' + s.parts : '') : 'no phase'),
         span('muted', pct === null ? '' : pct + '%')))
 
     if (s.phases.length) {
@@ -72,11 +72,11 @@
         list.append(item(p.state, p.name, p.stage))
         if (p.state === 'current' && s.partList.length) {
           const parts = el('div', { class: 'parts', role: 'list' })
-          s.partList.forEach((x, i) => parts.append(item(x.state, 'Parte ' + (i + 1) + ' · ' + x.name)))
+          s.partList.forEach((x, i) => parts.append(item(x.state, 'Part ' + (i + 1) + ' · ' + x.name)))
           list.append(parts)
         }
       }
-      root.append(el('h2', {}, s.milestone ? 'Hito ' + s.milestone : 'Fases'), list)
+      root.append(el('h2', {}, s.milestone ? 'Milestone ' + s.milestone : 'Phases'), list)
     }
   }
 

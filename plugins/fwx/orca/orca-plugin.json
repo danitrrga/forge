@@ -28,7 +28,7 @@
     "panels": [
       {
         "id": "session",
-        "title": "Sesión",
+        "title": "Session",
         "icon": "hammer",
         "entry": "panel.html",
         "ui": "html"
@@ -37,7 +37,7 @@
     "commands": [
       {
         "id": "open",
-        "title": "Abrir la sesión fwx"
+        "title": "Open the fwx session"
       }
     ]
   },
