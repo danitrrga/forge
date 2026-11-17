@@ -4,7 +4,7 @@
                          an empty registry and secrets file, then sync --apply --all and doctor
   forge new PATH         register a project: config/projects/NAME.claude.json, then sync --apply NAME
   forge sync [NAME | --all] [--apply]  regenerate every project's config (or NAME's), in a fixed order, one run at a time
-  forge skills [--apply] the skill links (~/.claude/skills) and the GSD runtime, which belong to the machine, not to a project
+  forge skills [--apply] the online skills and the skill links (~/.claude/skills), which belong to the machine, not to a project
   forge doctor [NAME]    one line per check: what is broken, and the command that fixes it;
                          with a project's name, only the checks that concern it, scoped to it
   forge test             run every test_*.py in the repo
@@ -14,7 +14,7 @@
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill, GSD and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
-  forge session-start    the SessionStart hook: this session's project only, then a note if the GSD runtime or the toolchain is off;
+  forge session-start    the SessionStart hook: this session's project only, then a note if the toolchain is off;
                          silent unless it wrote or has one
   forge lint             [--root DIR] --staged | --all | --range A..B | --message FILE: personal data that must not be published
   forge commit -m MSG (PATH... | --all)  each changed path to the history that owns it (forge/publish.py)
@@ -41,7 +41,7 @@ from forge import launch, lib, lockfile, mcp, owned, skills, toolchain, usage
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
-# the machine (the GSD runtime, the toolchain) is check_and_tell.
+# the machine (the toolchain) is check_and_tell.
 SYNC = [
     ("agent config", "scripts/sync/sync_agent_config.py", None, "--apply", []),
     ("system doc", "scripts/sync/sync_system_doc.py", None, "--apply", []),
@@ -51,12 +51,8 @@ SYNC = [
 # it while the links ran first.
 SKILLS = [
     ("online skills", "scripts/sync/materialise_skills.py", None, "--apply", []),
-    ("gsd runtime", "scripts/sync/sync_gsd_runtime.py", None, "--apply", ["--skills"]),
     ("skill links", "scripts/sync/relink_skills.py", "--dry-run", None, []),
 ]
-# The integration (lib.INTEGRATIONS) a step belongs to, by name: with it off, the command says so and
-# does not run the step (docs/portable-design.md section 5).
-STEP_INTEGRATION = {"gsd runtime": "gsd"}
 
 
 def skill_name_clashes(only=None):
@@ -566,8 +562,8 @@ def _codex_missing():
 
 
 def _gsd_tool():
-    """The tool GSD's install needs: npm for forge's patched copy (sync_gsd_runtime.py), pnpm for the
-    unpatched one forge init installs with `pnpm dlx @opengsd/gsd-core`."""
+    """The tool GSD's install needs: npm for forge's patched copy, pnpm for the unpatched one forge init
+    installs with `pnpm dlx @opengsd/gsd-core`."""
     return "npm" if lib.gsd_patched() else "pnpm"
 
 
@@ -831,7 +827,7 @@ def codex_hooks_row():
 
 # How long the `gsd engine` row waits for `gsd-tools.cjs --help`, which prints its usage and returns in well under a second.
 GSD_ENGINE_TIMEOUT = 20
-GSD_ENGINE_FIX = "python3 bin/forge skills --apply"
+GSD_ENGINE_FIX = "pnpm dlx @opengsd/gsd-core@latest --claude --global"  # what forge init runs (GSD_INSTALL)
 
 
 def gsd_engine_row():
@@ -1292,7 +1288,6 @@ MEMORY_HEALTH = None  # a test points it at a stand-in server; None reads sessio
 MEMORY_WAIT = 30
 MEMORY_POLL = 2
 HOOK_TIMEOUT, HOOK_MARGIN = lib.SESSION_START_TIMEOUT, 10
-GSD_DIFFERS = 2  # sync_gsd_runtime.py's DIFFERS
 
 
 def session_wait():
@@ -1368,10 +1363,6 @@ def run_steps(command, steps, apply, scope):
         with lib.lock() if apply else contextlib.nullcontext():
             for name, script, dry_flag, apply_flag, extra in steps:
                 flag = apply_flag if apply else dry_flag
-                if STEP_INTEGRATION.get(name) and not lib.on(STEP_INTEGRATION[name]):
-                    print("== forge: %s == NOT RUN, NOT ARMED (%s off)" % (name, STEP_INTEGRATION[name]), flush=True)
-                    print(flush=True)
-                    continue
                 print("== forge: %s ==" % name, flush=True)
                 env = None
                 if log:
@@ -1460,10 +1451,8 @@ def cmd_log(a):
 # for byte (docs/archive/designs/unify-split-design.md §2).
 CHANGED = re.compile(r"""
       ^\s*!                       # a warning or failure: lib.read_json and forge/{sync,mcp,memory,
-                                  # skills,hooks}.py; sync_gsd_runtime.py; sync_system_doc.py, whose
+                                  # skills,hooks}.py; sync_system_doc.py, whose
                                   # one ERROR line is "  ! <project> ERROR: <why> -- skipped..."
-    | ^GSD\ \S+\ is\ published    # sync_gsd_runtime.py npm_nag    "GSD <v> is published (installed <v>).
-                                  #                                Update: ...", once a day, exit 0
     | SKIP-                       # sync_system_doc.py             "  ~ <project>  SKIP-agents-md(non-forge
                                   #                                content):AGENTS.md", a file left alone
     | relink_skills:.*(BLOCKED|SKIPPED|failed)  # relink_skills.py "| BLOCKED(real dir in mirror): <link>",
@@ -1479,9 +1468,7 @@ CHANGED = re.compile(r"""
 SHOWN = 3
 VERBS = {"wrote": "wrote %d file(s)", "link": "linked %d", "unlink": "unlinked %d", "chmod": "chmod %d",
          "mkdir": "created %d dir(s)", "rmtree": "removed %d tree(s)"}
-# forge's own caches: logged, never shown. The gsd step's once-a-day npm check rewrites a stamp
-# under it, and a note every day for that would be the noise npm_nag exists to avoid; a restage
-# there coincides with the agent and engine writes, which are shown.
+# forge's own caches: logged, never shown.
 CACHE = os.path.join(lib.HOME, ".cache", "forge") + os.sep
 
 
@@ -1499,17 +1486,9 @@ def written(lines):
 
 def check_and_tell():
     """What a session start says about the machine, and fixes nothing (docs/toolchain-design.md section 5): one
-    note when the GSD runtime differs from forge's staged, patched copy (`sync_gsd_runtime.py --check`,
-    which never restages), the check's own '!' lines when it failed, and one for a failing `toolchain` row.
-    Every session says it, whatever its project: a runtime or a python that lost its libraries breaks them all."""
+    note for a failing `toolchain` row. Every session says it, whatever its project: a python that lost its
+    libraries breaks them all."""
     notes = []
-    if lib.on("gsd"):
-        r = lib.run(["scripts/sync/sync_gsd_runtime.py", "--check", "--all"], capture=True)
-        if r.returncode == GSD_DIFFERS:
-            notes.append("GSD runtime differs from forge's patched copy -- run `forge skills --apply`")
-        elif r.returncode:
-            why = " | ".join(l.strip() for l in (r.stdout + r.stderr).splitlines() if CHANGED.search(l)) or "check exit %d" % r.returncode
-            notes.append("gsd runtime: %s -- run `forge skills` to see why" % why)
     row = toolchain.row()
     if row.level == "FAIL":
         notes.append("toolchain: %s -- run `forge toolchain --fix`" % row.detail)
@@ -2069,7 +2048,7 @@ def main(argv=None):
     scope.add_argument("project", nargs="?", help="this project only, no user-scope files")
     scope.add_argument("--all", action="store_true", help="every project, even inside a session")
     s.set_defaults(fn=cmd_sync)
-    k = sub.add_parser("skills", help="the skill links and the GSD runtime (a dry-run unless --apply)")
+    k = sub.add_parser("skills", help="the online skills and the skill links (a dry-run unless --apply)")
     k.add_argument("--apply", action="store_true", help="write")
     k.set_defaults(fn=cmd_skills)
     d = sub.add_parser("doctor", help="what is broken")

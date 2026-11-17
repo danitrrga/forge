@@ -703,7 +703,7 @@ def record_cases(tmp):
 
     h = lib.HOME
     lines = [("wrote", h + "/.claude.json"), ("wrote", "/p/a"), ("chmod", h + "/.claude.json"), ("wrote", "/p/a"),
-             ("wrote", "/p/b"), ("wrote", "/p/c"), ("link", "/p/l"), ("wrote", cli.CACHE + "gsd-stage/NPM-CHECKED")]
+             ("wrote", "/p/b"), ("wrote", "/p/c"), ("link", "/p/l"), ("wrote", cli.CACHE + "a-stamp")]
     want("cli.written: per kind in the order seen, each path once, forge's cache left out",
          cli.written(lines), "wrote 4 file(s): ~/.claude.json, /p/a, /p/b +1 more; chmod 1: ~/.claude.json; linked 1: /p/l")
     want("cli.written, only the cache", cli.written([("wrote", cli.CACHE + "x")]), "")
@@ -715,8 +715,6 @@ def record_cases(tmp):
             ("relink_skills: 86 skills | 0 linked, 0 pruned | BLOCKED(real dir in mirror): ~/.claude/skills/x", True),
             ("relink_skills: memory unlink failed: [Errno 13] Permission denied", True),
             ("   ! any failure at all", True),
-            ("GSD 1.43.0 is published (installed 1.42.3). Update: see the procedure at the top of "
-             "scripts/sync/sync_gsd_runtime.py", True),
             ("  ! app                  ERROR: boom -- skipped, other projects unaffected", True),
             # sync_system_doc's only ERROR line starts with '!'; an ERROR anywhere else in a step's
             # output (a third-party installer, say) is not one of ours. Red while CHANGED had a bare
@@ -729,7 +727,6 @@ def record_cases(tmp):
             ("relink_skills: 86 skills | 86 linked, 0 pruned", False),
             ("  ~ app                  copy:AGENT-SYSTEM.md, create:CLAUDE.md", False),
             ("   wrote 2 changed: a.md, b.md", False),
-            ("GSD runtime in sync (2 file(s) written).", False),
             ("chmod 600 ~/.claude.json (it carries resolved secrets)", False),
             ("   ~/.codex/hooks.json -> repaired UserPromptSubmit ref_corpus_router.py", False)):
         want("cli.CHANGED shows %r" % line, bool(cli.CHANGED.search(line)), shown)
@@ -1347,8 +1344,8 @@ def main():
     # With no CLAUDE_PROJECT_DIR the session start resolves its project from the cwd, and the
     # generators it runs must get that same directory: they scope themselves by the variable
     # alone (lib.context), and without it every one of them ran over all projects and the user files.
-    # The machine check (sync_gsd_runtime.py --check --all) is no generator and needs no project: it is
-    # recorded apart, and must run once in every session, whatever the project.
+    # A machine check (a command with --check) is no generator and needs no project: it is recorded apart.
+    # None runs any more (the GSD runtime's left with forge skills' gsd step).
     seen_env, ran, checks = [], [], []
 
     def record(args, capture=False, env=None):
@@ -1369,12 +1366,14 @@ def main():
                         % (os.path.join(dev, "app"), seen_env))
 
     # A session start runs the two steps that write a project, in every session, forge's too: skill links
-    # and the GSD runtime left it for forge skills (step 2 of docs/toolchain-design.md). Red on 26a3ed5:
+    # left it for forge skills (step 2 of docs/toolchain-design.md). Red on 26a3ed5:
     # "session start in forge ran ['scripts/sync/relink_skills.py', 'scripts/sync/sync_gsd_runtime.py',
     # 'scripts/sync/sync_agent_config.py', 'scripts/sync/sync_system_doc.py'], want
     # ['scripts/sync/sync_agent_config.py', 'scripts/sync/sync_system_doc.py']".
+    # And it runs no machine check of the GSD runtime. Red on c0309a2: "session start in app ran [...] and
+    # checked [['scripts/sync/sync_gsd_runtime.py', '--check', '--all']], want [...] and []" (the same for "in forge").
     project_steps = ["scripts/sync/sync_agent_config.py", "scripts/sync/sync_system_doc.py"]
-    check_args = [["scripts/sync/sync_gsd_runtime.py", "--check", "--all"]]
+    check_args = []
     if ran != project_steps or checks != check_args:
         failures.append("session start in app ran %r and checked %r, want %r and %r" % (ran, checks, project_steps, check_args))
     forge_dir, forge_prof = os.path.join(dev, "forge"), os.path.join(prof_dir, "forge.claude.json")

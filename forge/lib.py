@@ -80,7 +80,7 @@ def on(name):
 def gsd_patched():
     """Whether GSD is forge's own patched, staged copy: the key `gsd_patches` is the JSON true, and
     anything else, absent included, is off. Off is a stranger's GSD, installed by GSD's own installer
-    (pnpm dlx) and left alone by sync_gsd_runtime.py. Meaningful only with the `gsd` integration on."""
+    (pnpm dlx), which forge does not touch. Meaningful only with the `gsd` integration on."""
     return settings().get("gsd_patches") is True
 
 
