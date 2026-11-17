@@ -90,7 +90,9 @@ with open(os.environ["FAKE_OUT"], "w") as fh:
     json.dump(doc, fh)
 peer = os.environ.get("FAKE_PEER")
 t0 = time.time()
-while peer and not os.path.exists(peer) and time.time() - t0 < 30:
+while peer and not os.path.exists(peer):
+    if time.time() - t0 > float(os.environ.get("FAKE_PEER_WAIT", "30")):
+        sys.exit(99)  # the peer never appeared: not a launch that overlapped, whatever FAKE_EXIT says
     time.sleep(0.05)
 sys.exit(int(os.environ.get("FAKE_EXIT", "0")))
 """
@@ -305,7 +307,12 @@ def profile_cases():
          (code, d and [f for f in ("--settings", "--mcp-config", "--strict-mcp-config") if f in d["argv"]], d and d["env"].get("FORGE_PROFILE")),
          (0, [], "code"))
 
-    # (5) two launches at once, different profiles: different files and records, and they overlap.
+    # (5) two launches at once, different profiles: different files and records, and they overlap. The fake waits for the other's
+    # dump and exits 99 when it never comes, so the "both exit 0" below fails on launches that ran one after the other. The control
+    # (a peer file that never appears, a 1 s wait) must exit 99; with the fake's timeout exit set to 0 instead it failed with
+    # "FAIL 5: control: a peer that never appears makes the fake exit 99: 0, want 99", and with 99 it passes.
+    code, so, se, d, _ = start(["@toy-b"], extra=dict(FAKE_PEER=os.path.join(dumps, "never-appears.json"), FAKE_PEER_WAIT="1"))
+    want("5: control: a peer that never appears makes the fake exit 99", code, 99)
     oa, ob = os.path.join(dumps, "peer-a.json"), os.path.join(dumps, "peer-b.json")
     pa, _ = popen(["@toy-b"], multi, dict(FAKE_OUT=oa, FAKE_PEER=ob))  # each fake waits for the other's dump: they overlap
     pb, _ = popen(["@list"], multi, dict(FAKE_OUT=ob, FAKE_PEER=oa))
@@ -369,6 +376,13 @@ def profile_cases():
 
 
 def main():
+    try:
+        return run_all()
+    finally:
+        sandbox.cleanup()  # also when a case raised: a test that leaves a folder in /tmp is a bug in that test (ORDERS 14)
+
+
+def run_all():
     profile_cases()
     with tempfile.TemporaryDirectory(prefix="forge-launch-") as tmp:
         n = [0]
@@ -417,7 +431,6 @@ def main():
                      (code, out, key in err), (2, None, True))
         code, _, err, out = run(LAUNCHERS, ["start", "orq"], with_claude=False)
         want("claude not on PATH: (exit, says so)", (code, "claude" in err and "PATH" in err), (127, True))
-    sandbox.cleanup()
     if failures:
         print("\n".join("FAIL " + f for f in failures))
         return 1
