@@ -137,10 +137,11 @@ def profile_cases():
     os.symlink(shutil.which("git"), os.path.join(fakebin, "git"))
     state = os.path.join(home, ".local", "state", "forge")
     outs = [0]
+    dumps = sandbox.mkdtemp("forge-dumps-")  # what the fake claude dumps stays out of the world the tests compare
 
     def env(extra=None, fake=True):
         outs[0] += 1
-        e = sandbox.bare_env(home, w.root, **dict(dict(FAKE_OUT=os.path.join(w.root, "dump-%d.json" % outs[0])), **(extra or {})))
+        e = sandbox.bare_env(home, w.root, **dict(dict(FAKE_OUT=os.path.join(dumps, "dump-%d.json" % outs[0])), **(extra or {})))
         e["PATH"] = fakebin if fake else os.path.join(w.root, "nobin")
         return e
 
@@ -179,8 +180,8 @@ def profile_cases():
          d and [f in argv for f in ("--settings", "--strict-mcp-config", "--mcp-config", "--session-id")], [True] * 4)
     want("1: the user's arguments arrive last, untouched", argv and argv[-3:], user)
     # --mcp-config is variadic: with its value right before the prompt it would swallow it (measured, 4.3 U0).
-    want("1: a non-variadic flag stands between --mcp-config's value and the prompt",
-         argv and argv[len(argv) - len(user) - 2] != "--mcp-config", "the prompt would be swallowed by --mcp-config: %s" % argv)
+    want("1: a flag with one value stands between --mcp-config's value and the prompt (else the prompt is swallowed)",
+         argv and argv[len(argv) - len(user) - 2] != "--mcp-config", True)
     sid = argv and argv[argv.index("--session-id") + 1]
     try:
         uuid.UUID(sid)
@@ -225,7 +226,7 @@ def profile_cases():
     for flags in (["--resume", "abc"], ["--resume=abc"], ["-c"], ["--continue"], ["-r"], ["--session-id", "mine"], ["--session-id=mine"]):
         code, so, se, d, _ = start(["@toy-b"] + flags)
         want("1: %s: no --session-id of forge's own" % flags, (code, d and [a for a in d["argv"] if a.startswith("--session-id")]),
-             (0, flags if flags[0].startswith("--session-id") else []))
+             (0, [f for f in flags if f.startswith("--session-id")]))
         want("1: %s: the user's flags arrive, the profile's too" % flags, d and (d["argv"][-len(flags):] == flags, "--settings" in d["argv"]), (True, True))
     want("1: a resume or a given id writes no record", len(lists("profile-sessions")), n_records)
     code, so, se, d, _ = start(["@toy-b", "--model", "haiku", "--resume", "abc"])
@@ -290,7 +291,7 @@ def profile_cases():
          (0, [], "code"))
 
     # (5) two launches at once, different profiles: different files and records, and they overlap.
-    oa, ob = os.path.join(w.root, "peer-a.json"), os.path.join(w.root, "peer-b.json")
+    oa, ob = os.path.join(dumps, "peer-a.json"), os.path.join(dumps, "peer-b.json")
     pa, _ = popen(["@toy-b"], multi, dict(FAKE_OUT=oa, FAKE_PEER=ob))  # each fake waits for the other's dump: they overlap
     pb, _ = popen(["@list"], multi, dict(FAKE_OUT=ob, FAKE_PEER=oa))
     pa.communicate(timeout=60)
@@ -313,10 +314,10 @@ def profile_cases():
     for args in (["@toy-sec", "--dry-run", "--model", "haiku"], ["--dry-run", "@toy-sec", "--model", "haiku"]):
         code, so, se, d, _ = start(args)
         want("6: %s: exit 0, claude not run, nothing written" % args, (code, se, d, tree_of() == before_d), (0, "", None, True))
-        want("6: %s: the arguments" % args, all(x in so for x in ("--settings", "--strict-mcp-config", "--mcp-config", "--session-id", "--model haiku")), so)
-        want("6: %s: the environment it would set" % args, all(x in so for x in ("FORGE_PROFILE=toy-sec", "FORGE_PROJECT=multi")), so)
-        want("6: %s: the files it would write" % args, all(x in so for x in ("profile-settings/multi/toy-sec.json", "profile-settings/multi/toy-sec.mcp.json",
-                                                                              "profile-sessions/")), so)
+        for label, parts in (("the arguments", ("--settings", "--strict-mcp-config", "--mcp-config", "--session-id", "--model haiku")),
+                             ("the environment it would set", ("FORGE_PROFILE=toy-sec", "FORGE_PROJECT=multi")),
+                             ("the files it would write", ("profile-settings/multi/toy-sec.json", "profile-settings/multi/toy-sec.mcp.json", "profile-sessions/"))):
+            want("6: %s: %s" % (args, label), [x for x in parts if x not in so], [])
         want("6: %s: no secret printed" % args, SECRET in so + se, False)
     code, so, se, d, _ = start(["@toy-b", "--dry-run", "--model", "haiku"], fake=False)
     want("6: claude not on PATH, dry-run: exit 127", code, 127)
