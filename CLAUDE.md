@@ -119,7 +119,8 @@ its gitleaks step, and so the script, fail); use it when Actions minutes are out
 
 ## Where things go
 
-- A new generator step goes in `forge/sync.py`'s sequence: the sequence is the output, and the output is an API.
+- A new step of the agent-config generator goes in `forge/sync.py`'s sequence: the sequence is the output, and the output is an API.
+  A new generator script, as the system doc is, gets a row in `SYNC` of `forge/cli.py` (in `SKILLS` for a user-scope step).
 - A new project field gets a row in `lib.PROJECT_FIELDS`, so `project_error` checks its type once.
 - A new hook row goes in `forge/hooks.py`; a row that belongs to an integration is also listed in
   `ROW_INTEGRATION`.
