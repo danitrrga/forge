@@ -1039,6 +1039,30 @@ def forge(root, env, *args):
     return r.returncode, (r.stdout + r.stderr).splitlines()
 
 
+# `forge doctor NAME` cut down to its generated row, run by the toy checkout's own forge package. In
+# the toy world the memory row always FAILs (no rendered Hindsight config), so the exit code of the
+# whole doctor says nothing about this row; this driver keeps cmd_doctor's own row handling and exit code.
+GENERATED_ONLY = """import argparse, os, sys
+sys.path.insert(0, %r)
+from forge import cli
+every = cli.project_checks
+cli.project_checks = lambda name, prof, why: [r for r in every(name, prof, why) if r[0] == "generated"]
+sys.exit(cli.cmd_doctor(argparse.Namespace(project=sys.argv[1])))
+"""
+
+
+def doctor_generated_only(root, env, name):
+    """(exit code, output lines) of cmd_doctor over only the generated row of project `name`."""
+    driver = os.path.join(os.path.dirname(root), "doctor_generated_only.py")
+    with open(driver, "w", encoding="utf-8") as fh:
+        fh.write(GENERATED_ONLY % root)
+    if not NS:
+        NS.append(sandbox.UNSHARE if sandbox.unshare_ok()[0] else ())
+    r = subprocess.run(list(NS[0]) + [sys.executable, driver, name], cwd=root, env=env, capture_output=True,
+                       text=True, timeout=300)
+    return r.returncode, (r.stdout + r.stderr).splitlines()
+
+
 def rows_of(lines):
     """{row name: (level, detail)} of lib.report's lines ("%-4s  %-22s %s")."""
     return {l[6:28].strip(): (l[:4].strip(), l[29:]) for l in lines if len(l) > 29 and not l.startswith("SUMMARY")}
@@ -1166,10 +1190,20 @@ def project_cases(tmp):
                                                    "frozen is not a boolean" in row(rows, "project")[1]),
          (1, ["project"], "FAIL", True))
 
-    # Never synced: the dry-run would write healthy's files, so the row is a FAIL with its fix.
+    # Never synced: the dry-run exits 0 but would write healthy's files, which a session start in the project
+    # writes anyway (most projects nobody had opened since a configuration change showed red for it): a WARN naming the count, with
+    # its fix, and a doctor of that one row that exits 0. Red before the change (control 1):
+    #   FAIL a never-synced project = ('FAIL', True, False), want ('WARN', True, True)
+    #   FAIL a never-synced project's doctor exit code and summary = (1, ['SUMMARY: 0 passed, 0 warnings, 1 failures']), want (0, ['SUMMARY: 0 passed, 1 warnings, 0 failures'])
+    # and likewise "a stale settings.local.json = ('FAIL', True, False), want ('WARN', True, True)".
     code, lines = forge(root, env, "doctor", "healthy")
     generated = row(rows_of(lines), "generated")
-    want("a never-synced project", (code, generated[0], generated[1].endswith(fix)), (1, "FAIL", True))
+    pending = re.match(r"(\d+) pending write\(s\): a session start in the project writes them -- ", generated[1])
+    want("a never-synced project", (generated[0], generated[1].endswith(fix), bool(pending) and int(pending.group(1)) > 0),
+         ("WARN", True, True))
+    code, lines = doctor_generated_only(root, env, "healthy")
+    want("a never-synced project's doctor exit code and summary",
+         (code, [l for l in lines if l.startswith("SUMMARY")]), (0, ["SUMMARY: 0 passed, 1 warnings, 0 failures"]))
 
     code, lines = forge(root, env, "sync", "--apply", "healthy")
     want("the toy apply of healthy", (code, sandbox.tail("\n".join(lines))), (0, sandbox.tail("\n".join(lines))))
@@ -1198,11 +1232,18 @@ def project_cases(tmp):
     with open(hp, "w", encoding="utf-8") as fh:
         json.dump(dict(json.loads(clean), servers=["not-in-registry"]), fh)
     code, lines = forge(root, env, "doctor", "healthy")
+    only_code, only_lines = doctor_generated_only(root, env, "healthy")
     with open(hp, "w", encoding="utf-8") as fh:
         fh.write(clean)
     generated = row(rows_of(lines), "generated")
     want("a dry-run that exits 1 with nothing to write", (generated[0], generated[1].startswith(
         "the dry-run exits 1 with 1 '!' line(s), which forge sync healthy shows")), ("FAIL", True))
+    # Control 2: a dry-run that exits non-zero stays a FAIL and the doctor exits 1, with nothing pending
+    # (above) and with writes pending too ("a stale file under a dry-run that exits 1", below). The first
+    # already held before the change; only the second sees the WARN branch swallow the exit code. Mutant
+    # (`if not r.returncode:` -> `if writes:` in generated_current), seen failing once:
+    #   FAIL a stale file under a dry-run that exits 1 = (0, 'WARN', False), want (1, 'FAIL', True)
+    want("a dry-run that exits 1: the doctor's exit code", (only_code, rows_of(only_lines)["generated"][0]), (1, "FAIL"))
 
     # Stale: settings.local.json no longer what the generator writes.
     slp = os.path.join(paths["healthy"], ".claude", "settings.local.json")
@@ -1213,7 +1254,17 @@ def project_cases(tmp):
         json.dump(doc, fh)
     code, lines = forge(root, env, "doctor", "healthy")
     generated = row(rows_of(lines), "generated")
-    want("a stale settings.local.json", (code, generated[0], generated[1].endswith(fix)), (1, "FAIL", True))
+    want("a stale settings.local.json", (generated[0], generated[1].endswith(fix),
+                                         generated[1].startswith("1 pending write(s): a session start")), ("WARN", True, True))
+    # The same stale file under a dry-run that exits 1: the pending write is named inside the FAIL.
+    with open(hp, "w", encoding="utf-8") as fh:
+        json.dump(dict(json.loads(clean), servers=["not-in-registry"]), fh)
+    code, lines = doctor_generated_only(root, env, "healthy")
+    with open(hp, "w", encoding="utf-8") as fh:
+        fh.write(clean)
+    generated = row(rows_of(lines), "generated")
+    want("a stale file under a dry-run that exits 1", (code, generated[0], generated[1].startswith(
+        "1 pending write(s); the dry-run exits 1 with 1 '!' line(s)")), (1, "FAIL", True))
 
     # Frozen: forge writes nothing there, which the row says instead of running the dry-run (whose
     # own frozen line would read as zero writes too), and every other row still runs.

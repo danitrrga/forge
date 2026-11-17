@@ -1091,8 +1091,11 @@ def pending_writes(lines):
 
 
 def generated_current(name, prof):
-    """PASS when the dry-run of `forge sync NAME` exits 0 and would write nothing. Only
-    counts are shown, never the generator's lines: `forge sync NAME` prints them."""
+    """PASS when the dry-run of `forge sync NAME` exits 0 and would write nothing; WARN when it exits 0
+    and would write files, since a session start in the project writes them (the settings file of a
+    project nobody opened since the last change); FAIL when it exits non-zero, naming the pending
+    writes too when there are any. Only counts are shown, never the generator's lines:
+    `forge sync NAME` prints them."""
     if prof.get("frozen"):
         return lib.Result("PASS", "generated", "frozen: forge writes nothing")
     r = lib.run(["bin/forge", "sync", name], capture=True)
@@ -1100,9 +1103,10 @@ def generated_current(name, prof):
     writes, bangs = pending_writes(lines), sum(1 for l in lines if lib.BANG.match(l))
     if not writes and not r.returncode:
         return lib.Result("PASS", "generated", "the dry-run of forge sync %s would write nothing" % name)
-    problems = (["%d pending write(s)" % writes] if writes else []) + (
-        ["the dry-run exits %d with %d '!' line(s), which forge sync %s shows" % (r.returncode, bangs, name)]
-        if r.returncode else [])
+    if not r.returncode:
+        return lib.Result("WARN", "generated", "%d pending write(s): a session start in the project writes them" % writes)
+    problems = (["%d pending write(s)" % writes] if writes else []) + [
+        "the dry-run exits %d with %d '!' line(s), which forge sync %s shows" % (r.returncode, bangs, name)]
     return lib.Result("FAIL", "generated", "; ".join(problems))
 
 
