@@ -11,6 +11,7 @@
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge start NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
+  forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
   forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names; forge/profiles.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
@@ -1926,8 +1927,13 @@ def main(argv=None):
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
     t.set_defaults(fn=toolchain.cmd)
-    t = sub.add_parser("start", help="start claude with the environment a named launcher of config/forge.json declares")
-    t.add_argument("name", nargs="?", help="a key of `launchers`; none lists them")
+    t = sub.add_parser("start", help="start claude: with the environment of a launcher of config/forge.json, or with a session profile of this project",
+                       epilog="examples: forge start orchestrator | forge start @marketing | forge start @marketing --dry-run --model haiku")
+    t.add_argument("name", nargs="?", help="a key of `launchers` (none lists them), or @NAME, a profile of the project of this directory "
+                   "(@ alone lists them): claude gets the profile's skills, plugins, permissions, env and servers through its own flags, "
+                   "and no file of the project or ~/.claude.json is written")
+    t.add_argument("--dry-run", action="store_true", help="with @NAME: print the arguments, the environment and the files, and write and start nothing "
+                   "(after NAME it must come first among the arguments for claude)")
     t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
     t.set_defaults(fn=launch.cmd)
     t = sub.add_parser("list", help="the profiles of this directory's project: forge list @, or one of them: forge list @NAME",

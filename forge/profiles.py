@@ -1,5 +1,6 @@
 """The profiles of a project: sets of skills, plugins and MCP servers that hold for one session (not for the project), and
-the two commands that read them, `forge list @` and `forge list @NAME`. Nothing here writes a file.
+the two commands that read them, `forge list @` and `forge list @NAME`, and the record of a session started with one
+(session_record, which forge/launch.py writes). Nothing else here writes a file.
 
 Two layers (docs/modes-design.md, "Where modes live"). A definition, shared by every project, is
 config/profile-defs/<name>.json (examples/profile-def.json has its shape): description, color, skills (names or `@SET` of
@@ -22,6 +23,7 @@ import json
 import os
 import re
 import sys
+import time
 
 from forge import lib, suggest
 
@@ -352,3 +354,23 @@ def cmd_list(a):
              % os.getcwd(), err=True)
         return 2
     return _card(a, found[0], found[1], profile) if profile else _list(a, *found)
+
+
+def session_path(session_id):
+    """Where the record of a session started with a profile lives: lib.STATE/profile-sessions/<session id>.json."""
+    return os.path.join(lib.STATE, "profile-sessions", session_id + ".json")
+
+
+def session_record(profile, project, launcher_pid, parent=None):
+    """The record of one session, as forge start @NAME writes it: {"profile", "project", "launcher_pid", "at"} (`at` in epoch
+    seconds), and `parent` (the parent session's id) only for a session another one started."""
+    rec = {"profile": profile, "project": project, "launcher_pid": launcher_pid, "at": round(time.time(), 3)}
+    if parent:
+        rec["parent"] = parent
+    return rec
+
+
+def write_session(session_id, record):
+    """session_path(session_id) holds `record`; atomic and private (0600), like every state file the launcher writes."""
+    lib.write_text(session_path(session_id), json.dumps(record, indent=2) + "\n", mode=0o600)
+    return session_path(session_id)
