@@ -22,6 +22,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import sys
 import time
 
@@ -354,6 +355,70 @@ def cmd_list(a):
              % os.getcwd(), err=True)
         return 2
     return _card(a, found[0], found[1], profile) if profile else _list(a, *found)
+
+
+def _contributes(prof, profile, lists):
+    """Whether the profile adds anything of its own to the common layer every project starts from: a skill (a `@SET` expanded),
+    a plugin or a server. The common layer is in resolve()'s lists, so they cannot say it."""
+    d, row, sk = definition(profile), prof["profiles"]["offered"][profile], _skill_keep()
+    names = d["skills"] + row.get("skills", [])
+    return bool(sk.expand_extras({profile: names}, sk.SKILL_KEEP.get("sets") or {})[profile]
+                or d["plugins"] or row.get("plugins") or lists["servers"])
+
+
+def _problem(project, prof, profile):
+    """None when `profile` of `project` resolves, adds something of its own and has session files that can be built
+    (launch.session_files: the --settings and --mcp-config documents, which writes nothing, and both serialise); else why not,
+    in one line. A secret the store lacks is named by its NAME: the documents are never printed."""
+    from forge import launch  # launch imports this module
+    prefix = "profile '%s' of project '%s': " % (profile, project)
+    try:
+        lists = resolve(project, prof, profile)
+        if not _contributes(prof, profile, lists):
+            return "resolves to nothing: no skill, plugin or server of its own, only what every project has"
+        docs = launch.session_files(project, prof, profile, lists)[:2]
+    except ProfileError as e:
+        return str(e)[len(prefix):] if str(e).startswith(prefix) else str(e)
+    except Exception as e:  # a file the build could not read: a FAIL naming the profile, not a traceback that hides the rest
+        return "its session files cannot be built (%s: %s)" % (type(e).__name__, e)
+    try:
+        for doc in docs:
+            json.dumps(doc)
+    except (TypeError, ValueError) as e:
+        return "its session files are not valid JSON (%s)" % e
+    return None
+
+
+def doctor_row(only=None):
+    """The `profiles` row of forge doctor (just project `only`, when given): for each project that declares `profiles` (a frozen
+    one receives none and is left out), every offered profile resolves, is not empty and has session files that can be built, and
+    `claude` is on PATH (forge start @NAME runs it). A FAIL names `project/profile` and the cause, never a secret's value. How many
+    projects and profiles it looked at is in the detail; zero where a project declares profiles is a FAIL, and no project declaring
+    them is a SKIP, NOT RUN, NOT ARMED, in which `claude` is not looked for."""
+    wanted = {n: p for n, p in sorted(lib.projects().items()) if isinstance(p.get("profiles"), dict) and (only is None or n == only)}
+    frozen = [n for n, p in wanted.items() if p.get("frozen")]
+    wanted = {n: p for n, p in wanted.items() if n not in frozen}
+    note = "; not looked at, frozen (it receives none): %s" % ", ".join(frozen) if frozen else ""
+    if not wanted:
+        who = "project %s declares no profiles" % only if only else "no project declares profiles"
+        return lib.Result("SKIP", "profiles", lib.NOT_ARMED + "%s%s, so no profile was looked at" % (who, note))
+    looked, problems = 0, []
+    for name, prof in wanted.items():
+        for profile in prof["profiles"]["offered"]:  # the profiles looked at
+            looked += 1
+            why = _problem(name, prof, profile)
+            if why:
+                problems.append("%s/%s: %s" % (name, profile, why))
+    head = "looked at %d project(s) (%s), %d profile(s)" % (len(wanted), ", ".join(wanted), looked)
+    if not looked:
+        problems.append("a check that saw no profile is not a pass (does profiles.offered of %s hold one?)" % ", ".join(wanted))
+    claude = shutil.which("claude", path=os.environ.get("PATH", os.defpath))
+    if not claude:
+        problems.append("claude is not on PATH: forge start @NAME runs it; install Claude Code or put its folder on PATH")
+    if problems:
+        return lib.Result("FAIL", "profiles", "%s%s: %s" % (head, note, " | ".join(problems)))
+    return lib.Result("PASS", "profiles", "%s%s: each resolves, adds something of its own and has session files that build; claude is at %s"
+                      % (head, note, lib.short(claude)))
 
 
 def session_path(session_id):

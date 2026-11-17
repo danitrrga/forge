@@ -1060,6 +1060,8 @@ CHECKS = [
     ("context base", context_base_row, ""),
     # Its failures carry their own fix, so the row's is empty.
     ("framework ignore", framework_ignore_row, ""),
+    # Its failures carry their own cause (project/profile: why), so the row's fix is empty.
+    ("profiles", profiles.doctor_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
     ("doctor_extra", doctor_extra_row, ""),
     # Its failures carry their own fix (python3 bin/forge sync --apply), so the row's is empty.
@@ -1131,6 +1133,7 @@ def project_checks(name, prof, why):
         ("command guard", lambda: command_guard_smoke(name), fix["command guard"]),
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
         ("ponytail", lambda: ponytail_row(name), fix["ponytail"]),
+        ("profiles", lambda: profiles.doctor_row(name), fix["profiles"]),
         ("memory", ["scripts/sync/memory_doctor.py", "--project", name],
          "python3 scripts/sync/memory_doctor.py --project %s --verbose" % name),
     ]
