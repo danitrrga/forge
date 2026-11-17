@@ -1212,7 +1212,7 @@ def project_cases(tmp):
     levels = {k: v[0] for k, v in rows.items()}
     want("a healthy project's rows", levels, {"project": "PASS", "generated": "PASS", "skill names": "PASS",
                                               "project roots": "PASS", "instruction files": "PASS", "command guard": "PASS", "worktree guard": "PASS", "ponytail": "PASS",
-                                              "memory": levels.get("memory", "(none)")})
+                                              "profiles": "SKIP", "memory": levels.get("memory", "(none)")})  # profiles: SKIP, a project with none
     want("a healthy project's memory row", "memory" in rows, True)
     want("a healthy project has no hindsight row", "hindsight" in rows, False)
     want("a healthy project's exit code follows its FAILs", code, 1 if "FAIL" in levels.values() else 0)

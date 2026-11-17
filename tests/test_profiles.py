@@ -52,6 +52,8 @@ Negative controls, each a mutation made by hand, run once and not kept (the firs
 """
 import json
 import os
+import re
+import shutil
 import subprocess
 import sys
 
@@ -180,18 +182,32 @@ def case_a():
     with_profiles = {"profiles": {"default": "code", "offered": {"list": {}}}}
     anchor = "        bad = lib.project_error(prof)\n"
     loader = "        if 'profiles' in prof:\n            prof.setdefault('env', {})['PROFILES_LOADED'] = '1'\n"
-    out = {}
+    out, rows = {}, {}
     for label, kw in (("plain", {}), ("profiles", {"extra": with_profiles}),
                       ("mutated", {"extra": with_profiles, "mutate": ("forge/sync.py", anchor, loader + anchor)})):
         w = World(["app", "plain"], **kw)
+        doc = w.forge_cmd(["doctor"])
+        # The doctor's `profiles` row is rightly different (SKIP without the field, PASS with it, tests/test_doctor_profiles.py), and so
+        # is the summary count it moves: both are asserted below and left out of the comparison, so that nothing else may differ.
+        # Control, a second row made to differ on purpose when a project declares profiles, run once and restored: "FAIL a: a project
+        # with `profiles` generates the same as one without -- output of doctor differs".
+        rows[label] = [l for l in doc[1].splitlines() if re.match(r"(PASS|FAIL|SKIP|WARN)\s+profiles\s", l)]
+        kept = "\n".join(l for l in doc[1].splitlines() if l not in rows[label] and not l.startswith("SUMMARY"))
         out[label] = {"sync --all (dry-run)": w.forge_cmd(["sync", "--all"]), "sync --apply app": w.forge_cmd(["sync", "--apply", "app"]),
-                      "doctor": w.forge_cmd(["doctor"]), **w.files("projects")}
+                      "doctor": (doc[0], kept, doc[2]), **w.files("projects")}
 
     def differs(label):
         a, b = out["plain"], out[label]
         return [(k if k.startswith("projects/") else "output of " + k) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
     check("a: a project with `profiles` generates the same as one without", not differs("profiles"),
           "; ".join("%s differs" % k for k in differs("profiles")))
+    # The row itself: one line in each doctor; without the field a SKIP saying it did not run, with it a PASS (a FAIL naming claude
+    # where claude is not installed, as on a machine that only runs the suite).
+    want = "PASS" if shutil.which("claude") else "FAIL"
+    check("a: the profiles row is the SKIP, NOT RUN, NOT ARMED where no project declares profiles",
+          len(rows["plain"]) == 1 and rows["plain"][0].startswith("SKIP") and "NOT RUN, NOT ARMED" in rows["plain"][0], rows["plain"])
+    check("a: the profiles row looks at the two projects' profiles where they declare them",
+          len(rows["profiles"]) == 1 and rows["profiles"][0].startswith(want) and "2 project(s)" in rows["profiles"][0], rows["profiles"])
     check("a: the world generated a settings.local.json to compare", "projects/app/.claude/settings.local.json" in out["plain"],
           sorted(out["plain"]))
     # The control: a loader that adds a key when the field is there must turn the comparison red.
