@@ -47,7 +47,7 @@ def name_error(name):
         return "%r starts with @, which marks a profile on the command line and is not part of its name" % name
     if name.startswith("-"):
         return "%r starts with -, which would read as an option" % name
-    if not NAME.match(name):
+    if not NAME.fullmatch(name):  # fullmatch: `$` would also match before a final newline
         return "%r is not kebab-case (lowercase letters and digits, single dashes between them)" % name
     return None
 
@@ -135,6 +135,9 @@ def definition(name):
             raise ProfileError("%s: %s is not a list of strings" % (rel, key))
     if not all(isinstance(v, str) for v in doc.get("env", {}).values()):
         raise ProfileError("%s: env is not an object of strings" % rel)
+    for key in ("allow", "deny", "additionalDirectories"):  # the lists the resolver unions: a bare string would be split into letters
+        if key in doc.get("permissions", {}) and not _strings(doc["permissions"][key]):
+            raise ProfileError("%s: permissions.%s is not a list of strings" % (rel, key))
     return {"description": "", "color": "", "skills": [], "plugins": [], "server_kinds": [], "permissions": {}, "env": {},
             **{k: v for k, v in doc.items() if k in DEFINITION}}
 
@@ -195,10 +198,14 @@ def resolve(project, prof, profile):
     if extra:
         raise fail("the row assigns a server to the kind '%s', which the definition does not list (server_kinds: %s)"
                    % (extra[0], ", ".join(d["server_kinds"]) or "none"))
+    doc = lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json"))
+    registry = doc.get("servers") if isinstance(doc, dict) and isinstance(doc.get("servers"), dict) else {}
     servers = []
     for kind in d["server_kinds"]:
         if kind not in row.get("servers", {}):
             raise fail("the server kind '%s' has no server assigned: add it to profiles.offered.%s.servers" % (kind, profile))
+        if row["servers"][kind] not in registry:
+            raise fail("server '%s' (kind '%s') is not in config/mcp-registry.json" % (row["servers"][kind], kind))
         servers.append(row["servers"][kind])
     out = {"skills_keep": _union(skills), "plugins_keep": _union(d["plugins"], row.get("plugins", [])),
            "permissions": json.loads(json.dumps(d["permissions"])), "env": dict(d["env"])}

@@ -29,6 +29,9 @@ Written first, run against the code that had forge/profiles.py and forge/suggest
 `profiles` row in lib: 47 FAIL, among them "b: toy-b resolves to the expected lists -- got None (usage: forge [-h] ... forge:
 error: argument cmd: invalid choice: 'list', maybe you meant 'lint'?", "d: a profiles that is not an object is refused --
 accepted" and "e: profile named '@x' is refused with the reason -- ... accepted"; case a passed, as it should.
+Review round (head 28d90f3), the three cases red before the fix: "FAIL c: perm-str is exit 2 -- exit 0, stderr ''", "FAIL c: perm-int
+is exit 2 -- exit 1, stderr 'Traceback (most recent call last): ...", "FAIL c: err-registry is exit 2 -- exit 0, stderr ''" and
+"FAIL e: an offered name with a trailing newline is refused -- accepted: the pattern's $ matches before a final newline".
 Negative controls, each a mutation made by hand, run once and not kept (the first message each produced):
   a  the generator's loop (forge/sync.py) adding a key to a project that has `profiles` -> "FAIL a: a project with `profiles`
      generates the same as one without -- output of doctor differs; projects/app/.claude/settings.local.json differs; ...".
@@ -88,10 +91,15 @@ DEFS = {
     "err-skill": {"skills": ["toy-missing"]},
     "err-kind": {"server_kinds": ["analytics", "search"]},
     "err-extra": {"server_kinds": ["analytics"]},
+    "perm-str": {"permissions": {"allow": "Read"}}, "perm-int": {"permissions": {"allow": 5}},
+    "perm-mixed": {"permissions": {"allow": [1, {"a": 1}]}}, "perm-deny": {"permissions": {"deny": "x"}},
+    "perm-dirs": {"permissions": {"additionalDirectories": 1}},
+    "err-registry": {"server_kinds": ["analytics"]},
 }
 DEFS["from-example"] = read_json(os.path.join(ROOT, "examples", "profile-def.json"))  # the shape a stranger copies
 ERRS_ROWS = {"from-example": {}, "err-set": {}, "err-skill": {}, "err-kind": {"servers": {"analytics": "toy-echo"}},
-             "err-extra": {"servers": {"analytics": "toy-echo", "search": "toy-echo"}}, "err-nodef": {}}
+             "err-extra": {"servers": {"analytics": "toy-echo", "search": "toy-echo"}}, "err-nodef": {},
+             "perm-str": {}, "perm-int": {}, "perm-mixed": {}, "perm-deny": {}, "perm-dirs": {}, "err-registry": {"servers": {"analytics": "no-such-server"}}}
 PROJECTS = {
     "multi": {"skills_keep": ["toy-common", "toy-a"], "plugins_keep": ["p-def@m"], "servers": [], "env": {"TOY": "1"},
               "profiles": {"default": "code", "offered": {
@@ -225,7 +233,14 @@ def main():
     for profile, cause in (("err-set", "unknown skill set '@NOPE'"), ("err-skill", "unknown skill 'toy-missing'"),
                            ("err-kind", "the server kind 'search' has no server assigned"),
                            ("err-extra", "the kind 'search', which the definition does not list"),
-                           ("err-nodef", "no definition: config/profile-defs/err-nodef.json does not exist")):
+                           ("err-nodef", "no definition: config/profile-defs/err-nodef.json does not exist"),
+                           # Review round: a bare string was split into letters (exit 0), the others were a TypeError traceback.
+                           ("perm-str", "permissions.allow is not a list of strings"),
+                           ("perm-int", "permissions.allow is not a list of strings"),
+                           ("perm-mixed", "permissions.allow is not a list of strings"),
+                           ("perm-deny", "permissions.deny is not a list of strings"),
+                           ("perm-dirs", "permissions.additionalDirectories is not a list of strings"),
+                           ("err-registry", "server 'no-such-server' (kind 'analytics') is not in config/mcp-registry.json")):
         code, out, err = w.forge_cmd(["list", "@" + profile], cwd=w.pp("errs"))
         check("c: %s is exit 2" % profile, code == 2, "exit %d, stderr %r" % (code, err))
         check("c: %s names the profile and the cause" % profile, ("profile '%s' of project 'errs'" % profile) in err and cause in err,
@@ -261,6 +276,9 @@ def main():
               "profile named '%s' accepted or the reason is missing: %r" % (name, why))
     why = lib.project_error({"profiles": {"default": "code", "offered": {"code": {}}}})
     check("e: the default label repeated in offered is refused with the reason", why is not None and "'code'" in why and "repeats the default" in why, why)
+    for label, body in (("an offered name", {"default": "code", "offered": {"b\n": {}}}), ("the default label", {"default": "a\n", "offered": {}})):
+        check("e: %s with a trailing newline is refused" % label, lib.project_error({"profiles": body}) is not None,
+              "accepted: the pattern's $ matches before a final newline")
     why = lib.project_error({"profiles": {"default": "@d", "offered": {}}})
     check("e: a default label is a name too", why is not None and "starts with @" in why, why)
     code, out, err = w.forge_cmd(["list", "@list"], cwd=w.pp("multi"))
