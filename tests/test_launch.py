@@ -203,7 +203,7 @@ def profile_cases():
     settings = json.loads(d["settings"]) if d and d["settings"] else {}
     want("1: --settings: the profile's skills on, every other global one off, the project's own left out",
          settings.get("skillOverrides"), {"toy-a": "on", "toy-b": "on", "toy-c": "on", "toy-common": "on", "toy-other": "off"})
-    want("1: --settings: enabledPlugins whole (kept on, every other plugin of the machine off)", settings.get("enabledPlugins"),
+    want("1: --settings: enabledPlugins names every plugin of the machine (kept on, the rest off)", settings.get("enabledPlugins"),
          {"p-def@m": True, "toy-plugin@x": True, "p-only-default@m": False, "p-other@m": False})
     want("1: --settings: permissions", settings.get("permissions"), {"allow": ["Read"]})
     env_s = settings.get("env") or {}
@@ -323,6 +323,23 @@ def profile_cases():
         recs = {os.path.basename(x): tp.read_json(os.path.join(state, "profile-sessions", x)) for x in lists("profile-sessions")}
         profs = sorted(r["profile"] for r in recs.values() if r["launcher_pid"] in (pa.pid, pb.pid))
         want("5: two records, one per profile", profs, ["list", "toy-b"])
+
+    # The profile's own flags are not the user's to repeat: with two --settings claude keeps the last, so the user's would silently
+    # replace the profile (skills, plugins, env, denied tools) while FORGE_PROFILE and the record still say it is active. Red on
+    # 2f85ddd: "FAIL 4: ['--settings', 'X']: refused, claude not run, nothing written: (0, {'argv': [...'--settings', '.../toy-b.json',
+    # ..., '--settings', 'X'], ...}, False), want (2, None, True)" (the fake claude received both flags and the launch exited 0).
+    for given in (["--settings", "X"], ["--settings=X"], ["--mcp-config", "X"], ["--mcp-config=X"], ["--strict-mcp-config"],
+                  ["--", "--settings", "X"], ["hello", "--model", "haiku", "--settings=X"]):
+        before_s = tree_of()
+        code, so, se, d, _ = start(["@toy-b"] + given)
+        flag_name = next(a.split("=")[0] for a in given if a.split("=")[0] in ("--settings", "--mcp-config", "--strict-mcp-config"))
+        want("4: %s: refused, claude not run, nothing written" % given, (code, d, tree_of() == before_s), (2, None, True))
+        want("4: %s: one line naming %s and saying the profile sets it" % (given, flag_name),
+             (se.strip() == "! forge start: %s is set by the profile: a profile start refuses it in ARGS" % flag_name), True)
+    code, so, se, d, _ = start(["@toy-b", "--dry-run", "--settings", "X"])
+    want("4: the refusal comes before a dry-run too", (code, "is set by the profile" in se), (2, True))
+    code, so, se, d, _ = start(["@code", "--settings", "X"])
+    want("4: the default label sets none of the three, so they are the user's", (code, d and d["argv"][-2:]), (0, ["--settings", "X"]))
 
     # A state folder that cannot be written is one line and claude is not started, never a traceback.
     sessions = os.path.join(state, "profile-sessions")

@@ -9,7 +9,8 @@ NAME (forge/profiles.py), through per-process flags and no shared file: `--setti
 permissions and env of the profile, `--strict-mcp-config --mcp-config` its servers, and a new session gets `--session-id` and
 a record (profiles.session_record). Nothing of the project is written and neither is ~/.claude.json, so two sessions of one
 project can run two profiles at once. Both files are state under lib.STATE, regenerated at every start (the servers' file
-holds resolved secrets, so both are 0600). claude runs as a child and its exit code is ours. `forge start @` lists the
+holds resolved secrets, so both are 0600). ARGS may not carry --settings, --mcp-config or --strict-mcp-config: the profile sets them
+(the last --settings would win and replace the profile). claude runs as a child and its exit code is ours. `forge start @` lists the
 project's profiles."""
 import argparse
 import json
@@ -25,6 +26,7 @@ from forge import framework, lib, mcp, profiles, skills, suggest
 
 # claude's own flags that mean the session is not a new one, or already has the id the user chose: no `--session-id` of ours.
 NOT_NEW = ("-r", "--resume", "-c", "--continue", "--session-id", "--from-pr")
+PROFILE_FLAGS = ("--settings", "--mcp-config", "--strict-mcp-config")  # the flags a profile start sets itself
 SESSION_ID = "NEW-SESSION-UUID"  # what --dry-run prints where a start puts a fresh uuid4
 
 
@@ -89,7 +91,8 @@ def session_files(project, prof, profile, lists):
     # merges by key with settings.local.json, so a skill left unnamed keeps what the project's file says and `on` beats it.
     overrides = {} if "*" in keep else {s: "off" for s in sorted(on_machine - own - keep)}
     overrides.update({s: "on" for s in sorted(keep - {"*"})})
-    # enabledPlugins is replaced whole, never merged by key: every plugin of the machine is named, the profile's on.
+    # enabledPlugins merges by key with settings.local.json (measured), so a plugin this file leaves unnamed keeps what the project's
+    # file says: every plugin of the machine is named here, the profile's on and the rest off, and the profile's set is what holds.
     on = set(lists["plugins_keep"])
     fw = framework.plan(prof, project)
     if fw.on and not fw.error:
@@ -167,6 +170,11 @@ def _profile(a):
     settings = mcp_file = from_secrets = None
     flags = []
     if profile != given["default"]:  # the default is the project file as it is: claude with no profile flags
+        # Two --settings: claude keeps the last, so the user's would silently replace the profile while FORGE_PROFILE says it is on.
+        # Every position is checked, `--` included: whether claude reads a flag after it as one is not ours to bet on.
+        for arg in args:
+            if arg.split("=", 1)[0] in PROFILE_FLAGS:
+                return _refuse("%s is set by the profile: a profile start refuses it in ARGS" % arg.split("=", 1)[0])
         try:
             settings, mcp_file, from_secrets = session_files(project, prof, profile, profiles.resolve(project, prof, profile))
         except profiles.ProfileError as e:
