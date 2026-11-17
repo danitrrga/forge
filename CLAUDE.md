@@ -14,7 +14,6 @@ forge/               the engine: lib, cli, sync, hooks, mcp, memory, skills, pub
 scripts/sync/        the generators, each derives its root from __file__; scripts/metrics/ harness metrics
 scripts/bench/       skill-bench, its tasks in benchmarks/skill-bench/ (the one public directory of benchmarks/)
 hooks/               the shared hooks that user-scope settings point at, with their tests
-config/gsd/          prose payloads of the GSD patches
 examples/            what `forge init` copies for a new user (forge.json, AGENT-SYSTEM.md, ...)
 plugins/fwx/         the agentic-workflow framework (a Claude Code plugin and the `fwx` CLI), with its own README; its suite is the
                      `fwx` group of the test runner (`python3 bin/forge test fwx`); `forge test` with no group skips it, CI runs the group as the `fwx` job
@@ -26,7 +25,7 @@ tests/               the suites; tests/sandbox.py builds a toy world
 
 ```bash
 python3 bin/forge sync          # dry-run of every generator; --apply writes; NAME or --all set the scope
-python3 bin/forge skills        # dry-run of the user-scope steps (online skills, skill links, GSD runtime); --apply writes
+python3 bin/forge skills        # dry-run of the user-scope steps (online skills, skill links); --apply writes
 python3 bin/forge doctor        # one PASS/FAIL/SKIP line per check, exit 1 on a FAIL; `doctor NAME` scopes it to a project
 python3 bin/forge test          # every tracked test_*.py but plugins/fwx's, at nice 19; `--mutants` runs only the on-demand guard mutants
 python3 bin/forge test fwx      # plugins/fwx's suite, in parallel (about 4 minutes); `--jobs N`, `--expect-not-run PATH[,PATH]` (paths relative to plugins/fwx);

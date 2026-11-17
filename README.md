@@ -322,11 +322,11 @@ ignore goes to the engine history, every other path to your data history when yo
 wrote and nothing else: each value its ownership record (`~/.local/state/forge/owned.json`) says forge wrote and
 that is still unchanged, then what is forge's by construction (the skill links into the checkout, a project's
 `.agents/skills` links, the guard hook entries, the copy of `AGENT-SYSTEM.md`, the pointer block in `CLAUDE.md`,
-GSD's defaults while they are forge's copy, `~/.cache/forge`), then forge's SessionStart row and last the record
+`~/.cache/forge`), then forge's SessionStart row and last the record
 itself. A value you edited stays and is named on a `!` line; a setting forge removed falls back to Claude Code's
 default, nothing earlier is restored. Your own hooks, permission rules and `.gitignore` lines stay.
 
-It leaves, and says so: GSD's agents and engine in `~/.claude` (with the command that removes them), any `.bak`
+It leaves, and says so: any `.bak`
 older than the record, and the checkout, whose deletion command it prints and never runs.
 `--integration N` takes out one integration's share once it is off in `config/forge.json`; a project NAME (`forge uninstall NAME`) one
 project's, once it is frozen or its file deleted.
