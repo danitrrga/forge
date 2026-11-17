@@ -284,6 +284,7 @@ forge log [--since DATE] [NAME]                             the journal of what 
 forge test [fwx] [--mutants]                                every tracked test_*.py but plugins/fwx's, at nice 19; `fwx`: that suite alone, in parallel (--jobs N, --expect-not-run P,..)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
+forge start @NAME [--dry-run] [ARGS...]                     claude started with a profile of this project, by flags alone: no file of the project is written
 forge list @ | @NAME [--json] [--names]                     the profiles a project declares, or one of them with its difference from the default
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
