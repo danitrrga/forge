@@ -20,9 +20,12 @@ WHAT IT CHECKS, and why each one earns its place:
   codex-untrusted   The mirror image: a hook registered in the manifest with NO trust record
                     never fires at all. A freshly written one is legitimately untrusted until
                     the next Codex session approves it, so this warns rather than fails -- but
-                    one that stays untrusted is a hook doing nothing, silently. A hooks.json
-                    that exists but does not parse FAILs: Codex loads none of its hooks, and
-                    no next session fixes that.
+                    one that stays untrusted is a hook doing nothing, silently. That holds
+                    while `codex_harness` is true; with it false or absent forge registered
+                    none of them, so they are another program's and a PASS line carries the
+                    counts (untrusted, examined). A hooks.json that exists but does not
+                    parse FAILs whatever `codex_harness` says: Codex loads none of its
+                    hooks, and no next session fixes that.
   lite-*            A claude-mem-lite store: CLAUDE_MEM_DIR derived from the project name,
                     the directory present and writable, rows written, no session stuck
                     'active' (it breaks the next SessionStart), rows labelled for this
@@ -414,10 +417,14 @@ def main() -> int:
             check("machine", "codex-untrusted", False,
                   "hooks.json unreadable (%s), so Codex loads none of its hooks: %s"
                   % (short(manifest), unreadable))
-        elif untrusted:
+        elif untrusted and lib.codex_harness():  # forge registered them, and none fires until trusted
             warn("machine", "codex-untrusted",
                  "%d hook(s) registered with no trust record, so they do not fire until the next "
                  "Codex session approves them: %s" % (len(untrusted), "; ".join(untrusted)))
+        elif untrusted:  # normal: forge registers no Codex hook, so these are another program's
+            check("machine", "codex-untrusted", True,
+                  "%d hook(s) registered with no trust record, none of them forge's with codex_harness off "
+                  "(%d examined): %s" % (len(untrusted), examined, "; ".join(untrusted)))
         else:
             check("machine", "codex-untrusted", True,
                   "every registered hook is trusted (%d examined)" % examined)
