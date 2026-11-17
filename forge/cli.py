@@ -11,6 +11,7 @@
   forge toolchain [--fix]  the third-party tools in config/toolchain.json, installed by mise at their pin
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge start NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
+  forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names; forge/profiles.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
@@ -36,7 +37,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, skills, toolchain, usage
+from forge import launch, lib, lockfile, mcp, owned, profiles, skills, toolchain, usage
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1929,6 +1930,12 @@ def main(argv=None):
     t.add_argument("name", nargs="?", help="a key of `launchers`; none lists them")
     t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
     t.set_defaults(fn=launch.cmd)
+    t = sub.add_parser("list", help="the profiles of this directory's project: forge list @, or one of them: forge list @NAME",
+                       epilog="examples: forge list @ --json | forge list @marketing")
+    t.add_argument("target", nargs="?", metavar="@[NAME]", help="@ lists the profiles, @NAME shows one with its difference from the default")
+    t.add_argument("--json", action="store_true", help="the same information as JSON")
+    t.add_argument("--names", action="store_true", help="with @: only the names, one per line, without the @")
+    t.set_defaults(fn=profiles.cmd_list)
     t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
     t.set_defaults(fn=lockfile.cmd_lock)

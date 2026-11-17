@@ -160,6 +160,9 @@ PROJECT_FIELDS = {
     # Shell commands (e.g. ["npm ci"]) the framework runs inside each worktree it makes, before any check runs there: a
     # fresh worktree has none of the project's installed dependencies. `fwx wave setup` runs them; each must name something.
     "worktree_setup": (list, str),
+    # The profiles a session of the project can run with (forge/profiles.py): {"default": label, "offered": {name: row}}. Its shape
+    # and its names are checked by profiles.shape_error, asked from project_error below.
+    "profiles": dict,
 }
 # The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
 # for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
@@ -240,6 +243,11 @@ def project_error(prof):
             return "%s is not %s" % (field, " or ".join('"%s"' % c for c in PROJECT_CHOICES[field]))
     if "production" in prof:
         why = _production_error()(prof["production"])
+        if why:
+            return why
+    if "profiles" in prof:
+        from forge import profiles  # here, not at the top: forge/profiles.py imports this module
+        why = profiles.shape_error(prof["profiles"])
         if why:
             return why
     # The command is written into the project's CLAUDE.md as an instruction: an empty one names nothing.
