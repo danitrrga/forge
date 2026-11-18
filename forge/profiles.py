@@ -266,9 +266,10 @@ def _say(text="", err=False):
     print(text, file=sys.stderr if err else sys.stdout)
 
 
-def _rows(prof):
-    """One row per profile of the project, the default first: {"name", "default", "description", "color"}. A definition
-    that cannot be read leaves its row with the reason as the description."""
+def _rows(prof, current=None):
+    """One row per profile of the project, the default first: {"name", "default", "description", "color"}, and `"current"`
+    (whether it is the profile `current` names) when `current` is given. A definition that cannot be read leaves its row with
+    the reason as the description."""
     p = prof["profiles"]
     rows = [{"name": p["default"], "default": True, "description": DEFAULT_TEXT, "color": ""}]
     for name in p["offered"]:
@@ -277,11 +278,27 @@ def _rows(prof):
             rows.append({"name": name, "default": False, "description": d["description"], "color": d["color"]})
         except ProfileError as e:
             rows.append({"name": name, "default": False, "description": "! %s" % e, "color": ""})
+    if current is not None:
+        for r in rows:
+            r["current"] = r["name"] == current
     return rows
 
 
+def current_profile(project, prof, session):
+    """The profile the session `session` runs (its record's), or the project's default one when the id has no record, the record is
+    another project's or names a profile the project no longer offers; None when no session was asked about."""
+    if not session:
+        return None
+    rec = read_session(session)
+    given = prof["profiles"]
+    if rec and rec.get("project") == project and rec.get("profile") in [given["default"]] + list(given["offered"]):
+        return rec["profile"]
+    return given["default"]
+
+
 def _list(a, name, prof):
-    rows = _rows(prof) if isinstance(prof.get("profiles"), dict) and not prof.get("frozen") else []
+    listed = isinstance(prof.get("profiles"), dict) and not prof.get("frozen")
+    rows = _rows(prof, current_profile(name, prof, getattr(a, "session", None) or os.environ.get("FORGE_SESSION"))) if listed else []
     if a.json:
         _say(json.dumps(rows, indent=2, ensure_ascii=False))
     elif a.names:
@@ -293,7 +310,7 @@ def _list(a, name, prof):
         w = max(len(r["name"]) for r in rows), max(len(r["color"]) for r in rows)
         _say("project %s: %d profile(s), the default is %s" % (name, len(rows), prof["profiles"]["default"]))
         for r in rows:
-            _say("  %s  %s  %s" % (r["name"].ljust(w[0]), _paint(r["color"].ljust(w[1]), r["color"]), r["description"]))
+            _say("%s %s  %s  %s" % ("*" if r.get("current") else " ", r["name"].ljust(w[0]), _paint(r["color"].ljust(w[1]), r["color"]), r["description"]))
     return 0 if rows else 1
 
 
@@ -439,3 +456,62 @@ def write_session(session_id, record):
     """session_path(session_id) holds `record`; atomic and private (0600), like every state file the launcher writes."""
     lib.write_text(session_path(session_id), json.dumps(record, indent=2) + "\n", mode=0o600)
     return session_path(session_id)
+
+
+def read_session(session_id):
+    """The record of session `session_id`, or None when there is none or it is not a JSON object. An id that is no file name
+    (a path, an empty string) has no record."""
+    if not session_id or os.sep in session_id or session_id.startswith("."):
+        return None
+    try:
+        with open(session_path(session_id), encoding="utf-8") as fh:
+            rec = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+# What a switch request is (forge switch writes it, the launcher above the session reads it): $XDG_STATE_HOME/forge/profile-switch/
+# <session id>.json, {"to", "launcher_pid", "at", "resume"}. `launcher_pid` is the launcher it is for, `at` its time in epoch seconds
+# and `resume` the conversation to resume (the session's id, or the one claude reports after a /clear). It is honoured by that
+# launcher only, and only for SWITCH_TTL seconds: a request nobody took is not a command to obey later.
+SWITCH_TTL = 120
+
+
+def switch_path(session_id):
+    return os.path.join(lib.STATE, "profile-switch", session_id + ".json")
+
+
+def write_switch(session_id, to, launcher_pid, resume):
+    """Write the request that session `session_id` change to profile `to`; the path."""
+    doc = {"to": to, "launcher_pid": launcher_pid, "at": round(time.time(), 3), "resume": resume}
+    lib.write_text(switch_path(session_id), json.dumps(doc, indent=2) + "\n", mode=0o600)
+    return switch_path(session_id)
+
+
+def pending_switch(session_id, pid, now=None):
+    """The request for session `session_id` that launcher `pid` must honour now, or None: there is none, it is not valid JSON of the
+    right shape, it is for another launcher, or it is older than SWITCH_TTL. Nothing is deleted."""
+    try:
+        with open(switch_path(session_id), encoding="utf-8") as fh:
+            req = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    now = time.time() if now is None else now
+    if not (isinstance(req, dict) and isinstance(req.get("to"), str) and isinstance(req.get("at"), (int, float))
+            and isinstance(req.get("launcher_pid"), int)):
+        return None
+    if req["launcher_pid"] != pid or now - req["at"] > SWITCH_TTL or req["at"] > now + SWITCH_TTL:
+        return None
+    return req
+
+
+def take_switch(session_id, pid):
+    """pending_switch, and the file is deleted whatever it held: a request that was honoured, a stale one and one for another
+    launcher must not be found again."""
+    req = pending_switch(session_id, pid)
+    try:
+        os.remove(switch_path(session_id))
+    except OSError:
+        pass
+    return req
