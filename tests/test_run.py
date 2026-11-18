@@ -15,7 +15,12 @@ exit 2 (127 for claude) with `forge start`'s wording, the child not run and noth
 --permission-mode unless asked, never the skip flag; 6 the session record: profile, project, print, launcher pid, `parent` only
 when CLAUDE_CODE_SESSION_ID is set, keyed by the --session-id the child got; 7 the prompt reaches claude on stdin, verbatim, never
 through a shell and never as an argument (a prompt that starts with `-` is not a flag); 8 --cwd: the child runs there and the project
-is that folder's; 9 FORGE_PROFILE and FORGE_PROJECT reach the child, the caller's FORGE_SESSION does not.
+is that folder's; 9 FORGE_PROFILE and FORGE_PROJECT reach the child, the caller's FORGE_SESSION does not, and a forge switch in the
+finished session is refused for its -p; 10 the child is bounded (a fake claude that sleeps): --timeout ends it with exit 124, KILL after
+KILL_AFTER (shortened to 1 s in the engine copy) when it ignores TERM, an INT sent to forge run reaches it, and a forge run killed with
+SIGKILL leaves no child (Linux: the parent-death signal; NOT RUN elsewhere); 11 what the caller may ask: a prompt that is no UTF-8, a
+--permission-mode outside default, plan, acceptEdits and dontAsk, an empty --model and a FORGE_RUN_DEPTH of 2 or more (or no number) are
+exit 2 with one line, nothing written; the child's FORGE_RUN_DEPTH is one more than the caller's.
 
 Written first and run against the code that had `forge start @NAME` and no `run` subcommand: 47 FAIL lines (the exit was 2, "invalid
 choice: 'run'"), the first "FAIL 1: no --model given: the child gets sonnet, once: None, want ['--model', 'sonnet']" and
@@ -31,12 +36,33 @@ first line each produced, run against forge/run.py as committed:
   wording      the refusals worded `forge start`    -> "FAIL 4: a project without profiles: one line with the reason 'declares no profiles', from forge run: (1, True, False), want (1, True, True)"
   cwd-ignored  --cwd not entered                    -> "FAIL 8: --cwd: the child runs there and the project is that folder's: (2, None, None), want (0, '.../projects/multi', 'multi')"
   noise        the answer printed with a banner     -> "FAIL 2: stdout is the answer and only it: (0, 'forge run: the answer\n'), want (0, 'the answer\n')"
+The fix round (review of the pull request) was written first and run against forge/run.py at 08c8f43: 25 FAIL lines, among them
+"FAIL 11: a prompt that is not UTF-8 (a Latin-1 byte): ...: (1, None, False, 11, True), want (2, None, True, 1, False)" (the traceback),
+"FAIL 11: --permission-mode 'bypassPermissions': ...: (0, {'argv': [...", "FAIL 10: --timeout: ...: (2, '', 3, True, False, True), want
+(124, ...)", "FAIL 10: INT sent to forge run is passed on to the child ...: (False, None), want (True, 130)", "FAIL 10: forge run killed with
+SIGKILL: the child does not outlive it: False, want True", "FAIL 11: the child's FORGE_RUN_DEPTH is 1 when the caller has none: None, want 1".
+The mutants that guard those, and the cases that already passed (the weak ones the review named), each seen failing:
+  add-dir, tools-all  `--add-dir /`, `--tools default` added      -> "FAIL 5: no wider permissions: the child's argv is exactly forge start's flags plus ..."
+  no-result-ok        the no-`result` branch removed              -> "FAIL 3: a result document with no `result` text: ...: (1, '', False, False, True), want (1, '', True, True, False)"
+  code-ok             the non-zero exit branch removed            -> "FAIL 3: a good document and a non-zero exit: ...: (3, 'the answer\n', False), want (3, '', True)"
+  fsencode            the prompt encoded with os.fsencode         -> "FAIL 11: a prompt that is not UTF-8 (a Latin-1 byte): ...: (0, {'argv': ..."
+  any-mode            any --permission-mode accepted              -> "FAIL 11: --permission-mode 'bypassPermissions': exit 2, one line ...: (0, {'argv': ..."
+  empty-model         an empty --model accepted                   -> "FAIL 11: an empty --model '': ...: (0, {'argv': ..."
+  depth-open          no depth limit                              -> "FAIL 11: FORGE_RUN_DEPTH='2': refused ...: (0, {'argv': ..."
+  depth-flat          the child's depth not counted up            -> "FAIL 11: the child's FORGE_RUN_DEPTH is 1 when the caller has none: 0, want 1"
+  no-print            the record without `print`                  -> "FAIL 9: forge switch in a finished forge run session is refused because it was started with -p ...: (0, False, ['<sid>.json']), want (2, True, False)"
+  no-limit            --timeout not applied                       -> "FAIL 10: --timeout: ...: (0, 'the answer\n', 1, False, False, False), want (124, '', 1, True, False, True)"
+  no-kill             no KILL after KILL_AFTER                    -> "FAIL 10: a child that ignores TERM is killed KILL_AFTER later: ...: (124, False, False), want (124, False, True)"
+  int-swallowed       INT swallowed as in forge start             -> "FAIL 10: INT sent to forge run is passed on to the child ...: (False, None), want (True, 130)"
+  orphan              no parent-death signal                      -> "FAIL 10: forge run killed with SIGKILL: the child does not outlive it: False, want True"
 """
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
+import time
 import uuid
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
@@ -46,9 +72,20 @@ import sandbox  # noqa: E402
 import test_profiles as tp  # noqa: E402
 
 FAKE = """#!%s
-import json, os, sys
+import json, os, signal, sys, time
+mode = os.environ.get("FAKE_MODE", "")  # hang: sleeps FAKE_SLEEP seconds; deaf: the same and ignores TERM; int: the same, and INT ends it with 130
+if mode == "deaf":
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)
+if mode == "int":
+    def got_int(*_):
+        open(os.environ["FAKE_OUT"] + ".int", "w").close()
+        sys.exit(130)
+    signal.signal(signal.SIGINT, got_int)
 with open(os.environ["FAKE_OUT"], "w") as fh:
-    json.dump({"argv": sys.argv[1:], "stdin": sys.stdin.read(), "env": dict(os.environ), "cwd": os.getcwd(), "ppid": os.getppid()}, fh)
+    json.dump({"argv": sys.argv[1:], "stdin": sys.stdin.read(), "env": dict(os.environ), "cwd": os.getcwd(), "ppid": os.getppid(),
+               "pid": os.getpid()}, fh)
+if mode:
+    time.sleep(float(os.environ.get("FAKE_SLEEP", "10")))
 sys.stdout.write(os.environ.get("FAKE_STDOUT", json.dumps({"type": "result", "subtype": "success", "is_error": False,
                  "result": "the answer", "session_id": "from-the-child", "total_cost_usd": 0.0123})))
 sys.stderr.write(os.environ.get("FAKE_STDERR", ""))
@@ -66,6 +103,20 @@ MUTANTS = {
                 "7: the prompt arrives on stdin"),  # fails 5 and 7
     "skip-perms": ("forge/run.py", '"--output-format", "json", "-p"', '"--dangerously-skip-permissions", "--output-format", "json", "-p"',
                    "5: no wider permissions"),
+    "add-dir": ("forge/run.py", '"--output-format", "json", "-p"', '"--add-dir", "/", "--output-format", "json", "-p"', "5: no wider permissions"),
+    "tools-all": ("forge/run.py", '"--output-format", "json", "-p"', '"--tools", "default", "--output-format", "json", "-p"', "5: no wider permissions"),
+    "no-result-ok": ("forge/run.py", 'elif not isinstance(doc.get("result"), str):', "elif False:", "3: a result document with no `result`"),
+    "code-ok": ("forge/run.py", "elif code:", "elif False:", "3: a good document and a non-zero exit"),
+    "fsencode": ("forge/run.py", 'a.prompt.encode("utf-8")', "os.fsencode(a.prompt)", "11: a prompt that is not UTF-8"),
+    "any-mode": ("forge/run.py", "a.permission_mode not in PERMISSION_MODES", "False", "11: --permission-mode"),
+    "empty-model": ("forge/run.py", "not a.model.strip()", "False", "11: an empty --model"),
+    "depth-open": ("forge/run.py", "depth >= MAX_DEPTH", "False", "11: FORGE_RUN_DEPTH"),
+    "depth-flat": ("forge/run.py", "FORGE_RUN_DEPTH=str(depth + 1)", "FORGE_RUN_DEPTH=str(depth)", "11: the child's FORGE_RUN_DEPTH"),
+    "no-print": ("forge/run.py", "print_mode=True", "print_mode=False", "9: forge switch in a finished forge run session"),
+    "no-limit": ("forge/run.py", "watch=watch", "watch=None", "10: --timeout"),
+    "no-kill": ("forge/launch.py", "send(signal.SIGKILL)", "pass", "10: a child that ignores TERM"),
+    "int-swallowed": ("forge/launch.py", "(lambda s, _: send(s)) if headless else (lambda *_: None)", "(lambda *_: None)", "10: INT"),
+    "orphan": ("forge/launch.py", "libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)", "pass", "10: forge run killed"),
     "wording": ("forge/run.py", 'WHO = "forge run"', 'WHO = "forge start"', "4: a project without profiles: one line"),
     "cwd-ignored": ("forge/run.py", "os.chdir(a.cwd)  # the project", "pass  # the project", "8: --cwd: the child runs there"),
     "noise": ("forge/run.py", "print(answer)", 'print("forge run: " + answer)', "2: stdout is the answer"),
@@ -94,6 +145,13 @@ def cases(mutate=None):
     tp.write_json(os.path.join(w.forge, "config", "mcp-registry.json"),
                   {"servers": {"toy-echo": {"type": "stdio", "command": "toy-echo", "args": [], "env": {}}}})
     home, multi = w.home, w.pp("multi")
+    launch_py = os.path.join(w.forge, "forge", "launch.py")  # a child that ignores TERM is killed after KILL_AFTER: 1 s here, not 15
+    with open(launch_py, encoding="utf-8") as fh:
+        launch_text = fh.read()
+    assert launch_text.count("KILL_AFTER = 15 ") == 1, "the anchor of the shortened KILL_AFTER is not in forge/launch.py"
+    with open(launch_py, "w", encoding="utf-8") as fh:
+        fh.write(launch_text.replace("KILL_AFTER = 15 ", "KILL_AFTER = 1 "))
+    slow = not mutate or mutate[3].split(":")[0] == "10"  # the cases that wait for a child (about 15 s) run for the mutants that name them
     tp.write_json(os.path.join(home, ".claude", "settings.json"), {"enabledPlugins": {"p-def@m": True, "toy-plugin@x": True}})
     tp.write_json(os.path.join(home, ".claude.json"), {"projects": {}, "mcpServers": {}})
     sandbox.git(multi, "add", "-A")
@@ -109,12 +167,17 @@ def cases(mutate=None):
     state = os.path.join(home, ".local", "state", "forge")
     n = [0]
 
-    def forge(verb, args, cwd=multi, extra=None, fake=True):
-        """(exit code, stdout, stderr, the fake's dump or None) of `forge VERB ARGS`."""
+    def fenv(extra=None, fake=True):
+        """(environment, the path the fake dumps to) of one run."""
         n[0] += 1
         out = os.path.join(dumps, "dump-%d.json" % n[0])
         e = sandbox.bare_env(home, w.root, **dict(dict(FAKE_OUT=out), **(extra or {})))
         e["PATH"] = fakebin if fake else os.path.join(w.root, "nobin")
+        return e, out
+
+    def forge(verb, args, cwd=multi, extra=None, fake=True):
+        """(exit code, stdout, stderr, the fake's dump or None) of `forge VERB ARGS`."""
+        e, out = fenv(extra, fake)
         r = subprocess.run([sys.executable, os.path.join(w.forge, "bin", "forge"), verb] + args, cwd=cwd, env=e, capture_output=True,
                            text=True, stdin=subprocess.DEVNULL, timeout=120)
         dump = None
@@ -125,6 +188,23 @@ def cases(mutate=None):
 
     def run(args, **k):
         return forge("run", args, **k)
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            return False
+        try:
+            with open("/proc/%d/stat" % pid) as fh:
+                return fh.read().rsplit(")", 1)[1].split()[0] != "Z"  # a zombie is dead, only not collected yet
+        except (OSError, IndexError):
+            return True
+
+    def wait_for(pred, seconds):
+        end = time.monotonic() + seconds
+        while time.monotonic() < end and not pred():
+            time.sleep(0.05)
+        return bool(pred())
 
     def flag(argv, name):
         return argv[argv.index(name) + 1] if argv and name in argv and argv.index(name) + 1 < len(argv) else None
@@ -180,6 +260,13 @@ def cases(mutate=None):
     code, so, se, d = run(["@toy-b", "do the thing", "--json"], extra=dict(FAKE_STDOUT=json.dumps(bad)))
     want("3: --json with is_error: the document is printed and the exit is 1", (code, (jload(so) or {}).get("subtype")), (1, "error_max_turns"))
 
+    nores = {"type": "result", "subtype": "error_max_turns", "is_error": False}  # what claude prints at the turn limit: no `result` at all
+    code, so, se, d = run(["@toy-b", "do the thing"], extra=dict(FAKE_STDOUT=json.dumps(nores)))
+    want("3: a result document with no `result` text: exit 1, nothing on stdout, the reason and the subtype on stderr, no traceback",
+         (code, so, "no `result` text" in se, "error_max_turns" in se, "Traceback" in se), (1, "", True, True, False))
+    code, so, se, d = run(["@toy-b", "do the thing"], extra=dict(FAKE_EXIT="3"))
+    want("3: a good document and a non-zero exit: that exit, no answer on stdout, the exit named on stderr", (code, so, "claude exited 3" in se), (3, "", True))
+
     # 4 refusals: exit 2, one line with forge start's wording, the child not run, nothing written.
     for label, args, cwd, why in (("a project without profiles", ["@toy-b", "hi"], w.pp("none"), "declares no profiles"),
                                   ("a frozen project", ["@list", "hi"], w.pp("frozen-p"), "frozen"),
@@ -215,17 +302,21 @@ def cases(mutate=None):
     code, _, _, started = forge("start", ["@toy-b", "-p", "hi"])
     start_settings, start_mcp = (started["argv"][started["argv"].index(f) + 1] for f in ("--settings", "--mcp-config"))
     start_files = (read(start_settings), read(start_mcp))
-    start_head = started["argv"][:started["argv"].index("--settings") + 2]
+    start_flags = started["argv"][:started["argv"].index("--session-id")]  # what forge start gave claude before its own session id and the test's `-p hi`
     code, so, se, d = run(["@toy-b", "do the thing"])
     argv = d and d["argv"]
     child_files = (read(flag(argv, "--settings")), read(flag(argv, "--mcp-config")))
-    want("5: the child gets the profile flags forge start gives, in the same order", argv and argv[:len(start_head)], start_head)
+    sid = argv and flag(argv, "--session-id")
+    want("5: the child gets the profile flags forge start gives, in the same order", argv and argv[:len(start_flags)], start_flags)
     want("5: its settings and servers files are forge start's, byte for byte, and are not empty", (child_files == start_files, all(child_files)), (True, True))
-    want("5: no wider permissions than forge start gives", argv and [a for a in argv if a in ("--dangerously-skip-permissions", "--permission-mode", "--allowedTools",
-         "--allowed-tools", "--allow-dangerously-skip-permissions")], [])
+    # an equality, not a list of names: before it, `--add-dir /`, `--tools default` and `--permission-mode=bypassPermissions` added to the
+    # child passed ("0 fail lines" for each, found by the review)
+    want("5: no wider permissions: the child's argv is exactly forge start's flags plus the session, model and output flags", argv,
+         start_flags + ["--session-id", sid, "--model", "sonnet", "--output-format", "json", "-p"])
     want("5: the profile's own permissions are in --settings", json.loads(child_files[0] or "{}").get("permissions"), {"allow": ["Read"]})
     code, so, se, d = run(["@toy-b", "do the thing", "--permission-mode", "plan"])
-    want("5: --permission-mode is passed when asked", d and flag(d["argv"], "--permission-mode"), "plan")
+    want("5: --permission-mode plan is passed when asked, and nothing else changes", d and d["argv"],
+         start_flags + ["--session-id", d and flag(d["argv"], "--session-id"), "--model", "sonnet", "--permission-mode", "plan", "--output-format", "json", "-p"])
     code, so, se, d = run(["@code", "do the thing"])
     want("5: the default label: no profile flags, the model still passed", d and ([f for f in ("--settings", "--mcp-config") if f in d["argv"]], flag(d["argv"], "--model")),
          ([], "sonnet"))
@@ -274,8 +365,99 @@ def cases(mutate=None):
     want("9: the child's FORGE_SESSION is its own, not the caller's (a `forge switch` in it must not restart the caller)",
          d and (d["env"].get("FORGE_SESSION"), d["env"].get("FORGE_LAUNCHER_PID") != "1"), (sid, True))
     switch_dir = os.path.join(state, "profile-switch")
+    # the record's launcher is forge run, dead by now: the test makes it its own pid, so that the refusal can only be the -p one
+    # (before, the case passed on "not a session started by forge start" and the mutant `print_mode=False` failed only case 6)
+    rec_path = os.path.join(state, "profile-sessions", "%s.json" % sid)
+    rec = json.loads(read(rec_path) or "{}")
+    rec["launcher_pid"] = os.getpid()
+    with open(rec_path, "w") as fh:
+        json.dump(rec, fh)
     code, so, se, d = forge("switch", ["@list"], cwd=multi, extra=dict(FORGE_SESSION=sid or "none", FORGE_LAUNCHER_PID=str(os.getpid())))
-    want("9: forge switch in a finished forge run session is refused and writes no request", (code, os.path.isdir(switch_dir) and os.listdir(switch_dir)), (2, False))
+    want("9: forge switch in a finished forge run session is refused because it was started with -p, and writes no request",
+         (code, "started with -p" in se, os.path.isdir(switch_dir) and os.listdir(switch_dir)), (2, True, False))
+
+    # 10 the child is bounded: --timeout, INT passed on, no orphan. A fake claude that sleeps.
+    if slow:
+        t0 = time.monotonic()
+        code, so, se, d = run(["@toy-b", "hi", "--timeout", "1"], extra=dict(FAKE_MODE="hang", FAKE_SLEEP="12"))
+        want("10: --timeout: a child that outlives it is ended: exit 124, nothing on stdout, one line naming the limit, the child gone, in time",
+             (code, so, len(se.strip().splitlines()), "--timeout 1" in se, d is not None and alive(d["pid"]), time.monotonic() - t0 < 8),
+             (124, "", 1, True, False, True))
+        t0 = time.monotonic()
+        code, so, se, d = run(["@toy-b", "hi", "--timeout", "1"], extra=dict(FAKE_MODE="deaf", FAKE_SLEEP="12"))
+        want("10: a child that ignores TERM is killed KILL_AFTER later: exit 124, the child gone, in time (not when it ends by itself)",
+             (code, d is not None and alive(d["pid"]), time.monotonic() - t0 < 8), (124, False, True))
+        proc, out = None, None
+        try:
+            e, out = fenv(dict(FAKE_MODE="int", FAKE_SLEEP="20"))
+            proc = subprocess.Popen([sys.executable, os.path.join(w.forge, "bin", "forge"), "run", "@toy-b", "hi"], cwd=multi, env=e,
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            wait_for(lambda: jload(read(out) or "") is not None, 15)
+            proc.send_signal(signal.SIGINT)
+            got = wait_for(lambda: os.path.exists(out + ".int"), 5)
+            try:
+                rc = proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                rc = None
+            want("10: INT sent to forge run is passed on to the child, and forge run ends with the child's exit (a swallowed INT leaves both alive)",
+                 (got, rc), (True, 130))
+        finally:
+            for pid in (proc and proc.pid, (jload(read(out) or "") or {}).get("pid")):
+                if pid and alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+            if proc:
+                proc.wait()
+        if sys.platform.startswith("linux"):
+            pid = None
+            try:
+                e, out = fenv(dict(FAKE_MODE="hang", FAKE_SLEEP="30"))
+                proc = subprocess.Popen([sys.executable, os.path.join(w.forge, "bin", "forge"), "run", "@toy-b", "hi"], cwd=multi, env=e,
+                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                wait_for(lambda: jload(read(out) or "") is not None, 15)
+                pid = (jload(read(out) or "") or {}).get("pid")
+                os.kill(proc.pid, signal.SIGKILL)
+                proc.wait()
+                want("10: forge run killed with SIGKILL: the child does not outlive it", bool(pid) and wait_for(lambda: not alive(pid), 5), True)
+            finally:
+                if pid and alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+        else:
+            print("NOT RUN, NOT ARMED: the parent-death case needs Linux (prctl PR_SET_PDEATHSIG)")
+        code, so, se, d = run(["--help"])
+        want("10: forge run --help names --timeout and its default", (code, "--timeout" in so, "1800" in so), (0, True, True))
+
+    # 11 what the caller may ask: a refusal is exit 2 with one line, the child not run, nothing written.
+    before = tree()
+    for label, p in (("a Latin-1 byte", "caf\udce9"), ("a stray 0xff", "a\udcffb")):  # argv bytes that are no UTF-8, as python decodes them
+        code, so, se, d = run(["@toy-b", p])
+        want("11: a prompt that is not UTF-8 (%s): exit 2, one line, the child not run, nothing written, no traceback" % label,
+             (code, d, tree() == before, len(se.strip().splitlines()), "Traceback" in se), (2, None, True, 1, False))
+    for mode in ("bypassPermissions", "auto", "Plan", "", "plan,default"):
+        code, so, se, d = run(["@toy-b", "hi", "--permission-mode", mode])
+        want("11: --permission-mode %r: exit 2, one line naming the accepted values, the child not run, nothing written" % mode,
+             (code, d, tree() == before, len(se.strip().splitlines()), all(m in se for m in ("default", "plan", "acceptEdits", "dontAsk"))),
+             (2, None, True, 1, True))
+    code, so, se, d = run(["@toy-b", "hi", "--permission-mode=bypassPermissions"])
+    want("11: --permission-mode=bypassPermissions in one token is refused too", (code, d), (2, None))
+    for mode in ("default", "plan", "acceptEdits", "dontAsk"):
+        code, so, se, d = run(["@toy-b", "hi", "--permission-mode", mode])
+        want("11: --permission-mode %s is passed once" % mode, (code, d and [a for a in d["argv"] if a == "--permission-mode"], d and flag(d["argv"], "--permission-mode")),
+             (0, ["--permission-mode"], mode))
+    before = tree()
+    for model in ("", "  "):
+        code, so, se, d = run(["@toy-b", "hi", "--model", model])
+        want("11: an empty --model %r: exit 2, one line, the child not run, nothing written" % model,
+             (code, d, tree() == before, len(se.strip().splitlines())), (2, None, True, 1))
+    code, so, se, d = run(["@toy-b", "hi"])
+    want("11: the child's FORGE_RUN_DEPTH is 1 when the caller has none", d and d["env"].get("FORGE_RUN_DEPTH"), "1")
+    code, so, se, d = run(["@toy-b", "hi"], extra=dict(FORGE_RUN_DEPTH="1"))
+    want("11: a child of forge run may call forge run once more: it runs, and its own child has FORGE_RUN_DEPTH 2",
+         (code, d and d["env"].get("FORGE_RUN_DEPTH")), (0, "2"))
+    before = tree()
+    for depth in ("2", "3", "x", "-1", ""):
+        code, so, se, d = run(["@toy-b", "hi"], extra=dict(FORGE_RUN_DEPTH=depth))
+        want("11: FORGE_RUN_DEPTH=%r: refused, exit 2, one line naming FORGE_RUN_DEPTH, the child not run, nothing written" % depth,
+             (code, d, tree() == before, len(se.strip().splitlines()), "FORGE_RUN_DEPTH" in se), (2, None, True, 1, True))
     return failures
 
 

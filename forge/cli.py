@@ -1962,8 +1962,10 @@ def main(argv=None):
     t.add_argument("prompt", metavar="PROMPT", help="what the session is asked; it reaches claude on stdin, never through a shell")
     t.add_argument("--model", metavar="M", help="claude's --model, always passed to the child (default: sonnet)")
     t.add_argument("--cwd", metavar="DIR", help="run in this folder: its project's profile, and the child's working directory")
-    t.add_argument("--permission-mode", metavar="MODE", help="claude's --permission-mode; none is passed when omitted, so the child has "
-                   "only what the profile's permissions allow")
+    t.add_argument("--permission-mode", metavar="MODE", help="claude's --permission-mode: default, plan, acceptEdits or dontAsk (never "
+                   "bypassPermissions); none is passed when omitted, so the child has only what the profile's permissions allow")
+    t.add_argument("--timeout", metavar="SECONDS", type=int, default=run.TIMEOUT, help="the child gets TERM after this long, and KILL "
+                   "later if it ignores that; forge run then exits 124 (default: %(default)s)")
     t.add_argument("--json", action="store_true", help="print claude's whole JSON result instead of the answer alone")
     t.set_defaults(fn=run.cmd)
     t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
