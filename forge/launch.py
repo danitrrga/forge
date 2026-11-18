@@ -91,6 +91,16 @@ def new_session(args):
     return True
 
 
+def forks(args):
+    """Whether `args` ask claude for a fork of the conversation they resume (`--fork-session`). Flags after `--` are the prompt's text."""
+    for arg in args:
+        if arg == "--":
+            break
+        if arg == "--fork-session":
+            return True
+    return False
+
+
 def resumed_id(args):
     """The conversation `--resume ID` / `-r ID` / `--resume=ID` of `args` names when ID is a uuid, else None (a title, a search term, no
     value, or no resume at all: no id of ours to record). Flags after `--` are the prompt's text."""
@@ -300,20 +310,18 @@ def _target(who, text):
     try:
         profile = profiles.parse_at(text)
     except ValueError as e:
-        return _refuse(str(e), who)
+        return _refuse("%s; `forge list @` lists the profiles of this project" % e, who)
     found = profiles.project_here(os.getcwd())
     if not found:
-        return _refuse("%s is not inside a project of forge's registry (a project file forge cannot read is left out of it)" % os.getcwd(), who)
+        return _refuse(profiles.not_a_project(os.getcwd()), who)
     project, prof = found
     if not profile:
         return project, prof, ""
     given = prof.get("profiles")
     if prof.get("frozen") or not isinstance(given, dict):
-        return _refuse("project '%s' %s" % (project, "is frozen, so it receives no profile" if prof.get("frozen")
-                                             else "declares no profiles (`forge list @` says which a project has)"), who)
-    known = [given["default"]] + list(given["offered"])
-    if profile not in known:
-        return _refuse(suggest.message("profile", "@" + profile, ["@" + n for n in known], " in project '%s'" % project), who)
+        return _refuse("project '%s' %s" % (project, profiles.none_reason(project, prof)), who)
+    if profile not in [given["default"]] + list(given["offered"]):
+        return _refuse(profiles.unknown_profile(who, project, profile, given, ' "PROMPT"' if who == "forge run" else ""), who)
     return project, prof, profile
 
 
@@ -423,17 +431,19 @@ def _profile(a):
         # Every position is checked, `--` included: whether claude reads a flag after it as one is not ours to bet on.
         for arg in args:
             if arg.split("=", 1)[0] in PROFILE_FLAGS:
-                return _refuse("%s is set by the profile: a profile start refuses it in ARGS" % arg.split("=", 1)[0])
+                return _refuse("%s is set by the profile: a profile start refuses it in ARGS; run `forge start @%s` without it" % (
+                    arg.split("=", 1)[0], profile))
         try:
             flags, settings, mcp_file, from_secrets, settings_path, mcp_path = _flags(project, prof, profile)
         except profiles.ProfileError as e:
-            return _refuse(str(e))
+            return _refuse(str(e) + profiles.doctor_hint(project))
     fresh = new_session(args)
-    sid = str(uuid.uuid4()) if fresh else resumed_id(args)  # the id of a session we can switch: ours, or the one `--resume` names
+    forked = not fresh and forks(args)  # claude gives a fork an id of its own, and the original's record is not ours to overwrite
+    sid = str(uuid.uuid4()) if fresh else None if forked else resumed_id(args)  # the id of a session we can switch: ours, or the one `--resume` names
     env = session_env(profile, project, sid)
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
-        print("! forge start: claude is not on PATH", file=sys.stderr)
+        print(profiles.claude_missing("forge start"), file=sys.stderr)
         return 127
     argv = flags + (["--session-id", sid] if fresh else []) + args
     carry, dropped, printing = carry_args(args)
@@ -455,14 +465,15 @@ def _profile(a):
             print("  %s  (the session record; the id is %s)" % (profiles.session_path(SESSION_ID if fresh else sid),
                                                               "a new uuid4" if fresh else "the one of --resume"))
         else:
-            print("  no session record: this session is continued, resumed by a title or has an id of the user's")
+            print("  no session record: this session is %s" % ("a fork, with an id that claude gives it" if forked
+                  else "continued, resumed by a title or has an id of the user's"))
         return 0
     try:
         _write_files(settings, mcp_file, settings_path, mcp_path)
         if record:
             profiles.write_session(sid, record)
     except OSError as e:
-        return _refuse("cannot write the session's files under %s: %s" % (lib.STATE, e.strerror or e))
+        return _refuse("cannot write the session's files under %s: %s%s" % (lib.STATE, e.strerror or e, profiles.state_hint()))
     if record:
         return _session(claude, argv, env, sid, project, profile, flags, carry, dropped)
     return _run(claude, argv, env)
@@ -497,24 +508,77 @@ def switch(a):
     sid = os.environ.get("FORGE_SESSION")
     rec = _launcher_above(sid)
     if rec is None:
-        return _refuse("this is not a session started by `forge start @NAME` (it has no launcher to restart claude): "
-                       "start it again with `forge start @%s`, or `forge start @%s --resume <id>` for this conversation" % (profile, profile), who)
+        return _fork_in_terminal(who, project, prof, profile)
     if rec.get("project") != project:
-        return _refuse("this session belongs to project '%s', not to '%s': run it from there" % (rec.get("project"), project), who)
+        where = (lib.projects().get(rec.get("project")) or {}).get("project_path")
+        return _refuse("this session belongs to project '%s', not to '%s': run `forge switch @%s` from there%s" % (
+            rec.get("project"), project, profile, " (cd %s)" % shlex.quote(where) if where else ""), who)
     if rec.get("print"):
-        return _refuse("this session was started with -p: a relaunch would come back interactive, so it cannot be switched", who)
+        return _refuse("this session was started with -p: a relaunch would come back interactive, so it cannot be switched; "
+                       "`forge run @%s \"PROMPT\"` starts a new headless session with that profile" % profile, who)
     if rec.get("profile") == profile:
         print("forge switch: already on @%s, nothing to do" % profile)
         return 0
     try:
         _flags(project, prof, profile)  # a profile that cannot be built now would leave the relaunch without it
     except profiles.ProfileError as e:
-        return _refuse(str(e), who)
+        return _refuse(str(e) + profiles.doctor_hint(project), who)
     try:
         profiles.write_switch(sid, profile, rec["launcher_pid"], _resume_id({"resume": os.environ.get("CLAUDE_CODE_SESSION_ID")}, sid))
     except OSError as e:
-        return _refuse("cannot write the request under %s: %s" % (lib.STATE, e.strerror or e), who)
+        return _refuse("cannot write the request under %s: %s%s" % (lib.STATE, e.strerror or e, profiles.state_hint()), who)
     print("forge switch: @%s requested; claude restarts in a moment and resumes this conversation" % profile)
+    return 0
+
+
+# What a new terminal must not inherit from the session that opens it: whose session it is. (The ones forge start adds are taken out
+# again by session_env; the others are Claude Code's own, set in the environment of a Bash tool call.)
+SESSION_VARS = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "FORGE_SESSION", "FORGE_LAUNCHER_PID")
+
+
+def _terminal():
+    """(the words of the command that opens a terminal, None), or (None, why not). They are `profiles.terminal` of config/forge.json
+    (a list of words, `xdg-terminal-exec` by default), the program looked up on this process's PATH."""
+    table = lib.settings().get("profiles", {})
+    words = table.get("terminal", ["xdg-terminal-exec"]) if isinstance(table, dict) else None
+    if not (isinstance(words, list) and words and all(isinstance(w, str) and w and "\0" not in w for w in words)):
+        return None, ("profiles.terminal of config/forge.json is not a list of words (the default is [\"xdg-terminal-exec\"]): "
+                      "set it to the command that opens a terminal, for example [\"xdg-terminal-exec\"]")
+    program = shutil.which(words[0], path=os.environ.get("PATH", os.defpath))
+    if not program:
+        return None, "the terminal `%s` (profiles.terminal of config/forge.json) is not on PATH: set it to the command that opens one" % words[0]
+    return [program] + words[1:], None
+
+
+def _fork_in_terminal(who, project, prof, profile):
+    """`forge switch @NAME` in a session no `forge start` launched: nobody can restart claude, so a new terminal runs `forge start @NAME
+    --resume ID --fork-session` (a copy of this conversation under an id of its own, measured in 4.3 U0: the original transcript is not
+    touched) and this session stays open. ID is CLAUDE_CODE_SESSION_ID, which Claude Code sets in a Bash tool call's environment.
+    Nothing is signalled and nothing is written for the old session. The terminal is started detached, in this
+    folder, never through a shell, and opens normally: it is a window the owner has to see. Exit 0 once it was started, 2 refused."""
+    try:
+        sid = str(uuid.UUID(os.environ.get("CLAUDE_CODE_SESSION_ID") or ""))
+    except ValueError:
+        return _refuse("this is not a session started by `forge start @NAME` (it has no launcher to restart claude) and its id "
+                       "(CLAUDE_CODE_SESSION_ID) is not in the environment, so it cannot be forked into a new terminal: "
+                       "run `forge start @%s` in a terminal" % profile, who)
+    again = "forge start @%s --resume %s --fork-session" % (profile, sid)
+    try:
+        _flags(project, prof, profile)  # a terminal that opens on a refusal is worse than no terminal
+    except profiles.ProfileError as e:
+        return _refuse(str(e) + profiles.doctor_hint(project), who)
+    words, why = _terminal()
+    if why:
+        return _refuse("%s; or run `%s` in a terminal" % (why, again), who)
+    env = {k: v for k, v in os.environ.items() if k not in SESSION_VARS}
+    argv = words + [sys.executable, os.path.join(lib.ROOT, "bin", "forge"), "start", "@" + profile, "--resume", sid, "--fork-session"]
+    try:
+        subprocess.Popen(argv, cwd=os.getcwd(), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+    except OSError as e:
+        return _refuse("cannot open the terminal %s: %s; run `%s` in a terminal" % (words[0], e.strerror or e, again), who)
+    print("forge switch: this session has no launcher to restart claude, so @%s opens in a new terminal as a fork of this conversation "
+          "(`%s`); this session stays open as it is" % (profile, again))
     return 0
 
 
@@ -534,8 +598,8 @@ def cmd(a):
             print("%s  %s" % (name, " ".join(sorted(launcher.get("env", {}))) or "(no env)"))
         return 0
     if a.name not in table:
-        print("! forge start: unknown launcher %r (known: %s)" % (a.name, ", ".join(sorted(table)) or "none"),
-              file=sys.stderr)
+        print("! forge start: unknown launcher %r (known: %s); `forge start` lists them, `forge list @` lists the profiles of this project" % (
+            a.name, ", ".join(sorted(table)) or "none"), file=sys.stderr)
         return 2
     env = dict(os.environ, **table[a.name].get("env", {}))
     # not a session of a profile launcher, so not the switchable one it may run inside: a `forge switch` from here would restart that one
@@ -543,7 +607,7 @@ def cmd(a):
         env.pop(var, None)
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
-        print("! forge start: claude is not on PATH", file=sys.stderr)
+        print(profiles.claude_missing("forge start"), file=sys.stderr)
         return 127
     sys.stdout.flush()
     os.execvpe(claude, ["claude"] + a.args, env)
