@@ -70,7 +70,8 @@ def ui_paragraph(proj_dir, profs):
     nothing to point at, and a pointer to a missing command is worse than none. A project that names its own `verdict_command`
     gets a paragraph naming that command instead, and needs nothing from this checkout."""
     mine = [p for p in profs.values()
-            if p.get("ui") is True and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir]
+            if p.get("ui") is True and not p.get("frozen") and p.get("project_path")
+            and os.path.normpath(p["project_path"]) == proj_dir]
     if not mine:
         return ""
     own = next((p["verdict_command"] for p in mine
@@ -91,6 +92,26 @@ def ui_paragraph(proj_dir, profs):
             "how to read it.\n")
 
 
+def profiles_paragraph(proj_dir, profs):
+    """The paragraph a project that declares `profiles` gets: how an agent hands a task to another profile. Nothing else loads
+    on every session of the project and says that it can, and AGENT-SYSTEM.md is read only when the configuration is touched.
+    Only a live project that declares them is eligible (a frozen file sharing the folder is not: forge writes nothing for it), and
+    the paragraph names that project and its folder: Claude Code also loads this file in a project nested inside it, where
+    `forge list @` and `forge run @NAME` read that project's profiles, so the two commands are said to be run from this folder.
+    FORGE_PROFILE is set by `forge start @NAME` and `forge run @NAME` (launch.session_env), so it is said for those two only.
+    A project that declares none gets nothing, and its block stays byte for byte what it was."""
+    names = sorted(n for n, p in profs.items()
+                   if isinstance(p.get("profiles"), dict) and not p.get("frozen") and p.get("project_path")
+                   and os.path.normpath(p["project_path"]) == proj_dir)
+    if not names:
+        return ""
+    return ("\n**To hand a task to another profile of this project** (`%s`, in `%s`), run `forge list @` and `forge run @PROFILE "
+            "\"PROMPT\"` from that folder, never from a project nested inside it, which has its own profiles or none; `run` "
+            "prints only that session's final answer. `FORGE_PROFILE` is this session's profile when forge started it with "
+            "`forge start @NAME` or `forge run @NAME`; a session started any other way has no such variable.\n"
+            % (names[0], proj_dir))
+
+
 def pointer(proj_dir, profs):
     """POINTER, plus a note when a frozen project lies below proj_dir. Claude Code loads a parent
     directory's CLAUDE.md in every session below it, so every session of a frozen project reads the dev
@@ -99,8 +120,8 @@ def pointer(proj_dir, profs):
     section 1.3 point 3; plan step 4)."""
     frozen = sorted(n for n, p in profs.items() if p.get("frozen") and p.get("project_path")
                     and os.path.normpath(p["project_path"]).startswith(proj_dir + os.sep))
-    ui = ui_paragraph(proj_dir, profs)
-    base = POINTER[:-len(END)] + ui + END if ui else POINTER
+    extra = ui_paragraph(proj_dir, profs) + profiles_paragraph(proj_dir, profs)
+    base = POINTER[:-len(END)] + extra + END if extra else POINTER
     if not frozen:
         return base
     note = "".join(

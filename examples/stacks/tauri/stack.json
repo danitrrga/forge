@@ -1,0 +1,7 @@
+{
+  "description": "A Tauri desktop app: a web front end over a Rust core, with clippy and cargo-nextest. Tauri patterns belong in the project's own .claude/skills/.",
+  "servers": [],
+  "plugins": ["rust-analyzer-lsp@claude-plugins-official", "context7@claude-plugins-official", "superpowers@claude-plugins-official", "code-review@claude-plugins-official"],
+  "checks": ["cargo clippy", "cargo nextest run"],
+  "skill_sets": []
+}

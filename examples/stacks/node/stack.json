@@ -1,0 +1,7 @@
+{
+  "description": "A Node tool, library or service. Lean: live docs, test discipline and code review.",
+  "servers": [],
+  "plugins": ["context7@claude-plugins-official", "superpowers@claude-plugins-official", "code-review@claude-plugins-official"],
+  "checks": ["pnpm test"],
+  "skill_sets": []
+}
