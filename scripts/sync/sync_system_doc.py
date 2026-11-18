@@ -91,6 +91,19 @@ def ui_paragraph(proj_dir, profs):
             "how to read it.\n")
 
 
+def profiles_paragraph(proj_dir, profs):
+    """The paragraph a project that declares `profiles` gets: how an agent hands a task to another profile. Nothing else loads
+    on every session of the project and says that it can, and AGENT-SYSTEM.md is read only when the configuration is touched.
+    FORGE_PROFILE is set by `forge start @NAME` and `forge run @NAME` (launch.session_env), so it is said for those two only.
+    A project that declares none gets nothing, and its block stays byte for byte what it was."""
+    if not any(isinstance(p.get("profiles"), dict) and p.get("project_path") and os.path.normpath(p["project_path"]) == proj_dir
+               for p in profs.values()):
+        return ""
+    return ("\n**To hand a task to another profile of this project** (`forge list @` names them), run `forge run @PROFILE "
+            "\"PROMPT\"`: it prints only that session's final answer. `FORGE_PROFILE` is this session's profile when forge "
+            "started it with `forge start @NAME` or `forge run @NAME`; a session started any other way has no such variable.\n")
+
+
 def pointer(proj_dir, profs):
     """POINTER, plus a note when a frozen project lies below proj_dir. Claude Code loads a parent
     directory's CLAUDE.md in every session below it, so every session of a frozen project reads the dev
@@ -99,8 +112,8 @@ def pointer(proj_dir, profs):
     section 1.3 point 3; plan step 4)."""
     frozen = sorted(n for n, p in profs.items() if p.get("frozen") and p.get("project_path")
                     and os.path.normpath(p["project_path"]).startswith(proj_dir + os.sep))
-    ui = ui_paragraph(proj_dir, profs)
-    base = POINTER[:-len(END)] + ui + END if ui else POINTER
+    extra = ui_paragraph(proj_dir, profs) + profiles_paragraph(proj_dir, profs)
+    base = POINTER[:-len(END)] + extra + END if extra else POINTER
     if not frozen:
         return base
     note = "".join(

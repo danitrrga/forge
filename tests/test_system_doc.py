@@ -46,10 +46,11 @@ def main():
     tmp = sandbox.mkdtemp("forge-sysdoc-")
     root, home, dev = (os.path.join(tmp, d) for d in ("forge", "home", "dev"))
     portal, app = os.path.join(dev, "Projects", "frozen-app"), os.path.join(dev, "Projects", "app")
+    prof_app = os.path.join(dev, "Projects", "prof-app")
     # The doc is the fixture's, not docs/AGENT-SYSTEM.md of this checkout: a copy_engine copy has none. Red there
     # before (M1): "FileNotFoundError" copying .../docs/AGENT-SYSTEM.md from sandbox.mini_root.
     sandbox.mini_root(root, SCRIPT, os.path.join("forge", "mcp.py"), os.path.join("forge", "owned.py"),
-                     MODULE)  # the script claims what it creates
+                     MODULE, os.path.join("forge", "profiles.py"), os.path.join("forge", "suggest.py"))  # the script claims what it creates
     os.makedirs(os.path.join(root, "docs"))
     shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"),
                 os.path.join(root, "docs", "AGENT-SYSTEM.md"))
@@ -57,7 +58,9 @@ def main():
     open(os.path.join(root, "bin", "forge"), "w").close()  # lib.installed_root() wants it a file
     projects = os.path.join(root, "config", "projects")
     os.makedirs(projects)
-    for name, path, extra in (("dev", dev, ""), ("frozen-app", portal, ', "frozen": true'), ("app", app, "")):
+    declared = ', "profiles": {"default": "toy-a", "offered": {"toy-b": {}}}'
+    for name, path, extra in (("dev", dev, ""), ("frozen-app", portal, ', "frozen": true'), ("app", app, ""),
+                              ("prof-app", prof_app, declared)):
         os.makedirs(path)
         with open(os.path.join(projects, name + ".claude.json"), "w") as f:
             f.write('{"project_path": "%s"%s}\n' % (path, extra))
@@ -102,13 +105,26 @@ def main():
           and os.path.join(projects, "frozen-app.claude.json") in note, got)
     got = read(os.path.join(app, "CLAUDE.md"))
     check("app's CLAUDE.md is the plain pointer, byte for byte", got == plain + "\n", got)
+    # A project without `profiles` gets no word of them: `plain` is read from the script's own POINTER, so a sentence put into
+    # POINTER itself would pass the line above and is caught here. Seen failing on 3ecfca4 (no sentence anywhere), for prof-app below:
+    # "FAIL prof-app, which declares profiles, is told how to hand a task to another one: the one sentence, once: got
+    # '<!-- BEGIN FORGE-SYSTEM-POINTER (managed by sync_system_doc.py) -->...'" (exit 1, 1 failure)
+    check("app, which declares no profiles, is told nothing of them",
+          got is not None and "forge run" not in got and "FORGE_PROFILE" not in got and "forge list @" not in got, got)
+    got = read(os.path.join(prof_app, "CLAUDE.md"))
+    check("prof-app, which declares profiles, is told how to hand a task to another one: the one sentence, once",
+          got is not None and got.startswith(plain[:-len(END)]) and got.endswith(END + "\n")
+          and got.count('forge run @PROFILE "PROMPT"') == 1 and got.count("forge list @") == 1
+          and got.count("FORGE_PROFILE") == 1, got)
+    check("prof-app's block is the plain pointer plus the sentence, and nothing before it moved",
+          got is not None and got.replace(got[len(plain) - len(END):-len(END + "\n")], "") == plain + "\n", got)
     check("the frozen frozen-app gets nothing", sandbox.manifest(portal) == before, out)
     rc, out = run("--apply")
     check("a second --apply changes nothing", rc == 0 and "0 change(s) applied." in out, out)
 
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 6 cases" % len(failures))
+    print("%d failure(s) over 10 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 
