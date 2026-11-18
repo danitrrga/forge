@@ -63,6 +63,20 @@ Round of fixes after the review of the pull request (each assertion seen failing
      control is the rollback loop of _write taken out by hand: "FAIL o: both files are byte for byte as before -- differ: ['forge.json']"
   differing  a card that lost its project name: "FAIL differing: a card that lost its project name is told apart" (the old check
      was "the name appears in the title", and the path contains the name).
+Second round, after the external review (each assertion seen failing against fe9246a, 7 FAIL; messages cut):
+  f  a row added to forge.json while the owner decided, for a change written only to the project file: "FAIL f: a row added to
+     forge.json while the owner decided, ... is refused (exit 1) and nothing is written -- exit 0, project file changed"
+  k  a project excluded from the common skills, row `@TOYSET`, `--off set:TOYSET --on skill:toy-b`: "FAIL k: the review's input: the
+     printed undo `forge config profiled --off skill:toy-b` runs -- exit 2: forge config: project 'profiled' would be left with no
+     skill at all"; the answer is now no command and the row as it was, by hand (checked against the file as it was, then put back
+     by hand and compared). Control of the new sequence check: with `restores()` returning True at once, "FAIL k: the review's
+     input: the printed undo `forge config profiled --on set:TOYSET --off skill:toy-b` runs -- exit 2: ... is kept after the change
+     although it was asked off" (5 FAIL)
+  p  both writes failing (a driver makes lib.write_text raise ENOSPC): a traceback ending `OSError: [Errno 28] No space left on
+     device` with no message; the message now names the file, the saved copy and the `cp` that puts it back (the copy is run)
+  d  `forge list` printing nothing: with `cards = ...; raise RuntimeError('boom')` planted, "FAIL d: forge list into a pipe printed the
+     cards (the check below has something to look at) -- forge list did not print the cards: exit 1, stdout '', stderr 'Traceback"
+     (the old check, "no escape code in out + err", passed on it)
 """
 import hashlib
 import json
@@ -412,7 +426,10 @@ def case_c(w):
 
 def case_d(w):
     code, out, err = w.forge_cmd(["list"])
-    # Control: a version that always paints fails with `escape codes in piped output`.
+    # Control: a version that always paints fails with `escape codes in piped output`; a `forge list` that fails with an empty
+    # stdout (the review's case) fails the first check with `forge list did not print the cards`.
+    check("d: forge list into a pipe printed the cards (the check below has something to look at)",
+          code == 0 and all(n in out for n in PROJECTS), "forge list did not print the cards: exit %d, stdout %r, stderr %r" % (code, out, err))
     check("d: no escape code into a pipe", "\x1b" not in out + err, "escape codes in piped output: %r" % out)
     for args in (["list"], ["list", "multi"]):
         code, shown = w.pty_cmd(args)
@@ -505,6 +522,23 @@ def case_f():
     check("f: a file changed while the owner decided is refused, exit 1, and not written over",
           code == 1 and "changed" in shown and "toy-common" not in json.dumps(w.doc()["skill_keep"]["common_opt_out"]), (code, shown))
     check("f: and the owner's own change is still there", "toy-b" in w.doc()["skill_keep"]["common_skills"], w.doc()["skill_keep"]["common_skills"])
+    # A document the plan was read from but does not write: a skill of a project with no extras row is decided from forge.json's
+    # tables and written only to the project file. Control (the review's input), against fe9246a: "FAIL f: a row added to forge.json
+    # while the owner decided, for a change written only to the project file, is refused (exit 1) and nothing is written -- exit 0,
+    # ... project file changed".
+    w = World()
+    proj_path = os.path.join(w.forge, "config", "projects", "plain.claude.json")
+    proj0 = read_text(proj_path)
+
+    def add_row():
+        doc = w.doc()
+        doc["skill_keep"]["extras"]["plain.claude.json"] = ["toy-d"]  # the row now supplies toy-d
+        write_json(os.path.join(w.forge, "config", "forge.json"), doc)
+    code, shown = w.pty_cmd(["config", "plain", "--off", "skill:toy-d"], [b"y\r"], during=add_row)
+    check("f: a row added to forge.json while the owner decided, for a change written only to the project file, is refused (exit 1) and "
+          "nothing is written", code == 1 and "changed" in shown and "Run the command again" in shown and read_text(proj_path) == proj0,
+          "exit %d, project file %s; %r" % (code, "unchanged" if read_text(proj_path) == proj0 else "changed", shown))
+    check("f: and the owner's row is still there", w.doc()["skill_keep"]["extras"].get("plain.claude.json") == ["toy-d"], w.doc()["skill_keep"]["extras"])
     # A file in another form (here four-space JSON) would be reformatted whole by a write: refused, nothing written.
     w = World()
     path, doc = os.path.join(w.forge, "config", "projects", "plain.claude.json"), w.proj("plain")
@@ -576,11 +610,6 @@ def snapshot(w, name):
     return {"forge.json": w.forge_text(), "project file": json.dumps(proj, indent=2), "settings.local.json": w.settings_hash(name)}
 
 
-def undo_lines(out):
-    """The commands the output prints as the undo, in order: the line `undo:` and the `then:` lines after it."""
-    return [l.split(":", 1)[1].strip() for l in out.splitlines() if l.startswith(("undo:", "then:"))]
-
-
 def case_k():
     cases = (
         ("a common skill", ["plain"], [], ["--off", "skill:toy-common"]),
@@ -600,22 +629,90 @@ def case_k():
     )
     for label, target, setup, flags in cases:
         w = World()
-        name = target[0]
         for step in setup:
             code, out, err = w.forge_cmd(["config"] + step + ["--apply"])
             assert code == 0, "the setup of %s failed: %s%s" % (label, out, err)
-        before = snapshot(w, name)
-        code, out, err = w.forge_cmd(["config"] + target + flags + ["--apply"])
-        check("k: %s: the change exits 0 and changes a file" % label, code == 0 and snapshot(w, name) != before, (code, out, err))
-        cmds = undo_lines(out)
-        check("k: %s: an undo is printed" % label, bool(cmds), out)
-        for cmd in cmds:
-            code, out2, err2 = w.forge_cmd(shlex.split(cmd)[1:] + ["--apply"])
-            # Control: the old undo (every flag flipped in one command) exits 2 here with `skill 'toy-b' of project 'multi' is kept
-            # after the change although it was asked off`.
-            check("k: %s: the printed undo `%s` runs" % (label, cmd), code == 0, "exit %d: %s%s" % (code, out2, err2))
-        after = snapshot(w, name)
-        check("k: %s: after the undo every file is what it was" % label, after == before, "differ: %s" % changed(before, after))
+        check_undo(label, w, target, flags)
+    case_k_excluded()
+
+
+def walk(doc, path):
+    """(present, value) of `path` (a list of keys) in `doc`."""
+    for key in path:
+        if not isinstance(doc, dict) or key not in doc:
+            return False, None
+        doc = doc[key]
+    return True, doc
+
+
+def check_undo(label, w, target, flags):
+    """Run `forge config TARGET FLAGS --apply --json`, then every undo it printed as printed; every file is then what it was. Where it
+    printed no command and said `by hand` (no order of commands restores the row), the places it names are checked against the
+    files as they were, and put back by hand (the file edited as the line says) the files are what they were too. Returns the doc."""
+    name = target[0]
+    before = snapshot(w, name)
+    docs0 = {"config/forge.json": json.loads(before["forge.json"]), "config/projects/%s.claude.json" % name: w.proj(name)}
+    code, out, err = w.forge_cmd(["config"] + target + flags + ["--apply", "--json"])
+    check("k: %s: the change exits 0 and changes a file" % label, code == 0 and snapshot(w, name) != before, (code, out, err))
+    doc = json.loads(out) if code == 0 else {}
+    cmds, by_hand = doc.get("undo") or [], doc.get("undo_by_hand") or []
+    check("k: %s: an undo is printed (commands, or the places to put back by hand)" % label, bool(cmds) != bool(by_hand), (cmds, by_hand))
+    for cmd in cmds:
+        code, out2, err2 = w.forge_cmd(shlex.split(cmd)[1:] + ["--apply"])
+        # Control: the old undo (every flag flipped in one command) exits 2 here with `skill 'toy-b' of project 'multi' is kept
+        # after the change although it was asked off`.
+        check("k: %s: the printed undo `%s` runs" % (label, cmd), code == 0, "exit %d: %s%s" % (code, out2, err2))
+    if by_hand:
+        check("k: %s: the by-hand line says so in the readable output" % label, "by hand" in err and all(b["where"] in err for b in by_hand), err)
+        for b in by_hand:
+            present, was = walk(docs0[b["file"]], b["path"])
+            check("k: %s: `%s` names the row as it was" % (label, b["where"]), present == (not b["absent"]) and (not present or was == b["was"]),
+                  "printed %r (absent %r), the file had %r (present %r)" % (b["was"], b["absent"], was, present))
+            target_doc = json.loads(read_text(os.path.join(w.forge, b["file"])))
+            node = target_doc
+            for key in b["path"][:-1]:
+                node = node[key]
+            if b["absent"]:
+                node.pop(b["path"][-1], None)
+            else:
+                node[b["path"][-1]] = b["was"]
+            write_json(os.path.join(w.forge, b["file"]), target_doc)
+        r = w.script("sync_skill_keep.py", "--apply")
+        code, out3, err3 = w.forge_cmd(["sync", name, "--apply"])
+        check("k: %s: put back by hand, the generators run" % label, r.returncode == 0 and code == 0, (r.stdout, r.stderr, out3, err3))
+    after = snapshot(w, name)
+    check("k: %s: after the undo every file is what it was" % label, after == before, "differ: %s" % changed(before, after))
+    return doc
+
+
+def case_k_excluded():
+    """The review's input: a project excluded from the common skills, extras `["@TOYSET"]` (toy-a, toy-b), and no other skill that
+    would keep the first undo command valid. `--off set:TOYSET --on skill:toy-b` leaves toy-b alone, and the first undo command,
+    `--off skill:toy-b`, leaves no skill and is refused; the second would bring the set back with toy-b in it. No order of the two
+    works, so the answer is `by hand` and the row as it was. Control, against fe9246a: "FAIL k: the review's input: the printed undo
+    `forge config profiled --off skill:toy-b` runs -- exit 2: forge config: project 'profiled' would be left with no skill at all"."""
+    w = World()
+    doc = w.doc()
+    doc["skill_keep"]["common_exclude"] = ["profiled.claude.json"]
+    doc["skill_keep"]["extras"]["profiled.claude.json"] = ["@TOYSET"]
+    write_json(os.path.join(w.forge, "config", "forge.json"), doc)
+    r = w.script("sync_skill_keep.py", "--apply")
+    code, out, err = w.forge_cmd(["sync", "--apply", "--all"])
+    assert r.returncode == 0 and code == 0, "the setup of the excluded project failed: %s%s%s%s" % (r.stdout, r.stderr, out, err)
+    assert sorted(w.proj("profiled")["skills_keep"]) == ["toy-a", "toy-b"], w.proj("profiled")["skills_keep"]
+    got = check_undo("the review's input", w, ["profiled"], ["--off", "set:TOYSET", "--on", "skill:toy-b"])
+    check("k: the review's input: no command is printed, since none works", not got.get("undo") and len(got.get("undo_by_hand") or []) == 1, got)
+    # The same project with a second skill that stays: the first command is valid, so an undo that runs is printed (no `by hand`).
+    w = World()
+    doc = w.doc()
+    doc["skill_keep"]["common_exclude"] = ["profiled.claude.json"]
+    doc["skill_keep"]["extras"]["profiled.claude.json"] = ["@TOYSET", "toy-c"]
+    write_json(os.path.join(w.forge, "config", "forge.json"), doc)
+    r = w.script("sync_skill_keep.py", "--apply")
+    code, out, err = w.forge_cmd(["sync", "--apply", "--all"])
+    assert r.returncode == 0 and code == 0, "the setup failed: %s%s%s%s" % (r.stdout, r.stderr, out, err)
+    got = check_undo("with another skill kept", w, ["profiled"], ["--off", "set:TOYSET", "--on", "skill:toy-b"])
+    check("k: with another skill kept an undo that runs is printed, not `by hand`", bool(got.get("undo")) and not got.get("undo_by_hand"), got)
 
 
 # ---- l: a server whose secret is missing -----------------------------------------------------------------------------------
@@ -688,6 +785,67 @@ def case_o():
     # Control: with the rollback of `_write` taken out, forge.json keeps the change: "FAIL o: ... forge.json differs".
     check("o: the second write failing is exit 1 and says the earlier file was put back", code == 1 and "the earlier file was put back" in err, (code, out, err))
     check("o: both files are byte for byte as before", after == before, "differ: %s" % [k for k in before if before[k] != after[k]])
+
+
+# A write that fails is made by a driver that runs configure.change() in the world's engine copy with lib.write_text failing for
+# the named file (ENOSPC, the review's example: the larger original does not fit back). FAULT `second`: the project's file
+# cannot be written; `restore`: the same, and forge.json cannot be put back; `first`: forge.json cannot be written.
+FAULT_DRIVER = """import os, sys
+root, fault = sys.argv[1], sys.argv[2]
+sys.path.insert(0, root)
+from forge import configure, lib
+real, calls = lib.write_text, {}
+def fake(path, text, *a, **kw):
+    name = os.path.basename(path)
+    calls[name] = calls.get(name, 0) + 1
+    if (name == "multi.claude.json" and fault in ("second", "restore")) or (name == "forge.json" and (
+            fault == "first" or (fault == "restore" and calls[name] == 2))):
+        raise OSError(28, "No space left on device")
+    return real(path, text, *a, **kw)
+lib.write_text = fake
+sys.exit(configure.change("multi", None, [("off", "set", "TOYSET"), ("on", "server", "toy-two")], yes=True))
+"""
+
+
+def case_p():
+    """A write that fails is one message and exit 1, also when putting the first file back fails: the message names the original
+    error, the file that is changed and should not be, and the saved copy of what it held, with the command that puts it back.
+    Control, against fe9246a: `restore` ends in a traceback ending `OSError: [Errno 28] No space left on device` (exit 1, no message)."""
+    for fault in ("second", "restore", "first"):
+        w = World()
+        driver = os.path.join(w.root, "fault_driver.py")
+        with open(driver, "w", encoding="utf-8") as fh:
+            fh.write(FAULT_DRIVER)
+        projects = os.path.join(w.forge, "config", "projects")
+        before = {"forge.json": w.forge_text(), "project": read_text(os.path.join(projects, "multi.claude.json"))}
+        r = subprocess.run([sys.executable, driver, w.forge, fault], cwd=w.forge, env=w.env(), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=120)
+        err = r.stderr.replace(w.root, "@S@")
+        after = {"forge.json": w.forge_text(), "project": read_text(os.path.join(projects, "multi.claude.json"))}
+        leftovers = [f for f in os.listdir(os.path.join(w.home, ".local", "state", "forge")) if f.startswith("config-restore")]
+        check("p: %s: one message, exit 1, no traceback" % fault, r.returncode == 1 and "Traceback" not in err and err.count("forge config:") == 1,
+              "exit %d; %s" % (r.returncode, err))
+        check("p: %s: it names the original error" % fault, "No space left on device" in err, err)
+        if fault == "restore":
+            m = re.search(r"cp (\S+config-restore\S+) (\S+forge\.json)", err)
+            check("p: restore: it names the file that is changed, its saved copy and the command that puts it back", bool(m)
+                  and "config/forge.json" in err and "multi.claude.json" in err, err)
+            check("p: restore: forge.json is in fact changed and the project's file is not", after["forge.json"] != before["forge.json"]
+                  and after["project"] == before["project"], "after: %s" % [k for k in before if before[k] != after[k]])
+            if m:
+                src, dst = (g.replace("@S@", w.root) for g in m.groups())
+                check("p: restore: the saved copy holds what forge.json held", os.path.isfile(src) and read_text(src) == before["forge.json"],
+                      "saved copy %s" % src)
+                check("p: restore: the saved copy is where the journal is", os.path.dirname(src) == os.path.join(w.home, ".local", "state", "forge"), src)
+                with open(src, encoding="utf-8") as fin, open(dst, "w", encoding="utf-8") as fout:  # the command it prints, done
+                    fout.write(fin.read())
+                check("p: restore: the printed command puts forge.json back", w.forge_text() == before["forge.json"], "differ")
+            check("p: restore: the saved copy is kept (it is the only one)", len(leftovers) == 1, leftovers)
+        else:
+            check("p: %s: both files are byte for byte as before" % fault, after == before, "differ: %s" % [k for k in before if before[k] != after[k]])
+            check("p: %s: no saved copy is left behind" % fault, not leftovers, leftovers)
+            check("p: %s: it says what happened to the files" % fault,
+                  ("the earlier file was put back" if fault == "second" else "nothing was changed") in err, err)
 
 
 # ---- i: a profile's row ----------------------------------------------------------------------------------------------------
@@ -785,7 +943,7 @@ def main():
     w = World()
     for fn in (case_a, case_c, case_d, case_j):
         attempt(fn, w)
-    for fn in (case_differing, case_b, case_e, case_f, case_g, case_i, case_k, case_l, case_m, case_n, case_o):
+    for fn in (case_differing, case_b, case_e, case_f, case_g, case_i, case_k, case_l, case_m, case_n, case_o, case_p):
         attempt(fn)
     sandbox.cleanup()
     if failures:
