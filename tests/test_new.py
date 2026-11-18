@@ -334,7 +334,7 @@ def a_list_created(w):
 
 def a_bad_names(w):
     bad = []
-    for name in ("@x", "-x", "My_Project", "a--b", "x-"):
+    for name in ("@x", "-x", "My_Project", "a--b", "x-", "demo\n"):
         before = w.snapshot()
         argv = ["new", "--stack", "generic", "--apply"] + (["--", name] if name.startswith("-") else [name])
         code, out = w.forge(*argv)
@@ -344,6 +344,20 @@ def a_bad_names(w):
             bad.append("%s: exit %d, want 2 and nothing written: %s %s" % (what, code, tail(out), made[:3]))
         elif "project name" not in out:
             bad.append("%r refused without saying why: %s" % (name, tail(out)))
+    return bad
+
+
+def a_bad_registration_name(w):
+    """`forge new DIR --name 'other\n'` (registering an existing directory) refuses a name with a trailing newline:
+    exit 1, "kebab-case", no project file. Same KEBAB object as creation, so a regex that lets `\n` through fails here too."""
+    d = w.register_demo("regdemo")
+    before = w.snapshot()
+    code, out = w.forge("new", d, "--name", "other\n")
+    bad = []
+    if code != 1 or "kebab-case" not in out:
+        bad.append("registered under a name with a trailing newline: exit %d, want 1 naming kebab-case: %s" % (code, tail(out)))
+    if w.snapshot() != before:
+        bad.append("a name with a trailing newline wrote %s" % changed(before, w.snapshot())[:3])
     return bad
 
 
@@ -422,6 +436,19 @@ def a_git_env(w):
         return ["git init followed GIT_DIR: exit %d, project .git %s, %s %s: %s" % (
             code, os.path.isdir(os.path.join(w.project("demo"), ".git")), elsewhere, "made" if os.path.lexists(elsewhere) else "not made", tail(out))]
     return []
+
+
+def a_record_fails_after_mkdir(w):
+    """The world's lib.record raises when it is told `mkdir` (the mutation FAIL_RECORD): the folder was made one line
+    earlier and must still be rolled back, exit 1, nothing left, the message saying what was removed."""
+    before = w.snapshot()
+    code, out = w.forge("new", "demo", "--stack", "generic", "--apply")
+    bad = []
+    if code != 1 or "record failed" not in out:
+        bad.append("a record that fails after mkdir: exit %d, want 1 with its message: %s" % (code, tail(out)))
+    if w.snapshot() != before or os.path.lexists(w.project("demo")):
+        bad.append("left behind: %s" % ", ".join(os.path.join(w.top, p) for p in left_behind(before, w.snapshot())[:6]))
+    return bad
 
 
 def a_forge_json_fails(w):
@@ -773,6 +800,12 @@ def a_registration_as_master(w, master_cli):
 
 NEW = os.path.join("forge", "new.py")
 CLI = os.path.join("forge", "cli.py")
+LIB = os.path.join("forge", "lib.py")
+# lib.record raising when told `mkdir`: the fault the rollback order is shown against (the real one never raises on an OSError, but a
+# signal handler's SystemExit lands in the same gap).
+FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n        try:\n            with open(log, "a"',
+               '    if what == "mkdir":\n        raise RuntimeError("record failed (test fault)")\n'
+               '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n        try:\n            with open(log, "a"')
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
 CONTROLS = [
     ("no check ahead of the first write, no cleanup", a_missing_stack,
@@ -817,6 +850,14 @@ CONTROLS = [
     ("a link followed", a_target_exists, [(NEW, "if os.path.islink(target):", "if False:"), (NEW, "if os.listdir(target):", "if False:")],
      "wrote through a link"),
     ("git init that follows GIT_DIR", a_git_env, [(NEW, ", env=lib.git_env())", ")")], "git init followed GIT_DIR"),
+    ("a trailing newline in a name (creation)", a_bad_names, [(NEW, '(-[a-z0-9]+)*\\Z")', '(-[a-z0-9]+)*$")')],
+     "project named 'demo\\n' created"),
+    ("a trailing newline in a name (registration)", a_bad_registration_name, [(NEW, '(-[a-z0-9]+)*\\Z")', '(-[a-z0-9]+)*$")')],
+     "registered under a name with a trailing newline"),
+    ("mkdir recorded for rollback after record", a_record_fails_after_mkdir,
+     [FAIL_RECORD, (NEW, '                undo.append(("dir", target))  # before anything else that can fail or be interrupted\n                lib.record("mkdir", target)\n',
+                    '                lib.record("mkdir", target)\n                undo.append(("dir", target))\n')],
+     "left behind: "),
     ("no cleanup after git fails", a_git_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
     ("no cleanup after forge.json fails", a_forge_json_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
 ]
@@ -832,7 +873,8 @@ def main():
 
     plain = [("no --stack", a_missing_stack, {}), ("one error for every missing answer", a_one_error, {"projects_dir": False}),
              ("generic stack created", a_generic_created, {}), ("dry-run", a_dry_run, {}), ("a project named list", a_list_created, {}),
-             ("bad names", a_bad_names, {}), ("path not name", a_path_not_name, {}), ("target exists", a_target_exists, {}),
+             ("bad names", a_bad_names, {}), ("a bad registration name", a_bad_registration_name, {}),
+             ("record fails after mkdir", a_record_fails_after_mkdir, {"mutate": [FAIL_RECORD]}), ("path not name", a_path_not_name, {}), ("target exists", a_target_exists, {}),
              ("already registered", a_registered, {}), ("git fails", a_git_fails, {}), ("GIT_DIR in the environment", a_git_env, {}), ("forge.json fails", a_forge_json_fails, {}),
              ("sync fails", a_sync_fails, {}), ("--path", a_path_flag, {}), ("flags by mode", a_flags_by_mode, {}),
              ("--framework", a_framework, {}), ("help", a_help, {}), ("unknown stack", a_unknown_stack, {}), ("no forge.json", a_no_forge_json, {}),
@@ -861,6 +903,9 @@ def main():
         print("control %-45s -> %s" % ("one more key in the project file", (got[0] if got else "NOT SEEN FAILING")[:110]))
         cw.close()
     for label, fn, mutate, needle in CONTROLS:
+        if fn is a_forge_json_fails and os.geteuid() == 0:
+            notrun.append("control '%s': a read-only folder does not stop root" % label)
+            continue
         cw = World("c", mutate=mutate)
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
@@ -868,14 +913,19 @@ def main():
         print("control %-45s -> %s" % (label, (shown[0] if shown else "NOT SEEN FAILING")[:110]))
         cw.close()
     sandbox.cleanup()
-    for n in notrun:
-        print("NOT RUN: %s" % n)
     if failures:
+        for n in notrun:
+            print("NOT RUN: %s" % n)
         print("%d check(s), %d failure(s)" % (n_checks[0], len(failures)))
         for f in failures:
             print("FAIL %s" % f)
         sys.exit(1)
     print("%d check(s), 0 failures%s" % (n_checks[0], " (%d NOT RUN)" % len(notrun) if notrun else ""))
+    if notrun:  # exit 77 and the last line the reason: `forge test` shows a yellow NOT RUN, NOT ARMED row, never a PASS
+        for n in notrun[:-1]:
+            print("NOT RUN: %s" % n)
+        print("NOT RUN: %s" % notrun[-1])
+        sys.exit(77)
 
 
 if __name__ == "__main__":
