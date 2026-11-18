@@ -4,10 +4,12 @@ started from a session's Bash tool does not inherit that session's profile (meas
 
 The child is `claude -p` with the flags `forge start @NAME` gives an interactive session (launch._flags: the same function, so the two
 cannot drift), a `--session-id` of ours, `--output-format json` and `--model`, which is always passed: `sonnet` when the caller gave
-none (no agent without an explicit model). No permission flag is added: a headless session cannot ask, so it has what the profile's
-`--settings` allows and nothing wider; `--permission-mode` takes only default, plan, acceptEdits and dontAsk, never bypassPermissions. The prompt reaches claude on its stdin, from a
-file: never as an argument (a prompt that starts with `-` is not a flag and a long one cannot overflow the command line) and never
-through a shell.
+none (no agent without an explicit model). No permission flag is added: forge sets no mode of its own, a headless session cannot ask,
+and the profile's `--settings` permissions are added to the user's, the project's and the local ones, which still apply: the child is
+not limited to the profile. `--permission-mode` takes only default, plan, acceptEdits and dontAsk, never bypassPermissions. The prompt
+reaches claude on its stdin, from a file: never as an argument of claude (a prompt that starts with `-` is not a flag there, and its
+length is no limit of claude's command line) and never through a shell. The caller's own `PROMPT` is one argument of `forge run`, and
+the system limits that one (on Linux 128 KiB).
 
 stdout carries only the final answer (with --json, claude's whole output), stderr one line `profile P session ID cost USD`, and the
 exit code is claude's, except that a child that exits 0 with `is_error` or with output that is no result document is exit 1: an error
@@ -31,7 +33,7 @@ import uuid
 from forge import launch, lib, profiles
 
 WHO = "forge run"
-PERMISSION_MODES = ("default", "plan", "acceptEdits", "dontAsk")  # never bypassPermissions: a child has no more than its profile, whoever asks
+PERMISSION_MODES = ("default", "plan", "acceptEdits", "dontAsk")  # never bypassPermissions, whoever asks
 MAX_DEPTH = 2  # a child of forge run may call forge run once more, and that one's child may not (FORGE_RUN_DEPTH counts the levels)
 TIMEOUT = 1800  # seconds a child may run (--timeout)
 TIMED_OUT = 124  # the exit code of a child that outlived it, as timeout(1)'s
@@ -50,7 +52,7 @@ def _result(text):
 
 def cmd(a):
     depth = os.environ.get("FORGE_RUN_DEPTH", "0")
-    if not (depth.isascii() and depth.isdigit()):
+    if not (depth.isascii() and depth.isdigit() and len(depth) <= 9):  # 9 digits: int() never meets a string long enough to raise
         return launch._refuse("FORGE_RUN_DEPTH=%r is not a number of levels" % depth, WHO)
     depth = int(depth)
     if depth >= MAX_DEPTH:
@@ -65,7 +67,7 @@ def cmd(a):
     if a.model is not None and not a.model.strip():
         return launch._refuse("--model is empty: name a model, or leave it out for sonnet", WHO)
     if a.permission_mode is not None and a.permission_mode not in PERMISSION_MODES:
-        return launch._refuse("--permission-mode %r is not accepted: %s (a child never has wider permissions than its profile)" % (
+        return launch._refuse("--permission-mode %r is not accepted: %s (forge adds no mode of its own)" % (
             a.permission_mode, ", ".join(PERMISSION_MODES)), WHO)
     if a.timeout < 1:
         return launch._refuse("--timeout is %d: a number of seconds, 1 or more" % a.timeout, WHO)
@@ -113,9 +115,17 @@ def cmd(a):
                 late.append(True)
                 return True
             return False
-        code = launch._run(claude, argv, env, watch=watch, headless=True, stdin=fin, stdout=fout)
-        fout.seek(0)
-        text = fout.read().decode("utf-8", "replace")
+        try:
+            code = launch._run(claude, argv, env, watch=watch, headless=True, stdin=fin, stdout=fout)
+        except OSError as e:  # claude passed `which` and still cannot start (a missing interpreter): the record says a session that never was
+            os.remove(profiles.session_path(sid))
+            print("! forge run: cannot start %s: %s" % (claude, e.strerror or e), file=sys.stderr)
+            return 127
+        if not late and time.monotonic() - began > a.timeout:  # the child ended between two looks of the watch, after the deadline
+            late.append(True)
+        if not late:
+            fout.seek(0)
+            text = fout.read().decode("utf-8", "replace")
     if late:
         print("! forge run: profile %s session %s ran past --timeout %d seconds and was ended" % (profile, sid, a.timeout), file=sys.stderr)
         return TIMED_OUT
@@ -127,7 +137,7 @@ def cmd(a):
     if doc is None:
         problem = "claude's output is not a result document (%d bytes)" % len(text)
     elif doc.get("is_error"):
-        problem = "the session ended with an error (%s)%s" % (doc.get("subtype") or "no subtype", ": " + doc["result"] if doc.get("result") else "")
+        problem = "the session ended with an error (%s)%s" % (doc.get("subtype") or "no subtype", ": " + doc["result"] if isinstance(doc.get("result"), str) and doc["result"] else "")
     elif not isinstance(doc.get("result"), str):
         problem = "the result document has no `result` text (%s)" % (doc.get("subtype") or "no subtype")
     elif code:
@@ -135,7 +145,7 @@ def cmd(a):
     if problem:
         print("! forge run: " + problem, file=sys.stderr)
         code = code or 1
-    if a.json:
+    if a.json and doc is not None:  # output that is no result document is not passed on as if it were one
         sys.stdout.write(text)
     elif not problem:
         answer = doc["result"]

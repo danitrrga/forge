@@ -232,28 +232,62 @@ def _run(claude, argv, env, watch=None, stopped=None, headless=False, **popen):
             os.killpg(child.pid, sig) if headless else child.send_signal(sig)
         except ProcessLookupError:
             pass  # already gone
+
+    mark = []  # headless: when a TERM or HUP of ours was passed on to the child's group; the KILL timer starts then, as at the deadline
+
+    def stop(sig, _):
+        if stopped is not None:
+            stopped.append(sig)
+        if headless and not mark:
+            mark.append(time.monotonic())
+        send(sig)
+
+    def hard_kill():
+        if headless:
+            send(signal.SIGKILL)
+        else:
+            child.kill()
+
+    def group_alive():
+        try:
+            os.killpg(child.pid, 0)  # the group lives as long as one member does, claude's end or not
+        except ProcessLookupError:
+            return False
+        return True
     saved = {sig: signal.signal(sig, handler) for sig, handler in (
         (signal.SIGINT, (lambda s, _: send(s)) if headless else (lambda *_: None)),
-        (signal.SIGTERM, lambda s, _: (stopped is None or stopped.append(s), send(s))),
-        (signal.SIGHUP, lambda s, _: (stopped is None or stopped.append(s), send(s))))}
+        (signal.SIGTERM, stop),
+        (signal.SIGHUP, stop))}
     try:
         ended = None  # when the child was asked to end
         while True:
+            if ended is None and mark:
+                ended = mark[0]
             try:
-                code = child.wait(timeout=POLL if watch else None)
+                code = child.wait(timeout=POLL if watch or headless else None)
                 break
             except subprocess.TimeoutExpired:
-                if ended is None and watch():
+                if ended is None and watch and watch():
                     ended = time.monotonic()
                     if headless:
                         send(signal.SIGTERM)
                     else:
                         child.terminate()
                 elif ended is not None and time.monotonic() - ended > KILL_AFTER:
-                    if headless:
-                        send(signal.SIGKILL)
-                    else:
-                        child.kill()
+                    hard_kill()
+        if headless and ended is None and mark:
+            ended = mark[0]  # a TERM that came as claude was ending
+        # Claude's end is not the group's: a member that ignores TERM (a tool claude started) is killed KILL_AFTER after the ask, and
+        # the wait is bounded, so a member nobody reaps (a zombie under a parent that never collects it) cannot hold us.
+        killed = None
+        while headless and ended is not None and group_alive():
+            now = time.monotonic()
+            if now - ended > KILL_AFTER:
+                hard_kill()
+                killed = killed or now
+                if now - killed > KILL_AFTER:
+                    break
+            time.sleep(0.05)
     finally:
         for sig, old in saved.items():
             signal.signal(sig, old)
