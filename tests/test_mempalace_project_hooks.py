@@ -12,19 +12,33 @@ Runs in-process against a toy forge.json (lib.SETTINGS), a toy HOME and toy proj
 written. The script cases run the copied files with a fake `mempalace` and a PATH that holds only the fake
 directory.
 
-Seen failing on cc2a8ef (no mempalace rows, SCOPES without "mempalace", no hooks/mempalace/), each message
-kept (the checks that passed there are controls, true before as after):
-  on: a mempalace project's settings.local.json gains the Stop row -- Stop [] (the three rows: Stop [],
-    SessionEnd [], PreCompact []; the line says nothing of them)
-  (and, with no hooks/mempalace/NOTICE.md: "NOTICE.md is not there", 0 scripts looked at, a failure by itself)
-  memory_doctor.py: hindsight off and mempalace on -- the row is not in USER_HOOKS (markers [...] without it)
-  the SessionEnd script returns at once -- FileNotFoundError / bash: .../mempal-session-end-hook.sh: No such file
-Negative controls on the finished code, each put back from a copy of the file:
-  SCOPES["mempalace"] removed from forge/hooks.py -- the profile cases red (KeyError 'mempalace' from
-    project_hooks, so the rows are never written)
-  the mempalace marker left out of ROW_INTEGRATION -- the integration-off cases red (rows written while off)
-  a byte flipped in a copied script (the check run on a toy copy of the directory, here) -- 'sha256 differs'
-  the SessionEnd script with its `&` taken off (toy copy) -- 'blocked 3 s on a hook that must return at once'."""
+Seen failing on cc2a8ef (no mempalace rows, SCOPES without "mempalace", no hooks/mempalace/), 19 of 34 checks red (the
+other 15 are controls true before as after; one of the 19, "nothing of MemPalace in USER_HOOKS", was red by a bug of this
+file, a match on "mempal" in a worktree path, fixed afterwards and shown red by mutation M4 below), messages kept:
+  on: a mempalace project's settings.local.json gains the Stop row -- Stop [] (SessionEnd [] and PreCompact [] the same; the
+    line says nothing of the rows; a project that declares only the server is not written: line None, file None)
+  on: the doctor's would-write for a mempalace project not yet written holds the rows -- would write None
+  both on: a project that lists both servers gets both sets -- the file held only the two Hindsight rows
+  on: a foreign hook on the same event stays beside the row -- Stop [foreign hook only]
+  off, server dropped: the seeded rows go -- the file still held the three commands (the old code never owned them)
+  user scope loses a MemPalace command by its exact text -- the Stop and SessionEnd commands stayed in the user-scope doc
+  scope mempalace: lands only in the MemPalace project -- mp [], plain []
+  memory_doctor.py: hindsight off and mempalace on, the row is written -- (live, taken out) (False, True)
+  hooks/mempalace: every script matches the sha256 NOTICE.md records -- looked at 0 script(s), problems ['NOTICE.md is not there']
+  hooks/mempalace: the four scripts are there -- missing [all four]
+  the script cases ran -- bash '/usr/bin/bash', scripts dir exists False: nothing was looked at
+Negative controls on the finished code, each put back from the committed file (red count of 40 checks; the first red line):
+  M1 SCOPES["mempalace"] removed -- 14 red: "on: a mempalace project's settings.local.json gains the Stop row -- Stop [];
+    line ('raised', 'KeyError', \"'mempalace'\")"
+  M2 the three mempalace markers out of ROW_INTEGRATION -- 4 red: "off: the row goes and the foreign hook stays -- Stop
+    [foreign hook, the mempalace command]"
+  M3 memory_doctor.py's ROW_INTEGRATION value back to "hindsight" -- 1 red: "memory_doctor.py: hindsight off and mempalace on,
+    the row is written -- (live, taken out) (False, True)"
+  M4 a mempalace row in the user-scope table -- 1 red: "on: nothing of MemPalace in USER_HOOKS (user scope)"
+  M5 a SessionStart row added to the three -- 7 red, among them "on: no SessionStart row (retrieval hit 3 of 3 without it)"
+  inside this file, on a toy copy of the scripts: a byte added to a script -- 'sha256 differs'; NOTICE.md removed -- 'NOTICE.md
+    is not there' with 0 looked at; the SessionEnd script with its `&` taken off -- 'without the `&` the SessionEnd script waits
+    for the save' (took 3.0 s)"""
 import hashlib
 import importlib
 import json
