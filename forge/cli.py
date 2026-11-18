@@ -14,6 +14,7 @@
   forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
   forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names, --session ID; forge/profiles.py)
   forge switch [@NAME]   inside a session started by `forge start @A`: restart claude with profile NAME and resume the conversation
+  forge run @NAME "PROMPT"  one headless session with profile NAME; its final answer on stdout (forge/run.py)
   forge shim [--shell S] print a shell function `claude`, so that `claude @NAME` runs `forge start @NAME` (--check @NAME: the probe; forge/shim.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
@@ -40,7 +41,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, profiles, shim, skills, toolchain, usage
+from forge import launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1955,6 +1956,20 @@ def main(argv=None):
                    "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
                    "restarts claude: anywhere else it refuses and kills nothing")
     t.set_defaults(fn=launch.switch)
+    t = sub.add_parser("run", help="one headless session of this project with a session profile; prints only its final answer",
+                       epilog="examples: forge run @marketing \"list your skills\" | forge run @reviewer \"review this diff\" --model haiku --json "
+                              "(a prompt that starts with a dash goes after --)")
+    t.add_argument("name", metavar="@NAME", help="the profile of the project of this directory (`forge list @` lists them)")
+    t.add_argument("prompt", metavar="PROMPT", help="what the session is asked; it reaches claude on stdin, never through a shell")
+    t.add_argument("--model", metavar="M", help="claude's --model, always passed to the child (default: sonnet)")
+    t.add_argument("--cwd", metavar="DIR", help="run in this folder: its project's profile, and the child's working directory")
+    t.add_argument("--permission-mode", metavar="MODE", help="claude's --permission-mode: default, plan, acceptEdits or dontAsk (never "
+                   "bypassPermissions); none is passed when omitted, so forge sets no mode and the child's own settings decide; the profile's "
+                   "permissions are added to its user, project and local ones, and do not limit it")
+    t.add_argument("--timeout", metavar="SECONDS", type=int, default=run.TIMEOUT, help="the child gets TERM after this long, and KILL "
+                   "later if it ignores that; forge run then exits 124 (default: %(default)s)")
+    t.add_argument("--json", action="store_true", help="print claude's whole JSON result instead of the answer alone")
+    t.set_defaults(fn=run.cmd)
     t = sub.add_parser("shim", help="print a shell function `claude`: `claude @NAME` starts that profile of this project, any other claude is the real one",
                        epilog="examples: forge shim --shell fish > ~/.config/fish/conf.d/forge-claude.fish | forge shim --check @marketing (the probe the function calls)")
     which = t.add_mutually_exclusive_group()
