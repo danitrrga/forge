@@ -443,12 +443,14 @@ def session_path(session_id):
     return os.path.join(lib.STATE, "profile-sessions", session_id + ".json")
 
 
-def session_record(profile, project, launcher_pid, parent=None):
+def session_record(profile, project, launcher_pid, parent=None, print_mode=False):
     """The record of one session, as forge start @NAME writes it: {"profile", "project", "launcher_pid", "at"} (`at` in epoch
-    seconds), and `parent` (the parent session's id) only for a session another one started."""
+    seconds), `parent` (the parent session's id) only for a session another one started, and `print` only for one started with -p."""
     rec = {"profile": profile, "project": project, "launcher_pid": launcher_pid, "at": round(time.time(), 3)}
     if parent:
         rec["parent"] = parent
+    if print_mode:
+        rec["print"] = True
     return rec
 
 

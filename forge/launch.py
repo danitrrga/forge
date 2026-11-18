@@ -17,8 +17,10 @@ forge switch @NAME  inside a session started by `forge start @A`: the profile of
 (profiles.write_switch) and nothing else; the launcher that is claude's parent sees it while claude runs, ends its own child with
 TERM (claude leaves a whole transcript, measured in 4.3 U0), and starts `claude --resume <id>` with NAME's flags, so the
 conversation goes on with the new skills, plugins and servers. It signals nobody: a `forge switch` outside such a session, or
-whose launcher is gone, refuses and kills nothing. The relaunch carries the profile's flags and `--resume`, not the arguments the
-session was started with (a prompt among them would be sent again). `forge switch` alone lists the profiles, the current one marked."""
+whose launcher is gone, or that was started with -p (a relaunch would come back interactive), refuses and kills nothing. The relaunch
+carries the profile's flags, the options of CARRY_VALUE and CARRY_BOOL the session was started with, and `--resume`; a prompt is
+never sent again, and any other argument is named on the launcher's line. A TERM or HUP to the launcher while a switch is being
+honoured ends the session. `forge switch` alone lists the profiles, the current one marked."""
 import argparse
 import json
 import os
@@ -35,6 +37,12 @@ from forge import framework, lib, mcp, profiles, skills, suggest
 # claude's own flags that mean the session is not a new one, or already has the id the user chose: no `--session-id` of ours.
 NOT_NEW = ("-r", "--resume", "-c", "--continue", "--session-id", "--from-pr")
 PROFILE_FLAGS = ("--settings", "--mcp-config", "--strict-mcp-config")  # the flags a profile start sets itself
+# What a relaunch repeats of the arguments the session was started with: an allowlist, not a parser of claude's command line. A prompt,
+# -p and the session flags are never repeated; every other flag is named on the launcher's line. --add-dir takes every value up to
+# the next flag, as claude's own parser does.
+CARRY_VALUE = ("--model", "--permission-mode", "--effort", "--add-dir")
+CARRY_BOOL = ("--dangerously-skip-permissions",)
+PRINT_FLAGS = ("-p", "--print")
 POLL = 0.25  # seconds between two looks at the switch request while claude runs
 KILL_AFTER = 15  # seconds a claude asked to end by a switch has before it is killed
 SESSION_ID = "NEW-SESSION-UUID"  # what --dry-run prints where a start puts a fresh uuid4
@@ -76,6 +84,33 @@ def new_session(args):
         if arg in NOT_NEW or arg.startswith(tuple(f + "=" for f in NOT_NEW if f.startswith("--"))):
             return False
     return True
+
+
+def carry_args(args):
+    """(the arguments of `args` a relaunch repeats, the flags it drops and names, whether the session is a print one). A prompt (what
+    follows `--`, or what no flag owns) is dropped without a word, since it would be sent again; so is -p, which `forge switch` refuses."""
+    kept, dropped, printing, i = [], [], False, 0
+    while i < len(args) and args[i] != "--":
+        arg = args[i]
+        name = arg.split("=", 1)[0]
+        i += 1
+        if name in CARRY_VALUE:
+            kept.append(arg)
+            if "=" not in arg:
+                if name == "--add-dir":
+                    while i < len(args) and not args[i].startswith("-"):
+                        kept.append(args[i])
+                        i += 1
+                elif i < len(args):
+                    kept.append(args[i])
+                    i += 1
+        elif name in CARRY_BOOL:
+            kept.append(arg)
+        elif name in PRINT_FLAGS:
+            printing = True
+        elif arg.startswith("-"):
+            dropped.append(name)
+    return kept, dropped, printing
 
 
 def _secret(value, secrets, errors, what):
@@ -140,15 +175,17 @@ def _describe(doc, from_secrets):
             "env: %s" % (", ".join("%s%s" % (k, " (a secret)" if k in from_secrets else "=" + v) for k, v in sorted(doc.get("env", {}).items())) or "none")]
 
 
-def _run(claude, argv, env, watch=None):
+def _run(claude, argv, env, watch=None, stopped=None):
     """claude as a child, to its end; the exit code it gave (128 + the signal when a signal ended it). Ctrl-C goes to the whole
-    foreground group, so claude has it already and we stay; a TERM or HUP aimed at us is passed on. With `watch`, called every
+    foreground group, so claude has it already and we stay; a TERM or HUP aimed at us is passed on, and noted in the list `stopped`
+    (the caller's) so that it does not start claude again. With `watch`, called every
     POLL seconds: once it says True the child is sent TERM (and KILL after KILL_AFTER seconds, so a claude that ignores it cannot
     keep the loop from going on)."""
     sys.stdout.flush()
     child = subprocess.Popen([claude] + argv, env=env)
     saved = {sig: signal.signal(sig, handler) for sig, handler in (
-        (signal.SIGINT, lambda *_: None), (signal.SIGTERM, lambda s, _: child.send_signal(s)), (signal.SIGHUP, lambda s, _: child.send_signal(s)))}
+        (signal.SIGINT, lambda *_: None), (signal.SIGTERM, lambda s, _: (stopped is None or stopped.append(s), child.send_signal(s))),
+        (signal.SIGHUP, lambda s, _: (stopped is None or stopped.append(s), child.send_signal(s))))}
     try:
         ended = None  # when the child was asked to end
         while True:
@@ -218,17 +255,20 @@ def _resume_id(req, sid):
         return sid
 
 
-def _session(claude, argv, env, sid, project, prof, profile, flags):
+def _session(claude, argv, env, sid, project, prof, profile, flags, carry=(), dropped=()):
     """claude for session `sid` under launcher `os.getpid()`, started again, resumed and with the flags of the other profile, for as
     long as a switch request of this launcher is there when claude ends; then its exit code. A request is taken (deleted) whether it
     is honoured or not. When the profile asked for cannot be built now (the project file changed since the start) the line says so
     and claude comes back with the profile it had, resumed: the terminal is never left without claude. Every pass needs a request
-    of its own, which only `forge switch` or a hand writes, so this ends with the first claude that ends without one."""
+    of its own, which only `forge switch` or a hand writes, so this ends with the first claude that ends without one, or when the launcher itself was told to stop (TERM, HUP): a claude
+    that was ended for a switch is then not started again. `carry` is repeated at every relaunch; `dropped` is named."""
     me = os.getpid()
+    note = "; not carried over: %s" % ", ".join(dropped) if dropped else ""
+    stopped = []
     while True:
-        code = _run(claude, argv, env, watch=lambda: profiles.pending_switch(sid, me) is not None)
+        code = _run(claude, argv, env, watch=lambda: profiles.pending_switch(sid, me) is not None, stopped=stopped)
         req = profiles.take_switch(sid, me)
-        if not req:
+        if not req or stopped:
             return code
         target = req["to"]
         try:
@@ -240,12 +280,12 @@ def _session(claude, argv, env, sid, project, prof, profile, flags):
             rec.update(profile=target, at=round(time.time(), 3))
             profiles.write_session(sid, rec)
         except (profiles.ProfileError, OSError) as e:
-            print("forge: cannot switch to @%s (%s); claude comes back with @%s" % (target, getattr(e, "strerror", None) or e, profile), file=sys.stderr)
+            print("forge: cannot switch to @%s (%s); claude comes back with @%s%s" % (target, getattr(e, "strerror", None) or e, profile, note), file=sys.stderr)
         else:
-            print("forge: profile %s \u2192 %s" % (profile, target))
+            print("forge: profile %s \u2192 %s%s" % (profile, target, note))
             profile, flags = target, new_flags
             env = dict(env, FORGE_PROFILE=profile)
-        argv = flags + ["--resume", _resume_id(req, sid)]
+        argv = flags + list(carry) + ["--resume", _resume_id(req, sid)]
 
 
 def _profile(a):
@@ -286,7 +326,8 @@ def _profile(a):
         print("! forge start: claude is not on PATH", file=sys.stderr)
         return 127
     argv = flags + (["--session-id", sid] if fresh else []) + args
-    record = profiles.session_record(profile, project, os.getpid()) if fresh else None
+    carry, dropped, printing = carry_args(args)
+    record = profiles.session_record(profile, project, os.getpid(), print_mode=printing) if fresh else None
     if dry:
         print("forge start @%s: a dry run, nothing is written and claude is not started" % profile)
         print("project      %s (%s)" % (project, prof["project_path"]))
@@ -312,7 +353,7 @@ def _profile(a):
     except OSError as e:
         return _refuse("cannot write the session's files under %s: %s" % (lib.STATE, e.strerror or e))
     if record:
-        return _session(claude, argv, env, sid, project, prof, profile, flags)
+        return _session(claude, argv, env, sid, project, prof, profile, flags, carry, dropped)
     return _run(claude, argv, env)
 
 
@@ -349,6 +390,8 @@ def switch(a):
                        "start it again with `forge start @%s`, or `forge start @%s --resume <id>` for this conversation" % (profile, profile), who)
     if rec.get("project") != project:
         return _refuse("this session belongs to project '%s', not to '%s': run it from there" % (rec.get("project"), project), who)
+    if rec.get("print"):
+        return _refuse("this session was started with -p: a relaunch would come back interactive, so it cannot be switched", who)
     if rec.get("profile") == profile:
         print("forge switch: already on @%s, nothing to do" % profile)
         return 0
