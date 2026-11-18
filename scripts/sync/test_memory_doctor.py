@@ -34,7 +34,32 @@ a standard-library HTTP server on a free loopback port that answers /healthz, /s
 (mempalace_list_wings, mempalace_list_drawers, mempalace_search) and records, then fails the run, on any other tool. The
 fake carries its own list of read tools, not the code's, so the guard cannot agree with a wrong list by construction.
 `mempalace` is a one-line script on a PATH that holds only its own directory (a system dir behind it would find the
-real one, ORDERS 10). The red of every case, and the mutation that turns it red, is in a comment at the case.
+real one, ORDERS 10).
+
+Control record. Red against the baseline (14a340f, memory_doctor.py with no MemPalace row), 67 of 105 cases failed, each
+with the shape "healthy: exit 0; output []", "on, hub stopped: exit 0; output []", "palace_path missing: exit 0; output []",
+"profile without a backend, integration on: exit 0; output []", "looking at zero profiles is a FAIL: exit 0; output []" and
+"hub_call: module 'memory_doctor' has no attribute 'hub_call'". Each mutation below, applied to memory_doctor.py alone, was
+seen to turn the named case red (and only the cases named, or a superset that follows from the same line):
+  - version comparison dropped          "cli at another version: exit 0; output [... PASS mempalace-cli installed 3.11.0 ...]"
+  - /healthz asked as /health           "healthy: exit 1" and every search case (the pinned hub answers /healthz only)
+  - search removed from the hub row     "healthz ok, search http500|rpcerror|toolerror|empty: exit 0" (the plan's control)
+  - MEMPALACE_PALACE_PATH ignored       "MEMPALACE_PALACE_PATH beats config.json: exit 1"
+  - `.count` requirement removed        "backup without .count: exit 0; output [... PASS mempalace-backup ...]"
+  - transcript condition removed        "stale wing, transcript older than the window: exit 0" (the parked-project cases)
+  - transcript window removed           "stale wing, transcript older than the window: exit 0"
+  - sibling directory prefix            "a sibling project's transcript does not: exit 0"
+  - `== 1` to `>= 0` for the backend    "profile without a backend, integration on|off|--hook, off: exit 0" and the three-backend case
+  - zero examined passes                "only unreadable project files: looked at zero, FAIL: exit 0; output [... PASS memory-one-backend 0 project(s) examined ...]"
+  - always armed                        "not armed, a starter project without memory: NOT RUN, exit 0: exit 1" and, outside this file,
+                                        tests/test_fresh_install.py (8 cases) and tests/test_integration_sites.py
+  - unreadable project files ignored    "an unreadable project file is not a pass: exit 0"
+  - write-tool guard removed            "hub_call let a write tool through", "a write tool reached the hub"
+  - palace mismatch check removed       "hub serves another palace than the doctor resolves: exit 0"
+  - integrity `ok` not required         "integrity not ok: exit 1" (no "3 error(s)" line)
+  - row marker ignored                  "a foreign hook in the event is not the row: exit 0"
+  - wing read under --hook              "--hook: the rows are checked, the wing is not read (no list_wings call)"
+  - a stopped hub passes                "on, hub stopped: exit 1" (no FAIL mempalace-hub line)
 """
 import contextlib
 import datetime
@@ -138,7 +163,7 @@ def run_full(manifest, trusted=False, hind=None, known=None, hook=False, setting
         os.makedirs(os.path.join(proj, ".claude"))
         write(os.path.join(proj, ".claude", "settings.local.json"), settings)
         profs = {"toy": {"project_path": proj, "plugins_keep": [md.memory.LITE_PLUGIN]}}
-    md.lib.projects = lambda: profs
+    md.lib.projects = lambda skipped=None: profs
     md.known_map.clear()
     return _invoke(hook)
 
@@ -342,18 +367,25 @@ def mp_world(**o):
     return w
 
 
-def mp_run(w, hook=False, known=None, env=None, on=True):
-    """main() with the integration on (or off) in `w`'s toy world. Returns (rc or traceback line, lines)."""
+def mp_run(w, hook=False, known=None, env=None, on=True, hind=False):
+    """main() with the mempalace integration on (or off) and, with `hind`, the hindsight one on over the live stand-in, in
+    `w`'s toy world. Returns (rc or traceback line, lines)."""
     knownf = os.path.join(w["root"], "known.json")
     if known is not None:
         write(knownf, known)
     md.CODEX_HOME = os.path.join(w["root"], "codex")
     integration("codex", False)
     integration("mempalace", on)
-    md.HINDSIGHT_RENDERED = os.path.join(w["root"], "absent-hindsight.json")
-    integration("hindsight", False)
+    md.HINDSIGHT_RENDERED = os.path.join(w["root"], "hindsight.json")
+    integration("hindsight", hind)
+    if hind:
+        write(md.HINDSIGHT_RENDERED, json.dumps({"apiUrl": LIVE, "bankId": "personal", "banks": {}}))
     md.KNOWN, md.BACKUPS, md.CLAUDE_PROJECTS, md.HOME = knownf, w["backups"], w["claude"], w["root"]
-    md.lib.projects = lambda: w["profs"]
+    def projects(skipped=None):
+        if skipped is not None:
+            skipped.extend(w.get("skipped", []))
+        return w["profs"]
+    md.lib.projects = projects
     md.known_map.clear()
     with environ(**(env if env is not None else {"MEMPALACE_CONFIG_DIR": w["cfg"], "PATH": w["bin"]})):
         return _invoke(hook)
@@ -545,46 +577,83 @@ def mempalace_cases(failures, cases):
         expect("--hook: the rows are checked, the wing is not read (no list_wings call)",
                rc == 0 and has(lines, "FAIL", "mempalace-rows") and ("tool", "mempalace_list_wings") not in HUB["log"], rc, lines)
 
-        # ---- memory-one-backend: always, also with the integration off and under --hook. Red against the baseline: a
-        # profile without a backend says nothing ("no backend: exit 0; output []"). Mutation: `== 1` to `>= 0` turns the
-        # no-backend case red; dropping the `examined > 0` condition turns the zero-profile case red.
+        # ---- memory-one-backend: also with mempalace off and under --hook. Armed when the checkout uses memory at all (the
+        # hindsight or mempalace integration on, or a project that grants a backend): there, a profile without a backend says
+        # so. Red against the baseline: it says nothing ("no backend: exit 0; output []"). Mutation: `== 1` to `>= 0` turns the
+        # no-backend cases red.
         none = {"toy": {"project_path": "/srv/toy", "servers": []}}
         two = {"toy": {"project_path": "/srv/toy", "servers": ["hindsight-coding-agents", "mempalace"],
                        "plugins_keep": [md.memory.LITE_PLUGIN]}}
         for label, profs, on, hook in (("on", none, True, False), ("off", none, False, False), ("--hook, off", none, False, True)):
             w = mp_world(backup_age_h=1, profs=profs)
-            rc, lines = mp_run(w, on=on, hook=hook)
+            rc, lines = mp_run(w, on=on, hook=hook, hind=True)
             expect("profile without a backend, integration %s" % label, rc == (0 if hook else 1) and has(
                 lines, "FAIL", "memory-backend", "toy has no memory backend"), rc, lines)
         w = mp_world(backup_age_h=1, profs=two)
-        rc, lines = mp_run(w, on=False)
+        rc, lines = mp_run(w, on=False, hind=True)
         expect("profile with three backends names them", rc == 1 and has(
             lines, "FAIL", "memory-backend", "toy has 3 memory backends: hindsight-coding-agents, claude-mem-lite, mempalace"), rc, lines)
         for servers, plugins, backend in ((["hindsight-coding-agents", "mempalace"], [], "hindsight-coding-agents, mempalace"),
                                           (["mempalace"], [md.memory.LITE_PLUGIN], "claude-mem-lite, mempalace"),
                                           (["hindsight-coding-agents"], [md.memory.LITE_PLUGIN], "hindsight-coding-agents, claude-mem-lite")):
             w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": servers, "plugins_keep": plugins}})
-            rc, lines = mp_run(w, on=False)
+            rc, lines = mp_run(w, on=False, hind=True)
             expect("profile with two backends: " + backend, rc == 1 and has(lines, "FAIL", "memory-backend", "2 memory backends: " + backend), rc, lines)
         for servers, plugins, backend in ((["hindsight-coding-agents"], [], "hindsight-coding-agents"),
                                           ([], [md.memory.LITE_PLUGIN], "claude-mem-lite"), (["mempalace"], [], "mempalace")):
             w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": servers, "plugins_keep": plugins}})
-            rc, lines = mp_run(w, on=False)
+            rc, lines = mp_run(w, on=False, hind=True)
             # (claude-mem-lite brings its own rows, which FAIL in this toy world: only the memory-backend lines are asserted.)
             expect("profile with one backend: " + backend, rc == (1 if plugins else 0)
-                   and not has(lines, "FAIL", "memory-backend") and has(lines, "PASS", "memory-one-backend", "1 project(s) examined"), rc, lines)
-        w = mp_world(backup_age_h=1, profs={})
+                   and not has(lines, "FAIL", "memory-backend") and has(
+                       lines, "PASS", "memory-one-backend", "1 project(s) examined, 1 with exactly one backend"), rc, lines)
+        # A project file that cannot be read has a backend nobody looked at: the row says so and FAILs (--project X leaves
+        # the others out of scope). Red against the row that took lib.projects() whole: "unreadable project: exit 0".
+        # Mutation: ignoring `skipped` turns it red. Looking at none is a FAIL too, once armed.
+        w = mp_world(backup_age_h=1)
+        w["skipped"] = [("broken.claude.json", "invalid JSON")]
         rc, lines = mp_run(w, on=False)
-        expect("looking at zero profiles is a FAIL", rc == 1 and has(lines, "FAIL", "memory-one-backend", "0 project(s)"), rc, lines)
-        rc, lines = mp_run(w, on=False, hook=True)
-        expect("looking at zero profiles, --hook: said, exit 0", rc == 0 and has(lines, "FAIL", "memory-one-backend"), rc, lines)
+        expect("an unreadable project file is not a pass", rc == 1 and has(
+            lines, "FAIL", "memory-one-backend", "1 project file(s) could not be read: broken.claude.json"), rc, lines)
+        w = mp_world(backup_age_h=1, profs={})
+        w["skipped"] = [("broken.claude.json", "invalid JSON")]
+        rc, lines = mp_run(w, on=False, hind=True)
+        expect("only unreadable project files: looked at zero, FAIL", rc == 1 and has(
+            lines, "FAIL", "memory-one-backend", "0 project(s) examined: a check that saw nothing is not a pass; 1 project file(s)"), rc, lines)
+        w = mp_world(backup_age_h=1, profs={})
+        rc, lines = mp_run(w, on=False, hind=True)
+        expect("armed and looking at zero projects is a FAIL", rc == 1 and has(lines, "FAIL", "memory-one-backend", "0 project(s)"), rc, lines)
+        rc, lines = mp_run(w, on=False, hind=True, hook=True)
+        expect("armed and looking at zero projects, --hook: said, exit 0", rc == 0 and has(lines, "FAIL", "memory-one-backend"), rc, lines)
+        # Not armed: no memory integration on and no project that grants a backend, which is a stranger's fresh checkout with its
+        # one starter project. `forge init` runs this doctor on it. Red while the row FAILed there (tests/test_fresh_install.py,
+        # 8 cases: "forge doctor exits 0 with no FAIL or WARN line -- exit 1: FAIL memory 1 unexpected failure(s)", and
+        # tests/test_integration_sites.py "memory_doctor, codex and hindsight off ... exit 1": "FAIL memory-one-backend 0 project(s)
+        # examined"): NOT RUN, NOT ARMED, exit 0, silent under --hook. Mutation: arming always turns these red.
+        NOT_RUN = "memory-one-backend -> NOT RUN, NOT ARMED: no memory integration is on"
+        for label, profs in (("a starter project without memory", none), ("no project file", {})):
+            w = mp_world(backup_age_h=1, profs=profs)
+            rc, lines = mp_run(w, on=False)
+            expect("not armed, %s: NOT RUN, exit 0" % label, rc == 0 and any(NOT_RUN in l for l in lines)
+                   and not has(lines, "PASS", "memory-one-backend") and not has(lines, "FAIL", "memory"), rc, lines)
+            rc, lines = mp_run(w, on=False, hook=True)
+            expect("not armed, %s, --hook: silent, exit 0" % label, rc == 0 and lines == [], rc, lines)
+        w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": []},
+                                            "other": {"project_path": "/srv/other", "servers": ["mempalace"]}})
+        rc, lines = mp_run(w, on=False)
+        expect("armed by another project's backend: the one without says so", rc == 1 and has(
+            lines, "FAIL", "memory-backend", "toy has no memory backend") and not any(NOT_RUN in l for l in lines), rc, lines)
         w = mp_world(backup_age_h=1, profs=none)
-        rc, lines = mp_run(w, on=False, known=json.dumps(
+        rc, lines = mp_run(w, on=True)
+        expect("armed by the mempalace integration alone: the one without says so", rc == 1 and has(
+            lines, "FAIL", "memory-backend", "toy has no memory backend"), rc, lines)
+        w = mp_world(backup_age_h=1, profs=none)
+        rc, lines = mp_run(w, on=False, hind=True, known=json.dumps(
             {"known": {"toy/memory-backend": {"since": "long ago", "why": "no memory on purpose"}}}))
         expect("profile declared without memory is KNOWN", rc == 0 and has(lines, "KNOWN", "memory-backend", "no memory on purpose")
                and not has(lines, "FAIL", "memory-backend"), rc, lines)
         w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": ["mempalace"]}})
-        rc, lines = mp_run(w, on=False, known=json.dumps(
+        rc, lines = mp_run(w, on=False, hind=True, known=json.dumps(
             {"known": {"toy/memory-backend": {"since": "long ago", "why": "no memory on purpose"}}}))
         expect("a declared-empty profile that now has a backend is reported stale", has(lines, "STALE", "toy/memory-backend"), rc, lines)
 

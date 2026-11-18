@@ -35,7 +35,8 @@ WHAT IT CHECKS, and why each one earns its place:
   mempalace-*       MemPalace, only while integrations.mempalace is on (off: one NOT RUN line). cli: `mempalace`
                     on the PATH at the version config/toolchain.json pins. hub: the registry's `mempalace` URL
                     answers /healthz and a search for text that is already in the palace finds it (/healthz said
-                    "ok" while the embedding model was not answering). palace: its directory, resolved as
+                    "ok" while the embedding model was not answering; an empty palace has nothing to search
+                    for, and the line says so). palace: its directory, resolved as
                     MemPalace's own config.py and paths.py do, has its database and the hub reports SQLite integrity ok
                     for that same palace. backup: the newest validated backup (its `.count` beside it) is under
                     BACKUP_MAX_H old. Per project that grants `mempalace`: rows (Stop, SessionEnd and PreCompact in
@@ -44,8 +45,9 @@ WHAT IT CHECKS, and why each one earns its place:
   memory-one-backend  Always, whatever is switched on and also under --hook: each project has exactly one memory
                     backend (hindsight-coding-agents in `servers`, the claude-mem-lite plugin in `plugins_keep`, or
                     `mempalace` in `servers`). None or two is a FAIL naming the project; a project without memory on
-                    purpose is declared in config/memory-known-empty.json as `<project>/memory-backend`; looking at
-                    zero projects is a FAIL.
+                    purpose is declared in config/memory-known-empty.json as `<project>/memory-backend`; a project file
+                    that could not be read is a FAIL, and so is looking at none. A checkout that uses no memory (no
+                    memory integration on, no project granting a backend: a fresh install) is NOT RUN.
 
   --bank            The hindsight bank answers a real recall over the network.
 
@@ -92,7 +94,7 @@ import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
-from forge import lib, memory, toolchain  # noqa: E402
+from forge import lib, memory  # noqa: E402
 HOME = lib.HOME
 KNOWN = os.path.join(ROOT, "config", "memory-known-empty.json")
 HINDSIGHT_RENDERED = os.path.join(HOME, ".hindsight", "coding-agent.json")
@@ -417,6 +419,7 @@ def check_mempalace_cli() -> None:
     exe = shutil.which("mempalace")
     if not exe:
         return void(check("machine", name, False, "mempalace not on PATH: forge toolchain --fix, then a new shell"))
+    from forge import toolchain      # here, not at the top: the toy checkouts of other suites copy this script without it
     entries, why = toolchain.entries()
     pins = [e for e in entries.get("tools", []) if e["name"] == MEMPALACE_PIN]
     if not pins:
@@ -615,9 +618,18 @@ def backends_of(prof: dict) -> list[str]:
     return out
 
 
-def check_one_backend(projects: list) -> None:
+def check_one_backend(projects: list, unreadable: list, armed: bool) -> None:
     """Each project has exactly one memory backend (docs/AGENT-SYSTEM.md: "one per project, never both"). Only a project that
-    breaks it prints a line; the row that always prints says how many were looked at, and looking at none is a FAIL."""
+    breaks it prints a line; the row that always prints says how many were looked at. A project file that could not be read is
+    a FAIL (its backend was not looked at), and so is looking at none of them.
+
+    `armed`: whether this checkout uses memory at all (the hindsight or mempalace integration is on, or some project grants a
+    backend). A stranger's fresh checkout has one starter project with none and no memory switched on, `forge init` runs this
+    doctor on it and it must pass: that is NOT RUN, NOT ARMED, not a FAIL. Once anything is armed, a project without a backend
+    is one that lost its memory."""
+    if not armed:
+        return note("memory-one-backend -> NOT RUN, NOT ARMED: no memory integration is on in config/forge.json and no project "
+                    "grants a backend, so there is nothing to look at")
     good = 0
     for name, prof in projects:
         got = backends_of(prof)
@@ -629,8 +641,11 @@ def check_one_backend(projects: list) -> None:
                   % (name, name))
         else:
             check(name, "memory-backend", False, "%s has %d memory backends: %s -- one per project, never both" % (name, len(got), ", ".join(got)))
-    check("machine", "memory-one-backend", bool(projects), "%d project(s) examined, %d with exactly one backend"
-          % (len(projects), good) if projects else "0 project(s) examined: a check that saw nothing is not a pass")
+    detail = ("%d project(s) examined, %d with exactly one backend" % (len(projects), good)) if projects \
+        else "0 project(s) examined: a check that saw nothing is not a pass"
+    if unreadable:
+        detail += "; %d project file(s) could not be read: %s" % (len(unreadable), ", ".join(n for n, _ in unreadable))
+    check("machine", "memory-one-backend", bool(projects) and not unreadable, detail)
 
 
 # ------------------------------------------------------------------------------ one project
@@ -746,7 +761,9 @@ def main() -> int:
     # substring-matched (`"servers": "hindsight-coding-agents"`). Skipped silently, as the
     # unreadable ones always were: session start and verify_skill_refs already name them, and
     # --hook must print nothing.
-    projects = [(n, p) for n, p in lib.projects().items() if not args.project or n == args.project]
+    skipped_files: list = []
+    every_project = lib.projects(skipped_files)
+    projects = [(n, p) for n, p in every_project.items() if not args.project or n == args.project]
 
     if args.project and not projects:
         print("no project named %r under %s" % (args.project, lib.PROJECTS))
@@ -781,7 +798,8 @@ def main() -> int:
     # Whatever is switched on, and under --hook too: a profile with no memory or with two is wrong in every mode.
     if not QUIET:
         print("\n== memory backends ==")
-    check_one_backend(projects)
+    check_one_backend(projects, [] if args.project else skipped_files,
+                      lib.on("hindsight") or lib.on("mempalace") or any(backends_of(p) for p in every_project.values()))
 
     # ------------------------------------------------------------------ machine-wide checks
     if not QUIET:
