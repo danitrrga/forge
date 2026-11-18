@@ -773,6 +773,9 @@ def new_profile(name, prof):
     except EOFError:
         _say(CANCELLED, err=True)
         return 0
+    except KeyboardInterrupt:
+        _say("forge config: interrupted (Ctrl-C), nothing was written", err=True)
+        return 130
     args = argparse.Namespace(path="@" + text, parent_dir=None, stack=None, framework=False, name=None, writes_tracked_files=False, yes=False,
                               apply=False, profiles=None, sets=None, skills=None, server=None, memory=None, check=None, plugin=None, ui=False,
                               command_guard=False)

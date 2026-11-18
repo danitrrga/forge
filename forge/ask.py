@@ -3,7 +3,8 @@
 The order, which `Asker.asked` records so a test can read it:
   1 profiles      "profiles in this project?" (names, by `input()`); naming one begins its questions
   2 sets, skills  per profile (or once, for the project): the sets of skill_keep.sets (each with its skill_keep.set_docs line, else its
-                  members), then the final list of skills, which is the sets' members edited by adding and removing
+                  members), then the final list of skills, which is the sets' members edited by adding and removing;
+                  `--sets` or `--skills` alone answers both, and so does the pair
   3 servers       the MCP servers of config/mcp-registry.json (an account server is `<service>-<project>`)
   4 memory        among the memory integrations that are on (MEMORY) and none; a project question, a profile has no memory
   5 stack         what the stack asks: its checks, its plugins and the options ui and command_guard
@@ -11,8 +12,9 @@ The order, which `Asker.asked` records so a test can read it:
 Every question is a flag: --profiles, --sets, --skills (the final list, replacing what the sets give), --server, --memory, and for
 5 --check, --plugin, --ui, --command-guard. `none` is the explicit empty answer of the first four. A flag asks nothing; a question
 whose flag is absent is asked only in a terminal and never with --yes, so the same data by flags or by answers writes the same
-files. With profiles named, `--sets`, `--skills` and `--server` apply to each of them (`@NAME:` in front of a value limits it to
-one: `--sets @code:A,B`); with none, to the project. An answer is validated whole, before the first write, with every problem named.
+files. Where nothing is asked (no terminal, or --yes), one question flag makes every other question need its flag (`none` is an answer),
+and the error names all that are missing; with none of them the command is what it was before the questions. With profiles named, `--sets`, `--skills` and `--server` apply to each of them (`@NAME:` in front of a value limits it to
+one and replaces the unscoped value for that profile: `--sets @code:A,B`); with none, to the project. An answer is validated whole, before the first write, with every problem named.
 
 The layer rules are forge/configure.py's (`Plan`): for the project a Draft of it runs the same `set_on`, `skill_on` and `server_on` on
 documents that are not on disk yet. A profile row is built beside them: `Plan` edits a profile through its definition on disk, and
@@ -23,17 +25,18 @@ import copy
 import os
 import sys
 
-from forge import configure, lib, profiles, selector, suggest
+from forge import configure, lib, memory, profiles, selector, suggest
 
 DEFAULT_LABEL = "default"  # the label of the project's own lists when a project offers profiles (profiles.default)
-# Memory integrations a project can be given, and the registry servers each one means. Only hindsight has them: the others of
-# lib.INTEGRATIONS are not memory, and mempalace joins here when its per-project wiring exists (it is no question before that).
-MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall")}
+# The memory integrations a project can be given (the project scopes of forge/hooks.py SCOPES, which read the project's `servers`), and
+# the registry servers each one means: a project is on one when its `servers` hold them. The others of lib.INTEGRATIONS are not memory.
+MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall"), "mempalace": ("mempalace",)}
 NONE = "none"
 
 
 class Cancelled(Exception):
-    """The owner ended a question (Esc, Ctrl-C, the input ending), or the recorded answers of a test ran out."""
+    """The owner ended a question (Esc, the input ending), or the recorded answers of a test ran out. Ctrl-C at a question that reads a
+    line is a KeyboardInterrupt, which forge/new.py turns into one line and exit 130."""
 
 
 class Asker:
@@ -168,12 +171,20 @@ class Context:
     def __init__(self, name, forge, proj, stack):
         self.name, self.forge, self.proj, self.stack = name, forge, proj, stack
         self.draft = Draft(name, forge, proj)
-        self.sets = dict((forge.get("skill_keep") or {}).get("sets") or {})
-        self.docs = dict((forge.get("skill_keep") or {}).get("set_docs") or {})
+        keep = forge.get("skill_keep") if isinstance(forge.get("skill_keep"), dict) else {}
+        self.sets, self.docs = keep.get("sets") or {}, keep.get("set_docs") or {}
+        self.error = None  # why the tables of config/forge.json cannot be asked about: gather() says it and nothing is asked
+        if not isinstance(self.sets, dict) or not all(isinstance(v, list) for v in self.sets.values()):
+            self.error = "config/forge.json skill_keep.sets must be an object of lists of skill names"
+        elif not isinstance(self.docs, dict):
+            self.error = "config/forge.json skill_keep.set_docs must be an object of texts (a line for each set), it is %s" % (
+                type(self.docs).__name__)
+        if self.error:
+            self.sets, self.docs = {}, {}
         self.installed = sorted(configure.installed_skills())
         self.registry = sorted(self.draft.registry())
         others = [n for n in lib.projects() if n != name]
-        self.owner = {s: o for s in self.registry for o in others if s.endswith("-" + o)}  # an account server of another project
+        self.owner = {s: o for s in self.registry for o in [owner_of(s, name, others)] if o}  # an account server of another project
 
     def memory_servers(self):
         return {s for servers in MEMORY.values() for s in servers}
@@ -197,6 +208,16 @@ class Context:
         return "%s: %s" % (name, doc if isinstance(doc, str) and doc.strip() else ", ".join(self.sets[name]))
 
 
+def owner_of(server, project, others):
+    """The other project whose account server `server` (`<service>-<project>`) is, or None. A project's own is its own, and when the
+    names of two projects both end the server's, the longer is the owner: hero does not take vercel-el-hero, which is el-hero's."""
+    named = [o for o in [project] + list(others) if server.endswith("-" + o) and len(server) > len(o) + 1]
+    if not named:
+        return None
+    best = max(named, key=len)
+    return None if best == project else best
+
+
 def kind_of(server, project):
     """The kind of MCP server a profile definition lists for `server`: the service of an account server `<service>-<project>`, else
     the server's own name."""
@@ -216,16 +237,21 @@ class Answers:
         self.stack = None
 
 
+def lists_answered(flags, scope):
+    """Whether the flags answer the skills question of `scope` (`--sets`, `--skills` or both): the one rule of ask_lists and of the
+    questions that are skipped when every answer came by flag."""
+    return flags.of(flags.sets, scope) is not None or flags.of(flags.skills, scope) is not None
+
+
 def ask_lists(ctx, asker, scope, flags, definition_kinds, interactive):
     """The three list questions of one scope, each only when its flag is absent; the answers for it."""
     given_sets, given_skills, given_servers = flags.of(flags.sets, scope), flags.of(flags.skills, scope), flags.of(flags.servers, scope)
     label = "" if scope is None else "profile @%s: " % scope
     sets, skills, servers = given_sets, given_skills, given_servers
-    if sets is None and skills is None and interactive:
+    if interactive and not lists_answered(flags, scope):  # the two questions, or none of them
         stack_sets = set(ctx.stack["skill_sets"]) if ctx.stack else set()
         rows = [(s, ctx.set_label(s) + (" (the stack's)" if s in stack_sets else ""), False) for s in ctx.sets]
         sets = asker.pick("sets", label + "skills, by sets of similar ones", rows)
-    if skills is None and interactive:
         members = {n for s in sets or [] for n in ctx.sets.get(s, [])}
         skills = asker.pick("skills", label + "the final list of skills (the sets' members are on; add and remove)",
                             [(n, n, n in members) for n in ctx.installed])
@@ -239,6 +265,8 @@ def gather(a, ctx, asker, profile=None):
     """(Answers, problems). `profile`: the one profile `forge new @NAME` makes, None for `forge new NAME`. Asks what the flags did not
     answer, in the owner's order, only when `asker.interactive` and `a.yes` is not given; never writes."""
     problems = []
+    if ctx.error:
+        return Answers(), [ctx.error]
     flags = Flags(a, problems)
     ans = Answers()
     ask_on = asker.interactive and not getattr(a, "yes", False)
@@ -267,6 +295,21 @@ def gather(a, ctx, asker, profile=None):
             if scope is not None and scope not in scopes:
                 problems.append("%s @%s: that is not one of the profiles of this run (%s)" % (
                     flag, scope, ", ".join("@" + s for s in scopes if s) or "none: no profile is being made"))
+    given_some = (any(t is not None for t in (flags.sets, flags.skills, flags.servers))
+                  or (profile is None and (flags.profiles is not None or flags.memory is not None or flags.stack_given())))
+    if given_some and not ask_on:  # nothing will be asked: one answer by flag, so every question needs its flag
+        missing = ["--profiles"] if profile is None and flags.profiles is None else []
+        for scope in scopes:
+            where = "" if scope is None else " for @%s" % scope
+            if not lists_answered(flags, scope):
+                missing.append("--sets or --skills" + where)
+            if flags.of(flags.servers, scope) is None:
+                missing.append("--server" + where)
+        if profile is None and flags.memory is None:
+            missing.append("--memory")
+        if missing:
+            problems.append("nothing is asked here, and one question has its flag, so each needs its flag (none is an answer): missing %s"
+                            % ", ".join(missing))
     if problems:
         return ans, problems
     for scope in scopes:
@@ -288,8 +331,7 @@ def gather(a, ctx, asker, profile=None):
             rows = [(NONE, "none", True)] + [(m, "%s (%s)" % (m, ", ".join(MEMORY[m])), False) for m in options]
             chosen = asker.pick_one("memory", "memory", rows)
             ans.memory = None if chosen == NONE else chosen
-        given_all = (flags.profiles is not None and flags.memory is not None
-                     and all(flags.of(flags.sets, s) is not None or flags.of(flags.skills, s) is not None for s in scopes)
+        given_all = (flags.profiles is not None and flags.memory is not None and all(lists_answered(flags, s) for s in scopes)
                      and all(flags.of(flags.servers, s) is not None for s in scopes))
         stack = ctx.stack
         ans.stack = {"checks": flags.checks, "plugins": flags.plugins, "ui": flags.ui, "command_guard": flags.command_guard}
@@ -426,6 +468,12 @@ def check_memory(ctx, ans, problems):
                     problems.append(refusal_text(e))
 
 
+def check_one_backend(ans, problems):
+    """One project, one memory backend (the doctor's memory-one-backend row): the memory answer and the memory plugin are two."""
+    if ans.memory and memory.LITE_PLUGIN in (ans.stack or {}).get("plugins", []):
+        problems.append("--plugin %s is a memory backend and --memory %s is another: one per project, never both" % (memory.LITE_PLUGIN, ans.memory))
+
+
 def check_stack(ctx, ans, problems):
     st = ans.stack
     if not st or ctx.stack is None:  # no stack: --stack is missing, and that is already said
@@ -456,6 +504,7 @@ def apply(ctx, ans):
     rows, new_defs = {}, {}
     apply_project(ctx, ans, problems)
     check_memory(ctx, ans, problems)
+    check_one_backend(ans, problems)
     check_stack(ctx, ans, problems)
     for scope in ans.profiles:
         target = ans.targets.get(scope)
@@ -472,7 +521,18 @@ def apply(ctx, ans):
         if existing is None:
             new_defs[scope] = {"description": "", "color": "", "skills": [], "plugins": [],
                                "server_kinds": sorted(row.get("servers", {})), "permissions": {}, "env": {}}
-            if not row:
-                problems.append("profile @%s: no definition exists and nothing was answered for it (--sets, --skills or --server): "
-                                "a profile with nothing of its own resolves to nothing" % scope)
+    if not problems:
+        check_resolves(ctx, rows, new_defs, problems)
     return rows, new_defs, problems
+
+
+def check_resolves(ctx, rows, new_defs, problems):
+    """Each profile this run makes, as it will be (its definition, the one on disk or the new one, and its row in the project's file), goes
+    through profiles.resolve: one that does not resolve, or resolves to nothing, is a problem with the reason resolve gives."""
+    given = ctx.proj.get("profiles") if isinstance(ctx.proj.get("profiles"), dict) else {"default": DEFAULT_LABEL, "offered": {}}
+    prof = dict(ctx.proj, profiles={"default": given["default"], "offered": {**given["offered"], **rows}})
+    with profiles.pending_definitions(new_defs):
+        for scope in rows:
+            _, why = profiles.unresolved(ctx.name, prof, scope)
+            if why:
+                problems.append("profile @%s: %s" % (scope, why))

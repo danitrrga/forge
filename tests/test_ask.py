@@ -46,13 +46,19 @@ NEW = os.path.join("forge", "new.py")
 
 # What the owner would press, per question. The toy skills in W/home/.claude/skills sort as alpha, beta, delta, gamma; the sets are
 # ARCH_SET = alpha, beta and OTHER_SET = gamma; the registry holds analytics-demo, plain (and analytics-other, another project's).
-DRIVER = '''import json, sys
+DRIVER = '''import builtins, io, json, sys
 sys.path.insert(0, sys.argv[1])
 from forge import ask, cli
 spec = json.load(open(sys.argv[2]))
+if spec.get("confirm") is not None:  # what is typed at the `make it?` prompt (configure._ask reads stdin)
+    sys.stdin = io.StringIO(spec["confirm"] + "\\n")
+if spec.get("interrupt"):  # Ctrl-C at the first `input()` question
+    def stop(prompt=""):
+        raise KeyboardInterrupt
+    builtins.input = stop
 made = []
 def make():
-    asker = ask.Asker(keys=spec["keys"], lines=spec["lines"], interactive=True)
+    asker = ask.Asker(keys=spec["keys"], lines=None if spec.get("interrupt") else spec["lines"], interactive=True)
     made.append(asker)
     return asker
 ask.make_asker = make
@@ -69,11 +75,22 @@ real = selector.run
 selector.run = lambda sections, window=None, keys=None, **kw: real(sections, window=window, keys=spec["screen_keys"] if keys is None else keys)
 configure.has_terminal = lambda: True
 configure._ask = lambda prompt: True
-builtins.input = lambda prompt="": spec["name"]
+def typed(prompt=""):
+    if spec.get("interrupt"):  # Ctrl-C at the name of the new profile
+        raise KeyboardInterrupt
+    return spec["name"]
+builtins.input = typed
 ask.make_asker = lambda: ask.Asker(keys=spec["keys"], lines=[], interactive=True)
 sys.exit(configure.cmd_config(argparse.Namespace(targets=["demo"], on=None, off=None, apply=False, yes=False, json=False)))
 '''
 ORDER = ["profiles", "sets", "skills", "servers", "memory", "stack"]
+
+
+def answered(**over):
+    """The flags of the four questions that `forge new` wants all of once one of them is given, each `none` unless `over` says otherwise
+    (a value None leaves the flag out)."""
+    flags = dict({"profiles": "none", "sets": "none", "server": "none", "memory": "none"}, **over)
+    return [x for k, v in flags.items() if v is not None for x in ("--" + k, v)]
 
 
 def write_json(path, doc):
@@ -82,8 +99,11 @@ def write_json(path, doc):
         fh.write("\n")
 
 
-def prep(w, hindsight=False):
-    """The world's skills, sets, registry and a second project; hindsight on only where a test asks (a sync then cannot finish)."""
+def prep(w, hindsight=False, mempalace=False):
+    """The world's skills, sets, registry and two other projects; hindsight or mempalace on only where a test asks (a sync then cannot
+    finish). The registry's names are what the tests of an account server need: analytics-my-other (suffix `-other`, the name a project
+    my-other would own), vercel-el-hero (another project's, whose name ends with a shorter project's: hero), plain and plain-demo (the
+    same kind of server twice)."""
     for n in ("alpha", "beta", "gamma", "delta"):
         os.makedirs(os.path.join(w.home, ".claude", "skills", n))
         with open(os.path.join(w.home, ".claude", "skills", n, "SKILL.md"), "w") as fh:
@@ -93,14 +113,17 @@ def prep(w, hindsight=False):
     doc["skill_keep"]["sets"] = {"ARCH_SET": ["alpha", "beta"], "OTHER_SET": ["gamma"]}
     doc["skill_keep"]["set_docs"] = {"ARCH_SET": "architecture skills"}
     doc["integrations"]["hindsight"] = hindsight
+    doc["integrations"]["mempalace"] = mempalace
     write_json(path, doc)
     stdio = {"type": "stdio", "command": "true", "args": []}
     write_json(w.path("config", "mcp-registry.json"), {"servers": {n: dict(stdio) for n in (
-        "analytics-demo", "analytics-other", "plain", "hindsight-coding-agents", "hindsight-recall")}})
-    other = os.path.join(w.top, "other")
-    os.makedirs(other)
-    write_json(w.path("config", "projects", "other.claude.json"), {"project": "other", "project_path": other,
-                                                                 "writes_tracked_files": False, "servers": []})
+        "analytics-demo", "analytics-other", "analytics-my-other", "vercel-el-hero", "plain", "plain-demo", "mempalace",
+        "hindsight-coding-agents", "hindsight-recall")}})
+    for name in ("other", "el-hero"):
+        folder = os.path.join(w.top, name)
+        os.makedirs(folder)
+        write_json(w.path("config", "projects", "%s.claude.json" % name), {"project": name, "project_path": folder,
+                                                                         "writes_tracked_files": False, "servers": []})
 
 
 def write_driver(w):
@@ -112,10 +135,10 @@ def write_driver(w):
     return d
 
 
-def asked_run(w, argv, keys, lines):
-    """(exit code, output, the questions asked) of `forge argv` with the owner's recorded answers."""
+def asked_run(w, argv, keys, lines, **extra):
+    """(exit code, output, the questions asked) of `forge argv` with the owner's recorded answers (`extra`: confirm, interrupt)."""
     d = write_driver(w)
-    write_json(os.path.join(d, "spec.json"), {"argv": argv, "keys": keys, "lines": lines})
+    write_json(os.path.join(d, "spec.json"), dict({"argv": argv, "keys": keys, "lines": lines}, **extra))
     r = subprocess.run([sys.executable, os.path.join(d, "driver.py"), w.root, os.path.join(d, "spec.json")], cwd=w.cwd, env=w.env,
                        capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
     out = r.stdout + r.stderr
@@ -233,12 +256,12 @@ def a_profile_names(w):
     bad = made_demo(w)
     if bad:
         return bad
-    code, out = w.forge("new", "@list", "--sets", "OTHER_SET", "--apply", cwd=w.project("demo"))
+    code, out = w.forge("new", "@list", "--sets", "OTHER_SET", "--server", "none", "--apply", cwd=w.project("demo"))
     if code != 0 or "list" not in ((project_doc(w) or {}).get("profiles") or {}).get("offered", {}):
         bad.append("profile named 'list' rejected: exit %d: %s" % (code, tail(out)))
     before = w.snapshot()
     for arg, reason in (("@-x", "starts with -"), ("@@x", "starts with @"), ("@Bad", "kebab-case"), ("@default", "label")):
-        code, out = w.forge("new", arg, "--sets", "OTHER_SET", "--apply", cwd=w.project("demo"))
+        code, out = w.forge("new", arg, "--sets", "OTHER_SET", "--server", "none", "--apply", cwd=w.project("demo"))
         if code != 2 or reason not in out:
             bad.append("profile named '%s' created or refused without the reason %r: exit %d: %s" % (arg[1:], reason, code, tail(out)))
     if w.snapshot() != before:
@@ -248,22 +271,68 @@ def a_profile_names(w):
 
 def a_nothing_answered(w):
     before = w.snapshot()
-    code, out = w.forge("new", "demo", "--stack", "generic", "--profiles", "code,docs", "--apply")
+    code, out = w.forge("new", "demo", "--stack", "generic", "--profiles", "code,docs", "--sets", "none", "--server", "none", "--memory", "none",
+                        "--apply")
     bad = []
     if code != 2 or "@code" not in out or "@docs" not in out or len([l for l in out.splitlines() if l.strip()]) != 1:
         bad.append("a profile with nothing was made or not named in one error: exit %d: %s" % (code, tail(out)))
     if w.snapshot() != before or os.path.lexists(w.project("demo")):
         bad.append("a profile with nothing was made: it wrote %s" % test_new.changed(before, w.snapshot())[:4])
-    # --stack missing and an answer missing: one error naming both
+    # --stack missing and the answers missing: one error naming both
     code, out = w.forge("new", "demo", "--profiles", "code", "--apply")
     if code != 2 or "--stack" not in out or "@code" not in out or len([l for l in out.splitlines() if l.strip()]) != 1:
         bad.append("--stack and the profile's answer not named together: exit %d: %s" % (code, tail(out)))
     return bad
 
 
+def a_partial_answers(w):
+    """One question flag given, no terminal or --yes: every other question must be answered by its flag, all named in one error."""
+    bad = []
+    before = w.snapshot()
+    code, out = w.forge("new", "demo", "--stack", "generic", "--sets", "ARCH_SET", "--apply")
+    if (code != 2 or any(f not in out for f in ("--profiles", "--server", "--memory")) or len([l for l in out.splitlines() if l.strip()]) != 1):
+        bad.append("a partial answer: exit %d, want 2 naming --profiles, --server and --memory in one line: %s" % (code, tail(out)))
+    if w.snapshot() != before or os.path.lexists(w.project("demo")):
+        bad.append("a partial answer wrote %s" % test_new.changed(before, w.snapshot())[:4])
+    code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic", "--profiles", "none", "--yes", "--apply"], [], [])
+    if code != 2 or "--server" not in out or asked != []:
+        bad.append("--yes in a terminal with one answer: exit %d, asked %s, want 2 naming --server: %s" % (code, asked, tail(out)))
+    code, out = w.forge("new", "demo", "--stack", "generic", "--ui", "--apply")
+    if code != 2 or "--memory" not in out:
+        bad.append("a stack flag alone: exit %d, want 2 naming --memory: %s" % (code, tail(out)))
+    code, out = w.forge("new", "demo", "--stack", "generic")  # no new flag: as on master
+    if code != 0 or "PLAN" not in out:
+        bad.append("no new flag: exit %d, want the plan of master: %s" % (code, tail(out)))
+    bad += made_demo(w)
+    before = w.snapshot()
+    code, out = w.forge("new", "@code", "--sets", "ARCH_SET", "--apply", cwd=w.project("demo"))
+    if code != 2 or "--server" not in out or w.snapshot() != before:
+        bad.append("forge new @code with the sets and no --server: exit %d, want 2 naming --server and nothing written: %s" % (code, tail(out)))
+    return bad
+
+
+def a_resolves(w):
+    """A profile is resolved as it will be before the first write: a definition that does not resolve, or that gives nothing, is refused."""
+    bad = made_demo(w)
+    if bad:
+        return bad
+    defs = w.path("config", "profile-defs")
+    os.makedirs(defs)
+    for text, flags, needle in (({"skills": ["@NOPE", "ghost"]}, ["--sets", "ARCH_SET", "--server", "none"], "@NOPE"),
+                                ({"description": "x"}, [], "resolves to nothing")):
+        write_json(os.path.join(defs, "code.json"), text)
+        before = w.snapshot()
+        code, out = w.forge("new", "@code", *flags, "--apply", cwd=w.project("demo"))
+        if code != 2 or needle not in out or w.snapshot() != before:
+            bad.append("unresolved profile was written: definition %s, exit %d, want 2 naming %r and nothing written: %s" % (
+                text, code, needle, tail(out)))
+    return bad
+
+
 def a_failure_after_write(w):
     before = w.snapshot()
-    code, out = w.forge("new", "demo", "--stack", "generic", "--profiles", "code", "--sets", "ARCH_SET", "--apply")
+    code, out = w.forge("new", "demo", "--stack", "generic", "--profiles", "code", "--sets", "ARCH_SET",
+                        "--server", "none", "--memory", "none", "--apply")
     bad = []
     if code != 1 or "injected" not in out:
         bad.append("the injected failure did not stop the run: exit %d: %s" % (code, tail(out)))
@@ -279,7 +348,7 @@ def a_profile_failure(w):
     if bad:
         return bad
     before = w.snapshot()
-    code, out = w.forge("new", "@code", "--sets", "ARCH_SET", "--apply", cwd=w.project("demo"))
+    code, out = w.forge("new", "@code", "--sets", "ARCH_SET", "--server", "none", "--apply", cwd=w.project("demo"))
     if code != 1 or "injected" not in out:
         bad.append("the injected failure did not stop the run: exit %d: %s" % (code, tail(out)))
     after = w.snapshot()
@@ -322,28 +391,79 @@ def a_plan_shows_answers(w):
 
 def a_stack_and_memory(w):
     bad = []
-    code, out = w.forge("new", "demo", "--stack", "next", "--check", "pnpm nope", "--plugin", "nope@x", "--memory", "mempalace")
-    for needle in ("pnpm nope", "nope@x", "mempalace"):
+    code, out = w.forge("new", "demo", "--stack", "next", *answered(), "--check", "pnpm nope", "--plugin", "nope@x")
+    for needle in ("pnpm nope", "nope@x"):
         if code != 2 or needle not in out:
             bad.append("a wrong %s: exit %d: %s" % (needle, code, tail(out)))
-    code, out = w.forge("new", "demo", "--stack", "next", "--memory", "hindsight")
-    if code != 2 or "off in config/forge.json" not in out:
-        bad.append("--memory hindsight with the integration off: exit %d: %s" % (code, tail(out)))
-    code, out = w.forge("new", "demo", "--stack", "next", "--server", "analytics-other")
+    for name, needle in (("nope", "nope"), ("hindsight", "off in config/forge.json"), ("mempalace", "off in config/forge.json")):
+        code, out = w.forge("new", "demo", "--stack", "next", *answered(memory=name))
+        if code != 2 or needle not in out or "no memory" in out and name != "nope":
+            bad.append("--memory %s with the integration off: exit %d, want 2 saying %r: %s" % (name, code, needle, tail(out)))
+    code, out = w.forge("new", "demo", "--stack", "next", *answered(server="analytics-other"))
     if code != 2 or "account server of project other" not in out:
         bad.append("another project's account server: exit %d: %s" % (code, tail(out)))
-    code, out = w.forge("new", "demo", "--stack", "next", "--sets", "NOPE")
+    code, out = w.forge("new", "demo", "--stack", "next", *answered(sets="NOPE"))
     if code != 2 or "NOPE" not in out:
         bad.append("an unknown set: exit %d: %s" % (code, tail(out)))
-    code, out = w.forge("new", "demo", "--stack", "next", "--sets", "@code:ARCH_SET")
+    code, out = w.forge("new", "demo", "--stack", "next", *answered(sets="@code:ARCH_SET"))
     if code != 2 or "not one of the profiles" not in out:
         bad.append("a scope that names no profile: exit %d: %s" % (code, tail(out)))
     return bad
 
 
+def a_own_account_server(w):
+    """A server is another project's when it ends with that project's name, but a project's own `<service>-<name>` is its own, and the
+    longest project name wins (hero does not take vercel-el-hero, which is el-hero's)."""
+    bad = []
+    code, out = w.forge("new", "my-other", "--stack", "generic", *answered(server="analytics-my-other"))
+    if code != 0 or "servers     analytics-my-other" not in out:
+        bad.append("the own account server of my-other refused: exit %d: %s" % (code, tail(out)))
+    code, out = w.forge("new", "hero", "--stack", "generic", *answered(server="vercel-el-hero"))
+    if code != 2 or "account server of project el-hero" not in out:
+        bad.append("another project's account server taken by a shorter name: exit %d: %s" % (code, tail(out)))
+    return bad
+
+
+def a_memory_mempalace(w):
+    """MemPalace on: it is a memory choice (asked, and by --memory), written into `servers`, and the registry server mempalace is not an
+    ordinary row of the servers question nor an answer of --server."""
+    bad = []
+    keys = [["enter"], ["enter"],                           # sets, final list: nothing
+            ["down", "space", "enter"],                     # servers: the second row (analytics-demo, plain): never mempalace
+            ["down", "space", "up", "space", "enter"],      # memory: none off, mempalace on
+            ["enter"]]                                      # stack
+    code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic", "--apply"], keys, [""])
+    servers = (project_doc(w) or {}).get("servers")
+    if servers != ["plain", "mempalace"]:
+        bad.append("asked: servers %s, want ['plain', 'mempalace'] (exit %d): %s" % (servers, code, tail(out)))
+    code, out = w.forge("new", "flags", "--stack", "generic", *answered(memory="mempalace"), "--apply")
+    servers = (project_doc(w, "flags") or {}).get("servers")
+    if servers != ["mempalace"]:
+        bad.append("--memory mempalace: servers %s, want ['mempalace'] (exit %d): %s" % (servers, code, tail(out)))
+    code, out = w.forge("new", "ordinary", "--stack", "generic", *answered(server="mempalace"))
+    if code != 2 or "--memory mempalace" not in out:
+        bad.append("--server mempalace: exit %d, want 2 pointing at --memory mempalace: %s" % (code, tail(out)))
+    return bad
+
+
+def a_one_backend(w):
+    """A project never ends with two memory backends: --plugin claude-mem-lite with a memory integration is refused."""
+    stack = os.path.join(w.root, "examples", "stacks", "mem")
+    os.makedirs(stack)
+    write_json(os.path.join(stack, "stack.json"), {"description": "toy", "servers": [], "plugins": ["claude-mem-lite@sdsrss"], "checks": [],
+                                                  "skill_sets": []})
+    with open(os.path.join(stack, "gitignore"), "w") as fh:
+        fh.write(".env\n")
+    code, out = w.forge("new", "demo", "--stack", "mem", *answered(memory="mempalace"), "--plugin", "claude-mem-lite@sdsrss")
+    if code != 2 or "one per project" not in out:
+        return ["two memory backends: exit %d, want 2 saying one per project: %s" % (code, tail(out))]
+    code, out = w.forge("new", "demo", "--stack", "mem", *answered(), "--plugin", "claude-mem-lite@sdsrss")
+    return [] if code == 0 else ["the memory plugin alone refused: exit %d: %s" % (code, tail(out))]
+
+
 def a_memory_hindsight(w):
     """Hindsight on: the memory servers reach the project file (the sync that follows cannot finish in a toy world, so the exit is not 0)."""
-    code, out = w.forge("new", "demo", "--stack", "generic", "--memory", "hindsight", "--apply")
+    code, out = w.forge("new", "demo", "--stack", "generic", *answered(memory="hindsight"), "--apply")
     doc = project_doc(w) or {}
     if doc.get("servers") != ["hindsight-coding-agents", "hindsight-recall"]:
         return ["--memory hindsight left servers %s: exit %d: %s" % (doc.get("servers"), code, tail(out))]
@@ -351,8 +471,6 @@ def a_memory_hindsight(w):
 
 
 def a_cancelled(w):
-    def forge_only(snap):  # the driver and its spec are the test's own files, not something forge wrote
-        return {k: v for k, v in snap.items() if not k.startswith("driver")}
     before = forge_only(w.snapshot())
     code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic", "--apply"], [["esc"]], ["code"])
     if code != 1 or "cancelled" not in out or forge_only(w.snapshot()) != before:
@@ -360,10 +478,146 @@ def a_cancelled(w):
     return []
 
 
+def forge_only(snap):  # the driver and its spec are the test's own files, not something forge wrote
+    return {k: v for k, v in snap.items() if not k.startswith("driver")}
+
+
+def a_set_docs_type(w):
+    """skill_keep.set_docs of the wrong type: one line, exit 2, nothing written (a traceback is exit 1 with `Traceback`)."""
+    path = w.path("config", "forge.json")
+    doc = test_new.read_json(path)
+    bad = []
+    for wrong in ("oops", ["a"]):
+        doc["skill_keep"]["set_docs"] = wrong
+        write_json(path, doc)
+        before = w.snapshot()
+        code, out = w.forge("new", "demo", "--stack", "generic", *answered(sets="ARCH_SET"), "--apply")
+        if (code != 2 or "set_docs" not in out or "Traceback" in out or len([l for l in out.splitlines() if l.strip()]) != 1
+                or w.snapshot() != before):
+            bad.append("set_docs %r: exit %d, want 2, one line naming set_docs, nothing written: %s" % (wrong, code, tail(out)))
+    return bad
+
+
+def a_ctrl_c(w):
+    """Ctrl-C at a question that reads a line (the profiles of forge new, the name of the screen's new profile): one line, exit 130, nothing
+    written."""
+    bad = made_demo(w)
+    if bad:
+        return bad
+    before = forge_only(w.snapshot())
+    code, out, asked = asked_run(w, ["new", "other-demo", "--stack", "generic", "--apply"], [], [], interrupt=True)
+    if code != 130 or "Traceback" in out or forge_only(w.snapshot()) != before:
+        bad.append("Ctrl-C at the profiles question: exit %d, want 130, no traceback and nothing written: %s" % (code, tail(out)))
+    d = write_driver(w)
+    with open(os.path.join(d, "screen.py"), "w") as fh:
+        fh.write(SCREEN_DRIVER)
+    write_json(os.path.join(d, "screen.json"), {"screen_keys": ["down"] * 60 + ["space", "enter"], "name": "docs", "keys": [], "interrupt": True})
+    before = forge_only(w.snapshot())
+    r = subprocess.run([sys.executable, os.path.join(d, "screen.py"), w.root, os.path.join(d, "screen.json")], cwd=w.cwd, env=w.env,
+                       capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    if r.returncode != 130 or "Traceback" in r.stderr or forge_only(w.snapshot()) != before:
+        bad.append("Ctrl-C at the name of the new profile: exit %d, want 130, no traceback and nothing written: %s" % (
+            r.returncode, tail(r.stdout + r.stderr)))
+    return bad
+
+
+def a_sets_alone(w):
+    """`--sets` alone answers the lists question (the final list is its members), as `--skills` alone does: nothing else is asked, and the
+    stack question is skipped, because every answer came by flag."""
+    code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic", *answered(sets="ARCH_SET", server="plain"), "--apply"], [], [])
+    row = row_of(w)
+    if code != 0 or asked != [] or row != ["@ARCH_SET"]:
+        return ["--sets alone in a terminal: exit %d, asked %s (want none), row %s: %s" % (code, asked, row, tail(out))]
+    return []
+
+
+def a_stack_question(w):
+    """The stack question is skipped only when every other answer came by flag."""
+    bad = []
+    flags = ["--stack", "generic", "--apply"]
+    code, out, asked = asked_run(w, ["new", "one", *flags, *answered(memory=None, server="plain")], [["enter"], ["enter"]], [])
+    if asked != ["memory", "stack"]:
+        bad.append("memory unanswered: asked %s, want ['memory', 'stack'] (exit %d): %s" % (asked, code, tail(out)))
+    code, out, asked = asked_run(w, ["new", "two", *flags, *answered(server="plain")], [], [])
+    if asked != []:
+        bad.append("every answer by flag: asked %s, want nothing (exit %d): %s" % (asked, code, tail(out)))
+    return bad
+
+
+def a_scoped(w):
+    """A value scoped `@code:` replaces the unscoped one for that profile and stays out of the others; the unscoped one does not also reach
+    `code`."""
+    code, out = w.forge("new", "demo", "--stack", "generic", *answered(profiles="code,docs", sets="ARCH_SET"), "--sets", "@code:OTHER_SET", "--apply")
+    got = ((project_doc(w) or {}).get("profiles") or {}).get("offered")
+    want = {"code": {"skills": ["@OTHER_SET"]}, "docs": {"skills": ["@ARCH_SET"]}}
+    return [] if got == want else ["scoped sets: profiles %s, want %s (exit %d): %s" % (got, want, code, tail(out))]
+
+
+def a_confirm_no(w):
+    """`n` at the `make it?` prompt writes nothing; `y` makes the project."""
+    bad = []
+    before = forge_only(w.snapshot())
+    code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic"], [list(k) for k in FULL_KEYS], list(PROJECT_LINES), confirm="n")
+    if code != 0 or "nothing written" not in out or forge_only(w.snapshot()) != before or os.path.lexists(w.project("demo")):
+        bad.append("n at make it: exit %d, want 0, 'nothing written' and no file: %s" % (code, tail(out)))
+    code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic"], [list(k) for k in FULL_KEYS], list(PROJECT_LINES), confirm="y")
+    if not os.path.isdir(w.project("demo")):
+        bad.append("y at make it made nothing: exit %d: %s" % (code, tail(out)))
+    return bad
+
+
+def a_frozen(w):
+    bad = made_demo(w)
+    if bad:
+        return bad
+    path = w.path("config", "projects", "demo.claude.json")
+    doc = project_doc(w)
+    doc["frozen"] = True
+    write_json(path, doc)
+    before = w.snapshot()
+    code, out = w.forge("new", "@code", "--sets", "ARCH_SET", "--server", "none", "--apply", cwd=w.project("demo"))
+    if code != 2 or "frozen" not in out or w.snapshot() != before:
+        bad.append("a profile in a frozen project: exit %d, want 2 'frozen' and nothing written: %s" % (code, tail(out)))
+    return bad
+
+
+def a_two_servers_one_kind(w):
+    bad = made_demo(w)
+    if bad:
+        return bad
+    before = w.snapshot()
+    code, out = w.forge("new", "@code", "--sets", "ARCH_SET", "--server", "plain", "--server", "plain-demo", "--apply", cwd=w.project("demo"))
+    if code != 2 or "both the kind 'plain'" not in out or w.snapshot() != before:
+        bad.append("two servers of one kind: exit %d, want 2 'both the kind' and nothing written: %s" % (code, tail(out)))
+    return bad
+
+
+def a_profile_twice(w):
+    before = w.snapshot()
+    code, out = w.forge("new", "demo", "--stack", "generic", *answered(profiles="code,code", sets="ARCH_SET"), "--apply")
+    if code != 2 or "twice" not in out or w.snapshot() != before:
+        return ["a profile named twice: exit %d, want 2 'twice' and nothing written: %s" % (code, tail(out))]
+    return []
+
+
+def a_help(w):
+    code, out = w.forge("new", "--help")
+    text = " ".join(out.split())
+    bad = []
+    if text.count("replaces the unscoped") < 3:  # --sets, --skills and --server each say it
+        bad.append("forge new --help says 'replaces the unscoped' %d time(s), want 3 (--sets, --skills, --server)" % text.count("replaces the unscoped"))
+    if "every other question needs its flag" not in text:
+        bad.append("forge new --help (--yes) does not say 'every other question needs its flag'")
+    return bad
+
+
 INJECT_PROFILE = (NEW, '            lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n',
                   '            raise OSError("injected")\n            lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n')
 INJECT = (NEW, '            if row or extras:\n', '            raise OSError("injected")\n            if row or extras:\n')
-SKILLS_BLOCK = '''    if skills is None and interactive:
+LISTS_BLOCK = '''    if interactive and not lists_answered(flags, scope):  # the two questions, or none of them
+        stack_sets = set(ctx.stack["skill_sets"]) if ctx.stack else set()
+        rows = [(s, ctx.set_label(s) + (" (the stack's)" if s in stack_sets else ""), False) for s in ctx.sets]
+        sets = asker.pick("sets", label + "skills, by sets of similar ones", rows)
         members = {n for s in sets or [] for n in ctx.sets.get(s, [])}
         skills = asker.pick("skills", label + "the final list of skills (the sets' members are on; add and remove)",
                             [(n, n, n in members) for n in ctx.installed])
@@ -372,8 +626,14 @@ SERVERS_BLOCK = '''    if servers is None and interactive:
         rows = ctx.server_rows(definition_kinds)
         servers = asker.pick("servers", label + "MCP servers (an account server is <service>-<project>)", [(s, s, False) for s in rows])
 '''
+KEYBOARD = (NEW, '    except KeyboardInterrupt:\n        return refuse(130, INTERRUPTED)\n    except ask.Cancelled as e:\n        return refuse(1, "%s -- nothing written" % e)\n'
+                 '    if bad:\n        return refuse(2, "nothing written, %s" % "; ".join(bad))\n    if rows:',
+             '    except ask.Cancelled as e:\n        return refuse(1, "%s -- nothing written" % e)\n'
+             '    if bad:\n        return refuse(2, "nothing written, %s" % "; ".join(bad))\n    if rows:')
+NO_RESOLVE = (ASK, "    if not problems:\n        check_resolves(ctx, rows, new_defs, problems)\n", "    if False:\n        check_resolves(ctx, rows, new_defs, problems)\n")
+HELP_CLI = "forge/cli.py"
 CONTROLS = [
-    ("servers asked before skills", a_order, [(ASK, SKILLS_BLOCK + SERVERS_BLOCK, SERVERS_BLOCK + SKILLS_BLOCK)], "order: servers before skills", {}),
+    ("servers asked before skills", a_order, [(ASK, LISTS_BLOCK + SERVERS_BLOCK, SERVERS_BLOCK + LISTS_BLOCK)], "order: servers before skills", {}),
     ("the flags' list kept as typed", a_same_by_flags_and_prompts,
      [(ASK, 'return sorted(set(target["skills"]))', 'return list(target["skills"])')], "flags and prompts differ", {}),
     ("the edited list ignored", a_edited_list, [(ASK, '        skills = asker.pick("skills", ', '        _ = asker.pick("skills", ')],
@@ -389,8 +649,7 @@ CONTROLS = [
       (NEW, "    why = lib.project_error(doc)\n    if why:\n        return refuse(2, \"nothing written, the project file would not be valid: %s\" % why)\n    print(\"forge new @",
        "    print(\"forge new @")],
      "profile named '-x' created", {}),
-    ("a profile with nothing answered", a_nothing_answered, [(ASK, "            if not row:\n", "            if False:\n")],
-     "a profile with nothing was made", {}),
+    ("a profile with nothing answered", a_nothing_answered, [NO_RESOLVE], "a profile with nothing was made", {}),
     ("definitions' folder not undone", a_failure_after_write, [INJECT, (NEW, '        undo.append(("dir", folder))\n', "        pass\n")],
      "left behind", {}),
     ("@NAME's rollback taken out", a_profile_failure, [INJECT_PROFILE, (NEW, "        rollback(steps=undo)\n", "        pass\n")], "left behind", {}),
@@ -399,23 +658,76 @@ CONTROLS = [
     ("a plan without the answers", a_plan_shows_answers, [(NEW, "    for line in describe(ctx, ans, rows, new_defs):\n        print(line)\n    print(\"  then",
                                                            "    print(\"  then")],
      "the plan does not show", {}),
+    ("a profile that is not resolved", a_resolves, [NO_RESOLVE], "unresolved profile was written", {}),
+    ("one answer, the others free", a_partial_answers, [(ASK, "    if given_some and not ask_on:", "    if False:")], "a partial answer", {}),
+    ("a stack flag is no answer", a_partial_answers,
+     [(ASK, "flags.memory is not None or flags.stack_given())))", "flags.memory is not None)))")], "a stack flag alone", {}),
+    ("the own account server taken for another's", a_own_account_server,
+     [(ASK, "for o in [project] + list(others) if", "for o in list(others) if")], "the own account server of my-other refused", {}),
+    ("the own server is always its own", a_own_account_server,
+     [(ASK, "    best = max(named, key=len)\n    return None if best == project else best\n",
+       "    if project in named:\n        return None\n    return max(named, key=len)\n")], "taken by a shorter name", {}),
+    ("mempalace not a memory", a_memory_mempalace, [(ASK, ', "mempalace": ("mempalace",)}', "}")], "--memory mempalace: servers", {"mempalace": True}),
+    ("the memory servers not kept out of the rows", a_memory_mempalace,
+     [(ASK, "        return {s for servers in MEMORY.values() for s in servers}", "        return set()")], "asked: servers", {"mempalace": True}),
+    ("memory off not said", a_stack_and_memory, [(ASK, "    elif not lib.on(ans.memory):", "    elif False:")], "with the integration off", {}),
+    ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ans, problems)\n", "    pass\n")], "two memory backends", {"mempalace": True}),
+    ("set_docs not checked", a_set_docs_type, [(ASK, "        elif not isinstance(self.docs, dict):", "        elif False:")], "set_docs 'oops'", {}),
+    ("Ctrl-C at the profiles question", a_ctrl_c, [KEYBOARD], "Ctrl-C at the profiles question", {}),
+    ("Ctrl-C at the new profile's name", a_ctrl_c,
+     [("forge/configure.py", '    except KeyboardInterrupt:\n        _say("forge config: interrupted (Ctrl-C), nothing was written", err=True)\n        return 130\n', "")],
+     "Ctrl-C at the name of the new profile", {}),
+    ("--sets alone asks the final list", a_sets_alone,
+     [(ASK, "    return flags.of(flags.sets, scope) is not None or flags.of(flags.skills, scope) is not None\n",
+       "    return flags.of(flags.sets, scope) is not None and flags.of(flags.skills, scope) is not None\n")], "--sets alone in a terminal", {}),
+    ("the stack question always asked", a_stack_question,
+     [(ASK, "        if ask_on and not given_all and not flags.stack_given():", "        if ask_on and not flags.stack_given():")],
+     "every answer by flag: asked", {}),
+    ("the memory answer left out of given_all", a_stack_question,
+     [(ASK, "given_all = (flags.profiles is not None and flags.memory is not None and all(", "given_all = (flags.profiles is not None and all(")],
+     "memory unanswered: asked", {}),
+    ("scoping ignored", a_scoped, [(ASK, "        return table[scope] if scope in table else table.get(None)", "        return table.get(None)")],
+     "scoped sets: profiles", {}),
+    ("a scoped value added to the unscoped one", a_scoped,
+     [(ASK, "        return table[scope] if scope in table else table.get(None)",
+       "        return (table[scope] + (table.get(None) or [])) if scope in table else table.get(None)")], "scoped sets: profiles", {}),
+    ("n at make it writes", a_confirm_no, [(NEW, '    print("nothing written")\n    return False', '    print("nothing written")\n    return True')],
+     "n at make it", {}),
+    ("a frozen project accepted", a_frozen, [(NEW, '    if doc.get("frozen"):\n        return refuse(2,', '    if False:\n        return refuse(2,')],
+     "a profile in a frozen project", {}),
+    ("two servers of one kind", a_two_servers_one_kind, [(ASK, "            if kind in assigned:\n", "            if False:\n")],
+     "two servers of one kind", {}),
+    ("a profile named twice", a_profile_twice, [(ASK, "    if len(set(ans.profiles)) != len(ans.profiles):\n", "    if False:\n")],
+     "a profile named twice", {}),
+    ("the scoping help gone", a_help, [(HELP_CLI, "A scoped value replaces the unscoped one for that profile; it does not add to it",
+                                       "A scoped value is for that profile")], "'replaces the unscoped'", {}),
+    ("the --yes help gone", a_help, [(HELP_CLI, "with one, every other question needs its flag", "with one, the others are free")],
+     "every other question needs its flag", {}),
 ]
 PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_prompts, {}), ("edited list", a_edited_list, {}),
          ("profile here", a_profile_here, {}), ("profile names", a_profile_names, {}), ("nothing answered", a_nothing_answered, {}),
          ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("profile failure", a_profile_failure, {"mutate": [INJECT_PROFILE]}), ("screen row", a_screen_row, {}), ("plan", a_plan_shows_answers, {}),
          ("stack and memory", a_stack_and_memory, {}), ("memory hindsight", a_memory_hindsight, {"hindsight": True}),
-         ("cancelled", a_cancelled, {})]
+         ("cancelled", a_cancelled, {}), ("partial answers", a_partial_answers, {}), ("resolves", a_resolves, {}),
+         ("own account server", a_own_account_server, {}), ("memory mempalace", a_memory_mempalace, {"mempalace": True}),
+         ("one backend", a_one_backend, {"mempalace": True}), ("set_docs type", a_set_docs_type, {}), ("ctrl-c", a_ctrl_c, {}),
+         ("sets alone", a_sets_alone, {}), ("stack question", a_stack_question, {}), ("scoped", a_scoped, {}),
+         ("confirm no", a_confirm_no, {}), ("frozen", a_frozen, {}), ("two servers one kind", a_two_servers_one_kind, {}),
+         ("profile twice", a_profile_twice, {}), ("help", a_help, {})]
 
 
-def world(tag, mutate=(), hindsight=False):
+def world(tag, mutate=(), hindsight=False, mempalace=False):
     w = World(tag, mutate=mutate)
-    prep(w, hindsight=hindsight)
+    prep(w, hindsight=hindsight, mempalace=mempalace)
     return w
 
 
 def main():
+    only = [t for t in os.environ.get("ASK_ONLY", "").split(",") if t]  # a subset while working: labels (or parts of them); a full run has none
     for label, fn, kw in PLAIN:
-        w = world("ask", mutate=kw.get("mutate", ()), hindsight=kw.get("hindsight", False))
+        if only and not any(t in label for t in only):
+            continue
+        w = world("ask", mutate=kw.get("mutate", ()), hindsight=kw.get("hindsight", False), mempalace=kw.get("mempalace", False))
         try:
             for why in fn(w):
                 failures.append("%s -- %s" % (label, why))
@@ -423,7 +735,9 @@ def main():
         finally:
             w.close()
     for label, fn, mutate, needle, kw in CONTROLS:
-        cw = world("askc", mutate=mutate, hindsight=kw.get("hindsight", False))
+        if only and not any(t in label for t in only):
+            continue
+        cw = world("askc", mutate=mutate, hindsight=kw.get("hindsight", False), mempalace=kw.get("mempalace", False))
         try:
             got = cw.anchors_missing or fn(cw)
             test_new.check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))

@@ -38,6 +38,7 @@ import time
 
 from forge import ask, configure, framework, lib, profiles, suggest
 
+INTERRUPTED = "interrupted (Ctrl-C) -- nothing written"  # exit 130, the shell's code for it
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\Z")  # \Z, not $: `$` also matches before one trailing newline
 
 # A stack is a folder of the checkout's examples/stacks/: stack.json and gitignore, each complete on its own (no code or text is
@@ -380,6 +381,8 @@ def create_profile(a):
         rows, new_defs = {}, {}
         if not bad:
             rows, new_defs, bad = ask.apply(ctx, ans)
+    except KeyboardInterrupt:
+        return refuse(130, INTERRUPTED)
     except ask.Cancelled as e:
         return refuse(1, "%s -- nothing written" % e)
     if bad:
@@ -394,8 +397,11 @@ def create_profile(a):
     print("  project     config/projects/%s.claude.json: profiles.offered.%s%s" % (
         project, name, "" if isinstance(json.loads(text).get("profiles"), dict) else
         " (and profiles.default %r: the project's own lists)" % given["default"]))
-    if not (a.apply or confirmed(asker, a)):
-        return 0
+    try:
+        if not (a.apply or confirmed(asker, a)):
+            return 0
+    except KeyboardInterrupt:
+        return refuse(130, INTERRUPTED)
     writable, reason = lib.may_write()
     if not writable:
         print(reason)
@@ -503,6 +509,8 @@ def create(a):
         rows, new_defs = {}, {}
         if not bad:
             rows, new_defs, bad = ask.apply(ctx, ans)
+    except KeyboardInterrupt:
+        return refuse(130, INTERRUPTED)
     except ask.Cancelled as e:
         return refuse(1, "%s -- nothing written" % e)
     if bad:
@@ -531,8 +539,11 @@ def create(a):
         print(line)
     print("  then        forge sync --apply %s" % name)
     if not a.apply:
-        if not confirmed(asker, a):
-            return 0
+        try:
+            if not confirmed(asker, a):
+                return 0
+        except KeyboardInterrupt:
+            return refuse(130, INTERRUPTED)
     ok, why = lib.may_write()
     if not ok:
         print(why)
