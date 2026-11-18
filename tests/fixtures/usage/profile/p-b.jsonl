@@ -1,0 +1,4 @@
+{"type": "attachment", "timestamp": "{D1}T10:00:00.000Z", "attachment": {"type": "skill_listing", "content": "- alpha: first\n- toy-plugin:beta: plugin skill", "isInitial": true}}
+{"type": "assistant", "timestamp": "{D1}T10:00:01.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-pb1", "name": "Skill", "input": {"skill": "toy-plugin:beta"}}]}}
+{"type": "assistant", "timestamp": "{D1}T10:00:02.000Z", "message": {"role": "assistant", "content": [{"type": "tool_use", "id": "tu-pb2", "name": "mcp__other-srv__ping", "input": {}}]}}
+{"type": "cost-state", "sessionId": "p-b", "totalCostUSD": 1.5, "modelUsage": {"toy-model": {"inputTokens": 7, "outputTokens": 3, "thinkingTokens": 0, "cacheReadInputTokens": 70, "cacheCreationInputTokens": 9, "webSearchRequests": 0, "costUSD": 1.5}}, "hasUnknownModelCost": false}
