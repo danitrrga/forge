@@ -1505,7 +1505,15 @@ else:
 #      "FAIL: D4 ... follows the mapping apply used: got '.fwx/workstreams/*/private/', want '.fwx/subprojects/*/private/'"
 #   D5 "FAIL: D5 apply --close on a phase only the ROADMAP has keeps its folder: missing .fwx/milestones/v1/phases/02-beta/gsd-roadmap-entry.md"
 #   D6 is in tests/test_state_cli.py (`phase list` in a linked worktree).
-# Controls (a copy of the plugin with the one rule changed; the first FAIL line it printed) are in the pull request.
+# Controls, each a copy of the plugin with one rule of migrate_gsd.py changed (532 checks on the good code; the first FAIL line):
+#   - apply removes `.planning/` whole (a folder that holds a file goes too): "FAIL: D2 ... the folder that holds the file stays, with
+#     every folder above it: got [False, False, False, False], want [True, True, True, True]"
+#   - `$HOME/.planning` read as a reference: "FAIL: D1 ... and `$HOME/.planning` (the user's own folder, not the repository's) is still no reference"
+#   - the carried rules copied without the mapping: the D3 plan check names the same files, the content check of the root one fails after it
+#   - the carried rule does not exempt the untracked image in leftovers: "FAIL: D3 leftovers after the merge exits 0 ...: got 2, want 0"
+#   - a handled .gitignore line offered again: "FAIL: D4 refs does not offer a .gitignore line apply already handled; ..."
+#   - the closing row of a closed roadmap-only phase not written: "FAIL: D5 ... state.phases sees it and its last stage is closed: got (['01-alpha', '02-beta'], None)"
+#   - a box alone makes the folder of a heading-only phase (the old behaviour changed): "FAIL: D5 ... state.phases sees it ...: got (['01-alpha', '02-beta', '03-gamma'], 'closed')"
 MINI_ROAD = ("# Roadmap\n\n- [x] **Phase 1: Alpha** - first\n- [ ] **Phase 2: Beta** - second\n- [x] **Phase 3: Gamma** - shipped\n\n"
              "### Phase 1: Alpha\nGoal.\n\n### Phase 2: Beta\nBeta goal.\n\n### Phase 3: Gamma\nGamma goal.\n")
 BETA = ".fwx/milestones/v1/phases/02-beta"

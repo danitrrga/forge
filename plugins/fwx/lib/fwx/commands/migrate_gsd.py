@@ -7,20 +7,27 @@
       In a worktree, on a branch that is not the default one: `git mv` of what is kept, `git rm` of what is purged and of the
       backlog (not migrated), the generated files (`milestones/<vN>/MILESTONE.md` with the base SHA and the recovery command, a
       `gsd-roadmap-entry.md` per open phase only the ROADMAP had, a stage row per closed phase through `state.append_audit`),
-      the `.fwx/` twin under each `.gitignore` line that names `.planning/`; everything staged, nothing committed. Then the
-      checks: the blob of each kept file identical at its destination, each purged file gone, `state.phases` sees every phase
+      the `.fwx/` twin under each `.gitignore` line that names `.planning/`, and the rules of each tracked `.gitignore` inside
+      `.planning/` written anew at the matching folder of `.fwx/` (one that moves whole with rules that need no mapping just
+      moves); a phase only the ROADMAP has and `--close` names is made closed, with its roadmap entry; the folders of
+      `.planning/` left with no file are removed at the end, `.planning/` itself when nothing is left; everything staged,
+      nothing committed. Then the checks: the blob of each kept file identical at its destination, each purged file gone, `state.phases` sees every phase
       folder, `state.last_stage` says closed for each closed phase. Re-entrant: after a merge that brings new files into
       `.planning/`, it converts only those.
   refs --base SHA [--json] [--milestone-map FILE] [--rewrite FILE...] [--prefix FILE...]
       The reference list, for a branch the conversion has already run on: the files of `.planning/` at SHA are classified again
-      and every tracked line outside `.planning/` and `.fwx/` that names `.planning` is listed. `--rewrite` changes, in the
+      and every tracked line outside `.planning/` and `.fwx/` that names `.planning` is listed, git pathspecs (`':!.planning'`,
+      `:(exclude).planning`, `:/.planning`) included. A path built from a variable (`"$ROOT/.planning/x"`, `${DIR}/.planning`,
+      `$(cmd)/.planning`; not `$HOME`) is kind `hand`: listed, never rewritten, said to need a hand. In a `.gitignore` a line
+      that already has its `.fwx` twin is not listed, and a proposal is the twin `apply` would write. `--rewrite` changes, in the
       named files only, the paths that moved (when their new path exists); `--prefix` changes `.planning` for `.fwx` in every
       path of the named files. What a purged file was cited by is never touched. The changed files are staged.
   leftovers [--apply] [--milestone-map FILE]
       In the main checkout, after the conversion is merged: the ignored and untracked files still under `.planning/` move to
       their destination with `os.rename` (an ignored file only if git would still ignore it there, else nothing moves), the
       machine-state names of GSD are deleted (every file it moves or deletes is first written to a tar in `<git dir>/fwx/migrate-gsd/`; `tar -xf` restores it), and `.planning/` is
-      removed when it is empty. A dry run unless `--apply`.
+      removed when it is empty. A dry run unless `--apply`. An untracked file whose destination a `.gitignore` inside `.fwx/` ignores
+      (the carried rules of one of `.planning/`, which ignored it before the merge) moves all the same.
 
 `plan` and `refs` without a write flag only read: no cache, no log, git runs with `--no-optional-locks`, so not even the
 index is refreshed.
@@ -352,6 +359,7 @@ class Scope:
         self.by_dir = {}    # inner folder path ("phases/01-a") -> phase
         self.actual = "v1"
         self.notes = []
+        self.carried = {}   # inner path of a tracked `.gitignore` -> (where its rules go inside the destination, their text)
 
     def label(self):
         return "" if self.ws is None else " (workstream %s)" % self.ws
@@ -548,6 +556,34 @@ def phase_file(sc, key, inner):
 
 # ---- the plan ----------------------------------------------------------------------------------------------------------
 
+def carry_gitignore(sc, mapper, src, inner, action, dest):
+    """(target, text) for a tracked `.gitignore` of `.planning/` whose rules have to be written anew under `.fwx/`, else None. Its
+    rules ignored files of its own folder (images, scratch) that apply does not track: dropped with the file, those files
+    would show as untracked once `leftovers` moves them. The target is the same folder at the destination; an anchored rule
+    (`phases/*/shots/`, `/x`) is mapped as a `.gitignore` line is, because the folders under it move. A file that
+    moves whole and whose rules need no mapping is not carried: it just moves, byte for byte."""
+    text = src.read(sc.prefix + inner)
+    if text is None:
+        return None
+    d = posixpath.dirname(inner)
+    here = mapper.structure((sc.prefix + d).rstrip("/"))
+    out = []
+    for line in text.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        neg = "!" if body.startswith("!") else ""
+        pat = body[len(neg):]
+        if not body.strip() or body.lstrip().startswith("#") or not (pat.startswith("/") or "/" in pat.rstrip("/")):
+            out.append(line)    # a comment, a blank, or a pattern with no slash in it: it matches at any depth, and still does
+            continue
+        new = mapper.structure(sc.prefix + (d + "/" if d else "") + pat.lstrip("/"))
+        out.append(("%s%s%s" % (neg, "/" if pat.startswith("/") else "", new[len(here) + 1:]) if new.startswith(here + "/") else body)
+                   + line[len(body):])
+    mapped = "".join(out)
+    if action == "keep" and dest and "%s/%s" % (sc.dest, dest) == here + "/.gitignore" and mapped == text:
+        return None
+    return here + "/.gitignore", mapped
+
+
 def analyze(src, opts):
     entries = src.entries()
     if not entries:
@@ -579,10 +615,17 @@ def analyze(src, opts):
     unused_map = [k for k in unknown_keys if k not in asked]
     if problems:
         raise Refuse("\n".join(problems))
+    shape = Mapper(scopes, [])      # where a path goes by its shape alone: all the carried `.gitignore` rules need
     for sc in scopes:
         results = []
         for inner, tracked, size in sc.files:
             action, dest, rule = classify(sc, inner, tracked)
+            if tracked and posixpath.basename(inner) == ".gitignore":
+                carry = carry_gitignore(sc, shape, src, inner, action, dest)
+                if carry:
+                    sc.carried[inner] = carry
+                    action, dest, rule = "purge", None, "inner-gitignore"
+                    notes.append("%s/%s%s: its rules are written again at %s" % (SCOPE_SRC, sc.prefix, inner, carry[0]))
             results.append([inner, tracked, size, action, dest, rule])
         # a `.gitkeep` is purged unless its folder would be left with no file
         kept = [r[0] for r in results if r[3] == "keep" and r[5] != "phase-gitkeep"]
@@ -1056,6 +1099,20 @@ def ignored_among(repo, paths):
     return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p}
 
 
+def ignored_by_fwx_file(repo, paths):
+    """The paths of the list that a rule of a `.gitignore` inside `.fwx/` ignores (the rule that decides, `check-ignore -v`): the
+    carried rules of a `.gitignore` of `.planning/`, as opposed to a line of the root `.gitignore`."""
+    if not paths:
+        return set()
+    r = _git(repo, "check-ignore", "-v", "-z", "--stdin", ok=(0, 1), input=_nul(paths))
+    parts, out = r.stdout.split(b"\0"), set()
+    for i in range(0, len(parts) - 3, 4):
+        source, pattern, path = os.fsdecode(parts[i]), os.fsdecode(parts[i + 2]), os.fsdecode(parts[i + 3])
+        if source.startswith(SCOPE_DEST + "/") and not pattern.startswith("!"):
+            out.add(path)
+    return out
+
+
 def roadmap_section(text, number):
     """The text of a ROADMAP's `### Phase N: title` section, up to the next heading of its own level or a higher one."""
     lines = (text or "").splitlines(keepends=True)
@@ -1276,6 +1333,9 @@ def plan_apply(repo, opts):
     job.root_state = getattr(root, "state_milestone", None)
     job.backlog = backlog_items(scopes, src, files)
     job.leftover = [f for f in files if not f["tracked"]]
+    for sc in scopes:
+        for inner, (target, text) in sorted(sc.carried.items()):
+            job.gens.append((target, text.encode("utf-8")))
     roadmaps = {sc.ws: src.read(sc.prefix + "ROADMAP.md") for sc in scopes}
     milestones, dests = set(), [d for _, d in job.moves]
     extra_bad = []
@@ -1853,7 +1913,8 @@ def plan_leftovers(repo, opts):
         raise Refuse("%d ignored file(s) would stop being ignored at their destination (no .gitignore line names it, apply adds "
                      "those): nothing was moved. First %s" % (len(exposed), exposed[0]))
     shown = ignored_among(repo, [d for _, d, ig in moves if not ig])
-    vanish = [d for _, d, ig in moves if not ig and d in shown]
+    carried = ignored_by_fwx_file(repo, sorted(shown))   # these were ignored by the `.gitignore` of `.planning/` that apply carried over
+    vanish = [d for _, d, ig in moves if not ig and d in shown and d not in carried]
     if vanish:
         raise Refuse("%d untracked file(s) would be ignored at their destination, so they would vanish from `git status` and "
                      "`git clean -X` would delete them: nothing was moved. First %s" % (len(vanish), vanish[0]))
