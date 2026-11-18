@@ -285,7 +285,8 @@ forge test [fwx] [--mutants]                                every tracked test_*
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
 forge start @NAME [--dry-run] [ARGS...]                     claude started with a profile of this project, by flags alone: no file of the project is written
-forge list @ | @NAME [--json] [--names]                     the profiles a project declares, or one of them with its difference from the default
+forge list @ | @NAME [--json] [--names] [--session ID]      the profiles a project declares, or one of them with its difference from the default
+forge switch @NAME                                          inside a session started by `forge start @A`: claude restarts with profile NAME and resumes the conversation
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
