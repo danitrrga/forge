@@ -2070,8 +2070,10 @@ def main(argv=None):
                        description="forge new PATH registers the directory PATH (its file, then sync --apply NAME). "
                                    "forge new NAME, a bare word that is no directory here, makes the project: its folder, git init, "
                                    ".gitignore, README.md, its file and its skill row, then sync --apply NAME; a dry-run unless --apply. "
-                                   "A path form (a /, or a leading . or ~) is always registered; a bare word that is a directory here is registered too.")
-    i.add_argument("path", metavar="PATH|NAME", help="an existing directory to register, or the name of a project to make (kebab-case)")
+                                   "A path form (a /, or a leading . or ~) is always registered; a bare word that is a directory here is registered too. "
+                                   "forge new @NAME, run in a project's folder, makes the session profile NAME for it. In a terminal, what no flag "
+                                   "answers is asked, in this order: profiles, skills (sets, then the final list), servers, memory, what the stack asks.")
+    i.add_argument("path", metavar="PATH|NAME|@NAME", help="an existing directory to register, or the name of a project to make (kebab-case)")
     i.add_argument("--name", help="registering: the project's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
@@ -2079,6 +2081,15 @@ def main(argv=None):
     i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
     i.add_argument("--yes", action="store_true", help="making: ask nothing; a missing answer is an error naming it (today every answer is a flag, with or without it)")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
+    i.add_argument("--profiles", metavar="A,B", help="question 1: the profiles the project offers (none: no profile); each is then asked like the project")
+    i.add_argument("--sets", action="append", metavar="[@PROFILE:]SET,SET", help="question 2: the skill sets (skill_keep.sets); repeat for several profiles")
+    i.add_argument("--skills", action="append", metavar="[@PROFILE:]a,b", help="question 2: the final list of skills, replacing what the sets give")
+    i.add_argument("--server", action="append", metavar="[@PROFILE:]NAME", help="question 3: an MCP server of the registry; repeat for each (an account server is <service>-<project>)")
+    i.add_argument("--memory", metavar="NAME|none", help="question 4: the memory integration of the project (hindsight, when it is on), or none")
+    i.add_argument("--check", action="append", metavar="CMD", help="question 5: one of the stack's checks, written as the project's checks")
+    i.add_argument("--plugin", action="append", metavar="NAME", help="question 5: one of the stack's plugins; the project then keeps only these (besides the common ones)")
+    i.add_argument("--ui", action="store_true", help="question 5: the project has a user interface (ui: true)")
+    i.add_argument("--command-guard", dest="command_guard", action="store_true", help="question 5: command_guard: true")
     i.set_defaults(fn=cmd_new)
     u = sub.add_parser("uninstall", help="take out what forge wrote; a dry-run unless --apply")
     u.add_argument("--apply", action="store_true", help="remove; without it, only show what would go")

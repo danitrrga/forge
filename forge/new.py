@@ -20,6 +20,7 @@ Two runs at once take turns: the checks are repeated and the files written under
 kernel frees when its holder dies), so the folder is claimed by one run and forge.json is read again before its row is added.
 TERM, INT and HUP during --apply roll back like a failure."""
 import contextlib
+import copy
 import fcntl
 import json
 import os
@@ -30,7 +31,7 @@ import signal
 import subprocess
 import time
 
-from forge import framework, lib, suggest
+from forge import ask, configure, framework, lib, profiles, suggest
 
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\Z")  # \Z, not $: `$` also matches before one trailing newline
 
@@ -105,19 +106,26 @@ def path_like(arg):
     return "/" in arg or os.sep in arg or arg[:1] in (".", "~")
 
 
+def answer_flags(a):
+    """Whether a flag that answers one of the questions (forge/ask.py) was given."""
+    return any(getattr(a, k, None) for k in ("profiles", "sets", "skills", "server", "memory", "check", "plugin", "ui", "command_guard"))
+
+
 def creation_flags(a):
     """Whether a flag that belongs to making a project was given."""
-    return a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply
+    return a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply or answer_flags(a)
 
 
 def route(a):
     """What `forge new ARG` does with ARG: None means register the directory (cmd_new goes on), a number is the exit code
     of a run that is already over (a project made, or a refusal)."""
     arg = a.path
+    if arg.startswith("@"):
+        return create_profile(a)
     isdir = os.path.isdir(os.path.expanduser(arg))
     if path_like(arg):
         if isdir and creation_flags(a):
-            return refuse(2, "%s is a directory, so forge new registers it, and --path, --stack, --framework, --yes and --apply "
+            return refuse(2, "%s is a directory, so forge new registers it, and --path, --stack, --framework, --yes, --apply and the answer flags "
                              "belong to making a project from a name" % arg)
         if not isdir and creation_flags(a):
             return refuse(1, "%s is not a directory (a path is only ever registered; to make a project give its name alone, "
@@ -164,9 +172,13 @@ def git_init(folder):
 def rollback(steps):
     """Takes out what this run made, newest first. A folder only while it is empty: it never removes what it did not put there."""
     stuck = []
-    for kind, path in reversed(steps):
+    for kind, path, *rest in reversed(steps):
         try:
-            if kind == "file":
+            if kind == "restore":  # a file that existed: put back what it held
+                lib.write_text(path, rest[0])
+                lib.record("wrote", path)
+                continue
+            elif kind == "file":
                 os.unlink(path)
             elif kind == "tree":
                 shutil.rmtree(path)
@@ -254,6 +266,153 @@ def world_error(target):
     return None
 
 
+def unanswered(a, name, stack, asker):
+    """The problems of the answers when nothing can be asked (no terminal, or --yes): what the flags give, checked as create() checks
+    it, so one error names these together with the missing --stack or folder. [] when nothing is wrong or forge.json cannot be read."""
+    doc, _ = skills_doc("%s.claude.json" % name)
+    if doc is None:
+        return []
+    from forge import cli
+    ctx = ask.Context(name, doc, json.loads(cli.example_text("project.claude.json")), None if stack is None else dict(stack, name=a.stack))
+    ans, problems = ask.gather(a, ctx, asker)
+    return problems if problems else ask.apply(ctx, ans)[2]
+
+
+def describe(ctx, ans, rows, new_defs):
+    """The lines of the plan that show each answer (none when nothing beyond the old plan was answered)."""
+    out = []
+    for scope, target in ans.targets.items():
+        whole, names = ask.skill_items(ctx, target)
+        what = ["@" + s for s in whole] + names
+        if scope is None and not (what or target["servers"]):
+            continue
+        if scope is not None:
+            row = rows.get(scope, {})
+            out.append("  profile     @%s: %s" % (scope, "definition config/profile-defs/%s.json is made" % scope if scope in new_defs
+                                                    else "definition config/profile-defs/%s.json is used as it is" % scope))
+            out.append("              skills %s; servers %s" % (", ".join(row.get("skills", [])) or "none",
+                                                              ", ".join("%s=%s" % kv for kv in row.get("servers", {}).items()) or "none"))
+        else:
+            out.append("  skills      %s" % (", ".join(what) or "none"))
+            out.append("  servers     %s" % (", ".join(sorted(set(target["servers"]))) or "none"))
+    if ans.profiles:
+        out.append("  default     the project's own lists are the profile %r; the profiles are offered beside it" % ask.DEFAULT_LABEL)
+    if ans.memory:
+        out.append("  memory      %s (servers %s)" % (ans.memory, ", ".join(ask.MEMORY[ans.memory])))
+    st = ans.stack or {}
+    if st.get("checks"):
+        out.append("  checks      %s" % ", ".join(st["checks"]))
+    if st.get("plugins"):
+        out.append("  plugins     only %s (besides the common ones)" % ", ".join(st["plugins"]))
+    if st.get("ui") or st.get("command_guard"):
+        out.append("  options     %s" % ", ".join(k for k in ("ui", "command_guard") if st.get(k)))
+    return out
+
+
+def write_definitions(undo, new_defs):
+    """config/profile-defs/<name>.json for each new definition, its folder first when it is not there. Each is on the undo list before
+    the call that can fail."""
+    if not new_defs:
+        return
+    folder = os.path.dirname(profiles.definition_path("x"))
+    if not os.path.isdir(folder):
+        undo.append(("dir", folder))
+        os.mkdir(folder)
+        lib.record("mkdir", folder)
+    for pname, d in new_defs.items():
+        write_file(undo, folder, pname + ".json", lib.dumps(d) + "\n")
+
+
+def create_profile(a):
+    """`forge new @NAME`, run in a project's folder: a session profile NAME for that project, with the questions of `forge new` that
+    belong to a profile (skills by sets and the final list, servers). Writes the definition (config/profile-defs/NAME.json, when there
+    is none) and the project's `profiles` row; a profile row is read when a session starts, so nothing is synced. Exit 0 made (or
+    planned), 1 a step failed or was cancelled, 2 a refusal or a missing answer."""
+    name = a.path[1:]
+    wrong = [flag for flag, given in (("--path", a.parent_dir is not None), ("--stack", a.stack is not None), ("--framework", a.framework),
+                                      ("--name", a.name), ("--writes-tracked-files", a.writes_tracked_files)) if given]
+    if wrong:
+        return refuse(2, "%s belong to making a project from a name, not to a profile" % ", ".join(wrong))
+    why = profiles.name_error(name)
+    if why:
+        return refuse(2, "%s is not a profile name: %s" % (a.path, why))
+    try:
+        project, _ = configure.project_here()
+    except configure.Refusal as e:
+        return refuse(2, str(e))
+    project_file = os.path.join(lib.PROJECTS, project + ".claude.json")
+    try:
+        text = lib.read_text(project_file)
+        doc = json.loads(text)
+    except (lib.Unreadable, ValueError, TypeError) as e:
+        return refuse(1, "%s cannot be read (%s)" % (lib.short(project_file), e))
+    if doc.get("frozen"):
+        return refuse(2, "project %s is frozen: forge writes nothing for it, so a profile here would do nothing" % project)
+    if lib.dumps(doc) + "\n" != text:
+        return refuse(1, "%s is not in the form forge writes it (two-space JSON, one final newline): a change would reformat all of it" % lib.short(project_file))
+    given = doc.get("profiles") if isinstance(doc.get("profiles"), dict) else {"default": ask.DEFAULT_LABEL, "offered": {}}
+    if name == given["default"]:
+        return refuse(2, "%s is the label of project %s's own lists (profiles.default), so it cannot also be a profile" % (name, project))
+    if name in given["offered"]:
+        return refuse(2, "project %s already offers @%s: change it with forge config %s @%s" % (project, name, project, name))
+    lib.settings.cache_clear()
+    forge = copy.deepcopy(lib.settings())
+    ctx = ask.Context(project, forge, doc, None)
+    asker = ask.make_asker()
+    try:
+        ans, problems = ask.gather(a, ctx, asker, profile=name)
+        rows, new_defs = {}, {}
+        if not problems:
+            rows, new_defs, problems = ask.apply(ctx, ans)
+    except ask.Cancelled as e:
+        return refuse(1, "%s -- nothing written" % e)
+    if problems:
+        return refuse(2, "nothing written, %s" % "; ".join(problems))
+    doc["profiles"] = {"default": given["default"], "offered": {**given["offered"], name: rows[name]}}
+    why = lib.project_error(doc)
+    if why:
+        return refuse(2, "nothing written, the project file would not be valid: %s" % why)
+    print("forge new @%s: %s in project %s" % (name, "APPLY" if a.apply else "PLAN, nothing written (--apply makes it)", project))
+    for line in describe(ctx, ans, rows, new_defs):
+        print(line)
+    print("  project     config/projects/%s.claude.json: profiles.offered.%s%s" % (
+        project, name, "" if isinstance(json.loads(text).get("profiles"), dict) else
+        " (and profiles.default %r: the project's own lists)" % given["default"]))
+    if not a.apply:
+        if asker.interactive and not a.yes:
+            if not configure._ask("make it? [y/N] "):
+                print("nothing written")
+                return 0
+        else:
+            return 0
+    ok, why = lib.may_write()
+    if not ok:
+        print(why)
+        return 1
+    undo = []
+    try:
+        with stopped_means_rollback(), creation_lock():
+            if lib.read_text(project_file) != text:
+                return refuse(2, "%s changed while the answers were asked; nothing written. Run the command again" % lib.short(project_file))
+            taken = [n for n in new_defs if os.path.lexists(profiles.definition_path(n))]
+            if taken:
+                return refuse(2, "config/profile-defs/%s.json exists now; nothing written. Run the command again" % taken[0])
+            write_definitions(undo, new_defs)
+            undo.append(("restore", project_file, text))  # before the write that can fail: the file is put back as it was
+            lib.write_text(project_file, lib.dumps(doc) + "\n", mode="keep")
+            print("wrote  %s" % os.path.relpath(project_file, lib.ROOT))
+    except BaseException as e:
+        made = bool(undo)
+        rollback(undo)
+        if not isinstance(e, Exception):
+            print("! forge new: stopped%s" % (" -- what this run made was removed" if made else ""))
+            raise
+        print("! forge new: %s%s" % (e, " -- what this run made was removed" if made else ""))
+        return 2 if isinstance(e, TimeoutError) else 1
+    print("start it: forge start @%s" % name)
+    return 0
+
+
 def create(a):
     """The creation side of `forge new ARG`, ARG being a name. Exit 0 made (or planned), 1 the world refuses or a step failed,
     2 an answer is wrong or missing."""
@@ -296,7 +455,10 @@ def create(a):
     if parent is not None and not os.path.isdir(parent):
         problems.append("%s is not a directory (it is not made for you)" % source)
         parent = None
+    asker = ask.make_asker()
     if problems:
+        if not asker.interactive or a.yes:  # nothing will be asked, so every missing answer is named now, in the same error
+            problems += unanswered(a, name, stack, asker)
         return refuse(2, "nothing written, %s (no directory %s here: to register a directory, give its path)" % ("; ".join(problems), name))
 
     parent = os.path.realpath(parent)
@@ -324,6 +486,22 @@ def create(a):
         why = lib.project_error(project) or framework.plan(project, name).error
         if why:
             return refuse(2, "nothing written, --framework would make a project every forge sync refuses: %s" % why)
+    ctx = ask.Context(name, doc, project, dict(stack, name=a.stack))
+    try:
+        ans, problems = ask.gather(a, ctx, asker)
+        rows, new_defs = {}, {}
+        if not problems:
+            rows, new_defs, problems = ask.apply(ctx, ans)
+    except ask.Cancelled as e:
+        return refuse(1, "%s -- nothing written" % e)
+    if problems:
+        return refuse(2, "nothing written, %s" % "; ".join(problems))
+    if rows:
+        project["profiles"] = {"default": ask.DEFAULT_LABEL, "offered": rows}
+    why = lib.project_error(project)
+    if why:
+        return refuse(2, "nothing written, the project file would not be valid: %s" % why)
+    extras = list(doc["skill_keep"]["extras"][key])
 
     print("forge new %s: %s" % (name, "APPLY" if a.apply else "PLAN, nothing written (--apply makes it)"))
     print("  folder      %s%s" % (target, " (exists, empty)" if exists else ""))
@@ -336,10 +514,18 @@ def create(a):
         print("  warning     %s" % warning)
     print("  git init, README.md")
     print("  project     config/projects/%s%s" % (key, " (framework on)" if a.framework else ""))
-    print("  skills row  config/forge.json skill_keep.extras %s" % ("gets %s" % key if row else "already has %s" % key))
+    print("  skills row  config/forge.json skill_keep.extras %s%s" % ("gets %s" % key if row else "already has %s" % key,
+                                                                         ": %s" % ", ".join(extras) if extras else ""))
+    for line in describe(ctx, ans, rows, new_defs):
+        print(line)
     print("  then        forge sync --apply %s" % name)
     if not a.apply:
-        return 0
+        if asker.interactive and not a.yes:  # the owner answered questions: one more, so they are not for nothing
+            if not configure._ask("make it? [y/N] "):
+                print("nothing written")
+                return 0
+        else:
+            return 0
     ok, why = lib.may_write()
     if not ok:
         print(why)
@@ -356,6 +542,12 @@ def create(a):
             doc, row = skills_doc(key)  # read again: another run may have added its row to forge.json meanwhile
             if doc is None:
                 raise OSError("config/forge.json skill_keep (or its extras) is not a JSON object")
+            if doc["skill_keep"].get("sets") != ctx.forge["skill_keep"].get("sets"):
+                return refuse(2, "another forge new got there first: skill_keep.sets of config/forge.json changed meanwhile")
+            doc["skill_keep"]["extras"][key] = extras
+            taken = [n for n in new_defs if os.path.lexists(profiles.definition_path(n))]
+            if taken:
+                return refuse(2, "another forge new got there first: config/profile-defs/%s.json exists now" % taken[0])
             if not exists:
                 os.mkdir(target)
                 undo.append(("dir", target))  # before anything else that can fail or be interrupted
@@ -366,10 +558,11 @@ def create(a):
             git_init(target)
             text = files["README.md"]
             write_file(undo, target, "README.md", text)
+            write_definitions(undo, new_defs)
             undo.append(("file", project_file))  # absent until the write: checked above, under the lock
             lib.write_text(project_file, lib.dumps(project) + "\n")
             print("wrote  %s" % os.path.relpath(project_file, lib.ROOT))
-            if row:
+            if row or extras:
                 lib.write_text(lib.SETTINGS, lib.dumps(doc) + "\n")  # atomic: when it fails, forge.json is as it was
                 print("wrote  config/forge.json (skill_keep.extras row %s)" % key)
     except BaseException as e:
