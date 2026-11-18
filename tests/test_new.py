@@ -24,6 +24,8 @@ in one line; the control's failure message is what is quoted here, and the asser
       control (no path check): `'./nope' was not refused as a path`
   - a target folder that is not empty, or is a link, is refused and never written into.
       control (no check): `wrote into a non-empty folder`, `wrote through a link`
+  - a GIT_DIR in the caller's environment does not decide where `git init` goes.
+      control (no scrubbed environment): `git init followed GIT_DIR`
   - a failure halfway (a git that fails; a forge.json that cannot be written after the project file) leaves nothing this
     run made, and nothing else is touched.
       control (no cleanup): `left behind: <paths>`
@@ -363,6 +365,18 @@ def a_git_fails(w):
     return bad
 
 
+def a_git_env(w):
+    """A GIT_DIR in the caller's environment (a git hook runs with one) must not decide where `git init` goes."""
+    elsewhere = os.path.join(w.top, "elsewhere-git")
+    env = dict(w.env, GIT_DIR=elsewhere, GIT_WORK_TREE=w.cwd)
+    code, out = w.forge("new", "demo", "--stack", "generic", "--apply", env=env)
+    # The exit code is not asserted: the sync that follows reads the same variables and may refuse them; the init is what is looked at.
+    if not os.path.isdir(os.path.join(w.project("demo"), ".git")) or os.path.lexists(elsewhere):
+        return ["git init followed GIT_DIR: exit %d, project .git %s, %s %s: %s" % (
+            code, os.path.isdir(os.path.join(w.project("demo"), ".git")), elsewhere, "made" if os.path.lexists(elsewhere) else "not made", tail(out))]
+    return []
+
+
 def a_forge_json_fails(w):
     """The project file is written, then forge.json cannot be (its folder is read-only): the project file, the
     README, .gitignore, .git and the folder this run made go; a pre-existing empty folder stays, empty; a neighbour stays."""
@@ -430,11 +444,18 @@ def a_flags_by_mode(w):
 
 
 def a_framework(w):
+    """--framework writes `framework: true` and nothing else of the framework: its hand-over (plugins_keep, the checks) is a
+    later unit, so forge sync refuses the project for want of plugins_keep (exit non-zero, naming it) until that is added."""
     code, out = w.forge("new", "demo", "--stack", "generic", "--framework", "--apply")
     pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
-    if code != 0 or pf.get("framework") is not True:
-        return ["--framework: exit %d, framework=%r: %s" % (code, pf.get("framework"), tail(out, 10))]
-    return []
+    bad = []
+    if pf.get("framework") is not True or any(k in pf for k in ("plugins_keep", "factory", "checks")):
+        bad.append("--framework: project file framework=%r, keys %s" % (pf.get("framework"), sorted(pf)))
+    if not os.path.isdir(os.path.join(w.project("demo"), ".git")):
+        bad.append("--framework: no project folder: %s" % tail(out, 4))
+    if code != 0 and "forge sync --apply demo" not in out:
+        bad.append("--framework: sync failed (exit %d) without naming what to run again: %s" % (code, tail(out, 4)))
+    return bad
 
 
 def a_help(w):
@@ -492,6 +513,8 @@ def a_registration_as_master(w, master_cli):
             bad.append("`forge %s` differs from master: exit %d vs %d, %s vs %s" % (argv, code_w, code_m, tail(out_w, 3), tail(out_m, 3)))
     # forge.json differs by design (projects_dir): compare every other file, and forge.json minus that key.
     for k in sorted(set(man_m) | set(man_w)):
+        if k.startswith(os.path.join("forge", "forge") + os.sep) or k.startswith(os.path.join("forge", "tests") + os.sep):
+            continue  # the engine copies: forge/cli.py is what differs between the two worlds
         if k == os.path.join("forge", "config", "forge.json") or k.startswith(os.path.join("home", ".local", "state", "forge")):
             continue  # forge.json differs by design (projects_dir); the journal and owned.json hold timestamps and each world's own paths
         if man_m.get(k) != man_w.get(k):
@@ -521,11 +544,12 @@ CONTROLS = [
     ("a reserved list of verbs", a_list_created,
      [(NEW, "if not KEBAB.match(name):", 'if not KEBAB.match(name) or name in ("list", "new", "doctor"):')], "project named 'list' rejected"),
     ("no name check", a_bad_names, [(NEW, "if not KEBAB.match(name):", "if False:")], "project named '@x' created"),
-    ("a path taken for a name", a_path_not_name, [(CLI, "if not os.path.isdir(os.path.expanduser(a.path)) and not path_like(a.path):",
-                                                    "if not os.path.isdir(os.path.expanduser(a.path)):")], "'./nope' was not refused as a path"),
+    ("a path taken for a name", a_path_not_name, [(CLI, "if not existing and not new_cmd.path_like(a.path):",
+                                                    "if not existing:")], "'./nope' was not refused as a path"),
     ("a non-empty folder written into", a_target_exists, [(NEW, "if os.listdir(target):", "if False:")], "wrote into a non-empty folder"),
     ("a link followed", a_target_exists, [(NEW, "if os.path.islink(target):", "if False:"), (NEW, "if os.listdir(target):", "if False:")],
      "wrote through a link"),
+    ("git init that follows GIT_DIR", a_git_env, [(NEW, ", env=lib.git_env())", ")")], "git init followed GIT_DIR"),
     ("no cleanup after git fails", a_git_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
     ("no cleanup after forge.json fails", a_forge_json_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
 ]
@@ -542,7 +566,7 @@ def main():
     plain = [("no --stack", a_missing_stack, {}), ("one error for every missing answer", a_one_error, {"projects_dir": False}),
              ("generic stack created", a_generic_created, {}), ("dry-run", a_dry_run, {}), ("a project named list", a_list_created, {}),
              ("bad names", a_bad_names, {}), ("path not name", a_path_not_name, {}), ("target exists", a_target_exists, {}),
-             ("already registered", a_registered, {}), ("git fails", a_git_fails, {}), ("forge.json fails", a_forge_json_fails, {}),
+             ("already registered", a_registered, {}), ("git fails", a_git_fails, {}), ("GIT_DIR in the environment", a_git_env, {}), ("forge.json fails", a_forge_json_fails, {}),
              ("sync fails", a_sync_fails, {}), ("--path", a_path_flag, {}), ("flags by mode", a_flags_by_mode, {}),
              ("--framework", a_framework, {}), ("help", a_help, {}), ("unknown stack", a_unknown_stack, {}), ("no forge.json", a_no_forge_json, {})]
     for label, fn, kw in plain:
@@ -570,7 +594,8 @@ def main():
         cw = World("c", mutate=mutate)
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
-        print("control %-45s -> %s" % (label, (got[0] if got else "NOT SEEN FAILING")[:110]))
+        shown = [g for g in got if needle in g] or got
+        print("control %-45s -> %s" % (label, (shown[0] if shown else "NOT SEEN FAILING")[:110]))
         cw.close()
     sandbox.cleanup()
     for n in notrun:

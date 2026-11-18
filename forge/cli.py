@@ -1831,9 +1831,10 @@ def cmd_new(a):
     if not os.path.exists(lib.SETTINGS):
         print("! forge new: config/forge.json missing -- run bin/forge init")
         return 1
-    if not os.path.isdir(os.path.expanduser(a.path)) and not new_cmd.path_like(a.path):
+    existing = os.path.isdir(os.path.expanduser(a.path))
+    if not existing and not new_cmd.path_like(a.path):
         return new_cmd.create(a)  # no such directory, and it is written as a name: a project to make
-    if a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply:
+    if existing and (a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply):
         print("! forge new: %s is a directory, so forge new registers it, and --path, --stack, --framework, --yes and --apply "
               "belong to making a project from a name" % a.path)
         return 2
@@ -2008,7 +2009,7 @@ def main(argv=None):
     i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
     i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
-    i.add_argument("--framework", action="store_true", help="making: switch the agent framework on in the project (framework: true)")
+    i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (the framework's plugin hand-over is a later step)")
     i.add_argument("--yes", action="store_true", help="making: ask nothing; a missing answer is an error naming it (today every answer is a flag, with or without it)")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
     i.set_defaults(fn=cmd_new)

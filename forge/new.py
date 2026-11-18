@@ -59,7 +59,7 @@ def write_file(undo, folder, filename, text):
 
 def git_init(folder):
     try:
-        subprocess.run(["git", "-C", folder, "init", "-q"], check=True, capture_output=True, text=True)
+        subprocess.run(["git", "-C", folder, "init", "-q"], check=True, capture_output=True, text=True, env=lib.git_env())
     except FileNotFoundError:
         raise OSError("git init failed: git is not on PATH")
     except subprocess.CalledProcessError as e:

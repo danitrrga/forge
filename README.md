@@ -164,7 +164,8 @@ python3 bin/forge test fwx                      # fwx's own suite, a group of fo
 git clone https://github.com/danitrrga/forge ~/forge
 cd ~/forge
 python3 bin/forge init                  # checks your tools, writes your data, syncs, runs doctor
-python3 bin/forge new ~/code/myproject  # registers a project and syncs it
+python3 bin/forge new ~/code/myproject  # registers an existing project and syncs it
+python3 bin/forge new myproject --stack generic --apply   # or makes one in projects_dir, then syncs it
 python3 bin/forge doctor                # what is broken, and how to fix it
 python3 bin/forge sync                  # dry-run: what would change
 python3 bin/forge sync --apply          # write it
@@ -180,10 +181,18 @@ itself, an empty MCP registry, `credentials/secrets.json` (mode 600), `docs/AGEN
 `skills/`. Then it runs `forge skills --apply`, then `forge sync --apply --all`, which installs the SessionStart hook, and
 exits with `forge doctor`'s status.
 
-`forge new PATH [--name NAME] [--writes-tracked-files]` writes `config/projects/NAME.claude.json` and runs
-`forge sync --apply NAME`. It refuses a path that is not a directory, a name already registered and
-a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
+`forge new PATH [--name NAME] [--writes-tracked-files]` registers the existing directory PATH: it writes
+`config/projects/NAME.claude.json` and runs `forge sync --apply NAME`. It refuses a path that is not a directory, a name already
+registered and a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
 `CLAUDE.md`, no `.gitignore` line. The flag allows it.
+
+`forge new NAME [--path DIR] [--stack generic] [--framework] [--yes] [--apply]`, when no directory of that name is there,
+makes the project in `projects_dir` of `config/forge.json` (or in `DIR`, which must exist): its folder, `git init`, a
+`.gitignore` written first, a one-line `README.md`, the project file, its `skill_keep.extras` row and `forge sync --apply NAME`.
+Without `--apply` it prints the plan and writes nothing. A missing answer (today only `--stack` and the folder) is named in one
+error before the first write, with or without `--yes`, so no half-made project is left; a failure after that removes what the run made.
+A name is kebab-case (so never `@x` or `-x`); an argument written as a path (a `/`, or a leading `.` or `~`) that does not exist is
+refused, never made. `--framework` writes `framework: true`; the plugin hand-over of the framework is not part of it yet.
 
 ## How it works
 
@@ -262,7 +271,7 @@ licences in `SOURCES.md`.
 
 - **Never writes outside its scope.** Only the installed checkout writes: a linked worktree or a plain copy of
   it writes nothing, and a toy HOME may only write its own toy world. Your own `CLAUDE.md`, `AGENTS.md` and
-  `.gitignore` in a project are never written by `forge new`.
+  `.gitignore` in a project are never written by `forge new` (a project it makes gets its own, new, `.gitignore`).
 - **Dry-run by default.** `forge sync` without `--apply` lists every file it would write and writes none.
 - **Secrets stay in one place.** The registry refers to a secret as `${VAR}`, resolved from the git-ignored
   `credentials/secrets.json`. A server whose secret is missing is not written.
@@ -276,7 +285,7 @@ licences in `SOURCES.md`.
 
 ```
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
-forge new PATH [--name NAME] [--writes-tracked-files]       register a project and sync it
+forge new PATH|NAME [--name N] [--path DIR] [--stack S] [--apply]  register a directory, or make a project from a name; sync it
 forge sync [NAME | --all] [--apply]                         what would change (or change it), per project
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
