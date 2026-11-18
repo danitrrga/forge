@@ -337,33 +337,6 @@ s.eq("list --json with no .fwx: no milestones", js(st(empty, "phase", "list", "-
 s.eq("list --json with no .fwx creates nothing", tree(empty), ["README"])
 clean("list --subproject with a bad name", st(sub, "phase", "list", "--subproject", "a/b"), 1)
 
-# ---- list in a linked worktree: the worktree's own `.fwx/` when the branch tracks one (converter fix, DTC-63) ---------
-# A conversion branch holds its `.fwx/` in the linked worktree while the main checkout has none until the merge: `phase list`
-# read the main checkout and listed nothing. Every other command keeps resolving the main checkout (the documents of a phase
-# live on the main branch, D110), so only the listing follows the folder it runs in, and only where that folder tracks `.fwx/`.
-# Seen red on the base (lib/fwx/commands/state.py at 2ffe5bf): "FAIL: list in a linked worktree whose branch tracks its own
-# .fwx/: the worktree's phases: got [], want [('v1', ['01-on-branch'])]" and "... its plan_root is the worktree's: got
-# '<main checkout>/.fwx', want '<worktree>/.fwx'".
-tracked_main = helpers.toy_repo()
-tracked_wt = helpers.add_worktree(tracked_main, "conversion")
-helpers.write(tracked_wt, ".fwx/milestones/v1/phases/01-on-branch/plan.md", "# plan\n")
-helpers.git(tracked_wt, "add", "-A")
-helpers.git(tracked_wt, "commit", "-q", "-m", "a phase on the branch")
-rows = lambda r: [(m["name"], [p["name"] for p in m["phases"]]) for m in js(r.stdout).get("milestones", [])]
-r = st(tracked_wt, "phase", "list", "--json")
-clean("list in a linked worktree whose branch tracks its own .fwx/", r, 0)
-s.eq("list in a linked worktree whose branch tracks its own .fwx/: the worktree's phases", rows(r), [("v1", ["01-on-branch"])])
-s.eq("... and its plan_root is the worktree's", js(r.stdout).get("plan_root"), os.path.join(tracked_wt, ".fwx"))
-s.eq("list in the main checkout still lists the main checkout's phases (none: the branch is not merged)", rows(st(tracked_main, "phase", "list", "--json")), [])
-# the opposite case: a worktree whose branch tracks no `.fwx/` (executors, the usual one) still sees the main checkout's documents
-plain_main = helpers.toy_repo()
-helpers.write(plain_main, ".fwx/milestones/v1/phases/01-only-on-main/plan.md", "# plan\n")     # untracked: the documents live there
-plain_wt = helpers.add_worktree(plain_main, "work")
-s.eq("list in a linked worktree that tracks no .fwx/ reads the main checkout", rows(st(plain_wt, "phase", "list", "--json")),
-     [("v1", ["01-only-on-main"])])
-s.eq("`phase new` in a linked worktree still makes the folder in the main checkout (D110)",
-     st(plain_wt, "phase", "new", "next").stdout.strip(), os.path.join(plain_main, ".fwx", "milestones", "v1", "phases", "02-next"))
-
 # ---- new-subphase, new-milestone ------------------------------------------------------------------------------------
 clean("new-subphase", real, 0, os.path.join(sphase, "01.1-part"))
 s.eq("new-subphase: folder content", ls(os.path.join(sphase, "01.1-part")), ["audit.tsv", "plan.md"])

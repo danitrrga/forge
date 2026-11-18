@@ -27,7 +27,8 @@
       their destination with `os.rename` (an ignored file only if git would still ignore it there, else nothing moves), the
       machine-state names of GSD are deleted (every file it moves or deletes is first written to a tar in `<git dir>/fwx/migrate-gsd/`; `tar -xf` restores it), and `.planning/` is
       removed when it is empty. A dry run unless `--apply`. An untracked file whose destination a `.gitignore` inside `.fwx/` ignores
-      (the carried rules of one of `.planning/`, which ignored it before the merge) moves all the same.
+      (only a rule the conversion carried over from `.planning/`, which ignored it before the merge; a rule that was in `.fwx/` before the
+      conversion does not count) moves all the same.
 
 `plan` and `refs` without a write flag only read: no cache, no log, git runs with `--no-optional-locks`, so not even the
 index is refreshed.
@@ -217,9 +218,9 @@ class WorkTree:
                 found.append(os.path.relpath(os.path.join(dirpath, n), self.repo))
         return sorted(found)
 
-    def read(self, rel):
+    def read(self, rel, errors="replace"):
         try:
-            with open(os.path.join(self.repo, SCOPE_SRC, rel), "r", encoding="utf-8", errors="replace") as f:
+            with open(os.path.join(self.repo, SCOPE_SRC, rel), "r", encoding="utf-8", errors=errors) as f:
                 return f.read()
         except OSError:
             return None
@@ -239,9 +240,9 @@ class Commit:
             out.append((path[len(SCOPE_SRC) + 1:], True, int(size) if size.isdigit() else 0))
         return sorted(out)
 
-    def read(self, rel):
+    def read(self, rel, errors="replace"):
         r = _git(self.repo, "cat-file", "blob", "%s:%s/%s" % (self.sha, SCOPE_SRC, rel), ok=(0, 128))
-        return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else None
+        return r.stdout.decode("utf-8", errors) if r.returncode == 0 else None
 
 
 # ---- small helpers -----------------------------------------------------------------------------------------------------
@@ -562,7 +563,7 @@ def carry_gitignore(sc, mapper, src, inner, action, dest):
     would show as untracked once `leftovers` moves them. The target is the same folder at the destination; an anchored rule
     (`phases/*/shots/`, `/x`) is mapped as a `.gitignore` line is, because the folders under it move. A file that
     moves whole and whose rules need no mapping is not carried: it just moves, byte for byte."""
-    text = src.read(sc.prefix + inner)
+    text = src.read(sc.prefix + inner, errors="surrogateescape")    # a byte that is not UTF-8 comes back as it was, not as U+FFFD
     if text is None:
         return None
     d = posixpath.dirname(inner)
@@ -622,6 +623,12 @@ def analyze(src, opts):
             action, dest, rule = classify(sc, inner, tracked)
             if tracked and posixpath.basename(inner) == ".gitignore":
                 carry = carry_gitignore(sc, shape, src, inner, action, dest)
+                if carry and "*" in carry[0]:    # its folder goes to a milestone the converter cannot know: nothing to write it under
+                    notes.append("%s/%s%s: its rules are NOT written again: the folder it sits in goes to a milestone this project has "
+                                 "several of and the converter cannot pick one (%s). Write the rules by hand where they belong"
+                                 % (SCOPE_SRC, sc.prefix, inner,
+                                    "the file moves with its rules unchanged" if action == "keep" and dest else "the file is removed with its folder"))
+                    carry = None
                 if carry:
                     sc.carried[inner] = carry
                     action, dest, rule = "purge", None, "inner-gitignore"
@@ -757,7 +764,7 @@ RE_PS_CARET = re.compile(_PS_BEFORE + r":\^\Z")
 # a path built from a variable or a command (`"$ROOT/.planning/x"`, `${DIR}/.planning`, `$(git rev-parse --show-toplevel)/.planning/x`):
 # whatever the variable holds is the script's business, so the converter lists the line and does not rewrite it. `$HOME` and `~` are
 # the user's own folder, not the repository's, and stay no reference.
-RE_HAND = re.compile(r"(?P<expr>\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*|\$\((?:[^()]|\([^()]*\))*\)|`[^`]*`)[\"']?/"
+RE_HAND = re.compile(r"(?P<expr>\$\{[A-Za-z_]\w*(?::?[-=?+][^{}]*)?\}|\$[A-Za-z_]\w*|\$\((?:[^()]|\([^()]*\))*\)|`[^`]*`)[\"']?/(?:\.\./)*"
                      r"(?P<tok>\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])(?:/[^\s\"'`<>()\[\]{},;|&$#]*)?)")
 RE_HOME = re.compile(r"\$\{?HOME\}?\Z")
 HAND_WHY = "needs a hand: the path is built from a variable, so the converter cannot know where it points"
@@ -766,15 +773,16 @@ HAND_WHY = "needs a hand: the path is built from a variable, so the converter ca
 def tokens(line, mapper):
     """(column, token, kind, new) of each `.planning` path of a line: the one reading of a line, so that what `refs` lists is
     what --rewrite and --prefix change. `hand` is a path built from a variable: listed, never rewritten."""
-    found, hand_at = [], set()
+    found, hand_at, home_at = [], set(), set()
     for m in RE_HAND.finditer(line):
         if RE_HOME.match(m.group("expr")):
+            home_at.add(m.start("tok"))     # `"$HOME"/.planning`: the user's own folder, also when the variable is quoted
             continue
         hand_at.add(m.start("tok"))
         found.append((m.start(), m.group(0).rstrip(".:!?"), "hand", None))
     for m in RE_TOKEN.finditer(line):
         before = line[:m.start()]
-        if m.start() in hand_at or (before.endswith(")") and not RE_PS_MAGIC.search(before)) \
+        if m.start() in hand_at or m.start() in home_at or (before.endswith(")") and not RE_PS_MAGIC.search(before)) \
                 or (before.endswith(":/") and not RE_PS_TOP.search(before)) or (before.endswith(":^") and not RE_PS_CARET.search(before)):
             continue
         token = m.group(0).rstrip(".:!?")
@@ -1099,16 +1107,34 @@ def ignored_among(repo, paths):
     return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p}
 
 
+def fwx_gitignores_before(repo):
+    """The `.gitignore` files inside `.fwx/` that the commit of the first conversion (the first base of the bases file) already
+    tracked: the owner's own rules, not carried ones. None when that base cannot be read, so that no rule counts as carried."""
+    try:
+        with open(_abs(repo, BASES), encoding="utf-8", errors="replace") as f:
+            m = re.search(r"\bbase ([0-9a-f]{7,40})\b", f.read())
+    except OSError:
+        return None
+    if not m:
+        return None
+    r = _git(repo, "ls-tree", "-r", "--name-only", "-z", m.group(1), "--", SCOPE_DEST, ok=(0, 128))
+    if r.returncode:
+        return None
+    return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p and posixpath.basename(os.fsdecode(p)) == ".gitignore"}
+
+
 def ignored_by_fwx_file(repo, paths):
-    """The paths of the list that a rule of a `.gitignore` inside `.fwx/` ignores (the rule that decides, `check-ignore -v`): the
-    carried rules of a `.gitignore` of `.planning/`, as opposed to a line of the root `.gitignore`."""
-    if not paths:
+    """The paths of the list that a rule of a `.gitignore` inside `.fwx/` ignores (the rule that decides, `check-ignore -v`), when
+    that file is one the conversion carried over from `.planning/`: not one the owner already had (`fwx_gitignores_before`), and
+    not a line of the root `.gitignore`."""
+    before = fwx_gitignores_before(repo) if paths else None
+    if before is None:
         return set()
     r = _git(repo, "check-ignore", "-v", "-z", "--stdin", ok=(0, 1), input=_nul(paths))
     parts, out = r.stdout.split(b"\0"), set()
     for i in range(0, len(parts) - 3, 4):
         source, pattern, path = os.fsdecode(parts[i]), os.fsdecode(parts[i + 2]), os.fsdecode(parts[i + 3])
-        if source.startswith(SCOPE_DEST + "/") and not pattern.startswith("!"):
+        if source.startswith(SCOPE_DEST + "/") and source not in before and not pattern.startswith("!"):
             out.add(path)
     return out
 
@@ -1239,7 +1265,7 @@ def audit_conflicts(repo, scopes):
     out = []
     for sc in scopes:
         for p in sc.phases:
-            if p["dest_rel"] is None or p["from_roadmap"] or not p["closed"]:
+            if p["dest_rel"] is None or not p["closed"]:
                 continue
             folder = _abs(repo, "%s/%s" % (sc.dest, p["dest_rel"]))
             audit = str(state.phase_paths(folder)["audit"])
@@ -1335,7 +1361,7 @@ def plan_apply(repo, opts):
     job.leftover = [f for f in files if not f["tracked"]]
     for sc in scopes:
         for inner, (target, text) in sorted(sc.carried.items()):
-            job.gens.append((target, text.encode("utf-8")))
+            job.gens.append((target, text.encode("utf-8", "surrogateescape")))
     roadmaps = {sc.ws: src.read(sc.prefix + "ROADMAP.md") for sc in scopes}
     milestones, dests = set(), [d for _, d in job.moves]
     extra_bad = []
@@ -1349,14 +1375,13 @@ def plan_apply(repo, opts):
             if p["from_roadmap"]:
                 section = roadmap_section(roadmaps[sc.ws], ".".join(str(n) for n in p["num"])) or ("### Phase %s\n" % p["title"])
                 job.gens.append((dest + "/gsd-roadmap-entry.md", section.encode("utf-8")))
-                if p["closed"]:     # --close named it: the folder keeps the entry, and the closing row says it is done
-                    job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
-                    job.closed.append(dest)
-            elif p["closed"]:
-                if not os.path.lexists(str(state.phase_paths(_abs(repo, dest))["audit"])):
+            if p["closed"]:     # --close named it (or GSD left it closed): the closing row says it is done, once
+                if os.path.lexists(str(state.phase_paths(_abs(repo, dest))["audit"])):
+                    job.notes.append("phase %s is already closed (%s): its audit file ends at the stage `closed`, so no second closing row is added" % (p["name"], dest))
+                else:
                     job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
                 job.closed.append(dest)
-            elif not any(d.startswith(dest + "/") for d in dests) and not os.path.isdir(_abs(repo, dest)):
+            elif not p["from_roadmap"] and not any(d.startswith(dest + "/") for d in dests) and not os.path.isdir(_abs(repo, dest)):
                 job.gens.append((dest + "/.gitkeep", b""))
     for d in dests:
         m = RE_MS_DEST.match(d)
@@ -1710,7 +1735,7 @@ def cmd_apply(repo, got):
     n_left = len(job.leftover)
     doc = {"schema": SCHEMA, "repo": repo, "base": job.base, "branch": branch, "moved": len(job.moves), "removed": len(job.removes),
            "generated": [g for g, _ in job.gens], "closed": [{"dest": d, "row": r} for d, r in job.audit_rows],
-           "gitignore": job.twins, "backlog": job.backlog, "leftover": n_left, "totals": job.totals,
+           "phases": len(job.phases), "gitignore": job.twins, "backlog": job.backlog, "leftover": n_left, "totals": job.totals,
            "recover": "git show %s:.planning/<path>" % job.base, "tag": job.tag, "commit_message": job.msgfile,
            "next": ["fwx migrate-gsd refs --base %s [--rewrite FILE...] [--prefix FILE...]" % job.base, "git commit -F " + job.msgfile]}
     if "--json" in got:
@@ -1727,6 +1752,7 @@ def cmd_apply(repo, got):
            "checks passed: the blob of each of the %d kept files is the same at its destination, each of the %d removed files is gone, "
            "state.phases sees %d phase folder(s), state.last_stage says closed for %d" % (len(job.moves), len(job.removes),
                                                                                        len(job.phases), len(job.closed)),
+           "`fwx phase list` reads the main checkout: it lists the %d phase(s) converted here once this branch is merged" % len(job.phases),
            "ignored or untracked files left where they are for `fwx migrate-gsd leftovers`: %d" % n_left,
            "backlog (not migrated, recover with the base): %d" % len(job.backlog)]
     out += ["  %s  %s" % (b["src"], b["title"]) for b in job.backlog]
@@ -2224,6 +2250,7 @@ def run(argv):
     scopes, files, mapper, phases, gitignore, notes, root = build(repo, src, options(got))
     if sub == "plan":
         notes += ["apply would refuse: " + c for c in audit_conflicts(repo, scopes)]
+        notes += ["apply would refuse: " + c for c in collisions(repo, [target for sc in scopes for target, _ in sc.carried.values()])]
     rewritten = left = None
     if sub == "refs" and (got["--rewrite"] or got["--prefix"]):
         rewritten, left = apply_rewrites(repo, mapper, got["--rewrite"], got["--prefix"])

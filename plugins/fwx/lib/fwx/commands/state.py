@@ -12,7 +12,6 @@ import os
 import re
 import shutil
 import sys
-from pathlib import Path
 
 from fwx import config, context_base, routes, state
 from fwx.core import stages
@@ -74,22 +73,8 @@ def cmd_resolve(a):
     return 0
 
 
-def _listing_root():
-    """The `.fwx/` that `phase list` reads: the one of the linked worktree it runs in when that branch tracks one (a conversion
-    branch, before its merge), else `state.plan_root()` (the main checkout, where the documents of a phase live: D110). Only the
-    listing does this: every command that writes or binds a phase keeps resolving the main checkout."""
-    root = state.plan_root()
-    r = state._git(os.getcwd(), "rev-parse", "--show-toplevel")
-    top = r.stdout.strip()
-    if r.returncode or not top or os.path.realpath(top) == os.path.realpath(config.main_checkout()):
-        return root
-    if state._git(top, "ls-files", "--", state.PLAN_DIR).stdout.strip():
-        return Path(top) / state.PLAN_DIR
-    return root
-
-
 def cmd_list(a):
-    root = _listing_root()
+    root = state.plan_root()
     scope = state.scope_root(root, a.subproject)
     out = {"plan_root": str(root), "subproject": a.subproject, "subprojects": state.subprojects(root), "milestones": []}
     for m in state.milestones(scope):

@@ -1504,7 +1504,7 @@ else:
 #   D4 "FAIL: D4 refs does not offer a .gitignore line apply already handled: got ['.gitignore:1', 'docs/.gitignore:1']" and
 #      "FAIL: D4 ... follows the mapping apply used: got '.fwx/workstreams/*/private/', want '.fwx/subprojects/*/private/'"
 #   D5 "FAIL: D5 apply --close on a phase only the ROADMAP has keeps its folder: missing .fwx/milestones/v1/phases/02-beta/gsd-roadmap-entry.md"
-#   D6 is in tests/test_state_cli.py (`phase list` in a linked worktree).
+#   D6 (`phase list` reading a conversion branch's own .fwx/) was taken out again in the fix round below: `phase list` reads the main checkout.
 # Controls, each a copy of the plugin with one rule of migrate_gsd.py changed (532 checks on the good code; the first FAIL line):
 #   - apply removes `.planning/` whole (a folder that holds a file goes too): "FAIL: D2 ... the folder that holds the file stays, with
 #     every folder above it: got [False, False, False, False], want [True, True, True, True]"
@@ -1669,15 +1669,117 @@ s.ok("D5 apply --close on a phase only the ROADMAP has keeps its folder: the roa
 s.eq("D5 ... state.phases sees it and its last stage is closed",
      ([p.name for p in state.phases(Path(wt) / ".fwx", "v1")], state.last_stage(Path(wt) / BETA)), (["01-alpha", "02-beta"], "closed"))
 s.ok("D5 ... the closing row is the converter's, with the base", "closed migrated-from-gsd" in (rd(os.path.join(wt, BETA, "audit.tsv")) or ""))
-pl = helpers.fwx(wt, "phase", "list", "--json", env=dict(ENV, CLAUDE_CODE_SESSION_ID=""))
-s.eq("D5 ... and `fwx phase list` in the worktree lists it as done (D6 and D5 together)",
-     [(p["name"], p["open"]) for m in json.loads(pl.stdout or '{"milestones": []}')["milestones"] for p in m["phases"]],
-     [("01-alpha", False), ("02-beta", False)])
 s.ok("D5 the closed phase 3 that only a box closes (no --close) is still not made: that part of the old behaviour stays",
      not os.path.lexists(os.path.join(wt, ".fwx/milestones/v1/phases/03-gamma")))
 repo, wt = mini()
 rr = run(wt, "apply", "--close", "1")
 s.ok("D5 without --close for it, phase 2 is still made open (no closing row)",
      os.path.isfile(os.path.join(wt, BETA, "gsd-roadmap-entry.md")) and state.last_stage(Path(wt) / BETA) is None)
+
+# ---- the fix round after the review of pull request 181 (review.md, findings 2 to 8; finding 1 is the take-out of the `phase list` change) ----
+# Each case written before its fix and seen red on caee651 (the first FAIL line of each):
+#   R4 "FAIL: R4 leftovers refuses an untracked file a rule of the owner's own .fwx/.gitignore would hide: exit: got 0, want 2"
+#   R5 "FAIL: ... its audit file is as it was (closed once, no second row): got '...earlier\tstage\t\tclosed\t\n<date>\tstage\t<sha>\tclosed migrated-from-gsd <sha>\t\n'",
+#      "FAIL: R5 apply --close on a roadmap-only phase whose audit file is at the stage discuss: exits 2: got 0, want 2" and, for a header that is
+#      not fwx's, "... exits 2: got 1, want 2" with "FAIL: ... the owner's file is still there" (the rollback deleted it)
+#   R6 "FAIL: R6 refs lists the forms with a default, a nested quote and `/../`, each as needing a hand: got [], want [(2, 'hand'), ...]"
+#   R8 "FAIL: R8 `\"$HOME\"/.planning/x` and `${HOME}/.planning/x` (the user's own folder) are no reference: got [6], want []"
+#   R2 "FAIL: R2 no folder named `*` is made under .fwx/: got ['*'], want []"
+#   R3 "FAIL: R3 a rule with a byte that is not UTF-8 is carried byte for byte (the mapped line apart): got b'phases/*/shots/\nui/n\xef\xbf\xbd.png\n', want b'...n\xe9.png\n'"
+#   R7 "FAIL: R7 plan says apply would refuse a carried .gitignore that lands on a file that exists: ..." (no note)
+#   and "FAIL: apply says in one line that `fwx phase list` lists the converted phases once the branch is merged, with their count: ..."
+# Control: the new cases against caee651's migrate_gsd.py (a copy of the plugin with only that file old): 22 FAIL lines, exit 1, at least one per
+# case above and the one for the `fwx phase list` line of apply; on the fixed file 562 checks, exit 0.
+
+# ---- R4: leftovers exempts the rules the conversion carried, not a rule the owner already had in .fwx/.gitignore ----------------------
+OWN = {".fwx/.gitignore": "*.log\n", ".planning/ui-reviews/.gitignore": "*.png\n", ".planning/ui-reviews/notes.md": "# n\n"}
+repo, wt = mini(OWN)
+helpers.write(repo, ".planning/ui-reviews/a.png", "image")      # hidden by the rule the conversion carried: moves
+helpers.write(repo, ".planning/notes.log", "log\n")             # hidden by the owner's own rule: refused, as on the base
+rr = run(wt, "apply", "--close", "1")
+s.eq("R4 apply exits 0 (an owner's .fwx/.gitignore and an inner one to carry)", rr.returncode, 0)
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+before = porcelain(repo)
+r = run(repo, "leftovers", "--apply")
+s.eq("R4 leftovers refuses an untracked file a rule of the owner's own .fwx/.gitignore would hide: exit", r.returncode, 2)
+s.ok("... it says 1 file, and which", "1 untracked file(s) would be ignored" in r.stderr and ".fwx/notes.log" in r.stderr, r.stderr[-300:])
+s.eq("... and nothing was moved", (porcelain(repo), os.path.isfile(os.path.join(repo, ".planning/ui-reviews/a.png"))), (before, True))
+if os.path.lexists(os.path.join(repo, ".planning/notes.log")):
+    os.remove(os.path.join(repo, ".planning/notes.log"))
+r = run(repo, "leftovers", "--apply")
+s.eq("R4 ... without that file the carried rule's image moves all the same (exit)", r.returncode, 0)
+s.eq("... and is at its new place", rd(os.path.join(repo, ".fwx/ui-reviews/a.png")), "image")
+
+# ---- R5: --close on a phase only the ROADMAP has, whose folder already holds an audit file ------------------------------------------
+HDR = "date\tkind\tsha\tdetail\trc\n"
+repo, wt = mini()
+helpers.write(wt, BETA + "/audit.tsv", HDR + "earlier\tstage\t\tclosed\t\n")
+r = run(wt, "apply", "--close", "2")
+s.eq("R5 --close on a roadmap-only phase whose audit file already says closed: exit", r.returncode, 0)
+s.eq("... its audit file is as it was (closed once, no second row)", rd(os.path.join(wt, BETA, "audit.tsv")), HDR + "earlier\tstage\t\tclosed\t\n")
+s.ok("... and apply says the phase was already closed", "already closed" in r.stdout and "02-beta" in r.stdout, r.stdout[-500:])
+repo, wt = mini()
+helpers.write(wt, BETA + "/audit.tsv", HDR + "earlier\tstage\t\tdiscuss started\t\n")
+roots = (wt, os.path.join(repo, ".git"))
+rp = run(wt, "plan", "--close", "2")
+s.ok("R5 plan says apply would refuse a roadmap-only phase at the stage discuss that --close names", rp.returncode == 0 and "apply would refuse" in rp.stdout and "discuss" in rp.stdout, rp.stdout[-400:])
+r = refusal("R5 apply --close on a roadmap-only phase whose audit file is at the stage discuss", wt, ["apply", "--close", "2"], "discuss", roots)
+s.ok("... it names the file and the way out (--open)", "02-beta/audit.tsv" in r.stderr and "--open" in r.stderr, r.stderr[-300:])
+repo, wt = mini()
+helpers.write(wt, BETA + "/audit.tsv", "when\twhat\nx\ty\n")
+roots = (wt, os.path.join(repo, ".git"))
+r = refusal("R5 apply --close on a roadmap-only phase whose audit file has a header that is not fwx's", wt, ["apply", "--close", "2"], "02-beta/audit.tsv", roots)
+s.ok("... the owner's file is still there", rd(os.path.join(wt, BETA, "audit.tsv")) == "when\twhat\nx\ty\n")
+
+# ---- R6: refs lists the variable-built forms the review found missing, and `"$HOME"/.planning` is still no reference ---------------
+FORMS = ("#!/bin/sh\nls ${V:-x}/.planning/a\ncat \"${ROOT:?}/.planning/x\"\ncat \"$(dirname \"$0\")/../.planning/x\"\ncat $ROOT/../.planning/x\n"
+         "ls \"$HOME\"/.planning/keep\nls ${HOME}/.planning/keep\n")
+repo, wt = mini({"scripts/forms.sh": FORMS})
+rp, D = plan_json(wt, "--close", "1")
+got = {r["line"]: r for r in D["refs"] if r["file"] == "scripts/forms.sh"}
+s.eq("R6 refs lists the forms with a default, a nested quote and `/../`, each as needing a hand",
+     [(n, got[n]["kind"]) for n in (2, 3, 4, 5) if n in got], [(2, "hand"), (3, "hand"), (4, "hand"), (5, "hand")])
+s.eq("R8 `\"$HOME\"/.planning/x` and `${HOME}/.planning/x` (the user's own folder) are no reference", [n for n in (6, 7) if n in got], [])
+
+# ---- R2: an inner .gitignore whose folder has no milestone to go to (several milestones) is not written into a folder named `*` ---
+repo, wt = mini({".planning/phases/.gitignore": "shots/\n/*.tmp\n", ".planning/phases/02-beta/02-CONTEXT.md": "# c\n"})
+mp = os.path.join(HOME, "r2-map.txt")
+with open(mp, "w") as fh:
+    fh.write("1 v1\n2 v2\n")
+rp = run(wt, "plan", "--milestone-map", mp, "--close", "1", "--close", "2")
+s.eq("R2 plan exits 0", rp.returncode, 0)
+r = run(wt, "apply", "--milestone-map", mp, "--close", "1", "--close", "2")
+s.eq("R2 apply exits 0", r.returncode, 0)
+s.eq("R2 no folder named `*` is made under .fwx/", [p for dp, dn, fn in os.walk(os.path.join(wt, ".fwx")) for p in dn + fn if "*" in p], [])
+s.ok("R2 ... and the note says the rules were NOT written again, and why", "its rules are NOT written again" in r.stdout and "milestone" in r.stdout
+     and ".planning/phases/.gitignore" in r.stdout and "written again at" not in r.stdout, r.stdout[-900:])
+
+# ---- R3: a rule with a byte that is not UTF-8 is carried byte for byte ----------------------------------------------------------------
+raw = b"phases/*/shots/\nui/n\xe9.png\n"
+repo, wt = mini({".planning/ui/.keep": ""})
+os.makedirs(os.path.join(wt, ".planning"), exist_ok=True)
+with open(os.path.join(wt, ".planning/.gitignore"), "wb") as fh:
+    fh.write(raw)
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "a gitignore with a latin-1 byte")
+r = run(wt, "apply", "--close", "1")
+s.eq("R3 apply exits 0", r.returncode, 0)
+s.eq("R3 a rule with a byte that is not UTF-8 is carried byte for byte (the mapped line apart)",
+     (rd(os.path.join(wt, ".fwx/.gitignore"), "rb") or b"").replace(b"milestones/v1/phases/*/shots/", b"phases/*/shots/"), raw)
+
+# ---- R7: plan says what apply will refuse when a carried .gitignore lands on a file that exists --------------------------------------
+repo, wt = mini({".planning/.gitignore": "phases/*/shots/\n", ".fwx/.gitignore": "mine\n"})
+rp = run(wt, "plan", "--close", "1")
+s.ok("R7 plan says apply would refuse a carried .gitignore that lands on a file that exists", rp.returncode == 0 and "apply would refuse" in rp.stdout
+     and ".fwx/.gitignore exists" in rp.stdout, rp.stdout[-500:])
+r = run(wt, "apply", "--close", "1")
+s.eq("R7 ... and apply does refuse (exit)", r.returncode, 2)
+
+# ---- the output of apply says what `fwx phase list` will show, and how many phases it converted -----------------------------------------
+repo, wt = mini()
+r = run(wt, "apply", "--close", "1")
+s.ok("apply says in one line that `fwx phase list` lists the converted phases once the branch is merged, with their count",
+     [l for l in r.stdout.splitlines() if "fwx phase list" in l and "merged" in l and "2 " in l] != [], r.stdout[-700:])
 
 s.done()
