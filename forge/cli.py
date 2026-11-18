@@ -1957,7 +1957,7 @@ def main(argv=None):
                        epilog="examples: forge config myapp --off skill:grilling --on server:neon | forge config --off option:ui | "
                               "forge config myapp @marketing --off skill:grilling --apply")
     t.add_argument("targets", nargs="*", metavar="[NAME] [@PROFILE]", help="the project (default: this directory's) and, after it, one of its profiles, "
-                   "whose row is then the one changed")
+                   "whose row is then the one changed; both come before the flags")
     t.add_argument("--on", action="append", metavar="TYPE:NAME", help="switch on skill:, set:, server: or option: (ui, command_guard, enableAllProjectMcpServers); repeatable")
     t.add_argument("--off", action="append", metavar="TYPE:NAME", help="switch it off; repeatable; one write, all or nothing")
     t.add_argument("--apply", action="store_true", help="write without asking (without a terminal the default is a dry-run)")

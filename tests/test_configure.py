@@ -23,10 +23,31 @@ Cases (the plan's control list of 4.4 U3b; (h), the screen, belongs to the secon
   j  the rest of the refusals (a project that keeps every skill, a frozen project, a flag given on and off, a malformed TYPE:NAME,
      no flag and no terminal), `forge list @` and `@NAME` as they were, and that no read changes a file.
 
-Written first, run against master (3ecfca4), which has no `config` and no `forge list` without @: 121 FAIL, among them
+Written first, run against master (3ecfca4), which has no `config` and no `forge list` without @: 83 FAIL, among them
 "a: forge list lists the projects -- exit 2, stderr 'forge list: no argument; it takes @ (this project's profiles) or @NAME (one
 profile)'" and "b: forge config plain --off skill:toy-common --apply exits 0 -- exit 2, stderr 'usage: forge [-h] ... forge:
 error: argument cmd: invalid choice: 'config'...". Case j's pinned `forge list @` text was taken from master before the change.
+Negative controls, each a mutation made by hand in the engine, run once and not kept (the first message each produced):
+  a  the readable card leaving out its last server -> "FAIL a: list, multi: the readable card and --json say the same -- human and
+     json differ: servers"
+  b  skill_off writing a common skill into the project's own list (and the two checks that would catch it taken out) -> "FAIL b:
+     skills_keep edited by hand: a later sync_skill_keep.py --apply brings the skill back -- skills_keep edited by hand -- ['toy-d',
+     'toy-common']"
+  c  need() raising with no suggestion -> "FAIL c: config plain --off skill:toy-comon names the closest skill -- no suggestion in:
+     forge config: no skill 'toy-comon'"
+  d  render.color_on() always true -> "FAIL d: no escape code into a pipe -- escape codes in piped output: '\x1b[1mbare\x1b[0m ..."
+  e  skill_on doing nothing (and the verify step out) -> "FAIL e: a common skill: settings.local.json is the same after the undo --
+     settings.local.json differs after undo"
+  f  the write decision `go = yes` made `go = True` -> "FAIL f: and the world did not change -- dry-run wrote: ['forge/config', ...]" and
+     "FAIL f: in a terminal, n writes nothing -- wrote without asking: [...]"
+  f  the staleness check of commit() out -> "FAIL f: a file changed while the owner decided is refused, exit 1, and not written over";
+     the form check out -> "FAIL f: a project file in another form is refused (exit 1) and not rewritten -- (0, ..."
+  g  plan() writing what it had applied before it re-raises a Refusal -> "FAIL g: a call with several flags in which one is refused
+     writes none -- wrote despite refusal: exit 2; ['forge/config', 'forge/config/forge.json']" (the first try passed: the refused
+     flag was applied before any accepted one, so there was nothing to write; the case now puts toy-c before toy-a)
+  i  cmd_config ignoring the @PROFILE -> "FAIL i: the project's extras row did not change -- profile change leaked to the project:
+     {'multi.claude.json': ['@TOYSET', 'toy-c'], 'profiled.claude.json': ['toy-d']}"
+Not covered: the rollback of the first file when the second cannot be written (it needs a write that fails half way).
 """
 import hashlib
 import json
@@ -457,10 +478,18 @@ def case_f():
     check("f: a file changed while the owner decided is refused, exit 1, and not written over",
           code == 1 and "changed" in shown and "toy-common" not in json.dumps(w.doc()["skill_keep"]["common_opt_out"]), (code, shown))
     check("f: and the owner's own change is still there", "toy-b" in w.doc()["skill_keep"]["common_skills"], w.doc()["skill_keep"]["common_skills"])
+    # A file in another form (here four-space JSON) would be reformatted whole by a write: refused, nothing written.
+    w = World()
+    path, doc = os.path.join(w.forge, "config", "projects", "plain.claude.json"), w.proj("plain")
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(doc, fh, indent=4)
+        fh.write("\n")
+    before = w.tree()
+    code, out, err = w.forge_cmd(["config", "plain", "--off", "option:ui", "--apply"])
+    check("f: a project file in another form is refused (exit 1) and not rewritten", code == 1 and "form forge writes" in err and w.tree() == before,
+          (code, out, err, changed(before, w.tree())))
     # A write that cannot be done (a checkout that may not write) is refused before anything is changed: a toy that makes may_write say no.
     w = World()
-    with open(os.path.join(w.forge, ".git", "gitdir-probe"), "w") as fh:
-        fh.write("")
     code, out, err = w.forge_cmd(["config", "plain", "--off", "skill:toy-d", "--apply"], HOME=w.home, XDG_CONFIG_HOME="/nonexistent-outside")
     check("f: a toy world whose environment points outside it writes nothing", code == 1 and w.proj("plain")["skills_keep"] == ["toy-common", "toy-d"]
           and "nothing written" in out + err, (code, out, err))
@@ -479,9 +508,9 @@ def case_g():
     cmds = [l.strip() for l in err.splitlines() if l.strip().startswith("forge config ")]
     check("g: the two commands that work are printed", len(cmds) == 2 and cmds[0] == "forge config multi --off set:TOYSET"
           and cmds[1] == "forge config multi --off set:TOYSET --on skill:toy-b", cmds)
-    # A refused flag among accepted ones writes none of them.
+    # A refused flag among accepted ones writes none of them (toy-c is accepted and applied first, toy-a refused after it).
     before = w.tree()
-    code, out, err = w.forge_cmd(["config", "multi", "--off", "server:toy-echo", "--off", "option:ui", "--off", "skill:toy-a", "--apply"])
+    code, out, err = w.forge_cmd(["config", "multi", "--off", "server:toy-echo", "--off", "skill:toy-c", "--off", "skill:toy-a", "--apply"])
     # Control: a version that writes the first flag before refusing the second fails with `wrote despite refusal`.
     check("g: a call with several flags in which one is refused writes none", code == 2 and w.tree() == before,
           "wrote despite refusal: exit %d; %s" % (code, changed(before, w.tree())))

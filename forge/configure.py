@@ -165,7 +165,7 @@ def cmd_list(a):
         _say(json.dumps(c, indent=2, ensure_ascii=False))
     else:
         _say("\n".join(render.card_lines(c, render.color_on()) + [
-            "  edit       forge config %s --off skill:NAME | --on server:NAME | --off option:ui | @PROFILE ...  (forge config --help)" % target]))
+            "  edit       forge config %s --off skill:X --on server:Y --off option:ui  (add @PROFILE for a profile's row; forge config --help)" % target]))
     return 0
 
 
@@ -226,6 +226,7 @@ class Plan:
         self.start = copy.deepcopy(self.docs)
         self.forge, self.proj = self.docs["forge"], self.docs["project"]
         self.items = []
+        self.expected = None
 
     # -- what the tables say
     def sk(self):
@@ -247,7 +248,7 @@ class Plan:
     def kept(self):
         """The skills sync_skill_keep.py would leave in the project file's skills_keep given these tables and this file, or None
         for a project that keeps every global skill. Mirrors that script's layers (extras row, common union, opt-out) and the
-        pruning of what is not installed; control (b) compares it with the script."""
+        pruning of what is not installed. commit() compares it with what the script then writes."""
         sk, sets, common = self.sk(), self.sk().get("sets") or {}, self.sk().get("common_skills") or []
         own, row, opt, excluded = self.proj.get("skills_keep"), self.row(), self.opted_out(), self.excluded()
         if row is not None:
@@ -522,6 +523,7 @@ def plan(name, profile, changes):
     something cannot be done as asked; nothing is written either way."""
     p = Plan(name, profile)
     p.apply(changes)
+    p.expected = None if profile else p.kept()  # what the project file's skills_keep must hold once sync_skill_keep.py has run
     return p
 
 
@@ -585,6 +587,10 @@ def _write(p, keys, forge_changed, undo, result):
         result["sync"]["skill keep"] = r.returncode
         if r.returncode:
             raise Failure("written, but sync_skill_keep.py --apply exits %d (%s); undo with: %s" % (r.returncode, _run_tail(r), undo))
+        got = (lib.read_json(p.paths["project"], quiet=True) or {}).get("skills_keep")
+        if p.expected is not None and (not isinstance(got, list) or set(got) != p.expected):
+            raise Failure("written, but sync_skill_keep.py left skills_keep as %s, not the %s this change should give; undo with: %s" % (
+                got, sorted(p.expected), undo))
 
 
 def _ask(prompt):
@@ -641,7 +647,7 @@ def change(name, profile, changes, yes=False, as_json=False):
         if as_json:
             _say(json.dumps(doc, indent=2, ensure_ascii=False))
         return 0
-    except Refusal as e:
+    except (Refusal, profiles.ProfileError) as e:  # a profile that cannot be resolved is the owner's data, not a bug
         _say("forge config: %s" % e, err=True)
         return 2
     except Failure as e:
