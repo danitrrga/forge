@@ -61,6 +61,12 @@ seen to turn the named case red (and only the cases named, or a superset that fo
   - row marker ignored                  "a foreign hook in the event is not the row: exit 0"
   - wing read under --hook              "--hook: the rows are checked, the wing is not read (no list_wings call)"
   - a stopped hub passes                "on, hub stopped: exit 1" (no FAIL mempalace-hub line)
+
+Fix round 2 (the external review's 17 findings). Each new case was seen red on 5437235 before the fix (messages in the comments by
+the cases); mutations of memory_doctor.py seen to turn a case red: every call keyed to one host ("a silent hub does not silence
+another host"); the Hindsight loop that ignores the spent budget ("a hub that eats the budget: the Hindsight probe is said not run").
+Not tested, said so: a drawer matched by id (the sampled drawer is matched by text; U1's real results do carry a `drawer_id`, but no
+real hub was available to confirm that list_drawers and search agree on it) and wing aliases.
 """
 import contextlib
 import datetime
@@ -72,11 +78,16 @@ import os
 import re
 import shutil
 import sys
+import socket
 import threading
 import time
 import traceback
+import urllib.request
 
 sys.dont_write_bytecode = True
+# No proxy for any request of this suite, the fixtures' and the direct control's alike: a developer's http_proxy would receive them
+# (review of the pull request, finding on the hub fixture). The opener is global, so memory_doctor's urlopen uses it too.
+urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
 HERE = os.path.dirname(os.path.realpath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(HERE)), "tests"))
 import sandbox  # noqa: E402
@@ -107,10 +118,13 @@ class _Health(http.server.BaseHTTPRequestHandler):
         pass
 
 
-_srv = http.server.HTTPServer(("127.0.0.1", 0), _Health)
+_srv = http.server.HTTPServer(("localhost", 0), _Health)
 threading.Thread(target=_srv.serve_forever, daemon=True).start()
-LIVE = "http://127.0.0.1:%d" % _srv.server_address[1]
-DEAD = "http://127.0.0.1:9"     # the discard port: connection refused at once
+LIVE = "http://localhost:%d" % _srv.server_address[1]
+# A port this suite owns and never listens on: connecting is refused at once, and nothing a developer runs can answer there.
+_refused = socket.socket()
+_refused.bind(("localhost", 0))
+DEAD = "http://localhost:%d" % _refused.getsockname()[1]
 
 
 def write(p, text):
@@ -232,6 +246,24 @@ class _Hub(http.server.BaseHTTPRequestHandler):
         if mode == "all" or (mode == "tools" and is_tool):
             time.sleep(12)                       # longer than any timeout of the doctor, and the answer never comes
             return True
+        if mode in ("trickle", "trickle-head"):
+            # One byte a second, so no single socket operation ever waits the doctor's 3 s: only a deadline for the whole request
+            # ends it. "trickle": the head arrives at once and the body drips (a read that never finishes); "trickle-head": the
+            # head itself drips (urlopen never returns).
+            raw = (b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 40\r\n\r\n" + b"x" * 40 if mode == "trickle"
+                   else b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx")
+            cut = raw.index(b"\r\n\r\n") + 4 if mode == "trickle" else 0
+            try:
+                if cut:
+                    self.wfile.write(raw[:cut])
+                    self.wfile.flush()
+                for i in range(cut, len(raw)):
+                    self.wfile.write(raw[i:i + 1])
+                    self.wfile.flush()
+                    time.sleep(1)
+            except OSError:                      # the doctor gave up and closed the socket
+                pass
+            return True
         if mode == "slow":
             time.sleep(2.9)
         return False
@@ -293,6 +325,9 @@ class _Hub(http.server.BaseHTTPRequestHandler):
             junk = {"unrelated": [unrelated], "nulls": [None], "emptyobj": [{}], "notext": [{"text": 5, "distance": 0.1}]}[mode]
             return self._send(200, _tool_answer({"results": junk}))
         hits = [{"text": d["text"], "source_file": "s.jsonl", "distance": 0.1} for d in drawers if args["query"] in d["text"]]
+        if mode == "lexical":            # MemPalace 3.12.0 (mcp_server/tools_read.py): vector index off, the answer is SQLite BM25 text
+            return self._send(200, _tool_answer({"results": hits[: args.get("limit", 5)], "vector_disabled": True,
+                                                 "vector_disabled_reason": "hnsw index diverged"}))
         if mode == "late":                                                   # the drawer is there, behind an unrelated hit
             hits = [unrelated] + hits
         if mode == "badbeside":                                              # the drawer is there, beside a malformed entry
@@ -303,9 +338,9 @@ class _Hub(http.server.BaseHTTPRequestHandler):
         pass
 
 
-_hub_srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Hub)
+_hub_srv = http.server.ThreadingHTTPServer(("localhost", 0), _Hub)
 threading.Thread(target=_hub_srv.serve_forever, daemon=True).start()
-FAKE_HUB = "http://127.0.0.1:%d" % _hub_srv.server_address[1]
+FAKE_HUB = "http://localhost:%d" % _hub_srv.server_address[1]
 
 NOW = datetime.datetime.now(datetime.timezone.utc)
 HOOK_ROWS = (("Stop", "mempal-stop-hook.sh"), ("SessionEnd", "mempal-session-end-hook.sh"),
@@ -368,7 +403,10 @@ def mp_world(**o):
     os.makedirs(w["backups"])
     if o.get("backup_age_h", 1) is not None:
         arch = os.path.join(w["backups"], "mempalace-20261118T043000Z.tar.zst")
-        write(arch, "archive")
+        if o.get("arch_is_dir"):
+            os.makedirs(arch)
+        else:
+            write(arch, "archive")
         if o.get("count", True):
             write(arch + ".count", "100\n")
         stamp = time.time() - o.get("backup_age_h", 1) * 3600
@@ -399,13 +437,17 @@ def mp_world(**o):
     if o.get("pinned", "3.12.0") is not None:
         tools.append({"name": "pipx:mempalace", "version": o.get("pinned", "3.12.0"), "why": "toy", "when": {"integration": "mempalace"}})
     write(os.path.join(WORLD, "config", "toolchain.json"), json.dumps({"tools": tools}))
-    w["profs"] = o.get("profs", {"toy": {"project_path": w["proj"], "servers": ["mempalace"]}})
+    # A project_path given relative ("toy") is a directory of the toy world, which holds no settings.local.json there: nothing
+    # outside `root` is read (review of the pull request, finding on the lite paths: "/srv/toy" was the machine's).
+    profs = o.get("profs", {"toy": {"project_path": w["proj"], "servers": ["mempalace"]}})
+    w["profs"] = {n: dict(p, project_path=os.path.join(root, p["project_path"])) if "project_path" in p else dict(p)
+                  for n, p in profs.items()}
     return w
 
 
 def mp_run(w, hook=False, known=None, env=None, on=True, hind=False):
-    """main() with the mempalace integration on (or off) and, with `hind`, the hindsight one on over the live stand-in, in
-    `w`'s toy world. Returns (rc or traceback line, lines)."""
+    """main() with the mempalace integration on (or off) and, with `hind`, the hindsight one on over the live stand-in (or at
+    the URL `hind` is), in `w`'s toy world. Returns (rc or traceback line, lines)."""
     knownf = os.path.join(w["root"], "known.json")
     if known is not None:
         write(knownf, known)
@@ -413,9 +455,9 @@ def mp_run(w, hook=False, known=None, env=None, on=True, hind=False):
     integration("codex", False)
     integration("mempalace", on)
     md.HINDSIGHT_RENDERED = os.path.join(w["root"], "hindsight.json")
-    integration("hindsight", hind)
+    integration("hindsight", bool(hind))
     if hind:
-        write(md.HINDSIGHT_RENDERED, json.dumps({"apiUrl": LIVE, "bankId": "personal", "banks": {}}))
+        write(md.HINDSIGHT_RENDERED, json.dumps({"apiUrl": hind if isinstance(hind, str) else LIVE, "bankId": "personal", "banks": {}}))
     md.KNOWN, md.BACKUPS, md.CLAUDE_PROJECTS, md.HOME = knownf, w["backups"], w["claude"], w["root"]
     def projects(skipped=None):
         if skipped is not None:
@@ -425,6 +467,26 @@ def mp_run(w, hook=False, known=None, env=None, on=True, hind=False):
     md.known_map.clear()
     with environ(**(env if env is not None else {"MEMPALACE_CONFIG_DIR": w["cfg"], "PATH": w["bin"]})):
         return _invoke(hook)
+
+
+@contextlib.contextmanager
+def vanishing(directory, gone):
+    """In `directory`, the file `gone` is listed first and its stat fails (it was removed between the listing and the stat)."""
+    real_stat, real_listdir = md.os.stat, md.os.listdir
+
+    def stat(p, *a, **k):
+        if str(p).endswith(gone):
+            raise FileNotFoundError(p)
+        return real_stat(p, *a, **k)
+
+    def listdir(p="."):
+        names = real_listdir(p)
+        return sorted(names, key=lambda n: n != gone) if str(p) == directory else names
+    md.os.stat, md.os.listdir = stat, listdir
+    try:
+        yield
+    finally:
+        md.os.stat, md.os.listdir = real_stat, real_listdir
 
 
 def has(lines, level, name, text=""):
@@ -473,9 +535,9 @@ def mempalace_cases(failures, cases):
         rc, lines = case("off", w, [("PASS", "memory-one-backend")], forbid=[("FAIL", "mempalace"), ("PASS", "mempalace")], on=False)
         expect("off: the NOT RUN line, once, and no call to the hub",
                lines.count("  " + OFF_LINE) == 1 and not HUB["log"], rc, lines)
-        case("on, hub stopped", mp_world(backup_age_h=1, hub="http://127.0.0.1:9"),
+        case("on, hub stopped", mp_world(backup_age_h=1, hub=DEAD),
              [("FAIL", "mempalace-hub", "systemctl --user enable --now mempalace-hub")], forbid=[("PASS", "mempalace-hub")])
-        rc, lines = mp_run(mp_world(backup_age_h=1, hub="http://127.0.0.1:9"))
+        rc, lines = mp_run(mp_world(backup_age_h=1, hub=DEAD))
         expect("on, hub stopped: no NOT RUN line for mempalace", not any(OFF_LINE in l for l in lines), rc, lines)
 
         # ---- mempalace-cli. Red: no row. Mutation: dropping the version comparison turns the second case red
@@ -518,6 +580,21 @@ def mempalace_cases(failures, cases):
         # Scheme and host are checked apart: `ftp://h/` has a host, `http:///` has a scheme (the review's surviving mutants).
         case("registry url is ftp: the scheme guard", mp_world(hub="ftp://h"), [("FAIL", "mempalace-hub", "no http(s) url")])
         case("registry url has no host: the host guard", mp_world(hub="http://"), [("FAIL", "mempalace-hub", "no http(s) url")])
+
+        # Fix round 2 (external review). A malformed registry url (an unmatched bracket) raised ValueError out of urlsplit and the
+        # doctor stopped: one FAIL that names it, and the rows after it still run. Red on 5437235: "registry url is malformed
+        # (http://[::1/mcp): exit 'ValueError: Invalid IPv6 URL'; output []".
+        for bad in ("http://[::1", "http://[x]y"):
+            case("registry url is malformed (%s): one FAIL that names it, the other rows run" % bad, mp_world(hub=bad),
+                 [("FAIL", "mempalace-hub", bad), ("PASS", "mempalace-backup"), ("PASS", "mempalace-rows")])
+        # Search that found the text without the embedding model: MemPalace 3.12.0 (mcp_server/tools_read.py) answers from SQLite BM25
+        # and adds `vector_disabled: true` when its vector index is off, and /healthz says ok. Red on 5437235: "search answered
+        # by the lexical fallback: exit 0; output [... PASS mempalace-hub ... found 1 result(s) ...]". The control is the healthy case
+        # (its answer has no such flag). U1's raw output (runs/7.1-u1/d-sessions/B1..B3.stream) shows every real result carrying
+        # `similarity`, `distance`, `matched_via` and the reply `distance_metric: cosine`, but no sample of a lexical answer, so the
+        # flag the source names is the only thing tested for: a result without `similarity` is not judged.
+        case("search answered by the lexical fallback", mp_world(hub_opts={"search": "lexical"}),
+             [("FAIL", "mempalace-hub", "search answered without the embedding model")], forbid=[("PASS", "mempalace-hub")])
 
         # ---- mempalace-palace. Red: no row ("palace_path that does not exist: exit 0; output []").
         w = mp_world(palace=False)
@@ -593,6 +670,10 @@ def mempalace_cases(failures, cases):
              forbid=[("PASS", "mempalace-backup")])
         case("backup without .count", mp_world(backup_age_h=1, count=False),
              [("FAIL", "mempalace-backup", "mempalace-backup.timer")], forbid=[("PASS", "mempalace-backup")])
+        # Fix round 2: a directory named like an archive, with a .count beside it, was an archive. Red on 5437235: "backup archive
+        # is a directory: exit 0; output [... PASS mempalace-backup newest validated backup is 1.0 h old ...]".
+        case("backup archive is a directory", mp_world(backup_age_h=1, arch_is_dir=True),
+             [("FAIL", "mempalace-backup", "mempalace-backup.timer")], forbid=[("PASS", "mempalace-backup")])
         case("no backup at all", mp_world(backup_age_h=None), [("FAIL", "mempalace-backup", "mempalace-backup.timer")])
         w = mp_world(backup_age_h=1)
         os.replace(os.path.join(w["backups"], "mempalace-20261118T043000Z.tar.zst"),
@@ -608,6 +689,21 @@ def mempalace_cases(failures, cases):
         case("a foreign hook in the event is not the row",
              mp_world(settings=json.dumps({"hooks": {e: [{"hooks": [{"type": "command", "command": "echo toy"}]}] for e, _ in HOOK_ROWS}})),
              [("FAIL", "mempalace-rows", "0 of 3")])
+        # Fix round 2: the row is a command that RUNS the script, not one that names it. Red on 5437235: "a command that only
+        # names the script is not the row: exit 0; output [... PASS mempalace-rows 3 of 3 rows present ...]" (echo, a hook of
+        # another type). The controls: the script with arguments, through bash, and as a quoted path with a space are rows.
+        def rows(make):
+            return json.dumps({"hooks": {e: [{"hooks": [make(s)]}] for e, s in HOOK_ROWS}})
+        case("a command that only names the script is not the row",
+             mp_world(settings=rows(lambda s: {"type": "command", "command": "echo " + s})), [("FAIL", "mempalace-rows", "0 of 3")])
+        case("a hook of another type is not the row",
+             mp_world(settings=rows(lambda s: {"type": "prompt", "command": "/srv/forge/hooks/mempalace/" + s})),
+             [("FAIL", "mempalace-rows", "0 of 3")])
+        for label, make in (("with arguments", lambda s: "/srv/forge/hooks/mempalace/%s --quiet" % s),
+                            ("through bash", lambda s: "bash /srv/forge/hooks/mempalace/" + s),
+                            ("a quoted path with a space", lambda s: "'/srv/my forge/hooks/mempalace/%s'" % s)):
+            case("rows run %s: present" % label, mp_world(settings=rows(lambda s, make=make: {"type": "command", "command": make(s)})),
+                 [("PASS", "mempalace-rows", "3 of 3")])
         case("truncated settings.local.json", mp_world(settings='{"hooks": {'), [("FAIL", "mempalace-rows", "unreadable")])
         case("hooks of the wrong shape", mp_world(settings=json.dumps({"hooks": ["x"]})), [("FAIL", "mempalace-rows", "wrong shape")])
 
@@ -636,6 +732,27 @@ def mempalace_cases(failures, cases):
         os.makedirs(d)
         write(os.path.join(d, "s.jsonl"), "{}\n")
         case("a sibling project's transcript does not", w, [("PASS", "mempalace-wing")], forbid=[("WARN", "")])
+        # Fix round 2: a transcript removed between the listing and the stat ended the scan of its directory. Red on 5437235: "a
+        # transcript that vanishes mid-scan does not hide a newer one: exit 0" (the WARN for the 3-day-old one is missing).
+        w = mp_world(drawers=old, transcript_age_days=3)
+        tdir = os.path.join(w["claude"], re.sub(r"[^A-Za-z0-9]", "-", w["proj"]))
+        write(os.path.join(tdir, "gone.jsonl"), "{}\n")
+        with vanishing(tdir, "gone.jsonl"):
+            case("a transcript that vanishes mid-scan does not hide a newer one", w, [("WARN", "mempalace-wing", "3.0 days")])
+        # Fix round 2: a project file without project_path made the rows and lite checks read the settings of the directory the
+        # doctor runs in (here a project that has all three rows). Red on 5437235: "a project without project_path: exit 0;
+        # output [... PASS mempalace-rows 3 of 3 ...]" for mempalace, and a `settings-local`/`lite-` line for the plugin.
+        for label, prof in (("mempalace", {"servers": ["mempalace"]}), ("claude-mem-lite", {"plugins_keep": [md.memory.LITE_PLUGIN]})):
+            w = mp_world(profs={"toy": prof})
+            here = os.getcwd()
+            os.chdir(w["proj"])
+            try:
+                rc, lines = mp_run(w)
+            finally:
+                os.chdir(here)
+            expect("a %s project without project_path: one line that names it, no settings read" % label, rc == 1
+                   and has(lines, "FAIL", "project-path", "toy") and not has(lines, "", "mempalace-rows")
+                   and not has(lines, "", "settings-local") and not has(lines, "", "lite-") and not has(lines, "", "mempalace-wing"), rc, lines)
         case("the freshness read gives no total: no traceback, a WARN",
              mp_world(drawers=old, transcript_age_days=3, hub_opts={"since_no_total": True}),
              [("WARN", "mempalace-wing", "freshness")])
@@ -645,9 +762,18 @@ def mempalace_cases(failures, cases):
              [("PASS", "mempalace-wing", "wing toy_proj has 1 drawers")])
         case("known-empty wing", mp_world(drawers=[]), [("KNOWN", "mempalace-wing")], known=json.dumps(
             {"known": {"toy/mempalace-wing": {"since": "long ago", "why": "not switched on yet"}}}), rc_is=0)
+        # Fix round 2: --hook does not read the wing, and then a wing declaration looked like one that had recovered. Red on 5437235:
+        # "--hook, a wing declaration is not stale: exit 0; output ['memory_doctor: 0 unexpected failure(s), 0 warning(s), 1 stale
+        # backlog entr(ies) ...', 'STALE toy/mempalace-wing no longer fails ...']". The control: a full run whose wing is healthy
+        # still reports it stale.
+        wing_known = json.dumps({"known": {"toy/mempalace-wing": {"since": "long ago", "why": "not switched on yet"}}})
+        rc, lines = mp_run(mp_world(), hook=True, known=wing_known)
+        expect("--hook, a wing declaration is not stale (the wing was not read)", rc == 0 and lines == [], rc, lines)
+        rc, lines = mp_run(mp_world(), known=wing_known)
+        expect("full run, the declared wing recovered: STALE", has(lines, "STALE", "toy/mempalace-wing"), rc, lines)
         case("list_wings answers a list: a FAIL, no traceback", mp_world(hub_opts={"wings_bad": True}),
              [("FAIL", "mempalace-wing", "list_wings")])
-        case("hub stopped: the wing rows fail too", mp_world(hub="http://127.0.0.1:9"), [("FAIL", "mempalace-wing", "hub")])
+        case("hub stopped: the wing rows fail too", mp_world(hub=DEAD), [("FAIL", "mempalace-wing", "hub")])
         w = mp_world(backup_age_h=1, rows=["Stop"])
         HUB["log"].clear()
         rc, lines = mp_run(w, hook=True)
@@ -665,11 +791,41 @@ def mempalace_cases(failures, cases):
             t0 = time.time()
             rc, lines = mp_run(w, hook=True)
             took = time.time() - t0
+            # (the slow hub spends the whole budget on the hub row, so the palace row is not reached: the one line that says so,
+            # below, replaces its FAIL.)
             expect("--hook, hub %s: ends in under %s s (took %.1f s) and prints its FAIL" % (mode, limit, took),
-                   rc == 0 and took < limit and has(lines, "FAIL", "mempalace-hub") and has(lines, "FAIL", "mempalace-palace"), rc, lines)
+                   rc == 0 and took < limit and has(lines, "FAIL", "mempalace-hub")
+                   and (has(lines, "WARN", "hook-budget", "mempalace-palace") if mode == "slow" else has(lines, "FAIL", "mempalace-palace")),
+                   rc, lines)
             if mode != "slow":
                 expect("--hook, hub %s: nothing is asked after the first call that did not answer" % mode,
                        ("GET", "/statusz") not in HUB["log"] and ("tool", "mempalace_search") not in HUB["log"], rc, HUB["log"])
+        # Fix round 2 (external review, findings on one deadline for the whole run). A hub that sends one byte a second answers
+        # inside every socket timeout, so only a deadline for the complete request ends it: "trickle" drips the body of /healthz,
+        # "trickle-head" its head. Red on 5437235 (measured): the run lasts as long as the drip (about 40 s) and its FAIL comes
+        # after the hook was killed. The budget is shared with the Hindsight probes: a hub that eats it leaves them one WARN line
+        # that says they were not run (red: no such line, the probe ran past the budget). A silent hub does not silence another host.
+        for mode in ("trickle", "trickle-head"):
+            w = mp_world(hub_opts={"hang": mode})
+            t0 = time.time()
+            rc, lines = mp_run(w, hook=True)
+            took = time.time() - t0
+            expect("--hook, hub drips one byte a second (%s): ends in under 8 s (took %.1f s) with a FAIL" % (mode, took),
+                   rc == 0 and took < 8 and has(lines, "FAIL", "mempalace-hub"), rc, lines)
+        w = mp_world(hub_opts={"hang": "slow"})
+        t0 = time.time()
+        rc, lines = mp_run(w, hook=True, hind=True)
+        took = time.time() - t0
+        expect("--hook, both integrations, a hub that eats the budget: the Hindsight probe is said not run (took %.1f s)" % took,
+               rc == 0 and took < 9.5 and has(lines, "WARN", "hook-budget", "not run") and has(lines, "WARN", "hook-budget", "hindsight-server"),
+               rc, lines)
+        rc, lines = mp_run(mp_world(), hook=True, hind=True)
+        expect("--hook, both integrations, healthy: silent (the budget line is only for a spent budget)", rc == 0 and lines == [], rc, lines)
+        w = mp_world(hub_opts={"hang": "all"})
+        rc, lines = mp_run(w, hook=True, hind=DEAD)
+        expect("--hook, a silent hub does not silence another host: the Hindsight probe is made and fails by itself",
+               rc == 0 and has(lines, "FAIL", "hindsight-server", "does not answer /health")
+               and not any("hindsight-server" in l and "not asked" in l for l in lines), rc, lines)
         # `mempalace --version` is capped under --hook too (30 s before). Red on 5078c50: "--hook, mempalace --version takes 15 s:
         # ends in under 8 s (took 15.1 s)"; mutation: the cap removed turns it red the same way.
         w = mp_world(cli_sleep=15)
@@ -688,8 +844,8 @@ def mempalace_cases(failures, cases):
         # hindsight or mempalace integration on, or a project that grants a backend): there, a profile without a backend says
         # so. Red against the baseline: it says nothing ("no backend: exit 0; output []"). Mutation: `== 1` to `>= 0` turns the
         # no-backend cases red.
-        none = {"toy": {"project_path": "/srv/toy", "servers": []}}
-        two = {"toy": {"project_path": "/srv/toy", "servers": ["hindsight-coding-agents", "mempalace"],
+        none = {"toy": {"project_path": "toy", "servers": []}}
+        two = {"toy": {"project_path": "toy", "servers": ["hindsight-coding-agents", "mempalace"],
                        "plugins_keep": [md.memory.LITE_PLUGIN]}}
         for label, profs, on, hook in (("on", none, True, False), ("off", none, False, False), ("--hook, off", none, False, True)):
             w = mp_world(backup_age_h=1, profs=profs)
@@ -703,17 +859,26 @@ def mempalace_cases(failures, cases):
         for servers, plugins, backend in ((["hindsight-coding-agents", "mempalace"], [], "hindsight-coding-agents, mempalace"),
                                           (["mempalace"], [md.memory.LITE_PLUGIN], "claude-mem-lite, mempalace"),
                                           (["hindsight-coding-agents"], [md.memory.LITE_PLUGIN], "hindsight-coding-agents, claude-mem-lite")):
-            w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": servers, "plugins_keep": plugins}})
+            w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "toy", "servers": servers, "plugins_keep": plugins}})
             rc, lines = mp_run(w, on=False, hind=True)
             expect("profile with two backends: " + backend, rc == 1 and has(lines, "FAIL", "memory-backend", "2 memory backends: " + backend), rc, lines)
         for servers, plugins, backend in ((["hindsight-coding-agents"], [], "hindsight-coding-agents"),
                                           ([], [md.memory.LITE_PLUGIN], "claude-mem-lite"), (["mempalace"], [], "mempalace")):
-            w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": servers, "plugins_keep": plugins}})
+            w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "toy", "servers": servers, "plugins_keep": plugins}})
             rc, lines = mp_run(w, on=False, hind=True)
             # (claude-mem-lite brings its own rows, which FAIL in this toy world: only the memory-backend lines are asserted.)
             expect("profile with one backend: " + backend, rc == (1 if plugins else 0)
                    and not has(lines, "FAIL", "memory-backend") and has(
                        lines, "PASS", "memory-one-backend", "1 project(s) examined, 1 with exactly one backend"), rc, lines)
+        # Fix round 2: a declaration that a project has no memory is no licence for two. Red on 5437235: "known-empty declaration
+        # does not cover two backends: exit 0; output [... KNOWN memory-backend toy has 2 memory backends ...]". It is stale once the
+        # project has a backend (the existing case below does the one-backend side).
+        w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "toy", "servers": ["hindsight-coding-agents", "mempalace"]}})
+        rc, lines = mp_run(w, on=False, hind=True, known=json.dumps(
+            {"known": {"toy/memory-backend": {"since": "long ago", "why": "no memory on purpose"}}}))
+        expect("a known-empty declaration does not cover two backends", rc == 1 and has(lines, "FAIL", "memory-backend", "2 memory backends")
+               and not has(lines, "KNOWN", "memory-backend") and has(lines, "STALE", "toy/memory-backend")
+               and has(lines, "FAIL", "memory-one-backend", "1 failing"), rc, lines)
         # A project file that cannot be read has a backend nobody looked at: the row says so and FAILs (--project X leaves
         # the others out of scope). Red against the row that took lib.projects() whole: "unreadable project: exit 0".
         # Mutation: ignoring `skipped` turns it red. Looking at none is a FAIL too, once armed.
@@ -722,6 +887,14 @@ def mempalace_cases(failures, cases):
         rc, lines = mp_run(w, on=False)
         expect("an unreadable project file is not a pass", rc == 1 and has(
             lines, "FAIL", "memory-one-backend", "1 project file(s) could not be read: broken.claude.json"), rc, lines)
+        # Fix round 2: with nothing switched on, a lone unreadable project file read as a fresh checkout (NOT RUN, exit 0). Red on
+        # 5437235: "an unreadable project file in a checkout with nothing switched on: exit 0; output [... NOT RUN, NOT ARMED ...]".
+        w = mp_world(backup_age_h=1, profs={})
+        w["skipped"] = [("broken.claude.json", "invalid JSON")]
+        rc, lines = mp_run(w, on=False)
+        expect("an unreadable project file in a checkout with nothing switched on: a FAIL, not NOT RUN", rc == 1 and has(
+            lines, "FAIL", "memory-one-backend", "1 project file(s) could not be read: broken.claude.json")
+            and not any("NOT RUN, NOT ARMED: no memory integration" in l for l in lines), rc, lines)
         w = mp_world(backup_age_h=1, profs={})
         w["skipped"] = [("broken.claude.json", "invalid JSON")]
         rc, lines = mp_run(w, on=False, hind=True)
@@ -745,8 +918,8 @@ def mempalace_cases(failures, cases):
                    and not has(lines, "PASS", "memory-one-backend") and not has(lines, "FAIL", "memory"), rc, lines)
             rc, lines = mp_run(w, on=False, hook=True)
             expect("not armed, %s, --hook: silent, exit 0" % label, rc == 0 and lines == [], rc, lines)
-        w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": []},
-                                            "other": {"project_path": "/srv/other", "servers": ["mempalace"]}})
+        w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "toy", "servers": []},
+                                            "other": {"project_path": "other", "servers": ["mempalace"]}})
         rc, lines = mp_run(w, on=False)
         expect("armed by another project's backend: the one without says so", rc == 1 and has(
             lines, "FAIL", "memory-backend", "toy has no memory backend") and not any(NOT_RUN in l for l in lines), rc, lines)
@@ -754,8 +927,8 @@ def mempalace_cases(failures, cases):
         # a project does: exit 1; output [... PASS memory-one-backend 4 project(s) examined, 2 with exactly one backend ...]".
         # Known-empty projects are counted apart and do not fail it. Mutation: the PASS condition back to `bool(projects)` turns
         # the first two cases red.
-        mixed = {"a": {"project_path": "/srv/a", "servers": ["mempalace"]}, "b": {"project_path": "/srv/b", "servers": []},
-                 "c": {"project_path": "/srv/c", "servers": ["mempalace"]}, "d": {"project_path": "/srv/d", "servers": []}}
+        mixed = {"a": {"project_path": "a", "servers": ["mempalace"]}, "b": {"project_path": "b", "servers": []},
+                 "c": {"project_path": "c", "servers": ["mempalace"]}, "d": {"project_path": "d", "servers": []}}
         w = mp_world(backup_age_h=1, profs=mixed)
         rc, lines = mp_run(w, on=False, hind=True)
         expect("the row fails when a project does", rc == 1 and has(lines, "FAIL", "memory-one-backend",
@@ -785,7 +958,7 @@ def mempalace_cases(failures, cases):
             {"known": {"toy/memory-backend": {"since": "long ago", "why": "no memory on purpose"}}}))
         expect("profile declared without memory is KNOWN", rc == 0 and has(lines, "KNOWN", "memory-backend", "no memory on purpose")
                and not has(lines, "FAIL", "memory-backend"), rc, lines)
-        w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "/srv/toy", "servers": ["mempalace"]}})
+        w = mp_world(backup_age_h=1, profs={"toy": {"project_path": "toy", "servers": ["mempalace"]}})
         rc, lines = mp_run(w, on=False, hind=True, known=json.dumps(
             {"known": {"toy/memory-backend": {"since": "long ago", "why": "no memory on purpose"}}}))
         expect("a declared-empty profile that now has a backend is reported stale", has(lines, "STALE", "toy/memory-backend"), rc, lines)

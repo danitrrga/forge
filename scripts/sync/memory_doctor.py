@@ -40,7 +40,7 @@ WHAT IT CHECKS, and why each one earns its place:
                     MemPalace's own config.py and paths.py do, has its database and the hub reports SQLite integrity ok
                     for that same palace. backup: the newest validated backup (its `.count` beside it) is under
                     BACKUP_MAX_H old. Per project that grants `mempalace`: rows (Stop, SessionEnd and PreCompact in
-                    its settings.local.json) and, outside --hook, wing (the project's wing holds drawers, and a
+                    its settings.local.json, each a command hook that runs the capture script) and, outside --hook, wing (the project's wing holds drawers, and a
                     WARN when none was filed in FRESH_DAYS days although a transcript of the project is that new).
   memory-one-backend  Always, whatever is switched on and also under --hook: each project has exactly one memory
                     backend (hindsight-coding-agents in `servers`, the claude-mem-lite plugin in `plugins_keep`, or
@@ -72,6 +72,9 @@ of READ_TOOLS: hub_call raises on any other name, so a write cannot leave this p
     python3 scripts/sync/memory_doctor.py --bank
     python3 scripts/sync/memory_doctor.py --all          # ignore the backlog, show everything
 
+Under --hook the whole run has one budget (HOOK_BUDGET_S) that every network call and subprocess draws from, Hindsight's probes
+included; a call is bounded as a whole request (fetch), and rows the spent budget did not reach are one WARN line that says so.
+
 Exits 1 on any unexpected failure (the count is printed), 0 otherwise. Known-backlog entries
 and warnings do not fail.
 """
@@ -82,10 +85,13 @@ import datetime
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
+import stat
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import urllib.error
@@ -126,13 +132,14 @@ def emit(level: str, name: str, detail: str) -> None:
               % (COLOR[level], level, OFF, name, (DIM + detail + OFF) if detail else ""))
 
 
-def check(scope: str, name: str, ok: bool, detail: str = "") -> bool:
-    """Record and print one check. A failed check is the whole point of the script."""
+def check(scope: str, name: str, ok: bool, detail: str = "", declarable: bool = True) -> bool:
+    """Record and print one check. A failed check is the whole point of the script. `declarable` False: config/memory-known-empty.json
+    cannot excuse this failure (a project declared empty that has two backends)."""
     key = "%s/%s" % (scope, name)
     if ok:
         emit("PASS", name, detail)
         return True
-    if key in known_map and not SHOW_ALL:
+    if key in known_map and declarable and not SHOW_ALL:
         known_still_failing.add(key)
         entry = known_map[key]
         emit("KNOWN", name, "%s — known since %s: %s"
@@ -268,9 +275,11 @@ def hindsight_recall(cfg: dict, bank: str, query: str, timeout: float = 20.0):
     if cfg.get("apiToken"):
         req.add_header("Authorization", "Bearer %s" % cfg["apiToken"])
     t0 = time.time()
+    timeout, why = call_timeout(timeout, host_of(url))
+    if timeout is None:
+        return False, 0, 0.0, why
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            data = json.loads(r.read().decode())
+        data = json.loads(fetch(req, timeout)[1].decode())
         return True, len(data.get("results", [])), time.time() - t0, None
     except urllib.error.HTTPError as e:
         return False, 0, time.time() - t0, "HTTP %s" % e.code
@@ -293,32 +302,66 @@ HOOK_ROWS = (("Stop", "mempal-stop-hook.sh"), ("SessionEnd", "mempal-session-end
              ("PreCompact", "mempal-precompact-hook.sh"))
 
 
-HOOK_CALL_S = 3.0        # --hook: the longest one call to the hub or to `mempalace` may take
-HOOK_BUDGET_S = 8.0      # --hook: the whole MemPalace part; forge/hooks.py gives this script 15 s and the FAIL has to print before
-deadline = None          # --hook: when the budget ends (set by main when the MemPalace part starts)
-silent = None            # --hook: why nothing more is asked of the hub (its first call that did not answer), else None
+HOOK_CALL_S = 3.0        # --hook: the longest one call to a server or to `mempalace` may take
+HOOK_BUDGET_S = 8.0      # --hook: the whole run, every network call and subprocess of it (MemPalace's and Hindsight's); forge/hooks.py
+                         # gives this script 15 s and what it found has to be printed before that
+deadline = None          # --hook: when the budget ends (set by main at its start)
+silent: dict = {}        # --hook: per server (host:port), why nothing more is asked of it (its first call that did not answer)
+not_run: list = []       # --hook: the rows the spent budget did not let run, named in the one line that says so
 
 
-def call_timeout(full: float):
-    """(seconds this call may take, None) or (None, why it is not made). The full run keeps `full`. Under --hook a call gets
-    HOOK_CALL_S at most and what is left of the budget, and none is made once a call did not answer: a hub that accepts and
-    never answers would otherwise outlast the hook (/healthz 5 s, /statusz 5 s, each tools/call 30 s, `--version` 30 s) and its
-    FAIL would never be printed."""
+def host_of(url: str) -> str:
+    try:
+        return urllib.parse.urlsplit(url).netloc or url
+    except ValueError:
+        return url
+
+
+def budget_spent() -> bool:
+    return QUIET and deadline is not None and deadline - time.monotonic() < 0.2
+
+
+def call_timeout(full: float, host: str = ""):
+    """(seconds this call may take, None) or (None, why it is not made). The full run keeps `full`. Under --hook a call gets the least
+    of `full`, HOOK_CALL_S and what is left of the one budget of the run, and none is made to a server that did not answer a
+    call before: a hub that accepts and never answers would otherwise outlast the hook (/healthz 5 s, /statusz 5 s, each
+    tools/call 30 s, `--version` 30 s) and its FAIL would never be printed."""
     if not QUIET:
         return full, None
-    if silent:
-        return None, "not asked: %s" % silent
-    left = HOOK_CALL_S if deadline is None else deadline - time.time()
+    if host in silent:
+        return None, "not asked: %s" % silent[host]
+    left = HOOK_CALL_S if deadline is None else deadline - time.monotonic()
     if left < 0.2:
         return None, "not asked: the --hook budget of %d s is spent" % HOOK_BUDGET_S
-    return min(HOOK_CALL_S, left), None
+    return min(full, HOOK_CALL_S, left), None
 
 
-def went_silent(what: str, e: Exception) -> None:
-    """--hook: a call that got no answer (not even an HTTP error) ends the questions to the hub."""
-    global silent
-    if QUIET and silent is None:
-        silent = "%s did not answer in time (%s)" % (what, type(e).__name__)
+def went_silent(host: str, what: str, e: Exception) -> None:
+    """--hook: a call that got no answer (not even an HTTP error) ends the questions to that server."""
+    if QUIET and host not in silent:
+        silent[host] = "%s did not answer in time (%s)" % (what, type(e).__name__)
+
+
+def fetch(req, timeout: float):
+    """(status, the whole body as bytes); raises what urlopen raises (HTTPError, URLError, OSError, ValueError) or TimeoutError.
+    `timeout` is for the complete request, connection, head and body: urlopen's own is per socket operation, and a server that
+    sends one byte a second never trips it. The request runs in a thread that is left behind, still a daemon, when the time ends."""
+    box: dict = {}
+
+    def run():
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                box["answer"] = (r.status, r.read())
+        except BaseException as e:                               # noqa: BLE001 - handed to the caller
+            box["error"] = e
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout)
+    if "error" in box:
+        raise box["error"]
+    if "answer" not in box:
+        raise TimeoutError("no complete answer in %.1f s" % timeout)
+    return box["answer"]
 
 
 def hub_call(url: str, tool: str, args: dict, timeout: float = 30.0):
@@ -330,17 +373,17 @@ def hub_call(url: str, tool: str, args: dict, timeout: float = 30.0):
     body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
                        "params": {"name": tool, "arguments": args}}).encode()
     req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
-    timeout, why = call_timeout(timeout)
+    host = host_of(url)
+    timeout, why = call_timeout(timeout, host)
     if timeout is None:
         return None, why
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            doc = json.loads(r.read().decode())
+        doc = json.loads(fetch(req, timeout)[1].decode())
     except urllib.error.HTTPError as e:
         return None, "HTTP %d" % e.code
     except Exception as e:                                    # noqa: BLE001 - report anything
         if not isinstance(e, ValueError):
-            went_silent(tool, e)
+            went_silent(host, tool, e)
         return None, "%s: %s" % (type(e).__name__, str(e)[:80])
     if not isinstance(doc, dict):
         return None, "the answer is not a JSON object"
@@ -367,16 +410,17 @@ def hub_call(url: str, tool: str, args: dict, timeout: float = 30.0):
 
 def http_get(url: str, timeout: float = 5.0):
     """(status, body, why not): status None when nothing answered."""
-    timeout, why = call_timeout(timeout)
+    host = host_of(url)
+    timeout, why = call_timeout(timeout, host)
     if timeout is None:
         return None, "", why
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
-            return r.status, r.read().decode("utf-8", "replace"), None
+        status, body = fetch(url, timeout)
+        return status, body.decode("utf-8", "replace"), None
     except urllib.error.HTTPError as e:
         return e.code, "", "HTTP %d" % e.code
     except Exception as e:                                    # noqa: BLE001 - report anything
-        went_silent(url.rsplit("/", 1)[-1], e)
+        went_silent(host, url.rsplit("/", 1)[-1], e)
         return None, "", "%s: %s" % (type(e).__name__, str(e)[:60])
 
 
@@ -393,7 +437,11 @@ class Hub:
             self.why = "config/mcp-registry.json has no `mempalace` entry (or cannot be read), so there is no hub URL"
             return
         url = entry.get("url")
-        parts = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+        try:
+            parts = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+        except ValueError as e:                      # an unmatched bracket in the authority: a finding, not a traceback
+            self.why = "the registry's `mempalace` entry has a malformed url (%r): %s" % (url, e)
+            return
         if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
             self.why = "the registry's `mempalace` entry has no http(s) url (%r)" % (url,)
             return
@@ -463,7 +511,7 @@ def check_mempalace_cli() -> None:
         return void(check("machine", name, False, "config/toolchain.json has no %s entry, so there is no version to compare%s"
                           % (MEMPALACE_PIN, " (%s)" % why if why else "")))
     pinned = pins[0]["version"]
-    timeout, why = call_timeout(30.0)
+    timeout, why = call_timeout(30.0, "mempalace --version")
     if timeout is None:
         return void(check("machine", name, False, "%s --version was not run: %s" % (exe, why)))
     try:
@@ -510,6 +558,11 @@ def check_mempalace_hub(hub: Hub) -> None:
         return void(check("machine", name, False, "the palace holds %d drawers but mempalace_list_drawers gave no text to search for" % total))
     found, err = hub_call(hub.url, "mempalace_search", {"query": query, "limit": 5})
     results = found.get("results") if found is not None else None
+    if found is not None and found.get("vector_disabled"):
+        # MemPalace answers from SQLite BM25 when its vector index is off and says so with this flag (v3.12.0, mcp_server/tools_read.py):
+        # the text is found, the embedding model is not what found it.
+        return void(check("machine", name, False, "%s answers /healthz but search answered without the embedding model (vector_disabled: %s)"
+                          % (hub.base, str(found.get("vector_disabled_reason") or "no reason given")[:80])))
     if err or not isinstance(results, list) or not results:
         return void(check("machine", name, False, "%s answers /healthz but a search for the text of an existing drawer %s: "
                           "the embedding model may not be answering" % (hub.base, "failed (%s)" % err if err else "found nothing")))
@@ -585,7 +638,9 @@ def check_mempalace_backup() -> None:
         arch = os.path.join(BACKUPS, n)
         try:
             if n.startswith("mempalace-") and n.endswith(".tar.zst") and os.path.isfile(arch + ".count"):
-                validated.append((os.stat(arch).st_mtime, n))
+                st = os.stat(arch)
+                if stat.S_ISREG(st.st_mode):             # a directory named like an archive is not one
+                    validated.append((st.st_mtime, n))
         except OSError:
             pass                                             # rotated away between the listing and the stat
     if not validated:
@@ -600,6 +655,19 @@ def check_mempalace_backup() -> None:
           % (age_h, newest, BACKUP_MAX_H))
 
 
+def runs_script(command, script: str) -> bool:
+    """Whether `command` runs `script`: the script is its program (with or without arguments, a path that may be quoted), or the
+    one `bash`/`sh` runs. `echo script`, or the name inside some other command's arguments, does not run it. U2's generator
+    (forge/hooks.py) writes the rows; the exact command it writes is its to say, so this does not compare whole commands."""
+    try:
+        words = shlex.split(command) if isinstance(command, str) else []
+    except ValueError:
+        return False
+    if words and os.path.basename(words[0]) in ("bash", "sh"):
+        words = words[1:]
+    return bool(words) and os.path.basename(words[0]) == script
+
+
 def check_mempalace_rows(name: str, ppath: str) -> None:
     try:
         doc = lib.read_owned(os.path.join(ppath, ".claude", "settings.local.json"))
@@ -610,7 +678,7 @@ def check_mempalace_rows(name: str, ppath: str) -> None:
         return void(check(name, "mempalace-rows", False, "settings.local.json hooks are of the wrong shape (%d malformed entr%s), "
                           "so the rows cannot be counted" % (bad, "y" if bad == 1 else "ies")))
     missing = [event for event, script in HOOK_ROWS
-               if not any(e == event and isinstance(h.get("command"), str) and script in h["command"] for e, _, _, h in entries)]
+               if not any(e == event and h.get("type") == "command" and runs_script(h.get("command"), script) for e, _, _, h in entries)]
     check(name, "mempalace-rows", not missing, "%d of %d rows present (%s)" % (len(HOOK_ROWS) - len(missing), len(HOOK_ROWS),
           ", ".join(e for e, _ in HOOK_ROWS)) if not missing else "%d of %d rows present, missing: %s"
           % (len(HOOK_ROWS) - len(missing), len(HOOK_ROWS), ", ".join(missing)))
@@ -629,12 +697,16 @@ def newest_transcript_age_days(ppath: str):
     newest = None
     for d in dirs:
         try:
-            for f in os.listdir(os.path.join(CLAUDE_PROJECTS, d)):
-                if f.endswith(".jsonl"):
-                    m = os.stat(os.path.join(CLAUDE_PROJECTS, d, f)).st_mtime
-                    newest = m if newest is None else max(newest, m)
+            names = os.listdir(os.path.join(CLAUDE_PROJECTS, d))
         except OSError:
-            pass
+            continue
+        for f in names:
+            if f.endswith(".jsonl"):
+                try:
+                    m = os.stat(os.path.join(CLAUDE_PROJECTS, d, f)).st_mtime
+                except OSError:                          # removed since the listing: the others still count
+                    continue
+                newest = m if newest is None else max(newest, m)
     return None if newest is None else (time.time() - newest) / 86400.0
 
 
@@ -699,8 +771,9 @@ def check_one_backend(projects: list, unreadable: list, armed: bool) -> None:
                   "claude-mem-lite in `plugins_keep`): grant one, or declare it in config/memory-known-empty.json as %s/memory-backend"
                   % (name, name))
         else:
-            check(name, "memory-backend", False, "%s has %d memory backends: %s -- one per project, never both" % (name, len(got), ", ".join(got)))
-        if "%s/memory-backend" % name in known_map and not SHOW_ALL:
+            check(name, "memory-backend", False, "%s has %d memory backends: %s -- one per project, never both" % (name, len(got), ", ".join(got)),
+                  declarable=False)
+        if not got and "%s/memory-backend" % name in known_map and not SHOW_ALL:
             declared += 1                     # check() printed it as KNOWN: counted apart, it does not fail the row
         else:
             failing += 1
@@ -800,7 +873,7 @@ def check_project(name: str, prof: dict) -> None:
 # ------------------------------------------------------------------------------------ main
 
 def main() -> int:
-    global QUIET, SHOW_ALL, deadline, silent
+    global QUIET, SHOW_ALL, deadline, silent, not_run
 
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -815,7 +888,9 @@ def main() -> int:
     args = ap.parse_args()
 
     QUIET, SHOW_ALL = args.hook, args.show_all
-    deadline = silent = None
+    # One budget for the whole --hook run, started here: MemPalace's calls and Hindsight's probes draw from it (the full run has none).
+    deadline = time.monotonic() + HOOK_BUDGET_S if QUIET else None
+    silent, not_run = {}, []
     try:
         known = lib.read_owned(KNOWN).get("known", {})
         if not isinstance(known, dict):
@@ -854,20 +929,30 @@ def main() -> int:
             print("\n== %s ==" % name)
         if has_hindsight:
             note("hindsight-coding-agents granted")
+        ppath = prof.get("project_path")
+        if (has_lite or (has_mempalace and hub is not None)) and not (isinstance(ppath, str) and ppath):
+            # lib.projects accepts a project file without `project_path`; the settings checks would read the directory the
+            # doctor happens to run in and report on another project.
+            check(name, "project-path", False, "%s has no project_path in its project file, so its settings.local.json was not "
+                  "looked at" % name)
+            continue
         if has_lite:
             check_project(name, prof)
         if has_mempalace:
             note("mempalace granted")
             if hub is not None:
-                check_mempalace_rows(name, prof.get("project_path", ""))
+                check_mempalace_rows(name, ppath)
                 if not QUIET:      # the wing is read through the hub: not on the session-start path
-                    check_mempalace_wing(name, prof.get("project_path", ""), hub)
+                    check_mempalace_wing(name, ppath, hub)
 
     # Whatever is switched on, and under --hook too: a profile with no memory or with two is wrong in every mode.
     if not QUIET:
         print("\n== memory backends ==")
-    check_one_backend(projects, [] if args.project else skipped_files,
-                      lib.on("hindsight") or lib.on("mempalace") or any(backends_of(p) for p in every_project.values()))
+    unreadable = [] if args.project else skipped_files
+    # An unreadable project file in scope arms the row too: it may be the one that grants a backend, and "a fresh checkout" is a
+    # checkout whose files were all read.
+    check_one_backend(projects, unreadable, lib.on("hindsight") or lib.on("mempalace") or bool(unreadable)
+                      or any(backends_of(p) for p in every_project.values()))
 
     # ------------------------------------------------------------------ machine-wide checks
     if not QUIET:
@@ -911,11 +996,13 @@ def main() -> int:
     if hub is None:
         note("mempalace checks -> NOT RUN, NOT ARMED: mempalace is off in config/forge.json")
     else:
-        deadline = time.time() + HOOK_BUDGET_S      # (--hook only: the full run's calls ignore it)
-        check_mempalace_cli()
-        check_mempalace_hub(hub)
-        check_mempalace_palace(hub)
-        check_mempalace_backup()
+        for row, step in (("mempalace-cli", lambda: check_mempalace_cli()), ("mempalace-hub", lambda: check_mempalace_hub(hub)),
+                          ("mempalace-palace", lambda: check_mempalace_palace(hub))):
+            if budget_spent():
+                not_run.append(row)
+            else:
+                step()
+        check_mempalace_backup()                    # a file and its age: no call to wait for
 
     cfg = None
     if not lib.on("hindsight"):
@@ -948,12 +1035,12 @@ def main() -> int:
             if bank not in named:
                 named.append(bank)
         for url, banks in sorted(urls.items()):
+            if budget_spent():
+                not_run.append("hindsight-server %s" % url)
+                continue
             t0 = time.time()
-            try:
-                with urllib.request.urlopen(url + "/health", timeout=5) as r:
-                    live, why = r.status == 200, "%d" % r.status
-            except Exception as e:
-                live, why = False, "%s: %s" % (type(e).__name__, str(e)[:60])
+            status, _, err = http_get(url + "/health", 5.0)
+            live, why = status == 200, err or "%s" % status
             check("machine", "hindsight-server", live,
                   "%s serves %s (%.2fs)" % (url, ", ".join(sorted(banks)), time.time() - t0)
                   if live else "%s does not answer /health — %s serves nothing until it does"
@@ -964,13 +1051,19 @@ def main() -> int:
             check("machine", "hindsight-recall", ok and n > 0,
                   "%s in %.2fs" % (err or ("%d results" % n), secs))
 
+    if not_run:
+        warn("machine", "hook-budget", "not run, the --hook budget of %d s was spent before: %s (python3 scripts/sync/memory_doctor.py "
+             "runs them all)" % (HOOK_BUDGET_S, ", ".join(not_run)))
+
     # A declared backlog entry that stopped failing is a stale declaration. Reporting it is
     # what stops config/memory-known-empty.json from outliving its reasons. Only meaningful
     # on a full sweep -- a --project run never visits the other entries.
     # --all deliberately routes every known entry through the FAIL path, so nothing is ever
     # recorded as still-failing and every entry would look stale. Skip the report there.
+    # A wing declaration is judged only when the wing was read: not under --hook, not with MemPalace off.
+    wing_unread = QUIET or hub is None
     stale_known = [] if (args.project or SHOW_ALL) \
-        else sorted(set(known_map) - known_still_failing)
+        else sorted(k for k in set(known_map) - known_still_failing if not (wing_unread and k.endswith("/mempalace-wing")))
 
     if fails or warns or stale_known or (backlog and not QUIET):
         if QUIET:
