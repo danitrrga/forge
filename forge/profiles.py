@@ -500,6 +500,14 @@ def write_session(session_id, record):
     return session_path(session_id)
 
 
+def drop_session(session_id):
+    """The record of a session whose claude could not start, removed: it would vouch for a launcher that never ran. None there is no error."""
+    try:
+        os.remove(session_path(session_id))
+    except OSError:
+        pass
+
+
 def read_session(session_id):
     """The record of session `session_id`, or None when there is none or it is not a JSON object. An id that is no file name
     (a path, an empty string) has no record."""

@@ -1999,7 +1999,8 @@ def main(argv=None):
                        epilog="examples: forge switch @marketing | forge switch (lists the profiles, the current one marked)")
     t.add_argument("target", nargs="?", metavar="@NAME", help="the profile to change to (@ or nothing lists them); only inside a session "
                    "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
-                   "restarts claude: anywhere else it refuses and kills nothing")
+                   "restarts claude in place; in any other session it opens a new terminal with `forge start @NAME --resume ID --fork-session` "
+                   "(profiles.terminal of config/forge.json) and leaves that session as it is; it kills nothing")
     t.set_defaults(fn=launch.switch)
     t = sub.add_parser("run", help="one headless session of this project with a session profile; prints only its final answer",
                        epilog="examples: forge run @marketing \"list your skills\" | forge run @reviewer \"review this diff\" --model haiku --json "

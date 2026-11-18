@@ -120,16 +120,16 @@ def cmd(a):
         try:
             code = launch._run(claude, argv, env, watch=watch, headless=True, stdin=fin, stdout=fout)
         except OSError as e:  # claude passed `which` and still cannot start (a missing interpreter): the record says a session that never was
-            os.remove(profiles.session_path(sid))
-            print("! forge run: cannot start %s: %s" % (claude, e.strerror or e), file=sys.stderr)
-            return 127
+            profiles.drop_session(sid)
+            return launch.cannot_exec(WHO, claude, e)
         if not late and time.monotonic() - began > a.timeout:  # the child ended between two looks of the watch, after the deadline
             late.append(True)
         if not late:
             fout.seek(0)
             text = fout.read().decode("utf-8", "replace")
     if late:
-        print("! forge run: profile %s session %s ran past --timeout %d seconds and was ended" % (profile, sid, a.timeout), file=sys.stderr)
+        print("! forge run: profile %s session %s ran past --timeout %d seconds and was ended; ask for more time with `--timeout %d`" % (
+            profile, sid, a.timeout, 2 * a.timeout), file=sys.stderr)
         return TIMED_OUT
     doc = _result(text)
     cost = (doc or {}).get("total_cost_usd", (doc or {}).get("cost_usd"))
@@ -145,7 +145,7 @@ def cmd(a):
     elif code:
         problem = "claude exited %d%s" % (code, ": " + doc["result"] if doc["result"] else "")
     if problem:
-        print("! forge run: " + problem, file=sys.stderr)
+        print("! forge run: %s; `claude --resume %s` in this folder opens that session to see why" % (problem, sid), file=sys.stderr)
         code = code or 1
     if a.json and doc is not None:  # output that is no result document is not passed on as if it were one
         sys.stdout.write(text)

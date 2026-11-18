@@ -19,12 +19,14 @@ TERM (claude leaves a whole transcript, measured in 4.3 U0), and starts `claude 
 conversation goes on with the new skills, plugins and servers. It signals nobody: a `forge switch` outside such a session, or
 whose launcher is gone, has nobody to restart claude: it opens a new terminal that runs `forge start @NAME --resume ID --fork-session`
 (ID is CLAUDE_CODE_SESSION_ID; `profiles.terminal` of config/forge.json is the command that opens it) and leaves the old session open, or
-refuses with the command to run by hand when there is no id or no terminal. One that was started with -p (a relaunch would come back
+refuses with the command to run by hand when there is no id, no terminal, or a terminal program that ends at once with an error. That fork
+is a session of ours like any other (its own record, under an id forge picks and passes as `--session-id`), so a `forge switch` inside it
+restarts it in place. One that was started with -p (a relaunch would come back
 interactive) refuses. Nothing is killed in any of them. The relaunch
 carries the profile's flags, the options of CARRY_VALUE and CARRY_BOOL the session was started with, and `--resume`; a prompt is
 never sent again, and any other argument is named on the launcher's line. A TERM or HUP to the launcher while a switch is being
-honoured ends the session. A session can be switched when it is a new one (`forge start @A`, the id is ours) or `--resume ID` of a uuid
-(the record goes under that id); `-c`, a title or a bare `--resume` have no id we know, and `forge switch` refuses them.
+honoured ends the session. A session can be switched when it is a new one (`forge start @A`, the id is ours), a fork of `--resume ID`
+(`--fork-session`: an id of ours too) or `--resume ID` of a uuid (the record goes under that id); `-c`, a title or a bare `--resume` have no id we know, and `forge switch` refuses them.
 `forge switch` alone lists the profiles, the current one marked."""
 import argparse
 import json
@@ -78,6 +80,13 @@ def _launchers(doc):
     return table, None
 
 
+def cannot_exec(who, claude, error):
+    """The line, and exit 127, for a claude that is on PATH and cannot be started (a missing interpreter, no permission)."""
+    print("! %s: cannot start %s: %s; `forge toolchain --fix` reinstalls it when config/toolchain.json lists it, or fix the program named "
+          "on its first line, then run this again" % (who, claude, error.strerror or error), file=sys.stderr)
+    return 127
+
+
 def _refuse(why, who="forge start"):
     print("! %s: %s" % (who, why), file=sys.stderr)
     return 2
@@ -92,6 +101,16 @@ def new_session(args):
         if arg in NOT_NEW or arg.startswith(tuple(f + "=" for f in NOT_NEW if f.startswith("--"))):
             return False
     return True
+
+
+def gave_session_id(args):
+    """Whether `args` carry a `--session-id` of the user's own (flags after `--` are the prompt's text)."""
+    for arg in args:
+        if arg == "--":
+            break
+        if arg == "--session-id" or arg.startswith("--session-id="):
+            return True
+    return False
 
 
 def forks(args):
@@ -143,6 +162,8 @@ def carry_args(args):
             i += 1 if "=" not in arg and i < len(args) else 0
         elif name in PRINT_FLAGS:
             printing = True
+        elif name == "--fork-session":
+            pass  # the fork is made once, at the start: a relaunch resumes the fork's own id, and says nothing of the flag
         elif arg.startswith("-"):
             dropped.append(name)
     return kept, dropped, printing
@@ -396,7 +417,8 @@ def _session(claude, argv, env, sid, project, profile, flags, carry=(), dropped=
             profiles.write_session(sid, rec)
         except Exception as e:  # not only ProfileError and OSError: whatever it is, claude is started again
             why = e if isinstance(e, profiles.ProfileError) else getattr(e, "strerror", None) or "%s: %s" % (type(e).__name__, e)
-            print("forge: cannot switch to @%s (%s); claude comes back with @%s%s" % (target, why, profile, note), file=sys.stderr)
+            print("forge: cannot switch to @%s (%s); claude comes back with @%s%s; fix that, then run `forge switch @%s` again" % (
+                target, why, profile, note, target), file=sys.stderr)
         else:
             print("forge: profile %s \u2192 %s%s" % (profile, target, note))
             profile, flags = target, new_flags
@@ -441,24 +463,28 @@ def _profile(a):
             flags, settings, mcp_file, from_secrets, settings_path, mcp_path = _flags(project, prof, profile)
         except profiles.ProfileError as e:
             return _refuse(str(e) + profiles.doctor_hint(project))
-    fresh = new_session(args)
-    forked = not fresh and forks(args)  # claude gives a fork an id of its own, and the original's record is not ours to overwrite
-    sid = str(uuid.uuid4()) if fresh else None if forked else resumed_id(args)  # the id of a session we can switch: ours, or the one `--resume` names
+    fresh, resumes = new_session(args), resumed_id(args)
+    # A fork of `--resume ID` is a session of ours under an id we pick (`--session-id NEW` goes with `--fork-session`: measured, claude
+    # starts it and runs it under NEW; the original's record is not touched). A fork of what has no id we know (-c, a title), or one the
+    # user gave an id of their own, has no record: the id claude gives it is not ours to know.
+    forked = not fresh and forks(args) and resumes is not None and not gave_session_id(args)
+    own = fresh or forked  # the session's id is one we pick and pass
+    sid = str(uuid.uuid4()) if own else None if forks(args) else resumes  # the id of a session we can switch: ours, or the one `--resume` names
     env = session_env(profile, project, sid)
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
         print(profiles.claude_missing("forge start"), file=sys.stderr)
         return 127
-    argv = flags + (["--session-id", sid] if fresh else []) + args
+    argv = flags + (["--session-id", sid] if own else []) + args
     carry, dropped, printing = carry_args(args)
     record = profiles.session_record(profile, project, os.getpid(), print_mode=printing) if sid else None
     if dry:
         print("forge start @%s: a dry run, nothing is written and claude is not started" % profile)
         print("project      %s (%s)" % (project, prof["project_path"]))
         print("claude       %s" % claude)
-        print("arguments    %s" % " ".join(SESSION_ID if fresh and x == sid else shlex.quote(x) for x in argv))
+        print("arguments    %s" % " ".join(SESSION_ID if own and x == sid else shlex.quote(x) for x in argv))
         print("environment  FORGE_PROFILE=%s FORGE_PROJECT=%s%s (added to this shell's)" % (
-            profile, project, " FORGE_SESSION=%s FORGE_LAUNCHER_PID=(this launcher's pid)" % (SESSION_ID if fresh else sid) if sid else ""))
+            profile, project, " FORGE_SESSION=%s FORGE_LAUNCHER_PID=(this launcher's pid)" % (SESSION_ID if own else sid) if sid else ""))
         print("would write")
         if settings is not None:
             print("  %s  (--settings)" % settings_path)
@@ -466,10 +492,10 @@ def _profile(a):
                 print("      %s" % line)
             print("  %s  (--mcp-config: %s)" % (mcp_path, ", ".join(mcp_file["mcpServers"]) or "no server"))
         if record:
-            print("  %s  (the session record; the id is %s)" % (profiles.session_path(SESSION_ID if fresh else sid),
-                                                              "a new uuid4" if fresh else "the one of --resume"))
+            print("  %s  (the session record; the id is %s)" % (profiles.session_path(SESSION_ID if own else sid),
+                                                              "a new uuid4" if own else "the one of --resume"))
         else:
-            print("  no session record: this session is %s" % ("a fork, with an id that claude gives it" if forked
+            print("  no session record: this session is %s" % ("a fork with no id of ours to pick" if forks(args)
                   else "continued, resumed by a title or has an id of the user's"))
         return 0
     try:
@@ -478,9 +504,14 @@ def _profile(a):
             profiles.write_session(sid, record)
     except OSError as e:
         return _refuse("cannot write the session's files under %s: %s%s" % (lib.STATE, e.strerror or e, profiles.state_hint()))
-    if record:
-        return _session(claude, argv, env, sid, project, profile, flags, carry, dropped)
-    return _run(claude, argv, env)
+    try:
+        if record:
+            return _session(claude, argv, env, sid, project, profile, flags, carry, dropped)
+        return _run(claude, argv, env)
+    except OSError as e:  # claude passed `which` and still cannot start (a missing interpreter): the record says a session that never was
+        if record:
+            profiles.drop_session(sid)
+        return cannot_exec("forge start", claude, e)
 
 
 def _launcher_above(sid):
@@ -536,9 +567,14 @@ def switch(a):
     return 0
 
 
-# What a new terminal must not inherit from the session that opens it: whose session it is. (The ones forge start adds are taken out
-# again by session_env; the others are Claude Code's own, set in the environment of a Bash tool call.)
-SESSION_VARS = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "FORGE_SESSION", "FORGE_LAUNCHER_PID")
+# What a new terminal must not inherit from the session that opens it: the variables that say whose session it is or connect to it (its
+# id, its pid, its message socket and token), so that the new claude is nobody's child and cannot speak as that session. The last two
+# are forge start's own; the rest are Claude Code's, set in the environment of a Bash tool call (an Orca session's
+# holds all of them). Not listed, because a fresh claude needs it: CLAUDE_CONFIG_DIR, and the login (CLAUDE_CODE_OAUTH_TOKEN).
+SESSION_VARS = ("CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_CHILD_SESSION",
+                "CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_CODE_MESSAGING_SOCKET",
+                "CLAUDE_CODE_MESSAGING_TOKEN", "FORGE_SESSION", "FORGE_LAUNCHER_PID")
+TERMINAL_LOOK = 1.5  # seconds `forge switch` watches the new terminal's program: one that ends in that time with an error did not open
 
 
 def _terminal():
@@ -560,7 +596,8 @@ def _fork_in_terminal(who, project, prof, profile):
     --resume ID --fork-session` (a copy of this conversation under an id of its own, measured in 4.3 U0: the original transcript is not
     touched) and this session stays open. ID is CLAUDE_CODE_SESSION_ID, which Claude Code sets in a Bash tool call's environment.
     Nothing is signalled and nothing is written for the old session. The terminal is started detached, in this
-    folder, never through a shell, and opens normally: it is a window the owner has to see. Exit 0 once it was started, 2 refused."""
+    folder, never through a shell, and opens normally: it is a window the owner has to see. It is watched for TERMINAL_LOOK seconds,
+    no longer: exit 0 once it was started and has not failed, 2 refused (also when its program ended at once with an error)."""
     try:
         sid = str(uuid.UUID(os.environ.get("CLAUDE_CODE_SESSION_ID") or ""))
     except ValueError:
@@ -578,12 +615,22 @@ def _fork_in_terminal(who, project, prof, profile):
     env = {k: v for k, v in os.environ.items() if k not in SESSION_VARS}
     argv = words + [sys.executable, os.path.join(lib.ROOT, "bin", "forge"), "start", "@" + profile, "--resume", sid, "--fork-session"]
     try:
-        subprocess.Popen(argv, cwd=os.getcwd(), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                         start_new_session=True)
+        child = subprocess.Popen(argv, cwd=os.getcwd(), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
     except OSError as e:
         return _refuse("cannot open the terminal %s: %s; run `%s` in a terminal" % (words[0], e.strerror or e, again), who)
+    # A short look, never a wait for the window: a terminal program that ends in it with an error opened nothing. One that ends with 0
+    # may have handed the window to a terminal that was already running, which forge cannot see; one still running opened.
+    try:
+        code = child.wait(timeout=TERMINAL_LOOK)
+    except subprocess.TimeoutExpired:
+        code = None
+    if code:
+        return _refuse("the terminal %s ended at once with exit code %d, so no window opened; run `%s` in a terminal" % (words[0], code, again), who)
     print("forge switch: this session has no launcher to restart claude, so @%s opens in a new terminal as a fork of this conversation "
-          "(`%s`); this session stays open as it is" % (profile, again))
+          "(`%s`)%s; this session stays open as it is" % (
+              profile, again, "; the terminal command ended at once with exit 0, as one that hands over to a running terminal does, and forge "
+              "cannot see the window" if code == 0 else ""))
     return 0
 
 
@@ -594,8 +641,7 @@ def cmd(a):
         return _refuse("--dry-run is for a profile: forge start @NAME --dry-run")
     table, bad = _launchers(lib.settings())
     if bad:
-        print("! forge start: %s" % bad, file=sys.stderr)
-        return 2
+        return _refuse("%s; fix `launchers` in config/forge.json (each launcher is {\"env\": {NAME: value}}), then `forge start` lists them" % bad)
     if not a.name:
         if not table:
             print("no launchers (add one under `launchers` in config/forge.json)")
@@ -615,4 +661,7 @@ def cmd(a):
         print(profiles.claude_missing("forge start"), file=sys.stderr)
         return 127
     sys.stdout.flush()
-    os.execvpe(claude, ["claude"] + a.args, env)
+    try:
+        os.execvpe(claude, ["claude"] + a.args, env)
+    except OSError as e:
+        return cannot_exec("forge start", claude, e)
