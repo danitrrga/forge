@@ -323,7 +323,8 @@ def _target(who, text):
     given = prof.get("profiles")
     if prof.get("frozen") or not isinstance(given, dict):
         return _refuse("project '%s' %s" % (project, profiles.none_reason(project, prof)), who)
-    if profile not in [given["default"]] + list(given["offered"]):
+    known = [given["default"]] + list(given["offered"])
+    if profile not in known:
         return _refuse(profiles.unknown_profile(who, project, profile, given, ' "PROMPT"' if who == "forge run" else ""), who)
     return project, prof, profile
 
