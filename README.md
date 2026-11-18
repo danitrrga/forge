@@ -288,7 +288,7 @@ licences in `SOURCES.md`.
 
 ```
 forge init [--yes] [--with a,b] [--without a,b] [--track]   first run for a new checkout
-forge new PATH|NAME|@NAME [--stack S] [--profiles A,B] [--sets S] [--skills a,b] [--server N] [--memory M] [--apply]  register a directory, make a project (asks what no flag answers, in a terminal), or make profile @NAME here
+forge new PATH|NAME|@NAME [--stack S] [--profiles A,B] [--sets S] [--skills a,b] [--server N] [--memory M] [--apply]  register a directory, make a project (asks what no flag answers, in a terminal; `--sets @code:A` replaces the unscoped `--sets` for profile code), or make profile @NAME here
 forge sync [NAME | --all] [--apply]                         what would change (or change it), per project
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
