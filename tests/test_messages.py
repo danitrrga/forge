@@ -21,17 +21,18 @@ B. The fork. In a session that no launcher started (a CLAUDE_CODE_SESSION_ID, no
 C. `forge start @list --resume ID --fork-session` does not write the record of ID: claude gives the fork an id of its own, so the
    original session's record, which may belong to a live launcher, is left as it was; `--dry-run` says there is no record.
 
-Written first, run against the code of base 41bd475 (forge/ unchanged, this file as it is now): 33 FAIL lines, among them
+Written first, run against the code of base 41bd475 (forge/ unchanged, this file as it is now): 48 FAIL lines, 46 refusals looked at, among them
   "FAIL sweep: start: an unknown name with a near one: no next step in: ! forge start: no profile '@toy-' in project 'multi'; did you mean '@toy-b'? There are: @code, @list, @toy-b"
-  "FAIL sweep: switch: a session with no launcher and no session id: ..." (the old message named `forge start @list` and passed, as meant),
-  "FAIL fork: ... no terminal was opened" and "FAIL fork-record: the record of the original session was overwritten".
-Negative controls (CONTROLS: an engine copy with one line broken, the same scenario, the message after the arrow must appear):
-  sweep   a message without its doc pointer   -> "no next step in: ! forge start: project 'none' declares no profiles"
-  fork    a switch that signals the session   -> "killed a session it did not launch"
-  fork    a fork without --fork-session       -> "terminal arguments"
-  fork    a missing id taken as an id         -> "a terminal was opened without a session id"
-  fork    a switch that waits for the terminal-> "forge switch waited for the terminal"
-  record  a start that records a fork         -> "the record of the original session was overwritten"
+  "FAIL sweep: switch: no terminal on PATH: no next step in: ! forge switch: this is not a session started by `forge start @NAME` (it has no launcher to restart claude): ..."
+  "FAIL fork: no terminal was opened (or more than one): 0 run(s)" (the old `forge switch` refused: exit 2, nothing started),
+  "FAIL the record of the original session was overwritten: ..." (`forge start @list --resume ID --fork-session` rewrote the record of ID).
+Negative controls (CONTROLS: an engine copy with one line broken, the same scenario; the first message each printed, FORGE_MESSAGES_SHOW=1):
+  sweep   a doc pointer left out of the no-profiles reason  -> "sweep: start: a project without profiles: no next step in: ! forge start: project 'none' declares no profiles"
+  fork    a switch that signals the session (CLAUDE_PID)    -> "killed a session it did not launch: the session's process ended (-15)"
+  fork    a fork without --fork-session                     -> "fork: terminal arguments end with `start @list --resume ID --fork-session`: [..., '--resume', 'ID'], want [..., '--fork-session']"
+  fork    a missing id taken as an id                       -> "a terminal was opened without a session id: exit 0, [{'argv': [..., '--resume', 'none', '--fork-session'], ...}]"
+  fork    a switch that waits for the terminal              -> "forge switch waited for the terminal: no exit in 15 s"
+  record  a start that records a fork                       -> "the record of the original session was overwritten: ..."
 """
 import json
 import os
@@ -145,6 +146,7 @@ class Ctx:
         return p
 
     def cleanup(self):
+        open(self.term_log + ".release", "w").close()  # a fake terminal that is still waiting ends now
         for p in self.pids:
             if p.poll() is None:
                 p.kill()
@@ -152,11 +154,12 @@ class Ctx:
 
 
 failures = []
+_sink = [failures]  # where want() writes: the real run's list, or the one of a control's scenario
 
 
 def want(label, got, expected):
     if got != expected:
-        failures.append("%s: %s, want %s" % (label, got, expected))
+        _sink[-1].append("%s: %s, want %s" % (label, got, expected))
 
 
 def next_step(message, step):
@@ -336,8 +339,9 @@ def scenario_fork(c):
     t = runs[0]
     tail = ["start", "@list", "--resume", sid, "--fork-session"]
     want("fork: terminal arguments end with `start @list --resume ID --fork-session`", t["argv"][-5:], tail)
-    want("fork: ... run through this checkout's bin/forge, with an interpreter", (t["argv"][-6].endswith(os.path.join("bin", "forge")),
-                                                                              os.path.isabs(t["argv"][-7])), (True, True))
+    head = t["argv"][:-5]
+    want("fork: ... run through this checkout's bin/forge, with an interpreter",
+         (len(head) >= 2 and head[-1].endswith(os.path.join("bin", "forge")), len(head) >= 2 and os.path.isabs(head[-2])), (True, True))
     want("fork: the terminal runs in the session's working directory", os.path.realpath(t["cwd"]), multi)
     want("fork: none of the session's variables reach the terminal", t["inherited"], [])
     want("fork: the terminal is detached (a process group of its own)", t["pgid"] == t["pid"] and t["sid"] == t["pid"], True)
@@ -372,8 +376,8 @@ def scenario_fork(c):
 
     # no session id: a refusal, and the terminal never opened (a control opens one with an id of "none")
     code, so, se = c.forge(["switch", "@list"])
-    if c.terminals()[0]:
-        out.append("a terminal was opened without a session id: %s" % c.terminals()[0])
+    if code == 0 or c.terminals()[0]:  # exit 0 is only said once the terminal was started, which may log a moment later
+        out.append("a terminal was opened without a session id: exit %d, %s" % (code, c.terminals()[0]))
         c.release()
     want("fork: no session id: exit 2 and the next step", (code, "`forge start @list`" in se), (2, True))
     return out
@@ -424,10 +428,14 @@ SCENARIOS = {"sweep": scenario_sweep, "fork": scenario_fork, "record": scenario_
 
 
 def run_scenario(name, mutate=None):
+    """The failure lines of one scenario in one world, kept apart from the real run's."""
+    mine = []
+    _sink.append(mine)
     c = Ctx(mutate=mutate)
     try:
-        return SCENARIOS[name](c)
+        return mine + SCENARIOS[name](c)
     finally:
+        _sink.pop()
         c.cleanup()
 
 
@@ -450,6 +458,8 @@ def main():
                 except AssertionError as e:  # the anchor is not in the file: the control would look at nothing
                     failures.append("control %s: %s" % (name, e))
                     continue
+                if os.environ.get("FORGE_MESSAGES_SHOW"):
+                    print("control %s: %s" % (name, next((x for x in got if message in x), got)))
                 if not any(message in x for x in got):
                     failures.append("control %s (%s -> %s) did not fail with %r: %s" % (name, old[:40], new[:30], message, got))
     finally:

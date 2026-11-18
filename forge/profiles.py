@@ -141,7 +141,7 @@ def doctor_hint(project):
 
 def claude_missing(who):
     """The line for a claude that is not on PATH, with how forge installs it (what `forge toolchain` pins and installs)."""
-    return "! %s: claude is not on PATH: `forge toolchain --fix` installs it at the pin of config/toolchain.json, then run this again" % who
+    return "! %s: claude is not on PATH: `forge toolchain --fix` installs it when config/toolchain.json lists it, then run this again" % who
 
 
 def state_hint():

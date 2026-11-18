@@ -328,7 +328,9 @@ def cases(mutate=None):
     for args, cwd in ((["@toy-b", "hi"], w.pp("none")), (["@list", "hi"], w.pp("frozen-p")), (["@toy-c", "hi"], multi), (["@toy-b", "hi"], home)):
         _, _, start_err, _ = forge("start", args[:1], cwd=cwd)
         _, _, run_err, _ = run(args, cwd=cwd)
-        want("4: %s: the reason is forge start's, word for word" % args[:1], run_err.replace("forge run", "forge start", 1), start_err)
+        # 4.4 U2: each refusal ends with its own command's next step (`forge run @toy-b "PROMPT"` here, `forge start @toy-b` there)
+        want("4: %s: the reason is forge start's, word for word" % args[:1],
+             run_err.replace("forge run", "forge start", 1).replace('`forge run @toy-b "PROMPT"`', "`forge start @toy-b`"), start_err)
     before = tree()
     for label, args in (("no prompt", ["@toy-b"]), ("an empty prompt", ["@toy-b", ""]), ("a blank prompt", ["@toy-b", "  \n "])):
         code, so, se, d = run(args)

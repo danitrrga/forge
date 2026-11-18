@@ -17,7 +17,10 @@ forge switch @NAME  inside a session started by `forge start @A`: the profile of
 (profiles.write_switch) and nothing else; the launcher that is claude's parent sees it while claude runs, ends its own child with
 TERM (claude leaves a whole transcript, measured in 4.3 U0), and starts `claude --resume <id>` with NAME's flags, so the
 conversation goes on with the new skills, plugins and servers. It signals nobody: a `forge switch` outside such a session, or
-whose launcher is gone, or that was started with -p (a relaunch would come back interactive), refuses and kills nothing. The relaunch
+whose launcher is gone, has nobody to restart claude: it opens a new terminal that runs `forge start @NAME --resume ID --fork-session`
+(ID is CLAUDE_CODE_SESSION_ID; `profiles.terminal` of config/forge.json is the command that opens it) and leaves the old session open, or
+refuses with the command to run by hand when there is no id or no terminal. One that was started with -p (a relaunch would come back
+interactive) refuses. Nothing is killed in any of them. The relaunch
 carries the profile's flags, the options of CARRY_VALUE and CARRY_BOOL the session was started with, and `--resume`; a prompt is
 never sent again, and any other argument is named on the launcher's line. A TERM or HUP to the launcher while a switch is being
 honoured ends the session. A session can be switched when it is a new one (`forge start @A`, the id is ours) or `--resume ID` of a uuid
@@ -497,7 +500,8 @@ def _launcher_above(sid):
 
 def switch(a):
     """forge switch [@NAME]: the session this runs in changes to profile NAME; with no NAME (or a bare @) the profiles are listed, the
-    current one marked. Exit 0 requested (or already on it), 2 refused with one line saying why."""
+    current one marked. Exit 0 requested (or already on it, or a terminal opened: _fork_in_terminal), 2 refused with one line saying why
+    and the command that fixes it."""
     who = "forge switch"
     found = _target(who, a.target or "@")
     if isinstance(found, int):
