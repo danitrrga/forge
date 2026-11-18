@@ -13,6 +13,9 @@ Cases (the plan's control (h), and the brief's):
   r  a toggled row the flags refuse (`toy-a`, which arrives through the set TOYSET) ends with the flags' refusal, exit 2, tree intact.
   p  `forge config profiled @x`: the screen changes the profile's row and not the project's extras row; a read-only profile row of
      the project screen does nothing when toggled.
+  m  one run that toggles three rows of three kinds (skill toy-d off, server toy-two on, option command_guard on) and `y` leaves the files
+     `--off skill:toy-d --on server:toy-two --on option:command_guard --apply` leaves, and the command shown names all three. (A row toggled
+     twice in the same run is no change: the last line of case e.)
   t  the terminal is as it was after every run above.
 
 Written first and run against fe9246a (the first half, whose `forge config NAME` with no flag and a terminal is exit 2 "nothing to change"): 26 FAIL,
@@ -24,6 +27,9 @@ mutants` (which is expected to print these FAILs and exit 1):
   t  selector.run() without the restore of the terminal attributes -> "FAIL t: terminal left in raw mode (selector without its restore) -- terminal left in raw mode"
   e  screen() returning a change for a cancelled selector -> "FAIL e: Esc exits 0 and says nothing was written -- exit 0, shown ..." (the screen went on to ask [y/N])
   n  the question of change() answered yes without asking -> "FAIL n: n at [y/N] writes nothing -- wrote without asking: ['forge/config/projects/plain.claude.json', ...]"
+  m  every change landing on the first toggled row (after the append in screen(): flags[-1] = (flags[-1][0], flags[-1][1], flags[0][2])) passed
+     the whole suite before case m existed (no case toggled two rows); now -> "FAIL m: the screen for three rows and the three flags --apply leave the same files -- screen and
+     flags differ: ['forge/config/projects/plain.claude.json', 'forge/forge/configure.py', ...]" (the run itself exits 2, the flags collapsing on one row)
 Left out of the file comparison: the toy HOME's state folder (time of each write; checksums of files that name the world's own root).
 """
 import os
@@ -167,6 +173,28 @@ def case_n(mutate=None):
     sandbox.rmtree(w.root)
 
 
+def case_m(mutate=None):
+    """Rows of `plain`: skills 0-5 (toy-d is 4), sets SOLO 6 and TOYSET 7, servers toy-echo 8 and toy-two 9, options ui 10 and command_guard 11. One run toggles
+    toy-d (off), toy-two (not listed: on) and command_guard (off: on), one row of each kind."""
+    args = ["plain", "--off", "skill:toy-d", "--on", "server:toy-two", "--on", "option:command_guard"]
+    want = flags_world(args)
+    w = World(mutate)
+    pristine = files(w)
+    keys = DOWN * 4 + SPACE + DOWN * 5 + SPACE + DOWN * 2 + SPACE + ENTER
+    code, shown, restored = run_screen(w, ["config", "plain"], keys, b"y\r")
+    flat = " ".join(shown.split())
+    # Control: every change landing on the first toggled row (the mutation above) fails with `screen and flags differ`.
+    check("m: the three-row screen run exits 0", code == 0, "exit %d, shown %r" % (code, shown))
+    check("m: it wrote something (looking at nothing is a failure)", files(w) != pristine, "the world did not change; shown %r" % shown)
+    got, expect = files(w), files(want)
+    check("m: the screen for three rows and the three flags --apply leave the same files", got == expect,
+          "screen and flags differ: %s; shown %r" % (changed(got, expect), shown))
+    check("m: and the command shown names all three changes", all(f in flat for f in ("--off skill:toy-d", "--on server:toy-two", "--on option:command_guard")), shown)
+    check("t: terminal restored after the three-row run", restored, "terminal left in raw mode after the three-row run")
+    sandbox.rmtree(w.root)
+    sandbox.rmtree(want.root)
+
+
 def case_r():
     """`multi` keeps toy-a and toy-b through the set TOYSET: its first two skill rows, in the group `skills from set TOYSET`."""
     w = World()
@@ -233,8 +261,11 @@ def main():
         attempt(case_terminal, ("forge/selector.py", "termios.tcsetattr(fd_in, termios.TCSADRAIN, before)", "pass"))
         attempt(case_e, ("forge/configure.py", "    if got is None:\n        return None\n", "    if got is None:\n        return [(\"off\", \"skill\", \"toy-d\")]\n"))
         attempt(case_n, ("forge/configure.py", "go = _ask(\"write these changes? [y/N] \")", "go = True"))
+        first_row = ("forge/configure.py", "            flags.append((\"on\" if now else \"off\", typ, item))\n",
+                     "            flags.append((\"on\" if now else \"off\", typ, item))\n            flags[-1] = (flags[-1][0], flags[-1][1], flags[0][2])\n")
+        attempt(case_m, first_row)
     else:
-        for fn in (case_h, case_e, case_n, case_r, case_p):
+        for fn in (case_h, case_e, case_m, case_n, case_r, case_p):
             attempt(fn)
     sandbox.cleanup()
     if failures:
