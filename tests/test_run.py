@@ -67,7 +67,7 @@ MUTANTS = {
     "skip-perms": ("forge/run.py", '"--output-format", "json", "-p"', '"--dangerously-skip-permissions", "--output-format", "json", "-p"',
                    "5: no wider permissions"),
     "wording": ("forge/run.py", 'WHO = "forge run"', 'WHO = "forge start"', "4: a project without profiles: one line"),
-    "cwd-ignored": ("forge/run.py", "os.chdir(a.cwd)", "pass", "8: --cwd: the child runs there"),
+    "cwd-ignored": ("forge/run.py", "os.chdir(a.cwd)  # the project", "pass  # the project", "8: --cwd: the child runs there"),
     "noise": ("forge/run.py", "print(answer)", 'print("forge run: " + answer)', "2: stdout is the answer"),
 }
 SENTINEL_PROMPT = "line one\n$(touch {sentinel}); `touch {sentinel}`; 'quoted' \"double\" \\ ; & | > <\nline three é"
@@ -203,6 +203,11 @@ def cases(mutate=None):
              (code, d, tree() == before, "forge run" in se and ("usage" in se or "prompt" in se)), (2, None, True, True))
     code, so, se, d = run(["@toy-b", "hi"], fake=False)
     want("4: claude not on PATH: exit 127 naming it, nothing written", (code, "claude" in se and "PATH" in se, tree() == before), (127, True, True))
+    shut = os.path.join(w.root, "shut")
+    os.mkdir(shut, 0o000)  # a folder that exists and cannot be entered: one line, never a traceback (red before the guard: "(1, ... Traceback")
+    code, so, se, d = run(["@toy-b", "hi", "--cwd", shut])
+    os.chmod(shut, 0o700)
+    want("4: a --cwd that cannot be entered: exit 2, one line, no traceback", (code, d, len(se.strip().splitlines()), "Traceback" in se), (2, None, 1, False))
     code, so, se, d = run(["@toy-b", "hi", "--cwd", os.path.join(w.root, "nothing-here")])
     want("4: a --cwd that is no folder: exit 2", (code, d, "--cwd" in se), (2, None, True))
 

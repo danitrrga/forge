@@ -42,7 +42,10 @@ def cmd(a):
     if a.cwd is not None:
         if not os.path.isdir(a.cwd):
             return launch._refuse("--cwd %s is not a folder" % a.cwd, WHO)
-        os.chdir(a.cwd)  # the project is this folder's, and the child runs in it
+        try:
+            os.chdir(a.cwd)  # the project is this folder's, and the child runs in it
+        except OSError as e:
+            return launch._refuse("cannot enter --cwd %s: %s" % (a.cwd, e.strerror or e), WHO)
     found = launch._target(WHO, a.name)
     if isinstance(found, int):
         return found
