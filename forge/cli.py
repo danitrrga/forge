@@ -12,7 +12,8 @@
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge start NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
   forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
-  forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names; forge/profiles.py)
+  forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names, --session ID; forge/profiles.py)
+  forge switch [@NAME]   inside a session started by `forge start @A`: restart claude with profile NAME and resume the conversation
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
@@ -1944,7 +1945,15 @@ def main(argv=None):
     t.add_argument("target", nargs="?", metavar="@[NAME]", help="@ lists the profiles, @NAME shows one with its difference from the default")
     t.add_argument("--json", action="store_true", help="the same information as JSON")
     t.add_argument("--names", action="store_true", help="with @: only the names, one per line, without the @")
+    t.add_argument("--session", metavar="ID", help="with @: mark the profile that session ID runs (its record's; the project's default one "
+                   "when it has none) as `current`; inside a session started by forge start, FORGE_SESSION is the default")
     t.set_defaults(fn=profiles.cmd_list)
+    t = sub.add_parser("switch", help="change the profile of the session you are in: claude restarts with it and resumes the conversation",
+                       epilog="examples: forge switch @marketing | forge switch (lists the profiles, the current one marked)")
+    t.add_argument("target", nargs="?", metavar="@NAME", help="the profile to change to (@ or nothing lists them); only inside a session "
+                   "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
+                   "restarts claude: anywhere else it refuses and kills nothing")
+    t.set_defaults(fn=launch.switch)
     t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
     t.set_defaults(fn=lockfile.cmd_lock)
