@@ -9,6 +9,11 @@ A missing answer never leaves a half-made project: every answer is checked, and 
 before the first write. A failure after that removes what this run made (and only that); a failed sync does not, because
 the project is by then complete and registered, and the exit says what to run.
 
+What the project gets is asked or given by flags (forge/ask.py: profiles, skills, servers, memory, what the stack asks); the answers add the
+profile definitions under config/profile-defs/, the project's `profiles` row and servers, and the words of its skill_keep.extras row, all
+under the same all-or-nothing rule. `forge new @NAME`, run in a project's folder, makes one profile of it (create_profile): the definition,
+when there is none, and the `profiles` row; a profile row is read at a session start, so it syncs nothing.
+
 Only the folder of the project and forge's own project files are written. Never a CLAUDE.md, never anything outside
 `projects_dir` or `--path`. Never inside the forge checkout, and in a toy HOME never outside its world.
 

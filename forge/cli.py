@@ -2079,7 +2079,7 @@ def main(argv=None):
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
     i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
     i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
-    i.add_argument("--yes", action="store_true", help="making: ask nothing; a missing answer is an error naming it (today every answer is a flag, with or without it)")
+    i.add_argument("--yes", action="store_true", help="making: ask nothing, even in a terminal; a missing answer is an error naming it")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
     i.add_argument("--profiles", metavar="A,B", help="question 1: the profiles the project offers (none: no profile); each is then asked like the project")
     i.add_argument("--sets", action="append", metavar="[@PROFILE:]SET,SET", help="question 2: the skill sets (skill_keep.sets); repeat for several profiles")
