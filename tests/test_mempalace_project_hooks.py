@@ -27,6 +27,9 @@ file, a match on "mempal" in a worktree path, fixed afterwards and shown red by 
   hooks/mempalace: every script matches the sha256 NOTICE.md records -- looked at 0 script(s), problems ['NOTICE.md is not there']
   hooks/mempalace: the four scripts are there -- missing [all four]
   the script cases ran -- bash '/usr/bin/bash', scripts dir exists False: nothing was looked at
+Review round of PR 179 (head ccebfd5): the owner check below ("MemPalace's rows are claimed by [None]" on that code, 2 red) and
+the SessionEnd timing check, which was a clock (`took < 1.5`) and is now a mark file: with the `&` taken off the real script
+it reads "TimeoutExpired: ... timed out after 30 seconds" (the save waits for a release file the test creates after the return).
 Negative controls on the finished code, each put back from the committed file (red count of 40 checks; the first red line):
   M1 SCOPES["mempalace"] removed -- 14 red: "on: a mempalace project's settings.local.json gains the Stop row -- Stop [];
     line ('raised', 'KeyError', \"'mempalace'\")"
@@ -187,6 +190,14 @@ check("on: no SessionStart row (retrieval hit 3 of 3 without it)", "SessionStart
       "hooks %r" % ((doc or {}).get("hooks"),))
 check("on: the line says so", isinstance(line, str) and all(("%s on" % m) in line for m in (
     "mempal-stop-hook.sh Stop", "mempal-session-end-hook.sh SessionEnd", "mempal-precompact-hook.sh PreCompact")), "line %r" % (line,))
+# Who claims each row (the uninstall worlds of tests/test_uninstall.py take them by integration). Red on ccebfd5, where
+# project_hooks carried no owner and skills.py claimed every row as "hindsight": "MemPalace's rows are claimed by [None]".
+prows = attempt(hooks.project_hooks, mp)
+owners = {r[1]: (r[6] if len(r) > 6 else None) for r in prows} if isinstance(prows, list) else {}
+check("on: MemPalace's three rows are claimed by mempalace", {owners.get(c) for c in ROWS} == {"mempalace"} and len(owners) >= 3,
+      "MemPalace's rows are claimed by %r" % (sorted({owners.get(c) for c in ROWS}, key=str),))
+check("on: Hindsight's rows are claimed by hindsight (control)", {owners.get(c) for c in (HS_UP, HS_STOP)} == {"hindsight"},
+      "owners %r" % (sorted(set(owners.values())),))
 before = raw(slp(mp))
 again = run(mp)
 check("on: a second run is already current", isinstance(again, str) and "already current" in again and raw(slp(mp)) == before,
@@ -373,22 +384,37 @@ def run_script(directory, name, payload=b'{"session_id": "toy"}'):
     return r, time.monotonic() - t0
 
 
+RELEASE = os.path.join(TOY, "release")
+
+
+def slow_save(cap):
+    """A fake mempalace whose save finishes only when RELEASE exists (or after `cap` seconds), then writes MARK. Which
+    came first, the hook's return or the save's end, is then decided by the files and not by how fast this machine is."""
+    for f in (MARK, RELEASE):
+        if os.path.exists(f):
+            os.remove(f)
+    fake_mempalace('n=0\nwhile [ ! -e "%s" ] && [ $n -lt %d ]; do sleep 0.1; n=$((n+1)); done\nprintf done > "%s"\n'
+                   % (RELEASE, cap * 10, MARK))
+
+
 def end_hook_check(directory, label):
-    fake_mempalace('sleep 3\nprintf done > "%s"\n' % MARK)
-    if os.path.exists(MARK):
-        os.remove(MARK)
+    slow_save(60)
     try:
         r, took = run_script(directory, "mempal-session-end-hook.sh")
     except (OSError, subprocess.SubprocessError) as e:
         check(label, False, "%s: %s" % (type(e).__name__, e))
         return
-    check(label, r.returncode == 0 and r.stdout == b"{}" and took < 1.5,
-          "exit %d, stdout %r, blocked %.1f s on a hook that must return at once" % (r.returncode, r.stdout, took))
-    for _ in range(80):  # the detached save finishes after the hook returned: wait for it, so the toy dir can go
+    # Red on ccebfd5 was a clock (`took < 1.5`, which a loaded machine can miss); the mark is the bound now: the hook
+    # returned before the save could finish, because the save waits for a file only this test creates, after the return.
+    check(label, r.returncode == 0 and r.stdout == b"{}" and not os.path.exists(MARK),
+          "exit %d, stdout %r, mark present %r: the hook waited for the save" % (r.returncode, r.stdout, os.path.exists(MARK)))
+    with open(RELEASE, "w") as fh:
+        fh.write("go")
+    for _ in range(300):  # the detached save finishes after the release: wait for it, so the toy dir can go
         if os.path.exists(MARK):
             break
         time.sleep(0.1)
-    check(label + ": and the save still ran in the background", os.path.exists(MARK), "no mark after 8 s")
+    check(label + ": and the save still ran in the background", os.path.exists(MARK), "no mark after 30 s")
 
 
 if BASH and os.path.isdir(SCRIPT_DIR):
@@ -401,10 +427,11 @@ if BASH and os.path.isdir(SCRIPT_DIR):
     patched = text.replace("</dev/null &\n", "</dev/null\n")
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(patched)
-    fake_mempalace('sleep 3\nprintf done > "%s"\n' % MARK)
+    slow_save(3)  # the save gives up waiting after 3 s: the patched hook, which waits for it, then returns with the mark written
     r, took = run_script(copy, "mempal-session-end-hook.sh")
-    check("negative control: without the `&` the SessionEnd script waits for the save", patched != text and took >= 3,
-          "patched %s, took %.1f s" % (patched != text, took))
+    check("negative control: without the `&` the SessionEnd script waits for the save",
+          patched != text and os.path.exists(MARK),
+          "patched %s, mark present %r after %.1f s" % (patched != text, os.path.exists(MARK), took))
     os.remove(os.path.join(FAKE, "mempalace"))
     r, took = run_script(SCRIPT_DIR, "mempal-stop-hook.sh")
     check("a Stop hook with no mempalace on PATH fails without the blocking exit code",

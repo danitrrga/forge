@@ -67,7 +67,6 @@ def _groups_ok(have):
 
 
 GUARD_SCRIPT = "guard_tool_use.py"
-PROJECT_ROW_OWNER = "hindsight"  # whose claim a per-project hook row is (hooks.SCOPES has the one scope)
 GUARD_TIMEOUT = 10  # the guard entry's own timeout in settings.local.json, and the doctor's probes'
 # forge's guards, each one PreToolUse entry it owns: (script in hooks/, the group's matcher or None,
 # whether the project turns it on, its name in the summary line's "<name> on", its name in "<name>
@@ -317,8 +316,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
       * worktree guard -- `worktree_guard` (lib.worktree_guard_on) does the same for
         hooks/worktree_guard.py, its group behind the matcher of every writing tool (GUARDS).
       * project_hooks -- the rows forge writes per project instead of at user scope
-        (forge.hooks.project_hooks: Hindsight's, for a project that uses it), each owned by its
-        exact command the same way: a wanted row ends as one entry, one not wanted goes. The
+        (forge.hooks.project_hooks: Hindsight's or MemPalace's, for a project that uses it), each owned by its
+        exact command the same way and claimed by its own integration: a wanted row ends as one entry, one not wanted goes. The
         callers pass them, so this module never reads config/forge.json.
       * framework -- the Plan of forge/framework.py when it is on (its `.plugin`, `.name` and `.source`): the
         plugin is switched on in enabledPlugins and its marketplace declared under extraKnownMarketplaces, each
@@ -524,11 +523,11 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     # every entry that runs one of its guards, which the append-only merge above could never remove.
     for row in GUARDS:
         hooks_summary += _own_guard(sl, prof, row)
-    for event, cmd, timeout, marker, matcher, wanted in project_hooks:
+    for event, cmd, timeout, marker, matcher, wanted, owner in project_hooks:
         hooks_summary += _own_hook(sl, prof, lambda c, cmd=cmd: c == cmd, event, canonical_hook(cmd, timeout),
                                    matcher, wanted, "%s %s" % (marker, event), marker)
         if wanted and _holds(sl, lambda c, cmd=cmd: c == cmd):  # not merged into a hooks that is not an object: not claimed
-            written.append(("hook", ["hooks", event, cmd], canonical_hook(cmd, timeout), PROJECT_ROW_OWNER))
+            written.append(("hook", ["hooks", event, cmd], canonical_hook(cmd, timeout), owner))
 
     # What the project declared last time and no longer does goes, if it is still what forge wrote: forge
     # cannot tell its leftovers from the user's in-session approvals in the same lists, so only an element

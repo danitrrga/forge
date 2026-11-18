@@ -254,9 +254,11 @@ _PER_PROJECT = {row[1] for row, _, _ in PROJECT_ROWS}
 
 def project_hooks(prof):
     """The rows skills.write_settings_local owns in this project's settings.local.json, as
-    (event, command, timeout, marker, matcher, wanted): `wanted` when the row is on and the project
-    is in its scope. One not wanted is taken out of the file by its exact command."""
-    return [(event, cmd, timeout, marker, matcher, on and SCOPES[scope](prof))
+    (event, command, timeout, marker, matcher, wanted, owner): `wanted` when the row is on and the
+    project is in its scope, `owner` the integration the row's ownership claim belongs to (its scope: each
+    memory system's rows are its own, so `forge uninstall --integration N` takes N's and no other's). One
+    not wanted is taken out of the file by its exact command."""
+    return [(event, cmd, timeout, marker, matcher, on and SCOPES[scope](prof), scope)
             for (event, cmd, timeout, marker, matcher, _), scope, on in PROJECT_ROWS]
 
 # Hooks removed from EVERY event on every run. The hindsight package installs a third hook,
