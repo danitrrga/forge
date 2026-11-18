@@ -175,6 +175,14 @@ def _integrations(marker):
     return (names,) if isinstance(names, str) else tuple(names)
 
 
+def claim_integrations(c):
+    """The integrations the row behind hook claim `c` belongs to (see _integrations), () for any other claim."""
+    at = c.get("at") if c.get("kind") == "hook" else None
+    if not (isinstance(at, list) and len(at) == 3 and isinstance(at[2], str)):
+        return ()
+    return next((_integrations(m) for m in ROW_INTEGRATION if m in at[2]), ())
+
+
 def _owner(marker):
     """Whose ownership claim a row's entry is: the first of its integrations that is on, else the first, else core."""
     names = _integrations(marker)

@@ -225,6 +225,11 @@ class Scope:
                 return c["owner"] in self.owners and (self.under(file) or (
                     os.path.basename(file) == "exclude" and any(_inside(p, repo) for p in self.real)))
             return self.under(file) or (file == CLAUDE_JSON and c.get("part") in self.keys)
+        # A row that several integrations share goes with the last of them: it is taken by any of them, only when none of
+        # the others is still on (its claim names whichever was on when it was written).
+        names = hooks.claim_integrations(c)
+        if self.integration in names:
+            return not any(lib.on(n) for n in names if n != self.integration)
         return c["owner"] == self.integration or (self.integration == "codex" and (file == CODEX_HOOKS or c.get("part") == "skills"))
 
     def select(self, claims):

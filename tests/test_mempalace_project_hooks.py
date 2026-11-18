@@ -169,7 +169,7 @@ STOP_CMD, END_CMD, PRE_CMD = (mp_cmd("mempal-stop-hook.sh"), mp_cmd("mempal-sess
 ROWS = {STOP_CMD, END_CMD, PRE_CMD}
 HS_UP = 'node "%s/claude-hook.js"' % os.path.join(HOME, ".hindsight", "coding-agents", "dist")
 HS_STOP = 'node "%s/claude-stop-hook.js"' % os.path.join(HOME, ".hindsight", "coding-agents", "dist")
-FOREIGN = "node /opt/herdr/notify.js"
+FOREIGN = "node /opt/example/notify.js"
 SEEDED = {"permissions": {"allow": ["Bash(ls)"]},
           "hooks": {"Stop": [group(STOP_CMD, 30)], "SessionEnd": [group(END_CMD, 10)], "PreCompact": [group(PRE_CMD, 90)]}}
 

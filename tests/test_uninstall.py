@@ -583,6 +583,17 @@ check("--integration hindsight: Hindsight's two rows go -- still in app: %s" % r
       not rows_in(hs_only.slp, HS_ROWS), out)
 check("--integration hindsight: MemPalace's rows stay -- gone from mp: %s"
       % [r for r in MP_ROWS if r not in rows_in(hs_only.mp_slp, MP_ROWS)], rows_in(hs_only.mp_slp, MP_ROWS) == list(MP_ROWS))
+# Hindsight first, MemPalace still on: the doctor's row (claimed for hindsight, the first of its integrations that was on)
+# stays, and goes with the second uninstall. Red on 68f458b, message:
+#   "--integration hindsight, MemPalace still on: the doctor's row stays -- []"
+check("--integration hindsight, MemPalace still on: the doctor's row stays -- %s" % rows_in(hs_only.settings, ("memory_doctor.py",)),
+      rows_in(hs_only.settings, ("memory_doctor.py",)) == ["memory_doctor.py"], out)
+hs_only.set_integration("mempalace", False)
+code, out = hs_only.forge("uninstall", "--integration", "mempalace", "--apply")
+check("--integration mempalace after hindsight: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+check("--integration mempalace after hindsight: the doctor's row and the three rows go -- %s %s"
+      % (rows_in(hs_only.settings, ("memory_doctor.py",)), rows_in(hs_only.mp_slp, MP_ROWS)),
+      not rows_in(hs_only.settings, ("memory_doctor.py",)) and not rows_in(hs_only.mp_slp, MP_ROWS), out)
 
 # The doctor's row follows its writer: with both on it is Hindsight's claim, so it goes with the second of the two to be
 # uninstalled, never with the first (a MemPalace-only machine: the MemPalace claim).
@@ -594,13 +605,14 @@ only_mp = mp_world("owners-mp-only", False, True)
 check("control: MemPalace alone, the doctor's row is written -- %s" % rows_in(only_mp.settings, ("memory_doctor.py",)),
       rows_in(only_mp.settings, ("memory_doctor.py",)) == ["memory_doctor.py"])
 only_mp.set_integration("mempalace", False)
+# The row goes when no integration it serves is on, whichever of them is uninstalled: MemPalace is already off in the config
+# here, so `--integration hindsight` takes it (it was a MemPalace claim; before, only the claim's owner could take it).
 code, out = only_mp.forge("uninstall", "--integration", "hindsight", "--apply")
-check("MemPalace alone: --integration hindsight leaves the doctor's row -- %s" % rows_in(only_mp.settings, ("memory_doctor.py",)),
-      rows_in(only_mp.settings, ("memory_doctor.py",)) == ["memory_doctor.py"], out)
+check("MemPalace off, --integration hindsight: the doctor's row goes, nothing it serves is on -- %s" % rows_in(only_mp.settings, ("memory_doctor.py",)),
+      not rows_in(only_mp.settings, ("memory_doctor.py",)), out)
 code, out = only_mp.forge("uninstall", "--integration", "mempalace", "--apply")
-check("MemPalace alone: --integration mempalace takes the doctor's row and the three rows -- %s %s"
-      % (rows_in(only_mp.settings, ("memory_doctor.py",)), rows_in(only_mp.mp_slp, MP_ROWS)),
-      not rows_in(only_mp.settings, ("memory_doctor.py",)) and not rows_in(only_mp.mp_slp, MP_ROWS), out)
+check("MemPalace alone: --integration mempalace takes the three rows -- %s" % rows_in(only_mp.mp_slp, MP_ROWS),
+      not rows_in(only_mp.mp_slp, MP_ROWS), out)
 
 # ---------------------------------------------------------------- negative controls
 # removable() ignoring the digest: the edited env goes, which the main world's check catches.
