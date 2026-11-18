@@ -199,14 +199,14 @@ def _describe(doc, from_secrets):
             "env: %s" % (", ".join("%s%s" % (k, " (a secret)" if k in from_secrets else "=" + v) for k, v in sorted(doc.get("env", {}).items())) or "none")]
 
 
-def _run(claude, argv, env, watch=None, stopped=None):
+def _run(claude, argv, env, watch=None, stopped=None, **popen):
     """claude as a child, to its end; the exit code it gave (128 + the signal when a signal ended it). Ctrl-C goes to the whole
     foreground group, so claude has it already and we stay; a TERM or HUP aimed at us is passed on, and noted in the list `stopped`
     (the caller's) so that it does not start claude again. With `watch`, called every
     POLL seconds: once it says True the child is sent TERM (and KILL after KILL_AFTER seconds, so a claude that ignores it cannot
-    keep the loop from going on)."""
+    keep the loop from going on). `popen` (stdin, stdout, cwd) goes to Popen as it is."""
     sys.stdout.flush()
-    child = subprocess.Popen([claude] + argv, env=env)
+    child = subprocess.Popen([claude] + argv, env=env, **popen)
     saved = {sig: signal.signal(sig, handler) for sig, handler in (
         (signal.SIGINT, lambda *_: None), (signal.SIGTERM, lambda s, _: (stopped is None or stopped.append(s), child.send_signal(s))),
         (signal.SIGHUP, lambda s, _: (stopped is None or stopped.append(s), child.send_signal(s))))}
@@ -326,6 +326,18 @@ def _session(claude, argv, env, sid, project, profile, flags, carry=(), dropped=
         argv = flags + list(carry) + ["--resume", _resume_id(req, sid)]
 
 
+def session_env(profile, project, sid):
+    """The environment of a session `forge start @NAME` or `forge run @NAME` starts: ours plus FORGE_PROFILE and FORGE_PROJECT. The session
+    the launcher can switch is its id and its own pid; a start with no id of ours (-c, a title, the picker) has no record and so cannot
+    be switched, and must not carry the ones of an outer session it was started from."""
+    env = dict(os.environ, FORGE_PROFILE=profile, FORGE_PROJECT=project)
+    for var in ("FORGE_SESSION", "FORGE_LAUNCHER_PID"):
+        env.pop(var, None)
+    if sid:
+        env.update(FORGE_SESSION=sid, FORGE_LAUNCHER_PID=str(os.getpid()))
+    return env
+
+
 def _profile(a):
     """forge start @NAME [--dry-run] [ARGS...]."""
     args, dry = list(a.args), a.dry_run
@@ -352,13 +364,7 @@ def _profile(a):
             return _refuse(str(e))
     fresh = new_session(args)
     sid = str(uuid.uuid4()) if fresh else resumed_id(args)  # the id of a session we can switch: ours, or the one `--resume` names
-    env = dict(os.environ, FORGE_PROFILE=profile, FORGE_PROJECT=project)
-    # The session the launcher can switch: its id and its own pid. A start with no id of ours (-c, a title, the picker) has no record and
-    # so cannot be switched, and must not carry the ones of an outer session it was started from.
-    for var in ("FORGE_SESSION", "FORGE_LAUNCHER_PID"):
-        env.pop(var, None)
-    if sid:
-        env.update(FORGE_SESSION=sid, FORGE_LAUNCHER_PID=str(os.getpid()))
+    env = session_env(profile, project, sid)
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
         print("! forge start: claude is not on PATH", file=sys.stderr)

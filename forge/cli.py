@@ -14,6 +14,7 @@
   forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
   forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names, --session ID; forge/profiles.py)
   forge switch [@NAME]   inside a session started by `forge start @A`: restart claude with profile NAME and resume the conversation
+  forge run @NAME "PROMPT"  one headless session with profile NAME; its final answer on stdout (forge/run.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
@@ -39,7 +40,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, profiles, skills, toolchain, usage
+from forge import launch, lib, lockfile, mcp, owned, profiles, run, skills, toolchain, usage
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1954,6 +1955,17 @@ def main(argv=None):
                    "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
                    "restarts claude: anywhere else it refuses and kills nothing")
     t.set_defaults(fn=launch.switch)
+    t = sub.add_parser("run", help="one headless session of this project with a session profile; prints only its final answer",
+                       epilog="examples: forge run @marketing \"list your skills\" | forge run @reviewer \"review this diff\" --model haiku --json "
+                              "(a prompt that starts with a dash goes after --)")
+    t.add_argument("name", metavar="@NAME", help="the profile of the project of this directory (`forge list @` lists them)")
+    t.add_argument("prompt", metavar="PROMPT", help="what the session is asked; it reaches claude on stdin, never through a shell")
+    t.add_argument("--model", metavar="M", help="claude's --model, always passed to the child (default: sonnet)")
+    t.add_argument("--cwd", metavar="DIR", help="run in this folder: its project's profile, and the child's working directory")
+    t.add_argument("--permission-mode", metavar="MODE", help="claude's --permission-mode; none is passed when omitted, so the child has "
+                   "only what the profile's permissions allow")
+    t.add_argument("--json", action="store_true", help="print claude's whole JSON result instead of the answer alone")
+    t.set_defaults(fn=run.cmd)
     t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
     t.set_defaults(fn=lockfile.cmd_lock)
