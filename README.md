@@ -287,6 +287,7 @@ forge start NAME [ARGS...]                                  claude started with 
 forge start @NAME [--dry-run] [ARGS...]                     claude started with a profile of this project, by flags alone: no file of the project is written
 forge list @ | @NAME [--json] [--names] [--session ID]      the profiles a project declares, or one of them with its difference from the default
 forge switch @NAME                                          inside a session started by `forge start @A` (new, or `--resume UUID`; not `-c`, a title or a bare `--resume`): claude restarts with profile NAME and resumes the conversation
+forge shim [--shell fish|zsh|bash] | --check @NAME         print a shell function `claude`: `claude @NAME` runs `forge start @NAME` when this project offers that profile (or it is the default label); any other `claude`, `claude @notes.md` (a file mention) included, is the real one, and a plain `claude` is never wrapped nor probed (the probe costs about 33 ms), so in a project with profiles it starts the default as before
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
