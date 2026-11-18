@@ -20,6 +20,8 @@ failure message is what is quoted, and the assertion must produce it.
       control (the check taken out): `a profile with nothing was made`
   - a failure after the first write (the project file's step fails) leaves the world as it was, definitions and their folder included.
       control (the definitions' folder not on the undo list): `left behind`
+  - a failure after `forge new @NAME` wrote its definition leaves the world as it was.
+      control (that rollback taken out): `left behind`
   - the plan shows every answer, and the dry-run writes nothing.
       control (a plan without the answers): `the plan does not show`
 Also: the old behaviour (no new flag, no terminal) is test_new.py's, unchanged.
@@ -256,6 +258,21 @@ def a_failure_after_write(w):
     return bad
 
 
+def a_profile_failure(w):
+    """`forge new @code` fails after its definition was written: the definition, its folder and the project file are as they were."""
+    bad = made_demo(w)
+    if bad:
+        return bad
+    before = w.snapshot()
+    code, out = w.forge("new", "@code", "--sets", "ARCH_SET", "--apply", cwd=w.project("demo"))
+    if code != 1 or "injected" not in out:
+        bad.append("the injected failure did not stop the run: exit %d: %s" % (code, tail(out)))
+    after = w.snapshot()
+    if after != before:
+        bad.append("left behind: %s" % ", ".join(test_new.left_behind(before, after)[:6]))
+    return bad
+
+
 def a_plan_shows_answers(w):
     before = w.snapshot()
     code, out = w.forge("new", "demo", "--stack", "next", "--profiles", "code", "--sets", "ARCH_SET", "--server", "analytics-demo",
@@ -310,6 +327,8 @@ def a_cancelled(w):
     return []
 
 
+INJECT_PROFILE = (NEW, '            lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n',
+                  '            raise OSError("injected")\n            lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n')
 INJECT = (NEW, '            if row or extras:\n', '            raise OSError("injected")\n            if row or extras:\n')
 SKILLS_BLOCK = '''    if skills is None and interactive:
         members = {n for s in sets or [] for n in ctx.sets.get(s, [])}
@@ -341,13 +360,14 @@ CONTROLS = [
      "a profile with nothing was made", {}),
     ("definitions' folder not undone", a_failure_after_write, [INJECT, (NEW, '        undo.append(("dir", folder))\n', "        pass\n")],
      "left behind", {}),
+    ("@NAME's rollback taken out", a_profile_failure, [INJECT_PROFILE, (NEW, "        rollback(steps=undo)\n", "        pass\n")], "left behind", {}),
     ("a plan without the answers", a_plan_shows_answers, [(NEW, "    for line in describe(ctx, ans, rows, new_defs):\n        print(line)\n    print(\"  then",
                                                            "    print(\"  then")],
      "the plan does not show", {}),
 ]
 PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_prompts, {}), ("edited list", a_edited_list, {}),
          ("profile here", a_profile_here, {}), ("profile names", a_profile_names, {}), ("nothing answered", a_nothing_answered, {}),
-         ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("plan", a_plan_shows_answers, {}),
+         ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("profile failure", a_profile_failure, {"mutate": [INJECT_PROFILE]}), ("plan", a_plan_shows_answers, {}),
          ("stack and memory", a_stack_and_memory, {}), ("memory hindsight", a_memory_hindsight, {"hindsight": True}),
          ("cancelled", a_cancelled, {})]
 

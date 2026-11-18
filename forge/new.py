@@ -266,6 +266,17 @@ def world_error(target):
     return None
 
 
+def confirmed(asker, a):
+    """Whether the owner, who has just answered questions in a terminal, says yes to writing them (without --apply). False without a
+    terminal or with --yes: that is the dry-run it always was."""
+    if not asker.interactive or a.yes:
+        return False
+    if configure._ask("make it? [y/N] "):
+        return True
+    print("nothing written")
+    return False
+
+
 def unanswered(a, name, stack, asker):
     """The problems of the answers when nothing can be asked (no terminal, or --yes): what the flags give, checked as create() checks
     it, so one error names these together with the missing --stack or folder. [] when nothing is wrong or forge.json cannot be read."""
@@ -360,14 +371,14 @@ def create_profile(a):
     ctx = ask.Context(project, forge, doc, None)
     asker = ask.make_asker()
     try:
-        ans, problems = ask.gather(a, ctx, asker, profile=name)
+        ans, bad = ask.gather(a, ctx, asker, profile=name)
         rows, new_defs = {}, {}
-        if not problems:
-            rows, new_defs, problems = ask.apply(ctx, ans)
+        if not bad:
+            rows, new_defs, bad = ask.apply(ctx, ans)
     except ask.Cancelled as e:
         return refuse(1, "%s -- nothing written" % e)
-    if problems:
-        return refuse(2, "nothing written, %s" % "; ".join(problems))
+    if bad:
+        return refuse(2, "nothing written, %s" % "; ".join(bad))
     doc["profiles"] = {"default": given["default"], "offered": {**given["offered"], name: rows[name]}}
     why = lib.project_error(doc)
     if why:
@@ -378,20 +389,15 @@ def create_profile(a):
     print("  project     config/projects/%s.claude.json: profiles.offered.%s%s" % (
         project, name, "" if isinstance(json.loads(text).get("profiles"), dict) else
         " (and profiles.default %r: the project's own lists)" % given["default"]))
-    if not a.apply:
-        if asker.interactive and not a.yes:
-            if not configure._ask("make it? [y/N] "):
-                print("nothing written")
-                return 0
-        else:
-            return 0
-    ok, why = lib.may_write()
-    if not ok:
-        print(why)
+    if not (a.apply or confirmed(asker, a)):
+        return 0
+    writable, reason = lib.may_write()
+    if not writable:
+        print(reason)
         return 1
     undo = []
     try:
-        with stopped_means_rollback(), creation_lock():
+        with creation_lock(), stopped_means_rollback():
             if lib.read_text(project_file) != text:
                 return refuse(2, "%s changed while the answers were asked; nothing written. Run the command again" % lib.short(project_file))
             taken = [n for n in new_defs if os.path.lexists(profiles.definition_path(n))]
@@ -403,7 +409,7 @@ def create_profile(a):
             print("wrote  %s" % os.path.relpath(project_file, lib.ROOT))
     except BaseException as e:
         made = bool(undo)
-        rollback(undo)
+        rollback(steps=undo)
         if not isinstance(e, Exception):
             print("! forge new: stopped%s" % (" -- what this run made was removed" if made else ""))
             raise
@@ -488,14 +494,14 @@ def create(a):
             return refuse(2, "nothing written, --framework would make a project every forge sync refuses: %s" % why)
     ctx = ask.Context(name, doc, project, dict(stack, name=a.stack))
     try:
-        ans, problems = ask.gather(a, ctx, asker)
+        ans, bad = ask.gather(a, ctx, asker)
         rows, new_defs = {}, {}
-        if not problems:
-            rows, new_defs, problems = ask.apply(ctx, ans)
+        if not bad:
+            rows, new_defs, bad = ask.apply(ctx, ans)
     except ask.Cancelled as e:
         return refuse(1, "%s -- nothing written" % e)
-    if problems:
-        return refuse(2, "nothing written, %s" % "; ".join(problems))
+    if bad:
+        return refuse(2, "nothing written, %s" % "; ".join(bad))
     if rows:
         project["profiles"] = {"default": ask.DEFAULT_LABEL, "offered": rows}
     why = lib.project_error(project)
@@ -520,11 +526,7 @@ def create(a):
         print(line)
     print("  then        forge sync --apply %s" % name)
     if not a.apply:
-        if asker.interactive and not a.yes:  # the owner answered questions: one more, so they are not for nothing
-            if not configure._ask("make it? [y/N] "):
-                print("nothing written")
-                return 0
-        else:
+        if not confirmed(asker, a):
             return 0
     ok, why = lib.may_write()
     if not ok:

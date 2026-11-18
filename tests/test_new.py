@@ -18,7 +18,7 @@ in one line; the control's failure message is what is quoted here, and the asser
   - a project named `list` can be created.
       control (a reserved list of verbs): `project named 'list' rejected`
   - a name starting with `@`, or with `-`, or not kebab-case, is refused, exit 2, nothing created.
-      control (no name check): `project named '@x' created`
+      control (no name check): `project named '-x' created`
   - an argument that looks like a path and does not exist is refused as a path (exit 1, "is not a directory", as
     before), never taken for a name.
       control (no path check): `'./nope' was not refused as a path`
@@ -347,7 +347,9 @@ def a_list_created(w):
 
 def a_bad_names(w):
     bad = []
-    for name in ("@x", "-x", "My_Project", "a--b", "x-", "demo\n"):
+    # "@x" is no longer here: with 4.4 U6 an argument that starts with @ is a profile of the project in the folder (`forge new @x`), not a
+    # name; tests/test_ask.py refuses its bad names (@-x, @@x, @Bad) with the reason.
+    for name in ("-x", "My_Project", "a--b", "x-", "demo\n"):
         before = w.snapshot()
         argv = ["new", "--stack", "generic", "--apply"] + (["--", name] if name.startswith("-") else [name])
         code, out = w.forge(*argv)
@@ -967,7 +969,7 @@ CONTROLS = [
     ("a dry-run that goes on", a_dry_run, [(NEW, "if not a.apply:", "if False:")], "dry-run changed the tree"),
     ("a reserved list of verbs", a_list_created,
      [(NEW, "if not KEBAB.match(name):", 'if not KEBAB.match(name) or name in ("list", "new", "doctor"):')], "project named 'list' rejected"),
-    ("no name check", a_bad_names, [(NEW, "if not KEBAB.match(name):", "if False:")], "project named '@x' created"),
+    ("no name check", a_bad_names, [(NEW, "if not KEBAB.match(name):", "if False:")], "project named '-x' created"),
     ("a path taken for a name", a_path_not_name, [(NEW, "if path_like(arg):", "if False:")], "'./nope' was not refused as a path"),
     ("a bare directory registered silently", a_name_or_path, [(NEW, 'print("forge new: ./%s exists here', '(lambda *x: None)("forge new: ./%s exists here')],
      "name taken for a path silently"),
