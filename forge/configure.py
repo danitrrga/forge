@@ -754,7 +754,8 @@ def screen(name, profile, keys=None):
 
 
 def cmd_config(a):
-    """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]."""
+    """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]. With no flag, in a terminal,
+    the key-selector screen builds the flags (exit 0 when it is cancelled or nothing was toggled); without a terminal, exit 2."""
     try:
         names = [t for t in a.targets if not t.startswith("@")]
         ats = [t for t in a.targets if t.startswith("@")]

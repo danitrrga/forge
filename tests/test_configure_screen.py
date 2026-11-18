@@ -15,13 +15,16 @@ Cases (the plan's control (h), and the brief's):
      the project screen does nothing when toggled.
   t  the terminal is as it was after every run above.
 
-Written first and run against fe9246a (the first half, whose `forge config NAME` with no flag and a terminal is exit 2 "nothing to change"):
-  "FAIL h: the screen run exits 0 -- exit 2 ..." and "FAIL e: Esc exits 0 and says nothing was written -- exit 2 ...": see the commit message.
-Negative controls, each a text replacement in the world's copy of the engine (World(mutate=...)), run once and not kept:
-  h  screen() reading the toggled row one place off (`ids[i + 1]` for `ids[i]`) -> "FAIL h: screen and flags differ: ..."
-  t  selector.run() without the restore of the terminal attributes -> "FAIL t: terminal left in raw mode ..."
-  e  screen() returning the changes of a cancelled selector -> "FAIL e: Esc wrote ..."
-  n  the screen's flags written without change()'s question (go = True) -> "FAIL n: ... wrote without asking"
+Written first and run against fe9246a (the first half, whose `forge config NAME` with no flag and a terminal is exit 2 "nothing to change"): 26 FAIL,
+the first "FAIL h: the screen run for toy-d exits 0 -- exit 2, shown 'forge config: nothing to change: give --on TYPE:NAME or --off TYPE:NAME ...'".
+Negative controls, each a text replacement in the world's copy of the engine (World(mutate=...)), run once with `python3 tests/test_configure_screen.py
+mutants` (which is expected to print these FAILs and exit 1):
+  h  the toggled row read as another (toy-d as toy-e, toy-common as toy-a) -> "FAIL h: the screen for toy-d and --off skill:toy-d --apply leave the same
+     files -- screen and flags differ: ['forge/config/projects/plain.claude.json', ...]"
+  t  selector.run() without the restore of the terminal attributes -> "FAIL t: terminal left in raw mode (selector without its restore) -- terminal left in raw mode"
+  e  screen() returning a change for a cancelled selector -> "FAIL e: Esc exits 0 and says nothing was written -- exit 0, shown ..." (the screen went on to ask [y/N])
+  n  the question of change() answered yes without asking -> "FAIL n: n at [y/N] writes nothing -- wrote without asking: ['forge/config/projects/plain.claude.json', ...]"
+Left out of the file comparison: the toy HOME's state folder (time of each write; checksums of files that name the world's own root).
 """
 import os
 import pty
@@ -46,7 +49,7 @@ HINT = b"esc cancels"
 def check(name, ok, detail=""):
     if not ok:
         failures.append(name)
-        print("FAIL %s -- %s" % (name, detail))
+        print("FAIL %s -- %s" % (name, str(detail)[:230]))
 
 
 STATE = os.path.join("home", ".local", "state", "forge")
@@ -132,8 +135,8 @@ def case_h(mutate=None):
         sandbox.rmtree(want.root)
 
 
-def case_e():
-    w = World()
+def case_e(mutate=None):
+    w = World(mutate)
     before = files(w)
     for label, keys in (("Esc", DOWN + SPACE + ESC), ("Ctrl-C", DOWN + SPACE + CTRL_C)):
         code, shown, restored = run_screen(w, ["config", "plain"], keys)
@@ -151,8 +154,8 @@ def case_e():
     sandbox.rmtree(w.root)
 
 
-def case_n():
-    w = World()
+def case_n(mutate=None):
+    w = World(mutate)
     before = files(w)
     for label, answer in (("n", b"n\r"), ("a bare Enter", b"\r"), ("N", b"N\r")):
         code, shown, restored = run_screen(w, ["config", "plain"], DOWN * 4 + SPACE + ENTER, answer)
