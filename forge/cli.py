@@ -569,13 +569,20 @@ def _agent_browser_missing():
         "open a new shell, or set integrations.agent_browser false")
 
 
+def _mempalace_missing():
+    return None if shutil.which("mempalace") else (
+        "mempalace is on in config/forge.json but mempalace is not on PATH -- run `forge toolchain --fix`, then "
+        "open a new shell, or set integrations.mempalace false")
+
+
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"),
                      "hindsight": (None, "no dependency checked here"),
                      "consent": (None, "its own row, `consent`, looks at the adapter, the projects and the hook"),
-                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
+                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH"),
+                     "mempalace": (_mempalace_missing, "mempalace found on PATH")}
 # An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
-# nothing. The value says when the check arrives (7.1 of the framework plan puts MemPalace's).
-INTEGRATION_PENDING = {"mempalace": "its check arrives with the MemPalace part"}
+# nothing. The value says when the check arrives. None is pending now.
+INTEGRATION_PENDING = {}
 
 
 def hook_scripts(command):

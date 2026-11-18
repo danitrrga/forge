@@ -120,22 +120,37 @@ _CODE_ROWS = [
      "coding-agents", None, (CODEX,)),
 ]
 
-# Rows written per project, never at user scope: one project uses one memory system, so Hindsight's
-# Claude hooks go only into the .claude/settings.local.json of a project that uses Hindsight (its
-# `servers` holds hindsight-coding-agents, SCOPES), through skills.write_settings_local, which owns
-# them by exact command there. At user scope they fired on every prompt of every project and only
-# Hindsight's own config made them inert outside its projects. config/forge.json's `user_hooks` rows
-# with `"scope": "hindsight"` join them (_config_rows). Every one of them is also an OFF_HOOKS row, so
-# reconcile() takes forge's old user-scope entry out by its exact command.
+# Rows written per project, never at user scope: one project uses one memory system, so a memory
+# system's Claude hooks go only into the .claude/settings.local.json of a project that uses it (SCOPES),
+# through skills.write_settings_local, which owns them by exact command there. Hindsight's: its `servers`
+# holds hindsight-coding-agents. MemPalace's: its `servers` holds mempalace. At user scope the Hindsight
+# ones fired on every prompt of every project and only Hindsight's own config made them inert outside its
+# projects. config/forge.json's `user_hooks` rows with `"scope": "hindsight"` or `"scope": "mempalace"`
+# join them (_config_rows). Every one of them is also an OFF_HOOKS row, so reconcile() takes forge's old
+# user-scope entry out by its exact command. Each item is (row, scope).
+#
+# MemPalace's three rows run the scripts of hooks/mempalace/, copied from the upstream tag (its NOTICE.md),
+# with the timeouts of the upstream plugin's hooks.json. No SessionStart row: 7.1's measurement found the
+# agent retrieves without one (3 of 3). The Stop script exits 1 when `mempalace` is missing (a failed hook the
+# session goes on from, never the blocking 2); the SessionEnd one saves in a background process and returns at
+# once, because Claude Code gives that event 1.5 s.
+MEMPALACE_DIR = os.path.join(HOOK_DIR, "mempalace")
 _PROJECT_CODE_ROWS = [
-    ("UserPromptSubmit", 'node "%s/claude-hook.js"' % HINDSIGHT_DIST, 30,
-     "coding-agents", None, (CLAUDE,)),
-    ("Stop", 'node "%s/claude-stop-hook.js"' % HINDSIGHT_DIST, 60,
-     "coding-agents", None, (CLAUDE,)),
+    (("UserPromptSubmit", 'node "%s/claude-hook.js"' % HINDSIGHT_DIST, 30,
+      "coding-agents", None, (CLAUDE,)), "hindsight"),
+    (("Stop", 'node "%s/claude-stop-hook.js"' % HINDSIGHT_DIST, 60,
+      "coding-agents", None, (CLAUDE,)), "hindsight"),
+    (("Stop", 'bash "%s/mempal-stop-hook.sh"' % MEMPALACE_DIR, 30,
+      "mempal-stop-hook.sh", None, (CLAUDE,)), "mempalace"),
+    (("SessionEnd", 'bash "%s/mempal-session-end-hook.sh"' % MEMPALACE_DIR, 10,
+      "mempal-session-end-hook.sh", None, (CLAUDE,)), "mempalace"),
+    (("PreCompact", 'bash "%s/mempal-precompact-hook.sh"' % MEMPALACE_DIR, 90,
+      "mempal-precompact-hook.sh", None, (CLAUDE,)), "mempalace"),
 ]
 # A project scope's name (a `user_hooks` row's `scope`, and the integration that gates it) -> whether
 # a project is in it.
-SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or [])}
+SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or []),
+          "mempalace": lambda prof: "mempalace" in (prof.get("servers") or [])}
 
 # The integration (lib.INTEGRATIONS) each gated row belongs to, by marker. A row whose integration
 # is off is not written, and reconcile() takes out the entries whose command EQUALS the row's, never
@@ -143,17 +158,33 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # installed themselves stays. HOOK_WARDS, by marker, is for retired rows only.
 #
 # One more gate, off unless the JSON true: `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
-ROW_INTEGRATION = {"coding-agents": "hindsight", "memory_doctor.py": "hindsight", "guard_tool_use.py --consent": "consent"}
+# A value is one integration, or a tuple of them when the row serves several: written while any is on. The
+# doctor's session-start row serves both memory systems, so it still runs with Hindsight off and MemPalace on.
+ROW_INTEGRATION = {"coding-agents": "hindsight", "memory_doctor.py": ("hindsight", "mempalace"),
+                   "guard_tool_use.py --consent": "consent", "mempal-stop-hook.sh": "mempalace",
+                   "mempal-session-end-hook.sh": "mempalace", "mempal-precompact-hook.sh": "mempalace"}
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
 # marker -> the `onFailure` value of the row's entries. reconcile() writes it and compares it, so an entry that is
 # right but for it is repaired and not kept for ever; a row not listed is compared as before (command, timeout, matcher).
 ROW_ON_FAILURE = {"guard_tool_use.py --consent": "block"}
 
 
+def _integrations(marker):
+    """The integrations a row with this marker belongs to, as a tuple (empty: a core row)."""
+    names = ROW_INTEGRATION.get(marker, ())
+    return (names,) if isinstance(names, str) else tuple(names)
+
+
+def _owner(marker):
+    """Whose ownership claim a row's entry is: the first of its integrations that is on, else the first, else core."""
+    names = _integrations(marker)
+    return next((n for n in names if lib.on(n)), names[0] if names else "core")
+
+
 def _row_on(marker):
     """Whether forge's own row with this marker is written."""
-    name = ROW_INTEGRATION.get(marker)
-    if name and not lib.on(name):
+    names = _integrations(marker)
+    if names and not any(lib.on(n) for n in names):
         return False
     return not (marker in ROW_HOUSE and lib.settings().get("house_hooks") is not True)
 
@@ -201,8 +232,8 @@ def _split():
     live, off, project = [], [], []
     for row in _CODE_ROWS:
         (live if _row_on(row[3]) else off).append(row)
-    for row in _PROJECT_CODE_ROWS:
-        project.append((row, "hindsight", _row_on(row[3])))
+    for row, scope in _PROJECT_CODE_ROWS:
+        project.append((row, scope, _row_on(row[3])))
     scopes = []
     for (row, on), scope in zip(_config_rows(scopes), scopes):
         if scope:
@@ -493,7 +524,7 @@ def reconcile_owned(doc, agent, file):
     for event, cmd, _, marker, matcher, targets in USER_HOOKS:
         found = owned.hooks_with(doc, event, cmd, matcher) if agent in targets else []
         if found:  # reconcile left exactly the conforming one
-            now.append(owned.claim("hook", [event, matcher, cmd], found[0], ROW_INTEGRATION.get(marker, "core")))
+            now.append(owned.claim("hook", [event, matcher, cmd], found[0], _owner(marker)))
     hooks = doc["hooks"]
     for c in owned.stale(prev, now):
         if c["kind"] != "hook" or len(c["at"]) != 3:
