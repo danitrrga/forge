@@ -1,7 +1,7 @@
 """How forge's terminal screens look: the one place of marks and colours, so a later change of look touches nothing else.
 
 Today it is the terminal's own foreground and background, no colour and no escape sequence, and plain marks. A look
-chosen later changes the constants and the functions here; forge/select.py asks for lines and never for a style.
+chosen later changes the constants and the functions here; forge/selector.py asks for lines and never for a style.
 """
 
 CURSOR = ">"

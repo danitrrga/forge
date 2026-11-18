@@ -11,8 +11,8 @@ A row is `(id, label, on)`; a section is `(title, [rows])`, and an empty title d
 the choice was cancelled (Esc, Ctrl-C, the input ending) or could not be asked (no terminal). Callers treat both
 "no change" outcomes alike unless they want to say "cancelled".
 
-This file is named like the stdlib module it imports; inside the `forge` package an absolute `import select` still
-finds the stdlib one, as long as the forge/ folder itself is never put on sys.path.
+It is `selector`, not `select`: a file named like the stdlib module would shadow it wherever the forge/ folder ends up on
+sys.path and `select` is an extension module, not a built-in one.
 """
 import os
 import select as stdlib_select

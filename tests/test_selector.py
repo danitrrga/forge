@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""forge/select.py and forge/render.py: the key selector, a list moved with the arrows and toggled with space
+"""forge/selector.py and forge/render.py: the key selector, a list moved with the arrows and toggled with space
 (framework-discuss plan 4.4 U3a). Three layers, each tested on its own: `Selector.press` (a state machine fed key
 names), `read_keys` (the decoder of a terminal's bytes, fed through a real pty) and `run` (owns the terminal).
 
-Written first and run against a tree without forge/select.py: "ImportError: cannot import name 'render' from 'forge'"
+Written first and run against a tree without forge/selector.py: "ImportError: cannot import name 'render' from 'forge'"
 (the whole file stops at its first import). Negative controls on the finished code, each mutation put back afterwards; the message each one made this
 file print is in the commit message:
   (b) a cancel that returns what changed         -> "esc returned changes = ..."
@@ -26,7 +26,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from forge import render  # noqa: E402
-from forge import select as selector  # noqa: E402
+from forge import selector  # noqa: E402
 
 try:
     import pty
