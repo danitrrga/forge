@@ -14,6 +14,7 @@
   forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
   forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names, --session ID; forge/profiles.py)
   forge switch [@NAME]   inside a session started by `forge start @A`: restart claude with profile NAME and resume the conversation
+  forge shim [--shell S] print a shell function `claude`, so that `claude @NAME` runs `forge start @NAME` (--check @NAME: the probe; forge/shim.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
@@ -39,7 +40,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, profiles, skills, toolchain, usage
+from forge import launch, lib, lockfile, mcp, owned, profiles, shim, skills, toolchain, usage
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1954,6 +1955,13 @@ def main(argv=None):
                    "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
                    "restarts claude: anywhere else it refuses and kills nothing")
     t.set_defaults(fn=launch.switch)
+    t = sub.add_parser("shim", help="print a shell function `claude`: `claude @NAME` starts that profile of this project, any other claude is the real one",
+                       epilog="examples: forge shim --shell fish > ~/.config/fish/conf.d/forge-claude.fish | forge shim --check @marketing (the probe the function calls)")
+    which = t.add_mutually_exclusive_group()
+    which.add_argument("--shell", choices=shim.SHELLS, help="the shell to print it for (default: the one $SHELL names, said on stderr)")
+    which.add_argument("--check", metavar="@NAME", help="print nothing: exit 0 when NAME is the default label or a profile this directory's project offers, "
+                       "1 in every other case (what the function asks before it takes `claude @x` for a profile and not for a file mention)")
+    t.set_defaults(fn=shim.cmd)
     t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")
     t.set_defaults(fn=lockfile.cmd_lock)
