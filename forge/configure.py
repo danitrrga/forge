@@ -697,6 +697,7 @@ def change(name, profile, changes, yes=False, as_json=False):
 
 # ---- the screen ------------------------------------------------------------------------------------------------------------
 
+NEW_PROFILE_ROW = "profile:+new"  # not a profile name: a name is kebab-case
 CANCELLED = "forge config: cancelled, nothing was written"
 NO_CHOICE = "forge config: nothing was changed, nothing was written"
 
@@ -733,9 +734,12 @@ def sections(name, profile):
     out.append(("servers", [("server:" + s, s, s in listed) for s in sorted(set(p.registry()) | set(listed))]))
     out.append(("options", [("option:" + o, o, p.proj.get(o) is True) for o in OPTIONS]))
     given = p.proj.get("profiles")
-    if isinstance(given, dict) and given.get("offered"):  # read-only: a toggle of these rows is dropped, the command is the way in
-        out.append(("profiles (read-only: open one with its command)", [
-            ("profile:" + n, "@%s  forge config %s @%s" % (n, name, n), False) for n in given["offered"]]))
+    offered = given["offered"] if isinstance(given, dict) else {}
+    # The rows of the offered profiles are read-only (a toggle of them is dropped, the command is the way in). The first row is the one that
+    # does something: toggled, it asks a name and the questions of `forge new @NAME` once the screen is closed. It goes first so the offered
+    # profiles stay the last rows.
+    out.append(("profiles (open one with its command, or add one)", [(NEW_PROFILE_ROW, "new profile  (toggle it, then Enter: asks its name and its questions)", False)]
+                + [("profile:" + n, "@%s  forge config %s @%s" % (n, name, n), False) for n in offered]))
     return out
 
 
@@ -748,9 +752,36 @@ def screen(name, profile, keys=None):
     flags = []
     for row, now in got.items():
         typ, _, item = row.partition(":")
-        if typ != "profile":
+        if row == NEW_PROFILE_ROW:
+            flags.append(("on", "profile", "+new"))
+        elif typ != "profile":
             flags.append(("on" if now else "off", typ, item))
     return flags
+
+
+def new_profile(name, prof):
+    """The screen's "new profile" row: asks the profile's name, then runs `forge new @NAME` for the project (its questions, its plan, its
+    confirmation) from the project's folder. The exit code of that."""
+    import argparse
+    from forge import new as new_cmd  # forge/new.py imports this module
+    folder = prof.get("project_path", "")
+    if not os.path.isdir(folder):
+        _say("forge config: the folder of project %s (%s) does not exist, so forge new @NAME cannot run there" % (name, folder), err=True)
+        return 2
+    try:
+        text = input("name of the new profile of %s: " % name).strip()
+    except EOFError:
+        _say(CANCELLED, err=True)
+        return 0
+    args = argparse.Namespace(path="@" + text, parent_dir=None, stack=None, framework=False, name=None, writes_tracked_files=False, yes=False,
+                              apply=False, profiles=None, sets=None, skills=None, server=None, memory=None, check=None, plugin=None, ui=False,
+                              command_guard=False)
+    here = os.getcwd()
+    try:
+        os.chdir(folder)
+        return new_cmd.create_profile(args)
+    finally:
+        os.chdir(here)
 
 
 def cmd_config(a):
@@ -784,6 +815,13 @@ def cmd_config(a):
             if not changes:
                 _say(NO_CHOICE if changes == [] else CANCELLED)
                 return 0
+            if ("on", "profile", "+new") in changes:  # the screen's own row: not a flag of change()
+                changes = [c for c in changes if c[1] != "profile"]
+                if changes:
+                    code = change(name, profile, changes, yes=a.apply or a.yes, as_json=a.json)
+                    if code:
+                        return code
+                return new_profile(name, prof)
     except (Refusal, profiles.ProfileError) as e:
         _say("forge config: %s" % e, err=True)
         return 2

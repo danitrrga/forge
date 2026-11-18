@@ -22,6 +22,8 @@ failure message is what is quoted, and the assertion must produce it.
       control (the definitions' folder not on the undo list): `left behind`
   - a failure after `forge new @NAME` wrote its definition leaves the world as it was.
       control (that rollback taken out): `left behind`
+  - the "new profile" row of the `forge config NAME` screen, toggled, asks a name and the questions and leaves the profile.
+      control (the row does nothing): `the new-profile row made no profile`
   - the plan shows every answer, and the dry-run writes nothing.
       control (a plan without the answers): `the plan does not show`
 Also: the old behaviour (no new flag, no terminal) is test_new.py's, unchanged.
@@ -57,6 +59,19 @@ ask.make_asker = make
 code = cli.main(spec["argv"])
 print("ASKED " + json.dumps(made[-1].asked if made else []))
 sys.exit(code)
+'''
+# The screen of `forge config demo` with a recorded key sequence, then the name and the questions of its "new profile" row.
+SCREEN_DRIVER = '''import argparse, builtins, json, sys
+sys.path.insert(0, sys.argv[1])
+from forge import ask, configure, selector
+spec = json.load(open(sys.argv[2]))
+real = selector.run
+selector.run = lambda sections, window=None, keys=None, **kw: real(sections, window=window, keys=spec["screen_keys"] if keys is None else keys)
+configure.has_terminal = lambda: True
+configure._ask = lambda prompt: True
+builtins.input = lambda prompt="": spec["name"]
+ask.make_asker = lambda: ask.Asker(keys=spec["keys"], lines=[], interactive=True)
+sys.exit(configure.cmd_config(argparse.Namespace(targets=["demo"], on=None, off=None, apply=False, yes=False, json=False)))
 '''
 ORDER = ["profiles", "sets", "skills", "servers", "memory", "stack"]
 
@@ -273,6 +288,24 @@ def a_profile_failure(w):
     return bad
 
 
+def a_screen_row(w):
+    """The "new profile" row of the `forge config demo` screen: toggled, it asks a name and the questions and leaves the profile."""
+    bad = made_demo(w)
+    if bad:
+        return bad
+    d = write_driver(w)
+    with open(os.path.join(d, "screen.py"), "w") as fh:
+        fh.write(SCREEN_DRIVER)
+    write_json(os.path.join(d, "screen.json"), {"screen_keys": ["down"] * 60 + ["space", "enter"], "name": "docs",
+                                                "keys": [["space", "enter"], ["enter"], ["enter"]]})
+    r = subprocess.run([sys.executable, os.path.join(d, "screen.py"), w.root, os.path.join(d, "screen.json")], cwd=w.cwd, env=w.env,
+                       capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    offered = ((project_doc(w) or {}).get("profiles") or {}).get("offered")
+    if r.returncode != 0 or offered != {"docs": {"skills": ["@ARCH_SET"]}}:
+        bad.append("the new-profile row made no profile: exit %d, offered %s: %s" % (r.returncode, offered, tail(r.stdout + r.stderr)))
+    return bad
+
+
 def a_plan_shows_answers(w):
     before = w.snapshot()
     code, out = w.forge("new", "demo", "--stack", "next", "--profiles", "code", "--sets", "ARCH_SET", "--server", "analytics-demo",
@@ -361,13 +394,15 @@ CONTROLS = [
     ("definitions' folder not undone", a_failure_after_write, [INJECT, (NEW, '        undo.append(("dir", folder))\n', "        pass\n")],
      "left behind", {}),
     ("@NAME's rollback taken out", a_profile_failure, [INJECT_PROFILE, (NEW, "        rollback(steps=undo)\n", "        pass\n")], "left behind", {}),
+    ("the new-profile row does nothing", a_screen_row, [("forge/configure.py", "                return new_profile(name, prof)", "                return 0")],
+     "the new-profile row made no profile", {}),
     ("a plan without the answers", a_plan_shows_answers, [(NEW, "    for line in describe(ctx, ans, rows, new_defs):\n        print(line)\n    print(\"  then",
                                                            "    print(\"  then")],
      "the plan does not show", {}),
 ]
 PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_prompts, {}), ("edited list", a_edited_list, {}),
          ("profile here", a_profile_here, {}), ("profile names", a_profile_names, {}), ("nothing answered", a_nothing_answered, {}),
-         ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("profile failure", a_profile_failure, {"mutate": [INJECT_PROFILE]}), ("plan", a_plan_shows_answers, {}),
+         ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("profile failure", a_profile_failure, {"mutate": [INJECT_PROFILE]}), ("screen row", a_screen_row, {}), ("plan", a_plan_shows_answers, {}),
          ("stack and memory", a_stack_and_memory, {}), ("memory hindsight", a_memory_hindsight, {"hindsight": True}),
          ("cancelled", a_cancelled, {})]
 
