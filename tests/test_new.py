@@ -37,14 +37,18 @@ and nowhere else, `forge new --help` lists every flag.
 Seen failing first (this file, before forge/new.py existed): `forge new demo --stack generic --apply` died with
 `forge new: ... is not a directory` exit 1 (the old command), every creation assertion failed, and every control
 said `control anchor not found in forge/new.py`."""
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shutil
+import signal
 import stat
 import subprocess
 import sys
+import threading
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
@@ -75,6 +79,12 @@ def write_json(path, doc):
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(doc, fh, indent=2)
         fh.write("\n")
+
+
+# forge new's own lock file and the folders above it: made by any apply, kept by design (an flock a dying run frees), so a
+# run that failed and rolled back still shows them.
+QUIET = {os.path.join("home", ".local"), os.path.join("home", ".local", "state"), os.path.join("home", ".local", "state", "forge"),
+         os.path.join("home", ".local", "state", "forge", "new.lock")}
 
 
 class World:
@@ -127,11 +137,36 @@ class World:
         if self.top in sandbox._made:
             sandbox._made.remove(self.top)
 
-    def forge(self, *args, env=None):
-        """(exit code, stdout and stderr) of `bin/forge args`, run from W/cwd with no terminal."""
-        r = subprocess.run([sys.executable, os.path.join(self.root, "bin", "forge")] + list(args), cwd=self.cwd,
+    def forge(self, *args, env=None, cwd=None):
+        """(exit code, stdout and stderr) of `bin/forge args`, run from W/cwd (or `cwd`) with no terminal."""
+        r = subprocess.run([sys.executable, os.path.join(self.root, "bin", "forge")] + list(args), cwd=cwd or self.cwd,
                            env=env or self.env, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
         return r.returncode, r.stdout + r.stderr
+
+    def start(self, *args, env=None, cwd=None):
+        """The same, started and not waited for."""
+        return subprocess.Popen([sys.executable, os.path.join(self.root, "bin", "forge")] + list(args), cwd=cwd or self.cwd,
+                                env=env or self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                stdin=subprocess.DEVNULL)
+
+    def start_together(self, jobs, at=1.0):
+        """Starts every job (a list of argv tails) so that each begins the same instant, `at` seconds ahead: the interpreters
+        are up and wait, then all run `bin/forge`, so their checks overlap."""
+        t = time.time() + at
+        code = "import runpy,sys,time; time.sleep(max(0.0, float(sys.argv[1]) - time.time())); sys.argv = sys.argv[2:]; runpy.run_path(sys.argv[0], run_name='__main__')"
+        return [subprocess.Popen([sys.executable, "-c", code, repr(t), os.path.join(self.root, "bin", "forge")] + list(job["args"]),
+                                 cwd=self.cwd, env=job.get("env") or self.env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True, stdin=subprocess.DEVNULL) for job in jobs]
+
+    def slow_env(self, secs):
+        """The environment with a `git` in front that sleeps `secs` seconds on `init` and otherwise is the real git."""
+        d = os.path.join(self.top, "slowbin")
+        os.makedirs(d, exist_ok=True)
+        real = shutil.which("git")
+        with open(os.path.join(d, "git"), "w") as fh:
+            fh.write('#!/bin/sh\nfor a in "$@"; do [ "$a" = init ] && sleep %s; done\nexec %s "$@"\n' % (secs, real))
+        os.chmod(os.path.join(d, "git"), 0o755)
+        return dict(self.env, PATH=d + os.pathsep + self.env["PATH"])
 
     def path(self, *parts):
         return os.path.join(self.root, *parts)
@@ -142,7 +177,8 @@ class World:
     def snapshot(self):
         """Every file of the world by kind, mode and content (not mtime), the write log left out; .git directories
         are not walked by sandbox.manifest, so their paths are added."""
-        snap = {k: v[:3] for k, v in sandbox.manifest(self.top).items() if k != "log" and not k.startswith("log" + os.sep)}
+        snap = {k: v[:3] for k, v in sandbox.manifest(self.top).items() if k != "log" and not k.startswith("log" + os.sep)
+                and k not in QUIET}
         for d, dirs, _ in os.walk(self.top):
             if ".git" in dirs:
                 snap[os.path.relpath(os.path.join(d, ".git"), self.top) + "/"] = ("dir-git",)
@@ -189,6 +225,8 @@ def a_missing_stack(w):
     for extra in ([], ["--apply"], ["--yes"], ["--yes", "--apply"]):
         before = w.snapshot()
         code, out = w.forge("new", "demo", *extra)
+        if "register" not in out:
+            bad.append("the missing --stack%s does not say a directory is registered by its path: %s" % (" ".join([""] + extra), tail(out)))
         if code != 2 or "--stack" not in out:
             bad.append("no --stack%s: exit %d, want 2 naming --stack: %s" % (" ".join([""] + extra), code, tail(out)))
         if os.path.lexists(w.project("demo")):
@@ -233,8 +271,13 @@ def a_generic_created(w):
             if rel and rel not in ALLOWED_IN_PROJECT and rel != ".git":
                 outside.append(path)
         elif path in (os.path.join("projects", "demo"), os.path.join("forge", "config", "projects", "demo.claude.json"),
-                      os.path.join("forge", "config", "forge.json")) or parts[0] == "home":
+                      os.path.join("forge", "config", "forge.json")):
             continue
+        elif parts[0] == "home":
+            if "/".join(parts[1:]) in (".claude.json", ".local", ".local/state", ".local/state/forge") or \
+                    "/".join(parts[1:]).startswith(".local/state/forge/"):
+                continue  # what sync writes (and the lock of forge new)
+            outside.append(path)
         else:
             outside.append(path)
     if outside:
@@ -311,6 +354,8 @@ def a_path_not_name(w):
         code, out = w.forge("new", arg, "--stack", "generic", "--apply")
         if code != 1 or "is not a directory" not in out:
             bad.append("%r was not refused as a path: exit %d: %s" % (arg, code, tail(out)))
+        elif "give its name alone" not in out:
+            bad.append("%r refused as a path without saying how to make a project: %s" % (arg, tail(out)))
         if w.snapshot() != before:
             bad.append("%r taken for a name, created %s" % (arg, changed(before, w.snapshot())[:3]))
     return bad
@@ -328,6 +373,8 @@ def a_target_exists(w):
         bad.append("wrote into a non-empty folder: exit %d, changed %s: %s" % (code, changed(before, w.snapshot())[:4], tail(out)))
     elif "not empty" not in out:
         bad.append("refused without saying the folder is not empty: %s" % tail(out))
+    elif "forge new %s" % d not in out:
+        bad.append("a non-empty folder refused without saying that `forge new %s` registers it: %s" % (d, tail(out)))
     # A link, even to an empty directory outside, is not a folder this run may write into.
     outside = os.path.join(w.top, "outside")
     os.makedirs(outside)
@@ -444,17 +491,18 @@ def a_flags_by_mode(w):
 
 
 def a_framework(w):
-    """--framework writes `framework: true` and nothing else of the framework: its hand-over (plugins_keep, the checks) is a
-    later unit, so forge sync refuses the project for want of plugins_keep (exit non-zero, naming it) until that is added."""
+    """--framework writes `framework: true`, and a project the framework step refuses (no plugins_keep, which the hand-over unit
+    adds) would make every `forge sync` and `forge doctor` fail: so the run is refused before the first write, exit 2, in one line
+    that names what is missing. Control (the check taken out): `--framework wrote a project that sync refuses`."""
+    before = w.snapshot()
     code, out = w.forge("new", "demo", "--stack", "generic", "--framework", "--apply")
-    pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
     bad = []
-    if pf.get("framework") is not True or any(k in pf for k in ("plugins_keep", "factory", "checks")):
-        bad.append("--framework: project file framework=%r, keys %s" % (pf.get("framework"), sorted(pf)))
-    if not os.path.isdir(os.path.join(w.project("demo"), ".git")):
-        bad.append("--framework: no project folder: %s" % tail(out, 4))
-    if code != 0 and "forge sync --apply demo" not in out:
-        bad.append("--framework: sync failed (exit %d) without naming what to run again: %s" % (code, tail(out, 4)))
+    if os.path.lexists(w.path("config", "projects", "demo.claude.json")) or os.path.lexists(w.project("demo")):
+        bad.append("--framework wrote a project that sync refuses: %s" % tail(out, 4))
+    if code != 2 or "plugins_keep" not in out or len([l for l in out.splitlines() if l.strip()]) != 1:
+        bad.append("--framework: exit %d, want 2 and ONE line naming plugins_keep: %s" % (code, tail(out, 4)))
+    if w.snapshot() != before:
+        bad.append("--framework wrote something: %s" % changed(before, w.snapshot())[:4])
     return bad
 
 
@@ -479,6 +527,198 @@ def a_no_forge_json(w):
     if code != 1 or "config/forge.json missing" not in out:
         return ["no forge.json: exit %d, want 1 'config/forge.json missing': %s" % (code, tail(out))]
     return []
+
+
+def a_name_or_path(w):
+    """A bare word that is a directory in the current folder is registered, and the first line says so; with a creation flag it
+    is refused, exit 2, naming both ways out; a bare word that is no directory is a name; a path form is always a path."""
+    bad = []
+    os.makedirs(os.path.join(w.cwd, "demo"))
+    code, out = w.forge("new", "demo")
+    first = out.splitlines()[0] if out.strip() else ""
+    want = ("forge new: ./demo exists here, registering it (nothing is created; to create a new project named demo elsewhere, "
+            "run it from another folder or give --path)")
+    pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
+    if code != 0 or first != want:
+        bad.append("name taken for a path silently: exit %d, first line %r, want %r" % (code, first, want))
+    if pf.get("project_path") != os.path.realpath(os.path.join(w.cwd, "demo")) or os.listdir(w.projects):
+        bad.append("registering ./demo: project_path %r, projects_dir holds %s" % (pf.get("project_path"), os.listdir(w.projects)))
+    os.makedirs(os.path.join(w.cwd, "other"))
+    for extra in (["--stack", "generic"], ["--apply"], ["--path", w.projects], ["--framework"]):
+        before = w.snapshot()
+        code, out = w.forge("new", "other", *extra)
+        if code != 2 or w.snapshot() != before:
+            bad.append("./other with %s: exit %d, want 2 and nothing written; changed %s: %s" % (extra[0], code, changed(before, w.snapshot())[:3], tail(out)))
+        elif "forge new ./other" not in out or "--path" not in out or "registers it" in out or len(out.strip().splitlines()) != 1:
+            bad.append("./other with %s: want ONE line naming `forge new ./other` and --path, not 'registers it': %s" % (extra[0], tail(out)))
+    # a bare word that is no directory in the current folder is a name to create, even beside other directories
+    code, out = w.forge("new", "fresh", "--stack", "generic", "--apply")
+    if code != 0 or not os.path.isdir(os.path.join(w.projects, "fresh", ".git")):
+        bad.append("a bare word that is no directory here was not made: exit %d: %s" % (code, tail(out)))
+    # a path form is always a path: no note, however it is written
+    os.makedirs(os.path.join(w.cwd, "pathy"))
+    code, out = w.forge("new", "./pathy")
+    if code != 0 or "exists here" in out:
+        bad.append("./pathy: exit %d, a path form carries no note: %s" % (code, tail(out)))
+    return bad
+
+
+def a_rerun_in_projects(w):
+    """The project just made, asked for again from inside projects_dir: it says it exists and is registered."""
+    bad = []
+    code, out = w.forge("new", "again", "--stack", "generic", "--apply")
+    if code != 0:
+        return ["could not make the project to ask for again: exit %d: %s" % (code, tail(out))]
+    for flags in (["--stack", "generic", "--apply"], []):
+        before = w.snapshot()
+        code, out = w.forge("new", "again", *flags, cwd=w.projects)
+        if code == 0 or w.snapshot() != before or "registers it" in out or "already exists" not in out or "registered" not in out:
+            bad.append("again %s from projects_dir: exit %d, want a refusal saying it already exists and is registered, nothing written: %s"
+                       % (" ".join(flags) or "(no flags)", code, tail(out)))
+    return bad
+
+
+def a_lock(w):
+    """Another run holds forge new's lock: this one waits, creates nothing meanwhile, and then goes on."""
+    state = os.path.join(w.home, ".local", "state", "forge")
+    os.makedirs(state, exist_ok=True)
+    held, bad = [], []
+
+    def hold():
+        with open(os.path.join(state, "new.lock"), "a") as fh:
+            fcntl.flock(fh, fcntl.LOCK_EX)
+            held.append(1)
+            time.sleep(2.5)
+
+    t = threading.Thread(target=hold)
+    t.start()
+    while not held:
+        time.sleep(0.02)
+    proc = w.start("new", "demo", "--stack", "generic", "--apply")
+    time.sleep(1.5)
+    if os.path.lexists(w.project("demo")):
+        bad.append("wrote while another run held the lock: %s exists" % w.project("demo"))
+    out = proc.communicate(timeout=120)[0]
+    t.join()
+    if proc.returncode != 0 or not os.path.isdir(os.path.join(w.project("demo"), ".git")):
+        bad.append("after the lock was freed the run did not finish: exit %d: %s" % (proc.returncode, tail(out)))
+    return bad
+
+
+def a_two_same_name(w):
+    """Two runs at once for the same name, the folder already there and empty: one makes it, the other exits in one line
+    and removes nothing the winner made. Control (no lock, no second check): `two runs for one name: exits [0, 0]`."""
+    os.makedirs(w.project("same"))
+    env = w.slow_env(2)
+    procs = w.start_together([{"args": ["new", "same", "--stack", "generic", "--apply"], "env": env}] * 2)
+    res = sorted((p.communicate(timeout=120)[0], p.returncode) for p in procs)
+    codes = sorted(c for _, c in res)
+    bad = []
+    # 2 when the loser lost the race under the lock, 1 when it came late enough to see the folder already in use: either way one line.
+    if codes[0] != 0 or codes[1] not in (1, 2):
+        bad.append("two runs for one name: exits %s, want one 0 and one 1 or 2: %s" % (codes, " || ".join(tail(o, 3) for o, _ in res)))
+    loser = [o for o, c in res if c != 0]
+    if loser and len([l for l in loser[0].splitlines() if l.startswith("! ")]) != 1:  # the plan it printed before the lock is not the refusal
+        bad.append("two runs for one name: the loser did not refuse in exactly one `!` line: %s" % tail(loser[0]))
+    entries = set(os.listdir(w.project("same")))
+    if entries != {".git", ".gitignore", "README.md", ".claude"}:
+        bad.append("two runs for one name: the winner's folder holds %s, want .git .gitignore README.md .claude (the loser removed or added something)" % sorted(entries))
+    return bad
+
+
+def a_two_names(w):
+    """Two runs at once for different names: forge.json keeps both skill_keep.extras rows.
+    Control (no lock, no re-read): `lost a skill_keep.extras row`."""
+    env = w.slow_env(2)
+    procs = w.start_together([{"args": ["new", n, "--stack", "generic", "--apply"], "env": env} for n in ("aa", "bb")])
+    outs = [(p.communicate(timeout=120)[0], p.returncode) for p in procs]
+    bad = []
+    if [c for _, c in outs] != [0, 0]:
+        bad.append("two runs for two names: exits %s: %s" % ([c for _, c in outs], " || ".join(tail(o, 3) for o, _ in outs)))
+    extras = ((read_json(w.path("config", "forge.json")) or {}).get("skill_keep") or {}).get("extras", {})
+    for n in ("aa", "bb"):
+        if extras.get("%s.claude.json" % n) != []:
+            bad.append("lost a skill_keep.extras row: %s.claude.json (forge.json has %s)" % (n, sorted(extras)))
+        if not os.path.isfile(w.path("config", "projects", "%s.claude.json" % n)):
+            bad.append("no project file for %s" % n)
+    return bad
+
+
+def a_path_outside_world(w):
+    """A toy HOME writes its toy world only: a --path outside it is refused before anything is made there.
+    Control (no check): `made outside the world`."""
+    outside = sandbox.mkdtemp("new-outside-")
+    bad = []
+    before = w.snapshot()
+    for extra in ([], ["--yes"]):
+        code, out = w.forge("new", "demo", "--stack", "generic", "--apply", "--path", outside, *extra)
+        if os.listdir(outside):
+            bad.append("made outside the world: %s now holds %s" % (outside, os.listdir(outside)))
+            break
+        if code == 0 or w.snapshot() != before:
+            bad.append("--path outside the world: exit %d, changed %s: %s" % (code, changed(before, w.snapshot())[:3], tail(out)))
+    sandbox.rmtree(outside)
+    return bad
+
+
+def a_path_in_checkout(w):
+    """A target inside the forge checkout, or an empty --path, is refused with one line and nothing written."""
+    bad = []
+    os.makedirs(os.path.join(w.root, "docs", "sub"), exist_ok=True)
+    cases = [("--path inside the checkout", ["--path", w.root]), ("--path in a folder of the checkout", ["--path", os.path.join(w.root, "docs")]),
+             ("an empty --path", ["--path", ""])]
+    for n, (label, extra) in enumerate(cases):  # a name of its own each: an old run that makes one must not make the next refuse as registered
+        before = w.snapshot()
+        code, out = w.forge("new", "case%d" % n, "--stack", "generic", "--apply", *extra)
+        if code == 0 or w.snapshot() != before or len([l for l in out.splitlines() if l.strip()]) != 1:
+            bad.append("%s: exit %d, want a refusal in one line and nothing written; changed %s: %s" % (label, code, changed(before, w.snapshot())[:3], tail(out)))
+    doc = read_json(w.path("config", "forge.json"))
+    doc["projects_dir"] = os.path.join(w.root, "docs")
+    write_json(w.path("config", "forge.json"), doc)
+    before = w.snapshot()
+    code, out = w.forge("new", "viadir", "--stack", "generic", "--apply")
+    if code == 0 or w.snapshot() != before:
+        bad.append("projects_dir inside the checkout: exit %d, changed %s: %s" % (code, changed(before, w.snapshot())[:3], tail(out)))
+    return bad
+
+
+def a_bad_projects_dir(w):
+    """projects_dir relative, empty, a list, a ~user or missing: exit 2, nothing written. Control (the absolute check
+    taken out): `a relative projects_dir was used`."""
+    bad = []
+    os.makedirs(os.path.join(w.cwd, "pd"))
+    for value in ("pd", "", ["x"], "~nobodyatall/x", os.path.join(w.top, "missing")):
+        doc = read_json(w.path("config", "forge.json"))
+        doc["projects_dir"] = value
+        write_json(w.path("config", "forge.json"), doc)
+        before = w.snapshot()
+        code, out = w.forge("new", "demo", "--stack", "generic", "--apply")
+        if os.path.lexists(os.path.join(w.cwd, "pd", "demo")):
+            bad.append("a relative projects_dir was used: %s" % os.path.join(w.cwd, "pd", "demo"))
+        elif code != 2 or w.snapshot() != before:
+            bad.append("projects_dir %r: exit %d, want 2 and nothing written; changed %s: %s" % (value, code, changed(before, w.snapshot())[:3], tail(out)))
+    return bad
+
+
+def a_signals(w):
+    """TERM or INT in the middle of --apply (here, in a slow git init) rolls back what the run made, as a failure does.
+    Control (no handler): `left behind after SIGTERM`."""
+    bad = []
+    env = w.slow_env(1.5)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        before = w.snapshot()
+        proc = w.start("new", "demo", "--stack", "generic", "--apply", env=env)
+        deadline = time.time() + 30
+        while time.time() < deadline and not os.path.exists(os.path.join(w.project("demo"), ".gitignore")):
+            time.sleep(0.05)
+        proc.send_signal(sig)
+        out = proc.communicate(timeout=60)[0]
+        time.sleep(2)  # an orphaned slow git must have finished before the tree is read
+        if w.snapshot() != before:
+            bad.append("left behind after %s: %s (exit %d)" % (sig.name, ", ".join(os.path.join(w.top, p) for p in left_behind(before, w.snapshot())[:5]), proc.returncode))
+        if proc.returncode == 0 or "Traceback" in out:
+            bad.append("%s: exit %d, want non-zero and no traceback: %s" % (sig.name, proc.returncode, tail(out, 3)))
+    return bad
 
 
 # ---------------------------------------------------------------- existing directory: as master
@@ -544,8 +784,35 @@ CONTROLS = [
     ("a reserved list of verbs", a_list_created,
      [(NEW, "if not KEBAB.match(name):", 'if not KEBAB.match(name) or name in ("list", "new", "doctor"):')], "project named 'list' rejected"),
     ("no name check", a_bad_names, [(NEW, "if not KEBAB.match(name):", "if False:")], "project named '@x' created"),
-    ("a path taken for a name", a_path_not_name, [(CLI, "if not existing and not new_cmd.path_like(a.path):",
-                                                    "if not existing:")], "'./nope' was not refused as a path"),
+    ("a path taken for a name", a_path_not_name, [(NEW, "if path_like(arg):", "if False:")], "'./nope' was not refused as a path"),
+    ("a bare directory registered silently", a_name_or_path, [(NEW, 'print("forge new: ./%s exists here', '(lambda *x: None)("forge new: ./%s exists here')],
+     "name taken for a path silently"),
+    ("a bare directory with a creation flag not refused", a_name_or_path, [(NEW, "if creation_flags(a):\n        return refuse(2, \"./%s", "if False:\n        return refuse(2, \"./%s")],
+     "want 2 and nothing written"),
+    ("a registered project taken for a plain directory", a_rerun_in_projects, [(NEW, 'if prof.get("project_path") and', 'if False and')],
+     "already exists and is registered"),
+    ("no lock", a_lock, [(NEW, "with stopped_means_rollback(), creation_lock():", "with stopped_means_rollback():")],
+     "wrote while another run held the lock"),
+    ("no lock, no second check, two runs for one name", a_two_same_name,
+     [(NEW, "with stopped_means_rollback(), creation_lock():", "with stopped_means_rollback():"),
+      (NEW, "            if why:\n                return refuse(2, \"another forge new", "            if False:\n                return refuse(2, \"another forge new"),
+      # the checks sit a second before the first write: both runs are past them when either writes (without it the late one is refused by chance)
+      (NEW, "    ok, why = lib.may_write()", "    time.sleep(1)\n    ok, why = lib.may_write()")],
+     "two runs for one name"),
+    ("no lock and no re-read, two names", a_two_names, [(NEW, "with stopped_means_rollback(), creation_lock():", "with stopped_means_rollback():"),
+                                                        (NEW, "doc, row = skills_doc(key)  # read again", "pass  # read again")],
+     "lost a skill_keep.extras row"),
+    ("no guard for a world", a_path_outside_world, [(NEW, "why = world_error(target)\n    if why:", "why = None\n    if why:")], "made outside the world"),
+    ("a target inside the checkout", a_path_in_checkout, [(NEW, "if (target + os.sep).startswith(os.path.realpath(lib.ROOT) + os.sep):", "if False:")],
+     "inside the checkout: exit"),
+    ("an empty --path", a_path_in_checkout, [(NEW, "if not a.parent_dir.strip():", "if False:")], "an empty --path: exit"),
+    ("--framework not checked", a_framework, [(NEW, "why = lib.project_error(project) or framework.plan(project, name).error", "why = None")],
+     "--framework wrote a project that sync refuses"),
+    ("a relative projects_dir", a_bad_projects_dir, [(NEW, "not os.path.isabs(os.path.expanduser(configured))", "False")],
+     "a relative projects_dir was used"),
+    ("no handler for TERM", a_signals, [(NEW, "with stopped_means_rollback(), creation_lock():", "with creation_lock():")], "left behind after SIGTERM"),
+    ("a stray file in HOME", a_generic_created, [(NEW, "git_init(target)\n", 'git_init(target)\n            open(os.path.join(lib.HOME, "stray"), "w").close()\n')],
+     "wrote outside the allowed list"),
     ("a non-empty folder written into", a_target_exists, [(NEW, "if os.listdir(target):", "if False:")], "wrote into a non-empty folder"),
     ("a link followed", a_target_exists, [(NEW, "if os.path.islink(target):", "if False:"), (NEW, "if os.listdir(target):", "if False:")],
      "wrote through a link"),
@@ -568,7 +835,10 @@ def main():
              ("bad names", a_bad_names, {}), ("path not name", a_path_not_name, {}), ("target exists", a_target_exists, {}),
              ("already registered", a_registered, {}), ("git fails", a_git_fails, {}), ("GIT_DIR in the environment", a_git_env, {}), ("forge.json fails", a_forge_json_fails, {}),
              ("sync fails", a_sync_fails, {}), ("--path", a_path_flag, {}), ("flags by mode", a_flags_by_mode, {}),
-             ("--framework", a_framework, {}), ("help", a_help, {}), ("unknown stack", a_unknown_stack, {}), ("no forge.json", a_no_forge_json, {})]
+             ("--framework", a_framework, {}), ("help", a_help, {}), ("unknown stack", a_unknown_stack, {}), ("no forge.json", a_no_forge_json, {}),
+             ("a name or a path", a_name_or_path, {}), ("again from projects_dir", a_rerun_in_projects, {}), ("the lock", a_lock, {}),
+             ("two runs, one name", a_two_same_name, {}), ("two runs, two names", a_two_names, {}), ("--path outside the world", a_path_outside_world, {}),
+             ("--path in the checkout", a_path_in_checkout, {}), ("bad projects_dir", a_bad_projects_dir, {}), ("signals", a_signals, {})]
     for label, fn, kw in plain:
         w = World("a", **kw)
         try:

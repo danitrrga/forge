@@ -186,13 +186,16 @@ exits with `forge doctor`'s status.
 registered and a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
 `CLAUDE.md`, no `.gitignore` line. The flag allows it.
 
-`forge new NAME [--path DIR] [--stack generic] [--framework] [--yes] [--apply]`, when no directory of that name is there,
-makes the project in `projects_dir` of `config/forge.json` (or in `DIR`, which must exist): its folder, `git init`, a
-`.gitignore` written first, a one-line `README.md`, the project file, its `skill_keep.extras` row and `forge sync --apply NAME`.
-Without `--apply` it prints the plan and writes nothing. A missing answer (today only `--stack` and the folder) is named in one
-error before the first write, with or without `--yes`, so no half-made project is left; a failure after that removes what the run made.
-A name is kebab-case (so never `@x` or `-x`); an argument written as a path (a `/`, or a leading `.` or `~`) that does not exist is
-refused, never made. `--framework` writes `framework: true`; the plugin hand-over of the framework is not part of it yet.
+`forge new NAME [--path DIR] [--stack generic] [--framework] [--yes] [--apply]` makes the project in `projects_dir` of
+`config/forge.json` (or in `DIR`, which must exist): its folder, `git init`, a `.gitignore` written first, a one-line `README.md`, the
+project file, its `skill_keep.extras` row and `forge sync --apply NAME`. Without `--apply` it prints the plan and writes nothing.
+A missing answer (today only `--stack` and the folder) is named in one error before the first write, with or without `--yes`, so no
+half-made project is left; a failure, TERM or INT after that removes what the run made. A name is kebab-case (so never `@x` or `-x`).
+Name or path: an argument written as a path (a `/`, or a leading `.` or `~`) is always a directory to register; a bare word that is no
+directory in the current folder is always a name to make; a bare word that is a directory there is registered, and the first line says so
+(with `--stack`, `--path`, `--framework` or `--apply` it is refused instead, naming both ways out). The folder is never inside the checkout,
+and in a toy HOME never outside its world; two runs at once take turns. `--framework` is refused for now, with one line: the project it
+would write has no `plugins_keep`, so every sync would fail (the framework's plugin hand-over is a later step).
 
 ## How it works
 

@@ -1831,13 +1831,9 @@ def cmd_new(a):
     if not os.path.exists(lib.SETTINGS):
         print("! forge new: config/forge.json missing -- run bin/forge init")
         return 1
-    existing = os.path.isdir(os.path.expanduser(a.path))
-    if not existing and not new_cmd.path_like(a.path):
-        return new_cmd.create(a)  # no such directory, and it is written as a name: a project to make
-    if existing and (a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply):
-        print("! forge new: %s is a directory, so forge new registers it, and --path, --stack, --framework, --yes and --apply "
-              "belong to making a project from a name" % a.path)
-        return 2
+    code = new_cmd.route(a)  # a name is made there; a directory comes back as None, to be registered below
+    if code is not None:
+        return code
     path = os.path.realpath(os.path.expanduser(a.path))
     if not os.path.isdir(path):
         print("! forge new: %s is not a directory" % a.path)
@@ -2002,14 +1998,15 @@ def main(argv=None):
     i.set_defaults(fn=cmd_init)
     i = sub.add_parser("new", help="a project: register a directory, or make one from a name; then sync --apply NAME",
                        description="forge new PATH registers the directory PATH (its file, then sync --apply NAME). "
-                                   "forge new NAME, when no directory of that name is there, makes the project: its folder, git init, "
-                                   ".gitignore, README.md, its file and its skill row, then sync --apply NAME; a dry-run unless --apply.")
+                                   "forge new NAME, a bare word that is no directory here, makes the project: its folder, git init, "
+                                   ".gitignore, README.md, its file and its skill row, then sync --apply NAME; a dry-run unless --apply. "
+                                   "A path form (a /, or a leading . or ~) is always registered; a bare word that is a directory here is registered too.")
     i.add_argument("path", metavar="PATH|NAME", help="an existing directory to register, or the name of a project to make (kebab-case)")
     i.add_argument("--name", help="registering: the project's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
     i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
-    i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (the framework's plugin hand-over is a later step)")
+    i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
     i.add_argument("--yes", action="store_true", help="making: ask nothing; a missing answer is an error naming it (today every answer is a flag, with or without it)")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
     i.set_defaults(fn=cmd_new)
