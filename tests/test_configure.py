@@ -20,6 +20,8 @@ Cases (the plan's control list of 4.4 U3b; (h), the screen, belongs to the secon
   g  a skill that arrives through a set is refused (exit 2) with the tree intact and the two commands printed; each of them, run
      in a clean world, does what it says; a call with several flags in which one is refused writes none of them.
   i  `forge config P @x --off skill:s` changes the profile's row and not the project's extras row.
+  k  every printed undo, run as printed, restores the files; l  a server with a missing secret is refused; m  the last skills are
+     not taken out; n  a file unreadable at the write is a one-line error; o  the rollback of the first file; differing  its own control.
   j  the rest of the refusals (a project that keeps every skill, a frozen project, a flag given on and off, a malformed TYPE:NAME,
      no flag and no terminal), `forge list @` and `@NAME` as they were, and that no read changes a file.
 
@@ -47,7 +49,20 @@ Negative controls, each a mutation made by hand in the engine, run once and not 
      flag was applied before any accepted one, so there was nothing to write; the case now puts toy-c before toy-a)
   i  cmd_config ignoring the @PROFILE -> "FAIL i: the project's extras row did not change -- profile change leaked to the project:
      {'multi.claude.json': ['@TOYSET', 'toy-c'], 'profiled.claude.json': ['toy-d']}"
-Not covered: the rollback of the first file when the second cannot be written (it needs a write that fails half way).
+Round of fixes after the review of the pull request (each assertion seen failing against 798896c, the merge of master into 84b5b22; 15 FAIL):
+  k  every undo the command prints is RUN in the world and every file compared with before: "FAIL k: a set off and a skill of it on (the
+     review's input): the printed undo `forge config multi --on set:TOYSET --off skill:toy-b` runs -- exit 2: forge config: skill
+     'toy-b' of project 'multi' is kept after the change although it was asked off"; "FAIL k: a set off: after the undo every file is
+     what it was -- differ: ['forge.json']" (the set came back at the end of its row: `--on set:` now puts it after the sets there).
+     The project file's `skills_keep` is compared sorted: sync_skill_keep.py puts a common skill that comes back at the end.
+  l  `--on server:X` with a missing secret: "FAIL l: ... is exit 2 and writes nothing -- exit 1, wrote: [...'plain.claude.json'...];
+     forge config: written, but forge sync plain --apply exits 1"
+  m  the last skills: "FAIL m: an extras row: taking out every skill is exit 2 and writes nothing -- exit 0, wrote: [...]"
+  n  a file unreadable at the write: a traceback ending in `lib.Unreadable ... Permission denied: '@S@/forge/config/forge.json'`
+  o  the rollback of the first file (config/projects read-only, `--off set:TOYSET --on server:toy-two`): it passed at once, so its
+     control is the rollback loop of _write taken out by hand: "FAIL o: both files are byte for byte as before -- differ: ['forge.json']"
+  differing  a card that lost its project name: "FAIL differing: a card that lost its project name is told apart" (the old check
+     was "the name appears in the title", and the path contains the name).
 """
 import hashlib
 import json
@@ -252,9 +267,9 @@ def differing(js, human):
         label = key.replace("_", "-")
         txt = h.get(label, "")
         if key == "project":
-            ok = val in h.get("title", "")
+            ok = h.get("title", "").split("  ")[0] == val
         elif key == "path":
-            ok = val in h.get("title", "")
+            ok = h.get("title", "").split("  ")[1:2] == [val]
         elif key == "frozen":
             ok = ("frozen" in h.get("title", "")) == val
         elif key == "origins":
@@ -276,6 +291,17 @@ def differing(js, human):
         if not ok:
             bad.append(key)
     return bad
+
+
+def case_differing():
+    """differing() must tell a card that lost its project name, or its path, from one that has them."""
+    js = {"project": "multi", "path": "/srv/projects/multi", "frozen": False}
+    good = "multi  /srv/projects/multi"
+    check("differing: a card that has its name and path is the same", differing(js, good) == [], differing(js, good))
+    for label, human in (("its project name", "/srv/projects/multi"), ("its path", "multi  /srv/other"), ("both", "")):
+        bad = differing(js, human)
+        # Control: the old check ("the name appears in the title") passed all three of these; it fails with `a card that lost ...`.
+        check("differing: a card that lost %s is told apart" % label, bad != [], "a card that lost %s says the same as the JSON" % label)
 
 
 def case_a(w):
@@ -346,6 +372,7 @@ def case_b():
     check("b: a skill of an extras row is removed from the row", code == 0 and doc["skill_keep"]["extras"]["multi.claude.json"] == ["@TOYSET"]
           and "multi.claude.json" not in doc["skill_keep"]["common_opt_out"] and "toy-c" not in w.proj("multi")["skills_keep"],
           (code, err, doc["skill_keep"]["extras"]["multi.claude.json"], w.proj("multi")["skills_keep"]))
+    w.forge_cmd(["config", "plain", "--on", "skill:toy-common", "--apply"])  # (toy-d is now the project's last skill: case m)
     code, out, err = w.forge_cmd(["config", "plain", "--off", "skill:toy-d", "--apply"])
     check("b: a skill of a project with no row is removed from its own list", code == 0 and "toy-d" not in w.proj("plain")["skills_keep"],
           (code, err, w.proj("plain")["skills_keep"]))
@@ -532,10 +559,135 @@ def case_g():
     # (SOLO is not in multi's row, so `--on set:SOLO` adds it; its one member has no other member: the first command is the only one.)
     c = World()
     code, out, err = c.forge_cmd(["config", "multi", "--on", "set:SOLO", "--apply"])
-    check("g: --on set:NAME adds @NAME to the row", code == 0 and c.doc()["skill_keep"]["extras"]["multi.claude.json"][-1] == "@SOLO"
+    check("g: --on set:NAME adds @NAME to the row", code == 0 and c.doc()["skill_keep"]["extras"]["multi.claude.json"] == ["@TOYSET", "@SOLO", "toy-c"]
           and "toy-e" in c.proj("multi")["skills_keep"], (code, err, c.doc()["skill_keep"]["extras"]["multi.claude.json"]))
     code, out, err = c.forge_cmd(["config", "multi", "--off", "skill:toy-e"])
     check("g: a one-member set: one command", code == 2 and len([l for l in err.splitlines() if l.strip().startswith("forge config ")]) == 1, (code, err))
+
+
+# ---- k: every printed undo works when run as printed -----------------------------------------------------------------------
+
+def snapshot(w, name):
+    """The files an undo must restore, as text. The project file's `skills_keep` is generated (sync_skill_keep.py puts a common
+    skill that comes back at the end, whatever its place was), so its order is not compared; the rows of forge.json are."""
+    proj = json.loads(read_text(os.path.join(w.forge, "config", "projects", name + ".claude.json")))
+    if isinstance(proj.get("skills_keep"), list):
+        proj["skills_keep"] = sorted(proj["skills_keep"])
+    return {"forge.json": w.forge_text(), "project file": json.dumps(proj, indent=2), "settings.local.json": w.settings_hash(name)}
+
+
+def undo_lines(out):
+    """The commands the output prints as the undo, in order: the line `undo:` and the `then:` lines after it."""
+    return [l.split(":", 1)[1].strip() for l in out.splitlines() if l.startswith(("undo:", "then:"))]
+
+
+def case_k():
+    cases = (
+        ("a common skill", ["plain"], [], ["--off", "skill:toy-common"]),
+        ("a skill of an extras row", ["multi"], [], ["--off", "skill:toy-c"]),
+        ("a skill of a project's own list", ["plain"], [], ["--off", "skill:toy-d"]),
+        ("a skill put on", ["plain"], [], ["--on", "skill:toy-a"]),
+        ("a server and an option off", ["plain"], [], ["--off", "server:toy-echo", "--off", "option:ui"]),
+        ("a server and an option on", ["plain"], [], ["--on", "server:toy-two", "--on", "option:command_guard"]),
+        ("a set off", ["multi"], [], ["--off", "set:TOYSET"]),
+        ("a set on", ["multi"], [], ["--on", "set:SOLO"]),
+        ("a set off and a skill of it on (the review's input)", ["multi"], [], ["--off", "set:TOYSET", "--on", "skill:toy-b"]),
+        ("a set and one of its skills off", ["multi"], [], ["--off", "skill:toy-a", "--off", "set:TOYSET"]),
+        ("a profile's skill off", ["profiled", "@x"], [], ["--off", "skill:toy-c"]),
+        ("a profile's skill on", ["profiled", "@x"], [], ["--on", "skill:toy-b"]),
+        ("a profile's set off and a skill of it on", ["profiled", "@x"], [["profiled", "@x", "--on", "set:TOYSET"]],
+         ["--off", "set:TOYSET", "--on", "skill:toy-b"]),
+    )
+    for label, target, setup, flags in cases:
+        w = World()
+        name = target[0]
+        for step in setup:
+            code, out, err = w.forge_cmd(["config"] + step + ["--apply"])
+            assert code == 0, "the setup of %s failed: %s%s" % (label, out, err)
+        before = snapshot(w, name)
+        code, out, err = w.forge_cmd(["config"] + target + flags + ["--apply"])
+        check("k: %s: the change exits 0 and changes a file" % label, code == 0 and snapshot(w, name) != before, (code, out, err))
+        cmds = undo_lines(out)
+        check("k: %s: an undo is printed" % label, bool(cmds), out)
+        for cmd in cmds:
+            code, out2, err2 = w.forge_cmd(shlex.split(cmd)[1:] + ["--apply"])
+            # Control: the old undo (every flag flipped in one command) exits 2 here with `skill 'toy-b' of project 'multi' is kept
+            # after the change although it was asked off`.
+            check("k: %s: the printed undo `%s` runs" % (label, cmd), code == 0, "exit %d: %s%s" % (code, out2, err2))
+        after = snapshot(w, name)
+        check("k: %s: after the undo every file is what it was" % label, after == before, "differ: %s" % changed(before, after))
+
+
+# ---- l: a server whose secret is missing -----------------------------------------------------------------------------------
+
+def case_l():
+    w = World()
+    reg = dict(REGISTRY, **{"toy-sec": {"type": "stdio", "command": "toy-sec", "args": [], "env": {"K": "${NOPE_MISSING_SECRET}"}}})
+    write_json(os.path.join(w.forge, "config", "mcp-registry.json"), {"servers": reg})
+    before = w.tree()
+    code, out, err = w.forge_cmd(["config", "plain", "--on", "server:toy-sec", "--apply"])
+    # Control: before the fix this wrote the project file and then failed with `written, but forge sync plain --apply exits 1`.
+    check("l: --on server:X whose registry entry names a missing secret is exit 2 and writes nothing",
+          code == 2 and w.tree() == before, "exit %d, wrote: %s; %s%s" % (code, changed(before, w.tree()), out, err))
+    check("l: it names the secret variable and where secrets live", "NOPE_MISSING_SECRET" in err and "config/secrets.json" in err, err)
+    # The control of the check itself: with the secret there (a toy value), the same call goes through.
+    write_json(os.path.join(w.forge, "credentials", "secrets.json"), {"NOPE_MISSING_SECRET": "toy-not-a-secret"})
+    code, out, err = w.forge_cmd(["config", "plain", "--on", "server:toy-sec", "--apply"])
+    check("l: with the secret in config/secrets.json the same call writes", code == 0 and "toy-sec" in w.proj("plain")["servers"], (code, out, err))
+    check("l: and no output carries the value", "toy-not-a-secret" not in out + err, "the secret's value was printed")
+
+
+# ---- m: the last skills --------------------------------------------------------------------------------------------------------
+
+def case_m():
+    for label, name, first, rest in (("an extras row", "profiled", ["skill:toy-common"], ["skill:toy-c", "skill:toy-d"]),
+                                     ("a project's own list", "plain", [], ["skill:toy-common", "skill:toy-d"])):
+        w = World()
+        for f in first:
+            code, out, err = w.forge_cmd(["config", name, "--off", f, "--apply"])
+            assert code == 0, "the setup of %s failed: %s%s" % (label, out, err)
+        before = w.tree()
+        code, out, err = w.forge_cmd(["config", name] + [a for f in rest for a in ("--off", f)] + ["--apply"])
+        # Control: before the fix this was exit 0 and wrote `skills_keep: []`.
+        check("m: %s: taking out every skill is exit 2 and writes nothing" % label, code == 2 and w.tree() == before,
+              "exit %d, wrote: %s; %s%s" % (code, changed(before, w.tree()), out, err))
+        check("m: %s: and says the project would have no skill at all" % label, "no skill at all" in err and "skills_keep" in err, err)
+        code, out, err = w.forge_cmd(["config", name, "--off", rest[0], "--apply"])
+        check("m: %s: all but the last one still goes" % label, code == 0, (code, out, err))
+
+
+# ---- n and o: a write that goes wrong --------------------------------------------------------------------------------------
+
+def case_n():
+    w = World()
+    path = os.path.join(w.forge, "config", "forge.json")
+    before = w.tree()
+
+    def lock():
+        os.chmod(path, 0)
+    try:
+        code, shown = w.pty_cmd(["config", "plain", "--off", "skill:toy-common"], [b"y\r"], during=lock)
+    finally:
+        os.chmod(path, 0o644)
+    # Control: before the fix this was a traceback: `lib.Unreadable: .../forge.json unreadable (... Permission denied ...)`.
+    check("n: a file that cannot be read at the write is exit 1, one line, no traceback", code == 1 and "Traceback" not in shown
+          and "cannot be read" in shown and "nothing was written" in shown, (code, shown))
+    check("n: and nothing was written", w.tree() == before, changed(before, w.tree()))
+
+
+def case_o():
+    w = World()
+    projects = os.path.join(w.forge, "config", "projects")
+    before = {"forge.json": w.forge_text(), "project": read_text(os.path.join(projects, "multi.claude.json"))}
+    os.chmod(projects, 0o555)  # the second file (the project's) cannot be replaced; the first (forge.json) was written
+    try:
+        code, out, err = w.forge_cmd(["config", "multi", "--off", "set:TOYSET", "--on", "server:toy-two", "--apply"])
+    finally:
+        os.chmod(projects, 0o755)
+    after = {"forge.json": w.forge_text(), "project": read_text(os.path.join(projects, "multi.claude.json"))}
+    # Control: with the rollback of `_write` taken out, forge.json keeps the change: "FAIL o: ... forge.json differs".
+    check("o: the second write failing is exit 1 and says the earlier file was put back", code == 1 and "the earlier file was put back" in err, (code, out, err))
+    check("o: both files are byte for byte as before", after == before, "differ: %s" % [k for k in before if before[k] != after[k]])
 
 
 # ---- i: a profile's row ----------------------------------------------------------------------------------------------------
@@ -633,7 +785,7 @@ def main():
     w = World()
     for fn in (case_a, case_c, case_d, case_j):
         attempt(fn, w)
-    for fn in (case_b, case_e, case_f, case_g, case_i):
+    for fn in (case_differing, case_b, case_e, case_f, case_g, case_i, case_k, case_l, case_m, case_n, case_o):
         attempt(fn)
     sandbox.cleanup()
     if failures:

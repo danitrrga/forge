@@ -21,7 +21,9 @@ Nothing is written until every flag has been accepted (a Refusal leaves both fil
 at most two files, undone from memory if the second fails; the files are compared with what the plan read just before it, so
 a change made while the owner decided is refused, not written over. After it the command runs the generators that depend
 on what changed (sync_skill_keep.py when forge.json did, then `forge sync NAME --apply`; a profile row is read when a
-session starts, so it has none) and says which layer it touched and the command that undoes it.
+session starts, so it has none) and says which layer it touched and the command that undoes it (two, in order, when a set and one
+of its skills went in the same call: Plan.undo). A change that would leave `skills_keep: []`, or switch on a server whose secret is
+missing, is a Refusal.
 
 change() is what the key-selector screen (the second half of the plan's U3b) calls with a list of flags."""
 import copy
@@ -29,7 +31,7 @@ import json
 import os
 import sys
 
-from forge import lib, profiles, render, suggest
+from forge import lib, mcp, profiles, render, suggest
 
 TYPES = ("skill", "set", "server", "option")
 ORDER = ("set", "skill", "server", "option")  # the order the flags are applied in: a set goes before the skills that were taken from it
@@ -181,17 +183,16 @@ def parse_flag(op, text):
     return op, typ, name
 
 
-def flags_text(items, invert=False):
-    parts = []
-    for it in items:
-        if it["changed"]:
-            op = ("on" if it["op"] == "off" else "off") if invert else it["op"]
-            parts.append("--%s %s:%s" % (op, it["type"], it["name"]))
-    return " ".join(parts)
+def command(project, profile, flags):
+    """The command line of `flags`, a list of (op, type, name)."""
+    return "forge config %s%s %s" % (project, " @" + profile if profile else "", " ".join("--%s %s:%s" % f for f in flags))
 
 
-def command(project, profile, items, invert=False):
-    return "forge config %s%s %s" % (project, " @" + profile if profile else "", flags_text(items, invert))
+def put_set(row, item):
+    """`item` (`@NAME`) into `row` after the sets already there (at the front when there are none), so that taking a set out and
+    putting it back, with the skills that were beside it, leaves the row as it was."""
+    at = max([i for i, x in enumerate(row) if x.startswith("@")], default=-1) + 1
+    row.insert(at, item)
 
 
 # ---- the plan --------------------------------------------------------------------------------------------------------------
@@ -219,6 +220,7 @@ class Plan:
 
     def __init__(self, name, profile):
         self.name, self.profile, self.fn = name, profile, name + ".claude.json"
+        self.before = None
         self.paths = {"forge": lib.SETTINGS, "project": os.path.join(lib.PROJECTS, self.fn)}
         self.texts, self.docs = {}, {}
         for key, path in self.paths.items():
@@ -304,7 +306,7 @@ class Plan:
         if "@" + name in row:
             self.record("on", "set", name, changed=False, note="already in this project's row")
         else:
-            row.append("@" + name)
+            put_set(row, "@" + name)
             self.record("on", "set", name, "skill_keep.extras[%s] in %s" % (self.fn, FORGE_REL))
 
     def via_set(self, name, prefix=None, row=None):
@@ -384,12 +386,24 @@ class Plan:
             self.need("server", name, self.registry(), " in config/mcp-registry.json")
             self.record("off", "server", name, changed=False, note="not in this project's servers")
 
+    def need_secrets(self, name):
+        """Refusal when the registry entry of `name` names a secret that config/secrets.json lacks: the generator would stop on it
+        at every sync of the project. The check is the generator's own (mcp.resolved_server); only names are read, never printed."""
+        secrets = {k: v for k, v in lib.read_json(os.path.join(lib.ROOT, "config", "secrets.json"), quiet=True).items() if not k.startswith("_")}
+        errors = []
+        mcp.resolved_server(name, self.registry()[name], secrets, errors)
+        if errors:
+            raise Refusal("server '%s' cannot be switched on: %s. Every sync of project '%s' would stop on it. Put that secret in "
+                          "config/secrets.json (it links to credentials/secrets.json; name it there, never in the registry), or give "
+                          "the registry entry another one" % (name, "; ".join(errors), self.name))
+
     def server_on(self, name):
         self.need("server", name, self.registry(), " in config/mcp-registry.json")
         listed = self.proj.get("servers", [])
         if name in listed:
             self.record("on", "server", name, changed=False, note="already in this project's servers")
         else:
+            self.need_secrets(name)
             self.proj["servers"] = list(listed) + [name]
             self.record("on", "server", name, "servers in %s" % self.project_rel())
 
@@ -433,7 +447,8 @@ class Plan:
         if "@" + name in skills or "@" + name in profiles.definition(self.profile)["skills"]:
             self.record("on", "set", name, changed=False, note="already in this profile")
         else:
-            row["skills"] = list(skills) + ["@" + name]
+            row["skills"] = list(skills)
+            put_set(row["skills"], "@" + name)
             self.record("on", "set", name, self.profile_where())
 
     def profile_skill_off(self, name):
@@ -478,6 +493,7 @@ class Plan:
             if bad:
                 raise Refusal("%s is not a thing a profile has: a profile row holds skills and sets; servers and options belong to the "
                               "project (forge config %s ...)" % (bad[0], self.name))
+        self.before = None if self.profile else self.kept()
         todo = {"off": {"set": self.profile_set_off if self.profile else self.set_off,
                         "skill": self.profile_skill_off if self.profile else self.skill_off,
                         "server": self.server_off, "option": lambda n: self.option("off", n)},
@@ -502,6 +518,9 @@ class Plan:
                             n, self.profile, "kept" if n in resolved else "not kept", o))
         else:
             kept = self.kept()
+            if self.before and kept is not None and not kept:  # sync_skill_keep.py calls `skills_keep: []` an accident
+                raise Refusal("project '%s' would be left with no skill at all (skills_keep: [] switches every global skill off). Keep "
+                              "at least one, or take the skills_keep key out of %s to keep every global skill" % (self.name, self.project_rel()))
             for o, t, n in changes:
                 if t == "skill" and kept is not None and (n in kept) != (o == "on"):
                     raise Refusal("skill '%s' of project '%s' is %s after the change although it was asked %s" % (
@@ -509,6 +528,21 @@ class Plan:
         why = lib.project_error(self.proj)
         if why:
             raise Refusal("the project file would no longer be valid: %s" % why)
+
+    def forward(self):
+        """The flags that did something, in the order they were applied."""
+        return [(i["op"], i["type"], i["name"]) for i in self.items if i["changed"]]
+
+    def undo(self):
+        """The commands that put everything back, in the order to run them: every changed flag turned round, in one command. Where
+        that cannot hold, `--on set:S` beside `--off skill:X` with X a member of S (the set brings X back, so the skill cannot stay
+        off), the set goes in a second command that runs after the first."""
+        turned = [("on" if o == "off" else "off", t, n) for o, t, n in self.forward()]
+        sets = self.sk().get("sets") or {}
+        skills_off = {n for o, t, n in turned if o == "off" and t == "skill"}
+        late = [f for f in turned if f[:2] == ("on", "set") and skills_off & set(sets.get(f[2], []))]
+        first = [f for f in turned if f not in late]
+        return [command(self.name, self.profile, group) for group in (first, late) if group]
 
     def items_changed(self):
         return any(i["changed"] for i in self.items)
@@ -562,7 +596,11 @@ def commit(p, undo):
 def _write(p, keys, forge_changed, undo, result):
     """The writes of commit(), under the sync lock."""
     for k in keys:
-        if lib.read_text(p.paths[k]) != p.texts[k]:
+        try:
+            now = lib.read_text(p.paths[k])
+        except lib.Unreadable as e:
+            raise Failure("%s cannot be read now (%s); nothing was written" % (lib.short(p.paths[k]), e.reason))
+        if now != p.texts[k]:
             raise Failure("%s changed while the plan was made; nothing was written. Run the command again" % lib.short(p.paths[k]))
     if forge_changed:  # the script rewrites every project whose file drifts from the tables: only on tables that are in step
         r = lib.run(["scripts/sync/sync_skill_keep.py", "--check"], capture=True)
@@ -615,9 +653,9 @@ def change(name, profile, changes, yes=False, as_json=False):
     try:
         p = plan(name, profile, changes)
         changed = [i for i in p.items if i["changed"]]
-        undo = command(name, profile, p.items, invert=True)
-        doc = {"project": name, "profile": profile, "changes": p.items, "command": command(name, profile, p.items) if changed else None,
-               "undo": undo if changed else None, "applied": False, "written": [], "sync": {}}
+        undo = p.undo() if changed else []
+        doc = {"project": name, "profile": profile, "changes": p.items, "command": command(name, profile, p.forward()) if changed else None,
+               "undo": undo or None, "applied": False, "written": [], "sync": {}}
         out = (lambda text="": _say(text, err=as_json))
         if not changed:
             out("forge config %s: nothing to change (%s)" % (name, "; ".join("%s:%s %s" % (i["type"], i["name"], i["note"]) for i in p.items)))
@@ -626,7 +664,8 @@ def change(name, profile, changes, yes=False, as_json=False):
             for i in p.items:
                 out("  %-3s %-28s %s" % (i["op"], "%s:%s" % (i["type"], i["name"]), i["layer"] if i["changed"] else "no change (%s)" % i["note"]))
             out("command: %s" % doc["command"])
-            out("undo:    %s" % undo)
+            for k, cmd in enumerate(undo):
+                out("%s    %s" % ("undo:" if k == 0 else "then:", cmd))
             go = yes
             if yes or has_terminal():  # asked before the question, so a `y` is never answered with a refusal
                 ok, why = lib.may_write()
@@ -637,7 +676,7 @@ def change(name, profile, changes, yes=False, as_json=False):
             elif not go:
                 out("dry-run: nothing written; add --apply (or --yes) to write")
             if go:
-                res = commit(p, undo)
+                res = commit(p, " && ".join(undo))
                 doc.update(applied=True, written=res["written"], sync=res["sync"])
                 out("written: %s" % ", ".join(res["written"]))
                 if res["sync"]:
