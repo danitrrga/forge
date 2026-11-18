@@ -176,13 +176,16 @@ class World:
         return out
 
 
+PARAGRAPH = re.compile(rb"\n\*\*To hand a task to another profile of this project\*\*[^\n]*\n")
+
+
 def case_a():
     """The generator ignores `profiles`: the same projects, with and without the field, give the same dry-run, the same
     files and the same doctor. (That a project without it is what the branch point gave is the cmp of the pull request.)"""
     with_profiles = {"profiles": {"default": "code", "offered": {"list": {}}}}
     anchor = "        bad = lib.project_error(prof)\n"
     loader = "        if 'profiles' in prof:\n            prof.setdefault('env', {})['PROFILES_LOADED'] = '1'\n"
-    out, rows = {}, {}
+    out, rows, paragraph = {}, {}, {}
     for label, kw in (("plain", {}), ("profiles", {"extra": with_profiles}),
                       ("mutated", {"extra": with_profiles, "mutate": ("forge/sync.py", anchor, loader + anchor)})):
         w = World(["app", "plain"], **kw)
@@ -195,12 +198,23 @@ def case_a():
         kept = "\n".join(l for l in doc[1].splitlines() if l not in rows[label] and not l.startswith("SUMMARY"))
         out[label] = {"sync --all (dry-run)": w.forge_cmd(["sync", "--all"]), "sync --apply app": w.forge_cmd(["sync", "--apply", "app"]),
                       "doctor": (doc[0], kept, doc[2]), **w.files("projects")}
+        # The one thing a project that declares `profiles` is meant to get that another does not: the paragraph of its CLAUDE.md block
+        # that says how to hand a task to another profile (scripts/sync/sync_system_doc.py, 4.3 U11; tests/test_system_doc.py checks
+        # its text). It is cut out here, and its presence is asserted below, so that nothing else in that file may differ.
+        md = out[label].get("projects/app/CLAUDE.md", b"")
+        paragraph[label] = PARAGRAPH.search(md) is not None
+        out[label]["projects/app/CLAUDE.md"] = PARAGRAPH.sub(b"", md)
 
     def differs(label):
         a, b = out["plain"], out[label]
         return [(k if k.startswith("projects/") else "output of " + k) for k in sorted(set(a) | set(b)) if a.get(k) != b.get(k)]
     check("a: a project with `profiles` generates the same as one without", not differs("profiles"),
           "; ".join("%s differs" % k for k in differs("profiles")))
+    # Seen failing without the cut (the paragraph made a profiles project's CLAUDE.md differ): "FAIL a: a project with `profiles`
+    # generates the same as one without -- projects/app/CLAUDE.md differs". Control for the cut: it must have found the paragraph in
+    # the world with the field and not in the plain one, or it removed nothing and the comparison above looked at nothing.
+    check("a: the CLAUDE.md block of a project with `profiles` holds the hand-over paragraph, and a plain one does not",
+          paragraph == {"plain": False, "profiles": True, "mutated": True}, paragraph)
     # The row itself: one line in each doctor; without the field a SKIP saying it did not run, with it a PASS (a FAIL naming claude
     # where claude is not installed, as on a machine that only runs the suite).
     want = "PASS" if shutil.which("claude") else "FAIL"
