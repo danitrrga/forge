@@ -14,6 +14,7 @@
   forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
   forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names, --session ID; forge/profiles.py)
   forge switch [@NAME]   inside a session started by `forge start @A`: restart claude with profile NAME and resume the conversation
+  forge run @NAME "PROMPT"  one headless session with profile NAME; its final answer on stdout (forge/run.py)
   forge shim [--shell S] print a shell function `claude`, so that `claude @NAME` runs `forge start @NAME` (--check @NAME: the probe; forge/shim.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
@@ -40,7 +41,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, profiles, shim, skills, toolchain, usage
+from forge import launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
 from forge import new as new_cmd
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
@@ -571,13 +572,20 @@ def _agent_browser_missing():
         "open a new shell, or set integrations.agent_browser false")
 
 
+def _mempalace_missing():
+    return None if shutil.which("mempalace") else (
+        "mempalace is on in config/forge.json but mempalace is not on PATH -- run `forge toolchain --fix`, then "
+        "open a new shell, or set integrations.mempalace false")
+
+
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"),
                      "hindsight": (None, "no dependency checked here"),
                      "consent": (None, "its own row, `consent`, looks at the adapter, the projects and the hook"),
-                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
+                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH"),
+                     "mempalace": (_mempalace_missing, "mempalace found on PATH")}
 # An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
-# nothing. The value says when the check arrives (7.1 of the framework plan puts MemPalace's).
-INTEGRATION_PENDING = {"mempalace": "its check arrives with the MemPalace part"}
+# nothing. The value says when the check arrives. None is pending now.
+INTEGRATION_PENDING = {}
 
 
 def hook_scripts(command):
@@ -1564,6 +1572,8 @@ def metrics_usage(a, prof, projects, fail, others):
     if not sessions:
         return lib.report([lib.Result("FAIL", "usage", "%s: 0 sessions in %s, usage unknown" % (
             a.project, ", ".join(names) or os.path.join(projects, transcript_key(path))))])
+    if getattr(a, "by_profile", False):
+        return metrics_by_profile(a, sessions, counts, names, path, left_out)
     rep = usage.report(a.project, sessions, counts, names, usage.project_skill_names(path), left_out)
     few = len(sessions) < usage.MIN_SESSIONS
     rep["few_sessions"] = few
@@ -1588,6 +1598,35 @@ def metrics_usage(a, prof, projects, fail, others):
         print("NOT RUN, NOT ARMED: plugin startup_bytes: %d SessionStart hooks (%d bytes) and none names its plugin "
               "(the transcript keeps ${CLAUDE_PLUGIN_ROOT} unexpanded), so no per-plugin cost" % (un["hooks"], un["bytes"]),
               file=sys.stderr if a.json else sys.stdout)
+    if few:
+        print("few sessions (%d)" % len(sessions), file=sys.stderr if a.json else sys.stdout)
+    return 0
+
+
+def metrics_by_profile(a, sessions, counts, names, path, left_out):
+    """forge metrics NAME --usage --by-profile: usage.by_profile over the sessions read, the profile of each from its record."""
+    rep = usage.by_profile(a.project, sessions, counts, names, usage.project_skill_names(path), profiles.read_session, left_out)
+    few = len(sessions) < usage.MIN_SESSIONS
+    rep["few_sessions"] = few
+    look = rep["looked_at"]
+    if a.json:
+        print(json.dumps(rep, indent=2))
+    else:
+        print("looked at %d sessions (%s to %s), %d with a record, %d without (counted as %s), in %d folders" % (
+            look["sessions"], look["first"], look["last"], look["with_record"], look["without_record"] + look["unusable_records"],
+            usage.DEFAULT_PROFILE, len(names)))
+        if look["unusable_records"]:
+            print("records with no usable profile name: %d" % look["unusable_records"])
+        for g in rep["profiles"]:
+            t = g["tokens"]
+            print("profile %s: %d sessions, %d tokens (input %d, output %d, cache read %d, cache creation %d), %s" % (
+                g["profile"], g["sessions"], t["total"], t["input"], t["output"], t["cache_read"], t["cache_creation"],
+                "cost %.2f USD (%d of %d sessions have one)" % (g["cost_usd"], g["with_cost"], g["sessions"]) if g["cost_usd"] is not None
+                else "cost unknown (no session has a cost line)"))
+            for label, rows in (("skills", g["skills"]), ("servers", g["servers"])):
+                print("  %s: %s" % (label, ", ".join("%s x%d" % (r["name"], r["calls"]) for r in rows) or "none"))
+            if g["runs"]:
+                print("  forge run sessions: " + ", ".join("%s (parent %s)" % (r["session"], r["parent"]) for r in g["runs"]))
     if few:
         print("few sessions (%d)" % len(sessions), file=sys.stderr if a.json else sys.stdout)
     return 0
@@ -1633,6 +1672,8 @@ def cmd_metrics(a):
     def fail(why):
         return lib.report([lib.Result("FAIL", "metrics", "%s: %s" % (a.project, why))])
     init_diff, use, answers = getattr(a, "init_diff", None), getattr(a, "usage", False), getattr(a, "answers", None)
+    if getattr(a, "by_profile", False) and not (use and not init_diff and not answers):
+        return fail("--by-profile goes with --usage only (--by-profile needs --usage)")
     if init_diff or answers:
         return metrics_init_diff(a, init_diff, answers, use)
     if use:
@@ -1922,6 +1963,7 @@ def main(argv=None):
     m.add_argument("--events-until", help="ISO instant: drop every transcript line stamped after it")
     m.add_argument("--json", action="store_true")
     m.add_argument("--usage", action="store_true", help="which skills, MCP servers, plugins and agents the project really uses, and what each costs at start-up (with --since, --json)")
+    m.add_argument("--by-profile", action="store_true", help="with --usage: group the sessions by the profile each ran with, with their tokens, cost and skill and server calls")
     m.add_argument("--init-diff", nargs=2, metavar=("BEFORE", "AFTER"), help="check an applied project: two system/init captures of `claude -p` against --answers")
     m.add_argument("--answers", help="with --init-diff: the review's answers (keep, drop, add per name)")
     m.set_defaults(fn=cmd_metrics)
@@ -1959,6 +2001,20 @@ def main(argv=None):
                    "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
                    "restarts claude: anywhere else it refuses and kills nothing")
     t.set_defaults(fn=launch.switch)
+    t = sub.add_parser("run", help="one headless session of this project with a session profile; prints only its final answer",
+                       epilog="examples: forge run @marketing \"list your skills\" | forge run @reviewer \"review this diff\" --model haiku --json "
+                              "(a prompt that starts with a dash goes after --)")
+    t.add_argument("name", metavar="@NAME", help="the profile of the project of this directory (`forge list @` lists them)")
+    t.add_argument("prompt", metavar="PROMPT", help="what the session is asked; it reaches claude on stdin, never through a shell")
+    t.add_argument("--model", metavar="M", help="claude's --model, always passed to the child (default: sonnet)")
+    t.add_argument("--cwd", metavar="DIR", help="run in this folder: its project's profile, and the child's working directory")
+    t.add_argument("--permission-mode", metavar="MODE", help="claude's --permission-mode: default, plan, acceptEdits or dontAsk (never "
+                   "bypassPermissions); none is passed when omitted, so forge sets no mode and the child's own settings decide; the profile's "
+                   "permissions are added to its user, project and local ones, and do not limit it")
+    t.add_argument("--timeout", metavar="SECONDS", type=int, default=run.TIMEOUT, help="the child gets TERM after this long, and KILL "
+                   "later if it ignores that; forge run then exits 124 (default: %(default)s)")
+    t.add_argument("--json", action="store_true", help="print claude's whole JSON result instead of the answer alone")
+    t.set_defaults(fn=run.cmd)
     t = sub.add_parser("shim", help="print a shell function `claude`: `claude @NAME` starts that profile of this project, any other claude is the real one",
                        epilog="examples: forge shim --shell fish > ~/.config/fish/conf.d/forge-claude.fish | forge shim --check @marketing (the probe the function calls)")
     which = t.add_mutually_exclusive_group()

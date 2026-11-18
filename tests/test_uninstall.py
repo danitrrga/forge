@@ -524,6 +524,96 @@ r = subprocess.run([sys.executable, "-c", driver], cwd=w.root, env=w.env, captur
 check("race: exit 0 -- exit %d: %s" % (r.returncode, sandbox.tail(r.stdout + r.stderr, 3)), r.returncode == 0, r.stdout + r.stderr)
 check("race: a claim recorded before the lock was taken is removed", not os.path.exists(extra), r.stdout)
 
+# ---------------------------------------------------------------- who owns a per-project hook row
+# Each per-project hook row is its own integration's claim: `--integration mempalace` takes MemPalace's three rows and none of
+# Hindsight's two, `--integration hindsight` the reverse, and the doctor's session-start row (both memory systems') goes with
+# the last of the two. Red on ccebfd5 (skills.PROJECT_ROW_OWNER = "hindsight" for every row), messages:
+#   "--integration mempalace: MemPalace's three rows go -- still in mp: [the three commands]; exit 1 ... looked at 0 claim(s)"
+#   "--integration hindsight: MemPalace's rows stay -- gone from mp: [the three commands]"
+MP_ROWS = ("mempal-stop-hook.sh", "mempal-session-end-hook.sh", "mempal-precompact-hook.sh")
+
+
+def mp_world(tag, hindsight, mempalace):
+    m = World(tag, sync=False)
+    reg = os.path.join(m.root, "config", "mcp-registry.json")
+    doc = load(reg)
+    doc["servers"]["mempalace"] = {"type": "stdio", "command": "toy-mp", "args": [], "env": {}}
+    write_json(reg, doc)
+    m.mp = os.path.join(m.top, "projects", "mp")
+    for rel, text in ((os.path.join(".claude", "skills", "x", "SKILL.md"), "---\nname: x\ndescription: stub\n---\n"),
+                      (".gitignore", "node_modules/\n"), ("CLAUDE.md", "# mp\n")):
+        write(os.path.join(m.mp, rel), text)
+    sandbox.git(m.mp, "init", "-q")
+    write_json(os.path.join(m.root, "config", "projects", "mp.claude.json"), {
+        "project": "mp", "project_path": m.mp, "servers": ["toy-echo", "mempalace"], "skills_keep": ["toy-common"],
+        "plugins_keep": [], "command_guard": True})
+    m.mp_slp = os.path.join(m.mp, ".claude", "settings.local.json")
+    m.set_integration("hindsight", hindsight)
+    m.set_integration("mempalace", mempalace)
+    code, out = m.forge("sync", "--all", "--apply")
+    check("%s: the sync builds the world -- exit %d: %s" % (tag, code, sandbox.tail(out, 4)), code == 0 and os.path.exists(m.registry), out)
+    return m
+
+
+def rows_in(path, markers):
+    cmds = commands(load(path)) if os.path.exists(path) else []
+    return [m for m in markers if any(m in c for c in cmds)]
+
+
+HS_ROWS = ("claude-hook.js", "claude-stop-hook.js")
+both = mp_world("owners-mp", True, True)
+check("control: both integrations on, each project holds its own rows -- mp %s, app %s"
+      % (rows_in(both.mp_slp, MP_ROWS + HS_ROWS), rows_in(both.slp, MP_ROWS + HS_ROWS)),
+      rows_in(both.mp_slp, MP_ROWS + HS_ROWS) == list(MP_ROWS) and rows_in(both.slp, MP_ROWS + HS_ROWS) == list(HS_ROWS))
+both.set_integration("mempalace", False)
+code, out = both.forge("uninstall", "--integration", "mempalace", "--apply")
+check("--integration mempalace: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+check("--integration mempalace: MemPalace's three rows go -- still in mp: %s" % rows_in(both.mp_slp, MP_ROWS),
+      not rows_in(both.mp_slp, MP_ROWS), out)
+check("--integration mempalace: Hindsight's two rows stay -- app has %s" % rows_in(both.slp, HS_ROWS),
+      rows_in(both.slp, HS_ROWS) == list(HS_ROWS))
+check("--integration mempalace: the doctor's row stays while Hindsight is on -- %s" % rows_in(both.settings, ("memory_doctor.py",)),
+      rows_in(both.settings, ("memory_doctor.py",)) == ["memory_doctor.py"])
+
+hs_only = mp_world("owners-hs", True, True)
+hs_only.set_integration("hindsight", False)
+code, out = hs_only.forge("uninstall", "--integration", "hindsight", "--apply")
+check("--integration hindsight: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+check("--integration hindsight: Hindsight's two rows go -- still in app: %s" % rows_in(hs_only.slp, HS_ROWS),
+      not rows_in(hs_only.slp, HS_ROWS), out)
+check("--integration hindsight: MemPalace's rows stay -- gone from mp: %s"
+      % [r for r in MP_ROWS if r not in rows_in(hs_only.mp_slp, MP_ROWS)], rows_in(hs_only.mp_slp, MP_ROWS) == list(MP_ROWS))
+# Hindsight first, MemPalace still on: the doctor's row (claimed for hindsight, the first of its integrations that was on)
+# stays, and goes with the second uninstall. Red on 68f458b, message:
+#   "--integration hindsight, MemPalace still on: the doctor's row stays -- []"
+check("--integration hindsight, MemPalace still on: the doctor's row stays -- %s" % rows_in(hs_only.settings, ("memory_doctor.py",)),
+      rows_in(hs_only.settings, ("memory_doctor.py",)) == ["memory_doctor.py"], out)
+hs_only.set_integration("mempalace", False)
+code, out = hs_only.forge("uninstall", "--integration", "mempalace", "--apply")
+check("--integration mempalace after hindsight: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 3)), code == 0, out)
+check("--integration mempalace after hindsight: the doctor's row and the three rows go -- %s %s"
+      % (rows_in(hs_only.settings, ("memory_doctor.py",)), rows_in(hs_only.mp_slp, MP_ROWS)),
+      not rows_in(hs_only.settings, ("memory_doctor.py",)) and not rows_in(hs_only.mp_slp, MP_ROWS), out)
+
+# The doctor's row follows its writer: with both on it is Hindsight's claim, so it goes with the second of the two to be
+# uninstalled, never with the first (a MemPalace-only machine: the MemPalace claim).
+both.set_integration("hindsight", False)
+code, out = both.forge("uninstall", "--integration", "hindsight", "--apply")
+check("the doctor's row goes once neither integration is left -- %s" % rows_in(both.settings, ("memory_doctor.py",)),
+      not rows_in(both.settings, ("memory_doctor.py",)), out)
+only_mp = mp_world("owners-mp-only", False, True)
+check("control: MemPalace alone, the doctor's row is written -- %s" % rows_in(only_mp.settings, ("memory_doctor.py",)),
+      rows_in(only_mp.settings, ("memory_doctor.py",)) == ["memory_doctor.py"])
+only_mp.set_integration("mempalace", False)
+# The row goes when no integration it serves is on, whichever of them is uninstalled: MemPalace is already off in the config
+# here, so `--integration hindsight` takes it (it was a MemPalace claim; before, only the claim's owner could take it).
+code, out = only_mp.forge("uninstall", "--integration", "hindsight", "--apply")
+check("MemPalace off, --integration hindsight: the doctor's row goes, nothing it serves is on -- %s" % rows_in(only_mp.settings, ("memory_doctor.py",)),
+      not rows_in(only_mp.settings, ("memory_doctor.py",)), out)
+code, out = only_mp.forge("uninstall", "--integration", "mempalace", "--apply")
+check("MemPalace alone: --integration mempalace takes the three rows -- %s" % rows_in(only_mp.mp_slp, MP_ROWS),
+      not rows_in(only_mp.mp_slp, MP_ROWS), out)
+
 # ---------------------------------------------------------------- negative controls
 # removable() ignoring the digest: the edited env goes, which the main world's check catches.
 m = World("mutant")

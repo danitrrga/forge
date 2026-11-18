@@ -32,7 +32,7 @@ import time
 
 from forge import framework, lib, suggest
 
-KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\Z")  # \Z, not $: `$` also matches before one trailing newline
 
 # A stack is a folder of the checkout's examples/stacks/: stack.json and gitignore, each complete on its own (no code or text is
 # shared between stacks). The files are copied as they are with {{KEY}} replaced; the README text has no folder, so it is here.
@@ -145,8 +145,8 @@ def refuse(code, text):
 
 def write_file(undo, folder, filename, text):
     path = os.path.join(folder, filename)
+    undo.append(("file", path))  # first: a write cut short by a signal still rolls back (rollback skips a file that is not there)
     lib.write_text(path, text)
-    undo.append(("file", path))
     print("wrote  %s" % path)
 
 
@@ -358,16 +358,16 @@ def create(a):
                 raise OSError("config/forge.json skill_keep (or its extras) is not a JSON object")
             if not exists:
                 os.mkdir(target)
+                undo.append(("dir", target))  # before anything else that can fail or be interrupted
                 lib.record("mkdir", target)
-                undo.append(("dir", target))
                 print("made   %s/" % target)
             write_file(undo, target, ".gitignore", files["gitignore"])
             undo.append(("tree", os.path.join(target, ".git")))
             git_init(target)
             text = files["README.md"]
             write_file(undo, target, "README.md", text)
+            undo.append(("file", project_file))  # absent until the write: checked above, under the lock
             lib.write_text(project_file, lib.dumps(project) + "\n")
-            undo.append(("file", project_file))
             print("wrote  %s" % os.path.relpath(project_file, lib.ROOT))
             if row:
                 lib.write_text(lib.SETTINGS, lib.dumps(doc) + "\n")  # atomic: when it fails, forge.json is as it was

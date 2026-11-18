@@ -65,8 +65,8 @@ DRY = lib.Ctx(False, None, False)
 FAKE_TOKEN = "fake-settings-keys-token-91c2-NOT-REAL"
 REGISTRY = owned.path()
 HS_CMD = "node /opt/toy/hs.js"
-HS_ROW = ("UserPromptSubmit", HS_CMD, 10, "hs.js", None, True)
-HS_OFF = HS_ROW[:5] + (False,)
+HS_ROW = ("UserPromptSubmit", HS_CMD, 10, "hs.js", None, True, "hindsight")  # the 7th is the owner (hooks.project_hooks)
+HS_OFF = HS_ROW[:5] + (False,) + HS_ROW[6:]
 
 failures, n_checks, n_proj = [], [0], [0]
 
