@@ -1951,7 +1951,8 @@ def main(argv=None):
     t = sub.add_parser("switch", help="change the profile of the session you are in: claude restarts with it and resumes the conversation",
                        epilog="examples: forge switch @marketing | forge switch (lists the profiles, the current one marked)")
     t.add_argument("target", nargs="?", metavar="@NAME", help="the profile to change to (@ or nothing lists them); only inside a session "
-                   "started by `forge start @NAME`, whose launcher restarts claude: anywhere else it refuses and kills nothing")
+                   "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
+                   "restarts claude: anywhere else it refuses and kills nothing")
     t.set_defaults(fn=launch.switch)
     t = sub.add_parser("lock", help="record the plugin, outside-skill and MCP package versions (a dry-run unless --apply)")
     t.add_argument("--apply", action="store_true", help="write config/forge.lock.json")

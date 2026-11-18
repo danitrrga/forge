@@ -39,6 +39,14 @@ Cases (S = the session id the first run was started with):
      flag is named on the launcher's line (`; not carried over: --agent, --odd`), and nothing is said when nothing was dropped.
   j  a session started with -p (or --print): `forge switch` exits 2 with one line naming -p, no request, no relaunch.
   k  a claude that ignores TERM is killed after KILL_AFTER (1 s in that world, so the case takes seconds) and the new one starts.
+  l  whatever fails while a switch is honoured (here the registry is no object: an AttributeError), claude comes back with the profile
+     it had, resumed, and one line says why; no traceback.
+  m  the profile asked for is looked up in the project file as it is now: one added since the start can be switched to.
+  n  a request the watch accepted is honoured although claude took seconds to end and the request is older than the limit by then.
+  o  `forge start NAME` (a named launcher) run inside a switchable session does not inherit FORGE_SESSION and FORGE_LAUNCHER_PID.
+  p  `forge start @A --resume UUID` (also `--resume=UUID`, `-r UUID`) is switchable, the record under that id and --resume not named as
+     dropped; a title, `-c` and a bare `--resume` are refused by `forge switch`.
+  i  also: --disallowedTools / --allowedTools (and the --disallowed-tools / --allowed-tools spellings) come back with every value.
 
 Negative controls (a copy of the engine with one line broken, run through the same scenario; the check must fail with the
 message after the arrow, which is what the version without the behaviour printed). They run at the end of this file as
@@ -58,7 +66,24 @@ CONTROLS, so the harness is reused and nothing is kept as a one-off script:
   j  a switch that does not look at -p          -> "j: -p: the switch is refused with one line naming -p: (0, 0, False, ...), want (2, 1, True, '')"
   k  a loop that never kills                    -> "k: a claude that ignores TERM was not killed: the launcher took 10.2 s with KILL_AFTER 1 ..."
   f  a launcher that does not look at the pid   -> "request of session 1 relaunched launcher 2"
+  l  an `except` that is ProfileError and OSError only -> "l: a failure that is no ProfileError: claude comes back ..."
+  m  a launcher that looks the profile up in the project as it was at the start -> "m: a profile added while the session runs ..."
+  n  a launcher that reads the request again after claude ended -> "n: an accepted request is honoured after a slow end ..."
+  o  a named launcher that keeps the outer session's variables -> "o: a named launcher ..."
+  p  a start that records no id of a resume       -> "p: --resume ID: relaunch missing: 1 run(s), want 2"
+  h  a watch that never fires                     -> "h: SIGTERM: the switch did not end claude with TERM ... the case looked at nothing"
+  i  tool lists left out of the carried options   -> "i: --disallowedTools keeps all its values"
+  i  options carried at the first relaunch only   -> "i: a second switch carries the options again: None, want haiku"
   a  a list that does not mark                  -> "current not marked"
+
+The red of the external review's round (cases against 4c5e2de): "m: ... (2, 'toy-b', 'toy-b.json'), want (2, 'late', 'late.json')", "n: ... (1, []),
+want (2, 'list')", "o: ... (1, 'outer-session', '4242'), want (1, None, None)", "p: --resume ID: relaunch missing: 1 run(s), want 2". Case l cannot be
+red against 4c5e2de: its launcher looked the profile up in the project as it was at the start, so only the new lookup reaches the failing
+build; its control (the narrow `except` back) prints "l: a failure that is no ProfileError ...: (1, [], []), want (2, 'list', True)".
+The four test findings: a ("a: a list outside any session: exit 0 and the profiles: (2, []), want (0, ['code', 'list', 'toy-b'])" when that list
+exits 2), f part B (a fake that dies before writing: "f: both foreign requests were written, as meant: [], want [...]", "f: both launchers
+exit 0: (1, 0), want (0, 0)"), h and the second relaunch (controls below). The base head also failed `control f` intermittently: the
+peer file was read half written.
 
 The red of the fix round (the cases h, i and j against b56990f): "SIGTERM to the launcher during a switch: claude was started again:
 2 run(s), want 1", "i: --model keeps its value: None, want haiku", "j: -p: ... (0, 0, False, ...), want (2, 1, True, '')". Case f's part B
@@ -100,8 +125,9 @@ def read_peer(path):
 for act in step.get("do", []):
     kind = act[0]
     if kind == "info":  # tell the peer who this is
-        with open(act[1], "w") as fh:
+        with open(act[1] + ".tmp", "w") as fh:  # atomic: a peer that reads it while it is written would get half a JSON (CodeRabbit, 446)
             json.dump({"session": env["FORGE_SESSION"], "ppid": os.getppid()}, fh)
+        os.replace(act[1] + ".tmp", act[1])
     elif kind == "wait":
         t0 = time.time()
         while not os.path.exists(act[1]) and time.time() - t0 < 30:
@@ -119,15 +145,35 @@ for act in step.get("do", []):
         os.makedirs(d, exist_ok=True)
         with open(os.path.join(d, sid + ".json"), "w") as fh:
             json.dump({"to": spec["to"], "launcher_pid": pid, "at": time.time() - spec.get("age", 0)}, fh)
+        put({"request": {"sid": sid, "pid": pid, "to": spec["to"]}})  # what was written, and that it was
+    elif kind == "edit":  # a user edits a file of the engine copy while claude runs: {"a.b": value} sets that nested key, null removes it
+        p = os.path.join(os.path.dirname(os.path.dirname(env["FAKE_FORGE"])), act[1])
+        doc = json.load(open(p)) if os.path.exists(p) else {}
+        for dotted, value in act[2].items():
+            if dotted == "=":  # the whole document
+                doc = value
+                continue
+            d, keys = doc, dotted.split(".")
+            for k in keys[:-1]:
+                d = d.setdefault(k, {})
+            if value is None:
+                d.pop(keys[-1], None)
+            else:
+                d[keys[-1]] = value
+        with open(p, "w") as fh:
+            json.dump(doc, fh)
     elif kind == "sleep":
         time.sleep(act[1])
     elif kind == "ignoreterm":  # a claude that does not end when asked
         signal.signal(signal.SIGTERM, signal.SIG_IGN)
-    elif kind == "slowterm":  # a claude that needs act[2] seconds to end on TERM or HUP, and leaves a marker file when asked
+    elif kind == "slowterm":  # a claude that leaves a marker file when asked to end by TERM or HUP, then stays until act[2] seconds have
+        # passed or the file `marker`.release exists (the test's handshake: it signals the launcher first, then releases)
         def slow(sig, frame, marker=act[1], secs=act[2]):
             if not os.path.exists(marker):
                 open(marker, "w").close()
-                time.sleep(secs)
+                t0 = time.time()
+                while not os.path.exists(marker + ".release") and time.time() - t0 < secs:
+                    time.sleep(0.05)
                 os._exit(143)
         signal.signal(signal.SIGTERM, slow)
         signal.signal(signal.SIGHUP, slow)
@@ -268,6 +314,8 @@ def scenario_a(c):
         out.append("current not marked: %s without a record, want ['code'] (the project's default)" % cur)
     code, so, se = c.forge(["list", "@", "--json"])
     rows = json.loads(so) if code == 0 else []
+    # a list that failed is not an empty one: exit 0 and the project's three profiles, or the check looked at nothing (CodeRabbit, 271)
+    want("a: a list outside any session: exit 0 and the profiles", (code, sorted(r["name"] for r in rows)), (0, ["code", "list", "toy-b"]))
     if any("current" in r for r in rows):
         out.append("a list outside any session marks one: %s" % [r["name"] for r in rows if "current" in r])
     code, so, se = c.forge(["list", "@"], extra={"FORGE_SESSION": sid})
@@ -440,6 +488,12 @@ def scenario_f(c):
     open(done, "w").close()  # launcher 2's claude was alive for the whole of launcher 1's, and ends only now
     p2.communicate(timeout=90)
     r1, r2 = runs(lines(log1)), runs(lines(log2))
+    # both requests were written, as meant: the first in session 1 naming launcher 2's pid, the second in session 2 naming launcher 1's
+    # (a fake that died before writing them, or wrote others, leaves a run that "ignored" nothing); and both claudes ended well
+    written = [x["request"] for x in lines(log1) if "request" in x]
+    want("f: both foreign requests were written, as meant", [(x["sid"], x["pid"]) for x in written],
+         r1 and r2 and [(r1[0]["session"], r2[0]["ppid"]), (r2[0]["session"], r1[0]["ppid"])])
+    want("f: both launchers exit 0", (p1.returncode, p2.returncode), (0, 0))
     if len(r1) != 1:
         out.append("request of session 1 relaunched launcher 2's pid: launcher 1 ran %d time(s), want 1" % len(r1))
     if len(r2) != 1:
@@ -453,12 +507,21 @@ def scenario_h(c):
     for sig in (signal.SIGTERM, signal.SIGHUP):
         marker = os.path.join(c.scratch, "termed-%d-%d" % (sig, c.n))
         c.n += 1
-        # claude takes 3 s to end once asked: the request is honoured (TERM to claude), and within those seconds the launcher is signalled.
-        p, log = c.launcher([{"do": [["slowterm", marker, 3], ["switch", ["@list"]], ["sleep", 60]]}, {}])
+        # The request is honoured (TERM to claude, which leaves the marker) and claude stays in its shutdown handler until the test has
+        # signalled the launcher and released it: no number of seconds decides it. If the marker never comes, or the launcher is gone,
+        # the case looked at nothing and fails (CodeRabbit, 461).
+        p, log = c.launcher([{"do": [["slowterm", marker, 30], ["switch", ["@list"]], ["sleep", 60]]}, {}])
         t0 = time.time()
-        while not os.path.exists(marker) and time.time() - t0 < 30:
+        while not os.path.exists(marker) and time.time() - t0 < 15 and p.poll() is None:
             time.sleep(0.05)
-        p.send_signal(sig)
+        asked, alive = os.path.exists(marker), p.poll() is None
+        if not (asked and alive):
+            out.append("h: %s: the switch did not end claude with TERM before the test signalled the launcher (claude asked to end: %s, "
+                       "launcher alive: %s): the case looked at nothing" % (sig.name, asked, alive))
+        if alive:
+            p.send_signal(sig)
+            time.sleep(0.5)  # the launcher has the signal noted before claude is let go
+        open(marker + ".release", "w").close()
         so, se = p.communicate(timeout=60)
         if len(runs(lines(log))) != 1:
             out.append("%s to the launcher during a switch: claude was started again: %d run(s), want 1" % (sig.name, len(runs(lines(log)))))
@@ -470,7 +533,8 @@ def scenario_i(c):
     """the relaunch keeps the options the session was started with, names what it drops."""
     out = []
     args = ("@toy-b", "--model", "haiku", "--permission-mode=acceptEdits", "--dangerously-skip-permissions", "--effort", "high",
-            "--add-dir", "/x", "/y", "--agent", "reviewer", "--odd=1", "the prompt")
+            "--add-dir", "/x", "/y", "--disallowedTools", "Bash", "Edit", "--allowed-tools=Read", "--allowedTools", "Grep", "Glob",
+            "--agent", "reviewer", "--odd=1", "the prompt")
     code, so, se, log, _ = c.run([{"do": [["switch", ["@list"]], ["sleep", 60]]}, {}], args=args)
     rs = runs(log)
     if len(rs) != 2:
@@ -481,6 +545,12 @@ def scenario_i(c):
     want("i: --dangerously-skip-permissions is kept", "--dangerously-skip-permissions" in second, True)
     want("i: --effort keeps its value", flag(second, "--effort"), "high")
     want("i: --add-dir keeps all its values", second[second.index("--add-dir"):][:3] if "--add-dir" in second else None, ["--add-dir", "/x", "/y"])
+    # a restriction that is dropped fails open: the tool lists come back with every value, in both spellings (CodeRabbit, 112)
+    want("i: --disallowedTools keeps all its values", second[second.index("--disallowedTools"):][:3] if "--disallowedTools" in second else None,
+         ["--disallowedTools", "Bash", "Edit"])
+    want("i: --allowed-tools=VALUE is kept as given", "--allowed-tools=Read" in second, True)
+    want("i: --allowedTools keeps all its values", second[second.index("--allowedTools"):][:3] if "--allowedTools" in second else None,
+         ["--allowedTools", "Grep", "Glob"])
     want("i: the prompt is never repeated", "the prompt" in second, False)
     want("i: the profile's flags and --resume are there", (os.path.basename(flag(second, "--settings") or ""), flag(second, "--resume") == flag(rs[0]["argv"], "--session-id")),
          ("list.json", True))
@@ -520,17 +590,129 @@ def scenario_k(c):
     return out
 
 
+class restored:
+    """With-block: the files `rels` (relative to the engine copy) are what they were when it ends, also when a case raised: a fake that
+    edits the shared toy world must not leave the next scenario another one."""
+
+    def __init__(self, c, *rels):
+        self.paths = [os.path.join(c.w.forge, r) for r in rels]
+
+    def __enter__(self):
+        self.saved = {}
+        for p in self.paths:
+            self.saved[p] = open(p, "rb").read() if os.path.exists(p) else None
+
+    def __exit__(self, *exc):
+        for p, data in self.saved.items():
+            if data is None:
+                if os.path.exists(p):
+                    os.remove(p)
+            else:
+                with open(p, "wb") as fh:
+                    fh.write(data)
+
+
+PROJECT_FILE = "config/projects/multi.claude.json"
+REGISTRY = "config/mcp-registry.json"
+
+
+def scenario_l(c):
+    """whatever fails while a switch is honoured, claude comes back with the profile it had, resumed, and one line says why."""
+    out = []
+    # The registry becomes something that is no object while claude runs (an edit gone wrong): building the target's files raises an
+    # AttributeError, which is neither a ProfileError nor an OSError. (A server named in the project and missing from the registry is the
+    # KeyError CodeRabbit found; resolve() checks every server of a profile against the registry first, so only an edit between its look and
+    # the next one reaches it, and no case can place one there.) The request is for the profile the session is on, written by hand.
+    with restored(c, REGISTRY):
+        code, so, se, log, _ = c.run([{"do": [["edit", REGISTRY, {"=": ["not", "an", "object"]}], ["request", {"to": "list", "pid": "ppid", "age": 1}],
+                                              ["sleep", 60]]}, {}], args=("@list",))
+    rs = runs(log)
+    want("l: a failure that is no ProfileError: claude comes back with the old profile, resumed",
+         (len(rs), rs[1:] and rs[1]["profile"], rs[1:] and flag(rs[1]["argv"], "--resume") == flag(rs[0]["argv"], "--session-id")), (2, "list", True))
+    want("l: one line says why, no traceback, the launcher exits 0", ("cannot switch to @list" in se and "AttributeError" in se, "Traceback" in se, code),
+         (True, False, 0))
+    return out
+
+
+def scenario_m(c):
+    """the profile asked for is looked up in the project file as it is now: one added since the start can be switched to."""
+    out = []
+    with restored(c, PROJECT_FILE, "config/profile-defs/late.json"):
+        code, so, se, log, _ = c.run([{"do": [["edit", PROJECT_FILE, {"profiles.offered.late": {}}],
+                                              ["edit", "config/profile-defs/late.json", {"description": "added meanwhile", "color": "green", "skills": ["toy-a"]}],
+                                              ["request", {"to": "late", "pid": "ppid", "age": 1}], ["sleep", 60]]}, {}])
+    rs = runs(log)
+    want("m: a profile added while the session runs: claude comes back with it",
+         (len(rs), rs[1:] and rs[1]["profile"], rs[1:] and os.path.basename(flag(rs[1]["argv"], "--settings") or "")), (2, "late", "late.json"))
+    want("m: said, and no error", ("profile toy-b \u2192 late" in so, se), (True, ""))
+    return out
+
+
+def scenario_n(c):
+    """a request the watch accepted is honoured although claude takes seconds to end and the request has aged past the limit meanwhile."""
+    out = []
+    marker = os.path.join(c.scratch, "slow-end-%d" % c.n)
+    # age 116 s at the write; claude needs 5 s to end (nobody releases it), so by then the request is 121 s old, over SWITCH_TTL (120)
+    code, so, se, log, _ = c.run([{"do": [["slowterm", marker, 5], ["request", {"to": "list", "pid": "ppid", "age": 116}], ["sleep", 60]]}, {}])
+    rs = runs(log)
+    want("n: an accepted request is honoured after a slow end: the second run", (len(rs), rs[1:] and rs[1]["profile"]), (2, "list"))
+    want("n: nothing left behind, exit 0", (code, c.switch_files()), (0, []))
+    return out
+
+
+def scenario_o(c):
+    """a named launcher (`forge start NAME`) started inside a switchable session does not inherit its id and launcher pid."""
+    out = []
+    with restored(c, "config/forge.json"):
+        doc = tp.read_json(os.path.join(c.w.forge, "config", "forge.json"))
+        doc["launchers"] = {"plain": {"env": {"PLAIN": "1"}}}
+        tp.write_json(os.path.join(c.w.forge, "config", "forge.json"), doc)
+        code, so, se, log, _ = c.run([{}], args=("plain",), extra={"FORGE_SESSION": "outer-session", "FORGE_LAUNCHER_PID": "4242"})
+    rs = runs(log)
+    want("o: a named launcher: claude started once, with neither the session id nor the launcher pid of the outer session",
+         (len(rs), rs and rs[0]["session"], rs and rs[0]["launcher"]), (1, None, None))
+    return out
+
+
+def scenario_p(c):
+    """`forge start @A --resume ID` (a uuid) is a switchable session: the record is under that id, and --resume is not named as dropped."""
+    out = []
+    sid = str(uuid.uuid4())
+    for form in (("--resume", sid), ("--resume=" + sid,), ("-r", sid)):
+        code, so, se, log, _ = c.run([{"do": [["switch", ["@list"]], ["sleep", 60]], "exit": 3}, {}], args=("@toy-b",) + form)
+        rs = runs(log)
+        label = form[0]
+        if len(rs) != 2:
+            out.append("p: %s ID: relaunch missing: %d run(s), want 2" % (label, len(rs)))
+            continue
+        want("p: %s ID: the first run is the user's command, session %s kept" % (label, sid[:8]),
+             (rs[0]["session"], "--session-id" in rs[0]["argv"]), (sid, False))
+        want("p: %s ID: the second run resumes it with the new profile, once" % label,
+             (rs[1]["argv"].count("--resume"), flag(rs[1]["argv"], "--resume"), os.path.basename(flag(rs[1]["argv"], "--settings") or ""), "-r" in rs[1]["argv"]),
+             (1, sid, "list.json", False))
+        want("p: %s ID: the line names nothing as dropped" % label, ("forge: profile toy-b \u2192 list" in so, "not carried over" in so), (True, False))
+        want("p: %s ID: the record is under that id" % label, (c.record(sid) or {}).get("profile"), "list")
+    # an id that is not a uuid (a title, a search term), --continue and the picker: no record, so no switch, and the refusal says so
+    for form in (("--resume", "my title"), ("-c",), ("--resume",)):
+        code, so, se, log, _ = c.run([{"do": [["switch", ["@list"]]]}], args=("@toy-b",) + form)
+        sw = [x for x in log if "switch" in x]
+        want("p: %s: not switchable: exit 2, one line, nothing written" % " ".join(form),
+             (sw and (sw[0]["rc"], len(sw[0]["err"].strip().splitlines())), c.switch_files(), len(runs(log))), ((2, 1), [], 1))
+    return out
+
+
 KILL_1S = ("forge/launch.py", "KILL_AFTER = 15 ", "KILL_AFTER = 1 ")
 
 
 def scenarios(c):
     return {"a": scenario_a, "b": scenario_b, "c": scenario_c, "d": scenario_d, "e": scenario_e, "f": scenario_f,
-            "h": scenario_h, "i": scenario_i, "j": scenario_j}
+            "h": scenario_h, "i": scenario_i, "j": scenario_j, "l": scenario_l, "m": scenario_m, "n": scenario_n,
+            "o": scenario_o, "p": scenario_p}
 
 
 # (name of the scenario, file, text to replace, replacement, the message the scenario must print)
 CONTROLS = (
-    ("b", "forge/launch.py", "profiles.take_switch(sid, me)", "None", "relaunch missing"),
+    ("b", "forge/launch.py", "taken = profiles.take_switch(sid, me)", "taken = None", "relaunch missing", (("forge/launch.py", "req = profiles.pending_switch(sid, me)", "req = None"),)),
     ("c", "forge/profiles.py", "now - req[\"at\"] > SWITCH_TTL", "False", "stale request obeyed"),
     ("c", "forge/profiles.py", "req[\"launcher_pid\"] != pid", "False", "foreign request obeyed"),
     ("d", "forge/launch.py", "rec = _launcher_above(sid)", "rec = _launcher_above(sid) or {\"launcher_pid\": 1, \"project\": project, \"profile\": \"x\"}",
@@ -545,6 +727,21 @@ CONTROLS = (
     ("h", "forge/launch.py", "if not req or stopped:", "if not req:", "claude was started again"),
     ("i", "forge/launch.py", "argv = flags + list(carry) + [\"--resume\"", "argv = flags + [\"--resume\"", "--model keeps its value"),
     ("i", "forge/launch.py", "if dropped else \"\"", "if False else \"\"", "named on the launcher's line"),
+    # the tool lists left out of the carried options (the first relaunch already lacks them): the restriction would be gone
+    ("i", "forge/launch.py", "VARIADIC = (\"--add-dir\", \"--allowedTools\", \"--allowed-tools\", \"--disallowedTools\", \"--disallowed-tools\")",
+     "VARIADIC = (\"--add-dir\", \"--allowedTools\", \"--allowed-tools\")", "i: --disallowedTools keeps all its values"),
+    # carried at the first relaunch and dropped from the second on: the diagnostic is the second-switch assertion's, not the first one's
+    ("i", "forge/launch.py", "argv = flags + list(carry) + [\"--resume\", _resume_id(req, sid)]",
+     "argv = flags + list(carry) + [\"--resume\", _resume_id(req, sid)]\n        carry = ()", "i: a second switch carries the options again"),
+    ("l", "forge/launch.py", "except Exception as e:  # not only", "except (profiles.ProfileError, OSError) as e:  # not only",
+     "l: a failure that is no ProfileError"),
+    ("m", "forge/launch.py", "now = lib.projects().get(project) or {}", "now = _stale",
+     "m: a profile added while the session runs", (("forge/launch.py", "    me = os.getpid()\n    note = ", "    me = os.getpid()\n    _stale = lib.projects().get(project)\n    note = "),)),
+    ("n", "forge/launch.py", "req = seen[0] if seen else taken", "req = taken", "n: an accepted request is honoured after a slow end"),
+    ("o", "forge/launch.py", "    # not a session of a profile launcher, so not the switchable one it may run inside: a `forge switch` from here would restart that one\n    for var in (",
+     "    for var in () and (", "o: a named launcher"),
+    ("p", "forge/launch.py", "else resumed_id(args)  #", "else None  #", "p: --resume ID: relaunch missing"),
+    ("h", "forge/launch.py", "watch=watch, stopped=stopped)", "watch=lambda: False, stopped=stopped)", "the case looked at nothing"),
     ("j", "forge/launch.py", "if rec.get(\"print\"):", "if False:", "j: -p: the switch is refused"),
     ("k", "forge/launch.py", "child.kill()", "pass", "was not killed", (KILL_1S,)),
     ("f", "forge/profiles.py", "req[\"launcher_pid\"] != pid", "False", "relaunched launcher 2"),
