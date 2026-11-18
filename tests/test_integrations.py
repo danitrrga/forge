@@ -186,8 +186,9 @@ check("integrations on: hindsight rows are in the table",
       {"coding-agents", SCAN_MARKER} <= set(markers),
       "markers %r" % (markers,))
 check("integrations on: ROW_INTEGRATION names the owner of each gated marker",
-      getattr(h, "ROW_INTEGRATION", {}) == {"coding-agents": "hindsight", "memory_doctor.py": "hindsight",
-                                           "guard_tool_use.py --consent": "consent"},
+      getattr(h, "ROW_INTEGRATION", {}) == {"coding-agents": "hindsight", "memory_doctor.py": ("hindsight", "mempalace"),
+                                           "guard_tool_use.py --consent": "consent", "mempal-stop-hook.sh": "mempalace",
+                                           "mempal-session-end-hook.sh": "mempalace", "mempal-precompact-hook.sh": "mempalace"},
       "ROW_INTEGRATION = %r" % (getattr(h, "ROW_INTEGRATION", None),))
 
 # 3. Rows that are not forge's come from `user_hooks`, appended after the code's, <ROOT> expanded.
@@ -522,32 +523,56 @@ finally:
 check("negative control: a need that always returns None makes the missing binary a PASS (so the FAIL check can fail)",
       only(rows, "agent_browser") == [("PASS", "agent_browser is on, no dependency checked here")], "rows %r" % (rows,))
 
-PENDING_ON = ("SKIP", "NOT RUN, NOT ARMED: mempalace is on in config/forge.json, but its check arrives with the MemPalace part")
-PENDING_OFF = ("SKIP", "NOT RUN, NOT ARMED: mempalace is off in config/forge.json; its check arrives with the MemPalace part")
+MPF = ("FAIL", "mempalace is on in config/forge.json but mempalace is not on PATH -- run `forge toolchain --fix`, then "
+       "open a new shell, or set integrations.mempalace false")
+# 7.1 U2 (the check was a pending SKIP before). Seen failing on cc2a8ef, the cases below that were a SKIP there:
+#   mempalace on, no mempalace on PATH: a FAIL naming `forge toolchain --fix` -- rows [('SKIP', 'NOT RUN, NOT ARMED: mempalace is on in
+#     config/forge.json, but its check arrives with the MemPalace part'), ...]
+#   mempalace on, a fake mempalace on PATH: a PASS -- the same SKIP
+#   mempalace off: a SKIP, NOT RUN, NOT ARMED -- the SKIP said "; its check arrives with the MemPalace part"
+# Controls: a `need` that returns None turns the FAIL into a PASS (so the FAIL check can fail); INTEGRATION_PENDING back to the old
+# entry turns mempalace on into a SKIP again.
 rows = int_row(EMPTY_BIN, mempalace=False)
-check("mempalace off: a SKIP that says its check arrives with the MemPalace part", only(rows, "mempalace") == [PENDING_OFF], "rows %r" % (rows,))
+check("mempalace off: a SKIP, NOT RUN, NOT ARMED",
+      only(rows, "mempalace") == [("SKIP", "NOT RUN, NOT ARMED: mempalace is off in config/forge.json")], "rows %r" % (rows,))
 rows = int_row(EMPTY_BIN, mempalace=True)
-check("mempalace on: still a SKIP, nothing is counted as checked, and the closing line does not claim every integration is off",
-      only(rows, "mempalace") == [PENDING_ON] and rows[-1] == (
-          "SKIP", "NOT RUN, NOT ARMED: no integration with a check is on in config/forge.json and no user_hooks row is configured, "
-          "so there is nothing to check"), "rows %r" % (rows,))
-real_pending, real_need = dict(cli.INTEGRATION_PENDING) if hasattr(cli, "INTEGRATION_PENDING") else {}, cli.INTEGRATION_NEEDS.get("mempalace")
-cli.INTEGRATION_PENDING = {}
-cli.INTEGRATION_NEEDS["mempalace"] = (None, "no dependency checked here")
+check("mempalace on, no mempalace on PATH: a FAIL naming `forge toolchain --fix` and a new shell",
+      only(rows, "mempalace") == [MPF], "rows %r" % (rows,))
+check("mempalace on, no mempalace on PATH: the closing line counts it as checked (a FAIL is not a SKIP)",
+      isinstance(rows, list) and rows[-1] == ("PASS", "checked 1: 1 integration(s) on, 0 user_hooks script(s)"), "rows %r" % (rows,))
+MP_BIN = os.path.join(TOY, "mempalace-bin")
+os.makedirs(MP_BIN)
+with open(os.path.join(MP_BIN, "mempalace"), "w") as fh:
+    fh.write("#!/bin/sh\n")
+os.chmod(os.path.join(MP_BIN, "mempalace"), 0o755)
+rows = int_row(MP_BIN, mempalace=True)
+check("control: a fake mempalace on PATH is a PASS", only(rows, "mempalace") == [("PASS", "mempalace is on, mempalace found on PATH")],
+      "rows %r" % (rows,))
+real_need = cli.INTEGRATION_NEEDS.get("mempalace")
+cli.INTEGRATION_NEEDS["mempalace"] = (lambda: None, "no dependency checked here")
+try:
+    rows = int_row(EMPTY_BIN, mempalace=True)
+finally:
+    if real_need is None:
+        del cli.INTEGRATION_NEEDS["mempalace"]
+    else:
+        cli.INTEGRATION_NEEDS["mempalace"] = real_need
+check("negative control: a need that always returns None makes the missing binary a PASS (so the FAIL check can fail)",
+      only(rows, "mempalace") == [("PASS", "mempalace is on, no dependency checked here")], "rows %r" % (rows,))
+check("no integration is pending any more", cli.INTEGRATION_PENDING == {}, "INTEGRATION_PENDING %r" % (cli.INTEGRATION_PENDING,))
+real_pending = dict(cli.INTEGRATION_PENDING)
+cli.INTEGRATION_PENDING = {"mempalace": "its check arrives with the MemPalace part"}
 try:
     rows = int_row(EMPTY_BIN, mempalace=True)
 finally:
     cli.INTEGRATION_PENDING = real_pending
-    if real_need is None:
-        cli.INTEGRATION_NEEDS.pop("mempalace", None)
-    else:
-        cli.INTEGRATION_NEEDS["mempalace"] = real_need
-check("negative control: without the pending case mempalace on is a PASS",
-      only(rows, "mempalace") == [("PASS", "mempalace is on, no dependency checked here")], "rows %r" % (rows,))
+check("negative control: the pending entry back turns mempalace on into a SKIP (so the FAIL cannot be a leftover)",
+      only(rows, "mempalace") == [("SKIP", "NOT RUN, NOT ARMED: mempalace is on in config/forge.json, but its check arrives with the MemPalace part")],
+      "rows %r" % (rows,))
 rows = int_row(EMPTY_BIN, agent_browser=True, mempalace=True)
-check("agent_browser and mempalace on, the binary missing: one FAIL, one SKIP, and the closing line counts the one checked",
-      [r[0] for r in only(rows, "agent_browser")] == ["FAIL"] and only(rows, "mempalace") == [PENDING_ON]
-      and rows[-1] == ("PASS", "checked 1: 1 integration(s) on, 0 user_hooks script(s)"), "rows %r" % (rows,))
+check("agent_browser and mempalace on, both binaries missing: two FAILs, and the closing line counts both",
+      [r[0] for r in only(rows, "agent_browser")] == ["FAIL"] and only(rows, "mempalace") == [MPF]
+      and rows[-1] == ("PASS", "checked 2: 2 integration(s) on, 0 user_hooks script(s)"), "rows %r" % (rows,))
 
 sandbox.cleanup(bool(failures))
 if failures:
