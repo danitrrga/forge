@@ -1,0 +1,7 @@
+{
+  "description": "A Python tool or service, with uv, ruff and pytest.",
+  "servers": [],
+  "plugins": ["context7@claude-plugins-official", "superpowers@claude-plugins-official", "code-review@claude-plugins-official"],
+  "checks": ["ruff check .", "pytest"],
+  "skill_sets": []
+}

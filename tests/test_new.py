@@ -31,6 +31,18 @@ in one line; the control's failure message is what is quoted here, and the asser
       control (no cleanup): `left behind: <paths>`
   - an existing directory behaves as on master: output and files compared with the base revision's cli.py.
       control (one more key in the project file): `differs from master`
+4.4 U5, the stacks as data (examples/stacks/<stack>/stack.json and gitignore, read by forge/new.py):
+  - every one of the six stacks creates a project whose .gitignore ignores .env.
+      control (rust's .env line taken out of its file): `.gitignore of stack rust does not ignore .env`
+  - a {{X}} with no value in a stack file: exit 2, `unresolved {{X}} in stacks/generic/gitignore`, nothing written.
+      control (a substituter that lets it through): `placeholder left in .gitignore`
+  - every stack.json parses and has exactly the five keys; the reader refuses one that lacks a key before the first write.
+      controls (a key renamed in tauri's file; the reader's check taken out): `stack tauri: stack.json has the keys`,
+      `a stack.json without checks`
+  - an unknown stack exits 2 and names the six; a value nothing used is a warning (control: `an unused argument not warned about`).
+  - `--stack generic` writes the .gitignore and README of 182's head byte for byte (control: a changed line, `differs from 182's head`).
+  Seen failing first, before the stacks and the reader existed: `stack generic: exit 2`... for the five new stacks `no project`,
+  `examples/stacks holds [], want [...]`, and the unknown stack named only generic.
 Also: the missing answers are named in ONE error (--stack and projects_dir together), --path puts the folder under it
 and nowhere else, `forge new --help` lists every flag.
 
@@ -54,6 +66,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import sandbox  # noqa: E402
 
 BASE = "2ffe5bf"  # master before this unit: the registration side is compared with its forge/cli.py
+HEAD_182 = "68576e8"  # the head of pull request 182: its forge/new.py holds the generic .gitignore text this unit moved into a file
 failures, notrun, n_checks = [], [], [0]
 
 
@@ -543,9 +556,144 @@ def a_help(w):
 def a_unknown_stack(w):
     before = w.snapshot()
     code, out = w.forge("new", "demo", "--stack", "cobol", "--apply")
-    if code != 2 or "generic" not in out or w.snapshot() != before:
-        return ["an unknown stack: exit %d, want 2 naming generic and nothing written: %s" % (code, tail(out))]
+    missing = [n for n in SIX if n not in out]
+    if code != 2 or missing or w.snapshot() != before:
+        return ["an unknown stack: exit %d, want 2 naming all six stacks (missing %s) and nothing written: %s" % (code, missing, tail(out))]
     return []
+
+
+# ---------------------------------------------------------------- 4.4 U5: the stacks are data (examples/stacks/<stack>/)
+
+SIX = ("generic", "next", "node", "python", "rust", "tauri")
+STACK_KEYS = ("description", "servers", "plugins", "checks", "skill_sets")
+PERSONAL = re.compile(r"/home/|/Users/|@(?!example\.(com|org|test))[\w.-]+\.\w+")
+
+
+def a_stacks_created(w):
+    """Every stack makes a project whose .gitignore ignores .env and holds no placeholder, and whose README is `# NAME`."""
+    bad = []
+    for stack in SIX:
+        name = "p-%s" % stack
+        code, out = w.forge("new", name, "--stack", stack, "--apply")
+        gi_path = os.path.join(w.project(name), ".gitignore")
+        if code != 0 or not os.path.exists(gi_path):
+            bad.append("stack %s: exit %d, no project: %s" % (stack, code, tail(out, 4)))
+            continue
+        gi = open(gi_path).read()
+        if ".env" not in gi.splitlines():
+            bad.append(".gitignore of stack %s does not ignore .env: %r" % (stack, gi[:60]))
+        if "{{" in gi:
+            bad.append("placeholder left in .gitignore of stack %s" % stack)
+        rd = open(os.path.join(w.project(name), "README.md")).read()
+        if rd != "# %s\n" % name:
+            bad.append("README.md of stack %s is %r, want %r" % (stack, rd, "# %s\n" % name))
+    return bad
+
+
+def a_stack_files(w):
+    """Every stack folder is complete on its own: a stack.json that parses with the five keys (a description, four lists of
+    strings, nothing else), a gitignore, no personal data; and the stacks are exactly the six."""
+    root = w.path("examples", "stacks")
+    bad = []
+    found = sorted(os.listdir(root)) if os.path.isdir(root) else []
+    if found != sorted(SIX):
+        bad.append("examples/stacks holds %s, want %s" % (found, sorted(SIX)))
+    for stack in found:
+        for fn in ("stack.json", "gitignore"):
+            p = os.path.join(root, stack, fn)
+            if not os.path.isfile(p):
+                bad.append("stack %s has no %s" % (stack, fn))
+            elif PERSONAL.search(open(p).read()):
+                bad.append("stack %s: %s holds personal data" % (stack, fn))
+        doc = read_json(os.path.join(root, stack, "stack.json"))
+        if not isinstance(doc, dict):
+            bad.append("stack %s: stack.json does not parse as an object" % stack)
+            continue
+        if sorted(doc) != sorted(STACK_KEYS):
+            bad.append("stack %s: stack.json has the keys %s, want %s" % (stack, sorted(doc), sorted(STACK_KEYS)))
+        elif not isinstance(doc["description"], str) or not doc["description"].strip() or \
+                not all(isinstance(doc[k], list) and all(isinstance(x, str) for x in doc[k]) for k in STACK_KEYS[1:]):
+            bad.append("stack %s: stack.json has a wrong type (description a text, the rest lists of texts)" % stack)
+    return bad
+
+
+def a_generic_as_182(w, base_new):
+    """`--stack generic` writes the same .gitignore and README, byte for byte, as 182's head did (its constants)."""
+    m = re.search(r'GENERIC_GITIGNORE = """(.*?)"""', base_new, re.S)
+    if not m:
+        return ["the base revision's forge/new.py holds no GENERIC_GITIGNORE"]
+    code, out = w.forge("new", "demo", "--stack", "generic", "--apply")
+    bad = []
+    got = open(os.path.join(w.project("demo"), ".gitignore")).read() if os.path.exists(os.path.join(w.project("demo"), ".gitignore")) else None
+    if got != m.group(1):
+        bad.append("generic .gitignore differs from 182's head: %r vs %r" % ((got or "")[:50], m.group(1)[:50]))
+    rd = open(os.path.join(w.project("demo"), "README.md")).read() if os.path.exists(os.path.join(w.project("demo"), "README.md")) else None
+    if rd != "# demo\n":
+        bad.append("generic README differs from 182's head: %r" % rd)
+    return bad
+
+
+def a_unresolved(w):
+    """A `{{X}}` in a stack file, with no value: exit 2 naming `unresolved {{X}} in stacks/generic/gitignore`, in the plan as well
+    as with --apply, and no folder, project file or row is left (the world carries the placeholder; see UNRESOLVED)."""
+    bad = []
+    for extra in ([], ["--apply"]):
+        before = w.snapshot()
+        code, out = w.forge("new", "demo", "--stack", "generic", *extra)
+        gi = os.path.join(w.project("demo"), ".gitignore")
+        if os.path.exists(gi) and "{{X}}" in open(gi).read():
+            bad.append("placeholder left in .gitignore")
+        if code != 2 or "unresolved {{X}} in stacks/generic/gitignore" not in out:
+            bad.append("a {{X}} with no value%s: exit %d, want 2 naming `unresolved {{X}} in stacks/generic/gitignore`: %s" % (" ".join([""] + extra), code, tail(out)))
+        if os.path.lexists(w.project("demo")) or w.snapshot() != before:
+            bad.append("an unresolved placeholder left %s" % changed(before, w.snapshot())[:4])
+    return bad
+
+
+UNRESOLVED = [(os.path.join("examples", "stacks", "generic", "gitignore"), "Thumbs.db\n", "Thumbs.db\n{{X}}\n")]
+BROKEN = [(os.path.join("examples", "stacks", "node", "stack.json"), '  "checks": ["pnpm test"],\n', "")]
+
+
+def a_bad_stack_json(w):
+    """A stack.json that lacks a key (here node's `checks`, taken out in this world) is refused before the first write, exit 2, one
+    line naming the file and the key; another stack still works."""
+    before = w.snapshot()
+    code, out = w.forge("new", "demo", "--stack", "node", "--apply")
+    bad = []
+    if code != 2 or "stacks/node/stack.json" not in out or "checks" not in out or len([l for l in out.splitlines() if l.strip()]) != 1:
+        bad.append("a stack.json without checks: exit %d, want 2 and ONE line naming stacks/node/stack.json and checks: %s" % (code, tail(out)))
+    if os.path.lexists(w.project("demo")) or w.snapshot() != before:
+        bad.append("a broken stack.json left %s" % changed(before, w.snapshot())[:4])
+    return bad
+
+
+UNUSED_SCRIPT = """import json, sys
+sys.path.insert(0, sys.argv[1])
+from forge import new
+text, errors, warnings = new.substitute("generic", {"gitignore": "a {{NAME}}\\n"}, {"NAME": "demo", "OTHER": "x"})
+print(json.dumps({"text": text, "errors": errors, "warnings": warnings}))
+"""
+
+
+def a_unused_argument(w):
+    """A value nothing used is a warning (not an error); the one used is replaced and not warned about."""
+    script = os.path.join(w.tmp, "unused.py")
+    with open(script, "w") as fh:
+        fh.write(UNUSED_SCRIPT)
+    r = subprocess.run([sys.executable, script, w.root], cwd=w.cwd, env=w.env, capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    got = None
+    try:
+        got = json.loads(r.stdout)
+    except ValueError:
+        pass
+    if not got:
+        return ["could not call forge.new.substitute: %s" % tail(r.stdout + r.stderr, 3)]
+    bad = []
+    if got["text"] != {"gitignore": "a demo\n"} or got["errors"]:
+        bad.append("substitute: text %r, errors %r, want the NAME replaced and no error" % (got["text"], got["errors"]))
+    if not (len(got["warnings"]) == 1 and "OTHER" in got["warnings"][0]):
+        bad.append("an unused argument not warned about: warnings %s" % got["warnings"])
+    return bad
 
 
 def a_no_forge_json(w):
@@ -809,7 +957,10 @@ FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n 
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
 CONTROLS = [
     ("no check ahead of the first write, no cleanup", a_missing_stack,
-     [(NEW, "if problems:", "if False:"), (NEW, "rollback(undo)", "pass")], "left a partial folder: "),
+     [(NEW, "if problems:", "if False:"), (NEW, "rollback(undo)", "pass"),
+      # the stack is read by the same check, so with it gone the plan has a stack to print and the write finds none after the mkdir
+      (NEW, "stack = files = warnings = None", 'stack = {"description": "", "servers": [], "plugins": [], "checks": [], "skill_sets": []}\n    files, warnings = None, []')],
+     "left a partial folder: "),
     ("a CLAUDE.md written", a_generic_created,
      [(NEW, 'write_file(undo, target, "README.md", text)', 'write_file(undo, target, "README.md", text); write_file(undo, target, "CLAUDE.md", text)')],
      "wrote outside the allowed list: "),
@@ -860,6 +1011,13 @@ CONTROLS = [
      "left behind: "),
     ("no cleanup after git fails", a_git_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
     ("no cleanup after forge.json fails", a_forge_json_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
+    ("a substituter that lets {{X}} through", a_unresolved, UNRESOLVED + [(NEW, "if unresolved:", "if False:")], "placeholder left in .gitignore"),
+    ("a stack whose .gitignore forgets .env", a_stacks_created, [(os.path.join("examples", "stacks", "rust", "gitignore"), ".env\n.env.*\n", "env-not-here\n")],
+     ".gitignore of stack rust does not ignore .env"),
+    ("a stack.json with a key missing", a_stack_files, [(os.path.join("examples", "stacks", "tauri", "stack.json"), '"skill_sets"', '"skill_set"')],
+     "stack tauri: stack.json has the keys"),
+    ("a stack.json not checked", a_bad_stack_json, BROKEN + [(NEW, "if missing:", "if False:")], "a stack.json without checks"),
+    ("an unused argument not warned about", a_unused_argument, [(NEW, "if unused else []", "if False else []")], "an unused argument not warned about"),
 ]
 
 
@@ -871,6 +1029,25 @@ def main():
     else:
         notrun.append("registration compared with master: revision %s is not in this clone (%s)" % (BASE, r.stderr.strip()[:80]))
 
+    r = subprocess.run(["git", "-C", sandbox.FORGE, "show", "%s:forge/new.py" % HEAD_182], capture_output=True, text=True)
+    if r.returncode == 0:
+        w = World("g182")
+        try:
+            for why in a_generic_as_182(w, r.stdout):
+                failures.append("generic as 182 -- %s" % why)
+            n_checks[0] += 1
+        finally:
+            w.close()
+        cw = World("g182c", mutate=[(os.path.join("examples", "stacks", "generic", "gitignore"), ".idea/\n", ".idea\n")])
+        try:
+            got = cw.anchors_missing or a_generic_as_182(cw, r.stdout)
+            check("control: a changed generic .gitignore is caught", any("differs from 182's head" in g for g in got), "got %s" % got[:2])
+            print("control %-45s -> %s" % ("generic .gitignore changed", (got[0] if got else "NOT SEEN FAILING")[:110]))
+        finally:
+            cw.close()
+    else:
+        notrun.append("generic compared with 182's head: revision %s is not in this clone (%s)" % (HEAD_182, r.stderr.strip()[:80]))
+
     plain = [("no --stack", a_missing_stack, {}), ("one error for every missing answer", a_one_error, {"projects_dir": False}),
              ("generic stack created", a_generic_created, {}), ("dry-run", a_dry_run, {}), ("a project named list", a_list_created, {}),
              ("bad names", a_bad_names, {}), ("a bad registration name", a_bad_registration_name, {}),
@@ -880,7 +1057,10 @@ def main():
              ("--framework", a_framework, {}), ("help", a_help, {}), ("unknown stack", a_unknown_stack, {}), ("no forge.json", a_no_forge_json, {}),
              ("a name or a path", a_name_or_path, {}), ("again from projects_dir", a_rerun_in_projects, {}), ("the lock", a_lock, {}),
              ("two runs, one name", a_two_same_name, {}), ("two runs, two names", a_two_names, {}), ("--path outside the world", a_path_outside_world, {}),
-             ("--path in the checkout", a_path_in_checkout, {}), ("bad projects_dir", a_bad_projects_dir, {}), ("signals", a_signals, {})]
+             ("--path in the checkout", a_path_in_checkout, {}), ("bad projects_dir", a_bad_projects_dir, {}), ("signals", a_signals, {}),
+             ("every stack creates a project", a_stacks_created, {}), ("the stack files", a_stack_files, {}),
+             ("an unresolved placeholder", a_unresolved, {"mutate": UNRESOLVED}), ("a broken stack.json", a_bad_stack_json, {"mutate": BROKEN}),
+             ("an unused argument", a_unused_argument, {})]
     for label, fn, kw in plain:
         w = World("a", **kw)
         try:

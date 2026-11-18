@@ -30,27 +30,74 @@ import signal
 import subprocess
 import time
 
-from forge import framework, lib
+from forge import framework, lib, suggest
 
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\Z")  # \Z, not $: `$` also matches before one trailing newline
 
-# The stacks, as data the next unit moves into files: the .gitignore text and the README text of each ({name} is the project's).
-GENERIC_GITIGNORE = """# secrets
-.env
-.env.*
-!.env.example
+# A stack is a folder of the checkout's examples/stacks/: stack.json and gitignore, each complete on its own (no code or text is
+# shared between stacks). The files are copied as they are with {{KEY}} replaced; the README text has no folder, so it is here.
+STACKS_DIR = os.path.join(lib.ROOT, "examples", "stacks")
+STACK_KEYS = ("description", "servers", "plugins", "checks", "skill_sets")
+PLACEHOLDER = re.compile(r"\{\{([A-Za-z][A-Za-z0-9_]*)\}\}")
+README = "# {{NAME}}\n"
 
-# editors
-.idea/
-.vscode/
-*.swp
-*~
 
-# OS
-.DS_Store
-Thumbs.db
-"""
-STACKS = {"generic": {"gitignore": GENERIC_GITIGNORE, "readme": "# {name}\n"}}
+def stack_names():
+    return sorted(n for n in os.listdir(STACKS_DIR) if os.path.isdir(os.path.join(STACKS_DIR, n))) if os.path.isdir(STACKS_DIR) else []
+
+
+def substitute(stack, files, values):
+    """(files with every {{KEY}} replaced, errors, warnings). `files` is {file name: text}, `values` {KEY: text}. A {{KEY}} with
+    no value is an error (`unresolved {{KEY}} in stacks/<stack>/<file>`) and is left in the text, which is then never written;
+    a value that no file used is a warning."""
+    out, errors, used = {}, [], set()
+    for fn, text in files.items():
+        unresolved = []
+
+        def put(m):
+            if m.group(1) in values:
+                used.add(m.group(1))
+                return values[m.group(1)]
+            if m.group(0) not in unresolved:
+                unresolved.append(m.group(0))
+            return m.group(0)
+        out[fn] = PLACEHOLDER.sub(put, text)
+        if unresolved:
+            errors.extend("unresolved %s in stacks/%s/%s" % (u, stack, fn) for u in unresolved)
+    unused = sorted(set(values) - used)
+    warnings = ["{{%s}} was given and nothing in stacks/%s used it" % (k, stack) for k in unused] if unused else []
+    return out, errors, warnings
+
+
+def load_stack(stack, name):
+    """(stack.json read and checked, {gitignore, README.md} with the project's NAME in, warnings) of one stack. ValueError, with one
+    line, when a file is missing or wrong or a {{KEY}} has no value: that is found before anything is written."""
+    where = "stacks/%s" % stack
+    texts = {}
+    for fn in ("stack.json", "gitignore"):
+        try:
+            with open(os.path.join(STACKS_DIR, stack, fn), encoding="utf-8") as fh:
+                texts[fn] = fh.read()
+        except (OSError, ValueError) as e:
+            raise ValueError("%s/%s cannot be read: %s" % (where, fn, e))
+    try:
+        doc = json.loads(texts["stack.json"])
+    except ValueError as e:
+        raise ValueError("%s/stack.json is not valid JSON: %s" % (where, e))
+    if not isinstance(doc, dict):
+        raise ValueError("%s/stack.json is not a JSON object" % where)
+    missing = [k for k in STACK_KEYS if k not in doc]
+    if missing:
+        raise ValueError("%s/stack.json lacks %s" % (where, ", ".join(missing)))
+    extra = sorted(set(doc) - set(STACK_KEYS))
+    if extra:
+        raise ValueError("%s/stack.json has %s, which is no key of a stack (the keys: %s)" % (where, ", ".join(extra), ", ".join(STACK_KEYS)))
+    if not isinstance(doc["description"], str) or not all(isinstance(doc[k], list) and all(isinstance(x, str) for x in doc[k]) for k in STACK_KEYS[1:]):
+        raise ValueError("%s/stack.json: description is a text and servers, plugins, checks and skill_sets are lists of texts" % where)
+    files, errors, warnings = substitute(stack, {"gitignore": texts["gitignore"], "README.md": README}, {"NAME": name})
+    if errors:
+        raise ValueError("; ".join(errors))
+    return doc, files, warnings
 
 
 def path_like(arg):
@@ -218,10 +265,19 @@ def create(a):
         return refuse(2, "%r is not a project name (lowercase letters and digits, single dashes between them; "
                          "it cannot start with @ or -)" % name)
     problems = []
-    if a.stack is None:
-        problems.append("--stack is missing (one of: %s)" % ", ".join(sorted(STACKS)))
-    elif a.stack not in STACKS:
-        problems.append("--stack %r is not a stack (one of: %s)" % (a.stack, ", ".join(sorted(STACKS))))
+    names = stack_names()
+    stack = files = warnings = None
+    if not names:
+        problems.append("there are no stacks (no folder in %s)" % STACKS_DIR)
+    elif a.stack is None:
+        problems.append("--stack is missing (one of: %s)" % ", ".join(names))
+    elif a.stack not in names:
+        problems.append("--stack: %s" % suggest.message("stack", a.stack, names))
+    else:
+        try:
+            stack, files, warnings = load_stack(a.stack, name)
+        except ValueError as e:
+            problems.append(str(e))
     parent = None
     if a.parent_dir is not None:
         if not a.parent_dir.strip():
@@ -272,6 +328,12 @@ def create(a):
     print("forge new %s: %s" % (name, "APPLY" if a.apply else "PLAN, nothing written (--apply makes it)"))
     print("  folder      %s%s" % (target, " (exists, empty)" if exists else ""))
     print("  .gitignore  stack %s, written first" % a.stack)
+    print("  stack       %s" % stack["description"])
+    for label, field in (("servers", "servers"), ("plugins", "plugins"), ("checks", "checks"), ("skill sets", "skill_sets")):
+        print("  %-11s %s" % (label, ", ".join(stack[field]) or "none"))
+    print("              (what the stack lists is shown here only: the project file does not get it)")
+    for warning in warnings:
+        print("  warning     %s" % warning)
     print("  git init, README.md")
     print("  project     config/projects/%s%s" % (key, " (framework on)" if a.framework else ""))
     print("  skills row  config/forge.json skill_keep.extras %s" % ("gets %s" % key if row else "already has %s" % key))
@@ -299,11 +361,10 @@ def create(a):
                 undo.append(("dir", target))  # before anything else that can fail or be interrupted
                 lib.record("mkdir", target)
                 print("made   %s/" % target)
-            stack = STACKS[a.stack]  # looked up here, after the folder: the check above is what keeps a missing stack from getting this far
-            write_file(undo, target, ".gitignore", stack["gitignore"])
+            write_file(undo, target, ".gitignore", files["gitignore"])
             undo.append(("tree", os.path.join(target, ".git")))
             git_init(target)
-            text = stack["readme"].format(name=name)
+            text = files["README.md"]
             write_file(undo, target, "README.md", text)
             undo.append(("file", project_file))  # absent until the write: checked above, under the lock
             lib.write_text(project_file, lib.dumps(project) + "\n")

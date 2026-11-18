@@ -1,0 +1,22 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# node
+node_modules/
+dist/
+build/
+coverage/
+*.log
+*.tsbuildinfo

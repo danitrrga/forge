@@ -1,0 +1,25 @@
+# secrets
+.env
+.env.*
+!.env.example
+
+# editors
+.idea/
+.vscode/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# tauri: the web side and the rust side
+node_modules/
+dist/
+coverage/
+*.log
+*.tsbuildinfo
+target/
+src-tauri/target/
+src-tauri/gen/
+*.pdb
