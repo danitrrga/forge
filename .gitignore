@@ -42,6 +42,7 @@
 !/hooks/test_worktree_guard.py
 !/hooks/test_read_injection_scanner.py
 !/hooks/test_read_injection_scanner.mjs
+!/hooks/mempalace/
 
 # scripts/: the metrics, and the sync generators with their tests.
 !/scripts/

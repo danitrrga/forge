@@ -47,6 +47,7 @@ CARRY_VALUE = ("--model", "--permission-mode", "--effort") + VARIADIC
 CARRY_BOOL = ("--dangerously-skip-permissions",)
 PRINT_FLAGS = ("-p", "--print")
 RESUME_FLAGS = ("-r", "--resume")  # the relaunch has its own --resume: the one the user gave is neither repeated nor named as dropped
+PR_SET_PDEATHSIG = 1  # linux/prctl.h
 POLL = 0.25  # seconds between two looks at the switch request while claude runs
 KILL_AFTER = 15  # seconds a claude asked to end by a switch has before it is killed
 SESSION_ID = "NEW-SESSION-UUID"  # what --dry-run prints where a start puts a fresh uuid4
@@ -199,29 +200,94 @@ def _describe(doc, from_secrets):
             "env: %s" % (", ".join("%s%s" % (k, " (a secret)" if k in from_secrets else "=" + v) for k, v in sorted(doc.get("env", {}).items())) or "none")]
 
 
-def _run(claude, argv, env, watch=None, stopped=None):
+def _die_with_parent(parent):
+    """A `preexec_fn`: the child gets KILL when process `parent` ends, however it ends (a SIGKILL included, which nothing in `parent` can
+    answer). Linux's prctl; elsewhere nothing is set."""
+    def prepare():
+        if sys.platform.startswith("linux"):
+            import ctypes
+            libc = ctypes.CDLL(None)
+            libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL)
+            if os.getppid() != parent:  # the parent was already gone before the call above
+                os.kill(os.getpid(), signal.SIGKILL)
+    return prepare
+
+
+def _run(claude, argv, env, watch=None, stopped=None, headless=False, **popen):
     """claude as a child, to its end; the exit code it gave (128 + the signal when a signal ended it). Ctrl-C goes to the whole
     foreground group, so claude has it already and we stay; a TERM or HUP aimed at us is passed on, and noted in the list `stopped`
     (the caller's) so that it does not start claude again. With `watch`, called every
     POLL seconds: once it says True the child is sent TERM (and KILL after KILL_AFTER seconds, so a claude that ignores it cannot
-    keep the loop from going on)."""
+    keep the loop from going on). `popen` (stdin, stdout, cwd) goes to Popen as it is.
+    `headless` is `forge run`'s: nobody is at a terminal, so the child gets a session of its own (a Ctrl-C reaches only us, once) and
+    every signal, INT too, is passed on to its whole group; and the child ends when we do (_die_with_parent), so that a `forge run`
+    killed by its caller leaves no claude running and billing behind it."""
     sys.stdout.flush()
-    child = subprocess.Popen([claude] + argv, env=env)
+    if headless:
+        popen = dict(popen, start_new_session=True, preexec_fn=_die_with_parent(os.getpid()))
+    child = subprocess.Popen([claude] + argv, env=env, **popen)
+
+    def send(sig):
+        try:
+            os.killpg(child.pid, sig) if headless else child.send_signal(sig)
+        except ProcessLookupError:
+            pass  # already gone
+
+    mark = []  # headless: when a TERM or HUP of ours was passed on to the child's group; the KILL timer starts then, as at the deadline
+
+    def stop(sig, _):
+        if stopped is not None:
+            stopped.append(sig)
+        if headless and not mark:
+            mark.append(time.monotonic())
+        send(sig)
+
+    def hard_kill():
+        if headless:
+            send(signal.SIGKILL)
+        else:
+            child.kill()
+
+    def group_alive():
+        try:
+            os.killpg(child.pid, 0)  # the group lives as long as one member does, claude's end or not
+        except ProcessLookupError:
+            return False
+        return True
     saved = {sig: signal.signal(sig, handler) for sig, handler in (
-        (signal.SIGINT, lambda *_: None), (signal.SIGTERM, lambda s, _: (stopped is None or stopped.append(s), child.send_signal(s))),
-        (signal.SIGHUP, lambda s, _: (stopped is None or stopped.append(s), child.send_signal(s))))}
+        (signal.SIGINT, (lambda s, _: send(s)) if headless else (lambda *_: None)),
+        (signal.SIGTERM, stop),
+        (signal.SIGHUP, stop))}
     try:
         ended = None  # when the child was asked to end
         while True:
+            if ended is None and mark:
+                ended = mark[0]
             try:
-                code = child.wait(timeout=POLL if watch else None)
+                code = child.wait(timeout=POLL if watch or headless else None)
                 break
             except subprocess.TimeoutExpired:
-                if ended is None and watch():
+                if ended is None and watch and watch():
                     ended = time.monotonic()
-                    child.terminate()
+                    if headless:
+                        send(signal.SIGTERM)
+                    else:
+                        child.terminate()
                 elif ended is not None and time.monotonic() - ended > KILL_AFTER:
-                    child.kill()
+                    hard_kill()
+        if headless and ended is None and mark:
+            ended = mark[0]  # a TERM that came as claude was ending
+        # Claude's end is not the group's: a member that ignores TERM (a tool claude started) is killed KILL_AFTER after the ask, and
+        # the wait is bounded, so a member nobody reaps (a zombie under a parent that never collects it) cannot hold us.
+        killed = None
+        while headless and ended is not None and group_alive():
+            now = time.monotonic()
+            if now - ended > KILL_AFTER:
+                hard_kill()
+                killed = killed or now
+                if now - killed > KILL_AFTER:
+                    break
+            time.sleep(0.05)
     finally:
         for sig, old in saved.items():
             signal.signal(sig, old)
@@ -326,6 +392,18 @@ def _session(claude, argv, env, sid, project, profile, flags, carry=(), dropped=
         argv = flags + list(carry) + ["--resume", _resume_id(req, sid)]
 
 
+def session_env(profile, project, sid):
+    """The environment of a session `forge start @NAME` or `forge run @NAME` starts: ours plus FORGE_PROFILE and FORGE_PROJECT. The session
+    the launcher can switch is its id and its own pid; a start with no id of ours (-c, a title, the picker) has no record and so cannot
+    be switched, and must not carry the ones of an outer session it was started from."""
+    env = dict(os.environ, FORGE_PROFILE=profile, FORGE_PROJECT=project)
+    for var in ("FORGE_SESSION", "FORGE_LAUNCHER_PID"):
+        env.pop(var, None)
+    if sid:
+        env.update(FORGE_SESSION=sid, FORGE_LAUNCHER_PID=str(os.getpid()))
+    return env
+
+
 def _profile(a):
     """forge start @NAME [--dry-run] [ARGS...]."""
     args, dry = list(a.args), a.dry_run
@@ -352,13 +430,7 @@ def _profile(a):
             return _refuse(str(e))
     fresh = new_session(args)
     sid = str(uuid.uuid4()) if fresh else resumed_id(args)  # the id of a session we can switch: ours, or the one `--resume` names
-    env = dict(os.environ, FORGE_PROFILE=profile, FORGE_PROJECT=project)
-    # The session the launcher can switch: its id and its own pid. A start with no id of ours (-c, a title, the picker) has no record and
-    # so cannot be switched, and must not carry the ones of an outer session it was started from.
-    for var in ("FORGE_SESSION", "FORGE_LAUNCHER_PID"):
-        env.pop(var, None)
-    if sid:
-        env.update(FORGE_SESSION=sid, FORGE_LAUNCHER_PID=str(os.getpid()))
+    env = session_env(profile, project, sid)
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
         print("! forge start: claude is not on PATH", file=sys.stderr)

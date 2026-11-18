@@ -32,6 +32,17 @@ Usage (`collect`, `report`)
              and `hookEvent` are the ones scripts/metrics/harness-baseline.mjs reads). A field that is named otherwise
              reads as 0 bytes and an empty `listing`, visible in the report; the fixture cannot catch that.
 
+Per profile (`by_profile`, `forge metrics NAME --usage --by-profile`)
+  The sessions of the same read, grouped by the profile their record names (`forge/profiles.py`: `$XDG_STATE_HOME/forge/
+             profile-sessions/<session id>.json`, handed in as a reader so this module stays free of configuration); a
+             session with no record, or a record whose `profile` is not a name, is `default`. A session that switched
+             profile has one record, with its last profile, and counts whole under it. A session `forge run` started
+             lists its `parent`. Per group: sessions, tokens, cost, and the calls to skills and servers of its sessions.
+  Cost     : the LAST `cost-state` line of the session's main file (Claude Code's running total: `totalCostUSD` and, per
+             model, `inputTokens`, `outputTokens`, `cacheReadInputTokens`, `cacheCreationInputTokens`; their shape is read
+             from real transcripts). It is the whole session even with `--since`. A session with no such line has no cost:
+             `cost_usd` is null when none of a group has one, and `with_cost` says how many did; never 0 for unknown.
+
 Zero sessions is an error (`usage unknown`), never "0 uses"; fewer than MIN_SESSIONS is reported as `few sessions`.
 
 Init diff (`init_diff`)
@@ -154,6 +165,8 @@ class Session:
         self.names = None  # tool names live after the deferred_tools_delta lines
         self.hooks = collections.Counter()  # plugin -> SessionStart stdout bytes
         self.hook_n = self.hook_n_attr = self.hook_bytes = 0  # every SessionStart hook, and the part that names a plugin
+        self.cost = None  # totalCostUSD of the last cost-state line of the main file; None: the file has none
+        self.tokens = collections.Counter()  # TOKEN_FIELDS of that same line, summed over its models
         self._ids = set()
 
 
@@ -182,6 +195,7 @@ def read_file(path, sess, main, since, counts):
             if isinstance(ts, str) and _DATE.match(ts[:10]):
                 date = ts[:10]
             if main:
+                _cost_state(d, sess)  # the running total of the whole session, whatever `since` says
                 _startup(d, sess)  # whatever `since` says: the listing a later /command is judged against is read once, at the start
             if since and date and date < since:
                 continue
@@ -189,6 +203,28 @@ def read_file(path, sess, main, since, counts):
                 sess.first = min(sess.first or date, date)
                 sess.last = max(sess.last or date, date)
             _uses(d, sess, date)
+
+
+TOKEN_FIELDS = (("input", "inputTokens"), ("output", "outputTokens"), ("cache_read", "cacheReadInputTokens"),
+                ("cache_creation", "cacheCreationInputTokens"))
+
+
+def _number(v):
+    return v if isinstance(v, (int, float)) and not isinstance(v, bool) else 0
+
+
+def _cost_state(d, sess):
+    """A `cost-state` line is the session's running total, so the last one replaces the one before. One with no
+    numeric `totalCostUSD` is not read as a cost of 0."""
+    total = d.get("totalCostUSD")
+    if d.get("type") != "cost-state" or not _number(total) and total != 0:
+        return
+    sess.cost = total
+    sess.tokens = collections.Counter()
+    models = d.get("modelUsage")
+    for m in models.values() if isinstance(models, dict) else ():
+        for key, field in TOKEN_FIELDS:
+            sess.tokens[key] += _number(m.get(field)) if isinstance(m, dict) else 0
 
 
 def _startup(d, sess):
@@ -363,6 +399,47 @@ def report(project, sessions, counts, folder_names, project_skills, left_out=0):
         "unlisted_commands": dict(sorted(unlisted.items(), key=lambda kv: (-kv[1], kv[0]))),
         "items": out_items,
     }
+
+
+DEFAULT_PROFILE = "default"
+SKILL_KINDS, SERVER_KINDS = ("skill", "project-skill", "plugin-skill"), ("mcp", "plugin-mcp")
+
+
+def by_profile(project, sessions, counts, folder_names, project_skills, read_record, left_out=0):
+    """The per-profile report: `report`'s `looked_at`, and `profiles`, one group per profile named by the sessions' records
+    (`read_record(session id)`: the record dict or None), the most sessions first. A group is a `report` of its own sessions, so a
+    /command is judged against the listing of the sessions that ran it."""
+    groups = collections.defaultdict(list)
+    meta = collections.defaultdict(list)  # profile -> [(session id, parent)] of the sessions another one started
+    with_record = unusable = 0
+    for s in sessions:
+        rec = read_record(s.id)
+        name = rec.get("profile") if isinstance(rec, dict) else None
+        if isinstance(rec, dict):
+            if isinstance(name, str) and name:
+                with_record += 1
+            else:
+                unusable += 1
+        if not (isinstance(name, str) and name):
+            name, rec = DEFAULT_PROFILE, None
+        groups[name].append(s)
+        if rec and isinstance(rec.get("parent"), str) and rec["parent"]:
+            meta[name].append((s.id, rec["parent"]))
+    full = report(project, sessions, counts, folder_names, project_skills, left_out)
+    out = []
+    for name, group in groups.items():
+        rep = report(project, group, counts, folder_names, project_skills, left_out)
+        costs = [s.cost for s in group if s.cost is not None]
+        tokens = {key: sum(s.tokens[key] for s in group) for key, _ in TOKEN_FIELDS}
+        tokens["total"] = sum(tokens.values())
+        pick = lambda kinds: [{"kind": i["kind"], "name": i["name"], "calls": i["calls"]} for i in rep["items"] if i["kind"] in kinds and i["calls"]]
+        out.append({"profile": name, "sessions": len(group), "with_cost": len(costs), "tokens": tokens,
+                    "cost_usd": round(sum(costs), 6) if costs else None,
+                    "runs": [{"session": sid, "parent": parent} for sid, parent in sorted(meta[name])],
+                    "skills": pick(SKILL_KINDS), "servers": pick(SERVER_KINDS)})
+    out.sort(key=lambda g: (-g["sessions"], g["profile"]))
+    look = dict(full["looked_at"], with_record=with_record, without_record=len(sessions) - with_record - unusable, unusable_records=unusable)
+    return {"schema": 1, "project": project, "looked_at": look, "profiles": out}
 
 
 def project_skill_names(project_path):
