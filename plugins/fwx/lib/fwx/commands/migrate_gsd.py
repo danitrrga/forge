@@ -453,12 +453,13 @@ def build_phases(sc, src, ctx):
             continue
         have.add(num)
         name = phase_folder(number, title)
+        asked = any(hit(k, name, num) for k in ctx["close"])
         closed = verdict(name, num, False)
-        if closed:
-            continue
+        if closed and not asked:
+            continue    # a heading whose box (or whose --open) says it is done: a shipped phase GSD kept only a line of, not made
         ms = milestone(name, num)
         sc.phases.append({"name": name, "ms": None, "files": [], "pairing": False, "checklist": boxes.get(num), "num": num,
-                          "milestone": ms, "closed": False, "from_roadmap": True, "key": None, "title": title})
+                          "milestone": ms, "closed": closed, "from_roadmap": True, "key": None, "title": title})
     if roadmap is not None and not heads:
         sc.notes.append("ROADMAP.md%s has no `### Phase N: title` headings: no phase is created from it, and it is kept whole" % sc.label())
     for p in sc.phases:
@@ -700,19 +701,43 @@ class Mapper:
 
 
 # `.planning` as a path of its own: after a space, a quote, `=`, `(`, `!` and the like, at the start of a line, or after `./` or a
-# leading `/`; never after a letter, `/` (`a/.planning`, a URL, `$HOME/.planning`), `~`, `-`, `.`, and never `.planning.bak`
+# leading `/`; never after a letter, `/` (`a/.planning`, a URL, `$HOME/.planning`), `~`, `-`, `.`, and never `.planning.bak`.
+# Three more places a git pathspec puts it, each checked in tokens(): `:(exclude).planning` (after the closing `)` of the magic),
+# `:/.planning` and `:^.planning`; `:!.planning` is already covered by `!`.
 _BEFORE = "\\s\"'`=(!{\\[,;|&<>"
-RE_TOKEN = re.compile(r"(?:(?<![^%s])|(?<=^/)|(?<=[%s]/)|(?<=^\./)|(?<=[%s]\./))\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])"
+RE_TOKEN = re.compile(r"(?:(?<![^%s])|(?<=^/)|(?<=[%s]/)|(?<=^\./)|(?<=[%s]\./)|(?<=:/)|(?<=:\^)|(?<=\)))\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])"
                       r"(/[^\s\"'`<>()\[\]{},;|&$#]*)?" % (_BEFORE, _BEFORE, _BEFORE))
+_PS_BEFORE = "(?:^|[%s])" % _BEFORE
+RE_PS_MAGIC = re.compile(_PS_BEFORE + r":\([^()\s]*\)\Z")
+RE_PS_TOP = re.compile(_PS_BEFORE + r":/\Z")
+RE_PS_CARET = re.compile(_PS_BEFORE + r":\^\Z")
+# a path built from a variable or a command (`"$ROOT/.planning/x"`, `${DIR}/.planning`, `$(git rev-parse --show-toplevel)/.planning/x`):
+# whatever the variable holds is the script's business, so the converter lists the line and does not rewrite it. `$HOME` and `~` are
+# the user's own folder, not the repository's, and stay no reference.
+RE_HAND = re.compile(r"(?P<expr>\$\{[A-Za-z_]\w*\}|\$[A-Za-z_]\w*|\$\((?:[^()]|\([^()]*\))*\)|`[^`]*`)[\"']?/"
+                     r"(?P<tok>\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])(?:/[^\s\"'`<>()\[\]{},;|&$#]*)?)")
+RE_HOME = re.compile(r"\$\{?HOME\}?\Z")
+HAND_WHY = "needs a hand: the path is built from a variable, so the converter cannot know where it points"
 
 
 def tokens(line, mapper):
     """(column, token, kind, new) of each `.planning` path of a line: the one reading of a line, so that what `refs` lists is
-    what --rewrite and --prefix change."""
+    what --rewrite and --prefix change. `hand` is a path built from a variable: listed, never rewritten."""
+    found, hand_at = [], set()
+    for m in RE_HAND.finditer(line):
+        if RE_HOME.match(m.group("expr")):
+            continue
+        hand_at.add(m.start("tok"))
+        found.append((m.start(), m.group(0).rstrip(".:!?"), "hand", None))
     for m in RE_TOKEN.finditer(line):
+        before = line[:m.start()]
+        if m.start() in hand_at or (before.endswith(")") and not RE_PS_MAGIC.search(before)) \
+                or (before.endswith(":/") and not RE_PS_TOP.search(before)) or (before.endswith(":^") and not RE_PS_CARET.search(before)):
+            continue
         token = m.group(0).rstrip(".:!?")
         kind, new = mapper.cite(token)
-        yield m.start(), token, kind, new
+        found.append((m.start(), token, kind, new))
+    return sorted(found, key=lambda f: f[0])
 
 
 def scan_refs(repo, mapper):
@@ -730,12 +755,26 @@ def scan_refs(repo, mapper):
             continue
         if SCOPE_SRC.encode() not in data or b"\0" in data[:8192]:
             continue
-        for n, line in enumerate(data.decode("utf-8", "replace").splitlines(), 1):
-            if SCOPE_SRC not in line:
+        text = data.decode("utf-8", "replace").splitlines()
+        gi = {l.rstrip() for l in text} if posixpath.basename(p) == ".gitignore" else None
+        for n, line in enumerate(text, 1):
+            if SCOPE_SRC not in line or (gi is not None and gitignore_handled(line, mapper, gi)):
                 continue
             for _, token, kind, new in tokens(line, mapper):
+                if gi is not None and kind == "prefix":    # a `.gitignore` pattern goes where `apply` sends its twin, not by prefix alone
+                    twin = mapper.gitignore(token)
+                    if twin != SCOPE_DEST + token[len(SCOPE_SRC):]:
+                        kind, new = "moved", twin
                 out.append({"file": p, "line": n, "old": token, "kind": kind, "new": new})
     return out
+
+
+def gitignore_handled(line, mapper, lines):
+    """Whether a `.gitignore` line already has its `.fwx` twin in the same file: `apply` wrote it, so `refs` does not offer the
+    old line again (and `--prefix` would only break what `apply` got right)."""
+    body = line.rstrip("\r\n").rstrip()
+    twin = mapper.gitignore(body)
+    return twin != body and twin in lines
 
 
 def git_facts(repo):
@@ -1250,6 +1289,9 @@ def plan_apply(repo, opts):
             if p["from_roadmap"]:
                 section = roadmap_section(roadmaps[sc.ws], ".".join(str(n) for n in p["num"])) or ("### Phase %s\n" % p["title"])
                 job.gens.append((dest + "/gsd-roadmap-entry.md", section.encode("utf-8")))
+                if p["closed"]:     # --close named it: the folder keeps the entry, and the closing row says it is done
+                    job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
+                    job.closed.append(dest)
             elif p["closed"]:
                 if not os.path.lexists(str(state.phase_paths(_abs(repo, dest))["audit"])):
                     job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
@@ -1568,6 +1610,11 @@ def execute(job):
         verify(job)
         with open(job.msgfile, "w", encoding="utf-8", errors="surrogateescape") as f:
             f.write(commit_message(job))
+        # last, so that no rollback has a folder to put back: the folders under `.planning/` that hold no file (the ones the
+        # moves and removals emptied, and the empty ones GSD scaffolds, which git cannot track), `.planning/` itself when
+        # nothing is left in it. A folder that still holds a file, an ignored or untracked one included, stays: rmdir only
+        # removes what is empty.
+        prune_empty(job.repo)
     except BaseException as e:
         try:
             errs = rollback(job)
@@ -1640,14 +1687,21 @@ def dest_exists(repo, new):
     return os.path.lexists(_abs(repo, new.rstrip("/")))
 
 
-def rewrite_line(line, mapper, repo, mode):
+def rewrite_line(line, mapper, repo, mode, gitignore_lines=None):
     """(new line, [(old, new, kind)] changed, [(old, kind, why)] left). `rewrite` changes the paths that moved and whose new
     place exists; `prefix` changes `.planning` for `.fwx` in every path. One pass over the tokens, so a longer path is never
     cut by a shorter one and nothing is changed twice."""
     out, last, changed, left = [], 0, [], []
+    if gitignore_lines is not None and gitignore_handled(line, mapper, gitignore_lines):
+        return line, changed, left
     for col, token, kind, new in tokens(line, mapper):
+        if kind == "hand":
+            left.append((token, kind, HAND_WHY))
+            continue
         if mode == "prefix":
             repl = SCOPE_DEST + token[len(SCOPE_SRC):]
+            if gitignore_lines is not None and kind in ("moved", "prefix"):
+                repl = mapper.gitignore(token)      # a `.gitignore` pattern follows the mapping `apply` used for its twin
         elif kind != "moved":
             left.append((token, kind, "it names a file the conversion removed" if kind == "purged"
                          else "it is a path of tool configuration: --prefix"))
@@ -1721,10 +1775,11 @@ def apply_rewrites(repo, mapper, rewrite, prefix):
     changed, left, writes = [], [], []
     for mode, rel, full, text in plan:
         new_lines = []
+        gi = {l.rstrip() for l in text.splitlines()} if posixpath.basename(rel) == ".gitignore" else None
         for n, line in enumerate(text.splitlines(keepends=True), 1):
             if SCOPE_SRC in line:
                 body = line.rstrip("\r\n")
-                nl, ch, lf = rewrite_line(body, mapper, repo, mode)
+                nl, ch, lf = rewrite_line(body, mapper, repo, mode, gi)
                 line = nl + line[len(body):]
                 changed += [(rel, n, o, w, k) for o, w, k in ch]
                 left += [(rel, n, o, k, why) for o, k, why in lf]
@@ -1820,8 +1875,11 @@ def prune_empty(repo):
     """Remove the folders of `.planning/` that hold no file, `.planning/` itself last. Never a folder with anything in it."""
     top = os.path.join(repo, SCOPE_SRC)
     for dirpath, dirnames, filenames in os.walk(top, topdown=False):
-        if not os.listdir(dirpath):
-            os.rmdir(dirpath)
+        try:
+            if not os.listdir(dirpath):
+                os.rmdir(dirpath)
+        except OSError:
+            pass    # a link in the place of a folder, or a folder someone has just written into: not ours to remove
     return not os.path.lexists(top)
 
 
@@ -2109,6 +2167,9 @@ def run(argv):
     if sub == "refs" and (got["--rewrite"] or got["--prefix"]):
         rewritten, left = apply_rewrites(repo, mapper, got["--rewrite"], got["--prefix"])
     refs = scan_refs(repo, mapper)
+    n_hand = sum(1 for r in refs if r["kind"] == "hand")
+    if n_hand:
+        notes.append("%d reference(s) are kind `hand`: %s. --rewrite and --prefix leave them; change them yourself" % (n_hand, HAND_WHY))
     url, ahead, branches = git_facts(repo)
     if sub == "refs":
         branches = []
