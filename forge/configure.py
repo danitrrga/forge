@@ -694,8 +694,23 @@ def change(name, profile, changes, yes=False, as_json=False):
         return 1
 
 
+def value_names():
+    """Every TYPE:NAME that --on and --off take, one per entry: the installed skills, the sets, the registry's servers and the options.
+    What `forge completion` asks at a tab; it reads files and writes none."""
+    doc = lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json"), quiet=True)
+    servers = doc.get("servers") if isinstance(doc, dict) else None
+    names = {"skill": installed_skills(), "set": set(_skill_keep().get("sets") or {}),
+             "server": set(servers) if isinstance(servers, dict) else set(), "option": set(OPTIONS)}
+    return ["%s:%s" % (t, n) for t in ORDER for n in sorted(names[t])]
+
+
 def cmd_config(a):
-    """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]."""
+    """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]. `--names` prints the values of
+    --on and --off and does nothing else."""
+    if a.names:
+        for line in value_names():
+            _say(line)
+        return 0
     try:
         names = [t for t in a.targets if not t.startswith("@")]
         ats = [t for t in a.targets if t.startswith("@")]
