@@ -7,7 +7,7 @@ touching this file. Names that change are asked of `forge` at every tab, never s
     forge list @ --names      this directory's profiles, after @  (forge start, switch, run, list, config; and `claude @`)
     forge config --names      the values of --on and --off        (skill:NAME, set:NAME, server:NAME, option:NAME)
 
-A call costs about 30 ms (the import of forge.cli), and its errors are dropped: outside a project there is simply nothing to offer.
+A call took a median of 95 ms (15 runs of each in a toy world, `nice -n 19`), and its errors are dropped: outside a project there is simply nothing to offer.
 `claude` is completed only for a first argument that starts with `@`; every other word goes to whatever completed `claude` before
 (fish: nothing of ours applies; bash and zsh: the function that was registered, or the shell's default).
 
