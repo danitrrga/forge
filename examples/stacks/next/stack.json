@@ -1,0 +1,7 @@
+{
+  "description": "A Next.js web app deployed on Vercel. Analytics or a database host are account servers, one entry per project, never listed here.",
+  "servers": [],
+  "plugins": ["vercel@claude-plugins-official", "context7@claude-plugins-official", "playwright@claude-plugins-official", "superpowers@claude-plugins-official", "code-review@claude-plugins-official"],
+  "checks": ["pnpm lint", "pnpm test"],
+  "skill_sets": []
+}

@@ -44,6 +44,7 @@ import tempfile
 import time
 
 from forge import completion, configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
+from forge import new as new_cmd
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
 # extra arguments.) A session start runs these for its own project and nothing else; what it says about
@@ -1707,7 +1708,7 @@ def cmd_metrics(a):
 # --- forge init and forge new (docs/portable-design.md section 6): what a new checkout and a new project
 # need before the generators have anything to read. Both only create: a file that is already there is kept.
 EXAMPLES = os.path.join(lib.ROOT, "examples")
-KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+KEBAB = new_cmd.KEBAB
 # What init asks about, and what it asks. The others are switched on by hand with --with.
 QUESTIONS = {"codex": "Codex found: manage its config too? [Y/n]"}
 # Local, never shared: the data history must not take a secret or a file the generators rewrite.
@@ -1873,6 +1874,9 @@ def cmd_new(a):
     if not os.path.exists(lib.SETTINGS):
         print("! forge new: config/forge.json missing -- run bin/forge init")
         return 1
+    code = new_cmd.route(a)  # a name is made there; a directory comes back as None, to be registered below
+    if code is not None:
+        return code
     path = os.path.realpath(os.path.expanduser(a.path))
     if not os.path.isdir(path):
         print("! forge new: %s is not a directory" % a.path)
@@ -2087,11 +2091,20 @@ def build_parser():
     i.add_argument("--without", dest="without_names", type=names_list, default=[], metavar="a,b", help="leave these integrations off")
     i.add_argument("--track", action="store_true", help="also make .forge-data.git, a local history of your data")
     i.set_defaults(fn=cmd_init)
-    i = sub.add_parser("new", help="register a project: its file, then sync --apply NAME", formatter_class=RAW,
+    i = sub.add_parser("new", help="a project: register a directory, or make one from a name; then sync --apply NAME", formatter_class=RAW,
+                       description="forge new PATH registers the directory PATH (its file, then sync --apply NAME). "
+                                   "forge new NAME, a bare word that is no directory here, makes the project: its folder, git init, "
+                                   ".gitignore, README.md, its file and its skill row, then sync --apply NAME; a dry-run unless --apply. "
+                                   "A path form (a /, or a leading . or ~) is always registered; a bare word that is a directory here is registered too.",
                        epilog=examples("forge new ~/dev/myapp", "forge new . --name my-app", "forge new ~/dev/site --writes-tracked-files"))
-    i.add_argument("path", help="the project's directory")
-    i.add_argument("--name", help="the project's name (kebab-case; default: the directory's name)")
-    i.add_argument("--writes-tracked-files", action="store_true", help="let forge write files that are tracked in the project")
+    i.add_argument("path", metavar="PATH|NAME", help="an existing directory to register, or the name of a project to make (kebab-case)")
+    i.add_argument("--name", help="registering: the project's name (kebab-case; default: the directory's name)")
+    i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
+    i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
+    i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
+    i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
+    i.add_argument("--yes", action="store_true", help="making: ask nothing; a missing answer is an error naming it (today every answer is a flag, with or without it)")
+    i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
     i.set_defaults(fn=cmd_new)
     c = sub.add_parser("completion", help="print the completion script of a shell: commands, flags, projects, profiles and --on/--off values, asked of forge at every tab",
                        formatter_class=RAW, epilog=examples("forge completion fish > ~/.config/fish/conf.d/forge-completion.fish",
