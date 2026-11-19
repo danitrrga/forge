@@ -468,10 +468,17 @@ def check_memory(ctx, ans, problems):
                     problems.append(refusal_text(e))
 
 
-def check_one_backend(ans, problems):
-    """One project, one memory backend (the doctor's memory-one-backend row): the memory answer and the memory plugin are two."""
-    if ans.memory and memory.LITE_PLUGIN in (ans.stack or {}).get("plugins", []):
-        problems.append("--plugin %s is a memory backend and --memory %s is another: one per project, never both" % (memory.LITE_PLUGIN, ans.memory))
+def check_one_backend(ctx, ans, problems):
+    """One project, one memory backend (the doctor's memory-one-backend row): the memory answer and the memory plugin are two. The memory
+    plugin is counted wherever it comes from: the stack's --plugin, and skill_keep.common_plugins, which sync adds to a project that keeps plugins."""
+    plugins = list((ans.stack or {}).get("plugins", []))
+    keep = ctx.forge.get("skill_keep") if isinstance(ctx.forge.get("skill_keep"), dict) else {}
+    common = list(keep.get("common_plugins") or []) if plugins else []
+    if ans.memory and memory.LITE_PLUGIN in plugins + common:
+        problems.append("--plugin %s is a memory backend and --memory %s is another: one per project, never both" % (
+            memory.LITE_PLUGIN, ans.memory) if memory.LITE_PLUGIN in plugins else
+            "%s is in skill_keep.common_plugins, which sync adds to a project that keeps plugins (--plugin), and --memory %s is another "
+            "memory backend: one per project, never both" % (memory.LITE_PLUGIN, ans.memory))
 
 
 def check_stack(ctx, ans, problems):
@@ -504,7 +511,7 @@ def apply(ctx, ans):
     rows, new_defs = {}, {}
     apply_project(ctx, ans, problems)
     check_memory(ctx, ans, problems)
-    check_one_backend(ans, problems)
+    check_one_backend(ctx, ans, problems)
     check_stack(ctx, ans, problems)
     for scope in ans.profiles:
         target = ans.targets.get(scope)

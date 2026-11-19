@@ -461,6 +461,32 @@ def a_one_backend(w):
     return [] if code == 0 else ["the memory plugin alone refused: exit %d: %s" % (code, tail(out))]
 
 
+def a_common_memory_plugin(w):
+    """The common layer adds claude-mem-lite to every project that keeps plugins (skill_keep.common_plugins), so --memory with any --plugin
+    is two backends once synced, though --plugin names only another plugin. A project with no plugin list gets no common plugin."""
+    path = w.path("config", "forge.json")
+    doc = test_new.read_json(path)
+    doc["skill_keep"]["common_plugins"] = ["claude-mem-lite@sdsrss"]
+    write_json(path, doc)
+    stack = os.path.join(w.root, "examples", "stacks", "plug")
+    os.makedirs(stack)
+    write_json(os.path.join(stack, "stack.json"), {"description": "toy", "servers": [], "plugins": ["other@example.test"], "checks": [],
+                                                  "skill_sets": []})
+    with open(os.path.join(stack, "gitignore"), "w") as fh:
+        fh.write(".env\n")
+    code, out = w.forge("new", "demo", "--stack", "plug", *answered(memory="mempalace"), "--plugin", "other@example.test")
+    bad = []
+    if code != 2 or "one per project" not in out:
+        bad.append("common memory plugin: exit %d, want 2 saying one per project: %s" % (code, tail(out)))
+    code, out = w.forge("new", "demo", "--stack", "plug", *answered(memory="mempalace"))
+    if code != 0:
+        bad.append("memory with no plugin list refused: exit %d: %s" % (code, tail(out)))
+    code, out = w.forge("new", "demo", "--stack", "plug", *answered(), "--plugin", "other@example.test")
+    if code != 0:
+        bad.append("the common memory plugin alone refused: exit %d: %s" % (code, tail(out)))
+    return bad
+
+
 def a_memory_hindsight(w):
     """Hindsight on: the memory servers reach the project file (the sync that follows cannot finish in a toy world, so the exit is not 0)."""
     code, out = w.forge("new", "demo", "--stack", "generic", *answered(memory="hindsight"), "--apply")
@@ -671,7 +697,10 @@ CONTROLS = [
     ("the memory servers not kept out of the rows", a_memory_mempalace,
      [(ASK, "        return {s for servers in MEMORY.values() for s in servers}", "        return set()")], "asked: servers", {"mempalace": True}),
     ("memory off not said", a_stack_and_memory, [(ASK, "    elif not lib.on(ans.memory):", "    elif False:")], "with the integration off", {}),
-    ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ans, problems)\n", "    pass\n")], "two memory backends", {"mempalace": True}),
+    ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ctx, ans, problems)\n", "    pass\n")], "two memory backends", {"mempalace": True}),
+    ("the common memory plugin not counted", a_common_memory_plugin,
+     [(ASK, "    common = list(keep.get(\"common_plugins\") or []) if plugins else []\n", "    common = []\n")],
+     "common memory plugin", {"mempalace": True}),
     ("set_docs not checked", a_set_docs_type, [(ASK, "        elif not isinstance(self.docs, dict):", "        elif False:")], "set_docs 'oops'", {}),
     ("Ctrl-C at the profiles question", a_ctrl_c, [KEYBOARD], "Ctrl-C at the profiles question", {}),
     ("Ctrl-C at the new profile's name", a_ctrl_c,
@@ -710,7 +739,8 @@ PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_promp
          ("stack and memory", a_stack_and_memory, {}), ("memory hindsight", a_memory_hindsight, {"hindsight": True}),
          ("cancelled", a_cancelled, {}), ("partial answers", a_partial_answers, {}), ("resolves", a_resolves, {}),
          ("own account server", a_own_account_server, {}), ("memory mempalace", a_memory_mempalace, {"mempalace": True}),
-         ("one backend", a_one_backend, {"mempalace": True}), ("set_docs type", a_set_docs_type, {}), ("ctrl-c", a_ctrl_c, {}),
+         ("one backend", a_one_backend, {"mempalace": True}),
+         ("common memory plugin", a_common_memory_plugin, {"mempalace": True}), ("set_docs type", a_set_docs_type, {}), ("ctrl-c", a_ctrl_c, {}),
          ("sets alone", a_sets_alone, {}), ("stack question", a_stack_question, {}), ("scoped", a_scoped, {}),
          ("confirm no", a_confirm_no, {}), ("frozen", a_frozen, {}), ("two servers one kind", a_two_servers_one_kind, {}),
          ("profile twice", a_profile_twice, {}), ("help", a_help, {})]
