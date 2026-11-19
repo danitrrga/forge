@@ -143,7 +143,7 @@ MUTANTS = {
     "json-garbage": ("forge/run.py", "if a.json and doc is not None:", "if a.json:", "3: --json with output that is no result"),
     "list-result": ("forge/run.py", 'if isinstance(doc.get("result"), str) and doc["result"]', 'if doc.get("result")', "3: is_error with a `result` that is a list"),
     "depth-huge": ("forge/run.py", "len(depth) <= 9", "True", "11: FORGE_RUN_DEPTH='99999"),
-    "record-kept": ("forge/run.py", "os.remove(profiles.session_path(sid))", "pass", "4: a claude that cannot be started"),
+    "record-kept": ("forge/run.py", "profiles.drop_session(sid)", "pass", "4: a claude that cannot be started"),
     "wording": ("forge/run.py", 'WHO = "forge run"', 'WHO = "forge start"', "4: a project without profiles: one line"),
     "cwd-ignored": ("forge/run.py", "os.chdir(a.cwd)  # the project", "pass  # the project", "8: --cwd: the child runs there"),
     "noise": ("forge/run.py", "print(answer)", 'print("forge run: " + answer)', "2: stdout is the answer"),

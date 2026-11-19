@@ -49,6 +49,8 @@ The fake claude of the in-place scenarios defers its end (a SIGTERM handler set 
 with a forced 3 s pause between `forge switch` and that write (not kept): the old fake, ended by the launcher meanwhile, left no `.switch`:
   "FAIL inplace: exit 0, two claudes, the switch asked inside the fork was accepted: (0, 2, None), want (0, 2, 0)"
 and the new one, the same pause, passed.
+After merging master (`forge config`, PR 185): `forge list` with no argument is a card per project and exit 0, no longer a refusal, so its row left the
+sweep (52 refusals now; the other `forge list` refusals, a name that cannot be one, outside a project, an unknown profile, stay).
 (Against 41bd475, the base of the pull request, the first round of this file saw 48 FAIL lines and the refusal of `forge switch` where it
 now opens a terminal.)
 Negative controls (CONTROLS: an engine copy with one line broken, the same scenario; the first message each printed, FORGE_MESSAGES_SHOW=1):
@@ -313,7 +315,6 @@ def sweep_cases(c, sid, live):
         ("start: claude is on PATH and cannot be executed", ["start", "@toy-b"], multi, {}, "badclaude", (127,), "err", "`forge toolchain --fix`", None),
         ("start: a launcher, and claude cannot be executed", ["start", "x"], multi, {}, "badclaude", (127,), "err", "`forge toolchain --fix`",
          Setting(c, launchers={"x": {"env": {}}})),
-        ("list: no argument", ["list"], multi, {}, "full", (2,), "err", "`forge list @`", None),
         ("list: a name that cannot be one", ["list", "@-x"], multi, {}, "full", (2,), "err", "`forge list @`", None),
         ("list: --names with a name", ["list", "@toy-b", "--names"], multi, {}, "full", (2,), "err", "`forge list @`", None),
         ("list: outside a project", ["list", "@"], home, {}, "full", (2,), "err", new_here, None),
