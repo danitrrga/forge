@@ -459,6 +459,20 @@ for label, args in (("--jobs 0", ("--jobs", "0")), ("--jobs abc", ("--jobs", "ab
        r.stderr.startswith("forge test:") and "--jobs" in r.stderr and "needs a group" not in r.stderr and "Traceback" not in r.stderr
        and r.stdout == "", r.stdout + r.stderr)
 
+# ---- --jobs N start order: the slow files first, then the largest ---------------------------------------------------------------
+# Written first and run on the code before start_order existed (the one FAIL it printed):
+#   FAIL: start order: ...: AttributeError: module 'forge.cli' has no attribute 'start_order'
+# Control (SLOW_FIRST emptied in a copy of forge/cli.py): FAIL: start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name
+from forge import cli  # noqa: E402
+
+eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name",
+   cli.start_order(["hooks/test_guard_tool_use.py", "tests/test_new.py", "tests/test_nosuch.py", "tests/test_switch.py", "tests/test_run.py",
+                    "tests/test_lib.py"]),
+   ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
+tracked = subprocess.run(["git", "-C", sandbox.FORGE, "ls-files"], capture_output=True, text=True, check=True).stdout.split()
+ok("start order: every SLOW_FIRST name is a tracked file (a renamed test would leave the list stale)",
+   all(f in tracked for f in cli.SLOW_FIRST), repr([f for f in cli.SLOW_FIRST if f not in tracked]))
+
 sandbox.cleanup(bool(fails))
 if checks == 0:
     fails.append("FAIL: no check ran")

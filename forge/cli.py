@@ -1466,12 +1466,23 @@ GROUPS = {"fwx": "plugins/fwx"}
 FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
+# The files that take minutes (measured on the 4-CPU CI runner, one after the other: 516 s, 329 s, 105 s, 89 s; every other file is under 60 s) start
+# first under --jobs N: by size alone they begin 150 to 300 s late and the run waits for them. A stale name costs minutes, never a result.
+SLOW_FIRST = ("tests/test_run.py", "tests/test_switch.py", "tests/test_messages.py", "tests/test_new.py")
+
+
 def _size(path):
     """Bytes of a file, 0 for one that is not there: it still gets its FAIL line from running it."""
     try:
         return os.path.getsize(path)
     except OSError:
         return 0
+
+
+def start_order(files):
+    """The order --jobs N starts the files in: SLOW_FIRST, then the largest (the slow ones are mostly the large), then by name."""
+    return sorted(files, key=lambda f: (f not in SLOW_FIRST, SLOW_FIRST.index(f) if f in SLOW_FIRST else 0,
+                                        -_size(os.path.join(lib.ROOT, f)), f))
 
 
 def cmd_test(a):
@@ -1560,11 +1571,11 @@ def cmd_test(a):
         results.extend(run_one(f) for f in todo)
     else:
         # --jobs N: up to N files at once, each its own process with its own captured output. The lines are still printed in the order of
-        # the file names, whatever N, so the report and the exit code do not depend on it. The largest file starts first (the slowest
-        # files are mostly the largest), so the last worker does not begin the one long file.
+        # the file names, whatever N, so the report and the exit code do not depend on it. The slow files start first, then the largest
+        # (start_order), so the last worker does not begin the one long file.
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {f: pool.submit(run_one, f) for f in sorted(todo, key=lambda f: (-_size(os.path.join(lib.ROOT, f)), f))}
+            futures = {f: pool.submit(run_one, f) for f in start_order(todo)}
             results.extend(futures[f].result() for f in todo)
     return lib.report(results)
 
