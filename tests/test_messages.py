@@ -42,6 +42,9 @@ among them
   "FAIL fork-record: claude gets --resume ID --fork-session and a --session-id of its own (a new uuid): (True, True, 0, False), want (True, True, 1, True)"
   "FAIL inplace: exit 0, two claudes, the switch asked inside the fork was accepted: (0, 1, 2), want (0, 2, 0)"
   "FAIL fallback: one line, with the next step `forge switch @toy-b`: (1, False), want (1, True)"
+Fix round 2 (CodeRabbit, pull request 187), the register scenario, against forge/profiles.py as it was (6adc2cb), seen failing before the fix:
+  "FAIL register 'My App': the suggested `forge new '.../projects/My App'` registers the folder (exit 0, project file my-app.claude.json): (1, False, None), want (0, True, True)"
+  "FAIL register 'My App': --name only where the folder's name is no project name: False, want True"
 (Against 41bd475, the base of the pull request, the first round of this file saw 48 FAIL lines and the refusal of `forge switch` where it
 now opens a terminal.)
 Negative controls (CONTROLS: an engine copy with one line broken, the same scenario; the first message each printed, FORGE_MESSAGES_SHOW=1):
@@ -58,9 +61,11 @@ Negative controls (CONTROLS: an engine copy with one line broken, the same scena
   record  a fork that is not given an id of ours            -> "fork-record: claude gets --resume ID --fork-session and a --session-id of its own (a new uuid): (True, True, 0, False), want (True, True, 1, True)"
   record  a fork with an id of the user's recorded under the original's -> "the record of the original session was overwritten: by a fork that gave its own --session-id, or one of -c or a title"
   inplace the fallback line without its next step           -> "fallback: one line, with the next step `forge switch @toy-b`: (1, False), want (1, True)"
+  register a folder named `My App` suggested without --name -> "register 'My App': the suggested `forge new '.../My App'` registers the folder (exit 0, project file my-app.claude.json): (1, False, None), want (0, True, True)"
 """
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -564,6 +569,32 @@ def scenario_inplace(c):
     return out
 
 
+def scenario_register(c):
+    """The command a refusal outside a project suggests registers the folder it was run from: for a folder whose name is not a project name
+    (`My App`) as well as for one whose name is. (CodeRabbit, pull request 187: `forge new '/srv/My App'` was refused as not kebab-case.)"""
+    out = []
+    looked = 0
+    for base, label in (("My App", "my-app"), ("plain-app", "plain-app")):
+        d = os.path.join(c.w.root, "projects", base)  # inside the toy world: its HOME check refuses projects outside it
+        os.makedirs(d)
+        code, so, se = c.forge(["start", "@toy-b"], cwd=d)
+        found = re.search(r"`forge (new [^`]*)`", se)
+        want("register %r: `forge start` outside a project refuses and suggests `forge new ...`" % base, (code, bool(found)), (2, True))
+        if not found:
+            continue
+        words = shlex.split(found.group(1))
+        code, so, se = c.forge(words, cwd=d)
+        project = os.path.join(c.w.forge, "config", "projects", label + ".claude.json")
+        want("register %r: the suggested `forge %s` registers the folder (exit 0, project file %s.claude.json)" % (base, found.group(1), label),
+             (code, os.path.exists(project), (tp.read_json(project) or {}).get("project_path") == os.path.realpath(d) if os.path.exists(project) else None),
+             (0, True, True))
+        want("register %r: --name only where the folder's name is no project name" % base, "--name" in words, base == "My App")
+        looked += 1
+    want("register: looked at both folders", looked, 2)
+    print("register: looked at %d folders" % looked)
+    return out
+
+
 # ---- the harness ----------------------------------------------------------------------------------------------------------------------
 
 CONTROLS = (
@@ -591,8 +622,10 @@ CONTROLS = (
      "no next step in: ! forge run: claude's output is not a result document", {}),
     ("inplace", "forge/launch.py", "; fix that, then run `forge switch @%s` again\" % (\n                target, why, profile, note, target)",
      "\" % (\n                target, why, profile, note)", "fallback: one line, with the next step", {}),
+    ("register", "forge/profiles.py", "    if not new.KEBAB.match(base):", "    if False:", "register 'My App': the suggested", {}),
 )
-SCENARIOS = {"sweep": scenario_sweep, "fork": scenario_fork, "record": scenario_record, "inplace": scenario_inplace}
+SCENARIOS = {"sweep": scenario_sweep, "fork": scenario_fork, "record": scenario_record, "inplace": scenario_inplace,
+             "register": scenario_register}
 
 
 def run_scenario(name, mutate=None):

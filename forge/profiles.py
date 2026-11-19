@@ -129,9 +129,17 @@ def unknown_profile(command, project, profile, given, tail=""):
 
 
 def not_a_project(cwd):
-    """`CWD is not inside a project ...` with the command that registers a folder as one."""
+    """`CWD is not inside a project ...` with the command that registers a folder as one. `forge new` takes the folder's name for the
+    project's, and refuses one that is not kebab-case (new.KEBAB, the rule it checks with): then the command carries `--name` with
+    that name lowercased, its runs of other characters made one dash, and `project` when nothing is left."""
+    from forge import new  # at call time: forge/new.py imports forge.framework
+    base = os.path.basename(cwd)
+    name = ""
+    if not new.KEBAB.match(base):
+        name = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
+        name = " --name " + (name if new.KEBAB.match(name) else "project")
     return ("%s is not inside a project of forge's registry (a project file forge cannot read is left out of it); "
-            "`forge new %s` registers this folder, or cd into a registered project" % (cwd, shlex.quote(cwd)))
+            "`forge new %s%s` registers this folder, or cd into a registered project" % (cwd, shlex.quote(cwd), name))
 
 
 def doctor_hint(project):
