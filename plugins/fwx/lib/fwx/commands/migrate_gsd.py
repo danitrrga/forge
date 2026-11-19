@@ -218,6 +218,9 @@ class WorkTree:
                 found.append(os.path.relpath(os.path.join(dirpath, n), self.repo))
         return sorted(found)
 
+    def islink(self, rel):
+        return os.path.islink(os.path.join(self.repo, SCOPE_SRC, rel))
+
     def read(self, rel, errors="replace"):
         try:
             with open(os.path.join(self.repo, SCOPE_SRC, rel), "r", encoding="utf-8", errors=errors) as f:
@@ -239,6 +242,10 @@ class Commit:
             size = meta.split()[-1]
             out.append((path[len(SCOPE_SRC) + 1:], True, int(size) if size.isdigit() else 0))
         return sorted(out)
+
+    def islink(self, rel):
+        r = _git(self.repo, "ls-tree", self.sha, "--", "%s/%s" % (SCOPE_SRC, rel), ok=(0, 128))
+        return r.stdout.startswith(b"120000 ")
 
     def read(self, rel, errors="replace"):
         r = _git(self.repo, "cat-file", "blob", "%s:%s/%s" % (self.sha, SCOPE_SRC, rel), ok=(0, 128))
@@ -562,7 +569,10 @@ def carry_gitignore(sc, mapper, src, inner, action, dest):
     rules ignored files of its own folder (images, scratch) that apply does not track: dropped with the file, those files
     would show as untracked once `leftovers` moves them. The target is the same folder at the destination; an anchored rule
     (`phases/*/shots/`, `/x`) is mapped as a `.gitignore` line is, because the folders under it move. A file that
-    moves whole and whose rules need no mapping is not carried: it just moves, byte for byte."""
+    moves whole and whose rules need no mapping is not carried: it just moves, byte for byte. A symbolic link is never read as a
+    rules file (its target may be any file the process can open): it is not carried, and analyze() says so."""
+    if src.islink(sc.prefix + inner):
+        return None
     text = src.read(sc.prefix + inner, errors="surrogateescape")    # a byte that is not UTF-8 comes back as it was, not as U+FFFD
     if text is None:
         return None
@@ -621,7 +631,11 @@ def analyze(src, opts):
         results = []
         for inner, tracked, size in sc.files:
             action, dest, rule = classify(sc, inner, tracked)
-            if tracked and posixpath.basename(inner) == ".gitignore":
+            if tracked and posixpath.basename(inner) == ".gitignore" and src.islink(sc.prefix + inner):
+                notes.append("%s/%s%s is a symbolic link: it is never read as a rules file, so its rules are NOT written again (needs a hand: "
+                             "%s)" % (SCOPE_SRC, sc.prefix, inner, "the link moves as it is" if action == "keep" and dest
+                                      else "the link is removed with its folder; write the rules you want where they belong"))
+            elif tracked and posixpath.basename(inner) == ".gitignore":
                 carry = carry_gitignore(sc, shape, src, inner, action, dest)
                 if carry and "*" in carry[0]:    # its folder goes to a milestone the converter cannot know: nothing to write it under
                     notes.append("%s/%s%s: its rules are NOT written again: the folder it sits in goes to a milestone this project has "

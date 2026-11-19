@@ -1776,6 +1776,25 @@ s.ok("R7 plan says apply would refuse a carried .gitignore that lands on a file 
 r = run(wt, "apply", "--close", "1")
 s.eq("R7 ... and apply does refuse (exit)", r.returncode, 2)
 
+# ---- CR1: a tracked .gitignore that is a symbolic link is never read as a rules file -----------------------------------------------------
+SENT = "SENTINEL-credentials-line\n"
+repo = helpers.toy_repo({"README": "toy\n", "secret.txt": SENT, ".planning/PROJECT.md": "# P\n", ".planning/STATE.md": "---\nmilestone: v1.0\n---\n",
+                         ".planning/ROADMAP.md": MINI_ROAD, ".planning/ui-reviews/notes.md": "# n\n"})
+os.symlink("../../secret.txt", os.path.join(repo, ".planning/ui-reviews/.gitignore"))
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "a link as the rules file")
+wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+rp = run(wt, "plan", "--close", "1")
+s.ok("CR1 plan does not print what a linked .gitignore points at", SENT.strip() not in rp.stdout, rp.stdout[-300:])
+s.ok("CR1 ... and says the link is not carried (needs a hand), by name", ".planning/ui-reviews/.gitignore" in rp.stdout
+     and "symbolic link" in rp.stdout and "NOT written again" in rp.stdout, rp.stdout[-600:])
+r = run(wt, "apply", "--close", "1")
+s.eq("CR1 apply exits 0", r.returncode, 0)
+leaked = [os.path.relpath(os.path.join(dp, n), wt) for dp, dn, fn in os.walk(os.path.join(wt, ".fwx")) for n in fn
+          if SENT.strip() in (rd(os.path.join(dp, n)) or "")]
+s.eq("CR1 the content of the link's target is carried nowhere under .fwx/", leaked, [])
+s.ok("CR1 ... and apply names the link as one it did not carry", ".planning/ui-reviews/.gitignore" in r.stdout and "symbolic link" in r.stdout, r.stdout[-600:])
+
 # ---- the output of apply says what `fwx phase list` will show, and how many phases it converted -----------------------------------------
 repo, wt = mini()
 r = run(wt, "apply", "--close", "1")
