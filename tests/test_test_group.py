@@ -195,7 +195,7 @@ for name in ("nosuch", "engine", "hooks"):
     eq("unknown group %s: nothing on stdout" % name, r.stdout, "")
     ok("unknown group %s: one line on stderr that names it and lists the groups" % name,
        r.stderr.strip().splitlines() == ["forge test: unknown group %s (groups: fwx)" % name], repr(r.stderr))
-for label, args in (("--jobs", ("--jobs", "2")), ("--expect-not-run", ("--expect-not-run", "test_top.py"))):
+for label, args in (("--expect-not-run", ("--expect-not-run", "test_top.py")),):
     r = forge(repo, *args)
     eq("%s with no group: exit code" % label, r.returncode, 2)
     ok("%s with no group: says it needs a group, nothing ran" % label,
@@ -413,6 +413,51 @@ for jobs in ("1", "3"):
 case("--jobs together with --expect-not-run", NO_BAD, 0, "3 test file(s): 2 passed, 0 failed, 0 not run, 1 expected not run",
      args=("--jobs", "3", "--expect-not-run", "tests/test_skip.py"))
 case("--jobs 1 and a failing file: same as before", FILES, 1, "4 test file(s): 2 passed, 1 failed, 1 not run", args=("--jobs", "1"))
+
+# ---- no group, --jobs N: the repository's own files run N at once; default and output as with one at a time --------------------
+# Written first and run on the code before --jobs was allowed with no group (each line is the first FAIL it printed):
+#   FAIL: no group, --jobs 2: two files running at once see each other: exit code: got 2, want 0
+#   FAIL: no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind: forge test: --jobs needs a group (groups: fwx)
+#   FAIL: no group, --jobs 0 is a usage error naming --jobs: stderr, nothing ran: forge test: --jobs needs a group (groups: fwx)
+#   (9 of 183 checks failed.)
+# Controls (the engine copy mutated in one place; the first FAIL each printed):
+#   one worker (`workers = 1` forced after the check): FAIL: no group, --jobs 2: two files running at once see each other: exit code: got 1, want 0
+#   results printed in finish order (`futures[f].result() for f in todo` -> `as_completed`): FAIL: no group, --jobs 4 prints the lines in file order
+#   a --jobs run that drops the failing file's result: FAIL: no group, --jobs 4: a failure is a FAIL line and exit 1
+d = sandbox.mkdtemp("forge-group-top-")
+rv = lambda me, other: RENDEZVOUS % {"d": d, "me": me, "other": other, "wait": 60}
+repo = toy({}, top={"test_a.py": rv("a", "b"), "test_b.py": rv("b", "a")})
+r = forge(repo, "--jobs", "2")
+eq("no group, --jobs 2: two files running at once see each other: exit code", r.returncode, 0)
+eq("no group, --jobs 2: summary", last(r), "SUMMARY: 2 passed, 0 warnings, 0 failures")
+d = sandbox.mkdtemp("forge-group-top-")
+repo = toy({}, top={"test_a.py": RENDEZVOUS % {"d": d, "me": "a", "other": "b", "wait": 1},
+                    "test_b.py": RENDEZVOUS % {"d": d, "me": "b", "other": "a", "wait": 1}})
+r = forge(repo)
+eq("no group, no --jobs: one file after the other (the first cannot see the second): exit code", r.returncode, 1)
+ok("no group, no --jobs: one FAIL, one PASS", last(r) == "SUMMARY: 1 passed, 0 warnings, 1 failures", r.stdout + r.stderr)
+MIXED = {"test_ok.py": "pass\n", "test_big.py": "x = 1\n" * 400 + "pass\n", "test_bad.py": BAD, "test_skip.py": SKIP,
+         "hooks/test_guard_mutants.py": "raise SystemExit(1)\n", "tests/test_zeta.py": "pass\n"}
+repo = toy({}, top=MIXED)
+one = forge(repo, "--jobs", "1")
+four = forge(repo, "--jobs", "4")
+ok("no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind", len(one.stdout.splitlines()) == 7 and
+   [l.split()[0] for l in sorted(one.stdout.splitlines()[:-1])] == ["FAIL", "PASS", "PASS", "PASS", "SKIP", "WARN"] , one.stdout + one.stderr)
+eq("no group, --jobs 1 and --jobs 4 print the same: stdout", four.stdout, one.stdout)
+eq("no group, --jobs 1 and --jobs 4 print the same: stderr", four.stderr, one.stderr)
+eq("no group, --jobs 1 and --jobs 4 print the same: exit code", four.returncode, one.returncode)
+eq("no group, --jobs 4 prints the lines in file order", [l.split()[1] for l in four.stdout.splitlines()[:-1]],
+   ["test_guard_mutants.py", "test_bad.py", "test_big.py", "test_ok.py", "test_skip.py", "test_zeta.py"])
+ok("no group, --jobs 4: a failure is a FAIL line and exit 1; a skip is a WARN; the on-demand file is a SKIP, not run",
+   four.returncode == 1 and "FAIL  test_bad.py" in four.stdout and "WARN  test_skip.py" in four.stdout and "no such tool" in four.stdout
+   and "SKIP  test_guard_mutants.py" in four.stdout and last(four) == "SUMMARY: 3 passed, 1 warnings, 1 failures", four.stdout)
+for label, args in (("--jobs 0", ("--jobs", "0")), ("--jobs abc", ("--jobs", "abc")), ("--jobs given twice", ("--jobs", "2", "--jobs", "3")),
+                    ("--jobs=", ("--jobs=",))):
+    r = forge(repo, *args)
+    eq("no group, %s is a usage error: exit code" % label, r.returncode, 2)
+    ok("no group, %s is a usage error naming --jobs: stderr, nothing ran" % label,
+       r.stderr.startswith("forge test:") and "--jobs" in r.stderr and "needs a group" not in r.stderr and "Traceback" not in r.stderr
+       and r.stdout == "", r.stdout + r.stderr)
 
 sandbox.cleanup(bool(fails))
 if checks == 0:
