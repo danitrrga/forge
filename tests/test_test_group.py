@@ -473,6 +473,53 @@ tracked = subprocess.run(["git", "-C", sandbox.FORGE, "ls-files"], capture_outpu
 ok("start order: every SLOW_FIRST name is a tracked file (a renamed test would leave the list stale)",
    all(f in tracked for f in cli.SLOW_FIRST), repr([f for f in cli.SLOW_FIRST if f not in tracked]))
 
+# ---- --jobs N and Ctrl+C: the files still queued do not start --------------------------------------------------------------------
+# Written first and run on the code before the pool was shut down with cancel_futures (the one FAIL it printed, 6 files started, not 2):
+#   FAIL: --jobs 2, SIGINT: only the 2 files that were running ever started: got 6, want 2
+# Control (`cancel_futures=True` taken out): the same FAIL.
+SLEEPY = ('import os, time\n'
+          'open(os.path.join(%(d)r, "started-%(n)s"), "w").close()\n'
+          'time.sleep(2)\n')
+
+
+def interrupted(jobs):
+    """`forge test --jobs JOBS` on 6 files that each mark their start and sleep 2 s; SIGINT to the runner alone once two have started.
+    (returncode, names that started, stderr)"""
+    d = sandbox.mkdtemp("forge-group-int-")
+    repo = toy({}, top={"test_s%d.py" % i: SLEEPY % {"d": d, "n": i} for i in range(6)})
+    runner = subprocess.Popen([sys.executable, os.path.join(repo, "bin", "forge"), "test", "--jobs", jobs], cwd=repo, env=env(),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        end = time.time() + 60
+        while time.time() < end and len(os.listdir(d)) < min(2, int(jobs)) and runner.poll() is None:
+            time.sleep(0.05)
+        if runner.poll() is None:
+            runner.send_signal(signal.SIGINT)
+        try:
+            out, err = runner.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            runner.kill()
+            out, err = runner.communicate()
+            err += " [the runner did not exit within 60 s of the signal]"
+        return runner.returncode, sorted(os.listdir(d)), err
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait()
+        for pipe in (runner.stdout, runner.stderr):
+            if pipe:
+                pipe.close()
+
+
+rc1, started1, err1 = interrupted("1")
+rc2, started2, err2 = interrupted("2")
+eq("--jobs 1, SIGINT: the file that was running is the only one that started", len(started1), 1)
+eq("--jobs 2, SIGINT: only the 2 files that were running ever started", len(started2), 2)
+eq("--jobs 2, SIGINT: the exit code is the one of an interrupted --jobs 1 run", rc2, rc1)
+ok("--jobs 1, SIGINT: it was an interruption (non-zero exit)", rc1 != 0, repr((rc1, err1[-200:])))
+ok("--jobs 2, SIGINT: the interruption is named on stderr as with --jobs 1", ("KeyboardInterrupt" in err2) == ("KeyboardInterrupt" in err1),
+   err2[-300:])
+
 sandbox.cleanup(bool(fails))
 if checks == 0:
     fails.append("FAIL: no check ran")

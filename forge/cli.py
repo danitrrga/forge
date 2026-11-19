@@ -1574,9 +1574,12 @@ def cmd_test(a):
         # the file names, whatever N, so the report and the exit code do not depend on it. The slow files start first, then the largest
         # (start_order), so the last worker does not begin the one long file.
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        pool = ThreadPoolExecutor(max_workers=workers)
+        try:
             futures = {f: pool.submit(run_one, f) for f in start_order(todo)}
             results.extend(futures[f].result() for f in todo)
+        finally:
+            pool.shutdown(wait=True, cancel_futures=True)  # an interrupt: the running files finish, the queued ones never start
     return lib.report(results)
 
 
