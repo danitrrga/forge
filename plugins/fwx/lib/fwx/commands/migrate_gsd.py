@@ -1153,40 +1153,20 @@ def carried_record(repo):
         return None
 
 
-def fwx_gitignores_before(repo):
-    """The `.gitignore` files inside `.fwx/` that the commit of the first conversion (the first base of the bases file) already
-    tracked: the owner's own rules, not carried ones. None when that base cannot be read, so that no rule counts as carried.
-    Used only for a conversion made before `carried_record` existed."""
-    try:
-        with open(_abs(repo, BASES), encoding="utf-8", errors="replace") as f:
-            m = re.search(r"\bbase ([0-9a-f]{7,40})\b", f.read())
-    except OSError:
-        return None
-    if not m:
-        return None
-    r = _git(repo, "ls-tree", "-r", "--name-only", "-z", m.group(1), "--", SCOPE_DEST, ok=(0, 128))
-    if r.returncode:
-        return None
-    return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p and posixpath.basename(os.fsdecode(p)) == ".gitignore"}
-
-
 def ignored_by_fwx_file(repo, paths):
     """The paths of the list that a rule of a `.gitignore` inside `.fwx/` ignores (the rule that decides, `check-ignore -v`), when
     that file is one the conversion carried over from `.planning/`: one `apply` wrote down (`carried_record`), never one the owner
-    added or already had, and not a line of the root `.gitignore`. With no record at all (a conversion that predates it) a file
-    absent from the first base counts as carried, as it did."""
-    if not paths:
-        return set()
+    added or already had, and not a line of the root `.gitignore`. With no record at all (a conversion that predates it, or one
+    whose record is gone) no rule counts as carried: nothing is guessed, so `leftovers` refuses what any rule would hide."""
     carried = carried_record(repo)
-    before = fwx_gitignores_before(repo) if carried is None else None
-    if carried is None and before is None:
+    if not paths or carried is None:
         return set()
     r = _git(repo, "check-ignore", "-v", "-z", "--stdin", ok=(0, 1), input=_nul(paths))
     parts, out = r.stdout.split(b"\0"), set()
     for i in range(0, len(parts) - 3, 4):
         source, pattern, path = os.fsdecode(parts[i]), os.fsdecode(parts[i + 2]), os.fsdecode(parts[i + 3])
         if source.startswith(SCOPE_DEST + "/") and not pattern.startswith("!") \
-                and (source in carried if carried is not None else source not in before):
+                and source in carried:
             out.add(path)
     return out
 
