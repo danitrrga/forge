@@ -342,7 +342,8 @@ def profile_cases():
         flag_name = next(a.split("=")[0] for a in given if a.split("=")[0] in ("--settings", "--mcp-config", "--strict-mcp-config"))
         want("4: %s: refused, claude not run, nothing written" % given, (code, d, tree_of() == before_s), (2, None, True))
         want("4: %s: one line naming %s and saying the profile sets it" % (given, flag_name),
-             (se.strip() == "! forge start: %s is set by the profile: a profile start refuses it in ARGS" % flag_name), True)
+             (se.strip() == "! forge start: %s is set by the profile: a profile start refuses it in ARGS; run `forge start @toy-b` without it"
+              % flag_name), True)  # 4.4 U2: the refusal names the command that fixes it
     code, so, se, d, _ = start(["@toy-b", "--dry-run", "--settings", "X"])
     want("4: the refusal comes before a dry-run too", (code, "is set by the profile" in se), (2, True))
     code, so, se, d, _ = start(["@code", "--settings", "X"])

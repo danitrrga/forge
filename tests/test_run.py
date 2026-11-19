@@ -143,7 +143,7 @@ MUTANTS = {
     "json-garbage": ("forge/run.py", "if a.json and doc is not None:", "if a.json:", "3: --json with output that is no result"),
     "list-result": ("forge/run.py", 'if isinstance(doc.get("result"), str) and doc["result"]', 'if doc.get("result")', "3: is_error with a `result` that is a list"),
     "depth-huge": ("forge/run.py", "len(depth) <= 9", "True", "11: FORGE_RUN_DEPTH='99999"),
-    "record-kept": ("forge/run.py", "os.remove(profiles.session_path(sid))", "pass", "4: a claude that cannot be started"),
+    "record-kept": ("forge/run.py", "profiles.drop_session(sid)", "pass", "4: a claude that cannot be started"),
     "wording": ("forge/run.py", 'WHO = "forge run"', 'WHO = "forge start"', "4: a project without profiles: one line"),
     "cwd-ignored": ("forge/run.py", "os.chdir(a.cwd)  # the project", "pass  # the project", "8: --cwd: the child runs there"),
     "noise": ("forge/run.py", "print(answer)", 'print("forge run: " + answer)', "2: stdout is the answer"),
@@ -328,7 +328,9 @@ def cases(mutate=None):
     for args, cwd in ((["@toy-b", "hi"], w.pp("none")), (["@list", "hi"], w.pp("frozen-p")), (["@toy-c", "hi"], multi), (["@toy-b", "hi"], home)):
         _, _, start_err, _ = forge("start", args[:1], cwd=cwd)
         _, _, run_err, _ = run(args, cwd=cwd)
-        want("4: %s: the reason is forge start's, word for word" % args[:1], run_err.replace("forge run", "forge start", 1), start_err)
+        # 4.4 U2: each refusal ends with its own command's next step (`forge run @toy-b "PROMPT"` here, `forge start @toy-b` there)
+        want("4: %s: the reason is forge start's, word for word" % args[:1],
+             run_err.replace("forge run", "forge start", 1).replace('`forge run @toy-b "PROMPT"`', "`forge start @toy-b`"), start_err)
     before = tree()
     for label, args in (("no prompt", ["@toy-b"]), ("an empty prompt", ["@toy-b", ""]), ("a blank prompt", ["@toy-b", "  \n "])):
         code, so, se, d = run(args)
