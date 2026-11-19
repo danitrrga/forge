@@ -12,7 +12,9 @@
                          (and the two files forge writes for mise); --fix writes the files and installs what is missing
   forge start NAME [ARGS...]  claude started with the environment the launcher NAME of config/forge.json declares
   forge start @NAME [--dry-run] [ARGS...]  claude started with this project's session profile NAME, by flags alone (forge/launch.py)
+  forge list [NAME]      every project's short card, or one project's full card (--json, --names; forge/configure.py)
   forge list @ | @NAME   the profiles of this directory's project, or one of them (--json, --names, --session ID; forge/profiles.py)
+  forge config [NAME] [@PROFILE] --on|--off TYPE:NAME ...  change a project's skills, sets, servers and options, in the layer that owns each
   forge switch [@NAME]   inside a session started by `forge start @A`: restart claude with profile NAME and resume the conversation
   forge run @NAME "PROMPT"  one headless session with profile NAME; its final answer on stdout (forge/run.py)
   forge shim [--shell S] print a shell function `claude`, so that `claude @NAME` runs `forge start @NAME` (--check @NAME: the probe; forge/shim.py)
@@ -41,7 +43,7 @@ import sys
 import tempfile
 import time
 
-from forge import launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
+from forge import configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
 from forge import new as new_cmd
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
@@ -1987,14 +1989,26 @@ def main(argv=None):
                    "(after NAME it must come first among the arguments for claude)")
     t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
     t.set_defaults(fn=launch.cmd)
-    t = sub.add_parser("list", help="the profiles of this directory's project: forge list @, or one of them: forge list @NAME",
-                       epilog="examples: forge list @ --json | forge list @marketing")
-    t.add_argument("target", nargs="?", metavar="@[NAME]", help="@ lists the profiles, @NAME shows one with its difference from the default")
+    t = sub.add_parser("list", help="every project (a short card each), one project (NAME), or the profiles of this directory's project (@, @NAME)",
+                       epilog="examples: forge list | forge list myapp --json | forge list @ --json | forge list @marketing")
+    t.add_argument("target", nargs="?", metavar="[NAME | @[NAME]]", help="a project's name shows its full card; @ lists this project's profiles, "
+                   "@NAME shows one with its difference from the default; nothing lists every project")
     t.add_argument("--json", action="store_true", help="the same information as JSON")
-    t.add_argument("--names", action="store_true", help="with @: only the names, one per line, without the @")
+    t.add_argument("--names", action="store_true", help="with no argument: the projects' names; with @: the profiles' names, one per line, without the @")
     t.add_argument("--session", metavar="ID", help="with @: mark the profile that session ID runs (its record's; the project's default one "
                    "when it has none) as `current`; inside a session started by forge start, FORGE_SESSION is the default")
-    t.set_defaults(fn=profiles.cmd_list)
+    t.set_defaults(fn=configure.cmd_list)
+    t = sub.add_parser("config", help="change a project's skills, sets, servers and options by flags, each in the layer that owns it",
+                       epilog="examples: forge config myapp --off skill:grilling --on server:neon | forge config --off option:ui | "
+                              "forge config myapp @marketing --off skill:grilling --apply")
+    t.add_argument("targets", nargs="*", metavar="[NAME] [@PROFILE]", help="the project (default: this directory's) and, after it, one of its profiles, "
+                   "whose row is then the one changed; both come before the flags")
+    t.add_argument("--on", action="append", metavar="TYPE:NAME", help="switch on skill:, set:, server: or option: (ui, command_guard, enableAllProjectMcpServers); repeatable")
+    t.add_argument("--off", action="append", metavar="TYPE:NAME", help="switch it off; repeatable; one write, all or nothing")
+    t.add_argument("--apply", action="store_true", help="write without asking (without a terminal the default is a dry-run)")
+    t.add_argument("--yes", action="store_true", help="the same as --apply")
+    t.add_argument("--json", action="store_true", help="the changes and what was written as JSON on stdout")
+    t.set_defaults(fn=configure.cmd_config)
     t = sub.add_parser("switch", help="change the profile of the session you are in: claude restarts with it and resumes the conversation",
                        epilog="examples: forge switch @marketing | forge switch (lists the profiles, the current one marked)")
     t.add_argument("target", nargs="?", metavar="@NAME", help="the profile to change to (@ or nothing lists them); only inside a session "
