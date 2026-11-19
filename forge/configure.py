@@ -906,9 +906,24 @@ def new_profile(name, prof):
         os.chdir(here)
 
 
+def value_names():
+    """Every TYPE:NAME that --on and --off take, one per entry: the installed skills, the sets, the registry's servers and the options.
+    What `forge completion` asks at a tab; it reads files and writes none."""
+    doc = lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json"), quiet=True)
+    servers = doc.get("servers") if isinstance(doc, dict) else None
+    names = {"skill": installed_skills(), "set": set(_skill_keep().get("sets") or {}),
+             "server": set(servers) if isinstance(servers, dict) else set(), "option": set(OPTIONS)}
+    return ["%s:%s" % (t, n) for t in ORDER for n in sorted(names[t])]
+
+
 def cmd_config(a):
     """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]. With no flag, in a terminal,
-    the key-selector screen builds the flags (exit 0 when it is cancelled or nothing was toggled); without a terminal, exit 2."""
+    the key-selector screen builds the flags (exit 0 when it is cancelled or nothing was toggled); without a terminal, exit 2.
+    `--names` prints the values of --on and --off and does nothing else."""
+    if a.names:
+        for line in value_names():
+            _say(line)
+        return 0
     try:
         names = [t for t in a.targets if not t.startswith("@")]
         ats = [t for t in a.targets if t.startswith("@")]
