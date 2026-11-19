@@ -1778,6 +1778,38 @@ roots = (wt, os.path.join(repo, ".git"))
 r = refusal("R5 apply --close on a roadmap-only phase whose audit file has a header that is not fwx's", wt, ["apply", "--close", "2"], "02-beta/audit.tsv", roots)
 s.ok("... the owner's file is still there", rd(os.path.join(wt, BETA, "audit.tsv")) == "when\twhat\nx\ty\n")
 
+# ---- CR4: an audit file already at the destination that says `closed` is staged with the rest, so it is in what is committed ------------
+# Red on c42c7ba: "FAIL: CR4 the audit the closing relies on is staged: got '', want '.fwx/milestones/v1/phases/02-beta/audit.tsv\n'" and, after
+# the commit and the merge, "FAIL: CR4 ... the merged tree holds it: got None, want 'date\tkind\tsha\tdetail\trc\nearlier\tstage\t\tclosed\t\n'"
+AUD = BETA + "/audit.tsv"
+CLOSED_AUDIT = "date\tkind\tsha\tdetail\trc\nearlier\tstage\t\tclosed\t\n"
+repo, wt = mini()
+helpers.write(wt, AUD, CLOSED_AUDIT)            # untracked, as an owner's own file
+r = run(wt, "apply", "--close", "2")
+s.eq("CR4 apply --close on a phase whose untracked audit already says closed: exit", r.returncode, 0)
+s.eq("CR4 the audit the closing relies on is staged", helpers.git(wt, "ls-files", "--", AUD), AUD + "\n")
+s.eq("CR4 ... as the bytes of the file (what the commit will hold)", show_bytes(wt, "", AUD), CLOSED_AUDIT.encode())
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+s.eq("CR4 ... the merged tree holds it, and the phase is closed there", (show_bytes(repo, "HEAD", AUD), mg.state.last_stage(os.path.join(repo, BETA))),
+     (CLOSED_AUDIT.encode(), "closed"))
+# a failure after it was staged: the owner's file is still on disk, and not in the index
+repo, wt = mini()
+helpers.write(wt, AUD, CLOSED_AUDIT)
+rc, out, err = inproc(wt, ["apply", "--close", "2"], [(mg, "step_gitignore", lambda job: (_ for _ in ()).throw(RuntimeError("simulated")))])
+s.eq("CR4 a failure after the audit was staged: exits 1, the audit is still the owner's file, and is not staged",
+     (rc, rd(os.path.join(wt, AUD)), helpers.git(wt, "ls-files", "--", AUD)), (1, CLOSED_AUDIT, ""))
+# control of the check itself: a staging step that leaves the audit out is caught from the index, not passed on what is on disk
+repo, wt = mini()
+helpers.write(wt, AUD, CLOSED_AUDIT)
+def stage_without_audit(job):
+    job.stage = [p for p in job.stage if p != AUD]
+    orig_stage(job)
+orig_stage = mg.step_stage
+rc, out, err = inproc(wt, ["apply", "--close", "2"], [(mg, "step_stage", stage_without_audit)])
+s.ok("CR4 a staging that leaves the closed audit out fails the check after the work, and the repository is back",
+     rc == 1 and "not closed in what is staged" in err and "back as it was" in err and rd(os.path.join(wt, AUD)) == CLOSED_AUDIT, err[-400:])
+
 # ---- R6: refs lists the variable-built forms the review found missing, and `"$HOME"/.planning` is still no reference ---------------
 FORMS = ("#!/bin/sh\nls ${V:-x}/.planning/a\ncat \"${ROOT:?}/.planning/x\"\ncat \"$(dirname \"$0\")/../.planning/x\"\ncat $ROOT/../.planning/x\n"
          "ls \"$HOME\"/.planning/keep\nls ${HOME}/.planning/keep\n")

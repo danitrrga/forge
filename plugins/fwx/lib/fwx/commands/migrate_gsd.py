@@ -981,7 +981,7 @@ def render(doc, notes, files, refs_only=False):
 MARKER = "fwx-migrate-gsd-apply"
 RE_MS_DEST = re.compile(r"(\.fwx(?:/subprojects/[^/]+)?)/milestones/(v\d+)/")
 RE_SECTION = re.compile(r"(#{2,4}) Phase (\d+(?:\.\d+)*): (.+)$")
-LISTS = ("restore", "created", "dirs")    # the files next to MARKER that say, in advance, which paths apply changes
+LISTS = ("restore", "created", "dirs", "adopted")    # the files next to MARKER that say, in advance, which paths apply changes
 BASES = ".fwx/migrate-gsd-bases.md"      # one line per apply: its base commit, kept in the repository
 CARRIED = "carried-gitignores.lst"       # in archive_dir(): the `.gitignore` files under `.fwx/` that apply carried over, NUL-separated
 
@@ -1004,6 +1004,9 @@ def undo_commands(repo, base, gitdir):
     if full("restore"):
         cmds.append("git -C %s --literal-pathspecs restore --source=%s --staged --worktree --pathspec-from-file=%s --pathspec-file-nul"
                     % (q(repo), base, q(lists["restore"])))
+    if full("adopted"):
+        cmds.append("git -C %s --literal-pathspecs rm -q --cached --ignore-unmatch --pathspec-from-file=%s --pathspec-file-nul"
+                    % (q(repo), q(lists["adopted"])))
     if full("created"):
         cmds.append("git -C %s --literal-pathspecs rm -q --cached --ignore-unmatch --pathspec-from-file=%s --pathspec-file-nul"
                     % (q(repo), q(lists["created"])))
@@ -1225,6 +1228,7 @@ class Job:
         self.moves, self.removes, self.gens, self.audit_rows, self.twins = [], [], [], [], []
         self.stage = []              # paths to `git add` after the files are written
         self.created, self.dirs = [], []   # files and folders apply made, in the order it made them
+        self.adopt, self.adopted = [], []  # untracked files already at their place that the conversion relies on (a closed audit): staged, never removed
         self.restore = []            # tracked files of the base that apply moves, removes or edits
         self.phases, self.closed = [], []
         self.carried = []            # destinations of the `.gitignore` files apply writes anew or moves: the leftovers exception is theirs only
@@ -1252,7 +1256,7 @@ def record(job, kind, rel):
     """Write down a path apply is about to create, before it creates it."""
     with open(job.lists[kind], "ab") as f:
         f.write(os.fsencode(rel) + b"\0")
-    (job.created if kind == "created" else job.dirs).append(rel)
+    {"created": job.created, "dirs": job.dirs, "adopted": job.adopted}[kind].append(rel)
 
 
 def safe_last_stage(folder):
@@ -1413,8 +1417,12 @@ def plan_apply(repo, opts):
                 section = roadmap_section(roadmaps[sc.ws], ".".join(str(n) for n in p["num"])) or ("### Phase %s\n" % p["title"])
                 job.gens.append((dest + "/gsd-roadmap-entry.md", section.encode("utf-8")))
             if p["closed"]:     # --close named it (or GSD left it closed): the closing row says it is done, once
-                if os.path.lexists(str(state.phase_paths(_abs(repo, dest))["audit"])):
+                audit = str(state.phase_paths(_abs(repo, dest))["audit"])
+                if os.path.lexists(audit):
                     job.notes.append("phase %s is already closed (%s): its audit file ends at the stage `closed`, so no second closing row is added" % (p["name"], dest))
+                    arel = os.path.relpath(audit, repo).replace(os.sep, "/")
+                    if not _lines(repo, "ls-files", "-z", "--", arel):    # untracked: it would be left out of the commit unless staged
+                        job.adopt.append(arel)
                 else:
                     job.audit_rows.append((dest, "closed migrated-from-gsd %s" % base))
                 job.closed.append(dest)
@@ -1468,7 +1476,7 @@ def plan_apply(repo, opts):
             raise Refuse("%d symbolic link(s) would point at nothing after the move (their text is kept byte for byte, but the "
                          "folder is deeper). Replace each with a link that works from its new place, or with a copy, then run "
                          "apply again:\n  %s" % (len(probs), "\n  ".join(probs[:30])))
-    everything = dests + [g for g, _ in job.gens]
+    everything = dests + [g for g, _ in job.gens] + job.adopt
     hidden = sorted(ignored_among(repo, everything))
     if hidden:
         raise Refuse("a destination is ignored by .gitignore, so git would not keep it:\n  " + "\n  ".join(hidden[:30]))
@@ -1527,6 +1535,9 @@ def step_generate(job):
         with open(a, "xb") as f:
             f.write(data)
         job.stage.append(rel)
+    for rel in job.adopt:
+        record(job, "adopted", rel)
+        job.stage.append(rel)
     for dest, detail in job.audit_rows:
         a = _abs(job.repo, dest)
         mkdirs(job, a)
@@ -1578,6 +1589,17 @@ def step_stage(job):
         _git(job.repo, "--literal-pathspecs", "add", "--pathspec-from-file=-", "--pathspec-file-nul", input=_nul(job.stage))
 
 
+def indexed_last_stage(repo, rel):
+    """`state.last_stage` of the audit file as the index holds it (None when it is not staged)."""
+    r = _git(repo, "cat-file", "blob", ":0:" + rel, ok=(0, 128))
+    if r.returncode:
+        return None
+    with tempfile.TemporaryDirectory(prefix="fwx-audit-") as d:
+        with open(str(state.phase_paths(d)["audit"]), "wb") as f:
+            f.write(r.stdout)
+        return safe_last_stage(d)
+
+
 def verify(job):
     """The checks after the work, each against what git says and not against what the steps meant: the blob of every kept file
     is the same at its destination, every purged or backlog file is gone, `state.phases` sees each phase folder and
@@ -1609,9 +1631,10 @@ def verify(job):
             problems.append("state.phases(%s, %s): %s" % (scope_dest, ms, e))
         if os.path.basename(dest) not in names:
             problems.append("state.phases does not see %s" % dest)
-    for dest in job.closed:
-        if state.last_stage(_abs(repo, dest)) != "closed":
-            problems.append("state.last_stage of %s is not closed" % dest)
+    for dest in job.closed:     # read from the index, which is what the commit will hold, not from the disk
+        rel = os.path.relpath(str(state.phase_paths(_abs(repo, dest))["audit"]), repo).replace(os.sep, "/")
+        if indexed_last_stage(repo, rel) != "closed":
+            problems.append("state.last_stage of %s is not closed in what is staged (%s)" % (dest, rel))
     if problems:
         raise Failed("a check after the work failed:\n  " + "\n  ".join(problems[:20])
                      + ("\n  ... %d more" % (len(problems) - 20) if len(problems) > 20 else ""))
@@ -1651,9 +1674,9 @@ def rollback(job):
         if job.restore:
             _git(repo, "--literal-pathspecs", "restore", "--source=" + job.base, "--staged", "--worktree",
                  "--pathspec-from-file=-", "--pathspec-file-nul", input=_nul(job.restore))
-        if job.created:
+        if job.created or job.adopted:       # an adopted file is the owner's: out of the index, never off the disk
             _git(repo, "--literal-pathspecs", "rm", "-q", "--cached", "--ignore-unmatch", "--pathspec-from-file=-",
-                 "--pathspec-file-nul", input=_nul(job.created))
+                 "--pathspec-file-nul", input=_nul(job.created + job.adopted))
     except Refuse as e:
         errs.append(str(e))
     for rel in job.created:
@@ -1674,7 +1697,7 @@ def rollback(job):
         except Refuse as e:
             errs.append(str(e))
     try:
-        mine = set(job.restore) | set(job.created)
+        mine = set(job.restore) | set(job.created) | set(job.adopted)
         now, before = parse_status(status_all(repo)), parse_status(job.before)
         new = sorted(p for _, p in now - before)
         left = [p for p in new if p in mine or any(p.startswith(d + "/") or p == d for d in job.dirs)]
@@ -1729,7 +1752,7 @@ def execute(job):
             f.write("apply started on %s\nbase %s\n" % (job.repo, job.base))
         with open(job.lists["restore"], "wb") as f:
             f.write(_nul(job.restore))
-        for k in ("created", "dirs"):
+        for k in ("created", "dirs", "adopted"):
             open(job.lists[k], "wb").close()
     except OSError as e:
         raise Refuse("cannot write %s (%s): nothing was changed" % (job.marker, e))
