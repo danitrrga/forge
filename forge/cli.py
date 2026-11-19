@@ -1466,11 +1466,20 @@ GROUPS = {"fwx": "plugins/fwx"}
 FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
+def _size(path):
+    """Bytes of a file, 0 for one that is not there: it still gets its FAIL line from running it."""
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return 0
+
+
 def cmd_test(a):
-    """forge test [GROUP [--expect-not-run PATH[,PATH...]] [--jobs N]] [--mutants]: every test but the ones of a group, or one group.
+    """forge test [GROUP [--expect-not-run PATH[,PATH...]]] [--jobs N] [--mutants]: every test but the ones of a group, or one group.
 
     A group is a suite run on its own, with its own exit codes (forge/testgroup.py); `fwx` is the plugin's (plugins/fwx/tests). The
-    options belong to a group, and --mutants to the run with no group; combined otherwise they exit 2, as does a group nobody has."""
+    --expect-not-run belongs to a group, and --mutants to the run with no group; combined otherwise they exit 2, as does a group nobody has.
+    --jobs N runs up to N files at once, in a group (default: the CPUs, at most 8) and in the run with no group (default: 1)."""
     group = getattr(a, "group", None)
     expect, jobs = getattr(a, "expect_not_run", None), getattr(a, "jobs", None)
     if group is not None:
@@ -1482,10 +1491,16 @@ def cmd_test(a):
             return 2
         from forge import testgroup  # not at the top: threads and signals that every other command (session-start) never needs
         return testgroup.main(os.path.join(lib.ROOT, GROUPS[group]), expect, jobs, GROUPS[group])
-    if expect or jobs:
-        print("forge test: %s needs a group (groups: %s)" % ("--expect-not-run" if expect else "--jobs", ", ".join(GROUPS)),
-              file=sys.stderr)
+    if expect:
+        print("forge test: --expect-not-run needs a group (groups: %s)" % ", ".join(GROUPS), file=sys.stderr)
         return 2
+    workers = 1  # one file after the other unless --jobs says otherwise: the owner's machine keeps its cores
+    if jobs:
+        from forge import testgroup
+        _, workers, error = testgroup.check(None, jobs)
+        if error:
+            print(error.replace(testgroup.NAME, "forge test"), file=sys.stderr)
+            return 2
     # A git that fails (not a repository, not installed) or a list with no tests is a FAIL: until
     # an attack round either ran zero tests and printed "0 failures" with exit 0.
     # Two histories own the files once the engine and the private data are split (forge/publish.py): the
@@ -1520,6 +1535,7 @@ def cmd_test(a):
     if fwx_owned and not mutants:  # said, never a PASS, and not counted in the summary
         results.append(lib.Result("SKIP", FWX_PREFIX.rstrip("/"), "NOT RUN here, %d tracked test_*.py file(s) that are a group of their own: "
                                   "run `forge test fwx`" % len(fwx_owned)))
+    todo = []  # the files to run, in the order their lines are printed
     for f in files:
         if f in ON_DEMAND:
             if not mutants:  # said, never a PASS, and not counted in the summary (non-negotiable 7)
@@ -1528,15 +1544,28 @@ def cmd_test(a):
                 continue
         elif mutants:
             continue
+        todo.append(f)
+
+    def run_one(f):
         r = lib.run([f], capture=True, low=True)  # nice 19 and idle I/O: a foreground tool keeps its cores
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
             # (CLAUDE.md, rule 4). Its last line is why, after "NOT RUN: ".
             why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
-            results.append(lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why))
-            continue
-        results.append(lib.Result("PASS", os.path.basename(f), f) if r.returncode == 0 else
-                       lib.Result("FAIL", os.path.basename(f), "python3 %s" % f))
+            return lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why)
+        return lib.Result("PASS", os.path.basename(f), f) if r.returncode == 0 else \
+            lib.Result("FAIL", os.path.basename(f), "python3 %s" % f)
+
+    if workers == 1:
+        results.extend(run_one(f) for f in todo)
+    else:
+        # --jobs N: up to N files at once, each its own process with its own captured output. The lines are still printed in the order of
+        # the file names, whatever N, so the report and the exit code do not depend on it. The largest file starts first (the slowest
+        # files are mostly the largest), so the last worker does not begin the one long file.
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {f: pool.submit(run_one, f) for f in sorted(todo, key=lambda f: (-_size(os.path.join(lib.ROOT, f)), f))}
+            results.extend(futures[f].result() for f in todo)
     return lib.report(results)
 
 
@@ -1996,7 +2025,7 @@ def build_parser():
     t.add_argument("--expect-not-run", action="append", metavar="PATH[,PATH...]",
                    help="with a group: tests that cannot run where this is called from, as the group lists them (repeatable); with it a test "
                         "that exits 77 and is not declared makes the run exit 77, and a run in which nothing passed exits 1")
-    t.add_argument("--jobs", action="append", metavar="N", help="with a group: how many test files run at once (default: the CPUs, at most 8)")
+    t.add_argument("--jobs", action="append", metavar="N", help="how many test files run at once (default: the CPUs, at most 8, with a group; 1 with none)")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
     t.set_defaults(fn=cmd_test)
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")

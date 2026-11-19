@@ -422,8 +422,8 @@ case("--jobs 1 and a failing file: same as before", FILES, 1, "4 test file(s): 2
 #   (9 of 183 checks failed.)
 # Controls (the engine copy mutated in one place; the first FAIL each printed):
 #   one worker (`workers = 1` forced after the check): FAIL: no group, --jobs 2: two files running at once see each other: exit code: got 1, want 0
-#   results printed in finish order (`futures[f].result() for f in todo` -> `as_completed`): FAIL: no group, --jobs 4 prints the lines in file order
-#   a --jobs run that drops the failing file's result: FAIL: no group, --jobs 4: a failure is a FAIL line and exit 1
+#   results printed in finish order (`futures[f].result() for f in todo` -> `as_completed`): FAIL: no group, --jobs 4 prints the lines in file order: got ['test_guard_mutants.py', 'test_ok.py', 'test_bad.py', ...]
+#   the failing file's result dropped (`for f in todo if f != 'test_bad.py'`): FAIL: no group, --jobs 1 and --jobs 4 print the same: exit code: got 0, want 1
 d = sandbox.mkdtemp("forge-group-top-")
 rv = lambda me, other: RENDEZVOUS % {"d": d, "me": me, "other": other, "wait": 60}
 repo = toy({}, top={"test_a.py": rv("a", "b"), "test_b.py": rv("b", "a")})
