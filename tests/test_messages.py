@@ -60,6 +60,7 @@ Negative controls (CONTROLS: an engine copy with one line broken, the same scena
   fork    a missing id taken as an id                       -> "a terminal was opened without a session id: exit 0, [{'argv': [..., '--resume', 'none', '--fork-session'], ...}]"
   fork    a switch that waits for the terminal              -> "forge switch waited for the terminal: no exit in 15 s"
   fork    a terminal that ends with an error taken as opened -> "fork: a terminal that ends at once with an error: exit, one line, and `forge start @list --resume ID --fork-session`: (0, True, 1), want (2, True, 1)"
+  fork    a terminal that stays in the session's process group -> "fork: the terminal is detached (a process group of its own): False, want True"
   fork    an exit 0 that says nothing of the window         -> "fork: a terminal that hands the window over and ends with 0: exit, one line, and cannot see the window: (0, False, 1), want (0, True, 1)"
   fork    one session name left in the environment          -> "fork: none of the session's variables reach the terminal: ['CLAUDE_CODE_MESSAGING_TOKEN'], want []"
   record  a fork that is not given an id of ours            -> "fork-record: claude gets --resume ID --fork-session and a --session-id of its own (a new uuid): (True, True, 0, False), want (True, True, 1, True)"
@@ -618,6 +619,8 @@ CONTROLS = (
     ("fork", "forge/launch.py", "        code = child.wait(timeout=TERMINAL_LOOK)", "        code = child.wait()", "forge switch waited for the terminal", {}),
     ("fork", "forge/launch.py", "        code = child.wait(timeout=TERMINAL_LOOK)", "        code = None",
      "fork: a terminal that ends at once with an error", {}),
+    ("fork", "forge/launch.py", "stderr=subprocess.DEVNULL,\n                                 start_new_session=True)",
+     "stderr=subprocess.DEVNULL)", "fork: the terminal is detached (a process group of its own)", {}),
     ("fork", "forge/launch.py", "if code == 0 else", "if False else", "fork: a terminal that hands the window over and ends with 0", {}),
     ("fork", "forge/launch.py", '"CLAUDE_CODE_MESSAGING_TOKEN", "FORGE_SESSION"', '"FORGE_SESSION"', "none of the session's variables reach the terminal", {}),
     ("record", "forge/launch.py", "forked = not fresh and forks(args) and resumes is not None and not gave_session_id(args)", "forked = False",
