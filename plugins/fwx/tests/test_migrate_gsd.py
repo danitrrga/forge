@@ -1738,14 +1738,25 @@ if os.path.lexists(os.path.join(repo, ".planning/notes.log")):
 r = run(repo, "leftovers", "--apply")
 s.eq("CR2 ... without that file the image, hidden by the rule the conversion carried, moves (exit)", r.returncode, 0)
 s.eq("... and is at its new place", rd(os.path.join(repo, ".fwx/ui-reviews/a.png")), "image")
-# a conversion made before the record existed has none: a file absent from the first base counts as carried, as it did
+# a conversion with no record (made before the record existed, or the file gone) counts no rule under .fwx/ as carried: nothing is guessed
+# from the first base, so `leftovers` refuses the image that the carried rule would hide (the same `vanish` refusal as for an owner's rule).
+# Red on 3cfdc95, where a file absent from the first base counted as carried: "FAIL: CR2 (no record) leftovers refuses ...: exit: got 0, want 2"
+# (the image was moved), "FAIL: ... it says 1 file, and which" and "FAIL: ... and nothing was moved: got ('!! .fwx/ui-reviews/a.png\n', False, True),
+# want ('?? .planning/\n', True, False)" (it sat at its new place, ignored)
 repo, wt = mini({".planning/ui-reviews/.gitignore": "*.png\n", ".planning/ui-reviews/notes.md": "# n\n"})
 helpers.write(repo, ".planning/ui-reviews/a.png", "image")
 s.eq("CR2 (no record) apply exits 0", run(wt, "apply", "--close", "1").returncode, 0)
 helpers.git(wt, "commit", "-q", "-m", "convert")
 helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
-os.remove(os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst"))
-s.eq("CR2 ... with no record the carried rule's image moves as before (exit)", run(repo, "leftovers", "--apply").returncode, 0)
+record = os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst")
+s.ok("CR2 ... the record exists before it is removed", os.path.isfile(record))
+os.remove(record)
+before = porcelain(repo)
+r = run(repo, "leftovers", "--apply")
+s.eq("CR2 (no record) leftovers refuses an image that a rule under .fwx/ would hide: exit", r.returncode, 2)
+s.ok("... it says 1 file, and which", "1 untracked file(s) would be ignored" in r.stderr and ".fwx/ui-reviews/a.png" in r.stderr, r.stderr[-300:])
+s.eq("... and nothing was moved", (porcelain(repo), os.path.isfile(os.path.join(repo, ".planning/ui-reviews/a.png")),
+                                   os.path.lexists(os.path.join(repo, ".fwx/ui-reviews/a.png"))), (before, True, False))
 
 # ---- CR3: two sources whose carried .gitignore lands on one destination are refused while planning, naming both -------------------------
 # Red on c42c7ba: "FAIL: CR3 plan with two .gitignore files carried to one destination exits 2: got 0, want 2" (and apply: "got 1, want 2", half done and rolled back)
