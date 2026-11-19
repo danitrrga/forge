@@ -43,7 +43,7 @@ import sys
 import tempfile
 import time
 
-from forge import configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
+from forge import completion, configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
 from forge import new as new_cmd
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
@@ -1942,6 +1942,28 @@ def main(argv=None):
     if refusal:
         print(refusal, file=sys.stderr)
         return 2
+    p = build_parser()
+    a = p.parse_args(args)
+    if a.cmd in PROJECT_ARGUMENT and a.project is not None and not a.project.strip():
+        # An empty name is an unset variable (`forge uninstall "$NAME"`), not "no name": it must not widen the scope.
+        print("forge %s: the project name is empty: say 'forge %s NAME' or %s" % (
+            a.cmd, a.cmd, "'forge sync --all'" if a.cmd == "sync" else "'forge uninstall --integration N' (or no argument for everything)"),
+            file=sys.stderr)
+        return 2
+    return a.fn(a)
+
+
+RAW = argparse.RawDescriptionHelpFormatter  # the examples section keeps its lines
+
+
+def examples(*lines):
+    """The epilog of a command's --help: one real command per line, which tests/test_discover.py runs through the parser."""
+    return "examples:\n" + "\n".join("  " + line for line in lines)
+
+
+def build_parser():
+    """The whole argument parser, built and not run: main() parses with it, `forge completion` reads the commands and flags from it,
+    and tests/test_discover.py parses every example of the help with it."""
     p = argparse.ArgumentParser(prog="forge", description=__doc__.split("\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     s = sub.add_parser("sync", help="regenerate every project's config")
@@ -1981,7 +2003,7 @@ def main(argv=None):
     t.add_argument("--fix", action="store_true", help="install the missing ones at their pinned version; never upgrades what is present")
     t.set_defaults(fn=toolchain.cmd)
     t = sub.add_parser("start", help="start claude: with the environment of a launcher of config/forge.json, or with a session profile of this project",
-                       epilog="examples: forge start orchestrator | forge start @marketing | forge start @marketing --dry-run --model haiku")
+                       formatter_class=RAW, epilog=examples("forge start orchestrator", "forge start @marketing", "forge start @marketing --dry-run --model haiku"))
     t.add_argument("name", nargs="?", help="a key of `launchers` (none lists them), or @NAME, a profile of the project of this directory "
                    "(@ alone lists them): claude gets the profile's skills, plugins, permissions, env and servers through its own flags, "
                    "and no file of the project or ~/.claude.json is written")
@@ -1990,7 +2012,8 @@ def main(argv=None):
     t.add_argument("args", nargs=argparse.REMAINDER, help="passed to claude untouched")
     t.set_defaults(fn=launch.cmd)
     t = sub.add_parser("list", help="every project (a short card each), one project (NAME), or the profiles of this directory's project (@, @NAME)",
-                       epilog="examples: forge list | forge list myapp --json | forge list @ --json | forge list @marketing")
+                       formatter_class=RAW, epilog=examples("forge list", "forge list myapp", "forge list myapp --json", "forge list @", "forge list @marketing",
+                                                            "forge list --names"))
     t.add_argument("target", nargs="?", metavar="[NAME | @[NAME]]", help="a project's name shows its full card; @ lists this project's profiles, "
                    "@NAME shows one with its difference from the default; nothing lists every project")
     t.add_argument("--json", action="store_true", help="the same information as JSON")
@@ -1999,8 +2022,8 @@ def main(argv=None):
                    "when it has none) as `current`; inside a session started by forge start, FORGE_SESSION is the default")
     t.set_defaults(fn=configure.cmd_list)
     t = sub.add_parser("config", help="change a project's skills, sets, servers and options by flags, each in the layer that owns it",
-                       epilog="examples: forge config myapp --off skill:grilling --on server:neon | forge config --off option:ui | "
-                              "forge config myapp @marketing --off skill:grilling --apply")
+                       formatter_class=RAW, epilog=examples("forge config myapp --off skill:grilling --on server:neon", "forge config --off option:ui",
+                                                            "forge config myapp @marketing --off skill:grilling --apply", "forge config --names"))
     t.add_argument("targets", nargs="*", metavar="[NAME] [@PROFILE]", help="the project (default: this directory's) and, after it, one of its profiles, "
                    "whose row is then the one changed; both come before the flags")
     t.add_argument("--on", action="append", metavar="TYPE:NAME", help="switch on skill:, set:, server: or option: (ui, command_guard, enableAllProjectMcpServers); repeatable")
@@ -2008,17 +2031,18 @@ def main(argv=None):
     t.add_argument("--apply", action="store_true", help="write without asking (without a terminal the default is a dry-run)")
     t.add_argument("--yes", action="store_true", help="the same as --apply")
     t.add_argument("--json", action="store_true", help="the changes and what was written as JSON on stdout")
+    t.add_argument("--names", action="store_true", help="print every TYPE:NAME that --on and --off take (skills, sets, servers, options), one per line, and change nothing")
     t.set_defaults(fn=configure.cmd_config)
     t = sub.add_parser("switch", help="change the profile of the session you are in: claude restarts with it and resumes the conversation",
-                       epilog="examples: forge switch @marketing | forge switch (lists the profiles, the current one marked)")
+                       formatter_class=RAW, epilog=examples("forge switch @marketing", "forge switch    # lists the profiles, the current one marked"))
     t.add_argument("target", nargs="?", metavar="@NAME", help="the profile to change to (@ or nothing lists them); only inside a session "
                    "started by `forge start @NAME` (a new session, or `--resume UUID`; not `-c`, a title or a bare `--resume`), whose launcher "
                    "restarts claude in place; in any other session it opens a new terminal with `forge start @NAME --resume ID --fork-session` "
                    "(profiles.terminal of config/forge.json) and leaves that session as it is; it kills nothing")
     t.set_defaults(fn=launch.switch)
     t = sub.add_parser("run", help="one headless session of this project with a session profile; prints only its final answer",
-                       epilog="examples: forge run @marketing \"list your skills\" | forge run @reviewer \"review this diff\" --model haiku --json "
-                              "(a prompt that starts with a dash goes after --)")
+                       formatter_class=RAW, epilog=examples("forge run @marketing \"list your skills\"", "forge run @reviewer \"review this diff\" --model haiku --json",
+                                                            "forge run @reviewer -- \"-v is the first word of this prompt\"    # a prompt that starts with a dash goes after --"))
     t.add_argument("name", metavar="@NAME", help="the profile of the project of this directory (`forge list @` lists them)")
     t.add_argument("prompt", metavar="PROMPT", help="what the session is asked; it reaches claude on stdin, never through a shell")
     t.add_argument("--model", metavar="M", help="claude's --model, always passed to the child (default: sonnet)")
@@ -2031,7 +2055,8 @@ def main(argv=None):
     t.add_argument("--json", action="store_true", help="print claude's whole JSON result instead of the answer alone")
     t.set_defaults(fn=run.cmd)
     t = sub.add_parser("shim", help="print a shell function `claude`: `claude @NAME` starts that profile of this project, any other claude is the real one",
-                       epilog="examples: forge shim --shell fish > ~/.config/fish/conf.d/forge-claude.fish | forge shim --check @marketing (the probe the function calls)")
+                       formatter_class=RAW, epilog=examples("forge shim --shell fish > ~/.config/fish/conf.d/forge-claude.fish",
+                                                            "forge shim --check @marketing    # the probe the function calls"))
     which = t.add_mutually_exclusive_group()
     which.add_argument("--shell", choices=shim.SHELLS, help="the shell to print it for (default: the one $SHELL names, said on stderr)")
     which.add_argument("--check", metavar="@NAME", help="print nothing: exit 0 when NAME is the default label or a profile this directory's project offers, "
@@ -2067,31 +2092,42 @@ def main(argv=None):
     i.add_argument("--without", dest="without_names", type=names_list, default=[], metavar="a,b", help="leave these integrations off")
     i.add_argument("--track", action="store_true", help="also make .forge-data.git, a local history of your data")
     i.set_defaults(fn=cmd_init)
-    i = sub.add_parser("new", help="a project: register a directory, or make one from a name; then sync --apply NAME",
+    i = sub.add_parser("new", help="a project: register a directory, or make one from a name; then sync --apply NAME", formatter_class=RAW,
                        description="forge new PATH registers the directory PATH (its file, then sync --apply NAME). "
                                    "forge new NAME, a bare word that is no directory here, makes the project: its folder, git init, "
                                    ".gitignore, README.md, its file and its skill row, then sync --apply NAME; a dry-run unless --apply. "
-                                   "A path form (a /, or a leading . or ~) is always registered; a bare word that is a directory here is registered too.")
-    i.add_argument("path", metavar="PATH|NAME", help="an existing directory to register, or the name of a project to make (kebab-case)")
+                                   "A path form (a /, or a leading . or ~) is always registered; a bare word that is a directory here is registered too. "
+                                   "forge new @NAME, run in a project's folder, makes the session profile NAME for it. In a terminal, what no flag "
+                                   "answers is asked, in this order: profiles, skills (sets, then the final list), servers, memory, what the stack asks.",
+                       epilog=examples("forge new ~/dev/myapp", "forge new . --name my-app", "forge new ~/dev/site --writes-tracked-files"))
+    i.add_argument("path", metavar="PATH|NAME|@NAME", help="an existing directory to register, or the name of a project to make (kebab-case)")
     i.add_argument("--name", help="registering: the project's name (kebab-case; default: the directory's name)")
     i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
     i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
     i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
-    i.add_argument("--yes", action="store_true", help="making: ask nothing; a missing answer is an error naming it (today every answer is a flag, with or without it)")
+    i.add_argument("--yes", action="store_true", help="making: ask nothing, even in a terminal. With none of the question flags that is the old command; with one, every other question needs its flag (none is an answer) and the error names all that are missing")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
+    i.add_argument("--profiles", metavar="A,B", help="question 1: the profiles the project offers (none: no profile); each is then asked like the project")
+    i.add_argument("--sets", action="append", metavar="[@PROFILE:]SET,SET", help="question 2: the skill sets (skill_keep.sets); repeat for several profiles. A scoped value replaces the unscoped one for that profile; it does not add to it")
+    i.add_argument("--skills", action="append", metavar="[@PROFILE:]a,b", help="question 2: the final list of skills, replacing what the sets give (a scoped value replaces the unscoped one for that profile)")
+    i.add_argument("--server", action="append", metavar="[@PROFILE:]NAME", help="question 3: an MCP server of the registry; repeat for each (an account server is <service>-<project>; a scoped value replaces the unscoped one for that profile)")
+    i.add_argument("--memory", metavar="NAME|none", help="question 4: the memory integration of the project (hindsight or mempalace, whichever is on), or none")
+    i.add_argument("--check", action="append", metavar="CMD", help="question 5: one of the stack's checks, written as the project's checks")
+    i.add_argument("--plugin", action="append", metavar="NAME", help="question 5: one of the stack's plugins; the project then keeps only these (besides the common ones)")
+    i.add_argument("--ui", action="store_true", help="question 5: the project has a user interface (ui: true)")
+    i.add_argument("--command-guard", dest="command_guard", action="store_true", help="question 5: command_guard: true")
     i.set_defaults(fn=cmd_new)
+    c = sub.add_parser("completion", help="print the completion script of a shell: commands, flags, projects, profiles and --on/--off values, asked of forge at every tab",
+                       formatter_class=RAW, epilog=examples("forge completion fish > ~/.config/fish/conf.d/forge-completion.fish",
+                                                            "forge completion zsh > ~/.zsh/forge-completion.zsh    # then, after compinit: source ~/.zsh/forge-completion.zsh",
+                                                            "forge completion bash > ~/.bash_forge-completion    # then: source ~/.bash_forge-completion"))
+    c.add_argument("shell", choices=completion.SHELLS, help="the shell to print it for; nothing is installed")
+    c.set_defaults(fn=lambda a: completion.cmd(a, p))
     u = sub.add_parser("uninstall", help="take out what forge wrote; a dry-run unless --apply")
     u.add_argument("--apply", action="store_true", help="remove; without it, only show what would go")
     scope = u.add_mutually_exclusive_group()
     scope.add_argument("--integration", choices=lib.INTEGRATIONS, help="only this integration's, once it is off in config/forge.json")
     scope.add_argument("project", nargs="?", help="only this project's, once it is frozen or its file deleted")
     u.set_defaults(fn=lambda a: _uninstall().main(a))
-    a = p.parse_args(args)
-    if a.cmd in PROJECT_ARGUMENT and a.project is not None and not a.project.strip():
-        # An empty name is an unset variable (`forge uninstall "$NAME"`), not "no name": it must not widen the scope.
-        print("forge %s: the project name is empty: say 'forge %s NAME' or %s" % (
-            a.cmd, a.cmd, "'forge sync --all'" if a.cmd == "sync" else "'forge uninstall --integration N' (or no argument for everything)"),
-            file=sys.stderr)
-        return 2
-    return a.fn(a)
+    return p

@@ -27,7 +27,9 @@ against the state the one before leaves, with the checks a real run makes; where
 so and prints what each changed place held, to be put back by hand). A change that would leave `skills_keep: []`, or switch on a
 server whose secret is missing, is a Refusal.
 
-change() is what the key-selector screen (the second half of the plan's U3b) calls with a list of flags."""
+The screen (`forge config [NAME] [@PROFILE]` with no flag, in a terminal): screen() builds the rows from a Plan that has applied
+nothing, runs forge/selector.py, and turns the rows that were toggled into the flags that would have toggled them; cmd_config
+then hands those flags to change(), the code path of the flags, so the screen decides nothing and every refusal is the flags'."""
 import copy
 import itertools
 import json
@@ -36,7 +38,7 @@ import shlex
 import sys
 import time
 
-from forge import lib, mcp, profiles, render, suggest
+from forge import lib, mcp, profiles, render, selector, suggest
 
 TYPES = ("skill", "set", "server", "option")
 ORDER = ("set", "skill", "server", "option")  # the order the flags are applied in: a set goes before the skills that were taken from it
@@ -812,9 +814,116 @@ def change(name, profile, changes, yes=False, as_json=False):
         _say("forge config: %s" % e, err=True)
         return 1
 
+# ---- the screen ------------------------------------------------------------------------------------------------------------
+
+NEW_PROFILE_ROW = "profile:+new"  # not a profile name: a name is kebab-case
+CANCELLED = "forge config: cancelled, nothing was written"
+NO_CHOICE = "forge config: nothing was changed, nothing was written"
+
+
+def _skill_rows(p, on, groups, label):
+    """The skill rows: one group per set of `groups` (the sets that bring skills here), then every other installed skill. A row
+    is `skill:NAME`, on when `on` (None: every skill is) holds it; a skill in two groups is in the first only."""
+    sets, have, seen, out = p.sk().get("sets") or {}, installed_skills(), set(), []
+    for g in groups:
+        members = [n for n in sets.get(g, []) if n in have and n not in seen]
+        seen.update(members)
+        if members:
+            out.append(("skills from set %s" % g, [("skill:" + n, label(n), on is None or n in on) for n in members]))
+    rest = sorted(have - seen)
+    out.append(("skills" if not out else "other skills", [("skill:" + n, label(n), on is None or n in on) for n in rest]))
+    return out
+
+
+def sections(name, profile):
+    """The screen's rows as selector sections for project `name` (or its profile `profile`). Refusal/Failure/ProfileError when the
+    state cannot be read; nothing is applied, and nothing here decides what a toggle may do (change() does)."""
+    p = Plan(name, profile)
+    sets = sorted(p.sk().get("sets") or {})
+    if profile:
+        carried = [i[1:] for i in p.profile_row().get("skills", []) + profiles.definition(profile)["skills"] if i.startswith("@")]
+        out = _skill_rows(p, p.resolved(), carried, lambda n: n)
+        out.append(("sets", [("set:" + s, s, s in carried) for s in sets]))
+        return out
+    carried = [i[1:] for i in p.row() or [] if i.startswith("@")]
+    origin = origins(name, p.proj, p.sk())
+    out = _skill_rows(p, p.kept(), carried, lambda n: "%s  (%s)" % (n, ",".join(origin[n])) if n in origin else n)
+    out.append(("sets", [("set:" + s, s, s in carried) for s in sets]))
+    listed = p.proj.get("servers", [])
+    out.append(("servers", [("server:" + s, s, s in listed) for s in sorted(set(p.registry()) | set(listed))]))
+    out.append(("options", [("option:" + o, o, p.proj.get(o) is True) for o in OPTIONS]))
+    given = p.proj.get("profiles")
+    offered = given["offered"] if isinstance(given, dict) else {}
+    # The rows of the offered profiles are read-only (a toggle of them is dropped, the command is the way in). The first row is the one that
+    # does something: toggled, it asks a name and the questions of `forge new @NAME` once the screen is closed. It goes first so the offered
+    # profiles stay the last rows.
+    out.append(("profiles (open one with its command, or add one)", [(NEW_PROFILE_ROW, "new profile  (toggle it, then Enter: asks its name and its questions)", False)]
+                + [("profile:" + n, "@%s  forge config %s @%s" % (n, name, n), False) for n in offered]))
+    return out
+
+
+def screen(name, profile, keys=None):
+    """Open the key selector on project `name` (or its profile) and return the flags that turn the toggled rows round, as a list of
+    (op, type, name); [] when nothing was toggled; None when the owner cancelled. `keys` is for tests (recorded key names)."""
+    got = selector.run(sections(name, profile), keys=keys)
+    if got is None:
+        return None
+    flags = []
+    for row, now in got.items():
+        typ, _, item = row.partition(":")
+        if row == NEW_PROFILE_ROW:
+            flags.append(("on", "profile", "+new"))
+        elif typ != "profile":
+            flags.append(("on" if now else "off", typ, item))
+    return flags
+
+
+def new_profile(name, prof):
+    """The screen's "new profile" row: asks the profile's name, then runs `forge new @NAME` for the project (its questions, its plan, its
+    confirmation) from the project's folder. The exit code of that."""
+    import argparse
+    from forge import new as new_cmd  # forge/new.py imports this module
+    folder = prof.get("project_path", "")
+    if not os.path.isdir(folder):
+        _say("forge config: the folder of project %s (%s) does not exist, so forge new @NAME cannot run there" % (name, folder), err=True)
+        return 2
+    try:
+        text = input("name of the new profile of %s: " % name).strip()
+    except EOFError:
+        _say(CANCELLED, err=True)
+        return 0
+    except KeyboardInterrupt:
+        _say("forge config: interrupted (Ctrl-C), nothing was written", err=True)
+        return 130
+    args = argparse.Namespace(path="@" + text, parent_dir=None, stack=None, framework=False, name=None, writes_tracked_files=False, yes=False,
+                              apply=False, profiles=None, sets=None, skills=None, server=None, memory=None, check=None, plugin=None, ui=False,
+                              command_guard=False)
+    here = os.getcwd()
+    try:
+        os.chdir(folder)
+        return new_cmd.create_profile(args)
+    finally:
+        os.chdir(here)
+
+
+def value_names():
+    """Every TYPE:NAME that --on and --off take, one per entry: the installed skills, the sets, the registry's servers and the options.
+    What `forge completion` asks at a tab; it reads files and writes none."""
+    doc = lib.read_json(os.path.join(lib.ROOT, "config", "mcp-registry.json"), quiet=True)
+    servers = doc.get("servers") if isinstance(doc, dict) else None
+    names = {"skill": installed_skills(), "set": set(_skill_keep().get("sets") or {}),
+             "server": set(servers) if isinstance(servers, dict) else set(), "option": set(OPTIONS)}
+    return ["%s:%s" % (t, n) for t in ORDER for n in sorted(names[t])]
+
 
 def cmd_config(a):
-    """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]."""
+    """forge config [NAME] [@PROFILE] [--on TYPE:NAME]... [--off TYPE:NAME]... [--apply | --yes] [--json]. With no flag, in a terminal,
+    the key-selector screen builds the flags (exit 0 when it is cancelled or nothing was toggled); without a terminal, exit 2.
+    `--names` prints the values of --on and --off and does nothing else."""
+    if a.names:
+        for line in value_names():
+            _say(line)
+        return 0
     try:
         names = [t for t in a.targets if not t.startswith("@")]
         ats = [t for t in a.targets if t.startswith("@")]
@@ -836,9 +945,24 @@ def cmd_config(a):
                 raise Refusal(suggest.message("profile", "@" + label, ["@" + n for n in known], " in project '%s'" % name))
             profile = None if label == given["default"] else label  # the default is the project file as it is
         if not changes:
-            raise Refusal("nothing to change: give --on TYPE:NAME or --off TYPE:NAME (the types are %s); `forge list %s` shows what there is" % (
-                ", ".join(TYPES), name))
-    except Refusal as e:
+            if not has_terminal():
+                raise Refusal("nothing to change: give --on TYPE:NAME or --off TYPE:NAME (the types are %s); `forge list %s` shows what there is" % (
+                    ", ".join(TYPES), name))
+            changes = screen(name, profile)
+            if not changes:
+                _say(NO_CHOICE if changes == [] else CANCELLED)
+                return 0
+            if ("on", "profile", "+new") in changes:  # the screen's own row: not a flag of change()
+                changes = [c for c in changes if c[1] != "profile"]
+                if changes:
+                    code = change(name, profile, changes, yes=a.apply or a.yes, as_json=a.json)
+                    if code:
+                        return code
+                return new_profile(name, prof)
+    except (Refusal, profiles.ProfileError) as e:
         _say("forge config: %s" % e, err=True)
         return 2
+    except Failure as e:
+        _say("forge config: %s" % e, err=True)
+        return 1
     return change(name, profile, changes, yes=a.apply or a.yes, as_json=a.json)

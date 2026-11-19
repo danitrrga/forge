@@ -17,6 +17,7 @@ inherit from the default (a marketing session must not list the code skills, and
 
 shape_error validates the field and is called by lib.project_error, so a malformed `profiles` makes lib.projects() leave the
 project out and name it. resolve() is the profile's lists; cmd_list is the command."""
+import contextlib
 import functools
 import importlib.util
 import json
@@ -431,19 +432,52 @@ def _contributes(prof, profile, lists):
                 or d["plugins"] or row.get("plugins") or lists["servers"])
 
 
+NOTHING = "resolves to nothing: no skill, plugin or server of its own, only what every project has"
+
+
+@contextlib.contextmanager
+def pending_definitions(defs):
+    """Inside the block, `definition(name)` answers from `defs` ({name: the definition as definition() returns it}) for a profile whose
+    file is not on disk yet; every other name is read as before. forge new resolves a profile before writing its definition."""
+    global definition
+    real = definition
+    definition = lambda name: defs[name] if name in defs else real(name)
+    try:
+        yield
+    finally:
+        definition = real
+
+
+def _bare(project, profile, error):
+    """The text of a ProfileError without the prefix that names the profile and the project."""
+    prefix = "profile '%s' of project '%s': " % (profile, project)
+    return str(error)[len(prefix):] if str(error).startswith(prefix) else str(error)
+
+
+def unresolved(project, prof, profile):
+    """(lists, None) when `profile` of `project` resolves and adds something of its own to the common layer, else (None, why) in one
+    line, without the prefix that names the profile and the project."""
+    try:
+        lists = resolve(project, prof, profile)
+    except ProfileError as e:
+        return None, _bare(project, profile, e)
+    if not _contributes(prof, profile, lists):
+        return None, NOTHING
+    return lists, None
+
+
 def _problem(project, prof, profile):
     """None when `profile` of `project` resolves, adds something of its own and has session files that can be built
     (launch.session_files: the --settings and --mcp-config documents, which writes nothing, and both serialise); else why not,
     in one line. A secret the store lacks is named by its NAME: the documents are never printed."""
     from forge import launch  # launch imports this module
-    prefix = "profile '%s' of project '%s': " % (profile, project)
     try:
-        lists = resolve(project, prof, profile)
-        if not _contributes(prof, profile, lists):
-            return "resolves to nothing: no skill, plugin or server of its own, only what every project has"
+        lists, why = unresolved(project, prof, profile)
+        if why:
+            return why
         docs = launch.session_files(project, prof, profile, lists)[:2]
     except ProfileError as e:
-        return str(e)[len(prefix):] if str(e).startswith(prefix) else str(e)
+        return _bare(project, profile, e)
     except Exception as e:  # a file the build could not read: a FAIL naming the profile, not a traceback that hides the rest
         return "its session files cannot be built (%s: %s)" % (type(e).__name__, e)
     try:

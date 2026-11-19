@@ -18,7 +18,7 @@ in one line; the control's failure message is what is quoted here, and the asser
   - a project named `list` can be created.
       control (a reserved list of verbs): `project named 'list' rejected`
   - a name starting with `@`, or with `-`, or not kebab-case, is refused, exit 2, nothing created.
-      control (no name check): `project named '@x' created`
+      control (no name check): `project named '-x' created`
   - an argument that looks like a path and does not exist is refused as a path (exit 1, "is not a directory", as
     before), never taken for a name.
       control (no path check): `'./nope' was not refused as a path`
@@ -347,7 +347,9 @@ def a_list_created(w):
 
 def a_bad_names(w):
     bad = []
-    for name in ("@x", "-x", "My_Project", "a--b", "x-", "demo\n"):
+    # "@x" is no longer here: with 4.4 U6 an argument that starts with @ is a profile of the project in the folder (`forge new @x`), not a
+    # name; tests/test_ask.py refuses its bad names (@-x, @@x, @Bad) with the reason.
+    for name in ("-x", "My_Project", "a--b", "x-", "demo\n"):
         before = w.snapshot()
         argv = ["new", "--stack", "generic", "--apply"] + (["--", name] if name.startswith("-") else [name])
         code, out = w.forge(*argv)
@@ -957,7 +959,7 @@ FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n 
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
 CONTROLS = [
     ("no check ahead of the first write, no cleanup", a_missing_stack,
-     [(NEW, "if problems:", "if False:"), (NEW, "rollback(undo)", "pass"),
+     [(NEW, "if problems:", "if False:"), (NEW, "complete = rollback(undo)", "complete = True"),
       # the stack is read by the same check, so with it gone the plan has a stack to print and the write finds none after the mkdir
       (NEW, "stack = files = warnings = None", 'stack = {"description": "", "servers": [], "plugins": [], "checks": [], "skill_sets": []}\n    files, warnings = None, []')],
      "left a partial folder: "),
@@ -967,7 +969,7 @@ CONTROLS = [
     ("a dry-run that goes on", a_dry_run, [(NEW, "if not a.apply:", "if False:")], "dry-run changed the tree"),
     ("a reserved list of verbs", a_list_created,
      [(NEW, "if not KEBAB.match(name):", 'if not KEBAB.match(name) or name in ("list", "new", "doctor"):')], "project named 'list' rejected"),
-    ("no name check", a_bad_names, [(NEW, "if not KEBAB.match(name):", "if False:")], "project named '@x' created"),
+    ("no name check", a_bad_names, [(NEW, "if not KEBAB.match(name):", "if False:")], "project named '-x' created"),
     ("a path taken for a name", a_path_not_name, [(NEW, "if path_like(arg):", "if False:")], "'./nope' was not refused as a path"),
     ("a bare directory registered silently", a_name_or_path, [(NEW, 'print("forge new: ./%s exists here', '(lambda *x: None)("forge new: ./%s exists here')],
      "name taken for a path silently"),
@@ -979,7 +981,7 @@ CONTROLS = [
      "wrote while another run held the lock"),
     ("no lock, no second check, two runs for one name", a_two_same_name,
      [(NEW, "with stopped_means_rollback(), creation_lock():", "with stopped_means_rollback():"),
-      (NEW, "            if why:\n                return refuse(2, \"another forge new", "            if False:\n                return refuse(2, \"another forge new"),
+      (NEW, "                if why:\n                    return refuse(2, \"another forge new", "                if False:\n                    return refuse(2, \"another forge new"),
       # the checks sit a second before the first write: both runs are past them when either writes (without it the late one is refused by chance)
       (NEW, "    ok, why = lib.may_write()", "    time.sleep(1)\n    ok, why = lib.may_write()")],
      "two runs for one name"),
@@ -995,7 +997,7 @@ CONTROLS = [
     ("a relative projects_dir", a_bad_projects_dir, [(NEW, "not os.path.isabs(os.path.expanduser(configured))", "False")],
      "a relative projects_dir was used"),
     ("no handler for TERM", a_signals, [(NEW, "with stopped_means_rollback(), creation_lock():", "with creation_lock():")], "left behind after SIGTERM"),
-    ("a stray file in HOME", a_generic_created, [(NEW, "git_init(target)\n", 'git_init(target)\n            open(os.path.join(lib.HOME, "stray"), "w").close()\n')],
+    ("a stray file in HOME", a_generic_created, [(NEW, "git_init(target)\n", 'git_init(target)\n                open(os.path.join(lib.HOME, "stray"), "w").close()\n')],
      "wrote outside the allowed list"),
     ("a non-empty folder written into", a_target_exists, [(NEW, "if os.listdir(target):", "if False:")], "wrote into a non-empty folder"),
     ("a link followed", a_target_exists, [(NEW, "if os.path.islink(target):", "if False:"), (NEW, "if os.listdir(target):", "if False:")],
@@ -1006,11 +1008,11 @@ CONTROLS = [
     ("a trailing newline in a name (registration)", a_bad_registration_name, [(NEW, '(-[a-z0-9]+)*\\Z")', '(-[a-z0-9]+)*$")')],
      "registered under a name with a trailing newline"),
     ("mkdir recorded for rollback after record", a_record_fails_after_mkdir,
-     [FAIL_RECORD, (NEW, '                undo.append(("dir", target))  # before anything else that can fail or be interrupted\n                lib.record("mkdir", target)\n',
-                    '                lib.record("mkdir", target)\n                undo.append(("dir", target))\n')],
+     [FAIL_RECORD, (NEW, '                    undo.append(("dir", target))  # before anything else that can fail or be interrupted\n                    lib.record("mkdir", target)\n',
+                    '                    lib.record("mkdir", target)\n                    undo.append(("dir", target))\n')],
      "left behind: "),
-    ("no cleanup after git fails", a_git_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
-    ("no cleanup after forge.json fails", a_forge_json_fails, [(NEW, "rollback(undo)", "pass")], "left behind: "),
+    ("no cleanup after git fails", a_git_fails, [(NEW, "complete = rollback(undo)", "complete = True")], "left behind: "),
+    ("no cleanup after forge.json fails", a_forge_json_fails, [(NEW, "complete = rollback(undo)", "complete = True")], "left behind: "),
     ("a substituter that lets {{X}} through", a_unresolved, UNRESOLVED + [(NEW, "if unresolved:", "if False:")], "placeholder left in .gitignore"),
     ("a stack whose .gitignore forgets .env", a_stacks_created, [(os.path.join("examples", "stacks", "rust", "gitignore"), ".env\n.env.*\n", "env-not-here\n")],
      ".gitignore of stack rust does not ignore .env"),
