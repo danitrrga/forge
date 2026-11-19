@@ -134,8 +134,16 @@ for act in step.get("do", []):
             time.sleep(0.05)
     elif kind == "switch":
         e = dict(env, **(act[2] if len(act) > 2 else {}))
-        r = subprocess.run([sys.executable, env["FAKE_FORGE"], "switch"] + act[1], env=e, capture_output=True, text=True, timeout=60)
-        put({"switch": act[1], "rc": r.returncode, "out": r.stdout, "err": r.stderr})
+        # The launcher may end this process the moment the request is made, before its result is logged: TERM and HUP wait (the
+        # handlers the plan set, or the default end, act when they are let through) until it is. `forge switch` itself gets them back.
+        ends = {signal.SIGTERM, signal.SIGHUP}
+        signal.pthread_sigmask(signal.SIG_BLOCK, ends)
+        try:
+            r = subprocess.run([sys.executable, env["FAKE_FORGE"], "switch"] + act[1], env=e, capture_output=True, text=True, timeout=60,
+                               preexec_fn=lambda: signal.pthread_sigmask(signal.SIG_UNBLOCK, ends))
+            put({"switch": act[1], "rc": r.returncode, "out": r.stdout, "err": r.stderr})
+        finally:
+            signal.pthread_sigmask(signal.SIG_UNBLOCK, ends)
     elif kind == "request":  # a request file by hand: {"for": "own"|<peer info file>, "to", "age", "pid": "ppid"|"peer"|int}
         spec = act[1]
         peer = read_peer(spec["peer"]) if spec.get("peer") else None
@@ -740,7 +748,7 @@ CONTROLS = (
     ("n", "forge/launch.py", "req = seen[0] if seen else taken", "req = taken", "n: an accepted request is honoured after a slow end"),
     ("o", "forge/launch.py", "    # not a session of a profile launcher, so not the switchable one it may run inside: a `forge switch` from here would restart that one\n    for var in (",
      "    for var in () and (", "o: a named launcher"),
-    ("p", "forge/launch.py", "else resumed_id(args)  #", "else None  #", "p: --resume ID: relaunch missing"),
+    ("p", "forge/launch.py", "else None if forks(args) else resumes  #", "else None  #", "p: --resume ID: relaunch missing"),
     ("h", "forge/launch.py", "watch=watch, stopped=stopped)", "watch=lambda: False, stopped=stopped)", "the case looked at nothing"),
     ("j", "forge/launch.py", "if rec.get(\"print\"):", "if False:", "j: -p: the switch is refused"),
     ("k", "forge/launch.py", "child.kill()", "pass", "was not killed", (KILL_1S,)),

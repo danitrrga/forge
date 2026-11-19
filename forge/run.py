@@ -24,6 +24,7 @@ INT, TERM or HUP sent to forge run is passed on to the child's whole group (laun
 included, takes claude with it (the parent-death signal of launch._die_with_parent, Linux only)."""
 import json
 import os
+import shlex
 import shutil
 import sys
 import tempfile
@@ -53,11 +54,12 @@ def _result(text):
 def cmd(a):
     depth = os.environ.get("FORGE_RUN_DEPTH", "0")
     if not (depth.isascii() and depth.isdigit() and len(depth) <= 9):  # 9 digits: int() never meets a string long enough to raise
-        return launch._refuse("FORGE_RUN_DEPTH=%r is not a number of levels" % depth, WHO)
+        return launch._refuse("FORGE_RUN_DEPTH=%r is not a number of levels: `unset FORGE_RUN_DEPTH` and run it again" % depth, WHO)
     depth = int(depth)
     if depth >= MAX_DEPTH:
         return launch._refuse("this is a forge run called from a forge run called from a forge run (FORGE_RUN_DEPTH=%d): "
-                              "agents launching agents stop here, so that no loop of them can start by accident" % depth, WHO)
+                              "agents launching agents stop here, so that no loop of them can start by accident; do the work in this session, "
+                              "or run `forge run @NAME \"PROMPT\"` from your own terminal, where the depth starts again" % depth, WHO)
     if not a.prompt.strip():
         return launch._refuse('the prompt is empty: forge run @NAME "PROMPT"', WHO)
     try:
@@ -65,19 +67,19 @@ def cmd(a):
     except UnicodeEncodeError:
         return launch._refuse("the prompt is not valid UTF-8 (a file in another encoding? convert it first, e.g. iconv -t UTF-8)", WHO)
     if a.model is not None and not a.model.strip():
-        return launch._refuse("--model is empty: name a model, or leave it out for sonnet", WHO)
+        return launch._refuse("--model is empty: name a model (`--model sonnet`), or leave it out for sonnet", WHO)
     if a.permission_mode is not None and a.permission_mode not in PERMISSION_MODES:
-        return launch._refuse("--permission-mode %r is not accepted: %s (forge adds no mode of its own)" % (
+        return launch._refuse("--permission-mode %r is not accepted: %s (forge adds no mode of its own); `--permission-mode default` is the usual one" % (
             a.permission_mode, ", ".join(PERMISSION_MODES)), WHO)
     if a.timeout < 1:
-        return launch._refuse("--timeout is %d: a number of seconds, 1 or more" % a.timeout, WHO)
+        return launch._refuse("--timeout is %d: a number of seconds, 1 or more (`--timeout %d` is the default)" % (a.timeout, TIMEOUT), WHO)
     if a.cwd is not None:
         if not os.path.isdir(a.cwd):
-            return launch._refuse("--cwd %s is not a folder" % a.cwd, WHO)
+            return launch._refuse("--cwd %s is not a folder: name one that exists (`--cwd .` is the current folder)" % a.cwd, WHO)
         try:
             os.chdir(a.cwd)  # the project is this folder's, and the child runs in it
         except OSError as e:
-            return launch._refuse("cannot enter --cwd %s: %s" % (a.cwd, e.strerror or e), WHO)
+            return launch._refuse("cannot enter --cwd %s: %s; look at it with `ls -ld %s`" % (a.cwd, e.strerror or e, shlex.quote(a.cwd)), WHO)
     found = launch._target(WHO, a.name)
     if isinstance(found, int):
         return found
@@ -87,12 +89,12 @@ def cmd(a):
     try:
         flags, settings, mcp_file, _, settings_path, mcp_path = launch._flags(project, prof, profile)
     except profiles.ProfileError as e:
-        return launch._refuse(str(e), WHO)
+        return launch._refuse(str(e) + profiles.doctor_hint(project), WHO)
     sid = str(uuid.uuid4())
     env = dict(launch.session_env(profile, project, sid), FORGE_RUN_DEPTH=str(depth + 1))
     claude = shutil.which("claude", path=env.get("PATH", os.defpath))
     if not claude:
-        print("! forge run: claude is not on PATH", file=sys.stderr)
+        print(profiles.claude_missing(WHO), file=sys.stderr)
         return 127
     model = a.model or "sonnet"
     argv = flags + ["--session-id", sid, "--model", model]
@@ -104,7 +106,7 @@ def cmd(a):
         launch._write_files(settings, mcp_file, settings_path, mcp_path)
         profiles.write_session(sid, record)
     except OSError as e:
-        return launch._refuse("cannot write the session's files under %s: %s" % (lib.STATE, e.strerror or e), WHO)
+        return launch._refuse("cannot write the session's files under %s: %s%s" % (lib.STATE, e.strerror or e, profiles.state_hint()), WHO)
     with tempfile.TemporaryFile() as fin, tempfile.TemporaryFile() as fout:  # files, not pipes: nothing to deadlock on, however long
         fin.write(prompt)
         fin.seek(0)
@@ -118,16 +120,16 @@ def cmd(a):
         try:
             code = launch._run(claude, argv, env, watch=watch, headless=True, stdin=fin, stdout=fout)
         except OSError as e:  # claude passed `which` and still cannot start (a missing interpreter): the record says a session that never was
-            os.remove(profiles.session_path(sid))
-            print("! forge run: cannot start %s: %s" % (claude, e.strerror or e), file=sys.stderr)
-            return 127
+            profiles.drop_session(sid)
+            return launch.cannot_exec(WHO, claude, e)
         if not late and time.monotonic() - began > a.timeout:  # the child ended between two looks of the watch, after the deadline
             late.append(True)
         if not late:
             fout.seek(0)
             text = fout.read().decode("utf-8", "replace")
     if late:
-        print("! forge run: profile %s session %s ran past --timeout %d seconds and was ended" % (profile, sid, a.timeout), file=sys.stderr)
+        print("! forge run: profile %s session %s ran past --timeout %d seconds and was ended; ask for more time with `--timeout %d`" % (
+            profile, sid, a.timeout, 2 * a.timeout), file=sys.stderr)
         return TIMED_OUT
     doc = _result(text)
     cost = (doc or {}).get("total_cost_usd", (doc or {}).get("cost_usd"))
@@ -143,7 +145,7 @@ def cmd(a):
     elif code:
         problem = "claude exited %d%s" % (code, ": " + doc["result"] if doc["result"] else "")
     if problem:
-        print("! forge run: " + problem, file=sys.stderr)
+        print("! forge run: %s; `claude --resume %s` in this folder opens that session to see why" % (problem, sid), file=sys.stderr)
         code = code or 1
     if a.json and doc is not None:  # output that is no result document is not passed on as if it were one
         sys.stdout.write(text)

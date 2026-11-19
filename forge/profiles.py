@@ -23,6 +23,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import shutil
 import sys
 import time
@@ -107,6 +108,54 @@ def parse_at(text):
     if name.startswith(("@", "-")):
         raise ValueError(name_error(name))
     return name
+
+
+DOC = 'docs/config-architecture.md, "Session profiles"'
+
+
+def none_reason(project, prof):
+    """What follows `project 'x' ` when it has no profiles to start: frozen, or declaring none, each with the step that gives it some."""
+    if prof.get("frozen"):
+        return "is frozen, so it receives no profile (to give it some, take `frozen` out of config/projects/%s.claude.json first)" % project
+    return "declares no profiles (the `profiles` field is described in %s)" % DOC
+
+
+def unknown_profile(command, project, profile, given, tail=""):
+    """The sentence for a profile `project` does not offer: the closest one and every one there is (suggest.message), then the command
+    that works, `command` (`forge start`, `forge switch`, `forge list`, `forge run`) with the closest name, or the default's when none
+    is near, and `tail` (the rest of that command's line)."""
+    names = ["@" + n for n in [given["default"]] + list(given["offered"])]
+    near = suggest.closest("@" + profile, names) or names[0]
+    return "%s; run `%s %s%s`" % (suggest.message("profile", "@" + profile, names, " in project '%s'" % project), command, near, tail)
+
+
+def not_a_project(cwd):
+    """`CWD is not inside a project ...` with the command that registers a folder as one. `forge new` takes the folder's name for the
+    project's, and refuses one that is not kebab-case (new.KEBAB, the rule it checks with): then the command carries `--name` with
+    that name lowercased, its runs of other characters made one dash, and `project` when nothing is left."""
+    from forge import new  # at call time: forge/new.py imports forge.framework
+    base = os.path.basename(cwd)
+    name = ""
+    if not new.KEBAB.match(base):
+        name = re.sub(r"[^a-z0-9]+", "-", base.lower()).strip("-")
+        name = " --name " + (name if new.KEBAB.match(name) else "project")
+    return ("%s is not inside a project of forge's registry (a project file forge cannot read is left out of it); "
+            "`forge new %s%s` registers this folder, or cd into a registered project" % (cwd, shlex.quote(cwd), name))
+
+
+def doctor_hint(project):
+    """What follows a ProfileError: the check that names the cause in every profile of the project."""
+    return " (`forge doctor %s` names what is wrong in each profile)" % project
+
+
+def claude_missing(who):
+    """The line for a claude that is not on PATH, with how forge installs it (what `forge toolchain` pins and installs)."""
+    return "! %s: claude is not on PATH: `forge toolchain --fix` installs it when config/toolchain.json lists it, then run this again" % who
+
+
+def state_hint():
+    """What follows a state file forge could not write: the folder to look at."""
+    return "; look at the folder with `ls -ld %s`, it has to be writable" % shlex.quote(lib.STATE)
 
 
 def definition_path(name):
@@ -306,7 +355,7 @@ def _list(a, name, prof):
         for r in rows:
             _say(r["name"])
     elif not rows:
-        _say("no profiles: project '%s' %s" % (name, "is frozen, so it receives none" if prof.get("frozen") else "declares none"))
+        _say("no profiles: project '%s' %s" % (name, none_reason(name, prof)))
     else:
         w = max(len(r["name"]) for r in rows), max(len(r["color"]) for r in rows)
         _say("project %s: %d profile(s), the default is %s" % (name, len(rows), prof["profiles"]["default"]))
@@ -318,17 +367,17 @@ def _list(a, name, prof):
 def _card(a, name, prof, profile):
     p = prof.get("profiles")
     if not isinstance(p, dict) or prof.get("frozen"):
-        _say("forge list: project '%s' has no profiles" % name, err=True)
+        _say("forge list: project '%s' %s" % (name, none_reason(name, prof)), err=True)
         return 1
     known = [p["default"]] + list(p["offered"])
     if profile not in known:
-        _say("forge list: %s" % suggest.message("profile", "@" + profile, ["@" + n for n in known], " in project '%s'" % name), err=True)
+        _say("forge list: %s" % unknown_profile("forge list", name, profile, p), err=True)
         return 2
     is_default = profile == p["default"]
     try:
         lists = default_lists(prof) if is_default else resolve(name, prof, profile)
     except ProfileError as e:
-        _say("forge list: %s" % e, err=True)
+        _say("forge list: %s%s" % (e, doctor_hint(name)), err=True)
         return 2
     row = next(r for r in _rows(prof) if r["name"] == profile)
     lists = {"description": row["description"], "color": row["color"], **lists}
@@ -357,7 +406,7 @@ def cmd_list(a):
     """forge list @ | forge list @NAME [--json] [--names]: the profiles of the project of this directory, or one of them. Exit 0
     it did, 1 the project has no profiles (or is frozen), 2 a bad argument, a folder that is no project or a profile it has not."""
     def usage(why):
-        _say("forge list: %s; it takes @ (this project's profiles) or @NAME (one profile)" % why, err=True)
+        _say("forge list: %s; run `forge list @` for this project's profiles or `forge list @NAME` for one of them" % why, err=True)
         return 2
     if a.target is None:
         return usage("no argument")
@@ -369,8 +418,7 @@ def cmd_list(a):
         return usage("--names is for forge list @")
     found = project_here(os.getcwd())
     if not found:
-        _say("forge list: %s is not inside a project of forge's registry (a project file forge cannot read is left out of it)"
-             % os.getcwd(), err=True)
+        _say("forge list: %s" % not_a_project(os.getcwd()), err=True)
         return 2
     return _card(a, found[0], found[1], profile) if profile else _list(a, *found)
 
@@ -492,6 +540,14 @@ def write_session(session_id, record):
     """session_path(session_id) holds `record`; atomic and private (0600), like every state file the launcher writes."""
     lib.write_text(session_path(session_id), json.dumps(record, indent=2) + "\n", mode=0o600)
     return session_path(session_id)
+
+
+def drop_session(session_id):
+    """The record of a session whose claude could not start, removed: it would vouch for a launcher that never ran. None there is no error."""
+    try:
+        os.remove(session_path(session_id))
+    except OSError:
+        pass
 
 
 def read_session(session_id):
