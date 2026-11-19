@@ -37,7 +37,7 @@ SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # `consent` is the consent window (hooks/guard_tool_use.py --consent): absent counts as off, so adding it
 # leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` and `mempalace`
 # are the framework's: the first asks for the `agent-browser` tool in config/toolchain.json (a `when` of
-# {"integration": "agent_browser"}), the second has no check until the MemPalace part and is a SKIP either way.
+# {"integration": "agent_browser"}). The `integrations` doctor row checks both: on and not on PATH is a FAIL, off is a SKIP.
 INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser", "mempalace")
 
 
