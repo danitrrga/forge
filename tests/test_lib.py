@@ -850,6 +850,25 @@ def cli_test_cases(tmp):
         rc, out = forge_test()
         want("a child of forge test runs at nice 19 and in the idle I/O class",
              (rc, "PASS  test_nice.py" in out, "PASS  test_ionice.py" in out), (0, True, True))
+        # preexec_fn runs Python between fork and exec, which Python's docs say can deadlock the child when other threads exist: with
+        # --jobs N the children are started from pool threads, so no child of forge test gets one, with or without --jobs.
+        lib.ROOT = toy("nopreexec", ["test_p%d.py" % i for i in range(4)])
+        started, real_run = [], subprocess.run
+
+        def spy(*a, **k):
+            started.append(k.get("preexec_fn"))
+            return real_run(*a, **k)
+
+        subprocess.run = spy
+        try:
+            for jobs in (None, ["2"]):
+                del started[:]
+                with contextlib.redirect_stdout(io.StringIO()) as o:
+                    rc = cli.cmd_test(argparse.Namespace(mutants=False, jobs=jobs))
+                want("forge test, jobs %s: the 4 files and the file list ran, none with a preexec_fn" % jobs,
+                     (rc, len(started), [c for c in started if c is not None], o.getvalue().count("PASS  test_p")), (0, 5, [], 4))
+        finally:
+            subprocess.run = real_run
         os.environ["PATH"] = os.path.join(tmp, "cmdtest", "no-bin")
         got = raised(forge_test)
         want("forge test with no git on PATH", (got[0], "git" in got[1]) if isinstance(got[0], int) else got[:2], (1, True))
