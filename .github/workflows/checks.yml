@@ -61,13 +61,19 @@ jobs:
       - run: python3 bin/forge test fwx --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py
 
   # The engine's own suite, `python3 bin/forge test`: every tracked test_*.py but plugins/fwx's (that group is the `fwx` job above)
-  # and the on-demand guard mutants. A test that exits 77 prints a WARN `NOT RUN, NOT ARMED`, which does not fail the run;
-  # the ones that cannot run on a bare runner are listed below. Before this job the suite ran only on the owner's machine,
-  # so a pull request that broke tests/test_profiles.py showed green.
+  # and the on-demand guard mutants, run one after the other at nice 19 (81 files, about 26 minutes here; test_run.py alone is ten).
+  # Before this job the suite ran only on the owner's machine, so a pull request that broke tests/test_profiles.py showed green.
+  # A test that exits 77 is a WARN `NOT RUN, NOT ARMED`: it does not fail the run, so the list is kept here, and a new
+  # one is to be read in the log. Two tests run `unshare -rn` (test_write_guard, test_sync_fixture, test_relink_skills): Ubuntu 24.04
+  # runners refuse that to an unprivileged user, so the first step lifts the restriction for this job's VM (only).
+  # The two WARN lines of the first run, both a thing this runner lacks:
+  #   tests/test_new.py: compares `forge new`'s generic .gitignore text with the head of pull request 182 (revision 68576e8), which a
+  #     checkout of one commit does not hold.
+  #   tests/test_shim.py: the fish and zsh cases need those shells, which the runner does not have; the bash cases run.
   suite:
     name: Engine suite
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     steps:
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
@@ -80,11 +86,4 @@ jobs:
           python-version: "3.12"
       - name: allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: diagnostic (throwaway)
-        run: |
-          for f in $(git ls-files '*test_*.py' | grep -v '^plugins/fwx/' | grep -v '^benchmarks/' | grep -v test_guard_mutants | sort); do
-            t0=$SECONDS
-            rc=0; nice -n 19 python3 "$f" > /tmp/out.txt 2>&1 </dev/null || rc=$?
-            echo "DIAG $((SECONDS-t0))s rc=$rc $f"
-            if [ $rc -ne 0 ]; then tail -40 /tmp/out.txt | sed 's/^/    | /'; fi
-          done
+      - run: python3 bin/forge test
