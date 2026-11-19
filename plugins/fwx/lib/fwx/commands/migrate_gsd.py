@@ -980,6 +980,7 @@ RE_MS_DEST = re.compile(r"(\.fwx(?:/subprojects/[^/]+)?)/milestones/(v\d+)/")
 RE_SECTION = re.compile(r"(#{2,4}) Phase (\d+(?:\.\d+)*): (.+)$")
 LISTS = ("restore", "created", "dirs")    # the files next to MARKER that say, in advance, which paths apply changes
 BASES = ".fwx/migrate-gsd-bases.md"      # one line per apply: its base commit, kept in the repository
+CARRIED = "carried-gitignores.lst"       # in archive_dir(): the `.gitignore` files under `.fwx/` that apply carried over, NUL-separated
 
 
 class Failed(Exception):
@@ -1121,9 +1122,20 @@ def ignored_among(repo, paths):
     return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p}
 
 
+def carried_record(repo):
+    """The `.gitignore` files under `.fwx/` that the conversions of this repository carried over from `.planning/` (what `apply`
+    wrote down in the common git dir, `CARRIED`, once its checks had passed): a set, or None when no conversion left a record."""
+    try:
+        with open(os.path.join(archive_dir(repo), CARRIED), "rb") as f:
+            return {os.fsdecode(p) for p in f.read().split(b"\0") if p}
+    except OSError:
+        return None
+
+
 def fwx_gitignores_before(repo):
     """The `.gitignore` files inside `.fwx/` that the commit of the first conversion (the first base of the bases file) already
-    tracked: the owner's own rules, not carried ones. None when that base cannot be read, so that no rule counts as carried."""
+    tracked: the owner's own rules, not carried ones. None when that base cannot be read, so that no rule counts as carried.
+    Used only for a conversion made before `carried_record` existed."""
     try:
         with open(_abs(repo, BASES), encoding="utf-8", errors="replace") as f:
             m = re.search(r"\bbase ([0-9a-f]{7,40})\b", f.read())
@@ -1139,16 +1151,21 @@ def fwx_gitignores_before(repo):
 
 def ignored_by_fwx_file(repo, paths):
     """The paths of the list that a rule of a `.gitignore` inside `.fwx/` ignores (the rule that decides, `check-ignore -v`), when
-    that file is one the conversion carried over from `.planning/`: not one the owner already had (`fwx_gitignores_before`), and
-    not a line of the root `.gitignore`."""
-    before = fwx_gitignores_before(repo) if paths else None
-    if before is None:
+    that file is one the conversion carried over from `.planning/`: one `apply` wrote down (`carried_record`), never one the owner
+    added or already had, and not a line of the root `.gitignore`. With no record at all (a conversion that predates it) a file
+    absent from the first base counts as carried, as it did."""
+    if not paths:
+        return set()
+    carried = carried_record(repo)
+    before = fwx_gitignores_before(repo) if carried is None else None
+    if carried is None and before is None:
         return set()
     r = _git(repo, "check-ignore", "-v", "-z", "--stdin", ok=(0, 1), input=_nul(paths))
     parts, out = r.stdout.split(b"\0"), set()
     for i in range(0, len(parts) - 3, 4):
         source, pattern, path = os.fsdecode(parts[i]), os.fsdecode(parts[i + 2]), os.fsdecode(parts[i + 3])
-        if source.startswith(SCOPE_DEST + "/") and source not in before and not pattern.startswith("!"):
+        if source.startswith(SCOPE_DEST + "/") and not pattern.startswith("!") \
+                and (source in carried if carried is not None else source not in before):
             out.add(path)
     return out
 
@@ -1207,6 +1224,7 @@ class Job:
         self.created, self.dirs = [], []   # files and folders apply made, in the order it made them
         self.restore = []            # tracked files of the base that apply moves, removes or edits
         self.phases, self.closed = [], []
+        self.carried = []            # destinations of the `.gitignore` files apply writes anew or moves: the leftovers exception is theirs only
         self.base_entries, self.before = {}, None
         self.bytes_of = {}           # path -> [bytes before, bytes apply wrote]: what is apply's and what is someone else's
         self.append_to = None        # (path, text): a tracked file that gets a line added
@@ -1376,6 +1394,8 @@ def plan_apply(repo, opts):
     for sc in scopes:
         for inner, (target, text) in sorted(sc.carried.items()):
             job.gens.append((target, text.encode("utf-8", "surrogateescape")))
+            job.carried.append(target)
+    job.carried += [d for _, d in job.moves if posixpath.basename(d) == ".gitignore"]    # moved whole: its rules are the conversion's too
     roadmaps = {sc.ws: src.read(sc.prefix + "ROADMAP.md") for sc in scopes}
     milestones, dests = set(), [d for _, d in job.moves]
     extra_bad = []
@@ -1683,6 +1703,17 @@ def commit_message(job):
     return "\n".join(lines) + "\n"
 
 
+def write_carried(job):
+    """Write down which `.gitignore` files under `.fwx/` this run carried (also when there are none: the record then says so), so
+    that `leftovers` never takes one the owner adds later for one the conversion wrote."""
+    try:
+        os.makedirs(archive_dir(job.repo), exist_ok=True)
+        with open(os.path.join(archive_dir(job.repo), CARRIED), "ab") as f:
+            f.write(_nul(job.carried))
+    except OSError as e:
+        raise Failed("cannot write the record of the carried .gitignore files (%s): %s" % (e.strerror, e))
+
+
 def execute(job):
     """Run the steps; on any failure, roll back. A Failed says whether the repository is back."""
     for p in [job.marker] + list(job.lists.values()):
@@ -1709,6 +1740,7 @@ def execute(job):
         verify(job)
         with open(job.msgfile, "w", encoding="utf-8", errors="surrogateescape") as f:
             f.write(commit_message(job))
+        write_carried(job)
         # last, so that no rollback has a folder to put back: the folders under `.planning/` that hold no file (the ones the
         # moves and removals emptied, and the empty ones GSD scaffolds, which git cannot track), `.planning/` itself when
         # nothing is left in it. A folder that still holds a file, an ignored or untracked one included, stays: rmdir only

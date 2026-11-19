@@ -1483,6 +1483,7 @@ gitdir = os.path.join(repo, ".git")
 if os.geteuid() == 0:
     print("NOT RUN: the unwritable archive folder needs a user that is not root")
 else:
+    shutil.rmtree(os.path.join(gitdir, "fwx"), ignore_errors=True)    # apply made it (it keeps its record there): the case is a folder that does not exist yet
     before = strict(repo)
     os.chmod(gitdir, 0o500)
     try:
@@ -1710,6 +1711,41 @@ if os.path.lexists(os.path.join(repo, ".planning/notes.log")):
 r = run(repo, "leftovers", "--apply")
 s.eq("R4 ... without that file the carried rule's image moves all the same (exit)", r.returncode, 0)
 s.eq("... and is at its new place", rd(os.path.join(repo, ".fwx/ui-reviews/a.png")), "image")
+
+# ---- CR2: the leftovers exception rests on a record of what the conversion carried, not on a file being absent from the first base ------
+# Red on c42c7ba: "FAIL: CR2 leftovers refuses an untracked file that a .fwx/.gitignore the owner added after the merge would hide: exit: got 0, want 2"
+repo, wt = mini({".planning/ui-reviews/.gitignore": "*.png\n", ".planning/ui-reviews/notes.md": "# n\n"})
+helpers.write(repo, ".planning/ui-reviews/a.png", "image")      # hidden by the rule the conversion carried: moves
+helpers.write(repo, ".planning/notes.log", "log\n")             # hidden by the rule the owner adds below: refused
+rr = run(wt, "apply", "--close", "1")
+s.eq("CR2 apply exits 0", rr.returncode, 0)
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".fwx/.gitignore", "*.log\n")                # the owner's own file, new after the conversion
+helpers.git(repo, "add", ".fwx/.gitignore")
+helpers.git(repo, "commit", "-q", "-m", "owner: ignore logs")
+record = os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst")
+s.eq("CR2 apply wrote down the destination it carried (a record in the git dir, one path per line)",
+     (rd(record) or "").replace("\0", "\n").split(), [".fwx/ui-reviews/.gitignore"])
+before = porcelain(repo)
+r = run(repo, "leftovers", "--apply")
+s.eq("CR2 leftovers refuses an untracked file that a .fwx/.gitignore the owner added after the merge would hide: exit", r.returncode, 2)
+s.ok("... it says 1 file, and which", "1 untracked file(s) would be ignored" in r.stderr and ".fwx/notes.log" in r.stderr, r.stderr[-300:])
+s.eq("... and nothing was moved (the file is reported as left, in place)",
+     (porcelain(repo), rd(os.path.join(repo, ".planning/notes.log")), os.path.isfile(os.path.join(repo, ".planning/ui-reviews/a.png"))), (before, "log\n", True))
+if os.path.lexists(os.path.join(repo, ".planning/notes.log")):
+    os.remove(os.path.join(repo, ".planning/notes.log"))
+r = run(repo, "leftovers", "--apply")
+s.eq("CR2 ... without that file the image, hidden by the rule the conversion carried, moves (exit)", r.returncode, 0)
+s.eq("... and is at its new place", rd(os.path.join(repo, ".fwx/ui-reviews/a.png")), "image")
+# a conversion made before the record existed has none: a file absent from the first base counts as carried, as it did
+repo, wt = mini({".planning/ui-reviews/.gitignore": "*.png\n", ".planning/ui-reviews/notes.md": "# n\n"})
+helpers.write(repo, ".planning/ui-reviews/a.png", "image")
+s.eq("CR2 (no record) apply exits 0", run(wt, "apply", "--close", "1").returncode, 0)
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+os.remove(os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst"))
+s.eq("CR2 ... with no record the carried rule's image moves as before (exit)", run(repo, "leftovers", "--apply").returncode, 0)
 
 # ---- R5: --close on a phase only the ROADMAP has, whose folder already holds an audit file ------------------------------------------
 HDR = "date\tkind\tsha\tdetail\trc\n"
