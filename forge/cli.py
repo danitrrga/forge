@@ -2021,7 +2021,7 @@ def build_parser():
     t.add_argument("--session", metavar="ID", help="with @: mark the profile that session ID runs (its record's; the project's default one "
                    "when it has none) as `current`; inside a session started by forge start, FORGE_SESSION is the default")
     t.set_defaults(fn=configure.cmd_list)
-    t = sub.add_parser("config", help="change a project's skills, sets, servers and options by flags, each in the layer that owns it",
+    t = sub.add_parser("config", help="change a project's skills, sets, servers and options, each in the layer that owns it: by --on/--off flags, or, with none and a terminal, on a selector screen",
                        formatter_class=RAW, epilog=examples("forge config myapp --off skill:grilling --on server:neon", "forge config --off option:ui",
                                                             "forge config myapp @marketing --off skill:grilling --apply", "forge config --names"))
     t.add_argument("targets", nargs="*", metavar="[NAME] [@PROFILE]", help="the project (default: this directory's) and, after it, one of its profiles, "

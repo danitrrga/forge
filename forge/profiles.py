@@ -408,8 +408,6 @@ def cmd_list(a):
     def usage(why):
         _say("forge list: %s; run `forge list @` for this project's profiles or `forge list @NAME` for one of them" % why, err=True)
         return 2
-    if a.target is None:
-        return usage("no argument")
     try:
         profile = parse_at(a.target)
     except ValueError as e:
