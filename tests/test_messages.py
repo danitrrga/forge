@@ -45,6 +45,10 @@ among them
 Fix round 2 (CodeRabbit, pull request 187), the register scenario, against forge/profiles.py as it was (6adc2cb), seen failing before the fix:
   "FAIL register 'My App': the suggested `forge new '.../projects/My App'` registers the folder (exit 0, project file my-app.claude.json): (1, False, None), want (0, True, True)"
   "FAIL register 'My App': --name only where the folder's name is no project name: False, want True"
+The fake claude of the in-place scenarios defers its end (a SIGTERM handler set before it runs `forge switch`) until it wrote `.switch`. Seen
+with a forced 3 s pause between `forge switch` and that write (not kept): the old fake, ended by the launcher meanwhile, left no `.switch`:
+  "FAIL inplace: exit 0, two claudes, the switch asked inside the fork was accepted: (0, 2, None), want (0, 2, 0)"
+and the new one, the same pause, passed.
 (Against 41bd475, the base of the pull request, the first round of this file saw 48 FAIL lines and the refusal of `forge switch` where it
 now opens a terminal.)
 Negative controls (CONTROLS: an engine copy with one line broken, the same scenario; the first message each printed, FORGE_MESSAGES_SHOW=1):
@@ -80,7 +84,7 @@ import sandbox  # noqa: E402
 import test_profiles as tp  # noqa: E402
 
 FAKE_CLAUDE = """#!%s
-import json, os, subprocess, sys, time
+import json, os, signal, subprocess, sys, time
 log = os.environ["FAKE_CLAUDE_LOG"]
 with open(log, "a") as fh:
     fh.write(json.dumps({"argv": sys.argv[1:], "session": os.environ.get("FORGE_SESSION"), "profile": os.environ.get("FORGE_PROFILE")}) + "\\n")
@@ -89,6 +93,8 @@ if os.environ.get("FAKE_CLAUDE_SLEEP"):
 target = os.environ.get("FAKE_CLAUDE_SWITCH")
 if target and not os.path.exists(log + ".switched"):  # the first claude of a launcher asks for a switch, as a session would, and waits to be ended
     open(log + ".switched", "w").close()
+    ended = []  # the launcher may end this process the moment the request is made: the end waits until the result is written
+    signal.signal(signal.SIGTERM, lambda *_: ended.append(1))
     if "--session-id" in sys.argv:  # claude's own variable: the id the session runs under
         os.environ["CLAUDE_CODE_SESSION_ID"] = sys.argv[sys.argv.index("--session-id") + 1]
     if os.environ.get("FAKE_BREAK_DIR"):  # what the launcher writes while it honours the request cannot be written (before the request: the
@@ -98,7 +104,9 @@ if target and not os.path.exists(log + ".switched"):  # the first claude of a la
     r = subprocess.run([sys.executable, os.environ["FAKE_FORGE"], "switch", "@" + target], capture_output=True, text=True)
     with open(log + ".switch", "w") as fh:
         fh.write(json.dumps([r.returncode, r.stdout, r.stderr]))
-    time.sleep(30)
+    t0 = time.time()
+    while not ended and time.time() - t0 < 30:  # waits to be ended, then ends
+        time.sleep(0.05)
 """
 BAD_CLAUDE = "#!/nonexistent/interpreter\n"  # passes `which`, cannot be executed
 FAKE_TERMINAL = """#!%s
