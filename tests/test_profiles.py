@@ -346,10 +346,16 @@ def main():
     check("f: a folder that is no project is exit 2", code == 2 and "not inside a project" in err, (code, out, err))
     code, out, err = w.forge_cmd(["list", "@", "--names"], cwd=tree)
     check("f: a linked worktree is its main checkout's project", code == 0 and out.split() == ["code", "toy-b", "list"], (code, out, err))
-    for args in (["list"], ["list", "multi"]):
-        code, out, err = w.forge_cmd(args, cwd=w.pp("multi"))
-        check("f: forge %s is exit 2 with one line" % " ".join(args), code == 2 and out == "" and len(err.strip().splitlines()) == 1
-              and "forge list:" in err and "@NAME" in err, (code, out, err))
+    # `forge list` and `forge list NAME` print the project cards since the first half of 4.4 U3b (tests/test_configure.py has the
+    # cards); here only that they are not the profile forms: exit 0, a card for each project, the `@` forms untouched above.
+    # Control (a deliberately wrong expectation, run once): `code == 2` in the first check gives "FAIL f: forge list prints a card per
+    # project, exit 0 -- (0, 'errs  @S@/projects/errs ...".
+    code, out, err = w.forge_cmd(["list"], cwd=w.pp("multi"))
+    names = ("multi", "errs", "none", "frozen-p")
+    check("f: forge list prints a card per project, exit 0", code == 0 and all("%s  " % n in out for n in names), (code, out, err))
+    code, out, err = w.forge_cmd(["list", "multi"], cwd=w.pp("none"))
+    check("f: forge list multi prints that project's card, whatever the folder, exit 0",
+          code == 0 and out.startswith("multi  ") and "profiles   code (default), toy-b, list" in out, (code, out, err))
 
     # g: forge list @NAME.
     code, out, err = w.forge_cmd(["list", "@toy-b"], cwd=w.pp("multi"))
