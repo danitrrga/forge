@@ -1993,8 +1993,8 @@ r = run(wt, "apply", "--close", "1")
 s.eq("LK1 a committed .planning/phases link: apply exits 0 and holds nothing of its target", (r.returncode, LKSENT in r.stdout + r.stderr, staged_holding(wt, LKSENT)), (0, False, []))
 # a link that is ignored and never parsed (the vendored copies under knowledge/) changes nothing: no note, no line
 repo = helpers.toy_repo(dict(LK_BASE, **{".gitignore": ".planning/knowledge/sources/\n"}))
-os.makedirs(os.path.join(repo, ".planning/knowledge/sources/kaneo"))
-os.symlink("..", os.path.join(repo, ".planning/knowledge/sources/kaneo/up"))
+os.makedirs(os.path.join(repo, ".planning/knowledge/sources/vendored"))
+os.symlink("..", os.path.join(repo, ".planning/knowledge/sources/vendored/up"))
 wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
 rp = run(wt, "plan", "--close", "1")
 s.ok("LK1 an ignored link nobody parses: plan exits 0 and says nothing of a symbolic link", rp.returncode == 0 and "symbolic link" not in rp.stdout + rp.stderr
