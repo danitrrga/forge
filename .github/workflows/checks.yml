@@ -64,7 +64,7 @@ jobs:
   # and the on-demand guard mutants, run one after the other at nice 19 (81 files, about 26 minutes here; test_run.py alone is ten).
   # Before this job the suite ran only on the owner's machine, so a pull request that broke tests/test_profiles.py showed green.
   # A test that exits 77 is a WARN `NOT RUN, NOT ARMED`: it does not fail the run, so the list is kept here, and a new
-  # one is to be read in the log. Two tests run `unshare -rn` (test_write_guard, test_sync_fixture, test_relink_skills): Ubuntu 24.04
+  # one is to be read in the log. Three tests run `unshare -rn` (test_write_guard, test_sync_fixture, test_relink_skills): Ubuntu 24.04
   # runners refuse that to an unprivileged user, so the first step lifts the restriction for this job's VM (only).
   # The two WARN lines of the first run, both a thing this runner lacks:
   #   tests/test_new.py: compares `forge new`'s generic .gitignore text with the head of pull request 182 (revision 68576e8), which a
