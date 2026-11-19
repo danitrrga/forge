@@ -26,6 +26,13 @@ failure message is what is quoted, and the assertion must produce it.
       control (the row does nothing): `the new-profile row made no profile`
   - the plan shows every answer, and the dry-run writes nothing.
       control (a plan without the answers): `the plan does not show`
+  - CodeRabbit's round on pull request 191 (each seen failing against the code before it):
+      the common layer's memory plugin counts as a backend: `common memory plugin: exit 0, want 2 saying one per project`;
+      a restore that fails says where the original is saved and never to remove the file: `the message does not say how to put the project file back`;
+      the creation lock is held while the file is put back: `lock released before rollback` (the probe printed `LOCK FREE DURING RESTORE`);
+      a chosen skill's opt-out is written, not only planned: `opt-out kept: alpha chosen, common_opt_out of demo is still ['alpha']`;
+      an extras row or an existing definition edited while the plan waits stops the run: `an extras row edited meanwhile: exit 0, want 2 saying changed meanwhile`,
+      `a definition edited meanwhile (@code): exit 0, want 2 saying changed meanwhile`.
 Also: the old behaviour (no new flag, no terminal) is test_new.py's, unchanged.
 
 Seen failing first (this file, before forge/ask.py existed): `forge new demo --profiles code ...` died with `unrecognized arguments:
@@ -82,6 +89,59 @@ def typed(prompt=""):
 builtins.input = typed
 ask.make_asker = lambda: ask.Asker(keys=spec["keys"], lines=[], interactive=True)
 sys.exit(configure.cmd_config(argparse.Namespace(targets=["demo"], on=None, off=None, apply=False, yes=False, json=False, names=False)))
+'''
+# `forge new @code` in a made project with lib.write_text failing like a full disk: the first write of the project file lands and then fails,
+# and so does the restore after it.
+RESTORE_DRIVER = '''import sys
+sys.path.insert(0, sys.argv[1])
+from forge import cli, lib
+real, seen = lib.write_text, []
+def write_text(path, text, *a, **kw):
+    if path.endswith(".claude.json") and "projects" in path.split("/"):
+        seen.append(path)
+        if len(seen) == 1:
+            real(path, text, *a, **kw)
+            raise OSError("injected")
+        raise OSError("disk full")
+    return real(path, text, *a, **kw)
+lib.write_text = write_text
+sys.exit(cli.main(sys.argv[2:]))
+'''
+# The same failure, with the restore preceded by a try for the creation lock from a second descriptor (what another `forge new` would do).
+LOCK_DRIVER = '''import fcntl, os, sys
+sys.path.insert(0, sys.argv[1])
+from forge import cli, lib
+real, seen = lib.write_text, []
+def write_text(path, text, *a, **kw):
+    if path.endswith(".claude.json") and "projects" in path.split("/"):
+        seen.append(path)
+        if len(seen) == 1:
+            real(path, text, *a, **kw)
+            raise OSError("injected")
+        with open(os.path.join(lib.STATE, "new.lock"), "a") as fh:
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                print("LOCK FREE DURING RESTORE")
+            except BlockingIOError:
+                print("LOCK HELD DURING RESTORE")
+    return real(path, text, *a, **kw)
+lib.write_text = write_text
+sys.exit(cli.main(sys.argv[2:]))
+'''
+# A file edited after the answers and before the first write (what the owner or another run does while the plan waits for its yes): the
+# edit lands when lib.may_write is asked, which is the last call before the lock.
+EDIT_DRIVER = '''import json, sys
+sys.path.insert(0, sys.argv[1])
+from forge import cli, lib
+spec = json.load(open(sys.argv[2]))
+real = lib.may_write
+def may_write():
+    for path, text in spec["edits"].items():
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write(text)
+    return real()
+lib.may_write = may_write
+sys.exit(cli.main(spec["argv"]))
 '''
 ORDER = ["profiles", "sets", "skills", "servers", "memory", "stack"]
 
@@ -487,6 +547,121 @@ def a_common_memory_plugin(w):
     return bad
 
 
+def a_restore_fails(w):
+    """The restore of the project file fails too: the message says the original is saved and how to put it back, never to remove the
+    project file (that is its registration), and the copy holds the original text."""
+    bad = made_demo(w)
+    if bad:
+        return bad
+    project_file = w.path("config", "projects", "demo.claude.json")
+    with open(project_file, encoding="utf-8") as fh:
+        original = fh.read()
+    d = write_driver(w)
+    with open(os.path.join(d, "restore.py"), "w") as fh:
+        fh.write(RESTORE_DRIVER)
+    r = subprocess.run([sys.executable, os.path.join(d, "restore.py"), w.root, "new", "@code", "--sets", "ARCH_SET", "--server", "none", "--apply"],
+                       cwd=w.project("demo"), env=w.env, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    out = r.stdout + r.stderr
+    state = os.path.join(w.home, ".local", "state", "forge")
+    copies = [f for f in os.listdir(state) if f.startswith("new-restore-")] if os.path.isdir(state) else []
+    if r.returncode != 1 or "injected" not in out:
+        bad.append("restore failure: the injected failure did not stop the run: exit %d: %s" % (r.returncode, tail(out)))
+    if "remove by hand" in out or "put it back with: cp" not in out:
+        bad.append("restore failure: the message does not say how to put the project file back: %s" % tail(out))
+    if len(copies) != 1 or open(os.path.join(state, copies[0]), encoding="utf-8").read() != original:
+        bad.append("restore failure: the saved copy is not the original text: %s" % copies)
+    return bad
+
+
+def a_lock_through_rollback(w):
+    """The creation lock is still held while the project file is put back, so a second `forge new` never reads the replaced file."""
+    bad = made_demo(w)
+    if bad:
+        return bad
+    d = write_driver(w)
+    with open(os.path.join(d, "lock.py"), "w") as fh:
+        fh.write(LOCK_DRIVER)
+    r = subprocess.run([sys.executable, os.path.join(d, "lock.py"), w.root, "new", "@code", "--sets", "ARCH_SET", "--server", "none", "--apply"],
+                       cwd=w.project("demo"), env=w.env, capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    out = r.stdout + r.stderr
+    if r.returncode != 1 or "LOCK HELD DURING RESTORE" not in out:
+        bad.append("lock released before rollback: exit %d: %s" % (r.returncode, tail(out)))
+    return bad
+
+
+def edited_run(w, argv, edits, cwd=None):
+    """(exit code, output) of `forge argv` with `edits` ({path: text}) written between the answers and the first write."""
+    d = write_driver(w)
+    with open(os.path.join(d, "edit.py"), "w") as fh:
+        fh.write(EDIT_DRIVER)
+    write_json(os.path.join(d, "edit.json"), {"argv": argv, "edits": edits})
+    r = subprocess.run([sys.executable, os.path.join(d, "edit.py"), w.root, os.path.join(d, "edit.json")], cwd=cwd or w.cwd, env=w.env,
+                       capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
+    return r.returncode, r.stdout + r.stderr
+
+
+def a_optout_persisted(w):
+    """A skill the owner picks that the project's opt-out row (skill_keep.common_opt_out) switches off: the opt-out is lifted in config/forge.json,
+    not only in the plan, or sync leaves the chosen skill off."""
+    path = w.path("config", "forge.json")
+    doc = test_new.read_json(path)
+    doc["skill_keep"]["common_skills"] = ["alpha"]
+    doc["skill_keep"]["common_opt_out"] = {"demo.claude.json": ["alpha"]}
+    write_json(path, doc)
+    code, out = w.forge("new", "demo", "--stack", "generic", *answered(), "--skills", "alpha", "--apply")
+    opt = ((test_new.read_json(path).get("skill_keep") or {}).get("common_opt_out") or {}).get("demo.claude.json")
+    if project_doc(w) is None or (opt and "alpha" in opt):
+        return ["opt-out kept: alpha chosen, common_opt_out of demo is still %s (exit %d): %s" % (opt, code, tail(out))]
+    return []
+
+
+def a_extras_row_edited(w):
+    """The extras row of the new project is edited while the plan waits: nothing is written over it (exit 2, forge.json as the edit left it)."""
+    path = w.path("config", "forge.json")
+    doc = test_new.read_json(path)
+    doc["skill_keep"]["extras"] = {"demo.claude.json": ["alpha"]}
+    write_json(path, doc)
+    edited = json.loads(json.dumps(doc))
+    edited["skill_keep"]["extras"]["demo.claude.json"] = ["alpha", "beta"]
+    text = json.dumps(edited, indent=2) + "\n"
+    code, out = edited_run(w, ["new", "demo", "--stack", "generic", *answered(), "--skills", "gamma", "--apply"], {path: text})
+    with open(path, encoding="utf-8") as fh:
+        now = fh.read()
+    bad = []
+    if code != 2 or "changed meanwhile" not in out:
+        bad.append("an extras row edited meanwhile: exit %d, want 2 saying changed meanwhile: %s" % (code, tail(out)))
+    if now != text or project_doc(w) is not None:
+        bad.append("an extras row edited meanwhile was overwritten or a project was made: row %s" % (
+            ((test_new.read_json(path).get("skill_keep") or {}).get("extras") or {}).get("demo.claude.json")))
+    return bad
+
+
+DEF_CODE = {"description": "a", "color": "", "skills": [], "plugins": [], "server_kinds": [], "permissions": {}, "env": {}}
+
+
+def a_definition_edited(w):
+    """An existing profile definition the answers were checked against is edited while the plan waits: `forge new @code` and `forge new NAME
+    --profiles code` both stop (exit 2, nothing written)."""
+    folder = w.path("config", "profile-defs")
+    os.makedirs(folder)
+    def_path = os.path.join(folder, "code.json")
+    write_json(def_path, DEF_CODE)
+    text = json.dumps(dict(DEF_CODE, description="b"), indent=2) + "\n"
+    bad = made_demo(w)
+    if bad:
+        return bad
+    before = project_doc(w)
+    code, out = edited_run(w, ["new", "@code", "--sets", "ARCH_SET", "--server", "none", "--apply"], {def_path: text}, cwd=w.project("demo"))
+    if code != 2 or "changed meanwhile" not in out or project_doc(w) != before:
+        bad.append("a definition edited meanwhile (@code): exit %d, want 2 saying changed meanwhile, project file unchanged: %s" % (code, tail(out)))
+    write_json(def_path, DEF_CODE)
+    code, out = edited_run(w, ["new", "other-demo", "--stack", "generic", "--profiles", "code", "--sets", "none", "--sets", "@code:ARCH_SET",
+                               "--server", "none", "--memory", "none", "--apply"], {def_path: text})
+    if code != 2 or "changed meanwhile" not in out or project_doc(w, "other-demo") is not None:
+        bad.append("a definition edited meanwhile (a project): exit %d, want 2 saying changed meanwhile, no project: %s" % (code, tail(out)))
+    return bad
+
+
 def a_memory_hindsight(w):
     """Hindsight on: the memory servers reach the project file (the sync that follows cannot finish in a toy world, so the exit is not 0)."""
     code, out = w.forge("new", "demo", "--stack", "generic", *answered(memory="hindsight"), "--apply")
@@ -637,9 +812,9 @@ def a_help(w):
     return bad
 
 
-INJECT_PROFILE = (NEW, '            lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n',
-                  '            raise OSError("injected")\n            lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n')
-INJECT = (NEW, '            if row or extras:\n', '            raise OSError("injected")\n            if row or extras:\n')
+INJECT_PROFILE = (NEW, '                lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n',
+                  '                raise OSError("injected")\n                lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n')
+INJECT = (NEW, '                if row or extras or lifted:\n', '                raise OSError("injected")\n                if row or extras or lifted:\n')
 LISTS_BLOCK = '''    if interactive and not lists_answered(flags, scope):  # the two questions, or none of them
         stack_sets = set(ctx.stack["skill_sets"]) if ctx.stack else set()
         rows = [(s, ctx.set_label(s) + (" (the stack's)" if s in stack_sets else ""), False) for s in ctx.sets]
@@ -678,7 +853,7 @@ CONTROLS = [
     ("a profile with nothing answered", a_nothing_answered, [NO_RESOLVE], "a profile with nothing was made", {}),
     ("definitions' folder not undone", a_failure_after_write, [INJECT, (NEW, '        undo.append(("dir", folder))\n', "        pass\n")],
      "left behind", {}),
-    ("@NAME's rollback taken out", a_profile_failure, [INJECT_PROFILE, (NEW, "        rollback(steps=undo)\n", "        pass\n")], "left behind", {}),
+    ("@NAME's rollback taken out", a_profile_failure, [INJECT_PROFILE, (NEW, "                complete = rollback(steps=undo)  # still", "                complete = True  # still")], "left behind", {}),
     ("the new-profile row does nothing", a_screen_row, [("forge/configure.py", "                return new_profile(name, prof)", "                return 0")],
      "the new-profile row made no profile", {}),
     ("a plan without the answers", a_plan_shows_answers, [(NEW, "    for line in describe(ctx, ans, rows, new_defs):\n        print(line)\n    print(\"  then",
@@ -701,6 +876,22 @@ CONTROLS = [
     ("the common memory plugin not counted", a_common_memory_plugin,
      [(ASK, "    common = list(keep.get(\"common_plugins\") or []) if plugins else []\n", "    common = []\n")],
      "common memory plugin", {"mempalace": True}),
+    ("the restore failure said to remove the file", a_restore_fails, [(NEW, "                    unrestored.append((path, rest[1], e))\n", "                    stuck.append(path)\n")],
+     "the message does not say how to put the project file back", {}),
+    ("the rollback after the lock", a_lock_through_rollback,
+     [(NEW, "                complete = rollback(steps=undo)  # still", "                complete = True  # still"),
+      (NEW, '    except BaseException as e:\n        if not isinstance(e, Exception):\n            print("! forge new: stopped%s" % end_note(made, complete))\n            raise\n'
+            '        print("! forge new: %s%s" % (e, end_note(made, complete)))\n        return 2 if isinstance(e, TimeoutError) else 1\n    print("start it',
+       '    except BaseException as e:\n        rollback(steps=undo)\n        if not isinstance(e, Exception):\n            raise\n'
+       '        print("! forge new: %s" % e)\n        return 2 if isinstance(e, TimeoutError) else 1\n    print("start it')],
+     "lock released before rollback", {}),
+    ("the opt-out lifted only in the plan", a_optout_persisted,
+     [(NEW, "                lifted = planned_opt != opt_out_row(ctx.draft.start[\"forge\"], key)", "                lifted = False")], "opt-out kept", {}),
+    ("an extras row overwritten", a_extras_row_edited,
+     [(NEW, "                if skills_read(doc, key) != skills_read(ctx.draft.start[\"forge\"], key):", "                if False:")],
+     "an extras row edited meanwhile", {}),
+    ("a definition not compared", a_definition_edited, [(NEW, "    for name, was in ctx.defs_read.items():", "    for name, was in []:")],
+     "a definition edited meanwhile (@code)", {}),
     ("set_docs not checked", a_set_docs_type, [(ASK, "        elif not isinstance(self.docs, dict):", "        elif False:")], "set_docs 'oops'", {}),
     ("Ctrl-C at the profiles question", a_ctrl_c, [KEYBOARD], "Ctrl-C at the profiles question", {}),
     ("Ctrl-C at the new profile's name", a_ctrl_c,
@@ -740,7 +931,9 @@ PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_promp
          ("cancelled", a_cancelled, {}), ("partial answers", a_partial_answers, {}), ("resolves", a_resolves, {}),
          ("own account server", a_own_account_server, {}), ("memory mempalace", a_memory_mempalace, {"mempalace": True}),
          ("one backend", a_one_backend, {"mempalace": True}),
-         ("common memory plugin", a_common_memory_plugin, {"mempalace": True}), ("set_docs type", a_set_docs_type, {}), ("ctrl-c", a_ctrl_c, {}),
+         ("common memory plugin", a_common_memory_plugin, {"mempalace": True}),
+         ("restore fails", a_restore_fails, {}), ("lock through rollback", a_lock_through_rollback, {}),
+         ("opt-out persisted", a_optout_persisted, {}), ("extras row edited", a_extras_row_edited, {}), ("definition edited", a_definition_edited, {}), ("set_docs type", a_set_docs_type, {}), ("ctrl-c", a_ctrl_c, {}),
          ("sets alone", a_sets_alone, {}), ("stack question", a_stack_question, {}), ("scoped", a_scoped, {}),
          ("confirm no", a_confirm_no, {}), ("frozen", a_frozen, {}), ("two servers one kind", a_two_servers_one_kind, {}),
          ("profile twice", a_profile_twice, {}), ("help", a_help, {})]

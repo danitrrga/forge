@@ -171,6 +171,7 @@ class Context:
     def __init__(self, name, forge, proj, stack):
         self.name, self.forge, self.proj, self.stack = name, forge, proj, stack
         self.draft = Draft(name, forge, proj)
+        self.defs_read = {}  # {profile: its definition} for each existing definition the answers were checked against (apply fills it)
         keep = forge.get("skill_keep") if isinstance(forge.get("skill_keep"), dict) else {}
         self.sets, self.docs = keep.get("sets") or {}, keep.get("set_docs") or {}
         self.error = None  # why the tables of config/forge.json cannot be asked about: gather() says it and nothing is asked
@@ -522,6 +523,8 @@ def apply(ctx, ans):
         except profiles.ProfileError as e:
             problems.append(str(e))
             continue
+        if existing is not None:
+            ctx.defs_read[scope] = copy.deepcopy(existing)
         kinds = set(existing["server_kinds"]) if existing is not None else None
         row = profile_row(ctx, scope, target, kinds, problems)
         rows[scope] = row
