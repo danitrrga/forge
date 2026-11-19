@@ -1747,6 +1747,16 @@ helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
 os.remove(os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst"))
 s.eq("CR2 ... with no record the carried rule's image moves as before (exit)", run(repo, "leftovers", "--apply").returncode, 0)
 
+# ---- CR3: two sources whose carried .gitignore lands on one destination are refused while planning, naming both -------------------------
+# Red on c42c7ba: "FAIL: CR3 plan with two .gitignore files carried to one destination exits 2: got 0, want 2" (and apply: "got 1, want 2", half done and rolled back)
+repo, wt = mini({".planning/phases/.gitignore": "shots/\n", ".planning/milestones/v1.0-phases/.gitignore": "fonts/\n"})
+rp = run(wt, "plan", "--close", "1")
+s.eq("CR3 plan with two .gitignore files carried to one destination exits 2", rp.returncode, 2)
+s.ok("... naming the destination and both sources", ".fwx/milestones/v1/phases/.gitignore" in rp.stderr and ".planning/phases/.gitignore" in rp.stderr
+     and ".planning/milestones/v1.0-phases/.gitignore" in rp.stderr, rp.stderr[-400:])
+roots = (wt, os.path.join(repo, ".git"))
+refusal("CR3 apply with two .gitignore files carried to one destination", wt, ["apply", "--close", "1"], "two files for one destination", roots)
+
 # ---- R5: --close on a phase only the ROADMAP has, whose folder already holds an audit file ------------------------------------------
 HDR = "date\tkind\tsha\tdetail\trc\n"
 repo, wt = mini()

@@ -900,6 +900,9 @@ def build(repo, src, opts):
     for f in files:
         if f["dest"] and f["action"] in ("keep", "leftover_move"):
             dests.setdefault(f["dest"], []).append(f["src"])
+    for sc in scopes:       # a carried `.gitignore` is written anew: its destination does not exist yet, so only this sees two of them
+        for inner, (target, _rules) in sc.carried.items():
+            dests.setdefault(target, []).append("%s/%s%s" % (SCOPE_SRC, sc.prefix, inner))
     clash = ["%s <- %s" % (d, ", ".join(s)) for d, s in sorted(dests.items()) if len(s) > 1]
     if clash:
         raise Refuse("two files for one destination:\n  " + "\n  ".join(clash))
