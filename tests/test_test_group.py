@@ -469,6 +469,7 @@ eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, 
    cli.start_order(["hooks/test_guard_tool_use.py", "tests/test_new.py", "tests/test_nosuch.py", "tests/test_switch.py", "tests/test_run.py",
                     "tests/test_lib.py"]),
    ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
+ok("start order: SLOW_FIRST names at least one file", len(cli.SLOW_FIRST) > 0, repr(cli.SLOW_FIRST))
 tracked = subprocess.run(["git", "-C", sandbox.FORGE, "ls-files"], capture_output=True, text=True, check=True).stdout.split()
 ok("start order: every SLOW_FIRST name is a tracked file (a renamed test would leave the list stale)",
    all(f in tracked for f in cli.SLOW_FIRST), repr([f for f in cli.SLOW_FIRST if f not in tracked]))
