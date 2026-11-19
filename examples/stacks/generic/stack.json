@@ -1,0 +1,7 @@
+{
+  "description": "Anything else: a static site, a script, a folder of documents. Secrets, editors and OS files ignored, nothing more.",
+  "servers": [],
+  "plugins": ["context7@claude-plugins-official"],
+  "checks": [],
+  "skill_sets": []
+}
