@@ -1093,17 +1093,15 @@ def lock(timeout=60):
         yield
 
 
-def _lowest_cpu_priority():
-    os.setpriority(os.PRIO_PROCESS, 0, 19)  # absolute, whatever the parent's nice is; raising it needs no privilege
-
-
 def run_low(argv, **kw):
     """subprocess.run(argv, **kw) at the lowest CPU priority (nice 19) and, where `ionice` exists, in the
     idle I/O class: the one place forge starts a heavy child that must not take the machine from a
     foreground tool (forge test; a voice detector once went from 0.3 s to 50+ s under it).
-    The priority is inherited by the child's own children."""
-    ionice = shutil.which("ionice")
-    return subprocess.run(([ionice, "-c3"] if ionice else []) + list(argv), preexec_fn=_lowest_cpu_priority, **kw)
+    The priority is inherited by the child's own children. It is set by the `nice` and `ionice` programs, not by a
+    `preexec_fn`: `forge test --jobs N` starts these children from threads, and Python's docs say a preexec_fn can
+    deadlock the child when threads exist. (`nice -n 19` adds 19 to the parent's value, which the kernel caps at 19.)"""
+    ionice, nice = shutil.which("ionice"), shutil.which("nice")
+    return subprocess.run(([ionice, "-c3"] if ionice else []) + ([nice, "-n", "19"] if nice else []) + list(argv), **kw)
 
 
 def run(args, capture=False, env=None, low=False):

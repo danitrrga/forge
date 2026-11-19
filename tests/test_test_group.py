@@ -195,7 +195,7 @@ for name in ("nosuch", "engine", "hooks"):
     eq("unknown group %s: nothing on stdout" % name, r.stdout, "")
     ok("unknown group %s: one line on stderr that names it and lists the groups" % name,
        r.stderr.strip().splitlines() == ["forge test: unknown group %s (groups: fwx)" % name], repr(r.stderr))
-for label, args in (("--jobs", ("--jobs", "2")), ("--expect-not-run", ("--expect-not-run", "test_top.py"))):
+for label, args in (("--expect-not-run", ("--expect-not-run", "test_top.py")),):
     r = forge(repo, *args)
     eq("%s with no group: exit code" % label, r.returncode, 2)
     ok("%s with no group: says it needs a group, nothing ran" % label,
@@ -413,6 +413,113 @@ for jobs in ("1", "3"):
 case("--jobs together with --expect-not-run", NO_BAD, 0, "3 test file(s): 2 passed, 0 failed, 0 not run, 1 expected not run",
      args=("--jobs", "3", "--expect-not-run", "tests/test_skip.py"))
 case("--jobs 1 and a failing file: same as before", FILES, 1, "4 test file(s): 2 passed, 1 failed, 1 not run", args=("--jobs", "1"))
+
+# ---- no group, --jobs N: the repository's own files run N at once; default and output as with one at a time --------------------
+# Written first and run on the code before --jobs was allowed with no group (each line is the first FAIL it printed):
+#   FAIL: no group, --jobs 2: two files running at once see each other: exit code: got 2, want 0
+#   FAIL: no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind: forge test: --jobs needs a group (groups: fwx)
+#   FAIL: no group, --jobs 0 is a usage error naming --jobs: stderr, nothing ran: forge test: --jobs needs a group (groups: fwx)
+#   (9 of 183 checks failed.)
+# Controls (the engine copy mutated in one place; the first FAIL each printed):
+#   one worker (`workers = 1` forced after the check): FAIL: no group, --jobs 2: two files running at once see each other: exit code: got 1, want 0
+#   results printed in finish order (`futures[f].result() for f in todo` -> `as_completed`): FAIL: no group, --jobs 4 prints the lines in file order: got ['test_guard_mutants.py', 'test_ok.py', 'test_bad.py', ...]
+#   the failing file's result dropped (`for f in todo if f != 'test_bad.py'`): FAIL: no group, --jobs 1 and --jobs 4 print the same: exit code: got 0, want 1
+d = sandbox.mkdtemp("forge-group-top-")
+rv = lambda me, other: RENDEZVOUS % {"d": d, "me": me, "other": other, "wait": 60}
+repo = toy({}, top={"test_a.py": rv("a", "b"), "test_b.py": rv("b", "a")})
+r = forge(repo, "--jobs", "2")
+eq("no group, --jobs 2: two files running at once see each other: exit code", r.returncode, 0)
+eq("no group, --jobs 2: summary", last(r), "SUMMARY: 2 passed, 0 warnings, 0 failures")
+d = sandbox.mkdtemp("forge-group-top-")
+repo = toy({}, top={"test_a.py": RENDEZVOUS % {"d": d, "me": "a", "other": "b", "wait": 1},
+                    "test_b.py": RENDEZVOUS % {"d": d, "me": "b", "other": "a", "wait": 1}})
+r = forge(repo)
+eq("no group, no --jobs: one file after the other (the first cannot see the second): exit code", r.returncode, 1)
+ok("no group, no --jobs: one FAIL, one PASS", last(r) == "SUMMARY: 1 passed, 0 warnings, 1 failures", r.stdout + r.stderr)
+MIXED = {"test_ok.py": "pass\n", "test_big.py": "x = 1\n" * 400 + "pass\n", "test_bad.py": BAD, "test_skip.py": SKIP,
+         "hooks/test_guard_mutants.py": "raise SystemExit(1)\n", "tests/test_zeta.py": "pass\n"}
+repo = toy({}, top=MIXED)
+one = forge(repo, "--jobs", "1")
+four = forge(repo, "--jobs", "4")
+ok("no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind", len(one.stdout.splitlines()) == 7 and
+   [l.split()[0] for l in sorted(one.stdout.splitlines()[:-1])] == ["FAIL", "PASS", "PASS", "PASS", "SKIP", "WARN"] , one.stdout + one.stderr)
+eq("no group, --jobs 1 and --jobs 4 print the same: stdout", four.stdout, one.stdout)
+eq("no group, --jobs 1 and --jobs 4 print the same: stderr", four.stderr, one.stderr)
+eq("no group, --jobs 1 and --jobs 4 print the same: exit code", four.returncode, one.returncode)
+eq("no group, --jobs 4 prints the lines in file order", [l.split()[1] for l in four.stdout.splitlines()[:-1]],
+   ["test_guard_mutants.py", "test_bad.py", "test_big.py", "test_ok.py", "test_skip.py", "test_zeta.py"])
+ok("no group, --jobs 4: a failure is a FAIL line and exit 1; a skip is a WARN; the on-demand file is a SKIP, not run",
+   four.returncode == 1 and "FAIL  test_bad.py" in four.stdout and "WARN  test_skip.py" in four.stdout and "no such tool" in four.stdout
+   and "SKIP  test_guard_mutants.py" in four.stdout and last(four) == "SUMMARY: 3 passed, 1 warnings, 1 failures", four.stdout)
+for label, args in (("--jobs 0", ("--jobs", "0")), ("--jobs abc", ("--jobs", "abc")), ("--jobs given twice", ("--jobs", "2", "--jobs", "3")),
+                    ("--jobs=", ("--jobs=",))):
+    r = forge(repo, *args)
+    eq("no group, %s is a usage error: exit code" % label, r.returncode, 2)
+    ok("no group, %s is a usage error naming --jobs: stderr, nothing ran" % label,
+       r.stderr.startswith("forge test:") and "--jobs" in r.stderr and "needs a group" not in r.stderr and "Traceback" not in r.stderr
+       and r.stdout == "", r.stdout + r.stderr)
+
+# ---- --jobs N start order: the slow files first, then the largest ---------------------------------------------------------------
+# Written first and run on the code before start_order existed (the one FAIL it printed):
+#   FAIL: start order: ...: AttributeError: module 'forge.cli' has no attribute 'start_order'
+# Control (SLOW_FIRST emptied in a copy of forge/cli.py): FAIL: start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name
+from forge import cli  # noqa: E402
+
+eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name",
+   cli.start_order(["hooks/test_guard_tool_use.py", "tests/test_new.py", "tests/test_nosuch.py", "tests/test_switch.py", "tests/test_run.py",
+                    "tests/test_lib.py"]),
+   ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
+ok("start order: SLOW_FIRST names at least one file", len(cli.SLOW_FIRST) > 0, repr(cli.SLOW_FIRST))
+tracked = subprocess.run(["git", "-C", sandbox.FORGE, "ls-files"], capture_output=True, text=True, check=True).stdout.split()
+ok("start order: every SLOW_FIRST name is a tracked file (a renamed test would leave the list stale)",
+   all(f in tracked for f in cli.SLOW_FIRST), repr([f for f in cli.SLOW_FIRST if f not in tracked]))
+
+# ---- --jobs N and Ctrl+C: the files still queued do not start --------------------------------------------------------------------
+# Written first and run on the code before the pool was shut down with cancel_futures (the one FAIL it printed, 6 files started, not 2):
+#   FAIL: --jobs 2, SIGINT: only the 2 files that were running ever started: got 6, want 2
+# Control (`cancel_futures=True` taken out): the same FAIL.
+SLEEPY = ('import os, time\n'
+          'open(os.path.join(%(d)r, "started-%(n)s"), "w").close()\n'
+          'time.sleep(2)\n')
+
+
+def interrupted(jobs):
+    """`forge test --jobs JOBS` on 6 files that each mark their start and sleep 2 s; SIGINT to the runner alone once two have started.
+    (returncode, names that started, stderr)"""
+    d = sandbox.mkdtemp("forge-group-int-")
+    repo = toy({}, top={"test_s%d.py" % i: SLEEPY % {"d": d, "n": i} for i in range(6)})
+    runner = subprocess.Popen([sys.executable, os.path.join(repo, "bin", "forge"), "test", "--jobs", jobs], cwd=repo, env=env(),
+                              stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    try:
+        end = time.time() + 60
+        while time.time() < end and len(os.listdir(d)) < min(2, int(jobs)) and runner.poll() is None:
+            time.sleep(0.05)
+        if runner.poll() is None:
+            runner.send_signal(signal.SIGINT)
+        try:
+            out, err = runner.communicate(timeout=60)
+        except subprocess.TimeoutExpired:
+            runner.kill()
+            out, err = runner.communicate()
+            err += " [the runner did not exit within 60 s of the signal]"
+        return runner.returncode, sorted(os.listdir(d)), err
+    finally:
+        if runner.poll() is None:
+            runner.kill()
+            runner.wait()
+        for pipe in (runner.stdout, runner.stderr):
+            if pipe:
+                pipe.close()
+
+
+rc1, started1, err1 = interrupted("1")
+rc2, started2, err2 = interrupted("2")
+eq("--jobs 1, SIGINT: the file that was running is the only one that started", len(started1), 1)
+eq("--jobs 2, SIGINT: only the 2 files that were running ever started", len(started2), 2)
+eq("--jobs 2, SIGINT: the exit code is the one of an interrupted --jobs 1 run", rc2, rc1)
+ok("--jobs 1, SIGINT: it was an interruption (non-zero exit)", rc1 != 0, repr((rc1, err1[-200:])))
+ok("--jobs 2, SIGINT: the interruption is named on stderr as with --jobs 1", ("KeyboardInterrupt" in err2) == ("KeyboardInterrupt" in err1),
+   err2[-300:])
 
 sandbox.cleanup(bool(fails))
 if checks == 0:

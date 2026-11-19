@@ -98,7 +98,9 @@ import signal
 import subprocess
 import sys
 import time
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
@@ -188,22 +190,31 @@ for act in step.get("do", []):
 sys.exit(step.get("exit", 0))
 """
 failures = []
-_sink = [failures]  # where want() writes: the real run's list, or the one of a control's scenario
+
+
+class Sinks(threading.local):
+    """Where want() writes: the real run's list, or the one of a control's scenario. One stack per thread, so that controls can run at once."""
+
+    def __init__(self):
+        self.stack = [failures]
+
+
+_sink = Sinks()
 
 
 def want(label, got, expected):
     if got != expected:
-        _sink[-1].append("%s: %s, want %s" % (label, got, expected))
+        _sink.stack[-1].append("%s: %s, want %s" % (label, got, expected))
 
 
 def collect(fn, c):
     """The failure lines of one scenario against one world, kept apart from the real run's."""
     mine = []
-    _sink.append(mine)
+    _sink.stack.append(mine)
     try:
         return mine + fn(c)
     finally:
-        _sink.pop()
+        _sink.stack.pop()
 
 
 class Ctx:
@@ -764,24 +775,35 @@ def main():
         sandbox.cleanup()  # also when a case raised: a test that leaves a folder in /tmp is a bug in that test (ORDERS 14)
 
 
+def control(row):
+    """The failure lines of one control: its mutation must make the scenario it names fail with its message."""
+    name, rel, old, new, message, *more = row
+    try:
+        m = Ctx(mutate=(rel, old, new), edits=more[0] if more else ())
+    except AssertionError as e:
+        return ["control %s: %s" % (name, e)]
+    got = collect({**scenarios(m), "k": scenario_k}[name], m)
+    if not any(message in x for x in got):
+        return ["control %s (%s -> %s) did not fail with %r: %s" % (name, old[:40], new[:20], message, got)]
+    return []
+
+
 def run_all():
-    c = Ctx()
-    for name, fn in scenarios(c).items():
-        failures.extend(collect(fn, c))
-    failures.extend(collect(scenario_k, Ctx(edits=(KILL_1S,))))
-    # g: a launcher name is not a profile: `forge switch` is not mixed into it
-    code, so, se = c.forge(["start", "nolauncher"])
-    want("g: forge start NAME with no such launcher is still exit 2 naming it", (code, "nolauncher" in se), (2, True))
-    if "--controls" in sys.argv or not os.environ.get("FORGE_SWITCH_NO_CONTROLS"):
-        for name, rel, old, new, message, *more in CONTROLS:
-            try:
-                m = Ctx(mutate=(rel, old, new), edits=more[0] if more else ())
-            except AssertionError as e:
-                failures.append("control %s: %s" % (name, e))
-                continue
-            got = collect({**scenarios(m), "k": scenario_k}[name], m)
-            if not any(message in x for x in got):
-                failures.append("control %s (%s -> %s) did not fail with %r: %s" % (name, old[:40], new[:20], message, got))
+    # The controls are independent worlds (about half of this file's 330 s on a 4-CPU runner): they run 4 at a time, started first, and
+    # their lines come after the real run's, in the order of CONTROLS, as when they ran one after the other.
+    with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
+        controls = []
+        if "--controls" in sys.argv or not os.environ.get("FORGE_SWITCH_NO_CONTROLS"):
+            controls = [pool.submit(control, row) for row in CONTROLS]
+        c = Ctx()
+        for name, fn in scenarios(c).items():
+            failures.extend(collect(fn, c))
+        failures.extend(collect(scenario_k, Ctx(edits=(KILL_1S,))))
+        # g: a launcher name is not a profile: `forge switch` is not mixed into it
+        code, so, se = c.forge(["start", "nolauncher"])
+        want("g: forge start NAME with no such launcher is still exit 2 naming it", (code, "nolauncher" in se), (2, True))
+        for f in controls:
+            failures.extend(f.result())
     if failures:
         print("\n".join("FAIL " + f for f in failures))
         return 1

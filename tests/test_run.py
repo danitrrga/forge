@@ -78,6 +78,7 @@ import subprocess
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
@@ -559,13 +560,16 @@ def cases(mutate=None):
 
 def main():
     try:
-        failures = cases()
-        ran = 0
-        for name, row in MUTANTS.items():
-            if name == "orphan" and not sys.platform.startswith("linux"):
-                continue  # its case does not run here (NOT_ARMED), so the mutant cannot fail it
-            ran += 1
-            fails = cases(row)
+        # The mutants are independent worlds (about 500 s one after the other on a 4-CPU runner), so they run 4 at a time, started before
+        # the unmutated cases and read back in the order of MUTANTS: the failure lines come out as they did one at a time.
+        rows = [(name, row) for name, row in MUTANTS.items() if not (name == "orphan" and not sys.platform.startswith("linux"))]
+        # (the orphan case does not run off Linux (NOT_ARMED), so its mutant cannot fail it)
+        with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
+            seen = [pool.submit(cases, row) for _, row in rows]
+            failures = cases()
+            seen = [f.result() for f in seen]
+        ran = len(rows)
+        for (name, row), fails in zip(rows, seen):
             if not any(f.startswith("FAIL " + row[3]) for f in fails):
                 failures.append("FAIL control %s: the mutant did not fail the case %r (it failed: %s)" % (name, row[3], [f[:60] for f in fails]))
         if failures:
