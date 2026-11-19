@@ -1738,14 +1738,25 @@ if os.path.lexists(os.path.join(repo, ".planning/notes.log")):
 r = run(repo, "leftovers", "--apply")
 s.eq("CR2 ... without that file the image, hidden by the rule the conversion carried, moves (exit)", r.returncode, 0)
 s.eq("... and is at its new place", rd(os.path.join(repo, ".fwx/ui-reviews/a.png")), "image")
-# a conversion made before the record existed has none: a file absent from the first base counts as carried, as it did
+# a conversion with no record (made before the record existed, or the file gone) counts no rule under .fwx/ as carried: nothing is guessed
+# from the first base, so `leftovers` refuses the image that the carried rule would hide (the same `vanish` refusal as for an owner's rule).
+# Red on 3cfdc95, where a file absent from the first base counted as carried: "FAIL: CR2 (no record) leftovers refuses ...: exit: got 0, want 2"
+# (the image was moved), "FAIL: ... it says 1 file, and which" and "FAIL: ... and nothing was moved: got ('!! .fwx/ui-reviews/a.png\n', False, True),
+# want ('?? .planning/\n', True, False)" (it sat at its new place, ignored)
 repo, wt = mini({".planning/ui-reviews/.gitignore": "*.png\n", ".planning/ui-reviews/notes.md": "# n\n"})
 helpers.write(repo, ".planning/ui-reviews/a.png", "image")
 s.eq("CR2 (no record) apply exits 0", run(wt, "apply", "--close", "1").returncode, 0)
 helpers.git(wt, "commit", "-q", "-m", "convert")
 helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
-os.remove(os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst"))
-s.eq("CR2 ... with no record the carried rule's image moves as before (exit)", run(repo, "leftovers", "--apply").returncode, 0)
+record = os.path.join(repo, ".git", "fwx", "migrate-gsd", "carried-gitignores.lst")
+s.ok("CR2 ... the record exists before it is removed", os.path.isfile(record))
+os.remove(record)
+before = porcelain(repo)
+r = run(repo, "leftovers", "--apply")
+s.eq("CR2 (no record) leftovers refuses an image that a rule under .fwx/ would hide: exit", r.returncode, 2)
+s.ok("... it says 1 file, and which", "1 untracked file(s) would be ignored" in r.stderr and ".fwx/ui-reviews/a.png" in r.stderr, r.stderr[-300:])
+s.eq("... and nothing was moved", (porcelain(repo), os.path.isfile(os.path.join(repo, ".planning/ui-reviews/a.png")),
+                                   os.path.lexists(os.path.join(repo, ".fwx/ui-reviews/a.png"))), (before, True, False))
 
 # ---- CR3: two sources whose carried .gitignore lands on one destination are refused while planning, naming both -------------------------
 # Red on c42c7ba: "FAIL: CR3 plan with two .gitignore files carried to one destination exits 2: got 0, want 2" (and apply: "got 1, want 2", half done and rolled back)
@@ -1892,5 +1903,101 @@ repo, wt = mini()
 r = run(wt, "apply", "--close", "1")
 s.ok("apply says in one line that `fwx phase list` lists the converted phases once the branch is merged, with their count",
      [l for l in r.stdout.splitlines() if "fwx phase list" in l and "merged" in l and "2 " in l] != [], r.stdout[-700:])
+
+# ---- LK1: a planning file behind a symbolic link is never read, and the notes name the link ---------------------------------------------
+# `WorkTree.read` followed a link to any file the process could open, and `plan` and `apply` copied its text into the output and into
+# staged files. Red on 3cfdc95 (the first FAIL of each case):
+#   roadmap: "FAIL: LK1 a linked ROADMAP.md: plan names the link as one it did not read" and "FAIL: LK1 ... plan made no phase from its target:
+#            got True, want False" ("### Phase 7: Leaked" of the target became a phase) and, from apply, "FAIL: LK1 ... no staged file under
+#            .fwx/ holds it: got ['.fwx/milestones/v1/phases/07-leaked/gsd-roadmap-entry.md'], want []"
+#   note:    "FAIL: LK1 a linked phase note: plan shows nothing of its target: got True, want False" (the backlog item took the target's
+#            heading as its title, and so did the commit message file)
+#   folder:  "FAIL: LK1 a linked .planning/phases (on disk, tracked as files): plan shows nothing of its target: got True, want False"
+# Green on 3cfdc95 on purpose: a folder link that is committed as a link (git lists no file under it, so nothing reads through it) and an
+# ignored link nobody parses (the plan output must stay as it was: no note, no line).
+LKSENT = "TOP-SECRET-OUTSIDE-TEXT"
+LK_BASE = {"README": "toy\n", ".planning/PROJECT.md": "# P\n", ".planning/STATE.md": "---\nmilestone: v1.0\n---\n",
+           ".planning/ROADMAP.md": MINI_ROAD, ".planning/phases/01-alpha/01-01-PLAN.md": PLAN_BODY,
+           ".planning/phases/999.1-x/999.1-CONTEXT.md": "# Someday\n"}
+
+
+def staged_holding(wt, text):
+    """The paths under `.fwx/` (links skipped: a link moves as a link, git stores its target's name) whose bytes hold `text`, and the
+    commit message file `apply` wrote, if it holds it too."""
+    out = []
+    for dp, dn, fn in os.walk(os.path.join(wt, ".fwx")):
+        for n in fn:
+            full = os.path.join(dp, n)
+            if not os.path.islink(full) and text in (rd(full, "rb") or b"").decode("utf-8", "replace"):
+                out.append(os.path.relpath(full, wt))
+    msg = os.path.join(helpers.git(wt, "rev-parse", "--absolute-git-dir").strip(), "fwx-migrate-gsd-commit-message.txt")
+    return out + ([os.path.relpath(msg, wt)] if text in (rd(msg) or "") else [])
+
+
+def linked_toy(link_rel, outside_rel, outside_text, link_to=None, drop=()):
+    """(repo, outside folder): LK_BASE minus `drop`, and `.planning/<link_rel>` a link into a folder outside the repo, to `link_to`
+    (default: the file `outside_rel` there, which holds `outside_text`). The link is on disk, not committed."""
+    outside = helpers.mkdtemp("fwx-outside-")
+    helpers.write(outside, outside_rel, outside_text)
+    repo = helpers.toy_repo({k: v for k, v in LK_BASE.items() if k not in drop})
+    link = os.path.join(repo, ".planning", link_rel)
+    if os.path.isdir(link):
+        shutil.rmtree(link)
+    os.makedirs(os.path.dirname(link), exist_ok=True)
+    os.symlink(os.path.join(outside, link_to or outside_rel), link)
+    return repo, outside
+
+
+def lk_case(label, link_rel, outside_rel, outside_text):
+    """`plan` of a worktree of a repo that commits `.planning/<link_rel>` as a link to a file outside it, replacing the plain file of
+    LK_BASE: the worktree, after the checks every such case shares."""
+    repo, outside = linked_toy(link_rel, outside_rel, outside_text, drop=(".planning/" + link_rel,))
+    helpers.git(repo, "add", "-A")
+    helpers.git(repo, "commit", "-q", "-m", "a link")
+    wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+    rp = run(wt, "plan", "--close", "1")
+    s.eq("LK1 %s: plan exits 0" % label, rp.returncode, 0)
+    s.eq("LK1 %s: plan shows nothing of its target" % label, LKSENT in rp.stdout + rp.stderr, False)
+    s.ok("LK1 %s: plan names the link as one it did not read" % label, ".planning/" + link_rel in rp.stdout and "symbolic link" in rp.stdout, rp.stdout[-500:])
+    return wt, rp
+
+
+# the ROADMAP is the link: its target would have made a phase
+wt, rp = lk_case("a linked ROADMAP.md", "ROADMAP.md", "ROADMAP.md", "### Phase 7: Leaked\n%s\n" % LKSENT)
+s.eq("LK1 ... plan made no phase from its target", "07-leaked" in rp.stdout, False)
+r = run(wt, "apply", "--close", "1")
+s.eq("LK1 a linked ROADMAP.md: apply exits 0", r.returncode, 0)
+s.eq("LK1 ... no staged file under .fwx/ holds it", staged_holding(wt, LKSENT), [])
+s.eq("LK1 ... and no phase was made from it", os.path.lexists(os.path.join(wt, ".fwx/milestones/v1/phases/07-leaked")), False)
+s.ok("LK1 ... apply names the link too", ".planning/ROADMAP.md" in r.stdout and "symbolic link" in r.stdout, r.stdout[-500:])
+# a backlog phase note is the link: its heading would have been the item's title
+wt, rp = lk_case("a linked phase note", "phases/999.1-x/999.1-CONTEXT.md", "note.md", "# %s title\n" % LKSENT)
+r = run(wt, "apply", "--close", "1")
+s.eq("LK1 a linked phase note: apply exits 0", r.returncode, 0)
+s.eq("LK1 ... nothing of it in the output, a staged file or the commit message", (LKSENT in r.stdout + r.stderr, staged_holding(wt, LKSENT)), (False, []))
+s.ok("LK1 ... apply names the link too", ".planning/phases/999.1-x/999.1-CONTEXT.md" in r.stdout and "symbolic link" in r.stdout, r.stdout[-500:])
+# a folder above the file is the link: the index still lists the files, the disk holds a link (plan only: apply refuses a tree that is not clean)
+repo, outside = linked_toy("phases", "phases/999.1-x/999.1-CONTEXT.md", "# %s title\n" % LKSENT, link_to="phases")
+wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+shutil.rmtree(os.path.join(wt, ".planning/phases"))
+os.symlink(os.path.join(outside, "phases"), os.path.join(wt, ".planning/phases"))
+rp = run(wt, "plan", "--close", "1")
+s.eq("LK1 a linked .planning/phases (on disk, tracked as files): plan shows nothing of its target", LKSENT in rp.stdout + rp.stderr, False)
+s.ok("LK1 ... and names the folder link", ".planning/phases is a symbolic link" in rp.stdout, rp.stdout[-500:])
+# a folder link committed as a link lists no file under it, so nothing reads through it: the conversion moves the link and stays clean
+repo, outside = linked_toy("phases", "phases/999.1-x/999.1-CONTEXT.md", "# %s title\n" % LKSENT, link_to="phases")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "a folder link")
+wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+r = run(wt, "apply", "--close", "1")
+s.eq("LK1 a committed .planning/phases link: apply exits 0 and holds nothing of its target", (r.returncode, LKSENT in r.stdout + r.stderr, staged_holding(wt, LKSENT)), (0, False, []))
+# a link that is ignored and never parsed (the vendored copies under knowledge/) changes nothing: no note, no line
+repo = helpers.toy_repo(dict(LK_BASE, **{".gitignore": ".planning/knowledge/sources/\n"}))
+os.makedirs(os.path.join(repo, ".planning/knowledge/sources/vendored"))
+os.symlink("..", os.path.join(repo, ".planning/knowledge/sources/vendored/up"))
+wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+rp = run(wt, "plan", "--close", "1")
+s.ok("LK1 an ignored link nobody parses: plan exits 0 and says nothing of a symbolic link", rp.returncode == 0 and "symbolic link" not in rp.stdout + rp.stderr
+     and "notes:" not in rp.stdout, rp.stdout[-500:])
 
 s.done()

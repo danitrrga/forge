@@ -192,6 +192,7 @@ class WorkTree:
 
     def __init__(self, repo):
         self.repo = repo
+        self.links = set()      # the links `read` refused, as paths under `.planning/`: the notes name them
 
     def entries(self):
         out = {}
@@ -222,6 +223,14 @@ class WorkTree:
         return os.path.islink(os.path.join(self.repo, SCOPE_SRC, rel))
 
     def read(self, rel, errors="replace"):
+        """The text of a planning file, None when it is missing or is (or sits under) a symbolic link: a link may lead to any file the
+        process can open, so it is never followed; `links` keeps the link, and linked_notes() names it."""
+        parts = rel.split("/")
+        for i in range(1, len(parts) + 1):
+            link = "/".join(parts[:i])
+            if os.path.islink(os.path.join(self.repo, SCOPE_SRC, link)):
+                self.links.add(link)
+                return None
         try:
             with open(os.path.join(self.repo, SCOPE_SRC, rel), "r", encoding="utf-8", errors=errors) as f:
                 return f.read()
@@ -250,6 +259,12 @@ class Commit:
     def read(self, rel, errors="replace"):
         r = _git(self.repo, "cat-file", "blob", "%s:%s/%s" % (self.sha, SCOPE_SRC, rel), ok=(0, 128))
         return r.stdout.decode("utf-8", errors) if r.returncode == 0 else None
+
+
+def linked_notes(src):
+    """One note for each link `src.read` refused (a commit's `read` follows nothing and has none)."""
+    return ["%s/%s is a symbolic link (or sits under one): it is never read, so nothing in it is converted (needs a hand: read it "
+            "yourself and write what belongs in .fwx/)" % (SCOPE_SRC, link) for link in sorted(getattr(src, "links", ()))]
 
 
 # ---- small helpers -----------------------------------------------------------------------------------------------------
@@ -1138,40 +1153,20 @@ def carried_record(repo):
         return None
 
 
-def fwx_gitignores_before(repo):
-    """The `.gitignore` files inside `.fwx/` that the commit of the first conversion (the first base of the bases file) already
-    tracked: the owner's own rules, not carried ones. None when that base cannot be read, so that no rule counts as carried.
-    Used only for a conversion made before `carried_record` existed."""
-    try:
-        with open(_abs(repo, BASES), encoding="utf-8", errors="replace") as f:
-            m = re.search(r"\bbase ([0-9a-f]{7,40})\b", f.read())
-    except OSError:
-        return None
-    if not m:
-        return None
-    r = _git(repo, "ls-tree", "-r", "--name-only", "-z", m.group(1), "--", SCOPE_DEST, ok=(0, 128))
-    if r.returncode:
-        return None
-    return {os.fsdecode(p) for p in r.stdout.split(b"\0") if p and posixpath.basename(os.fsdecode(p)) == ".gitignore"}
-
-
 def ignored_by_fwx_file(repo, paths):
     """The paths of the list that a rule of a `.gitignore` inside `.fwx/` ignores (the rule that decides, `check-ignore -v`), when
     that file is one the conversion carried over from `.planning/`: one `apply` wrote down (`carried_record`), never one the owner
-    added or already had, and not a line of the root `.gitignore`. With no record at all (a conversion that predates it) a file
-    absent from the first base counts as carried, as it did."""
-    if not paths:
-        return set()
+    added or already had, and not a line of the root `.gitignore`. With no record at all (a conversion that predates it, or one
+    whose record is gone) no rule counts as carried: nothing is guessed, so `leftovers` refuses what any rule would hide."""
     carried = carried_record(repo)
-    before = fwx_gitignores_before(repo) if carried is None else None
-    if carried is None and before is None:
+    if not paths or carried is None:
         return set()
     r = _git(repo, "check-ignore", "-v", "-z", "--stdin", ok=(0, 1), input=_nul(paths))
     parts, out = r.stdout.split(b"\0"), set()
     for i in range(0, len(parts) - 3, 4):
         source, pattern, path = os.fsdecode(parts[i]), os.fsdecode(parts[i + 2]), os.fsdecode(parts[i + 3])
         if source.startswith(SCOPE_DEST + "/") and not pattern.startswith("!") \
-                and (source in carried if carried is not None else source not in before):
+                and source in carried:
             out.add(path)
     return out
 
@@ -1404,6 +1399,7 @@ def plan_apply(repo, opts):
             job.carried.append(target)
     job.carried += [d for _, d in job.moves if posixpath.basename(d) == ".gitignore"]    # moved whole: its rules are the conversion's too
     roadmaps = {sc.ws: src.read(sc.prefix + "ROADMAP.md") for sc in scopes}
+    job.notes += linked_notes(src)      # every read of apply is done: build(), backlog_items() and this one
     milestones, dests = set(), [d for _, d in job.moves]
     extra_bad = []
     for sc in scopes:
@@ -2340,6 +2336,7 @@ def run(argv):
            "gsd_state": {"milestone": getattr(root, "state_milestone", None)}, "totals": totals(files),
            "scopes": [{"src": sc.src, "dest": sc.dest} for sc in scopes], "phases": phases, "files": files,
            "backlog": backlog_items(scopes, src, files), "gitignore": gitignore, "refs": refs, "branches": branches}
+    notes += linked_notes(src)
     if rewritten is not None:
         doc["rewritten"] = [{"file": f, "line": n, "old": o, "new": w, "kind": k} for f, n, o, w, k in rewritten]
         doc["left"] = [{"file": f, "line": n, "old": o, "kind": k, "why": why} for f, n, o, k, why in left]
