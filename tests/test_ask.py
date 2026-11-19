@@ -81,7 +81,7 @@ def typed(prompt=""):
     return spec["name"]
 builtins.input = typed
 ask.make_asker = lambda: ask.Asker(keys=spec["keys"], lines=[], interactive=True)
-sys.exit(configure.cmd_config(argparse.Namespace(targets=["demo"], on=None, off=None, apply=False, yes=False, json=False)))
+sys.exit(configure.cmd_config(argparse.Namespace(targets=["demo"], on=None, off=None, apply=False, yes=False, json=False, names=False)))
 '''
 ORDER = ["profiles", "sets", "skills", "servers", "memory", "stack"]
 
