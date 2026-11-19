@@ -1810,6 +1810,20 @@ rc, out, err = inproc(wt, ["apply", "--close", "2"], [(mg, "step_stage", stage_w
 s.ok("CR4 a staging that leaves the closed audit out fails the check after the work, and the repository is back",
      rc == 1 and "not closed in what is staged" in err and "back as it was" in err and rd(os.path.join(wt, AUD)) == CLOSED_AUDIT, err[-400:])
 
+# ---- CR5: the phase count in the closing message is what bare `fwx phase list` shows (the root scope), workstreams apart ----------------
+# Red on c42c7ba: "FAIL: CR5 the closing message counts the root phases only and says how many are in workstreams: ...it lists the 3 phase(s) converted here..."
+repo, wt = mini({".planning/workstreams/ws1/PROJECT.md": "# W\n", ".planning/workstreams/ws1/STATE.md": "---\nmilestone: v1.0\n---\n",
+                 ".planning/workstreams/ws1/phases/01-w/01-CONTEXT.md": "# c\n"})
+r = run(wt, "apply", "--close", "1")
+s.eq("CR5 apply with a workstream exits 0", r.returncode, 0)
+line = [l for l in r.stdout.splitlines() if "fwx phase list" in l and "merged" in l]
+s.ok("CR5 the closing message counts the root phases only and says how many are in workstreams, and the command that lists them",
+     len(line) == 1 and "lists the 2 root phase(s)" in line[0] and "1 more" in line[0] and "workstream" in line[0] and "--subproject <name>" in line[0], str(line))
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+rl = helpers.fwx(repo, "phase", "list", "--json", env=ENV)
+s.eq("CR5 ... and that is how many `fwx phase list` shows in the merged checkout", len([p for m in json.loads(rl.stdout).get("milestones", []) for p in m.get("phases", [])]) if rl.returncode == 0 else rl.stderr, 2)
+
 # ---- R6: refs lists the variable-built forms the review found missing, and `"$HOME"/.planning` is still no reference ---------------
 FORMS = ("#!/bin/sh\nls ${V:-x}/.planning/a\ncat \"${ROOT:?}/.planning/x\"\ncat \"$(dirname \"$0\")/../.planning/x\"\ncat $ROOT/../.planning/x\n"
          "ls \"$HOME\"/.planning/keep\nls ${HOME}/.planning/keep\n")

@@ -1805,6 +1805,7 @@ def cmd_apply(repo, got):
     job, branch = plan_apply(repo, options(got))
     execute(job)
     n_left = len(job.leftover)
+    n_root = sum(1 for p in job.phases if p[0] == SCOPE_DEST)     # the scope bare `fwx phase list` reads
     doc = {"schema": SCHEMA, "repo": repo, "base": job.base, "branch": branch, "moved": len(job.moves), "removed": len(job.removes),
            "generated": [g for g, _ in job.gens], "closed": [{"dest": d, "row": r} for d, r in job.audit_rows],
            "phases": len(job.phases), "gitignore": job.twins, "backlog": job.backlog, "leftover": n_left, "totals": job.totals,
@@ -1824,7 +1825,9 @@ def cmd_apply(repo, got):
            "checks passed: the blob of each of the %d kept files is the same at its destination, each of the %d removed files is gone, "
            "state.phases sees %d phase folder(s), state.last_stage says closed for %d" % (len(job.moves), len(job.removes),
                                                                                        len(job.phases), len(job.closed)),
-           "`fwx phase list` reads the main checkout: it lists the %d phase(s) converted here once this branch is merged" % len(job.phases),
+           "`fwx phase list` reads the main checkout: it lists the %d root phase(s) converted here once this branch is merged%s"
+           % (n_root, ("; %d more are in workstreams, which `fwx phase list --subproject <name>` lists" % (len(job.phases) - n_root))
+              if len(job.phases) > n_root else ""),
            "ignored or untracked files left where they are for `fwx migrate-gsd leftovers`: %d" % n_left,
            "backlog (not migrated, recover with the base): %d" % len(job.backlog)]
     out += ["  %s  %s" % (b["src"], b["title"]) for b in job.backlog]
