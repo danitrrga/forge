@@ -192,6 +192,7 @@ class WorkTree:
 
     def __init__(self, repo):
         self.repo = repo
+        self.links = set()      # the links `read` refused, as paths under `.planning/`: the notes name them
 
     def entries(self):
         out = {}
@@ -222,6 +223,14 @@ class WorkTree:
         return os.path.islink(os.path.join(self.repo, SCOPE_SRC, rel))
 
     def read(self, rel, errors="replace"):
+        """The text of a planning file, None when it is missing or is (or sits under) a symbolic link: a link may lead to any file the
+        process can open, so it is never followed; `links` keeps the link, and linked_notes() names it."""
+        parts = rel.split("/")
+        for i in range(1, len(parts) + 1):
+            link = "/".join(parts[:i])
+            if os.path.islink(os.path.join(self.repo, SCOPE_SRC, link)):
+                self.links.add(link)
+                return None
         try:
             with open(os.path.join(self.repo, SCOPE_SRC, rel), "r", encoding="utf-8", errors=errors) as f:
                 return f.read()
@@ -250,6 +259,12 @@ class Commit:
     def read(self, rel, errors="replace"):
         r = _git(self.repo, "cat-file", "blob", "%s:%s/%s" % (self.sha, SCOPE_SRC, rel), ok=(0, 128))
         return r.stdout.decode("utf-8", errors) if r.returncode == 0 else None
+
+
+def linked_notes(src):
+    """One note for each link `src.read` refused (a commit's `read` follows nothing and has none)."""
+    return ["%s/%s is a symbolic link (or sits under one): it is never read, so nothing in it is converted (needs a hand: read it "
+            "yourself and write what belongs in .fwx/)" % (SCOPE_SRC, link) for link in sorted(getattr(src, "links", ()))]
 
 
 # ---- small helpers -----------------------------------------------------------------------------------------------------
@@ -1404,6 +1419,7 @@ def plan_apply(repo, opts):
             job.carried.append(target)
     job.carried += [d for _, d in job.moves if posixpath.basename(d) == ".gitignore"]    # moved whole: its rules are the conversion's too
     roadmaps = {sc.ws: src.read(sc.prefix + "ROADMAP.md") for sc in scopes}
+    job.notes += linked_notes(src)      # every read of apply is done: build(), backlog_items() and this one
     milestones, dests = set(), [d for _, d in job.moves]
     extra_bad = []
     for sc in scopes:
@@ -2340,6 +2356,7 @@ def run(argv):
            "gsd_state": {"milestone": getattr(root, "state_milestone", None)}, "totals": totals(files),
            "scopes": [{"src": sc.src, "dest": sc.dest} for sc in scopes], "phases": phases, "files": files,
            "backlog": backlog_items(scopes, src, files), "gitignore": gitignore, "refs": refs, "branches": branches}
+    notes += linked_notes(src)
     if rewritten is not None:
         doc["rewritten"] = [{"file": f, "line": n, "old": o, "new": w, "kind": k} for f, n, o, w, k in rewritten]
         doc["left"] = [{"file": f, "line": n, "old": o, "kind": k, "why": why} for f, n, o, k, why in left]
