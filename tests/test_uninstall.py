@@ -638,18 +638,25 @@ check("no record: the by-construction count is above 0, exit 0 -- exit %d, %r" %
       code == 0 and seen is not None and seen[1] > 0, out)
 
 # Nothing there: a whole uninstall says so and exits 0; a scoped one that looked at zero is still a FAIL.
+def unquoted(out):
+    """argparse quotes the choices from Python 3.13 on (`choose from 'codex', ...`) and not before (3.12 on the CI runner, 3.15 here):
+    the choice that was refused keeps its quotes, the list of the valid ones is compared without them. Red on the 3.12 runner before:
+    "FAIL --integration caveman: argparse refuses it, exit 2 -- exit 2: ... invalid choice: 'caveman' (choose from codex, hindsight, consent, agent_browser, mempalace)"."""
+    return re.sub(r"(choose from )(.*)\)", lambda m: m.group(1) + m.group(2).replace("'", "") + ")", out)
+
+
 e = World("empty", sync=False)
 code, out = e.forge("uninstall")
 check("an empty world, whole: exit 0, nothing left of forge -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
 code, out = e.forge("uninstall", "--integration", "caveman")  # removed: no longer a choice. Red with "caveman" put back in lib.INTEGRATIONS: "exit 1: looked at 0 claim(s) and 0 item(s) forge made by construction | FAIL: looked at zero"
 check("--integration caveman: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
-      code == 2 and "invalid choice: 'caveman' (choose from 'codex', 'hindsight', 'consent', 'agent_browser', 'mempalace')" in out, out)
+      code == 2 and "invalid choice: 'caveman' (choose from codex, hindsight, consent, agent_browser, mempalace)" in unquoted(out), out)
 # D5: gsd is no longer an integration either. On 987388c it was a valid choice and this command exited 1 with "looked at zero" (the old
 # assertion of this line), so this check read "FAIL --integration gsd: argparse refuses it, exit 2 -- exit 1: ... looked at zero".
 code, out = e.forge("uninstall", "--integration", "gsd")
 check("--integration gsd: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
-      code == 2 and "invalid choice: 'gsd' (choose from 'codex', 'hindsight', 'consent', 'agent_browser', 'mempalace')" in out, out)
+      code == 2 and "invalid choice: 'gsd' (choose from codex, hindsight, consent, agent_browser, mempalace)" in unquoted(out), out)
 code, out = e.forge("uninstall", "--integration", "consent")
 check("an empty world, --integration consent: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 1 and "FAIL" in out and "looked at zero" in out, out)
