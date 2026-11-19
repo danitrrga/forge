@@ -78,4 +78,11 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - run: python3 bin/forge test
+      - name: diagnostic (throwaway)
+        run: |
+          for f in $(git ls-files '*test_*.py' | grep -v '^plugins/fwx/' | grep -v '^benchmarks/' | grep -v test_guard_mutants | sort); do
+            t0=$SECONDS
+            nice -n 19 python3 "$f" > /tmp/out.txt 2>&1 </dev/null; rc=$?
+            echo "DIAG $((SECONDS-t0))s rc=$rc $f"
+            if [ $rc -ne 0 ]; then tail -40 /tmp/out.txt | sed 's/^/    | /'; fi
+          done
