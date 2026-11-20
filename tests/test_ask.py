@@ -877,6 +877,12 @@ CONTROLS = [
     ("the memory servers not kept out of the rows", a_memory_asked,
      [(ASK, "        return {s for servers in MEMORY.values() for s in servers}", "        return set()")], "asked: servers", {"hindsight": True}),
     ("memory off not said", a_stack_and_memory, [(ASK, "    elif not lib.on(ans.memory):", "    elif False:")], "with the integration off", {}),
+    # The retired-name assertion of a_stack_and_memory: the old handling (mempalace a memory name whose integration is off) is put back.
+    # Seen: "control mempalace taken as a disabled integration -> --memory mempalace (retired): exit 2, want 2 as an unknown name, not 'off in config/forge.json': ..."
+    ("mempalace taken as a disabled integration", a_stack_and_memory,
+     [(ASK, "    if ans.memory not in MEMORY:", '    if ans.memory not in MEMORY and ans.memory != "mempalace":'),
+      (ASK, "    elif not lib.on(ans.memory):", '    elif ans.memory == "mempalace" or not lib.on(ans.memory):')],
+     "--memory mempalace (retired): exit 2, want 2 as an unknown name", {}),
     ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ctx, ans, problems)\n", "    pass\n")], "two memory backends", {"hindsight": True}),
     ("the common memory plugin not counted", a_common_memory_plugin,
      [(ASK, "    common = list(keep.get(\"common_plugins\") or []) if plugins else []\n", "    common = []\n")],

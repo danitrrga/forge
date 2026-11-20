@@ -252,20 +252,31 @@ rest = {f: [c for c in cs if c["owner"] != "hindsight" and c.get("part") != "bak
 # Its per-project rows (in the project's settings.local.json) and the doctor's session-start row (user scope, claimed for hindsight)
 # are claims too: they go with it. (Until MemPalace was retired the rows of two memory systems were told apart here.)
 HS_ROWS = ("claude-hook.js", "claude-stop-hook.js")
+HS_EVENT = {"claude-hook.js": "UserPromptSubmit", "claude-stop-hook.js": "Stop", "memory_doctor.py": "SessionStart"}
 
 
 def rows_in(path, markers):
+    """The markers some hook of the file runs, under any event (after the uninstall, so a hook left under a wrong event is seen)."""
     cmds = commands(load(path)) if os.path.exists(path) else []
     return [m for m in markers if any(m in c for c in cmds)]
 
 
-rows_before = (rows_in(w.slp, HS_ROWS), rows_in(w.settings, ("memory_doctor.py",)))
+def rows_under(path, markers):
+    """The markers run under the event they belong to (HS_EVENT): before the uninstall, so a misplaced row is not a present one."""
+    doc = load(path) if os.path.exists(path) else {}
+    return [m for m in markers
+            if any(m in h.get("command", "") for g in (doc.get("hooks") or {}).get(HS_EVENT[m], []) for h in g.get("hooks", []))]
+
+
+# Seen red with the doctor's row moved from SessionStart to Stop in forge/hooks.py (the old all-events search still found it):
+#   "FAIL control: Hindsight's two rows and the doctor's row were written before, each under its event -- (['claude-hook.js', 'claude-stop-hook.js'], [])"
+rows_before = (rows_under(w.slp, HS_ROWS), rows_under(w.settings, ("memory_doctor.py",)))
 w.set_integration("hindsight", False)
 code, out = w.forge("uninstall", "--integration", "hindsight", "--apply")
 check("--integration hindsight, off: exit 0 -- exit %d: %s" % (code, sandbox.tail(out, 4)), code == 0, out)
 check("control: hindsight has claims in three files at least -- %s" % sorted(mine), len(mine) >= 3)
 check("--integration hindsight: every hindsight claim is gone -- %s" % claims_left(w, mine)[:6], not claims_left(w, mine))
-check("control: Hindsight's two rows and the doctor's row were written before -- %s" % (rows_before,),
+check("control: Hindsight's two rows and the doctor's row were written before, each under its event -- %s" % (rows_before,),
       rows_before == (list(HS_ROWS), ["memory_doctor.py"]))
 check("--integration hindsight: its two rows and the doctor's row go -- app has %s, user settings %s"
       % (rows_in(w.slp, HS_ROWS), rows_in(w.settings, ("memory_doctor.py",))),
