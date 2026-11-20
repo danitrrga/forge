@@ -949,10 +949,13 @@ def settings_cases(tmp):
         # With lib.on raising on any key of the table outside INTEGRATIONS (an engine that does not
         # tolerate a machine's old key): "ValueError: unknown integration key in the table", a crash at
         # the on('codex') of the next line before any want() runs.
-        lib.SETTINGS = put("legacy.json", '{"integrations": {"codex": true, "jev": false, "caveman": true}}')
+        # MemPalace was retired the same way (never switched on; its file keeps `"mempalace": false`). Red on 70059b8, with
+        # "mempalace" in the loop below and in the file above: "on('mempalace') on a file that still carries the removed key = False,
+        # want True" (it was an integration, so lib.on answered the file's false instead of raising).
+        lib.SETTINGS = put("legacy.json", '{"integrations": {"codex": true, "jev": false, "caveman": true, "mempalace": false}}')
         want("on('codex') on a file that still carries removed integrations' keys", lib.on("codex"), True)
         want("on('hindsight') with its key absent beside them", lib.on("hindsight"), False)
-        for gone in ("jev", "caveman"):
+        for gone in ("jev", "caveman", "mempalace"):
             want("on(%r) on a file that still carries the removed key" % gone,
                  str(raised(lib.on, gone)).startswith("('raised', 'ValueError'"), True)
 

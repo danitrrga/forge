@@ -657,6 +657,11 @@ check("--integration caveman: argparse refuses it, exit 2 -- exit %d: %s" % (cod
 code, out = e.forge("uninstall", "--integration", "gsd")
 check("--integration gsd: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
       code == 2 and "invalid choice: 'gsd' (choose from codex, hindsight, consent, agent_browser, mempalace)" in unquoted(out), out)
+# MemPalace is retired: no longer a choice either. Red on 70059b8 (a valid choice): the command exits 1 with "looked at zero", so
+# this check read "FAIL --integration mempalace: argparse refuses it, exit 2 -- exit 1: ... looked at zero".
+code, out = e.forge("uninstall", "--integration", "mempalace")
+check("--integration mempalace: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
+      code == 2 and "invalid choice: 'mempalace'" in unquoted(out), out)
 code, out = e.forge("uninstall", "--integration", "consent")
 check("an empty world, --integration consent: FAIL, looked at zero, exit 1 -- exit %d: %s" % (code, sandbox.tail(out, 3)),
       code == 1 and "FAIL" in out and "looked at zero" in out, out)
