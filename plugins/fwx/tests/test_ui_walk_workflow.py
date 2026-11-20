@@ -628,6 +628,25 @@ def check_control_rows(script, s):
         keep, gone, shown = split(rec)
         s.ok("control row, %s: both rows of the one defect leave, the other finding stays" % what,
              '"T1-1"' in gone and '"T1-3"' in gone and '"T1-1"' not in keep and '"T1-3"' not in keep and '"T1-4"' in keep, shown)
+    # CodeRabbit's review of PR 198: an Outside note names the control (the judge says found, with no finding and the dead page): the verifier made a
+    # `<session>-notes` row from it, and its browser has no plant, so the row would reach the fixer as a defect of the repository. The note rows that
+    # name the dead page leave the verified file (and the rows tied to them); other note rows of the same session stay. Seen red on 1b18fd7:
+    #   FAIL: control note row: the note row that names the dead page leaves verified-T1.json and goes to control-T1.json: no executor:runner-control-T1 launched
+    note_judged = {"screen": "/settings", "found": True, "finding": None, "dead": "/billing-old", "why": "the Outside note of w1"}
+    nrows = [row("T1-1", "w1-F1"), row("T1-2", "w1-notes", claim="the Billing link goes to /billing-old and answers 404"),
+             row("T1-3", "w1-notes", claim="the footer of /other is cut"), row("T1-4", "w1-notes", "DUPLICATE", duplicate_of="T1-2", claim="same"),
+             row("T1-5", "w2-notes", steps="1. open /billing-older, which lists the old invoices")]
+    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": nrows}, "executor:runner-control-judge": R(note_judged)})
+    rec = finish(s, "control note row", rec, err)
+    keep, gone, shown = split(rec)
+    s.ok("control note row: the note row that names the dead page leaves verified-T1.json and goes to control-T1.json, with the row tied to it",
+         '"T1-2"' in gone and '"T1-4"' in gone and '"T1-2"' not in keep and '"T1-4"' not in keep, shown)
+    s.ok("control note row: the other note row, a finding row and a row that names a route that only starts like the dead page stay",
+         all(('"%s"' % i) in keep and ('"%s"' % i) not in gone for i in ("T1-1", "T1-3", "T1-5")), shown)
+    # no dead page named by the judge: no note row is taken out (nothing says which one it is)
+    rec, err = go(script, answers_over={**over, "ui-verifier:T1": {"findings": nrows}, "executor:runner-control-judge": R(dict(note_judged, dead=None))})
+    rec = finish(s, "control note row, no dead page", rec, err)
+    s.ok("control note row, no dead page named: no file is rewritten", "executor:runner-control-T1" not in labels(rec), repr(labels(rec)))
     # the id the judge names may also be the verified row's own
     rec, err = go(script, answers_over={**over, "executor:runner-control-judge": R(dict(judged, finding="T1-3"))})
     rec = finish(s, "control row by id", rec, err)
@@ -995,6 +1014,11 @@ MUTANTS = [
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
     ("a missed control still counts", "The run does not count", "Run", "FAIL: control missed: the reason says first that the run does not count"),
     ("a refused control's reason dropped", "(ctl.why ? ' (' + ctl.why + ')' : '')", "''", "FAIL: control refused (no visible change): the run does not count, and the reason says which it was"),
+    ("a note row is taken out whatever it says", "&& namesDead(leaves(r).join('\\n'), dead)", "", "FAIL: control note row: the other note row, a finding row and a row that names a route that only starts like the dead page stay"),
+    ("a note row that only starts like the dead page is taken out", "if ((p.replace(/\\/+$/, '') || '/') === want) return true", "if ((p.replace(/\\/+$/, '') || '/').startsWith(want)) return true",
+     "FAIL: control note row: the other note row, a finding row and a row that names a route that only starts like the dead page stay"),
+    ("an Outside note is not dropped", "const dead = st.control.found === true && !fid && st.dead ? safeDecode(st.dead) : null", "const dead = null",
+     "FAIL: control note row: the note row that names the dead page leaves verified-T1.json"),
     ("a control tramo not walked is judged", "walked = st.walked[ctl.tramo] === true", "walked = true", "FAIL: breaker null: no judge launched"),
     ("the critic walks the control", "if (job.axis === 'breaker') st.walked[job.tramo.id] = true", "if (job.axis === 'critic' && !job.firefox) st.walked[job.tramo.id] = true",
      "FAIL: critic null: the control is still judged"),
@@ -1042,7 +1066,7 @@ MUTANTS = [
     ("the slot is freed before the browser is closed", "      if (after) closed = (await after()) !== false\n    } finally {\n      if (closed) release()\n      else lose(tag)\n    }",
      "      release()\n      if (after) await after()\n    } finally {\n    }",
      "FAIL: close quota 1: the next job starts only after the previous one's browser was closed"),
-    ("the planted control's row goes to the fixer", "if (!fid) return", "return", "FAIL: control row: the verifier confirmed the planted title"),
+    ("the planted control's row goes to the fixer", "if (!fid && !dead) return", "return", "FAIL: control row: the verifier confirmed the planted title"),
     ("the rows tied to the control's row stay", "if (out.has(a) !== out.has(b)) {", "if (false) {", "FAIL: control row, the judged row duplicates a kept sighting"),
     ("the control's clip is listed", "if (i >= 0) st.clips.splice(i, 1)", "", "FAIL: control row clip: the clip of the control row is not listed"),
     ("a suffixed id loses its tramo", "f.id.replace(/-\\d+(?:\\.x)*$/, '')", "f.id.replace(/-\\d+$/, '')", "FAIL: recheck suffixed ids: one verifier per tramo"),

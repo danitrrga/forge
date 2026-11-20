@@ -69,7 +69,7 @@ let quota = 1
 const SLOTS = () => quota
 const st = {
   agents: 0, runDir: null, url: null, tramos: [], jobs: [], gaps: [], walked: {}, touched: {}, saved: [], fatal: null, closeFails: [], lost: 0, lostTags: [],
-  ctl: null, control: { screen: null, found: null, finding: null }, noCount: null, counts: null, fixFile: null, contradictedFile: null,
+  ctl: null, control: { screen: null, found: null, finding: null }, dead: null, noCount: null, counts: null, fixFile: null, contradictedFile: null,
   verified: [], shots: [], clips: [], coverageFile: null, downFile: null, recheck: null, ids: new Set(), sem: { free: 0, waiting: [] },
 }
 
@@ -346,6 +346,7 @@ async function judge() {
     return
   }
   st.control = { screen: typeof got.screen === 'string' && got.screen ? got.screen : ctl.screen, found: got.found, finding: got.finding || null }
+  st.dead = typeof got.dead === 'string' && got.dead ? got.dead : null
   if (got.found === false) st.noCount = 'the walkers did not find the fault planted on ' + st.control.screen
 }
 
@@ -354,12 +355,44 @@ async function judge() {
 // a defect of the repository. The judge names the walker's finding (`<session>-F<n>`, a row's `source`; a row's own id is read too): that row,
 // the rows tied to it by `duplicate_of` either way, leave the verified file for control-<tramo>.json. (The pictures the walkers took of the control's
 // screen that a genuine finding carries are left out by `fwx walk converge`.)
+// Whether a text names the dead page whole, as a path (the same rule as `fwx control judge`: a word cut at spaces and quotes, an address or a path,
+// the query and punctuation dropped, the case kept): the rows of a note that name the control, when the judge found it in an Outside note.
+function namesDead(text, dead) {
+  const want = dead.replace(/\/+$/, '') || '/'
+  for (let w of String(text).split(/[\s"'`<>]+|\]\(/)) {
+    w = w.replace(/^[(\[{]+/, '').replace(/[.,:;!?)\]}]+$/, '')
+    let path = null
+    const m = /^[a-z][a-z0-9+.-]*:\/\/(?:\[[^\]]*\]|[^/?#]*)(.*)$/i.exec(w)
+    if (m) path = m[1].split(/[?#]/)[0]
+    else if (w.startsWith('/')) path = w.split(/[?#]/)[0]
+    if (path === null) continue
+    let p = path
+    try {
+      p = decodeURIComponent(path)
+    } catch (e) {
+      // keep it as written
+    }
+    if ((p.replace(/\/+$/, '') || '/') === want) return true
+  }
+  return false
+}
+const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s)
+  } catch (e) {
+    return s
+  }
+}
+const leaves = (v) => (typeof v === 'string' ? [v] : Array.isArray(v) ? v.flatMap(leaves) : v && typeof v === 'object' ? Object.values(v).flatMap(leaves) : [])
+
 async function dropControl() {
   const fid = st.control.found === true ? st.control.finding : null
-  if (!fid) return
+  // found in a note under Outside: no finding is named, and the verifier made a `<session>-notes` row from the note: the rows of notes that name the dead page
+  const dead = st.control.found === true && !fid && st.dead ? safeDecode(st.dead) : null
+  if (!fid && !dead) return
   for (const v of st.verified) {
     const rows = v.rep.findings
-    const out = new Set(rows.filter((r) => r.source === fid || r.id === fid).map((r) => r.id))
+    const out = new Set(rows.filter((r) => (fid ? r.source === fid || r.id === fid : /-notes$/.test(String(r.source)) && namesDead(leaves(r).join('\n'), dead))).map((r) => r.id))
     const ties = rows.filter((r) => typeof r.duplicate_of === 'string' && r.duplicate_of).map((r) => [r.id, r.duplicate_of])
     for (let grew = out.size > 0; grew;) {
       grew = false

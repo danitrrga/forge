@@ -57,14 +57,17 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
   fwx control new --run R --screen URL [--kind functional|hierarchy]     plants the control, registered by `ab` at launch with --init-script (control.json).
       No walker sees it named. `functional` (the default) is a fault the `breaker` meets by using the screen: the first link to another screen of the
       app (inside nav, header or [role=navigation] first, then any link; one a walker can click at the walks' viewport: with layout, not display none or visibility hidden, not off the screen; not the screen itself, not a link that opens a tab or downloads) leads to
-      `<its path>-old`, a page that does not exist, for a click on that route (a click listener on the window in the capture phase, so the page's
+      `<its path>-old` (`-gone`, `-retired` when the app serves that name), a page that does not exist, for a click on that route (a click listener on the window in the capture phase, so the page's
       router never sees it); nothing in the page is changed, so no hydration warning and no mark a walker could take for the tooling's.
       Before it leaves control.json it proves the plant where the walkers will meet it: it opens the screen in session w1 with no plant, picks the
       link (waiting up to `FWX_WALK_CONTROL_WAIT_S` seconds, default 30, for a page that is still drawing; the pause between two looks is
-      `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app), clicks it and reads where the page lands, which must not be the screen itself;
+      `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app), clicks it and reads where the page lands, which must not be the screen itself, and loads the
+      dead page in a session with no plant, which must be missing (a 4xx/5xx status, or a not-found text on a 200 page; else the next name, else exit 1);
       then writes init.js and control.json, opens the screen in a fresh w1 launched by `ab` like any walker's session (with --init-script), clicks
-      the same link and reads where it lands, which must differ from the first landing (both go to control.json `readback.lands`). No link:
-      `target not found`; a link that leaves nowhere without the plant: `target not found`; the same landing with the plant: `no visible change`.
+      the same link and reads where it lands, which must be the dead page (both landings go to control.json `readback.lands`; paths are compared in one
+      percent-encoding). Each probe session must close, or the arming fails. control.json is published whole, and taken back with init.js if that fails. No link:
+      `target not found`; a link that leaves nowhere without the plant: `target not found`; the same landing with the plant: `no visible change`;
+      another landing than the dead page: `did not land on`; a dead page that is not missing: `not missing`.
       Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and neither control.json nor init.js is left.
       `hierarchy` is the first control, kept for when the `critic` returns: an init script that makes the main title of that route as large and
       light as body text; it proves the plant visible the same two ways with the title's computed font-size, font-weight and rendered box (a box that
@@ -72,10 +75,10 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       leaves the pictures of its route out of the evidence (`control-pictures.txt`, `converge`); a control.json with no `kind` is read as one.
   fwx control judge --run R FILE...     whether the walkers found the functional control, by code: FILE... are the walkers' findings files. The control
       is found when a finding block (`### F<n>`, which ends at the next heading, section label or rule, or at a paragraph that is no field of it) or a
-      note under Outside names the dead page whole, as a path (`/about-old`, bare or in an address, with a query or punctuation after it): never the
-      link's own path or text, never a 404, so a real 404 of the app is not the control. Prints `{screen, found, finding, why, looked_at: {files,
-      findings}}`, `finding` being `<session>-F<n>` (the walker's file `findings-<session>.md`) for a block and null for an Outside note (no row to
-      drop). Exit 0 for found and for not found. Exit 1: no control.json or an unreadable file; exit 2: no file, or a control that is not functional.
+      note under Outside (a real label: a heading, bold, `Outside:`, or the word alone on its line; not a sentence that starts with it) names the dead page
+      whole, as a path in the case the plant wrote it (`/about-old`, bare or in an address, with a query or punctuation after it; `/about-old;x` is another
+      route): never the link's own path or text, never a 404, so a real 404 of the app is not the control. Prints `{screen, found, finding, why, looked_at: {files,
+      findings}}`, `finding` being `<session>-F<n>` (the walker's file `findings-<session>.md`) for a block and null for an Outside note (the workflow drops the verifier's note rows that name `dead`, also printed). Exit 0 for found and for not found. Exit 1: no control.json or an unreadable file; exit 2: no file, or a control that is not functional. `start` moves the findings-*.md of an earlier run of the same part and round to `earlier/`.
   converge --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
@@ -546,7 +549,9 @@ def cmd_up(argv):
         if os.path.exists(os.path.join(run_dir, stale)):
             os.remove(os.path.join(run_dir, stale))
     # rechecked-*.json too: `review-page` joins a recheck's capture to a finding by id, and this walk numbers its findings T1-1 again
-    for old in glob.glob(os.path.join(run_dir, "verified-*.json")) + glob.glob(os.path.join(run_dir, "rechecked-*.json")):
+    # findings-*.md too: a breaker that returns without writing its own file must not be judged on the earlier invocation's (`control judge`)
+    for old in (glob.glob(os.path.join(run_dir, "verified-*.json")) + glob.glob(os.path.join(run_dir, "rechecked-*.json"))
+                + glob.glob(os.path.join(run_dir, "findings-*.md"))):
         os.makedirs(os.path.join(run_dir, "earlier"), exist_ok=True)
         os.replace(old, os.path.join(run_dir, "earlier", os.path.basename(old)))
     started = []
@@ -1022,33 +1027,41 @@ def cmd_arm_control(argv):
 # The functional control: the first link to another screen of the app (the navigation first) leads to a page that does not exist. A walker meets
 # it by using the screen, which is what the `breaker` axis does; nothing in the page is changed (no attribute, no style), so no hydration warning
 # and no mark a walker could take for the tooling's. The init script runs in the walkers' browsers like the hierarchy one.
-# A link a walker can click at the walks' viewport: it has layout (client rects, a box), is not display none or visibility hidden, and is not off the
-# screen to the left or right (a mobile menu kept in the page).
-VISIBLE_JS = """const vis = (a) => {
+# A link a walker can click at the walks' viewport: it opens in the page (no other target, no download), has layout (client rects, a box), is not
+# display none or visibility hidden, and is not off the screen to the left, to the right or below it (a mobile menu kept in the page). The pick and the
+# click walk the same scopes in the same order with the same rules, so the click is on the very link the pick chose.
+ELIGIBLE_JS = """const norm = (p) => p.replace(/\\/+$/, "") || "/";
+  const vis = (a) => {
     if (a.getClientRects().length === 0) return false;
     const r = a.getBoundingClientRect(), cs = getComputedStyle(a);
-    return r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden" && r.right > 0 && r.left < innerWidth && r.bottom > 0;
-  };"""
+    return r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden" && r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;
+  };
+  const ok = (a) => a.origin === location.origin && (!a.target || a.target === "_self") && !a.hasAttribute("download") && vis(a);
+  const scopes = ['nav a[href]', 'header a[href]', '[role="navigation"] a[href]', 'a[href]'];"""
 LINK_PICK_JS = """(() => {
-  VISIBLE_JS
-  const here = location.pathname.replace(/\\/+$/, "") || "/";
-  for (const sel of ['nav a[href]', 'header a[href]', '[role="navigation"] a[href]', 'a[href]']) {
+  ELIGIBLE_JS
+  const here = norm(location.pathname);
+  for (const sel of scopes) {
     for (const a of document.querySelectorAll(sel)) {
-      const p = a.pathname.replace(/\\/+$/, "") || "/";
-      if (a.origin === location.origin && p !== here && (!a.target || a.target === "_self") && !a.hasAttribute("download") && vis(a))
-        return "fwx:link|" + encodeURIComponent(p) + "|" + encodeURIComponent((a.textContent || "").trim().slice(0, 60));
+      if (ok(a) && norm(a.pathname) !== here)
+        return "fwx:link|" + encodeURIComponent(norm(a.pathname)) + "|" + encodeURIComponent((a.textContent || "").trim().slice(0, 60));
     }
   }
   return "fwx:missing";
-})()""".replace("VISIBLE_JS", VISIBLE_JS)
+})()""".replace("ELIGIBLE_JS", ELIGIBLE_JS)
 LINK_CLICK_JS = """(() => {
-  VISIBLE_JS
+  ELIGIBLE_JS
   const LINK = %s;
-  const a = [...document.querySelectorAll("a[href]")].find((x) => x.origin === location.origin && (x.pathname.replace(/\\/+$/, "") || "/") === LINK && vis(x));
-  if (!a) return "fwx:nolink";
-  a.click();
-  return "fwx:clicked";
-})()""".replace("VISIBLE_JS", VISIBLE_JS)
+  for (const sel of scopes) {
+    for (const a of document.querySelectorAll(sel)) {
+      if (ok(a) && norm(a.pathname) === LINK) {
+        a.click();
+        return "fwx:clicked";
+      }
+    }
+  }
+  return "fwx:nolink";
+})()""".replace("ELIGIBLE_JS", ELIGIBLE_JS)
 LINK_AT_JS = """"fwx:at|" + (location.pathname.replace(/\\/+$/, "") || "/")"""
 FUNCTIONAL_JS = """(() => {
   const PATH = %(path)s, LINK = %(link)s, DEAD = %(dead)s;
@@ -1056,7 +1069,7 @@ FUNCTIONAL_JS = """(() => {
   addEventListener("click", (e) => {
     if (norm(location.pathname) !== PATH) return;
     const a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
-    if (!a || a.origin !== location.origin || norm(a.pathname) !== LINK || (a.target && a.target !== "_self")) return;
+    if (!a || a.origin !== location.origin || norm(a.pathname) !== LINK || (a.target && a.target !== "_self") || a.hasAttribute("download")) return;
     e.preventDefault();
     e.stopImmediatePropagation();
     location.assign(DEAD);
@@ -1067,6 +1080,12 @@ LINK_PICK = re.compile(r"fwx:(?:(missing)|link\|([^|\s\"]+)\|([^|\s\"]*))")
 LINK_AT = re.compile(r"fwx:at\|([^|\s\"]+)")
 
 
+def canon(p):
+    """One spelling of a path: decoded once and encoded again the way a browser writes `location.pathname`, so a start page given as `/café` and
+    the browser's `/caf%C3%A9` are the same page."""
+    return quote(unquote(p), safe="/:@!$&'()*+,;=-._~")
+
+
 def link_start(run, screen):
     """The (path, text) of the link the plant will break, read from the page the session has open (None when the page holds none after
     CONTROL_WAIT_S: it may still be drawing)."""
@@ -1074,7 +1093,7 @@ def link_start(run, screen):
     while True:
         m = LINK_PICK.search(browser_must(run, ["eval", LINK_PICK_JS]))
         if m and not m.group(1):
-            return unquote(m.group(2)), unquote(m.group(3))
+            return canon(unquote(m.group(2))), unquote(m.group(3))
         if time.monotonic() >= end:
             return None
         time.sleep(SETTLE_POLL_S)
@@ -1093,71 +1112,113 @@ def click_link(run, link):
 
 def lands_at(run, here):
     """The path the page is on once the click has taken it somewhere other than `here`, or `here` when it has not moved after CONTROL_WAIT_S
-    (a page that is navigating cannot answer for a moment: that look is skipped)."""
+    (a page that is navigating cannot answer for a moment: that look is skipped). Paths are compared in one spelling (`canon`)."""
     end = time.monotonic() + CONTROL_WAIT_S
-    at = here
     while True:
         rc, out, _ = browser_call(run, ["eval", LINK_AT_JS])
         m = LINK_AT.search(out) if rc == 0 else None
-        if m:
-            at = unquote(m.group(1))
-            if at != here:
-                return at
+        if m and canon(unquote(m.group(1))) != here:
+            return canon(unquote(m.group(1)))
         if time.monotonic() >= end:
-            return at
+            return here
         time.sleep(SETTLE_POLL_S)
 
 
-CLOSE_PROBE = ["close"]  # the probe session is closed after each of the two readings
+CLOSE_PROBE = ["close"]  # the probe session is closed after each reading, and the close has to work: a session left up would be the walkers' first
+DEAD_SUFFIXES = ("-old", "-gone", "-retired")  # the names tried for the dead page, in this order
+DEAD_STATUS_JS = """(() => {
+  const nav = performance.getEntriesByType("navigation")[0];
+  const soft = /\\b404\\b|not found|could not be found|does not exist|no such page/i.test((document.body && document.body.innerText || "").slice(0, 2000));
+  return "fwx:status|" + (nav && nav.responseStatus ? nav.responseStatus : "") + "|" + (soft ? "soft" : "");
+})()"""
+DEAD_STATUS = re.compile(r"fwx:status\|(\d*)\|(soft)?")
 
 
-def dead_page(link):
-    return (link.rstrip("/") or "/index") + "-old"
+def probe_session(run, body):
+    """`body()` in the probe session (w1), then close it. A failed close is exit 1: a browser left up would be met by a walker (and a second `open`
+    would reuse it without the init script). An error of `body` wins over a failed close."""
+    try:
+        out = body()
+    except BaseException:
+        browser_call(run, CLOSE_PROBE)
+        raise
+    rc, _, err = browser_call(run, CLOSE_PROBE)
+    if rc:
+        raise Stop("arm-control: the probe session could not be closed (exit %d: %s), so a browser may be left open for the walkers"
+                   % (rc, (err.strip().splitlines() or ["no message"])[-1]), 1)
+    return out
+
+
+def dead_page(link, suffix="-old"):
+    return (link.rstrip("/") or "/index") + suffix
+
+
+def missing_page(run, origin, link):
+    """The first of the names tried for the dead page that the app does not serve, read in a session with no plant (a 4xx/5xx status, or a page that
+    draws a not-found text), and the names tried before it; (None, tried) when every one answers."""
+    tried = []
+    for suffix in DEAD_SUFFIXES:
+        dead = dead_page(link, suffix)
+        browser_must(run, ["open", origin + dead])
+        m = DEAD_STATUS.search(browser_must(run, ["eval", DEAD_STATUS_JS]))
+        if m and ((m.group(1) and int(m.group(1)) >= 400) or m.group(2)):
+            return dead, tried
+        tried.append(dead)
+    return None, tried
 
 
 def arm_functional(run, screen, path, ctl_file, script):
-    """The functional plant, proved where the walkers will meet it: in a session with no plant the link must leave the screen when clicked,
-    then in a fresh session launched through `ab` with the plant (as a walker's) the same click must land elsewhere. Else exit 1 with the
-    reason on stderr and stdout as {armed: false}, and no control.json or init.js left."""
+    """The functional plant, proved where the walkers will meet it: in a session with no plant the link must leave the screen when clicked and the
+    dead page must be missing; then in a fresh session launched through `ab` with the plant (as a walker's) the same click must land on the dead
+    page. Else exit 1 with the reason on stderr and stdout as {armed: false}, and no control.json or init.js left."""
+    path = canon(path)
     ctl = {"screen": screen, "path": path, "kind": "functional", "script": script}
+    parts = urlsplit(screen if "://" in screen else "http://" + screen)
+    origin = "%s://%s" % (parts.scheme, parts.netloc)
+
+    def first():
+        browser_must(run, ["open", screen])
+        link = link_start(run, screen)
+        if link is None:
+            raise Stop("arm-control: target not found on %s: no link to another screen of the app after %g s, so a plant there would change nothing" % (screen, CONTROL_WAIT_S), 1)
+        browser_must(run, ["eval", LINK_CLICK_JS % json.dumps(link[0])])
+        return link, lands_at(run, path)
+
+    def second(link):
+        browser_must(run, ["open", screen])
+        if not click_link(run, link):
+            raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no link to %s after %g s" % (screen, link, CONTROL_WAIT_S), 1)
+        return lands_at(run, path)
     try:
-        try:
-            browser_must(run, ["open", screen])
-            link = link_start(run, screen)
-            if link is None:
-                raise Stop("arm-control: target not found on %s: no link to another screen of the app after %g s, so a plant there would change nothing" % (screen, CONTROL_WAIT_S), 1)
-            browser_must(run, ["eval", LINK_CLICK_JS % json.dumps(link[0])])
-            before = lands_at(run, path)
-        finally:
-            browser_call(run, CLOSE_PROBE)
+        link, before = probe_session(run, first)
         if before == path:
             raise Stop("arm-control: target not found on %s: the link to %s does not leave the screen when clicked, so a plant on it would change nothing" % (screen, link[0]), 1)
-        dead = dead_page(link[0])
+        dead, tried = probe_session(run, lambda: missing_page(run, origin, link[0]))
+        if dead is None:
+            raise Stop("arm-control: the page the plant sends the link to is not missing on %s: %s answer%s, so a walker would meet a working page, and the browser gave no "
+                       "not-found status or text" % (screen, ", ".join(tried), "s" if len(tried) == 1 else ""), 1)
         os.makedirs(run["shots"], exist_ok=True)
         with open(script, "w", encoding="utf-8") as f:  # what the walkers' launch reads: control.json names the script, and `ab` adds it to a fresh walker session
             f.write(FUNCTIONAL_JS % {"path": json.dumps(path), "link": json.dumps(link[0]), "dead": json.dumps(dead)})
         write_json(ctl_file, dict(ctl, link=link[0], dead=dead))
-        try:
-            browser_must(run, ["open", screen])
-            if not click_link(run, link[0]):
-                raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no link to %s after %g s" % (screen, link[0], CONTROL_WAIT_S), 1)
-            after = lands_at(run, path)
-        finally:
-            browser_call(run, CLOSE_PROBE)
+        after = probe_session(run, lambda: second(link[0]))
         if after == before:
             raise Stop("arm-control: no visible change on %s: clicking the link to %s lands on %s without the plant and on %s in a fresh walker session launched with it "
                        "(the plant did not reach the browser, or the link goes there anyway)" % (screen, link[0], before, after), 1)
+        if after != dead:
+            raise Stop("arm-control: the planted click did not land on %s on %s: it landed on %s in a fresh walker session launched with the plant" % (dead, screen, after), 1)
+        ctl = dict(ctl, link=link[0], link_text=link[1], dead=dead,
+                   planted="the link to %s on this screen leads to %s, a page that does not exist" % (link[0], dead),
+                   readback={"lands": {"before": before, "after": after}}, armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+        write_json(ctl_file + ".tmp", ctl)  # published whole: a walker's launch never reads half a control.json
+        os.replace(ctl_file + ".tmp", ctl_file)
     except BaseException as e:
-        for left in (script, ctl_file):  # a plant that was not proved visible stays nowhere a walker could meet it
-            if os.path.exists(left):
+        for left in (script, ctl_file, ctl_file + ".tmp"):  # a plant that was not proved visible stays nowhere a walker could meet it
+            if os.path.isfile(left):
                 os.unlink(left)
         if isinstance(e, Stop) and e.code == 1:
             say({"reason": str(e), "armed": False})
         raise
-    ctl = dict(ctl, link=link[0], link_text=link[1], dead=dead,
-               planted="the link to %s on this screen leads to %s, a page that does not exist" % (link[0], dead),
-               readback={"lands": {"before": before, "after": after}}, armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
-    write_json(ctl_file, ctl)
     say(ctl)
     return 0
 
@@ -1222,9 +1283,16 @@ def cmd_check_screens(argv):
 # punctuation after it). Never the link's own path or text, never a 404: a real 404 on the app would be taken for the control and `dropControl`
 # would take that real finding from the fixer. Read in a finding block (`### F<n>`) and in a note under Outside (a walker files what is outside its
 # screens there, and the dead page is another route); a note under Tooling, Covered or Not covered is none.
-LABEL = re.compile(r"^\s*(?:#+\s*|\*\*|__)?\s*(covered|not covered|tooling|outside)\b\W*(.*)$", re.I)
+LABEL = re.compile(r"^\s*(#+\s*|\*\*|__)?(covered|not covered|tooling|outside)\s*(\*\*|__)?\s*([:\-\u2013\u2014])?\s*(\*\*|__)?\s*(.*)$", re.I)
 FIELD = re.compile(r"^(?:\s|[-*+]\s|\d+[.)]\s)")
-WORD = re.compile(r"[^\s\"'`<>()\[\]{},;|]+")
+WORD = re.compile(r"[\s\"'`<>]+|\]\(")  # what separates the words of a note: not the brackets of an IPv6 address, not `;`
+
+
+def label_of(line):
+    """The match of a section label (`## Tooling`, `**Outside:** note`, a line that is only `Outside`), None for a sentence that merely starts with
+    one of the words (`Outside navigation is excluded...`): a label has a heading mark, bold, a separator, or nothing after it."""
+    m = LABEL.match(line)
+    return m if m and (m.group(1) or m.group(3) or m.group(4) or m.group(5) or not m.group(6).strip()) else None
 
 
 def sections(text):
@@ -1233,15 +1301,15 @@ def sections(text):
     or an indented one); the Outside notes run from the label (its own line included) to the next heading, label or rule."""
     blocks, outside, mode, blank = [], [], None, False
     for line in text.splitlines():
-        m, lab = re.match(r"###\s+F(\d+)\b", line), LABEL.match(line)
+        m, lab = re.match(r"###\s+F(\d+)\b", line), label_of(line)
         if m:
             blocks.append([m.group(1), [line]])
             mode, blank = "finding", False
             continue
         if line.startswith("#") or re.match(r"^\s*(?:-{3,}|_{3,}|\*{3,})\s*$", line) or lab:
-            mode = "outside" if lab and lab.group(1).lower() == "outside" else None
+            mode = "outside" if lab and lab.group(2).lower() == "outside" else None
             if mode:
-                outside.append(lab.group(2))
+                outside.append(lab.group(6))
             blank = False
             continue
         if not line.strip():
@@ -1258,17 +1326,21 @@ def sections(text):
 
 
 def names_the_fault(block, ctl):
-    """Why this text names the planted dead page, or None: one of its words is that path, whole."""
-    dead = ctl["dead"].lower()
-    for word in WORD.findall(block):
-        word = word.rstrip(".:!?")
-        if re.match(r"^[a-z][a-z0-9+.-]*://", word, re.I):
-            path = urlsplit(word).path
-        elif word.startswith("/"):
-            path = re.split(r"[?#]", word)[0]
-        else:
+    """Why this text names the planted dead page, or None: one of its words is that path, whole, in the case the plant wrote it (scheme and host may
+    differ in case; a path may be encoded or not). A word is cut at spaces and quotes, never inside an address (`http://[::1]:3000/x`, `/x;y`)."""
+    dead = unquote(ctl["dead"]).rstrip("/") or "/"
+    for word in WORD.split(block):
+        word = word.lstrip("([{").rstrip(".,:;!?)]}")
+        try:
+            if re.match(r"^[a-z][a-z0-9+.-]*://", word, re.I):
+                path = urlsplit(word).path
+            elif word.startswith("/"):
+                path = re.split(r"[?#]", word)[0]
+            else:
+                continue
+        except ValueError:
             continue
-        if (unquote(path).rstrip("/") or "/").lower() == dead:
+        if (unquote(path).rstrip("/") or "/") == dead:
             return "it names the dead page %s" % ctl["dead"]
     return None
 
@@ -1293,7 +1365,9 @@ def cmd_control_judge(argv):
             with open(f, encoding="utf-8") as fh:
                 text = fh.read()
         except OSError as e:
-            raise Stop("cannot read the findings file %s (%s)" % (f, e.strerror), 1)
+            raise Stop("cannot read the findings file %s (%s)" % (f, e.strerror), 1) from e
+        except ValueError as e:  # not UTF-8 text
+            raise Stop("cannot read the findings file %s: it is not text (%s)" % (f, e), 1) from e
         session = re.sub(r"^findings-", "", os.path.splitext(os.path.basename(f))[0])
         blocks, outside = sections(text)
         for num, block in blocks:
@@ -1305,7 +1379,7 @@ def cmd_control_judge(argv):
         if why and note is None:  # a note is no verified row of its own (the verifier makes one from it, `<session>-notes`): there is none to drop
             note = {"finding": None, "why": "the Outside note of %s: %s" % (session, why)}
     found = found or note
-    say({"screen": ctl["screen"], "found": found is not None, "finding": found["finding"] if found else None,
+    say({"screen": ctl["screen"], "found": found is not None, "finding": found["finding"] if found else None, "dead": ctl["dead"],
          "why": found["why"] if found else "none of the %d finding(s) in %d file(s), nor an Outside note, names the dead page %s" % (n, len(files), ctl["dead"]),
          "looked_at": {"files": len(files), "findings": n}})
     return 0
