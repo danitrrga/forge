@@ -105,14 +105,8 @@ def _ignored(top, tasks):
 
 
 def _defaults(top, cfg):
-    """The names of the default branch: the configuration's, the remote's, else main and master."""
-    names = set()
-    if cfg["project"].get("default_branch"):
-        names.add(cfg["project"]["default_branch"])
-    ref = out(top, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
-    if ref:
-        names.add(ref.split("/", 1)[-1])
-    return names or {"main", "master"}
+    """The names of the default branch (core.verify has the one copy)."""
+    return verify.default_names(top, cfg)
 
 
 def _settings(path):
