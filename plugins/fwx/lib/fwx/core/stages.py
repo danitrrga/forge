@@ -16,16 +16,14 @@ at the same moment are not serialised (one folder has one driver at a time).
 A session folder does not enter `reviewing`, `phase-review` or `closed` while an `outside` item of it or of its subphases is neither fixed nor
 routed (core.outside): the ownership rule has its enforcer here, so a part cannot close with what an agent saw left as a mention.
 
-Moving a session folder to `closed` also removes the run folders of the phase (core.runs): one-use files do not outlive their work.
-
-Imports only the standard library, `state`, `core.outside` and `core.runs`.
+Imports only the standard library, `state` and `core.outside`.
 """
 import json
 import os
 import re
 
 from fwx import state
-from fwx.core import outside, runs
+from fwx.core import outside
 
 TABLE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))),
                      "data", "stages.json")
@@ -161,8 +159,6 @@ def advance(dir, to, why="", cwd=None, table=None):
         raise Refused("%s -> %s: %s" % (frm, to, held))
     detail = ("%s %s" % (to, why or "")).strip()
     state.append_audit(dir, "stage", detail=detail, cwd=str(dir) if cwd is None else cwd)
-    if machine == "session" and to == "closed":
-        runs.prune(dir)  # the phase's work is over: its runs' briefs and step files go with it
     return frm
 
 

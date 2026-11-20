@@ -152,19 +152,4 @@ s.eq("a phase that never had an item walks to reviewing", r.returncode, 0)
 code, doc = listed(other)
 s.eq("an empty ledger lists nothing and exits 0", (code, doc), (0, {"items": [], "open": []}))
 
-# ---- a run's folder does not outlive the phase's work (ownership includes the repository's tidiness: principles.md rule 12) ----------
-# Red on master: FAIL: closed: the run folders of the phase and its subphase are removed: got ['01-x-abc1234-1', '01.1-a-abc1234-2'], want []
-third = os.path.join(repo, ".fwx", "milestones", "v1", "phases", "03-z")
-os.makedirs(os.path.join(third, "03.1-b"))
-runs = os.path.join(repo, ".git", "fwx", "runs")
-mine = ("03-z-abc1234-1", "03.1-b-abc1234-2")
-theirs = ("02-y-abc1234-1", "03-zebra-abc1234-1", "03-z-notarun")
-for name in mine + theirs:
-    helpers.write(os.path.join(runs, name), "briefs/T1.md", "brief\n")
-for to in ("premortem", "planning", "postmortem", "executing", "phase-review"):
-    stage(to, third)
-r = stage("closed", third)
-s.eq("closed: exit 0", r.returncode, 0)
-s.eq("closed: the run folders of the phase and its subphase are removed, no other run's", sorted(os.listdir(runs)), sorted(theirs))
-
 s.done()
