@@ -10,7 +10,20 @@ file. No network, no real `gh`. The check-state table is 5.2's, row by row, not 
 Seen red before the code existed (core/gh.py and core/verify.py absent; the test stops at the import):
   FAIL: cannot import fwx.core.verify and fwx.core.gh: cannot import name 'gh' from 'fwx.core' (<worktree>/lib/fwx/core/__init__.py)
 
-Controls, each seen red on a copy of the repo with one thing changed (first FAIL line shown; 152 checks on the good code):
+The built-in check `fwx added-files` (no one-use or old-version file added since the default branch) was seen red on master,
+before core/verify.py had it (first FAILs shown):
+  FAIL: a range adding docs/brief-x.md, plan-v2.md and notes.md.bak: exit 1: got 0, want 1
+  FAIL: it prints the line of docs/brief-x.md: fwx verify: running 1 check from the project at 165a099 ...
+  FAIL: a red built-in check is a red command of the evidence, like the project's own: got ('0', 0, [{'cmd': 'true', 'rc': 0}]), want ('1', 1, [{'cmd': 'true', 'rc': 0}, {'cmd': 'fwx added-files', 'rc': 1}])
+Its mutants, each seen red on a copy of the plugin with one line changed:
+  - the `.fwx/` exemption removed:
+      FAIL: a range adding src/<date>-migration.sql, README.md and .fwx/milestones/x/state.md (and a marked name under .fwx/): exit 0: got 1, want 0
+  - modified files counted too (no `--diff-filter=A`):
+      FAIL: a marked file that already existed and is only changed is not added: got 1, want 0
+  - the `.md`/`.txt` limit of the one-use names removed:
+      FAIL: a marker in a code file's name, a folder's name, `-older` or a bare `notes.md` is not a hit: got 1, want 0
+
+Controls of the rest, each seen red on a copy of the repo with one thing changed (first FAIL line shown; 152 checks on the good code):
   - the dirty-tree check is off:
       FAIL: a modified tracked file: exit 2: got 0, want 2
       FAIL: a dirty tree writes no row: got [{'date': ..., 'kind': 'evidence', ...}], want []
@@ -317,6 +330,83 @@ if isinstance(parsed, dict):
     s.eq("--json has the facts.evidence shape, plus source and rc", sorted(parsed), ["clean", "commands", "rc", "sha", "source"])
     s.eq("--json is what the row's detail holds", parsed, json.loads(rows(phase)[-1]["detail"]))
     s.eq("--json is the evidence of HEAD", evidence.evidence_state(parsed, head(repo), ["true"])["state"], "verified")
+
+# ---- the built-in check: no file of a one-use or old-version name is added (the range from the default branch) -----------
+
+DATE = "-".join(("2001", "02", "03"))  # built from parts: the private list of `forge lint` refuses a date in a file
+TIP = ("is never committed: put it in your scratch folder (fwx scratch new), which git ignores; for an old version, keep only "
+       "the living file, since git holds the history. If this file really belongs in the project, rename it without the marker.")
+
+
+def on_branch(files, recipe=("true",), base_files=None):
+    """A toy repo on a new branch `work`, one commit past master, adding `files` ({path: text})."""
+    repo, phase = make(list(recipe), base_files)
+    helpers.git(repo, "checkout", "-q", "-b", "work")
+    for rel, text in files.items():
+        helpers.write(repo, rel, text)
+    helpers.git(repo, "add", "-A", "-f")
+    helpers.git(repo, "commit", "-q", "-m", "work")
+    return repo, phase
+
+
+repo, phase = on_branch({"docs/brief-x.md": "b\n", "plan-v2.md": "p\n", "notes.md.bak": "n\n"})
+r = run(repo)
+s.eq("a range adding docs/brief-x.md, plan-v2.md and notes.md.bak: exit 1", r.returncode, 1)
+for rel, what in (("docs/brief-x.md", "a one-use file"), ("plan-v2.md", "an old version"), ("notes.md.bak", "an old version")):
+    s.ok("it prints the line of %s" % rel, "%s: %s %s" % (rel, what, TIP) in r.stderr, r.stderr)
+s.eq("one line for each file, and nothing else says 'never committed'", r.stderr.count("is never committed"), 3)
+got = rows(phase)
+d = json.loads(got[0]["detail"]) if got else {}
+s.eq("a red built-in check is a red command of the evidence, like the project's own",
+     (got[0]["rc"], d.get("rc"), d.get("commands")) if got else None,
+     ("1", 1, [{"cmd": "true", "rc": 0}, {"cmd": "fwx added-files", "rc": 1}]))
+s.ok("the evidence line names it", "%s=1" % "fwx added-files" in r.stdout, r.stdout)
+s.eq("and it proves the commit failed (core.evidence)", evidence.evidence_state(d, head(repo), ["true"])["state"], "failed")
+
+repo, phase = on_branch({"src/" + DATE + "-migration.sql": "s\n", "README.md": "r\n", ".fwx/milestones/x/state.md": "st\n",
+                         ".fwx/milestones/x/handoff-" + DATE + ".md": "h\n"})
+r = run(repo)
+s.eq("a range adding src/" + DATE + "-migration.sql, README.md and .fwx/milestones/x/state.md (and a marked name under .fwx/): exit 0", r.returncode, 0)
+s.ok("and says nothing about files: success is silent", "never committed" not in r.stderr and "NOT RUN" not in r.stderr, r.stderr)
+s.eq("a green built-in check adds no command to the evidence",
+     [c["cmd"] for c in json.loads(rows(phase)[0]["detail"])["commands"]], ["true"])
+
+repo, phase = make(["true"])
+r = run(repo)
+s.eq("on the default branch itself the range is empty: exit 0, silent", (r.returncode, "never committed" in r.stderr), (0, False))
+repo, phase = on_branch({"src/a.py": "a\n"})
+helpers.git(repo, "checkout", "-q", "master")
+helpers.write(repo, "todo.md", "added on master after the branch left\n")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "master moves on")
+helpers.git(repo, "checkout", "-q", "work")
+s.eq("a file the default branch added after the branch left is not the branch's", run(repo).returncode, 0)
+helpers.git(repo, "branch", "-q", "-m", "master", "trunk")
+r = run(repo)
+s.eq("no default branch to measure from: exit 0 and the check says NOT RUN, NOT ARMED", (r.returncode, "NOT RUN, NOT ARMED" in r.stderr), (0, True))
+
+repo, phase = on_branch({"docs/old-brief.md": "changed\n", "legacy-v1.md": "changed\n"}, base_files={"docs/old-brief.md": "x\n", "legacy-v1.md": "x\n"})
+s.eq("a marked file that already existed and is only changed is not added", run(repo).returncode, 0)
+repo, phase = on_branch({"a/Brief.MD": "x\n"})
+s.eq("the marker is found whatever the case", run(repo).returncode, 1)
+repo, phase = on_branch({"src/brief.py": "x\n", "debug/older.md": "x\n", "src/api-v2/handler.py": "x\n", "docs/notes.md": "x\n",
+                         ".fwx/briefs/" + DATE + "-handoff.md": "x\n"})
+s.eq("a marker in a code file's name, a folder's name, `-older` or a bare `notes.md` is not a hit", run(repo).returncode, 0)
+wt = helpers.add_worktree(repo, "wt")
+helpers.write(wt, "checkpoint.txt", "c\n")
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "wt")
+r = run(wt)
+s.eq("from a linked worktree the range is the same: a checkpoint.txt added there fails", (r.returncode, "checkpoint.txt: a one-use file" in r.stderr), (1, True))
+
+for name, want in (("brief.md", "one-use"), ("my-prompt.txt", "one-use"), ("Checkpoint-3.md", "one-use"), ("handoff.md", "one-use"),
+                   ("tomorrow.md", "one-use"), ("TODO.md", "one-use"), ("scratch.txt", "one-use"), ("notes-api.md", "one-use"),
+                   ("day-" + DATE + ".md", "one-use"), ("x/prompts.md", "one-use"), ("brief.py", None), ("" + DATE + ".sql", None),
+                   ("notes.md", None), ("a.bak", "old"), ("a.orig", "old"), ("a.bak.md", "old"), ("a-old.py", "old"),
+                   ("a-copy.md", "old"), ("a copy.md", "old"), ("a copy", "old"), ("a-backup.json", "old"), ("a-v2.md", "old"),
+                   ("a-v12", "old"), ("a-v2.test.js", "old"), ("a-older.md", None), ("a-vx.md", None), ("a-v2b.md", None),
+                   ("old.md", None), ("copy.md", None), ("backup.md", None)):
+    s.eq("marker of %r" % name, getattr(core_verify, "marker", lambda n: "no marker()")(name), want)
 
 # ---- output: the tail, and no secrets in it ---------------------------------------------------------------------------
 

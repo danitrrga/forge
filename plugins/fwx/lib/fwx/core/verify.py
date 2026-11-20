@@ -16,6 +16,12 @@ killed by the limit or never started. It goes to `dir` when given, else to the p
 finds it, always in the main checkout whatever worktree the run was launched from; with neither it writes nothing and
 says so.
 
+One check is built in, after the project's own: `added_files`. A file the commits since the default branch ADD, named like a
+one-use file (a brief, a prompt, a checkpoint, a handoff, a todo, notes, a dated file, `.md` and `.txt` only) or like an old
+version (`.bak`, `-old`, `-v2`, any extension), is a red command of the evidence, `fwx added-files`, and each file gets one line
+that says what to do instead. Green it is silent and adds no command, so a green run's evidence is what it was. `.fwx/` is
+exempt (fwx writes its own state there). With no default branch to measure from it says `NOT RUN, NOT ARMED` and adds nothing.
+
 The output tail of a red check goes to the terminal, so secrets are taken out of it first: the value of any environment
 variable named like a credential, and the shapes of tokens (`redact`). Nothing else of the output is kept or written.
 
@@ -39,6 +45,13 @@ TAIL_LINES = 40
 TAIL_CHARS = 4000
 COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
+ADDED_FILES_CHECK = "fwx added-files"
+_ONE_USE_EXT = (".md", ".txt")
+_ONE_USE = re.compile(r"brief|prompt|checkpoint|handoff|tomorrow|todo|scratch|notes-|\d{4}-\d{2}-\d{2}", re.I)
+_OLD_VERSION = re.compile(r"\.(?:bak|orig)(?:\.|\Z)|(?:-old|-copy| copy|-backup|-v\d+)(?:\.|\Z)", re.I)
+ADDED_FILE_TIP = ("is never committed: put it in your scratch folder (fwx scratch new), which git ignores; for an old version, "
+                  "keep only the living file, since git holds the history. If this file really belongs in the project, rename "
+                  "it without the marker.")
 _NO_ROOT = os.devnull  # a root with no package.json: `plan_checks` then returns only the project's checks
 
 
@@ -123,6 +136,57 @@ def toplevel(cwd):
     return r.stdout.strip()
 
 
+def marker(name):
+    """`"one-use"`, `"old"` or None for the file `name` (a path: only its last part is read; `.fwx/` is the caller's)."""
+    base = os.path.basename(name)
+    if base.lower().endswith(_ONE_USE_EXT) and _ONE_USE.search(base):
+        return "one-use"
+    return "old" if _OLD_VERSION.search(base) else None
+
+
+def _default_refs(root, cfg):
+    """The refs of the default branch that exist: its local branch and its `origin/` copy, for the names `cfg` or the remote
+    gives, else main and master."""
+    names = set()
+    if cfg["project"].get("default_branch"):
+        names.add(cfg["project"]["default_branch"])
+    r = _git(root, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
+    if r.returncode == 0 and r.stdout.strip():
+        names.add(r.stdout.strip().split("/", 1)[-1])
+    refs = ["refs/%s/%s" % (kind, n) for n in sorted(names or {"main", "master"}) for kind in ("heads", "remotes/origin")]
+    return [ref for ref in refs if _git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}").returncode == 0]
+
+
+def _range_base(root, cfg):
+    """The merge base of HEAD with the default branch (the nearest, when the local branch and `origin/` differ), or None."""
+    best = None
+    for ref in _default_refs(root, cfg):
+        mb = _git(root, "merge-base", "HEAD", ref)
+        if mb.returncode:
+            continue
+        n = _git(root, "rev-list", "--count", mb.stdout.strip() + "..HEAD").stdout.strip()
+        if n.isdigit() and (best is None or int(n) < best[0]):
+            best = (int(n), mb.stdout.strip())
+    return best and best[1]
+
+
+def added_files(root, cfg):
+    """`(lines, known)`: one line per file added since the merge base with the default branch whose name marks it as one-use or
+    an old version, and False for `known` when there is no base to measure from."""
+    base = _range_base(root, cfg)
+    if base is None:
+        return [], False
+    r = _git(root, "diff", "-z", "--name-only", "--diff-filter=A", "-M", base, "HEAD")
+    if r.returncode:
+        raise state.StateError("git diff failed in %s: %s" % (root, r.stderr.strip()))
+    lines = []
+    for f in sorted(f for f in r.stdout.split("\0") if f):
+        kind = None if f.startswith(state.PLAN_DIR.rstrip("/") + "/") else marker(f)
+        if kind:
+            lines.append("%s: %s %s" % (f, "a one-use file" if kind == "one-use" else "an old version", ADDED_FILE_TIP))
+    return lines, True
+
+
 def evidence_line(sha, commands):
     """`evidence <sha> <cmd>=<rc> ...`, `none` for a command with no exit status: the line for a phase report."""
     return "evidence %s %s" % (sha, " ".join("%s=%s" % (c["cmd"], "none" if c["rc"] is None else c["rc"])
@@ -163,6 +227,12 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=CHECK_TIMEOUT_S, enviro
     say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",
                                                    "project" if source == "profile" else "package.json scripts", sha[:7]))
     results = [run_check(command, root, timeout) for command in recipe]
+    started = time.monotonic()
+    marked, known = added_files(root, cfg)
+    if not known:
+        say("%s: no default branch to measure the added files from" % "NOT RUN, NOT ARMED")
+    if marked:
+        results.append({"cmd": ADDED_FILES_CHECK, "rc": 1, "seconds": time.monotonic() - started, "output": None, "lines": marked})
     moved = head(root) != sha
     if moved:
         say("HEAD moved while the checks ran, so they prove neither commit")
@@ -171,7 +241,11 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=CHECK_TIMEOUT_S, enviro
         say("%s %s · %.1f s%s" % ("passed" if ok else "failed", r["cmd"], r["seconds"],
                                   "" if ok else " · exit %s" % ("none" if r["rc"] is None else r["rc"])))
     for r in results:
-        if r["rc"] != 0:
+        if r["rc"] != 0 and r["output"] is None:
+            say("\n--- %s" % r["cmd"])
+            for line in r["lines"]:
+                say(line)
+        elif r["rc"] != 0:
             say("\n--- %s\n%s" % (r["cmd"], tail(r["output"], environ)))
     green = all(r["rc"] == 0 for r in results)
     ev = {"sha": sha, "clean": not moved, "source": source, "commands": [{"cmd": r["cmd"], "rc": r["rc"]} for r in results],
