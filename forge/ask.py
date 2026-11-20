@@ -6,11 +6,12 @@ The order, which `Asker.asked` records so a test can read it:
                   members), then the final list of skills, which is the sets' members edited by adding and removing;
                   `--sets` or `--skills` alone answers both, and so does the pair
   3 servers       the MCP servers of config/mcp-registry.json (an account server is `<service>-<project>`)
-  4 memory        among the memory integrations that are on (MEMORY) and none; a project question, a profile has no memory
-  5 stack         what the stack asks: its checks, its plugins and the options ui and command_guard
+  4 memory        among the memory integrations that are on (MEMORY), the claude-mem-lite plugin (LITE) and none; a project question, a
+                  profile has no memory
+  5 stack         what the stack asks: its checks, its plugins and the options ui, command_guard and worktree_guard
 
 Every question is a flag: --profiles, --sets, --skills (the final list, replacing what the sets give), --server, --memory, and for
-5 --check, --plugin, --ui, --command-guard. `none` is the explicit empty answer of the first four. A flag asks nothing; a question
+5 --check, --plugin, --ui, --command-guard, --worktree-guard. `none` is the explicit empty answer of the first four. A flag asks nothing; a question
 whose flag is absent is asked only in a terminal and never with --yes, so the same data by flags or by answers writes the same
 files. Where nothing is asked (no terminal, or --yes), one question flag makes every other question need its flag (`none` is an answer),
 and the error names all that are missing; with none of them the command is what it was before the questions. With profiles named, `--sets`, `--skills` and `--server` apply to each of them (`@NAME:` in front of a value limits it to
@@ -30,7 +31,10 @@ from forge import configure, lib, memory, profiles, selector, suggest
 DEFAULT_LABEL = "default"  # the label of the project's own lists when a project offers profiles (profiles.default)
 # The memory integrations a project can be given (the project scopes of forge/hooks.py SCOPES, which read the project's `servers`), and
 # the registry servers each one means: a project is on one when its `servers` hold them. The others of lib.INTEGRATIONS are not memory.
-MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall")}
+# `lite` is the claude-mem-lite plugin: no server, no integration switch; the answer adds the plugin to plugins_keep (with_memory_plugin),
+# and the generator derives its store from the project's name.
+LITE = "lite"
+MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall"), LITE: ()}
 NONE = "none"
 
 
@@ -151,6 +155,7 @@ class Flags:
         self.plugins = getattr(a, "plugin", None) or []
         self.ui = bool(getattr(a, "ui", False))
         self.command_guard = bool(getattr(a, "command_guard", False))
+        self.worktree_guard = bool(getattr(a, "worktree_guard", False))
 
     def of(self, table, scope):
         """What `table` (sets, skills or servers) says for one scope: its own value, else the unscoped one, else None."""
@@ -159,7 +164,7 @@ class Flags:
         return table[scope] if scope in table else table.get(None)
 
     def stack_given(self):
-        return bool(self.checks or self.plugins or self.ui or self.command_guard)
+        return bool(self.checks or self.plugins or self.ui or self.command_guard or self.worktree_guard)
 
 
 # ---- the context -------------------------------------------------------------------------------------------------------------
@@ -191,7 +196,7 @@ class Context:
         return {s for servers in MEMORY.values() for s in servers}
 
     def memory_options(self):
-        return [m for m in lib.INTEGRATIONS if m in MEMORY and lib.on(m)]
+        return [m for m in MEMORY if memory_on(m)]
 
     def server_rows(self, kinds=None):
         """The servers worth asking about: not another project's account server and not a memory server (that is question 4)."""
@@ -207,6 +212,21 @@ class Context:
     def set_label(self, name):
         doc = self.docs.get(name)
         return "%s: %s" % (name, doc if isinstance(doc, str) and doc.strip() else ", ".join(self.sets[name]))
+
+
+def memory_on(m):
+    """Whether memory answer `m` may be chosen: an integration only when it is switched on in config/forge.json; the plugin always."""
+    return m == LITE or lib.on(m)
+
+
+def memory_label(m):
+    return "%s (the %s plugin)" % (m, memory.LITE_PLUGIN) if m == LITE else "%s (%s)" % (m, ", ".join(MEMORY[m]))
+
+
+def with_memory_plugin(plugins, ans):
+    """`plugins` (a plugins_keep), with the claude-mem-lite plugin once at the end when the memory answer is `lite`."""
+    plugins = list(plugins)
+    return plugins + [memory.LITE_PLUGIN] if ans.memory == LITE and memory.LITE_PLUGIN not in plugins else plugins
 
 
 def owner_of(server, project, others):
@@ -231,7 +251,7 @@ def kind_of(server, project):
 class Answers:
     """`profiles`: the names of the profiles this run makes. `targets`: {scope: {"sets", "skills", "servers"}} for each scope the
     lists were asked for (a profile's name, or None for the project), `skills` None when the final list is the sets' members as
-    they are. `memory`: a key of MEMORY or None. `stack`: {"checks", "plugins", "ui", "command_guard"} or None."""
+    they are. `memory`: a key of MEMORY or None. `stack`: {"checks", "plugins", "ui", "command_guard", "worktree_guard"} or None."""
 
     def __init__(self):
         self.profiles, self.targets, self.memory = [], {}, None
@@ -273,7 +293,7 @@ def gather(a, ctx, asker, profile=None):
     ask_on = asker.interactive and not getattr(a, "yes", False)
     if profile is not None:
         for flag, bad in (("--profiles", flags.profiles is not None), ("--memory", flags.memory is not None),
-                          ("--check, --plugin, --ui and --command-guard", flags.stack_given())):
+                          ("--check, --plugin, --ui, --command-guard and --worktree-guard", flags.stack_given())):
             if bad:
                 problems.append("%s belong to making a project, not to a profile" % flag)
         ans.profiles = [profile]
@@ -329,23 +349,25 @@ def gather(a, ctx, asker, profile=None):
             ans.memory = None if flags.memory == NONE else flags.memory
         elif ask_on:
             options = ctx.memory_options()
-            rows = [(NONE, "none", True)] + [(m, "%s (%s)" % (m, ", ".join(MEMORY[m])), False) for m in options]
+            rows = [(NONE, "none", True)] + [(m, memory_label(m), False) for m in options]
             chosen = asker.pick_one("memory", "memory", rows)
             ans.memory = None if chosen == NONE else chosen
         given_all = (flags.profiles is not None and flags.memory is not None and all(lists_answered(flags, s) for s in scopes)
                      and all(flags.of(flags.servers, s) is not None for s in scopes))
         stack = ctx.stack
-        ans.stack = {"checks": flags.checks, "plugins": flags.plugins, "ui": flags.ui, "command_guard": flags.command_guard}
+        ans.stack = {"checks": flags.checks, "plugins": flags.plugins, "ui": flags.ui, "command_guard": flags.command_guard,
+                     "worktree_guard": flags.worktree_guard}
         if ask_on and not given_all and not flags.stack_given():
             rows = ([("check:%s" % c, "check: %s" % c, False) for c in stack["checks"]]
                     + [("plugin:%s" % p, "plugin: %s" % p, False) for p in stack["plugins"]]
                     + [("ui", "option: ui (the project has a user interface)", False),
-                       ("command_guard", "option: command_guard", False)])
+                       ("command_guard", "option: command_guard", False),
+                       ("worktree_guard", "option: worktree_guard", False)])
             chosen = asker.pick("stack", "what the %s stack asks (plugins: only these are kept, besides the common ones)" % (
                 stack.get("name") or "chosen"), rows)
             ans.stack = {"checks": [k[6:] for k in chosen if k.startswith("check:")],
                          "plugins": [k[7:] for k in chosen if k.startswith("plugin:")],
-                         "ui": "ui" in chosen, "command_guard": "command_guard" in chosen}
+                         "ui": "ui" in chosen, "command_guard": "command_guard" in chosen, "worktree_guard": "worktree_guard" in chosen}
     return ans, problems
 
 
@@ -455,7 +477,7 @@ def check_memory(ctx, ans, problems):
         return
     if ans.memory not in MEMORY:
         problems.append("--memory: %s" % suggest.message("memory", ans.memory, [NONE] + list(MEMORY), ""))
-    elif not lib.on(ans.memory):
+    elif not memory_on(ans.memory):
         problems.append("--memory %s: the integration is off in config/forge.json (integrations.%s)" % (ans.memory, ans.memory))
     else:
         missing = [s for s in MEMORY[ans.memory] if s not in ctx.registry]
@@ -475,7 +497,7 @@ def check_one_backend(ctx, ans, problems):
     plugins = list((ans.stack or {}).get("plugins", []))
     keep = ctx.forge.get("skill_keep") if isinstance(ctx.forge.get("skill_keep"), dict) else {}
     common = list(keep.get("common_plugins") or []) if plugins else []
-    if ans.memory and memory.LITE_PLUGIN in plugins + common:
+    if ans.memory and ans.memory != LITE and memory.LITE_PLUGIN in plugins + common:  # `lite` is that plugin: the same backend, not a second
         problems.append("--plugin %s is a memory backend and --memory %s is another: one per project, never both" % (
             memory.LITE_PLUGIN, ans.memory) if memory.LITE_PLUGIN in plugins else
             "%s is in skill_keep.common_plugins, which sync adds to a project that keeps plugins (--plugin), and --memory %s is another "
@@ -494,6 +516,8 @@ def check_stack(ctx, ans, problems):
         ctx.proj["ui"] = True
     if st["command_guard"]:
         ctx.proj["command_guard"] = True
+    if st["worktree_guard"]:
+        ctx.proj["worktree_guard"] = True
     if st["checks"]:
         ctx.proj["checks"] = list(st["checks"])
     if st["plugins"]:
@@ -514,6 +538,8 @@ def apply(ctx, ans):
     check_memory(ctx, ans, problems)
     check_one_backend(ctx, ans, problems)
     check_stack(ctx, ans, problems)
+    if ans.memory == LITE:
+        ctx.proj["plugins_keep"] = with_memory_plugin(ctx.proj.get("plugins_keep") or [], ans)
     for scope in ans.profiles:
         target = ans.targets.get(scope)
         if target is None:

@@ -698,9 +698,239 @@ def a_doctor_fail(w):
     return bad
 
 
+# ---------------------------------------------------------------- 4.4 U9: the options register_project.py had and forge new lacked
+# (--account-server, --memory lite, --worktree-guard, --no-baseline, --no-git). Each is asserted against the effect the script gave it.
+
+LITE = "claude-mem-lite@sdsrss"
+POSTHOG = "https://mcp.posthog.com/mcp?project_id=42"
+NOTION = "https://mcp.notion.com/mcp"
+OTHER_POSTHOG = "https://mcp.posthog.com/mcp?project_id=1"
+PARITY_ANSWERS = ["--profiles", "none", "--skills", "none", "--server", "none"]  # every question but memory, which each test gives
+
+
+def registry_servers(w):
+    return (read_json(w.path("config", "mcp-registry.json")) or {}).get("servers", {})
+
+
+def a_account_server(w):
+    """`--account-server SERVICE[=PIN]` adds the registry entry `<service>-<name>` (type http, the service's URL, pinned when a pin is
+    given, a `_doc` naming the project) and lists it in the project's servers; a bare service that has a pin form is said to be UNPINNED
+    in the plan. An unknown service and a pin on a service that has none are refused before the first write."""
+    bad = []
+    before = w.fingerprint()
+    code, out = w.forge("new", "demo", "--stack", "generic", "--account-server", "posthog", "--account-server", "notion")
+    if code != 0 or w.fingerprint() != before or "posthog-demo" not in out or "UNPINNED" not in out or "notion-demo" not in out:
+        bad.append("--account-server dry-run: exit %d, want 0, nothing written and the plan naming posthog-demo UNPINNED and notion-demo "
+                   "(tree changed %s): %s" % (code, w.fingerprint() != before, tail(out, 6)))
+    for argv, needle in ((["--account-server", "nope"], "unknown service 'nope'"), (["--account-server", "notion=5"], "no project pin")):
+        before = w.snapshot()
+        code, out = w.forge("new", "demo", "--stack", "generic", *argv, "--apply")
+        if code != 2 or needle not in out or w.snapshot() != before:
+            bad.append("%s: exit %d, want 2 saying %r and nothing written: %s" % (" ".join(argv), code, needle, tail(out)))
+    code, out = w.forge("new", "demo", "--stack", "generic", "--account-server", "posthog=42", "--account-server", "notion", "--apply")
+    if code != 0:
+        return bad + ["--account-server --apply: exit %d: %s" % (code, tail(out, 6))]
+    servers = registry_servers(w)
+    want = {"posthog-demo": POSTHOG, "notion-demo": NOTION}
+    if set(servers) != set(want):
+        bad.append("the registry holds %s, want exactly %s" % (sorted(servers), sorted(want)))
+    for key, url in want.items():
+        entry = servers.get(key) or {}
+        if entry.get("type") != "http" or entry.get("url") != url or "demo" not in str(entry.get("_doc")):
+            bad.append("registry entry %s is %s, want type http, url %s and a _doc naming demo" % (key, entry, url))
+    pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
+    if pf.get("servers") != list(want):
+        bad.append("the project's servers are %s, want %s" % (pf.get("servers"), list(want)))
+    held = ((read_json(os.path.join(w.home, ".claude.json")) or {}).get("projects", {}).get(os.path.realpath(w.project("demo"))) or {}).get("mcpServers", {})
+    if set(held) != set(want):
+        bad.append("forge sync did not give the project its servers: ~/.claude.json holds %s" % sorted(held))
+    return bad
+
+
+def a_account_server_existing(w):
+    """A registry entry of the name that has the same URL is used as it is (the registry is not rewritten); one with another URL is a
+    login that a new URL would replace, so the run is refused, exit 2, before the first write, and the entry stays."""
+    bad = []
+    reg_path = w.path("config", "mcp-registry.json")
+    reg = read_json(reg_path)
+    reg["servers"]["notion-keep"] = {"_doc": "made earlier", "type": "http", "url": NOTION}
+    reg["servers"]["posthog-clash"] = {"type": "http", "url": OTHER_POSTHOG}
+    write_json(reg_path, reg)
+    text = open(reg_path, encoding="utf-8").read()
+    code, out = w.forge("new", "keep", "--stack", "generic", "--account-server", "notion", "--apply")
+    if code != 0 or open(reg_path, encoding="utf-8").read() != text or (read_json(w.path("config", "projects", "keep.claude.json")) or {}).get("servers") != ["notion-keep"]:
+        bad.append("a registry entry with the same URL was not used as it is: exit %d: %s" % (code, tail(out)))
+    before = w.snapshot()
+    code, out = w.forge("new", "clash", "--stack", "generic", "--account-server", "posthog=42", "--apply")
+    if code != 2 or "posthog-clash" not in out or w.snapshot() != before:
+        bad.append("a registry entry with another url: exit %d, want 2 naming posthog-clash and nothing written: %s" % (code, tail(out)))
+    if registry_servers(w).get("posthog-clash", {}).get("url") != OTHER_POSTHOG:
+        bad.append("a registry entry with another url was replaced")
+    return bad
+
+
+def a_account_server_rollback(w):
+    """The registry is written before the project file; when a later step fails (the world's forge.json write is made to) the registry,
+    the project file, the folder and forge.json are as they were. Exit 1."""
+    before = w.snapshot()
+    code, out = w.forge("new", "demo", "--stack", "generic", "--account-server", "notion", "--apply")
+    bad = []
+    if code != 1 or "injected after the registry" not in out:
+        bad.append("the injected failure did not stop the run: exit %d: %s" % (code, tail(out)))
+    if w.snapshot() != before or os.path.lexists(w.project("demo")):
+        bad.append("left behind: %s" % ", ".join(os.path.join(w.top, p) for p in left_behind(before, w.snapshot())[:6]))
+    return bad
+
+
+def project_of(w, name="demo"):
+    return read_json(w.path("config", "projects", "%s.claude.json" % name)) or {}
+
+
+def settings_local(w, name="demo"):
+    return read_json(os.path.join(w.project(name), ".claude", "settings.local.json")) or {}
+
+
+def a_memory_lite(w):
+    """`--memory lite` is the claude-mem-lite plugin and nothing else: it joins plugins_keep (after the stack's chosen --plugin), no server
+    is added, the project's settings turn the plugin on, and the generator derives CLAUDE_MEM_DIR from the project name. `--memory none`
+    and a project with no memory answer carry neither the plugin nor the store."""
+    bad = []
+    before = w.fingerprint()
+    code, out = w.forge("new", "demo", "--stack", "generic", *PARITY_ANSWERS, "--memory", "lite")
+    if code != 0 or w.fingerprint() != before or "claude-mem-lite" not in out:
+        bad.append("--memory lite dry-run: exit %d, want 0, nothing written and the plan naming claude-mem-lite (tree changed %s): %s" % (
+            code, w.fingerprint() != before, tail(out, 6)))
+    code, out = w.forge("new", "demo", "--stack", "generic", *PARITY_ANSWERS, "--memory", "lite", "--apply")
+    if code != 0:
+        return bad + ["--memory lite --apply: exit %d: %s" % (code, tail(out, 6))]
+    pf = project_of(w)
+    if pf.get("plugins_keep") != [LITE] or pf.get("servers") != []:
+        bad.append("--memory lite: plugins_keep %s and servers %s, want [%s] and []" % (pf.get("plugins_keep"), pf.get("servers"), LITE))
+    sl = settings_local(w)
+    if sl.get("enabledPlugins", {}).get(LITE) is not True:
+        bad.append("the project's settings do not turn %s on: %s" % (LITE, sl.get("enabledPlugins")))
+    store = (sl.get("env") or {}).get("CLAUDE_MEM_DIR", "")
+    if not store.endswith(os.path.join("data", "memory-lite", "demo")):
+        bad.append("the generator did not derive the store from the name: CLAUDE_MEM_DIR is %r" % store)
+    code, out = w.forge("new", "withplugin", "--stack", "node", *PARITY_ANSWERS, "--memory", "lite", "--plugin", NODE["plugins"][0], "--apply")
+    if code != 0 or project_of(w, "withplugin").get("plugins_keep") != [NODE["plugins"][0], LITE]:
+        bad.append("--memory lite with --plugin: exit %d, plugins_keep %s, want [%s, %s]: %s" % (
+            code, project_of(w, "withplugin").get("plugins_keep"), NODE["plugins"][0], LITE, tail(out)))
+    code, out = w.forge("new", "none", "--stack", "generic", *PARITY_ANSWERS, "--memory", "none", "--apply")
+    if code != 0 or "plugins_keep" in project_of(w, "none") or "CLAUDE_MEM_DIR" in (settings_local(w, "none").get("env") or {}):
+        bad.append("--memory none carries the plugin or its store (exit %d): %s %s" % (code, project_of(w, "none").get("plugins_keep"),
+                                                                                         (settings_local(w, "none").get("env") or {}).get("CLAUDE_MEM_DIR")))
+    return bad
+
+
+def a_memory_lite_common(w):
+    """The common layer already lists the plugin (skill_keep.common_plugins): `--memory lite` is the same backend, not a second one, so
+    it is not refused as `one per project` and plugins_keep names it once."""
+    path = w.path("config", "forge.json")
+    doc = read_json(path)
+    doc["skill_keep"]["common_plugins"] = [LITE]
+    write_json(path, doc)
+    code, out = w.forge("new", "demo", "--stack", "generic", *PARITY_ANSWERS, "--memory", "lite", "--plugin", "context7@claude-plugins-official", "--apply")
+    keep = project_of(w).get("plugins_keep")
+    if code != 0 or keep != ["context7@claude-plugins-official", LITE]:
+        return ["--memory lite with the plugin in common_plugins: exit %d, plugins_keep %s, want it once: %s" % (code, keep, tail(out))]
+    return []
+
+
+def a_memory_lite_framework(w):
+    """With --framework the plugin joins the plugins the framework project keeps (all the plain project has on), once, at the end."""
+    code, out = w.forge("new", "demo", "--stack", "node", "--framework", *PARITY_ANSWERS, "--memory", "lite", "--apply")
+    want = ["mine@mk"] + NODE["plugins"] + ["common@mk", LITE]
+    keep = project_of(w).get("plugins_keep")
+    if keep != want:
+        return ["--framework --memory lite: exit %d, plugins_keep %s, want %s: %s" % (code, keep, want, tail(out, 3))]
+    return []
+
+
+def a_worktree_guard(w):
+    """`--worktree-guard` writes `"worktree_guard": true` and the sync wires hooks/worktree_guard.py as a PreToolUse entry of the project;
+    without it there is neither. As an option of the stack question it is an answer, so alone, with nothing asked, it makes every other
+    question need its flag."""
+    bad = []
+    code, out = w.forge("new", "demo", "--stack", "generic", *PARITY_ANSWERS, "--memory", "none", "--worktree-guard", "--apply")
+    if code != 0 or project_of(w).get("worktree_guard") is not True:
+        return ["--worktree-guard: exit %d, worktree_guard %r, want True: %s" % (code, project_of(w).get("worktree_guard"), tail(out))]
+    wired = [h for g in (settings_local(w).get("hooks") or {}).get("PreToolUse", []) for h in g.get("hooks", []) if "worktree_guard.py" in h.get("command", "")]
+    if len(wired) != 1:
+        bad.append("sync did not wire hooks/worktree_guard.py as one PreToolUse entry: %s" % (settings_local(w).get("hooks"),))
+    if "options     worktree_guard" not in out:
+        bad.append("the plan does not show the option: %s" % tail(out, 12))
+    code, out = w.forge("new", "plain", "--stack", "generic", *PARITY_ANSWERS, "--memory", "none", "--apply")
+    if code != 0 or "worktree_guard" in project_of(w, "plain") or "worktree_guard.py" in json.dumps(settings_local(w, "plain")):
+        bad.append("a project without the flag has a worktree guard (exit %d)" % code)
+    before = w.snapshot()
+    code, out = w.forge("new", "alone", "--stack", "generic", "--worktree-guard", "--apply")
+    if code != 2 or "--memory" not in out or w.snapshot() != before:
+        bad.append("--worktree-guard alone: exit %d, want 2 naming the missing --memory and nothing written: %s" % (code, tail(out)))
+    return bad
+
+
+def a_no_baseline(w):
+    """`--no-baseline` leaves out the project's skill_keep.extras row: config/forge.json is not written at all (byte for byte as it was)
+    and the plan says the row is skipped. Without the flag the row is there. With skills answered the row would hold them, so the run is
+    refused, exit 2, before the first write."""
+    bad = []
+    os.makedirs(os.path.join(w.home, ".claude", "skills", "alpha"))
+    with open(os.path.join(w.home, ".claude", "skills", "alpha", "SKILL.md"), "w") as fh:
+        fh.write("---\nname: alpha\ndescription: toy\n---\n")
+    forge_json = w.path("config", "forge.json")
+    text = open(forge_json, encoding="utf-8").read()
+    code, out = w.forge("new", "bare", "--stack", "generic", "--no-baseline", "--apply")
+    if code != 0 or open(forge_json, encoding="utf-8").read() != text or "no-baseline" not in out or "wrote  config/forge.json" in out:
+        bad.append("--no-baseline: exit %d, forge.json changed %s, want 0, unchanged, and the plan saying --no-baseline: %s" % (
+            code, open(forge_json, encoding="utf-8").read() != text, tail(out, 8)))
+    if not os.path.isfile(w.path("config", "projects", "bare.claude.json")):
+        bad.append("--no-baseline made no project file")
+    code, out = w.forge("new", "with", "--stack", "generic", "--apply")
+    if code != 0 or "with.claude.json" not in (read_json(forge_json).get("skill_keep", {}).get("extras") or {}):
+        bad.append("without the flag there is no skill_keep.extras row (exit %d)" % code)
+    before = w.snapshot()
+    code, out = w.forge("new", "skilled", "--stack", "generic", "--profiles", "none", "--skills", "alpha", "--server", "none", "--memory", "none",
+                        "--no-baseline", "--apply")
+    if code != 2 or "--no-baseline" not in out or "alpha" not in out or w.snapshot() != before:
+        bad.append("--no-baseline with --skills alpha: exit %d, want 2 naming --no-baseline and alpha and nothing written: %s" % (code, tail(out)))
+    return bad
+
+
+def a_no_git(w):
+    """`--no-git` makes the folder, .gitignore and README.md and no `.git`, the sync that follows still works, and the output says there is
+    no git init. Without the flag there is a `.git`."""
+    bad = []
+    code, out = w.forge("new", "demo", "--stack", "generic", "--no-git", "--apply")
+    entries = sorted(os.listdir(w.project("demo"))) if os.path.isdir(w.project("demo")) else []
+    if code != 0 or ".git" in entries or "README.md" not in entries or ".gitignore" not in entries:
+        bad.append("--no-git: exit %d, the folder holds %s, want exit 0 and no .git: %s" % (code, entries, tail(out, 6)))
+    if "ran    git init" in out or "no git init" not in out:
+        bad.append("--no-git: the output does not say there is no git init: %s" % tail(out, 12))
+    code, out = w.forge("new", "plain", "--stack", "generic", "--apply")
+    if code != 0 or not os.path.isdir(os.path.join(w.project("plain"), ".git")):
+        bad.append("without --no-git there is no .git (exit %d)" % code)
+    return bad
+
+
+def a_parity_flags_by_mode(w):
+    """The new flags belong to making a project: a directory that is registered, and a profile, refuse them (exit 2, nothing written)."""
+    bad = []
+    d = w.register_demo("regdemo")
+    before = w.snapshot()
+    for flag in (["--no-git"], ["--no-baseline"], ["--account-server", "notion"], ["--worktree-guard"], ["--memory", "lite"]):
+        argvs = [["new", d, *flag]] + ([["new", "@code", *flag]] if flag[0] in ("--no-git", "--no-baseline", "--account-server") else [])
+        for argv in argvs:  # a profile refuses the flags of making before it looks for the project (test_ask.py has the ones it asks)
+            code, out = w.forge(*argv, cwd=d)
+            if code != 2 or "belong to making" not in out or w.snapshot() != before:
+                bad.append("%s: exit %d, want 2 saying the flag belongs to making a project, and nothing written: %s" % (" ".join(argv[:1] + argv[2:]), code, tail(out)))
+    return bad
+
+
 def a_help(w):
     code, out = w.forge("new", "--help")
-    flags = ("--path", "--stack", "--framework", "--yes", "--apply", "--name", "--writes-tracked-files")
+    flags = ("--path", "--stack", "--framework", "--yes", "--apply", "--name", "--writes-tracked-files",
+             "--account-server", "--worktree-guard", "--no-baseline", "--no-git", "--memory")
     miss = [f for f in flags if f not in out]
     return ["`forge new --help` does not list %s" % ", ".join(miss)] if code != 0 or miss else []
 
@@ -1099,6 +1329,8 @@ def a_registration_as_master(w, master_cli):
 # ---------------------------------------------------------------- controls
 
 NEW = os.path.join("forge", "new.py")
+ASK = os.path.join("forge", "ask.py")
+ACCOUNTS = os.path.join("forge", "accounts.py")
 CLI = os.path.join("forge", "cli.py")
 LIB = os.path.join("forge", "lib.py")
 # lib.record raising when told `mkdir`: the fault the rollback order is shown against (the real one never raises on an OSError, but a
@@ -1106,8 +1338,11 @@ LIB = os.path.join("forge", "lib.py")
 FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n        try:\n            with open(log, "a"',
                '    if what == "mkdir":\n        raise RuntimeError("record failed (test fault)")\n'
                '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n        try:\n            with open(log, "a"')
+# A step that fails after the registry and the project file are written: the forge.json write (what the account-server rollback is shown against).
+FAIL_AFTER_REGISTRY = (NEW, '                    lib.write_text(lib.SETTINGS, lib.dumps(doc) + "\\n")  # atomic',
+                       '                    raise OSError("injected after the registry")  # atomic')
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
-REFRESH = 'project["plugins_keep"] = framework_plugins(stack["plugins"], doc)\n'
+REFRESH = 'project["plugins_keep"] = ask.with_memory_plugin(framework_plugins(stack["plugins"], doc), ans)\n'
 # The user enables a plugin while the questions are asked: the first thing ask.gather does, in the world's copy of the engine.
 LATE = (os.path.join("forge", "ask.py"), "    problems = []\n    if ctx.error:\n        return Answers(), [ctx.error]\n",
         "    import json as _j, os as _o\n    _p = _o.path.join(_o.environ['HOME'], '.claude', 'settings.json')\n"
@@ -1205,6 +1440,22 @@ CONTROLS = [
      "stack tauri: stack.json has the keys"),
     ("a stack.json not checked", a_bad_stack_json, BROKEN + [(NEW, "if missing:", "if False:")], "a stack.json without checks"),
     ("an unused argument not warned about", a_unused_argument, [(NEW, "if unused else []", "if False else []")], "an unused argument not warned about"),
+    # 4.4 U9
+    ("the registry not put back", a_account_server_rollback, [FAIL_AFTER_REGISTRY, (NEW, 'undo.append(("restore", REGISTRY, account.text, saved))', "pass")], "left behind: "),
+    ("a registry entry with another URL replaced", a_account_server_existing, [(ACCOUNTS, 'if current is not None and current.get("url") != row["url"]:', "if False:")],
+     "a registry entry with another url"),
+    ("the account servers not listed", a_account_server,
+     [(NEW, 'project["servers"] = list(project["servers"]) + [n for n in account.names if n not in project["servers"]]', "pass")], "the project's servers are"),
+    ("--memory lite without the plugin", a_memory_lite, [(ASK, "    if ans.memory == LITE:\n        ctx.proj", "    if False:\n        ctx.proj")], "--memory lite: plugins_keep"),
+    ("--memory lite refused beside common_plugins", a_memory_lite_common, [(ASK, "ans.memory and ans.memory != LITE and ", "ans.memory and ")],
+     "--memory lite with the plugin in common_plugins"),
+    ("--memory lite lost in a framework project", a_memory_lite_framework, [(NEW, 'ask.with_memory_plugin(framework_plugins(stack["plugins"], doc), ans)',
+                                                                            'framework_plugins(stack["plugins"], doc)')], "--framework --memory lite"),
+    ("--worktree-guard not written", a_worktree_guard, [(ASK, '    if st["worktree_guard"]:\n        ctx.proj["worktree_guard"] = True\n', "")], "--worktree-guard: exit"),
+    ("--no-baseline still writes the row", a_no_baseline, [(NEW, '(not a.no_baseline and (row or extras)) or lifted', "row or extras or lifted"),
+                                                         (NEW, 'del doc["skill_keep"]["extras"][key]', "pass")], "--no-baseline: exit 0, forge.json changed True"),
+    ("--no-baseline beside skills", a_no_baseline, [(NEW, "if a.no_baseline and extras != list(", "if False and extras != list(")], "--no-baseline with --skills alpha"),
+    ("--no-git still runs git init", a_no_git, [(NEW, "                if not a.no_git:\n", "                if True:\n")], "--no-git: exit 0, the folder holds"),
 ]
 
 
@@ -1247,10 +1498,16 @@ def main():
              ("--path in the checkout", a_path_in_checkout, {}), ("bad projects_dir", a_bad_projects_dir, {}), ("signals", a_signals, {}),
              ("every stack creates a project", a_stacks_created, {}), ("the stack files", a_stack_files, {}),
              ("an unresolved placeholder", a_unresolved, {"mutate": UNRESOLVED}), ("a broken stack.json", a_bad_stack_json, {"mutate": BROKEN}),
-             ("an unused argument", a_unused_argument, {})]
+             ("an unused argument", a_unused_argument, {}),
+             ("--account-server", a_account_server, {}), ("--account-server, an entry that exists", a_account_server_existing, {}),
+             ("--account-server rolled back", a_account_server_rollback, {"mutate": [FAIL_AFTER_REGISTRY]}),
+             ("--memory lite", a_memory_lite, {}), ("--memory lite, listed in common_plugins", a_memory_lite_common, {}),
+             ("--worktree-guard", a_worktree_guard, {}), ("--no-baseline", a_no_baseline, {}), ("--no-git", a_no_git, {}),
+             ("the flags of making", a_parity_flags_by_mode, {})]
     for label, fn, kw in plain:
         w = World("a", **kw)
         try:
+            failures.extend("%s -- %s" % (label, why) for why in w.anchors_missing)  # a mutated world whose mutation did not apply tests nothing
             for why in fn(w):
                 failures.append("%s -- %s" % (label, why))
             n_checks[0] += 1
@@ -1258,7 +1515,8 @@ def main():
             w.close()
     for label, fn, kw in (("--framework made", a_framework_made, {}), ("handover checks", a_framework_checks, {}),
                           ("framework fields row", a_framework_fields, {}), ("doctor FAIL row", a_doctor_fail, {"mutate": [INJECT]}),
-                          ("a plugin enabled while asking", a_late_plugin, {"mutate": [LATE]})):
+                          ("a plugin enabled while asking", a_late_plugin, {"mutate": [LATE]}),
+                          ("--memory lite with --framework", a_memory_lite_framework, {})):
         w = World("fw", framework=True, **kw)
         try:
             for why in fn(w):
@@ -1283,7 +1541,7 @@ def main():
         if fn is a_forge_json_fails and os.geteuid() == 0:
             notrun.append("control '%s': a read-only folder does not stop root" % label)
             continue
-        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail, a_late_plugin))
+        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail, a_late_plugin, a_memory_lite_framework))
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
         shown = [g for g in got if needle in g] or got

@@ -43,7 +43,7 @@ import sys
 import tempfile
 import time
 
-from forge import completion, configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
+from forge import accounts, completion, configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
 from forge import new as new_cmd
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
@@ -2153,15 +2153,21 @@ def build_parser():
     i.add_argument("--framework", action="store_true", help="making: turn the agent framework on: framework true, factory off, the stack's checks, and its plugins as plugins_keep; then print a handover for the agent to settle protected_paths, checks_quick and app_run")
     i.add_argument("--yes", action="store_true", help="making: ask nothing, even in a terminal. With none of the question flags that is the old command; with one, every other question needs its flag (none is an answer) and the error names all that are missing")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
+    i.add_argument("--account-server", action="append", default=[], metavar="SERVICE[=PIN]",
+                   help="making: an account-scoped OAuth server that gets its own <service>-NAME entry in config/mcp-registry.json and is listed in the project's servers, "
+                        "e.g. posthog=<project id>; repeat for each. Services: " + ", ".join(sorted(accounts.SERVICES)))
+    i.add_argument("--no-baseline", action="store_true", help="making: leave out the project's skill_keep.extras row in config/forge.json (a client site that stays bare)")
+    i.add_argument("--no-git", action="store_true", help="making: no git init in the new folder")
     i.add_argument("--profiles", metavar="A,B", help="question 1: the profiles the project offers (none: no profile); each is then asked like the project")
     i.add_argument("--sets", action="append", metavar="[@PROFILE:]SET,SET", help="question 2: the skill sets (skill_keep.sets); repeat for several profiles. A scoped value replaces the unscoped one for that profile; it does not add to it")
     i.add_argument("--skills", action="append", metavar="[@PROFILE:]a,b", help="question 2: the final list of skills, replacing what the sets give (a scoped value replaces the unscoped one for that profile)")
     i.add_argument("--server", action="append", metavar="[@PROFILE:]NAME", help="question 3: an MCP server of the registry; repeat for each (an account server is <service>-<project>; a scoped value replaces the unscoped one for that profile)")
-    i.add_argument("--memory", metavar="NAME|none", help="question 4: the memory integration of the project (hindsight, when it is on), or none")
+    i.add_argument("--memory", metavar="NAME|none", help="question 4: the project's memory: lite (the claude-mem-lite plugin, added to plugins_keep), hindsight (when that integration is on), or none")
     i.add_argument("--check", action="append", metavar="CMD", help="question 5: one of the stack's checks, written as the project's checks")
     i.add_argument("--plugin", action="append", metavar="NAME", help="question 5: one of the stack's plugins; the project then keeps only these (besides the common ones)")
     i.add_argument("--ui", action="store_true", help="question 5: the project has a user interface (ui: true)")
     i.add_argument("--command-guard", dest="command_guard", action="store_true", help="question 5: command_guard: true")
+    i.add_argument("--worktree-guard", dest="worktree_guard", action="store_true", help="question 5: worktree_guard: true")
     i.set_defaults(fn=cmd_new)
     c = sub.add_parser("completion", help="print the completion script of a shell: commands, flags, projects, profiles and --on/--off values, asked of forge at every tab",
                        formatter_class=RAW, epilog=examples("forge completion fish > ~/.config/fish/conf.d/forge-completion.fish",
