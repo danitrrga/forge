@@ -26,11 +26,11 @@
  },
  "waves": [
   {"n": 1, "serial": false, "tasks": [
-   {"id": "T1", "type": "feature", "size": "normal", "ui": false, "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T1.md", "trailer": "01-toy/T1"},
-   {"id": "T2", "type": "bug", "size": "small", "ui": false, "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T2.md", "trailer": "01-toy/T2"}
+   {"id": "T1", "type": "feature", "size": "normal", "ui": false, "files": ["src/a.py"], "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T1.md", "trailer": "01-toy/T1"},
+   {"id": "T2", "type": "bug", "size": "small", "ui": false, "files": ["src/b.py"], "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T2.md", "trailer": "01-toy/T2"}
   ]},
   {"n": 2, "serial": false, "tasks": [
-   {"id": "T3", "type": "refactor", "size": "big", "ui": false, "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T3.md", "trailer": "01-toy/T3"}
+   {"id": "T3", "type": "refactor", "size": "big", "ui": false, "files": ["README.md"], "brief": "/work/.git/fwx/runs/01-toy-ab12cd3-1/briefs/T3.md", "trailer": "01-toy/T3"}
   ]}
  ],
  "done": [],

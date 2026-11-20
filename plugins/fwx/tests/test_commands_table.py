@@ -73,11 +73,14 @@ DECIDED = [
     # not in the table, kept under the name they have (their units are others', or the table does not name them)
     ("walk check-screens", None, "walk", ["check-screens"]),
     ("wave setup", None, "wave", ["setup"]),
+    # the outside items an agent saw and did not fix: listed, recorded, routed
+    ("outside", None, "outside", ["list"]), ("outside add", None, "outside", ["add"]), ("outside route", None, "outside", ["route"]),
 ]
 # what `fwx OBJECT` with no verb runs: (words, handler module, handler argv)
 DEFAULTS = [
     (["wave", "--run", "R"], "wave", ["summary", "--run", "R"]),
     (["session", "--json"], "state", ["resolve", "--json"]),
+    (["outside", "--part-dir", "D", "--open"], "outside", ["list", "--part-dir", "D", "--open"]),
     (["decision", "--all"], "state", ["decisions", "--all"]),
     (["context", "DIR"], "context_base", ["check", "DIR"]),
     (["linear", "--label", "L"], "linear", ["list", "--label", "L"]),

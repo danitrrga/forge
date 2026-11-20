@@ -128,6 +128,15 @@ def review_report(findings=(), criteria=None, looked=("a.py", "b.py")):
     return R({"looked_at": list(looked), "findings": list(findings), "criteria": crit() if criteria is None else criteria})
 
 
+def ot(where="src/z.py:7", size="small", fixed=None, what="z drops the last row", fix="read to the end"):
+    """One `outside` item, in the shape the executors and the reviewers report it in."""
+    return {"where": where, "what": what, "fix": fix, "size": size, "fixed": fixed}
+
+
+def review_report_outside(outside, findings=()):
+    return R({"looked_at": ["a.py", "b.py"], "findings": list(findings), "criteria": crit(), "outside": list(outside)})
+
+
 def finding(i, severity="medium", file="a.py", claim=None):
     return {"id": i, "file": file, "line": 3, "claim": claim or "claim of " + i, "evidence": "evidence of " + i, "severity": severity}
 
@@ -822,6 +831,175 @@ def check_fix_scope(script, s):
              ("test first when a test can express it" in p and "no test file" not in p) if tests else ("test first" not in p and "write no test file" in p), p[:900])
 
 
+def ledger_items(rec):
+    """The items the script handed `fwx outside add` (the JSON after --items), or None when it never called it."""
+    l = runner(rec, "outside")
+    if not l:
+        return None
+    m = re.search(r"--items '(.*)'$", l[0]["prompt"].strip().splitlines()[-1])
+    return json.loads(m.group(1).replace("'\\''", "'")) if m else "no --items in: " + l[0]["prompt"][-200:]
+
+
+def check_outside(script, s):
+    """The ownership rule (principles.md rule 12): an executor may fix a small defect outside its task, an `outside` item has a fixed shape
+    and the script rejects a report that lacks it, what stays unfixed does not end as a list nobody reads (a small item is a fix task,
+    every item is written to the ledger the stage guard reads), and the reviewers' nearby defects are items, never dismissed for not being in the diff.
+
+    Red on master (the script collected `outside` unread and returned it), the first FAIL line of each group:
+      FAIL: outside shape (no fix): relaunched once, then failed: got ('done', 1), want ('failed', 2)
+      FAIL: outside beside: T1 fixing T2's file is a malformed report: got ('done', 1), want ('failed', 2)
+      FAIL: outside prompts: the executor is told the files of the tasks beside it (T2's, not its own, not wave 2's): Your brief is ... Read it first and follow it. BASE: ...
+      FAIL: outside small unfixed: a fixer is launched for it: got [], want ['executor:fix-1']
+      FAIL: outside small unfixed: the ledger is written once, at the end, with the item as fixed and nothing but the five keys: got (0, None), want (1, [{'where': 'src/z.py:7', ...}])
+      FAIL: outside small unfixed, no round left: failed, no fixer: got ('done', []), want ('failed', [])
+      FAIL: outside large: the ledger is written with the item: got None, want [{'where': 'src/z.py:7', ..., 'size': 'large', 'fixed': None}]
+      FAIL: outside ledger not written: failed, not done, and the reason names the ledger: {'status': 'done', 'reason': '', ...}
+      FAIL: outside reviewer: the verifier is given the nearby defect as a finding under a prefixed id, with its file and the proposed fix
+      FAIL: outside reviewer lacks its fix: a malformed report, relaunched once, then failed: got ('done', 1), want ('failed', 2)
+    The controls that must stay green are the ones that say the rule does not over-reach: a file of a later wave is free, a defect in a file
+    beside is reportable, a report with no `outside` is read as none.
+    """
+    ledger = {"executor:runner-outside": R({"ids": ["O1"], "demoted": []})}
+    # the shape: each item lacks one thing, the report is malformed (relaunched once, a second miss is failed), and a good one is read
+    bad = {"no fix": {k: v for k, v in ot().items() if k != "fix"}, "a size that is neither": ot(size="medium"), "no line in where": ot(where="src/z.py"),
+           "an empty what": ot(what=" "), "a fixed that is no commit": ot(fixed="the fix"), "an extra key": dict(ot(), note="x"), "not an object": "src/z.py:7"}
+    for label, item in bad.items():
+        rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[item])})
+        rec = finish(s, "outside shape (%s)" % label, rec, err)
+        s.eq("outside shape (%s): relaunched once, then failed" % label, (result(rec).get("status"), len(launched(rec, "executor:T1"))), ("failed", 2))
+    rec, err = go(script, answers_over={"executor:runner-report-T1": {"$seq": [exec_report("wt-t1", outside=[bad["no fix"]]), exec_report("wt-t1", outside=[ot(size="large")])]},
+                                        **ledger})
+    rec = finish(s, "outside shape, second try good", rec, err)
+    s.eq("outside shape: a good second report is read", (result(rec).get("status"), len(launched(rec, "executor:T1"))), ("done", 2))
+    # a report with no `outside` at all says nothing outside
+    rec, err = go(script, answers_over={"executor:runner-report-T1": R({"status": "done", "branch": "wt-t1", "worktree": "/w/wt-t1", "head": "h", "commits": 2})})
+    rec = finish(s, "outside absent", rec, err)
+    s.eq("outside absent: read as none, no ledger call", (result(rec).get("status"), runner(rec, "outside")), ("done", []))
+
+    # beside: an executor fixing a file that a task of its own wave lists is a malformed report; a file nobody lists is fine
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(where="src/b.py:3", fixed="c0ffee0")])})
+    rec = finish(s, "outside beside", rec, err)
+    s.eq("outside beside: T1 fixing T2's file is a malformed report", (result(rec).get("status"), len(launched(rec, "executor:T1"))), ("failed", 2))
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(where="README.md:3", fixed="c0ffee0")]), **ledger})
+    rec = finish(s, "outside beside, a later wave's file", rec, err)
+    s.eq("outside beside: the file of a task of a later wave is free (T3 runs after the merge)", (result(rec).get("status"), len(launched(rec, "executor:T1"))), ("done", 1))
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(where="src/b.py:3", fixed=None, size="large")]), **ledger})
+    rec = finish(s, "outside beside, reported not fixed", rec, err)
+    s.eq("outside beside: reporting a defect in a file beside is fine, it is only not fixing it that is the rule", (result(rec).get("status"), len(launched(rec, "executor:T1"))), ("done", 1))
+
+    # the prompts: the executor is told the files beside it and that a defect it sees is its to fix or report; nobody is told "no fixes outside"
+    rec, err = go(script)
+    rec = finish(s, "outside prompts", rec, err)
+    p1 = launched(rec, "executor:T1")[0]["prompt"]
+    s.ok("outside prompts: the executor is told the files of the tasks beside it (T2's, not its own, not wave 2's)",
+         "src/b.py" in p1 and "BESIDE YOU" in p1 and "src/a.py" not in p1 and "README.md" not in p1, p1)
+    s.ok("outside prompts: and it is still one line", "\n" not in p1.strip(), repr(p1))
+    fixer = fix_scenario()
+    rec, err = go(script, base={**green(), **fixer})
+    rec = finish(s, "outside prompts, fixer", rec, err)
+    fp = (launched(rec, "executor:fix-") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("outside prompts: the fixer's FORBIDDEN no longer says no fixes outside this work", "no fixes outside" not in fp, fp)
+    s.ok("outside prompts: the fixer is told the shape of an outside item and to fix a small one in its own commit",
+         "OUTSIDE:" in fp and "where" in fp and "size" in fp and "its own commit" in fp, fp)
+
+    # a small unfixed item becomes a fix task: after the last wave's gate, one round, one fixer, the gate again, then the review of all of it
+    item = ot(where="src/z.py:7")
+    base = {**green(), "executor:runner-report-T1": exec_report("wt-t1", outside=[item]),
+            "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}),
+            "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix"),
+            "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"]), final("h3", ["wt-fix"])]},
+            "executor:runner-commits": R("c0ffee0 out-1\n"), **ledger}
+    rec, err = go(script, base=base)
+    rec = finish(s, "outside small unfixed", rec, err)
+    s.eq("outside small unfixed: a fixer is launched for it", [l["label"] for l in workers(rec) if not l["label"].startswith("executor:T")], ["executor:fix-1"])
+    fx = (launched(rec, "executor:fix-") or [{"prompt": "", "opts": {}}])[0]
+    s.ok("outside small unfixed: the fixer is given it as a finding under its own id and file",
+         "out-1" in fx["prompt"] and "src/z.py" in fx["prompt"] and "read to the end" in fx["prompt"] and "one commit per finding" in fx["prompt"], fx["prompt"][:900])
+    s.ok("outside small unfixed: the round is spent before the fixer starts", pos(rec, "executor:runner-fix-round") < pos(rec, "executor:fix-1"))
+    ints = runner(rec, "integrate")
+    s.ok("outside small unfixed: integrate --findings out-1 --final", len(ints) == 3 and "--findings 'out-1'" in ints[2]["prompt"] and "--final" in ints[2]["prompt"] and "'wt-fix'" in ints[2]["prompt"],
+         repr([i["prompt"][-120:] for i in ints]))
+    s.ok("outside small unfixed: the review comes after the fix and covers it (the diff ends at the fix's head)",
+         pos(rec, "reviewer:r1") > pos(rec, "executor:fix-1") and "h3" in launched(rec, "reviewer:")[0]["prompt"] and HEAD0 in launched(rec, "reviewer:")[0]["prompt"],
+         launched(rec, "reviewer:")[0]["prompt"][:300])
+    o = (details(rec).get("outside") or [{}])[0]
+    s.eq("outside small unfixed: details.outside says it is fixed, by which commit, and which ledger entry", (o.get("fixed"), o.get("ledger"), o.get("size")), ("c0ffee0", "O1", "small"))
+    got = ledger_items(rec)
+    s.eq("outside small unfixed: the ledger is written once, at the end, with the item as fixed and nothing but the five keys",
+         (len(runner(rec, "outside")), got), (1, [ot(where="src/z.py:7", fixed="c0ffee0")]))
+    s.ok("outside small unfixed: the ledger is written before the cleanup", pos(rec, "executor:runner-outside") < pos(rec, "executor:runner-cleanup"))
+    s.ok("outside small unfixed: the command names the part and the run", "fwx outside add --part-dir '/work/.fwx/phases/01-toy' --run '01-toy-ab12cd3-1' --items" in runner(rec, "outside")[0]["prompt"],
+         runner(rec, "outside")[0]["prompt"][-300:])
+    s.eq("outside small unfixed: the part is done", result(rec).get("status"), "done")
+    # the rounds are the limit: with none left the fix task does not run and the run ends failed
+    rec, err = go(script, base={**base, "executor:runner-fix-round": R({"ok": False, "spent": False, "rounds": "3/3"}, 1)})
+    rec = finish(s, "outside small unfixed, no round left", rec, err)
+    s.eq("outside small unfixed, no round left: failed, no fixer", (result(rec).get("status"), launched(rec, "executor:fix-")), ("failed", []))
+    # the same item reported by two attempts is one item
+    rec, err = go(script, base={**base, "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", status="failed", reason="boom", outside=[item]),
+                                                                              exec_report("wt-t1", outside=[item])]},
+                                "executor:runner-fix-round": {"$seq": [R({"ok": True, "spent": True, "rounds": "1/3"}), R({"ok": True, "spent": True, "rounds": "2/3"})]}})
+    rec = finish(s, "outside twice", rec, err)
+    s.eq("outside twice: one item, one fixer", (len(details(rec).get("outside") or []), len(launched(rec, "executor:fix-"))), (1, 1))
+
+    # fixed by the executor: no fix task, the ledger has the commit; large: no fix task, the ledger has it open, and the part is still done
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(fixed="beefcafe")]), **ledger})
+    rec = finish(s, "outside fixed", rec, err)
+    s.eq("outside fixed: no fixer, the ledger has the commit", (launched(rec, "executor:fix-"), ledger_items(rec)), ([], [ot(fixed="beefcafe")]))
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(size="large")]), **ledger})
+    rec = finish(s, "outside large", rec, err)
+    s.eq("outside large: no fix task", (launched(rec, "executor:fix-"), runner(rec, "fix-round")), ([], []))
+    s.eq("outside large: the ledger is written with the item", ledger_items(rec), [ot(size="large")])
+    s.eq("outside large: the part is done and details.outside carries the item with its ledger id",
+         (result(rec).get("status"), [(o["size"], o["fixed"], o.get("ledger")) for o in details(rec).get("outside", [])]), ("done", [("large", None, "O1")]))
+    # nothing outside: no ledger call at all (the green run's launch order is unchanged)
+    rec, err = go(script)
+    rec = finish(s, "outside none", rec, err)
+    s.eq("outside none: no ledger call", runner(rec, "outside"), [])
+    # the ledger the stage guard reads must be written: without it the part does not end done
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(size="large")]), "executor:runner-outside": R("", 1)})
+    rec = finish(s, "outside ledger not written", rec, err)
+    s.ok("outside ledger not written: failed, not done, and the reason names the ledger",
+         result(rec).get("status") == "failed" and "outside" in str(result(rec).get("reason")), repr(result(rec)))
+    s.ok("outside ledger not written: the cleanup still runs", last(rec) == "executor:runner-cleanup")
+    # a commit the branch does not hold is not fixed: the ledger says so and the item is reported open
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(size="large", fixed="beefcafe")]),
+                                        "executor:runner-outside": R({"ids": ["O1"], "demoted": ["O1"]})})
+    rec = finish(s, "outside demoted", rec, err)
+    s.eq("outside demoted: details.outside has it unfixed", [(o.get("fixed"), o.get("ledger")) for o in details(rec).get("outside", [])], [(None, "O1")])
+
+    # the reviewers: a defect nearby is an item, goes to the verifier as a finding, and is fixed (small) or recorded open (large); never dropped
+    fixing = {"executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}),
+              "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix"),
+              "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"]), final("h3", ["wt-fix"])]},
+              "executor:runner-commits": R("c0ffee0 r1-O1\n"), "reviewer:r2": review_line("r2"), "executor:runner-report-r2": review_report()}
+    small = {"reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report_outside([ot(where="lib/q.py:40")]),
+             "review-verifier:r1": verdicts(("r1-O1", "fix", "medium", "check")), **fixing, **ledger}
+    rec, err = go(script, base={**green(), **small})
+    rec = finish(s, "outside reviewer small", rec, err)
+    v = (launched(rec, "review-verifier:") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("outside reviewer: the verifier is given the nearby defect as a finding under a prefixed id, with its file and the proposed fix",
+         "r1-O1" in v and "lib/q.py" in v and "read to the end" in v, v[:600])
+    s.eq("outside reviewer small: a fixer fixes it", [l["label"] for l in launched(rec, "executor:fix-")], ["executor:fix-1"])
+    s.eq("outside reviewer small: the ledger has it fixed, by the fixer's commit", ledger_items(rec), [ot(where="lib/q.py:40", fixed="c0ffee0")])
+    s.eq("outside reviewer small: done", result(rec).get("status"), "done")
+    large = {"reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report_outside([ot(where="lib/q.py:40", size="large")]),
+             "review-verifier:r1": verdicts(("r1-O1", "fix", "medium", "check")), **ledger}
+    rec, err = go(script, base={**green(), **large})
+    rec = finish(s, "outside reviewer large", rec, err)
+    s.eq("outside reviewer large: no fixer, the ledger has it open", (launched(rec, "executor:fix-"), ledger_items(rec)), ([], [ot(where="lib/q.py:40", size="large")]))
+    dismissed = {"reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report_outside([ot(where="lib/q.py:40")]),
+                 "review-verifier:r1": verdicts(("r1-O1", "dismiss", "none", None))}
+    rec, err = go(script, base={**green(), **dismissed})
+    rec = finish(s, "outside reviewer dismissed", rec, err)
+    s.eq("outside reviewer: a verifier that finds the claim false dismisses it, and nothing is recorded", (runner(rec, "outside"), [d["id"] for d in (details(rec).get("findings") or {}).get("dismissed", [])]),
+         ([], ["r1-O1"]))
+    for label, item in (("lacks its fix", {k: v for k, v in ot().items() if k != "fix"}), ("says it fixed something", ot(fixed="c0ffee0"))):
+        rec, err = go(script, answers_over={"executor:runner-report-r1": review_report_outside([item])})
+        rec = finish(s, "outside reviewer " + label, rec, err)
+        s.eq("outside reviewer %s: a malformed report, relaunched once, then failed" % label, (result(rec).get("status"), len(launched(rec, "reviewer:"))), ("failed", 2))
+
+
 def check_wave_base(script, s):
     """3.4 U8 fix, F1: a later wave's worktrees are born from the phase head after the earlier wave merged, so the sha they check
     is the head when their wave launches (what the last `integrate` returned), never the one `prepare` saw. The check itself is
@@ -1182,6 +1360,7 @@ def check_all(script, s):
     check_review(script, s)
     check_fix(script, s)
     check_fix_scope(script, s)
+    check_outside(script, s)
     check_args_fix_and_revert(script, s)
     check_wave_base(script, s)
     check_scratch(script, s)

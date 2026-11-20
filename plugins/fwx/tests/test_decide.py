@@ -13,12 +13,12 @@ What is not ported, and why: the attempt, behind-base, size and major-bump limit
 (the producer of the facts says `running`), Bugbot (the facts carry `review`), the screenshots rule (the new `ui` reads the
 mark `ui` in `surfaces`, not file names).
 
-The 19 rules: U5a's 12 and U5b's 7 (`ui`, `type`, `hooks-settings`, `irreversible`, `outside-plan`, `weakened-assertions`,
-`protected-paths`). The control loop is the plan's: for each rule, a case that
+The 20 rules: U5a's 12, U5b's 7 (`ui`, `type`, `hooks-settings`, `irreversible`, `outside-plan`, `weakened-assertions`,
+`protected-paths`) and `outside-open` (the ownership rule: the facts count the outside items neither fixed nor routed, `review.open_outside`). The control loop is the plan's: for each rule, a case that
 only it catches. With the table the rule hands the case over (or waits, for `still-running`) with a reason that starts with
 its id and nothing else, and with the rule in `disabled` the same case would merge. The loop is a function that returns what
 is wrong, and it is run again on a table without the rule and must say so: a rule deleted from the table is a failure of
-this file. The file prints how many rules it checked and fails on any number but 19. The base facts' `plan_files` is `["**"]`
+this file. The file prints how many rules it checked and fails on any number but 20. The base facts' `plan_files` is `["**"]`
 so that only `outside-plan` looks at the plan; a case of a rule that edits a file `.github/**` also protects is not used
 for `trusted-edit` (its case is `.claude/fwx.json`): the workflow edit gets both reasons, trusted-edit first.
 
@@ -150,7 +150,7 @@ except ImportError as e:
 
 EXPECTED = ["review-label", "agent", "type", "ui", "ci-failed", "conflict", "trusted-edit", "hooks-settings",
             "protected-paths", "irreversible", "outside-plan", "weakened-assertions", "evidence-head", "evidence-dirty",
-            "evidence-recipe", "evidence-failed", "no-checks", "review-findings", "still-running"]
+            "evidence-recipe", "evidence-failed", "no-checks", "review-findings", "outside-open", "still-running"]
 PENDING = {"still-running"}
 HEAD = "a" * 40
 OTHER = "b" * 40
@@ -167,7 +167,7 @@ def facts():
                "changed_files": [{"path": "src/list.py", "additions": 10, "deletions": 2}],
                "checks": [{"name": "ci", "state": "success"}]},
         "evidence": {"sha": HEAD, "clean": True, "commands": [{"cmd": RECIPE, "rc": 0}]},
-        "plan_files": ["**"], "review": {"open_medium_high": 0, "running": False},
+        "plan_files": ["**"], "review": {"open_medium_high": 0, "open_outside": 0, "running": False},
         "project": {"checks": [RECIPE], "protected_paths": [], "production": {"branches": [], "commands": []},
                     "ui_bugs": False},
     }
@@ -219,6 +219,7 @@ CASES = {
     "evidence-failed": lambda: put(facts(), "evidence.commands", [{"cmd": RECIPE, "rc": 1}]),
     "no-checks": lambda: put(facts(), "project.checks", []),
     "review-findings": lambda: put(facts(), "review.open_medium_high", 2),
+    "outside-open": lambda: put(facts(), "review.open_outside", 2),
     "still-running": lambda: put(facts(), "pr.running", True),
 }
 
@@ -254,7 +255,7 @@ except decide.TableError as e:
     print("FAIL: the engine's rule table cannot be loaded: %s" % e)
     sys.exit(1)
 ids = [r["id"] for r in table["rules"]]
-s.eq("the table of the engine lists the 19 rules, in this order", ids, EXPECTED)
+s.eq("the table of the engine lists the 20 rules, in this order", ids, EXPECTED)
 s.eq("nothing is disabled by default", table["disabled"], [])
 
 # ---- the control loop: each rule catches its case alone, lets it go when disabled, and the loop notices a missing rule ----
@@ -327,6 +328,9 @@ only(put(facts(), "review.open_medium_high", 1), "review-findings", "one open me
 s.ok("one finding is said in the singular", first(put(facts(), "review.open_medium_high", 1)).endswith(": the review has 1 unresolved medium or high finding"),
      first(put(facts(), "review.open_medium_high", 1)))
 s.eq("no open finding: the review is no reason", D(facts())["reasons"], [])
+only(put(facts(), "review.open_outside", 1), "outside-open", "one outside item neither fixed nor routed")
+s.ok("one outside item is said in the singular", first(put(facts(), "review.open_outside", 1)).endswith(": 1 outside item is neither fixed nor routed"),
+     first(put(facts(), "review.open_outside", 1)))
 
 # size and major bumps are not rules of fwx (major-bump and max-size were dropped), and a manifest edit that only bumps a
 # dependency is not an edit of what the checks run
@@ -645,6 +649,9 @@ BAD = [
     ("a number for ui_bugs", lambda f: put(f, "project.ui_bugs", 1), "facts.project.ui_bugs: expected true or false"),
     ("a count of findings that is not an integer", lambda f: put(f, "review.open_medium_high", "2"),
      "facts.review.open_medium_high: expected a non-negative integer"),
+    ("no count of outside items (a missing count is not zero)", lambda f: f["review"].pop("open_outside") and f, "facts.review.open_outside: missing"),
+    ("a count of outside items that is not an integer", lambda f: put(f, "review.open_outside", "1"),
+     "facts.review.open_outside: expected a non-negative integer"),
 ]
 for state_name in ("neutral", "skipped", "cancelled", "timed_out", "action_required", "Success", ""):
     BAD.append(("a check in the state %r (GitHub's, not the three of the contract)" % state_name,
@@ -776,6 +783,6 @@ s.eq("an unknown option: exit 2", run(facts(), "--bogus")[0], 2)
 s.eq("--facts twice: exit 2", run(facts(), "--facts", "x")[0], 2)
 
 print("rules checked: %d" % checked)
-if checked != 19:
-    s.ok("the control loop checked the 19 rules", False, "checked %d" % checked)
+if checked != 20:
+    s.ok("the control loop checked the 20 rules", False, "checked %d" % checked)
 s.done()
