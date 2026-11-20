@@ -125,6 +125,6 @@ its gitleaks step, and so the script, fail); use it when Actions minutes are out
 - A new hook row goes in `forge/hooks.py`; a row that belongs to an integration is also listed in
   `ROW_INTEGRATION`.
 - A new terminal screen or component goes in `forge/ui/`: `tokens.json` is the one source of colours and glyphs, a component
-  names a role or a glyph and never holds one, and `tests/test_ui.py` gates contrast, widths, `NO_COLOR` and the glyph sets
+  names a role or a glyph and never holds one, and `tests/test_ui.py` gates contrast, widths, NO_COLOR and the glyph sets
   (`forge/ui/README.md`). `forge/render.py` is the older look and moves onto `forge/ui` screen by screen, each in its own PR.
 - A skill is never part of the engine. Skills live in the user's `skills/<name>/SKILL.md`. (The skills under `plugins/fwx/skills/` belong to that plugin, not to the user's `skills/`.)
