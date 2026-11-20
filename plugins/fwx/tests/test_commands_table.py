@@ -66,7 +66,7 @@ DECIDED = [
     ("wave remove", "wave cleanup", "wave", ["cleanup"]), ("wave", "wave summary", "wave", ["summary"]),
     ("walk start", "walk up", "walk", ["up"]), ("walk stop", "walk down", "walk", ["down"]),
     ("walk stop --orphans", "walk sweep", "walk", ["sweep"]), ("walk ab", None, "walk", ["ab"]), ("walk pw", None, "walk", ["pw"]),
-    ("control new", "walk arm-control", "walk", ["arm-control"]), ("walk converge", "walk findings", "walk", ["findings"]),
+    ("control new", "walk arm-control", "walk", ["arm-control"]), ("control judge", None, "walk", ["control-judge"]), ("walk converge", "walk findings", "walk", ["findings"]),
     ("review new", "walk review-page", "walk", ["review-page"]), ("review read", "walk review-answers", "walk", ["review-answers"]),
     ("walk selftest", None, "walk", ["selftest"]),
     ("migrate-gsd", None, "migrate_gsd", []),

@@ -56,7 +56,7 @@ once; the first matching FAIL line of each, seen red):
   control armed too late:    FAIL: green: the control is armed before any walker: ['executor:runner-up', 'ui-verifier:tramos', 'ui-walker:T1-breaker', ...]
   a missing walker no gap:   FAIL: breaker null: failed, naming the walker: got ('done', False), want ('failed', True)
   a missed control counts:   FAIL: control missed: the reason says first that the run does not count: 'Run: the walkers did not find the fault planted on /settings.'
-  an unwalked control judged: FAIL: control not walked: no judge launched, and the reason says the run does not count: ([..., 'ui-verifier:control', ...], ...)
+  an unwalked control judged: FAIL: breaker null: no judge launched, and the reason says the run does not count and that it was the breaker: ([..., 'executor:runner-control-judge', ...], ...)
   a down that exits 1 is done: FAIL: down fails: status failed, and the reason says browsers may be left: got ('done', False), want ('failed', True)
   Firefox critic for all:    FAIL: green: five walkers: a breaker and a critic per tramo, one more critic for Firefox: got [..., 'ui-walker:T1-firefox', ...]
   walkers told of the control: FAIL: green: no walker is told about the control: [...]
@@ -143,7 +143,7 @@ def green():
         "executor:runner-up": R(UP),
         "ui-verifier:tramos": json.dumps(TRAMOS),
         "executor:runner-check-screens": R(screens_out((APP + "/settings", 200), (APP + "/billing", 200))),
-        "executor:runner-arm-control": R({"screen": APP + "/settings", "path": "/settings", "kind": "hierarchy"}),
+        "executor:runner-arm-control": R({"screen": APP + "/settings", "path": "/settings", "kind": "functional", "link": "/billing", "dead": "/billing-old"}),
         "ui-walker:T1-breaker": "0 blocker, 1 minor\n%s/findings-w1.md\nthe save bar clips" % RUN_DIR,
         "ui-walker:T1-critic": "0 blocker, 0 minor\n%s/findings-w2.md\nnone" % RUN_DIR,
         "ui-walker:T2-breaker": "0 blocker, 0 minor\n%s/findings-w3.md\nnone" % RUN_DIR,
@@ -152,7 +152,8 @@ def green():
         "ui-verifier:T1": verified("T1", ("CONFIRMED", RUN_DIR + "/clip-1.webm"), ("NOT REPRODUCED", None)),
         "ui-verifier:T2": verified("T2", ("PLAUSIBLE", None)),
         "executor:runner-save-T1": R("saved"), "executor:runner-save-T2": R("saved"),
-        "ui-verifier:control": {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"},
+        "executor:runner-control-judge": R({"screen": "/settings", "found": True, "finding": "w1-F1", "why": "w1-F1: it names the dead page /billing-old",
+                                            "looked_at": {"files": 5, "findings": 2}}),
         "executor:runner-findings": R(FINDINGS_OUT),
         "executor:runner-screenshot": R(SHOTS),
         "executor:runner-coverage": R("saved"),
@@ -221,7 +222,7 @@ def check_green(script, s):
     s.eq("green: the close is findings, screenshot, coverage, down, in that order, and last", ls[-4:],
          ["executor:runner-findings", "executor:runner-screenshot", "executor:runner-coverage", "executor:runner-down"])
     s.ok("green: the control judge runs after every verifier and before the close",
-         max(at(ls, "ui-verifier:T1"), at(ls, "ui-verifier:T2")) < at(ls, "ui-verifier:control") < at(ls, "executor:runner-findings"), repr(ls))
+         max(at(ls, "ui-verifier:T1"), at(ls, "ui-verifier:T2")) < at(ls, "executor:runner-control-judge") < at(ls, "executor:runner-findings"), repr(ls))
     s.eq("green: five walkers: a breaker and a critic per tramo, one more critic for Firefox", sorted(l["label"] for l in walkers(rec)),
          ["ui-walker:T1-breaker", "ui-walker:T1-critic", "ui-walker:T2-breaker", "ui-walker:T2-critic", "ui-walker:T2-firefox"])
     for l in rec["launches"]:
@@ -236,8 +237,11 @@ def check_green(script, s):
             axis = "breaker" if l["label"].endswith("breaker") else "critic"
             s.eq("%s: model and agentType" % l["label"], (o.get("model"), o.get("agentType")), ({"breaker": "m-brk", "critic": "m-cri"}[axis], "fwx:ui-walker"))
     s.eq("green: the verifiers' model", {l["opts"]["model"] for l in launched(rec, "ui-verifier:T")}, {"m-ver"})
-    s.eq("green: the control judge is the ui-verifier on the small model", (launched(rec, "ui-verifier:control")[0]["opts"].get("model"),
-         launched(rec, "ui-verifier:control")[0]["opts"].get("agentType")), ("m-run", "fwx:ui-verifier"))
+    # The judgement is code (`fwx control judge`), run by a runner on the findings files of every walker that returned; no agent reads them.
+    #   FAIL: green: the control judge is `fwx control judge` on the findings files of the walkers that returned, run by a runner: no executor:runner-control-judge launched
+    judge = (runner(rec, "control-judge") or [{"prompt": "no executor:runner-control-judge launched"}])[0]["prompt"]
+    s.ok("green: the control judge is `fwx control judge` on the findings files of the walkers that returned, run by a runner",
+         "fwx control judge --run '%s' %s" % (RUN_DIR, " ".join("'%s/findings-w%d.md'" % (RUN_DIR, k) for k in range(1, 6))) in judge and not launched(rec, "ui-verifier:control"), judge[-300:])
     up = runner(rec, "up")[0]["prompt"]
     s.ok("green: up is told the repo, the folder, the part and the round", "cd '%s' && fwx walk start --dir '%s' --part 1 --round 1 --repo '%s'" % (REPO, PHASE, REPO) in up
          and "--app" not in up, up[-300:])
@@ -279,7 +283,7 @@ def check_green(script, s):
     s.eq("green: details.run_dir, fix_file, contradicted_file, down_file, coverage_file", (d.get("run_dir"), d.get("fix_file"), d.get("contradicted_file"), d.get("down_file"), d.get("coverage_file")),
          (RUN_DIR, RUN_DIR + "/fix.json", RUN_DIR + "/contradicted.json", RUN_DIR + "/down.json", RUN_DIR + "/coverage.md"))
     s.eq("green: details.counts are what `findings` printed", d.get("counts"), FINDINGS_OUT["counts"])
-    s.eq("green: details.control", d.get("control"), {"screen": "/settings", "found": True, "finding": "w2-F1"})
+    s.eq("green: details.control", d.get("control"), {"screen": "/settings", "found": True, "finding": "w1-F1"})
     s.eq("green: details.shots are the paths the screenshots were written to", d.get("shots"), [
          "/srv/git/fwx/walks/walk-1-1-abc123/shots/s1.png", "/srv/git/fwx/walks/walk-1-1-abc123/shots/s2.png"])
     s.eq("green: details.clips are the clip paths of the kept findings", d.get("clips"), [RUN_DIR + "/clip-1.webm"])
@@ -527,7 +531,8 @@ def check_close(script, s):
     # and the walker's findings were nowhere in the result). Seen red on 93e43d9:
     #   FAIL: close not confirmed, the owner's reading: the reason leads with the browser that could not be closed: 'The run does not count: the control screen ... was not walked: the critic of tramo T1 returned nothing. no tramo was verified: ...'
     #   FAIL: close not confirmed, the owner's reading: the findings the walker returned stay in the result as not verified: got None, want [{'tramo': 'T1', 'files': [...findings-w1.md]}]
-    rec, err = go(script, answers_over={**one, closing("w1"): R("", 1)})
+    # (the lost slot is the breaker's: it walked the control tramo and the judge says the walkers missed the fault, so the reason holds both)
+    rec, err = go(script, answers_over={**one, closing("w1"): R("", 1), **{"executor:runner-control-judge": R({"screen": "/settings", "found": False, "finding": None})}})
     rec = finish(s, "close not confirmed, the owner's reading", rec, err)
     r, d = result(rec), details(rec)
     s.ok("close not confirmed, the owner's reading: the reason leads with the browser that could not be closed and says no slot was left",
@@ -597,9 +602,9 @@ def check_control_rows(script, s):
         """The two writes of the control runner's command: the verified file kept, the control rows set aside."""
         cmd = (runner(rec, "control-T1") or [{"prompt": ""}])[0]["prompt"]
         return (cmd.split(" && ")[-2:] + ["", ""])[:2] + [cmd[-500:] or "no executor:runner-control-T1 launched"]
-    judged = {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 says the title reads like body text"}
+    judged = {"screen": "/settings", "found": True, "finding": "w2-F1", "why": "w2-F1 names the dead page /billing-old"}
     rows = [row("T1-1", "w1-F1", clip=RUN_DIR + "/clip-1.webm"), row("T1-2", "w1-F2", "NOT REPRODUCED"), row("T1-3", "w2-F1")]
-    over = {"ui-verifier:T1": {"findings": rows}, "ui-verifier:control": judged, "executor:runner-control-T1": R("saved")}
+    over = {"ui-verifier:T1": {"findings": rows}, "executor:runner-control-judge": R(judged), "executor:runner-control-T1": R("saved")}
     rec, err = go(script, answers_over=over)
     rec = finish(s, "control row", rec, err)
     ls = labels(rec)
@@ -608,7 +613,7 @@ def check_control_rows(script, s):
          RUN_DIR + "/verified-T1.json" in keep and '"T1-3"' not in keep and '"T1-1"' in keep and '"T1-2"' in keep
          and RUN_DIR + "/control-T1.json" in gone and '"T1-3"' in gone and '"T1-1"' not in gone, shown)
     s.ok("control row: it is taken out after the judge and before `findings` reads the files",
-         at(ls, "ui-verifier:control") < at(ls, "executor:runner-control-T1") < at(ls, "executor:runner-findings"), repr(ls))
+         at(ls, "executor:runner-control-judge") < at(ls, "executor:runner-control-T1") < at(ls, "executor:runner-findings"), repr(ls))
     s.ok("control row: a tramo with no control row is not rewritten", "executor:runner-control-T2" not in ls, repr(ls))
     s.eq("control row: the run is done and the clips are those of the rows kept", (result(rec).get("status"), details(rec).get("clips")), ("done", [RUN_DIR + "/clip-1.webm"]))
     # the control row carries a clip: it is not a clip of a finding the fixer gets
@@ -624,12 +629,12 @@ def check_control_rows(script, s):
         s.ok("control row, %s: both rows of the one defect leave, the other finding stays" % what,
              '"T1-1"' in gone and '"T1-3"' in gone and '"T1-1"' not in keep and '"T1-3"' not in keep and '"T1-4"' in keep, shown)
     # the id the judge names may also be the verified row's own
-    rec, err = go(script, answers_over={**over, "ui-verifier:control": dict(judged, finding="T1-3")})
+    rec, err = go(script, answers_over={**over, "executor:runner-control-judge": R(dict(judged, finding="T1-3"))})
     rec = finish(s, "control row by id", rec, err)
     s.ok("control row by id: a finding named by the id of its verified row leaves too", "executor:runner-control-T1" in labels(rec), repr(labels(rec)))
-    for what, ctl in (("not found", dict(judged, found=False, finding=None)), ("not judged", dict(judged, found=None, finding=None)),
+    for what, ctl in (("not found", dict(judged, found=False, finding=None)), ("not judged", dict(judged, found="maybe", finding=None)),
                       ("found, no finding named", dict(judged, finding=None))):
-        rec, err = go(script, answers_over={**over, "ui-verifier:control": ctl})
+        rec, err = go(script, answers_over={**over, "executor:runner-control-judge": R(ctl)})
         rec = finish(s, "control row, " + what, rec, err)
         s.ok("control row, %s: no file is rewritten" % what, "executor:runner-control-T1" not in labels(rec), repr(labels(rec)))
     rec, err = go(script, answers_over={**over, "executor:runner-control-T1": R("", 1)})
@@ -639,18 +644,41 @@ def check_control_rows(script, s):
 
 
 def check_control(script, s):
-    rec, err = go(script, answers_over={"ui-verifier:control": {"screen": "/settings", "found": False, "finding": None, "why": "nothing about the title"}})
+    """MVP: the control is a functional fault the breaker finds by using the screen, and whether a finding names it is code, `fwx control judge`
+    (its own cases are in test_walk.py). The workflow runs it on the walkers' files after the verifiers, counts the tramo as walked once its
+    breaker returned (the critic is off), and reads `found` from what it prints. Red on master (an agent judged, and a tramo counted as walked
+    only when its critic returned):
+      FAIL: control found: the breaker of the control tramo is judged by `fwx control judge`: no executor:runner-control-judge launched
+      FAIL: control missed: still done, found false: got ('done', None), want ('done', False)
+      FAIL: critic null: the control is still judged (the critic is not what walks the control): got None, want True
+      FAIL: breaker null: the control tramo was not walked: found null, no judge, and the reason says it was the breaker: ...
+    The cases with a refusal, a null breaker and a judge that fails are the negative controls of the green one."""
+    def says(found, finding=None, **kw):
+        return {"executor:runner-control-judge": R(dict({"screen": "/settings", "found": found, "finding": finding, "why": "w", "looked_at": {"files": 5, "findings": 1}}, **kw))}
+    rec, err = go(script, answers_over=says(False))
     rec = finish(s, "control missed", rec, err)
     r = result(rec)
     s.eq("control missed: still done, found false", (r.get("status"), details(rec).get("control", {}).get("found")), ("done", False))
     s.ok("control missed: the reason says first that the run does not count", str(r.get("reason")).lower().startswith("the run does not count"), repr(r.get("reason")))
-    # the critic of the control tramo never returned: the control tramo was not walked, so found is null without a judge
+    # the breaker walks the control, so the critic returning nothing leaves the control judged
     rec, err = go(script, answers_over={"ui-walker:T1-critic": None})
-    rec = finish(s, "control not walked", rec, err)
+    rec = finish(s, "critic null", rec, err)
+    s.eq("critic null: the control is still judged (the critic is not what walks the control)", details(rec).get("control", {}).get("found"), True)
+    s.ok("critic null: and the judge is not given the critic's file", "findings-w2.md" not in (runner(rec, "control-judge") or [{"prompt": "no judge"}])[0]["prompt"], repr(labels(rec)[-6:]))
+    # the breaker of the control tramo never returned: the control tramo was not walked, so found is null without a judge
+    rec, err = go(script, answers_over={"ui-walker:T1-breaker": None})
+    rec = finish(s, "breaker null", rec, err)
     r = result(rec)
-    s.eq("control not walked: found null", details(rec).get("control", {}).get("found"), None)
-    s.ok("control not walked: no judge launched, and the reason says the run does not count", "ui-verifier:control" not in labels(rec)
-         and str(r.get("reason")).lower().startswith("the run does not count"), repr((labels(rec)[-6:], r.get("reason"))))
+    s.eq("breaker null: found null", details(rec).get("control", {}).get("found"), None)
+    s.ok("breaker null: no judge launched, and the reason says the run does not count and that it was the breaker", "executor:runner-control-judge" not in labels(rec)
+         and str(r.get("reason")).lower().startswith("the run does not count") and "breaker of tramo T1" in str(r.get("reason")), repr((labels(rec)[-6:], r.get("reason"))))
+    # the judge cannot run (a file it cannot read, exit 1) or prints no verdict: the run does not count and the reason says so; found is never true
+    for what, ans in (("exit 1", R({"screen": "/settings", "found": True, "finding": "w1-F1"}, 1)), ("no verdict", R({"screen": "/settings", "found": "maybe"})), ("no answer", None)):
+        rec, err = go(script, answers_over={"executor:runner-control-judge": ans})
+        rec = finish(s, "judge " + what, rec, err)
+        s.ok("judge %s: found null, the run does not count, and the reason says the control could not be judged" % what,
+             details(rec).get("control", {}).get("found") is None and str(result(rec).get("reason")).lower().startswith("the run does not count")
+             and "could not be judged" in str(result(rec).get("reason")), repr((details(rec).get("control"), result(rec).get("reason"))))
     rec, err = go(script, answers_over={"executor:runner-arm-control": R("", 2)})
     rec = finish(s, "control not armed", rec, err)
     s.ok("control not armed: found null, the run does not count, the walk went on",
@@ -658,14 +686,14 @@ def check_control(script, s):
          repr((result(rec).get("reason"), len(walkers(rec)))))
     # D14: arm-control reads the plant back and refuses (exit 1, `{"armed": false, "reason": ...}` on stdout) when the target is not there or
     # the plant changes nothing. The control is then not armed, no judge runs, found is never true, and the result says which of the two it was.
-    for why in ("no visible change on %s/settings: the `h1` has font-size 16px and font-weight 400 with and without the plant" % APP,
-                "target not found on %s/settings: no `h1` after 30 s, so a plant there would change nothing" % APP):
+    for why in ("no visible change on %s/settings: clicking the link to /billing lands on /billing without the plant and on /billing in a fresh walker session launched with it" % APP,
+                "target not found on %s/settings: no link to another screen of the app after 30 s, so a plant there would change nothing" % APP):
         tag = why.split(" on ")[0]
         rec, err = go(script, answers_over={"executor:runner-arm-control": R({"armed": False, "reason": "arm-control: " + why}, 1)})
         rec = finish(s, "control refused: " + tag, rec, err)
         r = result(rec)
         s.ok("control refused (%s): not armed: no judge, found null (never true), the walk went on" % tag,
-             "ui-verifier:control" not in labels(rec) and details(rec).get("control", {}).get("found") is None and len(walkers(rec)) == 5,
+             "executor:runner-control-judge" not in labels(rec) and details(rec).get("control", {}).get("found") is None and len(walkers(rec)) == 5,
              repr((labels(rec)[-4:], details(rec).get("control"))))
         s.ok("control refused (%s): the run does not count, and the reason says which it was" % tag,
              str(r.get("reason")).lower().startswith("the run does not count") and tag in str(r.get("reason")), repr(r.get("reason")))
@@ -810,7 +838,7 @@ def check_recheck(script, s):
     rec = finish(s, "recheck", rec, err)
     ls = labels(rec)
     s.ok("recheck: no breaker or critic launched (critic launched in recheck)", walkers(rec) == [], repr([l for l in ls if l.startswith("ui-walker")]))
-    s.ok("recheck: no tramos agent, no control, no judge", not any(l in ls for l in ("ui-verifier:tramos", "executor:runner-arm-control", "ui-verifier:control")), repr(ls))
+    s.ok("recheck: no tramos agent, no control, no judge", not any(l in ls for l in ("ui-verifier:tramos", "executor:runner-arm-control", "executor:runner-control-judge")), repr(ls))
     s.ok("recheck: one verifier per tramo of the fix.json", "ui-verifier:T1" in ls and "ui-verifier:T2" in ls, repr(ls))
     s.ok("recheck: no capacity command: the quota is the cap sized to the 2 tramos of the fix.json (cap 4: a quota of 4)",
          not any("capacity" in l for l in ls) and any("a quota of 4 for 2 tramo" in l for l in rec["logs"]), repr((ls, rec["logs"][-4:])))
@@ -827,7 +855,7 @@ def check_recheck(script, s):
     s.eq("recheck: gone", (d.get("recheck") or {}).get("gone"), 1)
     # `fwx walk start` removes control.json on a restart, so a recheck round has no control: it must not be armed, judged or reported as "not found"
     s.ok("recheck: no control is expected: no judge, found null, and the reason does not say the run does not count",
-         "ui-verifier:control" not in ls and d.get("control", {}).get("found") is None and "does not count" not in str(r.get("reason")), repr((d.get("control"), r.get("reason"))))
+         "executor:runner-control-judge" not in ls and d.get("control", {}).get("found") is None and "does not count" not in str(r.get("reason")), repr((d.get("control"), r.get("reason"))))
     s.eq("recheck: fix_file is the one given", d.get("fix_file"), RUN_DIR + "/fix.json")
     s.eq("recheck: the up was run on the work branch's checkout", "fwx walk start --dir '%s' --part 1 --round 1 --repo '%s'" % (PHASE, REPO) in runner(rec, "up")[0]["prompt"], True)
     # `uniqueIds` appends `.x` to an id the run already used (T1-1 twice): the finding still belongs to its tramo (3.5 U3d). Against the
@@ -967,7 +995,11 @@ MUTANTS = [
     ("a missing walker is not a gap", "st.gaps.push('ui-walker did not return: ' + job.tag)", "", "FAIL: breaker null: failed, naming the walker"),
     ("a missed control still counts", "The run does not count", "Run", "FAIL: control missed: the reason says first that the run does not count"),
     ("a refused control's reason dropped", "(ctl.why ? ' (' + ctl.why + ')' : '')", "''", "FAIL: control refused (no visible change): the run does not count, and the reason says which it was"),
-    ("a control tramo not walked is judged", "walked = st.walked[ctl.tramo] === true", "walked = true", "FAIL: control not walked: no judge launched"),
+    ("a control tramo not walked is judged", "walked = st.walked[ctl.tramo] === true", "walked = true", "FAIL: breaker null: no judge launched"),
+    ("the critic walks the control", "if (job.axis === 'breaker') st.walked[job.tramo.id] = true", "if (job.axis === 'critic' && !job.firefox) st.walked[job.tramo.id] = true",
+     "FAIL: critic null: the control is still judged"),
+    ("an unreadable verdict is found", "typeof got.found !== 'boolean'", "false", "FAIL: judge no verdict: found null"),
+    ("a failed judge is read as found", "const got = v && v.rc === 0 ? parseAny(v.stdout) : null", "const got = v ? parseAny(v.stdout) : null", "FAIL: judge exit 1: found null"),
     ("a down that exits 1 is done", "if (down.rc !== 0)", "if (false)", "FAIL: down fails: status failed"),
     ("the Firefox critic always", "if (t.firefox === true)", "if (true)", "FAIL: green: five walkers"),
     ("the walkers are told about the control", "const brief = (job) => [", "const brief = (job) => ['The planted control is on this screen.',", "FAIL: green: no walker is told about the control"),

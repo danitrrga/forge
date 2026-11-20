@@ -72,7 +72,8 @@ ROWS = [
     ("walk converge", "walk findings", "walk", ["findings"], "the walkers' verdicts into fix.json and contradicted.json"),
     ("walk selftest", None, "walk", ["selftest"], "the walk's own check on a toy app"),
     ("walk capture", "screenshot", "screenshot", [], "one capture per walked screen of a run, with no model: --run R [--screens JSON] [--out DIR]"),
-    ("control new", "walk arm-control", "walk", ["arm-control"], "plant the control the walkers must find"),
+    ("control new", "walk arm-control", "walk", ["arm-control"], "plant the control the walkers must find: --run R --screen URL [--kind functional|hierarchy]"),
+    ("control judge", None, "walk", ["control-judge"], "did the walkers find the planted control: --run R FINDINGS_FILE..."),
     ("review new", "walk review-page", "walk", ["review-page"], "the review page the owner answers"),
     ("review read", "walk review-answers", "walk", ["review-answers"], "the owner's answers from the review page"),
 ]

@@ -54,16 +54,27 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       ui-walk workflow runs it once, for every screen, after the tramos and before `control new`, and ends `failed` on exit 1: a walk over pages
       that answer 404 finds nothing and its control would be planted on the not-found page. An empty list, or one that is not a list of URLs, is
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
-  fwx control new --run R --screen URL     plants the control: an init script that makes the main title of that route as large and light
-      as body text (a hierarchy defect), registered by `ab` at launch with --init-script; control.json. No walker sees it named.
-      Before it leaves control.json it proves the plant visible where the walkers will meet it: it opens the screen in session w1 with no
-      plant, reads the title's computed font-size, font-weight and rendered box (width and height in whole pixels) and closes the session; then
-      writes init.js and control.json and opens the screen in a fresh w1, launched by `ab` like any walker's session (with --init-script),
-      reads them again (both readings go to control.json `readback`, the boxes under `box`) and closes it. No title after `FWX_WALK_CONTROL_WAIT_S` seconds (default
-      30; the pause between two looks is `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app): `target not found`; a box that changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels (default 1) in both width and height:
-      `no visible change` (the plant did not reach the browser the walkers' way, or it changes no layout), whatever it did to the font (the
-      owner's rule: what moves no layout is not worth a walker's attention). Either is exit 1 with the line on stderr and
-      `{"armed": false, "reason": ...}` on stdout, and neither control.json nor init.js is left.
+  fwx control new --run R --screen URL [--kind functional|hierarchy]     plants the control, registered by `ab` at launch with --init-script (control.json).
+      No walker sees it named. `functional` (the default) is a fault the `breaker` meets by using the screen: the first link to another screen of the
+      app (inside nav, header or [role=navigation] first, then any link; not the screen itself, not a link that opens a tab or downloads) leads to
+      `<its path>-old`, a page that does not exist, for a click on that route (a click listener on the window in the capture phase, so the page's
+      router never sees it); nothing in the page is changed, so no hydration warning and no mark a walker could take for the tooling's.
+      Before it leaves control.json it proves the plant where the walkers will meet it: it opens the screen in session w1 with no plant, picks the
+      link (waiting up to `FWX_WALK_CONTROL_WAIT_S` seconds, default 30, for a page that is still drawing; the pause between two looks is
+      `FWX_WALK_POLL_S`, default 0.5 s, as in every wait for the app), clicks it and reads where the page lands, which must not be the screen itself;
+      then writes init.js and control.json, opens the screen in a fresh w1 launched by `ab` like any walker's session (with --init-script), clicks
+      the same link and reads where it lands, which must differ from the first landing (both go to control.json `readback.lands`). No link:
+      `target not found`; a link that leaves nowhere without the plant: `target not found`; the same landing with the plant: `no visible change`.
+      Either is exit 1 with the line on stderr and `{"armed": false, "reason": ...}` on stdout, and neither control.json nor init.js is left.
+      `hierarchy` is the first control, kept for when the `critic` returns: an init script that makes the main title of that route as large and
+      light as body text; it proves the plant visible the same two ways with the title's computed font-size, font-weight and rendered box (a box that
+      changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels, default 1, in both width and height: `no visible change`). Only a `hierarchy` plant
+      leaves the pictures of its route out of the evidence (`control-pictures.txt`, `converge`); a control.json with no `kind` is read as one.
+  fwx control judge --run R FILE...     whether the walkers found the functional control, by code: FILE... are the walkers' findings files. A finding
+      block (`### F<n>`, to the next heading; a note under Tooling or Outside is none) that names the dead page, or names the link (its text or path)
+      with a missing page (404, not found, does not exist), is the control found: `{screen, found, finding: "<session>-F<n>" (the walker's file
+      `findings-<session>.md`), why, looked_at: {files, findings}}`, exit 0 for found and for not found. Exit 1: no control.json or an unreadable file;
+      exit 2: no file, or a control that is not functional.
   converge --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
@@ -114,7 +125,7 @@ A capture path (`ab screenshot [<selector>] <path>`, `pw ... --filename <path>`)
 the run's folder or its captures folder; with no path the capture lands in the captures folder and its path is printed. `pw` sets Playwright's
 `outputDir` to the captures folder (so no `.playwright-cli/` reaches the project) and runs in it, except for the call that goes through a rig prefix.
 
-Measured by 3.5 U1 (framework-discuss/plan/3.5-review/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
+Measured by 3.5 U1 (framework-discuss/research/ui-walk/probe.md): the demo session enters by `cookies set <name> <value> --url <app>` (`--state`
 and `state load` are rejected under `--allowed-domains`); only the command that launches the daemon goes through `run`, the others
 find it with AGENT_BROWSER_SOCKET_DIR; Playwright's CLI inside the rig is `npx --offline --no-install`; the browser is
 /usr/bin/google-chrome-stable through Omarchy's wrapper (it loads an extension and passes --ozone-platform=wayland); the key
@@ -137,7 +148,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from fwx import config, routes
 from fwx.execute import base, brief
@@ -208,7 +219,8 @@ USAGES = {
     "ab": "usage: fwx walk ab [--run R] <session> <agent-browser args...>",
     "pw": "usage: fwx walk pw [--run R] <session> <playwright-cli args...>",
     "check-screens": "usage: fwx walk check-screens --run R --screens JSON   (JSON: a list of the screens' URLs)",
-    "arm-control": "usage: fwx control new --run R --screen URL",
+    "arm-control": "usage: fwx control new --run R --screen URL [--kind functional|hierarchy]",
+    "control-judge": "usage: fwx control judge --run R FINDINGS_FILE...",
     "findings": "usage: fwx walk converge --run R",
     "review-page": "usage: fwx review new --run R --fixed FILE",
     "review-answers": "usage: fwx review read --run R FILE",
@@ -813,8 +825,9 @@ def cmd_ab(argv):
     planted = not os.environ.get("FWX_WALK_NO_CONTROL") and not session.startswith("v") and os.path.isfile(ctl)
     if fresh and planted:
         steps[0] = (steps[0][0][:len(common)] + ["--init-script", read_json(ctl, "control.json")["script"]] + steps[0][0][len(common):], steps[0][1])
+    restyled = planted and read_json(ctl, "control.json").get("kind", "hierarchy") == "hierarchy"  # only a plant that restyles the page taints a picture of it
     prefix = shlex.split(app["run"])
-    seen = [] if planted and words[:1] == ["screenshot"] else None  # a capture in a session that has the plant: its route is noted below
+    seen = [] if restyled and words[:1] == ["screenshot"] else None  # a capture in a session that has the plant: its route is noted below
     for i, (a, quiet) in enumerate(steps):
         launch = fresh and i == 0
         env = clean_env({"AGENT_BROWSER_SOCKET_DIR": socket_dir()} if prefix and not launch else None)
@@ -963,8 +976,8 @@ def read_back(run, screen, arm):
 
 
 def cmd_arm_control(argv):
-    o, _ = opts("arm-control", argv, ("--run", "--screen"))
-    if "--run" not in o or "--screen" not in o:
+    o, _ = opts("arm-control", argv, ("--run", "--screen", "--kind"))
+    if "--run" not in o or "--screen" not in o or o.get("--kind", "functional") not in ("functional", "hierarchy"):
         raise usage("arm-control")
     run = load_run(o["--run"])
     screen = o["--screen"]
@@ -974,8 +987,10 @@ def cmd_arm_control(argv):
     ctl_file = os.path.join(run["run_dir"], "control.json")
     if os.path.isfile(ctl_file):
         os.remove(ctl_file)  # an earlier plant is not the one being armed: a failure below must leave none
-    code = CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(TARGET)}
     script = os.path.join(run["shots"], "init.js")
+    if o.get("--kind", "functional") == "functional":
+        return arm_functional(run, screen, path, ctl_file, script)
+    code = CONTROL_JS % {"path": json.dumps(path), "target": json.dumps(TARGET)}
     ctl = {"screen": screen, "path": path, "kind": "hierarchy", "script": script,
            "planted": "the main title of the screen has the size and weight of body text"}
 
@@ -998,6 +1013,140 @@ def cmd_arm_control(argv):
     ctl = dict(ctl, readback={"selector": TARGET, "before": dict(zip(names, before)), "after": dict(zip(names, after)),
                               "box": {"before": box(before), "after": box(after)}, "min_box_px": CONTROL_MIN_BOX_PX},
                armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
+    write_json(ctl_file, ctl)
+    say(ctl)
+    return 0
+
+
+# The functional control: the first link to another screen of the app (the navigation first) leads to a page that does not exist. A walker meets
+# it by using the screen, which is what the `breaker` axis does; nothing in the page is changed (no attribute, no style), so no hydration warning
+# and no mark a walker could take for the tooling's. The init script runs in the walkers' browsers like the hierarchy one.
+LINK_PICK_JS = """(() => {
+  const here = location.pathname.replace(/\\/+$/, "") || "/";
+  for (const sel of ['nav a[href]', 'header a[href]', '[role="navigation"] a[href]', 'a[href]']) {
+    for (const a of document.querySelectorAll(sel)) {
+      const p = a.pathname.replace(/\\/+$/, "") || "/";
+      if (a.origin === location.origin && p !== here && (!a.target || a.target === "_self") && !a.hasAttribute("download"))
+        return "fwx:link|" + encodeURIComponent(p) + "|" + encodeURIComponent((a.textContent || "").trim().slice(0, 60));
+    }
+  }
+  return "fwx:missing";
+})()"""
+LINK_CLICK_JS = """(() => {
+  const LINK = %s;
+  const a = [...document.querySelectorAll("a[href]")].find((x) => x.origin === location.origin && (x.pathname.replace(/\\/+$/, "") || "/") === LINK);
+  if (!a) return "fwx:nolink";
+  a.click();
+  return "fwx:clicked";
+})()"""
+LINK_AT_JS = """"fwx:at|" + (location.pathname.replace(/\\/+$/, "") || "/")"""
+FUNCTIONAL_JS = """(() => {
+  const PATH = %(path)s, LINK = %(link)s, DEAD = %(dead)s;
+  const norm = (p) => p.replace(/\\/+$/, "") || "/";
+  addEventListener("click", (e) => {
+    if (norm(location.pathname) !== PATH) return;
+    const a = e.target && e.target.closest ? e.target.closest("a[href]") : null;
+    if (!a || a.origin !== location.origin || norm(a.pathname) !== LINK || (a.target && a.target !== "_self")) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    location.assign(DEAD);
+  }, true);
+})();
+"""
+LINK_PICK = re.compile(r"fwx:(?:(missing)|link\|([^|\s\"]+)\|([^|\s\"]*))")
+LINK_AT = re.compile(r"fwx:at\|([^|\s\"]+)")
+
+
+def link_start(run, screen):
+    """The (path, text) of the link the plant will break, read from the page the session has open (None when the page holds none after
+    CONTROL_WAIT_S: it may still be drawing)."""
+    end = time.monotonic() + CONTROL_WAIT_S
+    while True:
+        m = LINK_PICK.search(browser_must(run, ["eval", LINK_PICK_JS]))
+        if m and not m.group(1):
+            return unquote(m.group(2)), unquote(m.group(3))
+        if time.monotonic() >= end:
+            return None
+        time.sleep(SETTLE_POLL_S)
+
+
+def click_link(run, link):
+    """True once the link to `link` was clicked on the open page, False when the page holds none after CONTROL_WAIT_S."""
+    end = time.monotonic() + CONTROL_WAIT_S
+    while True:
+        if "fwx:clicked" in browser_must(run, ["eval", LINK_CLICK_JS % json.dumps(link)]):
+            return True
+        if time.monotonic() >= end:
+            return False
+        time.sleep(SETTLE_POLL_S)
+
+
+def lands_at(run, here):
+    """The path the page is on once the click has taken it somewhere other than `here`, or `here` when it has not moved after CONTROL_WAIT_S
+    (a page that is navigating cannot answer for a moment: that look is skipped)."""
+    end = time.monotonic() + CONTROL_WAIT_S
+    at = here
+    while True:
+        rc, out, _ = browser_call(run, ["eval", LINK_AT_JS])
+        m = LINK_AT.search(out) if rc == 0 else None
+        if m:
+            at = unquote(m.group(1))
+            if at != here:
+                return at
+        if time.monotonic() >= end:
+            return at
+        time.sleep(SETTLE_POLL_S)
+
+
+CLOSE_PROBE = ["close"]  # the probe session is closed after each of the two readings
+
+
+def dead_page(link):
+    return (link.rstrip("/") or "/index") + "-old"
+
+
+def arm_functional(run, screen, path, ctl_file, script):
+    """The functional plant, proved where the walkers will meet it: in a session with no plant the link must leave the screen when clicked,
+    then in a fresh session launched through `ab` with the plant (as a walker's) the same click must land elsewhere. Else exit 1 with the
+    reason on stderr and stdout as {armed: false}, and no control.json or init.js left."""
+    ctl = {"screen": screen, "path": path, "kind": "functional", "script": script}
+    try:
+        try:
+            browser_must(run, ["open", screen])
+            link = link_start(run, screen)
+            if link is None:
+                raise Stop("arm-control: target not found on %s: no link to another screen of the app after %g s, so a plant there would change nothing" % (screen, CONTROL_WAIT_S), 1)
+            browser_must(run, ["eval", LINK_CLICK_JS % json.dumps(link[0])])
+            before = lands_at(run, path)
+        finally:
+            browser_call(run, CLOSE_PROBE)
+        if before == path:
+            raise Stop("arm-control: target not found on %s: the link to %s does not leave the screen when clicked, so a plant on it would change nothing" % (screen, link[0]), 1)
+        dead = dead_page(link[0])
+        os.makedirs(run["shots"], exist_ok=True)
+        with open(script, "w", encoding="utf-8") as f:  # what the walkers' launch reads: control.json names the script, and `ab` adds it to a fresh walker session
+            f.write(FUNCTIONAL_JS % {"path": json.dumps(path), "link": json.dumps(link[0]), "dead": json.dumps(dead)})
+        write_json(ctl_file, dict(ctl, link=link[0], dead=dead))
+        try:
+            browser_must(run, ["open", screen])
+            if not click_link(run, link[0]):
+                raise Stop("arm-control: target not found on %s in a fresh walker session launched with the plant: no link to %s after %g s" % (screen, link[0], CONTROL_WAIT_S), 1)
+            after = lands_at(run, path)
+        finally:
+            browser_call(run, CLOSE_PROBE)
+        if after == before:
+            raise Stop("arm-control: no visible change on %s: clicking the link to %s lands on %s without the plant and on %s in a fresh walker session launched with it "
+                       "(the plant did not reach the browser, or the link goes there anyway)" % (screen, link[0], before, after), 1)
+    except BaseException as e:
+        for left in (script, ctl_file):  # a plant that was not proved visible stays nowhere a walker could meet it
+            if os.path.exists(left):
+                os.unlink(left)
+        if isinstance(e, Stop) and e.code == 1:
+            say({"reason": str(e), "armed": False})
+        raise
+    ctl = dict(ctl, link=link[0], link_text=link[1], dead=dead,
+               planted="the link to %s on this screen leads to %s, a page that does not exist" % (link[0], dead),
+               readback={"lands": {"before": before, "after": after}}, armed=datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"))
     write_json(ctl_file, ctl)
     say(ctl)
     return 0
@@ -1059,6 +1208,71 @@ def cmd_check_screens(argv):
     return 1 if bad else 0
 
 
+# The walkers' findings that name the planted functional fault: a finding block (`### F<n>` up to the next heading) that names the dead page, or
+# that names the link (its path or its text) and a page that is missing. A note under Tooling or Outside is no finding of the walker's.
+MISSING_PAGE = re.compile(r"\b404\b|not found|could not be found|does not exist|doesn't exist|no such page|dead link|broken link", re.I)
+
+
+def finding_blocks(text):
+    """[(n, text)] of the `### F<n>` blocks of a walker's findings file: each runs to the next line that starts with `#`."""
+    blocks, cur = [], None
+    for line in text.splitlines():
+        m = re.match(r"###\s+F(\d+)\b", line)
+        if m:
+            cur = [m.group(1), []]
+            blocks.append(cur)
+        elif line.startswith("#"):
+            cur = None
+        if cur is not None:
+            cur[1].append(line)
+    return [(n, "\n".join(lines)) for n, lines in blocks]
+
+
+def names_the_fault(block, ctl):
+    """Why this finding block describes the planted fault, or None."""
+    dead = re.search(re.escape(ctl["dead"]) + r"(?![\w-])", block, re.I)
+    if dead:
+        return "it names the dead page %s" % ctl["dead"]
+    named = [r"(?<!\w)" + re.escape(ctl["link_text"]) + r"(?!\w)"] if ctl.get("link_text") else []
+    named.append(re.escape(ctl["link"]) + r"(?![\w-])")
+    if any(re.search(w, block, re.I) for w in named) and MISSING_PAGE.search(block):
+        return "it names the link to %s and a page that is missing" % ctl["link"]
+    return None
+
+
+def cmd_control_judge(argv):
+    i = argv.index("--run") if "--run" in argv else -1
+    if i < 0 or i + 1 >= len(argv):
+        raise usage("control-judge")
+    files = [a for j, a in enumerate(argv) if j not in (i, i + 1)]
+    if not files or any(f.startswith("--") for f in files):
+        raise usage("control-judge")
+    rd = run_dir_of(argv[i + 1])
+    ctl_file = os.path.join(rd, "control.json")
+    if not os.path.isfile(ctl_file):
+        raise Stop("no control.json in %s: no control was planted in this run" % rd, 1)
+    ctl = read_json(ctl_file, "control.json")
+    if ctl.get("kind") != "functional" or not all(isinstance(ctl.get(k), str) and ctl[k] for k in ("link", "dead", "screen")):
+        raise Stop("%s is not a functional control (kind %r): only that kind is judged by code" % (ctl_file, ctl.get("kind")))
+    found, n = None, 0
+    for f in files:
+        try:
+            with open(f, encoding="utf-8") as fh:
+                text = fh.read()
+        except OSError as e:
+            raise Stop("cannot read the findings file %s (%s)" % (f, e.strerror), 1)
+        session = re.sub(r"^findings-", "", os.path.splitext(os.path.basename(f))[0])
+        for num, block in finding_blocks(text):
+            n += 1
+            why = names_the_fault(block, ctl)
+            if why and found is None:
+                found = {"finding": "%s-F%s" % (session, num), "why": "%s-F%s: %s" % (session, num, why)}
+    say({"screen": ctl["screen"], "found": found is not None, "finding": found["finding"] if found else None,
+         "why": found["why"] if found else "none of the %d finding(s) in %d file(s) names the dead page %s or the link to %s with a missing page" % (n, len(files), ctl["dead"], ctl["link"]),
+         "looked_at": {"files": len(files), "findings": n}})
+    return 0
+
+
 # ----------------------------------------------------------------------------------------------------------------- findings
 def finding_files(rd):
     files = sorted(glob.glob(os.path.join(rd, "verified-*.json")))
@@ -1109,6 +1323,8 @@ def cmd_findings(argv):
     rd = run_dir_of(o["--run"])
     ctl_file = os.path.join(rd, "control.json")
     ctl = read_json(ctl_file, "control.json") if os.path.isfile(ctl_file) else None
+    if isinstance(ctl, dict) and ctl.get("kind", "hierarchy") != "hierarchy":
+        ctl = None  # a plant that changes nothing a picture shows (the functional one) leaves no picture to drop
     ctl_path = None
     if ctl is not None:  # a control.json that names no route cannot say which pictures to leave out: refused, not read as "none"
         route = ctl.get("path") if isinstance(ctl, dict) else None
@@ -1763,7 +1979,7 @@ def selftest_report(checks, o, result_file, as_json):
     return 0 if res["passed"] else 1
 
 
-COMMANDS = {"up": cmd_up, "ab": cmd_ab, "pw": cmd_pw, "check-screens": cmd_check_screens, "arm-control": cmd_arm_control, "findings": cmd_findings,
+COMMANDS = {"up": cmd_up, "ab": cmd_ab, "pw": cmd_pw, "check-screens": cmd_check_screens, "arm-control": cmd_arm_control, "control-judge": cmd_control_judge, "findings": cmd_findings,
             "review-page": cmd_review_page, "review-answers": cmd_review_answers, "down": cmd_down, "sweep": cmd_sweep,
             "selftest": cmd_selftest}
 
