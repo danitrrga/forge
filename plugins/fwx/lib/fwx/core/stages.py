@@ -13,13 +13,19 @@ converter's) is a phase of its own and starts in `discuss`; the parent tells the
 `advance` reads the current stage and writes the new one in two steps, with no lock: two scripts changing the same folder
 at the same moment are not serialised (one folder has one driver at a time).
 
-Imports only the standard library and `state`.
+A session folder does not enter `reviewing`, `phase-review` or `closed` while an `outside` item of it or of its subphases is neither fixed nor
+routed (core.outside): the ownership rule has its enforcer here, so a part cannot close with what an agent saw left as a mention.
+
+Moving a session folder to `closed` also removes the run folders of the phase (core.runs): one-use files do not outlive their work.
+
+Imports only the standard library, `state`, `core.outside` and `core.runs`.
 """
 import json
 import os
 import re
 
 from fwx import state
+from fwx.core import outside, runs
 
 TABLE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))),
                      "data", "stages.json")
@@ -142,15 +148,21 @@ def current(dir, table=None):
 def advance(dir, to, why="", cwd=None, table=None):
     """Move the folder to stage `to` if its machine allows it, and return the stage it left. The row is written by
     `state.append_audit` with the HEAD of `cwd` (default: the folder itself) and the detail `<to> <why>`. A change the
-    table does not allow raises Refused (a StateError) `<from> -> <to> is not in data/stages.json (<machine>)` and writes nothing."""
+    table does not allow raises Refused (a StateError) `<from> -> <to> is not in data/stages.json (<machine>)` and writes nothing; so does
+    a stage that open `outside` items hold back (`outside.refusal`)."""
     if not os.path.isdir(str(dir)):
         raise state.StateError("%s is not a folder" % dir)
     table = table or load()
     machine, frm = machine_of(dir), current(dir, table)
     if not allowed(machine, frm, to, table):
         raise Refused("%s -> %s is not in data/stages.json (%s)" % (frm, to, machine))
+    held = outside.refusal(dir, to) if machine == "session" else None
+    if held:
+        raise Refused("%s -> %s: %s" % (frm, to, held))
     detail = ("%s %s" % (to, why or "")).strip()
     state.append_audit(dir, "stage", detail=detail, cwd=str(dir) if cwd is None else cwd)
+    if machine == "session" and to == "closed":
+        runs.prune(dir)  # the phase's work is over: its runs' briefs and step files go with it
     return frm
 
 

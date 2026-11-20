@@ -936,8 +936,9 @@ def check_outside(script, s):
     rec = finish(s, "outside small unfixed, no round left", rec, err)
     s.eq("outside small unfixed, no round left: failed, no fixer", (result(rec).get("status"), launched(rec, "executor:fix-")), ("failed", []))
     # the same item reported by two attempts is one item
-    rec, err = go(script, base={**base, "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", status="failed", reason="boom", outside=[item]),
-                                                                              exec_report("wt-t1", outside=[item])]},
+    rec, err = go(script, base={**base, "executor:T1": {"$seq": [exec_line("T1", "failed"), exec_line("T1")]},
+                                "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", status="failed", reason="boom", outside=[item]),
+                                                                       exec_report("wt-t1", outside=[item])]},
                                 "executor:runner-fix-round": {"$seq": [R({"ok": True, "spent": True, "rounds": "1/3"}), R({"ok": True, "spent": True, "rounds": "2/3"})]}})
     rec = finish(s, "outside twice", rec, err)
     s.eq("outside twice: one item, one fixer", (len(details(rec).get("outside") or []), len(launched(rec, "executor:fix-"))), (1, 1))
@@ -1416,7 +1417,7 @@ MUTANTS = [
     ("verdict ask allowed", "enum: ['fix', 'consider', 'note', 'dismiss']", "enum: ['fix', 'consider', 'note', 'dismiss', 'ask']", "FAIL: verifier schema: verdict"),
     ("finding ids not prefixed", "let id = tag + '-' + String(f.id)", "let id = String(f.id)", "FAIL: fix: the fixer is given the finding under its unique id"),
     ("--final on every wave", "(o.final ? ' --final' : '')", "' --final'", "FAIL: green: the first wave is not integrated with --final"),
-    ("review fix not gated by the rounds", ["    if (fr.end) stop(fr.end[0], fr.end[1])\n    const before"], ["    const before"], "FAIL: fix with the rounds spent: failed, no fixer"),
+    ("review fix not gated by the rounds", ["review findings to fix: ' + ids.join(', '))\n    if (fr.end) stop(fr.end[0], fr.end[1])\n    const before"], ["review findings to fix: ' + ids.join(', '))\n    const before"], "FAIL: fix with the rounds spent: failed, no fixer"),
     ("done tasks are launched again", "const tasks = wave.tasks.filter((t) => !done.has(t.id))", "const tasks = wave.tasks", "FAIL: done tasks: in a wave half done"),
     ("a criterion no needs no finding", "if (c.met === 'no' && !rep.findings.some", "if (false && !rep.findings.some", "FAIL: criterion no that no finding names"),
     ("control findings ignored", "if (tag === 'r1') (A.control_findings || []).forEach(take)", "", "FAIL: control findings"),
@@ -1432,6 +1433,20 @@ MUTANTS = [
     ("the fixer has no SCOPE line", "  lines.push(scope.line)\n", "", "FAIL: fixer scope (tests listed): a SCOPE line names"),
     ("no task in args reads as no tests", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = tasks.some((t) => !t.ui)",
      "FAIL: fixer scope (no task in args): the test is still asked for"),
+    # the ownership rule: each piece of the enforcement, taken out
+    ("an outside item of any shape is read", "  if (!outsideOk(rep, true)) return null\n", "", "FAIL: outside shape (no fix)"),
+    ("a fix in a file beside is read", "  if ((rep.outside || []).some((o) => o.fixed && beside.includes(fileOf(o.where)))) return null\n", "", "FAIL: outside beside: T1 fixing T2's file"),
+    ("a small item is not a fix task", "  await fixOutside()\n  let from = A.base", "  let from = A.base", "FAIL: outside small unfixed: a fixer is launched"),
+    ("the ledger is not written", "    await recordOutside()\n  } catch", "  } catch", "FAIL: outside large: the ledger is written"),
+    ("a ledger that is not written is done", "if (outcome[0] === 'done') outcome = ['failed', 'the outside items", "if (false) outcome = ['failed', 'the outside items", "FAIL: outside ledger not written"),
+    ("a reviewer may say it fixed something", "if (!outsideOk(rep, false)) return null", "if (!outsideOk(rep, true)) return null", "FAIL: outside reviewer says it fixed something"),
+    ("a reviewer's large item is dropped", "      addOutside(st.outsideOf.get(it.id))\n    } else if", "    } else if", "FAIL: outside reviewer large"),
+    ("a reviewer's defect nearby is not read", "for (const [k, o] of (g.report.outside || []).entries()) st.outsideOf.set(", "for (const [k, o] of [].entries()) st.outsideOf.set(",
+     "FAIL: outside reviewer: the verifier is given the nearby defect"),
+    ("a commit the branch does not hold is a fix", "    if ((r.demoted || []).includes(ids[k])) o.fixed = null", "", "FAIL: outside demoted"),
+    ("the executor is not told the files beside it", "' BESIDE YOU, the files", "' NEAR YOU, the files", "FAIL: outside prompts: the executor is told the files"),
+    ("the fixer is forbidden to fix outside again", "nothing written in `.fwx/`.',\n    'OUTSIDE:", "nothing written in `.fwx/`, no fixes outside this work.',\n    'OUTSIDE:", "FAIL: outside prompts: the fixer's FORBIDDEN"),
+    ("one item reported twice is two", "const have = st.outside.find((x) => x.where === o.where && x.what === o.what)", "const have = null", "FAIL: outside twice"),
     ("the fixer's test is asked for whatever the part lists", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = true", "FAIL: fixer scope (no task lists tests): no unconditional test demand"),
     ("the fixer is never told to ask for the test", "(scope.tests ? ', the test in that commit and seen failing first' : '')", "''", "FAIL: fixer scope (tests listed): the test in the commit"),
 ]

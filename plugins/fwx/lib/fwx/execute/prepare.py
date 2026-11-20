@@ -347,7 +347,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     for n in sorted({t["wave"] for t in tasks}):
         serial = any(c["wave"] == n for c in clashes)
         waves.append({"n": n, "serial": serial,
-                      "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"],
+                      "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"], "files": [plan._norm(f) for f in t["files"]],
                                  "brief": made[t["id"]][0]["brief"] if t["id"] in made else None,
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
     why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]

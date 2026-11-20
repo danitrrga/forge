@@ -92,7 +92,7 @@ def pointer_problems(read_text):
     found = []
     for rel, words in POINTERS.items():
         text = read_text(rel)
-        if RULE not in text and rel != "skills/session/references/closing.md":
+        if not re.search(r"principles\.md`? rule 12", text) and rel != "skills/session/references/closing.md":
             found.append("%s does not point at %s" % (rel, RULE))
         for w in words:
             if w not in text:

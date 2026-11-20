@@ -62,6 +62,10 @@ ROWS = [
     ("wave setup", None, "wave", ["setup"], "run the project's worktree setup in the current linked worktree: [--force]"),
     ("base", "wave check-base", "wave", ["check-base"], "step 0 of an agent that writes: exit 42 unless the worktree starts at the commit: <sha> [--worktree P]"),
     ("scratch new", "wave scratch", "wave", ["scratch"], "the folder an agent writes its report and its TMPDIR in: <run> <unit>"),
+    # what an agent saw outside its task and did not fix (the ownership rule): the ledger the stage guard reads
+    ("outside", None, "outside", ["list"], "the outside items of a part and which are still open: --part-dir D [--open]"),
+    ("outside add", None, "outside", ["add"], "record outside items, as JSON: --part-dir D --run R --items JSON"),
+    ("outside route", None, "outside", ["route"], "mark an outside item routed to a Linear issue or a fix task: --part-dir D ID (--issue KEY | --task TASK)"),
     # the UI walk
     ("walk start", "walk up", "walk", ["up"], "start the app and a run"),
     ("walk stop", "walk down", "walk", ["down"], "close a run: its browsers, its app, its files"),

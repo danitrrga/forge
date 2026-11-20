@@ -34,7 +34,7 @@ Here the implementer is an executor, and a task is verified alone: a planner onc
 
 ## Criteria and tests
 
-A criterion is something the owner can observe, not an implementation detail ("bcrypt installed"). A number belongs only in one about speed or size, where `measure` names the baseline measured first and the number that fails.
+A criterion is something the owner can observe, not an implementation detail ("bcrypt installed"). The success criteria also cover what the result must work with and who it serves (`playbooks/principles.md` rule 12): the other software and technologies it integrates with, and the people who use it, so a plan whose result passes its tests but breaks a neighbouring program or confuses its users does not pass. A number belongs only in one about speed or size, where `measure` names the baseline measured first and the number that fails.
 
 A `bug` gets the test that reproduces it; a `refactor`, a test that passes on the current code and pins what it does (a type check or lint is not a pin); a feature on security, logic or architecture, the test of its contract; a UI task none, because the owner approved the page. A `red` names the wrong version the test fails against and the disagreement it prints, not only "fails". Ask of each `run` whether it is
 **falsifiable at all**. A command with no expressible failure mode is not an acceptance test —

@@ -362,7 +362,7 @@ s.eq("every refusal left audit.tsv byte for byte", read(aud), before)
 nf = mk(ar, "other-dir")
 refuses("an unknown kind writes no file", lambda: state.append_audit(nf, "bogus", "x"))
 s.ok("an unknown kind: audit.tsv was not created", not os.path.exists(os.path.join(nf, "audit.tsv")))
-s.eq("AUDIT_KINDS", state.AUDIT_KINDS, ("evidence", "stage", "round"))
+s.eq("AUDIT_KINDS", state.AUDIT_KINDS, ("evidence", "stage", "round", "outside"))
 s.eq("AUDIT_COLUMNS", state.AUDIT_COLUMNS, ("date", "kind", "sha", "detail", "rc"))
 
 # ---- open_phases ------------------------------------------------------------------------------------------------------

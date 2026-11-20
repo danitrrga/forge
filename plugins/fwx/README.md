@@ -27,6 +27,7 @@ python3 bin/fwx discuss --json    # what the discuss opens with: the configurati
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx decide --facts <file>    # the merge decision for the facts of a PR: merge, handover or pending, with the rule behind each reason
 python3 bin/fwx wave new --part-dir <dir> --plane session --branch <phase branch>    # validates a part and prints the args of `execute`; `wave merge`, `wave fix`, `wave revert` and `wave remove` are the steps after it, `wave` alone says whether the gate passed; `wave setup [--force]` runs the project's `worktree_setup` in the current worktree (exit 1: it failed)
+python3 bin/fwx outside --part-dir <dir> --open    # what an agent saw outside its task and nobody has fixed or routed; `outside add` records items, `outside route <id> --issue KEY` routes one, and `fwx stage` refuses to review or close a part while one is open; exit 1 when one is
 python3 bin/fwx base <sha>    # an executor's step 0: exit 0 when the worktree starts at that commit, 42 when not, 43 when the project's `worktree_setup` failed in it
 python3 bin/fwx scratch new <run> <unit>    # makes the folder git ignores, in its own worktree where an agent writes its report
 python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; exit 0 green, 1 red, 2 cannot prove the commit

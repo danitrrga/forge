@@ -1,4 +1,4 @@
-<!-- copied-from: pstack plugins/pstack/skills/poteto-mode/playbooks/orchestrate.md @36885ea (lines 40-53: the nine fields in their order; the TIMEBOX clause "on expiry, return partial findings and stop rather than run on" and the FORBIDDEN list "no PR retargets or merges, no rebase, no force-push, no fixes outside scope" word for word; "paths it may not" in SCOPE) -->
+<!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/orchestrate.md @36885ea (lines 40-53: the nine fields in their order; the TIMEBOX clause "on expiry, return partial findings and stop rather than run on" word for word; the FORBIDDEN list and "paths it may not" in SCOPE). Differs: the referent's FORBIDDEN also bans fixes outside the scope; here the owner's ownership rule (playbooks/principles.md rule 12) lets an agent fix a small defect outside its task, so only the coordination bans stay. -->
 <!-- Differs from the referent: markdown headings instead of a column of labels, because `fwx wave new` fills the slots and its test reads the fields back; the pasted STANDING is a path, because the executor's agent definition (agents/executor.md) is the agent's own prompt; a field that code can fill is filled by `lib/fwx/execute/brief.py` and an empty one stops the launch. -->
 <!-- Everything above the first heading is dropped when a brief is written. A `$name` is a slot brief.py fills; a missing or an unused slot fails the test. -->
 # Brief: $heading
@@ -7,9 +7,10 @@
 $goal
 
 ## SCOPE
-You may write only these files, in your own worktree (your starting directory):
+You may write these files, in your own worktree (your starting directory):
 $files
-You may not write any other path, except your scratch folder. The files of the tasks that run beside yours: $may_not
+Beside them, a small defect you see outside your task is yours to fix, in its own commit, unless its file is one of the files of the tasks that run beside yours, which you may not write: $may_not
+Anything else you see outside your task, a large defect or one in those files, goes in `outside` of your report with the fix you propose (playbooks/principles.md rule 12). Write nothing under `.git`, nothing in the main checkout and nothing in `.fwx/`.
 Run: $run
 Base: the `BASE` line of your prompt, the tip of the phase branch when your wave launched (it differs from wave to wave). Your first step is `fwx base` with that sha.
 Your branch is the one your worktree starts on; the report names it.
@@ -31,12 +32,11 @@ $verify
 $minutes minutes: a guide, since nothing cuts an agent off; on expiry, return partial findings and stop rather than run on: commit what is sound, report `failed` with the reason `timebox`.
 
 ## FORBIDDEN
-- no PR retargets or merges, no rebase, no force-push, no push, no fixes outside scope
+- no PR retargets or merges, no rebase, no force-push, no push
 - no writing in `.fwx/`
-What you see outside your files goes in `outside` of your report, not in a commit.
 
 ## REPORT
-Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`.
+Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, fixed: <commit>|null}`: `fixed` is the commit of your own fix, `null` when you only propose it. A report whose items lack that shape is rejected.
 Your whole reply is one line: `<status> <report path> commits=<n>`, the report path in full.
 
 ## STANDING
