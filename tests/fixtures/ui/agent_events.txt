@@ -1,0 +1,11 @@
+  ⬢ fwx  wave 2 of 3  ·  4 agents starting
+  ├ ◆ executor   task 3 add the stage table                           starting
+  ├ ◇ planner    task 4 render the home screen                        starting
+  ├ ● reviewer   part 1 diff base..head                               starting
+  └ ○ researcher        how other tools print a header                starting
+
+  ⬢ fwx  wave 2 of 3  ·  3 of 4 done
+  ├ ◆ executor   task 3 add the stage table                  ✓ 4m 12s  3 files
+  ├ ◇ planner    task 4 render the home screen               ✓ 6m 02s  5 files
+  ├ ● reviewer   part 1 diff base..head                           ▲ 2 findings
+  └ ○ researcher        how other tools print a header          running 3m 40s

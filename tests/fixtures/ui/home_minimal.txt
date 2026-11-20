@@ -1,0 +1,12 @@
+
+  ▀▀████████████████    forge
+        ▀▀██████▀▀      v0.1.0
+          ██████        One source of truth for the agent setup of every project
+      ▄██████████▄      on your machine.
+
+┌  7 projects  ·  24 skills installed
+│
+◆  doctor   ▰▰▰▰▰▰▰▰▰▱   41 passed  ·  3 warnings  ·  1 failure
+◆  sync     14 changes would apply
+│
+└  forge list  ·  forge doctor  ·  forge sync

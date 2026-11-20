@@ -598,6 +598,7 @@ def commit_cases():
     want("seed = exit", code, 0)
     git_out(root, "config", "core.hooksPath", "githooks")
     engine = [".gitignore", "bin/forge"] + ["forge/" + f for f in os.listdir(os.path.join(FORGE, "forge")) if f.endswith(".py")]
+    engine += ["forge/ui/" + f for f in os.listdir(os.path.join(FORGE, "forge", "ui")) if f != "__pycache__"]  # the UI library's folder
     if os.path.isdir(os.path.join(root, "githooks")):
         engine += ["githooks/" + f for f in os.listdir(os.path.join(root, "githooks"))]
     want("seed: engine files", files_of(root), sorted(engine))
