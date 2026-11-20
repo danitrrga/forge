@@ -267,6 +267,20 @@ check("scope hindsight with codex in agents: refused with a \"!\" line",
 got = toy_settings(10, user_hooks=[dict(AUDIT, scope=[])])
 check("scope not a string: refused with a \"!\" line, not a traceback",
       isinstance(got, tuple) and got[0] == "exit" and "scope" in got[1], "reload gave %r" % (got,))
+# MemPalace's scope was retired (a machine's forge.json may still hold a row with it). Disabled, the row does nothing: it loads, is
+# not written user-wide and its entry is taken out by exact command; enabled, it is refused and the message says it was retired.
+# Red on 1aeb7c2 (the scope check ran before `on` was read), messages:
+#   "retired scope mempalace, \"on\": false: loads, is no user-scope row and is taken out -- reload gave ('exit', \"! config/forge.json user_hooks[0] has a scope that is not one of hindsight\")"
+#   "retired scope mempalace, enabled: refused and says it was retired -- reload gave ('exit', \"! ... has a scope that is not one of hindsight\")"
+got = toy_settings(13, user_hooks=[dict(AUDIT, scope="mempalace", on=False)])
+check("retired scope mempalace, \"on\": false: loads, is no user-scope row and is taken out",
+      not (isinstance(got, tuple) and got[0] == "exit") and AUDIT_CMD not in [r[1] for r in hooks.USER_HOOKS]
+      and AUDIT_CMD in [r[1] for r in hooks.OFF_HOOKS], "reload gave %r; USER_HOOKS %r" % (got, [r[1] for r in hooks.USER_HOOKS][-3:]))
+got = toy_settings(14, user_hooks=[dict(AUDIT, scope="mempalace")])
+check("retired scope mempalace, enabled: refused and says it was retired",
+      isinstance(got, tuple) and got[0] == "exit" and got[1].startswith("!") and "retired" in got[1] and "mempalace" in got[1],
+      "reload gave %r" % (got,))
+toy_settings(15)    # leave the toy world as the next checks expect it
 # The doctor's integrations row reads the same rows: a scoped row whose integration is off is not armed,
 # so its missing script is a SKIP, as an "on": false row's is; with the integration on, a FAIL (control).
 toy_settings(11, user_hooks=[dict(AUDIT, scope="hindsight")], integrations=dict(INTEGRATIONS, hindsight=False))

@@ -57,7 +57,7 @@ failures, notrun, n_checks = [], [], [0]
 # ignore of `.claude/settings.local.json` hid a file from `git status` here while CI listed it (3.6 U2c: ci-local passed, CI failed).
 GIT_ENV = dict(os.environ, XDG_CONFIG_HOME=sandbox.mkdtemp("fresh-install-xdg-"), **sandbox.GIT_ENV)
 HINDSIGHT_HOOK = os.path.join(".hindsight", "coding-agents", "dist", "claude-hook.js")
-INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser", "mempalace")
+INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser")
 # What `forge new` leaves untracked in a project whose own files it must not touch: nothing. An untrimmed
 # project with no servers needs no .claude/settings.local.json, there is no pointer in CLAUDE.md, no ignore
 # line and no .codex/ with Codex off, and sync_system_doc.py writes the copy of AGENT-SYSTEM.md into a
@@ -287,7 +287,7 @@ def choice_cases():
     for flag, with_names, without_names in (("--with", ["caveman"], []), ("--without", [], ["caveman"])):
         got, why, q = run(True, with_names, without_names, both)
         want("init_choices %s caveman is refused as an unknown integration" % flag, (got, why),
-             (None, "unknown integration 'caveman' (one of codex, hindsight, consent, agent_browser, mempalace)"))
+             (None, "unknown integration 'caveman' (one of codex, hindsight, consent, agent_browser)"))
     got, why, q = run(True, ["hindsight"], ["hindsight"], both)
     check("init_choices a name in both lists is refused", got is None and "hindsight" in (why or ""), "got %r, %r" % (got, why))
 
@@ -364,7 +364,7 @@ def main_world():
     # nothing. Red with "caveman" put back in lib.INTEGRATIONS: "init --with caveman is refused as an unknown integration, exit 1, nothing written -- exit 1: ! forge init: failed -- doctor (exit 1) | ..." (init ran and wrote config/forge.json).
     code, out = w.forge("init", "--yes", "--with", "caveman")
     check("init --with caveman is refused as an unknown integration, exit 1, nothing written",
-          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, hindsight, consent, agent_browser, mempalace)" in out
+          code == 1 and "! forge init: unknown integration 'caveman' (one of codex, hindsight, consent, agent_browser)" in out
           and not os.path.exists(w.path("config", "forge.json")), "exit %d: %s" % (code, tail(out, 3)))
     code, out = w.forge("init", "--yes", "--without", "codex")
     check("init --yes --without codex exits 0", code == 0, "exit %d: %s" % (code, tail(out)))

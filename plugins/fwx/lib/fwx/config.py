@@ -53,7 +53,7 @@ DEFAULTS = {
     "critique_rounds_unattended": 2,
     "linear": {"labels": {}},
     "walk": {"browser_executable": None},
-    "integrations": {"consent": False, "notifications": False, "agent_browser": False, "mempalace": False},
+    "integrations": {"consent": False, "notifications": False, "agent_browser": False},
     "paths": {},
 }
 

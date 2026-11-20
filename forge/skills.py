@@ -316,7 +316,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
       * worktree guard -- `worktree_guard` (lib.worktree_guard_on) does the same for
         hooks/worktree_guard.py, its group behind the matcher of every writing tool (GUARDS).
       * project_hooks -- the rows forge writes per project instead of at user scope
-        (forge.hooks.project_hooks: Hindsight's or MemPalace's, for a project that uses it), each owned by its
+        (forge.hooks.project_hooks: Hindsight's, for a project that uses it), each owned by its
         exact command the same way and claimed by its own integration: a wanted row ends as one entry, one not wanted goes. The
         callers pass them, so this module never reads config/forge.json.
       * framework -- the Plan of forge/framework.py when it is on (its `.plugin`, `.name` and `.source`): the

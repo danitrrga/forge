@@ -35,10 +35,10 @@ CODEX_HOME = os.environ.get("CODEX_HOME") or os.path.join(HOME, ".codex")
 SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # The names `on()` accepts: what a stranger's forge may switch off (docs/portable-design.md section 5).
 # `consent` is the consent window (hooks/guard_tool_use.py --consent): absent counts as off, so adding it
-# leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` and `mempalace`
-# are the framework's: the first asks for the `agent-browser` tool in config/toolchain.json (a `when` of
-# {"integration": "agent_browser"}). The `integrations` doctor row checks both: on and not on PATH is a FAIL, off is a SKIP.
-INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser", "mempalace")
+# leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` is the framework's: it asks
+# for the `agent-browser` tool in config/toolchain.json (a `when` of {"integration": "agent_browser"}). The `integrations`
+# doctor row checks it: on and not on PATH is a FAIL, off is a SKIP.
+INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser")
 
 
 @functools.lru_cache(maxsize=None)

@@ -30,7 +30,7 @@ from forge import configure, lib, memory, profiles, selector, suggest
 DEFAULT_LABEL = "default"  # the label of the project's own lists when a project offers profiles (profiles.default)
 # The memory integrations a project can be given (the project scopes of forge/hooks.py SCOPES, which read the project's `servers`), and
 # the registry servers each one means: a project is on one when its `servers` hold them. The others of lib.INTEGRATIONS are not memory.
-MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall"), "mempalace": ("mempalace",)}
+MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall")}
 NONE = "none"
 
 

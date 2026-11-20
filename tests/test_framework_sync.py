@@ -355,8 +355,8 @@ check("true: weekly, models, limits, rounds, critique_rounds_unattended and path
       {k: doc.get(k) for k in ("weekly", "models", "limits", "rounds", "critique_rounds_unattended", "paths")})
 check("labels: linear.labels is copied from framework.linear -- linear.labels %s" % ("is empty" if not (doc.get("linear") or {}).get("labels") else ""),
       (doc.get("linear") or {}).get("labels") == {"needs-owner": "toy-needs-help"}, doc.get("linear"))
-check("true: integrations holds the four names, read from forge.json (notifications is not an integration yet: false)",
-      doc.get("integrations") == {"consent": True, "notifications": False, "agent_browser": False, "mempalace": False},
+check("true: integrations holds the three names, read from forge.json (notifications is not an integration yet: false)",
+      doc.get("integrations") == {"consent": True, "notifications": False, "agent_browser": False},
       doc.get("integrations"))
 gi = raw(os.path.join(pp, ".gitignore")) or b""
 check("true: the ignore line, inside the FORGE-FWX block, is in .gitignore",

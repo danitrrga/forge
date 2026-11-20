@@ -32,19 +32,9 @@ WHAT IT CHECKS, and why each one earns its place:
                     project, and the plugin actually enabled.
   hindsight-*       The rendered config names a server, and every server it names answers.
 
-  mempalace-*       MemPalace, only while integrations.mempalace is on (off: one NOT RUN line). cli: `mempalace`
-                    on the PATH at the version config/toolchain.json pins. hub: the registry's `mempalace` URL
-                    answers /healthz and a search for text that is already in the palace finds it (/healthz said
-                    "ok" while the embedding model was not answering; an empty palace has nothing to search
-                    for, and the line says so). palace: its directory, resolved as
-                    MemPalace's own config.py and paths.py do, has its database and the hub reports SQLite integrity ok
-                    for that same palace. backup: the newest validated backup (its `.count` beside it) is under
-                    BACKUP_MAX_H old. Per project that grants `mempalace`: rows (Stop, SessionEnd and PreCompact in
-                    its settings.local.json, each a command hook that runs the capture script) and, outside --hook, wing (the project's wing holds drawers, and a
-                    WARN when none was filed in FRESH_DAYS days although a transcript of the project is that new).
   memory-one-backend  Always, whatever is switched on and also under --hook: each project has exactly one memory
-                    backend (hindsight-coding-agents in `servers`, the claude-mem-lite plugin in `plugins_keep`, or
-                    `mempalace` in `servers`). None or two is a FAIL naming the project; a project without memory on
+                    backend (hindsight-coding-agents in `servers` or the claude-mem-lite plugin in `plugins_keep`).
+                    None or two is a FAIL naming the project; a project without memory on
                     purpose is declared in config/memory-known-empty.json as `<project>/memory-backend`; a project file
                     that could not be read is a FAIL, and so is looking at none. A checkout that uses no memory (no
                     memory integration on, no project granting a backend: a fresh install) is NOT RUN.
@@ -64,15 +54,14 @@ reported, so the backlog cannot quietly rot.
 
 IT NEVER WRITES A MEMORY. hindsight_doctor.py learned this the hard way -- seventeen canary
 probe sessions were retained as real documents and then outranked the user's own memories on
-any similarly-worded query. Every check here is a read, a stat, or a handshake. The hub is asked only for the tools
-of READ_TOOLS: hub_call raises on any other name, so a write cannot leave this process.
+any similarly-worded query. Every check here is a read, a stat, or a handshake.
 
     python3 scripts/sync/memory_doctor.py
     python3 scripts/sync/memory_doctor.py --project forge --verbose
     python3 scripts/sync/memory_doctor.py --bank
     python3 scripts/sync/memory_doctor.py --all          # ignore the backlog, show everything
 
-Under --hook the whole run has one budget (HOOK_BUDGET_S) that every network call and subprocess draws from, Hindsight's probes
+Under --hook the whole run has one budget (HOOK_BUDGET_S) that every network call draws from, Hindsight's probes
 included; a call is bounded as a whole request (fetch), and rows the spent budget did not reach are one WARN line that says so.
 
 Exits 1 on any unexpected failure (the count is printed), 0 otherwise. Known-backlog entries
@@ -81,15 +70,10 @@ and warnings do not fail.
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import os
 import re
-import shlex
-import shutil
 import sqlite3
-import stat
-import subprocess
 import sys
 import threading
 import time
@@ -287,23 +271,10 @@ def hindsight_recall(cfg: dict, bank: str, query: str, timeout: float = 20.0):
         return False, 0, time.time() - t0, type(e).__name__ + ": " + str(e)[:80]
 
 
-# ------------------------------------------------------------------------------------ mempalace
+# ------------------------------------------------------------------------------- --hook budget
 
-BACKUPS = os.path.join(HOME, "backups", "mempalace")
-BACKUP_MAX_H = 48          # nightly at 04:30: a day and a night missed
-FRESH_DAYS = 14
-CLAUDE_PROJECTS = os.path.join(HOME, ".claude", "projects")
-MEMPALACE_PIN = "pipx:mempalace"
-HUB_FIX = "systemctl --user enable --now mempalace-hub"
-# The only hub tools this script may call. Everything else MemPalace serves writes or is not a read it was written for.
-READ_TOOLS = ("mempalace_list_drawers", "mempalace_list_wings", "mempalace_search")
-# The per-project rows forge writes (hooks/mempalace/*.sh, part 7.1 U2): event and the script its command runs.
-HOOK_ROWS = (("Stop", "mempal-stop-hook.sh"), ("SessionEnd", "mempal-session-end-hook.sh"),
-             ("PreCompact", "mempal-precompact-hook.sh"))
-
-
-HOOK_CALL_S = 3.0        # --hook: the longest one call to a server or to `mempalace` may take
-HOOK_BUDGET_S = 8.0      # --hook: the whole run, every network call and subprocess of it (MemPalace's and Hindsight's); forge/hooks.py
+HOOK_CALL_S = 3.0        # --hook: the longest one call to a server may take
+HOOK_BUDGET_S = 8.0      # --hook: the whole run, every network call of it; forge/hooks.py
                          # gives this script 15 s and what it found has to be printed before that
 deadline = None          # --hook: when the budget ends (set by main at its start)
 silent: dict = {}        # --hook: per server (host:port), why nothing more is asked of it (its first call that did not answer)
@@ -324,8 +295,8 @@ def budget_spent() -> bool:
 def call_timeout(full: float, host: str = ""):
     """(seconds this call may take, None) or (None, why it is not made). The full run keeps `full`. Under --hook a call gets the least
     of `full`, HOOK_CALL_S and what is left of the one budget of the run, and none is made to a server that did not answer a
-    call before: a hub that accepts and never answers would otherwise outlast the hook (/healthz 5 s, /statusz 5 s, each
-    tools/call 30 s, `--version` 30 s) and its FAIL would never be printed."""
+    call before: a server that accepts and never answers would otherwise outlast the hook (/health 5 s) and its FAIL would never
+    be printed."""
     if not QUIET:
         return full, None
     if host in silent:
@@ -364,50 +335,6 @@ def fetch(req, timeout: float):
     return box["answer"]
 
 
-def hub_call(url: str, tool: str, args: dict, timeout: float = 30.0):
-    """(the tool's answer as a dict, None) or (None, why not): one JSON-RPC `tools/call` over HTTP, the way Claude Code
-    calls the hub (U1 (d), (h): no initialize first, no token on loopback). A tool outside READ_TOOLS raises ValueError
-    before anything is sent."""
-    if tool not in READ_TOOLS:
-        raise ValueError("memory_doctor never calls %s: it is not one of the read tools %s" % (tool, ", ".join(READ_TOOLS)))
-    body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                       "params": {"name": tool, "arguments": args}}).encode()
-    req = urllib.request.Request(url, data=body, method="POST", headers={"Content-Type": "application/json"})
-    host = host_of(url)
-    timeout, why = call_timeout(timeout, host)
-    if timeout is None:
-        return None, why
-    try:
-        doc = json.loads(fetch(req, timeout)[1].decode())
-    except urllib.error.HTTPError as e:
-        return None, "HTTP %d" % e.code
-    except Exception as e:                                    # noqa: BLE001 - report anything
-        if not isinstance(e, ValueError):
-            went_silent(host, tool, e)
-        return None, "%s: %s" % (type(e).__name__, str(e)[:80])
-    if not isinstance(doc, dict):
-        return None, "the answer is not a JSON object"
-    if "error" in doc:
-        return None, "JSON-RPC error %s" % str(doc["error"])[:80]
-    result = doc.get("result")
-    content = result.get("content") if isinstance(result, dict) else None
-    first = content[0] if isinstance(content, list) and content else None
-    text = first.get("text") if isinstance(first, dict) else None
-    if not isinstance(text, str):
-        return None, "the answer carries no text content"
-    if result.get("isError"):
-        return None, "tool error: %s" % text[:80]
-    try:
-        value = json.loads(text)
-    except ValueError:
-        return None, "the tool's text is not JSON: %s" % text[:60]
-    if not isinstance(value, dict):
-        return None, "the tool's answer is a %s, not an object" % type(value).__name__
-    if "error" in value:
-        return None, "tool error: %s" % str(value["error"])[:80]
-    return value, None
-
-
 def http_get(url: str, timeout: float = 5.0):
     """(status, body, why not): status None when nothing answered."""
     host = host_of(url)
@@ -424,318 +351,6 @@ def http_get(url: str, timeout: float = 5.0):
         return None, "", "%s: %s" % (type(e).__name__, str(e)[:60])
 
 
-class Hub:
-    """The hub as the registry's `mempalace` entry names it: its /mcp URL, its base, why there is none, and (read once
-    per run) the drawer count of each wing. Only the schemes http and https: urllib would open a file: URL."""
-
-    def __init__(self):
-        doc = lib.read_json(os.path.join(ROOT, "config", "mcp-registry.json"), quiet=True)
-        servers = doc.get("servers") if isinstance(doc, dict) else None
-        entry = servers.get("mempalace") if isinstance(servers, dict) else None
-        self.url = self.base = None
-        if not isinstance(entry, dict):
-            self.why = "config/mcp-registry.json has no `mempalace` entry (or cannot be read), so there is no hub URL"
-            return
-        url = entry.get("url")
-        try:
-            parts = urllib.parse.urlsplit(url) if isinstance(url, str) else None
-        except ValueError as e:                      # an unmatched bracket in the authority: a finding, not a traceback
-            self.why = "the registry's `mempalace` entry has a malformed url (%r): %s" % (url, e)
-            return
-        if parts is None or parts.scheme not in ("http", "https") or not parts.netloc:
-            self.why = "the registry's `mempalace` entry has no http(s) url (%r)" % (url,)
-            return
-        self.url, self.base, self.why = url, "%s://%s" % (parts.scheme, parts.netloc), None
-        self._wings = None
-
-    def wings(self):
-        """({wing: drawers}, None) or (None, why not), asked once."""
-        if self.url is None:
-            return None, self.why
-        if self._wings is None:
-            value, err = hub_call(self.url, "mempalace_list_wings", {})
-            found = value.get("wings") if value is not None else None
-            if value is not None and not isinstance(found, dict):
-                value, err = None, "no `wings` object in the answer"
-            self._wings = (found if value is not None else None, "mempalace_list_wings failed: %s" % err if err else None)
-        return self._wings
-
-
-def wing_name(project_path: str) -> str:
-    """The wing MemPalace files a session of this directory into: the directory's last name through
-    mempalace/config.py normalize_wing_name (v3.12.0). A worktree under .claude/worktrees/ is already the project's path."""
-    slug = os.path.basename(os.path.normpath(project_path)).lower().replace(" ", "_").replace("-", "_")
-    slug = re.sub(r"[^\w.']+", "_", slug)
-    slug = re.sub(r"\.{2,}", ".", slug)
-    return slug[:120].strip("_.'")
-
-
-def resolve_palace() -> tuple[str, str]:
-    """(the palace directory, where that came from), as mempalace/config.py's palace_path and paths.config_dir resolve it at
-    v3.12.0: MEMPALACE_PALACE_PATH, MEMPALACE_PALACE or MEMPAL_PALACE_PATH; else `palace_path` of config.json in the config
-    directory; else <config directory>/palace. The config directory: $MEMPALACE_CONFIG_DIR; else ~/.mempalace when it holds an
-    install; else $XDG_CONFIG_HOME/mempalace when that is absolute; else ~/.config/mempalace."""
-    for var in ("MEMPALACE_PALACE_PATH", "MEMPALACE_PALACE", "MEMPAL_PALACE_PATH"):
-        if os.environ.get(var):
-            return os.path.abspath(os.path.expanduser(os.environ[var])), "$" + var
-    legacy = os.path.join(HOME, ".mempalace")
-    xdg = os.path.expanduser(os.environ.get("XDG_CONFIG_HOME") or "")
-    if (os.environ.get("MEMPALACE_CONFIG_DIR") or "").strip():
-        cfg = os.path.expanduser(os.environ["MEMPALACE_CONFIG_DIR"])
-    elif os.path.isdir(legacy) and any(os.path.isfile(os.path.join(legacy, f)) for f in
-                                       ("config.json", "people_map.json", os.path.join("palace", "chroma.sqlite3"))):
-        cfg = legacy
-    elif xdg.strip() and os.path.isabs(xdg):
-        cfg = os.path.join(xdg, "mempalace")
-    else:
-        cfg = os.path.join(HOME, ".config", "mempalace")
-    try:
-        with open(os.path.join(cfg, "config.json"), encoding="utf-8-sig") as fh:
-            doc = json.load(fh)
-    except (OSError, ValueError):
-        doc = None
-    if isinstance(doc, dict) and "palace_path" in doc:
-        return os.path.expanduser(str(doc["palace_path"])), "palace_path in %s" % os.path.join(cfg, "config.json")
-    return os.path.join(cfg, "palace"), "the default under %s" % cfg
-
-
-def check_mempalace_cli() -> None:
-    name = "mempalace-cli"
-    exe = shutil.which("mempalace")
-    if not exe:
-        return void(check("machine", name, False, "mempalace not on PATH: forge toolchain --fix, then a new shell"))
-    from forge import toolchain      # here, not at the top: the toy checkouts of other suites copy this script without it
-    entries, why = toolchain.entries()
-    pins = [e for e in entries.get("tools", []) if e["name"] == MEMPALACE_PIN]
-    if not pins:
-        return void(check("machine", name, False, "config/toolchain.json has no %s entry, so there is no version to compare%s"
-                          % (MEMPALACE_PIN, " (%s)" % why if why else "")))
-    pinned = pins[0]["version"]
-    timeout, why = call_timeout(30.0, "mempalace --version")
-    if timeout is None:
-        return void(check("machine", name, False, "%s --version was not run: %s" % (exe, why)))
-    try:
-        r = subprocess.run([exe, "--version"], capture_output=True, text=True, timeout=timeout)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        return void(check("machine", name, False, "%s --version failed: %s" % (exe, type(e).__name__)))
-    found = re.search(r"\d+\.\d+\.\d+\S*", r.stdout)
-    if r.returncode != 0 or not found:
-        return void(check("machine", name, False, "%s --version gave exit %d and %r" % (exe, r.returncode, r.stdout.strip()[:60])))
-    check("machine", name, found.group(0) == pinned,
-          "%s at %s (config/toolchain.json pins %s)" % (exe, found.group(0), pinned) if found.group(0) == pinned
-          else "installed %s, config/toolchain.json pins %s: forge toolchain --fix" % (found.group(0), pinned))
-
-
-def void(_):
-    """For `return void(check(...))`: leave a function after its one verdict."""
-    return None
-
-
-def check_mempalace_hub(hub: Hub) -> None:
-    name = "mempalace-hub"
-    if hub.url is None:
-        return void(check("machine", name, False, hub.why))
-    t0 = time.time()
-    status, _, err = http_get(hub.base + "/healthz")
-    if status != 200:
-        return void(check("machine", name, False, "%s/healthz does not answer 200 (%s) -- %s" % (hub.base, err or status, HUB_FIX)))
-    secs = time.time() - t0
-    # /healthz said "ok" while the embedding model was not answering (measured on Hindsight: its health check passed with a dead model),
-    # so a search for text that is already in the palace is the proof, and it is the palace's own text, not a canary.
-    listed, err = hub_call(hub.url, "mempalace_list_drawers", {"limit": 1})
-    if err:
-        return void(check("machine", name, False, "%s answers /healthz but reading a drawer failed: %s" % (hub.base, err)))
-    total, drawers = listed.get("total"), listed.get("drawers")
-    if not isinstance(total, int) or isinstance(total, bool):
-        return void(check("machine", name, False, "mempalace_list_drawers gave no drawer count"))
-    if total == 0:
-        return void(check("machine", name, True, "%s /healthz 200 (%.2fs); the palace holds 0 drawers, so no search was run: "
-                          "there is nothing in it to look for" % (hub.base, secs)))
-    first = drawers[0] if isinstance(drawers, list) and drawers and isinstance(drawers[0], dict) else {}
-    preview = first.get("content_preview")
-    query = re.sub(r"\.\.\.$", "", preview.strip()).strip()[:200] if isinstance(preview, str) else ""
-    if not query:
-        return void(check("machine", name, False, "the palace holds %d drawers but mempalace_list_drawers gave no text to search for" % total))
-    found, err = hub_call(hub.url, "mempalace_search", {"query": query, "limit": 5})
-    results = found.get("results") if found is not None else None
-    if found is not None and found.get("vector_disabled"):
-        # MemPalace answers from SQLite BM25 when its vector index is off and says so with this flag (v3.12.0, mcp_server/tools_read.py):
-        # the text is found, the embedding model is not what found it.
-        return void(check("machine", name, False, "%s answers /healthz but search answered without the embedding model (vector_disabled: %s)"
-                          % (hub.base, str(found.get("vector_disabled_reason") or "no reason given")[:80])))
-    if err or not isinstance(results, list) or not results:
-        return void(check("machine", name, False, "%s answers /healthz but a search for the text of an existing drawer %s: "
-                          "the embedding model may not be answering" % (hub.base, "failed (%s)" % err if err else "found nothing")))
-    # Not "any non-empty list": the hub answered 10 results to an absurd query too (U1 (c), `absurd_returned`). Every entry must be
-    # a result of the shape U1 saw ({"text", "source_file", "distance"}: here a dict with a text) and one of them must hold the text
-    # of the drawer the hub itself listed (compared with whitespace collapsed: the preview is cut from the drawer's own text).
-    bad = [r for r in results if not isinstance(r, dict) or not isinstance(r.get("text"), str)]
-    if bad:
-        return void(check("machine", name, False, "%s answers /healthz but %d of the %d search result(s) are not results (no text): %r"
-                          % (hub.base, len(bad), len(results), bad[0] if not isinstance(bad[0], dict) else sorted(bad[0]))))
-    want = " ".join(query.split())
-    if not any(want in " ".join(r["text"].split()) for r in results):
-        return void(check("machine", name, False, "%s answers /healthz but a search for the text of an existing drawer returned %d "
-                          "result(s), none of them that drawer: the embedding model may not be answering" % (hub.base, len(results))))
-    check("machine", name, True, "%s /healthz 200 (%.2fs); a search for the first %d chars of a drawer the hub listed returned that "
-          "text among %d result(s) (matched by text: it is not known that a result carries the drawer's id); the palace holds %d drawers"
-          % (hub.base, secs, len(query), len(results), total))
-
-
-def check_mempalace_palace(hub: Hub) -> None:
-    name = "mempalace-palace"
-    path, how = resolve_palace()
-    db = os.path.join(path, "chroma.sqlite3")
-    try:
-        size = os.path.getsize(db) if os.path.isfile(db) else 0
-    except OSError:
-        size = 0
-    if not os.path.isdir(path):
-        check("machine", name, False, "no palace directory at %s (%s)" % (path, how))
-    elif not size:
-        check("machine", name, False, "no chroma.sqlite3 in %s (%s), or it is empty" % (path, how))
-    else:
-        check("machine", name, True, "%s (%s) holds chroma.sqlite3, %d bytes" % (path, how, size))
-    if hub.url is None:
-        return void(check("machine", name, False, "SQLite integrity not read: " + hub.why))
-    status, body, err = http_get(hub.base + "/statusz")
-    if status != 200:
-        return void(check("machine", name, False, "%s/statusz does not answer 200 (%s)" % (hub.base, err or status)))
-    try:
-        doc = json.loads(body)
-    except ValueError:
-        doc = None
-    integ = ((doc or {}).get("palace") or {}).get("sqlite_integrity") if isinstance(doc, dict) and isinstance(doc.get("palace"), dict) else None
-    if not isinstance(integ, dict):
-        return void(check("machine", name, False, "/statusz carries no palace.sqlite_integrity block"))
-    errors = integ.get("errors") if isinstance(integ.get("errors"), list) else []
-    if integ.get("checked") is not True:
-        check("machine", name, False, "SQLite integrity was not checked by the hub (checked is %r)" % integ.get("checked"))
-    elif integ.get("ok") is not True:
-        n = integ.get("error_count") if isinstance(integ.get("error_count"), int) else len(errors)
-        check("machine", name, False, "SQLite integrity not ok: %d error(s)%s" % (n, ", first: %s" % str(errors[0])[:80] if errors else ""))
-    elif not isinstance(integ.get("palace"), str) or not integ["palace"]:
-        check("machine", name, False, "/statusz does not name its palace (palace.sqlite_integrity.palace is %r), so it cannot be told "
-              "whether the integrity read is of %s (%s)" % (integ.get("palace"), path, how))
-    elif os.path.realpath(integ["palace"]) != os.path.realpath(path):
-        check("machine", name, False, "the hub serves %s but this doctor resolves %s (%s): the check above looked at another palace"
-              % (integ["palace"], path, how))
-    else:
-        check("machine", name, True, "SQLite integrity ok (0 errors, hub serves %s)" % integ["palace"])
-
-
-def check_mempalace_backup() -> None:
-    # Same rule as hindsight_doctor.py's backup row: only an archive with its .count beside it counts (the backup script
-    # writes the .count after its validator accepts the archive and renames a rejected one *.rejected), the age is the
-    # archive's mtime, and the archive is never opened.
-    name = "mempalace-backup"
-    try:
-        names = os.listdir(BACKUPS)
-    except OSError:
-        names = []
-    validated = []
-    for n in names:
-        arch = os.path.join(BACKUPS, n)
-        try:
-            if n.startswith("mempalace-") and n.endswith(".tar.zst") and os.path.isfile(arch + ".count"):
-                st = os.stat(arch)
-                if stat.S_ISREG(st.st_mode):             # a directory named like an archive is not one
-                    validated.append((st.st_mtime, n))
-        except OSError:
-            pass                                             # rotated away between the listing and the stat
-    if not validated:
-        return void(check("machine", name, False, "no validated backup in %s (an archive with its .count) -- is mempalace-backup.timer "
-                          "installed?" % short(BACKUPS)))
-    mtime, newest = max(validated)
-    age_h = (time.time() - mtime) / 3600.0
-    if age_h < 0:       # an mtime ahead of the clock says nothing about when the backup was made
-        return void(check("machine", name, False, "newest validated backup %s is dated %.1f h in the future: its age is unknown"
-                          % (newest, -age_h)))
-    check("machine", name, age_h < BACKUP_MAX_H, "newest validated backup is %.1f h old (%s; nightly 04:30, threshold %d h)"
-          % (age_h, newest, BACKUP_MAX_H))
-
-
-def runs_script(command, script: str) -> bool:
-    """Whether `command` runs `script`: the script is its program (with or without arguments, a path that may be quoted), or the
-    one `bash`/`sh` runs. `echo script`, or the name inside some other command's arguments, does not run it. U2's generator
-    (forge/hooks.py) writes the rows; the exact command it writes is its to say, so this does not compare whole commands."""
-    try:
-        words = shlex.split(command) if isinstance(command, str) else []
-    except ValueError:
-        return False
-    if words and os.path.basename(words[0]) in ("bash", "sh"):
-        words = words[1:]
-    return bool(words) and os.path.basename(words[0]) == script
-
-
-def check_mempalace_rows(name: str, ppath: str) -> None:
-    try:
-        doc = lib.read_owned(os.path.join(ppath, ".claude", "settings.local.json"))
-    except lib.Unreadable as e:
-        return void(check(name, "mempalace-rows", False, str(e)))
-    entries, bad = lib.hook_entries(doc)
-    if bad:
-        return void(check(name, "mempalace-rows", False, "settings.local.json hooks are of the wrong shape (%d malformed entr%s), "
-                          "so the rows cannot be counted" % (bad, "y" if bad == 1 else "ies")))
-    missing = [event for event, script in HOOK_ROWS
-               if not any(e == event and h.get("type") == "command" and runs_script(h.get("command"), script) for e, _, _, h in entries)]
-    check(name, "mempalace-rows", not missing, "%d of %d rows present (%s)" % (len(HOOK_ROWS) - len(missing), len(HOOK_ROWS),
-          ", ".join(e for e, _ in HOOK_ROWS)) if not missing else "%d of %d rows present, missing: %s"
-          % (len(HOOK_ROWS) - len(missing), len(HOOK_ROWS), ", ".join(missing)))
-
-
-def newest_transcript_age_days(ppath: str):
-    """Days since the newest transcript of this project, or None. Claude Code keeps them in ~/.claude/projects/<the path with
-    every non-alphanumeric as '-'>; a worktree under .claude/worktrees/ or .worktrees/ has a directory of its own that
-    MemPalace files into the project's wing, so it counts too. A sibling whose name merely starts the same does not."""
-    enc = re.sub(r"[^A-Za-z0-9]", "-", os.path.normpath(ppath))
-    try:
-        dirs = [d for d in os.listdir(CLAUDE_PROJECTS)
-                if d == enc or d.startswith(enc + "--claude-worktrees-") or d.startswith(enc + "--worktrees-")]
-    except OSError:
-        return None
-    newest = None
-    for d in dirs:
-        try:
-            names = os.listdir(os.path.join(CLAUDE_PROJECTS, d))
-        except OSError:
-            continue
-        for f in names:
-            if f.endswith(".jsonl"):
-                try:
-                    m = os.stat(os.path.join(CLAUDE_PROJECTS, d, f)).st_mtime
-                except OSError:                          # removed since the listing: the others still count
-                    continue
-                newest = m if newest is None else max(newest, m)
-    return None if newest is None else (time.time() - newest) / 86400.0
-
-
-def check_mempalace_wing(name: str, ppath: str, hub: Hub) -> None:
-    wing = wing_name(ppath)
-    wings, err = hub.wings()
-    if wings is None:
-        return void(check(name, "mempalace-wing", False, "wing %s not read from the hub: %s" % (wing, err)))
-    count = wings.get(wing)
-    count = count if isinstance(count, int) and not isinstance(count, bool) else 0
-    if not check(name, "mempalace-wing", count > 0, "wing %s has %d drawers" % (wing, count) if count
-                 else "wing %s has 0 drawers (the hub's wings: %s) -- granted but nothing was ever captured"
-                      % (wing, ", ".join(sorted(wings)) or "none")):
-        return
-    # The date of a wing's newest drawer is no call of the hub (U1 (h)); `since` on a list of the wing's drawers answers whether
-    # any was filed in the window. `filed_at` is the time of the filing, so this is "was anything captured lately".
-    since = (datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=FRESH_DAYS)).isoformat(timespec="seconds")
-    recent, err = hub_call(hub.url, "mempalace_list_drawers", {"wing": wing, "since": since, "limit": 1})
-    total = recent.get("total") if recent is not None else None
-    if not isinstance(total, int) or isinstance(total, bool):
-        return void(warn(name, "mempalace-wing", "freshness of wing %s unknown: %s" % (wing, err or "no drawer count in the answer")))
-    if total:
-        return
-    age = newest_transcript_age_days(ppath)
-    if age is not None and age <= FRESH_DAYS:
-        warn(name, "mempalace-wing", "no drawer of wing %s was filed in the last %d days, but a transcript of this project is "
-             "%.1f days old: its work was not captured" % (wing, FRESH_DAYS, age))
-
-
 def backends_of(prof: dict) -> list[str]:
     """The memory backends a project file grants, in a fixed order."""
     out = []
@@ -743,8 +358,6 @@ def backends_of(prof: dict) -> list[str]:
         out.append("hindsight-coding-agents")
     if memory.LITE_PLUGIN in (prof.get("plugins_keep") or []):
         out.append("claude-mem-lite")
-    if "mempalace" in prof.get("servers", []):
-        out.append("mempalace")
     return out
 
 
@@ -753,7 +366,7 @@ def check_one_backend(projects: list, unreadable: list, armed: bool) -> None:
     breaks it prints a line; the row that always prints says how many were looked at. A project file that could not be read is
     a FAIL (its backend was not looked at), and so is looking at none of them.
 
-    `armed`: whether this checkout uses memory at all (the hindsight or mempalace integration is on, or some project grants a
+    `armed`: whether this checkout uses memory at all (the hindsight integration is on, or some project grants a
     backend). A stranger's fresh checkout has one starter project with none and no memory switched on, `forge init` runs this
     doctor on it and it must pass: that is NOT RUN, NOT ARMED, not a FAIL. Once anything is armed, a project without a backend
     is one that lost its memory."""
@@ -767,7 +380,7 @@ def check_one_backend(projects: list, unreadable: list, armed: bool) -> None:
             good += 1
             continue
         if not got:
-            check(name, "memory-backend", False, "%s has no memory backend (hindsight-coding-agents or mempalace in `servers`, "
+            check(name, "memory-backend", False, "%s has no memory backend (hindsight-coding-agents in `servers`, "
                   "claude-mem-lite in `plugins_keep`): grant one, or declare it in config/memory-known-empty.json as %s/memory-backend"
                   % (name, name))
         else:
@@ -888,7 +501,7 @@ def main() -> int:
     args = ap.parse_args()
 
     QUIET, SHOW_ALL = args.hook, args.show_all
-    # One budget for the whole --hook run, started here: MemPalace's calls and Hindsight's probes draw from it (the full run has none).
+    # One budget for the whole --hook run, started here: Hindsight's probes draw from it (the full run has none).
     deadline = time.monotonic() + HOOK_BUDGET_S if QUIET else None
     silent, not_run = {}, []
     try:
@@ -912,15 +525,13 @@ def main() -> int:
         print("no project named %r under %s" % (args.project, lib.PROJECTS))
         return 1
 
-    hub = Hub() if lib.on("mempalace") else None
     for name, prof in projects:
         has_hindsight = "hindsight-coding-agents" in prof.get("servers", [])
         # claude-mem-lite grants nothing in `servers` -- it is a plugin, and the project
         # listing it IS the grant. Without this a lite-only project (the vault) was skipped
         # entirely and its checks never ran, which looked exactly like passing.
         has_lite = memory.LITE_PLUGIN in (prof.get("plugins_keep") or [])
-        has_mempalace = "mempalace" in prof.get("servers", [])
-        if not has_hindsight and not has_lite and not has_mempalace:
+        if not has_hindsight and not has_lite:
             if args.verbose:
                 print("\n== %s ==" % name)
                 note("no memory server granted")
@@ -930,7 +541,7 @@ def main() -> int:
         if has_hindsight:
             note("hindsight-coding-agents granted")
         ppath = prof.get("project_path")
-        if (has_lite or (has_mempalace and hub is not None)) and not (isinstance(ppath, str) and ppath):
+        if has_lite and not (isinstance(ppath, str) and ppath):
             # lib.projects accepts a project file without `project_path`; the settings checks would read the directory the
             # doctor happens to run in and report on another project.
             check(name, "project-path", False, "%s has no project_path in its project file, so its settings.local.json was not "
@@ -938,12 +549,6 @@ def main() -> int:
             continue
         if has_lite:
             check_project(name, prof)
-        if has_mempalace:
-            note("mempalace granted")
-            if hub is not None:
-                check_mempalace_rows(name, ppath)
-                if not QUIET:      # the wing is read through the hub: not on the session-start path
-                    check_mempalace_wing(name, ppath, hub)
 
     # Whatever is switched on, and under --hook too: a profile with no memory or with two is wrong in every mode.
     if not QUIET:
@@ -951,7 +556,7 @@ def main() -> int:
     unreadable = [] if args.project else skipped_files
     # An unreadable project file in scope arms the row too: it may be the one that grants a backend, and "a fresh checkout" is a
     # checkout whose files were all read.
-    check_one_backend(projects, unreadable, lib.on("hindsight") or lib.on("mempalace") or bool(unreadable)
+    check_one_backend(projects, unreadable, lib.on("hindsight") or bool(unreadable)
                       or any(backends_of(p) for p in every_project.values()))
 
     # ------------------------------------------------------------------ machine-wide checks
@@ -992,17 +597,6 @@ def main() -> int:
                   "every registered hook is trusted (%d examined)" % examined)
     else:
         note("codex checks -> NOT RUN, NOT ARMED: codex is off in config/forge.json")
-
-    if hub is None:
-        note("mempalace checks -> NOT RUN, NOT ARMED: mempalace is off in config/forge.json")
-    else:
-        for row, step in (("mempalace-cli", lambda: check_mempalace_cli()), ("mempalace-hub", lambda: check_mempalace_hub(hub)),
-                          ("mempalace-palace", lambda: check_mempalace_palace(hub))):
-            if budget_spent():
-                not_run.append(row)
-            else:
-                step()
-        check_mempalace_backup()                    # a file and its age: no call to wait for
 
     cfg = None
     if not lib.on("hindsight"):
@@ -1060,10 +654,7 @@ def main() -> int:
     # on a full sweep -- a --project run never visits the other entries.
     # --all deliberately routes every known entry through the FAIL path, so nothing is ever
     # recorded as still-failing and every entry would look stale. Skip the report there.
-    # A wing declaration is judged only when the wing was read: not under --hook, not with MemPalace off.
-    wing_unread = QUIET or hub is None
-    stale_known = [] if (args.project or SHOW_ALL) \
-        else sorted(k for k in set(known_map) - known_still_failing if not (wing_unread and k.endswith("/mempalace-wing")))
+    stale_known = [] if (args.project or SHOW_ALL) else sorted(set(known_map) - known_still_failing)
 
     if fails or warns or stale_known or (backlog and not QUIET):
         if QUIET:

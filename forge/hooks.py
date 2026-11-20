@@ -123,34 +123,23 @@ _CODE_ROWS = [
 # Rows written per project, never at user scope: one project uses one memory system, so a memory
 # system's Claude hooks go only into the .claude/settings.local.json of a project that uses it (SCOPES),
 # through skills.write_settings_local, which owns them by exact command there. Hindsight's: its `servers`
-# holds hindsight-coding-agents. MemPalace's: its `servers` holds mempalace. At user scope the Hindsight
-# ones fired on every prompt of every project and only Hindsight's own config made them inert outside its
-# projects. config/forge.json's `user_hooks` rows with `"scope": "hindsight"` or `"scope": "mempalace"`
-# join them (_config_rows). Every one of them is also an OFF_HOOKS row, so reconcile() takes forge's old
-# user-scope entry out by its exact command. Each item is (row, scope).
-#
-# MemPalace's three rows run the scripts of hooks/mempalace/, copied from the upstream tag (its NOTICE.md),
-# with the timeouts of the upstream plugin's hooks.json. No SessionStart row: 7.1's measurement found the
-# agent retrieves without one (3 of 3). The Stop script exits 1 when `mempalace` is missing (a failed hook the
-# session goes on from, never the blocking 2); the SessionEnd one saves in a background process and returns at
-# once, because Claude Code gives that event 1.5 s.
-MEMPALACE_DIR = os.path.join(HOOK_DIR, "mempalace")
+# holds hindsight-coding-agents. At user scope the Hindsight ones fired on every prompt of every project and
+# only Hindsight's own config made them inert outside its projects. config/forge.json's `user_hooks` rows
+# with `"scope": "hindsight"` join them (_config_rows). Every one of them is also an OFF_HOOKS row, so
+# reconcile() takes forge's old user-scope entry out by its exact command. Each item is (row, scope).
 _PROJECT_CODE_ROWS = [
     (("UserPromptSubmit", 'node "%s/claude-hook.js"' % HINDSIGHT_DIST, 30,
       "coding-agents", None, (CLAUDE,)), "hindsight"),
     (("Stop", 'node "%s/claude-stop-hook.js"' % HINDSIGHT_DIST, 60,
       "coding-agents", None, (CLAUDE,)), "hindsight"),
-    (("Stop", 'bash "%s/mempal-stop-hook.sh"' % MEMPALACE_DIR, 30,
-      "mempal-stop-hook.sh", None, (CLAUDE,)), "mempalace"),
-    (("SessionEnd", 'bash "%s/mempal-session-end-hook.sh"' % MEMPALACE_DIR, 10,
-      "mempal-session-end-hook.sh", None, (CLAUDE,)), "mempalace"),
-    (("PreCompact", 'bash "%s/mempal-precompact-hook.sh"' % MEMPALACE_DIR, 90,
-      "mempal-precompact-hook.sh", None, (CLAUDE,)), "mempalace"),
 ]
 # A project scope's name (a `user_hooks` row's `scope`, and the integration that gates it) -> whether
 # a project is in it.
-SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or []),
-          "mempalace": lambda prof: "mempalace" in (prof.get("servers") or [])}
+SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or [])}
+
+# Scopes that no longer exist (MemPalace's). A `user_hooks` row that still names one is refused while it is on, and does nothing
+# while it is `"on": false`: a machine's forge.json may hold such a row from when the scope was valid.
+RETIRED_SCOPES = ("mempalace",)
 
 # The integration (lib.INTEGRATIONS) each gated row belongs to, by marker. A row whose integration
 # is off is not written, and reconcile() takes out the entries whose command EQUALS the row's, never
@@ -158,11 +147,9 @@ SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("serv
 # installed themselves stays. HOOK_WARDS, by marker, is for retired rows only.
 #
 # One more gate, off unless the JSON true: `house_hooks` gates the two rows that are this machine's own (ROW_HOUSE).
-# A value is one integration, or a tuple of them when the row serves several: written while any is on. The
-# doctor's session-start row serves both memory systems, so it still runs with Hindsight off and MemPalace on.
-ROW_INTEGRATION = {"coding-agents": "hindsight", "memory_doctor.py": ("hindsight", "mempalace"),
-                   "guard_tool_use.py --consent": "consent", "mempal-stop-hook.sh": "mempalace",
-                   "mempal-session-end-hook.sh": "mempalace", "mempal-precompact-hook.sh": "mempalace"}
+# A value is one integration, or a tuple of them when the row serves several: written while any is on.
+ROW_INTEGRATION = {"coding-agents": "hindsight", "memory_doctor.py": "hindsight",
+                   "guard_tool_use.py --consent": "consent"}
 ROW_HOUSE = ("ref_corpus_router.py", "omarchy_notify.py")
 # marker -> the `onFailure` value of the row's entries. reconcile() writes it and compares it, so an entry that is
 # right but for it is repaired and not kept for ever; a row not listed is compared as before (command, timeout, matcher).
@@ -219,6 +206,11 @@ def _config_rows(scopes=None):
                 bad = "has a matcher that is neither a string nor null"
             if bad is None and not (isinstance(r.get("agents"), list) and r["agents"] and set(r["agents"]) <= set(BOTH)):
                 bad = "has agents that are not a non-empty list of %s" % " and ".join(BOTH)
+            retired = isinstance(r.get("scope"), str) and r["scope"] in RETIRED_SCOPES
+            if bad is None and retired and r.get("on") is not False:
+                bad = "has the scope %r, which was retired: remove the row from user_hooks" % r["scope"]
+            elif bad is None and retired:
+                r = dict(r, scope=None)        # disabled: it does nothing, and reconcile() takes its old entry out by command
             if bad is None and r.get("scope") is not None and not (isinstance(r["scope"], str) and r["scope"] in SCOPES):
                 bad = "has a scope that is not one of %s" % ", ".join(SCOPES)
             if bad is None and r.get("scope") is not None and r["agents"] != [CLAUDE]:
