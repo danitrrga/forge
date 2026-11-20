@@ -1,13 +1,11 @@
 """Lines to terminal text. With colour `none` the output is plain text without a single escape byte; otherwise each span is
 one SGR sequence closed by a reset. `ink` and `body` are the terminal's own foreground (ink is bold when asked): they take no
-colour, so a light or dark terminal theme keeps its own text colour."""
+colour, so a light or dark terminal theme keeps its own text colour. The exception is a line with a background: there they are
+painted with the theme's own ink and body (truecolor and 256), so the text never sits on a band in the terminal's opposite tone.
+At 16 colours the cursor band is reverse video, which keeps the pair together."""
 from forge.ui import tokens
 
 TERMINAL_OWN = ("ink", "body")
-# The 16-colour fallback: the SGR codes of a role (the bright black plus dim of `faint` is the quietest a 16-colour terminal has).
-SIXTEEN = {"accent": ("35",), "warn": ("33",), "ok": ("32",), "error": ("31",), "mute": ("90",), "dim": ("90",), "faint": ("90", "2")}
-for _i in range(4):
-    SIXTEEN["ramp%d" % _i] = ("35",)
 CUBE = (0, 95, 135, 175, 215, 255)
 
 
@@ -33,12 +31,12 @@ def _codes(span, bg, ctx):
         codes.append("1")
     if ctx.color == "16":
         if span.role not in TERMINAL_OWN:
-            codes.extend(SIXTEEN[span.role])
+            codes.extend(tokens.ansi16()[span.role])
         if bg == "band":
             codes.append("7")
         return codes
     table = ctx.colors
-    if span.role not in TERMINAL_OWN:
+    if span.role not in TERMINAL_OWN or bg:  # on a painted background the text colour is the theme's, never the terminal's
         c = tokens.role_color(table, span.role)
         codes.append("38;2;%d;%d;%d" % tokens.rgb(c) if ctx.color == "truecolor" else "38;5;%d" % xterm256(c))
     if bg:

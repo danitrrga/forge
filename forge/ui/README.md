@@ -4,9 +4,9 @@ forge's terminal component library. One source of truth, `tokens.json`; everythi
 
 | file | what it is |
 |---|---|
-| `tokens.json` | colour roles per theme (dark, light), the three glyph sets (nerd, unicode, ascii), layout numbers, the contrast rules |
+| `tokens.json` | colour roles per theme (dark, light), the 16-colour SGR codes (`ansi16`), the three glyph sets (nerd, unicode, ascii), layout numbers, the contrast rules |
 | `tokens.py` | loads and checks `tokens.json` (`problems`), the WCAG contrast helper, `theme(name)` and `glyphs(name)` |
-| `context.py` | `Context(theme, glyphs, color, width)` and `detect(env, stream)`: NO_COLOR, tty, COLORTERM, TERM, FORGE_ICONS, FORGE_THEME, COLUMNS |
+| `context.py` | `Context(theme, glyphs, color, width)` and `detect(env, stream)`: NO_COLOR, tty, COLORTERM, TERM, FORGE_ICONS, FORGE_THEME (default auto: COLORFGBG, dark when unset), COLUMNS (at least 60) |
 | `model.py` | `Span(role, text, bold)` and `Line(spans, bg)`: what a component returns |
 | `components.py` | meter, step, rail, check_row, group, band, stack, keys, table, header, status_line, agent_block: pure functions, no I/O |
 | `screens.py` | home, project_list, selector, agent_events: components composed from plain data |
@@ -38,3 +38,10 @@ python3 -m forge.ui.gallery --tokens-css tokens.css             # the custom pro
 ```
 
 `FORGE_UI_FONT=/path/to/font.ttf python3 tests/test_ui.py` also checks that the font has every glyph of the nerd and unicode sets.
+
+## Known limits
+
+- Wide (East Asian) characters are not measured: a line's width is its character count, so text must be single-cell.
+- Ambiguous-width glyphs (a few of the symbols) depend on the terminal's locale and font; the glyph-coverage check only says whether a font has them.
+- At 16 colours a coloured band has no background tint; its icon and bold text carry the meaning. Only the cursor band is drawn (reverse video).
+- `status_line` has its own fit loop beside `fit_first`, because it drops parts in a fixed order rather than trying whole lines.

@@ -5,6 +5,7 @@ The one rule: a component never carries a colour or a glyph. It names a role (`"
 Every public component returns `list[Line]` except `meter`, which returns the `list[Span]` that goes inside a line.
 """
 import textwrap
+import unicodedata
 
 from forge.ui import tokens
 from forge.ui.model import Line, Span
@@ -52,6 +53,11 @@ def _right(left, right, width):
     return list(left) + [_blank(gap)] + list(right)
 
 
+def count_word(n, word):
+    """`1 skill`, `2 skills`: a count and its word, singular for exactly one."""
+    return "%d %s%s" % (n, word, "" if n == 1 else "s")
+
+
 def truncate(ctx, text, n):
     """`text` cut to at most `n` characters, the last of them the ellipsis when something was cut."""
     if len(text) <= n:
@@ -67,6 +73,11 @@ def fit_first(candidates, width):
     return candidates[-1]
 
 
+def _printable(text):
+    """`text` with every control character (a newline, a tab, an escape) and line separator replaced by a space: a band is one line."""
+    return "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in text)
+
+
 # ---- meter -----------------------------------------------------------------------------------------------------------------
 def meter(ctx, done, total, cells=None, mode="ramp"):
     """`cells` glyphs, the first `filled` of them full. ramp: the filled cells brighten from ramp0 to ramp3; flat: all accent."""
@@ -76,8 +87,8 @@ def meter(ctx, done, total, cells=None, mode="ramp"):
         filled = 0
     elif done >= total:
         filled = cells
-    else:
-        filled = min(cells, max(1, round(cells * done / total)))
+    else:  # a full bar means complete: below the total it keeps one empty cell (but at least one filled, when there are two)
+        filled = max(1, min(cells - 1, round(cells * done / total)))
     full, empty = ctx.glyph("meter_full"), ctx.glyph("meter_empty")
     if mode == "ramp":
         spans = [Span("ramp%d" % min(3, i * 4 // filled), full) for i in range(filled)]
@@ -93,6 +104,8 @@ def meter(ctx, done, total, cells=None, mode="ramp"):
 # ---- the rail and the steps ----------------------------------------------------------------------------------------------
 def step(ctx, label, note="", state="active", label_width=0):
     """`<marker>  label   note`. `note` is a string (dim) or a list of spans. `label_width` pads the label so notes align."""
+    if state not in ("active", "disabled"):
+        raise ValueError("unknown step state %r (active or disabled)" % (state,))
     active = state == "active"
     spans = [Span("accent" if active else "faint", ctx.glyph("step_active")), _blank(2),
              Span("ink" if active else "faint", label.ljust(label_width), active)]
@@ -155,7 +168,7 @@ def group(ctx, name, members, cursor=None, meter_done=None, icon_on=None, faint=
     n = len(members)
     done = n if meter_done is None else meter_done
     count = [Span("mute", "  %d of %d" % (done, n))]
-    bar = meter(ctx, done, n, cells=n, mode="flat")
+    bar = meter(ctx, done, n, cells=min(n, ctx.layout["meter_cells"]), mode="flat")
     head = [Span("faint" if faint else "accent", ctx.glyph("check_on")), _blank(1), Span("faint" if faint else "ink", name, not faint)]
     right = bar + count
     lines = [_rail_line(ctx, head, _recolor(right, "faint") if faint else right)]
@@ -174,6 +187,7 @@ def group(ctx, name, members, cursor=None, meter_done=None, icon_on=None, faint=
 def band(ctx, kind, message, action="", width=None):
     """One line on a coloured surface: icon, message, and the action at the right. Too long and the message is cut, never wrapped."""
     w = _w(ctx, width)
+    message, action = _printable(message), _printable(action)
     surface, icon, role = BAND[kind]
     prefix = 1 + 1 + 2
     room = w - prefix - MARGIN
@@ -191,11 +205,18 @@ def band(ctx, kind, message, action="", width=None):
 
 
 def stack(ctx, bands):
-    """Bands under a screen: alert_gap_lines blank lines before each, none after the last. A band is (kind, message, action)."""
+    """Bands under a screen: alert_gap_lines blank lines before each, none after the last. A band is a (kind, message, action)
+    tuple or a list of Lines (what band() returns); anything else is a TypeError."""
     out = []
     for item in bands:
+        if isinstance(item, tuple) and len(item) == 3 and all(isinstance(x, str) for x in item):
+            lines = band(ctx, *item)
+        elif isinstance(item, list) and item and all(isinstance(x, Line) for x in item):
+            lines = item
+        else:
+            raise TypeError("stack takes (kind, message, action) tuples or lists of Line, not %r" % (item,))
         out.extend(Line([]) for _ in range(ctx.layout["alert_gap_lines"]))
-        out.extend(band(ctx, *item) if isinstance(item, tuple) else item)
+        out.extend(lines)
     return out
 
 
@@ -257,12 +278,14 @@ def status_line(ctx, profile, skills, servers, phase=None, done=None, total=None
     """One adaptive line: the profile on the left, the phase progress on the right. When it does not fit it drops, in order, the
     server count, the skill count, the phase text, the meter. The profile stays."""
     w = _w(ctx, width)
+    if (done is None) != (total is None):
+        raise ValueError("status_line takes done and total together, got done=%r total=%r" % (done, total))
     sep = Span("faint", "  " + ctx.glyph("sep") + "  ")
 
     def build(level):
         left = [_blank(2), Span("accent", ctx.glyph("mark")), _blank(1), Span("ink", profile, True)]
         if level < 2:
-            left += [sep, Span("mute", "%d skills" % skills)]
+            left += [sep, Span("mute", count_word(skills, "skill"))]
         if level < 1:
             left += [sep, Span("mute", "%d mcp" % servers)]
         if phase is None:
@@ -294,9 +317,9 @@ def agent_block(ctx, title, rows):
     for i, (agent, unit, what, state) in enumerate(rows):
         kind, text = state
         tree = ctx.glyph("tree_last" if i == len(rows) - 1 else "tree_mid")
-        left = [_blank(2), Span("faint", tree), _blank(1), Span("mute", ctx.glyph(DOT[FAMILY[agent]])), _blank(1),
+        left = [_blank(2), Span("faint", tree), _blank(1), Span("mute", ctx.glyph(DOT[FAMILY.get(agent, "read")])), _blank(1),
                 Span("ink", agent.ljust(name_w), True), Span("mute", unit.ljust(UNIT_WIDTH))]
-        right = [Span(AGENT_STATE_ROLE[kind], text)]
+        right = [Span(AGENT_STATE_ROLE.get(kind, "mute"), text)]
         room = w - MARGIN - _spans_width(left) - len(text) - 2
         what = truncate(ctx, what, room) if room > 0 else ""
         out.append(Line(_right(left + [Span("mute", what)], right, w)))

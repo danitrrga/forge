@@ -66,13 +66,13 @@ def plain():
 
 # ---- html ------------------------------------------------------------------------------------------------------------------
 CSS = """
-:root{--page:#141012;--page-ink:#e8e2e5;--page-mute:#9a9094;--page-line:#2e282b;--font-term:"CaskaydiaCove Nerd Font Mono","CaskaydiaCove Nerd Font","DejaVu Sans Mono",monospace}
+:root{--page:@band@;--page-ink:@ink@;--page-mute:@mute@;--page-line:@line@;--font-term:"CaskaydiaCove Nerd Font Mono","CaskaydiaCove Nerd Font","DejaVu Sans Mono",monospace}
 *{box-sizing:border-box}body{margin:0;padding:40px clamp(16px,4vw,56px) 80px;background:var(--page);color:var(--page-ink);font:15px/1.5 system-ui,sans-serif}
 h1{font-size:26px;margin:0 0 6px}h2{font-size:19px;margin:56px 0 6px;border-top:1px solid var(--page-line);padding-top:20px}h3{font-size:14px;margin:26px 0 8px;color:var(--page-mute);font-weight:600}
 p{color:var(--page-mute);max-width:80ch;margin:4px 0 12px}code{font-family:var(--font-term);font-size:13px}
 table.t{border-collapse:collapse;font:13px/1.4 var(--font-term)}table.t td,table.t th{padding:5px 14px 5px 0;border-bottom:1px solid var(--page-line);text-align:left;font-weight:400}
 table.t th{color:var(--page-mute)}.sw{display:inline-block;width:3.2ch;height:1.3em;vertical-align:middle;border:1px solid var(--page-line)}
-.pass{color:#8fd6a8}.fail{color:#ff7b5c;font-weight:700}
+.pass{color:@ok@}.fail{color:@error@;font-weight:700}
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,760px),1fr));gap:18px;align-items:start}
 .win{background:var(--forge-ground);border:1px solid var(--forge-line);border-radius:8px;overflow:hidden;color:var(--forge-body)}
 .bar{display:flex;justify-content:space-between;gap:16px;padding:7px 12px;border-bottom:1px solid var(--forge-line);font:11px/1 var(--font-term);color:var(--forge-dim)}
@@ -150,11 +150,19 @@ def screen_section():
     return "".join(out)
 
 
+def _chrome(css):
+    """The page's own colours (outside the terminal windows) are the dark theme's tokens."""
+    dark = tokens.theme("dark")
+    for role in ("band", "ink", "mute", "line", "ok", "error"):
+        css = css.replace("@%s@" % role, dark[role])
+    return css
+
+
 def page():
     css = "".join(render_html.tokens_css(t, _scope(t)) for t in THEMES)
     body = ("<h1>forge/ui gallery</h1><p>Generated from forge/ui/tokens.json: edit a value there, never in this page.</p>"
             + token_section() + glyph_section() + component_section() + screen_section())
-    return '<!doctype html><html lang="en"><meta charset="utf-8"><title>forge/ui gallery</title><style>%s%s</style><body>%s</body></html>\n' % (CSS, css, body)
+    return '<!doctype html><html lang="en"><meta charset="utf-8"><title>forge/ui gallery</title><style>%s%s</style><body>%s</body></html>\n' % (_chrome(CSS), css, body)
 
 
 def main(argv=None):

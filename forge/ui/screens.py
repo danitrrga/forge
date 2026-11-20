@@ -5,8 +5,7 @@ from forge.ui import marks
 from forge.ui.model import Line, Span
 
 
-def _count(n, word):
-    return "%d %s%s" % (n, word, "" if n == 1 else "s")
+_count = c.count_word
 
 
 def home(ctx, data):
@@ -22,7 +21,7 @@ def home(ctx, data):
     doctor = c.fit_first([c.step(ctx, "doctor", bar + [Span("mute", "   ")] + counts, label_width=6)[0],
                           c.step(ctx, "doctor", counts, label_width=6)[0]], ctx.width)
     out = [Line([])] + c.header(ctx, data["product"], data["version"], data["tagline"], marks.mark_lines(ctx)) + [Line([])]
-    out += c.rail_start(ctx, [Span("ink", _count(data["projects"], "project"), True), sep, Span("mute", "%d skills installed" % data["skills"])])
+    out += c.rail_start(ctx, [Span("ink", _count(data["projects"], "project"), True), sep, Span("mute", _count(data["skills"], "skill") + " installed")])
     out += c.rail_blank(ctx)
     out.append(doctor)
     out += c.step(ctx, "sync", [Span("mute", "%s would apply" % _count(data["sync"], "change"))], label_width=6)

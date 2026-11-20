@@ -5,11 +5,13 @@ the whole schema check (tests/test_ui.py runs it and the contrast rules on the s
 """
 import json
 import os
+import re
 
 PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "tokens.json")
 THEMES = ("dark", "light")
 GLYPH_SETS = ("nerd", "unicode", "ascii")
 RAMP = 4
+ANSI16_ROLES = ("accent", "mute", "dim", "faint", "warn", "ok", "error", "ramp0", "ramp1", "ramp2", "ramp3")
 
 
 def load(path=PATH):
@@ -40,6 +42,11 @@ def glyphs(name):
 def cell_glyphs():
     """The glyph names that must be exactly one terminal cell in every set."""
     return data()["glyphs"]["cell_glyphs"]
+
+
+def ansi16():
+    """role -> the SGR codes (a tuple of strings) a 16-colour terminal gets for it; ink and body, the terminal's own foreground, have none."""
+    return {role: tuple(codes.split(";")) for role, codes in data()["ansi16"].items()}
 
 
 def layout():
@@ -118,6 +125,13 @@ def problems(tokens):
                 out.append("cell glyph %s is not in set %s" % (glyph, name))
             elif len(value) != 1:
                 out.append("cell glyph %s in set %s is %d characters (%r), want 1" % (glyph, name, len(value), value))
+    table = tokens.get("ansi16", {})
+    for role in ANSI16_ROLES:
+        value = table.get(role)
+        if value is None:
+            out.append("ansi16 has no codes for role %s" % role)
+        elif not (isinstance(value, str) and re.fullmatch(r"[0-9]{1,3}(;[0-9]{1,3})*", value)):
+            out.append("ansi16.%s = %r is not SGR codes joined by ;" % (role, value))
     for glyph, value in sets["ascii"].items():
         if not value.isascii():
             out.append("ascii glyph %s = %r is not ASCII" % (glyph, value))

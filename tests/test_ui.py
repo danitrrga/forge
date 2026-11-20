@@ -31,6 +31,23 @@ Context.ellipsis is '\u2026', the token is '~'"), a font that lacks one glyph, a
 ("gallery --plain is not deterministic: two runs differ"), one with an empty block ("gallery block mark is empty"), a page without
 a role ("gallery page has no custom property for role warn_band") or a glyph name, and a command line that differs from plain().
 
+Round 3 (the adversarial review's fixes), each check written and run red first; the failures it printed:
+  meter        "FAIL 5 meter = ['meter(99,100): 10 filled cells, want 9', ..., 'meter(19,20) is a full bar below the total', ..."
+  widths       "FAIL 4 detect: width is at least 60 = 40, want 60"; "FAIL 11 a group of 100 members: every line at most 80 columns = [119]"
+  plural       "FAIL 11 home: 1 project and 1 skill installed = ['\u250c  1 project  \u00b7  1 skills installed']"
+  agents       "FAIL 11 agent_block: an unknown agent gets the read dot raised KeyError: 'made-up'"
+  band colour  "FAIL 11 truecolor: ink and body on a band are painted ... = (0, 2), want (2, 2)"
+  default theme "FAIL 4 detect: the default theme is auto: COLORFGBG 0;15 is light with no FORGE_THEME = 'dark', want 'light'"
+  band control "FAIL 11 a band with 'a\\nb' in its text is one line of one row = (1, True, False, False, 80), want (1, False, ..."
+  ansi16       "FAIL control not caught: an ansi16 table without a role" and the table was not in tokens.json
+  validation   "FAIL 11 status_line total without done raised TypeError, want ValueError", "FAIL 11 stack of a string was accepted",
+               "FAIL 11 step with an unknown state was accepted"
+  literal scan "FAIL 10 gallery.py carries no glyph or colour of its own = ['gallery.py: string with a colour: ..."
+After the fixes each one was mutated back in a throwaway copy (the cap, the group cells, the plural, the .get fallbacks, the
+background foreground, _printable, the done/total and step checks, MIN_WIDTH, the auto theme, the ansi16 validation, the stack
+type check) and the file failed each time.
+The tautological "the control font covers every glyph" line is deleted: it compared a set with itself.
+
 The glyph-coverage check (8) needs FORGE_UI_FONT (a path to a font file): without it, or without fontTools and fc-query, it prints
 NOT RUN, NOT ARMED and counts as neither pass nor fail. FORGE_UI_UPDATE=1 rewrites tests/fixtures/ui/*.txt from the current code:
 read the diff before committing it."""
@@ -172,9 +189,15 @@ want("2 the source scan looked at glyph tokens", len(tokens.glyphs("nerd")) > 20
 caught("components.py without icon_done", unused_glyphs([source("components.py").replace('"icon_done"', '"x"'), source("screens.py"), source("context.py")]))
 
 
-def literal_problems(name, text):
+# marks.py draws the placeholder anvil with half blocks: those three strings are the drawing, not a glyph token (a final logo replaces them)
+ALLOWED_LITERALS = {"marks.py": {marks.UPPER, marks.LOWER, marks.FULL}}
+
+
+def literal_problems(name, text, allowed=()):
     out = []
     for s in string_constants(text):
+        if s in allowed:
+            continue
         if not s.isascii():
             out.append("%s: string with a non-ASCII character: %r" % (name, s))
         if re.search(r"#[0-9a-fA-F]{6}\b", s):
@@ -182,10 +205,14 @@ def literal_problems(name, text):
     return out
 
 
-for n in ("components.py", "screens.py"):
-    want("10 %s carries no glyph or colour of its own" % n, literal_problems(n, source(n)), [])
+UI_FILES = sorted(f for f in os.listdir(UI_DIR) if f.endswith(".py"))
+want("10 the scan looked at every file of forge/ui", UI_FILES, sorted(["__init__.py", "components.py", "context.py", "gallery.py", "marks.py", "model.py", "render_ansi.py", "render_html.py", "samples.py", "screens.py", "tokens.py"]))
+for n in UI_FILES:
+    want("10 %s carries no glyph or colour of its own" % n, literal_problems(n, source(n), ALLOWED_LITERALS.get(n, ())), [])
 caught("a glyph written into a component", literal_problems("components.py", source("components.py") + '\nX = "\\u25c6"\n'))
 caught("a colour written into a component", literal_problems("components.py", source("components.py") + '\nX = "#ff00ff"\n'))
+caught("a colour written into the gallery", literal_problems("gallery.py", source("gallery.py") + '\nX = "#ff00ff"\n'))
+caught("marks.py without its explicit allowance", literal_problems("marks.py", source("marks.py")))
 
 
 # ---- 3. width ----------------------------------------------------------------------------------------------------------------
@@ -277,15 +304,17 @@ want("4 detect: a non-UTF-8 locale is ascii", context.detect(dict(FULL, LANG="C"
 want("4 detect: a non-UTF-8 locale beats FORGE_ICONS nerd", context.detect(dict(FULL, LANG="C", FORGE_ICONS="nerd"), Tty()).glyphs, "ascii")
 want("4 detect: LC_ALL wins over LANG", context.detect(dict(FULL, LC_ALL="C", LANG="en_US.UTF-8"), Tty()).glyphs, "ascii")
 want("4 detect: no locale at all is ascii", context.detect({"TERM": "xterm"}, Tty()).glyphs, "ascii")
-want("4 detect: default theme is dark", context.detect(FULL, Tty()).theme, "dark")
+want("4 detect: default theme is dark when COLORFGBG is not set", context.detect(FULL, Tty()).theme, "dark")
+want("4 detect: the default theme is auto: COLORFGBG 0;15 is light with no FORGE_THEME", context.detect(dict(FULL, COLORFGBG="0;15"), Tty()).theme, "light")
+want("4 detect: FORGE_THEME dark beats COLORFGBG", context.detect(dict(FULL, COLORFGBG="0;15", FORGE_THEME="dark"), Tty()).theme, "dark")
 want("4 detect: FORGE_THEME light", context.detect(dict(FULL, FORGE_THEME="light"), Tty()).theme, "light")
 for bg, theme in (("0", "dark"), ("6", "dark"), ("8", "dark"), ("7", "light"), ("15", "light")):
     want("4 detect: auto with COLORFGBG 15;%s" % bg, context.detect(dict(FULL, FORGE_THEME="auto", COLORFGBG="15;%s" % bg), Tty()).theme, theme)
 want("4 detect: auto reads the last field of COLORFGBG", context.detect(dict(FULL, FORGE_THEME="auto", COLORFGBG="0;default;15"), Tty()).theme, "light")
 want("4 detect: auto without COLORFGBG is dark", context.detect(dict(FULL, FORGE_THEME="auto"), Tty()).theme, "dark")
 want("4 detect: COLUMNS gives the width", context.detect(FULL, Tty()).width, 100)
-want("4 detect: width is at least 40", context.detect(dict(FULL, COLUMNS="12"), Tty()).width, 40)
-want("4 detect: a COLUMNS that is no number falls back to the terminal size and stays at least 40", context.detect(dict(FULL, COLUMNS="x"), Tty()).width >= 40, True)
+want("4 detect: width is at least 60", context.detect(dict(FULL, COLUMNS="12"), Tty()).width, 60)
+want("4 detect: a COLUMNS that is no number falls back to the terminal size and stays at least 60", context.detect(dict(FULL, COLUMNS="x"), Tty()).width >= 60, True)
 
 # colour output: what each depth writes
 ESC = "\033["
@@ -300,7 +329,7 @@ c16 = render_ansi.to_text(one, context.Context("dark", "unicode", "16", 80))
 want("4 16 colours: accent magenta, faint bright black plus dim, mute bright black",
      c16, ESC + "35ma" + ESC + "0m" + ESC + "1mb" + ESC + "0m" + "c" + ESC + "90;2md" + ESC + "0m" + ESC + "90me" + ESC + "0m\n")
 band_line = [Line([Span("body", "x")], bg="warn_band"), Line([Span("body", "y")], bg="band")]
-want("4 truecolor: a band is a 48;2 background", ESC + "48;2;42;35;16mx" + ESC + "0m", render_ansi.to_text(band_line[:1], context.Context("dark", "unicode", "truecolor", 80)).strip())
+want("4 truecolor: a band is a 48;2 background and its body text the theme's own foreground", ESC + "38;2;217;210;214;48;2;42;35;16mx" + ESC + "0m", render_ansi.to_text(band_line[:1], context.Context("dark", "unicode", "truecolor", 80)).strip())
 want("4 16 colours: only the cursor band is reverse video",
      render_ansi.to_text(band_line, context.Context("dark", "unicode", "16", 80)), "x\n" + ESC + "7my" + ESC + "0m\n")
 want("4 the colour is the theme's: light accent", ESC + "38;2;176;52;111ma" in render_ansi.to_text(one, context.Context("light", "unicode", "truecolor", 80)), True)
@@ -327,7 +356,8 @@ def meter_problems(fn):
     out = []
     ctx = context.Context("dark", "unicode", "none", 80)
     full, empty = ctx.glyph("meter_full"), ctx.glyph("meter_empty")
-    for done, total, cells, filled in ((0, 10, 10, 0), (4, 10, 10, 4), (1, 1000, 10, 1), (10, 10, 10, 10), (15, 10, 10, 10), (5, 0, 10, 0), (3, 4, 4, 3), (1, 2, 6, 3)):
+    for done, total, cells, filled in ((0, 10, 10, 0), (4, 10, 10, 4), (1, 1000, 10, 1), (10, 10, 10, 10), (15, 10, 10, 10), (5, 0, 10, 0), (3, 4, 4, 3), (1, 2, 6, 3),
+                                       (99, 100, 10, 9), (9, 10, 10, 9), (999, 1000, 10, 9), (95, 100, 10, 9)):
         spans = fn(ctx, done, total, cells=cells)
         text = "".join(s.text for s in spans)
         got = text.count(full)
@@ -349,6 +379,16 @@ def meter_problems(fn):
     flat = fn(ctx, 3, 5, cells=5, mode="flat")
     if {s.role for s in flat if s.text.startswith(full)} != {"accent"}:
         out.append("flat meter has roles other than accent: %r" % [s.role for s in flat])
+    # a full bar means complete: below the total it never fills every cell, and above zero it fills at least one
+    for total in range(1, 61):
+        for done in range(0, total):
+            n = "".join(x.text for x in fn(ctx, done, total, cells=10)).count(full)
+            if n >= 10:
+                out.append("meter(%d,%d) is a full bar below the total" % (done, total))
+                break
+            if done > 0 and n < 1:
+                out.append("meter(%d,%d) has no filled cell" % (done, total))
+                break
     return out
 
 
@@ -361,6 +401,13 @@ def meter_rounds_down(ctx, done, total, cells=None, mode="ramp"):
 
 
 caught("a meter that rounds down to zero", meter_problems(meter_rounds_down))
+
+
+def meter_full_when_nearly(ctx, done, total, cells=None, mode="ramp"):
+    return components.meter(ctx, total if total > 0 and done / total >= 0.95 else done, total, cells, mode)
+
+
+caught("a meter that shows a full bar for 99 of 100", meter_problems(meter_full_when_nearly))
 try:
     components.meter(context.Context(), 1, 2, mode="stripes")
     failures.append("an unknown meter mode was accepted")
@@ -564,7 +611,6 @@ else:
         for msg in coverage_problems(pts):
             failures.append("8 glyph coverage: " + msg)
 every = {ord(ch) for gs in ("nerd", "unicode") for v in tokens.glyphs(gs).values() for ch in v}
-want("8 the control font covers every glyph", coverage_problems(every), [])
 caught("a font that lacks one glyph", coverage_problems(every - {ord("\u25b0")}))
 want("8 the coverage check looked at glyphs", len(every) > 25, True)
 
@@ -637,6 +683,73 @@ if gallery is not None:
 
     want("10b python3 -m forge.ui.gallery runs with each flag", cli_problems(gallery.plain()), [])
     caught("a command line whose plain output differs from plain()", cli_problems(gallery.plain() + "x"))
+
+
+# ---- 11. the adversarial review's fixes ------------------------------------------------------------------------------------------
+ctx = context.Context("dark", "unicode", "none", 80)
+# 2 a group's meter is at most meter_cells wide and a big set fits
+big = components.group(ctx, "S", ["m%d" % i for i in range(100)])
+want("11 a group of 100 members: every line at most 80 columns", [l.width for l in big if l.width > 80], [])
+want("11 a group's meter is at most 10 cells", sum(len(sp.text) for sp in big[0].spans if sp.text and sp.text[0] in "\u25b0\u25b1"), 10)
+want("11 a group of 100 members says N of N and not the cells", "100 of 100" in big[0].text, True)
+want("11 a group of 3 keeps a 3 cell meter", sum(len(sp.text) for sp in components.group(ctx, "S", ["a", "b", "c"])[0].spans if sp.text and sp.text[0] in "\u25b0\u25b1"), 3)
+# 3 plural
+want("11 status line: 1 skill", "1 skill " in components.status_line(ctx, "@x", 1, 1)[0].text + " ", True)
+want("11 status line: 1 skill is not 1 skills", "1 skills" in components.status_line(ctx, "@x", 1, 1)[0].text, False)
+want("11 status line: 0 skills and 2 skills", ("0 skills" in components.status_line(ctx, "@x", 0, 1)[0].text, "2 skills" in components.status_line(ctx, "@x", 2, 1)[0].text), (True, True))
+one_skill = screens.home(ctx, dict(samples.HOME, skills=1, projects=1))
+want("11 home: 1 project and 1 skill installed", [l.text for l in one_skill if "installed" in l.text], ["\u250c  1 project  \u00b7  1 skill installed"])
+# 4 an agent type or a state kind nobody listed
+def attempt(label, fn, expected):
+    """`want` for a call that may raise: the raise is the failure, not the end of the file."""
+    try:
+        want(label, fn(), expected)
+    except Exception as e:  # noqa: BLE001
+        failures.append("%s raised %s: %s" % (label, type(e).__name__, e))
+
+
+attempt("11 agent_block: an unknown agent gets the read dot", lambda: components.agent_block(ctx, "t", [("made-up", "u", "w", ("done", "x"))])[1].spans[3].text, ctx.glyph("dot_read"))
+attempt("11 agent_block: an unknown state kind is mute", lambda: components.agent_block(ctx, "t", [("executor", "u", "w", ("made-up", "x"))])[1].spans[-1].role, "mute")
+# 5 a band paints its own foreground for ink and body
+for depth in ("truecolor", "256"):
+    cx = context.Context("dark", "unicode", depth, 80)
+    on_band = render_ansi.to_text([Line([Span("ink", "a", True), Span("body", "b")], bg="band")], cx)
+    bare = render_ansi.to_text([Line([Span("ink", "a", True), Span("body", "b")])], cx)
+    want("11 %s: ink and body on a band are painted (a foreground code before each)" % depth, (on_band.count("38;"), on_band.count("48;")), (2, 2))
+    want("11 %s: ink and body without a background stay the terminal's own" % depth, "38;" in bare, False)
+want("11 truecolor: the ink on a band is the theme's ink", "38;2;242;237;239" in render_ansi.to_text([Line([Span("ink", "a")], bg="band")], context.Context("dark", "unicode", "truecolor", 80)), True)
+want("11 16 colours: ink on a band is not painted, the cursor band is reverse", render_ansi.to_text([Line([Span("ink", "a")], bg="band")], context.Context("dark", "unicode", "16", 80)), "\033[7ma\033[0m\n")
+# 6 control characters cannot split a band
+for evil in ("a\nb", "a\rb", "a\x1b[2Jb", "a\tb", "a\u2028b"):
+    got = components.band(ctx, "broken", evil, evil)
+    want("11 a band with %r in its text is one line of one row" % evil, (len(got), "\n" in got[0].text, "\r" in got[0].text, "\x1b" in got[0].text, got[0].width), (1, False, False, False, 80))
+want("11 a band keeps the nerd icon (private use) in its text", "\uf00d" in components.band(context.Context("dark", "nerd", "none", 80), "broken", "x", "")[0].text, True)
+# 8 validation
+for label, call, exc in (("status_line total without done", lambda: components.status_line(ctx, "@x", 1, 1, "p", None, 5), ValueError),
+                         ("status_line done without total", lambda: components.status_line(ctx, "@x", 1, 1, "p", 4, None), ValueError),
+                         ("stack of a string", lambda: components.stack(ctx, ["broken"]), TypeError),
+                         ("stack of a number", lambda: components.stack(ctx, [3]), TypeError),
+                         ("stack of a list of non-lines", lambda: components.stack(ctx, [["broken", "m", "a"]]), TypeError),
+                         ("stack of a tuple of two", lambda: components.stack(ctx, [("broken", "m")]), TypeError),
+                         ("step with an unknown state", lambda: components.step(ctx, "x", state="actve"), ValueError)):
+    try:
+        call()
+        failures.append("11 %s was accepted" % label)
+    except exc as e:
+        if not str(e):
+            failures.append("11 %s raised without a message" % label)
+    except Exception as e:  # noqa: BLE001
+        failures.append("11 %s raised %s, want %s" % (label, type(e).__name__, exc.__name__))
+want("11 stack accepts a list of lines", len(components.stack(ctx, [components.band(ctx, "done", "m")])), 2)
+# 7 the 16-colour table is in tokens.json
+want("11 tokens.json has an ansi16 table for every colour role", sorted(tokens.data().get("ansi16", {})), sorted(["accent", "mute", "dim", "faint", "warn", "ok", "error", "ramp0", "ramp1", "ramp2", "ramp3"]))
+no16 = copy.deepcopy(tokens.data())
+no16.setdefault("ansi16", {}).pop("warn", None)
+caught("an ansi16 table without a role", token_problems(no16))
+bad16 = copy.deepcopy(tokens.data())
+bad16.setdefault("ansi16", {})["warn"] = "yellow"
+caught("an ansi16 value that is no SGR code", token_problems(bad16))
+want("11 render_ansi reads its 16-colour codes from tokens.json", render_ansi.to_text([Line([Span("warn", "a")])], context.Context("dark", "unicode", "16", 80)), "\033[%sma\033[0m\n" % tokens.data()["ansi16"]["warn"] if "ansi16" in tokens.data() else "")
 
 
 # ---- 9. forge/render.py is untouched ---------------------------------------------------------------------------------------------

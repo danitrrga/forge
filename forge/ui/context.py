@@ -1,11 +1,14 @@
-"""What a draw needs to know about where it is drawing: the theme, the glyph set, the colour depth and the width."""
+"""What a draw needs to know about where it is drawing: the theme, the glyph set, the colour depth and the width.
+
+`detect(env, stream)` reads them from the environment: NO_COLOR, a tty, COLORTERM and TERM for the colour depth; the locale and
+FORGE_ICONS (nerd|unicode|ascii) for the glyph set; FORGE_THEME (dark|light, and auto when unset: COLORFGBG says light or dark,
+dark when it is not set) for the theme; COLUMNS or the terminal size for the width, at least MIN_WIDTH."""
 import shutil
 
 from forge.ui import tokens
 
-MIN_WIDTH = 40
+MIN_WIDTH = 60  # the narrowest width the screens are drawn and tested at; status_line(width=) still adapts below it
 COLOR_DEPTHS = ("none", "16", "256", "truecolor")
-DARK_BG = {"0", "1", "2", "3", "4", "5", "6", "8"}
 LIGHT_BG = {"7", "15"}
 
 
@@ -79,14 +82,11 @@ def _glyph_set(env):
 
 
 def _theme(env):
+    """FORGE_THEME dark or light; anything else, and unset, is auto: COLORFGBG says light (7 or 15) or dark, and dark when it is not set."""
     choice = env.get("FORGE_THEME", "").lower()
     if choice in tokens.THEMES:
         return choice
-    if choice == "auto":
-        bg = env.get("COLORFGBG", "").split(";")[-1]
-        if bg in LIGHT_BG:
-            return "light"
-    return "dark"
+    return "light" if env.get("COLORFGBG", "").split(";")[-1] in LIGHT_BG else "dark"
 
 
 def _width(env):
