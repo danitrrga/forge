@@ -876,6 +876,20 @@ def check_outside(script, s):
     rec, err = go(script, answers_over={"executor:runner-report-T1": R({"status": "done", "branch": "wt-t1", "worktree": "/w/wt-t1", "head": "h", "commits": 2}), **keep})
     rec = finish(s, "outside absent", rec, err)
     s.eq("outside absent: read as none", (result(rec).get("status"), details(rec).get("outside")), ("done", []))
+    # Linear on but unreachable (the owner works offline at times): the executor sets `issue: null` and `issue_error`, the run completes and the item is
+    # returned the Linear-off way, for the stage row and the part report. Neither `issue` nor `issue_error` is still malformed.
+    unreachable = dict(ot(issue=None), issue_error="fwx linear: Linear unreachable")
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[unreachable]), **keep})
+    rec = finish(s, "outside linear unreachable", rec, err)
+    s.eq("outside (Linear unreachable): the run completes and the item is in details.outside with its error",
+         (result(rec).get("status"), launched(rec, "executor:T1") and len(launched(rec, "executor:T1")), details(rec).get("outside")), ("done", 1, [unreachable]))
+    for label, item in (("an empty error", dict(ot(issue=None), issue_error=" ")), ("an error beside a key", dict(ot(), issue_error="x")), ("an error that is no text", dict(ot(issue=None), issue_error=3))):
+        rec, err = go(script, answers_over={"executor:runner-report-T1": {"$seq": [exec_report("wt-t1", outside=[item]), exec_report("wt-t1", outside=[])]}, **keep})
+        rec = finish(s, "outside issue_error (%s)" % label, rec, err)
+        s.ok("outside issue_error (%s): rejected, and told why" % label, len(launched(rec, "executor:T1")) == 2 and "issue_error" in launched(rec, "executor:T1")[1]["prompt"], launched(rec, "executor:T1")[1]["prompt"][-300:])
+    rec, err = go(script, base={**green(), **keep, "reviewer:r1": review_line("r1"), "executor:runner-report-r1": {"$seq": [review_report_outside([dict(ot(issue=None), issue_error="x")]), review_report()]}})
+    rec = finish(s, "outside reviewer issue_error", rec, err)
+    s.eq("outside reviewer: a reviewer files nothing, so it has no error to give: rejected once", len(launched(rec, "reviewer:")), 2)
     # with Linear off for the project a null issue is right, and the item is returned for the part report
     rec, err = go(script, args_over=off, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(issue=None)]), **keep})
     rec = finish(s, "outside linear off", rec, err)
