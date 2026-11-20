@@ -33,7 +33,7 @@ The owner reads this and no diff or code. Fill the template on one screen, 40 li
 
 - Evidence: the commit SHA, command and exit code of the last `evidence` row, copied from the row. The session's check of the report fails when that SHA is missing, so copy it whole.
 - Assumptions: each open one in a line of words, with no row ids.
-- Outside: the items your prompt gives, one line each (where, what, the fix); `None` when it gives none.
+- Outside: the `outside: <where> - <what> - <fix>` items in the detail of the part's `stage` rows of `audit.tsv`, one line each (the defects that could not become Linear issues); `None` when there are none.
 - Diff: the pull request if one exists; otherwise the remote's compare URL; otherwise `git diff <base>..<head>`, where `<base>` is the `sha` of the `stage` row that moved to `executing`.
 - Handover: only when handing over, the one thing that needs the owner's judgment. A `skill-proposer` block in your prompt goes here, as it is: the owner decides it.
 

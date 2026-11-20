@@ -10,7 +10,7 @@ $goal
 You may write these files, in your own worktree (your starting directory):
 $files
 Beside them, a small defect you see outside your task is yours to fix, in its own commit, unless its file is one of the files of the tasks that run beside yours, which you may not write: $may_not
-Anything else you see outside your task, a large defect or one in those files, goes in `outside` of your report with the fix you propose (playbooks/principles.md rule 12). Write nothing under `.git`, nothing in the main checkout and nothing in `.fwx/`.
+Anything else you see outside your task, a large defect or one in those files, you file as a Linear issue before you return (`fwx linear new --template general < <JSON in your scratch folder>`) and put in `outside` of your report with the key (playbooks/principles.md rule 12). Write nothing under `.git`, nothing in the main checkout and nothing in `.fwx/`.
 Run: $run
 Base: the `BASE` line of your prompt, the tip of the phase branch when your wave launched (it differs from wave to wave). Your first step is `fwx base` with that sha.
 Your branch is the one your worktree starts on; the report names it.
@@ -25,7 +25,7 @@ $context
 $acceptance
 
 ## VERIFY
-Run only these; `fwx verify` runs the project's checks later, on the merged commit.
+Run only these, and the tests that a small outside fix of yours needs (its red and green); `fwx verify` runs the project's checks later, on the merged commit.
 $verify
 
 ## TIMEBOX
@@ -36,7 +36,7 @@ $minutes minutes: a guide, since nothing cuts an agent off; on expiry, return pa
 - no writing in `.fwx/`
 
 ## REPORT
-Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, fixed: <commit>|null}`: `fixed` is the commit of your own fix, `null` when you only propose it. A report whose items lack that shape is rejected.
+Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, issue: <Linear key>|null}`: a defect you saw outside your task and did not fix, `issue` the key you filed it under, `null` only where the project has no Linear project. A report whose items lack that shape is rejected.
 Your whole reply is one line: `<status> <report path> commits=<n>`, the report path in full.
 
 ## STANDING

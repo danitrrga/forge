@@ -353,6 +353,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
     return {
         "run": run, "plane": plane, "unattended": plane == "factory" or unattended, "cap": cap,
+        "linear": bool(cfg["project"].get("linear_project")),  # an unfixed `outside` item needs its issue key only where there is a Linear project
         "part_dir": part, "phase_dir": phase, "checkout": top, "branch": branch, "base": base, "isolation": "native",
         "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                   "plan": str(paths["plan"]), "postmortem": str(owner["postmortem"]), "config": os.path.join(main, config.FILE)},
