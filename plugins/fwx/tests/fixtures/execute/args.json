@@ -35,6 +35,7 @@
  ],
  "done": [],
  "plan_failures": [],
+ "linear": true,
  "security": {"needed": false, "why": "not asked for"},
  "criteria": [
   {"id": "C1", "text": "g is exported", "measure": "python -c 'import a; a.g'"},
