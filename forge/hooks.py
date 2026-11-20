@@ -137,6 +137,10 @@ _PROJECT_CODE_ROWS = [
 # a project is in it.
 SCOPES = {"hindsight": lambda prof: "hindsight-coding-agents" in (prof.get("servers") or [])}
 
+# Scopes that no longer exist (MemPalace's). A `user_hooks` row that still names one is refused while it is on, and does nothing
+# while it is `"on": false`: a machine's forge.json may hold such a row from when the scope was valid.
+RETIRED_SCOPES = ("mempalace",)
+
 # The integration (lib.INTEGRATIONS) each gated row belongs to, by marker. A row whose integration
 # is off is not written, and reconcile() takes out the entries whose command EQUALS the row's, never
 # by marker: `coding-agents` is also what Hindsight's own installer writes, and one a person
@@ -202,6 +206,11 @@ def _config_rows(scopes=None):
                 bad = "has a matcher that is neither a string nor null"
             if bad is None and not (isinstance(r.get("agents"), list) and r["agents"] and set(r["agents"]) <= set(BOTH)):
                 bad = "has agents that are not a non-empty list of %s" % " and ".join(BOTH)
+            retired = isinstance(r.get("scope"), str) and r["scope"] in RETIRED_SCOPES
+            if bad is None and retired and r.get("on") is not False:
+                bad = "has the scope %r, which was retired: remove the row from user_hooks" % r["scope"]
+            elif bad is None and retired:
+                r = dict(r, scope=None)        # disabled: it does nothing, and reconcile() takes its old entry out by command
             if bad is None and r.get("scope") is not None and not (isinstance(r["scope"], str) and r["scope"] in SCOPES):
                 bad = "has a scope that is not one of %s" % ", ".join(SCOPES)
             if bad is None and r.get("scope") is not None and r["agents"] != [CLAUDE]:
