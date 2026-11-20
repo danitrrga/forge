@@ -56,7 +56,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       exit 2. A soft 404 (status 200, a not-found page drawn by the page's own code) is not caught by a status.
   fwx control new --run R --screen URL [--kind functional|hierarchy]     plants the control, registered by `ab` at launch with --init-script (control.json).
       No walker sees it named. `functional` (the default) is a fault the `breaker` meets by using the screen: the first link to another screen of the
-      app (inside nav, header or [role=navigation] first, then any link; not the screen itself, not a link that opens a tab or downloads) leads to
+      app (inside nav, header or [role=navigation] first, then any link; one a walker can click at the walks' viewport: with layout, not display none or visibility hidden, not off the screen; not the screen itself, not a link that opens a tab or downloads) leads to
       `<its path>-old`, a page that does not exist, for a click on that route (a click listener on the window in the capture phase, so the page's
       router never sees it); nothing in the page is changed, so no hydration warning and no mark a walker could take for the tooling's.
       Before it leaves control.json it proves the plant where the walkers will meet it: it opens the screen in session w1 with no plant, picks the
@@ -70,11 +70,12 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       light as body text; it proves the plant visible the same two ways with the title's computed font-size, font-weight and rendered box (a box that
       changes by less than `FWX_WALK_CONTROL_MIN_BOX_PX` pixels, default 1, in both width and height: `no visible change`). Only a `hierarchy` plant
       leaves the pictures of its route out of the evidence (`control-pictures.txt`, `converge`); a control.json with no `kind` is read as one.
-  fwx control judge --run R FILE...     whether the walkers found the functional control, by code: FILE... are the walkers' findings files. A finding
-      block (`### F<n>`, to the next heading; a note under Tooling or Outside is none) that names the dead page, or names the link (its text or path)
-      with a missing page (404, not found, does not exist), is the control found: `{screen, found, finding: "<session>-F<n>" (the walker's file
-      `findings-<session>.md`), why, looked_at: {files, findings}}`, exit 0 for found and for not found. Exit 1: no control.json or an unreadable file;
-      exit 2: no file, or a control that is not functional.
+  fwx control judge --run R FILE...     whether the walkers found the functional control, by code: FILE... are the walkers' findings files. The control
+      is found when a finding block (`### F<n>`, which ends at the next heading, section label or rule, or at a paragraph that is no field of it) or a
+      note under Outside names the dead page whole, as a path (`/about-old`, bare or in an address, with a query or punctuation after it): never the
+      link's own path or text, never a 404, so a real 404 of the app is not the control. Prints `{screen, found, finding, why, looked_at: {files,
+      findings}}`, `finding` being `<session>-F<n>` (the walker's file `findings-<session>.md`) for a block and null for an Outside note (no row to
+      drop). Exit 0 for found and for not found. Exit 1: no control.json or an unreadable file; exit 2: no file, or a control that is not functional.
   converge --run R         the `verified-*.json` of the folder (a list, or {findings: [...]}, each with `id` and `verdict`) into `fix.json`
       (CONFIRMED and PLAUSIBLE) and `contradicted.json` (CONTRADICTED); the rest is dropped. Severity blocker/major/minor/cosmetic is
       written as high/high/medium/low (3.4's words). With a `control.json` in the folder, a finding on the control's screen loses the
@@ -1021,24 +1022,33 @@ def cmd_arm_control(argv):
 # The functional control: the first link to another screen of the app (the navigation first) leads to a page that does not exist. A walker meets
 # it by using the screen, which is what the `breaker` axis does; nothing in the page is changed (no attribute, no style), so no hydration warning
 # and no mark a walker could take for the tooling's. The init script runs in the walkers' browsers like the hierarchy one.
+# A link a walker can click at the walks' viewport: it has layout (client rects, a box), is not display none or visibility hidden, and is not off the
+# screen to the left or right (a mobile menu kept in the page).
+VISIBLE_JS = """const vis = (a) => {
+    if (a.getClientRects().length === 0) return false;
+    const r = a.getBoundingClientRect(), cs = getComputedStyle(a);
+    return r.width > 0 && r.height > 0 && cs.display !== "none" && cs.visibility !== "hidden" && r.right > 0 && r.left < innerWidth && r.bottom > 0;
+  };"""
 LINK_PICK_JS = """(() => {
+  VISIBLE_JS
   const here = location.pathname.replace(/\\/+$/, "") || "/";
   for (const sel of ['nav a[href]', 'header a[href]', '[role="navigation"] a[href]', 'a[href]']) {
     for (const a of document.querySelectorAll(sel)) {
       const p = a.pathname.replace(/\\/+$/, "") || "/";
-      if (a.origin === location.origin && p !== here && (!a.target || a.target === "_self") && !a.hasAttribute("download"))
+      if (a.origin === location.origin && p !== here && (!a.target || a.target === "_self") && !a.hasAttribute("download") && vis(a))
         return "fwx:link|" + encodeURIComponent(p) + "|" + encodeURIComponent((a.textContent || "").trim().slice(0, 60));
     }
   }
   return "fwx:missing";
-})()"""
+})()""".replace("VISIBLE_JS", VISIBLE_JS)
 LINK_CLICK_JS = """(() => {
+  VISIBLE_JS
   const LINK = %s;
-  const a = [...document.querySelectorAll("a[href]")].find((x) => x.origin === location.origin && (x.pathname.replace(/\\/+$/, "") || "/") === LINK);
+  const a = [...document.querySelectorAll("a[href]")].find((x) => x.origin === location.origin && (x.pathname.replace(/\\/+$/, "") || "/") === LINK && vis(x));
   if (!a) return "fwx:nolink";
   a.click();
   return "fwx:clicked";
-})()"""
+})()""".replace("VISIBLE_JS", VISIBLE_JS)
 LINK_AT_JS = """"fwx:at|" + (location.pathname.replace(/\\/+$/, "") || "/")"""
 FUNCTIONAL_JS = """(() => {
   const PATH = %(path)s, LINK = %(link)s, DEAD = %(dead)s;
@@ -1208,35 +1218,58 @@ def cmd_check_screens(argv):
     return 1 if bad else 0
 
 
-# The walkers' findings that name the planted functional fault: a finding block (`### F<n>` up to the next heading) that names the dead page, or
-# that names the link (its path or its text) and a page that is missing. A note under Tooling or Outside is no finding of the walker's.
-MISSING_PAGE = re.compile(r"\b404\b|not found|could not be found|does not exist|doesn't exist|no such page|dead link|broken link", re.I)
+# The walkers' words that name the planted functional fault: the dead page, whole, as a path (`/about-old`, alone or in an address, with a query or
+# punctuation after it). Never the link's own path or text, never a 404: a real 404 on the app would be taken for the control and `dropControl`
+# would take that real finding from the fixer. Read in a finding block (`### F<n>`) and in a note under Outside (a walker files what is outside its
+# screens there, and the dead page is another route); a note under Tooling, Covered or Not covered is none.
+LABEL = re.compile(r"^\s*(?:#+\s*|\*\*|__)?\s*(covered|not covered|tooling|outside)\b\W*(.*)$", re.I)
+FIELD = re.compile(r"^(?:\s|[-*+]\s|\d+[.)]\s)")
+WORD = re.compile(r"[^\s\"'`<>()\[\]{},;|]+")
 
 
-def finding_blocks(text):
-    """[(n, text)] of the `### F<n>` blocks of a walker's findings file: each runs to the next line that starts with `#`."""
-    blocks, cur = [], None
+def sections(text):
+    """([(n, text)] of the `### F<n>` blocks, [text] of the Outside notes) of a walker's findings file. A block runs to the next heading, section label
+    (`Tooling`, `Outside`..., plain or bold) or rule, or to a paragraph (after a blank line) that is no field of the finding (a `-` or numbered line,
+    or an indented one); the Outside notes run from the label (its own line included) to the next heading, label or rule."""
+    blocks, outside, mode, blank = [], [], None, False
     for line in text.splitlines():
-        m = re.match(r"###\s+F(\d+)\b", line)
+        m, lab = re.match(r"###\s+F(\d+)\b", line), LABEL.match(line)
         if m:
-            cur = [m.group(1), []]
-            blocks.append(cur)
-        elif line.startswith("#"):
-            cur = None
-        if cur is not None:
-            cur[1].append(line)
-    return [(n, "\n".join(lines)) for n, lines in blocks]
+            blocks.append([m.group(1), [line]])
+            mode, blank = "finding", False
+            continue
+        if line.startswith("#") or re.match(r"^\s*(?:-{3,}|_{3,}|\*{3,})\s*$", line) or lab:
+            mode = "outside" if lab and lab.group(1).lower() == "outside" else None
+            if mode:
+                outside.append(lab.group(2))
+            blank = False
+            continue
+        if not line.strip():
+            blank = True
+            continue
+        if mode == "finding" and blank and not FIELD.match(line):
+            mode = None
+        blank = False
+        if mode == "finding":
+            blocks[-1][1].append(line)
+        elif mode == "outside":
+            outside.append(line)
+    return [(n, "\n".join(lines)) for n, lines in blocks], outside
 
 
 def names_the_fault(block, ctl):
-    """Why this finding block describes the planted fault, or None."""
-    dead = re.search(re.escape(ctl["dead"]) + r"(?![\w-])", block, re.I)
-    if dead:
-        return "it names the dead page %s" % ctl["dead"]
-    named = [r"(?<!\w)" + re.escape(ctl["link_text"]) + r"(?!\w)"] if ctl.get("link_text") else []
-    named.append(re.escape(ctl["link"]) + r"(?![\w-])")
-    if any(re.search(w, block, re.I) for w in named) and MISSING_PAGE.search(block):
-        return "it names the link to %s and a page that is missing" % ctl["link"]
+    """Why this text names the planted dead page, or None: one of its words is that path, whole."""
+    dead = ctl["dead"].lower()
+    for word in WORD.findall(block):
+        word = word.rstrip(".:!?")
+        if re.match(r"^[a-z][a-z0-9+.-]*://", word, re.I):
+            path = urlsplit(word).path
+        elif word.startswith("/"):
+            path = re.split(r"[?#]", word)[0]
+        else:
+            continue
+        if (unquote(path).rstrip("/") or "/").lower() == dead:
+            return "it names the dead page %s" % ctl["dead"]
     return None
 
 
@@ -1254,7 +1287,7 @@ def cmd_control_judge(argv):
     ctl = read_json(ctl_file, "control.json")
     if ctl.get("kind") != "functional" or not all(isinstance(ctl.get(k), str) and ctl[k] for k in ("link", "dead", "screen")):
         raise Stop("%s is not a functional control (kind %r): only that kind is judged by code" % (ctl_file, ctl.get("kind")))
-    found, n = None, 0
+    found, note, n = None, None, 0
     for f in files:
         try:
             with open(f, encoding="utf-8") as fh:
@@ -1262,13 +1295,18 @@ def cmd_control_judge(argv):
         except OSError as e:
             raise Stop("cannot read the findings file %s (%s)" % (f, e.strerror), 1)
         session = re.sub(r"^findings-", "", os.path.splitext(os.path.basename(f))[0])
-        for num, block in finding_blocks(text):
+        blocks, outside = sections(text)
+        for num, block in blocks:
             n += 1
             why = names_the_fault(block, ctl)
             if why and found is None:
                 found = {"finding": "%s-F%s" % (session, num), "why": "%s-F%s: %s" % (session, num, why)}
+        why = names_the_fault("\n".join(outside), ctl)
+        if why and note is None:  # a note is no verified row of its own (the verifier makes one from it, `<session>-notes`): there is none to drop
+            note = {"finding": None, "why": "the Outside note of %s: %s" % (session, why)}
+    found = found or note
     say({"screen": ctl["screen"], "found": found is not None, "finding": found["finding"] if found else None,
-         "why": found["why"] if found else "none of the %d finding(s) in %d file(s) names the dead page %s or the link to %s with a missing page" % (n, len(files), ctl["dead"], ctl["link"]),
+         "why": found["why"] if found else "none of the %d finding(s) in %d file(s), nor an Outside note, names the dead page %s" % (n, len(files), ctl["dead"]),
          "looked_at": {"files": len(files), "findings": n}})
     return 0
 

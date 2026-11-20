@@ -2159,14 +2159,14 @@ the board.
 
 def case_control_judge(R, S):
     """`fwx control judge --run R FILE...`: whether the walkers found the planted functional fault, decided by code from what they wrote, not by
-    an agent's reading: a finding block (`### F<n>`, not a note under Tooling or Outside) that names the dead page the plant sends the link to,
-    or names the link (its path or its text) with the page being missing (404 or not found). It prints `{screen, found, finding, why, looked_at}`
+    an agent's reading: a finding block (`### F<n>`, not a note under Tooling) that names the dead page the plant sends the link to. It prints `{screen, found, finding, why, looked_at}`
     with `finding` as `<session>-F<n>` (the id `fwx walk converge` rows carry as `source`); exit 0 for found and for not found, 2 for a control
     that is not a functional one or no file, 1 for a file it cannot read. Seen red on master (there was no `control judge`; an agent judged):
       FAIL: control judge: the breaker's finding of the dead link: exit: got 2, want 0
       FAIL: control judge: the breaker's finding of the dead link: found: got None, want True
     A run whose breaker wrote only other findings, a note under Tooling that names the dead page, a finding that names the link and says nothing
-    of a missing page, and a page whose name only starts like the dead one are the negative controls: each is `found: false`."""
+    of a missing page, and a page whose name only starts like the dead one are the negative controls: each is `found: false`.
+    (Only the dead page counts, whole: see case_control_judge_exact.)"""
     sc = Scene()
     try:
         o = armed(sc, R, S, "control judge")
@@ -2206,7 +2206,7 @@ def case_control_judge(R, S):
         with open(named, "w", encoding="utf-8") as f:
             f.write("### F3 · bug · major\n- Observed: clicking Projects in the nav shows a 404 page.\n")
         r, j = judge(named)
-        S.eq("control judge: the link named with a 404, no address: found", (j.get("found"), j.get("finding")), (True, "w4-F3"))
+        S.eq("control judge: the link named with a 404 but not the dead page: not found (a real 404 never counts)", (j.get("found"), j.get("finding")), (False, None))
         named_ok = os.path.join(rd, "findings-w5.md")
         with open(named_ok, "w", encoding="utf-8") as f:
             f.write("### F1 · layout · minor\n- Observed: the Projects link is hard to read on a phone.\n")
@@ -2236,6 +2236,136 @@ def case_control_judge(R, S):
         sc.walk(R, "down", "--run", rd)
     finally:
         sc.stop()
+
+
+def case_control_judge_exact(R, S):
+    """Review of PR 198, finding 1 (fails open) and finding 2. The judge counts a finding only for the planted dead route, as a whole path
+    (`/about-old`, from a bare path or an address, with a query or punctuation after it), never for the link's own path or text: with the link
+    `/` the path matched the `//` of any address, and `/about` matched `/about/team` and `/about.png`, so a real 404 counted as the control and
+    `dropControl` took that real finding from the fixer. A note under Outside is read with the same rule (a walker is told to file what is outside
+    its screens there, and the dead page is another route); the finding it gives is null (a note is no row to drop). A block ends at the next
+    heading or section label, at a rule, or at a paragraph that is no field of the finding, so a plain-text Tooling or Outside after the last block
+    is not part of it. Seen red on 355a8e5:
+      FAIL: control judge exact: link /: a real 404 on another screen is not the control: got True, want False
+      FAIL: control judge exact: link /about: a nested route (/about/team) is not the control: got True, want False
+      FAIL: control judge exact: link /about: an image that is not found (/about.png) is not the control: got True, want False
+      FAIL: control judge exact: link /about: the link's text and "not found" are not the control: got True, want False
+      FAIL: control judge exact: link /about: a note under Outside that names the dead route: found: got (False, None), want (True, None)
+      FAIL: control judge exact: a plain-text Tooling after the last block is not part of it: got True, want False"""
+    def judge(ctl, *texts):
+        rd = helpers.mkdtemp("fwx-walk-run-")
+        helpers.write(rd, "control.json", json.dumps(dict({"screen": "http://localhost:3000/home", "path": "/home", "kind": "functional"}, **ctl)))
+        paths = []
+        for i, text in enumerate(texts):
+            paths.append(os.path.join(rd, "findings-w%d.md" % (i + 1)))
+            with open(paths[-1], "w", encoding="utf-8") as f:
+                f.write(text)
+        r = runner_walk(R, "control-judge", "--run", rd, *paths)
+        return r, obj(r.stdout) or {}
+    root = {"link": "/", "link_text": "Logo", "dead": "/index-old"}
+    about = {"link": "/about", "link_text": "About", "dead": "/about-old"}
+
+    def block(observed, screen="http://localhost:3000/home"):
+        return "### F1 · bug · major\n- Screen: %s (width 1309)\n- Kind: observed\n- Observed: %s\n" % (screen, observed)
+    for label, ctl, text in (
+            ("link /: a real 404 on another screen", root, block("the avatar says 'page not found'", "http://localhost:3000/contact")),
+            ("link /: a block with an address and a 404", root, block("the page returned 404", "http://localhost:3000/projects")),
+            ("link /: a block that says does not exist", root, block("the image does not exist")),
+            ("link /about: a nested route (/about/team)", about, block("GET /about/team returned 404")),
+            ("link /about: an image that is not found (/about.png)", about, block("/about.png returned 404")),
+            ("link /about: a route that only ends like the dead one (/team/about-old)", about, block("the address /team/about-old answers 404")),
+            ("link /about: the link's text and \"not found\"", about, block("the About page shows 'image not found'")),
+            ("link /about: the link and the dead page's name in prose", about, block("About: page not found")),
+            ("link /about: a route that only starts like the dead one (/about-older)", about, block("the address /about-older answers 404")),
+            ("link /about: the link's own path and a 404", about, block("clicking /about answers 404")),
+            ("link /: the root path and a 404", root, block("the / route answers 404"))):
+        r, j = judge(ctl, text)
+        S.eq("control judge exact: %s is not the control" % label, (r.returncode, j.get("found"), j.get("finding")), (0, False, None))
+    for label, ctl, text in (
+            ("link /: the dead route in an address with a port", root, block("the address became http://localhost:3000/index-old and the page says 404")),
+            ("link /about: the dead route as a bare path in backticks", about, block("it went to `/about-old` (404)")),
+            ("link /about: the dead route with a query and a closing sentence", about, block("it went to http://localhost:3000/about-old?from=nav.")),
+            ("link /about: the dead route with a trailing slash, in capitals", about, block("the address is HTTP://LOCALHOST:3000/About-Old/"))):
+        r, j = judge(ctl, text)
+        S.eq("control judge exact: %s is the control" % label, (r.returncode, j.get("found"), j.get("finding")), (0, True, "w1-F1"))
+    # the Outside notes: a walker files what is outside its screens there, and the dead route is another route
+    for label, tail in (("a heading", "## Outside\n- http://localhost:3000/about-old answers 404 (seen from /home)\n"),
+                        ("a plain-text label", "Outside\n- /about-old answers 404\n"),
+                        ("a bold label", "**Outside**\n- /about-old answers 404\n")):
+        r, j = judge(about, block("the footer is small") + "\n## Covered\nthe home page\n\n" + tail)
+        S.eq("control judge exact: link /about: a note under Outside (%s) that names the dead route: found, and no finding to drop" % label,
+             (r.returncode, j.get("found"), j.get("finding")), (0, True, None))
+        S.ok("control judge exact: link /about: ... and says it was the Outside note, of which file", "Outside" in str(j.get("why")) and "w1" in str(j.get("why")), r.stdout)
+    r, j = judge(about, block("the footer is small") + "\n## Outside\n- http://localhost:3000/about.png answers 404\n- /about/team answers 404\n")
+    S.eq("control judge exact: link /about: a note under Outside about a real 404 is not the control", (r.returncode, j.get("found")), (0, False))
+    # Tooling is no finding, wherever it starts, and it ends the block before it
+    for label, tail in (("a heading", "## Tooling\n- the click landed on /about-old (not filed)\n"),
+                        ("a plain-text label", "Tooling\n- the click landed on /about-old (not filed)\n"),
+                        ("a paragraph that is no field", "\nThe click landed on /about-old, which I took for the tool.\n"),
+                        ("a rule and a paragraph", "---\nnote: /about-old answered 404\n")):
+        r, j = judge(about, block("the footer is small") + tail)
+        S.eq("control judge exact: a plain-text Tooling after the last block is not part of it" if label == "a plain-text label"
+             else "control judge exact: after the last block, %s is not part of it" % label, (r.returncode, j.get("found")), (0, False))
+    # fields of a finding keep their lines (a numbered list, an indented continuation)
+    r, j = judge(about, "### F2 · bug · major\n- Steps:\n  1. open /home\n  2. click About\n- Observed: the address became\n  /about-old and the page says 404\n- Evidence: x.png\n")
+    S.eq("control judge exact: a finding's own indented lines are still read", (j.get("found"), j.get("finding")), (True, "w1-F2"))
+
+
+LINK_VIEW = r"""
+const view = JSON.parse(process.argv[3]);
+const mk = (a) => ({
+  origin: a.origin || "http://app.test", pathname: a.path, target: a.target || "", textContent: a.text || a.path,
+  hasAttribute: () => false, click() {},
+  getClientRects: () => (a.rects === 0 ? [] : [{}]),
+  getBoundingClientRect: () => Object.assign({left: 10, top: 10, right: 110, bottom: 40, width: 100, height: 30}, a.box || {}),
+  style: a.style || {},
+});
+const links = view.links.map(mk);
+global.location = {pathname: view.here || "/home", origin: "http://app.test"};
+global.innerWidth = 1309; global.innerHeight = 818;
+global.getComputedStyle = (el) => Object.assign({display: "inline", visibility: "visible"}, el.style);
+global.document = {querySelectorAll: (sel) => links.filter((l, i) => view.links[i].in.some((s) => sel.startsWith(s)) || sel === "a[href]")};
+console.log(String(eval(process.argv[2])));
+"""
+
+
+def case_link_pick_visible(R, S):
+    """Review of PR 198, finding 3. The link the plant breaks is the one a walker can click at the walks' viewport (1309 x 818): a nav that is in the
+    page but hidden (a mobile menu: display none, visibility hidden, no box, or off the screen to the left or right) is skipped for the next link.
+    Seen red on 355a8e5 (the first link of the page was picked whatever it looked like):
+      FAIL: link pick visible: a hidden menu first (display none): picked '/menu' (fwx:link|%2Fmenu|Menu), want '/projects'
+      FAIL: link pick visible: a link off the screen to the left: ...
+    A page with only hidden links gives `fwx:missing` (no link, so the arming says target not found); a visible link first is the negative control."""
+    if not shutil.which("node"):
+        sys.stderr.write("NOT RUN, NOT ARMED: node missing: the link pick was not run\n")
+        return
+    code = subprocess.run([sys.executable, "-c", "import sys, json; sys.path.insert(0, sys.argv[1]); from fwx.commands import walk; print(json.dumps([walk.LINK_PICK_JS, walk.LINK_CLICK_JS % json.dumps('/projects')]))",
+                           os.path.join(R.root, "lib")], capture_output=True, text=True)
+    if not S.ok("link pick visible: the pick and click code was read from walk.py", code.returncode == 0 and code.stdout.strip(), code.stderr[-300:]):
+        return
+    pick, click = json.loads(code.stdout)
+    hp = os.path.join(helpers.mkdtemp("fwx-walk-node-"), "harness.js")
+    with open(hp, "w", encoding="utf-8") as f:
+        f.write(LINK_VIEW)
+
+    def run(js, links):
+        out = subprocess.run(["node", hp, js, json.dumps({"links": links})], capture_output=True, text=True)
+        return out.stdout.strip().splitlines()[-1] if out.stdout.strip() else "error: " + out.stderr[-200:]
+    good = {"path": "/projects", "text": "Projects", "in": ["nav"]}
+    for label, hidden in (("a hidden menu first (display none)", {"style": {"display": "none"}, "rects": 0}),
+                          ("a link with visibility hidden", {"style": {"visibility": "hidden"}}),
+                          ("a link with no box (width 0)", {"box": {"width": 0, "height": 0, "right": 10, "bottom": 10}}),
+                          ("a link off the screen to the left", {"box": {"left": -300, "right": -200}}),
+                          ("a link off the screen to the right", {"box": {"left": 1400, "right": 1500}}),
+                          ("a link in an element with no layout (no client rects)", {"rects": 0})):
+        links = [dict({"path": "/menu", "text": "Menu", "in": ["nav"]}, **hidden), good]
+        got = run(pick, links)
+        S.eq("link pick visible: %s: skipped for the next link" % label, got, "fwx:link|%2Fprojects|Projects")
+        links = [dict({"path": "/projects", "text": "Projects", "in": ["nav"]}, **hidden)]
+        S.eq("link pick visible: %s, alone: no link" % label, run(pick, links), "fwx:missing")
+        S.eq("link pick visible: %s: the click finds no link to it either" % label, run(click, links), "fwx:nolink")
+    S.eq("link pick visible: a visible link first is picked (the first)", run(pick, [{"path": "/menu", "text": "Menu", "in": ["nav"]}, good]), "fwx:link|%2Fmenu|Menu")
+    S.eq("link pick visible: the click finds the visible link", run(click, [good]), "fwx:clicked")
 
 
 def case_functional_pictures(R, S):
@@ -2571,7 +2701,7 @@ def case_poll(R, S):
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_cap, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
-         case_arm_control_launch_path, case_arm_control_functional, case_arm_control_functional_plant, case_control_judge, case_functional_pictures,
+         case_arm_control_launch_path, case_arm_control_functional, case_arm_control_functional_plant, case_control_judge, case_control_judge_exact, case_link_pick_visible, case_functional_pictures,
          case_check_screens, case_check_screens_apps, case_poll]
 
 W = "lib/fwx/commands/walk.py"
@@ -2799,13 +2929,32 @@ MUTANTS = [
      "arm-control functional plant: another link, another site, a link that opens a tab and a click on no link are left alone"),
     ("functional plant: the click goes on to the page's handlers", case_arm_control_functional_plant, "    e.stopImmediatePropagation();\n", "",
      "arm-control functional plant: on the control's route the broken link goes to the dead page and the click is stopped"),
-    ("judge: a note under Tooling is a finding", case_control_judge, '        elif line.startswith("#"):\n            cur = None\n', "",
-     "control judge: other findings, and the dead page only in a note under Tooling: not found"),
-    ("judge: a dead page that only starts like it", case_control_judge, 'dead = re.search(re.escape(ctl["dead"]) + r"(?![\\w-])", block, re.I)', 'dead = re.search(re.escape(ctl["dead"]), block, re.I)',
-     "control judge: a page whose name only starts like the dead one: not found"),
-    ("judge: the link alone is the fault", case_control_judge, " and MISSING_PAGE.search(block):", ":", "control judge: the link named with no missing page: not found"),
-    ("judge: the dead page alone is not enough", case_control_judge, "    if dead:\n        return", "    if False:\n        return",
-     "control judge: the dead page named with no word of the link or of a missing page: found"),
+    ("judge exact: any word that ends like the dead page", case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/").lower() == dead:', 'if (unquote(path).lower()).endswith(dead):',
+     "control judge exact: link /about: a route that only ends like the dead one (/team/about-old) is not the control"),
+    ("judge exact: a route that only starts like the dead page", case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/").lower() == dead:', 'if (unquote(path).lower()).startswith(dead):',
+     "control judge exact: link /about: a route that only starts like the dead one (/about-older) is not the control"),
+    ("judge exact: the link's own path names the fault", case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/").lower() == dead:', 'if (unquote(path).rstrip("/") or "/").lower() in (dead, ctl["link"]):',
+     "control judge exact: link /about: the link's own path and a 404 is not the control"),
+    ("judge exact: Outside is not read", case_control_judge_exact, 'why = names_the_fault("\\n".join(outside), ctl)', "why = None",
+     "control judge exact: link /about: a note under Outside (a heading) that names the dead route: found"),
+    ("judge exact: a paragraph after the last block is part of it", case_control_judge_exact, '        if mode == "finding" and blank and not FIELD.match(line):\n            mode = None\n', "",
+     "control judge exact: after the last block, a paragraph that is no field is not part of it"),
+    ("judge exact: a plain-text label does not end a block", case_control_judge_exact, 'or re.match(r"^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$", line) or lab:', 'or re.match(r"^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$", line):',
+     "control judge exact: a plain-text Tooling after the last block is not part of it"),
+    ("judge exact: a rule does not end a block", case_control_judge_exact, "(?:-{3,}|_{3,}|\\*{3,})", "(?:-{300,}|_{300,}|\\*{300,})",
+     "control judge exact: after the last block, a rule and a paragraph is not part of it"),
+    ("link pick: hidden links are picked", case_link_pick_visible, '!a.hasAttribute("download") && vis(a))', '!a.hasAttribute("download"))',
+     "link pick visible: a hidden menu first (display none): skipped for the next link"),
+    ("link pick: a link with no layout", case_link_pick_visible, "    if (a.getClientRects().length === 0) return false;\n", "",
+     "link pick visible: a link in an element with no layout (no client rects): skipped for the next link"),
+    ("link pick: display and visibility", case_link_pick_visible, ' && cs.display !== "none" && cs.visibility !== "hidden"', "",
+     "link pick visible: a link with visibility hidden: skipped for the next link"),
+    ("link pick: an empty box", case_link_pick_visible, "return r.width > 0 && r.height > 0 && ", "return ",
+     "link pick visible: a link with no box (width 0): skipped for the next link"),
+    ("link pick: off the screen", case_link_pick_visible, " && r.right > 0 && r.left < innerWidth && r.bottom > 0;", ";",
+     "link pick visible: a link off the screen to the left: skipped for the next link"),
+    ("link click: a hidden link is clicked", case_link_pick_visible, '=== LINK && vis(x));', "=== LINK);",
+     "link pick visible: a hidden menu first (display none): the click finds no link to it either"),
     ("judge: found whatever was written", case_control_judge, 'say({"screen": ctl["screen"], "found": found is not None,', 'say({"screen": ctl["screen"], "found": True,',
      "control judge: other findings, and the dead page only in a note under Tooling: not found"),
     ("functional pictures: a functional plant taints the pictures", case_functional_pictures, '    if isinstance(ctl, dict) and ctl.get("kind", "hierarchy") != "hierarchy":', '    if False:',
