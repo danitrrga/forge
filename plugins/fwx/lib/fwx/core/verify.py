@@ -17,8 +17,8 @@ finds it, always in the main checkout whatever worktree the run was launched fro
 says so.
 
 One check is built in, after the project's own: `added_files`. A file the commits since the default branch ADD, named like a
-one-use file (a brief, a prompt, a checkpoint, a handoff, a todo, notes, a dated file, `.md` and `.txt` only) or like an old
-version (`.bak`, `-old`, `-v2`, any extension), is a red command of the evidence, `fwx added-files`, and each file gets one line
+one-use file (brief, checkpoint, handoff, tomorrow or scratch, `.md` and `.txt` only) or like an old version (`.bak` or `.orig`;
+`-old`, `-copy`, ` copy`, `-backup` or `-v2` only with the living file beside it, any extension), is a red command of the evidence, `fwx added-files`, and each file gets one line
 that says what to do instead. Green it is silent and adds no command, so a green run's evidence is what it was. `.fwx/` is
 exempt (fwx writes its own state there). With no default branch to measure from it says `NOT RUN, NOT ARMED` and adds nothing.
 
@@ -47,8 +47,9 @@ COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
 ADDED_FILES_CHECK = "fwx added-files"
 _ONE_USE_EXT = (".md", ".txt")
-_ONE_USE = re.compile(r"brief|prompt|checkpoint|handoff|tomorrow|todo|scratch|notes-|\d{4}-\d{2}-\d{2}", re.I)
-_OLD_VERSION = re.compile(r"\.(?:bak|orig)(?:\.|\Z)|(?:-old|-copy| copy|-backup|-v\d+)(?:\.|\Z)", re.I)
+_ONE_USE = re.compile(r"brief|checkpoint|handoff|tomorrow|scratch", re.I)
+_BACKUP = re.compile(r"\.(?:bak|orig)(?:\.|\Z)", re.I)
+_VERSION = re.compile(r"(?:-old|-copy| copy|-backup|-v\d+)(?=\.|\Z)", re.I)
 ADDED_FILE_TIP = ("is never committed: put it in your scratch folder (fwx scratch new), which git ignores; for an old version, "
                   "keep only the living file, since git holds the history. If this file really belongs in the project, rename "
                   "it without the marker.")
@@ -136,12 +137,19 @@ def toplevel(cwd):
     return r.stdout.strip()
 
 
-def marker(name):
-    """`"one-use"`, `"old"` or None for the file `name` (a path: only its last part is read; `.fwx/` is the caller's)."""
+def marker(name, exists=lambda path: False):
+    """`"one-use"`, `"old"` or None for the file `name` (a path: only its last part is read; `.fwx/` is the caller's). A
+    `.bak` or `.orig` is old; `-old`, `-copy`, ` copy`, `-backup` and `-v2` are old only when `exists(<the path without that
+    marker>)`: `plan-v2.md` beside `plan.md` is an old version, a lone `api-v2.md` is a living file."""
     base = os.path.basename(name)
     if base.lower().endswith(_ONE_USE_EXT) and _ONE_USE.search(base):
         return "one-use"
-    return "old" if _OLD_VERSION.search(base) else None
+    if _BACKUP.search(base):
+        return "old"
+    m = _VERSION.search(base)
+    if m and exists(os.path.join(os.path.dirname(name), base[:m.start()] + base[m.end():])):
+        return "old"
+    return None
 
 
 def _default_refs(root, cfg):
@@ -181,7 +189,7 @@ def added_files(root, cfg):
         raise state.StateError("git diff failed in %s: %s" % (root, r.stderr.strip()))
     lines = []
     for f in sorted(f for f in r.stdout.split("\0") if f):
-        kind = None if f.startswith(state.PLAN_DIR.rstrip("/") + "/") else marker(f)
+        kind = None if f.startswith(state.PLAN_DIR.rstrip("/") + "/") else marker(f, lambda p: os.path.exists(os.path.join(root, p)))
         if kind:
             lines.append("%s: %s %s" % (f, "a one-use file" if kind == "one-use" else "an old version", ADDED_FILE_TIP))
     return lines, True

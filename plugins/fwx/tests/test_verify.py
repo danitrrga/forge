@@ -15,11 +15,17 @@ before core/verify.py had it (first FAILs shown):
   FAIL: a range adding docs/brief-x.md, plan-v2.md and notes.md.bak: exit 1: got 0, want 1
   FAIL: it prints the line of docs/brief-x.md: fwx verify: running 1 check from the project at 165a099 ...
   FAIL: a red built-in check is a red command of the evidence, like the project's own: got ('0', 0, [{'cmd': 'true', 'rc': 0}]), want ('1', 1, [{'cmd': 'true', 'rc': 0}, {'cmd': 'fwx added-files', 'rc': 1}])
+Narrowed after the first version (a dated blog post, a prompt template, TODO.md, release notes and a lone api-v2.md are living
+files). The narrowed cases were seen red on the first version's code:
+  FAIL: living files that only look like leftovers (a dated blog post, a prompt template, TODO.md, a lone api-v2.md, release notes): exit 0: got (1, ['TODO.md', 'api-v2.md', 'blog/<date>-post.md', 'prompts/summary-prompt.md', 'release-notes-3.md']), want (0, [])
 Its mutants, each seen red on a copy of the plugin with one line changed:
   - the `.fwx/` exemption removed:
       FAIL: a range adding src/<date>-migration.sql, README.md and .fwx/milestones/x/state.md (and a marked name under .fwx/): exit 0: got 1, want 0
   - modified files counted too (no `--diff-filter=A`):
       FAIL: a marked file that already existed and is only changed is not added: got 1, want 0
+  - a `-v2` or `-old` name is old with no living file beside it:
+      FAIL: living files that only look like leftovers (...): exit 0: got (1, ['api-v2.md']), want (0, [])
+      FAIL: marker of 'api-v2.md': got 'old', want None
   - the `.md`/`.txt` limit of the one-use names removed:
       FAIL: a marker in a code file's name, a folder's name, `-older` or a bare `notes.md` is not a hit: got 1, want 0
 
@@ -349,7 +355,7 @@ def on_branch(files, recipe=("true",), base_files=None):
     return repo, phase
 
 
-repo, phase = on_branch({"docs/brief-x.md": "b\n", "plan-v2.md": "p\n", "notes.md.bak": "n\n"})
+repo, phase = on_branch({"docs/brief-x.md": "b\n", "plan-v2.md": "p\n", "notes.md.bak": "n\n"}, base_files={"plan.md": "p\n"})
 r = run(repo)
 s.eq("a range adding docs/brief-x.md, plan-v2.md and notes.md.bak: exit 1", r.returncode, 1)
 for rel, what in (("docs/brief-x.md", "a one-use file"), ("plan-v2.md", "an old version"), ("notes.md.bak", "an old version")):
@@ -370,6 +376,16 @@ s.eq("a range adding src/" + DATE + "-migration.sql, README.md and .fwx/mileston
 s.ok("and says nothing about files: success is silent", "never committed" not in r.stderr and "NOT RUN" not in r.stderr, r.stderr)
 s.eq("a green built-in check adds no command to the evidence",
      [c["cmd"] for c in json.loads(rows(phase)[0]["detail"])["commands"]], ["true"])
+
+repo, phase = on_branch({"blog/" + DATE + "-post.md": "p\n", "prompts/summary-prompt.md": "p\n", "TODO.md": "t\n",
+                         "api-v2.md": "a\n", "release-notes-3.md": "r\n"})
+r = run(repo)
+s.eq("living files that only look like leftovers (a dated blog post, a prompt template, TODO.md, a lone api-v2.md, release notes): exit 0",
+     (r.returncode, [l.split(": ")[1] for l in r.stderr.splitlines() if "never committed" in l]), (0, []))
+repo, phase = on_branch({"walk-old.py": "o\n", "docs/plan-v2.md": "o\n"}, base_files={"walk.py": "w\n", "docs/plan.md": "p\n"})
+r = run(repo)
+s.eq("an old version beside the living file fails whatever the extension",
+     (r.returncode, sorted(l.split(": ")[1] for l in r.stderr.splitlines() if "never committed" in l)), (1, ["docs/plan-v2.md", "walk-old.py"]))
 
 repo, phase = make(["true"])
 r = run(repo)
@@ -399,14 +415,18 @@ helpers.git(wt, "commit", "-q", "-m", "wt")
 r = run(wt)
 s.eq("from a linked worktree the range is the same: a checkpoint.txt added there fails", (r.returncode, "checkpoint.txt: a one-use file" in r.stderr), (1, True))
 
-for name, want in (("brief.md", "one-use"), ("my-prompt.txt", "one-use"), ("Checkpoint-3.md", "one-use"), ("handoff.md", "one-use"),
-                   ("tomorrow.md", "one-use"), ("TODO.md", "one-use"), ("scratch.txt", "one-use"), ("notes-api.md", "one-use"),
-                   ("day-" + DATE + ".md", "one-use"), ("x/prompts.md", "one-use"), ("brief.py", None), ("" + DATE + ".sql", None),
-                   ("notes.md", None), ("a.bak", "old"), ("a.orig", "old"), ("a.bak.md", "old"), ("a-old.py", "old"),
-                   ("a-copy.md", "old"), ("a copy.md", "old"), ("a copy", "old"), ("a-backup.json", "old"), ("a-v2.md", "old"),
-                   ("a-v12", "old"), ("a-v2.test.js", "old"), ("a-older.md", None), ("a-vx.md", None), ("a-v2b.md", None),
-                   ("old.md", None), ("copy.md", None), ("backup.md", None)):
-    s.eq("marker of %r" % name, getattr(core_verify, "marker", lambda n: "no marker()")(name), want)
+LIVING = {"plan.md", "src/walk.py", "a", "a.md", "a.test.js", "a.json", "a.py", "docs/a.md"}
+for name, want in (("brief.md", "one-use"), ("Checkpoint-3.md", "one-use"), ("handoff.md", "one-use"), ("tomorrow.md", "one-use"),
+                   ("scratch.txt", "one-use"), ("x/Brief.TXT", "one-use"),
+                   ("my-prompt.txt", None), ("TODO.md", None), ("notes-api.md", None), ("release-notes-3.md", None),
+                   ("day-" + DATE + ".md", None), ("blog/" + DATE + "-post.md", None), ("prompts/summary-prompt.md", None),
+                   ("brief.py", None), (DATE + ".sql", None), ("notes.md", None),
+                   ("a.bak", "old"), ("a.orig", "old"), ("notes.md.bak", "old"), ("a.bak.md", "old"),
+                   ("plan-v2.md", "old"), ("src/walk-old.py", "old"), ("a-copy.md", "old"), ("a copy.md", "old"), ("a copy", "old"),
+                   ("a-backup.json", "old"), ("a-v12.md", "old"), ("a-v2.test.js", "old"), ("docs/a-old.md", "old"),
+                   ("api-v2.md", None), ("src/api-v2.py", None), ("docs/plan-v2.md", None), ("a-older.md", None), ("a-vx.md", None),
+                   ("a-v2b.md", None), ("old.md", None), ("copy.md", None), ("backup.md", None)):
+    s.eq("marker of %r" % name, getattr(core_verify, "marker", lambda n, e=None: "no marker()")(name, lambda p: p in LIVING), want)
 
 # ---- output: the tail, and no secrets in it ---------------------------------------------------------------------------
 
