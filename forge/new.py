@@ -150,6 +150,14 @@ def framework_plugins(stack_plugins, forge):
 
 
 EXPECTED_DOCTOR_FAIL = "instruction files"  # a fresh project has no CLAUDE.md or AGENTS.md, and forge never writes one
+EXPECTED_MEMORY_FAIL = "FAIL  %s/lite-store-has-rows: no claude-mem-lite.db yet \u2014 nothing has been written"  # a fresh lite project has no store yet
+
+
+def fresh_store_only(name):
+    """Whether the `memory` doctor row fails for project `name` only because its claude-mem-lite store has no database yet, which every
+    project just made has until its first session. Read from memory_doctor.py's own report: its FAIL lines are that one, by exact text."""
+    r = lib.run(["scripts/sync/memory_doctor.py", "--project", name], capture=True)
+    return [l for l in r.stdout.splitlines() if l.startswith("FAIL")] == [EXPECTED_MEMORY_FAIL % name]
 
 
 def closing(name, target, handoff, profiles_made):
@@ -162,6 +170,8 @@ def closing(name, target, handoff, profiles_made):
         print(r.stderr, end="")
     fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
     other = [l for l in fails if l[6:28].strip() != EXPECTED_DOCTOR_FAIL]
+    if any(l[6:28].strip() == "memory" for l in other) and fresh_store_only(name):
+        other = [l for l in other if l[6:28].strip() != "memory"]
     if r.returncode and not fails:
         other = ["forge doctor exited %d and printed no FAIL row" % r.returncode]
     print("\n== handover: paste this into claude, started in %s ==\n" % target)
@@ -738,7 +748,7 @@ def create(a):
         print(why)
         return 1
 
-    undo, made, complete = [], False, True
+    undo, made, complete, saved = [], False, True, None  # saved: the recovery copy of the registry, kept until every step has succeeded
     try:
         with stopped_means_rollback(), creation_lock():
             try:
@@ -791,7 +801,6 @@ def create(a):
                     undo.append(("restore", REGISTRY, account.text, saved))  # before the write that can fail: the registry is put back as it was
                     lib.write_text(REGISTRY, lib.dumps({**account.doc, "servers": {**account.doc["servers"], **account.new}}) + "\n", mode="keep")
                     print("wrote  config/mcp-registry.json (%s)" % ", ".join(account.new))
-                    forget(saved)
                 undo.append(("file", project_file))  # absent until the write: checked above, under the lock
                 lib.write_text(project_file, lib.dumps(project) + "\n")
                 print("wrote  %s" % os.path.relpath(project_file, lib.ROOT))
@@ -809,6 +818,8 @@ def create(a):
             raise
         print("! forge new: %s%s" % (e, end_note(made, complete)))
         return 2 if isinstance(e, TimeoutError) else 1
+    if saved:
+        forget(saved)  # every step has succeeded: the recovery copy of the registry is not needed any more
     print(flush=True)
     code = lib.run(["bin/forge", "sync", "--apply", name]).returncode
     if code:

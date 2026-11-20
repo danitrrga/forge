@@ -782,6 +782,21 @@ def a_account_server_rollback(w):
     return bad
 
 
+def a_registry_copy_kept(w):
+    """A later step fails and the registry cannot be put back either (the world's rollback fails writing it): the message says
+    `cp COPY REGISTRY`, and COPY must still be there, holding the registry as it was."""
+    original = open(w.path("config", "mcp-registry.json"), encoding="utf-8").read()
+    code, out = w.forge("new", "demo", "--stack", "generic", "--account-server", "notion", "--apply")
+    m = re.search(r"put it back with: cp (\S+) ", out)
+    if not m:
+        return ["no `cp COPY REGISTRY` hint after the failed restore (exit %d): %s" % (code, tail(out, 4))]
+    try:
+        held = open(m.group(1), encoding="utf-8").read()
+    except OSError:
+        return ["the recovery copy %s named by the hint is gone" % m.group(1)]
+    return [] if held == original else ["the recovery copy does not hold the registry as it was"]
+
+
 def project_of(w, name="demo"):
     return read_json(w.path("config", "projects", "%s.claude.json" % name)) or {}
 
@@ -842,9 +857,13 @@ def a_memory_lite_framework(w):
     code, out = w.forge("new", "demo", "--stack", "node", "--framework", *PARITY_ANSWERS, "--memory", "lite", "--apply")
     want = ["mine@mk"] + NODE["plugins"] + ["common@mk", LITE]
     keep = project_of(w).get("plugins_keep")
+    bad = []
     if keep != want:
-        return ["--framework --memory lite: exit %d, plugins_keep %s, want %s: %s" % (code, keep, want, tail(out, 3))]
-    return []
+        bad.append("--framework --memory lite: exit %d, plugins_keep %s, want %s: %s" % (code, keep, want, tail(out, 3)))
+    # A fresh lite project has no claude-mem-lite.db until its first session: the memory row's one FAIL for it is expected, like `instruction files`.
+    if code != 0 or "open a new session in the folder" not in out:
+        bad.append("--framework --memory lite on a healthy fresh project: exit %d, want 0 and the closing line: %s" % (code, tail(out, 3)))
+    return bad
 
 
 def a_worktree_guard(w):
@@ -1341,6 +1360,9 @@ FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n 
 # A step that fails after the registry and the project file are written: the forge.json write (what the account-server rollback is shown against).
 FAIL_AFTER_REGISTRY = (NEW, '                    lib.write_text(lib.SETTINGS, lib.dumps(doc) + "\\n")  # atomic',
                        '                    raise OSError("injected after the registry")  # atomic')
+# The rollback cannot write the registry back (a double fault): the recovery copy is then the only way back.
+FAIL_RESTORE_REGISTRY = (NEW, "                try:\n                    lib.write_text(path, rest[0])\n",
+                         "                try:\n                    if path.endswith('mcp-registry.json'):\n                        raise OSError('disk full')\n                    lib.write_text(path, rest[0])\n")
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
 REFRESH = 'project["plugins_keep"] = ask.with_memory_plugin(framework_plugins(stack["plugins"], doc), ans)\n'
 # The user enables a plugin while the questions are asked: the first thing ask.gather does, in the world's copy of the engine.
@@ -1501,6 +1523,7 @@ def main():
              ("an unused argument", a_unused_argument, {}),
              ("--account-server", a_account_server, {}), ("--account-server, an entry that exists", a_account_server_existing, {}),
              ("--account-server rolled back", a_account_server_rollback, {"mutate": [FAIL_AFTER_REGISTRY]}),
+             ("the registry's recovery copy kept", a_registry_copy_kept, {"mutate": [FAIL_AFTER_REGISTRY, FAIL_RESTORE_REGISTRY]}),
              ("--memory lite", a_memory_lite, {}), ("--memory lite, listed in common_plugins", a_memory_lite_common, {}),
              ("--worktree-guard", a_worktree_guard, {}), ("--no-baseline", a_no_baseline, {}), ("--no-git", a_no_git, {}),
              ("the flags of making", a_parity_flags_by_mode, {})]
