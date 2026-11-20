@@ -642,6 +642,8 @@ def create(a):
         return refuse(2, "nothing written, %s" % "; ".join(bad))
     if rows:
         project["profiles"] = {"default": ask.DEFAULT_LABEL, "offered": rows}
+    if a.framework and not (ans.stack or {}).get("plugins"):  # no plugins chosen: read the user's again, they may have changed while asking
+        project["plugins_keep"] = framework_plugins(stack["plugins"], doc)
     if a.framework:  # the checks the project file holds, after --check chose among the stack's
         try:
             handoff = handoff_text(name, target, a.stack, project["checks"])

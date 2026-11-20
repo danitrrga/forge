@@ -668,12 +668,22 @@ def a_framework_fields(w):
     if len(got) != 1 or not got[0].startswith("SKIP") or "app_run" not in got[0]:
         bad.append("framework fields, a project with ui true and no app_run: want NOT RUN, NOT ARMED naming app_run, got %s" % got)
     pf = read_json(path % "screen")
-    pf["app_run"] = {"up": "true", "run": "", "down": "true", "url": "http://127.0.0.1:1"}
+    pf["app_run"] = {"up": "true", "run": "", "down": "true", "url": "http://192.0.2.1:1"}
     write_json(path % "screen", pf)
     got = row("screen")
     if len(got) != 1 or not got[0].startswith("PASS"):
         bad.append("framework fields, all three set: want PASS, got %s" % got)
     return bad
+
+
+def a_late_plugin(w):
+    """A plugin the user enables while the questions are open (the world's ask.gather does it) is in plugins_keep, and so on in the
+    project: the list is read after the questions, not before."""
+    code, out = w.forge("new", "demo", "--stack", "node", "--framework", "--apply")
+    pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
+    if code != 0 or "late@mk" not in (pf.get("plugins_keep") or []):
+        return ["a plugin enabled while the questions run is not in plugins_keep (exit %d): %s" % (code, pf.get("plugins_keep"))]
+    return []
 
 
 def a_doctor_fail(w):
@@ -1097,6 +1107,13 @@ FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n 
                '    if what == "mkdir":\n        raise RuntimeError("record failed (test fault)")\n'
                '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n        try:\n            with open(log, "a"')
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
+REFRESH = 'project["plugins_keep"] = framework_plugins(stack["plugins"], doc)\n'
+# The user enables a plugin while the questions are asked: the first thing ask.gather does, in the world's copy of the engine.
+LATE = (os.path.join("forge", "ask.py"), "    problems = []\n    if ctx.error:\n        return Answers(), [ctx.error]\n",
+        "    import json as _j, os as _o\n    _p = _o.path.join(_o.environ['HOME'], '.claude', 'settings.json')\n"
+        "    _d = _j.load(open(_p))\n    _d['enabledPlugins']['late@mk'] = True\n    _j.dump(_d, open(_p, 'w'))\n"
+        "    problems = []\n    if ctx.error:\n        return Answers(), [ctx.error]\n")
+
 # A doctor row that always FAILs, in `forge doctor NAME`'s list: what a real failure (project roots, generated...) looks like to forge new.
 INJECT = (os.path.join("forge", "cli.py"), '        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),\n',
           '        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),\n'
@@ -1154,12 +1171,14 @@ CONTROLS = [
     ("a handover from the stack's checks", a_framework_checks, [(NEW, "handoff = handoff_text(name, target, a.stack, project[\"checks\"])",
                                                                     "handoff = handoff_text(name, target, a.stack, stack[\"checks\"])")],
      "handover names a check the project file does not hold"),
-    ("plugins_keep of the stack alone", a_framework_made, [(NEW, "plugins_keep=framework_plugins(stack[\"plugins\"], doc)", "plugins_keep=list(stack[\"plugins\"])")],
+    ("plugins_keep of the stack alone", a_framework_made, [(NEW, "plugins_keep=framework_plugins(stack[\"plugins\"], doc)", "plugins_keep=list(stack[\"plugins\"])"), (NEW, REFRESH, "pass\n")],
      "project file: plugins_keep is"),
     ("a doctor and closing line for every project", a_framework_made, [(NEW, "    if not a.framework:\n        return 0\n", "")],
      "without --framework: forge doctor's report or the closing line was printed"),
     ("app_run asked of a project without a screen", a_framework_fields, [(os.path.join("forge", "framework.py"), 'if prof.get("ui") is True', "if True")],
      "a project without a screen and two fields set: want PASS"),
+    ("the plugin list read before the questions", a_late_plugin, [LATE, (NEW, REFRESH, "pass\n")],
+     "a plugin enabled while the questions run is not in plugins_keep"),
     ("a relative projects_dir", a_bad_projects_dir, [(NEW, "not os.path.isabs(os.path.expanduser(configured))", "False")],
      "a relative projects_dir was used"),
     ("no handler for TERM", a_signals, [(NEW, "with stopped_means_rollback(), creation_lock():", "with creation_lock():")], "left behind after SIGTERM"),
@@ -1238,7 +1257,8 @@ def main():
         finally:
             w.close()
     for label, fn, kw in (("--framework made", a_framework_made, {}), ("handover checks", a_framework_checks, {}),
-                          ("framework fields row", a_framework_fields, {}), ("doctor FAIL row", a_doctor_fail, {"mutate": [INJECT]})):
+                          ("framework fields row", a_framework_fields, {}), ("doctor FAIL row", a_doctor_fail, {"mutate": [INJECT]}),
+                          ("a plugin enabled while asking", a_late_plugin, {"mutate": [LATE]})):
         w = World("fw", framework=True, **kw)
         try:
             for why in fn(w):
@@ -1263,7 +1283,7 @@ def main():
         if fn is a_forge_json_fails and os.geteuid() == 0:
             notrun.append("control '%s': a read-only folder does not stop root" % label)
             continue
-        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail))
+        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail, a_late_plugin))
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
         shown = [g for g in got if needle in g] or got
