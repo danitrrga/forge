@@ -18,11 +18,20 @@ before core/verify.py had it (first FAILs shown):
 Narrowed after the first version (a dated blog post, a prompt template, TODO.md, release notes and a lone api-v2.md are living
 files). The narrowed cases were seen red on the first version's code:
   FAIL: living files that only look like leftovers (a dated blog post, a prompt template, TODO.md, a lone api-v2.md, release notes): exit 0: got (1, ['TODO.md', 'api-v2.md', 'blog/<date>-post.md', 'prompts/summary-prompt.md', 'release-notes-3.md']), want (0, [])
+After the adversarial review, seen red on the previous head (F1, F2; the F3 cases pass on it, they pin the behaviour before the
+two copies of the default branch's names became one, and their mutants below show them able to fail):
+  FAIL: `briefing` and `debrief` are not `brief`: exit 0: got (1, True), want (0, False)
+  FAIL: marker of 'morning-briefing-prompt.md': got 'one-use', want None
+  FAIL: a rename to a one-use name counts as added, a rename to a plain name does not: got (0, []), want (1, ['plan-handoff.md'])
 Its mutants, each seen red on a copy of the plugin with one line changed:
   - the `.fwx/` exemption removed:
       FAIL: a range adding src/<date>-migration.sql, README.md and .fwx/milestones/x/state.md (and a marked name under .fwx/): exit 0: got 1, want 0
   - modified files counted too (no `--diff-filter=A`):
       FAIL: a marked file that already existed and is only changed is not added: got 1, want 0
+  - renames not counted (`--diff-filter=A`): the rename case above, got (0, [])
+  - the `origin/` ref not looked up: FAIL: the remote's default branch (origin/HEAD) is measured from ...: got (0, True, False), want (1, False, True)
+  - the farthest base chosen, not the nearest: FAIL: a stale local master and a newer origin/master: ...: got 1, want 0
+  - `project.default_branch` ignored: FAIL: `project.default_branch` names the default branch ...: got (0, True, False), want (1, False, True)
   - a `-v2` or `-old` name is old with no living file beside it:
       FAIL: living files that only look like leftovers (...): exit 0: got (1, ['api-v2.md']), want (0, [])
       FAIL: marker of 'api-v2.md': got 'old', want None
@@ -387,6 +396,56 @@ r = run(repo)
 s.eq("an old version beside the living file fails whatever the extension",
      (r.returncode, sorted(l.split(": ")[1] for l in r.stderr.splitlines() if "never committed" in l)), (1, ["docs/plan-v2.md", "walk-old.py"]))
 
+# F1: a one-use marker is a whole word of the name; F2: a rename to such a name counts; F3: where the default branch is found
+repo, phase = on_branch({"docs/morning-briefing-prompt.md": "b\n", "debrief.md": "d\n"})
+r = run(repo)
+s.eq("`briefing` and `debrief` are not `brief`: exit 0", (r.returncode, "never committed" in r.stderr), (0, False))
+repo, phase = on_branch({"PROJECT_BRIEF.md": "b\n", "docs/api.handoff.txt": "h\n"})
+r = run(repo)
+s.eq("`PROJECT_BRIEF.md` and `api.handoff.txt` are one-use: exit 1, two lines", (r.returncode, r.stderr.count("is never committed")), (1, 2))
+
+repo, phase = make(["true"], {"plan.md": "the living plan, long enough to be told from another file\n" * 5, "old-name.md": "an old name\n" * 5})
+helpers.git(repo, "checkout", "-q", "-b", "work")
+helpers.git(repo, "mv", "plan.md", "plan-handoff.md")
+helpers.git(repo, "mv", "old-name.md", "docs-name.md")
+helpers.git(repo, "commit", "-q", "-m", "renames")
+r = run(repo)
+s.eq("a rename to a one-use name counts as added, a rename to a plain name does not",
+     (r.returncode, [l.split(": ")[1] for l in r.stderr.splitlines() if "never committed" in l]), (1, ["plan-handoff.md"]))
+
+repo, phase = make(["true"])
+helpers.write(repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"checks": ["true"], "default_branch": "develop"}}))
+helpers.git(repo, "commit", "-q", "-am", "config")
+helpers.git(repo, "branch", "-q", "-m", "master", "develop")
+helpers.git(repo, "checkout", "-q", "-b", "work")
+helpers.write(repo, "checkpoint.md", "c\n")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "work")
+r = run(repo)
+s.eq("`project.default_branch` names the default branch: develop is measured from, not NOT RUN",
+     (r.returncode, "NOT RUN" in r.stderr, "checkpoint.md: a one-use file" in r.stderr), (1, False, True))
+
+repo, phase = on_branch({"checkpoint.md": "c\n"})
+helpers.git(repo, "update-ref", "refs/remotes/origin/trunk", "master")
+helpers.git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+helpers.git(repo, "branch", "-q", "-D", "master")
+r = run(repo)
+s.eq("the remote's default branch (origin/HEAD) is measured from when no local branch of it exists",
+     (r.returncode, "NOT RUN" in r.stderr, "checkpoint.md: a one-use file" in r.stderr), (1, False, True))
+
+repo, phase = make(["true"])
+helpers.git(repo, "checkout", "-q", "-b", "up")
+helpers.write(repo, "handoff.md", "added upstream, merged before the branch left\n")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "upstream")
+helpers.git(repo, "update-ref", "refs/remotes/origin/master", "up")
+helpers.git(repo, "checkout", "-q", "-b", "work")
+helpers.write(repo, "src/a.py", "a\n")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "work")
+s.eq("a stale local master and a newer origin/master: the nearer base wins, upstream's file is not the branch's",
+     run(repo).returncode, 0)
+
 repo, phase = make(["true"])
 r = run(repo)
 s.eq("on the default branch itself the range is empty: exit 0, silent", (r.returncode, "never committed" in r.stderr), (0, False))
@@ -420,7 +479,9 @@ for name, want in (("brief.md", "one-use"), ("Checkpoint-3.md", "one-use"), ("ha
                    ("scratch.txt", "one-use"), ("x/Brief.TXT", "one-use"),
                    ("my-prompt.txt", None), ("TODO.md", None), ("notes-api.md", None), ("release-notes-3.md", None),
                    ("day-" + DATE + ".md", None), ("blog/" + DATE + "-post.md", None), ("prompts/summary-prompt.md", None),
-                   ("brief.py", None), (DATE + ".sql", None), ("notes.md", None),
+                   ("brief.py", None), (DATE + ".sql", None), ("morning-briefing-prompt.md", None), ("debrief.md", None),
+                   ("briefs.md", None), ("PROJECT_BRIEF.md", "one-use"), ("api.handoff.txt", "one-use"), ("my brief.md", "one-use"),
+                   ("notes_checkpoint-2.md", "one-use"), ("notes.md", None),
                    ("a.bak", "old"), ("a.orig", "old"), ("notes.md.bak", "old"), ("a.bak.md", "old"),
                    ("plan-v2.md", "old"), ("src/walk-old.py", "old"), ("a-copy.md", "old"), ("a copy.md", "old"), ("a copy", "old"),
                    ("a-backup.json", "old"), ("a-v12.md", "old"), ("a-v2.test.js", "old"), ("docs/a-old.md", "old"),

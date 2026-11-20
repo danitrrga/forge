@@ -16,7 +16,7 @@ killed by the limit or never started. It goes to `dir` when given, else to the p
 finds it, always in the main checkout whatever worktree the run was launched from; with neither it writes nothing and
 says so.
 
-One check is built in, after the project's own: `added_files`. A file the commits since the default branch ADD, named like a
+One check is built in, after the project's own: `added_files`. A file the commits since the default branch ADD (or rename to), named like a
 one-use file (brief, checkpoint, handoff, tomorrow or scratch, `.md` and `.txt` only) or like an old version (`.bak` or `.orig`;
 `-old`, `-copy`, ` copy`, `-backup` or `-v2` only with the living file beside it, any extension), is a red command of the evidence, `fwx added-files`, and each file gets one line
 that says what to do instead. Green it is silent and adds no command, so a green run's evidence is what it was. `.fwx/` is
@@ -47,7 +47,7 @@ COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
 ADDED_FILES_CHECK = "fwx added-files"
 _ONE_USE_EXT = (".md", ".txt")
-_ONE_USE = re.compile(r"brief|checkpoint|handoff|tomorrow|scratch", re.I)
+_ONE_USE = {"brief", "checkpoint", "handoff", "tomorrow", "scratch"}  # whole words of a name, split on - _ . and spaces
 _BACKUP = re.compile(r"\.(?:bak|orig)(?:\.|\Z)", re.I)
 _VERSION = re.compile(r"(?:-old|-copy| copy|-backup|-v\d+)(?=\.|\Z)", re.I)
 ADDED_FILE_TIP = ("is never committed: put it in your scratch folder (fwx scratch new), which git ignores; for an old version, "
@@ -142,7 +142,7 @@ def marker(name, exists=lambda path: False):
     `.bak` or `.orig` is old; `-old`, `-copy`, ` copy`, `-backup` and `-v2` are old only when `exists(<the path without that
     marker>)`: `plan-v2.md` beside `plan.md` is an old version, a lone `api-v2.md` is a living file."""
     base = os.path.basename(name)
-    if base.lower().endswith(_ONE_USE_EXT) and _ONE_USE.search(base):
+    if base.lower().endswith(_ONE_USE_EXT) and _ONE_USE.intersection(re.split(r"[-_. ]+", base.lower())):
         return "one-use"
     if _BACKUP.search(base):
         return "old"
@@ -152,16 +152,20 @@ def marker(name, exists=lambda path: False):
     return None
 
 
-def _default_refs(root, cfg):
-    """The refs of the default branch that exist: its local branch and its `origin/` copy, for the names `cfg` or the remote
-    gives, else main and master."""
+def default_names(root, cfg):
+    """The names of the default branch: the configuration's, the remote's, else main and master."""
     names = set()
     if cfg["project"].get("default_branch"):
         names.add(cfg["project"]["default_branch"])
     r = _git(root, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
     if r.returncode == 0 and r.stdout.strip():
         names.add(r.stdout.strip().split("/", 1)[-1])
-    refs = ["refs/%s/%s" % (kind, n) for n in sorted(names or {"main", "master"}) for kind in ("heads", "remotes/origin")]
+    return names or {"main", "master"}
+
+
+def _default_refs(root, cfg):
+    """The refs of the default branch that exist: its local branch and its `origin/` copy."""
+    refs = ["refs/%s/%s" % (kind, n) for n in sorted(default_names(root, cfg)) for kind in ("heads", "remotes/origin")]
     return [ref for ref in refs if _git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}").returncode == 0]
 
 
@@ -179,12 +183,12 @@ def _range_base(root, cfg):
 
 
 def added_files(root, cfg):
-    """`(lines, known)`: one line per file added since the merge base with the default branch whose name marks it as one-use or
+    """`(lines, known)`: one line per file added or renamed to since the merge base with the default branch whose name marks it as one-use or
     an old version, and False for `known` when there is no base to measure from."""
     base = _range_base(root, cfg)
     if base is None:
         return [], False
-    r = _git(root, "diff", "-z", "--name-only", "--diff-filter=A", "-M", base, "HEAD")
+    r = _git(root, "diff", "-z", "--name-only", "--diff-filter=AR", "-M", base, "HEAD")
     if r.returncode:
         raise state.StateError("git diff failed in %s: %s" % (root, r.stderr.strip()))
     lines = []
