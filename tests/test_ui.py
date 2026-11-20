@@ -63,6 +63,7 @@ import subprocess
 import sys
 import tempfile
 import types
+import unicodedata
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -176,7 +177,12 @@ def source(name):
 
 
 def string_constants(text):
-    return [n.value for n in ast.walk(ast.parse(text)) if isinstance(n, ast.Constant) and isinstance(n.value, str)]
+    """Every string literal of `text` except docstrings: a glyph token named only in documentation is not drawn."""
+    tree = ast.parse(text)
+    docs = {id(n.body[0].value) for n in ast.walk(tree)
+            if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.body
+            and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant) and isinstance(n.body[0].value.value, str)}
+    return [n.value for n in ast.walk(tree) if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in docs]
 
 
 def unused_glyphs(texts):
@@ -187,6 +193,8 @@ def unused_glyphs(texts):
 want("2 glyph tokens the components and screens do not name", unused_glyphs([source("components.py"), source("screens.py"), source("context.py")]), [])
 want("2 the source scan looked at glyph tokens", len(tokens.glyphs("nerd")) > 20, True)
 caught("components.py without icon_done", unused_glyphs([source("components.py").replace('"icon_done"', '"x"'), source("screens.py"), source("context.py")]))
+caught("components.py that names icon_done only in a docstring",
+       unused_glyphs([source("components.py").replace('"icon_done"', '"x"') + '\n\ndef _doc():\n    "the icon_done glyph"\n', source("screens.py"), source("context.py")]))
 
 
 # marks.py draws the placeholder anvil with half blocks: those three strings are the drawing, not a glyph token (a final logo replaces them)
@@ -216,16 +224,18 @@ caught("marks.py without its explicit allowance", literal_problems("marks.py", s
 
 
 # ---- 3. width ----------------------------------------------------------------------------------------------------------------
-def width_problems():
+def width_problems(cases=None):
     out = []
     for gs in SETS:
         for w in WIDTHS:
             ctx = context.Context("dark", gs, "none", w)
-            for name, state, lines in all_cases(ctx):
+            for name, state, lines in (cases or all_cases)(ctx):
+                if name == "band" and len(lines) != 1:
+                    out.append("%s/%d band %s: %d lines, want one" % (gs, w, state, len(lines)))
                 for i, line in enumerate(lines):
                     if line.width > w:
                         out.append("%s/%d %s %s: %d columns, width is %d" % (gs, w, name, state, line.width, w))
-                    if name == "band" and (len(lines) != 1 or line.width != w):
+                    if name == "band" and line.width != w:
                         out.append("%s/%d band %s: %d lines of width %d, want one of %d" % (gs, w, state, len(lines), line.width, w))
                 text = render_ansi.to_text(lines, ctx)
                 for t in text.split("\n"):
@@ -244,6 +254,7 @@ want("3 widths 60, 80 and 120 in every glyph set", width_problems(), [])
 want("3 the loop looked at components and screens", len(all_cases(context.Context("dark", "unicode", "none", 80))) > 40, True)
 with patched(components, "truncate", lambda ctx, text, n: text):
     caught("a truncate that cuts nothing", width_problems())
+caught("a band sample that returns no rows", width_problems(lambda ctx: [("band", "empty", [])] + all_cases(ctx)))
 long_band = components.band(context.Context("dark", "unicode", "none", 60), *samples.LONG_BAND)
 want("3 a too long band is one line and ends with the ellipsis", (len(long_band), "\u2026" in long_band[0].text), (1, True))
 long_ascii = components.band(context.Context("dark", "ascii", "none", 60), *samples.LONG_BAND)
@@ -425,10 +436,13 @@ STATUS_GOLDEN = {
 }
 
 
-def status_problems():
+def status_problems(cases=None):
     out = []
     ctx = context.Context("dark", "unicode", "none", 80)
-    for w, lines in samples.status_line_cases(ctx):
+    cases = samples.status_line_cases(ctx) if cases is None else cases
+    if sorted(w for w, _ in cases) != sorted(STATUS_GOLDEN):
+        out.append("status line widths sampled %s, golden has %s" % (sorted(w for w, _ in cases), sorted(STATUS_GOLDEN)))
+    for w, lines in cases:
         got = render_ansi.to_text(lines, ctx)
         # the golden keeps the padding the renderer strips only at the end of a line, so compare without it
         if got != STATUS_GOLDEN[w]:
@@ -448,6 +462,8 @@ want("5 status line drop order at 30, 36, 40, 60, 64, 80, 120 columns", status_p
 want("5 status line: one line", all(len(l) == 1 for _, l in samples.status_line_cases(context.Context())), True)
 with patched(components, "MARGIN", 0):
     caught("status line with MARGIN 0", status_problems())
+caught("a status-line sample that lost the 64-column width",
+       status_problems([c for c in samples.status_line_cases(context.Context("dark", "unicode", "none", 80)) if c[0] != 64]))
 
 
 # ---- 6. stack spacing ----------------------------------------------------------------------------------------------------------
@@ -616,7 +632,7 @@ want("8 the coverage check looked at glyphs", len(every) > 25, True)
 
 # ---- 10b. the gallery: python3 -m forge.ui.gallery --------------------------------------------------------------------------------
 BLOCKS = ["meter", "icons", "mark", "group", "keys", "table", "header", "band", "stack", "status_line", "agent_block", "home",
-          "project_list", "selector", "selector_frozen", "selector_stack"]
+          "project_list", "selector", "selector_frozen", "selector_stack", "agent_events"]
 
 
 def gallery_problems(gallery, expected_cli=None):
@@ -651,7 +667,10 @@ except ImportError as e:  # the check below then fails loudly rather than the wh
     failures.append("10b forge.ui.gallery cannot be imported: %s" % e)
 if gallery is not None:
     want("10b the gallery: deterministic, every block non-empty, every role and glyph named", gallery_problems(gallery), [])
-    nondeterministic = types.SimpleNamespace(plain=iter(["=== a ===\nx\n", "=== a ===\ny\n"] * 3).__next__, page=gallery.page)
+    good = gallery.plain()
+    changed = good.replace("=== icons ===\n", "=== icons ===\nchanged\n", 1)  # still every block, non-empty; only one body differs
+    want("10b the nondeterminism control differs from a good run only in one body", (changed != good, changed.count("=== "), good.count("=== ")), (True, good.count("=== "), good.count("=== ")))
+    nondeterministic = types.SimpleNamespace(plain=iter([good, changed] * 3).__next__, page=gallery.page)
     caught("a gallery whose plain output changes between runs", gallery_problems(nondeterministic))
     def empty_mark():
         head, rest = gallery.plain().split("=== mark ===\n", 1)
@@ -699,6 +718,18 @@ want("11 status line: 1 skill is not 1 skills", "1 skills" in components.status_
 want("11 status line: 0 skills and 2 skills", ("0 skills" in components.status_line(ctx, "@x", 0, 1)[0].text, "2 skills" in components.status_line(ctx, "@x", 2, 1)[0].text), (True, True))
 one_skill = screens.home(ctx, dict(samples.HOME, skills=1, projects=1))
 want("11 home: 1 project and 1 skill installed", [l.text for l in one_skill if "installed" in l.text], ["\u250c  1 project  \u00b7  1 skill installed"])
+def _line_of(cases, name, state):
+    return next(lines for n, s, lines in cases if (n, s) == (name, state))[0].spans
+
+
+# a meter never shows a full bar below the total, whatever the cell count
+for cells, done, total, want_full in ((1, 1, 2, 0), (0, 1, 2, 0), (2, 1, 2, 1), (4, 3, 4, 3), (4, 4, 4, 4), (1, 2, 2, 1)):
+    got = "".join(s.text for s in components.meter(ctx, done, total, cells=cells, mode="flat"))
+    want("11 meter %d of %d in %d cells has %d full" % (done, total, cells, want_full), got.count(ctx.glyph("meter_full")), want_full)
+want("11 the flat meter sample is three of four cells", "".join(s.text for s in _line_of(samples.component_cases(ctx), "meter", "flat, 3 of 4 cells")).count(ctx.glyph("meter_full")), 3)
+# html keeps the first blank row of a screen: the parser drops one newline right after <pre>
+html_out = render_html.to_html([Line([]), Line([Span("ink", "x")])], "dark")
+want("11 html: a disposable newline after <pre> keeps the first blank row", ">\n\n<span" in html_out, True)
 # 4 an agent type or a state kind nobody listed
 def attempt(label, fn, expected):
     """`want` for a call that may raise: the raise is the failure, not the end of the file."""
@@ -719,10 +750,19 @@ for depth in ("truecolor", "256"):
     want("11 %s: ink and body without a background stay the terminal's own" % depth, "38;" in bare, False)
 want("11 truecolor: the ink on a band is the theme's ink", "38;2;242;237;239" in render_ansi.to_text([Line([Span("ink", "a")], bg="band")], context.Context("dark", "unicode", "truecolor", 80)), True)
 want("11 16 colours: ink on a band is not painted, the cursor band is reverse", render_ansi.to_text([Line([Span("ink", "a")], bg="band")], context.Context("dark", "unicode", "16", 80)), "\033[7ma\033[0m\n")
-# 6 control characters cannot split a band
-for evil in ("a\nb", "a\rb", "a\x1b[2Jb", "a\tb", "a\u2028b"):
+# 6 control characters cannot split a band, and none reaches any span
+def control_problems(lines):
+    return ["%r holds a control or separator character" % l.text for l in lines if any(unicodedata.category(ch) in ("Cc", "Zl", "Zp") for ch in l.text)]
+
+
+for evil in ("a\nb", "a\rb", "a\x1b[2Jb", "a\tb", "a\u2028b", "a\u2029b", "a\x7fb", "a\x85b"):
     got = components.band(ctx, "broken", evil, evil)
-    want("11 a band with %r in its text is one line of one row" % evil, (len(got), "\n" in got[0].text, "\r" in got[0].text, "\x1b" in got[0].text, got[0].width), (1, False, False, False, 80))
+    want("11 a band with %r in its text is one line of full width" % evil, (len(got), got[0].width), (1, 80))
+    want("11 a band with %r in its text holds no control or separator character" % evil, control_problems(got), [])
+    want("11 a span with %r in its text holds no control or separator character" % evil, control_problems([Line([Span("ink", evil)])]), [])
+    want("11 colour off: %r leaves no escape byte in the plain text" % evil, "\033" in render_ansi.to_text([Line([Span("ink", evil)])], context.Context("dark", "unicode", "none", 80)), False)
+caught("a line that keeps a tab", control_problems([types.SimpleNamespace(text="a\tb")]))
+caught("a line that keeps U+2028", control_problems([types.SimpleNamespace(text="a\u2028b")]))
 want("11 a band keeps the nerd icon (private use) in its text", "\uf00d" in components.band(context.Context("dark", "nerd", "none", 80), "broken", "x", "")[0].text, True)
 # 8 validation
 for label, call, exc in (("status_line total without done", lambda: components.status_line(ctx, "@x", 1, 1, "p", None, 5), ValueError),

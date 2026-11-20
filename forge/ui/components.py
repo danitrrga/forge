@@ -5,10 +5,9 @@ The one rule: a component never carries a colour or a glyph. It names a role (`"
 Every public component returns `list[Line]` except `meter`, which returns the `list[Span]` that goes inside a line.
 """
 import textwrap
-import unicodedata
 
 from forge.ui import tokens
-from forge.ui.model import Line, Span
+from forge.ui.model import Line, Span, printable
 
 FAMILY = {"executor": "build", "planner": "plan", "pre-mortem": "plan", "post-mortem": "plan", "reviewer": "check",
           "security-reviewer": "check", "review-verifier": "check", "ui-walker": "check", "ui-verifier": "check",
@@ -73,11 +72,6 @@ def fit_first(candidates, width):
     return candidates[-1]
 
 
-def _printable(text):
-    """`text` with every control character (a newline, a tab, an escape) and line separator replaced by a space: a band is one line."""
-    return "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in text)
-
-
 # ---- meter -----------------------------------------------------------------------------------------------------------------
 def meter(ctx, done, total, cells=None, mode="ramp"):
     """`cells` glyphs, the first `filled` of them full. ramp: the filled cells brighten from ramp0 to ramp3; flat: all accent."""
@@ -87,8 +81,8 @@ def meter(ctx, done, total, cells=None, mode="ramp"):
         filled = 0
     elif done >= total:
         filled = cells
-    else:  # a full bar means complete: below the total it keeps one empty cell (but at least one filled, when there are two)
-        filled = max(1, min(cells - 1, round(cells * done / total)))
+    else:  # a full bar means complete: below the total it keeps one empty cell (and one filled, when there are two or more)
+        filled = min(max(0, cells - 1), max(1, round(cells * done / total)))
     full, empty = ctx.glyph("meter_full"), ctx.glyph("meter_empty")
     if mode == "ramp":
         spans = [Span("ramp%d" % min(3, i * 4 // filled), full) for i in range(filled)]
@@ -187,7 +181,7 @@ def group(ctx, name, members, cursor=None, meter_done=None, icon_on=None, faint=
 def band(ctx, kind, message, action="", width=None):
     """One line on a coloured surface: icon, message, and the action at the right. Too long and the message is cut, never wrapped."""
     w = _w(ctx, width)
-    message, action = _printable(message), _printable(action)
+    message, action = printable(message), printable(action)
     surface, icon, role = BAND[kind]
     prefix = 1 + 1 + 2
     room = w - prefix - MARGIN

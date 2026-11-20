@@ -85,7 +85,7 @@ def component_cases(ctx):
     out = []
     for done, total, label in ((0, 10, "empty"), (1, 20, "one cell at least"), (4, 10, "four of ten"), (10, 10, "full")):
         out.append(("meter", "ramp, " + label, _line(c.meter(ctx, done, total))))
-    out.append(("meter", "flat, 3 of 4 cells", _line(c.meter(ctx, 3, 3, cells=4, mode="flat"))))
+    out.append(("meter", "flat, 3 of 4 cells", _line(c.meter(ctx, 3, 4, cells=4, mode="flat"))))
     out.append(("step", "active", c.step(ctx, "skills", "3 of 3")))
     out.append(("step", "disabled", c.step(ctx, "skills", state="disabled")))
     body = [Span("body", "text on the rail")]

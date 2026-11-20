@@ -41,4 +41,5 @@ def to_html(lines, ctx_theme):
         if line.bg:
             body = '<span style="background:var(%s)">%s</span>' % (var(line.bg), body)
         rows.append(body)
-    return '<pre class="forge-term" data-forge-theme="%s">%s</pre>' % (html.escape(ctx_theme), "\n".join(rows))
+    # the newline right after <pre> is dropped by an HTML parser, so a screen that starts with a blank row keeps it
+    return '<pre class="forge-term" data-forge-theme="%s">\n%s</pre>' % (html.escape(ctx_theme), "\n".join(rows))

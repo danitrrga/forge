@@ -57,6 +57,7 @@ def plain_blocks():
     blocks.append(("selector", _text(screens_by[("selector", "refused")])))
     blocks.append(("selector_frozen", _text(screens_by[("selector", "frozen")])))
     blocks.append(("selector_stack", _text(screens_by[("selector", "several")])))
+    blocks.append(("agent_events", _text(screens_by[("agent_events", "")])))
     return blocks
 
 
