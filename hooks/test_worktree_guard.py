@@ -721,6 +721,12 @@ class Counting(list):
             yield x
 
 
+# The fixed scans take 0.1 to 0.3 s on an idle core; the quadratic ones took 11 to 17 s. The limit sits between, and wide on the
+# slow side: `forge test --jobs 4` runs this file at nice 19 beside three more CPU-bound files, and under that load a 1 s limit
+# failed one case in two (DTC-67: 8 of 10 runs on 4 cores with six busy loops, "rc=0 after 1.02 s .. 1.47 s, wanted rc 0 under 1 s").
+WALL_LIMIT_S = 5.0
+
+
 def scaling_checks():
     """Failure strings for the three scans: steps counted, the new scan equal to the old on a
     seeded corpus, then one generous wall-time case each through the hook itself."""
@@ -770,10 +776,10 @@ def scaling_checks():
             start = time.perf_counter()
             rc, err = run("Bash", {"command": cmd}, WT)
             took = time.perf_counter() - start
-            if rc == 0 and took < 1.0:
+            if rc == 0 and took < WALL_LIMIT_S:
                 break
         else:
-            fails.append("%s: rc=%s after %.2f s, wanted rc 0 under 1 s %s" % (name, rc, took, err.strip()[:100]))
+            fails.append("%s: rc=%s after %.2f s, wanted rc 0 under %g s %s" % (name, rc, took, WALL_LIMIT_S, err.strip()[:100]))
     return fails
 
 
