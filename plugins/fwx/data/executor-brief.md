@@ -36,7 +36,7 @@ $minutes minutes: a guide, since nothing cuts an agent off; on expiry, return pa
 - no writing in `.fwx/`
 
 ## REPORT
-Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, issue: <Linear key>|null}`: a defect you saw outside your task and did not fix, `issue` the key you filed it under, `null` only where the project has no Linear project. A report whose items lack that shape is rejected.
+Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`, `status` being `done`, `wrong-base`, `question` or `failed`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, issue: <Linear key>|null}`: a defect you saw outside your task and did not fix, `issue` the key you filed it under, `null` only where the project has no Linear project, or when `fwx linear new` failed: then add `issue_error`, the first line of its error, and the run goes on. A report whose items lack that shape is rejected.
 Your whole reply is one line: `<status> <report path> commits=<n>`, the report path in full.
 
 ## STANDING

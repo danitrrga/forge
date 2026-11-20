@@ -87,7 +87,7 @@ const text = (v) => typeof v === 'string' && v.trim() !== ''
 // in `issue`; with Linear on an item with no key is malformed) or `reviewer` (it files nothing: `issue` is null, the session files what is large).
 function itemProblem(o, who) {
   if (!o || typeof o !== 'object' || Array.isArray(o)) return 'it is not an object'
-  for (const k of Object.keys(o)) if (!OUTSIDE_KEYS.includes(k)) return 'unknown field `' + k + '`'
+  for (const k of Object.keys(o)) if (!OUTSIDE_KEYS.includes(k) && !(k === 'issue_error' && who === 'executor')) return 'unknown field `' + k + '`'
   for (const k of OUTSIDE_KEYS) if (!(k in o)) return 'missing field `' + k + '`'
   if (!(text(o.where) && WHERE.test(o.where))) return '`where` is path:line, got ' + JSON.stringify(o.where)
   if (!text(o.what)) return '`what` is a sentence, got ' + JSON.stringify(o.what)
@@ -95,8 +95,11 @@ function itemProblem(o, who) {
   if (o.size !== 'small' && o.size !== 'large') return '`size` is small or large, got ' + JSON.stringify(o.size)
   if (who === 'reviewer') return o.issue === null ? null : '`issue` is null in a review (a reviewer files nothing), got ' + JSON.stringify(o.issue)
   if (o.issue !== null && !(typeof o.issue === 'string' && ISSUE.test(o.issue))) return '`issue` is the Linear key you filed it under (like DTC-12) or null, got ' + JSON.stringify(o.issue)
-  if (o.issue === null && A.linear === true) {
-    return 'Linear is on for this project, so file the item with `fwx linear new --template general` (JSON on stdin) and put its key in `issue`'
+  // `issue_error` is the first line of the error when filing failed (Linear unreachable: the owner works offline at times). A run never fails
+  // for that: the item goes the Linear-off way, into the stage row and the part report. It needs `issue: null` and a sentence.
+  if ('issue_error' in o && (o.issue !== null || !text(o.issue_error))) return '`issue_error` is the first line of the error, with `issue: null`, got ' + JSON.stringify(o.issue_error)
+  if (o.issue === null && A.linear === true && !('issue_error' in o)) {
+    return 'Linear is on for this project, so file the item with `fwx linear new --template general` (JSON on stdin) and put its key in `issue`; if that fails, `issue: null` and `issue_error` with the first line of the error'
   }
   return null
 }
