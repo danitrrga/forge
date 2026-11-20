@@ -27,7 +27,7 @@ def tokens_css(theme, selector=":root"):
 
 
 def _span(span):
-    style = "color:var(%s)" % var(span.role)
+    style = "color:%s" % span.rgb if span.rgb else "color:var(%s)" % var(span.role)
     if span.bold:
         style += ";font-weight:700"
     return '<span style="%s">%s</span>' % (style, html.escape(span.text))

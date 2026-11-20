@@ -2,6 +2,7 @@
 
 Roles are token names of tokens.json. Every glyph forge draws is one terminal cell, so a line's width is its text length.
 """
+import re
 import unicodedata
 from dataclasses import dataclass, field
 
@@ -15,14 +16,22 @@ def printable(text):
     return "".join(" " if unicodedata.category(ch) in ("Cc", "Zl", "Zp") else ch for ch in text)
 
 
+HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
+
 @dataclass
 class Span:
+    """A run of text in one role. `rgb` is an exact `#rrggbb` that a truecolor or 256-colour renderer draws, instead of the role: it is
+    for the logo (marks.py) and nothing else; a component names a role."""
     role: str
     text: str
     bold: bool = False
+    rgb: str = None
 
     def __post_init__(self):
         self.text = printable(self.text)
+        if self.rgb is not None and not HEX.fullmatch(self.rgb):
+            raise ValueError("rgb must be #rrggbb, got %r" % (self.rgb,))
         if self.role not in ROLES:
             raise ValueError("unknown role %r (roles: %s)" % (self.role, ", ".join(ROLES)))
 

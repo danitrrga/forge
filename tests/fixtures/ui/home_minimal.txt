@@ -1,8 +1,10 @@
 
-  ▀▀████████████████    forge
-        ▀▀██████▀▀      v0.1.0
-          ██████        One source of truth for the agent setup of every project
-      ▄██████████▄      on your machine.
+  %@@@@@@@@@@@@@@@@@%#
+    :+#%%%%%%%%%%%%##*    forge
+       .*%%%%%%#-         v0.1.0
+         -#%@%%+          One source of truth for the agent setup of every
+        =#%%%%%%#         project on your machine.
+        *#%####%%:
 
 ┌  15 projects  ·  50 skills installed
 │

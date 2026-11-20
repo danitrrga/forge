@@ -255,14 +255,16 @@ def table(ctx, headers, rows, widths, align=None):
 
 
 def header(ctx, product, version, tagline, mark_lines):
-    """The mark on the left, then the product name, the version and the tagline wrapped at the layout measure."""
+    """The mark on the left, then the product name, the version and the tagline wrapped at the layout measure. A mark taller than
+    the text has the text centred beside it."""
     mark_w = max((_spans_width(m) for m in mark_lines), default=0)
     text_w = max(10, min(ctx.layout["measure"], ctx.width - 2 - mark_w - 4))
     texts = [[Span("ink", product, True)], [Span("mute", version)]] + [[Span("mute", t)] for t in textwrap.wrap(tagline, text_w)]
     out = []
-    for i in range(max(len(mark_lines), len(texts))):
+    top = max(0, (len(mark_lines) - len(texts)) // 2)
+    for i in range(max(len(mark_lines), len(texts) + top)):
         left = mark_lines[i] if i < len(mark_lines) else []
-        right = texts[i] if i < len(texts) else []
+        right = texts[i - top] if 0 <= i - top < len(texts) else []
         out.append(Line([_blank(2)] + _fill(left, mark_w) + [_blank(4)] + right))
     return out
 

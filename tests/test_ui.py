@@ -61,6 +61,7 @@ import re
 import shutil
 import subprocess
 import sys
+import json
 import tempfile
 import types
 import unicodedata
@@ -197,8 +198,7 @@ caught("components.py that names icon_done only in a docstring",
        unused_glyphs([source("components.py").replace('"icon_done"', '"x"') + '\n\ndef _doc():\n    "the icon_done glyph"\n', source("screens.py"), source("context.py")]))
 
 
-# marks.py draws the placeholder anvil with half blocks: those three strings are the drawing, not a glyph token (a final logo replaces them)
-ALLOWED_LITERALS = {"marks.py": {marks.UPPER, marks.LOWER, marks.FULL}}
+ALLOWED_LITERALS = {}  # no file may carry a glyph or a colour of its own: the logo is data (anvil.json), not a string in marks.py
 
 
 def literal_problems(name, text, allowed=()):
@@ -220,7 +220,7 @@ for n in UI_FILES:
 caught("a glyph written into a component", literal_problems("components.py", source("components.py") + '\nX = "\\u25c6"\n'))
 caught("a colour written into a component", literal_problems("components.py", source("components.py") + '\nX = "#ff00ff"\n'))
 caught("a colour written into the gallery", literal_problems("gallery.py", source("gallery.py") + '\nX = "#ff00ff"\n'))
-caught("marks.py without its explicit allowance", literal_problems("marks.py", source("marks.py")))
+caught("a half block drawn into marks.py", literal_problems("marks.py", source("marks.py") + '\nX = "\u2580"\n'))
 
 
 # ---- 3. width ----------------------------------------------------------------------------------------------------------------
@@ -511,13 +511,95 @@ want("components: the group meter is flat", {s.role for s in components.group(ct
 want("components: the group tree glyphs", [l.spans[2].text for l in components.group(ctx, "S", ["a", "b", "c"])[1:]], ["\u2502 ", "\u2502 ", "\u2514 "])
 want("components: the cursor member has an accent nest and an icon", ([(s.role, s.text) for s in components.group(ctx, "S", ["a", "b"], cursor=0, icon_on=("warn", "!"))[1].spans if s.role in ("accent", "warn")]), [("accent", "\u25b8 "), ("warn", "!")])
 want("components: a table has no borders and a lowercase header", [l.text for l in components.table(ctx, ["a", "bb"], [[[Span("body", "x")], [Span("body", "y")]]], [3, 2])], ["a    bb", "x    y"])
-want("components: header wraps the tagline at the measure", max(l.width for l in components.header(context.Context("dark", "unicode", "none", 200), "p", "v", "word " * 40, marks.mark_lines(ctx))) <= 2 + 18 + 4 + 66, True)
+want("components: header wraps the tagline at the measure", max(l.width for l in components.header(context.Context("dark", "unicode", "none", 200), "p", "v", "word " * 40, marks.mark_lines(ctx))) <= 2 + 20 + 4 + 66, True)
 want("components: keys with two spaces around the separator", components.keys(ctx, [("updown", "select"), ("esc", "cancel")])[0].text, "\u2514  \u2191\u2193 select  \u00b7  esc cancel")
 want("components: keys close the gaps in the ascii set at 60 columns", components.keys(context.Context("dark", "ascii", "none", 60), [("updown", "select"), ("space", "toggle"), ("enter", "apply"), ("esc", "cancel")])[0].width <= 60, True)
-want("marks: the placeholder is four lines of 18 cells", (len(marks.MARK_PLACEHOLDER), {len(l) for l in marks.MARK_PLACEHOLDER}), (4, {18}))
-want("marks: the first line accent and the rest mute", [l[0].role for l in marks.mark_lines(ctx)], ["accent", "mute", "mute", "mute"])
-want("marks: the first text line is the upper half of the first two rows", marks.MARK_PLACEHOLDER[0], "\u2580\u2580" + "\u2588" * 16)
-want("marks: the ascii mark is ASCII", all(s.text.isascii() for l in marks.mark_lines(context.Context("dark", "ascii", "none", 80)) for s in l), True)
+
+# ---- 7a. the mark: forge/ui/anvil.json, made by design/system/build_mark.py from the approved art ------------------------------
+def attempt_raises(fn):
+    try:
+        fn()
+    except ValueError:
+        return True
+    return False
+
+
+ART_GLYPHS = set("#%*+-.:=@ ")
+ART_ROLES = {"i": "ink", "b": "body", "m": "mute", "a": "accent", "r": "ramp2"}
+HEX = re.compile(r"#[0-9a-f]{6}")
+
+
+def art_problems(art):
+    """The data file is a clean grid: plain-ASCII glyphs only, a colour and a role for every glyph and none for a space."""
+    out = []
+    w, h = art.get("width"), art.get("height")
+    for key in ("rows", "colors", "roles"):
+        if len(art.get(key, [])) != h:
+            out.append("%s has %d rows, height is %s" % (key, len(art.get(key, [])), h))
+    if out:
+        return out
+    cells = 0
+    for y, (row, cols, roles) in enumerate(zip(art["rows"], art["colors"], art["roles"])):
+        if len(row) != w or len(cols) != w or len(roles) != w:
+            out.append("row %d: %d glyphs, %d colours, %d roles, width is %d" % (y, len(row), len(cols), len(roles), w))
+            continue
+        for x, (g, c, r) in enumerate(zip(row, cols, roles)):
+            cells += 1
+            if g not in ART_GLYPHS:
+                out.append("row %d col %d: glyph %r is not in the plain-ASCII ramp" % (y, x, g))
+            if g == " " and (c or r != " "):
+                out.append("row %d col %d: a space carries a colour or a role" % (y, x))
+            if g != " " and not HEX.fullmatch(c or ""):
+                out.append("row %d col %d: glyph %r has colour %r" % (y, x, g, c))
+            if g != " " and r not in ART_ROLES:
+                out.append("row %d col %d: glyph %r has role letter %r" % (y, x, g, r))
+    if cells < 100:
+        out.append("the scan looked at %d cells" % cells)
+    return out
+
+
+ART = json.load(open(os.path.join(UI_DIR, "anvil.json"), encoding="utf-8"))
+want("7a the art is a clean 20 x 6 grid", art_problems(ART), [])
+want("7a the art has the size the owner chose", (ART["width"], ART["height"]), (20, 6))
+want("7a the art has coloured cells to look at", sum(1 for row in ART["colors"] for c in row if c) > 70, True)
+for label, key, bad in (("a letter in the art", "rows", lambda r: r[:3] + "Z" + r[4:]), ("a digit in the art", "rows", lambda r: r[:3] + "7" + r[4:]),
+                        ("a glyph with no colour", "colors", lambda r: r[:3] + [""] + r[4:]), ("a colour that is not a hex value", "colors", lambda r: r[:3] + ["pink"] + r[4:]),
+                        ("a role letter nobody listed", "roles", lambda r: r[:3] + "z" + r[4:])):
+    broken = copy.deepcopy(ART)
+    broken[key][0] = bad(broken[key][0])  # row 0 has no space, so the change always lands on a glyph
+    caught(label, art_problems(broken))
+ragged = copy.deepcopy(ART)
+ragged["rows"][4] = ragged["rows"][4][:-1]
+caught("a ragged row", art_problems(ragged))
+caught("a row missing", art_problems(dict(ART, rows=ART["rows"][:-1])))
+
+mark_none = marks.mark_lines(context.Context("dark", "unicode", "none", 80))
+want("7a marks: six lines of 20 cells", (len(mark_none), {sum(len(s.text) for s in l) for l in mark_none}), (6, {20}))
+want("7a marks: the plain mark is the art's glyphs", ["".join(s.text for s in l) for l in mark_none], ART["rows"])
+want("7a marks: the plain mark has no escape byte", "\033" in render_ansi.to_text([Line(s) for s in mark_none], context.Context("dark", "unicode", "none", 80)), False)
+want("7a marks: the ascii set draws the same art", [l.text for l in [Line(s) for s in marks.mark_lines(context.Context("dark", "ascii", "none", 80))]], ART["rows"])
+exact = marks.mark_lines(context.Context("dark", "unicode", "truecolor", 80))
+want("7a marks: truecolor on dark carries each cell's exact colour", [s.rgb for l in exact for s in l if s.rgb][:1], [ART["colors"][0][0]])
+want("7a marks: truecolor on dark draws every coloured cell exactly", "".join(c for row in ART["colors"] for c in row if c), "".join(s.rgb for l in exact for s in l for _ in s.text.strip() if s.rgb))
+want("7a marks: truecolor output holds the first cell's exact escape", "38;2;%d;%d;%d" % tokens.rgb(ART["colors"][0][0]) in render_ansi.to_text([Line(s) for s in exact], context.Context("dark", "unicode", "truecolor", 80)), True)
+c256 = context.Context("dark", "unicode", "256", 80)
+text256 = render_ansi.to_text([Line(s) for s in marks.mark_lines(c256)], c256)
+want("7a marks: 256 colours on dark draws each cell as its nearest xterm-256 entry", "38;5;%d" % render_ansi.xterm256(ART["colors"][0][0]) in text256, True)
+want("7a marks: 256 colours on dark sends no truecolor escape", "38;2" in text256, False)
+want("7a marks: 256 colours on dark keeps the gradient (many distinct colours, not a handful of roles)", len(set(re.findall(r"38;5;(\d+)", text256))) > 8, True)
+for label, cx in (("light theme", context.Context("light", "unicode", "truecolor", 80)), ("light theme at 256 colours", context.Context("light", "unicode", "256", 80)), ("16 colours", context.Context("dark", "unicode", "16", 80))):
+    lines = marks.mark_lines(cx)
+    text = render_ansi.to_text([Line(s) for s in lines], cx)
+    want("7a marks: %s draws no exact colour" % label, (any(s.rgb for l in lines for s in l), "38;2;%d;%d;%d" % tokens.rgb(ART["colors"][0][0]) in text), (False, False))
+    want("7a marks: %s names only the roles of the art" % label, {s.role for l in lines for s in l if s.text.strip()} <= set(ART_ROLES.values()), True)
+want("7a marks: a Span refuses a colour that is not #rrggbb", [attempt_raises(lambda v=v: Span("ink", "x", rgb=v)) for v in ("pink", "#12345", "#12345g", "ff0000")], [True] * 4)
+want("7a marks: a 256-colour renderer draws a span's exact colour as the nearest entry, never a truecolor escape",
+     render_ansi.to_text([Line([Span("accent", "x", rgb="#ff0000")])], context.Context("dark", "unicode", "256", 80)), "\033[38;5;%dmx\033[0m\n" % render_ansi.xterm256("#ff0000"))
+want("7a marks: a 16-colour renderer ignores a span's exact colour and draws the role", "38;" in render_ansi.to_text([Line([Span("accent", "x", rgb="#ff0000")])], context.Context("dark", "unicode", "16", 80)), False)
+want("7a marks: html draws a span's exact colour", "color:#ff0000" in render_html.to_html([Line([Span("accent", "x", rgb="#ff0000")])], "dark"), True)
+hd = components.header(context.Context("dark", "unicode", "none", 80), "forge", "v0", "a tagline", marks.mark_lines(context.Context("dark", "unicode", "none", 80)))
+want("7a header: three text lines against six mark rows start one line down", [i for i, l in enumerate(hd) if "forge" in l.text], [1])
+want("7a header: the mark is as tall as the art and the text is inside it", (len(hd), all(l.width <= 80 for l in hd)), (6, True))
 want("model: a line's width is its text", Line([Span("ink", "ab"), Span("mute", "cde")]).width, 5)
 try:
     Line([], bg="pink")

@@ -29,6 +29,9 @@ def _codes(span, bg, ctx):
     codes = []
     if span.bold:
         codes.append("1")
+    if span.rgb and ctx.color in ("truecolor", "256"):  # the logo's own colour (the nearest entry at 256); 16 colours draw the role
+        codes.append("38;2;%d;%d;%d" % tokens.rgb(span.rgb) if ctx.color == "truecolor" else "38;5;%d" % xterm256(span.rgb))
+        return codes
     if ctx.color == "16":
         if span.role not in TERMINAL_OWN:
             codes.extend(tokens.ansi16()[span.role])
