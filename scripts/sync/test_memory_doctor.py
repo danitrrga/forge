@@ -42,7 +42,10 @@ red (and only cases that follow from the same line):
   - per-call cap (HOOK_CALL_S) removed   "--hook, Hindsight server all: ends in under 4.5 s (took 5.0 s) ..." (3 cases)
   - no whole-request deadline in fetch   "--hook, Hindsight server trickle: ends in under 4.5 s (took 33.0 s) ..." (2 cases)
   - the budget loop ignored              "--hook, a Hindsight server that eats the budget: the next probe is said not run ..."
-  - silence kept for every host          "--hook, a silent server does not silence another host ..."
+  - silence kept for every host          "--hook, a silent server does not silence another host: the second probe is made and fails by itself"
+  - stop after the first timeout         the same case (the second server, which answers 500, has no FAIL line of its own)
+  - hook cap applied to full runs        "full run, a server 4 s late: still healthy (the long timeouts stay): exit 1" (the server answers 4.0 s late,
+                                         between the 3 s hook cap and the full run's 5 s; "slow", 2.9 s, only feeds the budget case)
 """
 import contextlib
 import http.server
@@ -181,9 +184,11 @@ def run(manifest, trusted=False):
 
 class _Stall(http.server.BaseHTTPRequestHandler):
     """A stand-in Hindsight server whose /health answers late or never, by `self.server.mode`: "all" accepts and never answers (the
-    sleep is longer than any timeout of the doctor), "slow" answers 2.9 s late (inside a 3 s per-call timeout, so only a budget
-    ends a run of them), "trickle" sends the head at once and drips the body one byte a second, "trickle-head" drips the head itself
-    (urlopen never returns). The two drips never trip one socket timeout: only a deadline for the complete request ends them."""
+    sleep is longer than any timeout of the doctor), "quick" answers 0.3 s late (far inside the 3 s --hook cap), "slow" 2.9 s late
+    (just inside it, so only a budget ends a run of them), "mid" 4.0 s late (between the --hook cap, 3 s, and the full run's
+    timeout, 5 s: only a full run waits for it), "error" answers 500, "trickle" sends the head at once and drips the body one byte
+    a second, "trickle-head" drips the head itself (urlopen never returns). The two drips never trip one socket timeout: only a
+    deadline for the complete request ends them."""
 
     def do_GET(self):
         mode = self.server.mode
@@ -205,9 +210,8 @@ class _Stall(http.server.BaseHTTPRequestHandler):
             except OSError:                      # the doctor gave up and closed the socket
                 pass
             return
-        if mode == "slow":
-            time.sleep(2.9)
-        self.send_response(200)
+        time.sleep({"quick": 0.3, "slow": 2.9, "mid": 4.0}.get(mode, 0))
+        self.send_response(500 if mode == "error" else 200)
         self.end_headers()
         self.wfile.write(b"ok")
 
@@ -217,11 +221,22 @@ class _Stall(http.server.BaseHTTPRequestHandler):
 
 def stall(mode):
     """The URL of a new stand-in server in this mode (it lives as long as the process: its threads are daemons)."""
-    srv = http.server.ThreadingHTTPServer(("localhost", 0), _Stall)
-    srv.mode = mode
-    srv.daemon_threads = True
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    return "http://localhost:%d" % srv.server_address[1]
+    return stalls((mode,))[0]
+
+
+def stalls(modes):
+    """The URLs of new stand-in servers, sorted as the doctor sorts them (it probes in URL order), the first in `modes[0]`."""
+    servers = []
+    for mode in modes:
+        srv = http.server.ThreadingHTTPServer(("localhost", 0), _Stall)
+        srv.mode = mode
+        srv.daemon_threads = True
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        servers.append(srv)
+    servers.sort(key=lambda srv: "http://localhost:%d" % srv.server_address[1])
+    for srv, mode in zip(servers, modes):
+        srv.mode = mode
+    return ["http://localhost:%d" % srv.server_address[1] for srv in servers]
 
 
 def integration(name, value):
@@ -269,7 +284,7 @@ def mb_run(w, hook=False, known=None, hind=False):
 
 
 def has(lines, level, name, text=""):
-    return any(l.lstrip().startswith(level) and name in l and text in l for l in lines)
+    return any(ln.lstrip().startswith(level) and name in ln and text in ln for ln in lines)
 
 
 def backend_cases(failures, cases):
@@ -278,7 +293,7 @@ def backend_cases(failures, cases):
     def expect(label, ok, rc, lines, names=("memory-", "hindsight", "hook-budget", "project-path")):
         cases[0] += 1
         if not ok:
-            failures.append("%s: exit %r; output %r" % (label, rc, [l for l in lines if any(n in l for n in names)]))
+            failures.append("%s: exit %r; output %r" % (label, rc, [ln for ln in lines if any(n in ln for n in names)]))
 
     try:
         # ---- memory-one-backend: also with Hindsight off and under --hook. Armed when the checkout uses memory at all (the
@@ -317,7 +332,7 @@ def backend_cases(failures, cases):
         rc, lines = mb_run(w)
         expect("an unreadable project file in a checkout with nothing switched on: a FAIL, not NOT RUN", rc == 1 and has(
             lines, "FAIL", "memory-one-backend", "1 project file(s) could not be read: broken.claude.json")
-            and not any("NOT RUN, NOT ARMED: no memory integration" in l for l in lines), rc, lines)
+            and not any("NOT RUN, NOT ARMED: no memory integration" in ln for ln in lines), rc, lines)
         rc, lines = mb_run(w, hind=True)
         expect("only unreadable project files: looked at zero, FAIL", rc == 1 and has(
             lines, "FAIL", "memory-one-backend", "0 project(s) examined: a check that saw nothing is not a pass; 1 project file(s)"), rc, lines)
@@ -333,14 +348,14 @@ def backend_cases(failures, cases):
         for label, profs in (("a starter project without memory", none), ("no project file", {})):
             w = mb_world(profs)
             rc, lines = mb_run(w)
-            expect("not armed, %s: NOT RUN, exit 0" % label, rc == 0 and any(NOT_RUN in l for l in lines)
+            expect("not armed, %s: NOT RUN, exit 0" % label, rc == 0 and any(NOT_RUN in ln for ln in lines)
                    and not has(lines, "PASS", "memory-one-backend") and not has(lines, "FAIL", "memory"), rc, lines)
             rc, lines = mb_run(w, hook=True)
             expect("not armed, %s, --hook: silent, exit 0" % label, rc == 0 and lines == [], rc, lines)
         w = mb_world({"toy": {"project_path": "toy", "servers": []}, "other": {"project_path": "other", "servers": [HS]}})
         rc, lines = mb_run(w)
         expect("armed by another project's backend: the one without says so", rc == 1 and has(
-            lines, "FAIL", "memory-backend", "toy has no memory backend") and not any(NOT_RUN in l for l in lines), rc, lines)
+            lines, "FAIL", "memory-backend", "toy has no memory backend") and not any(NOT_RUN in ln for ln in lines), rc, lines)
         # The row a reader greps must not PASS while a project it examined fails. Known-empty projects are counted apart and do not
         # fail it. Mutation: the PASS condition back to `bool(projects)` turns the first two cases red.
         mixed = {"a": {"project_path": "a", "servers": [HS]}, "b": {"project_path": "b", "servers": []},
@@ -407,17 +422,24 @@ def backend_cases(failures, cases):
         expect("--hook, a Hindsight server that eats the budget: the next probe is said not run (took %.1f s)" % took,
                rc == 0 and took < 6 and has(lines, "WARN", "hook-budget", "not run") and has(lines, "WARN", "hook-budget", "hindsight-server"),
                rc, lines)
-        rc, lines = mb_run(w, hook=True, hind=stall("slow"))
-        expect("--hook, a server that answers inside its call timeout: silent (the budget line is only for a spent budget)",
+        rc, lines = mb_run(w, hook=True, hind=stall("quick"))
+        expect("--hook, a server that answers well inside its call timeout: silent (the budget line is only for a spent budget)",
                rc == 0 and lines == [], rc, lines)
-        # A silent server does not silence another host: the second probe is made and fails by itself.
-        rc, lines = mb_run(w, hook=True, hind={"apiUrl": stall("all"), "bankId": "personal", "banks": {"b": {"apiUrl": DEAD}}})
-        expect("--hook, a silent server does not silence another host: the probe is made and fails by itself",
-               rc == 0 and has(lines, "FAIL", "hindsight-server", "does not answer /health")
-               and not any("hindsight-server" in l and "not asked" in l for l in lines), rc, lines)
-        # The full run keeps its long timeouts: a server that is merely slow (2.9 s) is judged healthy outside --hook.
-        rc, lines = mb_run(w, hind=stall("slow"))
-        expect("full run, slow server: still healthy (the long timeouts stay)", rc == 0 and has(lines, "PASS", "hindsight-server"), rc, lines)
+        # A silent server does not silence another host: the stalled one is probed first (URL order), and the second, which answers
+        # 500, must still be probed and say so by itself (a run that stops after the first FAIL has no line for it).
+        stalled, second = stalls(("all", "error"))
+        rc, lines = mb_run(w, hook=True, hind={"apiUrl": stalled, "bankId": "personal", "banks": {"b": {"apiUrl": second}}})
+        expect("--hook, a silent server does not silence another host: the second probe is made and fails by itself",
+               rc == 0 and has(lines, "FAIL", "hindsight-server", "does not answer /health") and has(lines, "FAIL", second + " does not answer")
+               and not any("hindsight-server" in ln and "not asked" in ln for ln in lines), rc, lines)
+        # The full run keeps its long timeouts: a server that answers 4 s late, between the --hook cap (3 s) and the full run's 5 s, is
+        # judged healthy outside --hook and fails under it.
+        mid = stall("mid")
+        rc, lines = mb_run(w, hind=mid)
+        expect("full run, a server 4 s late: still healthy (the long timeouts stay)", rc == 0 and has(lines, "PASS", "hindsight-server"), rc, lines)
+        rc, lines = mb_run(w, hook=True, hind=mid)
+        expect("--hook, the same server 4 s late: its FAIL (the hook cap is 3 s)",
+               rc == 0 and has(lines, "FAIL", "hindsight-server", "does not answer /health"), rc, lines)
     finally:
         md.KNOWN, md.HINDSIGHT_RENDERED, md.CODEX_HOME, md.HOME, md.HOOK_BUDGET_S = real
         for name in ("hindsight", "codex"):
