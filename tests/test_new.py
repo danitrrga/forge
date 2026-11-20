@@ -109,7 +109,7 @@ class World:
         self.cwd = os.path.join(self.top, "cwd")
         self.tmp = os.path.join(self.top, "tmp")
         self.logs = os.path.join(self.top, "log")
-        for d in (self.home, self.projects, self.cwd, self.tmp, self.logs):
+        for d in (self.home, os.path.join(self.home, ".claude"), self.projects, self.cwd, self.tmp, self.logs):
             os.makedirs(d)
         sandbox.copy_engine(self.root)
         sandbox.git(self.root, "init", "-q")
@@ -138,6 +138,9 @@ class World:
             os.makedirs(os.path.join(self.plugin, ".claude-plugin"))
             write_json(os.path.join(self.plugin, ".claude-plugin", "marketplace.json"), {"name": "toyfw", "plugins": [{"name": "toyfw"}]})
             doc["framework"]["plugin_source"] = {"source": "directory", "path": self.plugin}
+            doc["skill_keep"]["common_plugins"] = ["common@mk"]
+            # the plugins a project without plugins_keep has on: the user scope's (a project that names none inherits them)
+            write_json(os.path.join(self.home, ".claude", "settings.json"), {"enabledPlugins": {"mine@mk": True, "off@mk": False}})
         write_json(os.path.join(cfg, "forge.json"), doc)
         for name in ("mcp-registry.json", "gateway.json"):
             shutil.copy(os.path.join(self.root, "examples", name), os.path.join(cfg, name))
@@ -575,7 +578,9 @@ def a_framework_made(w):
     if code != 0:
         return bad + ["--framework --apply: exit %d: %s" % (code, tail(out, 6))]
     pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
-    for key, want in (("framework", True), ("factory", "off"), ("checks", NODE["checks"]), ("plugins_keep", NODE["plugins"])):
+    # plugins_keep: what a project without it has on (the user scope's), the stack's, and common_plugins, in that order
+    for key, want in (("framework", True), ("factory", "off"), ("checks", NODE["checks"]),
+                      ("plugins_keep", ["mine@mk"] + NODE["plugins"] + ["common@mk"])):
         if pf.get(key) != want:
             bad.append("project file: %s is %r, want %r" % (key, pf.get(key), want))
     for key in UNARMED:
@@ -592,8 +597,9 @@ def a_framework_made(w):
     if w.project("demo") not in handoff or " ".join(NODE["checks"]) not in handoff:
         bad.append("the handover does not name the project's folder or the stack's checks")
     row = [l for l in out.splitlines() if l.startswith(("SKIP", "PASS", "FAIL", "WARN")) and "framework fields" in l]
-    if len(row) != 1 or "NOT RUN, NOT ARMED" not in row[0] or any(k not in row[0] for k in UNARMED):
-        bad.append("forge doctor demo: want one `framework fields` row, NOT RUN, NOT ARMED, naming the three fields: %s" % row)
+    if len(row) != 1 or "NOT RUN, NOT ARMED" not in row[0] or any(k not in row[0] for k in UNARMED[:2]) or "app_run" in row[0]:
+        bad.append("forge doctor demo: want one `framework fields` row, NOT RUN, NOT ARMED, naming protected_paths and checks_quick "
+                   "and not app_run (the project has no screen): %s" % row)
     if out.find("SUMMARY:") == -1 or not out.rstrip().splitlines()[-1].startswith("open a new session in the folder"):
         bad.append("the last line is not `open a new session in the folder ...`: %s" % tail(out, 2))
     elif out.find("SUMMARY:") > out.find(HANDOFF_START) >= 0:
@@ -603,12 +609,82 @@ def a_framework_made(w):
         bad.append("the project folder holds %s (.claude: %s), want what sync writes and nothing else" % (
             entries, sorted(os.listdir(os.path.join(w.project("demo"), ".claude")))))
     code, out = w.forge("new", "plain", "--stack", "node", "--apply")
+    plain_out = out
     pf = read_json(w.path("config", "projects", "plain.claude.json")) or {}
     if code != 0 or "handoff" in out.lower() or HANDOFF_START.replace("demo", "plain") in out or "framework" in pf or "checks" in pf \
             or "plugins_keep" in pf:
         bad.append("without --framework: exit %d, handover printed or framework keys written (%s): %s" % (code, sorted(pf), tail(out, 3)))
-    if "SUMMARY:" not in out or not out.rstrip().splitlines()[-1].startswith("open a new session in the folder"):
-        bad.append("without --framework: forge doctor's report, then the closing line, were not printed: %s" % tail(out, 3))
+    # Without --framework the output is what it was: no doctor report, no closing line (4.4 U8 is the framework's hand-over).
+    if any(m in plain_out for m in ("SUMMARY:", "forge doctor", "open a new session")):
+        bad.append("without --framework: forge doctor's report or the closing line was printed: %s" % tail(plain_out, 3))
+    # Turning the framework on never turns a plugin off: what the plain project has on is in the framework project's map.
+    def enabled(name):
+        sl = read_json(os.path.join(w.project(name), ".claude", "settings.local.json")) or {}
+        user = read_json(os.path.join(w.home, ".claude", "settings.json")) or {}
+        if "enabledPlugins" not in sl:  # no map: the project inherits the user scope's
+            return {p for p, on in user.get("enabledPlugins", {}).items() if on}
+        return {p for p, on in sl["enabledPlugins"].items() if on}
+    lost = enabled("plain") - enabled("demo")
+    if lost or not set(NODE["plugins"]) <= enabled("demo") or "off@mk" in enabled("demo") or "common@mk" not in enabled("demo"):
+        bad.append("--framework turned plugins off: plain has %s on, the framework project %s (lost %s)" % (
+            sorted(enabled("plain")), sorted(enabled("demo")), sorted(lost)))
+    return bad
+
+
+ANSWERS = ["--profiles", "none", "--skills", "none", "--server", "none", "--memory", "none"]  # every question answered: --check and --ui are two of them
+
+
+def a_framework_checks(w):
+    """The handover names the checks the project file holds: `--check pytest` narrows the stack's two, and the handover must not
+    tell the agent to run the one that was dropped."""
+    code, out = w.forge("new", "demo", "--stack", "python", "--framework", "--check", "pytest", *ANSWERS, "--apply")
+    pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
+    if code != 0 or pf.get("checks") != ["pytest"]:
+        return ["--check pytest: exit %d, checks %s: %s" % (code, pf.get("checks"), tail(out, 3))]
+    handoff = out[out.index(HANDOFF_START):] if HANDOFF_START in out else ""
+    if "`pytest`" not in handoff or "ruff check" in handoff:
+        return ["handover names a check the project file does not hold (checks %s): %s" % (pf["checks"], [l for l in handoff.splitlines() if "ruff" in l or "already set" in l])]
+    return []
+
+
+def a_framework_fields(w):
+    """The `framework fields` row can PASS: with protected_paths and checks_quick set it is a PASS for a project without a screen
+    (app_run is not asked of it), and with `ui: true` it is NOT ARMED until app_run is set too."""
+    bad = []
+    row = lambda name: [l for l in w.forge("doctor", name)[1].splitlines() if "framework fields" in l and l[:4] in ("SKIP", "PASS", "FAIL", "WARN")]
+    for name, extra in (("shut", []), ("screen", ["--ui"])):
+        code, out = w.forge("new", name, "--stack", "node", "--framework", *extra, *ANSWERS, "--apply")
+        if code != 0:
+            return ["forge new %s --framework: exit %d: %s" % (name, code, tail(out, 3))]
+    path = w.path("config", "projects", "%s.claude.json")
+    for name in ("shut", "screen"):
+        pf = read_json(path % name)
+        pf.update(protected_paths=["package.json"], checks_quick=["pnpm tsc --noEmit"])
+        write_json(path % name, pf)
+    got = row("shut")
+    if len(got) != 1 or not got[0].startswith("PASS"):
+        bad.append("framework fields, a project without a screen and two fields set: want PASS, got %s" % got)
+    got = row("screen")
+    if len(got) != 1 or not got[0].startswith("SKIP") or "app_run" not in got[0]:
+        bad.append("framework fields, a project with ui true and no app_run: want NOT RUN, NOT ARMED naming app_run, got %s" % got)
+    pf = read_json(path % "screen")
+    pf["app_run"] = {"up": "true", "run": "", "down": "true", "url": "http://127.0.0.1:1"}
+    write_json(path % "screen", pf)
+    got = row("screen")
+    if len(got) != 1 or not got[0].startswith("PASS"):
+        bad.append("framework fields, all three set: want PASS, got %s" % got)
+    return bad
+
+
+def a_doctor_fail(w):
+    """A FAIL row of `forge doctor NAME` other than `instruction files` (which a fresh project always has: no CLAUDE.md yet) makes
+    `forge new --framework` exit 1, after it printed that row and said the project was made. The world's doctor carries an injected row."""
+    code, out = w.forge("new", "demo", "--stack", "node", "--framework", "--apply")
+    bad = []
+    if code != 1 or "injected failure" not in out or "demo is made and registered" not in out or "toy check" not in out.split("is made and registered")[-1]:
+        bad.append("a FAIL row other than instruction files did not make forge new exit 1 (exit %d): %s" % (code, tail(out, 3)))
+    if not os.path.isdir(w.project("demo")) or not os.path.exists(w.path("config", "projects", "demo.claude.json")):
+        bad.append("the project was removed after doctor failed")
     return bad
 
 
@@ -1021,6 +1097,11 @@ FAIL_RECORD = (LIB, '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n 
                '    if what == "mkdir":\n        raise RuntimeError("record failed (test fault)")\n'
                '    log = os.environ.get("FORGE_WRITE_LOG")\n    if log:\n        try:\n            with open(log, "a"')
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
+# A doctor row that always FAILs, in `forge doctor NAME`'s list: what a real failure (project roots, generated...) looks like to forge new.
+INJECT = (os.path.join("forge", "cli.py"), '        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),\n',
+          '        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),\n'
+          '        ("toy check", lambda: lib.Result("FAIL", "toy check", "injected failure"), ""),\n')
+
 CONTROLS = [
     ("no check ahead of the first write, no cleanup", a_missing_stack,
      [(NEW, "if problems:", "if False:"), (NEW, "complete = rollback(undo)", "complete = True"),
@@ -1063,12 +1144,22 @@ CONTROLS = [
     ("no framework fields row", a_framework_made, [(CLI, '    ("framework fields", framework_fields_row, ""),\n', ""),
                                                    (CLI, '        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),\n', "")],
      "want one `framework fields` row"),
-    ("a plugins_keep that the stack does not give", a_framework_made, [(NEW, "plugins_keep=list(stack[\"plugins\"]))", "plugins_keep=[\"context7@claude-plugins-official\"])")],
-     "project file: plugins_keep is"),
     ("a framework project with the three unarmed fields written", a_framework_made, [(NEW, "factory=\"off\", checks=", "factory=\"off\", protected_paths=[\"**\"], checks=")],
      "protected_paths was written into the project file"),
-    ("a handover written into the project", a_framework_made, [(NEW, "    if handoff:\n", "    if handoff:\n        open(os.path.join(target, \"HANDOFF.md\"), \"w\").write(handoff)\n")],
+    ("a handover written into the project", a_framework_made,
+     [(NEW, '    print(handoff.rstrip("\\n"))\n', '    open(os.path.join(target, "HANDOFF.md"), "w").write(handoff)\n    print(handoff.rstrip("\\n"))\n')],
      "the project folder holds"),
+    ("doctor's result swallowed", a_doctor_fail, [INJECT, (NEW, "    return 1 if other else 0", "    return 0")],
+     "a FAIL row other than instruction files did not make forge new exit 1"),
+    ("a handover from the stack's checks", a_framework_checks, [(NEW, "handoff = handoff_text(name, target, a.stack, project[\"checks\"])",
+                                                                    "handoff = handoff_text(name, target, a.stack, stack[\"checks\"])")],
+     "handover names a check the project file does not hold"),
+    ("plugins_keep of the stack alone", a_framework_made, [(NEW, "plugins_keep=framework_plugins(stack[\"plugins\"], doc)", "plugins_keep=list(stack[\"plugins\"])")],
+     "project file: plugins_keep is"),
+    ("a doctor and closing line for every project", a_framework_made, [(NEW, "    if not a.framework:\n        return 0\n", "")],
+     "without --framework: forge doctor's report or the closing line was printed"),
+    ("app_run asked of a project without a screen", a_framework_fields, [(os.path.join("forge", "framework.py"), 'if prof.get("ui") is True', "if True")],
+     "a project without a screen and two fields set: want PASS"),
     ("a relative projects_dir", a_bad_projects_dir, [(NEW, "not os.path.isabs(os.path.expanduser(configured))", "False")],
      "a relative projects_dir was used"),
     ("no handler for TERM", a_signals, [(NEW, "with stopped_means_rollback(), creation_lock():", "with creation_lock():")], "left behind after SIGTERM"),
@@ -1146,13 +1237,15 @@ def main():
             n_checks[0] += 1
         finally:
             w.close()
-    w = World("fw", framework=True)
-    try:
-        for why in a_framework_made(w):
-            failures.append("--framework made -- %s" % why)
-        n_checks[0] += 1
-    finally:
-        w.close()
+    for label, fn, kw in (("--framework made", a_framework_made, {}), ("handover checks", a_framework_checks, {}),
+                          ("framework fields row", a_framework_fields, {}), ("doctor FAIL row", a_doctor_fail, {"mutate": [INJECT]})):
+        w = World("fw", framework=True, **kw)
+        try:
+            for why in fn(w):
+                failures.append("%s -- %s" % (label, why))
+            n_checks[0] += 1
+        finally:
+            w.close()
     if master_cli is not None:
         w = World("reg")
         for why in a_registration_as_master(w, master_cli):
@@ -1170,7 +1263,7 @@ def main():
         if fn is a_forge_json_fails and os.geteuid() == 0:
             notrun.append("control '%s': a read-only folder does not stop root" % label)
             continue
-        cw = World("c", mutate=mutate, framework=fn is a_framework_made)
+        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail))
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
         shown = [g for g in got if needle in g] or got

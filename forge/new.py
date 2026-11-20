@@ -16,7 +16,7 @@ when there is none, and the `profiles` row; a profile row is read at a session s
 
 With --framework the project file also gets `framework: true`, `factory: "off"`, the stack's checks and its plugins as `plugins_keep`
 (the plugin is turned on through it). protected_paths, checks_quick and app_run need a look at the project, so they are left out.
-After the sync `forge doctor NAME` runs, and with --framework the handover (examples/new-handoff.md, printed and written nowhere)
+With --framework, after the sync, `forge doctor NAME` runs, then the handover (examples/new-handoff.md, printed and written nowhere)
 is printed for an agent in the project's folder to settle those three; the last line says how to open a session.
 
 Only the folder of the project and forge's own project files are written. Never a CLAUDE.md, never anything outside
@@ -129,6 +129,42 @@ def handoff_text(name, folder, stack_name, checks):
     if errors:
         raise ValueError("; ".join(errors).replace("stacks/handover/", "examples/"))
     return out[HANDOFF]
+
+
+def framework_plugins(stack_plugins, forge):
+    """What `plugins_keep` holds for a framework project that did not choose its plugins (--plugin): every plugin the same project
+    would have on without it. A project with no plugins_keep has no plugin map and so inherits the user scope's, so those come first;
+    then the stack's, then skill_keep.common_plugins (sync adds those to a project that keeps plugins). Turning the framework on never
+    turns a plugin off; the framework plugin itself is turned on by forge, not listed."""
+    user = lib.read_json(os.path.join(lib.HOME, ".claude", "settings.json"), quiet=True).get("enabledPlugins")
+    on = [p for p, enabled in user.items() if enabled is True] if isinstance(user, dict) else []
+    common = ((forge.get("skill_keep") or {}).get("common_plugins") or [])
+    return list(dict.fromkeys(on + list(stack_plugins) + [p for p in common if isinstance(p, str)]))
+
+
+EXPECTED_DOCTOR_FAIL = "instruction files"  # a fresh project has no CLAUDE.md or AGENTS.md, and forge never writes one
+
+
+def closing(name, target, handoff, profiles_made):
+    """After the sync of a framework project: `forge doctor NAME`'s report, the handover, and how to open a session. 0, or 1 when
+    doctor has a FAIL row other than the one every fresh project has (the project is made either way, and the message says so)."""
+    print("\n== forge doctor %s ==" % name, flush=True)
+    r = lib.run(["bin/forge", "doctor", name], capture=True)
+    print(r.stdout, end="")
+    if r.stderr:
+        print(r.stderr, end="")
+    fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
+    other = [l for l in fails if l[6:28].strip() != EXPECTED_DOCTOR_FAIL]
+    if r.returncode and not fails:
+        other = ["forge doctor exited %d and printed no FAIL row" % r.returncode]
+    print("\n== handover: paste this into claude, started in %s ==\n" % target)
+    print(handoff.rstrip("\n"))
+    if other:
+        print("\n! forge new: %s is made and registered, but forge doctor %s fails beyond `%s`: %s" % (
+            name, name, EXPECTED_DOCTOR_FAIL, " | ".join(l.strip() for l in other)), flush=True)
+    else:
+        print("\nopen a new session in the folder: cd %s && claude%s" % (shlex.quote(target), "".join(" (or claude @%s)" % p for p in profiles_made)), flush=True)
+    return 1 if other else 0
 
 
 def path_like(arg):
@@ -586,16 +622,12 @@ def create(a):
     project.update(project=name, project_path=target, writes_tracked_files=False)
     handoff = None
     if a.framework:
-        # What a framework project needs and the stack knows: its checks, and its plugins (the plugin is turned on through plugins_keep).
-        # --check and --plugin choose among these later (ask.check_stack).
-        project.update(framework=True, factory="off", checks=list(stack["checks"]), plugins_keep=list(stack["plugins"]))
+        # What a framework project needs: the stack's checks, and plugins_keep (the plugin is turned on through it) holding every plugin a
+        # plain project of the stack has on. --check and --plugin choose among these later (ask.check_stack).
+        project.update(framework=True, factory="off", checks=list(stack["checks"]), plugins_keep=framework_plugins(stack["plugins"], doc))
         why = lib.project_error(project) or framework.plan(project, name).error
         if why:
             return refuse(2, "nothing written, --framework would make a project every forge sync refuses: %s" % why)
-        try:
-            handoff = handoff_text(name, target, a.stack, stack["checks"])
-        except ValueError as e:
-            return refuse(2, "nothing written, %s" % e)
     ctx = ask.Context(name, doc, project, dict(stack, name=a.stack))
     try:
         ans, bad = ask.gather(a, ctx, asker)
@@ -610,6 +642,11 @@ def create(a):
         return refuse(2, "nothing written, %s" % "; ".join(bad))
     if rows:
         project["profiles"] = {"default": ask.DEFAULT_LABEL, "offered": rows}
+    if a.framework:  # the checks the project file holds, after --check chose among the stack's
+        try:
+            handoff = handoff_text(name, target, a.stack, project["checks"])
+        except ValueError as e:
+            return refuse(2, "nothing written, %s" % e)
     why = lib.project_error(project)
     if why:
         return refuse(2, "nothing written, the project file would not be valid: %s" % why)
@@ -629,7 +666,7 @@ def create(a):
     print("  project     config/projects/%s%s" % (key, " (framework on, factory off)" if a.framework else ""))
     if a.framework:
         print("  framework   checks %s; plugins_keep %s" % (", ".join(project["checks"]) or "none", ", ".join(project["plugins_keep"]) or "none"))
-        print("              %s are left unarmed: the handover, printed after the run, hands them to an agent" % ", ".join(framework.UNARMED_FIELDS))
+        print("              %s are left unarmed: the handover, printed after the run, hands them to an agent" % ", ".join(framework.wanted_fields(project)))
     print("  skills row  config/forge.json skill_keep.extras %s%s" % ("gets %s" % key if row else "already has %s" % key,
                                                                          ": %s" % ", ".join(extras) if extras else ""))
     for line in describe(ctx, ans, rows, new_defs):
@@ -709,11 +746,6 @@ def create(a):
         print("! forge new: %s is made and registered, but forge sync --apply %s failed (exit %d) -- fix the cause and run that again"
               % (name, name, code))
         return code
-    print("\n== forge doctor %s ==" % name, flush=True)
-    lib.run(["bin/forge", "doctor", name])  # information: its own report says what is wrong, and the project is made either way
-    if handoff:
-        print("\n== handover: paste this into claude, started in %s ==\n" % target)
-        print(handoff.rstrip("\n"))
-    profile_starts = ["claude @%s" % p for p in rows]
-    print("\nopen a new session in the folder: cd %s && claude%s" % (shlex.quote(target), "".join(" (or %s)" % s for s in profile_starts)), flush=True)
-    return 0
+    if not a.framework:
+        return 0
+    return closing(name, target, handoff, list(rows))
