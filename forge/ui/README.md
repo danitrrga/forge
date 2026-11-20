@@ -14,12 +14,13 @@ forge's terminal component library. One source of truth, `tokens.json`; everythi
 | `render_html.py` | `to_html(lines, theme)` and `tokens_css(theme)`: the shared output for the web, the Orca panel and the verdict page |
 | `marks.py` | the brand mark, a placeholder until a final logo exists |
 | `samples.py` | neutral fixture data shared by the tests and the gallery |
+| `gallery.py` | `python3 -m forge.ui.gallery`: the offline HTML page, the plain text blocks and the token CSS |
 
 ## The one rule
 
 A component never carries a colour or a glyph. It names a role (`Span("accent", ...)`) or a glyph token
 (`ctx.glyph("check_on")`) from `tokens.json`. `tests/test_ui.py` fails a component or screen that holds a non-ASCII string or a
-`#rrggbb`. The one exception is the ellipsis of a cut text (`Context.ellipsis`), which `tokens.json` does not hold.
+`#rrggbb`. The ellipsis of a cut text is the `ellipsis` glyph token (`Context.ellipsis`).
 
 ## Add a role or a glyph
 
@@ -31,9 +32,9 @@ checks and the gallery see it; a new screen also gets a golden file (`FORGE_UI_U
 ## See it
 
 ```
-python3 scripts/dev/ui_gallery.py --out /tmp/forge-ui-gallery.html    # the page: tokens, contrast, glyph sets, components, screens
-python3 scripts/dev/ui_gallery.py --plain                              # every component and screen as plain text blocks
-python3 scripts/dev/ui_gallery.py --tokens-css tokens.css              # the custom properties of both themes
+python3 -m forge.ui.gallery --out /tmp/forge-ui-gallery.html   # the page: tokens, contrast, glyph sets, components, screens
+python3 -m forge.ui.gallery --plain                             # every component and screen as plain text blocks (=== NAME === each)
+python3 -m forge.ui.gallery --tokens-css tokens.css             # the custom properties of both themes
 ```
 
 `FORGE_UI_FONT=/path/to/font.ttf python3 tests/test_ui.py` also checks that the font has every glyph of the nerd and unicode sets.

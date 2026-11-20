@@ -14,6 +14,6 @@
 │  ◼ docs
 │  ◻ neon
 │
-└  ↑↓ select  ·  space toggle  ·  ↵ apply  ·  esc cancel
+└  ↑↓ select  ·  space toggle  ·  ⏎ apply  ·  esc cancel
 
  ▲  review is in CORE_SET: cannot go off alone         a whole set  b keep two

@@ -36,7 +36,9 @@ def wave_end(ctx):
         ("researcher", "", "how other tools print a header", ("running", "running 3m 40s"))]}
 
 
-HOME = {"product": "forge", "version": "v0.1.0", "tagline": TAGLINE, "projects": 7, "skills": 24,
+PROJECTS_HIDDEN = 8  # projects the list does not show (its "more" row); the home screen counts them
+SKILLS_INSTALLED = 50  # what the list's meters measure against; the home screen says it
+HOME = {"product": "forge", "version": "v0.1.0", "tagline": TAGLINE, "projects": 0, "skills": SKILLS_INSTALLED,
         "doctor": {"passed": 41, "warnings": 3, "failures": 1}, "sync": 14,
         "plugin": {"phase": "10 design", "stage": "review", "done": 4, "total": 10},
         "commands": ["forge list", "forge doctor", "forge sync"],
@@ -45,6 +47,7 @@ PROJECTS = [{"name": "alpha", "servers": 10, "skills": 31}, {"name": "beta", "se
             {"name": "gamma", "servers": 4, "skills": 18}, {"name": "delta", "servers": 3, "skills": 16},
             {"name": "epsilon", "servers": 4, "skills": 15}, {"name": "zeta", "servers": 4, "skills": 14},
             {"name": "eta", "servers": 0, "skills": 5, "frozen": True}]
+HOME["projects"] = len(PROJECTS) + PROJECTS_HIDDEN  # the same data feeds the home screen and the list
 SELECT_BASE = {"project": "alpha", "frozen": False, "server_cursor": None, "server_icon": None, "bands": [],
                "groups": [{"name": "CORE_SET", "members": ["lint", "review", "docs-style"], "cursor": None, "icon": None},
                           {"name": "STYLE_SET", "members": ["format", "naming"], "cursor": None, "icon": None}],
@@ -120,7 +123,7 @@ def screen_cases(ctx):
     """(screen, state, lines) for the reference screens."""
     out = [("home", "full", screens.home(ctx, HOME)),
            ("home", "minimal", screens.home(ctx, dict(HOME, plugin=None, bands=[])))]
-    out.append(("project_list", "", screens.project_list(ctx, PROJECTS, installed=50, more=8)))
+    out.append(("project_list", "", screens.project_list(ctx, PROJECTS, installed=SKILLS_INSTALLED, more=PROJECTS_HIDDEN)))
     for name, state in SELECTORS.items():
         out.append(("selector", name, screens.selector(ctx, state)))
     out.append(("agent_events", "", screens.agent_events(ctx, {"blocks": [wave_start(ctx), wave_end(ctx)]})))

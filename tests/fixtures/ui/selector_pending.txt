@@ -14,4 +14,4 @@
 │  ◻ docs                                                 off, not applied yet
 │  ◻ neon
 │
-└  ↑↓ select  ·  space toggle  ·  ↵ apply  ·  esc cancel
+└  ↑↓ select  ·  space toggle  ·  ⏎ apply  ·  esc cancel

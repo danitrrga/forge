@@ -35,8 +35,8 @@ class Context:
 
     @property
     def ellipsis(self):
-        """The mark of a cut text. It is not in tokens.json: one character in every set, ASCII in the ascii set."""
-        return "~" if self.glyphs == "ascii" else "…"
+        """The mark of a cut text: the `ellipsis` token of the glyph set."""
+        return self.glyph("ellipsis")
 
     def replace(self, **kw):
         fields = {"theme": self.theme, "glyphs": self.glyphs, "color": self.color, "width": self.width}

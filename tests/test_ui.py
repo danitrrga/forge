@@ -22,6 +22,15 @@ plus in-file controls (no source edit): a tokens dict with a lowered colour, a l
 a component source with a glyph or a colour written in; a renderer that ignores colour none; unicode glyphs where ascii is meant; a
 layout with alert_gap_lines 0; a font that lacks one glyph.
 
+Round 2 (the enter glyph, the ellipsis token, the gallery as forge/ui/gallery.py), each check written and run BEFORE the change:
+  1b  "FAIL 1b the ellipsis token and the enter glyph = [\"nerd: Context.ellipsis is '\u2026', the token is None\", ..."
+  8   FORGE_UI_FONT=<the Nerd Font Mono regular file>: "FAIL 8 glyph coverage: nerd enter U+21B5: not in the font" (and unicode)
+  10b "FAIL 10b forge.ui.gallery cannot be imported: cannot import name 'gallery' from 'forge.ui'"
+After the change all three pass, and each has a control that is caught: a Context.ellipsis that ignores the token ("ascii:
+Context.ellipsis is '\u2026', the token is '~'"), a font that lacks one glyph, a gallery whose plain output changes between runs
+("gallery --plain is not deterministic: two runs differ"), one with an empty block ("gallery block mark is empty"), a page without
+a role ("gallery page has no custom property for role warn_band") or a glyph name, and a command line that differs from plain().
+
 The glyph-coverage check (8) needs FORGE_UI_FONT (a path to a font file): without it, or without fontTools and fc-query, it prints
 NOT RUN, NOT ARMED and counts as neither pass nor fail. FORGE_UI_UPDATE=1 rewrites tests/fixtures/ui/*.txt from the current code:
 read the diff before committing it."""
@@ -35,6 +44,8 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
+import types
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -111,6 +122,33 @@ want("1 every cell glyph is one character in every set",
 want("1 the nerd stale icon is one character (a surrogate pair in the JSON)", len(tokens.glyphs("nerd")["icon_stale"]), 1)
 
 
+# ---- 1b. the enter glyph and the ellipsis token (round 2) -----------------------------------------------------------------------
+def glyph_problems(ctx_cls):
+    out = []
+    for gs in SETS:
+        got = ctx_cls("dark", gs, "none", 80).ellipsis
+        want_ = tokens.glyphs(gs).get("ellipsis")
+        if got != want_:
+            out.append("%s: Context.ellipsis is %r, the token is %r" % (gs, got, want_))
+    for gs, value in (("nerd", "\u2026"), ("unicode", "\u2026"), ("ascii", "~")):
+        if tokens.glyphs(gs).get("ellipsis") != value:
+            out.append("%s: ellipsis token is %r, want %r" % (gs, tokens.glyphs(gs).get("ellipsis"), value))
+    if "ellipsis" not in tokens.cell_glyphs():
+        out.append("ellipsis is not in cell_glyphs")
+    for gs, value in (("nerd", "\u23ce"), ("unicode", "\u23ce"), ("ascii", "enter")):
+        if tokens.glyphs(gs)["enter"] != value:
+            out.append("%s: enter is %r, want %r" % (gs, tokens.glyphs(gs)["enter"], value))
+    return out
+
+
+class HardEllipsis(context.Context):
+    ellipsis = "\u2026"
+
+
+want("1b the ellipsis token and the enter glyph", glyph_problems(context.Context), [])
+caught("a Context.ellipsis that ignores the token", glyph_problems(HardEllipsis))
+
+
 # ---- 2. no dead tokens, and no colour or glyph written into a component -------------------------------------------------------
 UI_DIR = os.path.join(ROOT, "forge", "ui")
 
@@ -129,9 +167,9 @@ def unused_glyphs(texts):
     return ["glyph token never used: %s" % g for g in tokens.glyphs("nerd") if g not in used]
 
 
-want("2 glyph tokens the components and screens do not name", unused_glyphs([source("components.py"), source("screens.py")]), [])
+want("2 glyph tokens the components and screens do not name", unused_glyphs([source("components.py"), source("screens.py"), source("context.py")]), [])
 want("2 the source scan looked at glyph tokens", len(tokens.glyphs("nerd")) > 20, True)
-caught("components.py without icon_done", unused_glyphs([source("components.py").replace('"icon_done"', '"x"'), source("screens.py")]))
+caught("components.py without icon_done", unused_glyphs([source("components.py").replace('"icon_done"', '"x"'), source("screens.py"), source("context.py")]))
 
 
 def literal_problems(name, text):
@@ -529,6 +567,77 @@ every = {ord(ch) for gs in ("nerd", "unicode") for v in tokens.glyphs(gs).values
 want("8 the control font covers every glyph", coverage_problems(every), [])
 caught("a font that lacks one glyph", coverage_problems(every - {ord("\u25b0")}))
 want("8 the coverage check looked at glyphs", len(every) > 25, True)
+
+# ---- 10b. the gallery: python3 -m forge.ui.gallery --------------------------------------------------------------------------------
+BLOCKS = ["meter", "icons", "mark", "group", "keys", "table", "header", "band", "stack", "status_line", "agent_block", "home",
+          "project_list", "selector", "selector_frozen", "selector_stack"]
+
+
+def gallery_problems(gallery, expected_cli=None):
+    """`gallery` is the module (or anything with plain() and page()): plain output deterministic and every block non-empty and
+    present; the page names every theme role and every glyph token."""
+    out = []
+    first, second = gallery.plain(), gallery.plain()
+    if first != second:
+        out.append("gallery --plain is not deterministic: two runs differ")
+    found = re.findall(r"^=== (\w+) ===$", first, re.M)
+    if found != BLOCKS:
+        out.append("gallery --plain blocks are %r, want %r" % (found, BLOCKS))
+    parts = re.split(r"^=== \w+ ===$", first, flags=re.M)[1:]
+    for name, body in zip(found, parts):
+        if not body.strip():
+            out.append("gallery block %s is empty" % name)
+    page = gallery.page()
+    roles = [r for r in tokens.theme("dark") if r != "ramp"] + ["ramp-%d" % i for i in range(4)]
+    for r in roles:
+        if "--forge-%s:" % r.replace("_", "-") not in page:
+            out.append("gallery page has no custom property for role %s" % r)
+    for g in tokens.glyphs("nerd"):
+        if ">%s<" % g not in page:
+            out.append("gallery page does not name glyph %s" % g)
+    return out
+
+
+try:
+    from forge.ui import gallery
+except ImportError as e:  # the check below then fails loudly rather than the whole file stopping
+    gallery = None
+    failures.append("10b forge.ui.gallery cannot be imported: %s" % e)
+if gallery is not None:
+    want("10b the gallery: deterministic, every block non-empty, every role and glyph named", gallery_problems(gallery), [])
+    nondeterministic = types.SimpleNamespace(plain=iter(["=== a ===\nx\n", "=== a ===\ny\n"] * 3).__next__, page=gallery.page)
+    caught("a gallery whose plain output changes between runs", gallery_problems(nondeterministic))
+    def empty_mark():
+        head, rest = gallery.plain().split("=== mark ===\n", 1)
+        return head + "=== mark ===\n\n=== group ===" + rest.split("=== group ===", 1)[1]
+
+    empty = types.SimpleNamespace(plain=empty_mark, page=gallery.page)
+    caught("a gallery with an empty block", gallery_problems(empty))
+    no_role = types.SimpleNamespace(plain=gallery.plain, page=lambda: gallery.page().replace("--forge-warn-band:", "--x:"))
+    caught("a gallery page without a role", gallery_problems(no_role))
+    no_glyph = types.SimpleNamespace(plain=gallery.plain, page=lambda: gallery.page().replace(">icon_stale<", ">x<"))
+    caught("a gallery page without a glyph name", gallery_problems(no_glyph))
+
+    def cli_problems(expected_plain):
+        out = []
+        env = dict(os.environ, PYTHONPATH=ROOT)
+        r = subprocess.run([sys.executable, "-m", "forge.ui.gallery", "--plain"], capture_output=True, text=True, cwd=tempfile.gettempdir(), env=env, timeout=120)
+        if r.returncode or r.stdout != expected_plain:
+            out.append("python3 -m forge.ui.gallery --plain: exit %d and %d characters, want exit 0 and %d" % (r.returncode, len(r.stdout), len(expected_plain)))
+        with tempfile.TemporaryDirectory() as d:
+            css, page = os.path.join(d, "t.css"), os.path.join(d, "g.html")
+            r = subprocess.run([sys.executable, "-m", "forge.ui.gallery", "--out", page, "--tokens-css", css], capture_output=True, text=True, cwd=d, env=env, timeout=120)
+            if r.returncode or not os.path.exists(css) or not os.path.exists(page):
+                out.append("python3 -m forge.ui.gallery --out --tokens-css: exit %d, %s" % (r.returncode, r.stderr.strip()[-200:]))
+            else:
+                with open(css, encoding="utf-8") as f, open(page, encoding="utf-8") as g:
+                    if "--forge-accent:" not in f.read() or "<!doctype html>" not in g.read():
+                        out.append("gallery files lack the custom properties or the page")
+        return out
+
+    want("10b python3 -m forge.ui.gallery runs with each flag", cli_problems(gallery.plain()), [])
+    caught("a command line whose plain output differs from plain()", cli_problems(gallery.plain() + "x"))
+
 
 # ---- 9. forge/render.py is untouched ---------------------------------------------------------------------------------------------
 CARD = {"project": "alpha", "path": "/tmp/alpha", "frozen": True, "skills": 3, "servers": ["a", "b"], "plugins": ["*"],
