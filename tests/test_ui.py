@@ -511,7 +511,7 @@ want("components: the group meter is flat", {s.role for s in components.group(ct
 want("components: the group tree glyphs", [l.spans[2].text for l in components.group(ctx, "S", ["a", "b", "c"])[1:]], ["\u2502 ", "\u2502 ", "\u2514 "])
 want("components: the cursor member has an accent nest and an icon", ([(s.role, s.text) for s in components.group(ctx, "S", ["a", "b"], cursor=0, icon_on=("warn", "!"))[1].spans if s.role in ("accent", "warn")]), [("accent", "\u25b8 "), ("warn", "!")])
 want("components: a table has no borders and a lowercase header", [l.text for l in components.table(ctx, ["a", "bb"], [[[Span("body", "x")], [Span("body", "y")]]], [3, 2])], ["a    bb", "x    y"])
-want("components: header wraps the tagline at the measure", max(l.width for l in components.header(context.Context("dark", "unicode", "none", 200), "p", "v", "word " * 40, marks.mark_lines(ctx))) <= 2 + 20 + 4 + 66, True)
+want("components: header wraps the tagline at the measure", max(l.width for l in components.header(context.Context("dark", "unicode", "none", 200), "p", "v", "word " * 40, marks.mark_lines(ctx))) <= 2 + 18 + 4 + 66, True)
 want("components: keys with two spaces around the separator", components.keys(ctx, [("updown", "select"), ("esc", "cancel")])[0].text, "\u2514  \u2191\u2193 select  \u00b7  esc cancel")
 want("components: keys close the gaps in the ascii set at 60 columns", components.keys(context.Context("dark", "ascii", "none", 60), [("updown", "select"), ("space", "toggle"), ("enter", "apply"), ("esc", "cancel")])[0].width <= 60, True)
 
@@ -553,15 +553,15 @@ def art_problems(art):
                 out.append("row %d col %d: glyph %r has colour %r" % (y, x, g, c))
             if g != " " and r not in ART_ROLES:
                 out.append("row %d col %d: glyph %r has role letter %r" % (y, x, g, r))
-    if cells < 100:
+    if cells < 60:
         out.append("the scan looked at %d cells" % cells)
     return out
 
 
 ART = json.load(open(os.path.join(UI_DIR, "anvil.json"), encoding="utf-8"))
-want("7a the art is a clean 20 x 6 grid", art_problems(ART), [])
-want("7a the art has the size the owner chose", (ART["width"], ART["height"]), (20, 6))
-want("7a the art has coloured cells to look at", sum(1 for row in ART["colors"] for c in row if c) > 70, True)
+want("7a the art is a clean 18 x 5 grid", art_problems(ART), [])
+want("7a the art has the size the owner chose", (ART["width"], ART["height"]), (18, 5))
+want("7a the art has coloured cells to look at", sum(1 for row in ART["colors"] for c in row if c) > 50, True)
 for label, key, bad in (("a letter in the art", "rows", lambda r: r[:3] + "Z" + r[4:]), ("a digit in the art", "rows", lambda r: r[:3] + "7" + r[4:]),
                         ("a glyph with no colour", "colors", lambda r: r[:3] + [""] + r[4:]), ("a colour that is not a hex value", "colors", lambda r: r[:3] + ["pink"] + r[4:]),
                         ("a role letter nobody listed", "roles", lambda r: r[:3] + "z" + r[4:])):
@@ -574,7 +574,7 @@ caught("a ragged row", art_problems(ragged))
 caught("a row missing", art_problems(dict(ART, rows=ART["rows"][:-1])))
 
 mark_none = marks.mark_lines(context.Context("dark", "unicode", "none", 80))
-want("7a marks: six lines of 20 cells", (len(mark_none), {sum(len(s.text) for s in l) for l in mark_none}), (6, {20}))
+want("7a marks: five lines of 18 cells", (len(mark_none), {sum(len(s.text) for s in l) for l in mark_none}), (5, {18}))
 want("7a marks: the plain mark is the art's glyphs", ["".join(s.text for s in l) for l in mark_none], ART["rows"])
 want("7a marks: the plain mark has no escape byte", "\033" in render_ansi.to_text([Line(s) for s in mark_none], context.Context("dark", "unicode", "none", 80)), False)
 want("7a marks: the ascii set draws the same art", [l.text for l in [Line(s) for s in marks.mark_lines(context.Context("dark", "ascii", "none", 80))]], ART["rows"])
@@ -598,8 +598,8 @@ want("7a marks: a 256-colour renderer draws a span's exact colour as the nearest
 want("7a marks: a 16-colour renderer ignores a span's exact colour and draws the role", "38;" in render_ansi.to_text([Line([Span("accent", "x", rgb="#ff0000")])], context.Context("dark", "unicode", "16", 80)), False)
 want("7a marks: html draws a span's exact colour", "color:#ff0000" in render_html.to_html([Line([Span("accent", "x", rgb="#ff0000")])], "dark"), True)
 hd = components.header(context.Context("dark", "unicode", "none", 80), "forge", "v0", "a tagline", marks.mark_lines(context.Context("dark", "unicode", "none", 80)))
-want("7a header: three text lines against six mark rows start one line down", [i for i, l in enumerate(hd) if "forge" in l.text], [1])
-want("7a header: the mark is as tall as the art and the text is inside it", (len(hd), all(l.width <= 80 for l in hd)), (6, True))
+want("7a header: three text lines against five mark rows start one line down", [i for i, l in enumerate(hd) if "forge" in l.text], [1])
+want("7a header: the mark is as tall as the art and the text is inside it", (len(hd), all(l.width <= 80 for l in hd)), (5, True))
 want("model: a line's width is its text", Line([Span("ink", "ab"), Span("mute", "cde")]).width, 5)
 try:
     Line([], bg="pink")
