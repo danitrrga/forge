@@ -409,3 +409,26 @@ def write(ctx, prof, p, name, secrets):
     if not p.on:
         out += fwxignore.drop(ctx.apply, ppath, prof.get("project") or name)
     return out + _drop_stale(ctx, ppath, p.file if p.on else None)
+
+
+# The three fields no one can fill in without looking at the project (3.6): which paths always go to a person, the quick build
+# commands `fwx wave` runs, how the UI walk starts the app. `forge new --framework` leaves them out on purpose.
+UNARMED_FIELDS = ("protected_paths", "checks_quick", "app_run")
+
+
+def fields_row(only=None):
+    """The `framework fields` row: for each project with `framework: true` (just `only`, when given), which of UNARMED_FIELDS the project
+    file leaves unset. All set in every project looked at is a PASS. Any unset is a SKIP, NOT RUN, NOT ARMED, which says which (the
+    field is optional: a project without a screen has no app_run, so it is never a FAIL). No framework project is a SKIP of the
+    same wording: nothing was looked at."""
+    wanted = {n: p for n, p in sorted(lib.projects().items()) if p.get("framework") is True and (only is None or n == only)}
+    if not wanted:
+        why = "%s has framework off" % only if only else "no project has framework: true"
+        return lib.Result("SKIP", "framework fields", lib.NOT_ARMED + "%s, so no field was looked at" % why)
+    unset = {n: [k for k in UNARMED_FIELDS if not p.get(k)] for n, p in wanted.items()}
+    unset = {n: ks for n, ks in unset.items() if ks}
+    looked = "looked at %d framework project(s)" % len(wanted)
+    if not unset:
+        return lib.Result("PASS", "framework fields", "%s: %s are set in each" % (looked, ", ".join(UNARMED_FIELDS)))
+    return lib.Result("SKIP", "framework fields", lib.NOT_ARMED + "%s; unset: %s (propose them from the project's own files, then set them in "
+                      "config/projects/<name>.claude.json)" % (looked, "; ".join("%s: %s" % (n, ", ".join(ks)) for n, ks in unset.items())))

@@ -14,6 +14,11 @@ profile definitions under config/profile-defs/, the project's `profiles` row and
 under the same all-or-nothing rule. `forge new @NAME`, run in a project's folder, makes one profile of it (create_profile): the definition,
 when there is none, and the `profiles` row; a profile row is read at a session start, so it syncs nothing.
 
+With --framework the project file also gets `framework: true`, `factory: "off"`, the stack's checks and its plugins as `plugins_keep`
+(the plugin is turned on through it). protected_paths, checks_quick and app_run need a look at the project, so they are left out.
+After the sync `forge doctor NAME` runs, and with --framework the handover (examples/new-handoff.md, printed and written nowhere)
+is printed for an agent in the project's folder to settle those three; the last line says how to open a session.
+
 Only the folder of the project and forge's own project files are written. Never a CLAUDE.md, never anything outside
 `projects_dir` or `--path`. Never inside the forge checkout, and in a toy HOME never outside its world.
 
@@ -106,6 +111,24 @@ def load_stack(stack, name):
     if errors:
         raise ValueError("; ".join(errors))
     return doc, files, warnings
+
+
+HANDOFF = "new-handoff.md"
+
+
+def handoff_text(name, folder, stack_name, checks):
+    """The handover document, examples/new-handoff.md with {{NAME}}, {{FOLDER}}, {{STACK}} and {{CHECKS}} filled in. ValueError, with one
+    line, when the file cannot be read or a {{KEY}} has no value: that is found before anything is written."""
+    from forge import cli  # at call time: forge/cli.py imports this module
+    try:
+        text = cli.example_text(HANDOFF)
+    except OSError as e:
+        raise ValueError("examples/%s cannot be read: %s" % (HANDOFF, e))
+    out, errors, _ = substitute("handover", {HANDOFF: text}, {"NAME": name, "FOLDER": folder, "STACK": stack_name,
+                                                              "CHECKS": ", ".join("`%s`" % c for c in checks) or "none"})
+    if errors:
+        raise ValueError("; ".join(errors).replace("stacks/handover/", "examples/"))
+    return out[HANDOFF]
 
 
 def path_like(arg):
@@ -561,11 +584,18 @@ def create(a):
         return refuse(1, "config/forge.json skill_keep (or its extras) is not a JSON object -- fix it by hand first")
     project = json.loads(cli.example_text("project.claude.json"))
     project.update(project=name, project_path=target, writes_tracked_files=False)
+    handoff = None
     if a.framework:
-        project["framework"] = True
+        # What a framework project needs and the stack knows: its checks, and its plugins (the plugin is turned on through plugins_keep).
+        # --check and --plugin choose among these later (ask.check_stack).
+        project.update(framework=True, factory="off", checks=list(stack["checks"]), plugins_keep=list(stack["plugins"]))
         why = lib.project_error(project) or framework.plan(project, name).error
         if why:
             return refuse(2, "nothing written, --framework would make a project every forge sync refuses: %s" % why)
+        try:
+            handoff = handoff_text(name, target, a.stack, stack["checks"])
+        except ValueError as e:
+            return refuse(2, "nothing written, %s" % e)
     ctx = ask.Context(name, doc, project, dict(stack, name=a.stack))
     try:
         ans, bad = ask.gather(a, ctx, asker)
@@ -591,11 +621,15 @@ def create(a):
     print("  stack       %s" % stack["description"])
     for label, field in (("servers", "servers"), ("plugins", "plugins"), ("checks", "checks"), ("skill sets", "skill_sets")):
         print("  %-11s %s" % (label, ", ".join(stack[field]) or "none"))
-    print("              (what the stack lists is shown here only: the project file does not get it)")
+    print("              (%s)" % ("with --framework the project file gets the stack's checks and plugins; the rest is shown here only" if a.framework
+                                      else "what the stack lists is shown here only: the project file does not get it"))
     for warning in warnings:
         print("  warning     %s" % warning)
     print("  git init, README.md")
-    print("  project     config/projects/%s%s" % (key, " (framework on)" if a.framework else ""))
+    print("  project     config/projects/%s%s" % (key, " (framework on, factory off)" if a.framework else ""))
+    if a.framework:
+        print("  framework   checks %s; plugins_keep %s" % (", ".join(project["checks"]) or "none", ", ".join(project["plugins_keep"]) or "none"))
+        print("              %s are left unarmed: the handover, printed after the run, hands them to an agent" % ", ".join(framework.UNARMED_FIELDS))
     print("  skills row  config/forge.json skill_keep.extras %s%s" % ("gets %s" % key if row else "already has %s" % key,
                                                                          ": %s" % ", ".join(extras) if extras else ""))
     for line in describe(ctx, ans, rows, new_defs):
@@ -674,4 +708,12 @@ def create(a):
     if code:
         print("! forge new: %s is made and registered, but forge sync --apply %s failed (exit %d) -- fix the cause and run that again"
               % (name, name, code))
-    return code
+        return code
+    print("\n== forge doctor %s ==" % name, flush=True)
+    lib.run(["bin/forge", "doctor", name])  # information: its own report says what is wrong, and the project is made either way
+    if handoff:
+        print("\n== handover: paste this into claude, started in %s ==\n" % target)
+        print(handoff.rstrip("\n"))
+    profile_starts = ["claude @%s" % p for p in rows]
+    print("\nopen a new session in the folder: cd %s && claude%s" % (shlex.quote(target), "".join(" (or %s)" % s for s in profile_starts)), flush=True)
+    return 0

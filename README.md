@@ -199,8 +199,12 @@ half-made project is left; a failure, TERM or INT after that removes what the ru
 Name or path: an argument written as a path (a `/`, or a leading `.` or `~`) is always a directory to register; a bare word that is no
 directory in the current folder is always a name to make; a bare word that is a directory there is registered, and the first line says so
 (with `--stack`, `--path`, `--framework` or `--apply` it is refused instead, naming both ways out). The folder is never inside the checkout,
-and in a toy HOME never outside its world; two runs at once take turns. `--framework` is refused for now, with one line: the project it
-would write has no `plugins_keep`, so every sync would fail (the framework's plugin hand-over is a later step).
+and in a toy HOME never outside its world; two runs at once take turns. `--framework` writes `framework: true`, `factory: "off"`, the stack's `checks` and its plugins as `plugins_keep` (the framework
+plugin is turned on through it), and is refused in one line, before the first write, when the framework plugin cannot be served
+(`framework.plugin_source`). `protected_paths`, `checks_quick` and `app_run` need a look at the project, so they are left out and
+`forge doctor NAME` says `NOT RUN, NOT ARMED` for them (the `framework fields` row). After the sync `forge new` runs `forge doctor NAME`,
+prints (and writes nowhere) the handover `examples/new-handoff.md` for an agent in the project's folder to propose those three
+values, and ends with how to open a session: `cd FOLDER && claude`.
 
 ## How it works
 

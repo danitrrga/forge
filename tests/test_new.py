@@ -101,7 +101,7 @@ QUIET = {os.path.join("home", ".local"), os.path.join("home", ".local", "state")
 
 
 class World:
-    def __init__(self, tag, mutate=(), projects_dir=True):
+    def __init__(self, tag, mutate=(), projects_dir=True, framework=False):
         self.top = sandbox.mkdtemp("new-%s-" % tag)
         self.root = os.path.join(self.top, "forge")
         self.home = os.path.join(self.top, "home")
@@ -116,10 +116,10 @@ class World:
         sandbox.git(self.root, "add", "-A")
         sandbox.git(self.root, "commit", "-q", "-m", "engine")
         self.anchors_missing = []
-        for rel, old, new in mutate:
+        for rel, old, new, *every in mutate:  # a fourth item True: every occurrence is replaced (at least one)
             p = os.path.join(self.root, rel)
             text = open(p, encoding="utf-8").read() if os.path.exists(p) else ""
-            if text.count(old) != 1:
+            if text.count(old) < 1 or (text.count(old) != 1 and not every):
                 self.anchors_missing.append("control anchor not found in %s: %r" % (rel, old))
                 continue
             with open(p, "w", encoding="utf-8") as fh:
@@ -132,6 +132,12 @@ class World:
         doc.pop("projects_dir", None)
         if projects_dir:
             doc["projects_dir"] = self.projects
+        self.plugin = None
+        if framework:  # a directory marketplace of one plugin, so the framework step can serve a project, and a `claude` that only logs
+            self.plugin = os.path.join(self.top, "plug", "toyfw")
+            os.makedirs(os.path.join(self.plugin, ".claude-plugin"))
+            write_json(os.path.join(self.plugin, ".claude-plugin", "marketplace.json"), {"name": "toyfw", "plugins": [{"name": "toyfw"}]})
+            doc["framework"]["plugin_source"] = {"source": "directory", "path": self.plugin}
         write_json(os.path.join(cfg, "forge.json"), doc)
         for name in ("mcp-registry.json", "gateway.json"):
             shutil.copy(os.path.join(self.root, "examples", name), os.path.join(cfg, name))
@@ -141,7 +147,8 @@ class World:
         os.symlink(os.path.join("..", "credentials", "secrets.json"), os.path.join(cfg, "secrets.json"))
         os.makedirs(os.path.join(self.root, "docs"), exist_ok=True)
         shutil.copy(os.path.join(self.root, "examples", "AGENT-SYSTEM.md"), os.path.join(self.root, "docs", "AGENT-SYSTEM.md"))
-        self.env = sandbox.bare_env(self.home, self.tmp, FORGE_WRITE_LOG=os.path.join(self.logs, "writes.log"),
+        bin_dir = sandbox.stub_claude(os.path.join(self.top, "bin"), os.path.join(self.logs, "claude.log")) if framework else None
+        self.env = sandbox.bare_env(self.home, self.tmp, bin_dir, FORGE_WRITE_LOG=os.path.join(self.logs, "writes.log"),
                                     GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@example.com",
                                     GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@example.com")
 
@@ -533,18 +540,75 @@ def a_flags_by_mode(w):
 
 
 def a_framework(w):
-    """--framework writes `framework: true`, and a project the framework step refuses (no plugins_keep, which the hand-over unit
-    adds) would make every `forge sync` and `forge doctor` fail: so the run is refused before the first write, exit 2, in one line
-    that names what is missing. Control (the check taken out): `--framework wrote a project that sync refuses`."""
+    """--framework on a checkout whose framework plugin cannot be served (no plugin_source here) would make a project every
+    `forge sync` and `forge doctor` refuse: so the run is refused before the first write, exit 2, in one line that names what is
+    missing. Control (the check taken out): `--framework wrote a project that sync refuses`."""
     before = w.snapshot()
     code, out = w.forge("new", "demo", "--stack", "generic", "--framework", "--apply")
     bad = []
     if os.path.lexists(w.path("config", "projects", "demo.claude.json")) or os.path.lexists(w.project("demo")):
         bad.append("--framework wrote a project that sync refuses: %s" % tail(out, 4))
-    if code != 2 or "plugins_keep" not in out or len([l for l in out.splitlines() if l.strip()]) != 1:
-        bad.append("--framework: exit %d, want 2 and ONE line naming plugins_keep: %s" % (code, tail(out, 4)))
+    if code != 2 or "plugin_source" not in out or len([l for l in out.splitlines() if l.strip()]) != 1:
+        bad.append("--framework: exit %d, want 2 and ONE line naming plugin_source: %s" % (code, tail(out, 4)))
     if w.snapshot() != before:
         bad.append("--framework wrote something: %s" % changed(before, w.snapshot())[:4])
+    return bad
+
+
+UNARMED = ("protected_paths", "checks_quick", "app_run")  # what cannot be known without looking at the project (3.6)
+HANDOFF_START = "# Finish setting up demo for the agent framework"
+NODE = read_json(os.path.join(sandbox.FORGE, "examples", "stacks", "node", "stack.json"))
+
+
+def a_framework_made(w):
+    """4.4 U8. `--framework` writes `framework: true`, `factory: "off"`, the stack's `checks` and its plugins as `plugins_keep` (the
+    plugin is turned on through plugins_keep), and leaves protected_paths, checks_quick and app_run out. After the sync, `forge doctor demo`
+    runs and says `NOT RUN, NOT ARMED` for those three; a handover document that names them is printed (and written nowhere); the last
+    line says how to open a session. Without --framework none of the handover is printed. The dry-run writes nothing."""
+    bad = []
+    before = w.fingerprint()
+    code, out = w.forge("new", "demo", "--stack", "node", "--framework")
+    if code != 0 or w.fingerprint() != before or HANDOFF_START in out:
+        bad.append("--framework dry-run: exit %d, tree changed %s, handover printed %s: %s" % (
+            code, w.fingerprint() != before, HANDOFF_START in out, tail(out, 4)))
+    code, out = w.forge("new", "demo", "--stack", "node", "--framework", "--apply")
+    if code != 0:
+        return bad + ["--framework --apply: exit %d: %s" % (code, tail(out, 6))]
+    pf = read_json(w.path("config", "projects", "demo.claude.json")) or {}
+    for key, want in (("framework", True), ("factory", "off"), ("checks", NODE["checks"]), ("plugins_keep", NODE["plugins"])):
+        if pf.get(key) != want:
+            bad.append("project file: %s is %r, want %r" % (key, pf.get(key), want))
+    for key in UNARMED:
+        if key in pf:
+            bad.append("%s was written into the project file: it is left unarmed" % key)
+    if HANDOFF_START not in out:
+        bad.append("no handover printed (a line `%s`): %s" % (HANDOFF_START, tail(out, 4)))
+        handoff = ""
+    else:
+        handoff = out[out.index(HANDOFF_START):]
+    for key in UNARMED:
+        if key not in handoff:
+            bad.append("handoff misses %s" % key)
+    if w.project("demo") not in handoff or " ".join(NODE["checks"]) not in handoff:
+        bad.append("the handover does not name the project's folder or the stack's checks")
+    row = [l for l in out.splitlines() if l.startswith(("SKIP", "PASS", "FAIL", "WARN")) and "framework fields" in l]
+    if len(row) != 1 or "NOT RUN, NOT ARMED" not in row[0] or any(k not in row[0] for k in UNARMED):
+        bad.append("forge doctor demo: want one `framework fields` row, NOT RUN, NOT ARMED, naming the three fields: %s" % row)
+    if out.find("SUMMARY:") == -1 or not out.rstrip().splitlines()[-1].startswith("open a new session in the folder"):
+        bad.append("the last line is not `open a new session in the folder ...`: %s" % tail(out, 2))
+    elif out.find("SUMMARY:") > out.find(HANDOFF_START) >= 0:
+        bad.append("the handover came before forge doctor's report")
+    entries = sorted(os.listdir(w.project("demo")))
+    if entries != [".claude", ".git", ".gitignore", "README.md"] or sorted(os.listdir(os.path.join(w.project("demo"), ".claude"))) != ["settings.local.json", "toyfw.json"]:
+        bad.append("the project folder holds %s (.claude: %s), want what sync writes and nothing else" % (
+            entries, sorted(os.listdir(os.path.join(w.project("demo"), ".claude")))))
+    code, out = w.forge("new", "plain", "--stack", "node", "--apply")
+    pf = read_json(w.path("config", "projects", "plain.claude.json")) or {}
+    if code != 0 or "handoff" in out.lower() or HANDOFF_START.replace("demo", "plain") in out or "framework" in pf or "checks" in pf \
+            or "plugins_keep" in pf:
+        bad.append("without --framework: exit %d, handover printed or framework keys written (%s): %s" % (code, sorted(pf), tail(out, 3)))
+    if "SUMMARY:" not in out or not out.rstrip().splitlines()[-1].startswith("open a new session in the folder"):
+        bad.append("without --framework: forge doctor's report, then the closing line, were not printed: %s" % tail(out, 3))
     return bad
 
 
@@ -994,6 +1058,17 @@ CONTROLS = [
     ("an empty --path", a_path_in_checkout, [(NEW, "if not a.parent_dir.strip():", "if False:")], "an empty --path: exit"),
     ("--framework not checked", a_framework, [(NEW, "why = lib.project_error(project) or framework.plan(project, name).error", "why = None")],
      "--framework wrote a project that sync refuses"),
+    ("a handover that never names checks_quick", a_framework_made, [(os.path.join("examples", "new-handoff.md"), "checks_quick", "the quick checks", True)],
+     "handoff misses checks_quick"),
+    ("no framework fields row", a_framework_made, [(CLI, '    ("framework fields", framework_fields_row, ""),\n', ""),
+                                                   (CLI, '        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),\n', "")],
+     "want one `framework fields` row"),
+    ("a plugins_keep that the stack does not give", a_framework_made, [(NEW, "plugins_keep=list(stack[\"plugins\"]))", "plugins_keep=[\"context7@claude-plugins-official\"])")],
+     "project file: plugins_keep is"),
+    ("a framework project with the three unarmed fields written", a_framework_made, [(NEW, "factory=\"off\", checks=", "factory=\"off\", protected_paths=[\"**\"], checks=")],
+     "protected_paths was written into the project file"),
+    ("a handover written into the project", a_framework_made, [(NEW, "    if handoff:\n", "    if handoff:\n        open(os.path.join(target, \"HANDOFF.md\"), \"w\").write(handoff)\n")],
+     "the project folder holds"),
     ("a relative projects_dir", a_bad_projects_dir, [(NEW, "not os.path.isabs(os.path.expanduser(configured))", "False")],
      "a relative projects_dir was used"),
     ("no handler for TERM", a_signals, [(NEW, "with stopped_means_rollback(), creation_lock():", "with creation_lock():")], "left behind after SIGTERM"),
@@ -1071,6 +1146,13 @@ def main():
             n_checks[0] += 1
         finally:
             w.close()
+    w = World("fw", framework=True)
+    try:
+        for why in a_framework_made(w):
+            failures.append("--framework made -- %s" % why)
+        n_checks[0] += 1
+    finally:
+        w.close()
     if master_cli is not None:
         w = World("reg")
         for why in a_registration_as_master(w, master_cli):
@@ -1088,7 +1170,7 @@ def main():
         if fn is a_forge_json_fails and os.geteuid() == 0:
             notrun.append("control '%s': a read-only folder does not stop root" % label)
             continue
-        cw = World("c", mutate=mutate)
+        cw = World("c", mutate=mutate, framework=fn is a_framework_made)
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
         shown = [g for g in got if needle in g] or got
