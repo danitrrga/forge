@@ -443,8 +443,15 @@ ok("no group, no --jobs: one FAIL, one PASS", last(r) == "SUMMARY: 1 passed, 0 w
 #   FAIL: no group, a failing file: its traceback on stderr is shown: ...
 # Controls (copies of forge/cli.py changed in one place): the tail dropped, all FAILs above; the cut taken out
 # (`lines[-TAIL_LINES:]` -> `lines`): FAIL: no group, a failing file: only the last 100 lines are shown ...
+# Without `-u` on the child (LOUD_BAD flushes nothing: stderr is unbuffered, stdout is block-buffered into the pipe, so the traceback
+# lands before the last stdout lines and the tail cuts the wrong end; the fixture used to flush by hand, which hid it):
+#   FAIL: no group, a failing file: its traceback on stderr is shown: 238
+#   FAIL: no group, a failing file: only the last 100 lines are shown, and the cut is said: FAIL  test_loud_bad.py ...
+# A passing file's output printed (PASS branch: `print(r.stdout) if r.stdout else None; return ...`; an unconditional print dies earlier,
+# in a check that reads the first line of a quiet run):
+#   FAIL: no group, a failing file: a passing file stays silent: passing chatter that nobody needs
 LOUD_BAD = ('import sys\nfor i in range(250):\n    print("noisy line %d" % i)\n'
-            'sys.stdout.flush()\nsys.stderr.write("Traceback (most recent call last):\\nAssertionError: the broken case\\n")\nsys.exit(1)\n')
+            'sys.stderr.write("Traceback (most recent call last):\\nAssertionError: the broken case\\n")\nsys.exit(1)\n')
 LOUD_OK = 'print("passing chatter that nobody needs")\n'
 for jobs in ((), ("--jobs", "4")):
     tag = "no group, a failing file%s" % (", --jobs 4" if jobs else "")

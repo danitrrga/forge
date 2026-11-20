@@ -1566,8 +1566,9 @@ def cmd_test(a):
         todo.append(f)
 
     def run_one(f):
-        # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr.
-        r = lib.run_low([sys.executable, f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr, and -u (unbuffered)
+        # keeps its place against the stdout lines printed before it.
+        r = lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
             # (CLAUDE.md, rule 4). Its last line is why, after "NOT RUN: ".
