@@ -977,7 +977,7 @@ def settings_cases(tmp):
         lib.SETTINGS = real
         lib.settings.cache_clear()
 
-    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "hindsight", "consent", "agent_browser", "mempalace"))
+    want("INTEGRATIONS", lib.INTEGRATIONS, ("codex", "hindsight", "consent", "agent_browser"))
     ours = json.load(open(os.path.join(FIXTURES, "forge.json")))
     want("tests/fixtures/config/forge.json integrations, all on",
          ours["integrations"], {"codex": True, "hindsight": True})  # consent is absent from the fixture: off

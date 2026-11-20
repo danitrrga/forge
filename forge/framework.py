@@ -51,8 +51,8 @@ from forge import fwxignore, lib, marketplace, owned
 
 PART = "framework"
 LINEAR_KEY = "LINEAR_API_KEY"
-# The four integrations the plugin's file reports (§ the file's `integrations`); a name forge has no switch for yet is false.
-INTEGRATIONS = ("consent", "notifications", "agent_browser", "mempalace")
+# The three integrations the plugin's file reports (§ the file's `integrations`); a name forge has no switch for yet is false.
+INTEGRATIONS = ("consent", "notifications", "agent_browser")
 PERMISSIONS_FILE = "framework-permissions.json"
 PERMISSIONS_SCHEMA = 1
 # A command that runs whatever follows it: `Bash(<one of these>:*)` allows any program or package script.

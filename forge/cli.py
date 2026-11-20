@@ -574,17 +574,10 @@ def _agent_browser_missing():
         "open a new shell, or set integrations.agent_browser false")
 
 
-def _mempalace_missing():
-    return None if shutil.which("mempalace") else (
-        "mempalace is on in config/forge.json but mempalace is not on PATH -- run `forge toolchain --fix`, then "
-        "open a new shell, or set integrations.mempalace false")
-
-
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"),
                      "hindsight": (None, "no dependency checked here"),
                      "consent": (None, "its own row, `consent`, looks at the adapter, the projects and the hook"),
-                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH"),
-                     "mempalace": (_mempalace_missing, "mempalace found on PATH")}
+                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
 # An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
 # nothing. The value says when the check arrives. None is pending now.
 INTEGRATION_PENDING = {}
@@ -2155,7 +2148,7 @@ def build_parser():
     i.add_argument("--sets", action="append", metavar="[@PROFILE:]SET,SET", help="question 2: the skill sets (skill_keep.sets); repeat for several profiles. A scoped value replaces the unscoped one for that profile; it does not add to it")
     i.add_argument("--skills", action="append", metavar="[@PROFILE:]a,b", help="question 2: the final list of skills, replacing what the sets give (a scoped value replaces the unscoped one for that profile)")
     i.add_argument("--server", action="append", metavar="[@PROFILE:]NAME", help="question 3: an MCP server of the registry; repeat for each (an account server is <service>-<project>; a scoped value replaces the unscoped one for that profile)")
-    i.add_argument("--memory", metavar="NAME|none", help="question 4: the memory integration of the project (hindsight or mempalace, whichever is on), or none")
+    i.add_argument("--memory", metavar="NAME|none", help="question 4: the memory integration of the project (hindsight, when it is on), or none")
     i.add_argument("--check", action="append", metavar="CMD", help="question 5: one of the stack's checks, written as the project's checks")
     i.add_argument("--plugin", action="append", metavar="NAME", help="question 5: one of the stack's plugins; the project then keeps only these (besides the common ones)")
     i.add_argument("--ui", action="store_true", help="question 5: the project has a user interface (ui: true)")

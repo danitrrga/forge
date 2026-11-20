@@ -159,8 +159,8 @@ def write_json(path, doc):
         fh.write("\n")
 
 
-def prep(w, hindsight=False, mempalace=False):
-    """The world's skills, sets, registry and two other projects; hindsight or mempalace on only where a test asks (a sync then cannot
+def prep(w, hindsight=False):
+    """The world's skills, sets, registry and two other projects; hindsight on only where a test asks (a sync then cannot
     finish). The registry's names are what the tests of an account server need: analytics-my-other (suffix `-other`, the name a project
     my-other would own), vercel-el-hero (another project's, whose name ends with a shorter project's: hero), plain and plain-demo (the
     same kind of server twice)."""
@@ -173,11 +173,10 @@ def prep(w, hindsight=False, mempalace=False):
     doc["skill_keep"]["sets"] = {"ARCH_SET": ["alpha", "beta"], "OTHER_SET": ["gamma"]}
     doc["skill_keep"]["set_docs"] = {"ARCH_SET": "architecture skills"}
     doc["integrations"]["hindsight"] = hindsight
-    doc["integrations"]["mempalace"] = mempalace
     write_json(path, doc)
     stdio = {"type": "stdio", "command": "true", "args": []}
     write_json(w.path("config", "mcp-registry.json"), {"servers": {n: dict(stdio) for n in (
-        "analytics-demo", "analytics-other", "analytics-my-other", "vercel-el-hero", "plain", "plain-demo", "mempalace",
+        "analytics-demo", "analytics-other", "analytics-my-other", "vercel-el-hero", "plain", "plain-demo",
         "hindsight-coding-agents", "hindsight-recall")}})
     for name in ("other", "el-hero"):
         folder = os.path.join(w.top, name)
@@ -455,10 +454,14 @@ def a_stack_and_memory(w):
     for needle in ("pnpm nope", "nope@x"):
         if code != 2 or needle not in out:
             bad.append("a wrong %s: exit %d: %s" % (needle, code, tail(out)))
-    for name, needle in (("nope", "nope"), ("hindsight", "off in config/forge.json"), ("mempalace", "off in config/forge.json")):
+    for name, needle in (("nope", "nope"), ("hindsight", "off in config/forge.json")):
         code, out = w.forge("new", "demo", "--stack", "next", *answered(memory=name))
         if code != 2 or needle not in out or "no memory" in out and name != "nope":
             bad.append("--memory %s with the integration off: exit %d, want 2 saying %r: %s" % (name, code, needle, tail(out)))
+    # MemPalace is retired: it is no memory choice, so it is refused as an unknown name and not as an integration that is off.
+    code, out = w.forge("new", "demo", "--stack", "next", *answered(memory="mempalace"))
+    if code != 2 or "mempalace" not in out or "off in config/forge.json" in out:
+        bad.append("--memory mempalace (retired): exit %d, want 2 as an unknown name, not 'off in config/forge.json': %s" % (code, tail(out)))
     code, out = w.forge("new", "demo", "--stack", "next", *answered(server="analytics-other"))
     if code != 2 or "account server of project other" not in out:
         bad.append("another project's account server: exit %d: %s" % (code, tail(out)))
@@ -484,25 +487,26 @@ def a_own_account_server(w):
     return bad
 
 
-def a_memory_mempalace(w):
-    """MemPalace on: it is a memory choice (asked, and by --memory), written into `servers`, and the registry server mempalace is not an
-    ordinary row of the servers question nor an answer of --server."""
+def a_memory_asked(w):
+    """Hindsight on: it is a memory choice (asked, and by --memory), written into `servers`, and the registry servers it means are not
+    ordinary rows of the servers question nor an answer of --server."""
     bad = []
+    both = ["hindsight-coding-agents", "hindsight-recall"]
     keys = [["enter"], ["enter"],                           # sets, final list: nothing
-            ["down", "space", "enter"],                     # servers: the second row (analytics-demo, plain): never mempalace
-            ["down", "space", "up", "space", "enter"],      # memory: none off, mempalace on
+            ["down", "space", "enter"],                     # servers: the second row (analytics-demo, plain): never a hindsight one
+            ["down", "space", "up", "space", "enter"],      # memory: none off, hindsight on
             ["enter"]]                                      # stack
     code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic", "--apply"], keys, [""])
     servers = (project_doc(w) or {}).get("servers")
-    if servers != ["plain", "mempalace"]:
-        bad.append("asked: servers %s, want ['plain', 'mempalace'] (exit %d): %s" % (servers, code, tail(out)))
-    code, out = w.forge("new", "flags", "--stack", "generic", *answered(memory="mempalace"), "--apply")
+    if servers != ["plain"] + both:
+        bad.append("asked: servers %s, want %s (exit %d): %s" % (servers, ["plain"] + both, code, tail(out)))
+    code, out = w.forge("new", "flags", "--stack", "generic", *answered(memory="hindsight"), "--apply")
     servers = (project_doc(w, "flags") or {}).get("servers")
-    if servers != ["mempalace"]:
-        bad.append("--memory mempalace: servers %s, want ['mempalace'] (exit %d): %s" % (servers, code, tail(out)))
-    code, out = w.forge("new", "ordinary", "--stack", "generic", *answered(server="mempalace"))
-    if code != 2 or "--memory mempalace" not in out:
-        bad.append("--server mempalace: exit %d, want 2 pointing at --memory mempalace: %s" % (code, tail(out)))
+    if servers != both:
+        bad.append("--memory hindsight: servers %s, want %s (exit %d): %s" % (servers, both, code, tail(out)))
+    code, out = w.forge("new", "ordinary", "--stack", "generic", *answered(server="hindsight-coding-agents"))
+    if code != 2 or "--memory hindsight" not in out:
+        bad.append("--server hindsight-coding-agents: exit %d, want 2 pointing at --memory hindsight: %s" % (code, tail(out)))
     return bad
 
 
@@ -514,7 +518,7 @@ def a_one_backend(w):
                                                   "skill_sets": []})
     with open(os.path.join(stack, "gitignore"), "w") as fh:
         fh.write(".env\n")
-    code, out = w.forge("new", "demo", "--stack", "mem", *answered(memory="mempalace"), "--plugin", "claude-mem-lite@sdsrss")
+    code, out = w.forge("new", "demo", "--stack", "mem", *answered(memory="hindsight"), "--plugin", "claude-mem-lite@sdsrss")
     if code != 2 or "one per project" not in out:
         return ["two memory backends: exit %d, want 2 saying one per project: %s" % (code, tail(out))]
     code, out = w.forge("new", "demo", "--stack", "mem", *answered(), "--plugin", "claude-mem-lite@sdsrss")
@@ -534,11 +538,11 @@ def a_common_memory_plugin(w):
                                                   "skill_sets": []})
     with open(os.path.join(stack, "gitignore"), "w") as fh:
         fh.write(".env\n")
-    code, out = w.forge("new", "demo", "--stack", "plug", *answered(memory="mempalace"), "--plugin", "other@example.test")
+    code, out = w.forge("new", "demo", "--stack", "plug", *answered(memory="hindsight"), "--plugin", "other@example.test")
     bad = []
     if code != 2 or "one per project" not in out:
         bad.append("common memory plugin: exit %d, want 2 saying one per project: %s" % (code, tail(out)))
-    code, out = w.forge("new", "demo", "--stack", "plug", *answered(memory="mempalace"))
+    code, out = w.forge("new", "demo", "--stack", "plug", *answered(memory="hindsight"))
     if code != 0:
         bad.append("memory with no plugin list refused: exit %d: %s" % (code, tail(out)))
     code, out = w.forge("new", "demo", "--stack", "plug", *answered(), "--plugin", "other@example.test")
@@ -868,14 +872,15 @@ CONTROLS = [
     ("the own server is always its own", a_own_account_server,
      [(ASK, "    best = max(named, key=len)\n    return None if best == project else best\n",
        "    if project in named:\n        return None\n    return max(named, key=len)\n")], "taken by a shorter name", {}),
-    ("mempalace not a memory", a_memory_mempalace, [(ASK, ', "mempalace": ("mempalace",)}', "}")], "--memory mempalace: servers", {"mempalace": True}),
-    ("the memory servers not kept out of the rows", a_memory_mempalace,
-     [(ASK, "        return {s for servers in MEMORY.values() for s in servers}", "        return set()")], "asked: servers", {"mempalace": True}),
+    ("hindsight not a memory", a_memory_asked, [(ASK, 'MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall")}', "MEMORY = {}")],
+     "--memory hindsight: servers", {"hindsight": True}),
+    ("the memory servers not kept out of the rows", a_memory_asked,
+     [(ASK, "        return {s for servers in MEMORY.values() for s in servers}", "        return set()")], "asked: servers", {"hindsight": True}),
     ("memory off not said", a_stack_and_memory, [(ASK, "    elif not lib.on(ans.memory):", "    elif False:")], "with the integration off", {}),
-    ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ctx, ans, problems)\n", "    pass\n")], "two memory backends", {"mempalace": True}),
+    ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ctx, ans, problems)\n", "    pass\n")], "two memory backends", {"hindsight": True}),
     ("the common memory plugin not counted", a_common_memory_plugin,
      [(ASK, "    common = list(keep.get(\"common_plugins\") or []) if plugins else []\n", "    common = []\n")],
-     "common memory plugin", {"mempalace": True}),
+     "common memory plugin", {"hindsight": True}),
     ("the restore failure said to remove the file", a_restore_fails, [(NEW, "                    unrestored.append((path, rest[1], e))\n", "                    stuck.append(path)\n")],
      "the message does not say how to put the project file back", {}),
     ("the rollback after the lock", a_lock_through_rollback,
@@ -929,9 +934,9 @@ PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_promp
          ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("profile failure", a_profile_failure, {"mutate": [INJECT_PROFILE]}), ("screen row", a_screen_row, {}), ("plan", a_plan_shows_answers, {}),
          ("stack and memory", a_stack_and_memory, {}), ("memory hindsight", a_memory_hindsight, {"hindsight": True}),
          ("cancelled", a_cancelled, {}), ("partial answers", a_partial_answers, {}), ("resolves", a_resolves, {}),
-         ("own account server", a_own_account_server, {}), ("memory mempalace", a_memory_mempalace, {"mempalace": True}),
-         ("one backend", a_one_backend, {"mempalace": True}),
-         ("common memory plugin", a_common_memory_plugin, {"mempalace": True}),
+         ("own account server", a_own_account_server, {}), ("memory asked", a_memory_asked, {"hindsight": True}),
+         ("one backend", a_one_backend, {"hindsight": True}),
+         ("common memory plugin", a_common_memory_plugin, {"hindsight": True}),
          ("restore fails", a_restore_fails, {}), ("lock through rollback", a_lock_through_rollback, {}),
          ("opt-out persisted", a_optout_persisted, {}), ("extras row edited", a_extras_row_edited, {}), ("definition edited", a_definition_edited, {}), ("set_docs type", a_set_docs_type, {}), ("ctrl-c", a_ctrl_c, {}),
          ("sets alone", a_sets_alone, {}), ("stack question", a_stack_question, {}), ("scoped", a_scoped, {}),
@@ -939,9 +944,9 @@ PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_promp
          ("profile twice", a_profile_twice, {}), ("help", a_help, {})]
 
 
-def world(tag, mutate=(), hindsight=False, mempalace=False):
+def world(tag, mutate=(), hindsight=False):
     w = World(tag, mutate=mutate)
-    prep(w, hindsight=hindsight, mempalace=mempalace)
+    prep(w, hindsight=hindsight)
     return w
 
 
@@ -950,7 +955,7 @@ def main():
     for label, fn, kw in PLAIN:
         if only and not any(t in label for t in only):
             continue
-        w = world("ask", mutate=kw.get("mutate", ()), hindsight=kw.get("hindsight", False), mempalace=kw.get("mempalace", False))
+        w = world("ask", mutate=kw.get("mutate", ()), hindsight=kw.get("hindsight", False))
         try:
             for why in fn(w):
                 failures.append("%s -- %s" % (label, why))
@@ -960,7 +965,7 @@ def main():
     for label, fn, mutate, needle, kw in CONTROLS:
         if only and not any(t in label for t in only):
             continue
-        cw = world("askc", mutate=mutate, hindsight=kw.get("hindsight", False), mempalace=kw.get("mempalace", False))
+        cw = world("askc", mutate=mutate, hindsight=kw.get("hindsight", False))
         try:
             got = cw.anchors_missing or fn(cw)
             test_new.check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
