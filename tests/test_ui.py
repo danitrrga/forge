@@ -525,34 +525,34 @@ def attempt_raises(fn):
 
 
 ART_GLYPHS = set("#%*+-.:=@ ")
-ART_ROLES = {"i": "ink", "b": "body", "m": "mute", "a": "accent", "r": "ramp2"}
 HEX = re.compile(r"#[0-9a-f]{6}")
 
 
 def art_problems(art):
-    """The data file is a clean grid: plain-ASCII glyphs only, a colour and a role for every glyph and none for a space."""
+    """The data file is a clean grid of art and nothing else: plain-ASCII glyphs, a colour for every glyph and none for a space."""
     out = []
     w, h = art.get("width"), art.get("height")
-    for key in ("rows", "colors", "roles"):
+    extra = sorted(set(art) - {"about", "width", "height", "rows", "colors"})
+    if extra:
+        out.append("anvil.json holds more than the art: %s (a fallback is derived from the tokens, never stored)" % ", ".join(extra))
+    for key in ("rows", "colors"):
         if len(art.get(key, [])) != h:
             out.append("%s has %d rows, height is %s" % (key, len(art.get(key, [])), h))
     if out:
         return out
     cells = 0
-    for y, (row, cols, roles) in enumerate(zip(art["rows"], art["colors"], art["roles"])):
-        if len(row) != w or len(cols) != w or len(roles) != w:
-            out.append("row %d: %d glyphs, %d colours, %d roles, width is %d" % (y, len(row), len(cols), len(roles), w))
+    for y, (row, cols) in enumerate(zip(art["rows"], art["colors"])):
+        if len(row) != w or len(cols) != w:
+            out.append("row %d: %d glyphs, %d colours, width is %d" % (y, len(row), len(cols), w))
             continue
-        for x, (g, c, r) in enumerate(zip(row, cols, roles)):
+        for x, (g, c) in enumerate(zip(row, cols)):
             cells += 1
             if g not in ART_GLYPHS:
                 out.append("row %d col %d: glyph %r is not in the plain-ASCII ramp" % (y, x, g))
-            if g == " " and (c or r != " "):
-                out.append("row %d col %d: a space carries a colour or a role" % (y, x))
+            if g == " " and c:
+                out.append("row %d col %d: a space carries a colour" % (y, x))
             if g != " " and not HEX.fullmatch(c or ""):
                 out.append("row %d col %d: glyph %r has colour %r" % (y, x, g, c))
-            if g != " " and r not in ART_ROLES:
-                out.append("row %d col %d: glyph %r has role letter %r" % (y, x, g, r))
     if cells < 60:
         out.append("the scan looked at %d cells" % cells)
     return out
@@ -563,8 +563,7 @@ want("7a the art is a clean 18 x 5 grid", art_problems(ART), [])
 want("7a the art has the size the owner chose", (ART["width"], ART["height"]), (18, 5))
 want("7a the art has coloured cells to look at", sum(1 for row in ART["colors"] for c in row if c) > 50, True)
 for label, key, bad in (("a letter in the art", "rows", lambda r: r[:3] + "Z" + r[4:]), ("a digit in the art", "rows", lambda r: r[:3] + "7" + r[4:]),
-                        ("a glyph with no colour", "colors", lambda r: r[:3] + [""] + r[4:]), ("a colour that is not a hex value", "colors", lambda r: r[:3] + ["pink"] + r[4:]),
-                        ("a role letter nobody listed", "roles", lambda r: r[:3] + "z" + r[4:])):
+                        ("a glyph with no colour", "colors", lambda r: r[:3] + [""] + r[4:]), ("a colour that is not a hex value", "colors", lambda r: r[:3] + ["pink"] + r[4:])):
     broken = copy.deepcopy(ART)
     broken[key][0] = bad(broken[key][0])  # row 0 has no space, so the change always lands on a glyph
     caught(label, art_problems(broken))
@@ -572,7 +571,18 @@ ragged = copy.deepcopy(ART)
 ragged["rows"][4] = ragged["rows"][4][:-1]
 caught("a ragged row", art_problems(ragged))
 caught("a row missing", art_problems(dict(ART, rows=ART["rows"][:-1])))
+caught("a stored fallback role", art_problems(dict(ART, roles=["i" * ART["width"]] * ART["height"])))
 
+def nearest_roles(art, table):
+    """Independent of marks.py: for each coloured cell the nearest of ink, body, mute, accent, ramp2 in `table` (a theme's colours)."""
+    pal = {r: tokens.rgb(table["ramp"][2] if r == "ramp2" else table[r]) for r in ("ink", "body", "mute", "accent", "ramp2")}
+    return [[None if not c else min(pal, key=lambda r: sum((a - b) ** 2 for a, b in zip(tokens.rgb(c), pal[r]))) for c in row] for row in art["colors"]]
+
+
+want("7a marks: each cell's fallback role is the nearest role of the current dark theme", [[r if g != " " else None for g, r in zip(row, rrow)] for row, rrow in zip(ART["rows"], marks.ROLES)], nearest_roles(ART, tokens.theme("dark")))
+moved = dict(tokens.theme("dark"), ink="#000000", body="#000000", mute="#000000")
+want("7a marks: a token change moves the roles (they are derived, not stored)", marks.fallback_roles(ART, moved) != marks.ROLES, True)
+want("7a marks: the derivation is not constant (at least three roles are used)", len({r for row in marks.ROLES for r in row}) >= 3, True)
 mark_none = marks.mark_lines(context.Context("dark", "unicode", "none", 80))
 want("7a marks: five lines of 18 cells", (len(mark_none), {sum(len(s.text) for s in l) for l in mark_none}), (5, {18}))
 want("7a marks: the plain mark is the art's glyphs", ["".join(s.text for s in l) for l in mark_none], ART["rows"])
@@ -591,7 +601,7 @@ for label, cx in (("light theme", context.Context("light", "unicode", "truecolor
     lines = marks.mark_lines(cx)
     text = render_ansi.to_text([Line(s) for s in lines], cx)
     want("7a marks: %s draws no exact colour" % label, (any(s.rgb for l in lines for s in l), "38;2;%d;%d;%d" % tokens.rgb(ART["colors"][0][0]) in text), (False, False))
-    want("7a marks: %s names only the roles of the art" % label, {s.role for l in lines for s in l if s.text.strip()} <= set(ART_ROLES.values()), True)
+    want("7a marks: %s names only the roles of the art" % label, {s.role for l in lines for s in l if s.text.strip()} <= set(marks.FALLBACK), True)
 want("7a marks: a Span refuses a colour that is not #rrggbb", [attempt_raises(lambda v=v: Span("ink", "x", rgb=v)) for v in ("pink", "#12345", "#12345g", "ff0000")], [True] * 4)
 want("7a marks: a 256-colour renderer draws a span's exact colour as the nearest entry, never a truecolor escape",
      render_ansi.to_text([Line([Span("accent", "x", rgb="#ff0000")])], context.Context("dark", "unicode", "256", 80)), "\033[38;5;%dmx\033[0m\n" % render_ansi.xterm256("#ff0000"))
@@ -651,7 +661,7 @@ def golden_problems(update=False):
         if got != wanted:
             diff = "".join(difflib.unified_diff(wanted.splitlines(True), got.splitlines(True), "golden/" + name, "rendered/" + name))
             out.append("%s differs from its golden file:\n%s" % (name, diff))
-    extra = sorted(set(os.listdir(FIXTURES)) - seen) if os.path.isdir(FIXTURES) and not update else []
+    extra = sorted(n for n in set(os.listdir(FIXTURES)) - seen if not n.startswith("mark_")) if os.path.isdir(FIXTURES) and not update else []
     out.extend("%s: a golden file no screen produces" % n for n in extra)
     return out
 
@@ -666,6 +676,43 @@ with patched(components, "MARGIN", 3):
     caught("components.MARGIN raised to 3", problems)
     want("7 the failure carries a unified diff", bool(problems) and "--- golden/" in problems[0] and "+++ rendered/" in problems[0], True)
 
+
+# ---- 7b. the logo's exact output, pinned at each colour depth ---------------------------------------------------------------
+# The plain mark is in the home goldens; these pin its colours. A change to the art, to a token it falls back to, or to either renderer
+# shows here, so the logo changes only when somebody regenerates these files on purpose (FORGE_UI_UPDATE=1) and reads the diff.
+MARK_PINS = (("truecolor", "dark"), ("256", "dark"), ("16", "dark"), ("truecolor", "light"))
+
+
+def mark_pin_problems(update=False):
+    out = []
+    for depth, theme in MARK_PINS:
+        cx = context.Context(theme, "unicode", depth, 80)
+        got = render_ansi.to_text([Line(s) for s in marks.mark_lines(cx)], cx)
+        path = os.path.join(FIXTURES, "mark_%s_%s.ansi" % (depth, theme))
+        if update:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(got)
+        elif not os.path.exists(path):
+            out.append("%s: no pinned file (FORGE_UI_UPDATE=1 writes it)" % os.path.basename(path))
+        elif open(path, encoding="utf-8").read() != got:
+            out.append("%s differs from the mark as drawn (repr of the first line now: %r)" % (os.path.basename(path), got.split("\n")[0][:80]))
+    return out
+
+
+if os.environ.get("FORGE_UI_UPDATE"):
+    mark_pin_problems(update=True)
+want("7b the mark at truecolor, 256 and 16 colours on dark and at truecolor on light is as pinned", mark_pin_problems(), [])
+want("7b the pins looked at four outputs", len(MARK_PINS), 4)
+recoloured = copy.deepcopy(ART)
+recoloured["colors"][0][0] = "#00ff00"
+with patched(marks, "ART", recoloured):
+    caught("a changed colour in the art", mark_pin_problems())
+with patched(marks, "ROLES", [["ink"] * ART["width"] for _ in range(ART["height"])]):
+    caught("every fallback role changed to ink", mark_pin_problems())
+swapped = [r.replace("@", "#") for r in ART["rows"]]
+want("7b the glyph control really changes the art", swapped != ART["rows"], True)
+with patched(marks, "ART", dict(ART, rows=swapped)):
+    caught("a glyph changed in the art", mark_pin_problems())
 
 # ---- 8. glyph coverage in a font ------------------------------------------------------------------------------------------------
 def font_codepoints(path):
