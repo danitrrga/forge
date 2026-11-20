@@ -797,6 +797,18 @@ def a_registry_copy_kept(w):
     return [] if held == original else ["the recovery copy does not hold the registry as it was"]
 
 
+def a_other_memory_fail(w):
+    """The memory row fails for a reason other than the empty store (the world's memory_doctor adds a failing `memory-backend` check):
+    `forge new --framework --memory lite` still exits 1, prints the row, and says the project is made but doctor fails."""
+    code, out = w.forge("new", "demo", "--stack", "node", "--framework", *PARITY_ANSWERS, "--memory", "lite", "--apply")
+    bad = []
+    if code != 1 or not re.search(r"^FAIL  memory ", out, re.M) or "fails beyond" not in out or "open a new session in the folder" in out:
+        bad.append("another memory failure was tolerated: exit %d, want 1, the memory row printed and no closing line: %s" % (code, tail(out, 3)))
+    if not os.path.exists(w.path("config", "projects", "demo.claude.json")):
+        bad.append("the project was removed after doctor failed")
+    return bad
+
+
 def project_of(w, name="demo"):
     return read_json(w.path("config", "projects", "%s.claude.json" % name)) or {}
 
@@ -1363,6 +1375,9 @@ FAIL_AFTER_REGISTRY = (NEW, '                    lib.write_text(lib.SETTINGS, li
 # The rollback cannot write the registry back (a double fault): the recovery copy is then the only way back.
 FAIL_RESTORE_REGISTRY = (NEW, "                try:\n                    lib.write_text(path, rest[0])\n",
                          "                try:\n                    if path.endswith('mcp-registry.json'):\n                        raise OSError('disk full')\n                    lib.write_text(path, rest[0])\n")
+# A second memory failure on a fresh lite project, beside the empty store.
+OTHER_MEMORY = (os.path.join("scripts", "sync", "memory_doctor.py"), '                db = os.path.join(want, "claude-mem-lite.db")\n',
+                '                check(name, "memory-backend", False, "injected second backend")\n                db = os.path.join(want, "claude-mem-lite.db")\n')
 # (label, assertion, mutations as (file, old text, new text), message the assertion must give)
 REFRESH = 'project["plugins_keep"] = ask.with_memory_plugin(framework_plugins(stack["plugins"], doc), ans)\n'
 # The user enables a plugin while the questions are asked: the first thing ask.gather does, in the world's copy of the engine.
@@ -1463,6 +1478,8 @@ CONTROLS = [
     ("a stack.json not checked", a_bad_stack_json, BROKEN + [(NEW, "if missing:", "if False:")], "a stack.json without checks"),
     ("an unused argument not warned about", a_unused_argument, [(NEW, "if unused else []", "if False else []")], "an unused argument not warned about"),
     # 4.4 U9
+    ("every memory failure tolerated", a_other_memory_fail, [OTHER_MEMORY, (NEW, "    return [l for l in r.stdout.splitlines() if l.startswith(\"FAIL\")] == [EXPECTED_MEMORY_FAIL % name]", "    return True")],
+     "another memory failure was tolerated"),
     ("the registry not put back", a_account_server_rollback, [FAIL_AFTER_REGISTRY, (NEW, 'undo.append(("restore", REGISTRY, account.text, saved))', "pass")], "left behind: "),
     ("a registry entry with another URL replaced", a_account_server_existing, [(ACCOUNTS, 'if current is not None and current.get("url") != row["url"]:', "if False:")],
      "a registry entry with another url"),
@@ -1539,7 +1556,8 @@ def main():
     for label, fn, kw in (("--framework made", a_framework_made, {}), ("handover checks", a_framework_checks, {}),
                           ("framework fields row", a_framework_fields, {}), ("doctor FAIL row", a_doctor_fail, {"mutate": [INJECT]}),
                           ("a plugin enabled while asking", a_late_plugin, {"mutate": [LATE]}),
-                          ("--memory lite with --framework", a_memory_lite_framework, {})):
+                          ("--memory lite with --framework", a_memory_lite_framework, {}),
+                          ("another memory failure", a_other_memory_fail, {"mutate": [OTHER_MEMORY]})):
         w = World("fw", framework=True, **kw)
         try:
             for why in fn(w):
@@ -1564,7 +1582,7 @@ def main():
         if fn is a_forge_json_fails and os.geteuid() == 0:
             notrun.append("control '%s': a read-only folder does not stop root" % label)
             continue
-        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail, a_late_plugin, a_memory_lite_framework))
+        cw = World("c", mutate=mutate, framework=fn in (a_framework_made, a_framework_checks, a_framework_fields, a_doctor_fail, a_late_plugin, a_memory_lite_framework, a_other_memory_fail))
         got = cw.anchors_missing or fn(cw)
         check("control '%s' produces %r" % (label, needle), any(needle in g for g in got), "got %s" % (got[:2] or "no failure (the assertion passed)"))
         shown = [g for g in got if needle in g] or got
