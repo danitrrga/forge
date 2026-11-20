@@ -7,6 +7,9 @@
 ## Assumptions
 <Each assumption still open, one line each, in words.>
 
+## Outside
+<Each defect seen outside the work that is neither fixed nor in a Linear issue, one line each: where, what, the fix. `None` otherwise.>
+
 ## Evidence
 <Commit `<sha>`, the command and its exit code, copied from the last `evidence` row of `audit.tsv`.>
 

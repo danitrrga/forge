@@ -4,8 +4,7 @@ an agent's scope to its brief.
 
 What this can check is the words: that rule 12 exists with its source and its enforcers named, that the texts which used to say "leave it" or
 "report what the diff breaks, not everything wrong in the files it touches" are gone, and that each agent file points at the rule and
-carries the shape of an `outside` item where it reports one. What happens to an item is checked in code (test_execute_workflow.py,
-test_outside.py, test_decide.py).
+carries the shape of an `outside` item where it reports one. What happens to an item is checked in code (test_execute_workflow.py).
 
 Red on master (the executor said "The bigger picture narrows your scope; it never widens it", the reviewers "not everything wrong in
 the files it touches", the principles had eleven rules); the FAIL lines:
@@ -44,8 +43,8 @@ POINTERS = {
     "agents/review-verifier.md": ["not introduced"],
     "agents/planner.md": ["other software", "the people who use"],
     "agents/pre-mortem.md": ["other software", "the people who use"],
-    "skills/session/SKILL.md": ["fwx outside", "route"],
-    "skills/session/references/closing.md": ["fwx outside"],
+    "skills/session/SKILL.md": ["Linear issue", "part report"],
+    "skills/session/references/part-report.md": ["Outside"],
     "data/executor-brief.md": ["`outside`", "fixed"],
 }
 
@@ -82,7 +81,7 @@ def rule_problems(principles):
             found.append("principles.md: the owner's words are not quoted: %s" % quote)
     if "Enforced by" not in body:
         found.append("principles.md: rule 12 names no enforcer (a rule with none is a guideline, rule 1)")
-    for enforcer in ("fwx stage", "fwx decide", "workflows/execute.js"):
+    for enforcer in ("workflows/execute.js", "fwx linear", "git diff"):
         if enforcer not in body:
             found.append("principles.md: rule 12 does not name %s as an enforcer" % enforcer)
     return found
@@ -92,7 +91,7 @@ def pointer_problems(read_text):
     found = []
     for rel, words in POINTERS.items():
         text = read_text(rel)
-        if not re.search(r"principles\.md`? rule 12", text) and rel != "skills/session/references/closing.md":
+        if not re.search(r"principles\.md`? rule 12", text) and rel != "skills/session/references/part-report.md":
             found.append("%s does not point at %s" % (rel, RULE))
         for w in words:
             if w not in text:

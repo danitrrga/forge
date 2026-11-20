@@ -19,9 +19,7 @@ The 19 rules, in the order of the table. First, the 12 of marshal: `review-label
 handing over, or it is not confident), `ci-failed` (a check of `pr.checks` is `failure`), `conflict` (`pr.mergeable` is false),
 `trusted-edit` (the PR edits what its checks run: `core.trusted`), `evidence-head` (no evidence, or evidence of another
 commit), `evidence-dirty`, `evidence-recipe` (the evidence did not run the recipe, or ran other commands), `evidence-failed`,
-`no-checks` (the effective recipe `project.checks` is empty), `review-findings` (`review.open_medium_high` above 0, or `review.open_outside` above 0: an agent saw something outside its task and it is
-neither fixed nor routed to a Linear issue or a fix task, the ownership rule of playbooks/principles.md rule 12; the count is required, never
-defaulted, so a facts producer that does not count them is a `FactsError` and a missing count cannot read as none) and
+`no-checks` (the effective recipe `project.checks` is empty), `review-findings` (`review.open_medium_high` above 0) and
 `still-running` (`pr.running`, `review.running` or a check `pending`: `pending`, no handover). Then the 7 that U5b adds:
 
 - `type`: the work is a `feature` or `structural` change.
@@ -218,9 +216,8 @@ def validate_facts(facts):
         if "rc" in ev:
             _integer(ev["rc"], "facts.evidence.rc", non_negative=False)
     _list(f["plan_files"], "facts.plan_files", lambda v, p: _string(v, p))
-    review = _object(f["review"], "facts.review", ("open_medium_high", "open_outside", "running"))
+    review = _object(f["review"], "facts.review", ("open_medium_high", "running"))
     _integer(review["open_medium_high"], "facts.review.open_medium_high")
-    _integer(review["open_outside"], "facts.review.open_outside")
     _boolean(review["running"], "facts.review.running")
     project = _object(f["project"], "facts.project", ("checks", "protected_paths", "production", "ui_bugs"))
     _list(project["checks"], "facts.project.checks", _check)
@@ -331,11 +328,8 @@ def _no_checks(f, table):
 
 
 def _review_findings(f, table):
-    n, o = f["review"]["open_medium_high"], f["review"]["open_outside"]
-    found = ["the review has %d unresolved medium or high finding%s" % (n, "" if n == 1 else "s")] if n > 0 else []
-    if o > 0:  # the ownership rule: what an agent saw outside its task is fixed or routed, never left as a mention
-        found.append("%d outside item%s neither fixed nor routed" % (o, " is" if o == 1 else "s are"))
-    return found
+    n = f["review"]["open_medium_high"]
+    return ["the review has %d unresolved medium or high finding%s" % (n, "" if n == 1 else "s")] if n > 0 else []
 
 
 def _still_running(f, table):

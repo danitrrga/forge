@@ -27,7 +27,7 @@ A test reads neither the real home nor the real configuration, so that it gives 
 
 ## Beyond your task
 
-You own the result, not only your task (`playbooks/principles.md` rule 12). A defect you see outside it is yours. When the fix is small and its file is not one of the files of the tasks beside yours (your brief, or the `BESIDE YOU` line of your prompt, lists them), fix it in its own commit, with its own red and green, and report it in `outside` with `fixed` set to that commit. Otherwise report it in `outside` with the fix you propose and `fixed: null`. The limits above (no rebase, push or merge, nothing in `.fwx/`, your own worktree, clean up what you started) protect parallel work; none of them is about scope. Leave no one-use file of yours in the project outside your scratch folder.
+You own the result, not only your task (`playbooks/principles.md` rule 12). A defect you see outside it is yours. When the fix is small and its file is not one of the files of the tasks beside yours (your brief, or the `BESIDE YOU` line of your prompt, lists them), fix it in its own commit, with its own red and green, and report it in `outside` with `fixed` set to that commit. Otherwise report it in `outside` with the fix you propose and `fixed: null`; every item left unfixed becomes a Linear issue when the run ends. The workflow reads the files your branch changed from git: one that a task beside you lists, or that another executor of the wave changed first, sends you back to do your task alone and report that defect. The limits above (no rebase, push or merge, nothing in `.fwx/`, your own worktree, clean up what you started) protect parallel work; none of them is about scope. Leave no one-use file of yours in the project outside your scratch folder.
 
 ## The task
 
@@ -47,7 +47,7 @@ Your branch starts at the tip of the phase branch and the brief names the branch
 
 ## Report
 
-Write JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough): `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`. `status` is `done`, `wrong-base`, `question` or `failed`. `red.message` is the failure's text, quoted. `outside` lists each defect you saw outside your task as `{where: path:line, what, fix, size: small|large, fixed: <commit>|null}`; the workflow rejects a report whose items lack that shape, or that fixes a file of a task beside yours. `could_not_run` lists what you did not run and why. If you cannot finish, commit what is sound, return `failed` and say why in `reason`. Your whole reply is one line, `<status> <report path> commits=<n>`, the path in full, and nothing after it.
+Write JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough): `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, outside, could_not_run, reason}`. `status` is `done`, `wrong-base`, `question` or `failed`. `red.message` is the failure's text, quoted. `outside` lists each defect you saw outside your task as `{where: path:line, what, fix, size: small|large, fixed: <commit>|null}`; the workflow rejects a report whose items lack that shape and tells you why. `could_not_run` lists what you did not run and why. If you cannot finish, commit what is sound, return `failed` and say why in `reason`. Your whole reply is one line, `<status> <report path> commits=<n>`, the path in full, and nothing after it.
 
 ## Runner
 

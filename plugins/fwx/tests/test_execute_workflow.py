@@ -907,6 +907,11 @@ def check_outside(script, s):
     s.eq("outside scope: the second executor to return is relaunched, the first is not", (len(launched(rec, "executor:T1")), len(launched(rec, "executor:T2"))), (1, 2))
     p2 = launched(rec, "executor:T2")[1]["prompt"]
     s.ok("outside scope: it is told the file is T1's now and to report its defect in `outside`", "lib/z.py" in p2 and "T1" in p2 and "outside" in p2, p2[-500:])
+    # a diff that cannot be read leaves the scope unproven: the run fails closed, it does not pass
+    rec, err = go(script, answers_over={"executor:runner-diff-T1": R("fatal: bad revision\n", 128), **diff_of("T2", "src/b.py")})
+    rec = finish(s, "outside scope, diff unreadable", rec, err)
+    s.ok("outside scope: a diff that cannot be read is failed, naming the task and `unproven`",
+         result(rec).get("status") == "failed" and "T1" in str(result(rec).get("reason")) and "unproven" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
     # no diff is read where nothing can clash: a one-task wave, a serial wave
     rec, err = go(script)
     rec = finish(s, "outside scope, calls", rec, err)
@@ -1415,7 +1420,7 @@ MUTANTS = [
      "FAIL: protected path (security needed: True)"),
     ("protected path skips the security review", "if ((A.security && A.security.needed) || st.protected.length > 0)", "if (A.security && A.security.needed)",
      "FAIL: protected path (security needed: False): the security reviewer ran"),
-    ("reviewer's second miss is done", "return { end: ['failed', role + ' did not return'] }", "return { report: { looked_at: ['x'], findings: [], criteria: [] } }",
+    ("reviewer's second miss is done", "      st.gaps.push(why)\n      return { end: ['failed', why] }\n    }\n    return { report: r.got }", "      st.gaps.push(why)\n      return { report: { looked_at: ['x'], findings: [], criteria: [] } }\n    }\n    return { report: r.got }",
      "FAIL: reviewer null twice"),
     ("looked_at 0 accepted", "if (!m || Number(m[2]) === 0) return null", "if (!m) return null", "FAIL: looked_at 0"),
     ("every real finding is fixed", "if (d.verdict === 'fix') {", "if (d.verdict !== 'dismiss') {", "FAIL: no fix verdict: no fixer, no round (note finding was fixed)"),
@@ -1446,19 +1451,28 @@ MUTANTS = [
     ("no task in args reads as no tests", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = tasks.some((t) => !t.ui)",
      "FAIL: fixer scope (no task in args): the test is still asked for"),
     # the ownership rule: each piece of the enforcement, taken out
-    ("an outside item of any shape is read", "  if (!outsideOk(rep, true)) return null\n", "", "FAIL: outside shape (no fix)"),
-    ("a fix in a file beside is read", "  if ((rep.outside || []).some((o) => o.fixed && beside.includes(fileOf(o.where)))) return null\n", "", "FAIL: outside beside: T1 fixing T2's file"),
-    ("a small item is not a fix task", "  await fixOutside()\n  let from = A.base", "  let from = A.base", "FAIL: outside small unfixed: a fixer is launched"),
-    ("the ledger is not written", "    await recordOutside()\n  } catch", "  } catch", "FAIL: outside large: the ledger is written"),
-    ("a ledger that is not written is done", "if (outcome[0] === 'done') outcome = ['failed', 'the outside items", "if (false) outcome = ['failed', 'the outside items", "FAIL: outside ledger not written"),
-    ("a reviewer may say it fixed something", "if (!outsideOk(rep, false)) return null", "if (!outsideOk(rep, true)) return null", "FAIL: outside reviewer says it fixed something"),
+    ("an outside item of any shape is read", "  const why = outsideProblem(rep, true)\n  if (why) {", "  const why = null\n  if (why) {", "FAIL: outside shape (no fix)"),
+    ("a rejected report is relaunched with the same prompt", "const note = i === 1 && spec.retryNote ? spec.retryNote() : ''", "const note = ''", "FAIL: outside shape (no fix): the relaunch prompt says why"),
+    ("a second rejection says the executor did not return", "const why = st.rejected[j.id] ? rejectedReason('executor ' + j.id, j.id) : 'executor did not return: ' + j.id", "const why = 'executor did not return: ' + j.id",
+     "FAIL: outside shape (no fix): a second miss fails with the real reason"),
+    ("the scope is not read from the diff", "const breach = rep.status === 'done' && j.scope ? await j.scope(rep) : null", "const breach = null", "FAIL: outside scope (a file of a task beside)"),
+    ("a folder entry covers only itself", "return e !== '' && (f === e || f.startsWith(e + '/'))", "return e !== '' && f === e", "FAIL: outside scope (a folder entry covers the file)"),
+    ("paths are taken as written", "    if (seg === '..') out.pop()\n    else out.push(seg)", "    out.push(seg)", "FAIL: outside scope (a path written another way)"),
+    ("a diff that cannot be read passes", "if (!v || v.rc !== 0) stop('failed', 'the files that ' + t.id", "if (false) stop('failed', 'the files that ' + t.id", "FAIL: outside scope: a diff that cannot be read"),
+    ("the same unlisted file twice is kept twice", "claimed.has(f) && claimed.get(f) !== t.id", "false", "FAIL: outside scope: the second executor to return is relaunched"),
+    ("a serial wave is read too", "if (wave.serial || wave.tasks.length < 2) return () => undefined", "if (wave.tasks.length < 1) return () => undefined", "FAIL: outside scope: none for a serial wave"),
+    ("the executor is not told the files beside it", "' BESIDE YOU, the files", "' NEAR YOU, the files", "FAIL: outside prompts: the executor is told the files"),
+    ("the fixer is forbidden to fix outside again", "nothing written in `.fwx/`.',\n    mayFix", "nothing written in `.fwx/`, no fixes outside this work.',\n    mayFix", "FAIL: outside prompts: the fixer's FORBIDDEN"),
+    ("the resolver may fix outside", "      : 'OUTSIDE: you are in the middle of a merge, so fix nothing outside it.", "      : 'OUTSIDE: you may fix what you see outside it, in its own commit.", "FAIL: outside prompts: the resolver"),
+    ("an unfixed item is not sent to Linear", "  const todo = st.outside.filter((o) => !o.fixed)\n  if (todo.length === 0) return", "  const todo = []\n  if (todo.length === 0) return", "FAIL: outside routing: an unfixed item"),
+    ("a fixed item is sent too", "  const todo = st.outside.filter((o) => !o.fixed)\n  if (todo.length === 0) return", "  const todo = st.outside.slice()\n  if (todo.length === 0) return", "FAIL: outside routing: a fixed item is not sent"),
+    ("the keys printed before a failure are dropped", "o.issue = keys[k] ? keys[k][1] : null", "o.issue = keys.length === todo.length && keys[k] ? keys[k][1] : null", "FAIL: outside routing: a create that stopped part way"),
+    ("the items go out with a label", "    origin: 'fwx execute, run ' + RUN,\n", "    origin: 'fwx execute, run ' + RUN,\n    labels: ['factory'],\n", "FAIL: outside routing: no label"),
+    ("a reviewer may say it fixed something", "const why = outsideProblem(rep, false)", "const why = outsideProblem(rep, true)", "FAIL: outside reviewer says it fixed something"),
     ("a reviewer's large item is dropped", "      addOutside(st.outsideOf.get(it.id))\n    } else if", "    } else if", "FAIL: outside reviewer large"),
     ("a reviewer's defect nearby is not read", "for (const [k, o] of (g.report.outside || []).entries()) st.outsideOf.set(", "for (const [k, o] of [].entries()) st.outsideOf.set(",
      "FAIL: outside reviewer: the verifier is given the nearby defect"),
-    ("a commit the branch does not hold is a fix", "    if ((r.demoted || []).includes(ids[k])) o.fixed = null", "", "FAIL: outside demoted"),
-    ("the executor is not told the files beside it", "' BESIDE YOU, the files", "' NEAR YOU, the files", "FAIL: outside prompts: the executor is told the files"),
-    ("the fixer is forbidden to fix outside again", "nothing written in `.fwx/`.',\n    'OUTSIDE:", "nothing written in `.fwx/`, no fixes outside this work.',\n    'OUTSIDE:", "FAIL: outside prompts: the fixer's FORBIDDEN"),
-    ("one item reported twice is two", "const have = st.outside.find((x) => x.where === o.where && x.what === o.what)", "const have = null", "FAIL: outside twice"),
+    ("one item reported twice is two", "const have = st.outside.find((x) => x.where === o.where && x.what === o.what)", "const have = null", "FAIL: outside routing: one item reported by two attempts is one issue"),
     ("the fixer's test is asked for whatever the part lists", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = true", "FAIL: fixer scope (no task lists tests): no unconditional test demand"),
     ("the fixer is never told to ask for the test", "(scope.tests ? ', the test in that commit and seen failing first' : '')", "''", "FAIL: fixer scope (tests listed): the test in the commit"),
 ]
