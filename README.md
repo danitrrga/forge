@@ -199,8 +199,16 @@ half-made project is left; a failure, TERM or INT after that removes what the ru
 Name or path: an argument written as a path (a `/`, or a leading `.` or `~`) is always a directory to register; a bare word that is no
 directory in the current folder is always a name to make; a bare word that is a directory there is registered, and the first line says so
 (with `--stack`, `--path`, `--framework` or `--apply` it is refused instead, naming both ways out). The folder is never inside the checkout,
-and in a toy HOME never outside its world; two runs at once take turns. `--framework` is refused for now, with one line: the project it
-would write has no `plugins_keep`, so every sync would fail (the framework's plugin hand-over is a later step).
+and in a toy HOME never outside its world; two runs at once take turns. `--framework` writes `framework: true`, `factory: "off"`, the stack's `checks` and `plugins_keep` (the framework plugin is turned on
+through it, and a project that names `plugins_keep` has no other plugin on). So that turning the framework on turns nothing off, `plugins_keep`
+holds every plugin the plain project would have: the ones on in `~/.claude/settings.json`, the stack's, and `skill_keep.common_plugins`
+(`--plugin` still chooses, as it does without `--framework`). It is refused in one line, before the first write, when the framework plugin
+cannot be served (`framework.plugin_source`). `protected_paths`, `checks_quick` and, for a project with `ui: true`, `app_run` need a look at
+the project, so they are left out and `forge doctor NAME` says `NOT RUN, NOT ARMED` for them (the `framework fields` row, a PASS once
+they are set). Only with `--framework`, after the sync `forge new` runs `forge doctor NAME` and prints its report, then prints (and writes nowhere)
+the handover `examples/new-handoff.md` for an agent in the project's folder to propose those values (its `checks` are the ones the project file
+holds), and ends with how to open a session: `cd FOLDER && claude`. A fresh project always fails doctor's `instruction files` row (no `CLAUDE.md`
+yet; forge writes none) and that is tolerated; any other FAIL row ends the run with exit 1, after saying the project was made.
 
 ## How it works
 

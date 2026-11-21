@@ -1032,6 +1032,12 @@ def framework_ignore_row(only=None):
                       % (len(looked), ", ".join(looked), note))
 
 
+def framework_fields_row(only=None):
+    """The `framework fields` row: forge/framework.py fields_row."""
+    from forge import framework
+    return framework.fields_row(only)
+
+
 def local_plugins_row():
     """The `local plugins` row: every folder of config/forge.json `local_plugins` is registered in the machine's marketplace
     registry at its path (forge/marketplace.py); a SKIP, NOT RUN, NOT ARMED, with the key empty or missing."""
@@ -1066,6 +1072,8 @@ CHECKS = [
     ("context base", context_base_row, ""),
     # Its failures carry their own fix, so the row's is empty.
     ("framework ignore", framework_ignore_row, ""),
+    # Its detail names the unset fields, so the row's fix is empty.
+    ("framework fields", framework_fields_row, ""),
     # Its failures carry their own cause (project/profile: why), so the row's fix is empty.
     ("profiles", profiles.doctor_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
@@ -1140,6 +1148,7 @@ def project_checks(name, prof, why):
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
         ("ponytail", lambda: ponytail_row(name), fix["ponytail"]),
         ("profiles", lambda: profiles.doctor_row(name), fix["profiles"]),
+        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),
         ("memory", ["scripts/sync/memory_doctor.py", "--project", name],
          "python3 scripts/sync/memory_doctor.py --project %s --verbose" % name),
     ]
@@ -2159,7 +2168,7 @@ def build_parser():
     i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
     i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
-    i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
+    i.add_argument("--framework", action="store_true", help="making: turn the agent framework on: framework true, factory off, the stack's checks, and its plugins as plugins_keep; then print a handover for the agent to settle protected_paths, checks_quick and app_run")
     i.add_argument("--yes", action="store_true", help="making: ask nothing, even in a terminal. With none of the question flags that is the old command; with one, every other question needs its flag (none is an answer) and the error names all that are missing")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
     i.add_argument("--profiles", metavar="A,B", help="question 1: the profiles the project offers (none: no profile); each is then asked like the project")
