@@ -1,0 +1,13 @@
+┌  forge list 15 projects
+│
+│     project                       servers  skills
+│  ◼  alpha                         10       ▰▰▰▰▰▰▱▱▱▱  31
+│  ◼  beta                          5        ▰▰▰▰▱▱▱▱▱▱  20
+│  ◼  gamma                         4        ▰▰▰▰▱▱▱▱▱▱  18
+│  ◼  delta                         3        ▰▰▰▱▱▱▱▱▱▱  16
+│  ◼  epsilon                       4        ▰▰▰▱▱▱▱▱▱▱  15
+│  ◼  zeta                          4        ▰▰▰▱▱▱▱▱▱▱  14
+│  *  eta                           0        ▱▱▱▱▱▱▱▱▱▱   5  frozen
+│  ↓ 8 more
+│
+└  forge list NAME → one project in full

@@ -1,0 +1,18 @@
+
+  .=+*#############+    forge
+     :+##%%##%%%#**+    v0.1.0
+        .*###%*         One source of truth for the agent setup of every project
+       -#%%%%%@%        on your machine.
+       *##*++###*
+
+┌  15 projects  ·  50 skills installed
+│
+◆  doctor   ▰▰▰▰▰▰▰▰▰▱   41 passed  ·  3 warnings  ·  1 failure
+◆  sync     14 changes would apply
+◆  fwx      phase 10 design  ·  review  ▰▰▰▰▱▱▱▱▱▱  4/10
+│
+└  forge list  ·  forge doctor  ·  forge sync
+
+ ×  hindsight: 2 checks failed                                    forge doctor
+
+ ▲  sync: 14 changes would apply                            forge sync --apply
