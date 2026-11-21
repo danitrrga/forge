@@ -112,11 +112,49 @@ if _a[_i:] == ["screenshot"] and os.environ.get("FAKE_SHOT_PATH"):
 # `close`; FAKE_INIT=ignore is a browser that drops the --init-script (the launch path the walkers use does not plant: the F-3 defect).
 planted = os.environ["FAKE_LOG"] + ".planted"
 if "--init-script" in sys.argv and os.environ.get("FAKE_INIT") != "ignore":
-    open(planted, "w").write("1")
+    open(planted, "w").write(sys.argv[sys.argv.index("--init-script") + 1])  # the plant's script: the dead page a planted click goes to is in it
 if "eval" in sys.argv and "MutationObserver" in sys.argv[-1]:
     open(planted, "w").write("1")
 if _a[_i:_i + 1] == ["close"] and os.path.exists(planted):
     os.remove(planted)
+if _a[_i:_i + 1] == ["close"] and os.environ.get("FAKE_CLOSE_RC"):
+    sys.exit(int(os.environ["FAKE_CLOSE_RC"]))  # a close that fails (the session is left up)
+if _a[_i:_i + 1] == ["open"]:
+    open(os.environ["FAKE_LOG"] + ".url", "w").write(sys.argv[-1])  # the page the session is on, for the dead-page probe below
+# The dead-page probe loads the proposed dead route in a session with no plant and asks the page's status and whether it draws a not-found text:
+# `fwx:status|<responseStatus>|soft`. FAKE_DEAD says what the app answers there:
+#   missing (the default): 404     exists: 200 and an ordinary page     soft: 200 and a not-found page     first: 200 for `...-old`, 404 for any other
+#   unknown: the browser gives no status (an empty one), an ordinary page
+if "eval" in sys.argv and "fwx:status" in sys.argv[-1]:
+    url = open(os.environ["FAKE_LOG"] + ".url").read() if os.path.exists(os.environ["FAKE_LOG"] + ".url") else ""
+    line = {"missing": "fwx:status|404|", "exists": "fwx:status|200|", "soft": "fwx:status|200|soft", "unknown": "fwx:status||",
+            "first": "fwx:status|200|" if url.endswith("-old") else "fwx:status|404|"}[os.environ.get("FAKE_DEAD", "missing")]
+    print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
+    sys.exit(0)
+# The functional control's proof asks the page three things with a call of the eval command, each whose code carries its own marker word:
+# `fwx:link` (which link to another screen of the app the page holds: answers `fwx:link|<path>|<text>`, or `fwx:missing`), `fwx:clicked` (click
+# the link to <path>: `fwx:clicked`, or `fwx:nolink`) and `fwx:at|` (where the page is now: `fwx:at|<pathname>`). FAKE_LINK says what the page does:
+#   works (the default): the link leads to /projects, and to /projects-old in a session launched with the plant     none: no link on the page
+#   same: the link leads to /projects in both sessions (the plant changes nothing)     stuck: the link leads nowhere (the page stays on /board) without the plant
+#   vanish: the link is gone in the session launched with the plant     stay: the plant's click does not leave the page     other: it lands on /elsewhere
+#   FAKE_HERE is the (percent-encoded) path the page is on when it does not move (default /board)
+if "eval" in sys.argv and any(w in sys.argv[-1] for w in ("fwx:link", "fwx:clicked", "fwx:at|")):
+    mode, on, code = os.environ.get("FAKE_LINK", "works"), os.path.exists(planted), sys.argv[-1]
+    if "fwx:link" in code:
+        line = "fwx:missing" if mode == "none" else "fwx:link|%2Fprojects|Projects"
+    elif "fwx:clicked" in code:
+        line = "fwx:nolink" if mode == "vanish" and on else "fwx:clicked"
+    else:
+        import urllib.parse
+        here = urllib.parse.quote(os.environ.get("FAKE_HERE", "/board"), safe="")  # what encodeURIComponent makes of the page's (percent-encoded) pathname
+        import re
+        script = open(planted).read() if on else ""
+        dead = re.search(r'DEAD = "([^"]*)"', open(script).read()).group(1) if script.startswith("/") and os.path.exists(script) else "/projects-old"
+        line = "fwx:at|" + {"works": ("/projects", dead), "same": ("/projects", "/projects"), "stuck": (here, dead),
+                            "none": ("/board", "/board"), "vanish": ("/projects", "/projects"), "stay": ("/projects", here),
+                            "other": ("/projects", "/elsewhere")}[mode][1 if on else 0]
+    print('"%s"' % line if os.environ.get("FAKE_QUOTE") else line)
+    sys.exit(int(os.environ.get("FAKE_RC", "0")))
 if "eval" in sys.argv and "fwx:" in sys.argv[-1]:
     mode = os.environ.get("FAKE_READ", "changes")
     reads = {"changes": ("fwx:24px|700|300x40", "fwx:16px|400|300x30"), "same": ("fwx:16px|400|300x30",) * 2,
@@ -177,7 +215,7 @@ if os.path.exists(pidfile):
 # The calls below name a walk command by its key in walk.COMMANDS (`up`, `down`, `findings`, ...), the name its function has; these are the
 # words after `fwx` that run it (the grammar's; tests/test_commands_table.py holds the table itself).
 WALK_WORDS = {"up": ("walk", "start"), "down": ("walk", "stop"), "sweep": ("walk", "stop", "--orphans"), "findings": ("walk", "converge"),
-              "arm-control": ("control", "new"), "review-page": ("review", "new"), "review-answers": ("review", "read")}
+              "arm-control": ("control", "new"), "control-judge": ("control", "judge"), "review-page": ("review", "new"), "review-answers": ("review", "read")}
 
 
 def walk_words(args):
@@ -570,7 +608,7 @@ def case_ab_session(R, S):
             return
         rd = o["run_dir"]
         S.eq("ab session: run is the prefix", o.get("run"), "fakerig run --")
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
         S.eq("ab session: arm-control exit", r.returncode, 0)
         # arm-control read the page in session w1 and closed it (case_arm_control_readback checks that); this case is about `ab`'s own session
         # handling, so it starts from no session even under the mutant that keeps one after `close`
@@ -946,10 +984,10 @@ def case_arm_control(R, S):
         if not o:
             return
         rd = o["run_dir"]
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", "https://a.example.test/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", "https://a.example.test/board")
         S.eq("arm-control: a screen outside the app is refused", r.returncode, 2)
         S.ok("arm-control: nothing written for it", not os.path.exists(os.path.join(rd, "control.json")))
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
         S.eq("arm-control: exit", r.returncode, 0)
         c = jfile(os.path.join(rd, "control.json")) or {}
         S.eq("arm-control: control.json names the screen", c.get("screen"), sc.url + "/board")
@@ -992,7 +1030,7 @@ def case_arm_control_readback(R, S):
             return
         rd = o["run_dir"]
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen)
         S.eq("arm-control read-back: the plant changes the style: exit", r.returncode, 0)
         c = jfile(os.path.join(rd, "control.json")) or {}
         rb = c.get("readback") or {}
@@ -1018,7 +1056,7 @@ def case_arm_control_readback(R, S):
         # (b) the title already has the planted style: nothing a walker could see; refuses, and the earlier control.json does not survive
         sc.env["FAKE_READ"] = "same"
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen)
         S.eq("arm-control read-back: the title already has the planted style: exit", r.returncode, 1)
         S.ok("arm-control read-back: the title already has the planted style: says no visible change, and where",
              "no visible change" in r.stderr and sc.url + screen in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
@@ -1030,7 +1068,7 @@ def case_arm_control_readback(R, S):
         # (c) no title on the screen
         sc.env["FAKE_READ"] = "missing"
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen)
         S.eq("arm-control read-back: no title on the screen: exit", r.returncode, 1)
         S.ok("arm-control read-back: no title on the screen: says target not found, and where, before any plant is launched",
              "target not found" in r.stderr and sc.url + screen in r.stderr and "fresh walker session" not in r.stderr
@@ -1044,7 +1082,7 @@ def case_arm_control_readback(R, S):
         #   FAIL: arm-control read-back: the boxes are recorded beside the styles: got None, want {'before': {'width': 300, 'height': 40}, 'after': {'width': 300, 'height': 30}}
         sc.env["FAKE_READ"] = "weight"
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen)
         S.eq("arm-control read-back: a weight-only change that leaves the box as it was: exit", r.returncode, 1)
         S.ok("arm-control read-back: and the reason says no visible change, where, and both boxes",
              "no visible change" in r.stderr and sc.url + screen in r.stderr and r.stderr.count("300x30") == 2 and len(r.stderr.strip().splitlines()) == 1, r.stderr)
@@ -1052,7 +1090,7 @@ def case_arm_control_readback(R, S):
         # (e) a box that changes by the constant (default 1 px, so any change) arms it, both boxes recorded
         sc.env["FAKE_READ"] = "grow10"
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen)
         S.eq("arm-control read-back: a box that grew 10 px arms it (the default is 1 px): exit", r.returncode, 0)
         rb = (jfile(os.path.join(rd, "control.json")) or {}).get("readback") or {}
         S.eq("arm-control read-back: the boxes are recorded beside the styles", rb.get("box"),
@@ -1060,18 +1098,18 @@ def case_arm_control_readback(R, S):
         S.eq("arm-control read-back: and the number the change was measured against", rb.get("min_box_px"), 1)
         # (f) the number is one constant read from the environment: 50 refuses the same 10 px, 10 still arms it (at least, not more than)
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "50"})
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "50"})
         S.eq("arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=50: exit", r.returncode, 1)
         S.ok("arm-control read-back: and the reason names the number and both boxes",
              "no visible change" in r.stderr and "50" in r.stderr and "300x30" in r.stderr and "310x30" in r.stderr, r.stderr)
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "10"})
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen, env={"FWX_WALK_CONTROL_MIN_BOX_PX": "10"})
         S.eq("arm-control read-back: a 10 px change with FWX_WALK_CONTROL_MIN_BOX_PX=10: armed", r.returncode, 0)
         S.eq("arm-control read-back: and the number recorded is the one in force", ((jfile(os.path.join(rd, "control.json")) or {}).get("readback") or {}).get("min_box_px"), 10)
         # a string result may come back quoted
         sc.env.update(FAKE_READ="changes", FAKE_QUOTE="1")
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + screen)
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + screen)
         S.eq("arm-control read-back: a quoted answer is read too: exit", r.returncode, 0)
         sc.walk(R, "down", "--run", rd)
     finally:
@@ -1790,9 +1828,14 @@ def case_up_restart(R, S):
         # a tramo id is whatever the tramos agent named it (`safe` in ui-walk.js lets any letter or digit start it): not only `T<n>`. A glob
         # narrowed to `rechecked-T*.json` passed the first version of this case.
         helpers.write(rd, "rechecked-x7.json", json.dumps({"findings": [{"id": "x7-1", "verdict": "NOT REPRODUCED", "evidence_after": "/srv/old-after.png"}]}))
+        # CodeRabbit review of PR 198: a findings file of the earlier invocation stayed, and a breaker that returned without writing its own was
+        # judged on it. Seen red on 1b18fd7:  FAIL: restart: a findings file of the earlier run is not left for the control judge: ['findings-w1.md']
+        helpers.write(rd, "findings-w1.md", "### F1 · bug · major\n- Observed: the address became /projects-old\n")
         r, o2 = sc.up(R)
         if not S.ok("restart: up armed again", r.returncode == 0 and o2 and o2.get("armed") is True, "rc %d %s" % (r.returncode, r.stderr)):
             return
+        S.eq("restart: a findings file of the earlier run is not left for the control judge", sorted(f for f in os.listdir(rd) if f.startswith("findings-")), [])
+        S.ok("restart: and it is kept, not deleted (findings)", os.path.exists(os.path.join(rd, "earlier", "findings-w1.md")))
         S.ok("restart: control.json of the earlier run is gone", not os.path.exists(os.path.join(rd, "control.json")), "it is still there")
         S.eq("restart: a verified file of the earlier run is not left for `findings`", sorted(f for f in os.listdir(rd) if f.startswith("verified-")), [])
         S.ok("restart: and it is kept, not deleted", os.path.exists(os.path.join(rd, "earlier", "verified-T9.json")))
@@ -1884,7 +1927,7 @@ def case_arm_control_root(R, S):
         if not o:
             return
         rd = o["run_dir"]
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/")
         S.eq("arm-control root: exit", r.returncode, 0)
         c = jfile(os.path.join(rd, "control.json")) or {}
         S.eq("arm-control root: the plant's path", c.get("path"), "/")
@@ -1926,7 +1969,7 @@ def case_arm_control_launch_path(R, S):
         rd = o["run_dir"]
         label = "arm-control launch path: a browser that ignores --init-script"
         sc.env["FAKE_INIT"] = "ignore"
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
         S.eq(label + ": exit", r.returncode, 1)
         S.ok(label + ": says no visible change, in a fresh walker session, and where",
              "no visible change" in r.stderr and "fresh walker session" in r.stderr and sc.url + "/board" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
@@ -1937,24 +1980,582 @@ def case_arm_control_launch_path(R, S):
         del sc.env["FAKE_INIT"]
         sc.env["FAKE_READ"] = "vanish"
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
         S.eq("arm-control launch path: a title that is gone in the planted session: exit", r.returncode, 1)
         S.ok("arm-control launch path: a title that is gone in the planted session: says target not found, in a fresh walker session, one line",
              "target not found" in r.stderr and "fresh walker session" in r.stderr and len(r.stderr.strip().splitlines()) == 1, "rc %d: %s" % (r.returncode, r.stderr))
         S.ok("arm-control launch path: a title that is gone in the planted session: no control.json is left", not os.path.exists(os.path.join(rd, "control.json")))
         del sc.env["FAKE_READ"]
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
         S.eq("arm-control launch path: a browser that takes the script: exit", r.returncode, 0)
         S.ok("arm-control launch path: a browser that takes the script: control.json is there", os.path.isfile(os.path.join(rd, "control.json")))
         # armed again over the earlier plant: the reading without the plant is still taken before any launch that carries it
         sc.clear()
-        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
         calls = [x["argv"] for x in sc.calls("agent-browser")]
         first_read = next((i for i, a in enumerate(calls) if "eval" in a and "fwx:" in a[-1]), None)
         first_init = next((i for i, a in enumerate(calls) if "--init-script" in a), None)
         S.ok("arm-control launch path: armed again over an earlier plant, the first reading is taken with no plant",
              r.returncode == 0 and first_read is not None and first_init is not None and first_read < first_init, "rc %d reads %r launch %r" % (r.returncode, first_read, first_init))
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_arm_control_functional(R, S):
+    """MVP of the UI walk: the planted control is a functional fault a walker meets by using the screen, not a look. The critic is the only axis
+    that can see a title shrunk to body size and it is off, so no live walk ever found that control. The default kind is now `functional`: the first
+    link to another screen of the app (the navigation first) leads to a page that does not exist, as a user finds it by clicking. The proof, as the
+    hierarchy control's is: the link is clicked in a session with no plant (where it must leave the screen), then in a fresh one launched with the
+    plant the way the walkers' are (where it must land somewhere else). Seen red on master (`fwx control new` planted the title and read its box):
+      FAIL: arm-control functional: control.json says what kind it is: got 'hierarchy', want 'functional'
+      FAIL: arm-control functional: the link the plant breaks and where it leads are recorded: got None, want {'link': '/projects', 'dead': '/projects-old', ...}
+      FAIL: arm-control functional: a screen with no link to another screen: exit: got 0, want 1
+    The cases after the first are its negative controls: the same call and the same fake, only what the page does differs."""
+    sc = Scene()
+    sc.env["FWX_WALK_CONTROL_WAIT_S"] = "1"
+    try:
+        o = armed(sc, R, S, "arm-control functional")
+        if not o:
+            return
+        rd = o["run_dir"]
+        screen = sc.url + "/board"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen)
+        S.eq("arm-control functional: exit", r.returncode, 0)
+        c = jfile(os.path.join(rd, "control.json")) or {}
+        S.eq("arm-control functional: control.json says what kind it is", c.get("kind"), "functional")
+        S.eq("arm-control functional: the link the plant breaks and where it leads are recorded",
+             {k: c.get(k) for k in ("screen", "path", "link", "link_text", "dead")},
+             {"screen": screen, "path": "/board", "link": "/projects", "link_text": "Projects", "dead": "/projects-old"})
+        S.eq("arm-control functional: and where the link led with the plant and without it",
+             (c.get("readback") or {}).get("lands"), {"before": "/projects", "after": "/projects-old"})
+        calls = [x["argv"] for x in sc.calls("agent-browser")]
+        marks = [("link" if "fwx:link" in a[-1] else "click" if "fwx:clicked" in a[-1] else "status" if "fwx:status" in a[-1] else "at") if "eval" in a and "fwx:" in a[-1] else
+                 "init" if "--init-script" in a else "close" if a[-1] == "close" else "" for a in calls]
+        marks = [m for m in marks if m]
+        S.eq("arm-control functional: the link is chosen, clicked and followed with no plant, the dead page is read, then the same click in a session launched with the plant, and closed",
+             marks, ["link", "click", "at", "close", "status", "close", "init", "click", "at", "close"])
+        ctl_script = c.get("script") or ""
+        text = open(ctl_script, encoding="utf-8").read() if ctl_script and os.path.isfile(ctl_script) else ""
+        S.ok("arm-control functional: the init script holds the route, the link and the dead page, and listens to clicks in the capture phase",
+             all(w in text for w in ('"/board"', '"/projects"', '"/projects-old"', 'addEventListener("click"', "location.assign", "stopImmediatePropagation")) and "}, true);" in text,
+             text[:400])
+        S.ok("arm-control functional: it changes nothing in the page (no hydration fingerprint, nothing a walker could take for tooling)",
+             not any(w in text for w in ("MutationObserver", "dataset", "setProperty", "setAttribute", "console.")), text[:400])
+        S.ok("arm-control functional: the walkers' launch carries the init script control.json names",
+             any(ctl_script in a for a in calls if "--init-script" in a), repr([a[:6] for a in calls if "--init-script" in a]))
+        S.ok("arm-control functional: no session mark is left", not os.path.exists(os.path.join(rd, "sessions", "ab-w1")))
+        # a quoted answer is read too
+        sc.env["FAKE_QUOTE"] = "1"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen)
+        S.eq("arm-control functional: a quoted answer is read too: exit", r.returncode, 0)
+        del sc.env["FAKE_QUOTE"]
+        # refusals: each one is exit 1, one line saying where and why, {armed: false} on stdout and no control.json, no init script
+        shots = (jfile(os.path.join(rd, "run.json")) or {}).get("shots", "")
+        for mode, label, words in (("none", "a screen with no link to another screen", ("target not found", "link")),
+                                   ("stuck", "a link that leads nowhere even without the plant", ("target not found", "does not leave")),
+                                   ("same", "a plant that changes where the link leads", ("no visible change", "/projects")),
+                                   ("vanish", "a link that is gone in the session launched with the plant", ("target not found", "fresh walker session"))):
+            sc.env["FAKE_LINK"] = mode
+            sc.clear()
+            r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen)
+            S.eq("arm-control functional: %s: exit" % label, r.returncode, 1)
+            S.ok("arm-control functional: %s: says why, and where, in one line" % label,
+                 all(w in r.stderr for w in words) and screen in r.stderr and len(r.stderr.strip().splitlines()) == 1, "rc %d: %s" % (r.returncode, r.stderr))
+            S.ok("arm-control functional: %s: the same reason on stdout as {armed: false}" % label, (obj(r.stdout) or {}).get("armed") is False, r.stdout)
+            S.ok("arm-control functional: %s: nothing is left a walker could meet" % label,
+                 not os.path.exists(os.path.join(rd, "control.json")) and not os.path.exists(os.path.join(shots, "init.js")))
+        del sc.env["FAKE_LINK"]
+        sc.env["FAKE_INIT"] = "ignore"
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen)
+        S.eq("arm-control functional: a browser that drops the init script: exit", r.returncode, 1)
+        S.ok("arm-control functional: a browser that drops the init script: no visible change, in a fresh walker session",
+             "no visible change" in r.stderr and "fresh walker session" in r.stderr, r.stderr)
+        del sc.env["FAKE_INIT"]
+        # the hierarchy control is still there, asked for by name; an unknown kind is a usage error
+        sc.clear()
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", screen)
+        S.eq("arm-control functional: --kind hierarchy still plants the title", (r.returncode, (jfile(os.path.join(rd, "control.json")) or {}).get("kind")), (0, "hierarchy"))
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "bogus", "--screen", screen)
+        S.ok("arm-control functional: an unknown kind is exit 2 and a usage line", r.returncode == 2 and "usage: fwx control new" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_arm_control_review(R, S):
+    """CodeRabbit's review of PR 198, on the arming. Seen red on 1b18fd7:
+      FAIL: arm-control review: the dead page already exists: exit: got 0, want 1
+      FAIL: arm-control review: the first dead page exists, the next is missing: the next is planted: got (0, '/projects-old'), want (0, '/projects-gone')
+      FAIL: arm-control review: the plant's click stays on the start page: exit: got 0, want 1
+      FAIL: arm-control review: the plant's click lands on another page than the dead one: exit: got 0, want 1
+      FAIL: arm-control review: the probe session cannot be closed: says so, in one line: fwx control new: arm-control: no visible change ...
+      FAIL: arm-control review: the final control.json cannot be written: exit: ...
+      FAIL: arm-control review: a start page given decoded, the browser reports it encoded, the link leads nowhere: exit: got 0, want 1
+    (the default call, in case_arm_control_functional, is the positive control of each: the same screen and fake, only what the page does differs)"""
+    sc = Scene()
+    sc.env["FWX_WALK_CONTROL_WAIT_S"] = "1"
+    try:
+        o = armed(sc, R, S, "arm-control review")
+        if not o:
+            return
+        rd = o["run_dir"]
+        screen = sc.url + "/board"
+        shots = (jfile(os.path.join(rd, "run.json")) or {}).get("shots", "")
+
+        def arm(env=None, screen=screen):
+            sc.clear()
+            r = sc.walk(R, "arm-control", "--run", rd, "--screen", screen, env=env)
+            return r, jfile(os.path.join(rd, "control.json")) or {}
+
+        def nothing_left(label):
+            S.ok("%s: nothing is left a walker could meet" % label, not os.path.exists(os.path.join(rd, "control.json")) and not os.path.exists(os.path.join(shots, "init.js")))
+        # (a) the proposed dead page must be missing, in the session with no plant, before it is planted
+        label = "arm-control review: the dead page already exists"
+        r, c = arm({"FAKE_DEAD": "exists"})
+        S.eq(label + ": exit", r.returncode, 1)
+        S.ok(label + ": the reason names the page and says it is not missing", "/projects-old" in r.stderr and "not missing" in r.stderr and len(r.stderr.strip().splitlines()) == 1, r.stderr)
+        S.ok(label + ": the same reason on stdout as {armed: false}", (obj(r.stdout) or {}).get("armed") is False, r.stdout)
+        nothing_left(label)
+        r, c = arm({"FAKE_DEAD": "first"})
+        S.eq("arm-control review: the first dead page exists, the next is missing: the next is planted", (r.returncode, c.get("dead")), (0, "/projects-gone"))
+        S.ok("arm-control review: ... and the init script sends the click there",
+             bool(c.get("script")) and '"/projects-gone"' in open(c["script"], encoding="utf-8").read())
+        r, c = arm({"FAKE_DEAD": "soft"})
+        S.eq("arm-control review: a page that answers 200 and draws a not-found text is missing", (r.returncode, c.get("dead")), (0, "/projects-old"))
+        label = "arm-control review: the browser gives no status and the page is an ordinary one"
+        r, c = arm({"FAKE_DEAD": "unknown"})
+        S.eq(label + ": exit", r.returncode, 1)
+        S.ok(label + ": the reason says it could not confirm the page is missing", "not missing" in r.stderr, r.stderr)
+        nothing_left(label)
+        # (d) the plant's click must land exactly on the dead page
+        for mode, label in (("stay", "the plant's click stays on the start page"), ("other", "the plant's click lands on another page than the dead one")):
+            r, c = arm({"FAKE_LINK": mode})
+            S.eq("arm-control review: %s: exit" % label, r.returncode, 1)
+            S.ok("arm-control review: %s: says it did not land on the dead page" % label,
+                 "did not land on /projects-old" in r.stderr and screen in r.stderr and len(r.stderr.strip().splitlines()) == 1, r.stderr)
+            nothing_left("arm-control review: " + label)
+        # the probe session must close, both times, or the arming fails
+        label = "arm-control review: the probe session cannot be closed"
+        r, c = arm({"FAKE_CLOSE_RC": "1"})
+        S.eq(label + ": exit", r.returncode, 1)
+        S.ok(label + ": says so, in one line", "could not be closed" in r.stderr and len(r.stderr.strip().splitlines()) == 1, r.stderr)
+        S.ok(label + ": the same reason on stdout as {armed: false}", (obj(r.stdout) or {}).get("armed") is False, r.stdout)
+        nothing_left(label)
+        # the final control.json cannot be written: the provisional plant is taken back
+        label = "arm-control review: the final control.json cannot be written"
+        os.makedirs(os.path.join(rd, "control.json.tmp"))
+        r, c = arm()
+        S.ok(label + ": exit is not 0", r.returncode != 0, "rc %d: %s" % (r.returncode, r.stdout[-200:]))
+        nothing_left(label)
+        os.rmdir(os.path.join(rd, "control.json.tmp"))
+        # a start page given decoded, which the browser reports encoded: a link that leads nowhere is still refused
+        label = "arm-control review: a start page given decoded, the browser reports it encoded, the link leads nowhere"
+        r, c = arm({"FAKE_LINK": "stuck", "FAKE_HERE": "/caf%C3%A9"}, screen=sc.url + "/caf\u00e9")
+        S.eq(label + ": exit", r.returncode, 1)
+        S.ok(label + ": says the link does not leave the screen", "does not leave" in r.stderr, r.stderr)
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_arm_control_functional_plant(R, S):
+    """The init script of the functional control, run by node against a page made of stubs: on the control's route a click on a link to the broken
+    screen (any spelling of its path) goes to the dead page, with the click stopped before the page's own handlers (a router listens on the
+    root, the plant on the window in the capture phase); on any other route, on any other link, off the app, for a link that opens a tab and
+    for a click on no link, nothing happens. Seen red on master (no functional plant: control.json had no `link`, so there was nothing to run):
+      FAIL: arm-control functional plant: node ran the init script: no record
+    The unplanted route and the other link are the negative controls of the planted one."""
+    if not shutil.which("node"):
+        sys.stderr.write("NOT RUN, NOT ARMED: node missing: the functional plant's script was not run\n")
+        return
+    sc = Scene()
+    sc.env["FWX_WALK_CONTROL_WAIT_S"] = "1"
+    try:
+        o = armed(sc, R, S, "arm-control functional plant")
+        if not o:
+            return
+        rd = o["run_dir"]
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        S.eq("arm-control functional plant: exit", r.returncode, 0)
+        c = jfile(os.path.join(rd, "control.json")) or {}
+        harness = ("const handlers = [];\n"
+                   "global.addEventListener = (type, fn, capture) => handlers.push({type, fn, capture});\n"
+                   "const here = process.argv[3], at = JSON.parse(process.argv[4]);\n"
+                   "const went = [];\n"
+                   "global.location = {pathname: here, origin: 'http://app.test', assign: (u) => went.push(u)};\n"
+                   "eval(require('fs').readFileSync(process.argv[2], 'utf8'));\n"
+                   "for (const a of at) if (a) a.hasAttribute = (n) => n === 'download' && !!a.download;\n"
+                   "const out = {listeners: handlers.map((h) => [h.type, h.capture]), cases: []};\n"
+                   "for (const a of at) {\n"
+                   "  const seen = {prevented: 0, stopped: 0};\n"
+                   "  const target = a === null ? {closest: () => null} : {closest: () => a};\n"
+                   "  const e = {target, preventDefault() { seen.prevented++; }, stopImmediatePropagation() { seen.stopped++; }};\n"
+                   "  went.length = 0;\n"
+                   "  for (const h of handlers) if (h.type === 'click') h.fn(e);\n"
+                   "  out.cases.push({went: went.slice(), prevented: seen.prevented, stopped: seen.stopped});\n"
+                   "}\n"
+                   "console.log(JSON.stringify(out));\n")
+        hp = os.path.join(helpers.mkdtemp("fwx-walk-node-"), "harness.js")
+        with open(hp, "w", encoding="utf-8") as f:
+            f.write(harness)
+        links = [{"origin": "http://app.test", "pathname": "/projects", "target": ""},          # the broken link
+                 {"origin": "http://app.test", "pathname": "/projects/", "target": "_self"},    # the same link, spelled with a slash
+                 {"origin": "http://app.test", "pathname": "/contact", "target": ""},           # another link of the page
+                 {"origin": "http://other.test", "pathname": "/projects", "target": ""},        # the same path on another site
+                 {"origin": "http://app.test", "pathname": "/projects", "target": "_blank"},    # a link that opens a tab
+                 {"origin": "http://app.test", "pathname": "/projects", "target": "", "download": True},  # a download of the same path (CodeRabbit)
+                 None]                                                                          # a click on no link
+        want_hit = {"went": ["/projects-old"], "prevented": 1, "stopped": 1}
+        want_miss = {"went": [], "prevented": 0, "stopped": 0}
+
+        def run_in(route):
+            out = subprocess.run(["node", hp, c.get("script", os.devnull), route, json.dumps(links)], capture_output=True, text=True)
+            return json.loads(out.stdout.strip().splitlines()[-1]) if out.stdout.strip() else None
+        got = run_in("/board")
+        S.ok("arm-control functional plant: node ran the init script", got is not None, "no record")
+        if got is None:
+            return
+        S.eq("arm-control functional plant: it listens to clicks, in the capture phase", got["listeners"], [["click", True]])
+        S.eq("arm-control functional plant: on the control's route the broken link goes to the dead page and the click is stopped",
+             got["cases"][:2], [want_hit, want_hit])
+        S.eq("arm-control functional plant: another link, another site, a link that opens a tab, a download of the same path and a click on no link are left alone",
+             got["cases"][2:], [want_miss] * 5)
+        S.eq("arm-control functional plant: on any other route nothing happens", run_in("/projects")["cases"], [want_miss] * 7)
+        S.eq("arm-control functional plant: the route is compared without its trailing slash", run_in("/board/")["cases"][:1], [want_hit])
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+JUDGE_FINDINGS = {
+    "w1": """# Findings (breaker)
+
+### F1 · bug · minor
+- Screen: %(url)s/board (width 1309, light, Chromium)
+- Kind: observed
+- Expected: the PROJECTS link opens the projects page
+- Steps: 1. open %(url)s/board 2. click PROJECTS in the navigation
+- Observed: the address became %(url)s/projects-old and the page says "404 | This page could not be found." (seen 3 of 3)
+- Evidence: shots/f1.png
+
+### F2 · layout · cosmetic
+- Screen: %(url)s/board
+- Observed: the footer text is small.
+
+## Covered
+the board.
+""",
+    "w2": """# Findings (breaker, second tramo)
+
+### F1 · bug · major
+- Observed: the contact form clears itself.
+
+## Tooling
+- clicking PROJECTS landed on %(url)s/projects-old (not filed: the click may have been the tool's).
+""",
+}
+
+
+def case_control_judge(R, S):
+    """`fwx control judge --run R FILE...`: whether the walkers found the planted functional fault, decided by code from what they wrote, not by
+    an agent's reading: a finding block (`### F<n>`, not a note under Tooling) that names the dead page the plant sends the link to. It prints `{screen, found, finding, why, looked_at}`
+    with `finding` as `<session>-F<n>` (the id `fwx walk converge` rows carry as `source`); exit 0 for found and for not found, 2 for a control
+    that is not a functional one or no file, 1 for a file it cannot read. Seen red on master (there was no `control judge`; an agent judged):
+      FAIL: control judge: the breaker's finding of the dead link: exit: got 2, want 0
+      FAIL: control judge: the breaker's finding of the dead link: found: got None, want True
+    A run whose breaker wrote only other findings, a note under Tooling that names the dead page, a finding that names the link and says nothing
+    of a missing page, and a page whose name only starts like the dead one are the negative controls: each is `found: false`.
+    (Only the dead page counts, whole: see case_control_judge_exact.)"""
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "control judge")
+        if not o:
+            return
+        rd = o["run_dir"]
+        sc.env["FWX_WALK_CONTROL_WAIT_S"] = "1"
+        r = sc.walk(R, "arm-control", "--run", rd, "--screen", sc.url + "/board")
+        S.eq("control judge: the control is planted", r.returncode, 0)
+        files = {}
+        for k, text in JUDGE_FINDINGS.items():
+            files[k] = os.path.join(rd, "findings-%s.md" % k)
+            with open(files[k], "w", encoding="utf-8") as f:
+                f.write(text % {"url": sc.url})
+
+        def judge(*paths):
+            r = sc.walk(R, "control-judge", "--run", rd, *paths)
+            return r, obj(r.stdout) or {}
+        label = "control judge: the breaker's finding of the dead link"
+        r, j = judge(files["w1"])
+        S.eq(label + ": exit", r.returncode, 0)
+        S.eq(label + ": found, and which finding", (j.get("found"), j.get("finding")), (True, "w1-F1"))
+        S.ok(label + ": says why, and how much it looked at", "projects-old" in str(j.get("why")) and j.get("looked_at") == {"files": 1, "findings": 2}, r.stdout)
+        S.eq(label + ": and the screen", j.get("screen"), sc.url + "/board")
+        S.eq(label + ": and the dead page it looked for (the workflow takes the note rows that name it)", j.get("dead"), "/projects-old")
+        r, j = judge(files["w2"], files["w1"])
+        S.eq("control judge: found in the second of two files, with the session of that file", (r.returncode, j.get("found"), j.get("finding"), (j.get("looked_at") or {}).get("files")),
+             (0, True, "w1-F1", 2))
+        # not found: other findings only; the dead page named only in a note under Tooling
+        other = os.path.join(rd, "findings-w3.md")
+        with open(other, "w", encoding="utf-8") as f:
+            f.write("### F1 · bug · minor\n- Observed: the footer is small.\n\n## Tooling\n- clicking PROJECTS landed on %s/projects-old (not filed)\n" % sc.url)
+        r, j = judge(other)
+        S.eq("control judge: other findings, and the dead page only in a note under Tooling: not found", (r.returncode, j.get("found"), j.get("finding")), (0, False, None))
+        S.eq("control judge: and it says it looked at one finding", j.get("looked_at"), {"files": 1, "findings": 1})
+        # the link named with a missing page, no address
+        named = os.path.join(rd, "findings-w4.md")
+        with open(named, "w", encoding="utf-8") as f:
+            f.write("### F3 · bug · major\n- Observed: clicking Projects in the nav shows a 404 page.\n")
+        r, j = judge(named)
+        S.eq("control judge: the link named with a 404 but not the dead page: not found (a real 404 never counts)", (j.get("found"), j.get("finding")), (False, None))
+        named_ok = os.path.join(rd, "findings-w5.md")
+        with open(named_ok, "w", encoding="utf-8") as f:
+            f.write("### F1 · layout · minor\n- Observed: the Projects link is hard to read on a phone.\n")
+        r, j = judge(named_ok)
+        S.eq("control judge: the link named with no missing page: not found", j.get("found"), False)
+        bare = os.path.join(rd, "findings-w7.md")
+        with open(bare, "w", encoding="utf-8") as f:
+            f.write("### F2 · bug · minor\n- Steps: 1. click the second item of the menu\n- Observed: the address bar reads %s/projects-old.\n" % sc.url)
+        r, j = judge(bare)
+        S.eq("control judge: the dead page named with no word of the link or of a missing page: found", (j.get("found"), j.get("finding")), (True, "w7-F2"))
+        near = os.path.join(rd, "findings-w6.md")
+        with open(near, "w", encoding="utf-8") as f:
+            f.write("### F1 · bug · minor\n- Observed: %s/projects-older answers with a list.\n" % sc.url)
+        r, j = judge(near)
+        S.eq("control judge: a page whose name only starts like the dead one: not found", j.get("found"), False)
+        # exits
+        undecodable = os.path.join(rd, "findings-w8.md")
+        with open(undecodable, "wb") as f:
+            f.write(b"### F1 \xff\xfe\n- Observed: \x80\n")
+        r, _ = judge(undecodable)
+        S.ok("control judge: a file that is not text: exit 1 and the file named, no traceback (CodeRabbit; red on 1b18fd7: a UnicodeDecodeError traceback)",
+             r.returncode == 1 and "findings-w8.md" in r.stderr and "Traceback" not in r.stderr, "rc %d: %s" % (r.returncode, r.stderr[-300:]))
+        r, _ = judge()
+        S.ok("control judge: no file: exit 2 and a usage line", r.returncode == 2 and "usage: fwx control judge" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        r, _ = judge(os.path.join(rd, "findings-none.md"))
+        S.ok("control judge: a file that is not there: exit 1, and the file named", r.returncode == 1 and "findings-none.md" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        r = sc.walk(R, "arm-control", "--run", rd, "--kind", "hierarchy", "--screen", sc.url + "/board")
+        r, _ = judge(files["w1"])
+        S.ok("control judge: a hierarchy control is not judged by code: exit 2", r.returncode == 2 and "functional" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        os.remove(os.path.join(rd, "control.json"))
+        r, _ = judge(files["w1"])
+        S.ok("control judge: no control.json: exit 1 and the file named", r.returncode == 1 and "control.json" in r.stderr, "rc %d: %s" % (r.returncode, r.stderr))
+        sc.walk(R, "down", "--run", rd)
+    finally:
+        sc.stop()
+
+
+def case_control_judge_exact(R, S):
+    """Review of PR 198, finding 1 (fails open) and finding 2. The judge counts a finding only for the planted dead route, as a whole path
+    (`/about-old`, from a bare path or an address, with a query or punctuation after it), never for the link's own path or text: with the link
+    `/` the path matched the `//` of any address, and `/about` matched `/about/team` and `/about.png`, so a real 404 counted as the control and
+    `dropControl` took that real finding from the fixer. A note under Outside is read with the same rule (a walker is told to file what is outside
+    its screens there, and the dead page is another route); the finding it gives is null (a note is no row to drop). A block ends at the next
+    heading or section label, at a rule, or at a paragraph that is no field of the finding, so a plain-text Tooling or Outside after the last block
+    is not part of it. CodeRabbit's review added: the route's case is kept (`/About-Old` is another route than `/about-old`), the whole address is read
+    (IPv6 brackets; `/about-old;preview` is another route), an encoded and a decoded spelling are the same, and only a real label opens an Outside
+    note (a sentence that starts with "Outside" does not). Seen red on 1b18fd7:
+      FAIL: control judge exact: link /about: the dead route's name in another case (/About-Old is another route) is not the control: got (0, True, 'w1-F1'), want (0, False, None)
+      FAIL: control judge exact: link /about: the dead route in an IPv6 address is the control: got (0, False, None), want (0, True, 'w1-F1')
+      FAIL: control judge exact: link /about: a sentence that starts with Outside and names the dead route is not the control: got (0, True, None), want (0, False, None)
+    Seen red on 355a8e5:
+      FAIL: control judge exact: link /: a real 404 on another screen is not the control: got True, want False
+      FAIL: control judge exact: link /about: a nested route (/about/team) is not the control: got True, want False
+      FAIL: control judge exact: link /about: an image that is not found (/about.png) is not the control: got True, want False
+      FAIL: control judge exact: link /about: the link's text and "not found" are not the control: got True, want False
+      FAIL: control judge exact: link /about: a note under Outside that names the dead route: found: got (False, None), want (True, None)
+      FAIL: control judge exact: a plain-text Tooling after the last block is not part of it: got True, want False"""
+    def judge(ctl, *texts):
+        rd = helpers.mkdtemp("fwx-walk-run-")
+        helpers.write(rd, "control.json", json.dumps(dict({"screen": "http://localhost:3000/home", "path": "/home", "kind": "functional"}, **ctl)))
+        paths = []
+        for i, text in enumerate(texts):
+            paths.append(os.path.join(rd, "findings-w%d.md" % (i + 1)))
+            with open(paths[-1], "w", encoding="utf-8") as f:
+                f.write(text)
+        r = runner_walk(R, "control-judge", "--run", rd, *paths)
+        return r, obj(r.stdout) or {}
+    root = {"link": "/", "link_text": "Logo", "dead": "/index-old"}
+    about = {"link": "/about", "link_text": "About", "dead": "/about-old"}
+
+    def block(observed, screen="http://localhost:3000/home"):
+        return "### F1 · bug · major\n- Screen: %s (width 1309)\n- Kind: observed\n- Observed: %s\n" % (screen, observed)
+    for label, ctl, text in (
+            ("link /: a real 404 on another screen", root, block("the avatar says 'page not found'", "http://localhost:3000/contact")),
+            ("link /: a block with an address and a 404", root, block("the page returned 404", "http://localhost:3000/projects")),
+            ("link /: a block that says does not exist", root, block("the image does not exist")),
+            ("link /about: a nested route (/about/team)", about, block("GET /about/team returned 404")),
+            ("link /about: an image that is not found (/about.png)", about, block("/about.png returned 404")),
+            ("link /about: a route that only ends like the dead one (/team/about-old)", about, block("the address /team/about-old answers 404")),
+            ("link /about: the link's text and \"not found\"", about, block("the About page shows 'image not found'")),
+            ("link /about: the link and the dead page's name in prose", about, block("About: page not found")),
+            ("link /about: a route that only starts like the dead one (/about-older)", about, block("the address /about-older answers 404")),
+            ("link /about: the link's own path and a 404", about, block("clicking /about answers 404")),
+            ("link /: the root path and a 404", root, block("the / route answers 404")),
+            ("link /about: the dead route's name in another case (/About-Old is another route)", about, block("the address http://localhost:3000/About-Old answers 404")),
+            ("link /about: the dead route with parameters (/about-old;preview)", about, block("it went to /about-old;preview (404)")),
+            ("link /about: a sentence that starts with Outside and names the dead route", about, block("the footer is small") + "\nOutside navigation is excluded; /about-old is an example.\n")):
+        r, j = judge(ctl, text)
+        S.eq("control judge exact: %s is not the control" % label, (r.returncode, j.get("found"), j.get("finding")), (0, False, None))
+    for label, ctl, text in (
+            ("link /: the dead route in an address with a port", root, block("the address became http://localhost:3000/index-old and the page says 404")),
+            ("link /about: the dead route as a bare path in backticks", about, block("it went to `/about-old` (404)")),
+            ("link /about: the dead route with a query and a closing sentence", about, block("it went to http://localhost:3000/about-old?from=nav.")),
+            ("link /about: the dead route, scheme and host in capitals, path as planted, with a slash", about, block("the address is HTTP://LOCALHOST:3000/about-old/")),
+            ("link /about: the dead route in an IPv6 address", about, block("the address became http://[::1]:3000/about-old (404)")),
+            ("link /about: the dead route in a Markdown link", about, block("it went to [the page](/about-old).")),
+            ("link /about: the dead route in parentheses", about, block("it went to (/about-old) and 404")),
+            ("link /caf%C3%A9: the dead route written decoded", {"link": "/caf%C3%A9", "link_text": "Cafe", "dead": "/caf%C3%A9-old"}, block("it went to /café-old (404)"))):
+        r, j = judge(ctl, text)
+        S.eq("control judge exact: %s is the control" % label, (r.returncode, j.get("found"), j.get("finding")), (0, True, "w1-F1"))
+    # the Outside notes: a walker files what is outside its screens there, and the dead route is another route
+    for label, tail in (("a heading", "## Outside\n- http://localhost:3000/about-old answers 404 (seen from /home)\n"),
+                        ("a plain-text label", "Outside\n- /about-old answers 404\n"),
+                        ("a bold label", "**Outside**\n- /about-old answers 404\n")):
+        r, j = judge(about, block("the footer is small") + "\n## Covered\nthe home page\n\n" + tail)
+        S.eq("control judge exact: link /about: a note under Outside (%s) that names the dead route: found, and no finding to drop" % label,
+             (r.returncode, j.get("found"), j.get("finding")), (0, True, None))
+        S.ok("control judge exact: link /about: ... and says it was the Outside note, of which file", "Outside" in str(j.get("why")) and "w1" in str(j.get("why")), r.stdout)
+    for label, tail in (("a colon", "Outside: /about-old answers 404\n"), ("a bold label with a colon", "**Outside:** /about-old answers 404\n")):
+        r, j = judge(about, block("the footer is small") + "\n" + tail)
+        S.eq("control judge exact: link /about: an Outside note with %s: found, and no finding to drop" % label, (r.returncode, j.get("found"), j.get("finding")), (0, True, None))
+    r, j = judge(about, "Outside navigation is excluded; /about-old is an example.\n")
+    S.eq("control judge exact: link /about: a sentence that starts with Outside, with no finding at all, is not a note", (r.returncode, j.get("found")), (0, False))
+    r, j = judge(about, block("the footer is small") + "\n## Outside\n- http://localhost:3000/about.png answers 404\n- /about/team answers 404\n")
+    S.eq("control judge exact: link /about: a note under Outside about a real 404 is not the control", (r.returncode, j.get("found")), (0, False))
+    # Tooling is no finding, wherever it starts, and it ends the block before it
+    for label, tail in (("a heading", "## Tooling\n- the click landed on /about-old (not filed)\n"),
+                        ("a plain-text label", "Tooling\n- the click landed on /about-old (not filed)\n"),
+                        ("a paragraph that is no field", "\nThe click landed on /about-old, which I took for the tool.\n"),
+                        ("a rule and a paragraph", "---\nnote: /about-old answered 404\n")):
+        r, j = judge(about, block("the footer is small") + tail)
+        S.eq("control judge exact: a plain-text Tooling after the last block is not part of it" if label == "a plain-text label"
+             else "control judge exact: after the last block, %s is not part of it" % label, (r.returncode, j.get("found")), (0, False))
+    # fields of a finding keep their lines (a numbered list, an indented continuation)
+    r, j = judge(about, "### F2 · bug · major\n- Steps:\n  1. open /home\n  2. click About\n- Observed: the address became\n  /about-old and the page says 404\n- Evidence: x.png\n")
+    S.eq("control judge exact: a finding's own indented lines are still read", (j.get("found"), j.get("finding")), (True, "w1-F2"))
+
+
+LINK_VIEW = r"""
+const view = JSON.parse(process.argv[3]);
+const mk = (a, i) => ({
+  origin: a.origin || "http://app.test", pathname: a.path, target: a.target || "", textContent: a.text || a.path,
+  hasAttribute: (n) => n === "download" && !!a.download, click() { global.clicked = i; },
+  getClientRects: () => (a.rects === 0 ? [] : [{}]),
+  getBoundingClientRect: () => Object.assign({left: 10, top: 10, right: 110, bottom: 40, width: 100, height: 30}, a.box || {}),
+  style: a.style || {},
+});
+const links = view.links.map(mk);
+global.location = {pathname: view.here || "/home", origin: "http://app.test"};
+global.innerWidth = 1309; global.innerHeight = 818;
+global.getComputedStyle = (el) => Object.assign({display: "inline", visibility: "visible"}, el.style);
+global.document = {querySelectorAll: (sel) => links.filter((l, i) => view.links[i].in.some((s) => sel.startsWith(s)) || sel === "a[href]")};
+const answer = String(eval(process.argv[2]));
+console.log(answer + (global.clicked === undefined ? "" : "#" + global.clicked));
+"""
+
+
+def case_link_pick_visible(R, S):
+    """Review of PR 198, finding 3. The link the plant breaks is the one a walker can click at the walks' viewport (1309 x 818): a nav that is in the
+    page but hidden (a mobile menu: display none, visibility hidden, no box, or off the screen to the left or right) is skipped for the next link.
+    CodeRabbit's review added a link below the screen, and the click on the link the pick chose (the first of its path in the same order, with the
+    same rules: not a link that opens a tab, not a download). Seen red on 1b18fd7:
+      FAIL: link pick visible: a body link that opens a tab before the nav link: the click is on the very link the pick chose: got 'fwx:clicked#0', want 'fwx:clicked#1'
+      FAIL: link pick visible: a link below the screen is skipped for the next link: got 'fwx:link|%2Fmenu|Menu', want ...
+    Seen red on 355a8e5 (the first link of the page was picked whatever it looked like):
+      FAIL: link pick visible: a hidden menu first (display none): picked '/menu' (fwx:link|%2Fmenu|Menu), want '/projects'
+      FAIL: link pick visible: a link off the screen to the left: ...
+    A page with only hidden links gives `fwx:missing` (no link, so the arming says target not found); a visible link first is the negative control."""
+    if not shutil.which("node"):
+        sys.stderr.write("NOT RUN, NOT ARMED: node missing: the link pick was not run\n")
+        return
+    code = subprocess.run([sys.executable, "-c", "import sys, json; sys.path.insert(0, sys.argv[1]); from fwx.commands import walk; print(json.dumps([walk.LINK_PICK_JS, walk.LINK_CLICK_JS % json.dumps('/projects')]))",
+                           os.path.join(R.root, "lib")], capture_output=True, text=True)
+    if not S.ok("link pick visible: the pick and click code was read from walk.py", code.returncode == 0 and code.stdout.strip(), code.stderr[-300:]):
+        return
+    pick, click = json.loads(code.stdout)
+    hp = os.path.join(helpers.mkdtemp("fwx-walk-node-"), "harness.js")
+    with open(hp, "w", encoding="utf-8") as f:
+        f.write(LINK_VIEW)
+
+    def run(js, links):
+        out = subprocess.run(["node", hp, js, json.dumps({"links": links})], capture_output=True, text=True)
+        return out.stdout.strip().splitlines()[-1] if out.stdout.strip() else "error: " + out.stderr[-200:]
+    good = {"path": "/projects", "text": "Projects", "in": ["nav"]}
+    for label, hidden in (("a hidden menu first (display none)", {"style": {"display": "none"}, "rects": 0}),
+                          ("a link with visibility hidden", {"style": {"visibility": "hidden"}}),
+                          ("a link with no box (width 0)", {"box": {"width": 0, "height": 0, "right": 10, "bottom": 10}}),
+                          ("a link off the screen to the left", {"box": {"left": -300, "right": -200}}),
+                          ("a link off the screen to the right", {"box": {"left": 1400, "right": 1500}}),
+                          ("a link in an element with no layout (no client rects)", {"rects": 0})):
+        links = [dict({"path": "/menu", "text": "Menu", "in": ["nav"]}, **hidden), good]
+        got = run(pick, links)
+        S.eq("link pick visible: %s: skipped for the next link" % label, got, "fwx:link|%2Fprojects|Projects")
+        links = [dict({"path": "/projects", "text": "Projects", "in": ["nav"]}, **hidden)]
+        S.eq("link pick visible: %s, alone: no link" % label, run(pick, links), "fwx:missing")
+        S.eq("link pick visible: %s: the click finds no link to it either" % label, run(click, links), "fwx:nolink")
+    S.eq("link pick visible: a visible link first is picked (the first)", run(pick, [{"path": "/menu", "text": "Menu", "in": ["nav"]}, good]), "fwx:link|%2Fmenu|Menu")
+    S.eq("link pick visible: the click finds the visible link", run(click, [good]), "fwx:clicked#0")
+    # CodeRabbit: a link below the screen (a closed menu translated down), and the click on the very link the pick chose
+    S.eq("link pick visible: a link below the screen is skipped for the next link",
+         run(pick, [{"path": "/menu", "text": "Menu", "in": ["nav"], "box": {"top": 900, "bottom": 940}}, good]), "fwx:link|%2Fprojects|Projects")
+    nav = {"path": "/projects", "text": "Projects", "in": ["nav"]}
+    for label, first in (("a body link that opens a tab before the nav link", {"path": "/projects", "text": "Body", "in": [], "target": "_blank"}),
+                         ("a body download of the same path before the nav link", {"path": "/projects", "text": "Body", "in": [], "download": True}),
+                         ("a visible body link of the same path before the nav link", {"path": "/projects", "text": "Body", "in": []}),
+                         ("a nav link that opens a tab before the nav link", {"path": "/projects", "text": "Tab", "in": ["nav"], "target": "_blank"}),
+                         ("a nav download of the same path before the nav link", {"path": "/projects", "text": "File", "in": ["nav"], "download": True})):
+        S.eq("link pick visible: %s: the pick is the nav link" % label, run(pick, [first, nav]), "fwx:link|%2Fprojects|Projects")
+        S.eq("link pick visible: %s: the click is on the very link the pick chose" % label, run(click, [first, nav]), "fwx:clicked#1")
+
+
+def case_functional_pictures(R, S):
+    """A functional plant changes nothing a screenshot shows, so the pictures a walker took of the control's screen are the app's own and a
+    genuine finding on that screen keeps them (the hierarchy plant's pictures are left out because the title in them is the plant's). A
+    control.json with no `kind` is the older hierarchy control, as before. Seen red on master (the pictures of the control's screen were left
+    out whatever the plant):
+      FAIL: functional pictures: a finding on the control's screen keeps its walker picture: got [], want ['.../walker-1.png']
+      FAIL: functional pictures: a capture of the control's route is not listed: got ['.../on-board.png'], want []
+    The same call with `kind: hierarchy` is the negative control (the picture is left out, and the existing case holds the rest)."""
+    rd = helpers.mkdtemp("fwx-walk-run-")
+    os.makedirs(os.path.join(rd, "shots"))
+    pic = os.path.join(rd, "shots", "walker-1.png")
+    with open(pic, "wb") as fh:
+        fh.write(PNG)
+    row = {"id": "T1-1", "file": "src/a.ts", "line": 3, "claim": "c", "evidence": [pic, "the form clears"], "severity": "major", "screen": "/board",
+           "verdict": "CONFIRMED", "expected": "x", "type": "bug", "kind": "observed"}
+    helpers.write(rd, "verified-T1.json", json.dumps({"findings": [row]}))
+    for kind, want, dropped in (("functional", [pic, "the form clears"], None), ("hierarchy", ["the form clears"], [pic])):
+        helpers.write(rd, "control.json", json.dumps({"screen": "http://localhost:3000/board", "path": "/board", "kind": kind, "script": os.path.join(rd, "init.js")}))
+        r = runner_walk(R, "findings", "--run", rd)
+        got = (jfile(os.path.join(rd, "fix.json")) or [{}])[0]
+        S.eq("functional pictures: %s control: exit" % kind, r.returncode, 0)
+        S.eq("functional pictures: a finding on the control's screen keeps its walker picture" if kind == "functional"
+             else "functional pictures: a hierarchy control still leaves it out", (got.get("evidence"), got.get("evidence_dropped")), (want, dropped))
+    # `ab` lists the pictures of the control's route only for a plant that restyles the page
+    sc = Scene()
+    try:
+        o = armed(sc, R, S, "functional pictures")
+        if not o:
+            return
+        rd = o["run_dir"]
+        shots = jfile(os.path.join(rd, "run.json"))["shots"]
+        listing = os.path.join(rd, "control-pictures.txt")
+        for kind in ("functional", "hierarchy"):
+            if os.path.exists(listing):
+                os.remove(listing)
+            sc.walk(R, "ab", "--run", rd, "w2", "close")
+            helpers.write(rd, "init.js", "//")
+            helpers.write(rd, "control.json", json.dumps({"screen": sc.url + "/board", "path": "/board", "kind": kind, "script": os.path.join(rd, "init.js")}))
+            shot = os.path.join(shots, "on-board-%s.png" % kind)
+            r = sc.walk(R, "ab", "--run", rd, "w2", "screenshot", env={"FAKE_PAGE_URL": sc.url + "/board", "FAKE_SHOT_PATH": shot})
+            seen = [ln for ln in open(listing, encoding="utf-8").read().splitlines() if ln] if os.path.exists(listing) else []
+            S.eq("functional pictures: a capture of the control's route is %s (%s control)" % ("not listed" if kind == "functional" else "listed", kind),
+                 (r.returncode, seen), (0, [] if kind == "functional" else [shot]))
         sc.walk(R, "down", "--run", rd)
     finally:
         sc.stop()
@@ -2245,7 +2846,8 @@ def case_poll(R, S):
 CASES = [case_url_guard, case_probe, case_run_prefix, case_up, case_ab_guard, case_ab_session, case_ab_commands, case_ab_viewport, case_run_empty, case_pw, case_hygiene, case_arm_control, case_arm_control_readback, case_down_count,
          case_off, case_container, case_cap, case_factory, case_findings, case_review_page, case_review_answers, case_sweep,
          case_usage, case_rollback_env, case_up_restart, case_finding_ids, case_review_recheck, case_arm_control_root, case_planted_captures, case_findings_control_pictures,
-         case_arm_control_launch_path, case_check_screens, case_check_screens_apps, case_poll]
+         case_arm_control_launch_path, case_arm_control_functional, case_arm_control_review, case_arm_control_functional_plant, case_control_judge, case_control_judge_exact, case_link_pick_visible, case_functional_pictures,
+         case_check_screens, case_check_screens_apps, case_poll]
 
 W = "lib/fwx/commands/walk.py"
 # (name, case, old text, new text, the FAIL text it must produce); each `old` is in walk.py exactly once, and a control whose `old`
@@ -2390,7 +2992,7 @@ MUTANTS = [
     ("pw: one config file for every session", case_pw, '"pw.config-%s.json" % session', '"pw.config.json"', "pw: a second session's config is its own file"),
     ("rechecked files kept at up, only those of a tramo named T<n>", case_up_restart, 'glob.glob(os.path.join(run_dir, "rechecked-*.json"))',
      'glob.glob(os.path.join(run_dir, "rechecked-T*.json"))', "restart: a rechecked file of the earlier run is not left for `review-page`"),
-    ("rechecked files kept at up", case_up_restart, ' + glob.glob(os.path.join(run_dir, "rechecked-*.json")):', ":",
+    ("rechecked files kept at up", case_up_restart, ' + glob.glob(os.path.join(run_dir, "rechecked-*.json"))\n', "\n",
      "restart: a rechecked file of the earlier run is not left for `review-page`"),
     ("a control.json with no route is read as no control", case_findings_control_pictures, 'if not isinstance(route, str) or not route.startswith("/"):', "if False:",
      "control pictures: a control.json with no route is exit 2 and writes no fix.json"),
@@ -2457,6 +3059,84 @@ MUTANTS = [
     ("cap: the tramos are not doubled", case_cap, "cap = capacity(cfg, tramos * 2, container, factory)", "cap = capacity(cfg, tramos, container, factory)",
      "cap: three tramos want 6"),
     ("cap: allowed is what was asked for", case_cap, '"allowed": min(want, cap)', '"allowed": want', "cap: per_project.ui-walker 1: allowed 1"),
+    ("functional: the default kind is the hierarchy one", case_arm_control_functional, 'if o.get("--kind", "functional") == "functional":\n        return arm_functional',
+     'if o.get("--kind", "hierarchy") == "functional":\n        return arm_functional', "arm-control functional: control.json says what kind it is"),
+    ("functional: a link that leads nowhere is planted on", case_arm_control_functional, "    if before == path:\n", "    if False:\n",
+     "arm-control functional: a link that leads nowhere even without the plant: exit"),
+    ("functional: a plant that changes nothing is accepted", case_arm_control_functional, "        if after == before:\n", "        if False:\n",
+     "arm-control functional: a plant that changes where the link leads: says why, and where, in one line"),
+    ("functional: a failed arming leaves control.json", case_arm_control_functional,
+     '        for left in (script, ctl_file, ctl_file + ".tmp"):  # a plant that was not proved visible stays nowhere a walker could meet it\n            if os.path.isfile(left):\n                os.unlink(left)\n        if isinstance(e, Stop) and e.code == 1:\n            say({"reason": str(e), "armed": False})\n        raise\n    say(ctl)',
+     "        raise\n    say(ctl)", "arm-control functional: a screen with no link to another screen: nothing is left a walker could meet"),
+    ("functional plant: bubbling phase", case_arm_control_functional_plant, "  }, true);\n})();", "  }, false);\n})();", "arm-control functional plant: it listens to clicks, in the capture phase"),
+    ("functional plant: every route", case_arm_control_functional_plant, "    if (norm(location.pathname) !== PATH) return;\n    const a = e.target", "    const a = e.target",
+     "arm-control functional plant: on any other route nothing happens"),
+    ("functional plant: every link", case_arm_control_functional_plant, " || norm(a.pathname) !== LINK ||", " ||",
+     "arm-control functional plant: another link, another site, a link that opens a tab, a download of the same path and a click on no link are left alone"),
+    ("functional plant: the click goes on to the page's handlers", case_arm_control_functional_plant, "    e.stopImmediatePropagation();\n", "",
+     "arm-control functional plant: on the control's route the broken link goes to the dead page and the click is stopped"),
+    ("judge exact: any word that ends like the dead page", case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/") == dead:', 'if (unquote(path).lower()).endswith(dead):',
+     "control judge exact: link /about: a route that only ends like the dead one (/team/about-old) is not the control"),
+    ("judge exact: a route that only starts like the dead page", case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/") == dead:', 'if (unquote(path).lower()).startswith(dead):',
+     "control judge exact: link /about: a route that only starts like the dead one (/about-older) is not the control"),
+    ("judge exact: the link's own path names the fault", case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/") == dead:', 'if (unquote(path).rstrip("/") or "/").lower() in (dead, ctl["link"]):',
+     "control judge exact: link /about: the link's own path and a 404 is not the control"),
+    ("judge exact: Outside is not read", case_control_judge_exact, 'why = names_the_fault("\\n".join(outside), ctl)', "why = None",
+     "control judge exact: link /about: a note under Outside (a heading) that names the dead route: found"),
+    ("judge exact: a paragraph after the last block is part of it", case_control_judge_exact, '        if mode == "finding" and blank and not FIELD.match(line):\n            mode = None\n', "",
+     "control judge exact: after the last block, a paragraph that is no field is not part of it"),
+    ("judge exact: a plain-text label does not end a block", case_control_judge_exact, 'or re.match(r"^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$", line) or lab:', 'or re.match(r"^\\s*(?:-{3,}|_{3,}|\\*{3,})\\s*$", line):',
+     "control judge exact: a plain-text Tooling after the last block is not part of it"),
+    ("judge exact: a rule does not end a block", case_control_judge_exact, "(?:-{3,}|_{3,}|\\*{3,})", "(?:-{300,}|_{300,}|\\*{300,})",
+     "control judge exact: after the last block, a rule and a paragraph is not part of it"),
+    ("link pick: hidden links are picked", case_link_pick_visible, '&& !a.hasAttribute("download") && vis(a);', '&& !a.hasAttribute("download");',
+     "link pick visible: a hidden menu first (display none): skipped for the next link"),
+    ("link pick: a link with no layout", case_link_pick_visible, "    if (a.getClientRects().length === 0) return false;\n", "",
+     "link pick visible: a link in an element with no layout (no client rects): skipped for the next link"),
+    ("link pick: display and visibility", case_link_pick_visible, ' && cs.display !== "none" && cs.visibility !== "hidden"', "",
+     "link pick visible: a link with visibility hidden: skipped for the next link"),
+    ("link pick: an empty box", case_link_pick_visible, "return r.width > 0 && r.height > 0 && ", "return ",
+     "link pick visible: a link with no box (width 0): skipped for the next link"),
+    ("link pick: off the screen", case_link_pick_visible, " && r.right > 0 && r.left < innerWidth && r.bottom > 0 && r.top < innerHeight;", ";",
+     "link pick visible: a link off the screen to the left: skipped for the next link"),
+    ("link click: a hidden link is clicked", case_link_pick_visible, 'if (ok(a) && norm(a.pathname) === LINK) {', 'if (norm(a.pathname) === LINK) {',
+     "link pick visible: a hidden menu first (display none): the click finds no link to it either"),
+    ('judge exact: the route case is folded', case_control_judge_exact, 'if (unquote(path).rstrip("/") or "/") == dead:', 'if (unquote(path).rstrip("/") or "/").lower() == dead.lower():',
+     "control judge exact: link /about: the dead route's name in another case (/About-Old is another route) is not the control"),
+    ('judge exact: a sentence is a label', case_control_judge_exact, 'return m if m and (m.group(1) or m.group(3) or m.group(4) or m.group(5) or not m.group(6).strip()) else None', 'return m',
+     'control judge exact: link /about: a sentence that starts with Outside and names the dead route is not the control'),
+    ('judge exact: a word is cut at brackets', case_control_judge_exact, 'WORD = re.compile(r"[\\s\\"\'`<>]+|\\]\\(")', 'WORD = re.compile(r"[\\s\\"\'`<>\\[\\];]+|\\]\\(")',
+     'control judge exact: link /about: the dead route in an IPv6 address is the control'),
+    ('judge exact: an encoded path is not decoded', case_control_judge_exact, 'dead = unquote(ctl["dead"]).rstrip("/") or "/"', 'dead = ctl["dead"].rstrip("/") or "/"',
+     'control judge exact: link /caf%C3%A9: the dead route written decoded is the control'),
+    ('judge: a file that is not text', case_control_judge, 'except ValueError as e:  # not UTF-8 text', 'except KeyError as e:  # not UTF-8 text',
+     'control judge: a file that is not text'),
+    ('judge: the dead page is not named', case_control_judge, '"found": found is not None, "finding": found["finding"] if found else None, "dead": ctl["dead"],', '"found": found is not None, "finding": found["finding"] if found else None,',
+     'and the dead page it looked for'),
+    ('review: an existing page is a dead page', case_arm_control_review, 'if m and ((m.group(1) and int(m.group(1)) >= 400) or m.group(2)):', 'if True:',
+     'arm-control review: the dead page already exists: exit'),
+    ('review: any landing is the dead page', case_arm_control_review, '        if after != dead:\n', '        if False:\n',
+     "arm-control review: the plant's click stays on the start page: exit"),
+    ('review: a failed close is not checked', case_arm_control_review, '    if rc:\n        raise Stop("arm-control: the probe session could not be closed', '    if False:\n        raise Stop("arm-control: the probe session could not be closed',
+     'arm-control review: the probe session cannot be closed: says so, in one line'),
+    ('review: control.json is published unguarded', case_arm_control_review, '        write_json(ctl_file + ".tmp", ctl)  # published whole: a walker\'s launch never reads half a control.json\n        os.replace(ctl_file + ".tmp", ctl_file)\n', '        pass\n',
+     'arm-control review: the final control.json cannot be written: exit is not 0'),
+    ('review: paths are compared as written', case_arm_control_review, '    return quote(unquote(p), safe="/:@!$&\'()*+,;=-._~")', '    return p',
+     'arm-control review: a start page given decoded'),
+    ('review: the earlier findings stay', case_up_restart, '                + glob.glob(os.path.join(run_dir, "findings-*.md")))', '                + [])',
+     'restart: a findings file of the earlier run is not left'),
+    ('review: a link below the screen is visible', case_link_pick_visible, ' && r.bottom > 0 && r.top < innerHeight;', ' && r.bottom > 0;',
+     'link pick visible: a link below the screen is skipped'),
+    ('review: the click is on the first visible link', case_link_pick_visible, '      if (ok(a) && norm(a.pathname) === LINK) {', '      if (vis(a) && norm(a.pathname) === LINK) {',
+     'the click is on the very link the pick chose'),
+    ('review: a download is broken by the plant', case_arm_control_functional_plant, ' || a.hasAttribute("download")) return;', ') return;',
+     'a download of the same path'),
+    ("judge: found whatever was written", case_control_judge, 'say({"screen": ctl["screen"], "found": found is not None,', 'say({"screen": ctl["screen"], "found": True,',
+     "control judge: other findings, and the dead page only in a note under Tooling: not found"),
+    ("functional pictures: a functional plant taints the pictures", case_functional_pictures, '    if isinstance(ctl, dict) and ctl.get("kind", "hierarchy") != "hierarchy":', '    if False:',
+     "functional pictures: a finding on the control's screen keeps its walker picture"),
+    ("functional pictures: ab lists them anyway", case_functional_pictures, 'restyled = planted and read_json(ctl, "control.json").get("kind", "hierarchy") == "hierarchy"',
+     "restyled = planted", "functional pictures: a capture of the control's route is not listed (functional control)"),
 ]
 
 
