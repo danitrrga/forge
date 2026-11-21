@@ -19,6 +19,8 @@ Picture the work built and wrong, and ask which row or phrase would explain it (
 2. **Invented.** Anything no row backs. Rows with support `agent-assumption` or `unexamined` are what the owner never confirmed: ask what breaks if each is wrong. What `context.md` says about existing code is a hypothesis: read the file, or run the command changing nothing, before relying on it.
 3. **Size.** Tag the work by what the owner asked and decided: the smallest tag whose band holds it. A band is tasks per plan file: `small` 4, `normal` 6, `big` 8. `parts` counts the pieces the owner reviews separately, 1 unless there are several. When rows ask for more than the intent needs, name them.
 
+A discuss whose success criteria say nothing of the other software the result must work with, or of the people who use it, is a misread intent (`playbooks/principles.md` rule 12): name what is missing, since a result can pass every row and still fail the owner there.
+
 Drop everything else. A detail the planner can settle with an obvious choice is plan work, not a failure reason. A failure reason with no row or owner phrase making it possible is a guess. A made-up one costs the owner a round, so when none is left the verdict is `ok`.
 
 ## Verdict

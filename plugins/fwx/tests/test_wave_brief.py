@@ -151,8 +151,11 @@ def case_briefs(R, S):
     S.ok("briefs: TIMEBOX says to return partial findings and stop",
          "on expiry, return partial findings and stop rather than run on" in f1.get("TIMEBOX", ""), f1.get("TIMEBOX", ""))
     forb = f1.get("FORBIDDEN", "")
-    S.ok("briefs: FORBIDDEN has the four bans and .fwx/",
-         all(w in forb for w in ("no PR retargets or merges", "no rebase", "no force-push", "no fixes outside scope", ".fwx/")), forb)
+    S.ok("briefs: FORBIDDEN has the coordination bans and .fwx/, and no ban on fixing outside the task (ownership rule: principles.md rule 12)",
+         all(w in forb for w in ("no PR retargets or merges", "no rebase", "no force-push", ".fwx/")) and "no fixes outside" not in forb,
+         forb)
+    S.ok("briefs: SCOPE lets a small defect outside the task be fixed in its own commit, unless its file is one beside, and else sends it to `outside`",
+         "its own commit" in scope and "`outside`" in scope and "src/b.py" in scope and "only these files" not in scope, scope)
     rep = f1.get("REPORT", "")
     S.ok("briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply",
          "`report.json` directly in your scratch folder, not in its `tmp/`" in rep and os.path.join(folder, "reports") not in t1 and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
@@ -395,7 +398,7 @@ MUTANTS = [
     ("big task at 40 minutes", case_briefs, B, '"big": 60', '"big": 40', "T2 TIMEBOX is 60 minutes"),
     ("every wave runs beside it", case_briefs, P, 'brief.task_facts(t, [x for x in data["tasks"] if x["wave"] == t["wave"]], ctx)',
      'brief.task_facts(t, data["tasks"], ctx)', "SCOPE says nothing of wave 2's files"),
-    ("no referent in the header", case_template, T, "copied-from: pstack", "copied-from: none", "the header names its referent"),
+    ("no referent in the header", case_template, T, "referent: pstack", "referent: none", "the header names its referent"),
     ("shared file named in the template", case_template, T, "## CONTEXT\n$context", "## CONTEXT\nRead context.md.\n$context",
      "it does not spell the shared files"),
     ("UI task without its sentence", case_ui, B, 'NO_TEST = "none: a UI task carries no test; the owner walks it"', 'NO_TEST = "none"',
