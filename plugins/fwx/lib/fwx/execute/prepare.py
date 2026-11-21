@@ -105,14 +105,8 @@ def _ignored(top, tasks):
 
 
 def _defaults(top, cfg):
-    """The names of the default branch: the configuration's, the remote's, else main and master."""
-    names = set()
-    if cfg["project"].get("default_branch"):
-        names.add(cfg["project"]["default_branch"])
-    ref = out(top, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
-    if ref:
-        names.add(ref.split("/", 1)[-1])
-    return names or {"main", "master"}
+    """The names of the default branch (core.verify has the one copy)."""
+    return verify.default_names(top, cfg)
 
 
 def _settings(path):
@@ -347,12 +341,13 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     for n in sorted({t["wave"] for t in tasks}):
         serial = any(c["wave"] == n for c in clashes)
         waves.append({"n": n, "serial": serial,
-                      "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"],
+                      "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"], "files": [plan._norm(f) for f in t["files"]],
                                  "brief": made[t["id"]][0]["brief"] if t["id"] in made else None,
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
     why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
     return {
         "run": run, "plane": plane, "unattended": plane == "factory" or unattended, "cap": cap,
+        "linear": bool(cfg["project"].get("linear_project")),  # an unfixed `outside` item needs its issue key only where there is a Linear project
         "part_dir": part, "phase_dir": phase, "checkout": top, "branch": branch, "base": base, "isolation": "native",
         "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                   "plan": str(paths["plan"]), "postmortem": str(owner["postmortem"]), "config": os.path.join(main, config.FILE)},

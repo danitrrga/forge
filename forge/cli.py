@@ -1032,6 +1032,12 @@ def framework_ignore_row(only=None):
                       % (len(looked), ", ".join(looked), note))
 
 
+def framework_fields_row(only=None):
+    """The `framework fields` row: forge/framework.py fields_row."""
+    from forge import framework
+    return framework.fields_row(only)
+
+
 def local_plugins_row():
     """The `local plugins` row: every folder of config/forge.json `local_plugins` is registered in the machine's marketplace
     registry at its path (forge/marketplace.py); a SKIP, NOT RUN, NOT ARMED, with the key empty or missing."""
@@ -1066,6 +1072,8 @@ CHECKS = [
     ("context base", context_base_row, ""),
     # Its failures carry their own fix, so the row's is empty.
     ("framework ignore", framework_ignore_row, ""),
+    # Its detail names the unset fields, so the row's fix is empty.
+    ("framework fields", framework_fields_row, ""),
     # Its failures carry their own cause (project/profile: why), so the row's fix is empty.
     ("profiles", profiles.doctor_row, ""),
     # config/forge.json's `doctor_extra` rows, each with the fix it names; the row's own fix is empty.
@@ -1140,6 +1148,7 @@ def project_checks(name, prof, why):
         ("worktree guard", lambda: worktree_guard_smoke(name), fix["worktree guard"]),
         ("ponytail", lambda: ponytail_row(name), fix["ponytail"]),
         ("profiles", lambda: profiles.doctor_row(name), fix["profiles"]),
+        ("framework fields", lambda: framework_fields_row(name), fix["framework fields"]),
         ("memory", ["scripts/sync/memory_doctor.py", "--project", name],
          "python3 scripts/sync/memory_doctor.py --project %s --verbose" % name),
     ]
@@ -1478,6 +1487,21 @@ def start_order(files):
                                         -_size(os.path.join(lib.ROOT, f)), f))
 
 
+# The lines of a failing file's output that `forge test` prints under its FAIL line. A test's verdict (its FAIL lines, a traceback) comes last,
+# and the whole output of a loud file would bury the other results in a CI log; the line that says how many were left out keeps the cut honest.
+TAIL_LINES = 100
+
+
+def failure_tail(output):
+    """The last TAIL_LINES lines of a failing file's output, indented under its FAIL line, as one string starting with a newline ("" for none)."""
+    lines = output.splitlines()
+    if not lines:
+        return "\n    (the file printed nothing)"
+    cut = max(0, len(lines) - TAIL_LINES)
+    head = ["    (%d earlier line(s) not shown)" % cut] if cut else []
+    return "\n" + "\n".join(head + ["    " + l for l in lines[cut:]])
+
+
 def cmd_test(a):
     """forge test [GROUP [--expect-not-run PATH[,PATH...]]] [--jobs N] [--mutants]: every test but the ones of a group, or one group.
 
@@ -1551,14 +1575,17 @@ def cmd_test(a):
         todo.append(f)
 
     def run_one(f):
-        r = lib.run([f], capture=True, low=True)  # nice 19 and idle I/O: a foreground tool keeps its cores
+        # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr, and -u (unbuffered)
+        # keeps its place against the stdout lines printed before it.
+        r = lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
             # (CLAUDE.md, rule 4). Its last line is why, after "NOT RUN: ".
             why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
             return lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why)
-        return lib.Result("PASS", os.path.basename(f), f) if r.returncode == 0 else \
-            lib.Result("FAIL", os.path.basename(f), "python3 %s" % f)
+        if r.returncode == 0:
+            return lib.Result("PASS", os.path.basename(f), f)  # success is silent: its output is dropped
+        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s" % (f, failure_tail(r.stdout)))
 
     if workers == 1:
         results.extend(run_one(f) for f in todo)
@@ -2141,7 +2168,7 @@ def build_parser():
     i.add_argument("--writes-tracked-files", action="store_true", help="registering: let forge write files that are tracked in the project")
     i.add_argument("--path", dest="parent_dir", metavar="DIR", help="making: the folder to make the project in (default: projects_dir of config/forge.json)")
     i.add_argument("--stack", metavar="STACK", help="making: the project's stack, which decides its .gitignore (generic)")
-    i.add_argument("--framework", action="store_true", help="making: write framework: true in the project file (refused for now: the plugin hand-over is a later step)")
+    i.add_argument("--framework", action="store_true", help="making: turn the agent framework on: framework true, factory off, the stack's checks, and its plugins as plugins_keep; then print a handover for the agent to settle protected_paths, checks_quick and app_run")
     i.add_argument("--yes", action="store_true", help="making: ask nothing, even in a terminal. With none of the question flags that is the old command; with one, every other question needs its flag (none is an answer) and the error names all that are missing")
     i.add_argument("--apply", action="store_true", help="making: write; without it, only print the plan")
     i.add_argument("--profiles", metavar="A,B", help="question 1: the profiles the project offers (none: no profile); each is then asked like the project")

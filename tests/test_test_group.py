@@ -436,17 +436,52 @@ repo = toy({}, top={"test_a.py": RENDEZVOUS % {"d": d, "me": "a", "other": "b", 
 r = forge(repo)
 eq("no group, no --jobs: one file after the other (the first cannot see the second): exit code", r.returncode, 1)
 ok("no group, no --jobs: one FAIL, one PASS", last(r) == "SUMMARY: 1 passed, 0 warnings, 1 failures", r.stdout + r.stderr)
+# ---- no group: a failing file's output is shown (the tail of it), a passing file's never ----------------------------------------
+# Written first and run on master, where run_one captured the output and threw it away: CI showed only
+# `FAIL test_worktree_guard.py python3 hooks/test_worktree_guard.py` and the summary (DTC-67). The first FAILs it printed:
+#   FAIL: no group, a failing file: its last stdout line is shown: stdout: ...
+#   FAIL: no group, a failing file: its traceback on stderr is shown: ...
+# Controls (copies of forge/cli.py changed in one place): the tail dropped, all FAILs above; the cut taken out
+# (`lines[-TAIL_LINES:]` -> `lines`): FAIL: no group, a failing file: only the last 100 lines are shown ...
+# Without `-u` on the child (LOUD_BAD flushes nothing: stderr is unbuffered, stdout is block-buffered into the pipe, so the traceback
+# lands before the last stdout lines and the tail cuts the wrong end; the fixture used to flush by hand, which hid it):
+#   FAIL: no group, a failing file: its traceback on stderr is shown: 238
+#   FAIL: no group, a failing file: only the last 100 lines are shown, and the cut is said: FAIL  test_loud_bad.py ...
+# A passing file's output printed (PASS branch: `print(r.stdout) if r.stdout else None; return ...`; an unconditional print dies earlier,
+# in a check that reads the first line of a quiet run):
+#   FAIL: no group, a failing file: a passing file stays silent: passing chatter that nobody needs
+LOUD_BAD = ('import sys\nfor i in range(250):\n    print("noisy line %d" % i)\n'
+            'sys.stderr.write("Traceback (most recent call last):\\nAssertionError: the broken case\\n")\nsys.exit(1)\n')
+LOUD_OK = 'print("passing chatter that nobody needs")\n'
+for jobs in ((), ("--jobs", "4")):
+    tag = "no group, a failing file%s" % (", --jobs 4" if jobs else "")
+    repo = toy({}, top={"test_loud_bad.py": LOUD_BAD, "test_loud_ok.py": LOUD_OK})
+    r = forge(repo, *jobs)
+    lines = r.stdout.splitlines()
+    eq("%s: exit code" % tag, r.returncode, 1)
+    ok("%s: its last stdout line is shown: stdout" % tag, "    noisy line 249" in lines, r.stdout[-300:])
+    ok("%s: its traceback on stderr is shown" % tag, "    AssertionError: the broken case" in lines, r.stdout[-300:])
+    ok("%s: only the last 100 lines are shown, and the cut is said" % tag,
+       "    noisy line 151" not in lines and "    noisy line 152" in lines and any("152 earlier line(s) not shown" in l for l in lines),
+       r.stdout[:300])
+    ok("%s: the output sits right under its FAIL line" % tag,
+       any(l.startswith("FAIL  test_loud_bad.py") for l in lines) and lines[[i for i, l in enumerate(lines) if l.startswith("FAIL  ")][0] + 1].startswith("    "),
+       r.stdout[:300])
+    ok("%s: a passing file stays silent" % tag, "passing chatter" not in r.stdout + r.stderr, r.stdout)
+    eq("%s: the summary line is last" % tag, last(r), "SUMMARY: 1 passed, 0 warnings, 1 failures")
+
 MIXED = {"test_ok.py": "pass\n", "test_big.py": "x = 1\n" * 400 + "pass\n", "test_bad.py": BAD, "test_skip.py": SKIP,
          "hooks/test_guard_mutants.py": "raise SystemExit(1)\n", "tests/test_zeta.py": "pass\n"}
 repo = toy({}, top=MIXED)
 one = forge(repo, "--jobs", "1")
 four = forge(repo, "--jobs", "4")
-ok("no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind", len(one.stdout.splitlines()) == 7 and
-   [l.split()[0] for l in sorted(one.stdout.splitlines()[:-1])] == ["FAIL", "PASS", "PASS", "PASS", "SKIP", "WARN"] , one.stdout + one.stderr)
+head = lambda r: [l for l in r.stdout.splitlines()[:-1] if not l.startswith(" ")]  # a failing file's output is indented under its FAIL line
+ok("no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind", len(head(one)) == 6 and
+   [l.split()[0] for l in sorted(head(one))] == ["FAIL", "PASS", "PASS", "PASS", "SKIP", "WARN"] , one.stdout + one.stderr)
 eq("no group, --jobs 1 and --jobs 4 print the same: stdout", four.stdout, one.stdout)
 eq("no group, --jobs 1 and --jobs 4 print the same: stderr", four.stderr, one.stderr)
 eq("no group, --jobs 1 and --jobs 4 print the same: exit code", four.returncode, one.returncode)
-eq("no group, --jobs 4 prints the lines in file order", [l.split()[1] for l in four.stdout.splitlines()[:-1]],
+eq("no group, --jobs 4 prints the lines in file order", [l.split()[1] for l in head(four)],
    ["test_guard_mutants.py", "test_bad.py", "test_big.py", "test_ok.py", "test_skip.py", "test_zeta.py"])
 ok("no group, --jobs 4: a failure is a FAIL line and exit 1; a skip is a WARN; the on-demand file is a SKIP, not run",
    four.returncode == 1 and "FAIL  test_bad.py" in four.stdout and "WARN  test_skip.py" in four.stdout and "no such tool" in four.stdout

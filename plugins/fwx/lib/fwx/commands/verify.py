@@ -1,7 +1,8 @@
 """Run the project's checks on a clean tree at the exact commit and record the evidence: fwx verify [--json] [--pr N] [--dir PATH].
 
 The checks are the recipe of `project.checks` in `.claude/fwx.json`, or the package.json scripts test, lint, typecheck and build
-(core.verify says how a run goes). Progress and the tail of every red check go to stderr; stdout gets the line
+(core.verify says how a run goes), and one built-in check, `fwx added-files`: a one-use or old-version file name added since the
+default branch is red (core.verify.added_files). Progress and the tail of every red check go to stderr; stdout gets the line
 `evidence <sha> <cmd>=<rc> ...` for the phase report, or with `--json` the evidence as JSON, `{sha, clean, source, commands,
 rc}`, the shape of `facts.evidence`. The row is written to `--dir` (the factory passes the job's folder) or to the session's
 phase. `--pr N` creates or edits in place the PR's comment marked `<!-- fwx:evidence -->`; if `gh` fails the row stays written

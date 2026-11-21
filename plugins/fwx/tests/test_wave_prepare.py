@@ -195,6 +195,10 @@ def case_base(R, S):
     S.eq("task: fields", (t1.get("id"), t1.get("type"), t1.get("size"), t1.get("ui"), t1.get("trailer")),
          ("T1", "feature", "small", False, "%s/T1" % PHASE))
     S.ok("task: has a brief key (U9 fills it)", "brief" in t1, repr(t1))
+    S.eq("task: its files, for the workflow to hold an executor to the files of the tasks beside it (ownership rule)", t1.get("files"), ["src/a.py"])
+    S.eq("args: linear is false for a project with no Linear project (an outside item needs no issue key there)", a.get("linear"), False)
+    lin = Scene(config={"project": {"checks": ["true"], "linear_project": "forge"}})
+    S.eq("args: linear is true for a project with a Linear project", json.loads(lin.prepare(R).stdout or "{}").get("linear"), True)
     S.ok("prepare wrote nothing in the part", not sc.audit_exists())
 
 

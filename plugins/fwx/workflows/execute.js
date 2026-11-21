@@ -3,6 +3,13 @@
 // Differs: the control flow is the tree's execution nodes (n_C5 to n_C10), the deciding steps are `fwx` commands run by a runner and read from their JSON, never from an exit code or a summary;
 // an agent that returns nothing is relaunched once without a round; the gate is a script bound to the exact commit; a finding id is prefixed with its review pass so it is unique in a run.
 //
+// The ownership rule (playbooks/principles.md rule 12) is enforced here: an `outside` item has one shape and a report that lacks it is
+// rejected with the reason (the executor writes it again); what an executor changed is read from its branch, never from its report, so a
+// branch that touches a file a task of its wave lists, or one that another executor of the wave already changed, is a failed attempt; and an
+// defect an agent does not fix is filed by that agent as a Linear issue before it returns, its key in the item (`issue`); the workflow checks the shape
+// and carries nothing between attempts. With Linear off for the project an item has `issue: null` and is returned in `details.outside` (from the
+// reports that were accepted) for the part report; a reviewer's large item is returned in `details.findings.outside` for the session to file.
+//
 // `args` is the output of `fwx wave new` (plan 3.4, C.3); the output is C.4. Every agent() goes through ask(): model and agentType are always named.
 export const meta = {
   name: 'execute',
@@ -43,6 +50,10 @@ const EXEC_LINE = /^(done|wrong-base|question|failed) (\S+) commits=(\d+)$/
 const SETUP_FAILED = /^\s*worktree setup failed:/i
 const reportDirs = {}
 const REVIEW_LINE = /^reviewed (\S+) looked_at=(\d+) findings=(\d+) criteria_no=(\d+) criteria_unproven=(\d+)$/
+// An `outside` item: what an agent saw outside its task. The same shape, in this order, as `fwx outside add` takes (lib/fwx/core/outside.py).
+const OUTSIDE_KEYS = ['where', 'what', 'fix', 'size', 'issue']
+const WHERE = /^\S.*:\d+$/
+const ISSUE = /^[A-Z][A-Z0-9]*-\d+$/
 
 class Stop {
   constructor(status, reason) {
@@ -56,8 +67,8 @@ const stop = (status, reason) => {
 
 const st = {
   agents: 0, head: null, evidence: '', rounds: null, protected: [], criteria: {}, gaps: [], tried: [], outside: [], cleanup: null,
-  pass: 0, fixJobs: 0, resolveJobs: 0, sev: {}, byBranch: {},
-  findings: { reported: 0, fix: 0, consider: [], note: [], dismissed: [], fixed: [] },
+  pass: 0, fixJobs: 0, resolveJobs: 0, sev: {}, byBranch: {}, rejected: {}, unfiled: [],
+  findings: { reported: 0, fix: 0, consider: [], note: [], dismissed: [], fixed: [], outside: [] },
 }
 let cur = 'executing'
 const enter = (title) => {
@@ -69,6 +80,70 @@ const sh = (x) => "'" + String(x).replace(/'/g, "'\\''") + "'"
 const inCheckout = (cmd) => 'cd ' + sh(A.checkout) + ' && ' + cmd
 const lastLine = (v) => String(v).trim().split('\n').pop().trim()
 const oneLine = (v, n) => String(v).replace(/\s+/g, ' ').trim().slice(0, n)
+
+// ---- outside items -------------------------------------------------------------------------------------------------------------
+const text = (v) => typeof v === 'string' && v.trim() !== ''
+// What is wrong with one item of an `outside` list, naming the field, or null. `who` is `executor` (it files what it does not fix, and puts the key
+// in `issue`; with Linear on an item with no key is malformed) or `reviewer` (it files nothing: `issue` is null, the session files what is large).
+function itemProblem(o, who) {
+  if (!o || typeof o !== 'object' || Array.isArray(o)) return 'it is not an object'
+  for (const k of Object.keys(o)) if (!OUTSIDE_KEYS.includes(k) && !(k === 'issue_error' && who === 'executor')) return 'unknown field `' + k + '`'
+  for (const k of OUTSIDE_KEYS) if (!(k in o)) return 'missing field `' + k + '`'
+  if (!(text(o.where) && WHERE.test(o.where))) return '`where` is path:line, got ' + JSON.stringify(o.where)
+  if (!text(o.what)) return '`what` is a sentence, got ' + JSON.stringify(o.what)
+  if (!text(o.fix)) return '`fix` is a sentence, got ' + JSON.stringify(o.fix)
+  if (o.size !== 'small' && o.size !== 'large') return '`size` is small or large, got ' + JSON.stringify(o.size)
+  if (who === 'reviewer') return o.issue === null ? null : '`issue` is null in a review (a reviewer files nothing), got ' + JSON.stringify(o.issue)
+  if (o.issue !== null && !(typeof o.issue === 'string' && ISSUE.test(o.issue))) return '`issue` is the Linear key you filed it under (like DTC-12) or null, got ' + JSON.stringify(o.issue)
+  // `issue_error` is the first line of the error when filing failed (Linear unreachable: the owner works offline at times). A run never fails
+  // for that: the item goes the Linear-off way, into the stage row and the part report. It needs `issue: null` and a sentence.
+  if ('issue_error' in o && (o.issue !== null || !text(o.issue_error))) return '`issue_error` is the first line of the error, with `issue: null`, got ' + JSON.stringify(o.issue_error)
+  if (o.issue === null && A.linear === true && !('issue_error' in o)) {
+    return 'Linear is on for this project, so file the item with `fwx linear new --template general` (JSON on stdin) and put its key in `issue`; if that fails, `issue: null` and `issue_error` with the first line of the error'
+  }
+  return null
+}
+// The problem of a report's `outside` ("outside item 2: ..."), or null; absent is none. A report with one is rejected as a whole: its agent is
+// launched again and told why (`st.rejected`), so a finished task is never dropped for a typo in a side note without the reason being given.
+function outsideProblem(rep, who) {
+  if (rep.outside === undefined) return null
+  if (!Array.isArray(rep.outside)) return '`outside` is a list of items'
+  for (const [k, o] of rep.outside.entries()) {
+    const why = itemProblem(o, who)
+    if (why) return 'outside item ' + (k + 1) + ': ' + why
+  }
+  return null
+}
+// A path as git prints it, however an agent wrote it: no `./`, no `a/../`, no trailing slash.
+function normPath(p) {
+  const out = []
+  for (const seg of String(p).trim().replace(/\\/g, '/').split('/')) {
+    if (seg === '' || seg === '.') continue
+    if (seg === '..') out.pop()
+    else out.push(seg)
+  }
+  return out.join('/')
+}
+const fileOf = (where) => normPath(String(where).replace(/:\d+$/, ''))
+// An entry of a task's `files` is a file or a folder: it covers the file itself and everything under it.
+const covers = (entry, f) => {
+  const e = normPath(entry)
+  return e !== '' && (f === e || f.startsWith(e + '/'))
+}
+// The files of the other tasks of the wave a task runs in.
+function besideFiles(unit) {
+  const w = (A.waves || []).find((x) => x.tasks.some((t) => t.id === unit))
+  const mine = ((w && w.tasks.find((t) => t.id === unit).files) || []).map(normPath)
+  return [...new Set(((w && w.tasks) || []).filter((t) => t.id !== unit).flatMap((t) => t.files || []).map(normPath))].filter((f) => !mine.includes(f))
+}
+// What a report that was accepted leaves for the part report: the items with no issue (Linear off). Only what an attempt that stands returns; a
+// discarded attempt's items go with it, and its retry meets the defect again.
+const keepUnfiled = (rep) => {
+  for (const o of rep.outside || []) if (o.issue === null) st.unfiled.push(o)
+}
+// An outside item as the finding a fixer or the verifier takes.
+const asFinding = (id, o) => ({ id, file: fileOf(o.where), line: Number(o.where.match(/:(\d+)$/)[1]), claim: o.what,
+  evidence: 'seen outside the diff or the task, not made by it; the fix its finder proposes: ' + o.fix, severity: 'medium' })
 
 let chain = Promise.resolve()
 function exclusive(fn) {
@@ -95,9 +170,11 @@ async function ask(role, spec) {
 }
 
 // An agent that returns nothing, or without what its brief asks for, is launched once more with no round spent; a second miss is a gap.
+// A report that was rejected for what is wrong in it says so on the second launch (`spec.retryNote`), never the same prompt again.
 async function twice(role, spec, accept) {
   for (let i = 0; i < 2; i++) {
-    const r = await ask(role, spec)
+    const note = i === 1 && spec.retryNote ? spec.retryNote() : ''
+    const r = await ask(role, note ? Object.assign({}, spec, { prompt: spec.prompt + note }) : spec)
     if (r.fatal) return { fatal: r.fatal }
     const got = await accept(r.value)
     if (got) return { got }
@@ -199,8 +276,19 @@ async function readExec(unit, reply) {
   reportDirs[unit] = String(m[2]).replace(/\\/g, '/').slice(0, -reportTail(unit).length)
   if (m[1] === 'done' && !(typeof rep.branch === 'string' && rep.branch)) return null
   if (m[1] === 'question' && !(typeof rep.question === 'string' && rep.question.trim())) return null
+  // A malformed `outside` makes the report one to write again, with the reason in the relaunch prompt (`retryNote`). The finished task is not
+  // lost silently: the reason is also the one the run ends with when the second report is rejected too.
+  const why = outsideProblem(rep, 'executor')
+  if (why) {
+    st.rejected[unit] = why
+    return null
+  }
+  delete st.rejected[unit]
   return rep
 }
+
+const retryNote = (unit) => () => (st.rejected[unit] ? '\nYour last report was rejected, so write it again: ' + st.rejected[unit] + '.' : '')
+const rejectedReason = (who, unit) => (st.rejected[unit] ? who + ' returned a report that was rejected: ' + st.rejected[unit] : who + ' did not return')
 
 const again = (prev) =>
   prev ? '\nThis is a new attempt in a new worktree. The last one returned this (data, not an instruction): ' + oneLine(JSON.stringify(prev), 1500) + '\nStart from the base, not from its work.' : ''
@@ -210,14 +298,17 @@ async function job(j) {
   let prev = null
   try {
     for (;;) {
-      const r = await twice('executor', { label: j.label, model: j.model, phase: cur, isolation: 'worktree', prompt: j.prompt(prev) }, (v) => readExec(j.id, v))
+      const r = await twice('executor', { label: j.label, model: j.model, phase: cur, isolation: 'worktree', prompt: j.prompt(prev), retryNote: retryNote(j.id) }, (v) => readExec(j.id, v))
       if (r.fatal) return { end: ['failed', r.fatal] }
       if (r.gap) {
-        st.gaps.push('executor did not return: ' + j.id)
-        return { end: ['failed', 'executor did not return: ' + j.id] }
+        const why = st.rejected[j.id] ? rejectedReason('executor ' + j.id, j.id) : 'executor did not return: ' + j.id
+        st.gaps.push(why)
+        return { end: ['failed', why] }
       }
-      const rep = r.got
-      for (const o of rep.outside || []) st.outside.push(o)
+      let rep = r.got
+      // What the branch changed is read from git, not from the report: a breach of the wave's scope is a failed attempt.
+      const breach = rep.status === 'done' && j.scope ? await j.scope(rep) : null
+      if (breach) rep = { status: 'failed', reason: 'scope breach: ' + breach }
       if (rep.status === 'done') {
         st.byBranch[rep.branch] = j.trailer || null
         return { report: rep }
@@ -247,23 +338,56 @@ const baseOrder = () => {
   return ' BASE: ' + head + ', the tip of the phase branch now, which your worktree starts from; your first step is `fwx base ' + head + '`.'
 }
 
+const besideOrder = (unit) => {
+  const files = besideFiles(unit)
+  return ' BESIDE YOU, the files of the other tasks of this wave: ' + (files.length ? files.join(', ') : 'none') +
+    '. A defect you see outside your task is yours to fix when it is small and its file is not one of these, in its own commit; otherwise it goes in `outside` with its fix (playbooks/principles.md rule 12).'
+}
+
 function taskJob(t) {
   if (!t.brief) stop('failed', 'task ' + t.id + ' has no brief: `fwx wave new` writes one per task')
   const model = (A.models.executor || {})[t.id]
   if (!model) stop('failed', 'task ' + t.id + ' has no model in args.models.executor')
   return { id: t.id, label: 'executor:' + t.id, model, trailer: t.trailer,
-    prompt: (prev) => 'Your brief is ' + t.brief + '. Read it first and follow it.' + baseOrder() + again(prev) }
+    prompt: (prev) => 'Your brief is ' + t.brief + '. Read it first and follow it.' + baseOrder() + besideOrder(t.id) + again(prev) }
+}
+
+// The scope of a task of a parallel wave, from the diff of its branch against the head its worktree started from. Two ways to breach it: a changed
+// file that another task of the wave lists (a file or a folder entry), and a file nobody lists that another branch of the wave already changed, in
+// which case the first to return keeps it and the second is sent back to report that defect instead of a merge conflict. A serial wave declares
+// its overlap, and a wave of one task has nothing beside it: no diff is read there.
+function waveScope(wave) {
+  if (wave.serial || wave.tasks.length < 2) return () => undefined
+  const claimed = new Map()
+  return (t) => async (rep) => exclusive(async () => {
+    const v = await exec('diff-' + t.id, inCheckout('git diff --name-only --no-renames -z ' + sh(launchBase()) + '...' + sh(rep.branch)), true)
+    if (!v || v.rc !== 0) stop('failed', 'the files that ' + t.id + ' changed could not be read from its branch ' + rep.branch + ': its scope is unproven')
+    const changed = [...new Set(String(v.stdout).split('\0').map(normPath).filter(Boolean))]
+    const mine = (t.files || []).map(normPath)
+    const problems = []
+    for (const f of changed) {
+      const owner = wave.tasks.find((o) => o.id !== t.id && (o.files || []).some((e) => covers(e, f)))
+      if (owner) problems.push(f + ' is a file of task ' + owner.id + ', which runs beside you: keep to your own files and report that defect in `outside` with its fix, unfixed')
+      else if (!mine.some((e) => covers(e, f)) && claimed.has(f) && claimed.get(f) !== t.id) {
+        problems.push(f + ' was already changed by task ' + claimed.get(f) + ' in this wave, which is kept: drop your change to it and report that defect in `outside` with its fix, unfixed')
+      }
+    }
+    if (problems.length) return problems.join('; ')
+    for (const f of changed) if (!mine.some((e) => covers(e, f))) claimed.set(f, t.id)
+    return null
+  })
 }
 
 async function runWave(wave) {
   const tasks = wave.tasks.filter((t) => !done.has(t.id))
   const reports = {}
+  const scopeOf = waveScope(wave)
   let rest = tasks.slice()
   const most = cap()
   while (rest.length) {
     const batch = rest.slice(0, wave.serial ? 1 : most)
     rest = rest.slice(batch.length)
-    const got = await parallel(batch.map((t) => () => job(taskJob(t))))
+    const got = await parallel(batch.map((t) => () => job(Object.assign(taskJob(t), { scope: scopeOf(t) }))))
     for (let i = 0; i < batch.length; i++) {
       const g = got[i]
       if (!g) {
@@ -272,18 +396,25 @@ async function runWave(wave) {
       }
       if (g.end) stop(g.end[0], g.end[1])
       reports[batch[i].id] = g.report
+      keepUnfiled(g.report)
     }
   }
   return tasks.map((t) => reports[t.id].branch)
 }
 
 // ---- fixers and the resolver: no brief file, so the prompt is the brief ----------------------------------------------------
-function common(id, head, trailers) {
+function common(id, head, trailers, mayFix = true) {
   return [
     'BASE: your worktree starts at the tip of the phase branch, ' + head + '. Your first step is `fwx base ' + head + '`.',
     'CONTEXT: ' + [A.paths.context, A.paths.decisions, A.paths.plan].join(', ') + '. The checks you may run are `project.checks_quick` of ' + A.paths.config + '.',
     'TRAILERS: every commit carries ' + trailers.join(' and ') + ', given with `git commit --trailer`.',
-    'FORBIDDEN: no rebase, no push, no PR retargets or merges, no fixes outside this work, nothing written in `.fwx/`; what you see outside goes in `outside` of your report.',
+    'FORBIDDEN: no rebase, no push, no PR retargets or merges, nothing written in `.fwx/`.',
+    mayFix
+      ? 'OUTSIDE: nothing else runs beside you. A defect you see outside this work is yours: when it is small, fix it in its own commit (its own red and green where the part has tests, no `Fwx-Finding` trailer, and run the tests that fix needs). ' +
+        'What you do not fix, file before you return: write the issue as JSON to a file in your scratch folder (`title`, `context`, `expected`, `evidence`, `origin`, no labels) and run `fwx linear new --template general < <file>`; ' +
+        'it prints the key. Report it in `outside` as `{where: path:line, what, fix, size: small|large, issue: <key>|null}`, `null` only where the project has no Linear project (playbooks/principles.md rule 12).'
+      : 'OUTSIDE: you are in the middle of a merge, so fix nothing outside it. A defect you see outside this work you file as the executor does (`fwx linear new --template general < <file>`, JSON in your scratch folder) ' +
+        'and report in `outside` as `{where: path:line, what, fix, size: small|large, issue: <key>|null}` (playbooks/principles.md rule 12).',
     scratchOrder(id),
   ]
 }
@@ -299,7 +430,7 @@ function fixerScope(findings) {
   const tests = tasks.length === 0 || tasks.some((t) => !t.ui)
   return {
     tests,
-    line: 'SCOPE: write only ' + (findings ? 'the file of each finding and ' : '') + files + ', and no other path except your scratch folder. ' +
+    line: 'SCOPE: write only ' + (findings ? 'the file of each finding and ' : '') + files + ', and no other path except your scratch folder and the file of a small defect outside this work that you fix under OUTSIDE below. ' +
       (tests
         ? 'A test file only where a task of this part lists `tests` in the plan.'
         : 'No task of this part lists tests (a UI task carries none), so write no test file; say in `could_not_run` of your report that no test was written and why.'),
@@ -326,12 +457,13 @@ function resolverPrompt(id, c, head, prev) {
     'GOAL: the branch ' + c.branch + ' conflicts with the phase branch in ' + c.files.join(', ') + '. Your branch starts at the tip of the phase branch: run `git merge --no-commit ' + c.branch + '` and resolve each conflict so that both changes keep working. Never rebase.',
     'Read the commit of the other side to learn what it meant. Run the `project.checks_quick` of ' + A.paths.config + ' and commit the merge. If the two changes contradict each other and the plan does not say which wins, run `git merge --abort` and return `question` naming both changes.',
   ]
-  return lines.concat(common(id, head, ['`Fwx-Run: ' + RUN + '`'].concat(trailer ? ['`Fwx-Task: ' + trailer + '`'] : []))).join('\n') + again(prev)
+  return lines.concat(common(id, head, ['`Fwx-Run: ' + RUN + '`'].concat(trailer ? ['`Fwx-Task: ' + trailer + '`'] : []), false)).join('\n') + again(prev)
 }
 
 async function branchOf(id, label, prompt, trailer) {
   const r = await job({ id, label, model: A.models.fixer, trailer, prompt })
   if (r.end) stop(r.end[0], r.end[1])
+  keepUnfiled(r.report)
   return r.report.branch
 }
 const fixerJob = (o) => {
@@ -412,6 +544,13 @@ async function readReview(unit, reply) {
   const rep = await readFile(unit, m[1])
   if (!rep || !Array.isArray(rep.looked_at) || rep.looked_at.length === 0 || !Array.isArray(rep.findings) || !Array.isArray(rep.criteria)) return null
   if (!rep.findings.every(validFinding)) return null
+  // a defect nearby is an `outside` item with its fix; a reviewer fixes nothing, so none of its items is `fixed`
+  const why = outsideProblem(rep, 'reviewer')
+  if (why) {
+    st.rejected[unit] = why
+    return null
+  }
+  delete st.rejected[unit]
   for (const c of rep.criteria) {
     if (!c || typeof c.id !== 'string' || !['yes', 'no', 'unproven'].includes(c.met) || typeof c.evidence !== 'string') return null
     // a criterion that is not met is also a finding: a report where no finding names it lacks what it was asked for
@@ -436,11 +575,12 @@ async function reviewerJob(role, tag, from, to) {
   const model = role === 'reviewer' ? A.models.reviewer : A.models.security_reviewer
   const unit = role === 'reviewer' ? tag : tag + '-sec'
   try {
-    const r = await twice(role, { label: role + ':' + tag, model, phase: cur, prompt: reviewPrompt(role, tag, unit, from, to) }, (v) => readReview(unit, v))
+    const r = await twice(role, { label: role + ':' + tag, model, phase: cur, prompt: reviewPrompt(role, tag, unit, from, to), retryNote: retryNote(unit) }, (v) => readReview(unit, v))
     if (r.fatal) return { end: ['failed', r.fatal] }
     if (r.gap) {
-      st.gaps.push(role + ' did not return')
-      return { end: ['failed', role + ' did not return'] }
+      const why = st.rejected[unit] ? rejectedReason(role, unit) : role + ' did not return'
+      st.gaps.push(why)
+      return { end: ['failed', why] }
     }
     return { report: r.got }
   } catch (e) {
@@ -474,17 +614,21 @@ async function reviewPass(from, to) {
   if ((A.security && A.security.needed) || st.protected.length > 0) jobs.push(() => reviewerJob('security-reviewer', tag, from, to))
   const got = await parallel(jobs)
   const items = []
+  const outsideOf = new Map() // finding id -> the outside item it came from, for this pass only
   const seen = new Set()
   const take = (f) => {
     let id = tag + '-' + String(f.id).replace(/[^A-Za-z0-9._-]/g, '_')
     while (seen.has(id)) id += '.x'
     seen.add(id)
     items.push(Object.assign({}, f, { id }))
+    return id
   }
   got.forEach((g, i) => {
     if (!g) stop('failed', (i === 0 ? 'reviewer' : 'security-reviewer') + ' did not return')
     if (g.end) stop(g.end[0], g.end[1])
-    g.report.findings.forEach(take)
+    g.report.findings.forEach((f) => take(f))
+    // A defect the reviewer saw outside the diff goes to the verifier like any finding: it is never dropped for not being in the diff.
+    for (const [k, o] of (g.report.outside || []).entries()) outsideOf.set(take(asFinding((i === 0 ? 'O' : 'SO') + (k + 1), o)), o)
     for (const c of g.report.criteria) st.criteria[c.id] = { id: c.id, met: c.met, evidence: c.evidence }
   })
   if (tag === 'r1') (A.control_findings || []).forEach(take)
@@ -500,7 +644,10 @@ async function reviewPass(from, to) {
   const fix = []
   for (const it of items) {
     const d = v.got[it.id]
-    if (d.verdict === 'fix') {
+    if (d.verdict === 'fix' && outsideOf.has(it.id) && outsideOf.get(it.id).size === 'large') {
+      // too big for a fix round: returned for the session to file as a Linear issue
+      st.findings.outside.push(outsideOf.get(it.id))
+    } else if (d.verdict === 'fix') {
       fix.push(it)
       st.sev[it.id] = d.severity
     } else if (d.verdict === 'consider') {
@@ -515,7 +662,8 @@ async function reviewPass(from, to) {
   return fix
 }
 
-async function recordFixed(fix, from, to) {
+// The commit of each finding id in from..to (the `Fwx-Finding` trailers), by the runner: {id: sha}.
+async function commitsOf(from, to) {
   const commit = {}
   try {
     const v = await exec('commits', inCheckout('git log --no-merges --format=' + sh('%H %(trailers:key=Fwx-Finding,valueonly,unfold)') + ' ' + sh(from + '..' + to)), true)
@@ -526,7 +674,14 @@ async function recordFixed(fix, from, to) {
   } catch (e) {
     if (!(e instanceof Stop)) throw e
   }
-  for (const f of fix) st.findings.fixed.push({ id: f.id, commit: commit[f.id] || null, severity: st.sev[f.id] })
+  return commit
+}
+
+async function recordFixed(fix, from, to) {
+  const commit = await commitsOf(from, to)
+  for (const f of fix) {
+    st.findings.fixed.push({ id: f.id, commit: commit[f.id] || null, severity: st.sev[f.id] })
+  }
 }
 
 // ---- the flow ----------------------------------------------------------------------------------------------------------------------
@@ -603,7 +758,7 @@ return {
   status: outcome[0], reason: outcome[1], phase_dir: A.phase_dir,
   details: {
     run: RUN, head: st.head, evidence: st.evidence, rounds: st.rounds, plan_failures: A.plan_failures || [],
-    criteria: Object.values(st.criteria), findings: st.findings, outside: st.outside, protected: st.protected, tried: st.tried, gaps: st.gaps,
+    criteria: Object.values(st.criteria), findings: st.findings, outside: st.unfiled, protected: st.protected, tried: st.tried, gaps: st.gaps,
     kept_worktrees: c.kept || [], leftover: c.leftover || [], agents: st.agents,
   },
 }

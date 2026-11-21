@@ -1,0 +1,17 @@
+┌  forge config alpha
+│
+◆  skills
+│  ◼ CORE_SET                                                      ▰▰▰  3 of 3
+│  │ ▸ lint
+│  │ ▸ review
+│  └ ▸ docs-style
+│  ◼ STYLE_SET                                                      ▰▰  2 of 2
+│  │ ▸ format
+│  └ ▸ naming
+│
+◆  servers
+│  ◼ search
+│  ◻ docs                                                 off, not applied yet
+│  ◻ neon
+│
+└  ↑↓ select  ·  space toggle  ·  ⏎ apply  ·  esc cancel

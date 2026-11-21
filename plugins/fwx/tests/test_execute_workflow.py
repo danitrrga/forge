@@ -128,6 +128,16 @@ def review_report(findings=(), criteria=None, looked=("a.py", "b.py")):
     return R({"looked_at": list(looked), "findings": list(findings), "criteria": crit() if criteria is None else criteria})
 
 
+def ot(where="src/z.py:7", size="small", issue="DTC-5", what="z drops the last row", fix="read to the end"):
+    """One `outside` item, an unfixed defect seen outside the task, in the shape the executors and the reviewers report it in. `issue` is the
+    Linear key the executor filed it under (a reviewer files nothing: its items carry null)."""
+    return {"where": where, "what": what, "fix": fix, "size": size, "issue": issue}
+
+
+def review_report_outside(outside, findings=()):
+    return R({"looked_at": ["a.py", "b.py"], "findings": list(findings), "criteria": crit(), "outside": list(outside)})
+
+
 def finding(i, severity="medium", file="a.py", claim=None):
     return {"id": i, "file": file, "line": 3, "claim": claim or "claim of " + i, "evidence": "evidence of " + i, "severity": severity}
 
@@ -145,6 +155,7 @@ def green():
     return {
         "executor:T1": exec_line("T1"), "executor:runner-report-T1": exec_report("wt-t1"),
         "executor:T2": exec_line("T2"), "executor:runner-report-T2": exec_report("wt-t2"),
+        **diff_of("T1", "src/a.py"), **diff_of("T2", "src/b.py"),
         "executor:T3": exec_line("T3"), "executor:runner-report-T3": exec_report("wt-t3"),
         "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"])]},
         "reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report(),
@@ -270,7 +281,7 @@ def check_green(script, s):
     s.eq("green: reason", r.get("reason"), "")
     s.eq("green: phase_dir", r.get("phase_dir"), "/work/.fwx/phases/01-toy")
     want = ["executor:T1", "executor:T2", "executor:runner-report-T1", "executor:runner-report-T2",
-            "executor:runner-integrate", "executor:T3", "executor:runner-report-T3",
+            "executor:runner-diff-T1", "executor:runner-diff-T2", "executor:runner-integrate", "executor:T3", "executor:runner-report-T3",
             "executor:runner-integrate", "reviewer:r1", "executor:runner-report-r1", "executor:runner-cleanup"]
     s.eq("green: launch order", labels(rec), want)
     s.eq("green: phases", rec.get("phases"), ["executing", "reviewing"])
@@ -309,7 +320,7 @@ def check_green(script, s):
     s.eq("green: details.kept_worktrees and leftover come from cleanup", (d.get("kept_worktrees"), d.get("leftover")), ([], []))
     s.eq("green: details.criteria", d.get("criteria"), crit())
     s.eq("green: details.plan_failures", d.get("plan_failures"), [])
-    s.eq("green: details.findings", d.get("findings"), {"reported": 0, "fix": 0, "consider": [], "note": [], "dismissed": [], "fixed": []})
+    s.eq("green: details.findings", d.get("findings"), {"reported": 0, "fix": 0, "consider": [], "note": [], "dismissed": [], "fixed": [], "outside": []})
     s.eq("green: details keys", sorted(d), sorted(["run", "head", "evidence", "rounds", "plan_failures", "criteria", "findings", "outside", "protected",
                                                  "tried", "gaps", "kept_worktrees", "leftover", "agents"]))
     s.eq("green: the cleanup is the last launch", last(rec), "executor:runner-cleanup")
@@ -822,6 +833,177 @@ def check_fix_scope(script, s):
              ("test first when a test can express it" in p and "no test file" not in p) if tests else ("test first" not in p and "write no test file" in p), p[:900])
 
 
+def diff_of(tid, *files):
+    """What `git diff --name-only --no-renames -z` prints for a branch: the paths, each ended by a NUL."""
+    return {"executor:runner-diff-" + tid: R("".join(f + "\0" for f in files))}
+
+
+def check_outside(script, s):
+    """The ownership rule (principles.md rule 12) in the workflow, with nothing carried: the agent that sees a defect outside its task and does not
+    fix it files it as a Linear issue before it returns and puts the key in the item `{where, what, fix, size, issue}`; the workflow only checks
+    the shape (an unfixed item with Linear on and no `issue` is a malformed report, the reason is in the relaunch prompt), and keeps nothing
+    between attempts. What an executor changed is read from its branch, never from its report: a changed file that a task beside it lists, or
+    that another executor of the wave changed first, is a failed attempt. Paths are NUL-delimited and renames are not followed, so both sides count.
+
+    Red on the head that routed at the end of the run (`routeOutside`, an accumulated `st.outside`, the shape with `fixed`):
+      FAIL: outside shape (no issue, Linear on): ... got ('done', 1), want ('done', 2)
+      FAIL: outside none: a launch of `fwx linear new` by the workflow: got ['executor:runner-outside-issues'], want []
+      FAIL: outside nothing carried: a discarded attempt's item is not in the details: got [...], want []
+      FAIL: outside scope: the diff is read NUL-delimited and without renames: ...
+      FAIL: outside scope (a name with a tab under a folder entry): T1 is a failed attempt ...
+      FAIL: outside reviewer: a large item is in details.findings.outside: got [], want [...]
+    """
+    keep = {**diff_of("T1", "src/a.py"), **diff_of("T2", "src/b.py")}
+    small, large = ot(where="src/z.py:7", size="small"), ot(where="lib/q.py:2", size="large", issue="DTC-6", what="q leaks a handle", fix="close it in finally")
+
+    def off(a):
+        a["linear"] = False
+    # the shape: a bad item makes the report one to write again, and says why
+    bad = {"no fix": ({k: v for k, v in ot().items() if k != "fix"}, "fix"), "a size that is neither": (ot(size="medium"), "size"),
+           "no line in where": (ot(where="src/z.py"), "where"), "an empty what": (ot(what=" "), "what"),
+           "an issue that is no key": (ot(issue="the issue"), "issue"), "the old fixed field": (dict(ot(), fixed=None), "fixed"), "not an object": ("src/z.py:7", "object"),
+           "no issue, Linear on": (ot(issue=None), "fwx linear new")}
+    for label, (item, word) in bad.items():
+        rec, err = go(script, answers_over={"executor:runner-report-T1": {"$seq": [exec_report("wt-t1", outside=[item]), exec_report("wt-t1", outside=[])]}, **keep})
+        rec = finish(s, "outside shape (%s)" % label, rec, err)
+        s.eq("outside shape (%s): relaunched once and read the second time" % label, (result(rec).get("status"), len(launched(rec, "executor:T1"))), ("done", 2))
+        s.ok("outside shape (%s): the relaunch prompt says why, naming `%s`" % (label, word), "rejected" in launched(rec, "executor:T1")[1]["prompt"] and word in launched(rec, "executor:T1")[1]["prompt"],
+             launched(rec, "executor:T1")[1]["prompt"][-300:])
+        rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[item]), **keep})
+        rec = finish(s, "outside shape twice (%s)" % label, rec, err)
+        s.ok("outside shape (%s): a second miss fails with the real reason, not `did not return`" % label,
+             result(rec).get("status") == "failed" and "rejected" in str(result(rec).get("reason")) and word in str(result(rec).get("reason")), repr(result(rec).get("reason")))
+    rec, err = go(script, answers_over={"executor:runner-report-T1": R({"status": "done", "branch": "wt-t1", "worktree": "/w/wt-t1", "head": "h", "commits": 2}), **keep})
+    rec = finish(s, "outside absent", rec, err)
+    s.eq("outside absent: read as none", (result(rec).get("status"), details(rec).get("outside")), ("done", []))
+    # Linear on but unreachable (the owner works offline at times): the executor sets `issue: null` and `issue_error`, the run completes and the item is
+    # returned the Linear-off way, for the stage row and the part report. Neither `issue` nor `issue_error` is still malformed.
+    unreachable = dict(ot(issue=None), issue_error="fwx linear: Linear unreachable")
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[unreachable]), **keep})
+    rec = finish(s, "outside linear unreachable", rec, err)
+    s.eq("outside (Linear unreachable): the run completes and the item is in details.outside with its error",
+         (result(rec).get("status"), launched(rec, "executor:T1") and len(launched(rec, "executor:T1")), details(rec).get("outside")), ("done", 1, [unreachable]))
+    for label, item in (("an empty error", dict(ot(issue=None), issue_error=" ")), ("an error beside a key", dict(ot(), issue_error="x")), ("an error that is no text", dict(ot(issue=None), issue_error=3))):
+        rec, err = go(script, answers_over={"executor:runner-report-T1": {"$seq": [exec_report("wt-t1", outside=[item]), exec_report("wt-t1", outside=[])]}, **keep})
+        rec = finish(s, "outside issue_error (%s)" % label, rec, err)
+        s.ok("outside issue_error (%s): rejected, and told why" % label, len(launched(rec, "executor:T1")) == 2 and "issue_error" in launched(rec, "executor:T1")[1]["prompt"], launched(rec, "executor:T1")[1]["prompt"][-300:])
+    rec, err = go(script, base={**green(), **keep, "reviewer:r1": review_line("r1"), "executor:runner-report-r1": {"$seq": [review_report_outside([dict(ot(issue=None), issue_error="x")]), review_report()]}})
+    rec = finish(s, "outside reviewer issue_error", rec, err)
+    s.eq("outside reviewer: a reviewer files nothing, so it has no error to give: rejected once", len(launched(rec, "reviewer:")), 2)
+    # with Linear off for the project a null issue is right, and the item is returned for the part report
+    rec, err = go(script, args_over=off, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[ot(issue=None)]), **keep})
+    rec = finish(s, "outside linear off", rec, err)
+    s.eq("outside (Linear off): a null issue is accepted and the item is in details.outside", (result(rec).get("status"), details(rec).get("outside")), ("done", [ot(issue=None)]))
+    # an item with its key is in Linear already: nothing more to carry
+    rec, err = go(script, answers_over={"executor:runner-report-T1": exec_report("wt-t1", outside=[small]), "executor:runner-report-T2": exec_report("wt-t2", outside=[large]), **keep})
+    rec = finish(s, "outside filed", rec, err)
+    s.eq("outside (filed by the executor): accepted, done, nothing returned for it", (result(rec).get("status"), details(rec).get("outside")), ("done", []))
+    # the workflow files nothing and fixes nothing for an item
+    s.eq("outside none: no launch of `fwx linear new` by the workflow, no fix task, no round", ([l["label"] for l in rec["launches"] if "outside" in l["label"]], launched(rec, "executor:fix-"), runner(rec, "fix-round")),
+         ([], [], []))
+    # nothing survives an attempt: a discarded attempt's items are gone with it, and a retry meets the defect again
+    drop = {"executor:T1": {"$seq": [exec_line("T1", "failed"), exec_line("T1")]},
+            "executor:runner-report-T1": {"$seq": [exec_report("wt-t1", status="failed", reason="boom", outside=[ot(issue=None)]), exec_report("wt-t1", outside=[])]},
+            "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}), **keep}
+    rec, err = go(script, args_over=off, answers_over=drop)
+    rec = finish(s, "outside nothing carried", rec, err)
+    s.eq("outside nothing carried: a discarded attempt's item is not in the details", (result(rec).get("status"), details(rec).get("outside")), ("done", []))
+
+    # scope from the diff: the files a branch changed against the base of its wave, not what its report says
+    def two(a, t2_files=("src/b.py",)):
+        a["waves"][0]["tasks"][1]["files"] = list(t2_files)
+    breach = {"executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}), "executor:T1": {"$seq": [exec_line("T1"), exec_line("T1")]}}
+    for label, over, first, want_word in (("a file of a task beside", None, ["src/a.py", "src/b.py"], "src/b.py"),
+                                          ("a folder entry covers the file", lambda a: two(a, ("src/auth",)), ["src/a.py", "src/auth/x.py"], "src/auth/x.py"),
+                                          ("a path written another way", None, ["./src/../src/b.py"], "src/b.py"),
+                                          ("a folder entry written with a slash", lambda a: two(a, ("src/auth/",)), ["src/auth/x.py"], "src/auth/x.py"),
+                                          ("a name with a tab under a folder entry", lambda a: two(a, ("src/auth",)), ["src/auth/we\tird.py"], "ird.py"),
+                                          ("a rename away from a task's file shows both paths", None, ["src/b.py", "lib/b.py"], "src/b.py")):
+        rec, err = go(script, args_over=over, answers_over={**breach, "executor:runner-diff-T1": {"$seq": [R("".join(f + "\0" for f in first)), R("src/a.py\0")]}, **diff_of("T2", "src/b.py")})
+        rec = finish(s, "outside scope (%s)" % label, rec, err)
+        s.eq("outside scope (%s): T1 is a failed attempt, a round is spent and T1 runs again" % label,
+             (len(runner(rec, "fix-round")), len(launched(rec, "executor:T1")), result(rec).get("status")), (1, 2, "done"))
+        p = launched(rec, "executor:T1")[1]["prompt"]
+        s.ok("outside scope (%s): the new attempt is told the file and the task that lists it" % label, "scope breach" in p and want_word in p and "T2" in p, p[-500:])
+    rec, err = go(script, answers_over={**diff_of("T1", "src/a.py", "lib/own-fix.py"), **diff_of("T2", "src/b.py")})
+    rec = finish(s, "outside scope, own and unlisted files", rec, err)
+    s.eq("outside scope: a file of its own and a file nobody lists are fine", (result(rec).get("status"), runner(rec, "fix-round")), ("done", []))
+    # two executors that changed the same unlisted file: the first to return keeps it, the second is sent back instead of a merge conflict
+    rec, err = go(script, answers_over={**diff_of("T1", "src/a.py", "lib/z.py"), "executor:runner-diff-T2": {"$seq": [R("src/b.py\0lib/z.py\0"), R("src/b.py\0")]},
+                                        "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}), "executor:T2": {"$seq": [exec_line("T2"), exec_line("T2")]}})
+    rec = finish(s, "outside scope, the same file twice", rec, err)
+    s.eq("outside scope: the second executor to return is relaunched, the first is not", (len(launched(rec, "executor:T1")), len(launched(rec, "executor:T2"))), (1, 2))
+    p2 = launched(rec, "executor:T2")[1]["prompt"]
+    s.ok("outside scope: it is told the file is T1's now and to report its defect in `outside`", "lib/z.py" in p2 and "T1" in p2 and "outside" in p2, p2[-500:])
+    # a diff that cannot be read leaves the scope unproven: the run fails closed, it does not pass
+    rec, err = go(script, answers_over={"executor:runner-diff-T1": R("fatal: bad revision\n", 128), **diff_of("T2", "src/b.py")})
+    rec = finish(s, "outside scope, diff unreadable", rec, err)
+    s.ok("outside scope: a diff that cannot be read is failed, naming the task and `unproven`",
+         result(rec).get("status") == "failed" and "T1" in str(result(rec).get("reason")) and "unproven" in str(result(rec).get("reason")), repr(result(rec).get("reason")))
+    # no diff is read where nothing can clash: a one-task wave, a serial wave
+    rec, err = go(script)
+    rec = finish(s, "outside scope, calls", rec, err)
+    s.eq("outside scope: one diff per task of a parallel wave, none for the one-task wave 2", sorted(l["label"] for l in runner(rec, "diff-")), ["executor:runner-diff-T1", "executor:runner-diff-T2"])
+    s.ok("outside scope: the diff is read NUL-delimited and without renames, against the base of its wave",
+         "git diff --name-only --no-renames -z '%s'...'wt-t1'" % HEAD0 in launched(rec, "executor:runner-diff-T1")[0]["prompt"], launched(rec, "executor:runner-diff-T1")[0]["prompt"][-200:])
+    rec, err = go(script, args_over=lambda a: a["waves"][0].update(serial=True))
+    rec = finish(s, "outside scope, serial", rec, err)
+    s.eq("outside scope: none for a serial wave (its tasks declare the overlap)", runner(rec, "diff-"), [])
+
+    # the prompts: the executor is told the files beside it and to file what it does not fix; nobody is told "no fixes outside"
+    rec, err = go(script)
+    rec = finish(s, "outside prompts", rec, err)
+    p1 = launched(rec, "executor:T1")[0]["prompt"]
+    s.ok("outside prompts: the executor is told the files of the tasks beside it (T2's, not its own, not wave 2's)",
+         "src/b.py" in p1 and "BESIDE YOU" in p1 and "src/a.py" not in p1 and "README.md" not in p1, p1)
+    s.ok("outside prompts: and it is still one line", "\n" not in p1.strip(), repr(p1))
+    rec, err = go(script, base={**green(), **fix_scenario()})
+    rec = finish(s, "outside prompts, fixer", rec, err)
+    fp = (launched(rec, "executor:fix-") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("outside prompts: the fixer's FORBIDDEN no longer says no fixes outside this work", "no fixes outside" not in fp, fp)
+    s.ok("outside prompts: the fixer's SCOPE line and its OUTSIDE line agree (the file of a small outside defect is in the scope)",
+         re.search(r"^SCOPE: .*outside", fp, re.M) is not None and "OUTSIDE:" in fp and "its own commit" in fp, fp)
+    s.ok("outside prompts: the fixer files what it does not fix and puts the key in `issue`", "fwx linear new" in fp and "issue" in fp, fp)
+    conflict = integ("h1", ["wt-t1"], ok=False, conflict={"branch": "wt-t2", "files": ["a.py"]})
+    rec, err = go(script, answers_over={"executor:runner-integrate": {"$seq": [conflict, integ("h1r", ["wt-res"]), final("h2", ["wt-t3"])]},
+                                        "executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}),
+                                        "executor:resolve-1": exec_line("resolve-1"), "executor:runner-report-resolve-1": exec_report("wt-res"), **keep})
+    rec = finish(s, "outside prompts, resolver", rec, err)
+    rp = (launched(rec, "executor:resolve-") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("outside prompts: the resolver, in the middle of a merge, fixes nothing outside and reports it", "its own commit" not in rp and "fix nothing" in rp and "OUTSIDE:" in rp, rp[-600:])
+
+    # the reviewers: a defect nearby is an item with a null issue (a reviewer files nothing), goes to the verifier as a finding, and is fixed (small, in
+    # the findings round) or, large, returned in details.findings.outside for the session to file
+    fixing = {"executor:runner-fix-round": R({"ok": True, "spent": True, "rounds": "1/3"}),
+              "executor:fix-1": exec_line("fix-1"), "executor:runner-report-fix-1": exec_report("wt-fix"),
+              "executor:runner-integrate": {"$seq": [integ("h1", ["wt-t1", "wt-t2"]), final("h2", ["wt-t3"]), final("h3", ["wt-fix"])]},
+              "executor:runner-commits": R("c0ffee0 r1-O1\n"), "reviewer:r2": review_line("r2"), "executor:runner-report-r2": review_report()}
+    rbase = {**green(), **keep}
+    sm = {"reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report_outside([ot(where="lib/q.py:40", issue=None)]),
+          "review-verifier:r1": verdicts(("r1-O1", "fix", "medium", "check")), **fixing}
+    rec, err = go(script, base={**rbase, **sm})
+    rec = finish(s, "outside reviewer small", rec, err)
+    v = (launched(rec, "review-verifier:") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("outside reviewer: the verifier is given the nearby defect as a finding under a prefixed id, with its file and the proposed fix", "r1-O1" in v and "lib/q.py" in v and "read to the end" in v, v[:600])
+    s.eq("outside reviewer small: a fixer fixes it, nothing is left over", ([l["label"] for l in launched(rec, "executor:fix-")], (details(rec).get("findings") or {}).get("outside")), (["executor:fix-1"], []))
+    lg = {"reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report_outside([ot(where="lib/q.py:40", size="large", issue=None)]),
+          "review-verifier:r1": verdicts(("r1-O1", "fix", "medium", "check"))}
+    rec, err = go(script, base={**rbase, **lg})
+    rec = finish(s, "outside reviewer large", rec, err)
+    s.eq("outside reviewer large: no fixer, and the item is in details.findings.outside for the session", (launched(rec, "executor:fix-"), (details(rec).get("findings") or {}).get("outside")),
+         ([], [ot(where="lib/q.py:40", size="large", issue=None)]))
+    dm = {"reviewer:r1": review_line("r1"), "executor:runner-report-r1": review_report_outside([ot(where="lib/q.py:40", issue=None)]), "review-verifier:r1": verdicts(("r1-O1", "dismiss", "none", None))}
+    rec, err = go(script, base={**rbase, **dm})
+    rec = finish(s, "outside reviewer dismissed", rec, err)
+    s.eq("outside reviewer: a verifier that finds the claim false dismisses it and nothing is left over",
+         ((details(rec).get("findings") or {}).get("outside"), [d["id"] for d in (details(rec).get("findings") or {}).get("dismissed", [])]), ([], ["r1-O1"]))
+    for label, item, word in (("lacks its fix", {k: v for k, v in ot(issue=None).items() if k != "fix"}, "fix"), ("claims an issue", ot(issue="DTC-9"), "issue")):
+        rec, err = go(script, base=rbase, answers_over={"executor:runner-report-r1": {"$seq": [review_report_outside([item]), review_report()]}})
+        rec = finish(s, "outside reviewer " + label, rec, err)
+        s.eq("outside reviewer %s: rejected, relaunched once, told why" % label, (result(rec).get("status"), len(launched(rec, "reviewer:"))), ("done", 2))
+        s.ok("outside reviewer %s: the relaunch prompt names `%s`" % (label, word), "rejected" in launched(rec, "reviewer:")[1]["prompt"] and word in launched(rec, "reviewer:")[1]["prompt"], launched(rec, "reviewer:")[1]["prompt"][-300:])
+
+
 def check_wave_base(script, s):
     """3.4 U8 fix, F1: a later wave's worktrees are born from the phase head after the earlier wave merged, so the sha they check
     is the head when their wave launches (what the last `integrate` returned), never the one `prepare` saw. The check itself is
@@ -1108,6 +1290,7 @@ def wave_answers(n):
         ans["executor:T%d" % i] = exec_line("T%d" % i)
         ans["executor:runner-report-T%d" % i] = exec_report("wt-t%d" % i)
         ans["executor:runner-setup-T%d" % i] = R("", 1)
+        ans["executor:runner-diff-T%d" % i] = R("src/t%d.py\0" % i)
     return ans
 
 
@@ -1182,6 +1365,7 @@ def check_all(script, s):
     check_review(script, s)
     check_fix(script, s)
     check_fix_scope(script, s)
+    check_outside(script, s)
     check_args_fix_and_revert(script, s)
     check_wave_base(script, s)
     check_scratch(script, s)
@@ -1223,7 +1407,7 @@ MUTANTS = [
      "FAIL: protected path (security needed: True)"),
     ("protected path skips the security review", "if ((A.security && A.security.needed) || st.protected.length > 0)", "if (A.security && A.security.needed)",
      "FAIL: protected path (security needed: False): the security reviewer ran"),
-    ("reviewer's second miss is done", "return { end: ['failed', role + ' did not return'] }", "return { report: { looked_at: ['x'], findings: [], criteria: [] } }",
+    ("reviewer's second miss is done", "      st.gaps.push(why)\n      return { end: ['failed', why] }\n    }\n    return { report: r.got }", "      st.gaps.push(why)\n      return { report: { looked_at: ['x'], findings: [], criteria: [] } }\n    }\n    return { report: r.got }",
      "FAIL: reviewer null twice"),
     ("looked_at 0 accepted", "if (!m || Number(m[2]) === 0) return null", "if (!m) return null", "FAIL: looked_at 0"),
     ("every real finding is fixed", "if (d.verdict === 'fix') {", "if (d.verdict !== 'dismiss') {", "FAIL: no fix verdict: no fixer, no round (note finding was fixed)"),
@@ -1237,7 +1421,7 @@ MUTANTS = [
     ("verdict ask allowed", "enum: ['fix', 'consider', 'note', 'dismiss']", "enum: ['fix', 'consider', 'note', 'dismiss', 'ask']", "FAIL: verifier schema: verdict"),
     ("finding ids not prefixed", "let id = tag + '-' + String(f.id)", "let id = String(f.id)", "FAIL: fix: the fixer is given the finding under its unique id"),
     ("--final on every wave", "(o.final ? ' --final' : '')", "' --final'", "FAIL: green: the first wave is not integrated with --final"),
-    ("review fix not gated by the rounds", ["    if (fr.end) stop(fr.end[0], fr.end[1])\n    const before"], ["    const before"], "FAIL: fix with the rounds spent: failed, no fixer"),
+    ("review fix not gated by the rounds", ["review findings to fix: ' + ids.join(', '))\n    if (fr.end) stop(fr.end[0], fr.end[1])\n    const before"], ["review findings to fix: ' + ids.join(', '))\n    const before"], "FAIL: fix with the rounds spent: failed, no fixer"),
     ("done tasks are launched again", "const tasks = wave.tasks.filter((t) => !done.has(t.id))", "const tasks = wave.tasks", "FAIL: done tasks: in a wave half done"),
     ("a criterion no needs no finding", "if (c.met === 'no' && !rep.findings.some", "if (false && !rep.findings.some", "FAIL: criterion no that no finding names"),
     ("control findings ignored", "if (tag === 'r1') (A.control_findings || []).forEach(take)", "", "FAIL: control findings"),
@@ -1253,6 +1437,29 @@ MUTANTS = [
     ("the fixer has no SCOPE line", "  lines.push(scope.line)\n", "", "FAIL: fixer scope (tests listed): a SCOPE line names"),
     ("no task in args reads as no tests", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = tasks.some((t) => !t.ui)",
      "FAIL: fixer scope (no task in args): the test is still asked for"),
+    # the ownership rule: each piece of the enforcement, taken out
+    ("a rejected report is relaunched with the same prompt", "const note = i === 1 && spec.retryNote ? spec.retryNote() : ''", "const note = ''", "FAIL: outside shape (no fix): the relaunch prompt says why"),
+    ("a second rejection says the executor did not return", "const why = st.rejected[j.id] ? rejectedReason('executor ' + j.id, j.id) : 'executor did not return: ' + j.id", "const why = 'executor did not return: ' + j.id",
+     "FAIL: outside shape (no fix): a second miss fails with the real reason"),
+    ("the scope is not read from the diff", "const breach = rep.status === 'done' && j.scope ? await j.scope(rep) : null", "const breach = null", "FAIL: outside scope (a file of a task beside)"),
+    ("a folder entry covers only itself", "return e !== '' && (f === e || f.startsWith(e + '/'))", "return e !== '' && f === e", "FAIL: outside scope (a folder entry covers the file)"),
+    ("paths are taken as written", "    if (seg === '..') out.pop()\n    else out.push(seg)", "    out.push(seg)", "FAIL: outside scope (a path written another way)"),
+    ("a diff that cannot be read passes", "if (!v || v.rc !== 0) stop('failed', 'the files that ' + t.id", "if (false) stop('failed', 'the files that ' + t.id", "FAIL: outside scope: a diff that cannot be read"),
+    ("an outside item of any shape is read", "  const why = outsideProblem(rep, 'executor')\n  if (why) {", "  const why = null\n  if (why) {", "FAIL: outside shape (no fix)"),
+    ("an error in place of a key is refused", "(k === 'issue_error' && who === 'executor')", "(false)", "FAIL: outside (Linear unreachable)"),
+    ("Linear on and no issue is read", "if (o.issue === null && A.linear === true && !('issue_error' in o)) {", "if (false) {", "FAIL: outside shape (no issue, Linear on)"),
+    ("a reviewer may file an issue", "if (who === 'reviewer') return o.issue === null ? null :", "if (who === 'reviewer') return null\n  if (false) return", "FAIL: outside reviewer claims an issue"),
+    ("a discarded attempt's items are kept", "      const breach = rep.status === 'done' && j.scope ? await j.scope(rep) : null", "      keepUnfiled(rep)\n      const breach = rep.status === 'done' && j.scope ? await j.scope(rep) : null", "FAIL: outside nothing carried"),
+    ("renames are followed", "git diff --name-only --no-renames -z '", "git diff --name-only '", "FAIL: outside scope: the diff is read NUL-delimited and without renames"),
+    ("paths are split on newlines", "String(v.stdout).split('\\0').map(normPath)", "String(v.stdout).split('\\n').map(normPath)", "FAIL: outside scope (a file of a task beside)"),
+    ("a reviewer's large item is dropped", "      st.findings.outside.push(outsideOf.get(it.id))\n    } else if", "    } else if", "FAIL: outside reviewer large"),
+    ("a reviewer's defect nearby is not read", "for (const [k, o] of (g.report.outside || []).entries()) outsideOf.set(", "for (const [k, o] of [].entries()) outsideOf.set(",
+     "FAIL: outside reviewer: the verifier is given the nearby defect"),
+    ("the same unlisted file twice is kept twice", "claimed.has(f) && claimed.get(f) !== t.id", "false", "FAIL: outside scope: the second executor to return is relaunched"),
+    ("a serial wave is read too", "if (wave.serial || wave.tasks.length < 2) return () => undefined", "if (wave.tasks.length < 1) return () => undefined", "FAIL: outside scope: none for a serial wave"),
+    ("the executor is not told the files beside it", "' BESIDE YOU, the files", "' NEAR YOU, the files", "FAIL: outside prompts: the executor is told the files"),
+    ("the fixer is forbidden to fix outside again", "nothing written in `.fwx/`.',\n    mayFix", "nothing written in `.fwx/`, no fixes outside this work.',\n    mayFix", "FAIL: outside prompts: the fixer's FORBIDDEN"),
+    ("the resolver may fix outside", "      : 'OUTSIDE: you are in the middle of a merge, so fix nothing outside it.", "      : 'OUTSIDE: you may fix what you see outside it, in its own commit.", "FAIL: outside prompts: the resolver"),
     ("the fixer's test is asked for whatever the part lists", "const tests = tasks.length === 0 || tasks.some((t) => !t.ui)", "const tests = true", "FAIL: fixer scope (no task lists tests): no unconditional test demand"),
     ("the fixer is never told to ask for the test", "(scope.tests ? ', the test in that commit and seen failing first' : '')", "''", "FAIL: fixer scope (tests listed): the test in the commit"),
 ]

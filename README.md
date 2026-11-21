@@ -48,7 +48,7 @@ replaces the GSD integration, and its changes are reviewed in the same pull requ
 
 That is the full workflow, every step and every exit. An interactive version is coming.
 
-Each item below says whether it is **built** (on the default branch), **on a branch** (written, not merged) or
+Each item below says whether it is **built** (on the default branch), **parked** (built and merged, not in use) or
 **planned**. A plan is never described as shipped. [What exists today](#what-exists-today) names the command or file
 behind every "built".
 
@@ -57,8 +57,9 @@ behind every "built".
 - **A supervised session.** You open a chat. The work goes through discuss, pre-mortem, plan, post-mortem on the plan,
   execution in git worktrees, review, a UI walk when the part touches UI, a report and the close. The orchestrator is
   the only agent that talks to you. Every other agent starts from the same base context and returns a short answer
-  with a path. Built up to review; the UI walk and the glue that carries a session from discuss to close are on
-  branches.
+  with a path. Built and merged from discuss to close, the session skill included. No real session has closed yet: three
+  rehearsals on a clone of a real project reached the close, with an operator typing, and the first real session is still
+  to come. The UI walk is built and parked.
 - **The factory.** It takes a Linear issue labelled `factory` and runs the same steps with nobody watching, each job in
   its own container. Only work on a closed list of mechanical changes is offered to it, every change gets three
   attempts, and in the trial mode it never merges. Afterwards it merges into an integration branch, never into your
@@ -121,8 +122,10 @@ finding for you, and a difference from the approved design is reported, not fail
 In an earlier trial of this idea the walkers missed a fault that had been planted as a control, so a walk plants one
 on a screen no walker is told about, and a walk that does not find it proves nothing and says so. And the walk touches
 only a local app with demo data and a demo account: its browser tool refuses any other address. The walk finds; the
-session fixes, one commit per finding. The playbook is on the default branch (`plugins/fwx/playbooks/ui-walk.md`). The
-workflow, the `fwx walk` command and the walker agents are on the branch `feat/3.5-ui-walk`, not merged.
+session fixes, one commit per finding. The walk is built and merged (the playbook `plugins/fwx/playbooks/ui-walk.md`, the
+workflow `plugins/fwx/workflows/ui-walk.js`, the `fwx walk` command and the walker agents) and parked until forge is
+practically finished: in the live walks so far the planted fault was never found, so a walk says its result does not count.
+Its UI-system rebuild is the work that follows.
 
 ### Borrowed on purpose
 
@@ -144,11 +147,13 @@ source in a `referent:` line.
   workflow (waves of executors in worktrees, up to three fix rounds per job, the gate, reviewers, the verifier, the
   security reviewer); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
   client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline and budget
-  commands; the playbooks of the session and of the UI walk; and forge's framework step that installs all of it.
-- **On a branch, not merged:** the session skill that carries a work item from discuss to close
-  (`feat/3.2-session`), and the UI walk (`feat/3.5-ui-walk`).
-- **Planned, not built:** the factory's unattended runner, the weekly improvement, memory, and an interactive version of
-  the tree.
+  commands; the session skill that carries a work item from discuss to close (`plugins/fwx/skills/session/`); the UI walk
+  (`plugins/fwx/workflows/ui-walk.js`, `fwx walk`), parked; the playbooks of the session and of the UI walk; and
+  forge's framework step that installs all of it. No real session has closed yet.
+- **Retired:** MemPalace, a memory store that was tried and removed. The code projects keep claude-mem-lite, and Hindsight
+  stays an optional integration.
+- **Planned, not built:** the factory's unattended runner, the weekly improvement, and an interactive version of the
+  tree.
 
 ```sh
 python3 plugins/fwx/bin/fwx --help              # every command, one line each
@@ -194,8 +199,16 @@ half-made project is left; a failure, TERM or INT after that removes what the ru
 Name or path: an argument written as a path (a `/`, or a leading `.` or `~`) is always a directory to register; a bare word that is no
 directory in the current folder is always a name to make; a bare word that is a directory there is registered, and the first line says so
 (with `--stack`, `--path`, `--framework` or `--apply` it is refused instead, naming both ways out). The folder is never inside the checkout,
-and in a toy HOME never outside its world; two runs at once take turns. `--framework` is refused for now, with one line: the project it
-would write has no `plugins_keep`, so every sync would fail (the framework's plugin hand-over is a later step).
+and in a toy HOME never outside its world; two runs at once take turns. `--framework` writes `framework: true`, `factory: "off"`, the stack's `checks` and `plugins_keep` (the framework plugin is turned on
+through it, and a project that names `plugins_keep` has no other plugin on). So that turning the framework on turns nothing off, `plugins_keep`
+holds every plugin the plain project would have: the ones on in `~/.claude/settings.json`, the stack's, and `skill_keep.common_plugins`
+(`--plugin` still chooses, as it does without `--framework`). It is refused in one line, before the first write, when the framework plugin
+cannot be served (`framework.plugin_source`). `protected_paths`, `checks_quick` and, for a project with `ui: true`, `app_run` need a look at
+the project, so they are left out and `forge doctor NAME` says `NOT RUN, NOT ARMED` for them (the `framework fields` row, a PASS once
+they are set). Only with `--framework`, after the sync `forge new` runs `forge doctor NAME` and prints its report, then prints (and writes nowhere)
+the handover `examples/new-handoff.md` for an agent in the project's folder to propose those values (its `checks` are the ones the project file
+holds), and ends with how to open a session: `cd FOLDER && claude`. A fresh project always fails doctor's `instruction files` row (no `CLAUDE.md`
+yet; forge writes none) and that is tolerated; any other FAIL row ends the run with exit 1, after saying the project was made.
 
 ## How it works
 
