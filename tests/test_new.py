@@ -928,6 +928,27 @@ def a_no_baseline(w):
     return bad
 
 
+def a_no_baseline_existing_row(w):
+    """`--no-baseline` on a name whose skill_keep.extras row already holds skills (left from a project that was removed): the site would
+    not be bare, so the run is refused before the first write, exit 2, naming the row; forge.json is untouched. (The script kept such a row
+    without a word.) An existing row that is empty does no harm and is left as it is."""
+    bad = []
+    forge_json = w.path("config", "forge.json")
+    doc = read_json(forge_json)
+    doc["skill_keep"].setdefault("extras", {})["demo.claude.json"] = ["alpha"]
+    doc["skill_keep"]["extras"]["empty.claude.json"] = []
+    write_json(forge_json, doc)
+    before = w.snapshot()
+    code, out = w.forge("new", "demo", "--stack", "generic", "--no-baseline", "--apply")
+    if code != 2 or "demo.claude.json" not in out or "skill_keep.extras" not in out or w.snapshot() != before:
+        bad.append("--no-baseline with an existing extras row: exit %d, want 2 naming demo.claude.json and skill_keep.extras, nothing written: %s" % (code, tail(out)))
+    text = open(forge_json, encoding="utf-8").read()
+    code, out = w.forge("new", "empty", "--stack", "generic", "--no-baseline", "--apply")
+    if code != 0 or open(forge_json, encoding="utf-8").read() != text:
+        bad.append("--no-baseline with an empty existing row: exit %d, want 0 and forge.json as it was: %s" % (code, tail(out)))
+    return bad
+
+
 def a_no_git(w):
     """`--no-git` makes the folder, .gitignore and README.md and no `.git`, the sync that follows still works, and the output says there is
     no git init. Without the flag there is a `.git`."""
@@ -1478,6 +1499,19 @@ CONTROLS = [
     ("a stack.json not checked", a_bad_stack_json, BROKEN + [(NEW, "if missing:", "if False:")], "a stack.json without checks"),
     ("an unused argument not warned about", a_unused_argument, [(NEW, "if unused else []", "if False else []")], "an unused argument not warned about"),
     # 4.4 U9
+    ("an existing extras row beside --no-baseline", a_no_baseline_existing_row, [(NEW, "    if a.no_baseline and held:", "    if False and held:")],
+     "--no-baseline with an existing extras row"),
+    ("the recovery copy deleted before a failed restore", a_registry_copy_kept,
+     [FAIL_AFTER_REGISTRY, FAIL_RESTORE_REGISTRY, (NEW, '            if kind == "restore":  # a file that existed: put back what it held\n',
+                                                   '            if kind == "restore":  # a file that existed: put back what it held\n                forget(rest[1])\n')],
+     "named by the hint is gone"),
+    ("the creation flags allowed on a registered directory", a_parity_flags_by_mode,
+     [(NEW, "or bool(a.account_server) or a.no_baseline\n            or a.no_git or answer_flags(a))", "or answer_flags(a))")], "want 2 saying the flag belongs to making"),
+    ("--worktree-guard not an answer flag", a_parity_flags_by_mode, [(NEW, '"ui", "command_guard", "worktree_guard"))\n\n\ndef creation_flags', '"ui", "command_guard"))\n\n\ndef creation_flags')],
+     "want 2 saying the flag belongs to making"),
+    ("a profile allowed the flags of making", a_parity_flags_by_mode,
+     [(NEW, ',\n                                      ("--account-server", a.account_server), ("--no-baseline", a.no_baseline), ("--no-git", a.no_git)) if given]', ") if given]")],
+     "want 2 saying the flag belongs to making"),
     ("every memory failure tolerated", a_other_memory_fail, [OTHER_MEMORY, (NEW, "    return [l for l in r.stdout.splitlines() if l.startswith(\"FAIL\")] == [EXPECTED_MEMORY_FAIL % name]", "    return True")],
      "another memory failure was tolerated"),
     ("the registry not put back", a_account_server_rollback, [FAIL_AFTER_REGISTRY, (NEW, 'undo.append(("restore", REGISTRY, account.text, saved))', "pass")], "left behind: "),
@@ -1493,7 +1527,7 @@ CONTROLS = [
     ("--worktree-guard not written", a_worktree_guard, [(ASK, '    if st["worktree_guard"]:\n        ctx.proj["worktree_guard"] = True\n', "")], "--worktree-guard: exit"),
     ("--no-baseline still writes the row", a_no_baseline, [(NEW, '(not a.no_baseline and (row or extras)) or lifted', "row or extras or lifted"),
                                                          (NEW, 'del doc["skill_keep"]["extras"][key]', "pass")], "--no-baseline: exit 0, forge.json changed True"),
-    ("--no-baseline beside skills", a_no_baseline, [(NEW, "if a.no_baseline and extras != list(", "if False and extras != list(")], "--no-baseline with --skills alpha"),
+    ("--no-baseline beside skills", a_no_baseline, [(NEW, "if a.no_baseline and extras != held:", "if False and extras != held:")], "--no-baseline with --skills alpha"),
     ("--no-git still runs git init", a_no_git, [(NEW, "                if not a.no_git:\n", "                if True:\n")], "--no-git: exit 0, the folder holds"),
 ]
 
@@ -1542,7 +1576,7 @@ def main():
              ("--account-server rolled back", a_account_server_rollback, {"mutate": [FAIL_AFTER_REGISTRY]}),
              ("the registry's recovery copy kept", a_registry_copy_kept, {"mutate": [FAIL_AFTER_REGISTRY, FAIL_RESTORE_REGISTRY]}),
              ("--memory lite", a_memory_lite, {}), ("--memory lite, listed in common_plugins", a_memory_lite_common, {}),
-             ("--worktree-guard", a_worktree_guard, {}), ("--no-baseline", a_no_baseline, {}), ("--no-git", a_no_git, {}),
+             ("--worktree-guard", a_worktree_guard, {}), ("--no-baseline", a_no_baseline, {}), ("--no-baseline, a row exists", a_no_baseline_existing_row, {}), ("--no-git", a_no_git, {}),
              ("the flags of making", a_parity_flags_by_mode, {})]
     for label, fn, kw in plain:
         w = World("a", **kw)

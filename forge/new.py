@@ -704,7 +704,11 @@ def create(a):
     if why:
         return refuse(2, "nothing written, the project file would not be valid: %s" % why)
     extras = list(doc["skill_keep"]["extras"][key])
-    if a.no_baseline and extras != list(ctx.draft.start["forge"]["skill_keep"]["extras"][key]):
+    held = list(ctx.draft.start["forge"]["skill_keep"]["extras"][key])
+    if a.no_baseline and held:  # a row left from an earlier project of this name: the site would not be bare, and the row is never deleted here
+        return refuse(2, "nothing written, --no-baseline: config/forge.json skill_keep.extras already has a row %s (%s) that would still "
+                         "give this project skills; remove the row by hand, or drop --no-baseline" % (key, ", ".join(held)))
+    if a.no_baseline and extras != held:
         return refuse(2, "nothing written, --no-baseline leaves out the skill_keep.extras row of %s, and the skills answered go into it (%s): "
                          "drop --no-baseline, or give those skills to a profile" % (key, ", ".join(extras)))
 
