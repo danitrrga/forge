@@ -14,6 +14,11 @@ profile definitions under config/profile-defs/, the project's `profiles` row and
 under the same all-or-nothing rule. `forge new @NAME`, run in a project's folder, makes one profile of it (create_profile): the definition,
 when there is none, and the `profiles` row; a profile row is read at a session start, so it syncs nothing.
 
+Four flags carry what the `new-project` skill's old script gave a project. --account-server SERVICE[=PIN] adds the registry entry
+`<service>-NAME` (forge/accounts.py) and lists it in the project's servers; the registry is written before the project file and put back
+with it when a later step fails. --memory lite adds the claude-mem-lite plugin to plugins_keep (the generator derives its store from the
+name). --worktree-guard writes `worktree_guard: true`. --no-baseline leaves out the skill_keep.extras row, and --no-git the `git init`.
+
 With --framework the project file also gets `framework: true`, `factory: "off"`, the stack's checks and its plugins as `plugins_keep`
 (the plugin is turned on through it). protected_paths, checks_quick and app_run need a look at the project, so they are left out.
 With --framework, after the sync, `forge doctor NAME` runs, then the handover (examples/new-handoff.md, printed and written nowhere)
@@ -41,8 +46,9 @@ import shutil
 import signal
 import subprocess
 import time
+import types
 
-from forge import ask, configure, framework, lib, profiles, suggest
+from forge import accounts, ask, configure, framework, lib, memory, profiles, suggest
 
 INTERRUPTED = "interrupted (Ctrl-C) -- nothing written"  # exit 130, the shell's code for it
 KEBAB = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*\Z")  # \Z, not $: `$` also matches before one trailing newline
@@ -53,6 +59,7 @@ STACKS_DIR = os.path.join(lib.ROOT, "examples", "stacks")
 STACK_KEYS = ("description", "servers", "plugins", "checks", "skill_sets")
 PLACEHOLDER = re.compile(r"\{\{([A-Za-z][A-Za-z0-9_]*)\}\}")
 README = "# {{NAME}}\n"
+REGISTRY = os.path.join(lib.ROOT, "config", "mcp-registry.json")
 
 
 def stack_names():
@@ -143,6 +150,14 @@ def framework_plugins(stack_plugins, forge):
 
 
 EXPECTED_DOCTOR_FAIL = "instruction files"  # a fresh project has no CLAUDE.md or AGENTS.md, and forge never writes one
+EXPECTED_MEMORY_FAIL = "FAIL  %s/lite-store-has-rows: no claude-mem-lite.db yet \u2014 nothing has been written"  # a fresh lite project has no store yet
+
+
+def fresh_store_only(name):
+    """Whether the `memory` doctor row fails for project `name` only because its claude-mem-lite store has no database yet, which every
+    project just made has until its first session. Read from memory_doctor.py's own report: its FAIL lines are that one, by exact text."""
+    r = lib.run(["scripts/sync/memory_doctor.py", "--project", name], capture=True)
+    return [l for l in r.stdout.splitlines() if l.startswith("FAIL")] == [EXPECTED_MEMORY_FAIL % name]
 
 
 def closing(name, target, handoff, profiles_made):
@@ -155,6 +170,8 @@ def closing(name, target, handoff, profiles_made):
         print(r.stderr, end="")
     fails = [l for l in r.stdout.splitlines() if l.startswith("FAIL")]
     other = [l for l in fails if l[6:28].strip() != EXPECTED_DOCTOR_FAIL]
+    if any(l[6:28].strip() == "memory" for l in other) and fresh_store_only(name):
+        other = [l for l in other if l[6:28].strip() != "memory"]
     if r.returncode and not fails:
         other = ["forge doctor exited %d and printed no FAIL row" % r.returncode]
     print("\n== handover: paste this into claude, started in %s ==\n" % target)
@@ -167,6 +184,22 @@ def closing(name, target, handoff, profiles_made):
     return 1 if other else 0
 
 
+def registry_read():
+    """(text, document) of config/mcp-registry.json, for an entry to be added. ValueError, with one line, when it cannot take one: it is no
+    object with a `servers` object, or it is not in the form forge writes (a change would reformat all of it). OSError when unreadable."""
+    text = lib.read_text(REGISTRY)
+    try:
+        doc = json.loads(text)
+    except ValueError as e:
+        raise ValueError("%s is not valid JSON (%s)" % (lib.short(REGISTRY), e))
+    if not isinstance(doc, dict) or not isinstance(doc.get("servers"), dict):
+        raise ValueError("%s is not an object with a `servers` object" % lib.short(REGISTRY))
+    if lib.dumps(doc) + "\n" != text:
+        raise ValueError("%s is not in the form forge writes it (two-space JSON, one final newline): adding an entry would reformat all of it"
+                         % lib.short(REGISTRY))
+    return text, doc
+
+
 def path_like(arg):
     """Whether `arg` is written as a path (a name never is): it holds a separator or starts with . or ~."""
     return "/" in arg or os.sep in arg or arg[:1] in (".", "~")
@@ -174,12 +207,13 @@ def path_like(arg):
 
 def answer_flags(a):
     """Whether a flag that answers one of the questions (forge/ask.py) was given."""
-    return any(getattr(a, k, None) for k in ("profiles", "sets", "skills", "server", "memory", "check", "plugin", "ui", "command_guard"))
+    return any(getattr(a, k, None) for k in ("profiles", "sets", "skills", "server", "memory", "check", "plugin", "ui", "command_guard", "worktree_guard"))
 
 
 def creation_flags(a):
     """Whether a flag that belongs to making a project was given."""
-    return a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply or answer_flags(a)
+    return (a.parent_dir is not None or a.stack is not None or a.framework or a.yes or a.apply or bool(a.account_server) or a.no_baseline
+            or a.no_git or answer_flags(a))
 
 
 def route(a):
@@ -191,8 +225,8 @@ def route(a):
     isdir = os.path.isdir(os.path.expanduser(arg))
     if path_like(arg):
         if isdir and creation_flags(a):
-            return refuse(2, "%s is a directory, so forge new registers it, and --path, --stack, --framework, --yes, --apply and the answer flags "
-                             "belong to making a project from a name" % arg)
+            return refuse(2, "%s is a directory, so forge new registers it, and --path, --stack, --framework, --yes, --apply, --account-server, "
+                             "--no-baseline, --no-git and the answer flags belong to making a project from a name" % arg)
         if not isdir and creation_flags(a):
             return refuse(1, "%s is not a directory (a path is only ever registered; to make a project give its name alone, "
                              "and --path DIR for where)" % arg)
@@ -428,15 +462,18 @@ def describe(ctx, ans, rows, new_defs):
             out.append("  servers     %s" % (", ".join(sorted(set(target["servers"]))) or "none"))
     if ans.profiles:
         out.append("  default     the project's own lists are the profile %r; the profiles are offered beside it" % ask.DEFAULT_LABEL)
-    if ans.memory:
+    if ans.memory == ask.LITE:
+        out.append("  memory      lite: the %s plugin (plugins_keep); its store %s is derived by the generator" % (
+            memory.LITE_PLUGIN, os.path.join(os.path.relpath(memory.LITE_ROOT, lib.ROOT), memory.lite_store_name(ctx.proj, ctx.name) or ctx.name)))
+    elif ans.memory:
         out.append("  memory      %s (servers %s)" % (ans.memory, ", ".join(ask.MEMORY[ans.memory])))
     st = ans.stack or {}
     if st.get("checks"):
         out.append("  checks      %s" % ", ".join(st["checks"]))
     if st.get("plugins"):
         out.append("  plugins     only %s (besides the common ones)" % ", ".join(st["plugins"]))
-    if st.get("ui") or st.get("command_guard"):
-        out.append("  options     %s" % ", ".join(k for k in ("ui", "command_guard") if st.get(k)))
+    if st.get("ui") or st.get("command_guard") or st.get("worktree_guard"):
+        out.append("  options     %s" % ", ".join(k for k in ("ui", "command_guard", "worktree_guard") if st.get(k)))
     return out
 
 
@@ -461,7 +498,8 @@ def create_profile(a):
     planned), 1 a step failed or was cancelled, 2 a refusal or a missing answer."""
     name = a.path[1:]
     wrong = [flag for flag, given in (("--path", a.parent_dir is not None), ("--stack", a.stack is not None), ("--framework", a.framework),
-                                      ("--name", a.name), ("--writes-tracked-files", a.writes_tracked_files)) if given]
+                                      ("--name", a.name), ("--writes-tracked-files", a.writes_tracked_files),
+                                      ("--account-server", a.account_server), ("--no-baseline", a.no_baseline), ("--no-git", a.no_git)) if given]
     if wrong:
         return refuse(2, "%s belong to making a project from a name, not to a profile" % ", ".join(wrong))
     why = profiles.name_error(name)
@@ -618,6 +656,17 @@ def create(a):
     doc, row = skills_doc(key)
     if doc is None:
         return refuse(1, "config/forge.json skill_keep (or its extras) is not a JSON object -- fix it by hand first")
+    account = None  # what --account-server gives: names, new (registry entries to add), unpinned, and the registry as read: text, doc
+    if a.account_server:
+        try:
+            reg_text, reg_doc = registry_read()
+        except (OSError, ValueError) as e:
+            return refuse(1, "--account-server: %s -- nothing written" % e)
+        try:
+            account = types.SimpleNamespace(**dict(zip(("names", "new", "unpinned"), accounts.plan(a.account_server, name, reg_doc["servers"]))),
+                                            text=reg_text, doc=reg_doc)
+        except ValueError as e:
+            return refuse(2, "nothing written, %s" % e)
     project = json.loads(cli.example_text("project.claude.json"))
     project.update(project=name, project_path=target, writes_tracked_files=False)
     handoff = None
@@ -643,7 +692,9 @@ def create(a):
     if rows:
         project["profiles"] = {"default": ask.DEFAULT_LABEL, "offered": rows}
     if a.framework and not (ans.stack or {}).get("plugins"):  # no plugins chosen: read the user's again, they may have changed while asking
-        project["plugins_keep"] = framework_plugins(stack["plugins"], doc)
+        project["plugins_keep"] = ask.with_memory_plugin(framework_plugins(stack["plugins"], doc), ans)
+    if account:  # after the --server answers, as the script listed them
+        project["servers"] = list(project["servers"]) + [n for n in account.names if n not in project["servers"]]
     if a.framework:  # the checks the project file holds, after --check chose among the stack's
         try:
             handoff = handoff_text(name, target, a.stack, project["checks"])
@@ -653,6 +704,13 @@ def create(a):
     if why:
         return refuse(2, "nothing written, the project file would not be valid: %s" % why)
     extras = list(doc["skill_keep"]["extras"][key])
+    held = list(ctx.draft.start["forge"]["skill_keep"]["extras"][key])
+    if a.no_baseline and held:  # a row left from an earlier project of this name: the site would not be bare, and the row is never deleted here
+        return refuse(2, "nothing written, --no-baseline: config/forge.json skill_keep.extras already has a row %s (%s) that would still "
+                         "give this project skills; remove the row by hand, or drop --no-baseline" % (key, ", ".join(held)))
+    if a.no_baseline and extras != held:
+        return refuse(2, "nothing written, --no-baseline leaves out the skill_keep.extras row of %s, and the skills answered go into it (%s): "
+                         "drop --no-baseline, or give those skills to a profile" % (key, ", ".join(extras)))
 
     print("forge new %s: %s" % (name, "APPLY" if a.apply else "PLAN, nothing written (--apply makes it)"))
     print("  folder      %s%s" % (target, " (exists, empty)" if exists else ""))
@@ -664,12 +722,21 @@ def create(a):
                                       else "what the stack lists is shown here only: the project file does not get it"))
     for warning in warnings:
         print("  warning     %s" % warning)
-    print("  git init, README.md")
+    print("  README.md (--no-git: no git init)" if a.no_git else "  git init, README.md")
     print("  project     config/projects/%s%s" % (key, " (framework on, factory off)" if a.framework else ""))
     if a.framework:
         print("  framework   checks %s; plugins_keep %s" % (", ".join(project["checks"]) or "none", ", ".join(project["plugins_keep"]) or "none"))
         print("              %s are left unarmed: the handover, printed after the run, hands them to an agent" % ", ".join(framework.wanted_fields(project)))
-    print("  skills row  config/forge.json skill_keep.extras %s%s" % ("gets %s" % key if row else "already has %s" % key,
+    if account:
+        for reg_name in account.names:
+            print("  registry    %s -> %s%s" % (
+                reg_name, (account.new.get(reg_name) or account.doc["servers"][reg_name])["url"],
+                "  UNPINNED: add the pin before the first /mcp login" if reg_name in account.unpinned else
+                "" if reg_name in account.new else " (already in config/mcp-registry.json, used as it is)"))
+    if a.no_baseline:
+        print("  skills row  skipped (--no-baseline): no skill_keep.extras row")
+    else:
+        print("  skills row  config/forge.json skill_keep.extras %s%s" % ("gets %s" % key if row else "already has %s" % key,
                                                                          ": %s" % ", ".join(extras) if extras else ""))
     for line in describe(ctx, ans, rows, new_defs):
         print(line)
@@ -685,7 +752,7 @@ def create(a):
         print(why)
         return 1
 
-    undo, made, complete = [], False, True
+    undo, made, complete, saved = [], False, True, None  # saved: the recovery copy of the registry, kept until every step has succeeded
     try:
         with stopped_means_rollback(), creation_lock():
             try:
@@ -700,7 +767,11 @@ def create(a):
                 if skills_read(doc, key) != skills_read(ctx.draft.start["forge"], key):  # what the plan read, not what it changed
                     return refuse(2, "another forge new got there first: skill_keep of config/forge.json (the sets, the common lists, or the "
                                      "rows of %s) changed meanwhile" % key)
-                doc["skill_keep"]["extras"][key] = extras
+                if a.no_baseline:
+                    if row:
+                        del doc["skill_keep"]["extras"][key]  # the row skills_doc made in this copy: --no-baseline leaves it out
+                else:
+                    doc["skill_keep"]["extras"][key] = extras
                 planned_opt = opt_out_row(ctx.forge, key)  # a skill the owner chose that the project's opt-out switched off: the opt-out is lifted
                 lifted = planned_opt != opt_out_row(ctx.draft.start["forge"], key)
                 if lifted:
@@ -715,23 +786,32 @@ def create(a):
                 changed = definition_changed(ctx)
                 if changed:
                     return refuse(2, "config/profile-defs/%s.json changed meanwhile; nothing written. Run the command again" % changed)
+                if account and lib.read_text(REGISTRY) != account.text:
+                    return refuse(2, "config/mcp-registry.json changed meanwhile; nothing written. Run the command again")
                 if not exists:
                     os.mkdir(target)
                     undo.append(("dir", target))  # before anything else that can fail or be interrupted
                     lib.record("mkdir", target)
                     print("made   %s/" % target)
                 write_file(undo, target, ".gitignore", files["gitignore"])
-                undo.append(("tree", os.path.join(target, ".git")))
-                git_init(target)
+                if not a.no_git:
+                    undo.append(("tree", os.path.join(target, ".git")))
+                    git_init(target)
                 text = files["README.md"]
                 write_file(undo, target, "README.md", text)
                 write_definitions(undo, new_defs)
+                if account and account.new:
+                    saved = save_copy(REGISTRY, account.text)
+                    undo.append(("restore", REGISTRY, account.text, saved))  # before the write that can fail: the registry is put back as it was
+                    lib.write_text(REGISTRY, lib.dumps({**account.doc, "servers": {**account.doc["servers"], **account.new}}) + "\n", mode="keep")
+                    print("wrote  config/mcp-registry.json (%s)" % ", ".join(account.new))
                 undo.append(("file", project_file))  # absent until the write: checked above, under the lock
                 lib.write_text(project_file, lib.dumps(project) + "\n")
                 print("wrote  %s" % os.path.relpath(project_file, lib.ROOT))
-                if row or extras or lifted:
+                if (not a.no_baseline and (row or extras)) or lifted:
                     lib.write_text(lib.SETTINGS, lib.dumps(doc) + "\n")  # atomic: when it fails, forge.json is as it was
-                    print("wrote  config/forge.json (skill_keep.extras row %s%s)" % (key, ", common_opt_out row" if lifted else ""))
+                    print("wrote  config/forge.json (%s)" % ", ".join(
+                        (["skill_keep.extras row %s" % key] if not a.no_baseline else []) + (["common_opt_out row"] if lifted else [])))
             except BaseException:
                 made = bool(undo)
                 complete = rollback(undo)  # still under the lock: the next forge new reads the committed state or the restored one
@@ -742,6 +822,8 @@ def create(a):
             raise
         print("! forge new: %s%s" % (e, end_note(made, complete)))
         return 2 if isinstance(e, TimeoutError) else 1
+    if saved:
+        forget(saved)  # every step has succeeded: the recovery copy of the registry is not needed any more
     print(flush=True)
     code = lib.run(["bin/forge", "sync", "--apply", name]).returncode
     if code:

@@ -897,7 +897,7 @@ def new_profile(name, prof):
         return 130
     args = argparse.Namespace(path="@" + text, parent_dir=None, stack=None, framework=False, name=None, writes_tracked_files=False, yes=False,
                               apply=False, profiles=None, sets=None, skills=None, server=None, memory=None, check=None, plugin=None, ui=False,
-                              command_guard=False)
+                              command_guard=False, worktree_guard=False, account_server=[], no_baseline=False, no_git=False)
     here = os.getcwd()
     try:
         os.chdir(folder)

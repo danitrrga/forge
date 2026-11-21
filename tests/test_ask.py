@@ -749,6 +749,28 @@ def a_stack_question(w):
     return bad
 
 
+def a_lite_and_guard_asked(w):
+    """The memory question offers the claude-mem-lite plugin (`lite`, with no integration switched on) and the stack question offers the
+    option worktree_guard; each answer reaches the project file the way its flag does. `forge new @code --worktree-guard` is refused: a
+    profile has neither a memory nor the options of the stack."""
+    bad = []
+    stack_rows = 1 + 3  # the generic stack: context7 as a plugin, then the options ui, command_guard and worktree_guard
+    keys = [["enter"], ["enter"],                                    # sets, final list: nothing
+            ["enter"],                                               # servers: none
+            ["down", "space", "up", "space", "enter"],               # memory: none off, lite on (hindsight is off here, so it is not a row)
+            ["down"] * (stack_rows - 1) + ["space", "enter"]]        # stack: the last row, worktree_guard
+    code, out, asked = asked_run(w, ["new", "demo", "--stack", "generic", "--apply"], keys, [""])
+    doc = project_doc(w) or {}
+    if doc.get("plugins_keep") != ["claude-mem-lite@sdsrss"] or doc.get("worktree_guard") is not True:
+        bad.append("asked: plugins_keep %s and worktree_guard %s, want [claude-mem-lite@sdsrss] and True (exit %d, asked %s): %s" % (
+            doc.get("plugins_keep"), doc.get("worktree_guard"), code, asked, tail(out)))
+    before = w.snapshot()
+    code, out = w.forge("new", "@code", "--worktree-guard", cwd=w.project("demo"))
+    if code != 2 or "--worktree-guard" not in out or w.snapshot() != before:
+        bad.append("@code --worktree-guard: exit %d, want 2 naming --worktree-guard and nothing written: %s" % (code, tail(out)))
+    return bad
+
+
 def a_scoped(w):
     """A value scoped `@code:` replaces the unscoped one for that profile and stays out of the others; the unscoped one does not also reach
     `code`."""
@@ -818,7 +840,7 @@ def a_help(w):
 
 INJECT_PROFILE = (NEW, '                lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n',
                   '                raise OSError("injected")\n                lib.write_text(project_file, lib.dumps(doc) + "\\n", mode="keep")\n')
-INJECT = (NEW, '                if row or extras or lifted:\n', '                raise OSError("injected")\n                if row or extras or lifted:\n')
+INJECT = (NEW, '                if (not a.no_baseline and (row or extras)) or lifted:\n', '                raise OSError("injected")\n                if (not a.no_baseline and (row or extras)) or lifted:\n')
 LISTS_BLOCK = '''    if interactive and not lists_answered(flags, scope):  # the two questions, or none of them
         stack_sets = set(ctx.stack["skill_sets"]) if ctx.stack else set()
         rows = [(s, ctx.set_label(s) + (" (the stack's)" if s in stack_sets else ""), False) for s in ctx.sets]
@@ -872,16 +894,16 @@ CONTROLS = [
     ("the own server is always its own", a_own_account_server,
      [(ASK, "    best = max(named, key=len)\n    return None if best == project else best\n",
        "    if project in named:\n        return None\n    return max(named, key=len)\n")], "taken by a shorter name", {}),
-    ("hindsight not a memory", a_memory_asked, [(ASK, 'MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall")}', "MEMORY = {}")],
+    ("hindsight not a memory", a_memory_asked, [(ASK, 'MEMORY = {"hindsight": ("hindsight-coding-agents", "hindsight-recall"), LITE: ()}', "MEMORY = {}")],
      "--memory hindsight: servers", {"hindsight": True}),
     ("the memory servers not kept out of the rows", a_memory_asked,
      [(ASK, "        return {s for servers in MEMORY.values() for s in servers}", "        return set()")], "asked: servers", {"hindsight": True}),
-    ("memory off not said", a_stack_and_memory, [(ASK, "    elif not lib.on(ans.memory):", "    elif False:")], "with the integration off", {}),
+    ("memory off not said", a_stack_and_memory, [(ASK, "    elif not memory_on(ans.memory):", "    elif False:")], "with the integration off", {}),
     # The retired-name assertion of a_stack_and_memory: the old handling (mempalace a memory name whose integration is off) is put back.
     # Seen: "control mempalace taken as a disabled integration -> --memory mempalace (retired): exit 2, want 2 as an unknown name, not 'off in config/forge.json': ..."
     ("mempalace taken as a disabled integration", a_stack_and_memory,
      [(ASK, "    if ans.memory not in MEMORY:", '    if ans.memory not in MEMORY and ans.memory != "mempalace":'),
-      (ASK, "    elif not lib.on(ans.memory):", '    elif ans.memory == "mempalace" or not lib.on(ans.memory):')],
+      (ASK, "    elif not memory_on(ans.memory):", '    elif ans.memory == "mempalace" or not memory_on(ans.memory):')],
      "--memory mempalace (retired): exit 2, want 2 as an unknown name", {}),
     ("two memory backends", a_one_backend, [(ASK, "    check_one_backend(ctx, ans, problems)\n", "    pass\n")], "two memory backends", {"hindsight": True}),
     ("the common memory plugin not counted", a_common_memory_plugin,
@@ -932,6 +954,13 @@ CONTROLS = [
      "a profile named twice", {}),
     ("the scoping help gone", a_help, [(HELP_CLI, "A scoped value replaces the unscoped one for that profile; it does not add to it",
                                        "A scoped value is for that profile")], "'replaces the unscoped'", {}),
+    ("lite not a memory row", a_lite_and_guard_asked, [(ASK, "        return [m for m in MEMORY if memory_on(m)]", "        return [m for m in MEMORY if m != LITE and memory_on(m)]")],
+     "asked: plugins_keep", {}),
+    ("worktree_guard not a stack row", a_lite_and_guard_asked,
+     [(ASK, '                       ("worktree_guard", "option: worktree_guard", False)])', '                       ])')], "asked: plugins_keep", {}),
+    ("a profile takes --worktree-guard", a_lite_and_guard_asked,
+     [(ASK, '("--check, --plugin, --ui, --command-guard and --worktree-guard", flags.stack_given())', '("--check, --plugin, --ui, --command-guard and --worktree-guard", False)')],
+     "@code --worktree-guard: exit", {}),
     ("the --yes help gone", a_help, [(HELP_CLI, "with one, every other question needs its flag", "with one, the others are free")],
      "every other question needs its flag", {}),
 ]
@@ -940,7 +969,7 @@ PLAIN = [("order", a_order, {}), ("flags and prompts", a_same_by_flags_and_promp
          ("failure after the first write", a_failure_after_write, {"mutate": [INJECT]}), ("profile failure", a_profile_failure, {"mutate": [INJECT_PROFILE]}), ("screen row", a_screen_row, {}), ("plan", a_plan_shows_answers, {}),
          ("stack and memory", a_stack_and_memory, {}), ("memory hindsight", a_memory_hindsight, {"hindsight": True}),
          ("cancelled", a_cancelled, {}), ("partial answers", a_partial_answers, {}), ("resolves", a_resolves, {}),
-         ("own account server", a_own_account_server, {}), ("memory asked", a_memory_asked, {"hindsight": True}),
+         ("lite and the guard asked", a_lite_and_guard_asked, {}), ("own account server", a_own_account_server, {}), ("memory asked", a_memory_asked, {"hindsight": True}),
          ("one backend", a_one_backend, {"hindsight": True}),
          ("common memory plugin", a_common_memory_plugin, {"hindsight": True}),
          ("restore fails", a_restore_fails, {}), ("lock through rollback", a_lock_through_rollback, {}),
