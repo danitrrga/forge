@@ -753,20 +753,20 @@ class Mapper:
 
     def is_backlog(self, sc, parts):
         """Whether a path of a scope, by its shape, is backlog (what `classify_tracked` sends to `backlog/`): `BACKLOG.md`, a `999.x`
-        phase, `todos/pending`, a quick task that has a backlog file, and the folders `todos` and `quick` that hold them (their
-        other contents are purged, so the folder goes where its backlog goes)."""
+        phase, `todos/pending` and a quick task that has files and no tracked SUMMARY. A folder that holds both these and other
+        files (`todos`, `quick`, `phases`) is not: `gitignore_all` gives its line a twin for each destination."""
         if not parts:
             return False
         glob = lambda x: any(c in x for c in "*?[")
         if parts[0] == "BACKLOG.md":
             return len(parts) == 1
         if parts[0] == "todos":
-            return len(parts) == 1 or glob(parts[1]) or parts[1] == "pending"
+            return len(parts) >= 2 and parts[1] == "pending"
         if parts[0] == "phases":
             return len(parts) >= 2 and parts[1].startswith("999.")
         if parts[0] == "quick":
             if len(parts) == 1 or glob(parts[1]):
-                return True
+                return False
             key = "quick/%s/" % parts[1]      # open as `classify_tracked` reads it: it has files and no tracked SUMMARY
             names = [(n, t) for n, t, _ in sc.files if n.startswith(key)] if sc else []
             return bool(names) and not any(t and n.endswith("SUMMARY.md") and n.count("/") == 2 for n, t in names)
@@ -811,6 +811,24 @@ class Mapper:
         if stem and not any(c in stem for c in "*?[") and stem in self.files and self.files[stem]["dest"]:
             return m.group(1) + self.files[stem]["dest"] + ("/" if rest.endswith("/") else "")
         return m.group(1) + self.structure(rest) if rest else m.group(1) + SCOPE_DEST + "/"
+
+    def gitignore_all(self, line):
+        """Every `.fwx` twin of a `.gitignore` line, the first being `gitignore(line)`. A line that names `todos`, `quick` or `phases`
+        (or a glob directly under one) names a folder that holds backlog and other files, which go to different places: it gets a
+        second twin for the backlog's own, `backlog/<same path>`. Decided by shape, not by the files there: the ignored ones are
+        in another checkout when `apply` runs."""
+        out = [self.gitignore(line)]
+        m = re.match(r"(!?/?)(\.planning)(/.*)?\Z", line.rstrip())
+        if not m:
+            return out
+        rest = (m.group(3) or "/")[1:]
+        parts = [p for p in rest.split("/") if p]
+        head = SCOPE_DEST
+        if len(parts) >= 2 and parts[0] == "workstreams":
+            head, parts = "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
+        if parts and parts[0] in ("todos", "quick", "phases") and (len(parts) == 1 or (len(parts) == 2 and any(c in parts[1] for c in "*?["))):
+            out.append(m.group(1) + "/".join([head, "backlog"] + parts) + ("/" if rest.endswith("/") else ""))
+        return out
 
 
 # `.planning` as a path of its own: after a space, a quote, `=`, `(`, `!` and the like, at the start of a line, or after `./` or a
@@ -902,8 +920,8 @@ def gitignore_handled(line, mapper, lines):
     """Whether a `.gitignore` line already has its `.fwx` twin in the same file: `apply` wrote it, so `refs` does not offer the
     old line again (and `--prefix` would only break what `apply` got right)."""
     body = line.rstrip("\r\n").rstrip()
-    twin = mapper.gitignore(body)
-    return twin != body and twin in lines
+    twins = mapper.gitignore_all(body)
+    return twins[0] != body and all(twin in lines for twin in twins)
 
 
 def git_facts(repo):
@@ -959,7 +977,7 @@ def build(repo, src, opts):
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f.read().splitlines():
                 if SCOPE_SRC in line and not line.lstrip().startswith("#"):
-                    gitignore.append({"old": line, "new": mapper.gitignore(line)})
+                    gitignore += [{"old": line, "new": twin} for twin in mapper.gitignore_all(line)]
     dests = {}
     for f in files:
         if f["dest"] and f["action"] in ("keep", "leftover_move", "backlog"):
@@ -1619,18 +1637,20 @@ def step_gitignore(job):
         text = f.read().decode("utf-8", "surrogateescape")
     lines = text.splitlines(keepends=True)
     have = {l.rstrip("\r\n") for l in lines}
-    pending = {g["old"]: g["new"] for g in job.twins}
+    pending = {}
+    for g in job.twins:
+        pending.setdefault(g["old"], []).append(g["new"])
     out = []
     for line in lines:
         bare = line.rstrip("\r\n")
         out.append(line)
-        new = pending.get(bare)
-        if new is not None and new not in have:
-            eol = line[len(bare):] or "\n"
-            if not line[len(bare):]:
-                out[-1] = line + "\n"
-            out.append(new + eol)
-            have.add(new)
+        for new in pending.get(bare, ()):
+            if new not in have:
+                eol = line[len(bare):] or "\n"
+                if not line[len(bare):]:
+                    out[-1] = line + "\n"
+                out.append(new + eol)
+                have.add(new)
     if out != lines:
         data = "".join(out).encode("utf-8", "surrogateescape")
         with open(path, "wb") as f:
