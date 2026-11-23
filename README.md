@@ -210,6 +210,35 @@ the handover `examples/new-handoff.md` for an agent in the project's folder to p
 holds), and ends with how to open a session: `cd FOLDER && claude`. A fresh project always fails doctor's `instruction files` row (no `CLAUDE.md`
 yet; forge writes none) and that is tolerated; any other FAIL row ends the run with exit 1, after saying the project was made.
 
+## Profiles
+
+A profile is a named variant of one project (`@docs`, `@code`): its own skills, servers, permissions and env, started by flags, so
+no file of the project is written and two windows can run two profiles at once. The flags of each command are in [Commands](#commands)
+and in its `--help`.
+
+```sh
+forge new myapp --stack generic --profiles code,docs --apply   # once: a project with two profiles (asks what no flag answers, in a terminal)
+cd ~/code/myapp
+forge list @                         # the profiles this project offers; `forge list @docs` is one, with its difference from the default
+claude @docs                         # a session with profile docs; plain `claude` starts the default as before
+forge switch @code                   # inside that session: claude restarts as code and resumes the conversation
+forge run @code "list your skills"   # from a session or script: one headless run in another profile, only its answer on stdout
+forge config @docs --off skill:grilling --on server:neon       # change one profile's skills, sets, servers or options (dry-run without a terminal; --apply writes)
+forge new @review --apply            # add a profile to the project of this folder (asks what no flag answers, in a terminal)
+forge doctor myapp                   # where to look when something fails: each check, scoped to the project
+```
+
+`claude @docs` needs the shell function `forge shim` prints; without it, `forge start @docs` does the same. The completion
+(`claude @<TAB>`, commands, projects, `--on`/`--off` values) is a script per shell. Neither is installed for you; each is written once
+into the shell's own files (fish shown; `forge shim --help` and `forge completion --help` give the zsh and bash lines):
+
+```sh
+forge shim --shell fish > ~/.config/fish/conf.d/forge-claude.fish
+forge completion fish > ~/.config/fish/conf.d/forge-completion.fish
+```
+
+To undo either, delete the file: `claude` is the binary again.
+
 ## How it works
 
 <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/fig-sync-dark.png"><img src="docs/assets/fig-sync.png" alt="What forge writes: the projects, the MCP registry and the git-ignored secrets file feed forge sync, which a SessionStart hook runs for the project you open and which writes each project's .claude/settings.local.json, its MCP servers in ~/.claude.json and, with Codex on, its .codex/config.toml; skills/ feeds forge skills, which links each skill into ~/.claude/skills; forge doctor checks both sides." width="100%"></picture>
