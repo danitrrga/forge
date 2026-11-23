@@ -2171,4 +2171,45 @@ s.ok("B3 ... and the refusal is the plan's: no marker was left", not [n for n in
 rp = run(wt, "plan", "--close", "1")
 s.ok("B3 plan refuses it too, naming both paths", rp.returncode == 2 and ".fwx/backlog" in rp.stderr and ".fwx/backlog/BACKLOG.md" in rp.stderr, rp.stderr[-300:])
 
+# ---- DTC-75 and DTC-76 -----------------------------------------------------------------------------------------------------------------
+# DTC-75: `refs --prefix` rewrote what a purged file was cited by to a path that does not exist (`.planning/STATE.md` -> `.fwx/STATE.md`) and the
+# path of a moved file by the blunt prefix (`.planning/phases/01-alpha/01-CONTEXT.md` -> `.fwx/phases/...`, missing `milestones/v1`). Red on add19eb:
+#   "FAIL: DTC-75 --prefix leaves the citations of purged files and rewrites the moved ones to their real new path: got ['state: .fwx/STATE.md',
+#    'plan: .fwx/phases/01-alpha/01-01-PLAN.md', 'context: .fwx/phases/01-alpha/01-CONTEXT.md', ...], want ['state: .planning/STATE.md', 'plan: .planning/phases/01-alpha/01-01-PLAN.md',
+#    'context: .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md', ...]"
+# Control (the purged branch of rewrite_line taken out, the rest fixed): the first two lines come back as `.fwx/STATE.md` and `.fwx/phases/01-alpha/01-01-PLAN.md`.
+DOC75 = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.md\ncontext: .planning/phases/01-alpha/01-CONTEXT.md\n"
+         "folder: .planning/phases/01-alpha/\ntool: .planning\nunknown: .planning/other.txt\nrel: ../.planning/PROJECT.md\n")
+DOC75_WANT = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.md\n"
+              "context: .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md\nfolder: .fwx/milestones/v1/phases/01-alpha/\n"
+              "tool: .fwx\nunknown: .fwx/other.txt\nrel: ../.fwx/PROJECT.md\n")
+repo, wt = mini({"docs/guide.md": DOC75})
+rr = run(wt, "apply", "--close", "1")
+s.eq("DTC-75 apply exits 0", rr.returncode, 0)
+base75 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", base75, "--prefix", "docs/guide.md")
+got75 = rd(os.path.join(wt, "docs/guide.md")) or ""
+s.ok("DTC-75 --prefix leaves the citations of purged files and rewrites the moved ones to their real new path: got %s, want %s" % (got75.splitlines(), DOC75_WANT.splitlines()),
+     r.returncode == 0 and got75 == DOC75_WANT, r.stderr[-300:])
+s.ok("DTC-75 ... and lists what it left as a purged file's citation", "left alone" in r.stdout and ".planning/STATE.md" in r.stdout, r.stdout[-400:])
+
+# DTC-76: `plan` on a detached HEAD listed the detached state as an unmerged branch (`git branch --no-merged` prints `(HEAD detached from <sha>)`), so
+# `git diff master...(HEAD detached ...)` failed. Red on add19eb: "FAIL: DTC-76 plan on a detached HEAD exits 0: got 2, want 0" and, from the
+# --json line, "fwx migrate-gsd: git diff -z failed (128): fatal: bad revision 'master...(HEAD detached from 013c786)'".
+# Control (the fix reverted): the same two lines.
+repo, wt = world()          # with an origin and a default branch, as a real project has: that is where the branch names are read
+helpers.git(wt, "checkout", "-q", "--detach")
+helpers.write(wt, ".planning/phases/01-a/new.md", "# a commit that master does not have\n")      # else HEAD is merged into master and git lists nothing
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "detached work")
+r = run(wt, "plan")
+s.eq("DTC-76 plan on a detached HEAD exits 0", r.returncode, 0)
+s.ok("DTC-76 ... and the detached state is not listed as a branch", "detached" not in r.stdout and "no branch" not in r.stdout, r.stdout[-300:])
+rp, D = plan_json(wt)
+helpers.git(wt, "checkout", "-q", "-b", "was-detached")
+on_branch = plan_json(wt)[1]
+s.ok("DTC-76 ... and --json has the same files as on a branch, with no branch named after the detached state",
+     rp.returncode == 0 and D["totals"] == on_branch["totals"] and not [b for b in D["branches"] if "(" in b["name"]], rp.stderr[-300:])
+
 s.done()
