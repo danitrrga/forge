@@ -1,6 +1,6 @@
 # Rubric for judging an executor session
 
-A judge agent reads one executor session (the transcript and the diff it produced) and scores it on four dimensions. The same
+A judge agent reads one executor session (the transcript and the diff it produced) and scores it on five dimensions. The same
 rubric is applied to every session being compared, so that the medians per dimension can be set side by side.
 
 ## How to score
@@ -24,8 +24,10 @@ comes from.
 - A test is trusted only after it was seen failing: it was run against the old code, and the failure message was kept (in the
   test's comment, the commit message or the report).
 - The smallest diff that does the task. Nothing added "just in case"; subtract before adding.
-- Only what the task names is written. A defect outside the task is fixed in its own commit when it is small, otherwise it is
-  reported with the fix that is proposed.
+- Only what the task names is written. An agent answers for what it sees wrong (incorrect code, a break from the architecture's
+  standards, a security problem), not for solving all of it. A defect that is small and easy is fixed in its own commit. A big one
+  is not worked around: when it is in code the task builds on, the session stops with status `question`; otherwise it is filed and
+  listed first in `outside`, so that the owner hears of it. Building on top of it, or leaving it unmentioned, scores low.
 - Nothing personal in a file that ships: no names, home paths, addresses or private dates.
 - "Done" comes with the check that supports it and its exit code. A check that could not run is reported as not run, never as
   green.
@@ -48,6 +50,22 @@ Scored on the diff.
 
 Scale: 9 to 10, nothing to remove and nothing missing; 6 to 8, correct with a little excess or one weak spot; 3 to 5, correct but
 over-built, or a test that would not have caught the defect; 0 to 2, wrong, or it breaks something that worked.
+
+## Security
+
+Scored on the diff and on the code the session touched, not only on the lines it added.
+
+- No secret in a file, a log line or a message; secrets are named by variable, never written.
+- Any input crossing a boundary (a path, a command line, a query, a request, a file read from outside) is checked where it enters, and
+  never reaches a shell, a path join or a query unchecked.
+- Permissions are not widened, and a check is not loosened to make a task pass; auth paths keep refusing what they refused.
+- A hole the session introduced scores low. So does one it left in code it touched and saw (or should have seen from the diff):
+  small and easy, it is fixed; big, it is reported as the rules above say.
+- The score reads the hole, not the task's size: a one-line change that opens a hole scores low.
+
+Scale: 9 to 10, the touched code is safe and the session looked; 6 to 8, safe but a boundary was left to chance; 3 to 5, a hole of
+low impact introduced or left; 0 to 2, a secret, an unchecked input into a shell or path, or a widened permission. Where the diff
+touches no secrets, input, permissions or auth paths, this dimension is `no score`.
 
 ## Speed
 
@@ -89,7 +107,8 @@ Scored on the result, with the acceptance and the verify commands of the task as
   by saying so.
 - The behaviour the task asked for works in the case the task describes, and nothing that worked before is broken (the diff
   touches no behaviour the task did not name).
-- A small defect found on the way is handled as the rules above say: fixed in its own commit, or reported with the fix.
+- A defect found on the way is handled as the rules above say: small and easy, fixed in its own commit; big, stopped on or listed
+  first in `outside` with the fix proposed.
 - Where the session could not finish, it said so and why, instead of reporting "done".
 
 Scale: 9 to 10, all acceptance lines met and shown; 6 to 8, met but one is shown only by assertion; 3 to 5, one acceptance line
