@@ -74,12 +74,15 @@ jobs:
       - name: fresh install
         if: ${{ !cancelled() }}
         run: python3 tests/test_fresh_install.py
-      - name: tests that read the documentation
+      - name: documentation reader, README and CLAUDE.md claims
         if: ${{ !cancelled() }}
-        run: |
-          python3 tests/test_readme.py
-          python3 tests/test_registry_names.py
-          python3 tests/test_measure_login.py
+        run: python3 tests/test_readme.py
+      - name: documentation reader, old registry names in tracked files
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_registry_names.py
+      - name: documentation reader, the README quick-start
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_measure_login.py
 
   # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (51 test files, about four minutes);
   # `forge test` with no group leaves them out, so this job is where they run in CI. `forge test fwx` exits 1 when no test
