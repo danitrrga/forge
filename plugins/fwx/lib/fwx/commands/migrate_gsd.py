@@ -22,7 +22,7 @@
       `$(cmd)/.planning`; not `$HOME`) is kind `hand`: listed, never rewritten, said to need a hand. In a `.gitignore` a line
       that already has its `.fwx` twin is not listed, and a proposal is the twin `apply` would write. `--rewrite` changes, in the
       named files only, the paths that moved (when their new path exists); `--prefix` changes `.planning` for `.fwx` in every
-      path of the named files (a file that moved goes to its real new path, as with `--rewrite`). What a purged file was cited by is never touched. The changed files are staged.
+      path of the named files (a file that moved goes to its real new path, and stays as it is when that path does not exist, as with `--rewrite`). What a purged file was cited by is never touched. The changed files are staged.
   leftovers [--apply] [--milestone-map FILE]
       In the main checkout, after the conversion is merged: the ignored and untracked files still under `.planning/` move to
       their destination with `os.rename` (an ignored file only if git would still ignore it there, else nothing moves), the
@@ -1945,6 +1945,9 @@ def rewrite_line(line, mapper, repo, mode, gitignore_lines=None, here=None):
             elif kind == "moved":                   # the real new path, the one --rewrite writes (`.fwx/milestones/v1/...`), not the blunt prefix
                 if new is None or ("milestones/*/" in new and "milestones/*/" not in token):
                     left.append((token, kind, "its milestone is not one"))
+                    continue
+                if not dest_exists(repo, new[len(up):]):     # as --rewrite: a path that is not there (yet) is not written
+                    left.append((token, kind, "%s does not exist (run it with the --milestone-map of apply)" % new))
                     continue
                 repl = new
         elif kind != "moved":
