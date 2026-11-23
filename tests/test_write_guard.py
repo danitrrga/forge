@@ -13,9 +13,12 @@ run must leave the whole temp dir byte-identical, and the real checkouts must no
 probe project. Each has a positive run beside it, the same command with the copy named as
 installed, that does write -- so none can pass by writing nothing anywhere.
 
-`forge new` is first run dry: it must exit 0 and write nothing. The plan names no project file by absolute path
-(only the folder, which comes from --path), so the old check that the plan names the copy's own file is gone; the
-tripwire below, that no real checkout gains the probe project, takes its place.
+`forge new` is first run dry: it must exit 0 and write nothing. Its plan names no project file by absolute path (only
+the folder, which comes from --path), so the old check that the plan names the copy's own file cannot be made. What
+replaces it: every `forge new` run, the dry-run included, happens in `unshare -rmn` with the real checkouts under an
+empty tmpfs (DRIVER, `run_covered`), so a root that pointed at one writes into memory, and the write is reported as
+`REAL <path>` instead of reaching the owner's data. The tripwire below, that no real checkout gains the probe
+project, stays as the second net.
 
 Every script runs in an empty network namespace with a PATH whose systemctl only logs: if the
 guard broke, forge new --apply would start the copy's sync_agent_config.py, which can
@@ -42,7 +45,13 @@ replaced by `ok, why = True, ""`, "forge new --apply from a copy: exit 1 (want 1
 'forge/config/projects/guard-probe.claude.json', ...]" (the exit is 1 only because the sync that follows refuses
 the copy); with it replaced by a constant refusal, "forge new --apply from a copy: exit 1 (want 1), no refusal
 message, wrote []" and "control: forge new --apply with the copy installed wrote project False, EXTRAS row
-False: exit 1".
+False: exit 1". With lib.PROJECTS hardcoded to the main checkout's config/projects (a root pointing at a real
+checkout), the positive run failed "wrote project False, EXTRAS row True, real checkout
+['<main>/config', '<main>/config/projects', '<main>/config/projects/guard-probe.claude.json']"; adding the
+may_write() bypass to that, "forge new --apply from a copy: exit 1 (want 1), said why, wrote ['REAL <main>/config',
+'REAL <main>/config/projects', 'REAL <main>/config/projects/guard-probe.claude.json', ...]". Both times the main
+checkout's config/forge.json kept its sha256 (f7c5c2f2e4ff1a18dfe668cf02f0f870e756cca55ca52b1cf5e6e0650f02fc03)
+and gained no guard-probe file.
 
 The incident itself is a second copy that keeps the real projects, run with HOME set to a scratch
 dir that names no checkout. It runs under `unshare -rmn` with an empty tmpfs mounted over every
@@ -163,12 +172,39 @@ def main():
                            cwd=copy, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
         return r.returncode, r.stdout
 
-    def refused(label, script, *args, code=0):
-        """The run exits `code`, says why, and writes not a byte in the temp dir."""
+    def namespace(spec):
+        """DRIVER under `unshare -rmn`: {rc, out, moved} of spec's command, `moved` being what changed under spec's tops."""
+        r = subprocess.run(["unshare", "-rmn", sys.executable, "-c", DRIVER, json.dumps(spec)],
+                           capture_output=True, text=True, timeout=300)
+        try:
+            return json.loads(r.stdout.strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return {"rc": r.returncode, "out": (r.stdout + r.stderr).strip()[-300:], "moved": None}
+
+    # Every forge new case runs with the real checkouts (this one and the main one) under an empty tmpfs, so a forge new that
+    # resolved its root to a real checkout writes into memory and is reported in `moved`, not into the owner's data.
+    all_real = real_checkouts()
+    rtops = sorted(t for t in set(all_real) if not any(t.startswith(o + os.sep) for o in all_real))
+    keep = [tmp, os.path.realpath(sys.executable), os.path.realpath(sys.prefix), tempfile.gettempdir()]
+    unsafe_real = [t for t in rtops if t == "/" or not os.path.isabs(t)
+                   or any(k == t or k.startswith(t + os.sep) for k in keep)]
+
+    def run_covered(script, *args):
+        """(exit code, output, what changed under the real checkouts) of a script of the copy, run with them covered."""
+        got = namespace({"tops": rtops, "projects": [], "real_home": False, "cwd": copy, "env": env,
+                         "cmd": [sys.executable, os.path.join(copy, script)] + list(args)})
+        return got["rc"], got["out"], got["moved"]
+
+    def refused(label, script, *args, code=0, cover=False):
+        """The run exits `code`, says why, and writes not a byte in the temp dir (nor, with `cover`, in a real checkout)."""
         before = sandbox.manifest(tmp, skip={log})
-        rc, out = run(script, *args)
+        if cover:
+            rc, out, real_moved = run_covered(script, *args)
+            real_moved = ["REAL " + k for k in (real_moved if real_moved is not None else ["(the namespace did not report)"])]
+        else:
+            (rc, out), real_moved = run(script, *args), []
         after = sandbox.manifest(tmp, skip={log})
-        moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+        moved = real_moved + sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
         msg = "forge: %s is not the checkout this machine runs (%s) -- nothing written; apply from %s" % (
             copy, other, other)
         if rc != code or msg not in out or moved:
@@ -192,22 +228,15 @@ def main():
         if pp:
             real.append(os.path.realpath(pp))
     tops = sorted(t for t in set(real) if not any(t.startswith(o + os.sep) for o in real))
-    keep = [tmp, os.path.realpath(sys.executable), os.path.realpath(sys.prefix), tempfile.gettempdir()]
     unsafe = [t for t in tops if t == "/" or not os.path.isabs(t)
               or any(k == t or k.startswith(t + os.sep) for k in keep)]
     ihome = os.path.join(tmp, "incident", "home")
     os.makedirs(ihome)
 
     def covered(real_home):
-        spec = {"tops": tops, "projects": real, "real_home": real_home, "cwd": incident,
-                "env": dict(env, HOME=ihome), "cmd": [sys.executable, os.path.join(incident, "scripts", "sync",
-                                                                                   "sync_system_doc.py"), "--apply"]}
-        r = subprocess.run(["unshare", "-rmn", sys.executable, "-c", DRIVER, json.dumps(spec)],
-                           capture_output=True, text=True, timeout=300)
-        try:
-            return json.loads(r.stdout.strip().splitlines()[-1])
-        except (ValueError, IndexError):
-            return {"rc": r.returncode, "out": (r.stdout + r.stderr).strip()[-300:], "moved": None}
+        return namespace({"tops": tops, "projects": real, "real_home": real_home, "cwd": incident,
+                          "env": dict(env, HOME=ihome), "cmd": [sys.executable, os.path.join(incident, "scripts", "sync",
+                                                                                             "sync_system_doc.py"), "--apply"]})
 
     if unsafe or not tops:
         failures.append("the incident case cannot cover the real project trees safely: tops %s, unsafe %s" % (tops, unsafe))
@@ -234,28 +263,32 @@ def main():
         failures.append("control: sync_system_doc.py --apply with the copy installed did not write %s: %s"
                         % (doc, tail(out)))
 
-    # forge new puts the project in <--path>/NAME, and lib.may_write() guards its --apply (exit 1 with the refusal). The
-    # dry-run must exit 0 and move nothing, or no write case runs.
+    # forge new puts the project in <--path>/NAME, and lib.may_write() guards its --apply (exit 1 with the refusal). All of its
+    # runs have the real checkouts under tmpfs (run_covered): a root that pointed at one would write there, unseen, and `moved`
+    # says so. The dry-run must exit 0 and move nothing, or no write case runs.
     new_args = ("new", NAME, "--stack", "generic", "--path", projects, "--no-git")
     want = os.path.join(copy, "config", "projects", NAME + ".claude.json")
-    install(other)
-    before = sandbox.manifest(tmp, skip={log})
-    rc, out = run(NEW, *new_args)
-    after = sandbox.manifest(tmp, skip={log})
-    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
-    if rc or moved:
-        failures.append("forge new dry-run from a copy: exit %d (want 0), wrote %s: %s -- no write case run, it would write there"
-                        % (rc, moved[:8], tail(out)))
+    if unsafe_real or not rtops:
+        failures.append("the forge new cases cannot cover the real checkouts safely: tops %s, unsafe %s" % (rtops, unsafe_real))
     else:
-        refused("forge new --apply from a copy", NEW, *new_args, "--apply", code=1)
-        install(copy)
-        rc, out = run(NEW, *new_args, "--apply")
-        # The extras table is config/forge.json skill_keep.extras (T3 of docs/portable-design.md).
-        with open(os.path.join(copy, "config", "forge.json"), encoding="utf-8") as f:
-            extras = '"%s.claude.json"' % NAME in f.read()
-        if not (os.path.exists(want) and extras and os.path.isdir(os.path.join(projects, NAME))):
-            failures.append("control: forge new --apply with the copy installed wrote project %s, EXTRAS row %s: exit %d, %s"
-                            % (os.path.exists(want), extras, rc, tail(out)))
+        install(other)
+        before = sandbox.manifest(tmp, skip={log})
+        rc, out, real_moved = run_covered(NEW, *new_args)
+        after = sandbox.manifest(tmp, skip={log})
+        moved = ["REAL " + k for k in (real_moved or [])] + sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+        if rc or moved or real_moved is None:
+            failures.append("forge new dry-run from a copy: exit %d (want 0), wrote %s: %s -- no write case run, it would write there"
+                            % (rc, moved[:8], tail(out)))
+        else:
+            refused("forge new --apply from a copy", NEW, *new_args, "--apply", code=1, cover=True)
+            install(copy)
+            rc, out, real_moved = run_covered(NEW, *new_args, "--apply")
+            # The extras table is config/forge.json skill_keep.extras (T3 of docs/portable-design.md).
+            with open(os.path.join(copy, "config", "forge.json"), encoding="utf-8") as f:
+                extras = '"%s.claude.json"' % NAME in f.read()
+            if real_moved or not (os.path.exists(want) and extras and os.path.isdir(os.path.join(projects, NAME))):
+                failures.append("control: forge new --apply with the copy installed wrote project %s, EXTRAS row %s, real checkout %s: "
+                                "exit %d, %s" % (os.path.exists(want), extras, (real_moved or [])[:4], rc, tail(out)))
 
     # sync_skill_keep.py had no guard at all; app's project was seeded without its gsd-* skills.
     install(other)
