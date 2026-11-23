@@ -14,6 +14,45 @@ permissions:
   contents: read
 
 jobs:
+  # Which of the two long suites below (`fwx`, `suite`) this run needs, from the paths a pull request changes
+  # (.github/scripts/select_suites.py, its rules and their reasons are in that file, its cases in tests/test_select_suites.py).
+  # A push to the default branch, a manual run and any path nobody listed select both, so the only run that gets narrower is a
+  # pull request that changes documentation or one side of the engine. `engine` and ci.yml's jobs never wait for it.
+  # A suite skipped here is a skipped job: ci.yml's `project` job counts it as passed, and `All checks` goes red only for a job
+  # that ran and failed, or for this job failing (its dependants are skipped and `project` fails). A suite is skipped only when
+  # its output is the word `false`: an output that is empty or missing (a script that wrote nothing) runs it.
+  changes:
+    name: Changed paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      fwx: ${{ steps.select.outputs.fwx }}
+      suite: ${{ steps.select.outputs.suite }}
+    steps:
+      - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0 # the diff runs from the merge base, which a one-commit checkout does not have
+      - name: select the suites
+        id: select
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # No pipe into tee: a pipe without pipefail would hide a failing script behind tee's exit code.
+          python3 .github/scripts/select_suites.py --event "$EVENT" --base "$BASE" --head "$HEAD" --github-output "$GITHUB_OUTPUT" > "$RUNNER_TEMP/select.txt"
+          cat "$RUNNER_TEMP/select.txt"
+          { echo '### Suites selected'; echo '```'; cat "$RUNNER_TEMP/select.txt"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+  # Always runs, whatever the pull request changes: lint reads every file (the documentation too), and the three tests after it are
+  # the ones that read README.md and CLAUDE.md or scan every tracked file, which is why a change to those files may skip the long
+  # suites (DOC_READERS in select_suites.py; tests/test_select_suites.py checks the lists agree). A few seconds each, 25 s in all.
+  # Full history, because tests/test_readme.py asks git whether a branch it names is merged and prints NOT RUN, NOT ARMED (exit 77)
+  # on a one-commit checkout.
   engine:
     name: Tests
     runs-on: ubuntu-latest
@@ -25,15 +64,25 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
       - name: lint
         run: python3 bin/forge lint --all
-      # The second step runs even when the first fails, so one run reports both.
+      # Each of the next steps runs even when an earlier one fails, so one run reports all of them.
       - name: fresh install
         if: ${{ !cancelled() }}
         run: python3 tests/test_fresh_install.py
+      - name: documentation reader, README and CLAUDE.md claims
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_readme.py
+      - name: documentation reader, old registry names in tracked files
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_registry_names.py
+      - name: documentation reader, the README quick-start
+        if: ${{ !cancelled() }}
+        run: python3 tests/test_measure_login.py
 
   # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (51 test files, about four minutes);
   # `forge test` with no group leaves them out, so this job is where they run in CI. `forge test fwx` exits 1 when no test
@@ -46,6 +95,8 @@ jobs:
   #   tests/test_playbooks_tree.py: reads the private workflow tree, which is not in this repository.
   fwx:
     name: fwx tests
+    needs: changes
+    if: ${{ needs.changes.outputs.fwx != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -71,6 +122,8 @@ jobs:
   #   tests/test_shim.py: the fish and zsh cases need those shells, which the runner does not have; the bash cases run.
   suite:
     name: Engine suite
+    needs: changes
+    if: ${{ needs.changes.outputs.suite != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
