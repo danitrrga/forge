@@ -2110,6 +2110,13 @@ s.ok("DTC-72 --prefix changes `.planning` to `.fwx` after a `../` run too, and k
 #   B3 "FAIL: B3 apply with a file `.planning/backlog` beside BACKLOG.md: exits 2: got 1, want 2" (a blob check failed, the rollback could not
 #      remove .fwx/backlog, a marker was left)
 # Controls: B1 `structure` without its backlog branch (the first FAIL above); B3 the new check removed (the same line).
+# The third pass found that `todos` and `quick` as a whole were mapped to backlog/ though only todos/pending, open quick tasks,
+# BACKLOG.md and 999.x phases go there. Red on bc881de:
+#   B1 "FAIL: B1 a line that names a folder holding backlog and other material gets a twin for each destination: got ['.planning/quick/',
+#      '.fwx/backlog/quick/', '.planning/todos/', '.fwx/backlog/todos/'], want ['.planning/quick/', '.fwx/quick/', '.fwx/backlog/quick/', ...]"
+#   B4 "FAIL: B1 leftovers after the merge exits 0 ...: got 2, want 0" (".fwx/todos/done/d.md would stop being ignored")
+#   B4 "FAIL: B4 a .gitignore directly in todos/ or quick/ stays with its non-backlog siblings, byte for byte: got [None, None, '*.x\n', '*.y\n'],
+#      want ['*.x\n', '*.y\n', None, None]"
 repo = helpers.toy_repo({"README": "toy\n", ".planning/PROJECT.md": "# P\n", ".planning/STATE.md": "---\nmilestone: v1.0\n---\n",
                          ".planning/ROADMAP.md": MINI_ROAD, ".planning/phases/01-alpha/01-01-PLAN.md": PLAN_BODY,
                          ".planning/phases/01-alpha/01-01-SUMMARY.md": "# s\n", ".planning/phases/01-alpha/01-CONTEXT.md": "# c\n"})
@@ -2119,19 +2126,29 @@ helpers.git(repo, "commit", "-q", "-m", "ignore")
 wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
 r = run(wt, "apply", "--close", "1")
 s.eq("B1 apply exits 0", r.returncode, 0)
-s.eq("B1 the .gitignore twins of the lines that name the backlog name .fwx/backlog/...",
+s.eq("B1 a line that names a folder holding backlog and other material gets a twin for each destination",
      (rd(os.path.join(wt, ".gitignore")) or "").splitlines(),
-     [".planning/quick/", ".fwx/backlog/quick/", ".planning/todos/", ".fwx/backlog/todos/"])
+     [".planning/quick/", ".fwx/quick/", ".fwx/backlog/quick/", ".planning/todos/", ".fwx/todos/", ".fwx/backlog/todos/"])
 helpers.git(wt, "commit", "-q", "-m", "convert")
 helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
 helpers.write(repo, ".planning/quick/260101-open/260101-PLAN.md", "# Fix the thing\n")   # an open quick task, ignored
 helpers.write(repo, ".planning/quick/260101-open/notes.txt", "scratch\n")          # ignored
 helpers.write(repo, ".planning/todos/pending/a.md", "# ignored todo\n")           # ignored
+helpers.write(repo, ".planning/todos/done/d.md", "# done\n")                      # ignored, not backlog
+helpers.write(repo, ".planning/todos/other/o.md", "# other\n")                    # ignored, not backlog
 r = run(repo, "leftovers", "--apply")
 s.eq("B1 leftovers after the merge exits 0 (the ignored backlog files move where the twins ignore them)", r.returncode, 0)
 s.eq("B1 ... and they are at .fwx/backlog/<their path>",
      (rd(os.path.join(repo, ".fwx/backlog/quick/260101-open/notes.txt")), rd(os.path.join(repo, ".fwx/backlog/todos/pending/a.md"))),
      ("scratch\n", "# ignored todo\n"))
+s.eq("B4 ... and the ignored files of the same folder that are not backlog stay where the old line ignored them, under .fwx/todos/",
+     (rd(os.path.join(repo, ".fwx/todos/done/d.md")), rd(os.path.join(repo, ".fwx/todos/other/o.md"))), ("# done\n", "# other\n"))
+repo, wt = mini({".planning/todos/.gitignore": "*.x\n", ".planning/quick/.gitignore": "*.y\n", ".planning/todos/pending/a.md": "# t\n"})
+r = run(wt, "apply", "--close", "1")
+s.eq("B4 apply exits 0", r.returncode, 0)
+s.eq("B4 a .gitignore directly in todos/ or quick/ stays with its non-backlog siblings, byte for byte",
+     [rd(os.path.join(wt, p)) for p in (".fwx/todos/.gitignore", ".fwx/quick/.gitignore", ".fwx/backlog/todos/.gitignore", ".fwx/backlog/quick/.gitignore")],
+     ["*.x\n", "*.y\n", None, None])
 
 GI = {".planning/phases/999.1-x/999.1-CONTEXT.md": "# Someday\n", ".planning/phases/999.1-x/.gitignore": "*.tmp\n",
       ".planning/quick/260101-open/.gitignore": "*.log\n", ".planning/todos/pending/a.md": "# t\n",
