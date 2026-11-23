@@ -336,7 +336,7 @@ def case_a(w):
             check("a: list, %s: the readable card and --json say the same" % card["project"], not bad, "human and json differ: %s" % ", ".join(bad))
         by = {c["project"]: c for c in cards}
         check("a: the short card says what it must", by["plain"]["servers"] == ["toy-echo"] and by["plain"]["skills"] == 2
-              and by["plain"]["options"] == {"ui": True, "command_guard": False, "enableAllProjectMcpServers": None}
+              and by["plain"]["options"] == {"ui": True, "command_guard": False, "enableAllProjectMcpServers": None, "framework": None}
               and by["multi"]["profiles"] == {"default": "code", "offered": ["toy-b", "list"]} and by["bare"]["profiles"] is None
               and by["frozen-p"]["frozen"] is True and by["bare"]["skills"] == "*", by)
     for name in PROJECTS:
