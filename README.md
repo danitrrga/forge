@@ -386,3 +386,5 @@ only the suite its changed paths can affect (`.github/scripts/select_suites.py` 
 ## License
 
 Apache License 2.0, see [`LICENSE`](LICENSE), for the whole repository including `plugins/fwx`. Third-party notices are in [`NOTICE`](NOTICE).
+
+<!-- throwaway CI probe: a README-only change -->
