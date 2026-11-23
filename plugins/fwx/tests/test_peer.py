@@ -6,26 +6,44 @@ says, and records what it was launched with and where) over a toy repo; no netwo
 
 referent: none, own text (the command's contract is its docstring and plugins/fwx/README.md).
 
-Controls: every behaviour is also run on a copy of bin/fwx and lib/fwx with one line of peer.py changed (`MUTANTS`), and must go red
-with the text given. A mutant that makes the command crash is red on its exit code. First FAIL line of each, seen red (a control run
-stops at the first FAIL it waits for):
-  empty looked_at accepted:     FAIL: empty looked_at: exit 1, naming looked_at: (0, '', {'looked_at': [], 'findings': [...
-  critical not mapped to high:  FAIL: success: findings, critical is high, renumbered, with reproduction and fix: got [{'id': 'G1', ..., 'severity': 'critical', ...
-  ids not renumbered:           FAIL: success: findings, critical is high, renumbered, with reproduction and fix: got [{'id': 'F1', ...
-  fix dropped:                  FAIL: success: findings, critical is high, renumbered, with reproduction and fix: got [{'id': 'G1', ..., 'proposed_fix': None}, ...
-  unreproduced not marked:      FAIL: a finding with no reproduction is passed on, marked unreproduced: ...'reproduced': True...
-  malformed line accepted:      FAIL: a finding whose line is no integer: exit 1: (0, '', {'looked_at': ['a.txt'], 'findings': [{'id': 'G1', ..., 'line': 'x', ...
-  no result file passes:        FAIL: Gemini done and no result file: exit 1 naming it: (0, ...
-  missing orca exits 1:         FAIL: orca not on PATH: exit 77 and NOT RUN, NOT ARMED naming the fix: (1, 'NOT ARMED: orca is not on PATH -- install Orca ...
-  unreachable Orca runs:        FAIL: Orca not reachable: exit 77, NOT RUN, NOT ARMED, open Orca: (0, '')
-  no timeout:                   FAIL: working for ever: exit 1 naming the timeout, nothing left: (1, 'Traceback (most recent call last): ... (a sleep of a negative time)
-  does not wait for done:       FAIL: success: exit 0 and the line: got (...), want (0, 'peer looked_at=1 findings=2 model=gemini-4-neon')
-  failed launch ignored:        FAIL: launch refused: exit 1 naming `orca agent launch`, nothing left: (1, 'Traceback ... (no session id)
-  worktree at the base:         FAIL: success: the worktree is a detached checkout of HEAD: ...
-  worktree left behind:         FAIL: success: the worktree, its folder and the state file are gone, git lists one worktree: ...
-  prompt loses reproduce:       FAIL: success: the brief: range, intent files, criteria, reproduce, proposed fix, result path, no push: ...
-  resume starts again:          FAIL: resume: the second call goes on with the same chat, one launch in all: ...
+Controls: every behaviour is also run on a copy of bin/fwx and lib/fwx with one line of peer.py or peer_state.py changed (`MUTANTS`), and
+must go red with the text given; a mutant that makes the command crash is red on its exit code (marked *). First FAIL line of each, seen red
+(a control run stops at the first FAIL it waits for; `...` cuts a long value):
+  no file of looked_at has to exist:    FAIL: empty looked_at: exit 1, naming looked_at: (0, '', {'looked_at': [], 'findings': [...
+  looked_at is not filtered:            FAIL: looked_at keeps only the files that exist in the worktree: (0, 'peer looked_at=3 findings=1 ...
+  critical not mapped to high:          FAIL: success: findings, critical is high, renumbered, with reproduction and fix: got [{'id': 'G1', ..., 'severity': 'critical', ...
+  ids not renumbered:                   FAIL: success: findings, critical is high, renumbered, with reproduction and fix: got [{'id': 'F1', ...
+  fix dropped:                          FAIL: success: findings, critical is high, renumbered, with reproduction and fix: got [{'id': 'G1', ... 'proposed_fix': None ...
+  unreproduced not marked:              FAIL: a finding with no reproduction is passed on, marked unreproduced: (0, {..., 'reproduced': True ...
+  a malformed entry sinks the review:   FAIL: malformed entries do not sink the review: valid findings kept, ...: (1, "peer review failed: its `severity` is 'info', ...
+  the raw result is not copied:         FAIL: the raw result is copied next to FILE before the worktree goes: False
+  no result file passes:                FAIL: Gemini done and no result file: exit 1 naming it: (0, '')
+  missing orca exits 1:                 FAIL: orca not on PATH: exit 77 and NOT RUN, NOT ARMED naming the fix: (1, 'NOT ARMED: orca is not on PATH -- install Orca ...
+  unreachable Orca runs:                FAIL: Orca not reachable: exit 77, NOT RUN, NOT ARMED, open Orca: (0, '')
+  --check does not check:               FAIL: --check with no orca: exit 77, NOT RUN, NOT ARMED: (0, '')
+  no timeout *:                         FAIL: working for ever: exit 1 naming the timeout and how to go on or give up, ...: (1, 'Traceback (most recent call last): ...
+  a timeout drops the review:           FAIL: working for ever: exit 1 naming the timeout and how to go on or give up, the worktree and the state kept: (1, 'peer review failed: Gemini was not done after 1 s ...
+  does not wait for done:               FAIL: success: exit 0 and the line: got (1, ''), want (0, 'peer looked_at=1 findings=2 model=gemini-4-neon')
+  a read is never tried again:          FAIL: one failed read is tried again: the review ends well, one launch: (1, '', 'peer review failed: `orca agent read` failed 3 times in a row ...
+  a refusal is taken for a lost reply:  FAIL: launch refused: exit 1 naming `orca agent launch` and Orca's own words, nothing left: (1, 'peer review failed: `orca agent launch` exited 1 and its reply was not understood: }. Orca may ...
+  a lost reply is taken for a refusal:  FAIL: launch reply lost: exit 1 naming `orca agent list`, the worktree and the state kept: (1, 'peer review failed: `orca agent launch` was refused: x', [...
+  selector_not_found not put in words:  FAIL: launch refused with selector_not_found: the message says to add the project to Orca: (1, 'peer review failed: `orca agent launch` was refused: selector_not_found')
+  the new worktree is not waited for:   FAIL: a worktree Orca does not know yet is waited for: the launch is not refused: (1, 'peer review failed: `orca agent launch` was refused: Orca does not know this project (selector_not_found): add the project to Orca', [])
+                                        (found by the real smoke: a launch right after `git worktree add` is refused by the real orca for a few seconds)
+  worktree at the base:                 FAIL: success: the worktree is a detached checkout of HEAD: ('bd82c09...', '5a3b1da...', True)
+  the base is not resolved:             FAIL: a relative revision reaches the brief as the commit it is: (0, '', "You are a reviewer of a code change ... HEAD~1 ...
+  worktree left behind:                 FAIL: success: the worktree, its folder and the state file are gone, git lists one worktree: (False, ['/tmp/fwx-toy-... [master]', '/tmp/fwx-peer-tmp-.../fwx-peer-.../wt ...
+  prompt loses reproduce:               FAIL: success: the brief: range, intent files, criteria, reproduce, proposed fix, result path, no push: You are a reviewer ...
+  resume starts again:                  FAIL: resume: the second call goes on with the same chat, one launch in all: (0, 'peer looked_at=1 findings=2 model=gemini-4-neon', '', 2, [...
+  the state is trusted:                 FAIL: a state with work outside the temp folder: exit 2 naming `work`, nothing deleted: (75, '')
+  started is not checked *:             FAIL: a state with a started that is missing: exit 2 naming `started`, nothing deleted: (1, 'Traceback (most recent call last): ...
+  no lock:                              FAIL: a call while another holds FILE.state: exit 2 saying so, no second launch: (75, '', 1)
+  a missing intent is fatal:            FAIL: an --intent that does not exist is left out with a line, the review goes on: (2, 'fwx peer-review: --intent /nonexistent/plan.md does not exist: left out of the brief')
+  FILE's folder is not made:            FAIL: an --out in a folder that does not exist yet: the folder is made, the review runs: (1, 'peer review failed: cannot write .../new2/sub/peer.json.state: No such file or directory')
+  --abandon removes nothing:            FAIL: --abandon removes the worktree and the state, and says the chat is not stopped: (0, 'peer abandoned worktree=... chat=unknown ...
 """
+import fcntl
+import itertools
 import json
 import os
 import re
@@ -45,7 +63,7 @@ a = sys.argv[1:]
 
 
 def out(obj, rc=0):
-    print(json.dumps(obj))
+    print(json.dumps(obj, indent=2))
     sys.exit(rc)
 
 
@@ -53,7 +71,15 @@ if a[:1] == ["status"]:
     out(sc.get("status", {"ok": True, "result": {"runtime": {"reachable": True}}}), sc.get("status_rc", 0))
 if a[:2] == ["agent", "installed"]:
     out({"ok": True, "result": {"agents": [{"id": x} for x in sc.get("agents", ["claude", "antigravity"])]}})
+if a[:2] == ["worktree", "show"]:  # Orca knows a new worktree only after `show_fail` asks
+    n = len(os.listdir(os.path.join(d, "shows")))
+    open(os.path.join(d, "shows", str(n)), "w").close()
+    if n < sc.get("show_fail", 0):
+        out({"ok": False, "error": {"code": "selector_not_found", "message": "selector_not_found"}}, 1)
+    out({"ok": True, "result": {"worktree": {}}})
 if a[:2] == ["agent", "launch"]:
+    if len(os.listdir(os.path.join(d, "shows"))) <= sc.get("show_fail", 0):  # a launch before Orca knows the worktree is refused, as the real one does
+        out({"ok": False, "error": {"code": "selector_not_found", "message": "selector_not_found"}}, 1)
     prompt = a[a.index("--prompt") + 1]
     m = re.search(r"(/\\S+/\\.fwx-peer/result\\.json)", prompt)
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
@@ -62,10 +88,16 @@ if a[:2] == ["agent", "launch"]:
     log = os.path.join(d, "launches.json")
     done = json.load(open(log)) if os.path.exists(log) else []
     json.dump(done + [rec], open(log, "w"))
+    if "launch_raw" in sc:
+        print(sc["launch_raw"])
+        sys.exit(sc.get("launch_rc", 0))
     out(sc.get("launch", {"ok": True, "result": {"outcome": {"kind": "structured", "sessionId": "sid-1"}}}), sc.get("launch_rc", 0))
 if a[:2] == ["agent", "read"]:
     n = len(os.listdir(os.path.join(d, "reads")))
     open(os.path.join(d, "reads", str(n)), "w").close()
+    if n < sc.get("read_fail", 0):
+        sys.stderr.write("orca: runtime busy\\n")
+        sys.exit(1)
     reads = sc["reads"]
     reply = reads[min(n, len(reads) - 1)]
     if reply.get("state") == "done" and "result" in sc:  # the result file is there once the chat is done, not before
@@ -106,6 +138,7 @@ BASE = helpers.git(repo, "rev-parse", "HEAD~1").strip()
 HEAD = helpers.git(repo, "rev-parse", "HEAD").strip()
 PLAN = helpers.write(repo, ".fwx/plan.md", "# plan\n")
 CRIT = [{"id": "C1", "text": "g is exported", "measure": "python -c 'import a'"}]
+COUNT = itertools.count()
 PEER_TMP = helpers.mkdtemp("fwx-peer-tmp-")  # the command makes its review folders here (TMPDIR): what a run leaves goes with it
 GIT_DIR = helpers.mkdtemp("fwx-peer-git-")  # a PATH with git and no orca
 os.symlink(shutil.which("git"), os.path.join(GIT_DIR, "git"))
@@ -114,6 +147,7 @@ os.symlink(shutil.which("git"), os.path.join(GIT_DIR, "git"))
 def scenario_dir(sc):
     d = helpers.mkdtemp("fwx-peer-orca-")
     os.makedirs(os.path.join(d, "reads"))
+    os.makedirs(os.path.join(d, "shows"))
     with open(os.path.join(d, "scenario.json"), "w") as f:
         json.dump(sc, f)
     bindir = os.path.join(d, "bin")
@@ -148,7 +182,7 @@ def run(bin_fwx, sc, with_orca=True, argv=None, config=None, seconds=20, d=None,
     args = argv if argv is not None else ["--base", BASE, "--head", HEAD, "--out", out, "--dir", repo] + list(extra)
     try:
         r = subprocess.run([sys.executable, bin_fwx, "peer-review"] + args, cwd=repo, capture_output=True, text=True, timeout=seconds,
-                           env=helpers.clean_env(PATH=path, FAKE_ORCA_DIR=d, TMPDIR=PEER_TMP))
+                           env=helpers.clean_env(PATH=path, FAKE_ORCA_DIR=d, TMPDIR=PEER_TMP, FWX_PEER_POLL_S="0.2"))
         code, so, se = r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         code, so, se = 124, "", "killed after %d s" % seconds
@@ -211,18 +245,32 @@ def cases(S, bin_fwx):
     f = ((r.doc or {}).get("findings") or [{}])[0]
     S.ok("a finding with no reproduction is passed on, marked unreproduced", r.code == 0 and f.get("reproduced") is False and f.get("reproduction") == "" and f.get("proposed_fix") is None,
          repr((r.code, r.doc)))
-    # no findings is valid, one that read nothing is not, nor a malformed one
+    # no findings is valid, one that read nothing is not
     r = run(bin_fwx, {"result": result([]), "reads": DONE})
     S.eq("no findings is a valid review", (r.code, (r.doc or {}).get("findings")), (0, []))
     r = run(bin_fwx, {"result": result([finding()], looked=()), "reads": DONE})
     S.ok("empty looked_at: exit 1, naming looked_at", r.code == 1 and "looked_at" in r.se and r.doc is None, repr((r.code, r.se, r.doc)))
-    r = run(bin_fwx, {"result": result([finding(line="x")]), "reads": DONE})
-    S.ok("a finding whose line is no integer: exit 1", r.code == 1 and "finding 1" in r.se and "line" in r.se and r.doc is None, repr((r.code, r.se, r.doc)))
-    r = run(bin_fwx, {"result": result([finding(severity="urgent")]), "reads": DONE})
-    S.ok("a finding with an unknown severity: exit 1", r.code == 1 and "severity" in r.se and r.doc is None, repr((r.code, r.se, r.doc)))
+    # looked_at keeps the files that exist in the worktree; a stub that names none is no review
+    r = run(bin_fwx, {"result": result([finding()], looked=("a.txt", "no/such/file.py", "")), "reads": DONE})
+    S.ok("looked_at keeps only the files that exist in the worktree", r.code == 0 and (r.doc or {}).get("looked_at") == ["a.txt"] and r.so.startswith("peer looked_at=1 "), repr((r.code, r.so, r.doc)))
+    r = run(bin_fwx, {"result": result([], looked=("no/such/file.py",)), "reads": DONE})
+    S.ok("looked_at with no file that exists: exit 1 naming it", r.code == 1 and "looked_at" in r.se and "exists" in r.se and r.doc is None, repr((r.code, r.se, r.doc)))
+    # an entry that is no finding does not sink the review: it is a finding of its own, and the raw result is kept next to FILE
+    bad = [finding("F1", "low"), finding("F2", severity="info"), "not even an object", finding("F4", line="10-20", file="b.py"), finding("F5", "high")]
+    r = run(bin_fwx, {"result": result(bad), "reads": DONE})
+    fs = (r.doc or {}).get("findings") or []
+    S.ok("malformed entries do not sink the review: valid findings kept, each malformed one a finding of its own", r.code == 0 and len(fs) == 5
+         and [f["claim"].startswith("malformed finding from the peer: ") for f in fs] == [False, True, True, True, False]
+         and fs[0]["claim"] == "claim F1" and fs[4]["claim"] == "claim F5" and fs[3]["file"] == "b.py" and "10-20" in fs[3]["claim"] and fs[1]["severity"] == "medium",
+         repr((r.code, r.se, fs)))
+    raw = os.path.join(r.d, "peer.json.raw.json")
+    S.ok("the raw result is copied next to FILE before the worktree goes", os.path.exists(raw) and json.load(open(raw)) == result(bad) and "peer.json.raw.json" in (fs[1]["evidence"] if len(fs) > 1 else ""),
+         repr(os.path.exists(raw)))
+    r = run(bin_fwx, {"result": {"looked_at": ["a.txt"], "findings": "none"}, "reads": DONE})
+    S.ok("`findings` that is no list: exit 1 naming it", r.code == 1 and "`findings` is not a list" in r.se and r.doc is None, repr((r.code, r.se)))
     r = run(bin_fwx, {"reads": [chat(text="I could not finish: the tests need a database.")]})
     S.ok("Gemini done and no result file: exit 1 naming it", r.code == 1 and "wrote no .fwx-peer/result.json" in r.se and "need a database" in r.se and r.doc is None, repr((r.code, r.se)))
-    S.ok("a review that failed leaves no worktree and no state", len(worktrees()) == 1 and not os.path.exists(os.path.join(r.d, "peer.json.state")), repr(worktrees()))
+    S.ok("a review that has ended leaves no worktree and no state", len(worktrees()) == 1 and not os.path.exists(os.path.join(r.d, "peer.json.state")), repr(worktrees()))
     r = run(bin_fwx, {"result": "{not json", "reads": DONE})
     S.ok("a result file that is no JSON: exit 1 naming it", r.code == 1 and "is not JSON" in r.se and r.doc is None, repr((r.code, r.se)))
     # Orca
@@ -235,13 +283,53 @@ def cases(S, bin_fwx):
     S.ok("`orca status` failing: exit 77", r.code == 77 and not r.launches, repr((r.code, r.se)))
     r = run(bin_fwx, dict(GOOD, agents=["claude"]))
     S.ok("no antigravity agent in Orca: exit 77 naming it", r.code == 77 and "antigravity" in r.se and not r.launches, repr((r.code, r.se)))
-    r = run(bin_fwx, dict(GOOD, launch={"ok": False, "error": {"message": "no such workspace"}}, launch_rc=1))
-    S.ok("launch refused: exit 1 naming `orca agent launch`, nothing left", r.code == 1 and "orca agent launch" in r.se and r.doc is None and len(worktrees()) == 1, repr((r.code, r.se, worktrees())))
+    # --check: the same readiness, no review
+    r = run(bin_fwx, GOOD, argv=["--check", "--dir", repo])
+    S.ok("--check with Orca ready: `peer ready`, exit 0, nothing launched", (r.code, r.so) == (0, "peer ready") and not r.launches, repr((r.code, r.so, r.se)))
+    r = run(bin_fwx, GOOD, with_orca=False, argv=["--check", "--dir", repo])
+    S.ok("--check with no orca: exit 77, NOT RUN, NOT ARMED", r.code == 77 and "NOT RUN, NOT ARMED" in r.se, repr((r.code, r.se)))
+    # Orca learns of a new worktree a moment after git makes it, and refuses a launch there before: the command waits for it
+    r = run(bin_fwx, dict(GOOD, show_fail=3))
+    S.ok("a worktree Orca does not know yet is waited for: the launch is not refused", r.code == 0 and len(r.launches) == 1 and len(os.listdir(os.path.join(r.d, "shows"))) == 4, repr((r.code, r.se, r.launches and 1)))
+    # a launch Orca refuses leaves nothing; the error says what to do in words, not the last line of a JSON
+    r = run(bin_fwx, dict(GOOD, launch={"ok": False, "error": {"code": "model_unknown", "message": "no such model"}}, launch_rc=1))
+    S.ok("launch refused: exit 1 naming `orca agent launch` and Orca's own words, nothing left", r.code == 1 and "orca agent launch" in r.se and "model_unknown: no such model" in r.se
+         and r.doc is None and len(worktrees()) == 1 and not os.path.exists(os.path.join(r.d, "peer.json.state")), repr((r.code, r.se, worktrees())))
+    r = run(bin_fwx, dict(GOOD, launch={"ok": False, "error": {"code": "selector_not_found", "message": "selector_not_found"}}, launch_rc=1))
+    S.ok("launch refused with selector_not_found: the message says to add the project to Orca", r.code == 1 and "add the project to Orca" in r.se and not r.se.rstrip().endswith("}"), repr((r.code, r.se)))
+    # a launch whose reply was lost may have started the chat: nothing is deleted and nothing launches twice
+    r = run(bin_fwx, dict(GOOD, launch_raw="starting...", launch_rc=0))
+    st_path = os.path.join(r.d, "peer.json.state")
+    S.ok("launch reply lost: exit 1 naming `orca agent list`, the worktree and the state kept", r.code == 1 and "orca agent list" in r.se and "no second one" in r.se
+         and os.path.exists(st_path) and len(worktrees()) == 2, repr((r.code, r.se, worktrees())))
+    r2 = run(bin_fwx, None, d=r.d)
+    S.ok("after a lost launch reply a second call refuses to launch again (exit 2), the first launch is the only one", r2.code == 2 and "no second one" in r2.se and len(r2.launches) == 1 and os.path.exists(st_path),
+         repr((r2.code, r2.se, len(r2.launches))))
+    r3 = run(bin_fwx, None, d=r.d, argv=["--abandon", "--out", os.path.join(r.d, "peer.json")])
+    S.ok("--abandon removes the worktree and the state, and says the chat is not stopped", r3.code == 0 and r3.so.startswith("peer abandoned worktree=") and "keeps running" in r3.so
+         and not os.path.exists(st_path) and len(worktrees()) == 1, repr((r3.code, r3.so, r3.se, worktrees())))
+    r = run(bin_fwx, None, d=r.d, argv=["--abandon", "--out", os.path.join(r.d, "peer.json")])
+    S.ok("--abandon with no state: exit 2", r.code == 2 and "nothing to abandon" in r.se, repr((r.code, r.se)))
+    # a read of the chat that fails is tried again; three in a row keep the review, and the next call goes on with it
+    r = run(bin_fwx, dict(GOOD, read_fail=1, reads=[chat("working"), chat()]))
+    S.ok("one failed read is tried again: the review ends well, one launch", r.code == 0 and r.so.startswith("peer looked_at=1 ") and len(r.launches) == 1, repr((r.code, r.so, r.se)))
+    r = run(bin_fwx, dict(GOOD, read_fail=3, reads=[chat("working"), chat("working"), chat("working"), chat()]), extra=["--max-wait", "60"])
+    st_path = os.path.join(r.d, "peer.json.state")
+    S.ok("three failed reads in a row: exit 1 naming it, the worktree and the state kept", r.code == 1 and "failed 3 times in a row" in r.se and "nothing was deleted" in r.se
+         and os.path.exists(st_path) and len(worktrees()) == 2, repr((r.code, r.se, worktrees())))
+    r2 = run(bin_fwx, None, d=r.d, extra=["--max-wait", "60"])
+    S.ok("the next call waits on the same chat and takes the result: exit 0, one launch, nothing left", r2.code == 0 and len(r2.launches) == 1 and len(worktrees()) == 1
+         and not os.path.exists(st_path), repr((r2.code, r2.se, len(r2.launches), worktrees())))
+    # a timeout keeps the review too
     r = run(bin_fwx, {"reads": [chat("working")]}, config={"peer": {"timeout_s": 1}})
-    S.ok("working for ever: exit 1 naming the timeout, nothing left", r.code == 1 and "not done after 1 s" in r.se and "last state: working" in r.se and r.doc is None and len(worktrees()) == 1,
-         repr((r.code, r.se, worktrees())))
+    st_path = os.path.join(r.d, "peer.json.state")
+    S.ok("working for ever: exit 1 naming the timeout and how to go on or give up, the worktree and the state kept",
+         r.code == 1 and "not done after 1 s" in r.se and "last state: working" in r.se and "--abandon" in r.se and "call again" in r.se and r.doc is None
+         and os.path.exists(st_path) and len(worktrees()) == 2, repr((r.code, r.se, worktrees())))
+    r2 = run(bin_fwx, None, d=r.d, argv=["--abandon", "--out", os.path.join(r.d, "peer.json")])
+    S.ok("the timed-out review is abandoned on purpose: nothing left", r2.code == 0 and not os.path.exists(st_path) and len(worktrees()) == 1, repr((r2.code, r2.se, worktrees())))
     # a review takes longer than a call: --max-wait ends the call, the next goes on with the same chat
-    d = scenario_dir(dict(GOOD, reads=[chat("working"), chat("working"), chat("working"), chat()]))
+    d = scenario_dir(dict(GOOD, reads=[chat("working")] * 12 + [chat()]))  # polled every 0.2 s: a one-second slice reads about five
     r1 = run(bin_fwx, None, d=d, extra=["--max-wait", "1"])
     S.ok("resume: a call that ends while it is working: exit 75, `peer running`, the worktree and the state kept",
          r1.code == 75 and re.match(r"^peer running elapsed=\d+ of=2700$", r1.so) and os.path.exists(os.path.join(d, "peer.json.state")) and len(worktrees()) == 2 and r1.doc is None,
@@ -250,59 +338,115 @@ def cases(S, bin_fwx):
     S.ok("resume: the second call goes on with the same chat, one launch in all",
          r2.code == 0 and r2.so == "peer looked_at=1 findings=2 model=gemini-4-neon" and len(r2.launches) == 1 and len(worktrees()) == 1
          and not os.path.exists(os.path.join(d, "peer.json.state")), repr((r2.code, r2.so, r2.se, len(r2.launches), worktrees())))
+    # a review that is running: another range is refused, a second call at once is refused, a state that cannot be trusted deletes nothing
     d = scenario_dir(dict(GOOD, reads=[chat("working")]))
+    out = os.path.join(d, "peer.json")
     run(bin_fwx, None, d=d, extra=["--max-wait", "1"])
-    r = run(bin_fwx, None, d=d, argv=["--base", HEAD, "--head", BASE, "--out", os.path.join(d, "peer.json"), "--dir", repo])
-    S.ok("resume: the state of another range is refused, naming it", r.code == 2 and "still running" in r.se and "delete the file" in r.se, repr((r.code, r.se)))
-    helpers.git(repo, "worktree", "remove", "--force", [w.split()[0] for w in worktrees() if w.split()[0] != os.path.realpath(repo)][0])
+    r = run(bin_fwx, None, d=d, argv=["--base", HEAD, "--head", BASE, "--out", out, "--dir", repo])
+    S.ok("resume: the state of another range is refused, naming it", r.code == 2 and "still running" in r.se and "--abandon" in r.se, repr((r.code, r.se)))
+    fd = os.open(out + ".state", os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    r = run(bin_fwx, None, d=d, extra=["--max-wait", "1"])
+    S.ok("a call while another holds FILE.state: exit 2 saying so, no second launch", r.code == 2 and "holds" in r.se and len(r.launches) == 1, repr((r.code, r.se, len(r.launches))))
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+    precious = helpers.mkdtemp("fwx-peer-precious-")
+    helpers.write(precious, "keep.txt", "x\n")
+    good_state = json.load(open(out + ".state"))
+    for label, edit, needle in (("work outside the temp folder", {"work": precious}, "work"), ("a started that is missing", {"started": None}, "started"),
+                                ("a started that is no number", {"started": "soon"}, "started"), ("a started that is a boolean", {"started": True}, "started"),
+                                ("a session that is no string", {"session": 7}, "session"), ("result outside the worktree", {"result": os.path.join(precious, "keep.txt")}, "result")):
+        st = dict(good_state)
+        st.update(edit)
+        if st.get("started") is None:
+            del st["started"]
+        json.dump(st, open(out + ".state", "w"))
+        r = run(bin_fwx, None, d=d, extra=["--max-wait", "1"])
+        S.ok("a state with %s: exit 2 naming `%s`, nothing deleted" % (label, needle), r.code == 2 and needle in r.se and "nothing was deleted" in r.se and os.path.exists(os.path.join(precious, "keep.txt"))
+             and os.path.isdir(good_state["wt"]) and len(r.launches) == 1, repr((r.code, r.se)))
+    json.dump(good_state, open(out + ".state", "w"))
+    run(bin_fwx, None, d=d, argv=["--abandon", "--out", out])
+    S.ok("the worktree of the state that was put back is removed by --abandon", len(worktrees()) == 1 and not os.path.exists(good_state["work"]), repr(worktrees()))
     # the range and the options
-    r = run(bin_fwx, GOOD, argv=["--base", HEAD, "--head", HEAD, "--out", "/nonexistent-dir-x/out.json", "--dir", repo])
-    S.ok("an empty range: exit 2, nothing launched", r.code == 2 and "empty" in r.se and not r.launches, repr((r.code, r.se)))
+    r = run(bin_fwx, GOOD, argv=["--base", HEAD, "--head", HEAD, "--out", os.path.join(PEER_TMP, "empty-range.json"), "--dir", repo])
+    S.ok("an empty range: exit 2, nothing launched, no state left", r.code == 2 and "empty" in r.se and not r.launches and not os.path.exists(os.path.join(PEER_TMP, "empty-range.json.state")), repr((r.code, r.se)))
     r = run(bin_fwx, GOOD, argv=["--base", "nonesuch", "--head", HEAD, "--out", "/tmp/x.json", "--dir", repo])
     S.ok("a bad revision: exit 2", r.code == 2 and "not a commit" in r.se and not r.launches and len(worktrees()) == 1, repr((r.code, r.se)))
+    # --base and --head are commits before they go into the brief: `HEAD~1` in the worktree would be another commit
+    r = run(bin_fwx, GOOD, argv=["--base", "HEAD~1", "--head", "HEAD", "--out", os.path.join(PEER_TMP, "rel.json"), "--dir", repo])
+    prompt = flag(r.launch.get("argv") or [], "--prompt") or ""
+    S.ok("a relative revision reaches the brief as the commit it is", r.code == 0 and "git diff %s..%s" % (BASE, HEAD) in prompt and "HEAD~1" not in prompt, repr((r.code, r.se, prompt[:300])))
+    # FILE's folder is made, and the state written, before anything launches
+    fresh = os.path.join(PEER_TMP, "new%d" % next(COUNT), "sub", "peer.json")  # a folder no earlier run of these cases made
+    r = run(bin_fwx, GOOD, argv=["--base", BASE, "--head", HEAD, "--out", fresh, "--dir", repo])
+    S.ok("an --out in a folder that does not exist yet: the folder is made, the review runs", r.code == 0 and os.path.exists(fresh), repr((r.code, r.se)))
+    blocked = os.path.join(repo, "a.txt", "sub", "peer.json")  # a.txt is a file: its folder cannot be made
+    r = run(bin_fwx, GOOD, argv=["--base", BASE, "--head", HEAD, "--out", blocked, "--dir", repo])
+    S.ok("an --out whose folder cannot be made: exit 1 before any launch, nothing left", r.code == 1 and "cannot write" in r.se and not r.launches and len(worktrees()) == 1, repr((r.code, r.se, worktrees())))
     r = run(bin_fwx, GOOD, argv=["--base", BASE])
     S.ok("missing options: exit 2 with the usage", r.code == 2 and "usage: fwx peer-review" in r.se, repr((r.code, r.se)))
-    r = run(bin_fwx, GOOD, extra=["--intent", "/nonexistent/plan.md"])
-    S.ok("an --intent that does not exist: exit 2", r.code == 2 and "--intent" in r.se, repr((r.code, r.se)))
+    r = run(bin_fwx, GOOD, extra=["--intent", "/nonexistent/plan.md", "--intent", PLAN])
+    prompt = flag(r.launch.get("argv") or [], "--prompt") or ""
+    S.ok("an --intent that does not exist is left out with a line, the review goes on", r.code == 0 and "--intent /nonexistent/plan.md does not exist" in r.se
+         and "/nonexistent/plan.md" not in prompt and os.path.realpath(PLAN) in prompt, repr((r.code, r.se)))
     r = run(bin_fwx, GOOD, extra=["--criteria", "{}"])
     S.ok("--criteria that is no JSON list: exit 2", r.code == 2 and "--criteria" in r.se and not r.launches, repr((r.code, r.se)))
     r = run(bin_fwx, GOOD, extra=["--max-wait", "0"])
     S.ok("--max-wait that is no positive number: exit 2", r.code == 2 and "--max-wait" in r.se and not r.launches, repr((r.code, r.se)))
 
 
-# name, text to replace (once, in peer.py), its replacement, the FAIL text that must appear
+P, ST = "lib/fwx/commands/peer.py", "lib/fwx/execute/peer_state.py"
+# name, file, text to replace (once), its replacement, the FAIL text that must appear
 MUTANTS = [
-    ("empty looked_at accepted", "or not looked or not all(_text(x)", "or not all(_text(x)", "FAIL: empty looked_at"),
-    ("critical not mapped to high", '"critical": "high"}', '"critical": "critical"}', "FAIL: success: findings, critical is high"),
-    ("ids not renumbered", '"id": "G%d" % n', '"id": f.get("id")', "FAIL: success: findings, critical is high"),
-    ("fix dropped", 'and _text(fix.get("rationale")) else None', "and False else None", "FAIL: success: findings, critical is high"),
-    ("unreproduced not marked", '"reproduced": bool(repro)', '"reproduced": True', "FAIL: a finding with no reproduction is passed on"),
-    ("malformed line accepted", 'if not isinstance(f.get("line"), int) or isinstance(f.get("line"), bool):', "if False:", "FAIL: a finding whose line is no integer"),
-    ("no result file passes", '    except OSError:\n        raise Stop(1, "peer review failed: Gemini was done and wrote no', '    except OSError:\n        return ["x"], []\n        raise Stop(1, "peer review failed: Gemini was done and wrote no',
+    ("no file of looked_at has to exist", P, "    if not looked:\n        raise Stop(1, \"peer review failed: `looked_at` names no file", "    if False:\n        raise Stop(1, \"peer review failed: `looked_at` names no file", "FAIL: empty looked_at"),
+    ("looked_at is not filtered", P, 'looked = [p for p in looked if _text(p) and os.path.exists(os.path.join(st["wt"], p))]', "pass", "FAIL: looked_at keeps only the files that exist"),
+    ("critical not mapped to high", P, '"critical": "high"}', '"critical": "critical"}', "FAIL: success: findings, critical is high"),
+    ("ids not renumbered", P, 'return {"id": "G%d" % n', 'return {"id": f.get("id")', "FAIL: success: findings, critical is high"),
+    ("fix dropped", P, 'and _text(fix.get("rationale")) else None', "and False else None", "FAIL: success: findings, critical is high"),
+    ("unreproduced not marked", P, '"reproduced": bool(repro)', '"reproduced": True', "FAIL: a finding with no reproduction is passed on"),
+    ("a malformed entry sinks the review", P, "        if found is None:\n            raw = json.dumps", "        if found is None:\n            raise Stop(1, \"peer review failed: %s\" % why)\n            raw = json.dumps",
+     "FAIL: malformed entries do not sink the review"),
+    ("the raw result is not copied", P, 'shutil.copyfile(st["result"], raw)', "pass", "FAIL: the raw result is copied next to FILE"),
+    ("no result file passes", P, '    except FileNotFoundError:\n        raise Stop(1, "peer review failed: Gemini was done and wrote no', '    except FileNotFoundError:\n        return ["x"], []\n        raise Stop(1, "peer review failed: Gemini was done and wrote no',
      "FAIL: Gemini done and no result file"),
-    ("missing orca exits 1", 'raise Stop(NOT_RUN, "NOT ARMED: orca is not on PATH', 'raise Stop(1, "NOT ARMED: orca is not on PATH', "FAIL: orca not on PATH: exit 77"),
-    ("unreachable Orca runs", '.get("reachable") is not True', '.get("reachable") is None', "FAIL: Orca not reachable: exit 77"),
-    ("no timeout", "if left <= 0:", "if False:", "FAIL: working for ever: exit 1 naming the timeout"),
-    ("does not wait for done", 'if result.get("state") == "done":', "if True:", "FAIL: success: exit 0 and the line"),
-    ("failed launch ignored", 'if rc != 0 or launched.get("ok") is not True or not isinstance(sid, str) or not sid:', "if False:", "FAIL: launch refused"),
-    ("worktree at the base", 'st["wt"], shas[1]]', 'st["wt"], shas[0]]', "FAIL: success: the worktree is a detached checkout of HEAD"),
-    ("worktree left behind", '    subprocess.run(["git", "-C", st["top"], "worktree", "remove", "--force", st["wt"]], capture_output=True, stdin=subprocess.DEVNULL)\n',
-     "    return\n", "FAIL: success: the worktree, its folder and the state file are gone"),
-    ("prompt loses reproduce", '"REPRODUCE every defect before you report it', '"Skip every defect before you report it', "FAIL: success: the brief"),
-    ("resume starts again", "    if os.path.exists(state_path):\n        try:", "    if False:\n        try:", "FAIL: resume: the second call goes on with the same chat"),
+    ("missing orca exits 1", P, 'raise Stop(NOT_RUN, "NOT ARMED: orca is not on PATH', 'raise Stop(1, "NOT ARMED: orca is not on PATH', "FAIL: orca not on PATH: exit 77"),
+    ("unreachable Orca runs", P, '.get("reachable") is not True', '.get("reachable") is None', "FAIL: Orca not reachable: exit 77"),
+    ("--check does not check", P, '            _ready(got.get("--dir", "."))\n            line = "peer ready"', '            line = "peer ready"', "FAIL: --check with no orca: exit 77"),
+    ("no timeout", P, "if left <= 0:", "if False:", "FAIL: working for ever: exit 1 naming the timeout"),
+    ("a timeout drops the review", P, 'entries = _wait(orca, st, peer["timeout_s"], max_wait, sleep)  # Running and Stop leave the state and the worktree',
+     'try:\n            entries = _wait(orca, st, peer["timeout_s"], max_wait, sleep)\n        except Stop:\n            peer_state.drop(st, state_path)\n            raise', "FAIL: working for ever: exit 1 naming the timeout"),
+    ("does not wait for done", P, 'if result.get("state") == "done":', "if True:", "FAIL: success: exit 0 and the line"),
+    ("a read is never tried again", P, "for i in range(READ_TRIES):", "for i in range(1):", "FAIL: one failed read is tried again"),
+    ("a refusal is taken for a lost reply", P, 'if reply is not None and reply.get("ok") is False:', "if False:", "FAIL: launch refused: exit 1 naming"),
+    ("a lost reply is taken for a refusal", P, '    raise Stop(1, "peer review failed: `orca agent launch` %s. Orca may have started',
+     '    raise _Refused("x")\n    raise Stop(1, "peer review failed: `orca agent launch` %s. Orca may have started', "FAIL: launch reply lost"),
+    ("selector_not_found not put in words", P, 'if code == "selector_not_found":', "if False:", "FAIL: launch refused with selector_not_found"),
+    ("the new worktree is not waited for", P, "        _known(orca, st[\"wt\"], sleep)\n", "        pass\n", "FAIL: a worktree Orca does not know yet is waited for"),
+    ("worktree at the base", P, '"worktree", "add", "--detach", st["wt"], shas[1]]', '"worktree", "add", "--detach", st["wt"], shas[0]]', "FAIL: success: the worktree is a detached checkout of HEAD"),
+    ("the base is not resolved", P, '"base": shas[0],', '"base": base,', "FAIL: a relative revision reaches the brief"),
+    ("worktree left behind", ST, 'for args in (("worktree", "remove", "--force", st["wt"]), ("worktree", "prune")):', "for args in ():", "FAIL: success: the worktree, its folder and the state file are gone"),
+    ("prompt loses reproduce", P, '"REPRODUCE every defect before you report it', '"Skip every defect before you report it', "FAIL: success: the brief"),
+    ("resume starts again", P, "        st = _load(fd, state_path)\n        if st is None:\n            st = _start(", "        st = None\n        if st is None:\n            st = _start(", "FAIL: resume: the second call goes on with the same chat"),
+    ("the state is trusted", P, "    problem = peer_state.check(st)\n", "    problem = None\n", "FAIL: a state with work outside the temp folder"),
+    ("started is not checked", ST, 'if not isinstance(st.get("started"), (int, float)) or isinstance(st.get("started"), bool):', "if False:", "FAIL: a state with a started that is missing"),
+    ("no lock", P, "fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)", "fcntl.flock(fd, fcntl.LOCK_UN)", "FAIL: a call while another holds FILE.state"),
+    ("a missing intent is fatal", P, 'left out of the brief\\n" % p)', 'left out of the brief\\n" % p)\n            return 2', "FAIL: an --intent that does not exist is left out"),
+    ("FILE's folder is not made", P, "os.makedirs(os.path.dirname(os.path.abspath(state_path)), exist_ok=True)", "pass", "FAIL: an --out in a folder that does not exist yet"),
+    ("--abandon removes nothing", P, "        peer_state.drop(st, state_path)\n    finally:\n        os.close(fd)\n    return", "        pass\n    finally:\n        os.close(fd)\n    return",
+     "FAIL: --abandon removes the worktree and the state"),
 ]
 
 
-def mutant(name, old, new, want):
+def mutant(name, rel, old, new, want):
     work = helpers.mkdtemp("fwx-peer-mut-")
     shutil.copytree(os.path.join(ROOT, "lib", "fwx"), os.path.join(work, "lib", "fwx"), ignore=shutil.ignore_patterns("__pycache__"))
     os.makedirs(os.path.join(work, "bin"))
     shutil.copy(os.path.join(ROOT, "bin", "fwx"), os.path.join(work, "bin", "fwx"))
-    p = os.path.join(work, "lib", "fwx", "commands", "peer.py")
+    p = os.path.join(work, rel)
     with open(p, encoding="utf-8") as f:
         text = f.read()
     if text.count(old) != 1:
-        return "the anchor of %s is in peer.py %d times, not once" % (name, text.count(old))
+        return "the anchor of %s is in %s %d times, not once" % (name, rel, text.count(old))
     with open(p, "w", encoding="utf-8") as f:
         f.write(text.replace(old, new))
     ctl = helpers.FirstFail(lambda line: want in line)

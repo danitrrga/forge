@@ -18,7 +18,9 @@ branch, the main checkout and a worktree of another run are never candidates.
 
 The folder `fwx scratch new <run> <unit>` makes in the checkout (`<top>/.fwx-agent/<run>/`, where the reviewers, which have no
 worktree of their own, write) is removed with the run's worktrees: it is git-ignored, so nothing else would ever clear it. The
-folders of other runs and the ignore file stay; `scratch` in the result lists what was removed.
+folders of other runs and the ignore file stay; `scratch` in the result lists what was removed. A `fwx peer-review` that the run left
+running has its own throwaway worktree in the temp folder, named by a `*.state` file in that scratch folder: it goes first (only a
+folder `peer_state.check` shows `fwx peer-review` made), and its folder is listed in `scratch` too.
 
 Imports the standard library and execute.base.
 """
@@ -26,6 +28,7 @@ import os
 import re
 import shutil
 
+from fwx.execute import peer_state
 from fwx.execute.base import AGENT_DIR, WaveError, git, out
 
 PROC = "/proc"
@@ -162,11 +165,31 @@ def leftover(paths):
     return found
 
 
+def _peers(top, folder):
+    """Remove the throwaway worktrees of the peer reviews a `*.state` file under `folder` names; the folders removed. A file that is no
+    state, or names a folder `fwx peer-review` did not make, is left to the removal of `folder` and deletes nothing else."""
+    found = []
+    for root, _dirs, files in os.walk(folder):
+        for name in files:
+            if not name.endswith(".state"):
+                continue
+            path = os.path.join(root, name)
+            try:
+                st = peer_state.read(path)
+            except (OSError, ValueError):
+                continue
+            if st is not None and peer_state.check(st) is None:
+                peer_state.drop(st, path, top)
+                found.append(st["work"])
+    return found
+
+
 def _scratch(top, run):
     """Remove `<top>/.fwx-agent/<run>`; the list of the folders removed (empty when there was none or it could not go)."""
     folder = os.path.join(top, AGENT_DIR, run)
     if not os.path.isdir(folder):
         return []
+    peers = _peers(top, folder)
     shutil.rmtree(folder, ignore_errors=True)
     root = os.path.dirname(folder)
     try:
@@ -175,7 +198,7 @@ def _scratch(top, run):
             os.rmdir(root)
     except OSError:
         pass
-    return [] if os.path.exists(folder) else [folder]
+    return peers + ([] if os.path.exists(folder) else [folder])
 
 
 def cleanup(cwd, run, recorded=()):

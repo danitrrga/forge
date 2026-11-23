@@ -32,6 +32,8 @@ The first FAIL line of each mutant, seen red:
   fix-round spends before looking:          FAIL: fix-round, 3 used before: rounds 4/3: got 'rounds 4/3', want 'rounds 3/3' (after an earlier line for the same cause)
   fix-round writes a stage row:             FAIL: fix-round: stage rows written: 1: got 1, want 0
   cleanup deletes by prefix:                FAIL: cleanup: removed a worktree of another run: got True, want False
+  cleanup leaves the peer worktrees:        FAIL: cleanup: the peer worktree and its folder are gone, listed in scratch: (True, [...])
+  cleanup trusts a peer state:              FAIL: cleanup: a state that names a folder fwx peer-review did not make deletes nothing: [...]
   cleanup keeps a stale-locked worktree:    FAIL: cleanup: kept a stale-locked worktree: True: got (False, True), want (True, False)
   cleanup without /proc runs on:            FAIL: cleanup, no /proc: exit 1: got 1, want 77
   summary ignores the exit of the evidence: FAIL: summary, red evidence: gate: got 'pass': got 'pass', want 'fail'
@@ -494,6 +496,31 @@ def case_cleanup_scratch(R, S):
     sc.stop()
 
 
+def case_cleanup_peer(R, S):
+    """A run that ended while `fwx peer-review` was still running leaves that review's throwaway worktree, in the temp folder, named by the
+    `*.state` file in the run's scratch folder: `cleanup` removes it with the folder (G3 of the review of PR 210). A state that names
+    a folder `fwx peer-review` did not make deletes nothing."""
+    sc = Scene()
+    top = os.path.realpath(sc.cwd)
+    work = helpers.mkdtemp("fwx-peer-")
+    wt = os.path.join(work, "wt")
+    helpers.git(sc.cwd, "worktree", "add", "--detach", wt, "HEAD")
+    foreign = helpers.mkdtemp("precious-")
+    helpers.write(foreign, "keep.txt", "x\n")
+    for unit, folder in (("r1-peer", work), ("r2-peer", foreign)):
+        S.eq("cleanup peer, setup: scratch for %s" % unit, sc.call(R, "scratch", sc.run, unit).returncode, 0)
+        state = {"top": top, "work": folder, "wt": os.path.join(folder, "wt"), "result": os.path.join(folder, "wt", ".fwx-peer", "result.json"),
+                 "base": "a" * 40, "head": "b" * 40, "started": 1.0, "session": "sid"}
+        with open(os.path.join(top, ".fwx-agent", sc.run, unit, "report.json.state"), "w") as f:
+            json.dump(state, f)
+    v = ok_json(S, "cleanup, a run that left a peer review", sc.call(R, "cleanup", "--run", sc.run))
+    S.ok("cleanup: the peer worktree and its folder are gone, listed in scratch", not exists(work) and work in (v.get("scratch") or []), repr((exists(work), v.get("scratch"))))
+    S.ok("cleanup: git no longer lists the peer worktree", wt not in helpers.git(sc.cwd, "worktree", "list"), helpers.git(sc.cwd, "worktree", "list"))
+    S.ok("cleanup: a state that names a folder fwx peer-review did not make deletes nothing", exists(os.path.join(foreign, "keep.txt")) and foreign not in (v.get("scratch") or []),
+         repr(v.get("scratch")))
+    sc.stop()
+
+
 def case_cleanup_no_proc(R, S):
     """Without /proc cleanup says NOT RUN, NOT ARMED and exits 77: through the tree's own lib, with PROC pointed nowhere."""
     sc = Scene()
@@ -606,7 +633,7 @@ def case_step_files(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
+         case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_peer, case_cleanup_no_proc, case_summary,
          case_step_files]
 
 I = "lib/fwx/execute/integrate.py"
@@ -633,6 +660,9 @@ MUTANTS = [
     ("cleanup keeps a stale-locked worktree", case_cleanup, C, LIVE, 'return "live"', "kept a stale-locked worktree"),
     ("cleanup without /proc runs on", case_cleanup_no_proc, C, "if not os.path.isdir(PROC):", "if False:", "cleanup, no /proc: exit"),
     ("cleanup keeps the run's scratch", case_cleanup_scratch, C, "    scratch = _scratch(top, run)", "    scratch = []", "the run's scratch folder is removed and listed"),
+    ("cleanup leaves the peer worktrees", case_cleanup_peer, C, "    peers = _peers(top, folder)\n", "    peers = []\n", "the peer worktree and its folder are gone"),
+    ("cleanup trusts a peer state", case_cleanup_peer, "lib/fwx/execute/peer_state.py", "    work = os.path.realpath(st[\"work\"])\n",
+     "    return None\n    work = os.path.realpath(st[\"work\"])\n", "a state that names a folder fwx peer-review did not make deletes nothing"),
     ("cleanup leaves the ignore file", case_cleanup_scratch, C, "            os.rmdir(root)", "            pass", "`.fwx-agent/` and its .gitignore are gone too"),
     ("summary ignores the exit of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if sha == head and not why else "fail"',
      "red evidence: gate"),

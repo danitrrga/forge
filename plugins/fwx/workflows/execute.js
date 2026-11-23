@@ -600,6 +600,21 @@ const PEER_LINE = /^peer looked_at=(\d+) findings=(\d+) model=(\S+)$/
 const PEER_RUNNING = /^peer running elapsed=\d+ of=\d+$/
 const PEER_SLICE = 540
 const PEER_NOTE = 'This command takes up to ten minutes: give the Bash tool a timeout of 600000 ms.'
+// What `details.peer` says: `not needed`, `off` (asked for, the integration off), `not run yet` (asked for, on, the run ended before the review),
+// `ran looked_at=N findings=M model=X unreproduced=K`, or `failed: <why>`.
+const peerFailed = (why) => {
+  st.peer = 'failed: ' + oneLine(why, 200)
+  return why
+}
+// With the integration on and the peer review asked for, whether it could run at all is asked before any executor starts: a runner calls
+// `fwx peer-review --check`. What decides is its last line, not its exit code.
+async function peerCheck() {
+  const v = await exec('peer-check', inCheckout('fwx peer-review --check --dir . 2>&1'), false)
+  if (!v) stop('failed', peerFailed('peer review: the runner did not return (the check before the first executor)'))
+  if (lastLine(v.stdout) !== 'peer ready') {
+    stop('failed', peerFailed('peer review is on (integrations.peer_review) and cannot run, so the run stops before any work: ' + oneLine(v.stdout, 400)))
+  }
+}
 async function peerJob(tag, from, to) {
   const unit = tag + '-peer'
   const out = A.checkout + reportTail(unit)
@@ -610,7 +625,7 @@ async function peerJob(tag, from, to) {
   try {
     for (let i = 0; i < slices; i++) {
       const v = await exec('peer-' + tag, inCheckout(cmd), false, PEER_NOTE)
-      if (!v) return { end: ['failed', 'peer review: the runner did not return'] }
+      if (!v) return { end: ['failed', peerFailed('peer review: the runner did not return')] }
       const last = lastLine(v.stdout)
       if (PEER_RUNNING.test(last)) {
         log('reviewing: ' + last)
@@ -625,12 +640,12 @@ async function peerJob(tag, from, to) {
         st.peer = 'ran ' + last.slice('peer '.length) + ' unreproduced=' + rep.findings.filter((f) => f.reproduced === false).length
         return { report: { looked_at: rep.looked_at, findings: rep.findings, criteria: [] } }
       }
-      if (v.rc === 77 || /NOT RUN, NOT ARMED/.test(v.stdout)) return { end: ['failed', 'peer review is on (integrations.peer_review) and could not run: ' + text] }
-      return { end: ['failed', 'peer review failed: ' + (text || 'no output') + (m && v.rc === 0 ? ' (its report is missing or not valid)' : '')] }
+      if (v.rc === 77 || /NOT RUN, NOT ARMED/.test(v.stdout)) return { end: ['failed', peerFailed('peer review is on (integrations.peer_review) and could not run: ' + text)] }
+      return { end: ['failed', peerFailed('peer review failed: ' + (text || 'no output') + (m && v.rc === 0 ? ' (its report is missing or not valid)' : ''))] }
     }
-    return { end: ['failed', 'peer review failed: still running after ' + slices + ' calls of ' + PEER_SLICE + ' s'] }
+    return { end: ['failed', peerFailed('peer review failed: still running after ' + slices + ' calls of ' + PEER_SLICE + ' s')] }
   } catch (e) {
-    if (e instanceof Stop) return { end: [e.status, e.reason] }
+    if (e instanceof Stop) return { end: [e.status, peerFailed(e.reason)] }
     throw e
   }
 }
@@ -668,7 +683,6 @@ async function reviewPass(from, to) {
       jobs.push(() => peerJob(tag, from, to))
       roles.push('peer review')
     } else {
-      st.peer = 'off'
       log('reviewing: peer review is asked for (' + A.peer.why + ') and integrations.peer_review is off')
     }
   }
@@ -711,7 +725,8 @@ async function reviewPass(from, to) {
       fix.push(it)
       st.sev[it.id] = d.severity
     } else if (d.verdict === 'consider') {
-      st.findings.consider.push({ id: it.id, file: it.file, line: it.line, claim: it.claim, severity: d.severity })
+      st.findings.consider.push(Object.assign({ id: it.id, file: it.file, line: it.line, claim: it.claim, severity: d.severity },
+        it.reproduced === undefined ? {} : { reproduced: it.reproduced, reproduction: it.reproduction, proposed_fix: it.proposed_fix }))
     } else if (d.verdict === 'note') {
       st.findings.note.push({ id: it.id, claim: it.claim })
     } else {
@@ -746,7 +761,9 @@ async function recordFixed(fix, from, to) {
 
 // ---- the flow ----------------------------------------------------------------------------------------------------------------------
 async function main() {
+  st.peer = A.peer && A.peer.needed ? (A.peer.on ? 'not run yet' : 'off') : 'not needed'
   cap() // before the first launch on every path: a gate re-entry can launch a fixer, and a revert, a wave and a fix all start from here
+  if (A.peer && A.peer.needed && A.peer.on && !(A.revert && A.revert.length)) await peerCheck()
   if (A.from !== 'gate') enter('executing')
   if (A.revert && A.revert.length) {
     // Code that was already reviewed comes back: no review. `fwx wave merge` needs a branch, so the gate on the new head is `fwx verify`.

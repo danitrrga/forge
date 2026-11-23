@@ -101,8 +101,8 @@ ask only where the standard says to:
   `decide` rules, the `.fwx/` format, the configuration schema, a new CLI command). Ask while the PR is open and wait for the
   answer before merging (the approval status is not required).
 - **Logic**: code that decides with nobody watching (fwx core: verify, decide, stages, rounds; wave new/merge; workflows)
-  and the PR that closes a whole part. Same as Architecture. A PR in either class also gets `fwx peer-review` on its range beside its
-  adversarial review, its findings verified like the reviewer's.
+  and the PR that closes a whole part. Same as Architecture. When `integrations.peer_review` is on, a PR in either class also gets `fwx peer-review` on its range beside
+  its adversarial review, its findings verified like the reviewer's.
 - **Never**: UI, documentation, data, texts for agents (prompts, playbooks, skills: they have their own review), test-only PRs,
   renames and moves, Dependabot.
 
