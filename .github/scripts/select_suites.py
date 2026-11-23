@@ -91,7 +91,8 @@ def classify(event, paths):
 
 def changed_paths(base, head):
     """The paths the pull request changes since the merge base (three dots), or None when git cannot say."""
-    r = subprocess.run(["git", "diff", "--name-only", "-z", "%s...%s" % (base, head)], capture_output=True, text=True)
+    # --no-renames: git names a rename by its destination alone, so a file moved out of plugins/fwx/ would not select fwx.
+    r = subprocess.run(["git", "diff", "--name-only", "--no-renames", "-z", "%s...%s" % (base, head)], capture_output=True, text=True)
     if r.returncode:
         print("git diff %s...%s failed (exit %d): %s" % (base, head, r.returncode, r.stderr.strip()), file=sys.stderr)
         return None
