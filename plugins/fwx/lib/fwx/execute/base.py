@@ -3,7 +3,8 @@
 `check_base(sha, cwd, worktree)` says whether the directory is a linked worktree whose HEAD is exactly `sha`: an agent
 that starts from the default branch, from a moved phase branch or in the main checkout (a Bash call from an isolated agent
 can write there, so one writer per worktree is not assumed) must stop before it touches anything. It compares the HEAD,
-never the merge-base: a worktree that is ahead of the base is not on it. `sha` is 7 to 40 hex digits, never a name that
+never the merge-base: a worktree that is ahead of the base is not on it. A FRESH worktree (`_fresh`) that is not on it is moved to it:
+Claude Code makes an agent's worktree at the main checkout's HEAD, which is not the wave's base after the first part of a phase branch. `sha` is 7 to 40 hex digits, never a name that
 git resolves (`HEAD` would always match).
 
 `scratch(cwd, run, unit)` makes the folder where an agent writes its report and its TMPDIR: `<worktree>/.fwx-agent/<run>/<unit>/`
@@ -64,8 +65,33 @@ def check_base(sha, cwd, worktree=None):
         return WRONG_BASE, "wrong worktree: %s, expected %s" % (top, worktree)
     head = out(top, "rev-parse", "HEAD") or ""
     if not head.startswith(sha):
+        if _fresh(top) and _move(top, sha):
+            return 0, ""
         return WRONG_BASE, "wrong base: HEAD %s, expected %s" % (head or "none", sha)
     return 0, ""
+
+
+def _fresh(top):
+    """Whether the worktree is exactly as Claude Code made it, with no work of the agent's in it: tree and index clean (ignored files,
+    the `.fwx-agent` folder, do not show), on a branch that is not a default branch, and that branch's reflog is the one entry of its
+    creation. Any commit, reset, merge or checkout adds an entry, so a branch that was ever written to is not fresh, whatever its content."""
+    branch = out(top, "symbolic-ref", "--short", "-q", "HEAD")
+    if not branch or out(top, "status", "--porcelain") != "":
+        return False
+    default = {"main", "master"}
+    remote = out(top, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
+    if remote:
+        default.add(remote.split("/", 1)[-1])
+    if branch in default:
+        return False
+    log = out(top, "reflog", "show", "--format=%gs", "refs/heads/" + branch) or ""
+    return len(log.splitlines()) == 1 and log.startswith("branch: Created from")
+
+
+def _move(top, sha):
+    """Moves a fresh worktree's branch to `sha`, a commit of the repository: `--keep` refuses to overwrite a local change, as `--hard` would."""
+    full = out(top, "rev-parse", "--verify", "--quiet", sha + "^{commit}")
+    return bool(full) and git(top, "reset", "--keep", full).returncode == 0
 
 
 def agent_root(top):

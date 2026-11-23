@@ -10,7 +10,8 @@ anything that must stop the run before it starts, with the reason on stderr and 
 into the checks once every task is on the phase branch (the tree's n_C7F loops to n_C7): execute/prepare.py says what it changes.
 
 `fwx base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
-(the one at `P`, when given) whose HEAD is `<sha>`, 42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
+(the one at `P`, when given) whose HEAD is `<sha>` (a fresh worktree, as Claude Code made it and nothing written in it, is first moved there: execute/base.py `_fresh`),
+42 when it is not (`wrong base: HEAD <x>, expected <sha>` or `not a linked
 worktree: <path>` on stderr), 2 for a usage error. `<sha>` is 7 to 40 hex digits. With the base right it then runs the project's
 `worktree_setup` (below), so that the agent's own checks find the dependencies: exit 43 when that fails, with `worktree setup
 failed: <command> (exit N, log PATH)` on stderr, which is the reason the agent reports, and in `.fwx-agent/worktree-setup-failed.json`

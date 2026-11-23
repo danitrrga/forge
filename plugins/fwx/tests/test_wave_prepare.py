@@ -510,7 +510,8 @@ def case_check_base_moves_fresh(R, S):
     sc.commit("mine.txt", "feat: mine", cwd=own)
     refused("a commit of its own", own, head(own))
     reset = helpers.add_worktree(sc.repo, "agent-reset")
-    helpers.git(reset, "reset", "-q", "--hard", main_head)  # nothing changed, but the branch has been written to since it was made
+    sc.commit("gone.txt", "feat: gone", cwd=reset)
+    helpers.git(reset, "reset", "-q", "--hard", main_head)  # tree clean and HEAD as made, but the branch has been written to since
     refused("a branch that was reset", reset, main_head)
     mainname = helpers.add_worktree(sc.repo, "main")
     refused("the default branch's name", mainname, main_head)
@@ -618,6 +619,12 @@ MUTANTS = [
     ("scratch under .git", case_scratch, B, 'folder = os.path.join(os.path.realpath(top), AGENT_DIR, run, unit)',
      'folder = os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), AGENT_DIR, run, unit)',
      "scratch: it prints the folder, inside the worktree"),
+    ("fresh: no cleanliness check", case_check_base_moves_fresh, B, 'if not branch or out(top, "status", "--porcelain") != "":', "if not branch:",
+     "moves-fresh: a modified file: exit 0, want 42"),
+    ("fresh: no reflog check", case_check_base_moves_fresh, B, 'return len(log.splitlines()) == 1 and log.startswith("branch: Created from")',
+     "return True", "moves-fresh: a commit of its own: exit 0, want 42"),
+    ("fresh: default branch allowed", case_check_base_moves_fresh, B, "if branch in default:", "if False:",
+     "moves-fresh: the default branch's name: exit 0, want 42"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
 ]
 
