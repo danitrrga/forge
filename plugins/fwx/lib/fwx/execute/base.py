@@ -76,7 +76,7 @@ def _fresh(top):
     the `.fwx-agent` folder, do not show), on a branch that is not a default branch, and that branch's reflog is the one entry of its
     creation. Any commit, reset, merge or checkout adds an entry, so a branch that was ever written to is not fresh, whatever its content."""
     branch = out(top, "symbolic-ref", "--short", "-q", "HEAD")
-    if not branch or out(top, "status", "--porcelain") != "":
+    if not branch or out(top, "status", "--porcelain", "--untracked-files=normal") != "":
         return False
     default = {"main", "master"}
     remote = out(top, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
@@ -91,7 +91,8 @@ def _fresh(top):
 def _move(top, sha):
     """Moves a fresh worktree's branch to `sha`, a commit of the repository: `--keep` refuses to overwrite a local change, as `--hard` would."""
     full = out(top, "rev-parse", "--verify", "--quiet", sha + "^{commit}")
-    return bool(full) and git(top, "reset", "--keep", full).returncode == 0
+    # a ref named like `sha` (a tag, a branch) wins over the hash prefix in rev-parse: the commit must be the one `sha` spells
+    return bool(full) and full.startswith(sha) and git(top, "reset", "--keep", full).returncode == 0
 
 
 def agent_root(top):
