@@ -132,6 +132,15 @@ step7 = [l for l in files["SKILL.md"].splitlines() if l.startswith("7. ")]
 launch7 = step7[0].split("launch `demo`", 1)[-1].split(";", 1)[0] if step7 and "launch `demo`" in step7[0] else ""
 check("step 7 names verdict_tool and verdict_command in the sentence that launches demo",
       "`verdict_tool`" in launch7 and "`verdict_command`" in launch7, "step 7 launch clause: %r" % launch7[:90])
+# the turn that builds the verdict page ends with where it is (the rehearsal's owner message named the page earlier in the turn, not last)
+# Seen red on the old step 7 (it said "open the page ... say in one line it is ready and end the turn"):
+#   FAIL: step 7 makes the last line of the turn name the page, its path or the orca tab -> step 7: "waiting on it. His pasted answer's pick and note go into `Approved UI` of `context.md`. ..."
+def last_line_names_page(step):
+    return re.search(r"last line[^.;]*\bnames? the page\b", step) is not None and "path" in step and "orca tab" in step
+check("step 7 makes the last line of the turn name the page, its path or the orca tab",
+      bool(step7) and last_line_names_page(step7[0]), "step 7: %r" % (step7[0][-200:] if step7 else ""))
+check("control: the old step 7 does not pass the last-line check",
+      not last_line_names_page("open the page for the owner the way the user's instructions say, say in one line it is ready and end the turn"))
 gets = [l for l in demo.splitlines() if "fwx discuss --json" in l and "`verdict_tool`" in l and "`verdict_command`" in l]
 check("demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them",
       len(gets) == 1, "agents/demo.md has no line with 'fwx discuss --json' and both keys")
