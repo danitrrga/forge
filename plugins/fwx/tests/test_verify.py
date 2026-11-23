@@ -38,6 +38,20 @@ Its mutants, each seen red on a copy of the plugin with one line changed:
   - the `.md`/`.txt` limit of the one-use names removed:
       FAIL: a marker in a code file's name, a folder's name, `-older` or a bare `notes.md` is not a hit: got 1, want 0
 
+After an active review of PR 201 (G1 to G4), each case seen red on the code before its fix (G4 on a mutant):
+  - G1, only the first `-vN`/`-old` match of a name read (`api-v2.spec-old.md` beside `api-v2.spec.md`):
+      FAIL: marker of 'api-v2.spec-old.md': got None, want 'old'
+  - G2, a sibling looked up in the working tree, and an empty stem counted:
+      FAIL: a folder, an empty stem and an ignored file are no living sibling; a committed broken symlink is one: got (True, ['-v2', 'docs/api-v2', 'report-v2.json']), want (True, ['plan-old.md'])
+      FAIL: marker of '-v2' with every path existing: the stem is empty, so None: got 'old', want None
+      FAIL: added_files measures the commit it is given, not a HEAD that moved (before: TypeError: added_files() takes 2 positional arguments but 3 were given)
+  - G3, a dangling `refs/remotes/origin/HEAD` trusted:
+      FAIL: a dangling origin/HEAD: the check still measures from master, exit 1, no NOT RUN: got (0, True, False), want (1, False, True)
+      FAIL: a dangling origin/HEAD: the names are the fallback ones: got ['gone'], want ['main', 'master']
+  - G4, the old master case (`todo.md`, no longer a marker; master only adds) passed a mutant of `_range_base` returning the default
+    branch's ref instead of the merge base; with `handoff.md` added and a marked file deleted on master it fails:
+      FAIL: a marked file the default branch added or removed after the branch left is not the branch's: got 1, want 0
+
 Controls of the rest, each seen red on a copy of the repo with one thing changed (first FAIL line shown; 152 checks on the good code):
   - the dirty-tree check is off:
       FAIL: a modified tracked file: exit 2: got 0, want 2
@@ -449,13 +463,16 @@ s.eq("a stale local master and a newer origin/master: the nearer base wins, upst
 repo, phase = make(["true"])
 r = run(repo)
 s.eq("on the default branch itself the range is empty: exit 0, silent", (r.returncode, "never committed" in r.stderr), (0, False))
-repo, phase = on_branch({"src/a.py": "a\n"})
+# G4: a real marker, and a marked file the default branch DELETES after the fork: measured from master's tip, work would
+# "add" it back (A), so only the merge base keeps it out
+repo, phase = on_branch({"src/a.py": "a\n"}, base_files={"legacy-handoff.md": "existed at the fork\n"})
 helpers.git(repo, "checkout", "-q", "master")
-helpers.write(repo, "todo.md", "added on master after the branch left\n")
+helpers.write(repo, "handoff.md", "added on master after the branch left\n")
+helpers.git(repo, "rm", "-q", "legacy-handoff.md")
 helpers.git(repo, "add", "-A")
 helpers.git(repo, "commit", "-q", "-m", "master moves on")
 helpers.git(repo, "checkout", "-q", "work")
-s.eq("a file the default branch added after the branch left is not the branch's", run(repo).returncode, 0)
+s.eq("a marked file the default branch added or removed after the branch left is not the branch's", run(repo).returncode, 0)
 helpers.git(repo, "branch", "-q", "-m", "master", "trunk")
 r = run(repo)
 s.eq("no default branch to measure from: exit 0 and the check says NOT RUN, NOT ARMED", (r.returncode, "NOT RUN, NOT ARMED" in r.stderr), (0, True))
@@ -474,7 +491,38 @@ helpers.git(wt, "commit", "-q", "-m", "wt")
 r = run(wt)
 s.eq("from a linked worktree the range is the same: a checkpoint.txt added there fails", (r.returncode, "checkpoint.txt: a one-use file" in r.stderr), (1, True))
 
-LIVING = {"plan.md", "src/walk.py", "a", "a.md", "a.test.js", "a.json", "a.py", "docs/a.md"}
+# G2: a sibling is a file (or symlink) of the verified commit, not whatever the working tree holds
+repo, phase = make(["true"], {".gitignore": "report.json\n", "docs/api/idx.md": "x\n"})
+os.symlink("missing-target", os.path.join(repo, "plan.md"))
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "a folder docs/api and a committed broken symlink plan.md")
+helpers.git(repo, "checkout", "-q", "-b", "work")
+for rel in ("docs/api-v2", "-v2", "report-v2.json", "plan-old.md"):
+    helpers.write(repo, rel, "x\n")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "work")
+helpers.write(repo, "report.json", "an ignored artifact a check made\n")
+cfg0 = {"project": {"default_branch": None}}
+lines, known = core_verify.added_files(repo, cfg0)
+s.eq("a folder, an empty stem and an ignored file are no living sibling; a committed broken symlink is one",
+     (known, [l.split(": ")[0] for l in lines]), (True, ["plan-old.md"]))
+sha0 = head(repo)
+helpers.write(repo, "checkpoint.md", "c\n")
+helpers.git(repo, "add", "-A")
+helpers.git(repo, "commit", "-q", "-m", "after the verified commit")
+s.eq("added_files measures the commit it is given, not a HEAD that moved",
+     [l.split(": ")[0] for l in core_verify.added_files(repo, cfg0, sha0)[0]], ["plan-old.md"])
+
+# G3: an origin/HEAD that points at a branch the remote no longer has does not replace main and master
+repo, phase = on_branch({"brief.md": "b\n"})
+helpers.git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/gone")
+r = run(repo)
+s.eq("a dangling origin/HEAD: the check still measures from master, exit 1, no NOT RUN",
+     (r.returncode, "NOT RUN" in r.stderr, "brief.md: a one-use file" in r.stderr), (1, False, True))
+s.eq("a dangling origin/HEAD: the names are the fallback ones", sorted(core_verify.default_names(repo, cfg0)), ["main", "master"])
+
+LIVING = {"plan.md", "src/walk.py", "a", "a.md", "a.test.js", "a.json", "a.py", "docs/a.md",
+          "api-v2.spec.md", "api-v2.test.js", "api-v2.config.json", "api-v2.schema.json"}
 for name, want in (("brief.md", "one-use"), ("Checkpoint-3.md", "one-use"), ("handoff.md", "one-use"), ("tomorrow.md", "one-use"),
                    ("scratch.txt", "one-use"), ("x/Brief.TXT", "one-use"),
                    ("my-prompt.txt", None), ("TODO.md", None), ("notes-api.md", None), ("release-notes-3.md", None),
@@ -486,8 +534,14 @@ for name, want in (("brief.md", "one-use"), ("Checkpoint-3.md", "one-use"), ("ha
                    ("plan-v2.md", "old"), ("src/walk-old.py", "old"), ("a-copy.md", "old"), ("a copy.md", "old"), ("a copy", "old"),
                    ("a-backup.json", "old"), ("a-v12.md", "old"), ("a-v2.test.js", "old"), ("docs/a-old.md", "old"),
                    ("api-v2.md", None), ("src/api-v2.py", None), ("docs/plan-v2.md", None), ("a-older.md", None), ("a-vx.md", None),
-                   ("a-v2b.md", None), ("old.md", None), ("copy.md", None), ("backup.md", None)):
+                   ("a-v2b.md", None), ("old.md", None), ("copy.md", None), ("backup.md", None),
+                   # G1: a version token before an earlier dot does not hide the one that makes the copy
+                   ("api-v2.spec-old.md", "old"), ("api-v2.test-copy.js", "old"), ("api-v2.config-backup.json", "old"),
+                   ("api-v2.schema-v2.json", "old"), ("api-v2.spec.md", None), ("api-v2.other-old.md", None)):
     s.eq("marker of %r" % name, getattr(core_verify, "marker", lambda n, e=None: "no marker()")(name, lambda p: p in LIVING), want)
+# G2: a name that is only a marker strips to nothing, and nothing is not a living sibling (even when `exists` says yes to everything)
+for name in ("-v2", "fixtures/-old", "-copy"):
+    s.eq("marker of %r with every path existing: the stem is empty, so None" % name, core_verify.marker(name, lambda p: True), None)
 
 # ---- output: the tail, and no secrets in it ---------------------------------------------------------------------------
 
