@@ -2,8 +2,8 @@
 """A plain copy of forge writes nothing, however its scripts are run. Once,
 two test agents copied forge to /tmp and ran scripts from the copies. The copies still held the
 real projects, so sync_system_doc.py --apply rewrote CLAUDE.md pointers and AGENT-SYSTEM.md in
-~20 real projects with the copy's path, and register_project.py, whose ROOT was hardcoded to
-master, wrote a project and an EXTRAS row into master. The worktree guard did not fire: a copy
+~20 real projects with the copy's path, and the project-registering script of the time, whose ROOT was
+hardcoded to master, wrote a project and an EXTRAS row into master (`forge new` replaced it, plan 4.4 U9). The worktree guard did not fire: a copy
 is not a linked worktree.
 
 This copies the tracked files into a temp dir (not a worktree), points every project at a
@@ -13,27 +13,36 @@ run must leave the whole temp dir byte-identical, and the real checkouts must no
 probe project. Each has a positive run beside it, the same command with the copy named as
 installed, that does write -- so none can pass by writing nothing anywhere.
 
-register_project.py is first run dry: its plan must name the copy's own project path. If it
-names any other checkout, no write case runs at all, because it would write there.
+`forge new` is first run dry: it must exit 0 and write nothing. The plan names no project file by absolute path
+(only the folder, which comes from --path), so the old check that the plan names the copy's own file is gone; the
+tripwire below, that no real checkout gains the probe project, takes its place.
 
 Every script runs in an empty network namespace with a PATH whose systemctl only logs: if the
-guard broke, register_project --apply would start the copy's sync_agent_config.py, which can
+guard broke, forge new --apply would start the copy's sync_agent_config.py, which can
 reach for the host's systemd and network.
 
 Seen failing on 3c8f6a2: sync_system_doc.py --apply from the copy "wrote
 ['projects/forge', 'projects/forge/.claude', 'projects/forge/.claude/AGENT-SYSTEM.md', ...]",
-register_project.py's dry-run "plans its project at ['/home/user/dev/Projects/forge/config/
+the old registering script's dry-run "plans its project at ['/home/user/dev/Projects/forge/config/
 projects/guard-probe.claude.json']" (so no write case ran), and sync_skill_keep.py --apply "wrote
 ['forge/config/projects/app.claude.json', ...]: 18 project(s) updated". With ROOT derived but
-its guard removed, register_project.py --apply-fs "exit 0 (want 1), no refusal message, wrote
+its guard removed, that script's --apply-fs "exit 0 (want 1), no refusal message, wrote
 ['forge/config/projects/guard-probe.claude.json', 'forge/scripts/sync/sync_skill_keep.py',
 'projects/guard-probe', ...]". The two tripwires, seen firing the same day: with the copy counted as a
 real checkout, "/tmp/forge-guard-.../forge gained the probe project 'guard-probe'"; with lib's
-copy check removed, register_project --apply ran the copy's sync_agent_config.py and "systemctl
+copy check removed, that script's --apply ran the copy's sync_agent_config.py and "systemctl
 was called: ['--user daemon-reload', ...]" -- the stub,
 in the empty namespace. refused() asserts the whole refusal, "; apply from <installed>" included:
 with lib printing the older text, "sync_system_doc.py --apply from a copy: exit 0 (want 0), no
 refusal message, wrote []".
+
+The same cases through `forge new` (plan 4.4 U9), seen failing: with the may_write() call of forge/new.py
+replaced by `ok, why = True, ""`, "forge new --apply from a copy: exit 1 (want 1), said why, wrote
+['forge/config', 'forge/config/forge.json', 'forge/config/projects',
+'forge/config/projects/guard-probe.claude.json', ...]" (the exit is 1 only because the sync that follows refuses
+the copy); with it replaced by a constant refusal, "forge new --apply from a copy: exit 1 (want 1), no refusal
+message, wrote []" and "control: forge new --apply with the copy installed wrote project False, EXTRAS row
+False: exit 1".
 
 The incident itself is a second copy that keeps the real projects, run with HOME set to a scratch
 dir that names no checkout. It runs under `unshare -rmn` with an empty tmpfs mounted over every
@@ -56,10 +65,8 @@ import sandbox  # noqa: E402
 from sandbox import FORGE, git, tail  # noqa: E402
 
 NAME = "guard-probe"
-# register_project.py is a private skill: a checkout that has skills/new-project runs the cases that use it, and
-# without it they are NOT RUN. The rest of the world is the engine files and tests/fixtures/config.
-REGISTER = "skills/new-project/scripts/register_project.py"
-HAVE_REGISTER = os.path.exists(os.path.join(FORGE, REGISTER))
+# `forge new` makes the probe project: it needs only the engine files and the fixtures (its stacks are examples/stacks).
+NEW = "bin/forge"
 # Runs inside `unshare -rmn`: an empty tmpfs over every real project tree (and over the namespace's
 # own pw_dir for the positive control), verified before anything runs, then the command, then
 # what changed under those mounts. The mounts die with the namespace, so a broken guard writes
@@ -115,9 +122,6 @@ def main():
         os.makedirs(os.path.join(copy, "skills", skill))
         with open(os.path.join(copy, "skills", skill, "SKILL.md"), "w") as f:
             f.write("---\nname: %s\ndescription: stub\n---\n" % skill)
-    if HAVE_REGISTER:
-        files = sandbox.ls_files("--", "skills/new-project")
-        sandbox._copy_files([f for f in files if f], copy, set())
     incident = os.path.join(tmp, "incident", "forge")  # a second copy whose projects name projects outside its world
     shutil.copytree(copy, incident, symlinks=True)
     # Its projects name trees outside the world (tmp/incident/), the way the incident's real ones did. They are
@@ -230,30 +234,28 @@ def main():
         failures.append("control: sync_system_doc.py --apply with the copy installed did not write %s: %s"
                         % (doc, tail(out)))
 
-    if HAVE_REGISTER:
-        install(other)
-        rc, out = run(REGISTER, "--name", NAME,
-                      "--path", os.path.join(projects, NAME), "--no-git")
-        plan = [l.split()[-1] for l in out.splitlines() if l.strip().startswith("- project")]
-        want = os.path.join(copy, "config", "projects", NAME + ".claude.json")
-        if rc or plan != [want]:
-            failures.append("register_project.py dry-run from a copy plans its project at %s, want %s -- "
-                            "no write case run, it would write there" % (plan, want))
-        else:
-            for flag in ("--apply-fs", "--apply"):
-                refused("register_project.py %s from a copy" % flag, REGISTER,
-                        "--name", NAME, "--path", os.path.join(projects, NAME), "--no-git", flag, code=1)
-            install(copy)
-            rc, out = run(REGISTER, "--name", NAME,
-                          "--path", os.path.join(projects, NAME), "--no-git", "--apply-fs")
-            # The extras table moved from sync_skill_keep.py to config/forge.json skill_keep.extras (T3 of docs/portable-design.md).
-            with open(os.path.join(copy, "config", "forge.json"), encoding="utf-8") as f:
-                extras = '"%s.claude.json"' % NAME in f.read()
-            if rc or not (os.path.exists(want) and extras and os.path.isdir(os.path.join(projects, NAME))):
-                failures.append("control: register_project.py --apply-fs with the copy installed wrote project %s, "
-                                "EXTRAS row %s: %s" % (os.path.exists(want), extras, tail(out)))
+    # forge new puts the project in <--path>/NAME, and lib.may_write() guards its --apply (exit 1 with the refusal). The
+    # dry-run must exit 0 and move nothing, or no write case runs.
+    new_args = ("new", NAME, "--stack", "generic", "--path", projects, "--no-git")
+    want = os.path.join(copy, "config", "projects", NAME + ".claude.json")
+    install(other)
+    before = sandbox.manifest(tmp, skip={log})
+    rc, out = run(NEW, *new_args)
+    after = sandbox.manifest(tmp, skip={log})
+    moved = sorted(k for k in set(before) | set(after) if before.get(k) != after.get(k))
+    if rc or moved:
+        failures.append("forge new dry-run from a copy: exit %d (want 0), wrote %s: %s -- no write case run, it would write there"
+                        % (rc, moved[:8], tail(out)))
     else:
-        print("NOT RUN: register_project.py from a copy (four cases) -- no skills/new-project in this checkout")
+        refused("forge new --apply from a copy", NEW, *new_args, "--apply", code=1)
+        install(copy)
+        rc, out = run(NEW, *new_args, "--apply")
+        # The extras table is config/forge.json skill_keep.extras (T3 of docs/portable-design.md).
+        with open(os.path.join(copy, "config", "forge.json"), encoding="utf-8") as f:
+            extras = '"%s.claude.json"' % NAME in f.read()
+        if not (os.path.exists(want) and extras and os.path.isdir(os.path.join(projects, NAME))):
+            failures.append("control: forge new --apply with the copy installed wrote project %s, EXTRAS row %s: exit %d, %s"
+                            % (os.path.exists(want), extras, rc, tail(out)))
 
     # sync_skill_keep.py had no guard at all; app's project was seeded without its gsd-* skills.
     install(other)
@@ -278,7 +280,7 @@ def main():
 
     for msg in failures:
         print("FAIL", msg)
-    print("%d failure(s) over 11 cases" % len(failures))
+    print("%d failure(s) over 10 cases" % len(failures))
     sandbox.cleanup(failures)
     sys.exit(1 if failures else 0)
 
