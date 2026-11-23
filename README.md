@@ -379,8 +379,9 @@ python3 bin/forge lint --all      # no personal data in the engine
 git config core.hooksPath githooks        # run the personal-data guard on every commit and push
 ```
 
-`forge init` sets `core.hooksPath` for you. CI runs `lint`, a fresh-install test and fwx's suite on every push and
-pull request.
+`forge init` sets `core.hooksPath` for you. CI runs `lint`, a fresh-install test and the tests that read the documentation
+on every push and pull request, and the engine suite and fwx's suite on every push to the default branch. A pull request runs
+only the suite its changed paths can affect (`.github/scripts/select_suites.py` holds the rules; a path it does not know runs both).
 
 ## License
 
