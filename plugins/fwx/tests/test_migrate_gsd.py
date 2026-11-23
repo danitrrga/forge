@@ -1246,7 +1246,7 @@ TABLE = [("cp .planning.bak backup/", "cp .planning.bak backup/"),
          ("cd .planning", "cd .fwx"),
          ('"!.planning"', '"!.fwx"'),
          ("ls ./.planning/x", "ls ./.fwx/x"),
-         ("X=.planning/phases", "X=.fwx/phases"),
+         ("X=.planning/phases", "X=.fwx/milestones/v2/phases"),     # a moved folder goes to its real new path (DTC-75), not by the blunt prefix
          ("(.planning/x)", "(.fwx/x)"),
          ("/.planning/phases/01-a/fonts/", "/.fwx/phases/01-a/fonts/"),
          ("see .planning.", "see .fwx.")]
@@ -2098,8 +2098,8 @@ s.eq("DTC-72 --rewrite changes each relative path to the new place of its file, 
       VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/PROJECT.md)")))
 helpers.git(wt, "reset", "-q", "--hard")
 r = run(wt, "refs", "--base", base72, "--prefix", "docs/vision.md")
-s.ok("DTC-72 --prefix changes `.planning` to `.fwx` after a `../` run too, and keeps the run",
-     r.returncode == 0 and "](../.fwx/REQUIREMENTS.md)" in (rd(os.path.join(wt, "docs/vision.md")) or ""), r.stderr[-300:] + (rd(os.path.join(wt, "docs/vision.md")) or ""))
+s.ok("DTC-72 --prefix changes `.planning` to the real new path after a `../` run too, and keeps the run",
+     r.returncode == 0 and "](../.fwx/milestones/v1/REQUIREMENTS.md)" in (rd(os.path.join(wt, "docs/vision.md")) or ""), r.stderr[-300:] + (rd(os.path.join(wt, "docs/vision.md")) or ""))
 
 # ---- the review of pull request 219: the three places that did not know the backlog moved ------------------------------------------------
 # Each seen red on cb804e7 (the first FAIL line of each case):
@@ -2170,5 +2170,82 @@ s.ok("B3 ... and the refusal is the plan's: no marker was left", not [n for n in
                                                                     if n.startswith("fwx-migrate-gsd-apply")])
 rp = run(wt, "plan", "--close", "1")
 s.ok("B3 plan refuses it too, naming both paths", rp.returncode == 2 and ".fwx/backlog" in rp.stderr and ".fwx/backlog/BACKLOG.md" in rp.stderr, rp.stderr[-300:])
+
+# ---- DTC-75 and DTC-76 -----------------------------------------------------------------------------------------------------------------
+# DTC-75: `refs --prefix` rewrote what a purged file was cited by to a path that does not exist (`.planning/STATE.md` -> `.fwx/STATE.md`) and the
+# path of a moved file by the blunt prefix (`.planning/phases/01-alpha/01-CONTEXT.md` -> `.fwx/phases/...`, missing `milestones/v1`). Red on add19eb:
+#   "FAIL: DTC-75 --prefix leaves the citations of purged files and rewrites the moved ones to their real new path: got ['state: .fwx/STATE.md',
+#    'plan: .fwx/phases/01-alpha/01-01-PLAN.md', 'context: .fwx/phases/01-alpha/01-CONTEXT.md', ...], want ['state: .planning/STATE.md', 'plan: .planning/phases/01-alpha/01-01-PLAN.md',
+#    'context: .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md', ...]"
+# Control (the purged branch of rewrite_line taken out, the rest fixed): the first two lines come back as `.fwx/STATE.md` and `.fwx/phases/01-alpha/01-01-PLAN.md`.
+DOC75 = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.md\ncontext: .planning/phases/01-alpha/01-CONTEXT.md\n"
+         "folder: .planning/phases/01-alpha/\ntool: .planning\nunknown: .planning/other.txt\nrel: ../.planning/PROJECT.md\n")
+DOC75_WANT = ("state: .planning/STATE.md\nplan: .planning/phases/01-alpha/01-01-PLAN.md\n"
+              "context: .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md\nfolder: .fwx/milestones/v1/phases/01-alpha/\n"
+              "tool: .fwx\nunknown: .fwx/other.txt\nrel: ../.fwx/PROJECT.md\n")
+repo, wt = mini({"docs/guide.md": DOC75})
+rr = run(wt, "apply", "--close", "1")
+s.eq("DTC-75 apply exits 0", rr.returncode, 0)
+base75 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", base75, "--prefix", "docs/guide.md")
+got75 = rd(os.path.join(wt, "docs/guide.md")) or ""
+s.ok("DTC-75 --prefix leaves the citations of purged files and rewrites the moved ones to their real new path: got %s, want %s" % (got75.splitlines(), DOC75_WANT.splitlines()),
+     r.returncode == 0 and got75 == DOC75_WANT, r.stderr[-300:])
+s.ok("DTC-75 ... and lists what it left as a purged file's citation", "left alone" in r.stdout and ".planning/STATE.md" in r.stdout, r.stdout[-400:])
+
+# DTC-76: `plan` on a detached HEAD listed the detached state as an unmerged branch (`git branch --no-merged` prints `(HEAD detached from <sha>)`), so
+# `git diff master...(HEAD detached ...)` failed. Red on add19eb: "FAIL: DTC-76 plan on a detached HEAD exits 0: got 2, want 0" and, from the
+# --json line, "fwx migrate-gsd: git diff -z failed (128): fatal: bad revision 'master...(HEAD detached from 013c786)'".
+# Control (the fix reverted): the same two lines.
+repo, wt = world()          # with an origin and a default branch, as a real project has: that is where the branch names are read
+helpers.git(wt, "checkout", "-q", "--detach")
+helpers.write(wt, ".planning/phases/01-a/new.md", "# a commit that master does not have\n")      # else HEAD is merged into master and git lists nothing
+helpers.git(wt, "add", "-A")
+helpers.git(wt, "commit", "-q", "-m", "detached work")
+r = run(wt, "plan")
+s.eq("DTC-76 plan on a detached HEAD exits 0", r.returncode, 0)
+s.ok("DTC-76 ... and the detached state is not listed as a branch", "detached" not in r.stdout and "no branch" not in r.stdout, r.stdout[-300:])
+rp, D = plan_json(wt)
+helpers.git(wt, "checkout", "-q", "-b", "was-detached")
+on_branch = plan_json(wt)[1]
+s.ok("DTC-76 ... and --json has the same files as on a branch, with no branch named after the detached state",
+     rp.returncode == 0 and D["totals"] == on_branch["totals"] and not [b for b in D["branches"] if "(" in b["name"]], rp.stderr[-300:])
+
+# The review of pull request 220: `--prefix` wrote the new path of a moved citation without the existence check `--rewrite` makes.
+# Red on 6fcb1f4:
+#   R1 "FAIL: R1 --prefix without the map apply was run with leaves a citation whose new path does not exist, and says why: got 'see .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md\n'
+#      (exit 0, output '... rewritten: 1 reference(s) in 1 file(s), staged ...'), want 'see .planning/phases/01-alpha/01-CONTEXT.md\n'" (apply put the phase in v2 by --milestone-map; the plain run computes v1)
+#   R2 "FAIL: R2 --prefix leaves a glob across workstreams whose new path matches nothing: got 'ls .fwx/subprojects/*/ROADMAP.md\n', want 'ls .planning/workstreams/*/ROADMAP.md\n'"
+# Control (the dest_exists check taken out of the prefix branch): the same two lines.
+repo, wt = mini({"docs/d.md": "see .planning/phases/01-alpha/01-CONTEXT.md\n"})
+mapfile = os.path.join(HOME, "r1-map.txt")
+with open(mapfile, "w") as fh:
+    fh.write("1 v2\n")
+rr = run(wt, "apply", "--close", "1", "--milestone-map", mapfile)
+s.eq("R1 apply with the map exits 0", rr.returncode, 0)
+baseR1 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", baseR1, "--prefix", "docs/d.md")
+gotR1 = rd(os.path.join(wt, "docs/d.md"))
+s.ok("R1 --prefix without the map apply was run with leaves a citation whose new path does not exist, and says why: got %r (exit %d, output %r), want %r"
+     % (gotR1, r.returncode, r.stdout[-200:], "see .planning/phases/01-alpha/01-CONTEXT.md\n"),
+     r.returncode == 0 and gotR1 == "see .planning/phases/01-alpha/01-CONTEXT.md\n" and "does not exist" in r.stdout)
+helpers.git(wt, "reset", "-q", "--hard")
+r = run(wt, "refs", "--base", baseR1, "--milestone-map", mapfile, "--prefix", "docs/d.md")
+s.eq("R1 ... and with the map it writes the path that exists", (r.returncode, rd(os.path.join(wt, "docs/d.md"))),
+     (0, "see .fwx/milestones/v2/phases/01-alpha/01-CONTEXT.md\n"))
+
+repo, wt = world()
+helpers.write(wt, "docs/g.md", "ls .planning/workstreams/*/ROADMAP.md\n")
+helpers.git(wt, "add", "docs/g.md")
+helpers.git(wt, "commit", "-q", "-m", "a glob across workstreams")
+rr = run(wt, "apply", "--close", "1")
+s.eq("R2 apply exits 0", rr.returncode, 0)
+baseR2 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", baseR2, "--prefix", "docs/g.md")
+s.ok("R2 --prefix leaves a glob across workstreams whose new path matches nothing: got %r, want %r" % (rd(os.path.join(wt, "docs/g.md")), "ls .planning/workstreams/*/ROADMAP.md\n"),
+     r.returncode == 0 and rd(os.path.join(wt, "docs/g.md")) == "ls .planning/workstreams/*/ROADMAP.md\n")
 
 s.done()
