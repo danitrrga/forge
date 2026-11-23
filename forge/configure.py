@@ -442,11 +442,11 @@ class Plan:
 
     def framework_ready(self):
         """What the framework needs before it is on, the way `forge new --framework` leaves a project: plugins_keep (the plugin is turned on
-        through it), filled from the plugins the project already has on when it has none. Refusal when the generator would still refuse the
+        through it), filled from the plugins the project already has on when the key is absent (a present one, even `[]`, is the owner's and stays). Refusal when the generator would still refuse the
         project, so a change is never written that every sync then stops on. Returns the text for the layer column."""
         from forge import framework, new  # not at import: forge/new.py imports this module
         added = ""
-        if not self.proj.get("plugins_keep"):
+        if "plugins_keep" not in self.proj:
             self.proj["plugins_keep"] = new.framework_plugins([], self.forge)
             added = " and plugins_keep (the plugins the project had on)"
         why = lib.project_error(self.proj) or framework.plan(self.proj, self.name).error

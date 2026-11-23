@@ -29,7 +29,10 @@ Negative controls, each a one-line mutation of forge/configure.py, run once and 
      exit 2, stderr "forge config: framework cannot be switched on for project 'demo': framework is true but the project has no
      plugins_keep: ..."" (and the b assertions: "a project with no plugins_keep gets the plugins it had on -- None")
   e  the refusal in framework_ready() taken out -> "FAIL e: no plugin_source is refused (exit 2) and nothing is written -- exit 1,
-     forge config: written, but forge sync demo --apply exits 1 (...)"."""
+     forge config: written, but forge sync demo --apply exits 1 (...)".
+  h  (after the review of PR 217) `plugins_keep` defaulted when falsy instead of when absent, run against head 9721a48 -> "FAIL h: an
+     empty plugins_keep is refused (exit 2) and nothing is written -- exit 1, ... forge config: written, but forge sync nokeep
+     --apply exits 1 (...); undo with: no command does; by hand: ... plugins_keep in config/projects/nokeep.claude.json: was []"."""
 import hashlib
 import json
 import os
@@ -63,7 +66,7 @@ def write_json(p, doc):
 
 
 PROJECTS = {"demo": {}, "kept": {"plugins_keep": ["only@mk"]}, "fixed": {"framework": True, "plugins_keep": ["only@mk"]},
-            "frozen-p": {"frozen": True}}
+            "frozen-p": {"frozen": True}, "nokeep": {"plugins_keep": []}}
 
 
 class World:
@@ -134,7 +137,7 @@ class World:
 
     def fingerprint(self):
         h = hashlib.sha256()
-        for base in (os.path.join(self.root, "config"), self.pp("demo"), self.pp("kept"), self.pp("fixed"), self.pp("frozen-p")):
+        for base in (os.path.join(self.root, "config"), self.pp("demo"), self.pp("kept"), self.pp("fixed"), self.pp("frozen-p"), self.pp("nokeep")):
             for d, dirs, files in os.walk(base):
                 dirs[:] = sorted(x for x in dirs if x != ".git")
                 for f in sorted(files):
@@ -205,6 +208,16 @@ def case_e():
     check("e: a frozen project is refused (exit 2) and nothing is written", code == 2 and w.fingerprint() == before, "exit %d, %s" % (code, err.strip()[-300:]))
 
 
+def case_h(w):
+    # CodeRabbit on PR 217: plugins_keep is defaulted only when the key is absent. A present `[]` is the owner's explicit "no plugins": it
+    # is refused (the generator needs plugins_keep), never replaced silently by the defaults. (A present invalid value such as "" is already
+    # refused when the file is read; that was seen passing before the fix, so it is not asserted here.)
+    before = w.fingerprint()
+    code, out, err = w.forge("config", "nokeep", "--on", "option:framework", "--apply")
+    check("h: an empty plugins_keep is refused (exit 2) and nothing is written", code == 2 and w.fingerprint() == before,
+          "exit %d, stdout %r, stderr %r" % (code, out.strip()[-200:], err.strip()[-300:]))
+
+
 def case_f(w):
     code, out, err = w.forge("config", "--names")
     check("f: --names lists option:framework", "option:framework" in out.splitlines(), out[-300:])
@@ -230,7 +243,7 @@ def attempt(fn, *args):
 
 
 def main():
-    for fn in (case_a, case_b, case_c, case_d, case_f, case_g):
+    for fn in (case_a, case_b, case_c, case_d, case_f, case_g, case_h):
         attempt(lambda f=fn: f(World()))
     attempt(case_e)
     sandbox.cleanup()
