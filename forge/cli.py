@@ -20,6 +20,7 @@
   forge shim [--shell S] print a shell function `claude`, so that `claude @NAME` runs `forge start @NAME` (--check @NAME: the probe; forge/shim.py)
   forge lock [--apply]   config/forge.lock.json: the plugin, outside-skill and MCP package versions this machine runs
   forge versions [--md]  those and the mise pins of config/toolchain.json, for release notes
+  forge update [NAME... | --all] [--apply]  move the entries of config/toolchain.json that follow upstream, then install, relink and relock
   forge metrics NAME     a project's harness metrics from its Claude Code transcripts (--baseline: one session)
   forge session-start    the SessionStart hook: this session's project only, then a note if the toolchain is off;
                          silent unless it wrote or has one
@@ -43,7 +44,7 @@ import sys
 import tempfile
 import time
 
-from forge import accounts, completion, configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, usage
+from forge import accounts, completion, configure, launch, lib, lockfile, mcp, owned, profiles, run, shim, skills, toolchain, update, usage
 from forge import new as new_cmd
 
 # The order is the contract: the system doc comes last. (name, script, its dry-run flag, its apply flag,
@@ -2131,6 +2132,12 @@ def build_parser():
     t = sub.add_parser("versions", help="the toolchain pins and the lock together, for release notes")
     t.add_argument("--md", action="store_true", help="markdown tables")
     t.set_defaults(fn=lockfile.cmd_versions)
+    t = sub.add_parser("update", help="move the toolchain entries that follow upstream (a dry-run unless --apply)")
+    t.add_argument("names", nargs="*", metavar="NAME", help="entries of config/toolchain.json (a tool, or pip:NAME); none lists every one")
+    t.add_argument("--all", action="store_true", help="every entry (--apply needs NAME... or --all)")
+    t.add_argument("--apply", action="store_true", help="write config/toolchain.json, then run forge toolchain --fix, forge skills --apply "
+                   "(when an archive changed) and forge lock --apply")
+    t.set_defaults(fn=update.cmd)
     g = sub.add_parser("log", help="the change journal: what forge sync --apply and session start wrote")
     g.add_argument("project", nargs="?", help="this project's paths only")
     g.add_argument("--since", help="YYYY-MM-DD, changes from this day")

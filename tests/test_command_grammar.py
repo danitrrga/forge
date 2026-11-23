@@ -27,7 +27,7 @@ import sandbox  # noqa: E402
 
 failures = []
 RENAMED = {"add": "new", "launch": "start", "check-public": "lint"}
-KEPT = ("sync", "skills", "doctor", "metrics", "test", "toolchain", "lock", "versions", "log", "session-start", "commit",
+KEPT = ("sync", "skills", "doctor", "metrics", "test", "toolchain", "lock", "versions", "update", "log", "session-start", "commit",
         "init", "uninstall")
 
 

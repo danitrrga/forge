@@ -347,6 +347,7 @@ forge shim [--shell fish|zsh|bash] | --check @NAME         print a shell functio
 forge completion fish|zsh|bash                          print the completion script of a shell (nothing is installed): commands and flags from the parser, and the projects, this directory's `@` profiles and the `--on`/`--off` values (`forge config --names`) asked of `forge` at each tab; `claude @` completes too, every other `claude` word is left to what completed it before
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
+forge update [NAME... | --all] [--apply]                    what each `track: latest` entry of config/toolchain.json would move to (tools by `mise latest`, online-skill archives by `git ls-remote`, pip libraries by PyPI, only with a wheel for the pinned python); `--apply` writes the file, then runs `forge toolchain --fix`, `forge skills --apply` (when an archive changed) and `forge lock --apply`, stopping at the first failure; a frozen entry is skipped with its why
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
 forge lint [--root DIR] --all                               personal data in the files the engine publishes (--root: another repository's)
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts
