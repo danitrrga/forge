@@ -705,9 +705,9 @@ def create(a):
         return refuse(2, "nothing written, the project file would not be valid: %s" % why)
     extras = list(doc["skill_keep"]["extras"][key])
     held = list(ctx.draft.start["forge"]["skill_keep"]["extras"][key])
-    if a.no_baseline and held:  # a row left from an earlier project of this name: the site would not be bare, and the row is never deleted here
+    if a.no_baseline and not row:  # a row left from an earlier project of this name, even an empty one: the project would still be enrolled (it gets the common skills and is trimmed), and the row is never deleted here
         return refuse(2, "nothing written, --no-baseline: config/forge.json skill_keep.extras already has a row %s (%s) that would still "
-                         "give this project skills; remove the row by hand, or drop --no-baseline" % (key, ", ".join(held)))
+                         "enrol this project in skill trimming; remove the row by hand, or drop --no-baseline" % (key, ", ".join(held) or "empty"))
     if a.no_baseline and extras != held:
         return refuse(2, "nothing written, --no-baseline leaves out the skill_keep.extras row of %s, and the skills answered go into it (%s): "
                          "drop --no-baseline, or give those skills to a profile" % (key, ", ".join(extras)))
