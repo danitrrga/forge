@@ -45,6 +45,7 @@ line of each, seen red:
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -199,7 +200,8 @@ def case_base(R, S):
     S.eq("args: linear is false for a project with no Linear project (an outside item needs no issue key there)", a.get("linear"), False)
     lin = Scene(config={"project": {"checks": ["true"], "linear_project": "forge"}})
     S.eq("args: linear is true for a project with a Linear project", json.loads(lin.prepare(R).stdout or "{}").get("linear"), True)
-    S.ok("prepare wrote nothing in the part", not sc.audit_exists())
+    S.eq("prepare wrote one evidence row, the green base, and nothing else in the part",
+         [x.get("kind") for x in state.read_rows(os.path.join(sc.part, "audit.tsv"))], ["evidence"])
 
 
 def case_models(R, S):
@@ -589,9 +591,73 @@ def case_dispatch(R, S):
     S.ok("`fwx help` lists wave", "wave" in h.stdout, h.stdout)
 
 
+def counting(runs, mark="x"):
+    """A check that passes and leaves one line in `runs`: how many times it ran, outside the repository."""
+    return "echo %s >> %s" % (mark, shlex.quote(runs))
+
+
+def ran(runs):
+    return len(open(runs).read().split()) if os.path.exists(runs) else 0
+
+
+def evidence_rows(sc):
+    return state.read_rows(os.path.join(sc.part, "audit.tsv"))
+
+
+def case_base_reuse(R, S):
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    sc = Scene(recipe=[counting(runs)])
+    base = sc.head()
+    r1 = sc.prepare(R)
+    S.eq("reuse: the first wave new runs the checks once", (r1.returncode, ran(runs)), (0, 1))
+    S.eq("reuse: the green base is recorded as one evidence row of the sha, with the checks it ran",
+         [(x.get("kind"), x.get("sha"), x.get("rc"), [c["cmd"] for c in json.loads(x["detail"])["commands"]]) for x in evidence_rows(sc)],
+         [("evidence", base, "0", [counting(runs)])])
+    r2 = sc.prepare(R)
+    S.eq("reuse: a second wave new on the same base runs no check", (r2.returncode, ran(runs)), (0, 1))
+    S.ok("reuse: and says it reused the record of the sha", "base checks: reused the passing record of %s" % base[:7] in r2.stderr, r2.stderr)
+    S.eq("reuse: it writes no second row", len(evidence_rows(sc)), 1)
+    sc.commit("more.txt", "another commit")
+    r3 = sc.prepare(R)
+    S.eq("reuse: stale record, a record of an older sha stands in for nothing: the checks run again", (r3.returncode, ran(runs)), (0, 2))
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"checks": [counting(runs, "y")]}}))
+    r4 = sc.prepare(R)
+    S.eq("reuse: a record of other checks on the same sha stands in for nothing: the checks run again", (r4.returncode, ran(runs)), (0, 3))
+    r5 = sc.prepare(R)
+    S.eq("reuse: the new checks are recorded and reused in turn", (r5.returncode, ran(runs)), (0, 3))
+    bad = Scene(recipe=[counting(runs, "z") + "; exit 3"])
+    codes = (bad.prepare(R).returncode, bad.prepare(R).returncode)
+    S.eq("reuse: a red base leaves no record, so the next run runs the checks again", (codes, ran(runs), bad.audit_exists()), ((1, 1), 5, False))
+
+
+def timeout_run(sc, seconds):
+    """`fwx wave new` as the command runs it, with the time limit of a check shortened: (exit code, stdout, stderr)."""
+    code = ("import sys; sys.path.insert(0, %r); from fwx.core import verify; verify.run_check.__defaults__ = (%d,); "  # the limit is run_check's default
+            "from fwx.commands import wave; sys.exit(wave.do_prepare(sys.argv[1:]))" % (os.path.join(ROOT, "lib"), seconds))
+    r = subprocess.run([sys.executable, "-c", code, "--part-dir", sc.part, "--plane", "session", "--branch", "phase"], cwd=sc.cwd,
+                       env=helpers.clean_env(**sc.env), capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr
+
+
+def case_base_timeout(R, S):
+    slow = "%s -c 'import time; time.sleep(30)'" % shlex.quote(sys.executable)
+    sc = Scene(recipe=[slow])
+    code, out_, err = timeout_run(sc, 1)
+    S.eq("timeout: a base check that outlives its limit is NOT RUN, exit 77, nothing on stdout", (code, out_), (77, ""))
+    S.ok("timeout: the message says NOT RUN, names the check and the limit, and is not the red-base line",
+         "NOT RUN" in err and "timed out after 1 s" in err and "time.sleep(30)" in err and "is red" not in err, err)
+    S.ok("timeout: and says how to go on", "run it again" in err, err)
+    S.ok("timeout: nothing is recorded as a pass or a failure, and no round is spent", not sc.audit_exists())
+    both = Scene(recipe=["echo boom; exit 3", slow])
+    code, out_, err = timeout_run(both, 1)
+    S.eq("timeout: a check that is red beside one that timed out is still a red base", (code, json.loads(out_ or "{}").get("status")), (1, "needs-owner"))
+    fast = Scene(recipe=["true"])
+    S.eq("timeout: a check inside its limit is not affected", timeout_run(fast, 1)[0], 0)
+
+
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
