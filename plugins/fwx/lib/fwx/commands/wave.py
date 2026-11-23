@@ -5,8 +5,11 @@ The steps keep their old names inside: in the run's files (`<n>-<step>.json`), i
 `wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
 [--control-findings F] [--from gate]` validates the part `D` from the integration checkout (the current folder, on branch `W`) and prints
 the `args` of `execute` as one JSON object (execute/prepare.py says what it checks and what it leaves out). Exit 0, 1 when
-the base fails its own checks (a needs-owner JSON line on stdout, `rounds <used>/<cap>` on stderr, no round spent), 2 for
-anything that must stop the run before it starts, with the reason on stderr and nothing written. `--from gate` is the way back
+the base fails its own checks (a needs-owner JSON line on stdout, `rounds <used>/<cap>` on stderr, no round spent), 77 when a
+base check ran out of time and none is red (`NOT RUN: ...` on stderr, nothing on stdout, no round spent: the machine was too slow,
+the base is not red; run it again), 2 for anything that must stop the run before it starts, with the reason on stderr and nothing
+written. A base that ran green is recorded as an `evidence` row of the part, and a second `wave new` on the same base and checks
+reuses it. `--from gate` is the way back
 into the checks once every task is on the phase branch (the tree's n_C7F loops to n_C7): execute/prepare.py says what it changes.
 
 `fwx base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
@@ -117,6 +120,9 @@ def do_prepare(argv):
         print(json.dumps(e.status))
         sys.stderr.write("fwx wave new: %s\n%s\nrounds %s\n" % (e, e.shown, e.status["rounds"]))
         return 1
+    except prep.NotRun as e:
+        sys.stderr.write("fwx wave new: %s\n" % e)
+        return 77
     except (base.WaveError, config.ConfigError, state.StateError, plan_step.CannotRun) as e:
         sys.stderr.write("fwx wave new: %s\n" % e)
         return 2
