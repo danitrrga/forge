@@ -34,7 +34,7 @@ $minutes minutes: a guide, since nothing cuts an agent off; on expiry, return pa
 - no writing in `.fwx/`
 
 ## REPORT
-Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, assumptions, outside, could_not_run, reason}`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, issue: <Linear key>|null}`; `issue` is `null` only where the project has no Linear project, or with `issue_error` when `fwx linear new` failed. A report whose items lack that shape is rejected.
+Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the file-write tool is enough). Its fields: `{status, branch, worktree, head, commits, red: {cmd, message}, green: {cmd}, question, assumptions, outside, could_not_run, reason}`. Each item of `outside` is `{where: path:line, what, fix, size: small|large, issue: <Linear key>|null}`; `issue` is `null` only where the project has no Linear project, or with `issue_error` when `fwx linear new` failed. A report whose items lack that shape is rejected.
 Your whole reply is one line: `<status> <report path> commits=<n>`, the report path in full.
 
 ## STANDING

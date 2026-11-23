@@ -161,7 +161,7 @@ def case_briefs(R, S):
          "`report.json` directly in your scratch folder, not in its `tmp/`" in rep and os.path.join(folder, "reports") not in t1 and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
                                                                                         "question", "outside", "could_not_run", "reason"))
          and "<status> <report path> commits=<n>" in rep, rep)
-    S.ok("briefs: REPORT says the Write tool is enough (the folder is in the worktree: no heredoc, Write is not refused there)", "Write tool" in rep and "heredoc" not in rep, rep)
+    S.ok("briefs: REPORT says the file-write tool is enough, naming no harness tool (the folder is in the worktree: no heredoc)", "file-write tool" in rep and "Write tool" not in rep and "heredoc" not in rep, rep)
     S.ok("briefs: STANDING names agents/executor.md of the plugin", os.path.join(ROOT, "agents", "executor.md") in f1.get("STANDING", ""), f1.get("STANDING", ""))
     S.ok("briefs: no model name (they come from `fwx model`)", not re.search(r"sonnet|opus|haiku|fable", t1, re.I), t1[:200])
     S.ok("briefs: no placeholder left", re.search(r"\$[a-z_]+", t1) is None, t1)
@@ -184,6 +184,8 @@ def case_template(R, S):
     S.ok("template: it does not spell the shared files (one place assembles them, 2.5 U9)",
          not any(w in text.replace("plan.md", "") for w in ("context.md", "decisions.tsv")), text)
     S.ok("template: no model name", not re.search(r"sonnet|opus|haiku|fable", text, re.I))
+    js = read(os.path.join(ROOT, "workflows", "execute.js"))
+    S.ok("template: the fixer's and resolver's prompt names the file-write tool too, no harness tool", "file-write tool" in js and "Write tool" not in js)
 
 
 def case_refused(R, S):
@@ -393,7 +395,7 @@ MUTANTS = [
     ("trailers dropped", case_briefs, T, "\n$trailers", "", "SCOPE lists its file, the run and both trailers"),
     ("a sha back in the brief", case_briefs, T, "Base: the `BASE` line of your prompt,", "Base: 0123456789abcdef0123456789abcdef01234567 (the `BASE` line of your prompt),",
      "no sha is in the brief"),
-    ("report back under .git", case_briefs, T, "Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the Write tool is enough).",
+    ("report back under .git", case_briefs, T, "Write it as JSON to `report.json` directly in your scratch folder, not in its `tmp/` (the file-write tool is enough).",
      "Write it as JSON to .git/fwx/reports/T1.json, with a heredoc.", "REPORT names report.json in the scratch folder"),
     ("big task at 40 minutes", case_briefs, B, '"big": 60', '"big": 40', "T2 TIMEBOX is 60 minutes"),
     ("every wave runs beside it", case_briefs, P, 'brief.task_facts(t, [x for x in data["tasks"] if x["wave"] == t["wave"]], ctx)',
