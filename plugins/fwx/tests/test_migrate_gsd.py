@@ -1246,7 +1246,7 @@ TABLE = [("cp .planning.bak backup/", "cp .planning.bak backup/"),
          ("cd .planning", "cd .fwx"),
          ('"!.planning"', '"!.fwx"'),
          ("ls ./.planning/x", "ls ./.fwx/x"),
-         ("X=.planning/phases", "X=.fwx/phases"),
+         ("X=.planning/phases", "X=.fwx/milestones/v2/phases"),     # a moved folder goes to its real new path (DTC-75), not by the blunt prefix
          ("(.planning/x)", "(.fwx/x)"),
          ("/.planning/phases/01-a/fonts/", "/.fwx/phases/01-a/fonts/"),
          ("see .planning.", "see .fwx.")]
@@ -2098,8 +2098,8 @@ s.eq("DTC-72 --rewrite changes each relative path to the new place of its file, 
       VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/PROJECT.md)")))
 helpers.git(wt, "reset", "-q", "--hard")
 r = run(wt, "refs", "--base", base72, "--prefix", "docs/vision.md")
-s.ok("DTC-72 --prefix changes `.planning` to `.fwx` after a `../` run too, and keeps the run",
-     r.returncode == 0 and "](../.fwx/REQUIREMENTS.md)" in (rd(os.path.join(wt, "docs/vision.md")) or ""), r.stderr[-300:] + (rd(os.path.join(wt, "docs/vision.md")) or ""))
+s.ok("DTC-72 --prefix changes `.planning` to the real new path after a `../` run too, and keeps the run",
+     r.returncode == 0 and "](../.fwx/milestones/v1/REQUIREMENTS.md)" in (rd(os.path.join(wt, "docs/vision.md")) or ""), r.stderr[-300:] + (rd(os.path.join(wt, "docs/vision.md")) or ""))
 
 # ---- the review of pull request 219: the three places that did not know the backlog moved ------------------------------------------------
 # Each seen red on cb804e7 (the first FAIL line of each case):
