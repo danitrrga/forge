@@ -2101,4 +2101,57 @@ r = run(wt, "refs", "--base", base72, "--prefix", "docs/vision.md")
 s.ok("DTC-72 --prefix changes `.planning` to `.fwx` after a `../` run too, and keeps the run",
      r.returncode == 0 and "](../.fwx/REQUIREMENTS.md)" in (rd(os.path.join(wt, "docs/vision.md")) or ""), r.stderr[-300:] + (rd(os.path.join(wt, "docs/vision.md")) or ""))
 
+# ---- the review of pull request 219: the three places that did not know the backlog moved ------------------------------------------------
+# Each seen red on cb804e7 (the first FAIL line of each case):
+#   B1 "FAIL: B1 the .gitignore twins of the lines that name the backlog name .fwx/backlog/...: got ['.planning/quick/', '.fwx/quick/', '.planning/todos/', '.fwx/todos/'], want ['.planning/quick/', '.fwx/backlog/quick/', '.planning/todos/', '.fwx/backlog/todos/']"
+#      and "FAIL: B1 leftovers after the merge exits 0 ...: got 2, want 0" (it says the files "would stop being ignored at their destination")
+#   B2 "FAIL: B2 a tracked .gitignore inside a backlog item moves with it, byte for byte: .fwx/backlog/phases/999.1-x/.gitignore: got None, want '*.tmp\n'"
+#      (it was written at .fwx/milestones/v1/phases/999.1-x/.gitignore, a phase that `fwx phase list` showed open)
+#   B3 "FAIL: B3 apply with a file `.planning/backlog` beside BACKLOG.md: exits 2: got 1, want 2" (a blob check failed, the rollback could not
+#      remove .fwx/backlog, a marker was left)
+# Controls: B1 `structure` without its backlog branch (the first FAIL above); B3 the new check removed (the same line).
+repo = helpers.toy_repo({"README": "toy\n", ".planning/PROJECT.md": "# P\n", ".planning/STATE.md": "---\nmilestone: v1.0\n---\n",
+                         ".planning/ROADMAP.md": MINI_ROAD, ".planning/phases/01-alpha/01-01-PLAN.md": PLAN_BODY,
+                         ".planning/phases/01-alpha/01-01-SUMMARY.md": "# s\n", ".planning/phases/01-alpha/01-CONTEXT.md": "# c\n",
+                         ".planning/quick/260101-open/260101-PLAN.md": "# Fix the thing\n"})
+helpers.write(repo, ".gitignore", ".planning/quick/\n.planning/todos/\n")
+helpers.git(repo, "add", ".gitignore")
+helpers.git(repo, "commit", "-q", "-m", "ignore")
+wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+r = run(wt, "apply", "--close", "1")
+s.eq("B1 apply exits 0", r.returncode, 0)
+s.eq("B1 the .gitignore twins of the lines that name the backlog name .fwx/backlog/...",
+     (rd(os.path.join(wt, ".gitignore")) or "").splitlines(),
+     [".planning/quick/", ".fwx/backlog/quick/", ".planning/todos/", ".fwx/backlog/todos/"])
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".planning/quick/260101-open/notes.txt", "scratch\n")          # ignored
+helpers.write(repo, ".planning/todos/pending/a.md", "# ignored todo\n")           # ignored
+r = run(repo, "leftovers", "--apply")
+s.eq("B1 leftovers after the merge exits 0 (the ignored backlog files move where the twins ignore them)", r.returncode, 0)
+s.eq("B1 ... and they are at .fwx/backlog/<their path>",
+     (rd(os.path.join(repo, ".fwx/backlog/quick/260101-open/notes.txt")), rd(os.path.join(repo, ".fwx/backlog/todos/pending/a.md"))),
+     ("scratch\n", "# ignored todo\n"))
+
+GI = {".planning/phases/999.1-x/999.1-CONTEXT.md": "# Someday\n", ".planning/phases/999.1-x/.gitignore": "*.tmp\n",
+      ".planning/quick/260101-open/.gitignore": "*.log\n", ".planning/todos/pending/a.md": "# t\n",
+      ".planning/todos/pending/.gitignore": "/draft/\n*.bak\n"}
+repo, wt = mini(GI)
+r = run(wt, "apply", "--close", "1")
+s.eq("B2 apply exits 0", r.returncode, 0)
+s.eq("B2 a tracked .gitignore inside a backlog item moves with it, byte for byte (a phase 999.x, a quick task, todos/pending)",
+     [rd(os.path.join(wt, ".fwx/backlog", p)) for p in ("phases/999.1-x/.gitignore", "quick/260101-open/.gitignore", "todos/pending/.gitignore")],
+     ["*.tmp\n", "*.log\n", "/draft/\n*.bak\n"])
+s.eq("B2 ... and no phase 999.1-x appears among the phases of the milestone",
+     ([p.name for p in state.phases(Path(wt) / ".fwx", "v1") if p.name.startswith("999")], os.path.lexists(os.path.join(wt, ".fwx/milestones/v1/phases/999.1-x"))),
+     ([], False))
+
+repo, wt = mini({".planning/BACKLOG.md": "# Backlog\n", ".planning/backlog": "a file the project named backlog\n"})
+r = refusal("B3 apply with a file `.planning/backlog` (kept at .fwx/backlog) beside BACKLOG.md (moved to .fwx/backlog/BACKLOG.md)", wt,
+            ["apply", "--close", "1"], ".fwx/backlog", (wt, os.path.join(repo, ".git")))
+s.ok("B3 ... and the refusal is the plan's: no marker was left", not [n for n in os.listdir(helpers.git(wt, "rev-parse", "--absolute-git-dir").strip())
+                                                                    if n.startswith("fwx-migrate-gsd-apply")])
+rp = run(wt, "plan", "--close", "1")
+s.ok("B3 plan refuses it too, naming both paths", rp.returncode == 2 and ".fwx/backlog" in rp.stderr and ".fwx/backlog/BACKLOG.md" in rp.stderr, rp.stderr[-300:])
+
 s.done()
