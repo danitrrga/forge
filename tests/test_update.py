@@ -501,11 +501,29 @@ def cases(tmp):
     pins = {e["name"]: e["version"] for k in ("tools", "pip") for e in json.loads(w.read(w.manifest))[k]}
     want("--apply leaves the held pins as they were and moves the others",
          (code, pins["npm:ahead-tool"], pins["npm:rc-tool"], pins["ahead"], pins["node"]), (0, "2.0.0", "3.0.0", "5.0.0", "26.1.0"))
-    want("--apply never installs a held entry", [l for l in w.calls() if l.startswith(("mise install", "python3 -m pip install")) and ("ahead" in l or "rc-tool" in l)], [])
-    for older, newer in (("1.9.9", "2.0.0"), ("2.0.0-rc.1", "2.0.0"), ("1.0", "1.0.1"), ("2026.9.1", "2026.10.26"), ("0.9", "0.10"), ("1.0.0a1", "1.0.0")):
+    installs = [c for c in w.calls() if c.startswith(("mise install", "python3 -m pip install"))]
+    want("--apply installed the moved entries (so the held-entry check below looked at something)",
+         ("node@26.1.0" in " ".join(installs), "PyYAML==6.0.1" in " ".join(installs)), (True, True))
+    want("--apply never installs a held entry", [c for c in installs if "ahead" in c or "rc-tool" in c], [])
+    for older, newer in (("1.9.9", "2.0.0"), ("2.0.0-rc.1", "2.0.0"), ("1.0", "1.0.1"), ("2026.9.1", "2026.10.26"), ("0.9", "0.10"), ("1.0.0a1", "1.0.0"),
+                         ("2.0.0", "2.0.0.post1"), ("1.0", "1.0.post1"), ("2.0.0.post1", "2.0.0.post2"), ("2.0.0.post1", "2.0.1"), ("2.0.0rc1", "2.0.0.post1")):
         want("version order %s < %s" % (older, newer), (update.older(older, newer), update.older(newer, older)), (True, False))
     for same in (("1.0", "1.0.0"), ("26.13.1", "26.13.1")):
         want("version order %s is not older than %s either way" % same, (update.older(same[0], same[1]), update.older(same[1], same[0])), (False, False))
+
+    # a post-release is newer than its release: a pin on one is never "moved" back to the release (a downgrade), and a
+    # release pin does move to its post-release
+    doc = doc_base()
+    doc["pip"].append(tool("postpinned", "2.0.0.post1"))
+    doc["pip"].append(tool("postbehind", "2.0.0"))
+    w = World(tmp, "post", doc)
+    pages = web()
+    pages[update.PYPI % "postpinned"] = pypi("2.0.0", "postpinned-2.0.0-py3-none-any.whl")
+    pages[update.PYPI % "postbehind"] = pypi("2.0.0.post1", "postbehind-2.0.0.post1-py3-none-any.whl")
+    code, out, _ = w.run("update", "pip:postpinned", "pip:postbehind", web_pages=pages)
+    want("a pin on a post-release is held, not moved back to the release",
+         ("held: pin 2.0.0.post1 is newer than upstream's latest 2.0.0" in line(out, "pip:postpinned"), "->" in line(out, "pip:postpinned")), (True, False))
+    want("a release pin moves to its post-release", ("->" in line(out, "pip:postbehind"), "skipped" in line(out, "pip:postbehind")), (True, False))
 
     # an upstream answer that is no version is an error row and never reaches the manifest (G5)
     w = World(tmp, "badlatest")

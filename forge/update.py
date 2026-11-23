@@ -125,15 +125,21 @@ def requires_python_ok(spec, target):
     return True
 
 
+POST_WORDS = {"post", "rev", "r"}
+
+
 def vkey(version):
     """A sortable key: the numbers of a version as numbers, its words (rc, a, beta) as text below every number, so a
     pre-release is older than its release; zeros that end a run of numbers do not count (1.0 is 1.0.0, and 1.0.0-rc.1
-    is below 1.0)."""
+    is below 1.0). A post-release word (post, rev, r) comes after the end of its release and before the next number
+    (2.0.0 < 2.0.0.post1 < 2.0.1)."""
     out = []
     for t in re.findall(r"\d+|[A-Za-z]+", version):
         if not t.isdigit():
             while out and out[-1] == (1, 0):
                 out.pop()
+            if t.lower() in POST_WORDS:
+                out.append((1, 0))
         out.append((1, int(t)) if t.isdigit() else (0, t.lower()))
     while out and out[-1] == (1, 0):
         out.pop()
