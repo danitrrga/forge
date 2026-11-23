@@ -146,9 +146,10 @@ def marker(name, exists=lambda path: False):
         return "one-use"
     if _BACKUP.search(base):
         return "old"
-    m = _VERSION.search(base)
-    if m and exists(os.path.join(os.path.dirname(name), base[:m.start()] + base[m.end():])):
-        return "old"
+    for m in _VERSION.finditer(base):
+        stem = base[:m.start()] + base[m.end():]
+        if stem and exists(os.path.join(os.path.dirname(name), stem)):
+            return "old"
     return None
 
 
@@ -158,7 +159,7 @@ def default_names(root, cfg):
     if cfg["project"].get("default_branch"):
         names.add(cfg["project"]["default_branch"])
     r = _git(root, "symbolic-ref", "--short", "-q", "refs/remotes/origin/HEAD")
-    if r.returncode == 0 and r.stdout.strip():
+    if r.returncode == 0 and r.stdout.strip() and _git(root, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD^{commit}").returncode == 0:
         names.add(r.stdout.strip().split("/", 1)[-1])
     return names or {"main", "master"}
 
@@ -169,31 +170,37 @@ def _default_refs(root, cfg):
     return [ref for ref in refs if _git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}").returncode == 0]
 
 
-def _range_base(root, cfg):
-    """The merge base of HEAD with the default branch (the nearest, when the local branch and `origin/` differ), or None."""
+def _range_base(root, cfg, rev="HEAD"):
+    """The merge base of `rev` with the default branch (the nearest, when the local branch and `origin/` differ), or None."""
     best = None
     for ref in _default_refs(root, cfg):
-        mb = _git(root, "merge-base", "HEAD", ref)
+        mb = _git(root, "merge-base", rev, ref)
         if mb.returncode:
             continue
-        n = _git(root, "rev-list", "--count", mb.stdout.strip() + "..HEAD").stdout.strip()
+        n = _git(root, "rev-list", "--count", mb.stdout.strip() + ".." + rev).stdout.strip()
         if n.isdigit() and (best is None or int(n) < best[0]):
             best = (int(n), mb.stdout.strip())
     return best and best[1]
 
 
-def added_files(root, cfg):
+def _committed(root, rev, path):
+    """Whether `path` is a file or a symlink of the commit `rev`: not a folder, and not a file only the working tree holds."""
+    r = _git(root, "cat-file", "-t", "%s:%s" % (rev, path))
+    return r.returncode == 0 and r.stdout.strip() == "blob"
+
+
+def added_files(root, cfg, rev="HEAD"):
     """`(lines, known)`: one line per file added or renamed to since the merge base with the default branch whose name marks it as one-use or
-    an old version, and False for `known` when there is no base to measure from."""
-    base = _range_base(root, cfg)
+    an old version, in the commit `rev` (the one verified), and False for `known` when there is no base to measure from."""
+    base = _range_base(root, cfg, rev)
     if base is None:
         return [], False
-    r = _git(root, "diff", "-z", "--name-only", "--diff-filter=AR", "-M", base, "HEAD")
+    r = _git(root, "diff", "-z", "--name-only", "--diff-filter=AR", "-M", base, rev)
     if r.returncode:
         raise state.StateError("git diff failed in %s: %s" % (root, r.stderr.strip()))
     lines = []
     for f in sorted(f for f in r.stdout.split("\0") if f):
-        kind = None if f.startswith(state.PLAN_DIR.rstrip("/") + "/") else marker(f, lambda p: os.path.exists(os.path.join(root, p)))
+        kind = None if f.startswith(state.PLAN_DIR.rstrip("/") + "/") else marker(f, lambda p: _committed(root, rev, p))
         if kind:
             lines.append("%s: %s %s" % (f, "a one-use file" if kind == "one-use" else "an old version", ADDED_FILE_TIP))
     return lines, True
@@ -240,7 +247,7 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=CHECK_TIMEOUT_S, enviro
                                                    "project" if source == "profile" else "package.json scripts", sha[:7]))
     results = [run_check(command, root, timeout) for command in recipe]
     started = time.monotonic()
-    marked, known = added_files(root, cfg)
+    marked, known = added_files(root, cfg, sha)
     if not known:
         say("%s: no default branch to measure the added files from" % "NOT RUN, NOT ARMED")
     if marked:
