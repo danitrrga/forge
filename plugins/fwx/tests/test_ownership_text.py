@@ -102,14 +102,15 @@ def pointer_problems(read_text):
 # What the rubric must judge, by the rule it comes from: an agent is responsible for what it sees wrong, not for solving it all
 RUBRIC_WORDS = {
     "ownership": ["small and easy", "status `question`", "first in `outside`"],
+    "security": ["\n## Security\n", "secrets", "input crossing a boundary", "permissions", "auth paths", "scores low"],
 }
 
 
-def rubric_problems(text, dims=("ownership",)):
+def rubric_problems(text, dims=("ownership", "security")):
     return ["session-rubric.md does not say %s (%s)" % (w, d) for d in dims for w in RUBRIC_WORDS[d] if w not in text]
 
 
-s.eq("session-rubric.md judges what an agent does with a defect it sees: fixed when small, `question` or an `outside` item flagged first when big",
+s.eq("session-rubric.md judges what an agent does with a defect it sees (fixed when small, `question` or an `outside` item flagged first when big) and has a Security dimension",
      rubric_problems(read("docs/session-rubric.md")), [])
 s.eq("principles.md: rule 12 states the ownership rule, its source and its enforcers", rule_problems(read("playbooks/principles.md")), [])
 s.eq("a text still narrows an agent's scope to its brief (state the rule once, in " + RULE + ", and point at it)", narrowing(texts()), [])
@@ -129,5 +130,7 @@ s.ok("control: an executor that does not point at the rule is found",
      any("executor.md does not point" in p for p in pointer_problems(lambda rel: "" if rel == "agents/executor.md" else read(rel))))
 s.ok("control: a reviewer that does not say a defect nearby is an `outside` item is found",
      any("reviewer.md does not say `outside`" in p for p in pointer_problems(lambda rel: read(rel).replace("`outside`", "") if rel == "agents/reviewer.md" else read(rel))))
+s.ok("control: a rubric with no security dimension is found",
+     rubric_problems(read("docs/session-rubric.md").replace("## Security", "## Safety"), ("security",)) != [])
 s.ok("control: a rubric with no escalation criterion is found", rubric_problems("Only what the task names is written.") != [])
 s.done()
