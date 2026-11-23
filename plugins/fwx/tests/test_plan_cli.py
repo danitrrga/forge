@@ -71,7 +71,7 @@ def front(data, body):
 
 
 def good_plan(tasks=None):
-    t = {"id": "T1", "part": 1, "type": "feature", "wave": 1, "files": ["a.py"], "depends_on": [], "tests": [], "size": "small", "ui": False}
+    t = {"id": "T1", "part": 1, "type": "feature", "wave": 1, "files": ["a.py"], "depends_on": [], "tests": [{"run": "python3 t.py", "measures": "the thing", "red": "x fails"}], "size": "small", "ui": False}
     return front({"size": {"tag": "small", "parts": 1, "agents": 1},
                   "criteria": [{"id": "C1", "text": "it works", "measure": "t.py exits 0"},
                                {"id": "C2", "text": "it is fast", "measure": "time t.py"}],
@@ -209,7 +209,7 @@ repo, ph = world({"plan.md": good_plan()})
 rows(repo, ph, "planning")
 for flag in ((), ("--unattended",)):
     status("plan clean %s" % (flag,), repo, ph, "plan", "done", *flag)
-bad = good_plan([{"id": "T1", "part": 1, "type": "feature", "wave": 1, "files": [], "depends_on": [], "tests": [], "size": "small", "ui": False}])
+bad = good_plan([{"id": "T1", "part": 1, "type": "feature", "wave": 1, "files": [], "depends_on": [], "tests": [{"run": "python3 t.py", "measures": "the thing", "red": "x fails"}], "size": "small", "ui": False}])
 repo, ph = world({"plan.md": bad})
 rows(repo, ph, "planning")
 for flag in ((), ("--unattended",)):

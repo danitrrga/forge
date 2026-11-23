@@ -73,7 +73,7 @@ def base():
              "size": "small", "ui": False},
             {"id": "T2", "part": 1, "type": "bug", "wave": 1, "files": ["b.py"], "depends_on": [], "tests": [test()],
              "size": "small", "ui": False},
-            {"id": "T3", "part": 1, "type": "feature", "wave": 2, "files": ["c.py"], "depends_on": ["T1", "T2"], "tests": [],
+            {"id": "T3", "part": 1, "type": "feature", "wave": 2, "files": ["c.py"], "depends_on": ["T1", "T2"], "tests": [test()],
              "size": "small", "ui": False},
         ],
         "not_built": [{"what": "x", "why": "y"}],
@@ -235,7 +235,7 @@ case("a body of 150 lines of 25 words is over 3600 words", phase(body=long), war
 # ---- ## Size must say something when the plan warned about its size
 five = lambda f: (f["size"].update(tag="small", agents=1), f.update(tasks=[
     {"id": "T%d" % i, "part": 1, "type": "feature", "wave": i, "files": ["f%d.py" % i], "depends_on": ["T%d" % (i - 1)] if i > 1 else [],
-     "tests": [], "size": "small", "ui": False} for i in range(1, 6)]))
+     "tests": [test()], "size": "small", "ui": False} for i in range(1, 6)]))
 BAND = "plan.md: tasks: 5 tasks, the small band is 4"
 pre_small = dict(PRE, size_tag="small")
 case("a band warning and a ## Size with text", phase(five, body=BODY.replace("D1.", "D1 and T5."), pre_fm=pre_small), warnings=[BAND], exact=(0, 1))
@@ -314,10 +314,10 @@ s.ok("a protected path check with no configuration: NOT RUN, NOT ARMED, no error
 # ---- subphases: each plan file is checked, the ids of its own tasks, the decisions of the phase
 SUB = lambda part, n: {"size": {"tag": "small", "parts": 1, "agents": 1}, "criteria": base()["criteria"], "not_built": [], "later": [],
                        "tasks": [{"id": "S%d" % n, "part": part, "type": "feature", "wave": 1, "files": ["s%d.py" % n], "depends_on": [],
-                                  "tests": [], "size": "small", "ui": False}]}
+                                  "tests": [test()], "size": "small", "ui": False}]}
 top = lambda f: f.update(size={"tag": "normal", "parts": 2, "agents": 1}, tasks=[
-    {"id": "T1", "part": 1, "subphase": "01.1-a", "type": "feature", "wave": 1, "files": ["a.py"], "depends_on": [], "tests": [], "size": "small", "ui": False},
-    {"id": "T2", "part": 2, "subphase": "01.2-b", "type": "feature", "wave": 2, "files": ["b.py"], "depends_on": ["T1"], "tests": [], "size": "small", "ui": False}])
+    {"id": "T1", "part": 1, "subphase": "01.1-a", "type": "feature", "wave": 1, "files": ["a.py"], "depends_on": [], "tests": [test()], "size": "small", "ui": False},
+    {"id": "T2", "part": 2, "subphase": "01.2-b", "type": "feature", "wave": 2, "files": ["b.py"], "depends_on": ["T1"], "tests": [test()], "size": "small", "ui": False}])
 SBODY = GOAL + "## Approach\nS1 first, for C1 and D1.\n\n" + SIZE
 subs = lambda b1=SBODY, b2=SBODY.replace("S1", "S2"): {"01.1-a/plan.md": fm_text(SUB(1, 1)) + b1, "01.2-b/plan.md": fm_text(SUB(2, 2)) + b2}
 case("two subphases, clean", phase(top, body=GOAL + "## Approach\nT1, then T2; D1 and C1.\n\n" + SIZE, pre_fm=dict(PRE, parts=2), extra=subs()), exact=(0, 0))
