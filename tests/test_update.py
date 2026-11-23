@@ -27,6 +27,15 @@ each put back):
   same commit downloads anyway     "archive at its newest commit: up to date, nothing downloaded = (1, False, ['https://github.com/o/toy-skills/archive/aaaa...tar.gz']), want (0, True, [])"
   downgrade allowed (never-downgrade fix)  "--apply leaves the held pins as they were and moves the others = (0, '1.9.9', '3.0.0-rc.1', '4.9.0', '26.1.0'), want (0, '2.0.0', '3.0.0', '5.0.0', '26.1.0')"
                                    and "a tool pinned newer than latest: held with both versions, not an update = (0, False, True), want (0, True, False)"
+  The review fixes (G1, G2, G5) were written first and run against the code before them (22 FAIL), then each broken once more (6 mutations):
+  G1 pip step in the old python    "python 3.15 -> 3.16: exit 0 = (1, '... No matching distribution found for PyYAML==6.0.1 native==2.0.0 ...stopped at `pip install ...", and
+                                   "python 3.16: the installs ran in the new python = ['python3.15.2 -m pip install ...'], want ['python3.16.0 -m pip install ...']"
+  G1 no check when python alone moves  "a patch bump of python alone, the new python lacks the pinned libraries: (exit, stopped at a pip step, lock not run) = (0, False, True), want (1, True, False)"
+  G1 missing python dir ignored    "the new python's directory not found: exit 1 naming mise where, lock not run = (0, False, True), want (1, True, False)"
+  G2 requires_python ignored       "requires_python '>=3.9,<3.15' on python 3.15.3: (held with the spec named, moved) = (False, True), want (True, False)"
+  G5 any string is a version       "a bad mise latest: exit 1, a `!` line, the rest answered = (0, False, True), want (1, True, True)"
+  G5 latest accepted               "mise latest printing 'latest': (exit, a `!` line, manifest untouched) = (0, False, True), want (1, True, True)"; before the fix a PyPI version of
+                                   null or 3 raised "TypeError: expected string or bytes-like object" out of show()
 """
 import contextlib
 import functools
@@ -59,6 +68,10 @@ if a[:1] == ["latest"] and len(a) == 2:
         sys.stderr.write("mise ERROR no latest for %%s\\n" %% a[1])
         sys.exit(1)
     print(got)
+    sys.exit(0)
+if a[:1] == ["where"] and len(a) == 2:
+    where = json.loads(os.environ.get("FAKE_WHERE", "{}")).get(a[1]) or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    print(where)
     sys.exit(0)
 if a == ["ls", "--json"]:
     out = {}
@@ -114,6 +127,29 @@ sys.exit(99)
 """
 
 
+VPY = """#!%(py)s
+import json, os, sys
+a = sys.argv[1:]
+open(os.environ["FAKE_LOG"], "a").write("python%(ver)s " + " ".join(a) + "\\n")
+state = %(state)r
+if a[:3] == ["-m", "pip", "list"]:
+    sys.stdout.write(open(state).read())
+    sys.exit(0)
+if a[:3] == ["-m", "pip", "install"] and "--upgrade" not in a:
+    specs = [x for x in a[3:] if not x.startswith("-")]
+    if any(x in %(reject)r for x in specs):
+        sys.stderr.write("ERROR: No matching distribution found for %%s\\n" %% " ".join(specs))
+        sys.exit(1)
+    have = json.load(open(state))
+    for spec in specs:
+        name, ver = spec.split("==")
+        have = [h for h in have if h["name"].lower() != name.lower()] + [{"name": name, "version": ver}]
+    json.dump(have, open(state, "w"))
+    sys.exit(0)
+sys.exit(99)
+"""
+
+
 def want(label, got, expected):
     if got != expected:
         failures.append("%s = %r, want %r" % (label, got, expected))
@@ -139,6 +175,7 @@ def doc_base():
     }
 
 
+OLD_PY = {"3.15.2": [("PyYAML", "6.0.0"), ("native", "1.0.0"), ("requests", "2.0.0")]}  # the old python of a bump and its libraries
 LATEST = {"node": "26.1.0", "python": "3.15.3", "npm:same-tool": "1.0.0", "npm:frozen-tool": "9.9.9"}
 
 
@@ -162,6 +199,12 @@ def _archive(sha, paths):
 def pypi(version, *files):
     return json.dumps({"info": {"version": version}, "urls": [{"filename": f, "packagetype": "bdist_wheel" if f.endswith(".whl") else "sdist"}
                                                               for f in files]}).encode()
+
+
+def pypi_req(version, req, *files):
+    """PyPI's answer with `requires_python` on the release and on each file, as it carries it."""
+    return json.dumps({"info": {"version": version, "requires_python": req},
+                       "urls": [{"filename": f, "packagetype": "bdist_wheel", "requires_python": req} for f in files]}).encode()
 
 
 def web(sha=NEW, paths=("skills/eng/alpha/SKILL.md", "LICENSE")):
@@ -216,6 +259,25 @@ class World:
                     "PIP_REQUIRE_VIRTUALENV": "1", "FAKE_LOG": self.log, "FAKE_MISE_STATE": self.mise_state,
                     "FAKE_PIP_STATE": self.pip_state, "FAKE_LATEST": json.dumps(LATEST), "FAKE_LS": json.dumps({"https://github.com/o/toy-skills": NEW})}
 
+    def install_pythons(self, held, reject=()):
+        """Each of `held` ({version: [(pip name, version)]}) as installs/python/<version>/bin/python3 with its own packages.
+        The first is the old python on PATH (the toy bin/python3 is removed: only a prefix that mise names is the new
+        one); `reject` are the specs the 3.15 interpreters refuse (a wheel built for another minor). Returns {version: state}."""
+        os.remove(os.path.join(self.base, "bin", "python3"))
+        states = {}
+        for i, (ver, pkgs) in enumerate(held.items()):
+            d = os.path.join(self.base, "installs", "python", ver, "bin")
+            os.makedirs(d)
+            states[ver] = os.path.join(self.base, "pip-%s.json" % ver)
+            json.dump([{"name": n, "version": v} for n, v in pkgs], open(states[ver], "w"))
+            with open(os.path.join(d, "python3"), "w") as fh:
+                fh.write(VPY % {"py": sys.executable, "ver": ver, "state": states[ver], "reject": [x for x in reject if ver.startswith("3.15")]})
+            os.chmod(os.path.join(d, "python3"), 0o755)
+            if i == 0:
+                self.env["PATH"] = d + os.pathsep + os.path.join(self.base, "bin")
+        self.env["FAKE_WHERE"] = json.dumps({"python@%s" % v: os.path.join(self.base, "installs", "python", v) for v in held})
+        return states
+
     def write_manifest(self, doc):
         with open(self.manifest, "w", encoding="utf-8") as fh:
             fh.write(json.dumps(doc, indent=2, ensure_ascii=False) + "\n")
@@ -264,6 +326,8 @@ class World:
                     code = cli.main(list(argv))
                 except SystemExit as ex:
                     code = ex.code
+                except Exception as ex:
+                    code = "raised %s: %s" % (type(ex).__name__, ex)
         finally:
             for k, v in saved.items():
                 if v is None:
@@ -278,6 +342,11 @@ class World:
 def lockfile_path():
     from forge import lockfile
     return lockfile.path()
+
+
+def errline(out, label):
+    """Whether an error line (`!`) names `label` (show() puts no space after the longest label of a run: a follow-up)."""
+    return any(l.startswith("!") and label in l for l in out.splitlines())
 
 
 def line(out, label):
@@ -437,6 +506,68 @@ def cases(tmp):
         want("version order %s < %s" % (older, newer), (update.older(older, newer), update.older(newer, older)), (True, False))
     for same in (("1.0", "1.0.0"), ("26.13.1", "26.13.1")):
         want("version order %s is not older than %s either way" % same, (update.older(same[0], same[1]), update.older(same[1], same[0])), (False, False))
+
+    # an upstream answer that is no version is an error row and never reaches the manifest (G5)
+    w = World(tmp, "badlatest")
+    before = w.read(w.manifest)
+    for given in ("latest", "Latest", "1.0 2.0", "-1"):
+        code, out, _ = w.run("update", "node", "--apply", FAKE_LATEST=json.dumps(dict(LATEST, node=given)))
+        want("mise latest printing %r: (exit, a `!` line, manifest untouched)" % given, (code, errline(out, "node"), w.read(w.manifest) == before), (1, True, True))
+    for given in (None, "", "  ", "latest", 3, ["1.0"]):
+        pages = web()
+        pages[update.PYPI % "PyYAML"] = pypi(given, "PyYAML-6.0.1-py3-none-any.whl")
+        code, out, _ = w.run("update", "pip:PyYAML", "--apply", web_pages=pages)
+        want("PyPI answering version %r: (exit, a `!` line, manifest untouched)" % (given,), (code, errline(out, "pip:PyYAML"), w.read(w.manifest) == before), (1, True, True))
+    pages = web()
+    pages[update.PYPI % "PyYAML"] = b'{"info": {}, "urls": []}'
+    code, out, _ = w.run("update", "pip:PyYAML", web_pages=pages)
+    want("PyPI answering no version at all: exit 1 and a `!` line", (code, errline(out, "pip:PyYAML")), (1, True))
+
+    # requires_python of the release decides too, not only the wheel's filename (G2)
+    for spec, target, good in ((">=3.9,<3.15", (3, 15, 2), False), (">=3.16", (3, 15, 2), False), (">=3.16", (3, 16, 0), True),
+                               ("!=3.15.*", (3, 15, 2), False), ("!=3.15.*", (3, 16, 0), True), ("~=3.14.0", (3, 15, 2), False),
+                               ("~=3.14", (3, 15, 2), True), (">=3.10", (3, 15, 2), True), ("==3.15.*", (3, 15, 2), True),
+                               ("<3.15.3", (3, 15, 2), True), (None, (3, 15, 2), True), ("", (3, 15, 2), True),
+                               (">=3.9, <4", (3, 15, 2), True), ("nonsense", (3, 15, 2), False), (">=3.x", (3, 15, 2), False)):
+        want("requires_python_ok(%r, %r)" % (spec, target), update.requires_python_ok(spec, target), good)
+    w = World(tmp, "reqpy")
+    for spec, python, held in ((">=3.9,<3.15", "3.15.3", True), (">=3.16", "3.15.3", True), (">=3.16", "3.16.0", False), ("!=3.15.*", "3.15.3", True)):
+        pages = web()
+        pages[update.PYPI % "PyYAML"] = pypi_req("6.0.1", spec, "PyYAML-6.0.1-py3-none-any.whl")
+        code, out, _ = w.run("update", "python", "pip:PyYAML", web_pages=pages, FAKE_LATEST=json.dumps(dict(LATEST, python=python)))
+        got = line(out, "pip:PyYAML")
+        want("requires_python %r on python %s: (held with the spec named, moved)" % (spec, python),
+             ("held at 6.0.0" in got and "requires python %s" % spec in got, "->" in got), (True, False) if held else (False, True))
+
+    # when python itself moves, the pip installs and the check run with the NEW python, not the one first on PATH (G1)
+    w = World(tmp, "pybump")
+    states = w.install_pythons(dict(OLD_PY, **{"3.16.0": [("requests", "2.0.0")]}), reject=("native==2.0.0",))
+    pages = web()
+    pages[update.PYPI % "native"] = pypi("2.0.0", "native-2.0.0-cp316-cp316-manylinux_2_28_%s.whl" % update.ARCH)
+    code, out, seen = w.run("update", "--all", "--apply", web_pages=pages, FAKE_LATEST=json.dumps(dict(LATEST, python="3.16.0")))
+    want("python 3.15 -> 3.16: exit 0", (code, out[-400:]) if code else code, 0)
+    want("python 3.16: the installs ran in the new python, in one call",
+         [l for l in w.calls() if "pip install" in l], ["python3.16.0 -m pip install --disable-pip-version-check PyYAML==6.0.1 native==2.0.0"])
+    want("python 3.16: the new python holds the pinned libraries",
+         sorted((h["name"], h["version"]) for h in json.load(open(states["3.16.0"]))), [("PyYAML", "6.0.1"), ("native", "2.0.0"), ("requests", "2.0.0")])
+    want("python 3.16: skills and lock still ran after it", (len(seen["skills"]), os.path.exists(w.lock_file)), (1, True))
+    for label, argv in (("a patch bump, the new python lacks the pinned libraries, a library updates", ("python", "pip:PyYAML")),
+                        ("a patch bump of python alone, the new python lacks the pinned libraries", ("python",))):
+        w = World(tmp, "pypatch")
+        w.install_pythons(dict(OLD_PY, **{"3.15.3": []}))
+        code, out, seen = w.run("update", *argv, "--apply", FAKE_LATEST=json.dumps(dict(LATEST, python="3.15.3")))
+        stopped = out.split("stopped at `")[-1].split("`")[0] if "stopped at `" in out else ""
+        want("%s: (exit, stopped at a pip step, lock not run)" % label, (code, "pip" in stopped, os.path.exists(w.lock_file)), (1, True, False))
+    w = World(tmp, "pyok")
+    w.install_pythons(dict(OLD_PY, **{"3.15.3": OLD_PY["3.15.2"]}))
+    code, out, _ = w.run("update", "python", "--apply", FAKE_LATEST=json.dumps(dict(LATEST, python="3.15.3")))
+    want("a patch bump of python alone, the new python holds the pins: exit 0 and the check ran in it",
+         (code, any(l.startswith("python3.15.3 -m pip list") for l in w.calls())), (0, True))
+    w = World(tmp, "pymissing")
+    w.install_pythons(dict(OLD_PY, **{"3.15.3": []}))
+    code, out, seen = w.run("update", "python", "--apply", FAKE_LATEST=json.dumps(dict(LATEST, python="3.15.3")),
+                            FAKE_WHERE=json.dumps({"python@3.15.3": "/nonexistent/python"}))
+    want("the new python's directory not found: exit 1 naming mise where, lock not run", (code, "mise where" in out, os.path.exists(w.lock_file)), (1, True, False))
 
     # a python minor bump decides which wheels a library needs
     doc = doc_base()

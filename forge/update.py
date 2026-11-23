@@ -19,6 +19,7 @@ the machine match it, stopping at the first step that fails and saying what to r
 """
 import argparse
 import concurrent.futures
+import contextlib
 import hashlib
 import io
 import json
@@ -61,6 +62,12 @@ def fetch(url):
     return data
 
 
+def valid_version(v):
+    """Whether `v` can be an exact pin in config/toolchain.json: a string of version characters that is not `latest`
+    (the manifest refuses that one, and an answer that fails here is an error row, never a line that is written)."""
+    return isinstance(v, str) and bool(VERSION.fullmatch(v)) and v.lower() != "latest"
+
+
 def short(version):
     """A 40-character commit is shown as 12."""
     return version[:12] if re.fullmatch(r"[0-9a-f]{40}", version) else version
@@ -86,6 +93,36 @@ def wheel_ok(filename, minor, arch=None):
         if m.group(1) == "cp" and n is not None and ((n == minor and set(abis) & {"cp3%d" % n, "abi3", "none"}) or (n < minor and "abi3" in abis)):
             return plat_ok
     return False
+
+
+def requires_python_ok(spec, target):
+    """Whether CPython `target`, (3, minor, micro), satisfies a PEP 440 `requires_python` specifier. No specifier is
+    satisfied; one this cannot read is not (a release that would not install is held, never written)."""
+    if not spec or not isinstance(spec, str):
+        return True
+    for raw in spec.split(","):
+        clause = raw.strip()
+        if not clause:
+            continue
+        m = re.fullmatch(r"(===|==|!=|<=|>=|~=|<|>)\s*(\d+(?:\.\d+)*)(\.\*)?", clause)
+        if not m:
+            return False
+        op, ver_s, star = m.groups()
+        ver = tuple(int(p) for p in ver_s.split("."))
+        n = max(len(target), len(ver))
+        tp, vp = target + (0,) * (n - len(target)), ver + (0,) * (n - len(ver))
+        if op == "~=":
+            if star or len(ver) < 2 or tp < vp or target[:len(ver) - 1] != ver[:-1]:
+                return False
+        elif op in ("==", "==="):
+            if (target[:len(ver)] != ver) if star else (tp != vp):
+                return False
+        elif op == "!=":
+            if (target[:len(ver)] == ver) if star else (tp == vp):
+                return False
+        elif (op == ">=" and tp < vp) or (op == "<=" and tp > vp) or (op == ">" and tp <= vp) or (op == "<" and tp >= vp):
+            return False
+    return True
 
 
 def vkey(version):
@@ -117,7 +154,7 @@ def resolve_tool(e):
     env = dict(os.environ, MISE_MINIMUM_RELEASE_AGE="0")
     code, out, err = toolchain.tool_run(["mise", "latest", name], LATEST_TIMEOUT, cwd=lib.HOME, env=env)
     latest = out.strip()
-    if code != 0 or not VERSION.match(latest):
+    if code != 0 or not valid_version(latest):
         return Row(name, "tools", e, "error", note="`mise latest %s` %s" % (name, "failed (exit %s): %s" % (code, err) if code != 0
                                                                           else "printed %r, not a version" % latest[:60]))
     if older(latest, e["version"]):
@@ -161,31 +198,41 @@ def resolve_archive(e, skills):
     return Row(name, "tools", e, "update", sha, checksum="sha256:" + hashlib.sha256(data).hexdigest())
 
 
-def resolve_pip(e, minor):
-    label = "pip:" + e["name"]
+def resolve_pip(e, target):
+    """`target` is (3, minor, micro) of the python the libraries must install on. A release counts only with a wheel
+    built for that minor (by its filename) whose `requires_python` (the file's, else the release's) the python meets."""
+    label, minor = "pip:" + e["name"], target[1]
     try:
         doc = json.loads(fetch(PYPI % urllib.parse.quote(e["name"])))
         latest = doc["info"]["version"]
-        wheels = [f["filename"] for f in doc.get("urls", []) if f.get("packagetype") == "bdist_wheel" and not f.get("yanked")]
-    except (OSError, ValueError, KeyError, TypeError) as ex:
+        release_req = doc["info"].get("requires_python")
+        wheels = [(f["filename"], f.get("requires_python") or release_req)
+                  for f in doc.get("urls", []) if f.get("packagetype") == "bdist_wheel" and not f.get("yanked")]
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as ex:
         return Row(label, "pip", e, "error", note="PyPI answered no release for %s (%s: %s)" % (e["name"], type(ex).__name__, ex))
+    if not valid_version(latest):
+        return Row(label, "pip", e, "error", note="PyPI answered %r for %s, not a version" % (latest, e["name"]))
     if latest == e["version"]:
         return Row(label, "pip", e, "same", latest)
     if older(latest, e["version"]):
         return Row(label, "pip", e, "skip", note=NEWER % (e["version"], latest))
-    if not any(wheel_ok(w, minor) for w in wheels):
+    fit = [(w, req) for w, req in wheels if wheel_ok(w, minor)]
+    if not fit:
         return Row(label, "pip", e, "skip", note="held at %s: %s has no wheel for python 3.%d on %s (%d wheel(s))" % (
             e["version"], latest, minor, ARCH, len(wheels)))
+    if not any(requires_python_ok(req, target) for _, req in fit):
+        return Row(label, "pip", e, "skip", note="held at %s: %s requires python %s, and this is %s" % (
+            e["version"], latest, " or ".join(sorted({str(req) for _, req in fit})), ".".join(map(str, target))))
     return Row(label, "pip", e, "update", latest)
 
 
-def python_minor(rows, doc):
-    """3.<minor> that the libraries must build for: the python the manifest will pin after this run, else the
+def python_version(rows, doc):
+    """(3, minor, micro) that the libraries must install on: the python the manifest will pin after this run, else the
     interpreter that is running."""
     new = next((r.latest for r in rows if r.label == "python" and r.status == "update"), None)
     pin = new or next((e["version"] for e in doc["tools"] if e["name"] == "python"), None)
-    m = re.match(r"3\.(\d+)", pin or "")
-    return int(m.group(1)) if m else sys.version_info[1]
+    m = re.match(r"3\.(\d+)(?:\.(\d+))?", pin or "")
+    return (3, int(m.group(1)), int(m.group(2) or 0)) if m else tuple(sys.version_info[:3])
 
 
 def pmap(fn, items):
@@ -224,9 +271,9 @@ def resolve(doc, skills, chosen):
     for (label, _, _), row in zip(first, pmap(lambda x: resolve_archive(x[2], by_source.get(x[0], [])) if x[0].startswith("http:")
                                               else resolve_tool(x[2]), first)):
         rows[label] = row
-    minor = python_minor(list(rows.values()), doc)
+    target = python_version(list(rows.values()), doc)
     second = [x for x in ask if x[1] == "pip"]
-    for (label, _, _), row in zip(second, pmap(lambda x: resolve_pip(x[2], minor), second)):
+    for (label, _, _), row in zip(second, pmap(lambda x: resolve_pip(x[2], target), second)):
         rows[label] = row
     return [rows[label] for label, _, _ in chosen]
 
@@ -261,12 +308,41 @@ def step_toolchain():
     return toolchain.cmd(argparse.Namespace(fix=True))
 
 
-def step_pips(pips):
+@contextlib.contextmanager
+def with_python(version):
+    """While it runs, the bin directory of mise's python@<version> is first on PATH, so that pip and the check ask the
+    python that `forge toolchain --fix` just installed and not the one this process started with. Yields why not (the
+    directory could not be found) or None; no version: nothing changes."""
+    if not version:
+        yield None
+        return
+    code, out, err = toolchain.tool_run(["mise", "where", "python@" + version], toolchain.LIST_TIMEOUT, cwd=lib.HOME)
+    bindir = os.path.join(out.strip(), "bin") if code == 0 and out.strip() else ""
+    if not bindir or not os.path.isfile(os.path.join(bindir, "python3")):
+        yield "`mise where python@%s` gave no bin/python3 (%s)" % (version, err or out.strip() or "no path")
+        return
+    old = os.environ.get("PATH")
+    os.environ["PATH"] = bindir + (os.pathsep + old if old else "")
+    try:
+        yield None
+    finally:
+        if old is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = old
+
+
+def step_pips(pips, python_ver=None):
     """Install each changed library at its new pin (`forge toolchain --fix` leaves a library that is present at
     another version alone), then check the manifest again: the verdict is the check, and a library that is
-    still at its old version is a failure the check only calls a WARN."""
-    ran = toolchain.install({"tools": [], "pip": pips})
-    results, _, where = toolchain.check()
+    still at its old version is a failure the check only calls a WARN. With `python_ver` (python itself moved) both run
+    in that python, and the check runs even when no library changed: the new python must hold every pin."""
+    with with_python(python_ver) as why:
+        if why:
+            print("! " + why)
+            return 1
+        ran = toolchain.install({"tools": [], "pip": pips}) if pips else {}
+        results, _, where = toolchain.check()
     print(where)
     code = lib.report(results)
     stuck = [r for r in results if r.name in ran and r.level != "PASS"]
@@ -327,8 +403,11 @@ def cmd(a):
     print("wrote config/toolchain.json (%d entr%s)" % (len(updates), "y" if len(updates) == 1 else "ies"))
     steps = [("forge toolchain --fix", step_toolchain)]
     pips = [(r.entry["name"], r.latest) for r in updates if r.section == "pip"]
+    new_python = next((r.latest for r in updates if r.label == "python"), None)
     if pips:
-        steps.append(("pip install " + " ".join("%s==%s" % p for p in pips), lambda: step_pips(pips)))
+        steps.append(("pip install " + " ".join("%s==%s" % p for p in pips), lambda: step_pips(pips, new_python)))
+    elif new_python:
+        steps.append(("check the pip libraries in python@" + new_python, lambda: step_pips([], new_python)))
     if any(r.entry["name"].startswith("http:") for r in updates):
         steps.append(("forge skills --apply", step_skills))
     steps.append(("forge lock --apply", step_lock))
