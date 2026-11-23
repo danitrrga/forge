@@ -31,6 +31,7 @@ The toy has six nodes, not five: the sixth is the `later` node, so every kind of
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -303,7 +304,30 @@ def cli(*args, cwd=None, **env):
                            cwd=cwd or code, env=helpers.clean_env(**ENV, **env), capture_output=True, text=True)
 
 
+RAW_TOY = (  # the form before the readable default existed; it must not change
+    "n_owner | owner | session | Alex opens a chat\n    to n_orch «Alex asks»\n"
+    "n_orch | orchestrator | session | The orchestrator decides\n    sometimes n_agent «sometimes»\n    context n_script «context»\n"
+    "n_agent | agent | execute | An agent reads\n    loop n_orch «it fails»\n"
+    "n_script | script | - | A script checks\n    later n_later\n"
+    "n_block | block | - | A block on an arrow\n"
+    "n_later | later | - | NOT BUILT YET something\n"
+    "n_conn | connector | connector | → goes to another lane\n    to n_owner\n"
+    "6 nodes, 1 connectors, 1 notes, 6 arrows (1 from a connector)\n")
+
+# the default is for a person: no node id, grouped by playbook; --raw is the form the agents and checks read
 r = cli("list", "--tree", toy_path)
+s.eq("readable: exit code", r.returncode, 0)
+# control: the old default (the `id | kind | scope | text` form) fails this check with "n_owner" in the output
+s.ok("readable: no node id in the default output", not re.search(r"\b[np]_\w+", r.stdout), r.stdout)
+s.ok("readable: grouped by playbook, nodes in words, exits as `then TITLE`",
+     "SESSION (2)" in r.stdout and "  owner        Alex opens a chat\n" in r.stdout
+     and "               then The orchestrator decides — Alex asks\n" in r.stdout, r.stdout)
+s.ok("readable: a target in another playbook says which", "[execute]" in r.stdout, r.stdout)
+raw = cli("list", "--raw", "--tree", toy_path)
+s.eq("raw: exit code", raw.returncode, 0)
+s.eq("raw: the old form, byte for byte", raw.stdout, RAW_TOY)
+
+r = cli("list", "--raw", "--tree", toy_path)
 s.eq("tree: exit code", r.returncode, 0)
 lines = r.stdout.splitlines()
 s.eq("tree: a node line is `id | kind | scope | text`", lines[0], "n_owner | owner | session | Alex opens a chat")
@@ -313,7 +337,7 @@ s.ok("tree: a connector line", "n_conn | connector | connector | → goes to ano
 s.ok("tree: an exit with no label has no guillemets", "    later n_later" in lines, r.stdout)
 s.eq("tree: the counts close the output", lines[-1], "6 nodes, 1 connectors, 1 notes, 6 arrows (1 from a connector)")
 
-r = cli("list", "--tree", toy_path, "--scope", "session")
+r = cli("list", "--raw", "--tree", toy_path, "--scope", "session")
 s.eq("tree --scope: exit code", r.returncode, 0)
 ids = [ln.split(" | ")[0] for ln in r.stdout.splitlines() if " | " in ln]
 s.eq("tree --scope: only that playbook's nodes", ids, ["n_owner", "n_orch"])
@@ -329,14 +353,14 @@ s.ok("tree: a tree with a fault exits 1 and says it",
      r.returncode == 1 and "unknown colour #123456 on node n_agent" in r.stderr and r.stdout == "", "%s %r" % (r.returncode, r.stderr))
 
 repo = helpers.toy_repo()
-r = cli("list", cwd=repo)
+r = cli("list", "--raw", cwd=repo)
 s.ok("tree: no path anywhere exits 2 and says how to give one",
      r.returncode == 2 and "--tree" in r.stderr and "paths.tree" in r.stderr, "%s %r" % (r.returncode, r.stderr))
 helpers.write(repo, ".claude/fwx.json", json.dumps({"schema": 1, "paths": {"tree": toy_path}}))
-r = cli("list", cwd=repo)
+r = cli("list", "--raw", cwd=repo)
 s.ok("tree: the path defaults to paths.tree", r.returncode == 0 and "n_owner | owner" in r.stdout, "%s %r" % (r.returncode, r.stderr))
 wt = helpers.add_worktree(repo, "side")
-r = cli("list", cwd=wt)
+r = cli("list", "--raw", cwd=wt)
 s.ok("tree: paths.tree is found from a worktree", r.returncode == 0 and "n_owner | owner" in r.stdout, "%s %r" % (r.returncode, r.stderr))
 r = cli("list", "--tree", toy_path, cwd=repo)
 s.eq("tree: --tree wins over paths.tree", r.returncode, 0)

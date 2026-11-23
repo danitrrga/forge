@@ -44,7 +44,7 @@ ROWS = [
     ("context seal", "context-base seal", "context_base", ["seal"], "put the mark on a base file written by hand: <file> [--source F]"),
     ("context lint", "context-base check", "context_base", ["check"], "lint the base context of a phase: <dir> | --file F | --project P"),
     ("context audit", "context-base audit", "context_base", ["audit"], "which agent of a session did not get the base its type should get"),
-    ("playbook list", "playbooks tree", "playbooks", ["tree"], "the workflow tree, one node per line with its exits: [--tree PATH] [--scope NAME]"),
+    ("playbook list", "playbooks tree", "playbooks", ["tree"], "the workflow tree by playbook, in words (--raw: the id form agents read): [--raw] [--tree PATH] [--scope NAME]"),
     ("playbook lint", "playbooks check", "playbooks", ["check"], "lint the playbooks against the workflow tree: [--tree PATH] [--only NAME]"),
     # Linear
     ("linear list", None, "linear", ["list"], "the issues of the project with a label: [--project NAME] --label L [--json]"),
