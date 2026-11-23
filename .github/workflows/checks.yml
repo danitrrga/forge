@@ -118,8 +118,9 @@ jobs:
   # A test that exits 77 is a WARN `NOT RUN, NOT ARMED`: it does not fail the run, so the list is kept here, and a new
   # one is to be read in the log. Three tests run `unshare -rn` (test_write_guard, test_sync_fixture, test_relink_skills): Ubuntu 24.04
   # runners refuse that to an unprivileged user, so the first step lifts the restriction for this job's VM (only).
-  # The one WARN line left, a thing this runner lacks (tests/test_new.py is armed by the full-history checkout below):
+  # The WARN lines left, each a thing this runner lacks (tests/test_new.py is armed by the full-history checkout below):
   #   tests/test_shim.py: the fish and zsh cases need those shells, which the runner does not have; the bash cases run.
+  #   tests/test_profiles_walk.py: it drives a live claude in tmux on the measurement token, which the runner has neither of.
   suite:
     name: Engine suite
     needs: changes
