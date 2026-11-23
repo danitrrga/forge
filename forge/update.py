@@ -38,6 +38,7 @@ VERSION = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._+-]*$")
 SHA = re.compile(r"^([0-9a-f]{40})\s+HEAD$", re.M)
 ARCHIVE_URL = re.compile(r"^(https://github\.com/[^/]+/[^/]+)/archive/\{\{ version \}\}\.tar\.gz$")
 PYPI = "https://pypi.org/pypi/%s/json"
+NEWER = "held: pin %s is newer than upstream's latest %s"  # never a downgrade; an archive's commit has no order, so it has none of this
 ARCH = platform.machine()
 
 
@@ -87,6 +88,26 @@ def wheel_ok(filename, minor, arch=None):
     return False
 
 
+def vkey(version):
+    """A sortable key: the numbers of a version as numbers, its words (rc, a, beta) as text below every number, so a
+    pre-release is older than its release; zeros that end a run of numbers do not count (1.0 is 1.0.0, and 1.0.0-rc.1
+    is below 1.0)."""
+    out = []
+    for t in re.findall(r"\d+|[A-Za-z]+", version):
+        if not t.isdigit():
+            while out and out[-1] == (1, 0):
+                out.pop()
+        out.append((1, int(t)) if t.isdigit() else (0, t.lower()))
+    while out and out[-1] == (1, 0):
+        out.pop()
+    return out + [(1, 0)]
+
+
+def older(a, b):
+    """Whether version `a` is older than version `b`."""
+    return vkey(a) < vkey(b)
+
+
 def resolve_tool(e):
     name = e["name"]
     if not shutil.which("mise"):
@@ -99,6 +120,8 @@ def resolve_tool(e):
     if code != 0 or not VERSION.match(latest):
         return Row(name, "tools", e, "error", note="`mise latest %s` %s" % (name, "failed (exit %s): %s" % (code, err) if code != 0
                                                                           else "printed %r, not a version" % latest[:60]))
+    if older(latest, e["version"]):
+        return Row(name, "tools", e, "skip", note=NEWER % (e["version"], latest))
     return Row(name, "tools", e, "same" if latest == e["version"] else "update", latest)
 
 
@@ -148,6 +171,8 @@ def resolve_pip(e, minor):
         return Row(label, "pip", e, "error", note="PyPI answered no release for %s (%s: %s)" % (e["name"], type(ex).__name__, ex))
     if latest == e["version"]:
         return Row(label, "pip", e, "same", latest)
+    if older(latest, e["version"]):
+        return Row(label, "pip", e, "skip", note=NEWER % (e["version"], latest))
     if not any(wheel_ok(w, minor) for w in wheels):
         return Row(label, "pip", e, "skip", note="held at %s: %s has no wheel for python 3.%d on %s (%d wheel(s))" % (
             e["version"], latest, minor, ARCH, len(wheels)))

@@ -10,7 +10,7 @@ and urllib's urlopen raises, so a build that reached the network fails. `world()
 forge would write is outside the toy. `forge skills` is a recorder (its real steps are scripts run from the checkout).
 
 Written first and run against a forge/update.py that did not exist: "forge: error: argument command: invalid choice:
-'update'" (every case). Each behaviour below was then broken once in the finished code and seen failing (13 mutations,
+'update'" (every case). Each behaviour below was then broken once in the finished code and seen failing (14 mutations,
 each put back):
   release-age guard dropped        "every mise latest ran with MISE_MINIMUM_RELEASE_AGE=0 from HOME = {('age=None', ...)}, want {('age=0', ...)}"
   not asked from HOME              the same case: "cwd=<the checkout>, want cwd=<the toy home>"
@@ -25,8 +25,11 @@ each put back):
   archive path check removed       "a skill that moved upstream: held ... = (0, False, 'bbbb...', False), want (0, True, 'aaaa...', True)"
   checksum not written             "apply: the manifest is the old one with exactly those versions and that checksum, in the same format = ..."
   same commit downloads anyway     "archive at its newest commit: up to date, nothing downloaded = (1, False, ['https://github.com/o/toy-skills/archive/aaaa...tar.gz']), want (0, True, [])"
+  downgrade allowed (never-downgrade fix)  "--apply leaves the held pins as they were and moves the others = (0, '1.9.9', '3.0.0-rc.1', '4.9.0', '26.1.0'), want (0, '2.0.0', '3.0.0', '5.0.0', '26.1.0')"
+                                   and "a tool pinned newer than latest: held with both versions, not an update = (0, False, True), want (0, True, False)"
 """
 import contextlib
+import functools
 import hashlib
 import io
 import json
@@ -140,6 +143,12 @@ LATEST = {"node": "26.1.0", "python": "3.15.3", "npm:same-tool": "1.0.0", "npm:f
 
 
 def archive(sha, paths=("skills/eng/alpha/SKILL.md", "LICENSE")):
+    return _archive(sha, tuple(paths))
+
+
+@functools.lru_cache(maxsize=None)
+def _archive(sha, paths):
+    """Built once per (sha, paths): the gzip header carries the time, so two builds a second apart have different checksums."""
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for p in paths:
@@ -403,6 +412,31 @@ def cases(tmp):
          (0, True, OLD, True))
     code, out, _ = w.run("update", "http:toy-skills", FAKE_LS=json.dumps({}))
     want("git ls-remote failing: exit 1 naming it", (code, "`git ls-remote https://github.com/o/toy-skills HEAD` failed (exit 128)" in out), (1, True))
+
+    # never downgrade: a pin newer than upstream's latest is held and left out of --apply (an archive's commit is never "older")
+    doc = doc_base()
+    doc["tools"].append(tool("npm:ahead-tool", "2.0.0"))
+    doc["tools"].append(tool("npm:rc-tool", "3.0.0"))
+    doc["pip"].append(tool("ahead", "5.0.0"))
+    w = World(tmp, "ahead", doc)
+    pages = web()
+    pages[update.PYPI % "ahead"] = pypi("4.9.0", "ahead-4.9.0-py3-none-any.whl")
+    latest = json.dumps(dict(LATEST, **{"npm:ahead-tool": "1.9.9", "npm:rc-tool": "3.0.0-rc.1"}))
+    code, out, _ = w.run("update", web_pages=pages, FAKE_LATEST=latest)
+    want("a tool pinned newer than latest: held with both versions, not an update",
+         (code, "skipped, held: pin 2.0.0 is newer than upstream's latest 1.9.9" in line(out, "npm:ahead-tool"), "->" in line(out, "npm:ahead-tool")), (0, True, False))
+    want("a pre-release latest is older than the release pinned", "held: pin 3.0.0 is newer than upstream's latest 3.0.0-rc.1" in line(out, "npm:rc-tool"), True)
+    want("a pip library pinned newer than latest: held", "held: pin 5.0.0 is newer than upstream's latest 4.9.0" in line(out, "pip:ahead"), True)
+    want("the entries that are behind still update", ("->" in line(out, "node"), "->" in line(out, "pip:PyYAML")), (True, True))
+    code, out, _ = w.run("update", "--all", "--apply", web_pages=pages, FAKE_LATEST=latest)
+    pins = {e["name"]: e["version"] for k in ("tools", "pip") for e in json.loads(w.read(w.manifest))[k]}
+    want("--apply leaves the held pins as they were and moves the others",
+         (code, pins["npm:ahead-tool"], pins["npm:rc-tool"], pins["ahead"], pins["node"]), (0, "2.0.0", "3.0.0", "5.0.0", "26.1.0"))
+    want("--apply never installs a held entry", [l for l in w.calls() if l.startswith(("mise install", "python3 -m pip install")) and ("ahead" in l or "rc-tool" in l)], [])
+    for older, newer in (("1.9.9", "2.0.0"), ("2.0.0-rc.1", "2.0.0"), ("1.0", "1.0.1"), ("2026.9.1", "2026.10.26"), ("0.9", "0.10"), ("1.0.0a1", "1.0.0")):
+        want("version order %s < %s" % (older, newer), (update.older(older, newer), update.older(newer, older)), (True, False))
+    for same in (("1.0", "1.0.0"), ("26.13.1", "26.13.1")):
+        want("version order %s is not older than %s either way" % same, (update.older(same[0], same[1]), update.older(same[1], same[0])), (False, False))
 
     # a python minor bump decides which wheels a library needs
     doc = doc_base()
