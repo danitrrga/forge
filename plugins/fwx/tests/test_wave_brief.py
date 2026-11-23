@@ -24,7 +24,8 @@ line in its file exactly once), and must fail with the text in `MUTANTS`; the go
 seen red:
   SCOPE not checked:                      FAIL: module: the empty SCOPE is named (prepare exit 0 with an empty SCOPE): []
   UI task refused:                        FAIL: ui: a UI task with no tests: exit (ui task refused): got 2, want 0
-  empty fields not refused:               FAIL: refused: a feature task with no tests: exit: got 0, want 2
+  brief.missing not asked:                FAIL: refused: a CONTEXT file that is not there: exit: got 0, want 2
+  empty VERIFY not refused:               FAIL: module: a non-UI task with no tests misses ACCEPTANCE and VERIFY: got ['task T2: ACCEPTANCE is empty'], want [...]
   context file not looked for:            FAIL: refused: a CONTEXT file that is not there: exit: got 0, want 2
   briefs written before the base is run:  FAIL: refused: a red base writes no brief
   task id not checked:                    FAIL: refused: a task id that cannot name a file: exit: got 0, want 2
@@ -193,7 +194,9 @@ def case_refused(R, S):
     r = sc.prepare(R)
     S.eq("refused: a feature task with no tests: exit", r.returncode, 2)
     S.eq("refused: stdout empty", r.stdout, "")
-    S.ok("refused: names the task and the field", "task T2: ACCEPTANCE is empty" in r.stderr and "task T2: VERIFY is empty" in r.stderr, r.stderr)
+    # DTC-70: plan lint (which wave new runs first) now refuses a non-UI task with no tests, so the planner meets it in its lint loop;
+    # brief.missing stays as the last guard and is called directly in case_module.
+    S.ok("refused: names the task and the field", "tasks[T2].tests: empty" in r.stderr and "needs a test" in r.stderr, r.stderr)
     S.ok("refused: T1 is not blamed", "task T1" not in r.stderr, r.stderr)
     S.ok("refused: no brief written, not even T1's", not os.path.exists(os.path.join(runs_dir(sc))), "runs/ exists in %s" % common_dir(sc.repo))
     gone = wp.Scene()
@@ -237,6 +240,9 @@ def case_module(R, S):
     S.ok("module: the empty SCOPE is named (prepare exit 0 with an empty SCOPE)", problems == ["task T2: SCOPE is empty"], repr(problems))
     code = module_facts("print(json.dumps(brief.missing(facts)))\n")
     S.eq("module: a complete task has nothing missing", json.loads(child(R.root, code)[1] or "null"), [])
+    code = module_facts("facts['tests'] = []\nprint(json.dumps(brief.missing(facts)))\n")
+    S.eq("module: a non-UI task with no tests misses ACCEPTANCE and VERIFY", json.loads(child(R.root, code)[1] or "null"),
+         ["task T2: ACCEPTANCE is empty", "task T2: VERIFY is empty"])
     code = module_facts("facts['ui'] = True; facts['tests'] = []\nprint(json.dumps(brief.missing(facts)))\n")
     S.eq("module: a UI task needs no ACCEPTANCE and no VERIFY", json.loads(child(R.root, code)[1] or "null"), [])
     code = module_facts("facts['ui'] = True; facts['tests'] = []; facts['files'] = []\nprint(json.dumps(brief.missing(facts)))\n")
@@ -382,8 +388,9 @@ CASES = [case_briefs, case_template, case_refused, case_ui, case_module, case_fi
 MUTANTS = [
     ("SCOPE not checked", case_module, B, '    if not facts["files"]:', "    if False:", "the empty SCOPE is named"),
     ("UI task refused", case_ui, B, '    if not facts["ui"]:', "    if True:", "ui task refused"),
-    ("empty fields not refused", case_refused, P, "        problems += brief.missing(facts)", "        problems += []",
-     "a feature task with no tests: exit"),
+    ("brief.missing not asked", case_refused, P, "        problems += brief.missing(facts)", "        problems += []",
+     "a CONTEXT file that is not there: exit"),
+    ("empty VERIFY not refused", case_module, B, "        if not _verify(facts):", "        if False:", "a non-UI task with no tests misses"),
     ("context file not looked for", case_refused, B, "if not os.path.exists(p)]", "if False]", "a CONTEXT file that is not there: exit"),
     ("briefs written before the base is run", case_refused, P, "    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)",
      "    _write(made, folder, False)\n    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)", "a red base writes no brief"),
