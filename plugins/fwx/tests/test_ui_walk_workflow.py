@@ -432,6 +432,22 @@ def check_critic_context(script, s):
     s.ok("ui-walker.md: the critic section says the same", "the whole screen" in critic and "context" in critic and "place to start" in critic and "well done" in critic, critic[:600])
 
 
+def check_breaker_links(s):
+    """The breaker follows every link to another screen once, navigation first (the rehearsal's walk 1 never clicked the planted link on /home,
+    so the walk missed the planted control half the time). The text is the only lever: the brief ui-walk.js builds names the screens, not
+    their links. Seen red on the old text (the breaker section had no rule about links):
+      FAIL: ui-walker.md: the breaker follows every link to another screen once, navigation first, and records each link it followed: 'Use every control of your screens like someone in a hurry ...'
+    Negative control: the same check on the old paragraph (text without the rule) must say False."""
+    with open(os.path.join(ROOT, "agents", "ui-walker.md"), encoding="utf-8") as f:
+        agent = f.read()
+    breaker = agent.split("## Axis `breaker`", 1)[-1].split("## Axis `critic`", 1)[0]
+
+    def says(text):
+        return all(k in text for k in ("every link", "another screen", "once", "navigation first", "link you followed"))
+    s.ok("ui-walker.md: the breaker follows every link to another screen once, navigation first, and records each link it followed", says(breaker), breaker[:300])
+    s.ok("control: a breaker paragraph without the link rule fails the check", not says("Use every control of your screens like someone in a hurry or with odd data."), "says() passed on the old paragraph")
+
+
 def check_down_fails(script, s):
     rec, err = go(script, answers_over={"executor:runner-down": R(DOWN, 1)})
     rec = finish(s, "down fails", rec, err)
@@ -996,6 +1012,7 @@ def check_all(script, s):
     check_screens(script, s)
     check_screens_login(script, s)
     check_critic_context(script, s)
+    check_breaker_links(s)
     check_verify(script, s)
     check_recheck(script, s)
     check_args(script, s)
