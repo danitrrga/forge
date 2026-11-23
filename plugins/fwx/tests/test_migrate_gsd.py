@@ -425,8 +425,9 @@ act(".planning/PROJECT.md", "keep", "project", ".fwx/PROJECT.md")
 act(".planning/workstreams/ws1/STATE.md", "purge", "machine-state")
 
 # ---- 7: backlog -----------------------------------------------------------------------------------------------------
-s.eq("backlog items with their titles", d["backlog"], [{"src": ".planning/phases/999.1-x", "title": "Someday idea"},
-                                                        {"src": ".planning/quick/260101-open", "title": "Fix the thing"}])
+s.eq("backlog items with their titles and where they go", d["backlog"],
+     [{"src": ".planning/phases/999.1-x", "title": "Someday idea", "dest": ".fwx/backlog/phases/999.1-x"},
+      {"src": ".planning/quick/260101-open", "title": "Fix the thing", "dest": ".fwx/backlog/quick/260101-open"}])
 s.ok("02.5-c is a phase, not backlog", not any("02.5-c" in b["src"] for b in d["backlog"]))
 s.ok("a quick task with a SUMMARY is not backlog", not any("260102-done" in b["src"] for b in d["backlog"]))
 
@@ -800,7 +801,7 @@ s.ok("the 02.5-c phase kept its .gitkeep (nothing generated for it)", ".fwx/mile
 s.eq(".gitignore: each line that names .planning/ has its twin right under it, the old line stays",
      open(os.path.join(wt, ".gitignore"), encoding="utf-8").read().splitlines(),
      ["node_modules/", "/.planning/phases/01-a/fonts/", "/.fwx/milestones/v2/phases/01-a/fonts/", OLD, "/.fwx/subprojects/*/private/"])
-s.ok("the backlog is listed in what apply prints (it is removed, not migrated)", "Someday idea" in r.stdout and "Fix the thing" in r.stdout, r.stdout)
+s.ok("the backlog is listed in what apply prints (moved, not converted)", "Someday idea" in r.stdout and "Fix the thing" in r.stdout, r.stdout)
 s.eq("nothing was written in the main checkout (same files, same status, same HEAD, no .fwx/)",
      (content(repo), porcelain(repo), helpers.git(repo, "rev-parse", "HEAD")), (main0, st_main0, head_main0))
 s.ok("... and its branch is still master", helpers.git(repo, "symbolic-ref", "--short", "HEAD").strip() == "master")
@@ -2054,6 +2055,7 @@ s.eq("DTC-71 refs --rewrite takes the citation of a backlog file to where it wen
      (r.returncode, rd(os.path.join(wt, "docs/notes.md"))), (0, "open items: .fwx/backlog/todos/pending/a.md\n"))
 helpers.git(wt, "commit", "-q", "--allow-empty", "-am", "rewritten")
 helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".planning/todos/pending/untracked.md", "# Not in git\n")      # the main checkout's own untracked file
 r = run(repo, "leftovers", "--apply")
 s.eq("DTC-71 leftovers moves an untracked backlog file to the same place",
      (r.returncode, rd(os.path.join(repo, ".fwx/backlog/todos/pending/untracked.md"))), (0, "# Not in git\n"))
@@ -2065,7 +2067,7 @@ s.eq("DTC-71 leftovers moves an untracked backlog file to the same place",
 # F7: `docs/.planning/` and `apps/web/src/.planning/` are other folders). Red on 6e4e54c:
 #   "FAIL: DTC-72 refs list a relative path that climbs to the root, with the real new path (and one that does not reach the root is no
 #    reference): got [('docs/vision.md', 1, '.planning/PROJECT.md', 'moved', '.fwx/PROJECT.md')], want [('apps/web/src/e2e/a.spec.ts', 1, '../../../../.planning/phases/01-alpha/01-CONTEXT.md', 'moved', ...
-# Control (a copy with the climb check taken out, so `../.planning` from apps/web/src/e2e/ counts too): the same check lists line 3 of a.spec.ts.
+# Control (a copy with the climb check taken out, so every `../` run counts): the same check lists lines 3 and 4 of a.spec.ts too (got [..., ('apps/web/src/e2e/a.spec.ts', 3, '../.planning/phases/01-alpha/01-CONTEXT.md', ...), ...]).
 SPEC = ('const a = readFileSync(path.join(__dirname, "../../../../.planning/phases/01-alpha/01-CONTEXT.md"), "utf8");\n'
         'const b = readFileSync(__dirname + "/../../../../.planning/REQUIREMENTS.md");\n'
         'const c = "../.planning/phases/01-alpha/01-CONTEXT.md"; // apps/web/src/.planning: not the root one\n'
@@ -2081,8 +2083,8 @@ s.eq("DTC-72 refs list a relative path that climbs to the root, with the real ne
      [("apps/web/src/e2e/a.spec.ts", 1, "../../../../.planning/phases/01-alpha/01-CONTEXT.md", "moved", REL),
       ("apps/web/src/e2e/a.spec.ts", 2, "../../../../.planning/REQUIREMENTS.md", "moved", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
       ("apps/web/src/e2e/a.spec.ts", 5, "../../../../.planning/STATE.md", "purged", None),
-      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/PROJECT.md"),
-      ("docs/vision.md", 1, "../.planning/REQUIREMENTS.md", "moved", "../.fwx/milestones/v1/REQUIREMENTS.md")])
+      ("docs/vision.md", 1, "../.planning/REQUIREMENTS.md", "moved", "../.fwx/milestones/v1/REQUIREMENTS.md"),
+      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/PROJECT.md")])
 rr = run(wt, "apply", "--close", "1")
 s.eq("DTC-72 apply exits 0", rr.returncode, 0)
 base72 = helpers.git(wt, "rev-parse", "HEAD").strip()
