@@ -55,7 +55,8 @@ class GhNotArmed(GhError):
     """`gh` is not installed or has no login: nothing was asked of GitHub, so no answer is not an empty answer."""
 
 
-_NO_LOGIN = re.compile(r"gh auth login|GH_TOKEN|GITHUB_TOKEN|HTTP 401|not logged in", re.I)
+NO_LOGIN_EXIT = 4  # gh's own "authentication required" exit code, with this first line of its message
+_NO_LOGIN = "To get started with GitHub CLI"
 
 
 def api(path, method="GET", body=None, cwd=None):
@@ -71,7 +72,7 @@ def api(path, method="GET", body=None, cwd=None):
     except OSError as e:
         raise GhError("cannot run gh (%s)" % e)
     if r.returncode:
-        if _NO_LOGIN.search(r.stderr or ""):
+        if r.returncode == NO_LOGIN_EXIT and (r.stderr or "").startswith(_NO_LOGIN):
             raise GhNotArmed("gh has no login: %s" % r.stderr.strip().splitlines()[0])
         raise GhError("gh api %s failed (%d): %s" % (path, r.returncode, r.stderr.strip() or r.stdout.strip() or "no output"))
     if not r.stdout.strip():

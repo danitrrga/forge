@@ -14,6 +14,9 @@ Controls, each seen red on one changed line (the first FAIL it raised):
       FAIL: no gh login: open_prs is not_run, not a list: got []
   - a gh with no login is not told from a failing gh (4 failed):
       FAIL: no gh login: open_prs is not_run, not a list: got {'error': 'gh api repos/{owner}/{repo}/pulls?state=open&per_page=100&page=1 failed (4): To get started with GitHub CLI, ...
+  - any gh message that names a login or a token is read as a missing login (the first version of the check; 4 failed):
+      FAIL: gh badtoken: an error, not a not_run: got {'not_run': 'gh has no login: gh: Bad credentials (HTTP 401): install the GitHub CLI and log in with ...
+      FAIL: gh badtoken: exit 1: got 77, want 1
   - the default branch's CI always says success:
       FAIL: all armed: default_branch_ci: got ('master', 'success', '.../commit/ccc/checks'), want ('master', 'failure', '.../commit/ccc/checks')
   - Linear's closed states are not filtered out:
@@ -43,6 +46,12 @@ import json, os, sys
 if os.environ.get("FAKE_GH_MODE") == "nologin":
     sys.stderr.write("To get started with GitHub CLI, please run:  gh auth login\\nAlternatively, populate the GH_TOKEN environment variable.\\n")
     sys.exit(4)
+if os.environ.get("FAKE_GH_MODE") == "badtoken":
+    sys.stderr.write("gh: Bad credentials (HTTP 401)\\nset GH_TOKEN to a valid token\\n")
+    sys.exit(1)
+if os.environ.get("FAKE_GH_MODE") == "nonhub":
+    sys.stderr.write("unable to expand placeholder in path: none of the git remotes point to a known GitHub host. To tell gh about a new GitHub host, please use `gh auth login`\\n")
+    sys.exit(1)
 if os.environ.get("FAKE_GH_MODE") == "down":
     sys.stderr.write("gh: HTTP 500 server error\\n")
     sys.exit(1)
@@ -259,6 +268,17 @@ def case_gh_down(s, root, w):
     f.close()
 
 
+def case_gh_armed_failing(s, root, w):
+    f = Linear([issue("TOY-1")])
+    for mode in ("badtoken", "nonhub"):
+        r = w.go(root, f, mode=mode)
+        got = parse(s, "gh " + mode, r)
+        v = got.get("open_prs", {})
+        s.ok("gh %s: an error, not a not_run" % mode, "error" in v and "not_run" not in v, "got %r" % (v,))
+        s.eq("gh %s: exit 1" % mode, r.returncode, 1)
+    f.close()
+
+
 def case_nokey(s, root, w):
     f = Linear([issue("TOY-1")])
     r = w.go(root, f, key=None)
@@ -276,13 +296,16 @@ def case_nokey(s, root, w):
     f.close()
 
 
-CASES = [case_armed, case_text, case_empty, case_pages, case_nologin, case_nogh, case_gh_down, case_nokey]
+CASES = [case_armed, case_text, case_empty, case_pages, case_nologin, case_nogh, case_gh_down, case_gh_armed_failing, case_nokey]
 GH_PY, LIN_PY, CMD_PY = "lib/fwx/core/gh.py", "lib/fwx/linear.py", "lib/fwx/commands/project_state.py"
 CONTROLS = [
     ("a gh with no login answers an empty list", case_nologin, "open_prs is not_run, not a list",
      {CMD_PY: [('return {"not_run": "%s: %s" % (e, GH_FIX)}', "return []")]}),
     ("a gh with no login is a failing gh", case_nologin, "exit 77",
-     {GH_PY: [("if _NO_LOGIN.search(r.stderr or \"\"):", "if False:")]}),
+     {GH_PY: [('if r.returncode == NO_LOGIN_EXIT and (r.stderr or "").startswith(_NO_LOGIN):', "if False:")]}),
+    ("any gh message that names a login or token is a missing login", case_gh_armed_failing, "an error, not a not_run",
+     {GH_PY: [('if r.returncode == NO_LOGIN_EXIT and (r.stderr or "").startswith(_NO_LOGIN):',
+               'if re.search(r"gh auth login|GH_TOKEN|HTTP 401", r.stderr or ""):')]}),
     ("the default branch's CI always success", case_armed, "default_branch_ci",
      {GH_PY: [("states = [c[\"state\"] for c in head_checks(sha, cwd)[0]]", "states = []")]}),
     ("closed Linear states are not filtered", case_armed, "the open issues",
