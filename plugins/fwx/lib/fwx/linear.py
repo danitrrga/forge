@@ -45,6 +45,8 @@ MARK = "<!-- fwx:"
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 DATA = os.path.join(ROOT, "data", "linear")
 WAITING = ("needs-owner", "factory-review", "factory-failed")
+DONE_TYPES = ("completed", "canceled")  # Linear's state types of a closed issue
+MAX_PAGES = 20
 FIELDS = ("context", "reproduce", "expected", "out_of_scope", "evidence", "origin")
 REQUIRED = ("context", "expected")
 IDENT = re.compile(r"[A-Za-z][A-Za-z0-9]*-[0-9]+\Z")
@@ -61,6 +63,9 @@ Q_REF = "query($id: String!) { issue(id: $id) { id identifier project { name } }
 Q_LIST = ("query($project: String!, $labels: [String!]) { issues(first: %d, filter: { "
           "project: { name: { eq: $project } }, labels: { some: { name: { in: $labels } } } }) { "
           "nodes { %s } pageInfo { hasNextPage } } }" % (PAGE, ISSUE_FIELDS))
+Q_OPEN = ("query($project: String!, $done: [String!], $after: String) { issues(first: %d, after: $after, filter: { "
+          "project: { name: { eq: $project } }, state: { type: { nin: $done } } }) { "
+          "nodes { %s } pageInfo { hasNextPage endCursor } } }" % (PAGE, ISSUE_FIELDS))
 Q_ISSUE = ("query($id: String!) { issue(id: $id) { %s comments(first: %d) { nodes { body createdAt user { name } } "
            "pageInfo { hasNextPage } } } }" % (ISSUE_FIELDS, PAGE))
 Q_LABEL = ("query($name: String!) { issueLabels(first: 50, filter: { name: { eqIgnoreCase: $name } }) "
@@ -285,6 +290,21 @@ class Client:
     def waiting(self):
         """The issues waiting for the owner (the labels of WAITING), with `updatedAt` to group them by age."""
         return self._list(WAITING, "waiting for the owner (%s)" % ", ".join(WAITING))
+
+    def open_issues(self):
+        """Every issue of this project whose state is not completed or canceled, page after page by cursor; a project
+        still full after MAX_PAGES pages is a LinearError (a truncated list is a wrong answer)."""
+        out, after = [], None
+        for _ in range(MAX_PAGES):
+            data = self._gql(Q_OPEN, {"project": self.project_name, "done": list(DONE_TYPES), "after": after})
+            out += [self._shape(n) for n in _dig(data, "issues", "nodes")]
+            page = _dig(data, "issues", "pageInfo")
+            if not page.get("hasNextPage"):
+                return out
+            after = page.get("endCursor")
+            if not after:
+                raise LinearError("Linear has more open issues but sent no cursor", "shape")
+        raise LinearError("%s still has open issues after %d pages: the list is truncated" % (self.project_name, MAX_PAGES), "shape")
 
     def issue(self, ident):
         """One issue of this project with its comments; a comment is `own` when it starts with the fwx mark."""

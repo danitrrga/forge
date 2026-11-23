@@ -9,6 +9,11 @@ own message; a list that is still full after MAX_PAGES pages is `GhError` too, b
 `upsert_comment(pr, marker, body)` edits in place the comment of the PR that carries `marker`, or creates one: it returns
 `"created"`, `"updated"` or `"unchanged"` (the body already is the one asked for). The comments are read page by page.
 
+`open_prs()` is the open PRs of the checkout's repository, `[{number, title, head, checks}]` (`head` the branch name,
+`checks` as below); `default_branch_ci()` is `{branch, conclusion, url}` of the default branch's head, `conclusion` being
+`failure` when any check failed, else `pending` when any is not green, else `success`. A missing `gh` or a missing login
+is `GhNotArmed` (a `GhError`): the caller says NOT RUN, NOT ARMED instead of answering with an empty list.
+
 `pr_facts(pr)` is the `pr` object of the merge decision's facts: `{number, head_sha, base, mergeable, running,
 changed_files, checks, not_green}`. `mergeable` is null while GitHub computes it: then `running` is true and `mergeable`
 true (the schema has a boolean; `running` holds the decision back). A changed file carries `path`, `additions`,
@@ -46,6 +51,13 @@ class GhError(Exception):
     """`gh` failed, is missing, or answered something that is not what was asked for."""
 
 
+class GhNotArmed(GhError):
+    """`gh` is not installed or has no login: nothing was asked of GitHub, so no answer is not an empty answer."""
+
+
+_NO_LOGIN = re.compile(r"gh auth login|GH_TOKEN|GITHUB_TOKEN|HTTP 401|not logged in", re.I)
+
+
 def api(path, method="GET", body=None, cwd=None):
     """The JSON `gh api` answers for `path` (None for an empty answer). `body` (a dict) is sent as the JSON request."""
     cmd = ["gh", "api", "--method", method, path] + (["--input", "-"] if body is not None else [])
@@ -53,12 +65,14 @@ def api(path, method="GET", body=None, cwd=None):
         r = subprocess.run(cmd, cwd=cwd, input=None if body is None else json.dumps(body), capture_output=True,
                            text=True, timeout=TIMEOUT_S)
     except FileNotFoundError:
-        raise GhError("gh is not installed or not on PATH (the PR comment needs it)")
+        raise GhNotArmed("gh is not installed or not on PATH")
     except subprocess.TimeoutExpired:
         raise GhError("gh api %s did not answer within %d s" % (path, TIMEOUT_S))
     except OSError as e:
         raise GhError("cannot run gh (%s)" % e)
     if r.returncode:
+        if _NO_LOGIN.search(r.stderr or ""):
+            raise GhNotArmed("gh has no login: %s" % r.stderr.strip().splitlines()[0])
         raise GhError("gh api %s failed (%d): %s" % (path, r.returncode, r.stderr.strip() or r.stdout.strip() or "no output"))
     if not r.stdout.strip():
         return None
@@ -169,6 +183,49 @@ def _file(f):
     return out
 
 
+def head_checks(sha, cwd=None):
+    """`(checks, not_green)` of the commit `sha`: its check runs and its commit statuses, every page."""
+    base = "repos/{owner}/{repo}"
+    runs = pages("%s/commits/%s/check-runs" % (base, sha), "check_runs", cwd)
+    statuses = []
+    for page in range(1, MAX_PAGES + 1):
+        got = api("%s/commits/%s/status?per_page=%d&page=%d" % (base, sha, PER_PAGE, page), cwd=cwd) or {}
+        batch = got.get("statuses") or []
+        statuses += batch
+        if len(batch) < PER_PAGE:
+            break
+    else:
+        raise GhError("the commit statuses of %s are truncated after %d pages" % (sha, MAX_PAGES))
+    return checks_of(runs, statuses)
+
+
+def open_prs(cwd=None):
+    """The open PRs of the repository: `[{number, title, head, checks}]`, `checks` as in `pr_facts`."""
+    out = []
+    for pr in pages("repos/{owner}/{repo}/pulls?state=open", cwd=cwd):
+        head = pr.get("head") or {}
+        if not isinstance(head.get("sha"), str) or not head["sha"]:
+            raise GhError("the PR %s has no head sha in gh's answer" % pr.get("number"))
+        out.append({"number": pr.get("number"), "title": pr.get("title", ""), "head": head.get("ref", ""),
+                    "checks": head_checks(head["sha"], cwd)[0]})
+    return out
+
+
+def default_branch_ci(cwd=None):
+    """`{branch, conclusion, url}` of the default branch's head commit (module docstring)."""
+    repo = api("repos/{owner}/{repo}", cwd=cwd) or {}
+    branch = repo.get("default_branch")
+    if not isinstance(branch, str) or not branch:
+        raise GhError("gh's answer for the repository has no default_branch")
+    commit = api("repos/{owner}/{repo}/commits/%s" % branch, cwd=cwd) or {}
+    sha = commit.get("sha")
+    if not isinstance(sha, str) or not sha:
+        raise GhError("the head of %s has no sha in gh's answer" % branch)
+    states = [c["state"] for c in head_checks(sha, cwd)[0]]
+    conclusion = "failure" if "failure" in states else "pending" if "pending" in states else "success"
+    return {"branch": branch, "conclusion": conclusion, "url": (commit.get("html_url") or "") + "/checks"}
+
+
 def pr_facts(pr, cwd=None):
     """The `pr` facts of PR number `pr` (module docstring)."""
     pr = _pr_number(pr)
@@ -178,17 +235,7 @@ def pr_facts(pr, cwd=None):
     if not isinstance(head, str) or not head:
         raise GhError("the PR %d has no head sha in gh's answer" % pr)
     files = pages("%s/pulls/%d/files" % (base, pr), cwd=cwd)
-    runs = pages("%s/commits/%s/check-runs" % (base, head), "check_runs", cwd)
-    statuses = []
-    for page in range(1, MAX_PAGES + 1):
-        got = api("%s/commits/%s/status?per_page=%d&page=%d" % (base, head, PER_PAGE, page), cwd=cwd) or {}
-        batch = got.get("statuses") or []
-        statuses += batch
-        if len(batch) < PER_PAGE:
-            break
-    else:
-        raise GhError("the commit statuses of %s are truncated after %d pages" % (head, MAX_PAGES))
-    checks, not_green = checks_of(runs, statuses)
+    checks, not_green = head_checks(head, cwd)
     mergeable = info.get("mergeable")
     return {"number": pr, "head_sha": head, "base": (info.get("base") or {}).get("ref", ""),
             "mergeable": True if mergeable is None else bool(mergeable), "running": mergeable is None,

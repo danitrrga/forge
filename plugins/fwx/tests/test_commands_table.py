@@ -60,6 +60,7 @@ DECIDED = [
     ("linear list", None, "linear", ["list"]), ("linear list --waiting", "linear waiting", "linear", ["waiting"]),
     ("linear new", "linear create", "linear", ["create"]), ("linear comment", None, "linear", ["comment"]),
     ("linear label", None, "linear", ["label"]),
+    ("project state", None, "project_state", []),
     ("wave new", "wave prepare", "wave", ["prepare"]), ("base", "wave check-base", "wave", ["check-base"]),
     ("scratch new", "wave scratch", "wave", ["scratch"]), ("wave merge", "wave integrate", "wave", ["integrate"]),
     ("wave fix", "wave fix-round", "wave", ["fix-round"]), ("wave revert", None, "wave", ["revert"]),

@@ -25,6 +25,7 @@ python3 bin/fwx plan lint <dir>    # the structure of a phase's plan.md (and eac
 python3 bin/fwx context new <dir>    # the base-context file every agent of a phase starts with; `context seal` marks a hand-written one, `context lint` fails on one over the cap, edited or stale
 python3 bin/fwx discuss --json    # what the discuss opens with: the configuration, the phases, the models and what waits in Linear; read-only
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
+python3 bin/fwx project state --json    # open PRs, the default branch's CI and open Linear issues; a section without `gh` login or LINEAR_API_KEY is `{"not_run": ...}`, exit 77
 python3 bin/fwx decide --facts <file>    # the merge decision for the facts of a PR: merge, handover or pending, with the rule behind each reason
 python3 bin/fwx wave new --part-dir <dir> --plane session --branch <phase branch>    # validates a part and prints the args of `execute`; `wave merge`, `wave fix`, `wave revert` and `wave remove` are the steps after it, `wave` alone says whether the gate passed; `wave setup [--force]` runs the project's `worktree_setup` in the current worktree (exit 1: it failed)
 python3 bin/fwx base <sha>    # an executor's step 0: exit 0 when the worktree starts at that commit, 42 when not, 43 when the project's `worktree_setup` failed in it
