@@ -85,9 +85,9 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       pictures in its `evidence` (the walkers' browsers carried the plant; the text stays, the pictures are listed in `evidence_dropped`), and
       so does any finding for a picture `ab` listed in `control-pictures.txt` (below). An id names the review's files, so one that is not letters, digits, `.`, `_`, `-`
       (starting with a letter or digit) is exit 2, as in `wave new`.
-  fwx review new --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("¿Mantener este arreglo?",
+  fwx review new --run R --fixed F        `review/decisions.json` for design/verdict: one item per fixed finding ("Keep this fix?",
       figures today/built; choices `ok`, `redo` and `not_defect`, the last two with `needs_note`) and one per CONTRADICTED
-      ("¿Cambiar lo aprobado por esto?", yes/no), the item `id` being the finding's. A `.webm`
+      ("Change what was approved to this?", yes/no), the item `id` being the finding's. A `.webm`
       clip becomes an animated WebP with ffmpeg; without it `NOT RUN, NOT ARMED: ffmpeg missing`, exit 0, the clip's path in the text.
       `review/map.json` says which id is a fix and which a contradicted one. F is a file with [{id, commit}]. The `built` figure of a fix
       is the `evidence_after` its recheck saved in `rechecked-*.json`, else the one fix.json holds.
@@ -188,12 +188,12 @@ POLL_S = _poll_seconds()
 STALE_H = 12
 WEBP = ("fps=12,scale=640:-1", "60")  # 640 px, 12 fps, quality 60: 13 KB for the 5 s clip of U1
 IMAGES = (".png", ".jpg", ".jpeg", ".webp", ".gif")
-ASK_FIX = "¿Mantener este arreglo?"
-ASK_CONTRADICTED = "¿Cambiar lo aprobado por esto?"
+ASK_FIX = "Keep this fix?"
+ASK_CONTRADICTED = "Change what was approved to this?"
 # The three answers to a fix on the review page. `redo` and `not_defect` refuse the fix and need the owner's reason (`needs_note`): "no" used
 # to mean both "it does not work" and "it is not a defect", and a refusal without its reason is not an answer. The keys are what `review-answers` reads.
-FIX_CHOICES = [{"key": "ok", "text": "Mantener el arreglo"}, {"key": "redo", "text": "No funciona: arréglalo otra vez"},
-               {"key": "not_defect", "text": "No es un defecto"}]
+FIX_CHOICES = [{"key": "ok", "text": "Keep the fix"}, {"key": "redo", "text": "It does not work: fix it again"},
+               {"key": "not_defect", "text": "It is not a defect"}]
 NEEDS_NOTE = ["redo", "not_defect"]
 VERDICTS = ("CONFIRMED", "PLAUSIBLE", "CONTRADICTED", "NOT REPRODUCED", "TOOLING", "DUPLICATE")
 SEVERITY = {"blocker": "high", "major": "high", "minor": "medium", "cosmetic": "low"}

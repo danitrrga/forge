@@ -1585,7 +1585,7 @@ def case_review_page(R, S):
     ids = [i.get("id") for i in items]
     S.ok("review page: item ids 01,02,03, want F1,F2,F3 (the finding's id, not a number)", ids == ["F1", "F2", "F3"],
          "item ids %s, want F1,F2,F3" % ",".join(ids) if ids else "no items")
-    S.eq("review page: the asks", [i.get("ask") for i in items], ["¿Mantener este arreglo?", "¿Mantener este arreglo?", "¿Cambiar lo aprobado por esto?"])
+    S.eq("review page: the asks", [i.get("ask") for i in items], ["Keep this fix?", "Keep this fix?", "Change what was approved to this?"])
     caps = [[fg.get("caption") for fg in i.get("figures", [])] for i in items]
     S.ok("review page: today and built on a fix, today on a contradicted", "today" in caps[0] and "built" in caps[0] and "built" in caps[1] and caps[2] == ["today"], str(caps))
     figs = [fg for i in items for fg in i.get("figures", [])]

@@ -41,7 +41,7 @@ fwx (plugins/fwx)
   below. plugins/fwx/NOTICE lists, file by file, what each one copied or read; plugins/fwx/tests/test_notice.py checks every
   `copied-from:` header against it. It is part of this notice and stays where it is.
 
-  - marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209498517a4c826073b5a0edc2a4097a4fa, used with
+  - marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209598517a4c826073b5a0edc2a4097a4fa, used with
     the author's permission.
   - EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, MIT licence.
   - mattpocock/skills, https://github.com/mattpocock/skills, MIT licence.
