@@ -929,23 +929,29 @@ def a_no_baseline(w):
 
 
 def a_no_baseline_existing_row(w):
-    """`--no-baseline` on a name whose skill_keep.extras row already holds skills (left from a project that was removed): the site would
-    not be bare, so the run is refused before the first write, exit 2, naming the row; forge.json is untouched. (The script kept such a row
-    without a word.) An existing row that is empty does no harm and is left as it is."""
+    """`--no-baseline` on a name that already has a skill_keep.extras row, empty or not (left from a project that was removed): the project
+    would still be enrolled (sync_skill_keep.py gives a row's project the common skills and switches trimming on), so the run is refused
+    before the first write, exit 2, naming the row; forge.json is untouched and the row is never deleted here. A name with no row is made.
+    Before: only a row that held skills was refused, so an empty row (the one a plain `forge new` leaves) was kept, the run said
+    `skills row  skipped (--no-baseline)` and exited 0, and `sync_skill_keep.py --check` then exited 1 with `extras +['alpha'] -[]`.
+    The world has a common skill: with `common_skills: []` an empty row changes nothing, which hid this."""
     bad = []
     forge_json = w.path("config", "forge.json")
     doc = read_json(forge_json)
-    doc["skill_keep"].setdefault("extras", {})["demo.claude.json"] = ["alpha"]
-    doc["skill_keep"]["extras"]["empty.claude.json"] = []
+    doc["skill_keep"]["common_skills"] = ["alpha"]
+    extras = doc["skill_keep"].setdefault("extras", {})
+    extras["demo.claude.json"] = ["alpha"]
+    extras["empty.claude.json"] = []
     write_json(forge_json, doc)
-    before = w.snapshot()
-    code, out = w.forge("new", "demo", "--stack", "generic", "--no-baseline", "--apply")
-    if code != 2 or "demo.claude.json" not in out or "skill_keep.extras" not in out or w.snapshot() != before:
-        bad.append("--no-baseline with an existing extras row: exit %d, want 2 naming demo.claude.json and skill_keep.extras, nothing written: %s" % (code, tail(out)))
-    text = open(forge_json, encoding="utf-8").read()
-    code, out = w.forge("new", "empty", "--stack", "generic", "--no-baseline", "--apply")
-    if code != 0 or open(forge_json, encoding="utf-8").read() != text:
-        bad.append("--no-baseline with an empty existing row: exit %d, want 0 and forge.json as it was: %s" % (code, tail(out)))
+    for name, held in (("demo", "skills"), ("empty", "empty")):
+        before = w.snapshot()
+        code, out = w.forge("new", name, "--stack", "generic", "--no-baseline", "--apply")
+        if code != 2 or "%s.claude.json" % name not in out or "skill_keep.extras" not in out or w.snapshot() != before:
+            bad.append("--no-baseline with an existing %s extras row: exit %d, want 2 naming %s.claude.json and skill_keep.extras, nothing written: %s"
+                       % (held, code, name, tail(out)))
+    code, out = w.forge("new", "fresh", "--stack", "generic", "--no-baseline", "--apply")
+    if code != 0 or "fresh.claude.json" in read_json(forge_json)["skill_keep"]["extras"]:
+        bad.append("--no-baseline with no row: exit %d, want 0 and no row for fresh.claude.json: %s" % (code, tail(out)))
     return bad
 
 
@@ -1499,8 +1505,8 @@ CONTROLS = [
     ("a stack.json not checked", a_bad_stack_json, BROKEN + [(NEW, "if missing:", "if False:")], "a stack.json without checks"),
     ("an unused argument not warned about", a_unused_argument, [(NEW, "if unused else []", "if False else []")], "an unused argument not warned about"),
     # 4.4 U9
-    ("an existing extras row beside --no-baseline", a_no_baseline_existing_row, [(NEW, "    if a.no_baseline and held:", "    if False and held:")],
-     "--no-baseline with an existing extras row"),
+    ("an existing extras row beside --no-baseline", a_no_baseline_existing_row, [(NEW, "    if a.no_baseline and not row:", "    if a.no_baseline and held:")],
+     "--no-baseline with an existing empty extras row"),
     ("the recovery copy deleted before a failed restore", a_registry_copy_kept,
      [FAIL_AFTER_REGISTRY, FAIL_RESTORE_REGISTRY, (NEW, '            if kind == "restore":  # a file that existed: put back what it held\n',
                                                    '            if kind == "restore":  # a file that existed: put back what it held\n                forget(rest[1])\n')],
