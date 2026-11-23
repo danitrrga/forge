@@ -8,8 +8,9 @@ used with the author's permission.
   Text copied by part 2.1, each line as written: playbooks/execute.md takes from its playbooks/factory.md the three rules
   "Clean up only what you started", "Prove the commit you ship" and "Giving up means `failed`" of "Standing rules".
   Text copied by agents/executor.md: line 18 of playbooks/factory.md, the rule "Clean up only what you started." and the three
-  sentences after it, word for word. Read for the same agent: lines 43-47 (the resolution of a merge conflict) and line 65 (the
-  question when no test can express the bug), in words of its own.
+  sentences after it, word for word. Read for the same agent, in words of its own: lines 43-47 (the resolution of a merge conflict), line 65 (the
+  question when no test can express the bug), line 16 (a question with two or three concrete options), line 19 (nothing uncommitted
+  at hand-in), line 27 (the acceptance check before code) and line 53 (the assumptions list of the report).
   Read for workflows/execute.js: playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
   Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
     lib/fwx/core/keys.py     from lib/factory.ts
@@ -64,7 +65,9 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   agents/executor.md: "Workers never rebase and never retarget or merge PRs." of playbooks/orchestrate.md line 84, "Red is a colour,
   not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, "Don't tweak a test's expected values just to get a pass."
   of skills/babysit/SKILL.md line 53 and "Type check and lint are not a pin." of playbooks/refactoring.md line 9, each word for word.
-  Read for the same agent: line 18 of playbooks/autopilot-full.md and steps 1-4 of skills/tdd/SKILL.md, in words of its own.
+  Read for the same agent: line 18 of playbooks/autopilot-full.md, steps 1-4 of skills/tdd/SKILL.md, and skills/poteto-mode/SKILL.md
+  with its principle-* leaves (smallest diff, subtract before adding, the data shape first, the two-edit test rule, attack the premise,
+  prove it works: the section "What good work is"), in words of its own.
   agents/reviewer.md: "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, word for word.
   Read for the same agent: skills/interrogate/references/reviewer-prompt.md, its lead-judgment.md and line 20 of
   playbooks/autopilot-full.md, in words of its own.
