@@ -2212,4 +2212,40 @@ on_branch = plan_json(wt)[1]
 s.ok("DTC-76 ... and --json has the same files as on a branch, with no branch named after the detached state",
      rp.returncode == 0 and D["totals"] == on_branch["totals"] and not [b for b in D["branches"] if "(" in b["name"]], rp.stderr[-300:])
 
+# The review of pull request 220: `--prefix` wrote the new path of a moved citation without the existence check `--rewrite` makes.
+# Red on 6fcb1f4:
+#   R1 "FAIL: R1 --prefix without the map apply was run with leaves a citation whose new path does not exist, and says why: got 'see .fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md\n'
+#      (exit 0, output '... rewritten: 1 reference(s) in 1 file(s), staged ...'), want 'see .planning/phases/01-alpha/01-CONTEXT.md\n'" (apply put the phase in v2 by --milestone-map; the plain run computes v1)
+#   R2 "FAIL: R2 --prefix leaves a glob across workstreams whose new path matches nothing: got 'ls .fwx/subprojects/*/ROADMAP.md\n', want 'ls .planning/workstreams/*/ROADMAP.md\n'"
+# Control (the dest_exists check taken out of the prefix branch): the same two lines.
+repo, wt = mini({"docs/d.md": "see .planning/phases/01-alpha/01-CONTEXT.md\n"})
+mapfile = os.path.join(HOME, "r1-map.txt")
+with open(mapfile, "w") as fh:
+    fh.write("1 v2\n")
+rr = run(wt, "apply", "--close", "1", "--milestone-map", mapfile)
+s.eq("R1 apply with the map exits 0", rr.returncode, 0)
+baseR1 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", baseR1, "--prefix", "docs/d.md")
+gotR1 = rd(os.path.join(wt, "docs/d.md"))
+s.ok("R1 --prefix without the map apply was run with leaves a citation whose new path does not exist, and says why: got %r (exit %d, output %r), want %r"
+     % (gotR1, r.returncode, r.stdout[-200:], "see .planning/phases/01-alpha/01-CONTEXT.md\n"),
+     r.returncode == 0 and gotR1 == "see .planning/phases/01-alpha/01-CONTEXT.md\n" and "does not exist" in r.stdout)
+helpers.git(wt, "reset", "-q", "--hard")
+r = run(wt, "refs", "--base", baseR1, "--milestone-map", mapfile, "--prefix", "docs/d.md")
+s.eq("R1 ... and with the map it writes the path that exists", (r.returncode, rd(os.path.join(wt, "docs/d.md"))),
+     (0, "see .fwx/milestones/v2/phases/01-alpha/01-CONTEXT.md\n"))
+
+repo, wt = world()
+helpers.write(wt, "docs/g.md", "ls .planning/workstreams/*/ROADMAP.md\n")
+helpers.git(wt, "add", "docs/g.md")
+helpers.git(wt, "commit", "-q", "-m", "a glob across workstreams")
+rr = run(wt, "apply", "--close", "1")
+s.eq("R2 apply exits 0", rr.returncode, 0)
+baseR2 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", baseR2, "--prefix", "docs/g.md")
+s.ok("R2 --prefix leaves a glob across workstreams whose new path matches nothing: got %r, want %r" % (rd(os.path.join(wt, "docs/g.md")), "ls .planning/workstreams/*/ROADMAP.md\n"),
+     r.returncode == 0 and rd(os.path.join(wt, "docs/g.md")) == "ls .planning/workstreams/*/ROADMAP.md\n")
+
 s.done()
