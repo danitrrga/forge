@@ -81,6 +81,9 @@ def rule_problems(principles):
             found.append("principles.md: the owner's words are not quoted: %s" % quote)
     if "Enforced by" not in body:
         found.append("principles.md: rule 12 names no enforcer (a rule with none is a guideline, rule 1)")
+    for big in ("status `question`", "first in `outside`"):
+        if big not in body:
+            found.append("principles.md: rule 12 does not say what a big defect does (%s)" % big)
     for enforcer in ("workflows/execute.js", "git diff", "files it before it returns"):
         if enforcer not in body:
             found.append("principles.md: rule 12 does not name %s as an enforcer" % enforcer)
@@ -125,6 +128,8 @@ s.ok("control: the narrowing check finds the old executor sentence",
 s.ok("control: ... and the old reviewer sentence", narrowing({"agents/reviewer.md": "not everything wrong in the files it touches"}) != [])
 s.ok("control: ... and the old FORBIDDEN line", narrowing({"workflows/execute.js": "FORBIDDEN: no rebase, no fixes outside this work"}) != [])
 s.ok("control: a rule 12 with no enforcer is found", rule_problems("12. **Agents own the result.** Source: the owner.\n") != [])
+s.ok("control: a rule 12 with no escalation of a big defect is found",
+     any("big defect" in p for p in rule_problems(read("playbooks/principles.md").replace("first in `outside`", "in `outside`"))))
 s.ok("control: a missing rule 12 is found", rule_problems("11. **x.** y\n") != [])
 s.ok("control: an executor that does not point at the rule is found",
      any("executor.md does not point" in p for p in pointer_problems(lambda rel: "" if rel == "agents/executor.md" else read(rel))))
