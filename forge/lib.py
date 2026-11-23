@@ -519,8 +519,8 @@ def write_text(path, text, mode=None, backup=False, fsync=False, check=None):
     `fsync` syncs the temp file before the rename and the directory after it: old content or new
     survives a power cut, not an empty file (rotate_secret.py's secrets.json, whose loss makes
     every SessionStart generator exit 1). `check(tmp)` sees the written temp file before it is
-    renamed into place, and raises to refuse it (register_project.py validates a project that
-    way); the retries rename the same bytes without checking them again. Whatever raises, no
+    renamed into place, and raises to refuse it (a caller that validates the file before it
+    goes live); the retries rename the same bytes without checking them again. Whatever raises, no
     temp file is left behind: until S1 a write that raised left `path.tmp.<pid>`."""
     # One policy for a `path` that is a symlink: its target is replaced and the link kept, as
     # scripts/tools/rotate_secret.py's own writer did before it came here. Replacing the link with

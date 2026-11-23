@@ -698,7 +698,7 @@ def a_doctor_fail(w):
     return bad
 
 
-# ---------------------------------------------------------------- 4.4 U9: the options register_project.py had and forge new lacked
+# ---------------------------------------------------------------- 4.4 U9: the options the old registering script had and forge new lacked
 # (--account-server, --memory lite, --worktree-guard, --no-baseline, --no-git). Each is asserted against the effect the script gave it.
 
 LITE = "claude-mem-lite@sdsrss"
