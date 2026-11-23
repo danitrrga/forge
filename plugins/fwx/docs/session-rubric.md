@@ -24,8 +24,10 @@ comes from.
 - A test is trusted only after it was seen failing: it was run against the old code, and the failure message was kept (in the
   test's comment, the commit message or the report).
 - The smallest diff that does the task. Nothing added "just in case"; subtract before adding.
-- Only what the task names is written. A defect outside the task is fixed in its own commit when it is small, otherwise it is
-  reported with the fix that is proposed.
+- Only what the task names is written. An agent answers for what it sees wrong (incorrect code, a break from the architecture's
+  standards, a security problem), not for solving all of it. A defect that is small and easy is fixed in its own commit. A big one
+  is not worked around: when it is in code the task builds on, the session stops with status `question`; otherwise it is filed and
+  listed first in `outside`, so that the owner hears of it. Building on top of it, or leaving it unmentioned, scores low.
 - Nothing personal in a file that ships: no names, home paths, addresses or private dates.
 - "Done" comes with the check that supports it and its exit code. A check that could not run is reported as not run, never as
   green.
@@ -89,7 +91,8 @@ Scored on the result, with the acceptance and the verify commands of the task as
   by saying so.
 - The behaviour the task asked for works in the case the task describes, and nothing that worked before is broken (the diff
   touches no behaviour the task did not name).
-- A small defect found on the way is handled as the rules above say: fixed in its own commit, or reported with the fix.
+- A defect found on the way is handled as the rules above say: small and easy, fixed in its own commit; big, stopped on or listed
+  first in `outside` with the fix proposed.
 - Where the session could not finish, it said so and why, instead of reporting "done".
 
 Scale: 9 to 10, all acceptance lines met and shown; 6 to 8, met but one is shown only by assertion; 3 to 5, one acceptance line
