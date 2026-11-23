@@ -159,7 +159,7 @@ def case_briefs(R, S):
     rep = f1.get("REPORT", "")
     S.ok("briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply",
          "`report.json` directly in your scratch folder, not in its `tmp/`" in rep and os.path.join(folder, "reports") not in t1 and all(w in rep for w in ("status", "branch", "worktree", "head", "commits", "red", "green",
-                                                                                        "question", "outside", "could_not_run", "reason"))
+                                                                                        "question", "assumptions", "outside", "could_not_run", "reason"))
          and "<status> <report path> commits=<n>" in rep, rep)
     S.ok("briefs: REPORT says the file-write tool is enough, naming no harness tool (the folder is in the worktree: no heredoc)", "file-write tool" in rep and "Write tool" not in rep and "heredoc" not in rep, rep)
     S.ok("briefs: STANDING names agents/executor.md of the plugin", os.path.join(ROOT, "agents", "executor.md") in f1.get("STANDING", ""), f1.get("STANDING", ""))
