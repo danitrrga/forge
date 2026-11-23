@@ -465,6 +465,63 @@ def case_check_base(R, S):
     S.eq("check-base: outside git fails closed", (r.returncode, "not a linked worktree: %s" % outside in r.stderr), (42, True))
 
 
+def case_check_base_moves_fresh(R, S):
+    """DTC-74: `isolation: worktree` makes each agent's worktree at the main checkout's HEAD, not at the wave's BASE, so `fwx base`
+    moves a FRESH worktree to BASE instead of refusing. Fresh = the tree and index clean (the ignored `.fwx-agent` aside), on a
+    branch that is not a default branch, whose reflog is the one `branch: Created from` entry (a commit, a reset, a merge or a
+    checkout of it adds another), and BASE is a commit of the repository. Anything else keeps exit 42 and is not touched."""
+    sc = Scene()
+    cb = lambda cwd, *a: R(cwd, "base", *a, env=sc.env)  # noqa: E731
+    head = lambda cwd: helpers.git(cwd, "rev-parse", "HEAD").strip()  # noqa: E731
+    main_head = head(sc.repo)
+    agent = helpers.add_worktree(sc.repo, "agent-fresh")  # as Claude Code makes it: a new branch at the main checkout's HEAD
+    sc.commit("one.txt", "feat: one")  # the phase branch moves on: the wave's base is not where the agent's worktree starts
+    base = sc.head()
+    S.ok("moves-fresh: the fixture has the agent's worktree behind BASE", head(agent) == main_head != base, (head(agent), main_head, base))
+    scratch = R(agent, "scratch", "new", "run1", "T1", env=sc.env)
+    r = cb(agent, base)
+    S.eq("moves-fresh: a fresh worktree is moved to BASE: exit, stderr", (r.returncode, r.stderr), (0, ""))
+    S.eq("moves-fresh: its HEAD is BASE, on its own branch, tree clean (the scratch folder made before is not work)",
+         (head(agent), helpers.git(agent, "symbolic-ref", "--short", "HEAD").strip(), helpers.git(agent, "status", "--porcelain"), scratch.returncode),
+         (base, "agent-fresh", "", 0))
+    S.eq("moves-fresh: the main checkout and the phase worktree stay where they were", (head(sc.repo), sc.head()), (main_head, base))
+    S.eq("moves-fresh: moved once, the same call again is the plain check", cb(agent, base).returncode, 0)
+    short = helpers.add_worktree(sc.repo, "agent-short")
+    S.eq("moves-fresh: a short sha moves too", (cb(short, base[:7]).returncode, head(short)), (0, base))
+
+    def refused(label, wt, want_head, sha=None):
+        r = cb(wt, sha or base)
+        S.eq("moves-fresh: %s: exit %d, want 42 and HEAD unmoved" % (label, r.returncode), (r.returncode, head(wt)), (42, want_head))
+        S.ok("moves-fresh: %s: today's message `wrong base: HEAD <x>, expected <sha>`" % label,
+             "wrong base: HEAD %s, expected %s" % (want_head, sha or base) in r.stderr, r.stderr)
+
+    dirty = helpers.add_worktree(sc.repo, "agent-dirty")
+    helpers.write(dirty, "README", "edited\n")
+    refused("a modified file", dirty, main_head)
+    S.eq("moves-fresh: a modified file is still there", open(os.path.join(dirty, "README")).read(), "edited\n")
+    staged = helpers.add_worktree(sc.repo, "agent-staged")
+    helpers.write(staged, "new.txt", "x\n")
+    helpers.git(staged, "add", "new.txt")
+    refused("a staged file", staged, main_head)
+    untracked = helpers.add_worktree(sc.repo, "agent-untracked")
+    helpers.write(untracked, "notes.txt", "x\n")
+    refused("an untracked file", untracked, main_head)
+    own = helpers.add_worktree(sc.repo, "agent-own")
+    sc.commit("mine.txt", "feat: mine", cwd=own)
+    refused("a commit of its own", own, head(own))
+    reset = helpers.add_worktree(sc.repo, "agent-reset")
+    helpers.git(reset, "reset", "-q", "--hard", main_head)  # nothing changed, but the branch has been written to since it was made
+    refused("a branch that was reset", reset, main_head)
+    mainname = helpers.add_worktree(sc.repo, "main")
+    refused("the default branch's name", mainname, main_head)
+    detached = helpers.add_worktree(sc.repo, "agent-detached")
+    helpers.git(detached, "checkout", "-q", "--detach")
+    refused("a detached HEAD", detached, main_head)
+    gone = helpers.add_worktree(sc.repo, "agent-gone")
+    refused("a sha that is no commit", gone, main_head, sha="0" * 40)
+    S.eq("moves-fresh: the main checkout is never moved", (cb(sc.repo, base).returncode, head(sc.repo)), (42, main_head))
+
+
 def case_scratch(R, S):
     """3.4 U8 fix, F2: an agent writes its report and its TMPDIR in `<worktree>/.fwx-agent/<run>/<unit>/`, a folder of its own
     worktree that git ignores (it holds its own `.gitignore`), never under `.git`: Claude Code asks permission for `.git` and
@@ -524,7 +581,7 @@ def case_dispatch(R, S):
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_scratch, case_dispatch]
+         case_check_base_moves_fresh, case_scratch, case_dispatch]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
