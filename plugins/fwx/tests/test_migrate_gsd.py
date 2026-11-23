@@ -425,8 +425,9 @@ act(".planning/PROJECT.md", "keep", "project", ".fwx/PROJECT.md")
 act(".planning/workstreams/ws1/STATE.md", "purge", "machine-state")
 
 # ---- 7: backlog -----------------------------------------------------------------------------------------------------
-s.eq("backlog items with their titles", d["backlog"], [{"src": ".planning/phases/999.1-x", "title": "Someday idea"},
-                                                        {"src": ".planning/quick/260101-open", "title": "Fix the thing"}])
+s.eq("backlog items with their titles and where they go", d["backlog"],
+     [{"src": ".planning/phases/999.1-x", "title": "Someday idea", "dest": ".fwx/backlog/phases/999.1-x"},
+      {"src": ".planning/quick/260101-open", "title": "Fix the thing", "dest": ".fwx/backlog/quick/260101-open"}])
 s.ok("02.5-c is a phase, not backlog", not any("02.5-c" in b["src"] for b in d["backlog"]))
 s.ok("a quick task with a SUMMARY is not backlog", not any("260102-done" in b["src"] for b in d["backlog"]))
 
@@ -800,7 +801,7 @@ s.ok("the 02.5-c phase kept its .gitkeep (nothing generated for it)", ".fwx/mile
 s.eq(".gitignore: each line that names .planning/ has its twin right under it, the old line stays",
      open(os.path.join(wt, ".gitignore"), encoding="utf-8").read().splitlines(),
      ["node_modules/", "/.planning/phases/01-a/fonts/", "/.fwx/milestones/v2/phases/01-a/fonts/", OLD, "/.fwx/subprojects/*/private/"])
-s.ok("the backlog is listed in what apply prints (it is removed, not migrated)", "Someday idea" in r.stdout and "Fix the thing" in r.stdout, r.stdout)
+s.ok("the backlog is listed in what apply prints (moved, not converted)", "Someday idea" in r.stdout and "Fix the thing" in r.stdout, r.stdout)
 s.eq("nothing was written in the main checkout (same files, same status, same HEAD, no .fwx/)",
      (content(repo), porcelain(repo), helpers.git(repo, "rev-parse", "HEAD")), (main0, st_main0, head_main0))
 s.ok("... and its branch is still master", helpers.git(repo, "symbolic-ref", "--short", "HEAD").strip() == "master")
@@ -1999,5 +2000,175 @@ wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
 rp = run(wt, "plan", "--close", "1")
 s.ok("LK1 an ignored link nobody parses: plan exits 0 and says nothing of a symbolic link", rp.returncode == 0 and "symbolic link" not in rp.stdout + rp.stderr
      and "notes:" not in rp.stdout, rp.stdout[-500:])
+
+# ---- DTC-71: apply never deletes backlog material it does not migrate -------------------------------------------------------------------
+# A real conversion: `plan` said "backlog (not migrated)" and `apply` `git rm`-ed the seven files (six open items), which only the base commit kept.
+# Now the backlog moves, bytes unchanged, to `backlog/<its own path>` under the scope's folder of `.fwx/` (an untracked one by `leftovers`,
+# to the same place), and plan and apply say so. Red on 6e4e54c (the first FAIL line of the plan check, then of the apply check):
+#   "FAIL: DTC-71 plan says where each backlog file goes (tracked or not, root or workstream): got [('.planning/BACKLOG.md', None), ...], want [('.planning/BACKLOG.md', '.fwx/backlog/BACKLOG.md'), ...]"
+#   "FAIL: DTC-71 apply keeps every backlog file, byte for byte, at .fwx/backlog/<its path>: missing: got ['.fwx/backlog/BACKLOG.md', ...], want []"
+# Control (a copy of the plugin with the backlog back in `job.removes` and out of `job.moves`): the apply FAIL line above.
+BL = {".planning/BACKLOG.md": "# Backlog\n- 999.1 someday\n", ".planning/todos/pending/a.md": "# Add the thing\n",
+      ".planning/quick/260101-open/260101-PLAN.md": "# Fix the thing\n", ".planning/phases/999.1-x/999.1-CONTEXT.md": "# Someday idea\n",
+      ".planning/workstreams/ws1/todos/pending/w.md": "# Workstream thing\n",
+      "docs/notes.md": "open items: .planning/todos/pending/a.md\n"}
+repo, wt = mini(BL)
+helpers.write(wt, ".planning/todos/pending/untracked.md", "# Not in git\n")          # untracked: `leftovers` moves it after the merge
+rp, D = plan_json(wt, "--close", "1")
+BLF = [f for f in D["files"] if f["rule"] in ("backlog", "quick-open") or f["src"].endswith("untracked.md")]
+s.eq("DTC-71 plan says where each backlog file goes (tracked or not, root or workstream)",
+     sorted((f["src"], f["dest"]) for f in BLF),
+     [(".planning/BACKLOG.md", ".fwx/backlog/BACKLOG.md"),
+      (".planning/phases/999.1-x/999.1-CONTEXT.md", ".fwx/backlog/phases/999.1-x/999.1-CONTEXT.md"),
+      (".planning/quick/260101-open/260101-PLAN.md", ".fwx/backlog/quick/260101-open/260101-PLAN.md"),
+      (".planning/todos/pending/a.md", ".fwx/backlog/todos/pending/a.md"),
+      (".planning/todos/pending/untracked.md", ".fwx/backlog/todos/pending/untracked.md"),
+      (".planning/workstreams/ws1/todos/pending/w.md", ".fwx/subprojects/ws1/backlog/todos/pending/w.md")])
+s.eq("DTC-71 a reference to a backlog file is a moved one, with its real new path",
+     [(r["old"], r["kind"], r["new"]) for r in D["refs"] if r["file"] == "docs/notes.md"],
+     [(".planning/todos/pending/a.md", "moved", ".fwx/backlog/todos/pending/a.md")])
+rt = run(wt, "plan", "--close", "1")
+s.ok("DTC-71 plan (text) says the backlog moves to .fwx/backlog/ as it is, and nowhere that it is not migrated",
+     "backlog (moved as it is" in rt.stdout and ".fwx/backlog/" in rt.stdout and "not migrated" not in rt.stdout, rt.stdout[-900:])
+r = run(wt, "apply", "--close", "1")
+s.eq("DTC-71 apply exits 0", r.returncode, 0)
+base71 = D["base"]
+miss = []
+for src_, text in BL.items():
+    if src_.startswith(".planning/"):
+        dest_ = (src_.replace(".planning/workstreams/ws1/", ".fwx/subprojects/ws1/backlog/") if "workstreams" in src_
+                 else ".fwx/backlog/" + src_[len(".planning/"):])
+        if rd(os.path.join(wt, dest_)) != text:
+            miss.append(dest_)
+s.eq("DTC-71 apply keeps every backlog file, byte for byte, at .fwx/backlog/<its path>: missing", sorted(miss), [])
+idx71 = set(p for p in helpers.git(wt, "ls-files", "-z").split("\0") if p)
+s.ok("DTC-71 ... staged, and none of them is left under .planning/",
+     ".fwx/backlog/BACKLOG.md" in idx71 and not [p for p in idx71 if p.startswith(".planning/")], str(sorted(idx71)[:20]))
+s.ok("DTC-71 apply says what it did with the backlog, and does not call it removed or not migrated",
+     "moved as it is to .fwx/backlog/" in r.stdout and "Someday idea" in r.stdout and "not migrated" not in r.stdout, r.stdout[-900:])
+msg71 = rd(os.path.join(helpers.git(wt, "rev-parse", "--absolute-git-dir").strip(), "fwx-migrate-gsd-commit-message.txt")) or ""
+s.ok("DTC-71 the commit message says the backlog moved, not that it was dropped",
+     "Someday idea" in msg71 and ".fwx/backlog/" in msg71 and "recover it with the base" not in msg71, msg71)
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", base71, "--rewrite", "docs/notes.md")
+s.eq("DTC-71 refs --rewrite takes the citation of a backlog file to where it went",
+     (r.returncode, rd(os.path.join(wt, "docs/notes.md"))), (0, "open items: .fwx/backlog/todos/pending/a.md\n"))
+helpers.git(wt, "commit", "-q", "--allow-empty", "-am", "rewritten")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".planning/todos/pending/untracked.md", "# Not in git\n")      # the main checkout's own untracked file
+r = run(repo, "leftovers", "--apply")
+s.eq("DTC-71 leftovers moves an untracked backlog file to the same place",
+     (r.returncode, rd(os.path.join(repo, ".fwx/backlog/todos/pending/untracked.md"))), (0, "# Not in git\n"))
+
+# ---- DTC-72: a relative path into .planning/ is a reference, and is rewritten to the file's real new path --------------------------------
+# A real conversion: `apps/web/src/e2e/*.spec.ts` read two phase files by `../../../../.planning/...`, which `refs` did not list (`.planning` after
+# `../` was never a path of its own), and `docs/vision.md` got `.fwx/REQUIREMENTS.md` (the blunt prefix) where the file went to
+# `.fwx/milestones/v1/REQUIREMENTS.md`. A `../` run counts when it climbs from the file's folder exactly to the repository root (the rule of
+# F7: `docs/.planning/` and `apps/web/src/.planning/` are other folders). Red on 6e4e54c:
+#   "FAIL: DTC-72 refs list a relative path that climbs to the root, with the real new path (and one that does not reach the root is no
+#    reference): got [('docs/vision.md', 1, '.planning/PROJECT.md', 'moved', '.fwx/PROJECT.md')], want [('apps/web/src/e2e/a.spec.ts', 1, '../../../../.planning/phases/01-alpha/01-CONTEXT.md', 'moved', ...
+# Control (a copy with the climb check taken out, so every `../` run counts): the same check lists lines 3 and 4 of a.spec.ts too (got [..., ('apps/web/src/e2e/a.spec.ts', 3, '../.planning/phases/01-alpha/01-CONTEXT.md', ...), ...]).
+SPEC = ('const a = readFileSync(path.join(__dirname, "../../../../.planning/phases/01-alpha/01-CONTEXT.md"), "utf8");\n'
+        'const b = readFileSync(__dirname + "/../../../../.planning/REQUIREMENTS.md");\n'
+        'const c = "../.planning/phases/01-alpha/01-CONTEXT.md"; // apps/web/src/.planning: not the root one\n'
+        'const d = "../../../../../.planning/PROJECT.md"; // climbs above the repository\n'
+        'const e = "../../../../.planning/STATE.md"; // a purged file\n')
+VISION = ("See [the requirements](../.planning/REQUIREMENTS.md) and [project](.planning/PROJECT.md).\n"
+          "Not ours: docs/../.planning/PROJECT.md, https://example.test/x/../.planning/PROJECT.md and $ROOT/../.planning/PROJECT.md.\n")
+REL = "../../../../.fwx/milestones/v1/phases/01-alpha/01-CONTEXT.md"
+repo, wt = mini({".planning/REQUIREMENTS.md": "# Reqs\n", "apps/web/src/e2e/a.spec.ts": SPEC, "docs/vision.md": VISION})
+rp, D = plan_json(wt, "--close", "1")
+s.eq("DTC-72 refs list a relative path that climbs to the root, with the real new path (and one that does not reach the root is no reference)",
+     sorted((r["file"], r["line"], r["old"], r["kind"], r["new"]) for r in D["refs"] if r["kind"] != "hand"),
+     [("apps/web/src/e2e/a.spec.ts", 1, "../../../../.planning/phases/01-alpha/01-CONTEXT.md", "moved", REL),
+      ("apps/web/src/e2e/a.spec.ts", 2, "../../../../.planning/REQUIREMENTS.md", "moved", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
+      ("apps/web/src/e2e/a.spec.ts", 5, "../../../../.planning/STATE.md", "purged", None),
+      ("docs/vision.md", 1, "../.planning/REQUIREMENTS.md", "moved", "../.fwx/milestones/v1/REQUIREMENTS.md"),
+      ("docs/vision.md", 1, ".planning/PROJECT.md", "moved", ".fwx/PROJECT.md")])
+rr = run(wt, "apply", "--close", "1")
+s.eq("DTC-72 apply exits 0", rr.returncode, 0)
+base72 = helpers.git(wt, "rev-parse", "HEAD").strip()
+helpers.git(wt, "commit", "-q", "-m", "convert")
+r = run(wt, "refs", "--base", base72, "--rewrite", "apps/web/src/e2e/a.spec.ts", "docs/vision.md")
+s.eq("DTC-72 refs --rewrite exits 0", r.returncode, 0)
+s.eq("DTC-72 --rewrite changes each relative path to the new place of its file, keeps its `../`, and changes nothing else",
+     (rd(os.path.join(wt, "apps/web/src/e2e/a.spec.ts")), rd(os.path.join(wt, "docs/vision.md"))),
+     (SPEC.replace("../../../../.planning/phases/01-alpha/01-CONTEXT.md", REL)
+      .replace("../../../../.planning/REQUIREMENTS.md", "../../../../.fwx/milestones/v1/REQUIREMENTS.md"),
+      VISION.replace("](../.planning/REQUIREMENTS.md)", "](../.fwx/milestones/v1/REQUIREMENTS.md)").replace("](.planning/PROJECT.md)", "](.fwx/PROJECT.md)")))
+helpers.git(wt, "reset", "-q", "--hard")
+r = run(wt, "refs", "--base", base72, "--prefix", "docs/vision.md")
+s.ok("DTC-72 --prefix changes `.planning` to `.fwx` after a `../` run too, and keeps the run",
+     r.returncode == 0 and "](../.fwx/REQUIREMENTS.md)" in (rd(os.path.join(wt, "docs/vision.md")) or ""), r.stderr[-300:] + (rd(os.path.join(wt, "docs/vision.md")) or ""))
+
+# ---- the review of pull request 219: the three places that did not know the backlog moved ------------------------------------------------
+# Each seen red on cb804e7 (the first FAIL line of each case):
+#   B1 "FAIL: B1 the .gitignore twins of the lines that name the backlog name .fwx/backlog/...: got ['.planning/quick/', '.fwx/quick/', '.planning/todos/', '.fwx/todos/'], want ['.planning/quick/', '.fwx/backlog/quick/', '.planning/todos/', '.fwx/backlog/todos/']"
+#      and "FAIL: B1 leftovers after the merge exits 0 ...: got 2, want 0" (it says the files "would stop being ignored at their destination")
+#   B2 "FAIL: B2 a tracked .gitignore inside a backlog item moves with it, byte for byte (a phase 999.x, a quick task, todos/pending): got [None, None, None], want ['*.tmp\n', '*.log\n', '/draft/\n*.bak\n']"
+#      (it was written at .fwx/milestones/v1/phases/999.1-x/.gitignore, a phase that `fwx phase list` showed open)
+#   B3 "FAIL: B3 apply with a file `.planning/backlog` beside BACKLOG.md: exits 2: got 1, want 2" (a blob check failed, the rollback could not
+#      remove .fwx/backlog, a marker was left)
+# Controls: B1 `structure` without its backlog branch (the first FAIL above); B3 the new check removed (the same line).
+# The third pass found that `todos` and `quick` as a whole were mapped to backlog/ though only todos/pending, open quick tasks,
+# BACKLOG.md and 999.x phases go there. Red on bc881de:
+#   B1 "FAIL: B1 a line that names a folder holding backlog and other material gets a twin for each destination: got ['.planning/quick/',
+#      '.fwx/backlog/quick/', '.planning/todos/', '.fwx/backlog/todos/'], want ['.planning/quick/', '.fwx/quick/', '.fwx/backlog/quick/', ...]"
+#   B4 "FAIL: B1 leftovers after the merge exits 0 ...: got 2, want 0" (".fwx/todos/done/d.md would stop being ignored")
+#   B4 "FAIL: B4 a .gitignore directly in todos/ or quick/ stays with its non-backlog siblings, byte for byte: got [None, None, '*.x\n', '*.y\n'],
+#      want ['*.x\n', '*.y\n', None, None]"
+repo = helpers.toy_repo({"README": "toy\n", ".planning/PROJECT.md": "# P\n", ".planning/STATE.md": "---\nmilestone: v1.0\n---\n",
+                         ".planning/ROADMAP.md": MINI_ROAD, ".planning/phases/01-alpha/01-01-PLAN.md": PLAN_BODY,
+                         ".planning/phases/01-alpha/01-01-SUMMARY.md": "# s\n", ".planning/phases/01-alpha/01-CONTEXT.md": "# c\n"})
+helpers.write(repo, ".gitignore", ".planning/quick/\n.planning/todos/\n")
+helpers.git(repo, "add", ".gitignore")
+helpers.git(repo, "commit", "-q", "-m", "ignore")
+wt = helpers.add_worktree(repo, "fwx-migrate-gsd")
+r = run(wt, "apply", "--close", "1")
+s.eq("B1 apply exits 0", r.returncode, 0)
+s.eq("B1 a line that names a folder holding backlog and other material gets a twin for each destination",
+     (rd(os.path.join(wt, ".gitignore")) or "").splitlines(),
+     [".planning/quick/", ".fwx/quick/", ".fwx/backlog/quick/", ".planning/todos/", ".fwx/todos/", ".fwx/backlog/todos/"])
+helpers.git(wt, "commit", "-q", "-m", "convert")
+helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".planning/quick/260101-open/260101-PLAN.md", "# Fix the thing\n")   # an open quick task, ignored
+helpers.write(repo, ".planning/quick/260101-open/notes.txt", "scratch\n")          # ignored
+helpers.write(repo, ".planning/todos/pending/a.md", "# ignored todo\n")           # ignored
+helpers.write(repo, ".planning/todos/done/d.md", "# done\n")                      # ignored, not backlog
+helpers.write(repo, ".planning/todos/other/o.md", "# other\n")                    # ignored, not backlog
+r = run(repo, "leftovers", "--apply")
+s.eq("B1 leftovers after the merge exits 0 (the ignored backlog files move where the twins ignore them)", r.returncode, 0)
+s.eq("B1 ... and they are at .fwx/backlog/<their path>",
+     (rd(os.path.join(repo, ".fwx/backlog/quick/260101-open/notes.txt")), rd(os.path.join(repo, ".fwx/backlog/todos/pending/a.md"))),
+     ("scratch\n", "# ignored todo\n"))
+s.eq("B4 ... and the ignored files of the same folder that are not backlog stay where the old line ignored them, under .fwx/todos/",
+     (rd(os.path.join(repo, ".fwx/todos/done/d.md")), rd(os.path.join(repo, ".fwx/todos/other/o.md"))), ("# done\n", "# other\n"))
+repo, wt = mini({".planning/todos/.gitignore": "*.x\n", ".planning/quick/.gitignore": "*.y\n", ".planning/todos/pending/a.md": "# t\n"})
+r = run(wt, "apply", "--close", "1")
+s.eq("B4 apply exits 0", r.returncode, 0)
+s.eq("B4 a .gitignore directly in todos/ or quick/ stays with its non-backlog siblings, byte for byte",
+     [rd(os.path.join(wt, p)) for p in (".fwx/todos/.gitignore", ".fwx/quick/.gitignore", ".fwx/backlog/todos/.gitignore", ".fwx/backlog/quick/.gitignore")],
+     ["*.x\n", "*.y\n", None, None])
+
+GI = {".planning/phases/999.1-x/999.1-CONTEXT.md": "# Someday\n", ".planning/phases/999.1-x/.gitignore": "*.tmp\n",
+      ".planning/quick/260101-open/.gitignore": "*.log\n", ".planning/todos/pending/a.md": "# t\n",
+      ".planning/todos/pending/.gitignore": "/draft/\n*.bak\n"}
+repo, wt = mini(GI)
+r = run(wt, "apply", "--close", "1")
+s.eq("B2 apply exits 0", r.returncode, 0)
+s.eq("B2 a tracked .gitignore inside a backlog item moves with it, byte for byte (a phase 999.x, a quick task, todos/pending)",
+     [rd(os.path.join(wt, ".fwx/backlog", p)) for p in ("phases/999.1-x/.gitignore", "quick/260101-open/.gitignore", "todos/pending/.gitignore")],
+     ["*.tmp\n", "*.log\n", "/draft/\n*.bak\n"])
+s.eq("B2 ... and no phase 999.1-x appears among the phases of the milestone",
+     ([p.name for p in state.phases(Path(wt) / ".fwx", "v1") if p.name.startswith("999")], os.path.lexists(os.path.join(wt, ".fwx/milestones/v1/phases/999.1-x"))),
+     ([], False))
+
+repo, wt = mini({".planning/BACKLOG.md": "# Backlog\n", ".planning/backlog": "a file the project named backlog\n"})
+r = refusal("B3 apply with a file `.planning/backlog` (kept at .fwx/backlog) beside BACKLOG.md (moved to .fwx/backlog/BACKLOG.md)", wt,
+            ["apply", "--close", "1"], ".fwx/backlog", (wt, os.path.join(repo, ".git")))
+s.ok("B3 ... and the refusal is the plan's: no marker was left", not [n for n in os.listdir(helpers.git(wt, "rev-parse", "--absolute-git-dir").strip())
+                                                                    if n.startswith("fwx-migrate-gsd-apply")])
+rp = run(wt, "plan", "--close", "1")
+s.ok("B3 plan refuses it too, naming both paths", rp.returncode == 2 and ".fwx/backlog" in rp.stderr and ".fwx/backlog/BACKLOG.md" in rp.stderr, rp.stderr[-300:])
 
 s.done()
