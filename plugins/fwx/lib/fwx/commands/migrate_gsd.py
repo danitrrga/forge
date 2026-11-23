@@ -608,7 +608,7 @@ def carry_gitignore(sc, mapper, src, inner, action, dest):
         out.append(("%s%s%s" % (neg, "/" if pat.startswith("/") else "", new[len(here) + 1:]) if new.startswith(here + "/") else body)
                    + line[len(body):])
     mapped = "".join(out)
-    if action == "keep" and dest and "%s/%s" % (sc.dest, dest) == here + "/.gitignore" and mapped == text:
+    if action in ("keep", "backlog") and dest and "%s/%s" % (sc.dest, dest) == here + "/.gitignore" and mapped == text:
         return None
     return here + "/.gitignore", mapped
 
@@ -651,7 +651,7 @@ def analyze(src, opts):
             action, dest, rule = classify(sc, inner, tracked)
             if tracked and posixpath.basename(inner) == ".gitignore" and src.islink(sc.prefix + inner):
                 notes.append("%s/%s%s is a symbolic link: it is never read as a rules file, so its rules are NOT written again (needs a hand: "
-                             "%s)" % (SCOPE_SRC, sc.prefix, inner, "the link moves as it is" if action == "keep" and dest
+                             "%s)" % (SCOPE_SRC, sc.prefix, inner, "the link moves as it is" if action in ("keep", "backlog") and dest
                                       else "the link is removed with its folder; write the rules you want where they belong"))
             elif tracked and posixpath.basename(inner) == ".gitignore":
                 carry = carry_gitignore(sc, shape, src, inner, action, dest)
@@ -659,7 +659,7 @@ def analyze(src, opts):
                     notes.append("%s/%s%s: its rules are NOT written again: the folder it sits in goes to a milestone this project has "
                                  "several of and the converter cannot pick one (%s). Write the rules by hand where they belong"
                                  % (SCOPE_SRC, sc.prefix, inner,
-                                    "the file moves with its rules unchanged" if action == "keep" and dest else "the file is removed with its folder"))
+                                    "the file moves with its rules unchanged" if action in ("keep", "backlog") and dest else "the file is removed with its folder"))
                     carry = None
                 if carry:
                     sc.carried[inner] = carry
@@ -734,7 +734,9 @@ class Mapper:
         if len(parts) >= 2 and parts[0] == "workstreams":
             sc, head, parts = self.scopes.get(parts[1]), "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
         tail = parts
-        if parts and parts[0] == "phases":
+        if self.is_backlog(sc, parts):
+            tail = ["backlog"] + parts
+        elif parts and parts[0] == "phases":
             known = [p for p in (sc.phases if sc else []) if len(parts) >= 2 and p["key"] == "phases/" + parts[1]]
             others = {p["milestone"] for p in (sc.phases if sc else []) if p["milestone"]}
             ms = known[0]["milestone"] if known else (others.pop() if len(others) == 1 else "*")
@@ -748,6 +750,27 @@ class Mapper:
         elif len(parts) == 1 and sc and parts[0] in MILESTONE_DOCS:
             tail = ["milestones", sc.actual, parts[0]]
         return "/".join([head] + tail) + ("/" if rest.endswith("/") and tail else "")
+
+    def is_backlog(self, sc, parts):
+        """Whether a path of a scope, by its shape, is backlog (what `classify_tracked` sends to `backlog/`): `BACKLOG.md`, a `999.x`
+        phase, `todos/pending`, a quick task that has a backlog file, and the folders `todos` and `quick` that hold them (their
+        other contents are purged, so the folder goes where its backlog goes)."""
+        if not parts:
+            return False
+        glob = lambda x: any(c in x for c in "*?[")
+        if parts[0] == "BACKLOG.md":
+            return len(parts) == 1
+        if parts[0] == "todos":
+            return len(parts) == 1 or glob(parts[1]) or parts[1] == "pending"
+        if parts[0] == "phases":
+            return len(parts) >= 2 and parts[1].startswith("999.")
+        if parts[0] == "quick":
+            if len(parts) == 1 or glob(parts[1]):
+                return True
+            key = "quick/%s/" % parts[1]      # open as `classify_tracked` reads it: it has files and no tracked SUMMARY
+            names = [(n, t) for n, t, _ in sc.files if n.startswith(key)] if sc else []
+            return bool(names) and not any(t and n.endswith("SUMMARY.md") and n.count("/") == 2 for n, t in names)
+        return False
 
     def cite(self, token):
         """(kind, new) of a token that starts with `.planning`: moved, purged or prefix."""
@@ -945,6 +968,13 @@ def build(repo, src, opts):
         for inner, (target, _rules) in sc.carried.items():
             dests.setdefault(target, []).append("%s/%s%s" % (SCOPE_SRC, sc.prefix, inner))
     clash = ["%s <- %s" % (d, ", ".join(s)) for d, s in sorted(dests.items()) if len(s) > 1]
+    for d in sorted(dests):     # a file whose destination is a folder that another destination lies under
+        parent = posixpath.dirname(d)
+        while parent:
+            if parent in dests:
+                clash.append("%s <- %s is a file, and %s <- %s needs it to be a folder"
+                             % (parent, ", ".join(dests[parent]), d, ", ".join(dests[d])))
+            parent = posixpath.dirname(parent)
     if clash:
         raise Refuse("two files for one destination:\n  " + "\n  ".join(clash))
     return scopes, files, mapper, phases, gitignore, notes, root

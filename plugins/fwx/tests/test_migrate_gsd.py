@@ -2105,15 +2105,14 @@ s.ok("DTC-72 --prefix changes `.planning` to `.fwx` after a `../` run too, and k
 # Each seen red on cb804e7 (the first FAIL line of each case):
 #   B1 "FAIL: B1 the .gitignore twins of the lines that name the backlog name .fwx/backlog/...: got ['.planning/quick/', '.fwx/quick/', '.planning/todos/', '.fwx/todos/'], want ['.planning/quick/', '.fwx/backlog/quick/', '.planning/todos/', '.fwx/backlog/todos/']"
 #      and "FAIL: B1 leftovers after the merge exits 0 ...: got 2, want 0" (it says the files "would stop being ignored at their destination")
-#   B2 "FAIL: B2 a tracked .gitignore inside a backlog item moves with it, byte for byte: .fwx/backlog/phases/999.1-x/.gitignore: got None, want '*.tmp\n'"
+#   B2 "FAIL: B2 a tracked .gitignore inside a backlog item moves with it, byte for byte (a phase 999.x, a quick task, todos/pending): got [None, None, None], want ['*.tmp\n', '*.log\n', '/draft/\n*.bak\n']"
 #      (it was written at .fwx/milestones/v1/phases/999.1-x/.gitignore, a phase that `fwx phase list` showed open)
 #   B3 "FAIL: B3 apply with a file `.planning/backlog` beside BACKLOG.md: exits 2: got 1, want 2" (a blob check failed, the rollback could not
 #      remove .fwx/backlog, a marker was left)
 # Controls: B1 `structure` without its backlog branch (the first FAIL above); B3 the new check removed (the same line).
 repo = helpers.toy_repo({"README": "toy\n", ".planning/PROJECT.md": "# P\n", ".planning/STATE.md": "---\nmilestone: v1.0\n---\n",
                          ".planning/ROADMAP.md": MINI_ROAD, ".planning/phases/01-alpha/01-01-PLAN.md": PLAN_BODY,
-                         ".planning/phases/01-alpha/01-01-SUMMARY.md": "# s\n", ".planning/phases/01-alpha/01-CONTEXT.md": "# c\n",
-                         ".planning/quick/260101-open/260101-PLAN.md": "# Fix the thing\n"})
+                         ".planning/phases/01-alpha/01-01-SUMMARY.md": "# s\n", ".planning/phases/01-alpha/01-CONTEXT.md": "# c\n"})
 helpers.write(repo, ".gitignore", ".planning/quick/\n.planning/todos/\n")
 helpers.git(repo, "add", ".gitignore")
 helpers.git(repo, "commit", "-q", "-m", "ignore")
@@ -2125,6 +2124,7 @@ s.eq("B1 the .gitignore twins of the lines that name the backlog name .fwx/backl
      [".planning/quick/", ".fwx/backlog/quick/", ".planning/todos/", ".fwx/backlog/todos/"])
 helpers.git(wt, "commit", "-q", "-m", "convert")
 helpers.git(repo, "merge", "--ff-only", "-q", "fwx-migrate-gsd")
+helpers.write(repo, ".planning/quick/260101-open/260101-PLAN.md", "# Fix the thing\n")   # an open quick task, ignored
 helpers.write(repo, ".planning/quick/260101-open/notes.txt", "scratch\n")          # ignored
 helpers.write(repo, ".planning/todos/pending/a.md", "# ignored todo\n")           # ignored
 r = run(repo, "leftovers", "--apply")
