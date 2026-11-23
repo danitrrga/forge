@@ -262,8 +262,8 @@ def _tasks(p, tasks):
         p.one_of(t, "review", name, REVIEWS, required=False)
         tests = _list(p, t, "tests", name)
         if tests is not None:
-            if not tests and ttype in ("bug", "refactor") and ui is False:
-                p.add(name + ".tests", "empty (a %s task with ui false needs a test)" % ttype)
+            if not tests and ui is False:
+                p.add(name + ".tests", "empty (a %s task with ui false needs a test: add one with run, measures and red)" % (ttype or "non-UI"))
             for j, test in enumerate(tests):
                 tn = "%s.tests[%d]" % (name, j)
                 if not isinstance(test, dict):
