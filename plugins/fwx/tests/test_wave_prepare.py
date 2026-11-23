@@ -506,6 +506,15 @@ def case_check_base_moves_fresh(R, S):
     untracked = helpers.add_worktree(sc.repo, "agent-untracked")
     helpers.write(untracked, "notes.txt", "x\n")
     refused("an untracked file", untracked, main_head)
+    quiet = helpers.add_worktree(sc.repo, "agent-quiet")
+    helpers.write(quiet, "notes.txt", "x\n")
+    helpers.git(sc.repo, "config", "status.showUntrackedFiles", "no")  # a setting that hides untracked files from a plain `git status`
+    refused("an untracked file with status.showUntrackedFiles=no", quiet, main_head)
+    helpers.git(sc.repo, "config", "--unset", "status.showUntrackedFiles")
+    sc.commit("two.txt", "feat: two")
+    helpers.git(sc.repo, "tag", base[:7], sc.head())  # a ref named like the sha: git resolves the name before the hash prefix
+    shadow = helpers.add_worktree(sc.repo, "agent-shadow")
+    refused("a sha that a ref of the same name shadows", shadow, main_head, sha=base[:7])
     own = helpers.add_worktree(sc.repo, "agent-own")
     sc.commit("mine.txt", "feat: mine", cwd=own)
     refused("a commit of its own", own, head(own))
