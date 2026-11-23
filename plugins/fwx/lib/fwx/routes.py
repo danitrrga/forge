@@ -52,6 +52,8 @@ ROWS = [
     ("linear new", "linear create", "linear", ["create"], "create issues from JSON on stdin: --template T"),
     ("linear comment", None, "linear", ["comment"], "comment on an issue, the body on stdin: ISSUE --kind K"),
     ("linear label", None, "linear", ["label"], "add and remove neutral labels: ISSUE +L -L ..."),
+    # a project's GitHub and Linear state
+    ("project state", None, "project_state", [], "open PRs, default-branch CI and open Linear issues of this project: [--json]"),
     # the waves of a part and the checkout an agent writes in
     ("wave", "wave summary", "wave", ["summary"], "did a run's gate pass (the default of `wave`): --run R [--part-dir D]"),
     ("wave new", "wave prepare", "wave", ["prepare"], "prepare a part for `execute`: --part-dir D --plane session|factory --branch W [...]"),
