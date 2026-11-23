@@ -22,6 +22,7 @@ ROWS = [
     ("stage", None, "stage", [], "change the stage of a phase or a job, only where data/stages.json allows it: <dir> <stage> [--why TEXT]"),
     ("decide", None, "decide", [], "the merge decision for the facts of a PR: --facts FILE"),
     ("verify", None, "verify", [], "run the project's checks on a clean tree at the exact commit and record the evidence: [--json] [--pr N] [--dir PATH]"),
+    ("peer-review", None, "peer", [], "a read-only review of a git range by another model, through the Antigravity CLI: --base REV --head REV --out FILE [--dir CHECKOUT] [--intent PATH ...]"),
     ("discuss", "discuss start", "discuss", ["start"], "what the discuss opens with, as one JSON: [--json] [--phase PHASE_DIR]"),
     ("migrate-gsd", None, "migrate_gsd", [], "convert a project's GSD `.planning/` to `.fwx/`: plan|refs|apply|leftovers [...]"),
     # the session, the phases, the milestones, the decisions and the files of the state

@@ -37,8 +37,9 @@ SETTINGS = os.path.join(ROOT, "config", "forge.json")
 # `consent` is the consent window (hooks/guard_tool_use.py --consent): absent counts as off, so adding it
 # leaves the generated output unchanged until config/forge.json turns it on. `agent_browser` is the framework's: it asks
 # for the `agent-browser` tool in config/toolchain.json (a `when` of {"integration": "agent_browser"}). The `integrations`
-# doctor row checks it: on and not on PATH is a FAIL, off is a SKIP.
-INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser")
+# doctor row checks it: on and not on PATH is a FAIL, off is a SKIP. `peer_review` is the framework's too: `fwx peer-review` (another model reviews
+# a part's diff, through Orca's Antigravity agent) runs only while it is on, and its doctor row looks for `orca`.
+INTEGRATIONS = ("codex", "hindsight", "consent", "agent_browser", "peer_review")
 
 
 @functools.lru_cache(maxsize=None)

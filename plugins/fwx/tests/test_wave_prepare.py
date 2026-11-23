@@ -39,6 +39,9 @@ line of each, seen red:
   done from every branch:  FAIL: done: a trailer on another branch is not done: got ['T1', 'T3'], want ['T1']
   checks of the checkout:  FAIL: from a worktree: exit: got (2, 'fwx wave new: no checks defined: ...'), want (0, '')
   subphase as a phase:     FAIL: subphase: context.md is the parent's: got '.../03-alpha/03.1-beta/context.md', want '.../03-alpha/context.md'
+  peer, postmortem not read: FAIL: peer: postmortem peer_review, the switch on: got (False, True), want (True, True)
+  peer, --peer not read:   FAIL: peer: --peer, the switch off: got (False, False), want (True, False)
+  peer, switch not read:   FAIL: peer: postmortem peer_review, the switch on: got (True, False), want (True, True)
   check-base by merge-base: FAIL: check-base: an ancestor of HEAD is another base: exit 0, want 42: got 0, want 42
   check-base, main checkout: FAIL: check-base: the main checkout: exit 0, want 42: got 0, want 42
 """
@@ -82,7 +85,7 @@ class Scene:
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
 
     def __init__(self, tasks=None, recipe=("true",), base_ref="head", security=False, wt=True, config=None, size="normal",
-                 sub=False, settings=None, user=None, plan_extra=None):
+                 sub=False, settings=None, user=None, plan_extra=None, peer=None):
         self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\nconfig/forge.json\n",
                                       "src/a.py": "a\n", "src/b.py": "b\n"})
         cfg = {"schema": 1, "project": {"checks": list(recipe)}}
@@ -108,7 +111,7 @@ class Scene:
                 "not_built": [], "later": []}
         plan.update(plan_extra or {})
         helpers.write(self.part, "plan.md", front(plan))
-        post = front({"verdict": "ok", "security_review": security, "round": 1})
+        post = front(dict({"verdict": "ok", "security_review": security, "round": 1}, **({} if peer is None else {"peer_review": peer})))
         helpers.write(self.phase, "context.md", "# context\n")
         helpers.write(self.phase, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
         if sub:
@@ -349,6 +352,28 @@ def case_security(R, S):
     S.ok("security: why names the flag", "--security" in sec.get("why", ""), repr(sec))
 
 
+def case_peer(R, S):
+    """`args.peer`: {needed, why, on, timeout_s}. Asked for by the postmortem's `peer_review: true` or `--peer`; `on` is integrations.peer_review. A
+    postmortem written before the key existed has none: not needed."""
+    on = {"integrations": {"peer_review": True}}
+    peer = lambda name, sc, *a: ok_args(S, name, sc.prepare(R, *a)).get("peer") or {}  # noqa: E731
+    got = peer("peer: no key in the postmortem", Scene())
+    S.eq("peer: nothing asks for it, the switch is off", got, {"needed": False, "why": "not asked for", "on": False, "timeout_s": 2700})
+    got = peer("peer: timeout_s of the configuration", Scene(config={"peer": {"timeout_s": 600}}))
+    S.eq("peer: timeout_s is the configuration's, for the workflow's slices", got.get("timeout_s"), 600)
+    got = peer("peer from the postmortem", Scene(peer=True, config=on))
+    S.eq("peer: postmortem peer_review, the switch on", (got.get("needed"), got.get("on")), (True, True))
+    S.ok("peer: why names the postmortem", "postmortem" in got.get("why", ""), repr(got))
+    got = peer("peer false in the postmortem", Scene(peer=False, config=on))
+    S.eq("peer: peer_review false asks for nothing, the switch on", (got.get("needed"), got.get("on")), (False, True))
+    got = peer("peer flag", Scene(), "--peer")
+    S.eq("peer: --peer, the switch off", (got.get("needed"), got.get("on")), (True, False))
+    S.ok("peer: why names the flag", "--peer" in got.get("why", ""), repr(got))
+    sc = Scene(peer="yes")
+    r = sc.prepare(R)
+    S.ok("peer: a peer_review that is no boolean is refused naming it", r.returncode == 2 and "peer_review" in r.stderr, "%s %s" % (r.returncode, r.stderr))
+
+
 def case_done(R, S):
     sc = Scene(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 1, ["src/b.py"]), task("T3", 2, ["README"])])
     sc.commit("one.txt", "feat: one\n\nFwx-Task: %s/T1\nFwx-Run: r" % PHASE)
@@ -523,7 +548,7 @@ def case_dispatch(R, S):
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
-         case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
+         case_unattended, case_cap, case_security, case_peer, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
          case_scratch, case_dispatch]
 
 # ---------------------------------------------------------------------------------------------------- the controls
@@ -544,6 +569,10 @@ MUTANTS = [
      "cap: per_project.executor wins in both kinds"),
     ("cap: the kind is always supervised", case_cap, P, 'cap = _cap(cfg, plane == "factory" or unattended)', "cap = _cap(cfg, False)",
      "cap: no limits in the file: 3 with the owner present, 4 with nobody"),
+    ("peer: the postmortem is not read", case_peer, P, 'post.get("peer_review") is True', "False", "peer: postmortem peer_review, the switch on"),
+    ("peer: --peer is not read", case_peer, P, '("--peer", peer)', '("--peer", False)', "peer: --peer, the switch off"),
+    ("peer: timeout_s is not the configuration's", case_peer, P, '"timeout_s": cfg["peer"]["timeout_s"]}', '"timeout_s": 2700}', "peer: timeout_s is the configuration"),
+    ("peer: the switch is not read", case_peer, P, 'cfg["integrations"].get("peer_review") is True', "False", "peer: postmortem peer_review, the switch on"),
     ("done from every branch", case_done, P, '"log", "refs/heads/" + branch,', '"log", "--all",', "a trailer on another branch is not done"),
     ("checks from the checkout", case_worktree_checks, P, "return config.load(top)",
      'return dict(config.DEFAULTS, project=dict(config.DEFAULTS["project"], checks=[]))', "from a worktree: exit: got (2,"),

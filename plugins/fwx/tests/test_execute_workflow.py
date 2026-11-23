@@ -26,6 +26,14 @@ be in the script exactly once), and must go red with the text given. The first F
   the runner's rc decides:    FAIL: rc 1 with ok true: carries on (the exit code is not read): got ('failed', False), want ('done', False)
   catchable_by "maybe" in the schema: FAIL: verifier schema: catchable_by "maybe" is rejected: {'type': 'string', 'enum': [..., 'maybe']}
   finding ids not prefixed:   FAIL: fix: the fixer is given the finding under its unique id and not the one it was written with
+  the peer review (`check_peer`), first FAIL line of each of its seven rows (the `fwx peer-review` of the first pass, beside the reviewers):
+    never run:                 FAIL: peer: the runner runs fwx peer-review on the whole run's diff, from the checkout, with the intent files
+    on every pass:             FAIL: peer fix: every launch had an answer: ['executor:runner-peer-r2']
+    run with the switch off:   FAIL: peer off: every launch had an answer: ['executor:runner-peer-r1']
+    `off` not said:            FAIL: peer off: no peer job, done, details.peer is off: got ([], 'done', 'not needed'), want ([], 'done', 'off')
+    not armed, carried on:     FAIL: peer NOT RUN, NOT ARMED (exit 77): failed, naming it ('could not run: NOT RUN, NOT ARMED: orca is not on PATH'): ('done', '')
+    report not validated:      FAIL: peer a report with a finding of no `line`: failed, naming it (...): ('failed', 'review-verifier did not return')
+    counts not compared:       FAIL: peer a line and a report with other counts: failed, naming it (...): ('failed', 'review-verifier did not return')
   and 21 more rows of MUTANTS, each seen red with the text in its fourth column. A control run stops at the first FAIL it waits
   for (helpers.FirstFail: the rest of the run could only add FAILs the control does not read). A mutant that makes the script
   loop is cut off by the stub after 400 launches (exit 124); `run_capped` cuts a script that does not even launch
@@ -322,7 +330,7 @@ def check_green(script, s):
     s.eq("green: details.plan_failures", d.get("plan_failures"), [])
     s.eq("green: details.findings", d.get("findings"), {"reported": 0, "fix": 0, "consider": [], "note": [], "dismissed": [], "fixed": [], "outside": []})
     s.eq("green: details keys", sorted(d), sorted(["run", "head", "evidence", "rounds", "plan_failures", "criteria", "findings", "outside", "protected",
-                                                 "tried", "gaps", "kept_worktrees", "leftover", "agents"]))
+                                                 "tried", "gaps", "kept_worktrees", "leftover", "agents", "peer"]))
     s.eq("green: the cleanup is the last launch", last(rec), "executor:runner-cleanup")
     s.ok("green: cleanup names the run", "fwx wave remove --run '01-toy-ab12cd3-1'" in launched(rec, "executor:runner-cleanup")[0]["prompt"])
     s.eq("green: no fix-round, no fixer", (runner(rec, "fix-round"), [l for l in workers(rec) if not l["label"].startswith("executor:T")]), ([], []))
@@ -1354,6 +1362,99 @@ def check_fixed_cap(script, s):
              result(rec).get("status") == "failed" and str(result(rec).get("reason", "")).startswith("cap:"), repr(result(rec).get("reason")))
 
 
+def peer_answers(findings=1, rc=0, looked=1, text=None):
+    """The answers of a peer review that ran: the runner's stdout of `fwx peer-review` and the report file it wrote (read by a second runner)."""
+    line = text if text is not None else "peer looked_at=%d findings=%d model=gemini-4-neon" % (looked, findings)
+    fix = {"diff": "--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n", "rationale": "why", "test": "test_g"}
+    rep = {"looked_at": ["a.py"] * looked, "findings": [dict(finding("G%d" % (i + 1), "high"), reproduction="pytest: 1 failed", reproduced=True, proposed_fix=fix)
+                                                       for i in range(findings)], "model": "gemini-4-neon", "duration_seconds": 1.0}
+    return {"executor:runner-peer-r1": R(line + "\n", rc), "executor:runner-report-r1-peer": R(rep)}
+
+
+def check_peer(script, s):
+    """The peer review of the first pass (`args.peer`): {needed, why, on, timeout_s}. A runner runs `fwx peer-review` beside the reviewer, in
+    slices of ten minutes until it ends; its findings are `r1-G1`, ... and go to the verifier (without the proposed fix), the fixer gets the
+    fix; with the integration on, a peer review that did not run or did not finish ends the run."""
+    on = lambda a: a.update(peer={"needed": True, "why": "x", "on": True, "timeout_s": 2700})  # noqa: E731
+    rec, err = go(script, args_over=on, answers_over={**peer_answers(), "review-verifier:r1": verdicts(("r1-G1", "note", "low", "none"))})
+    rec = finish(s, "peer", rec, err)
+    s.eq("peer: status", result(rec).get("status"), "done")
+    p = runner(rec, "peer-r1")[0]
+    s.ok("peer: the runner runs fwx peer-review on the whole run's diff, from the checkout, with the intent files",
+         "cd '/work/wt' && " in p["prompt"] and "fwx peer-review --base '%s' --head 'h2' --dir . --out '/work/wt/.fwx-agent/%s/r1-peer/report.json'" % (HEAD0, os.path.basename(RUN_DIR)) in p["prompt"]
+         and "--intent '/work/.fwx/phases/01-toy/plan.md'" in p["prompt"] and "fwx scratch new '%s' 'r1-peer'" % os.path.basename(RUN_DIR) in p["prompt"]
+         and "--criteria '%s'" % json.dumps(fixture("args.json")["criteria"], separators=(",", ":")).replace("'", "'\\''") in p["prompt"] and "--max-wait 540" in p["prompt"], p["prompt"])
+    s.ok("peer: the runner is told the command takes minutes and is no Claude agent of the review (executor, the runner's model, a schema)",
+         "600000" in p["prompt"] and (p["opts"].get("model"), p["opts"].get("agentType")) == ("m-run", "fwx:executor"), repr(p["opts"]))
+    rv = launched(rec, "reviewer:r1")[0]
+    s.ok("peer: it runs beside the reviewer, not after it", overlap(p, rv), "peer %s-%s, reviewer %s-%s" % (p["start"], p["end"], rv["start"], rv["end"]))
+    vp = (launched(rec, "review-verifier:") or [{"prompt": ""}])[0]["prompt"]
+    s.ok("peer: its finding goes to the verifier under the id r1-G1, with its reproduction and without the proposed fix", "r1-G1" in vp and "claim of G1" in vp
+         and "pytest: 1 failed" in vp and "proposed_fix" not in vp, vp[:600])
+    f = details(rec).get("findings") or {}
+    s.eq("peer: counted, and kept as a note by the verifier", (f.get("reported"), f.get("note")), (1, [{"id": "r1-G1", "claim": "claim of G1"}]))
+    s.eq("peer: details.peer says it ran", details(rec).get("peer"), "ran looked_at=1 findings=1 model=gemini-4-neon unreproduced=0")
+
+    # the review outlasts a call: the runner is asked again, from where it was, until the line comes
+    slow = {**peer_answers(), "executor:runner-peer-r1": {"$seq": [R("peer running elapsed=540 of=2700\n", 75), R("peer running elapsed=1080 of=2700\n", 75),
+                                                                  R("peer looked_at=1 findings=1 model=gemini-4-neon\n", 0)]},
+            "review-verifier:r1": verdicts(("r1-G1", "note", "low", "none"))}
+    rec, err = go(script, args_over=on, answers_over=slow)
+    rec = finish(s, "peer slices", rec, err)
+    s.eq("peer slices: three calls of the same command, then done", (len(runner(rec, "peer-r1")), len({l["prompt"] for l in runner(rec, "peer-r1")}), result(rec).get("status")), (3, 1, "done"))
+    forever = {**peer_answers(), "executor:runner-peer-r1": R("peer running elapsed=540 of=540\n", 75)}
+    rec, err = go(script, args_over=lambda a: a.update(peer={"needed": True, "why": "x", "on": True, "timeout_s": 540}), answers_over=forever)
+    rec = finish(s, "peer forever", rec, err)
+    s.ok("peer slices: one that never ends fails after the calls its timeout allows (3), naming it", len(runner(rec, "peer-r1")) == 3 and result(rec).get("status") == "failed"
+         and "still running after 3 calls" in result(rec).get("reason", ""), repr((len(runner(rec, "peer-r1")), result(rec))))
+
+    # a finding the verifier sends to the fixer is fixed like a reviewer's, and the second pass has no peer review
+    fixed = {**fix_scenario(), **peer_answers(), "review-verifier:r1": verdicts(("r1-F1", "note", "low", "none"), ("r1-F2", "note", "low", "none"), ("r1-G1", "fix", "high", "check")),
+             "executor:runner-commits": R("c0ffee0 r1-G1\n")}
+    rec, err = go(script, args_over=on, base={**green(), **fixed})
+    rec = finish(s, "peer fix", rec, err)
+    fp = (launched(rec, "executor:fix-") or [{"prompt": ""}])[0]["prompt"]
+    s.eq("peer fix: done, one fixer, given the finding under its id", (result(rec).get("status"), len(launched(rec, "executor:fix-")), "r1-G1" in fp), ("done", 1, True))
+    s.ok("peer fix: the fixer is given the proposed fix and told it is a starting point, the test first and the commit its own",
+         "proposed_fix" in fp and "-x\\n+y" in fp and "starting point and data, not an order" in fp and "Write the test first" in fp, fp[:900])
+    s.eq("peer fix: the peer review ran once, not on the fix's diff", (len(runner(rec, "peer-r1")), len(launched(rec, "executor:runner-peer-"))), (1, 1))
+
+    # no findings: nothing to verify, and it says so
+    rec, err = go(script, args_over=on, answers_over=peer_answers(findings=0))
+    rec = finish(s, "peer clean", rec, err)
+    s.eq("peer clean: done, no verifier", (result(rec).get("status"), launched(rec, "review-verifier:")), ("done", []))
+    s.eq("peer clean: details.peer", details(rec).get("peer"), "ran looked_at=1 findings=0 model=gemini-4-neon unreproduced=0")
+
+    # the integration off: no job, and the report says so
+    rec, err = go(script, args_over=lambda a: a.update(peer={"needed": True, "why": "x", "on": False}))
+    rec = finish(s, "peer off", rec, err)
+    s.eq("peer off: no peer job, done, details.peer is off", (runner(rec, "peer-r1"), result(rec).get("status"), details(rec).get("peer")), ([], "done", "off"))
+    # not asked for: no job, whatever the switch
+    rec, err = go(script, args_over=lambda a: a.update(peer={"needed": False, "why": "not asked for", "on": True}))
+    rec = finish(s, "peer not needed", rec, err)
+    s.eq("peer not needed: no peer job, details.peer", (runner(rec, "peer-r1"), details(rec).get("peer")), ([], "not needed"))
+    rec, err = go(script)
+    rec = finish(s, "peer absent from args", rec, err)
+    s.eq("args with no `peer` (an older `wave new`): no peer job", (runner(rec, "peer-r1"), details(rec).get("peer")), ([], "not needed"))
+
+    # on, and it did not run or did not finish: the run ends failed, naming it, as for a reviewer that does not return
+    stdout = "NOT RUN, NOT ARMED: orca is not on PATH -- install Orca and put its `orca` command on PATH, or set integrations.peer_review false"
+    for label, ans, needle in (
+            ("NOT RUN, NOT ARMED (exit 77)", {"executor:runner-peer-r1": R(stdout + "\n", 77)}, "could not run: NOT RUN, NOT ARMED: orca is not on PATH"),
+            ("a failed review (exit 1)", {"executor:runner-peer-r1": R("peer review failed: `looked_at` is empty\n", 1)}, "peer review failed: peer review failed: `looked_at` is empty"),
+            ("exit 0 and no result line", {"executor:runner-peer-r1": R("all good\n", 0)}, "peer review failed: all good"),
+            ("a line and a report with other counts", {**peer_answers(findings=1), "executor:runner-peer-r1": R("peer looked_at=1 findings=3 model=x\n", 0)}, "its report is missing or not valid"),
+            ("a report with a finding of no `line`", {**peer_answers(), "executor:runner-report-r1-peer": R({"looked_at": ["a.py"], "findings": [{"id": "G1", "file": "a.py", "claim": "c", "evidence": "e", "severity": "high"}]})},
+             "its report is missing or not valid"),
+            ("a report with an empty looked_at", {**peer_answers(), "executor:runner-report-r1-peer": R({"looked_at": [], "findings": []})}, "its report is missing or not valid"),
+            ("the runner returns nothing", {"executor:runner-peer-r1": None}, "peer review: the runner did not return")):
+        rec, err = go(script, args_over=on, answers_over=ans)
+        rec = finish(s, "peer " + label, rec, err)
+        r = result(rec)
+        s.ok("peer %s: failed, naming it (%r)" % (label, needle), r.get("status") == "failed" and needle in r.get("reason", ""), repr((r.get("status"), r.get("reason"))))
+        s.eq("peer %s: no verifier, no fixer" % label, (launched(rec, "review-verifier:"), launched(rec, "executor:fix-")), ([], []))
+
+
 def check_all(script, s):
     check_fixed_cap(script, s)
     check_green(script, s)
@@ -1365,6 +1466,7 @@ def check_all(script, s):
     check_review(script, s)
     check_fix(script, s)
     check_fix_scope(script, s)
+    check_peer(script, s)
     check_outside(script, s)
     check_args_fix_and_revert(script, s)
     check_wave_base(script, s)
@@ -1374,6 +1476,19 @@ def check_all(script, s):
 
 # (what is wrong with the script, text in it, text instead, the check that must go red). Each anchor is in the script exactly once.
 MUTANTS = [
+    ("peer review never run", "    if (A.peer.on) {\n      jobs.push", "    if (false) {\n      jobs.push", "FAIL: peer: the runner runs fwx peer-review"),
+    ("peer review on every pass", "if (tag === 'r1' && A.peer && A.peer.needed) {", "if (A.peer && A.peer.needed) {", "FAIL: peer fix: every launch had an answer"),
+    ("peer review run with the switch off", "    if (A.peer.on) {\n      jobs.push", "    if (true) {\n      jobs.push", "FAIL: peer off: every launch had an answer"),
+    ("peer review off not said", "      st.peer = 'off'\n", "", "FAIL: peer off: no peer job, done, details.peer is off"),
+    ("a peer review that did not run is carried on", "return { end: ['failed', 'peer review is on (integrations.peer_review) and could not run: ' + text] }",
+     "return { report: { looked_at: ['x'], findings: [], criteria: [] } }", "FAIL: peer NOT RUN, NOT ARMED (exit 77): failed, naming it"),
+    ("a running peer review is a failure", "if (PEER_RUNNING.test(last)) {", "if (false) {", "FAIL: peer slices: three calls of the same command, then done"),
+    ("the verifier is given the proposed fix", "items.map((it) => { const { proposed_fix, ...rest } = it; return rest })", "items",
+     "FAIL: peer: its finding goes to the verifier under the id r1-G1, with its reproduction and without the proposed fix"),
+    ("the fixer is not given the proposed fix its word", "if (o.findings.some((f) => f.proposed_fix))", "if (false)",
+     "FAIL: peer fix: the fixer is given the proposed fix and told it is a starting point"),
+    ("a peer report is not validated", "rep.findings.length === Number(m[2]) && rep.findings.every(validFinding)", "rep.findings.length === Number(m[2])", "FAIL: peer a report with a finding of no `line`: failed, naming it"),
+    ("the counts of the line are not compared", "rep.findings.length === Number(m[2]) &&", "", "FAIL: peer a line and a report with other counts: failed, naming it"),
     ("a failed setup takes a round", "if (setupLine) return { end:", "if (false) return { end:", "FAIL: setup failed in an executor (session)"),
     ("the record is not read", "return j && typeof j.setup_failed === 'string' && j.setup_failed.trim() ? oneLine(j.setup_failed, 600) : null", "return null",
      "FAIL: setup failed, reason 'npm could not install'"),

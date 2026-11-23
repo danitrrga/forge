@@ -574,10 +574,27 @@ def _agent_browser_missing():
         "open a new shell, or set integrations.agent_browser false")
 
 
+def _orca_missing():
+    orca = shutil.which("orca")
+    if not orca:
+        return ("peer_review is on in config/forge.json but orca is not on PATH -- install Orca and put its `orca` command on PATH, "
+                "or set integrations.peer_review false")
+    try:
+        r = subprocess.run([orca, "agent", "installed", "--json"], capture_output=True, text=True, timeout=30, stdin=subprocess.DEVNULL)
+        agents = ((json.loads(r.stdout).get("result") or {}).get("agents")) if r.returncode == 0 else None
+    except (OSError, ValueError, subprocess.TimeoutExpired, AttributeError):
+        agents = None
+    if isinstance(agents, list) and "antigravity" not in [a.get("id") for a in agents if isinstance(a, dict)]:
+        return ("peer_review is on in config/forge.json but Orca has no `antigravity` agent -- install the Antigravity CLI and turn it "
+                "on in Orca's Settings, Agents, or set integrations.peer_review false")
+    return None
+
+
 INTEGRATION_NEEDS = {"codex": (_codex_missing, "codex found on PATH"),
                      "hindsight": (None, "no dependency checked here"),
                      "consent": (None, "its own row, `consent`, looks at the adapter, the projects and the hook"),
-                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH")}
+                     "agent_browser": (_agent_browser_missing, "agent-browser found on PATH"),
+                     "peer_review": (_orca_missing, "orca found on PATH with its antigravity agent (Orca not running: the agent is not checked)")}
 # An integration whose check does not exist yet: a SKIP, NOT RUN, NOT ARMED, on or off, never a PASS that looked at
 # nothing. The value says when the check arrives. None is pending now.
 INTEGRATION_PENDING = {}

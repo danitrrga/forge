@@ -355,8 +355,8 @@ check("true: weekly, models, limits, rounds, critique_rounds_unattended and path
       {k: doc.get(k) for k in ("weekly", "models", "limits", "rounds", "critique_rounds_unattended", "paths")})
 check("labels: linear.labels is copied from framework.linear -- linear.labels %s" % ("is empty" if not (doc.get("linear") or {}).get("labels") else ""),
       (doc.get("linear") or {}).get("labels") == {"needs-owner": "toy-needs-help"}, doc.get("linear"))
-check("true: integrations holds the three names, read from forge.json (notifications is not an integration yet: false)",
-      doc.get("integrations") == {"consent": True, "notifications": False, "agent_browser": False},
+check("true: integrations holds the four names, read from forge.json (notifications is not an integration yet: false)",
+      doc.get("integrations") == {"consent": True, "notifications": False, "agent_browser": False, "peer_review": False},
       doc.get("integrations"))
 gi = raw(os.path.join(pp, ".gitignore")) or b""
 check("true: the ignore line, inside the FORGE-FWX block, is in .gitignore",
@@ -483,6 +483,24 @@ w5p.run()
 d5p = load(fwfile(pp5p)) or {}
 check("open: an `open` that is not a table is left out of the file, as for walk -- %s" % d5p.get("open", "absent"),
       "open" not in d5p, d5p.get("open"))
+# peer: the `peer` table ({model, effort, timeout_s} of `fwx peer-review`) reaches the file as it is, a section without one leaves the key
+# out (the plugin's defaults apply), and integrations.peer_review true reaches `integrations`. Seen failing with the table copy and the name
+# taken out of framework.INTEGRATIONS, 3 checks red (the absence passes): `FAIL peer: framework.peer reaches fwx.json unchanged -- peer is
+# missing from fwx.json -- None` and `FAIL peer: integrations.peer_review true reaches fwx.json -- integrations is {'consent': True,
+# 'notifications': False, 'agent_browser': False}` and the four-names check above.
+PEER = {"model": "toy-model", "effort": "low", "timeout_s": 90}
+forge_json(fw=dict(FW, peer=PEER), integrations=dict(INTEGRATIONS_ON, peer_review=True))
+pp5q = project()
+w5q = World()
+w5q.put(project_file(pp5q, name="peer"))
+w5q.run()
+d5q = load(fwfile(pp5q)) or {}
+check("peer: framework.peer reaches fwx.json unchanged -- peer is %s" % d5q.get("peer", "missing from fwx.json"),
+      d5q.get("peer") == PEER, d5q.get("peer"))
+check("peer: integrations.peer_review true reaches fwx.json -- integrations is %s" % d5q.get("integrations"),
+      (d5q.get("integrations") or {}).get("peer_review") is True, d5q.get("integrations"))
+check("peer: no `peer` key in the section means no `peer` key in the file (bare section) -- %s" % d5.get("peer", "absent"),
+      "peer" not in d5 and "peer" not in doc, (d5.get("peer"), doc.get("peer")))
 forge_json(integrations=INTEGRATIONS_ON)
 
 # ------------------------------------------------------------------------------- 2. false: both directions

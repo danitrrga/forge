@@ -51,8 +51,8 @@ from forge import fwxignore, lib, marketplace, owned
 
 PART = "framework"
 LINEAR_KEY = "LINEAR_API_KEY"
-# The three integrations the plugin's file reports (§ the file's `integrations`); a name forge has no switch for yet is false.
-INTEGRATIONS = ("consent", "notifications", "agent_browser")
+# The integrations the plugin's file reports (§ the file's `integrations`); a name forge has no switch for yet is false.
+INTEGRATIONS = ("consent", "notifications", "agent_browser", "peer_review")
 PERMISSIONS_FILE = "framework-permissions.json"
 PERMISSIONS_SCHEMA = 1
 # A command that runs whatever follows it: `Bash(<one of these>:*)` allows any program or package script.
@@ -155,6 +155,8 @@ def _document(prof, name, ppath):
             doc[key] = section[key]
     if isinstance(section.get("walk"), dict):  # the plugin validates its own keys; a section without one leaves it out
         doc["walk"] = table("walk")
+    if isinstance(section.get("peer"), dict):  # {model, effort, timeout_s} of `fwx peer-review`; the plugin validates its own keys
+        doc["peer"] = table("peer")
     if isinstance(section.get("open"), dict):  # the user's opener ({"command": argv with {url} and {path}}), as is
         doc["open"] = table("open")
     doc["linear"] = linear

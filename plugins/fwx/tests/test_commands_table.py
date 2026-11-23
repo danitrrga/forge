@@ -44,7 +44,7 @@ s = helpers.Suite()
 DECIDED = [
     ("budget", None, "budget", []), ("model", None, "model", []),
     ("statusline", None, "statusline", []), ("rounds", None, "rounds", []), ("stage", None, "stage", []),
-    ("decide", None, "decide", []), ("verify", None, "verify", []),
+    ("decide", None, "decide", []), ("verify", None, "verify", []), ("peer-review", None, "peer", []),
     ("walk capture", "screenshot", "screenshot", []),
     ("session", "state resolve", "state", ["resolve"]), ("session attach", "state use", "state", ["use"]),
     ("phase list", "state list", "state", ["list"]), ("phase new", "state new-phase", "state", ["new-phase"]),

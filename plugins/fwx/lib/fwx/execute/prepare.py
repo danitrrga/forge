@@ -257,7 +257,7 @@ def _write(made, folder, claim):
 
 
 def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=None, revert=None, control_findings=None,
-            start=None, environ=None, say=lambda line: None):
+            start=None, environ=None, say=lambda line: None, peer=False):
     environ = os.environ if environ is None else environ
     if plane not in PLANES:
         raise WaveError("--plane is %r, not one of %s" % (plane, ", ".join(PLANES)))
@@ -345,6 +345,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
                                  "brief": made[t["id"]][0]["brief"] if t["id"] in made else None,
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
     why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
+    why_peer = [w for w, on_ in (("postmortem.md peer_review is true", post.get("peer_review") is True), ("--peer", peer)) if on_]
     return {
         "run": run, "plane": plane, "unattended": plane == "factory" or unattended, "cap": cap,
         "linear": bool(cfg["project"].get("linear_project")),  # an unfixed `outside` item needs its issue key only where there is a Linear project
@@ -359,6 +360,8 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         "waves": waves, "done": _done(top, branch, name, tasks), "plan_failures": [
             {"wave": c["wave"], "tasks": c["tasks"], "files": [c["file"]]} for c in clashes],
         "security": {"needed": bool(why), "why": " and ".join(why) or "not asked for"},
+        "peer": {"needed": bool(why_peer), "why": " and ".join(why_peer) or "not asked for", "on": cfg["integrations"].get("peer_review") is True,
+                 "timeout_s": cfg["peer"]["timeout_s"]},
         "criteria": data["criteria"],
         "fix": dict(fixing, brief=made[brief.FIX][0]["brief"] if brief.FIX in made else None) if fixing else None,
         "revert": revert or [],

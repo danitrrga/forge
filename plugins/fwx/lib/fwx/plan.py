@@ -290,6 +290,7 @@ def _premortem_extra(p, data):
 
 def _postmortem_extra(p, data):
     p.value(data, "security_review", "", lambda v: isinstance(v, bool), "true or false")
+    p.value(data, "peer_review", "", lambda v: isinstance(v, bool), "true or false", required=False)  # absent in the files written before it: false
 
 
 def _premortem_problems(data):
@@ -297,7 +298,7 @@ def _premortem_problems(data):
 
 
 def _postmortem_problems(data):
-    return _round_problems(data, ("verdict", "security_review", "round"), _postmortem_extra)
+    return _round_problems(data, ("verdict", "security_review", "peer_review", "round"), _postmortem_extra)
 
 
 def _load(path, label, problems):
@@ -320,7 +321,7 @@ def load_premortem(path, label=None):
 
 
 def load_postmortem(path, label=None):
-    """The validated frontmatter of a `postmortem.md`: {verdict, security_review, round}."""
+    """The validated frontmatter of a `postmortem.md`: {verdict, security_review, round}, and peer_review when the file has it."""
     return _load(path, label, _postmortem_problems)
 
 

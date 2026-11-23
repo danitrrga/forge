@@ -53,7 +53,8 @@ DEFAULTS = {
     "critique_rounds_unattended": 2,
     "linear": {"labels": {}},
     "walk": {"browser_executable": None},
-    "integrations": {"consent": False, "notifications": False, "agent_browser": False},
+    "integrations": {"consent": False, "notifications": False, "agent_browser": False, "peer_review": False},
+    "peer": {"model": "gemini-4-neon", "effort": "high", "timeout_s": 2700},
     "paths": {},
 }
 
@@ -171,6 +172,19 @@ def _check_walk(cfg, path):
         raise _bad(path, "walk.browser_executable is %r, not null or the path of a browser" % (exe,))
 
 
+def _check_peer(cfg, path):
+    """peer.model and peer.effort (what `orca agent launch --model --effort` takes for the Antigravity agent) and peer.timeout_s (seconds
+    the whole `fwx peer-review` may take, 45 minutes by default: the workflow waits on it in slices)."""
+    peer = cfg.get("peer")
+    if not isinstance(peer, dict):
+        raise _bad(path, "peer is not a table")
+    for key in ("model", "effort"):
+        if not isinstance(peer.get(key), str) or not peer[key].strip():
+            raise _bad(path, "peer.%s is %r, not a non-empty name" % (key, peer.get(key)))
+    if not _count(peer.get("timeout_s")):
+        raise _bad(path, "peer.timeout_s is %r, not a positive whole number of seconds" % (peer.get("timeout_s"),))
+
+
 def load(cwd=None, quiet=False):
     """The configuration: the main checkout's .claude/fwx.json laid over DEFAULTS, validated. `_source` is the
     path read, or None when the file is missing (then one line on stderr, once per process, unless `quiet`)."""
@@ -201,6 +215,7 @@ def load(cwd=None, quiet=False):
         source = path
     _validate(cfg, source)
     _check_walk(cfg, source)
+    _check_peer(cfg, source)
     _check_setup(cfg, source)
     cfg["_source"] = source
     return cfg

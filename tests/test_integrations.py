@@ -537,6 +537,52 @@ check("negative control: a pending entry turns agent_browser on into a SKIP (so 
       only(rows, "agent_browser") == [("SKIP", "NOT RUN, NOT ARMED: agent_browser is on in config/forge.json, but its check arrives later")],
       "rows %r" % (rows,))
 
+# 10. peer_review, the framework's third switch (`fwx peer-review`, through Orca's Antigravity agent): the row looks for `orca`, and for the
+# `antigravity` agent in `orca agent installed` when Orca answers (a closed Orca is not a FAIL: the agent cannot be seen).
+# Seen failing against the code before the row existed (cli.INTEGRATION_NEEDS without a peer_review entry: KeyError in integrations_row,
+# the cases below red): "peer_review on, no orca on PATH: a FAIL naming the fix -- rows [...]". Controls, each a case: a need that returns
+# None turns the missing orca into a PASS; a fake orca with the agent is a PASS; one without it a FAIL; a closed one (exit 1) a PASS.
+OK_JSON = '{"ok": true, "result": {"agents": [{"id": "claude"}, {"id": "antigravity"}]}}'
+NO_JSON = '{"ok": true, "result": {"agents": [{"id": "claude"}]}}'
+
+
+def fake_orca(name, body):
+    d = os.path.join(TOY, name)
+    os.makedirs(d)
+    with open(os.path.join(d, "orca"), "w") as fh:
+        fh.write("#!/bin/sh\n" + body + "\n")
+    os.chmod(os.path.join(d, "orca"), 0o755)
+    return d
+
+
+ORCA_OK = fake_orca("orca-ok", "echo '%s'" % OK_JSON)
+ORCA_NO_AG = fake_orca("orca-no-agent", "echo '%s'" % NO_JSON)
+ORCA_CLOSED = fake_orca("orca-closed", "echo 'Orca is not running' >&2; exit 1")
+PRF = ("FAIL", "peer_review is on in config/forge.json but orca is not on PATH -- install Orca and put its `orca` command on PATH, "
+       "or set integrations.peer_review false")
+PRN = ("FAIL", "peer_review is on in config/forge.json but Orca has no `antigravity` agent -- install the Antigravity CLI and turn it "
+       "on in Orca's Settings, Agents, or set integrations.peer_review false")
+rows = int_row(EMPTY_BIN, peer_review=True)
+check("peer_review on, no orca on PATH: a FAIL naming the fix", only(rows, "peer_review") == [PRF], "rows %r" % (rows,))
+rows = int_row(EMPTY_BIN, peer_review=False)
+check("peer_review off: a SKIP, NOT RUN, NOT ARMED",
+      only(rows, "peer_review") == [("SKIP", "NOT RUN, NOT ARMED: peer_review is off in config/forge.json")], "rows %r" % (rows,))
+rows = int_row(ORCA_OK, peer_review=True)
+check("control: an orca that lists antigravity is a PASS", [r[0] for r in only(rows, "peer_review")] == ["PASS"], "rows %r" % (rows,))
+rows = int_row(ORCA_NO_AG, peer_review=True)
+check("control: an orca without the antigravity agent is a FAIL naming it", only(rows, "peer_review") == [PRN], "rows %r" % (rows,))
+rows = int_row(ORCA_CLOSED, peer_review=True)
+check("control: an orca that is not running cannot show its agents, and is a PASS", [r[0] for r in only(rows, "peer_review")] == ["PASS"],
+      "rows %r" % (rows,))
+real_need = cli.INTEGRATION_NEEDS["peer_review"]
+cli.INTEGRATION_NEEDS["peer_review"] = (lambda: None, "no dependency checked here")
+try:
+    rows = int_row(EMPTY_BIN, peer_review=True)
+finally:
+    cli.INTEGRATION_NEEDS["peer_review"] = real_need
+check("negative control: a need that always returns None makes the missing orca a PASS (so the FAIL check can fail)",
+      only(rows, "peer_review") == [("PASS", "peer_review is on, no dependency checked here")], "rows %r" % (rows,))
+
 sandbox.cleanup(bool(failures))
 if failures:
     print("%d of %d checks failed" % (len(failures), n_cases[0]))

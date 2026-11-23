@@ -1,5 +1,5 @@
 ---
-{"verdict": "ok|objections|back-to-discuss", "security_review": false, "round": 1}
+{"verdict": "ok|objections|back-to-discuss", "security_review": false, "peer_review": false, "round": 1}
 ---
 <!-- referent: none, own text: no source has a plan review as a document; the frontmatter is fixed by the plan format -->
 

@@ -578,7 +578,7 @@ check("no record: the by-construction count is above 0, exit 0 -- exit %d, %r" %
 def unquoted(out):
     """argparse quotes the choices from Python 3.13 on (`choose from 'codex', ...`) and not before (3.12 on the CI runner, 3.15 here):
     the choice that was refused keeps its quotes, the list of the valid ones is compared without them. Red on the 3.12 runner before:
-    "FAIL --integration caveman: argparse refuses it, exit 2 -- exit 2: ... invalid choice: 'caveman' (choose from codex, hindsight, consent, agent_browser)"."""
+    "FAIL --integration caveman: argparse refuses it, exit 2 -- exit 2: ... invalid choice: 'caveman' (choose from codex, hindsight, consent, agent_browser, peer_review)"."""
     return re.sub(r"(choose from )(.*)\)", lambda m: m.group(1) + m.group(2).replace("'", "") + ")", out)
 
 
@@ -588,12 +588,12 @@ check("an empty world, whole: exit 0, nothing left of forge -- exit %d: %s" % (c
       code == 0 and "nothing left of forge" in out and "FAIL" not in out, out)
 code, out = e.forge("uninstall", "--integration", "caveman")  # removed: no longer a choice. Red with "caveman" put back in lib.INTEGRATIONS: "exit 1: looked at 0 claim(s) and 0 item(s) forge made by construction | FAIL: looked at zero"
 check("--integration caveman: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
-      code == 2 and "invalid choice: 'caveman' (choose from codex, hindsight, consent, agent_browser)" in unquoted(out), out)
+      code == 2 and "invalid choice: 'caveman' (choose from codex, hindsight, consent, agent_browser, peer_review)" in unquoted(out), out)
 # D5: gsd is no longer an integration either. On 987388c it was a valid choice and this command exited 1 with "looked at zero" (the old
 # assertion of this line), so this check read "FAIL --integration gsd: argparse refuses it, exit 2 -- exit 1: ... looked at zero".
 code, out = e.forge("uninstall", "--integration", "gsd")
 check("--integration gsd: argparse refuses it, exit 2 -- exit %d: %s" % (code, sandbox.tail(out, 2)),
-      code == 2 and "invalid choice: 'gsd' (choose from codex, hindsight, consent, agent_browser)" in unquoted(out), out)
+      code == 2 and "invalid choice: 'gsd' (choose from codex, hindsight, consent, agent_browser, peer_review)" in unquoted(out), out)
 # MemPalace is retired: no longer a choice either. Red on 70059b8 (a valid choice): the command exits 1 with "looked at zero", so
 # this check read "FAIL --integration mempalace: argparse refuses it, exit 2 -- exit 1: ... looked at zero".
 code, out = e.forge("uninstall", "--integration", "mempalace")

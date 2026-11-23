@@ -2,7 +2,7 @@
 fwx wave [new|merge|fix|revert|remove|setup] ..., `fwx base`, `fwx scratch new`. `fwx wave` alone is the summary.
 The steps keep their old names inside: in the run's files (`<n>-<step>.json`), in the `step` of a call, in this file's functions.
 
-`wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
+`wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--peer] [--fix F] [--revert IDS]
 [--control-findings F] [--from gate]` validates the part `D` from the integration checkout (the current folder, on branch `W`) and prints
 the `args` of `execute` as one JSON object (execute/prepare.py says what it checks and what it leaves out). Exit 0, 1 when
 the base fails its own checks (a needs-owner JSON line on stdout, `rounds <used>/<cap>` on stderr, no round spent), 2 for
@@ -53,7 +53,7 @@ import sys
 from fwx import config, plan_step, routes, state
 from fwx.execute import base, cleanup, integrate, prepare as prep, worktree_setup
 
-PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] "
+PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--peer] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
 CHECK_USAGE = "usage: fwx base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
 SETUP_USAGE = "usage: fwx wave setup [--force]\n"
@@ -100,7 +100,7 @@ def _parse(argv, flags, valued, many=()):
 
 
 def do_prepare(argv):
-    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from"))
+    parsed = _parse(argv, ("--unattended", "--security", "--peer"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from"))
     if parsed is None or parsed[1] or any(k not in parsed[0] for k in ("--part-dir", "--plane", "--branch")):
         sys.stderr.write(PREPARE_USAGE)
         return 2
@@ -111,7 +111,7 @@ def do_prepare(argv):
         sys.stderr.write("fwx wave new: %s\n" % line)
     try:
         args = prep.prepare(".", got["--part-dir"], got["--plane"], got["--branch"], "--unattended" in got, "--security" in got,
-                            got.get("--fix"), revert, got.get("--control-findings"), got.get("--from"), say=say)
+                            got.get("--fix"), revert, got.get("--control-findings"), got.get("--from"), say=say, peer="--peer" in got)
     except prep.RedBase as e:
         print(json.dumps(e.status))
         sys.stderr.write("fwx wave new: %s\n%s\nrounds %s\n" % (e, e.shown, e.status["rounds"]))

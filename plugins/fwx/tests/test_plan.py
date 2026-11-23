@@ -254,6 +254,13 @@ for label, fm, want in (
         ("a missing round", {k: v for k, v in POST.items() if k != "round"}, "postmortem.md: round: missing"),
         ("size_tag, which is the premortem's", dict(POST, size_tag="small"), "postmortem.md: size_tag: unknown field")):
     case("postmortem " + label, phase(extra={"postmortem.md": fm_text(fm)}), [want])
+# peer_review (another model reviews the diff): optional, absent in the files written before it, a boolean when there. Seen red with the key
+# left out of the keys of `_postmortem_problems` (the control): the suite stops at `fwx.plan.PlanError: .../postmortem.md: peer_review: unknown field`.
+PEERED = dict(POST, peer_review=True)
+case("a postmortem with peer_review true", phase(extra={"postmortem.md": fm_text(PEERED) + POSTB}), exact=(0, 0))
+s.eq("load_postmortem keeps peer_review", plan.load_postmortem(os.path.join(phase(extra={"postmortem.md": fm_text(PEERED)}), "postmortem.md")), PEERED)
+case("postmortem peer_review as a string", phase(extra={"postmortem.md": fm_text(dict(POST, peer_review="yes"))}),
+     ["postmortem.md: peer_review: must be true or false"])
 case("a postmortem with no frontmatter", phase(extra={"postmortem.md": "## Verdict\nok\n"}), ["postmortem.md: frontmatter: missing"])
 raises("load_premortem: an invalid file raises", lambda: plan.load_premortem(os.path.join(phase(extra={"premortem.md": fm_text(dict(PRE, verdict="x"))}), "premortem.md")), field="verdict")
 

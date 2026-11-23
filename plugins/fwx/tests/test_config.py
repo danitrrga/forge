@@ -255,4 +255,24 @@ if has_cap:
     except config.ConfigError as e:
         s.ok("an unknown role: the message lists the roles", all(r in str(e) for r in config.ROLES), str(e))
 
+# ---- peer (`fwx peer-review`) and integrations.peer_review. Seen red on the code before them: `FAIL: peer defaults: got None, want {...}`
+# and, with `_check_peer` taken out of load (the control), `FAIL: peer not a table: a ConfigError naming peer is not a table: load accepted it`.
+peerdir = helpers.toy_repo()
+cfg, _ = load(peerdir)
+s.eq("peer defaults", cfg.get("peer") if isinstance(cfg, dict) else cfg, {"model": "gemini-4-neon", "effort": "high", "timeout_s": 2700})
+s.eq("integrations.peer_review is off by default", cfg["integrations"].get("peer_review") if isinstance(cfg, dict) else cfg, False)
+put(peerdir, {"schema": 1, "peer": {"model": "other"}, "integrations": {"peer_review": True}})
+cfg, _ = load(peerdir)
+s.eq("a file that sets one key of peer keeps the other defaults",
+     cfg.get("peer") if isinstance(cfg, dict) else cfg, {"model": "other", "effort": "high", "timeout_s": 2700})
+s.eq("a file can switch peer_review on, and keeps the other switches", cfg["integrations"] if isinstance(cfg, dict) else cfg,
+     {"consent": False, "notifications": False, "agent_browser": False, "peer_review": True})
+for what, peer, needle in (("peer not a table", "gemini", "peer is not a table"), ("model empty", {"model": ""}, "peer.model"),
+                           ("effort a number", {"effort": 3}, "peer.effort"), ("timeout_s 0", {"timeout_s": 0}, "peer.timeout_s"),
+                           ("timeout_s text", {"timeout_s": "560"}, "peer.timeout_s"), ("timeout_s true", {"timeout_s": True}, "peer.timeout_s")):
+    put(peerdir, {"schema": 1, "peer": peer})
+    c, _ = load(peerdir)
+    s.ok("%s: a ConfigError naming %s" % (what, needle), isinstance(c, config.ConfigError) and needle in str(c),
+         str(c) if isinstance(c, config.ConfigError) else "load accepted it")
+
 s.done()
