@@ -125,12 +125,6 @@ def step(text, n):
     return m.group(0) if m else ""
 
 
-def block(playbook, node):
-    """The block of `node` in a playbook: from its `### <id> ·` heading to the next heading."""
-    m = re.search(r"^### %s ·.*?(?=^### |\Z)" % re.escape(node), playbook, re.S | re.M)
-    return m.group(0) if m else ""
-
-
 def commit_effect(line, stale=False, demo=True, twice=False):
     """Run rule 4's commit line in a toy repo holding the documents of a phase beside what the UI walk leaves, and say what it did:
     (exit code, tracked files under .fwx/, untracked ones, files of the last commit, exit code of a second run or None). `<main_checkout>` is
@@ -263,20 +257,15 @@ def main():
         else:
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
 
-    # The playbook and the skill say the same of a rejected fix: `fwx review read` only sorts the answers (walk.py `cmd_review_answers`
+    # The skill says what a rejected fix records: `fwx review read` only sorts the answers (walk.py `cmd_review_answers`
     # writes review/answers.json and no decision), and the `decisions` agent records `not_defect` with support `approved` and `redo` with
-    # support `chosen`. PR 125 made the playbook say a `redo` records nothing while this skill (what the session follows) records it.
+    # support `chosen`.
     # Seen red on 93e43d9 (the playbook said `redo` records nothing; the skill did not say that the command writes no decision):
     #   FAIL: the playbook and ui-review.md both say what the decisions agent records for each rejection -> playbook {}, ui-review.md {'not_defect': 'approved', 'redo': 'chosen'}
     #   FAIL: the playbook and ui-review.md both say `review read` writes no decision -> playbook False, ui-review.md False
-    with open(os.path.join(ROOT, "playbooks", "ui-walk.md"), encoding="utf-8") as f:
-        playbook = f.read()
-    rej = playbook[playbook.index("### p_REJ"):]
     want = {"not_defect": "approved", "redo": "chosen"}
-    check("the playbook and ui-review.md both say what the decisions agent records for each rejection",
-          supports(rej) == want and supports(review) == want, "playbook %s, ui-review.md %s" % (supports(rej), supports(review)))
-    check("the playbook and ui-review.md both say `review read` writes no decision", "no decision" in rej and "no decision" in review,
-          "playbook %s, ui-review.md %s" % ("no decision" in rej, "no decision" in review))
+    check("ui-review.md says what the decisions agent records for each rejection", supports(review) == want, "ui-review.md %s" % supports(review))
+    check("ui-review.md says `review read` writes no decision", "no decision" in review, "ui-review.md %s" % ("no decision" in review))
     check("control: a text that records a `redo` as approved is not the wanted one", supports("`not_defect` with support `approved`, `redo` with support `approved`") != want)
 
     # A walk that did not finish is not "no findings": `fix_file` is null then, and step 6 once read that as nothing to fix. The session texts
@@ -284,7 +273,7 @@ def main():
     # returns, which tests/test_ui_walk_workflow.py pins key by key), so a renamed field breaks this check.
     # Seen red on 1afad4d (no session text read them):
     #   FAIL: SKILL.md step 6 tells the owner the reason, the unverified findings and that the walk did not pass -> missing: ['reason', 'unverified', 'passed']
-    #   (and the same for references/ui-review.md, playbooks/ui-walk.md and playbooks/session.md)
+    #   (and the same for references/ui-review.md)
     with open(os.path.join(ROOT, "workflows", "ui-walk.js"), encoding="utf-8") as f:
         js = f.read()
     returned = returned_fields(js)
@@ -298,10 +287,7 @@ def main():
     check("references/ui-review.md says what to do when `details.fix_file` is null", "`details.fix_file` null" in review and "do not run the command" in review, "missing")
     check("control: `details.reason` is flagged, `reason` is a top-level field only", cited_missing("read `details.reason`", returned) == ["reason"], "got %s" % cited_missing("read `details.reason`", returned))
     check("control: a details field is read as a details field", cited_missing("read `details.gaps` and `details.fix_file`", returned) == [])
-    with open(os.path.join(ROOT, "playbooks", "session.md"), encoding="utf-8") as f:
-        session_pb = f.read()
-    for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review), ("playbooks/ui-walk.md", playbook),
-                       ("playbooks/session.md", session_pb)):
+    for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review)):
         absent = [w for w in ("reason", "unverified", "passed") if w not in text]
         check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
         check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
@@ -311,12 +297,10 @@ def main():
     s6 = step(texts["SKILL.md"], 6)
     check("SKILL.md step 6 reads models.runner from `fwx model runner small`", "`models.runner` from `fwx model runner small`" in s6 and "models.runner` from `fwx model executor" not in s6, "missing")
 
-    # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when, and the
-    # playbook's block of the owner's review carries the matching exit. `fwx playbook lint` compares that exit with the table by itself.
+    # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when.
     # Seen red on 239aa07 (step 8 and the playbook did not mention it):
     #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
     # (reworded after the review of PR 129 into numbered sub-steps; the checks follow the new words)
-    #   FAIL: playbooks/session.md n_L8 exits `loop n_C12` -> missing
     from fwx.core import stages  # noqa: E402
     check("the stage table allows phase-review -> ui-walk", stages.allowed("session", "phase-review", "ui-walk"), "refused")
     check("step 8 says when the walk is repeated from `phase-review`",
@@ -362,14 +346,10 @@ def main():
           all(w in s0 for w in ("amendment", "`planning` or `postmortem` row", "after an `executing` row", "make no branch at step 4")),
           "step 0 has %s" % ("no 'amendment'" if "amendment" not in s0 else "the sentence without one of its parts"))
     check("control: a step 0 without the sentence is caught", "amendment" not in "Go to the step of the last stage: none or `discuss` 1; `planning` 2; `postmortem` 3.")
-    l8 = block(session_pb, "n_L8")
-    check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
     # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
-    # `phase-review -> planning`); the `source` the skill tells the `decisions` agent to use is the one `plan_step.py` looks for, and the
-    # playbook's block of the review and of the plan carry the matching exit and sentence.
+    # `phase-review -> planning`); the `source` the skill tells the `decisions` agent to use is the one `plan_step.py` looks for.
     # Seen red on 83c37cb (step 8 and the playbook said nothing of it):
     #   FAIL: step 8 sends a post-plan decision back to the planner -> no 'planning' with 'steps 2 and 3' and 'review of part <N>'
-    #   FAIL: playbooks/session.md n_L8 exits `loop n_C2` -> missing
     from fwx import plan_step  # noqa: E402
     check("the stage table allows phase-review -> planning", stages.allowed("session", "phase-review", "planning"), "refused")
     check("step 8 sends a post-plan decision back to the planner",
@@ -382,8 +362,6 @@ def main():
     check("step 2 writes stage `planning` and step 3 stage `postmortem`", "Stage `planning`" in step(texts["SKILL.md"], 2) and "Stage `postmortem`" in step(texts["SKILL.md"], 3), "missing")
     check("step 8 gives the decision the source the briefs look for",
           "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
-    check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
-    check("playbooks/session.md n_C2 names the decision of the review as what a replan attends", "his review" in block(session_pb, "n_C2"), "missing")
     # Rehearsal of a whole session (F-2): the session tried to edit `.claude/fwx.json` (a `sed -i`, then `Edit`, both refused) and no rule said not
     # to. forge generates that file and rewrites it at every session start. Rule 9 says so, names the owner's way out and forbids the edit.
     # Seen red on b4c52fc: FAIL: rule 9 says `.claude/fwx.json` is generated by forge, a wrong value goes to the owner through the `forge` CLI, and the file is never edited -> no rule 9
@@ -436,7 +414,6 @@ def main():
     check("control: `commit -- .fwx` after the find-built add commits a previously tracked walk file", any(f.endswith("demo-state.json") for f in commit_effect(
         "cd <main_checkout> && find .fwx -type f ! -name '.*' \\( -name '*.md' -o -name '*.tsv' -o -path '*/demo/*.html' \\) -print0 | git add --pathspec-from-file=- --pathspec-file-nul && git commit -m \"<message>\" -- .fwx",
         stale=True)[3]), "the control line did not commit it")
-    check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # DTC-34: the worktree of a phase is removed by the next session, once its PR is merged and it is clean, never at the close.
     closing = read(os.path.join("references", "closing.md"))
@@ -449,8 +426,6 @@ def main():
     check("SKILL.md step 0 clears merged worktrees: merged PR, clean, no force", all(w in s0 for w in need), "missing: %s" % [w for w in need if w not in s0])
     check("SKILL.md step 0 never uses `git branch -D`", "branch -D" not in s0, "`git branch -D` is in it")
     check("SKILL.md step 0 clears worktrees before the retake and the resume", in_order(s0, "--state merged", "retake", "fwx session --json"), "order is not sweep, retake, resume")
-    check("playbooks/session.md n_L3 clears merged worktrees (--state merged)", "--state merged" in block(session_pb, "n_L3"), "missing")
-    check("playbooks/session.md n_L10 no longer removes the phase worktree", "removes only the phase worktree" not in block(session_pb, "n_L10"), "'removes only the phase worktree' still in it")
     # The owner leaving changes nothing: the session passes no `--unattended` (the factory's flag) and says so.
     # Seen red on the text before the change (rc=1):
     #   FAIL: no line of SKILL.md tells the session to pass --unattended -> line 46: '5. **Execute a part.** ... (add `--unattended` when the owner says he is leaving); it prints ...'

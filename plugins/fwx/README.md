@@ -31,14 +31,12 @@ python3 bin/fwx wave new --part-dir <dir> --plane session --branch <phase branch
 python3 bin/fwx base <sha>    # an executor's step 0: exit 0 when the worktree starts at that commit, 42 when not, 43 when the project's `worktree_setup` failed in it
 python3 bin/fwx scratch new <run> <unit>    # makes the folder git ignores, in its own worktree where an agent writes its report
 python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; also red for a brief, checkpoint or handoff file (a whole word of its name), or an old version kept beside its living file, added or renamed since the default branch; exit 0 green, 1 red, 2 cannot prove the commit
-python3 bin/fwx playbook list    # the workflow tree (an Excalidraw file) by playbook, in words; --raw: the id form agents read; --tree PATH, --scope NAME
 python3 bin/fwx walk start --dir <phase dir> --part N --round R    # UI walk: starts the seeded local app, drives browsers with guards (`walk ab`, `walk pw`), checks that every screen answers (`walk check-screens`; not for an app that declares `app_run.login`), merges findings (`walk converge`) and closes with a process count (`walk stop`, `walk stop --orphans`); NOT RUN, NOT ARMED without `app_run` or `agent_browser`
 python3 bin/fwx control new --run <run dir> --screen <url>    # plants the control the walkers must find: a link that leads to a page that does not exist (`--kind hierarchy`: a title shrunk to body size, for the critic); `control judge --run <run dir> <findings files>` says, by code, whether a finding names it
 python3 bin/fwx review new --run <run dir> --fixed <file>    # builds the review page of the fixes; `review read --run <run dir> <file>` sorts the owner's answers
 python3 bin/fwx walk selftest [--json]    # proves the walk environment works, on the host or inside an image: `walk start`, the app answers 200, `agent-browser` opens it with the demo session (only an app that declares `app_run.login` has one), a non-blank capture, `walk stop` leaves 0 processes; exit 0 all pass, 1 a check failed, 2 NOT RUN, NOT ARMED
 python3 bin/fwx walk capture --run <run dir> [--screens JSON] [--out DIR]    # one 1440-wide capture per walked screen, through `walk ab` and its guards, no model; one line each, exit 1 naming the missing ones
 python3 bin/fwx migrate-gsd plan [--json]    # what converting a GSD .planning/ to .fwx/ would keep, purge and move; read-only. `apply` (in a worktree, own branch) does it, staged, with its checks and a rollback; `refs --base SHA [--rewrite F...] [--prefix F...]` lists and fixes the references; `leftovers [--apply]` moves the ignored files after the merge
-python3 bin/fwx playbook lint    # each playbook against the tree and the block format; exit 77 without a tree; --tree PATH, --only NAME
 ```
 
 Run these from this folder. The suite is not one of them: forge runs it, as the `fwx` group of its test runner, from forge's top
@@ -85,6 +83,10 @@ name with no entry is used as it is.
 owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave new` prints the
 executor's as `cap` in the `args` of `execute`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
 are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
+
+`project.check_timeout_s` (default `1200`) is the seconds one check of `project.checks` or `checks_quick` may run before fwx stops it: `fwx verify`, the
+gate, `fwx wave new`'s base checks and `fwx wave merge` use it, and a base check stopped by it is `NOT RUN` and names the limit it had. A project whose suite
+needs longer sets it (forge's project field of the same name); anything but a positive whole number is an error that names the key.
 
 `walk.browser_executable` (default `null`) is the path of the browser the UI walk uses instead of the one `agent-browser`
 finds, for a machine where that one goes through a wrapper (an extension, a window flag): `fwx walk ab` then adds

@@ -77,8 +77,10 @@ import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 sys.path.insert(0, ROOT)
@@ -224,12 +226,21 @@ class Ctx:
 
 
 failures = []
-_sink = [failures]  # where want() writes: the real run's list, or the one of a control's scenario
+
+
+class Sinks(threading.local):
+    """Where want() writes: the real run's list, or the one of a control's scenario. One stack per thread, so that controls can run at once."""
+
+    def __init__(self):
+        self.stack = [failures]
+
+
+_sink = Sinks()
 
 
 def want(label, got, expected):
     if got != expected:
-        _sink[-1].append("%s: %s, want %s" % (label, got, expected))
+        _sink.stack[-1].append("%s: %s, want %s" % (label, got, expected))
 
 
 def next_step(message, step):
@@ -643,13 +654,26 @@ SCENARIOS = {"sweep": scenario_sweep, "fork": scenario_fork, "record": scenario_
 def run_scenario(name, mutate=None):
     """The failure lines of one scenario in one world, kept apart from the real run's."""
     mine = []
-    _sink.append(mine)
+    _sink.stack.append(mine)
     c = Ctx(mutate=mutate)
     try:
         return mine + SCENARIOS[name](c)
     finally:
-        _sink.pop()
+        _sink.stack.pop()
         c.cleanup()
+
+
+def control(row):
+    """(failure line or None, the line FORGE_MESSAGES_SHOW prints) of one control: its mutation must make the scenario fail with its message."""
+    name, rel, old, new, message, _ = row
+    try:
+        got = run_scenario(name, mutate=(rel, old, new))
+    except AssertionError as e:  # the anchor is not in the file: the control would look at nothing
+        return "control %s: %s" % (name, e), None
+    shown = "control %s: %s" % (name, next((x for x in got if message in x), got))
+    if not any(message in x for x in got):
+        return "control %s (%s -> %s) did not fail with %r: %s" % (name, old[:40], new[:30], message, got), shown
+    return None, shown
 
 
 def self_check():
@@ -665,16 +689,14 @@ def main():
         for name in SCENARIOS:
             failures.extend(run_scenario(name))
         if not os.environ.get("FORGE_MESSAGES_NO_CONTROLS"):
-            for name, rel, old, new, message, _ in CONTROLS:
-                try:
-                    got = run_scenario(name, mutate=(rel, old, new))
-                except AssertionError as e:  # the anchor is not in the file: the control would look at nothing
-                    failures.append("control %s: %s" % (name, e))
-                    continue
-                if os.environ.get("FORGE_MESSAGES_SHOW"):
-                    print("control %s: %s" % (name, next((x for x in got if message in x), got)))
-                if not any(message in x for x in got):
-                    failures.append("control %s (%s -> %s) did not fail with %r: %s" % (name, old[:40], new[:30], message, got))
+            # The controls are independent worlds (about 100 s of this file one after the other): up to 4 at a time, their lines in the
+            # order of CONTROLS as when they ran one after the other.
+            with ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1)) as pool:
+                for failure, shown in [f.result() for f in [pool.submit(control, row) for row in CONTROLS]]:
+                    if shown and os.environ.get("FORGE_MESSAGES_SHOW"):
+                        print(shown)
+                    if failure:
+                        failures.append(failure)
     finally:
         sandbox.cleanup()
     if failures:

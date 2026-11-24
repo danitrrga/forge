@@ -509,6 +509,7 @@ async function integrate(branches, o) {
       text = 'the branch ' + r.conflict.branch + ' conflicts in ' + r.conflict.files.join(', ')
     } else if (r.quick && r.quick.ran && r.quick.rc !== 0) {
       text = 'checks_quick failed with exit ' + r.quick.rc + ' on ' + r.head + ': ' + (r.quick.cmds || []).join(' ; ')
+      if (r.quick.timed_out && r.quick.timed_out.length) text += ' (stopped after ' + r.quick.limit + ' s: ' + r.quick.timed_out.join(' ; ') + '; raise project.check_timeout_s if the check needs longer)'
     } else if (r.verify && r.verify.ran && r.verify.rc !== 0) {
       if (r.verify.rc !== 1) stop(A.plane === 'session' ? 'needs-owner' : 'failed', 'verify could not run (exit ' + r.verify.rc + '): ' + (r.verify.line || 'no line'))
       text = 'the gate failed on ' + r.head + ': ' + r.verify.line

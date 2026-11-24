@@ -84,21 +84,29 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tests/test_measure_login.py
 
-  # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (51 test files, about four minutes);
-  # `forge test` with no group leaves them out, so this job is where they run in CI. `forge test fwx` exits 1 when no test
+  # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (49 test files, 1605 s of file time at 4 at once,
+  # 403 s median on one runner: the long pole of a run that does not change the engine);
+  # `forge test` with no group leaves them out, so this job is where they run in CI. It runs as 3 shards on 3 runners (`--shard I/N`: the
+  # files are dealt one by one, FWX_SLOW_FIRST first, then the largest; test_walk, test_execute_workflow and test_ui_walk_workflow, 461 s,
+  # 332 s and 200 s on one runner, are pinned first so that each lands in its own shard, which tests/test_test_shard.py checks. The test
+  # declared below can land in a shard of its own, which is not a failure: only a whole run that passed nothing is). tests/test_test_shard.py checks that the entries of `shard` are exactly 1/N .. N/N and that the
+  # shards of a suite are every file once. `forge test fwx` exits 1 when no test
   # file ran (and when the plugin folder is missing and a path is declared, as here) and 77 when none failed but one could
-  # not run, so an empty or unarmed suite is red here, not falsely green. The two tests below can never run in CI, and are
-  # declared so: each prints `EXPECTED NOT RUN` with its reason and does not turn the exit to 77. Any other test that cannot
+  # not run, so an empty or unarmed suite is red here, not falsely green. The test below can never run in CI, and is
+  # declared so: it prints `EXPECTED NOT RUN` with its reason and does not turn the exit to 77. Any other test that cannot
   # run is still 77, so still red. The paths are relative to plugins/fwx, as the group lists them.
   #   tests/test_linear_live.py: asks the real Linear API and has no LINEAR_API_KEY here (a secret this job
   #     is not given).
-  #   tests/test_playbooks_tree.py: reads the private workflow tree, which is not in this repository.
   fwx:
-    name: fwx tests
+    name: fwx tests (${{ matrix.shard }})
     needs: changes
     if: ${{ needs.changes.outputs.fwx != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    strategy:
+      fail-fast: false # one run shows every shard's failures, not the first one's
+      matrix:
+        shard: ["1/3", "2/3", "3/3"]
     steps:
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
@@ -109,11 +117,13 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
-      - run: python3 bin/forge test fwx --expect-not-run tests/test_linear_live.py,tests/test_playbooks_tree.py
+      - run: python3 bin/forge test fwx --shard ${{ matrix.shard }} --expect-not-run tests/test_linear_live.py
 
   # The engine's own suite, `python3 bin/forge test`: every tracked test_*.py but plugins/fwx's (that group is the `fwx` job above)
-  # and the on-demand guard mutants, 4 files at once (the runner has 4 CPUs; 85 files: about 25 minutes one after the other, 6 to 9 at 4 at
-  # once; test_run and test_switch start first, and each runs its own mutants 4 at a time).
+  # and the on-demand guard mutants, 4 files at once (the runner has 4 CPUs; 89 files: about 25 minutes one after the other, 532 s median
+  # at 4 at once on one runner, 3141 s of file time: the CPUs are the limit, more files at once cannot help). It runs as 4 shards on 4
+  # runners (`--shard I/N`): test_run, test_switch, test_messages and test_new, the four slow files (SLOW_FIRST in forge/cli.py), are
+  # dealt first, one to each shard, and each runs its own mutants 4 at a time.
   # Before this job the suite ran only on the owner's machine, so a pull request that broke tests/test_profiles.py showed green.
   # A test that exits 77 is a WARN `NOT RUN, NOT ARMED`: it does not fail the run, so the list is kept here, and a new
   # one is to be read in the log. Three tests run `unshare -rn` (test_write_guard, test_sync_fixture, test_relink_skills): Ubuntu 24.04
@@ -121,11 +131,15 @@ jobs:
   # The one WARN line left, a thing this runner lacks (tests/test_new.py is armed by the full-history checkout below):
   #   tests/test_shim.py: the fish and zsh cases need those shells, which the runner does not have; the bash cases run.
   suite:
-    name: Engine suite
+    name: Engine suite (${{ matrix.shard }})
     needs: changes
     if: ${{ needs.changes.outputs.suite != 'false' }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false # one run shows every shard's failures, not the first one's
+      matrix:
+        shard: ["1/4", "2/4", "3/4", "4/4"]
     steps:
       - uses: step-security/harden-runner@1d88384fd173af6ecb012dfd0264a306b711241a # v2.22.4
         with:
@@ -139,4 +153,4 @@ jobs:
           python-version: "3.12"
       - name: allow unprivileged user namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - run: python3 bin/forge test --jobs 4
+      - run: python3 bin/forge test --jobs 4 --shard ${{ matrix.shard }}
