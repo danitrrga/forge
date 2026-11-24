@@ -177,6 +177,11 @@ cfg = config.DEFAULTS
 s.eq("seed: planner is opus", config.model(cfg, "planner", "normal"), "opus")
 s.eq("seed: pre-mortem is sonnet", config.model(cfg, "pre-mortem", "normal"), "sonnet")
 s.eq("seed: detector is haiku", config.model(cfg, "detector", "normal"), "haiku")
+for role in ("decisions", "state"):
+    s.ok("seed: %s is haiku at every size" % role,
+         all(config.model(cfg, role, z) == "haiku" for z in config.SIZES),
+         "got %r" % [config.model(cfg, role, z) for z in config.SIZES])
+s.ok("seed: planner is opus at every size", all(config.model(cfg, "planner", z) == "opus" for z in config.SIZES))
 s.eq("seed: executor is sonnet", config.model(cfg, "executor", "big"), "sonnet")
 for role, size, what in (("nosuch", "small", "role"), ("executor", "huge", "size")):
     try:
