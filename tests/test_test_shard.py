@@ -136,6 +136,11 @@ from forge import cli, testgroup  # noqa: E402
 take_shard = getattr(testgroup, "take_shard", None)
 ok("forge.testgroup.take_shard exists", take_shard is not None)
 take_shard = take_shard or (lambda order, shard: [])
+# Looking at zero is a failure: with SLOW_FIRST emptied the two lines below would both be [], equal, and pass having checked nothing.
+# So the names are asserted first, on their own: at least two (one file is trivially alone in its shard), each a tracked file.
+tracked_files = set(subprocess.run(["git", "-C", FORGE, "ls-files"], capture_output=True, text=True, check=True).stdout.split())
+ok("SLOW_FIRST names at least two slow engine files", len(cli.SLOW_FIRST) >= 2, repr(cli.SLOW_FIRST))
+ok("every SLOW_FIRST name is a tracked file", all(f in tracked_files for f in cli.SLOW_FIRST), repr(cli.SLOW_FIRST))
 order = cli.start_order(list(cli.SLOW_FIRST) + ["tests/test_%s.py" % c for c in "abcdefgh"])
 slices = [take_shard(order, (i, len(cli.SLOW_FIRST))) for i in range(1, len(cli.SLOW_FIRST) + 1)]
 eq("SLOW_FIRST: with as many shards as slow files each shard gets exactly one of them",
