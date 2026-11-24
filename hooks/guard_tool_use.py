@@ -38,6 +38,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 
 # forge: this file lives in <forge>/hooks/, and its alert log in <forge>/logs/.
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -1945,6 +1946,110 @@ def _creates_issue(seg):
     return not any(a in ("-R", "--repo") or a.startswith(("-R", "--repo=")) for a in words[3:])
 
 
+# ------------------------------------------------------------------ the Orca chat rule
+ORCA_TIMEOUT = 3.0  # seconds, for every `orca` call of one check together
+ORCA_WALK_UP = 6  # folders tried from the working directory upward, to find the one Orca knows as a worktree
+ORCA_OWN_AGENTS = ("claude", "claude-agent-teams")
+
+
+def orca_chat_refusal(pcmd):
+    """A refusal when pcmd runs `orca agent launch --agent X` while a chat of agent X is already open in the
+    worktree the launch lands in: the agent sends to that chat (`orca orchestration send`) instead of opening a
+    duplicate, and a chat on an unrelated topic is started with `ORCA_NEW_TOPIC='<why>'` in front of the command.
+    Read like issue_create_refusal: wrappers, assignments, nested shells. Open means listed by
+    `orca agent list --worktree <sel> --json`, which is {"ok": true, "result": {"agents": [{"orcaSessionId",
+    "agent", "title", "updatedAt", ...}]}}. `claude` is not covered: a Claude session starting a Claude worker is the
+    normal way to split work. A steering rule, not a security one: when `orca` is missing, fails, answers no list
+    or takes over ORCA_TIMEOUT seconds, the launch is allowed and a one-line note says the check was skipped, so
+    a stopped Orca never blocks work."""
+    for seg in pieces(pcmd):
+        launch = _orca_launch(seg)
+        if not launch:
+            continue
+        agent, worktree = launch
+        chats, why = orca_open_chats(agent, worktree)
+        if why:
+            sys.stderr.write("guard_tool_use: note - open Orca chat check skipped for a new %s chat: %s\n"
+                             % (agent, why))
+            continue
+        if chats:
+            last = max(chats, key=lambda c: c.get("updatedAt") if isinstance(c.get("updatedAt"), (int, float)) else 0)
+            sid, title = last.get("orcaSessionId"), last.get("title") or "untitled"
+            return ("an open %s chat exists in this project: orca_session_id:%s (%s)%s. Instead of a new chat, send to "
+                    "it: orca orchestration send --to orca_session_id:%s --subject <s> --body <text>, read with orca "
+                    "agent read %s. A new chat is only for an unrelated topic: prefix the command with "
+                    "ORCA_NEW_TOPIC='<why it is unrelated>'"
+                    % (last.get("agent") or agent, sid, title,
+                       "" if len(chats) == 1 else " (%d open, this is the latest)" % len(chats), sid, sid))
+    return None
+
+
+def _orca_launch(seg, has_topic=False):
+    """(agent, --worktree selector or "") of an `orca agent launch --agent X` in seg that the rule applies to, or
+    None: no --agent, an agent of ORCA_OWN_AGENTS, or a non-empty ORCA_NEW_TOPIC assigned before it."""
+    assigns, words, _, _ = command_words(split_words(pipeline(seg)[0]) or [])
+    has_topic = has_topic or any(n == "ORCA_NEW_TOPIC" and v.strip() for n, v in assigns)
+    bodies = nested_bodies(words)
+    if bodies:
+        return next((hit for a in bodies for p in pieces(a) for hit in [_orca_launch(p, has_topic)] if hit), None)
+    if has_topic or len(words) < 3 or os.path.basename(words[0]) != "orca" or words[1:3] != ["agent", "launch"]:
+        return None
+    agent, worktree = _option(words[3:], "--agent").lower(), _option(words[3:], "--worktree")
+    return None if not agent or agent in ORCA_OWN_AGENTS else (agent, worktree)
+
+
+def _option(args, name):
+    """The value of the long option `name` in args, given as `--name value` or `--name=value`, else ""."""
+    for i, a in enumerate(args):
+        if a == name and i + 1 < len(args):
+            return args[i + 1]
+        if a.startswith(name + "="):
+            return a.split("=", 1)[1]
+    return ""
+
+
+def orca_open_chats(agent, worktree):
+    """(the open chats of `agent`, None), or (None, why the answer is unknown). The worktree is the launch's own
+    `--worktree` selector; without one it is the first of the working directory and its parents that Orca knows
+    (`path:` takes a worktree's root and refuses a subfolder, as the launch itself resolves the folder upward)."""
+    deadline = time.monotonic() + ORCA_TIMEOUT
+    selectors, d = [worktree], os.path.abspath(CWD[0])
+    if not worktree:
+        selectors = []
+        for _ in range(ORCA_WALK_UP):
+            selectors.append("path:" + d)
+            if os.path.dirname(d) == d:
+                break
+            d = os.path.dirname(d)
+    for sel in selectors:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return None, "orca took over %d s" % ORCA_TIMEOUT
+        try:
+            r = subprocess.run(["orca", "agent", "list", "--worktree", sel, "--json"], capture_output=True, text=True,
+                               timeout=left, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            return None, "orca took over %d s" % ORCA_TIMEOUT
+        except OSError as e:
+            return None, "orca did not run (%s)" % (e.strerror or e)
+        try:
+            out = json.loads(r.stdout)
+        except ValueError:
+            out = None
+        if not isinstance(out, dict) or not isinstance(out.get("ok"), bool):
+            return None, "orca answered no JSON (exit %s)" % r.returncode
+        if out["ok"]:
+            agents = out.get("result", {}).get("agents") if isinstance(out.get("result"), dict) else None
+            if not isinstance(agents, list):
+                return None, "orca's answer has no agents list"
+            return [a for a in agents if isinstance(a, dict) and str(a.get("agent")).lower() == agent], None
+        err = out.get("error")
+        code = err.get("code") if isinstance(err, dict) else None
+        if code != "selector_not_found" or worktree:
+            return None, "orca said %s" % code
+    return None, "no worktree of Orca holds %s" % CWD[0]
+
+
 # ------------------------------------------------------------------ per-project parameters
 #
 # `--project NAME` (the project's `command_guard` line) reads <forge>/config/guard/NAME.json
@@ -2839,6 +2944,9 @@ def main(argv=None):
             if reason:
                 deny(reason)
             reason = issue_create_refusal(pcmd)
+            if reason:
+                deny(reason)
+            reason = orca_chat_refusal(pcmd) if "orca" in low else None
             if reason:
                 deny(reason)
             if KEYRING_DUMP.search(low) and not REDIRECT_TO_FILE.search(cmd):

@@ -3441,6 +3441,7 @@ def main():
           % (len(FORGE_BLOCK), len(FORGE_ALLOW), len(FORGE_FILE_CASES), len(FORGE_MALFORMED), len(CONFIG_CASES),
              len(CONSENT_CASES)))
     fails += budget_renews()
+    print("orca chat rule: %d cases" % len(ORCA_CASES))
     print("timed cases: %d, each under %.1f s; the glob budget is renewed per call" % (len(FAST_CASES), FAST_LIMIT))
     print("known gaps, not asserted: %d" % len(KNOWN_GAPS))
     parity, n_pats = secret_deny_parity()
