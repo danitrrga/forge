@@ -1,19 +1,15 @@
-"""Print the status-bar line (the session's subproject, only when the project has subprojects) and save the session's budget.
+"""Print the status-bar line: the session's subproject, only when the project has subprojects.
 
-Reads the JSON Claude Code gives a status line on stdin (`session_id`, `workspace.current_dir` or `cwd`, `context_window`,
-`rate_limits`); with no stdin it takes the session from CLAUDE_CODE_SESSION_ID and the current folder. Prints the
-subproject the session is bound to, or `root` when it is bound to the root, and only when `subprojects/` has entries;
-otherwise nothing. Whatever it prints, it saves `{context_window, rate_limits, at}` (the two objects as the input has them,
-`rate_limits` null when the input has none) to `<git-common-dir>/fwx/sessions/<session_id>.budget.json`, which `fwx budget`
-reads; this is the only writer of that file. It always exits 0, never prints a traceback and has to finish in under
-100 ms: a broken input, a folder outside a repository or a folder it cannot write is an empty line, not an error.
+Reads the JSON Claude Code gives a status line on stdin (`session_id`, `workspace.current_dir` or `cwd`); with no stdin it takes
+the session from CLAUDE_CODE_SESSION_ID and the current folder. Prints the subproject the session is bound to, or `root` when it
+is bound to the root, and only when `subprojects/` has entries; otherwise nothing. It writes nothing. It always exits 0, never
+prints a traceback and has to finish in under 100 ms: a broken input or a folder outside a repository is an empty line, not an error.
 
 Imports only the standard library and fwx.state (itself standard library and config).
 """
 import json
 import os
 import sys
-from datetime import datetime, timezone
 
 from fwx import state
 
@@ -54,25 +50,6 @@ def line(cwd, sid):
     return bound["subproject"] or "root"
 
 
-def save_budget(cwd, sid, data):
-    """Write the budget file atomically (temp file, then rename)."""
-    path = os.path.join(state._sessions_dir(cwd), sid + ".budget.json")
-    body = {"context_window": data.get("context_window"), "rate_limits": data.get("rate_limits"),
-            "at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
-    tmp = "%s.%d.tmp" % (path, os.getpid())
-    try:
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(body, f)
-            f.write("\n")
-        os.replace(tmp, path)
-    finally:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-
-
 def main(argv):
     try:
         data = _read_input()
@@ -86,11 +63,6 @@ def main(argv):
             text = line(cwd, sid)
         except Exception:
             pass
-        if sid is not None:
-            try:
-                save_budget(cwd, sid, data)
-            except Exception:
-                pass
         if text:
             print(text)
     except Exception:

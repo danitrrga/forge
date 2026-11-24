@@ -42,7 +42,7 @@ s = helpers.Suite()
 
 # (new name, old name or None, module, handler argv before the user's own) -- gramatica-decidida.md, "fwx: hoy -> decidido"
 DECIDED = [
-    ("budget", None, "budget", []), ("model", None, "model", []),
+    ("model", None, "model", []),
     ("statusline", None, "statusline", []), ("rounds", None, "rounds", []), ("stage", None, "stage", []),
     ("decide", None, "decide", []), ("verify", None, "verify", []),
     ("walk capture", "screenshot", "screenshot", []),
@@ -188,6 +188,9 @@ def scenario(work):
     # unknown names and verbs
     for args, text in ((("nosuch",), "unknown command: nosuch"), (("phase", "nwe"), "unknown verb: nwe"), (("phase",), "needs a verb"),
                        (("../commands/budget",), "unknown command"), (("Budget",), "unknown command"),
+                       # the budget nag is gone (09.4 D13): its row, command and file with it. Red at d348f8d (it was a row):
+                       #   FAIL: fwx budget: exit 2 and 'unknown command: budget': got (0, False, 'STUB budget []\n')
+                       (("budget",), "unknown command: budget"), (("budget", "--json"), "unknown command: budget"),
                        # the cap of agents is a number of the configuration (D90): no command answers how many can start now, and the old
                        # names are not refused with a "now ...": there is no natural target. Red on master (both were rows of the table):
                        #   FAIL: fwx capacity: exit 2 and 'unknown command: capacity': got (0, False, ...)

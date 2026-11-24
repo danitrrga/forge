@@ -145,8 +145,8 @@ source in a `referent:` line.
 - **Built, on the default branch:** the discuss, pre-mortem, plan and post-mortem skills and agents; the `execute`
   workflow (waves of executors in worktrees, up to three fix rounds per job, the gate, reviewers, the verifier, the
   security reviewer); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
-  client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline and budget
-  commands; the session skill that carries a work item from discuss to close (`plugins/fwx/skills/session/`); the UI walk
+  client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline
+  command; the session skill that carries a work item from discuss to close (`plugins/fwx/skills/session/`); the UI walk
   (`plugins/fwx/workflows/ui-walk.js`, `fwx walk`), parked; and forge's
   framework step that installs all of it. No real session has closed yet.
 - **Retired:** MemPalace, a memory store that was tried and removed. The code projects keep claude-mem-lite, and Hindsight

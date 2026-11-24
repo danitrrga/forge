@@ -13,7 +13,6 @@ removed the checks that pinned wording (the steps' sentences, the sub-steps of s
 skills' "another model", the shared marker `Noticed:`) together with their red logs.
 
 Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the first FAIL line printed):
-  skills/session/SKILL.md, "fwx budget" -> "fwx budgett":  FAIL: fwx budgett exists -> not in `fwx --help`
   references/part-report.md, "fwx report lint" -> "fwx report check":  FAIL: part-report.md saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch
   references/ui-review.md, "details.unverified" -> "details.unverfied":  FAIL: references/ui-review.md cites only fields the workflow returns -> not returned: ['unverfied']
   references/ui-review.md, "`support` `approved`" -> "`support` `approvd`":  FAIL: ui-review.md names the support of `not_defect` and `redo`, each a value `fwx decision new` accepts -> ui-review.md {'not_defect': 'approvd', 'redo': 'chosen'}, SUPPORT ('chosen', 'approved', 'unexamined', 'agent-assumption')
@@ -159,11 +158,6 @@ def in_order(text, *words):
     return True
 
 
-def missing_keys(cited, source):
-    """The cited keys that the source does not name as a quoted key."""
-    return [k for k in cited if '"%s"' % k not in source]
-
-
 def fwx_commands(text):
     """Top-level `fwx <name>` words; `fwx:execute` (a workflow) has a colon and is not one."""
     return set(re.findall(r"\bfwx ([a-z][a-z-]*)\b", text))
@@ -206,12 +200,13 @@ def main():
     check("part-report.md saves the returned report with Write, then checks it", in_order(rep_ref, "`state`", "report-<n>.md", "`Write`", "fwx report lint"),
           "no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch")
 
-    # The fields the steps read exist in the code that produces them (a rename would leave the text reading nothing).
-    with open(os.path.join(ROOT, "lib", "fwx", "commands", "budget.py"), encoding="utf-8") as f:
-        budget_src = f.read()
-    cited = [k for k in ("used_percentage", "week_tight") if "`%s`" % k in skill or ".%s" % k in skill]
-    check("SKILL.md cites both budget fields it reads", len(cited) == 2, "cites %s" % cited)
-    check("fwx budget names the fields rule 7 and step 2 read", not missing_keys(cited, budget_src), "missing %s" % missing_keys(cited, budget_src))
+    # 09.4 D13: the budget nag is gone, so no session text tells an agent to run `fwx budget` or to read its fields, and no check reads the
+    # deleted lib/fwx/commands/budget.py. Seen red before the texts changed (rule 7, step 2 and step 5 still named it):
+    #   FAIL: no session text names `fwx budget` or its fields -> SKILL.md: ['fwx budget', 'used_percentage', 'week_tight']
+    nagging = {n: [w for w in ("fwx budget", "used_percentage", "week_tight") if w in tx] for n, tx in texts.items()}
+    nagging = {n: ws for n, ws in nagging.items() if ws}
+    check("no session text names `fwx budget` or its fields", not nagging, ", ".join("%s: %s" % kv for kv in sorted(nagging.items())))
+    check("control: a text that names `fwx budget` is caught", any(w in "7. **Budget.** Run `fwx budget --json`" for w in ("fwx budget", "used_percentage")))
     check("step 8 reads `review: blocking` and the plan accepts that value", "`review: blocking`" in s8 and "blocking" in plan.REVIEWS,
           "step 8 names it: %s; plan.REVIEWS: %s" % ("`review: blocking`" in s8, plan.REVIEWS))
     check("steps 5 and 8 read `ui: true` and plan.py has a task key `ui`", "`ui: true`" in skill and '"ui"' in open(os.path.join(ROOT, "lib", "fwx", "plan.py"), encoding="utf-8").read(),
@@ -348,7 +343,6 @@ def main():
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
     check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx report lint on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
     check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx report lint", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
-    check("control: a cited field the code lacks is caught", missing_keys(["used_percentage", "usage_percentage"], '{"used_percentage": 1}') == ["usage_percentage"])
     check("control: step() cuts one numbered step", step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2).startswith("2. **B.**") and "z" not in step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2))
     check("control: revert before the question fails", not asks_before_revert("run wave new --revert 1, then ask: revert it?"))
     check("control: question before the revert passes", asks_before_revert("ask: revert it? Then wave new --revert 1"))
