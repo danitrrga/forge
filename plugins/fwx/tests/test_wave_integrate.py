@@ -777,6 +777,31 @@ def case_next(R, S):
     has(S, "findings fixer", text, "Fwx-Finding: <id>", "F1", "F2", "one commit per finding", b, "fwx base %s" % sf.head())
     sf.stop()
 
+    # G2: the fixer of a refused attempt is told where the text of the findings is: the oldest fixer's brief that names them, whichever round it was
+    # (`_fix.md` of `wave new --fix`, or a `_fix-<n>.md` of a review pass); never the fixer of a gate, which holds no finding, nor the brief of an
+    # earlier refused attempt, which lists the ids and points back
+    # Red before: FAIL: a second fix round: the brief has '.../briefs/_fix-2.md' -> missing   (it looked at `_fix.md` only)
+    sr = Scene()
+    briefs = os.path.join(sr.common, "fwx", "runs", sr.run, "briefs")
+    helpers.write(briefs, "_fix.md", "the first fixer: F9 is a finding\n")
+    helpers.write(briefs, "_fix-1.md", "a fixer of a red gate, no finding in it\n")
+    helpers.write(briefs, "_fix-2.md", "a fixer of a review pass: r1-F1 claim, r1-F2 claim\n")
+    helpers.write(briefs, "_fix-3.md", "a refused attempt: r1-F1, r1-F2; the text is in _fix-2.md\n")
+    b = sr.agent("fix", [("src/a.py", "a1\n", ["r1-F1", "r1-F2"])])
+    v = ok_json(S, "next, a later fix round refused", sr.integrate(R, b, extra=("--findings", "r1-F1,r1-F2")), code=2)
+    S.eq("a later fix round: the new brief is the next free one", os.path.basename(v.get("brief") or ""), "_fix-4.md")
+    text = runs_file(sr, v.get("brief"))
+    has(S, "a later fix round", text, "holds the text of each finding: " + os.path.join(briefs, "_fix-2.md"))
+    S.ok("a later fix round: neither the gate fixer's brief nor the refused attempt's is named", all(os.path.join(briefs, n) not in text for n in ("_fix-1.md", "_fix-3.md")))
+    sr.stop()
+    so = Scene()
+    briefs = os.path.join(so.common, "fwx", "runs", so.run, "briefs")
+    helpers.write(briefs, "_fix.md", "the first fixer: F1 and F2 are findings\n")
+    b = so.agent("fix", [("src/a.py", "a1\n", ["F1", "F2"])])
+    v = ok_json(S, "next, a refused attempt after `wave new --fix`", so.integrate(R, b, extra=("--findings", "F1,F2")), code=2)
+    has(S, "after `wave new --fix`", runs_file(so, v.get("brief")), os.path.join(briefs, "_fix.md"))
+    so.stop()
+
     sl = Scene()
     b_live = sl.agent("live", [("src/a.py", "a1\n", None)])
     sl.lock(b_live, *sl.live())
@@ -865,6 +890,8 @@ MUTANTS = [
     ("a commit may carry two findings", case_integrate_findings, I, "if len(ids) > 1:", "if False:", "one commit for two findings: refused"),
     ("integrate --final needs a branch", case_integrate_gate_only, W, '(() if parsed and "--final" in parsed[0] else ("--branches",))', '("--branches",)',
      "integrate --final with no branch: exit"),
+    ("a refused attempt's fixer is pointed at the oldest brief that names the findings", case_next, I, "for _n, name in sorted(found):", "for _n, name in sorted(found, reverse=True):",
+     "a later fix round: the brief has"),
     ("fix-round never spends", case_fix_round, I, 'rounds.record(part_dir, "use", why)', "pass", "a conflict with nothing counted: rounds 0/3"),
     ("fix-round spends on a counted failure", case_fix_round, I, "if not counted:", "if True:", "red evidence of HEAD: rounds 2/3"),
     ("fix-round decides by the counter after", case_fix_round, I, "before = rounds.count(rows[:-1]) if counted else rounds.count(rows)",
