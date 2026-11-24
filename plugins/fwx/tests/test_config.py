@@ -269,5 +269,13 @@ s.eq("a file value is read", cfg["project"].get("check_timeout_s", "missing") if
 for label, value in (("0", 0), ("-5", -5), ("a string", "1200"), ("a float", 12.5), ("true", True), ("null", None), ("a list", [1])):
     put(tdir, {"schema": 1, "project": {"check_timeout_s": value}})
     refuses("check_timeout_s %s" % label, tdir, "project.check_timeout_s")
+# A `project` that is no table has no such key to read: a ConfigError naming the key, never an AttributeError out of load (PR 223 review).
+# Seen red: Traceback ...: AttributeError: 'str' object has no attribute 'get'   (config.py _check_timeout)
+for label, value in (("a string", "x"), ("a list", [1]), ("an empty list", []), ("a number", 3), ("null", None)):
+    put(tdir, {"schema": 1, "project": value})
+    try:
+        refuses("project %s: check_timeout_s" % label, tdir, "project.check_timeout_s")
+    except AttributeError as e:
+        s.ok("project %s: load raises a ConfigError, not %s" % (label, type(e).__name__), False, str(e))
 
 s.done()

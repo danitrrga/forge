@@ -163,7 +163,10 @@ def setup_commands(cwd=None):
 def _check_timeout(cfg, path):
     """project.check_timeout_s: the seconds a check of the project may run before it is stopped (default 1200). A project whose suite
     needs longer sets it; anything but a positive whole number is refused here, once, so every caller can read the key as it is."""
-    v = (cfg.get("project") or {}).get("check_timeout_s")
+    project = cfg.get("project")
+    if not isinstance(project, dict):
+        raise _bad(path, "project is %r, not a table, so project.check_timeout_s cannot be read" % (project,))
+    v = project.get("check_timeout_s")
     if not _count(v):
         raise _bad(path, "project.check_timeout_s is %r, not a positive whole number of seconds" % (v,))
 
