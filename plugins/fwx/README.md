@@ -61,7 +61,8 @@ Its tests are `orca plugin test plugins/fwx/orca` and `orca plugin check plugins
 
 The plugin reads one file, `.claude/fwx.json` of the project's main checkout, and only through `lib/fwx/config.py`.
 From a worktree or any subfolder it finds the main checkout's file through git's common directory. A setup tool
-(forge) generates it and it is never edited by hand there. Without such a tool, write it by hand to the schema:
+(forge) generates it: `forge sync` rewrites it from the project's file (`config/projects/<name>.json`) and from the
+`framework` section of forge's `config/forge.json`, so a hand edit there is lost on the next sync. Without such a tool, write it by hand to the schema:
 
 ```json
 { "schema": 1,
@@ -92,6 +93,50 @@ needs longer sets it (forge's project field of the same name); anything but a po
 finds, for a machine where that one goes through a wrapper (an extension, a window flag): `fwx walk ab` then adds
 `--executable-path <path>` to every call. If the file is not there, `fwx walk start` is `NOT RUN, NOT ARMED` (exit 0, `armed: false`).
 It is ignored inside the factory image, which has its own browser.
+
+### The keys
+
+Every key of `DEFAULTS` (`config.py`), with what it changes and its default; a key left out of the file keeps the default.
+
+- `schema`: the file's format; must be `1`.
+- `framework` (default `true`): whether the project runs on the framework; `fwx discuss` stops when it is `false`.
+- `project`: the project's own facts, one line each below.
+- `models`: the model alias for each role and size, seeded by `_seed()` in `config.py` (the planner on `opus`, the detector on `haiku`, the rest `sonnet` with the exceptions that function lists); `fwx model <role> <size>` prints one.
+- `limits`: the most agents at once, above.
+- `rounds` (default `3`): the cap of rounds a job may use; `fwx rounds <dir>` counts against it.
+- `critique_rounds_unattended` (default `2`): the cap of critique rounds of a plan when nobody is present.
+- `linear`: `linear.labels` maps neutral label names to the names in your Linear workspace (default none).
+- `walk`: the UI walk's keys, above.
+- `factory`: the factory's switches. `mode` (default `"off"`) is the project's factory mode; `ui_bugs` (`false`) sends mechanical UI fixes to it, and `fwx discuss` reads it. `watchdog_nudge_min` (`30`), `watchdog_fail_min` (`30`), `cost_warn_x_median` (`3`), `tick_trigger` (`null`) and `classifier` (`"suggest"`) are kept for the factory's loop; no command of this plugin reads them yet.
+- `weekly`: the weekly improvement cycle's switches: `on` (`true`), `min_sessions` (`5`), `trigger` (`null`), `precision_low` (`0.7`), `precision_min_marks` (`20`), `cost_target` (`0.05`), `improve` (`{}`) and `projects` (`[]`). No command of this plugin reads them yet.
+- `integrations`: which optional tools are armed, each `false` by default: `consent` (the consent window), `notifications` and `agent_browser` (`fwx walk start` is `NOT RUN, NOT ARMED` without it). forge writes them from its own switches and has none for `notifications`, so that one stays `false`.
+- `paths` (default `{}`): where a project's own tools are; `paths.verdict` is the verdict tool `fwx discuss` reports to the demo agent.
+
+The `project` table:
+
+- `project.name`, `project.main_checkout`: the project's name and main checkout; forge writes them, and without a file they are the folder's name and path.
+- `project.linear_project`: the Linear project the framework files issues in (default none; forge uses the project file's `linear_project`, else the remote's name).
+- `project.default_branch`: the branch pull requests go to, which `fwx verify` treats as the default branch (forge reads it from git); `project.factory_branch` (default `"factory"`) is where factory work lands.
+- `project.checks` (default `[]`): the commands that gate a wave; `project.checks_quick` (`[]`) are the quick ones `fwx wave` runs in each worktree.
+- `project.protected_paths` (`[]`): globs a task may not write without the security review, added to the decide table's own.
+- `project.production` (`{"branches": [], "commands": []}`): the branches a merge ships to users from and the commands that deploy; a deploy runs only through the consent window.
+- `project.verdict_command` (default none): the command the demo agent runs to show a UI change in the app.
+- `project.ui` (`false`): whether the project has a screen, so the UI walk applies.
+- `project.app_run` (default none): how the UI walk starts the app.
+- `project.worktree_setup` (`[]`): the shell commands `fwx wave setup` runs in each new worktree, before any check.
+- `project.check_timeout_s` (`1200`): above.
+
+### Changing a key
+
+The file is generated, so change its source and not the file. To change one, ask an agent: say which key and which value, and it edits the setup tool's source (for forge, `config/projects/<name>.json` for a `project` key, `config/forge.json`'s `framework` section for any other), then runs `forge sync`. Where no setup tool writes the file, it edits `.claude/fwx.json` by hand to the schema above. Either way it ends by running the command that reads the key (`fwx model <role> <size>` for a model, `fwx session --json` for the rest) to show the new value is the one in force.
+
+### What is not configurable
+
+The fixed core is code and text, changed by a change to this plugin and never by a key: the stage table (`data/stages.json`), the plan's format, the blocks that stay in every plan and report, the merge rules of `fwx decide`, and the texts of the agents and skills.
+
+### Platform
+
+fwx runs on Linux only: its cleanup, `worktree_setup` and UI walk read `/proc`. No key changes that.
 
 ## Install
 
