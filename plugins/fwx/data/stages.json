@@ -3,9 +3,9 @@
     "start": "discuss",
     "terminal": ["closed", "cancelled"],
     "transitions": {
-      "discuss": ["premortem", "cancelled"],
+      "discuss": ["premortem", "planning", "cancelled"],
       "premortem": ["planning", "discuss"],
-      "planning": ["postmortem"],
+      "planning": ["postmortem", "executing", "discuss"],
       "postmortem": ["planning", "executing", "discuss"],
       "executing": ["reviewing", "phase-review"],
       "reviewing": ["executing", "ui-walk", "phase-review"],

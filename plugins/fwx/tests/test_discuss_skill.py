@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""The discuss skill's text: no model name, a model on every agent launch, and no recommendation in a question.
+"""The discuss skill's text: no model name, a model on every agent launch, a recommendation on every question, and no `decisions` agent.
 
 Plain Python, no network: it reads skills/discuss/ and agents/demo.md of the checkout it sits in (`python3 tests/test_discuss_skill.py [ROOT]`
-reads another tree). The question lines it looks at are the round format (`**Q1**`, `a. `, `- a) `); the rule sentence "no recommendation"
-is not one.
+reads another tree). The question lines the format check looks at are the round format of rounds.md (from `**Q1**` to the first `---`).
 
-Seen red on copies of the real tree with one planted change each (first FAIL line; the real tree is green, 9 checks). Planted in rounds.md
-on the option lines (`a. <option>: <what it implies>` at line 13, `b.` at 14) or the question line:
-  - "(recommended)": FAIL: no recommendation in a question -> rounds.md:13 a. <option>: <what it implies> (recommended)
-  - "I suggest option b": FAIL: no recommendation in a question -> rounds.md:14 b. <option>: <what it implies> I suggest option b
-  - "(preferred)": FAIL: no recommendation in a question -> rounds.md:13 a. <option>: <what it implies> (preferred)
-  - "the best choice": FAIL: no recommendation in a question -> rounds.md:14 b. <option>: <what it implies> the best choice
-  - "(default)": FAIL: no recommendation in a question -> rounds.md:13 a. <option>: <what it implies> (default)
-  - "I would go with a here." under the question: FAIL: no recommendation in a question -> rounds.md:12 I would go with a here.
-  - lettered option "b. drop it, suggest b" in SKILL.md: FAIL: no recommendation in a question -> SKILL.md:20 b. drop it, suggest b
-  - "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'
-  - `models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:
+08-steering D9 and D29 reversed the old rule "never recommend an option unasked": every question ends with `Recommended: <letter>, because ...`,
+and no discuss text says never recommend. D17: the orchestrator records decisions itself with `fwx decision new`, so the discuss launches no
+`decisions` agent. D14: step 3 offers a route (direct change, focused fix or full process) the owner confirms. D23: reentry.md's split is
+the wayfinder mode, a milestone as the map and one phase per decision ticket.
+Seen red on the 6e4e54c texts (rc=1, 43 checks; the first FAIL of each check):
+  FAIL: rounds.md's question format ends with a Recommended: line -> last line of the format: 'b. <option>: <what it implies>'
+  FAIL: no discuss text says never recommend -> SKILL.md:6 <!-- referent: ... the owner decides without recommendations; ...  (also SKILL.md:8, :22, rounds.md:1 and :33)
+  FAIL: the discuss launches no `decisions` agent -> SKILL.md:24 5. **Record.** With decisions in the turn, launch `decisions` (`models.decisions.small`) ...  (also SKILL.md:30)
+  FAIL: step 3 offers a route, direct change, focused fix or full process, that the owner confirms -> step 3: '3. **What does the owner ask?** Unsure: ask in round one. ...
+  FAIL: step 5 records with fwx decision new, launches nothing, and names Pocock's three criteria -> step 5: '5. **Record.** With decisions in the turn, launch `decisions` ...
+  FAIL: reentry.md's split is the wayfinder mode: a map and a decision ticket per phase -> reentry.md lacks one of: wayfinder, Destination, ...
+Each check has a control on a toy: the good toy passes, then one change makes its check fail.
+Held from before (seen red on planted copies): no model name (planted "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'), and every launch names its
+model (`models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:).
 No verdict page is waited on or served, and no opener is named: no .md under skills/, agents/ and playbooks/ names `verdict wait`,
 `--serve` or `xdg-open` (how a page is opened for the owner is in his own instructions).
 Seen red on master before the texts changed (first match per file; 18 .md files looked at):
@@ -46,10 +48,34 @@ def check(name, ok, detail=""):
 
 
 MODEL = re.compile(r"\b(opus|sonnet|haiku|fable)\b", re.I)
-LAUNCH = re.compile(r"launch[^.]*?`(researcher|decisions|demo)`", re.I)
-QUESTION = re.compile(r"^\s*(\*\*Q\d|[a-z]\. |[-*] [a-z]\) |\d+\. \*\*Q\d)")
+LAUNCH = re.compile(r"launch[^.]*?`(researcher|demo)`", re.I)
 OPEN, CLOSE = re.compile(r"^\s*(\d+\. )?\*\*Q\d"), re.compile(r"^\s*(---\s*$|The owner answers)")
-STEER = re.compile(r"recommend|suggest|prefer|\bbest\b|\bbetter\b|default|go with|\bI(?:'d| would) |my pick|ideal|safest|wiser", re.I)
+NEVER_REC = re.compile(r"never recommend|no recommendation|without recommendations?|without a recommendation|takes? no recommendation", re.I)
+DECISIONS_AGENT = re.compile(r"`(?:fwx:)?decisions`")
+RECOMMENDED = re.compile(r"^Recommended: <letter>, because ")
+
+
+def format_ends_with_recommended(text):
+    """The round format of rounds.md: from the first `**Q` line to the first `---`, its last non-blank line is the Recommended: line."""
+    block, inside = [], False
+    for line in text.splitlines():
+        if OPEN.match(line):
+            inside = True
+        elif CLOSE.match(line) and inside:
+            break
+        if inside and line.strip():
+            block.append(line.strip())
+    return bool(block) and RECOMMENDED.match(block[-1]) is not None, (block[-1] if block else "no **Q1** line")
+
+
+def never_recommend(files):
+    return [("no discuss text says never recommend", "%s:%d %s" % (n, i, l.strip()[:80]))
+            for n, t in files.items() for i, l in enumerate(t.splitlines(), 1) if NEVER_REC.search(l)]
+
+
+def decisions_agent(files):
+    return [("the discuss launches no `decisions` agent", "%s:%d %s" % (n, i, l.strip()[:80]))
+            for n, t in files.items() for i, l in enumerate(t.splitlines(), 1) if DECISIONS_AGENT.search(l)]
 
 
 def problems(files, demo_text):
@@ -63,15 +89,6 @@ def problems(files, demo_text):
     for sentence in re.split(r"(?<=[.;:])\s+", skill):
         if LAUNCH.search(sentence) and "models." not in sentence:
             out.append(("every launch names its model", sentence.strip()[:90]))
-    for name, text in files.items():
-        inside = False
-        for n, line in enumerate(text.splitlines(), 1):
-            if OPEN.match(line):
-                inside = True
-            elif CLOSE.match(line):
-                inside = False
-            if (inside or QUESTION.match(line)) and STEER.search(line):
-                out.append(("no recommendation in a question", "%s:%d %s" % (name, n, line.strip()[:80])))
     for block in re.findall(r"```json\n(.*?)```", demo_text, flags=re.S):
         if re.search(r'"(recommend|pick)"\s*:', block):
             out.append(("demo example has no recommend key", block[:60]))
@@ -112,20 +129,41 @@ for name, detail in waiting(agent_texts):
 
 check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```json" in demo)
 
-# The owner asks for a recommendation: the rule has its exception where it is always read (the Rules paragraph) and in rounds.md.
-# Seen red on the text before the change (rc=1):
-#   FAIL: the Rules paragraph of SKILL.md says both never unasked and give it when asked -> no 'unasked' and 'asks' in: Rules. Only the owner and you speak. ...
-#   FAIL: rounds.md does not state the no-recommendation rule without its exception -> '- Never recommend an option or mark one as better: the owner' has no 'unasked' and 'asks'
-rules = next((l for l in files["SKILL.md"].splitlines() if l.startswith("Rules.")), "")
-check("the Rules paragraph of SKILL.md says both never unasked and give it when asked",
-      "Never recommend" in rules and "unasked" in rules and re.search(r"owner asks[^.]*\bsay it\b", rules) is not None
-      and "no row of its own" in rules,
-      "no 'unasked' and 'asks' in: %s" % rules[:60])
-never = [l for l in files["rounds.md"].splitlines() if "Never recommend" in l]
-check("rounds.md does not state the no-recommendation rule without its exception",
-      len(never) == 1 and "unasked" in never[0] and re.search(r"he asks[^.]*\bsay it\b", never[0]) is not None
-      and "no row of its own" in never[0],
-      "%r has no 'unasked' and 'asks'" % (never[0][:60] if never else "no 'Never recommend' line"))
+# D9: every question carries a recommendation, and nothing in the discuss says the opposite.
+ok, last = format_ends_with_recommended(files["rounds.md"])
+check("rounds.md's question format ends with a Recommended: line", ok, "last line of the format: %r" % last)
+for name, detail in never_recommend(files):
+    check(name, False, detail)
+# D17: the orchestrator records the decision itself; no agent is launched for it
+for name, detail in decisions_agent(files):
+    check(name, False, detail)
+
+
+def step(text, n):
+    """The lines of step n of SKILL.md: from its number to the next numbered line."""
+    m = re.search(r"^%d\. .*?(?=^\d+\. |\Z)" % n, text, flags=re.S | re.M)
+    return m.group(0) if m else ""
+
+
+def route_line(step3):
+    return all(w in step3 for w in ("direct change", "focused fix", "full process", "confirm"))
+
+
+def records_itself(step5):
+    return ("fwx decision new" in step5 and "launch" not in step5.lower()
+            and all(w in step5 for w in ("hard to reverse", "surprising without context", "trade-off")))
+
+
+def wayfinder(text):
+    return all(w in text for w in ("wayfinder", "Destination", "Decisions so far", "Not yet specified", "Out of scope", "decision ticket"))
+
+
+check("step 3 offers a route, direct change, focused fix or full process, that the owner confirms", route_line(step(files["SKILL.md"], 3)),
+      "step 3: %r" % step(files["SKILL.md"], 3)[:90])
+check("step 5 records with fwx decision new, launches nothing, and names Pocock's three criteria", records_itself(step(files["SKILL.md"], 5)),
+      "step 5: %r" % step(files["SKILL.md"], 5)[:90])
+check("reentry.md's split is the wayfinder mode: a map and a decision ticket per phase", wayfinder(files["reentry.md"]),
+      "reentry.md lacks one of: wayfinder, Destination, Decisions so far, Not yet specified, Out of scope, decision ticket")
 
 # the verdict keys reach the demo: the launch sentence of step 7 names both, and the demo gets them itself when its prompt lacks them
 step7 = [l for l in files["SKILL.md"].splitlines() if l.startswith("7. ")]
@@ -153,14 +191,33 @@ check("control: the good toy passes", problems(good, "```json\n{\"options\": [\"
 for label, files2, demo2, want in [
     ("a model name", dict(good, **{"SKILL.md": good["SKILL.md"] + "Use sonnet.\n"}), "", "no model name"),
     ("a launch without models.", dict(good, **{"SKILL.md": "launch `demo` for the figure.\n"}), "", "every launch names its model"),
-    ("a recommended option", dict(good, **{"rounds.md": "**Q1** - x\na. one: y (recommended)\n"}), "", "no recommendation in a question"),
-    ("a suggested option", dict(good, **{"rounds.md": "**Q1** - x\na. one: y\nb. two: z. I suggest option b\n"}), "", "no recommendation in a question"),
-    ("a preferred option", dict(good, **{"rounds.md": "**Q1** - x\na. one: y (preferred)\n"}), "", "no recommendation in a question"),
-    ("a steer in the question body", dict(good, **{"rounds.md": "**Q1** - x\nI would go with a here.\n\na. one: y\n"}), "", "no recommendation in a question"),
     ("a recommend key", good, "```json\n{\"recommend\": 1}\n```", "demo example has no recommend key"),
 ]:
     got = [c for c, _ in problems(files2, demo2)]
     check("control: " + label, want in got, "got %s" % got)
+
+good_round = "**Q1** - x\na. one: y\nb. two: z\nRecommended: a, because it is cheaper\n\n---\n"
+GOOD_FORMAT = "**Q1** - **<title>**: <body>\n\na. <option>: <what it implies>\nb. <option>: <what it implies>\nRecommended: <letter>, because <why>\n\n---\n"
+check("control: the good format passes", format_ends_with_recommended(GOOD_FORMAT)[0])
+for label, text in [("no Recommended line", GOOD_FORMAT.replace("Recommended: <letter>, because <why>\n", "")),
+                    ("a Recommended line before the options", "**Q1** - x\nRecommended: <letter>, because <why>\na. <option>: y\n\n---\n"),
+                    ("no question at all", "Work in rounds.\n")]:
+    check("control: " + label + " fails the format", not format_ends_with_recommended(text)[0])
+for bad in ("Never recommend an option.", "Questions go with no recommendation.", "The owner decides without recommendations.",
+            "Ask without a recommendation."):
+    check("control: %r fails" % bad, len(never_recommend({"a.md": "x\n" + bad + "\n"})) == 1)
+check("control: a recommendation rule passes", never_recommend({"a.md": "Every question ends with a Recommended line.\n"}) == [])
+check("control: a launch of decisions fails", len(decisions_agent({"a.md": "launch `decisions` (`models.decisions.small`)"})) == 1)
+check("control: the decision CLI passes", decisions_agent({"a.md": "record it with `fwx decision new`"}) == [])
+GOOD3 = "3. **What?** Route: direct change, focused fix or full process; the owner confirms.\n"
+check("control: the good step 3 passes", route_line(step(GOOD3 + "4. x\n", 3)))
+check("control: a step 3 with no route fails", not route_line(step("3. **What?** Trivial: plain Claude.\n4. x\n", 3)))
+GOOD5 = "5. **Record.** `fwx decision new`: hard to reverse, surprising without context and a real trade-off.\n6. x\n"
+check("control: the good step 5 passes", records_itself(step(GOOD5, 5)))
+check("control: a step 5 that launches an agent fails", not records_itself(step(GOOD5.replace("5. **Record.**", "5. **Record.** Launch an agent;"), 5)))
+check("control: a step 5 with no criteria fails", not records_itself(step("5. **Record.** `fwx decision new`.\n6. x\n", 5)))
+check("control: the wayfinder text passes", wayfinder("wayfinder: Destination, Decisions so far, Not yet specified, Out of scope, one decision ticket per phase"))
+check("control: the old split fails", not wayfinder("make the other phases with `fwx phase new`"))
 
 check("control: a text with no wait passes", waiting({"a.md": "show the page."}) == [])
 for bad in ("verdict wait <dir>", "verdict <dir> --serve", "end with its `xdg-open` line"):

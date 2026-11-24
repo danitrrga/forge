@@ -165,6 +165,17 @@ def _commit_effect(line, toy, stale, demo, twice):
     return r.returncode, [f for f in tracked if f.startswith(".fwx/")], [u[3:] for u in untracked if u.startswith("?? ")], last, again
 
 
+def line_no(text, start):
+    """The 1-based line of the first line of `text` starting with `start`, looking only below `## Steps` (the fixed rules above it are numbered too), or 0."""
+    lines = text.splitlines()
+    top = next((i for i, ln in enumerate(lines) if ln.startswith("## Steps")), 0)
+    return next((i for i, ln in enumerate(lines, 1) if i > top and ln.startswith(start)), 0)
+
+
+def rule6_of(text):
+    return next((ln for ln in text.split("## Steps")[0].splitlines() if ln.startswith("6. **")), "")
+
+
 def in_order(text, *words):
     """True when every word is in `text` and each comes after the one before it."""
     pos = -1
@@ -413,10 +424,29 @@ def main():
 
     # DTC-34: the worktree of a phase is removed by the next session, once its PR is merged and it is clean, never at the close.
     closing = read(os.path.join("references", "closing.md"))
-    cleanup = next((ln for ln in closing.splitlines() if ln.startswith("4. **Cleanup.**")), "")
-    check("closing.md step 4 found", "fwx walk stop --orphans" in cleanup, "not found")
-    check("closing.md step 4 does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
-    check("closing.md step 4 says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    cleanup = next((ln for ln in closing.splitlines() if re.match(r"\d+\. \*\*Cleanup\.\*\*", ln)), "")
+    check("closing.md the cleanup step found", "fwx walk stop --orphans" in cleanup, "not found")
+    check("closing.md the cleanup step does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
+    check("closing.md the cleanup step says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    # 08.4 T41 (D24, D35, D11): before `closed` the orchestrator promotes the phase's decisions that pass Pocock's three criteria to the
+    # durable record (`fwx decision new --adr`), and fwx's work ends at the pull request: nothing that merges, babysits or watches follows `gh pr create`.
+    # Seen red on the 6e4e54c closing.md (rc=1):
+    #   FAIL: closing.md promotes passing decisions with `fwx decision new --adr` before step 3's `fwx stage <phase folder> closed` -> 'fwx decision new --adr' is not before 'fwx stage <phase folder> closed'
+    #   FAIL: closing.md names the three criteria of a durable decision -> missing: ['hard to reverse', 'surprising without context', 'real trade-off']
+    #   (the later checks pass on it; their controls below show they can fail)
+    promote = "fwx decision new --adr"
+    check("closing.md promotes passing decisions with `fwx decision new --adr` before step 3's `fwx stage <phase folder> closed`",
+          in_order(closing, promote, "fwx stage <phase folder> closed"), "'%s' is not before 'fwx stage <phase folder> closed'" % promote)
+    criteria = ["hard to reverse", "surprising without context", "real trade-off"]
+    check("closing.md names the three criteria of a durable decision", all(c in closing for c in criteria), "missing: %s" % [c for c in criteria if c not in closing])
+    after_pr = closing[closing.find("gh pr create"):] if "gh pr create" in closing else ""
+    after_pr_steps = [ln.split("**")[1] for ln in after_pr.splitlines() if re.match(r"\d+\. \*\*", ln)]
+    after_pr_bans = ("babysit", "watch", "gh pr merge", "gh pr checks", "wait for CI", "poll")
+    check("closing.md has a step after `gh pr create`", bool(after_pr_steps), "no numbered step after it")
+    check("closing.md adds no merge, babysit or watch to the steps after the pull request",
+          not [w for w in after_pr_bans if w in after_pr.replace("fwx walk", "")] and "merge it" not in after_pr, "found: %s" % [w for w in after_pr_bans if w in after_pr])
+    check("control: a closing text that promotes after `closed` fails", not in_order("fwx stage <phase folder> closed then fwx decision new --adr", promote, "fwx stage <phase folder> closed"))
+    check("control: a step that babysits the pull request is caught", "babysit" in "6. **Babysit.** After `gh pr create`, babysit the PR until CI is green.".split("gh pr create")[1])
     s0 = step(texts["SKILL.md"], 0)
     need = ["--state merged", "status --porcelain", ".claude/worktrees/", "no force", "git branch -d"]
     check("SKILL.md step 0 clears merged worktrees: merged PR, clean, no force", all(w in s0 for w in need), "missing: %s" % [w for w in need if w not in s0])
@@ -431,7 +461,7 @@ def main():
     check("no line of SKILL.md tells the session to pass --unattended", not bad, ("line %d: %r" % bad[0]) if bad else "")
     check("SKILL.md says the owner leaving changes nothing",
           any("he is leaving, nothing changes" in ln and "no `--unattended`" in ln and "end your turn for his answer" in ln
-              and "no recommendation unasked; when he asks what you recommend" in ln for ln in texts["SKILL.md"].splitlines()),
+              and "`Recommended:" in ln for ln in texts["SKILL.md"].splitlines()),
           "no line with 'he is leaving, nothing changes' and 'no `--unattended`'")
     check("control: 'add `--unattended` when the owner says he is leaving' is caught", leave_re.search("(add `--unattended` when the owner says he is leaving)") is not None)
     check("control: 'you pass no `--unattended`' is not caught", leave_re.search("you pass no `--unattended` (only the factory does)") is None)
@@ -440,6 +470,67 @@ def main():
     check("control: a step 0 without the rule is caught", not all(w in "0. **Where you are.** Run `fwx session --json`." for w in need))
     check("control: a step 0 with `git branch -D` is caught", "branch -D" in "then `git branch -D <branch>`")
     check("control: step 0 is cut by step()", step("## Steps\n0. **A.** x\n1. **B.** y\n", 0).startswith("0. **A.**") and "y" not in step("## Steps\n0. **A.** x\n1. **B.** y\n", 0))
+
+    # 08.3 (D9, D10, D14, D17): the session asks for no pre-mortem unless the owner does, skips the post-mortem of a small plan, records
+    # decisions itself with `fwx decision new` (no `decisions` agent) and every question to the owner carries a recommendation. The texts
+    # are the session skill, its references and the three critique skills; the discuss skill is another task's.
+    # Seen red on 6e4e54c (the texts before this change):
+    #   FAIL: step 1 runs the pre-mortem only when the owner asks -> SKILL.md:34: '1. **Pre-mortem.** Stage `premortem`. Call `fwx:pre-mortem` with ...' has no owner request before the stage row
+    #   FAIL: step 3 skips the post-mortem when `plan.md`'s `size.tag` is `small` -> SKILL.md:38: '3. **Post-mortem.** Stage `postmortem`. ...' names no `size.tag`, no `small` or no step 4 before the stage row
+    #   FAIL: no text launches or names the `decisions` agent, and its file is gone -> SKILL.md:18, SKILL.md:19, SKILL.md:34, SKILL.md:50, SKILL.md:55, SKILL.md:67, references/factory-return.md:9, references/ui-review.md:8, agents/decisions.md exists
+    #   FAIL: no text tells the session to ask without a recommendation -> SKILL.md:22, SKILL.md:60, references/factory-return.md:8
+    # (and one FAIL each for: a question carries `Recommended:`, the critique skills run on another model on request, the plan skill passes on a
+    # planner's `back-to-discuss`, step 2 sends it to step 7, step 4 says a skipped post-mortem leaves nothing to stop for.)
+    skill_files = {"SKILL.md": os.path.join(SESSION, "SKILL.md"),
+                   "references/ui-review.md": os.path.join(SESSION, "references", "ui-review.md"),
+                   "references/factory-return.md": os.path.join(SESSION, "references", "factory-return.md"),
+                   "references/closing.md": os.path.join(SESSION, "references", "closing.md"),
+                   "references/part-report.md": os.path.join(SESSION, "references", "part-report.md")}
+    for name in ("plan", "pre-mortem", "post-mortem"):
+        skill_files["skills/%s/SKILL.md" % name] = os.path.join(ROOT, "skills", name, "SKILL.md")
+    scanned = {}
+    for name, path in skill_files.items():
+        with open(path, encoding="utf-8") as f:
+            scanned[name] = f.read()
+    skill = texts["SKILL.md"]
+
+    def first_line(text, n):
+        return next((ln.strip() for ln in text.splitlines()[line_no(text, "%d. **" % n) - 1:] if re.match(r"%d\. \*\*" % n, ln)), "")
+
+    s1, s3, s4 = step(skill, 1), step(skill, 3), step(skill, 4)
+    ahead1 = s1.split("Stage `premortem`")[0]
+    check("step 1 runs the pre-mortem only when the owner asks",
+          "Stage `premortem`" in s1 and "owner asks" in ahead1 and "step 2" in ahead1,
+          "SKILL.md:%d: %r has no owner request before the stage row" % (line_no(skill, "1. **"), first_line(skill, 1)[:90]))
+    ahead3 = s3.split("Stage `postmortem`")[0]
+    check("step 3 skips the post-mortem when `plan.md`'s `size.tag` is `small`",
+          "Stage `postmortem`" in s3 and "`size.tag`" in ahead3 and "`small`" in ahead3 and "step 4" in ahead3,
+          "SKILL.md:%d: %r names no `size.tag`, no `small` or no step 4 before the stage row" % (line_no(skill, "3. **Post-mortem"), first_line(skill, 3)[:90]))
+    check("step 2 sends a planner's `back-to-discuss` to step 7", "`back-to-discuss`" in step(skill, 2) and "step 7" in step(skill, 2),
+          "SKILL.md:%d: step 2 names no `back-to-discuss` -> step 7" % line_no(skill, "2. **Plan"))
+    check("step 4 says a skipped post-mortem leaves nothing to stop for", "skipped" in s4, "SKILL.md:%d: step 4 does not say it" % line_no(skill, "4. **Go"))
+
+    decisions_hits = ["%s:%d" % (n, i) for n, t in scanned.items() for i, ln in enumerate(t.splitlines(), 1) if re.search(r"`(fwx:)?decisions`|decisions agent", ln)]
+    if os.path.exists(os.path.join(ROOT, "agents", "decisions.md")):
+        decisions_hits.append("agents/decisions.md exists")
+    check("no text launches or names the `decisions` agent, and its file is gone", not decisions_hits, ", ".join(decisions_hits))
+    recorders = [n for n in ("SKILL.md", "references/ui-review.md", "references/factory-return.md") if "fwx decision new" not in scanned[n]]
+    check("the session, the UI review and the factory return record decisions with `fwx decision new`", not recorders, "missing in %s" % recorders)
+    silent = ["%s:%d" % (n, i) for n, t in scanned.items() for i, ln in enumerate(t.splitlines(), 1)
+              if re.search(r"never recommend|no recommendation|without a recommendation|unasked", ln, re.I)]
+    check("no text tells the session to ask without a recommendation", not silent, ", ".join(silent))
+    asking = [n for n, t in (("SKILL.md rule 6", rule6_of(skill)), ("SKILL.md step 4", s4), ("SKILL.md step 8", step(skill, 8)),
+                             ("references/ui-review.md", review), ("references/factory-return.md", scanned["references/factory-return.md"])) if "Recommended:" not in t]
+    check("every question to the owner carries a `Recommended:` line", not asking, "no `Recommended:` in %s" % asking)
+    for name in ("pre-mortem", "post-mortem"):
+        t = scanned["skills/%s/SKILL.md" % name]
+        check("skills/%s runs on another model on request: a Claude model as the launch's model, another provider's through Orca" % name,
+              "another model" in t and "Orca" in t and "`model: " in t, "skills/%s/SKILL.md names no 'another model', 'Orca' or '`model: '" % name)
+    check("skills/plan hands on a planner's `back-to-discuss`", "`back-to-discuss`" in scanned["skills/plan/SKILL.md"], "skills/plan/SKILL.md names no `back-to-discuss`")
+    check("control: a decisions-agent line is caught", re.search(r"`(fwx:)?decisions`|decisions agent", "record it by the `decisions` agent") is not None)
+    check("control: `decisions.tsv` is not a decisions-agent line", re.search(r"`(fwx:)?decisions`|decisions agent", "read `decisions.tsv`") is None)
+    check("control: 'no recommendation unasked' is caught", re.search(r"no recommendation|unasked", "it carries no recommendation unasked", re.I) is not None)
+    check("control: step 1 of the old text has no owner request", "owner asks" not in "1. **Pre-mortem.** Stage `premortem`. Call `fwx:pre-mortem` with the folder.".split("Stage `premortem`")[0])
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})

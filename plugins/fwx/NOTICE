@@ -6,8 +6,9 @@ also lent text are named below.
 marshal-factory, https://github.com/ski043/marshal-factory, commit 999ad209598517a4c826073b5a0edc2a4097a4fa,
 used with the author's permission.
   Text copied by agents/executor.md: line 18 of playbooks/factory.md, the rule "Clean up only what you started." and the three
-  sentences after it, word for word. Read for the same agent: lines 43-47 (the resolution of a merge conflict) and line 65 (the
-  question when no test can express the bug), in words of its own.
+  sentences after it, word for word. Read for the same agent, in words of its own: lines 43-47 (the resolution of a merge conflict), line 65 (the
+  question when no test can express the bug), line 16 (a question with two or three concrete options), line 19 (nothing uncommitted
+  at hand-in), line 27 (the acceptance check before code) and line 53 (the assumptions list of the report).
   Read for workflows/execute.js: playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
   Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
     lib/fwx/core/globs.py    from lib/globs.ts
@@ -31,8 +32,6 @@ repository under Apache-2.0 since the import).
   repo-kit/files/ @582258b) did not come with the import: forge's .github/ is that same kit and runs fwx's tests as the `fwx` job of checks.yml.
 
 EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230 (MIT).
-  agents/decisions.md: the section "The settlement test" of skills/ce-plan/references/settled-decisions.md, word for word except
-  "the user" reads "the owner", "(below)" is dropped and the Directive bullet ends after "Not settled.".
   playbooks/principles.md: the sentence on risk of rule 5 of skills/ce-plan/references/structure.md, quoted.
   agents/planner.md: lines 46-57 of skills/ce-plan/references/structure.md word for word (the units block); lines 137 and 143-152
   of the same file adapted (the rule on what is built, what goes to `not_built` and what goes to `later`). Its shape is read from
@@ -42,7 +41,8 @@ EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engin
   mechanisms), in words of its own.
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
-  agents/decisions.md: the three ADR criteria of skills/engineering/domain-modeling/SKILL.md, as written there.
+  skills/engineering/domain-modeling/SKILL.md: the three ADR criteria. Read for the same criteria by skills/discuss/SKILL.md step 5,
+  in words of its own; no text is copied.
 
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/principles.md, and for the rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
@@ -60,7 +60,9 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   agents/executor.md: "Workers never rebase and never retarget or merge PRs." of playbooks/orchestrate.md line 84, "Red is a colour,
   not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, "Don't tweak a test's expected values just to get a pass."
   of skills/babysit/SKILL.md line 53 and "Type check and lint are not a pin." of playbooks/refactoring.md line 9, each word for word.
-  Read for the same agent: line 18 of playbooks/autopilot-full.md and steps 1-4 of skills/tdd/SKILL.md, in words of its own.
+  Read for the same agent: line 18 of playbooks/autopilot-full.md, steps 1-4 of skills/tdd/SKILL.md, and skills/poteto-mode/SKILL.md
+  with its principle-* leaves (smallest diff, subtract before adding, the data shape first, the two-edit test rule, attack the premise,
+  prove it works: the section "What good work is"), in words of its own.
   agents/reviewer.md: "Red is a colour, not a measurement." of skills/principle-prove-it-works/SKILL.md line 21, word for word.
   Read for the same agent: skills/interrogate/references/reviewer-prompt.md, its lead-judgment.md and line 20 of
   playbooks/autopilot-full.md, in words of its own.
@@ -85,9 +87,8 @@ of the npm package it was read from; MIT).
   (agents/gsd-plan-checker.md lines 41-47), and for its point that a complete plan can still miss the goal, in words of its own.
 
 EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engineering-plugin, commit 3449230705a5 (MIT).
-  Text copied by part 3.1, in every line "user" reading "owner" (as in agents/decisions.md). skills/discuss/references/rounds.md takes line
-  27 of skills/ce-brainstorm/references/interaction-rules.md (its list number dropped) and line 78 of dialogue.md; line 13 of
-  approaches.md is not used because it tells the agent to recommend. skills/discuss/references/playback.md takes lines 31, 33, 35, 36,
+  Text copied by part 3.1, in every line "user" reading "owner". skills/discuss/references/rounds.md takes line
+  27 of skills/ce-brainstorm/references/interaction-rules.md (its list number dropped) and line 78 of dialogue.md. skills/discuss/references/playback.md takes lines 31, 33, 35, 36,
   38, 40, 42 and 92 of synthesis-summary.md, with "the scoping synthesis" and "the synthesis" reading "the playback" and "the doc"
   reading `context.md`; line 40 loses its sentence on a Deep scope and its sentence naming the ce-noslop skill, and line 92 loses
   " The loop is:". It takes line 87 of dialogue.md with "Before exiting Phase 1.3" reading "Before the playback", "Phase 2.5's" reading
@@ -99,9 +100,8 @@ EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engin
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit 4ae2317ddb22 (MIT).
   Text copied by part 3.1: skills/discuss/references/rounds.md takes lines 8, 26 and 28 of skills/productivity/grilling/SKILL.md with
-  "user" reading "owner", "Work the tree" reading "Work the decision tree" and "and give your recommended answer" dropped from line 8
-  (the owner takes no recommendations), and adapts the round format of its lines 10-22 to lettered options with what each implies and
-  no recommendation. Read for shape by the skills of 3.1 U4 and U5 (skills/engineering/to-tickets/SKILL.md, grilling).
+  "user" reading "owner" and "Work the tree" reading "Work the decision tree", and adapts the round format of its lines 10-22 to
+  lettered options with what each implies and a Recommended: line. Read for shape by the skills of 3.1 U4 and U5 (skills/engineering/to-tickets/SKILL.md, grilling).
 
 humanlayer/humanlayer, https://github.com/humanlayer/humanlayer, commit 316e74ef9af0 (Apache-2.0), Copyright 2025-2026 QueryTale, Inc.
 d/b/a HumanLayer. The licence is at https://www.apache.org/licenses/LICENSE-2.0 and in apps/riptide-rpi-claude-plugin/LICENSE of the commit.
@@ -109,6 +109,11 @@ d/b/a HumanLayer. The licence is at https://www.apache.org/licenses/LICENSE-2.0 
   apps/riptide-rpi-claude-plugin/skills/create-prd/SKILL.md. Changes: "user" reads "owner", "leave the document alone" reads "leave
   `decisions.tsv` alone", and the example in brackets after "ask a clarifying question of their own" is dropped. The rest of that file
   is this repo's own text.
+
+mattpocock/skills, https://github.com/mattpocock/skills, commit abeeaf9 (MIT).
+  Read, nothing copied, by skills/discuss/references/reentry.md and templates/MILESTONE.md: skills/engineering/wayfinder/SKILL.md, for
+  the map (Destination, Decisions so far, Not yet specified, Out of scope) and its decision tickets, in words of its own. Here the map is
+  a milestone and the tickets are phases of `.fwx/`, not issues in a tracker.
 
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea631d2 (MIT).
   Read by part 3.1 for the shape of the agents researcher and demo and of the skill discuss; single lines it copies are named in the
@@ -127,3 +132,12 @@ skill-data/dogfood/SKILL.md (errors and console after acting, a recording for an
 OneRedOak/claude-code-workflows, https://github.com/OneRedOak/claude-code-workflows, commit
 29a34c725313c7621f426f838ed31cf482473fb4 (MIT), design-review/design-review-agent.md (the live screen first, problems over
 prescriptions); and the owner's own ui-walk skill of a project, .claude/skills/ui-walk/walker.md and verifier.md @76eca414.
+
+t3dotgg/tstack, https://github.com/t3dotgg/tstack, commit 11e37a74d0a6868c121cd0910ab2b3bd9873b92a (MIT), Copyright (c) 2026 Theo Browne.
+  Only its peer-review and code-review material is used (D4).
+  agents/reviewer.md: "Skip style unless it hides a bug." (line 71) and "blocker = intended case wrong. should = real bug callers will hit,
+  in intent. nit = rest." (line 74) of skills/sol-loop/SKILL.md, word for word. Read for the same agent: the reviewer's brief and the
+  proof of a finding (lines 64-92 of the same file), in words of its own.
+  agents/review-verifier.md: "Check each finding and severity yourself. Another path, rare case, or small cost is a nit, whatever label
+  it came with." (lines 82-83 of skills/sol-loop/SKILL.md), word for word.
+  Read for agents/security-reviewer.md: lines 64-92 of skills/sol-loop/SKILL.md, in words of its own. No text is copied.

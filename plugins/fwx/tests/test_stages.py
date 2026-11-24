@@ -26,6 +26,10 @@ Controls, each seen red on a copy of the repo with one thing changed (351 checks
       FAIL: discuss -> executing: exit 1: got 0, want 1
   - the table lets premortem go to executing (6 failed):
       FAIL: session: premortem -> executing is forbidden: got True
+  - the table lacks discuss -> planning, planning -> executing and planning -> discuss (08.3 T31):
+      FAIL: session: discuss -> planning is allowed: got False
+      FAIL: small phase: -> planning: exit: got 1, want 0
+  - the table lets planning go to closed (08.3 T31): `session: planning -> closed is forbidden` and `small phase: -> closed: exit` fail
   - the table drops ui-walk -> discuss (1 failed):
       FAIL: session: ui-walk -> discuss is allowed: got False
   - the table lacks ui-walk -> executing (the walk's fixes go back to the executors; seen red on master, 1 failed):
@@ -70,9 +74,9 @@ except ImportError as e:
 # ---- the allowed transitions, by hand ------------------------------------------------------------------------------
 
 SESSION = {
-    "discuss": ["premortem", "cancelled"],
+    "discuss": ["premortem", "planning", "cancelled"],
     "premortem": ["planning", "discuss"],
-    "planning": ["postmortem"],
+    "planning": ["postmortem", "executing", "discuss"],
     "postmortem": ["planning", "executing", "discuss"],
     "executing": ["reviewing", "phase-review"],
     "reviewing": ["executing", "ui-walk", "phase-review"],
@@ -246,6 +250,17 @@ s.ok("discuss -> premortem: says what it did", "discuss -> premortem" in r.stdou
 rows = state.read_rows(state.phase_paths(cli)["audit"])
 s.eq("discuss -> premortem: the row", [(x["kind"], x["detail"], x["sha"]) for x in rows],
      [("stage", "premortem first pass", head)])
+# A small phase skips the critiques (08.3 T31): discuss -> planning -> executing, and the planner can send the phase back to discuss.
+small = os.path.join(repo, ".fwx", "milestones", "v1", "phases", "06-small")
+os.makedirs(small)
+for code, to in ((0, "planning"), (0, "discuss"), (0, "planning"), (1, "closed"), (0, "executing")):
+    r = helpers.fwx(repo, "stage", small, to)
+    s.eq("small phase: -> %s: exit" % to, r.returncode, code)
+    if code:
+        s.ok("small phase: -> %s: the refusal names the table" % to,
+             "planning -> closed is not in data/stages.json (session)" in r.stderr, r.stderr)
+s.eq("small phase: the stage is executing and the refused move left no row", state.last_stage(small), "executing")
+s.eq("small phase: four moves, four rows", len(state.read_rows(state.phase_paths(small)["audit"])), 4)
 r = helpers.fwx(repo, "stage", cli)
 s.eq("a missing stage is a usage error", r.returncode, 2)
 r = helpers.fwx(repo, "stage", cli, "premortem", "--bogus")

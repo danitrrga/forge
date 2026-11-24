@@ -223,7 +223,7 @@ async function run(step, cmd, retry) {
 const reportTail = (unit) => '/.fwx-agent/' + RUN + '/' + unit + '/report.json'
 const scratchOrder = (unit) =>
   'REPORT: run `fwx scratch new ' + RUN + ' ' + unit + '`: it prints a folder of your own worktree that git ignores. Your TMPDIR is tmp/ inside that folder; ' +
-  'write the JSON of your standing orders to report.json directly in that folder, not in tmp/ (the Write tool is enough), and reply with the one line they give, naming that report.json by its full path.'
+  'write the JSON of your standing orders to report.json directly in that folder, not in tmp/ (the file-write tool is enough), and reply with the one line they give, naming that report.json by its full path.'
 async function readFile(unit, path) {
   const p = String(path).replace(/\\/g, '/')
   if (!p.endsWith(reportTail(unit)) || /(^|\/)\.\.(\/|$)/.test(p)) return null
