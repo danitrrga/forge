@@ -626,13 +626,10 @@ try:
     private = res["output"].strip().splitlines()[0] if res["output"].strip() else ""
     s.eq("TMPDIR inside a checkout: the check's temp dir is outside any work tree", (res["rc"], private != tmp_inside), (0, True))
     s.ok("TMPDIR inside a checkout: the private folder is under /tmp and gone after the check", private.startswith("/tmp/") and not os.path.exists(private), private)
-    tmp_outside = tempfile.mkdtemp(dir="/tmp", prefix="fwx-verify-out-")
-    try:
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="fwx-verify-out-") as tmp_outside:
         os.environ["TMPDIR"] = tmp_outside
         res = core_verify.run_check(tmp_probe, tmp_toy)
         s.eq("TMPDIR outside a checkout: left as it was", (res["rc"], res["output"].strip()), (0, tmp_outside))
-    finally:
-        shutil.rmtree(tmp_outside, ignore_errors=True)
 finally:
     if saved_tmp is None:
         os.environ.pop("TMPDIR", None)

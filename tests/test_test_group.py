@@ -640,13 +640,10 @@ for label, args, _, name in RUNS:
     seen = open(out_file).read() if os.path.isfile(out_file) else ""
     ok("%s, TMPDIR inside a checkout: the test's TMPDIR was a fresh folder under /tmp" % label, seen.startswith("/tmp/") and seen != inside, seen)
     ok("%s, TMPDIR inside a checkout: the private temp dir is removed after the run" % label, bool(seen) and not os.path.exists(seen), seen)
-    outside = tempfile.mkdtemp(dir="/tmp", prefix="forge-group-out-")  # a TMPDIR that is already outside any checkout is not touched
-    try:
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="forge-group-out-") as outside:  # a TMPDIR already outside any checkout is not touched
         r = forge(repo, *args, TMPDIR=outside, PROBE_OUT=out_file)
         eq("%s, TMPDIR outside a checkout: exit code" % label, r.returncode, 0)
         eq("%s, TMPDIR outside a checkout: left as it was" % label, open(out_file).read(), outside)
-    finally:
-        shutil.rmtree(outside, ignore_errors=True)
 
 sandbox.cleanup(bool(fails))
 if checks == 0:
