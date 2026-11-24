@@ -25,7 +25,7 @@ it every item is fixed, a large `outside` item excepted (it is too big for a rou
 State is read from the run's own recorded calls (`steps`, oldest first), never from variables of a running script: the pass, its items, and the
 misses of each unit (a unit's name holds its pass, so a miss of one pass never counts in the next). Only a `report.json` inside the folder
 `fwx scratch new <run> <unit>` makes is read. Imports the standard library, fwx.config, fwx.plan, fwx.plan_step, fwx.state and execute.base,
-brief, integrate and report.
+brief, integrate, prepare and report.
 """
 import json
 import os
@@ -33,7 +33,7 @@ import re
 
 from fwx import config, plan, plan_step, state
 from fwx.core import evidence
-from fwx.execute import brief, integrate
+from fwx.execute import brief, integrate, prepare
 from fwx.execute.base import WaveError, out, toplevel
 from fwx.execute.report import last_line, norm_path, outside_problem
 
@@ -101,14 +101,13 @@ def review(cwd, part_dir, run, frm, to, security, steps):
             raise WaveError("%s is not a commit of this repository" % ref)
     data, owner, ctx = _context(top, part_dir, run)
     try:
-        post = plan.load_postmortem(owner["postmortem"])
-    except (plan.PlanError, OSError) as e:
-        raise WaveError("the post-mortem of the phase cannot be read: %s" % e)
+        asked = prepare._security_why(data, owner["postmortem"], config.load(top))  # as `wave new` decides it: a small plan may have no post-mortem
+    except (config.ConfigError, state.StateError) as e:
+        raise WaveError(str(e))
     tag = "r%d" % (1 + sum(1 for r in steps if r.get("step") == "review"))
     protected = _protected(steps)
-    sec = security or post["security_review"] or bool(protected)
-    why = [w for w, on in (("--security", security), ("postmortem.md security_review is true", post["security_review"]),
-                           ("the last final merge named a protected path", bool(protected))) if on]
+    why = (["--security"] if security else []) + asked + (["the last final merge named a protected path"] if protected else [])
+    sec = bool(why)
     agents = [("reviewer", tag, "review-%s" % tag)] + ([("security-reviewer", tag + "-sec", "review-%s-sec" % tag)] if sec else [])
     made = []
     for kind, unit, name in agents:

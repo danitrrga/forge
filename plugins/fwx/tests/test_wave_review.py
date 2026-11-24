@@ -66,8 +66,10 @@ def criteria(c1="yes", c2="yes"):
 class World:
     """A toy repo with the part's plan, a phase branch with one commit past its start (the diff of a pass), and the reviewers' folders."""
 
-    def __init__(self, security=False):
-        self.S = wp.Scene(tasks=TASKS, security=security, config={"project": {"checks": ["true"], "checks_quick": ["true"]}})
+    def __init__(self, security=False, config=None, tasks=None, **kw):
+        cfg = {"project": {"checks": ["true"], "checks_quick": ["true"]}}
+        cfg["project"].update((config or {}).get("project", {}))
+        self.S = wp.Scene(tasks=tasks or TASKS, security=security, config=cfg, **kw)
         self.frm = self.S.head()
         self.S.commit("n.txt", "one more commit")
         self.to = self.S.head()
@@ -206,6 +208,24 @@ def case_security(R, S):
 
 
 # ---------------------------------------------------------------------------------------------------- wave findings: the threshold
+
+def case_small_plan(R, S):
+    """A small plan may skip the post-mortem (08.3 T31): `wave review` decides the security review as `wave new` does (prepare._security_why).
+    Red before: FAIL: small plan, no postmortem: exit: got (2, 'the post-mortem of the phase cannot be read: ... postmortem.md: file: cannot be read (No such file or directory)'), want (0, '')"""
+    for label, kw, want in (("security_review false", dict(plan_extra={"security_review": False}), None),
+                            ("security_review true", dict(plan_extra={"security_review": True}), "plan.md security_review is true"),
+                            ("a task on a protected path", dict(plan_extra={"security_review": False}, config={"project": {"protected_paths": ["src/a.py"]}}), "protected path")):
+        W = World(postmortem=False, size="small", **kw)
+        r, v = W.review(R)
+        S.eq("small plan, no postmortem, %s: exit" % label, (r.returncode, r.stderr.strip()[:200]), (0, ""))
+        S.eq("small plan, no postmortem, %s: the agents of the pass" % label, [x.get("role") for x in v.get("reviewers") or []],
+             ["reviewer"] + (["security-reviewer"] if want else []))
+        S.ok("small plan, no postmortem, %s: `security` says why" % label, want in v.get("security", "") if want else v.get("security") == "not asked for", v.get("security"))
+    W = World(postmortem=False, size="normal", plan_extra={"security_review": False})
+    r, v = W.review(R)
+    S.eq("a normal plan with no postmortem is still refused, naming the file", (r.returncode, "postmortem.md" in r.stderr, r.stdout), (2, True, ""))
+    S.eq("a refused call writes nothing", W.files(), [])
+
 
 def case_threshold(R, S):
     """D10: the verifier runs only on a review with more than three items. At d348f8d (execute.js:637) it ran on any."""
@@ -553,7 +573,7 @@ def case_usage(R, S):
     S.eq("outside a repository: exit 2", r.returncode, 2)
 
 
-CASES = [case_review, case_security, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage]
+CASES = [case_review, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
@@ -597,12 +617,14 @@ MUTANTS = [
      "a criterion that is not met and that no finding names relaunches"),
     ("the evidence of a finding does not name a criterion", case_misses, V_, '"%s %s" % (f["claim"], f["evidence"])', 'f["claim"]',
      "a criterion named in a finding's evidence is read"),
-    ("`--security` does nothing", case_security, V_, "sec = security or", "sec = False or",
+    ("`--security` does nothing", case_security, V_, '(["--security"] if security else [])', "[]",
      "--security launches the security reviewer too"),
-    ("the post-mortem's security_review does nothing", case_security, V_, ' or post["security_review"]', "",
+    ("the post-mortem's security_review does nothing", case_security, V_, " + asked + ", " + [] + ",
      "the post-mortem's security_review launches the security reviewer"),
-    ("a protected path asks for no security review", case_security, V_, " or bool(protected)", "",
+    ("a protected path asks for no security review", case_security, V_, '(["the last final merge named a protected path"] if protected else [])', "[]",
      "a protected path of the last final merge launches the security reviewer"),
+    ("a missing postmortem.md is an error again", case_small_plan, V_, 'asked = prepare._security_why(data, owner["postmortem"], config.load(top))',
+     'asked = plan.load_postmortem(owner["postmortem"]) and []', "small plan, no postmortem, security_review false: exit"),
     ("a verdict `consider` is fixed", case_verdicts, V_, 'elif verdict == "consider":', 'elif verdict == "fix":',
      "consider: id, file, line, claim, severity"),
     ("the verdicts of any unit are read", case_verdicts, V_, 'if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None, ""', 'if False:\n        return None, ""',
@@ -611,7 +633,7 @@ MUTANTS = [
      "a verdict missing for an id relaunches the verifier"),
     ("a verdict that is none of the four groups is read", case_verdicts, V_, 'elif d.get("verdict") not in VERDICTS:', "elif False:",
      "a verdict that is none of the four groups relaunches"),
-    ("a protected path does not end the flow with the owner", case_verdicts, V_, "if protected else", "if False else",
+    ("a protected path does not end the flow with the owner", case_verdicts, V_, ') if protected else ("done"', ') if False else ("done"',
      "nothing to fix but a protected path: the owner"),
     ("a large outside item is filed when dismissed", case_verdicts, V_, 'if _large(outside_of, ident) and verdict == "fix":', "if _large(outside_of, ident):",
      "a dismissed large outside item is not filed"),
