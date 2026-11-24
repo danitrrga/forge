@@ -374,6 +374,8 @@ got = rows(phase)
 s.eq("a check of 2 s with check_timeout_s 1: exit 1 and rc none",
      (r.returncode, [c["rc"] for c in json.loads(got[-1]["detail"])["commands"]] if got else []), (1, [None]))
 s.ok("a check of 2 s with check_timeout_s 1: the limit actually used is named", "timed out after 1 s" in r.stderr, r.stderr)
+# PR 223 review. Seen red: FAIL: a timed-out check says to raise project.check_timeout_s: fwx verify: running 1 check from the project at ...
+s.ok("a timed-out check says to raise project.check_timeout_s", "raise `project.check_timeout_s`" in r.stderr, r.stderr)
 repo, phase = make([NAP])
 s.eq("the same check with no configured limit passes (the default is 1200 s)", run(repo).returncode, 0)
 repo, phase = make([NAP], project={"check_timeout_s": 0})

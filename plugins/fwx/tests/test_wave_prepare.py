@@ -669,6 +669,8 @@ def case_base_timeout(R, S):
     S.ok("timeout: the message says NOT RUN, names the check and the limit, and is not the red-base line",
          "NOT RUN" in err and "timed out after 1 s" in err and "time.sleep(30)" in err and "is red" not in err, err)
     S.ok("timeout: and says how to go on", "Run it again" in err, err)
+    # PR 223 review. Seen red: FAIL: timeout: a suite that needs longer is told to raise project.check_timeout_s: NOT RUN: the base checks at ...
+    S.ok("timeout: a suite that needs longer is told to raise project.check_timeout_s", "raise `project.check_timeout_s`" in err, err)
     S.ok("timeout: nothing is recorded as a pass or a failure, and no round is spent", not sc.audit_exists())
     _, code, out_, err = timeout_run(["echo boom; exit 3", slow], 1, R)
     S.eq("timeout: a check that is red beside one that timed out is still a red base", (code, json.loads(out_ or "{}").get("status")), (1, "needs-owner"))

@@ -268,8 +268,8 @@ def _base_is_green(top, base, recipe, folders, say, timeout):
     late = [r for r in results if r["timed_out"]]
     if not red and late:
         raise NotRun("NOT RUN: the base checks at %s did not finish: %s timed out after %d s. That is the machine, not the code: the base is "
-                     "neither red nor green, no round was spent and nothing was recorded. Run it again when the machine is less loaded: "
-                     "a base that passes is recorded, and the next `fwx wave new` on it reuses the record"
+                     "neither red nor green, no round was spent and nothing was recorded. Run it again when the machine is less loaded, or raise `project.check_timeout_s` if the check needs longer. "
+                     "A base that passes is recorded, and the next `fwx wave new` on it reuses the record"
                      % (base[:8], ", ".join(r["cmd"] for r in late), late[0]["limit"]))
     return red or None
 

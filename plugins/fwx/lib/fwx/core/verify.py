@@ -102,7 +102,7 @@ def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
                 except OSError:
                     pass
                 proc.wait()
-                note, timed_out = "\ntimed out after %d s" % timeout, True
+                note, timed_out = ("\ntimed out after %d s; raise `project.check_timeout_s` if the check needs longer" % timeout), True
         out.seek(0, os.SEEK_END)
         out.seek(max(0, out.tell() - 4 * KEEP_CHARS))
         text = out.read().decode("utf-8", "replace")[-KEEP_CHARS:]
