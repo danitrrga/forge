@@ -436,10 +436,29 @@ def main():
 
     # DTC-34: the worktree of a phase is removed by the next session, once its PR is merged and it is clean, never at the close.
     closing = read(os.path.join("references", "closing.md"))
-    cleanup = next((ln for ln in closing.splitlines() if ln.startswith("4. **Cleanup.**")), "")
-    check("closing.md step 4 found", "fwx walk stop --orphans" in cleanup, "not found")
-    check("closing.md step 4 does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
-    check("closing.md step 4 says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    cleanup = next((ln for ln in closing.splitlines() if re.match(r"\d+\. \*\*Cleanup\.\*\*", ln)), "")
+    check("closing.md the cleanup step found", "fwx walk stop --orphans" in cleanup, "not found")
+    check("closing.md the cleanup step does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
+    check("closing.md the cleanup step says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    # 08.4 T41 (D24, D35, D11): before `closed` the orchestrator promotes the phase's decisions that pass Pocock's three criteria to the
+    # durable record (`fwx decision new --adr`), and fwx's work ends at the pull request: nothing that merges, babysits or watches follows `gh pr create`.
+    # Seen red on the 6e4e54c closing.md (rc=1):
+    #   FAIL: closing.md promotes passing decisions with `fwx decision new --adr` before step 3's `fwx stage <phase folder> closed` -> 'fwx decision new --adr' is not before 'fwx stage <phase folder> closed'
+    #   FAIL: closing.md names the three criteria of a durable decision -> missing: ['hard to reverse', 'surprising without context', 'real trade-off']
+    #   (the later checks pass on it; their controls below show they can fail)
+    promote = "fwx decision new --adr"
+    check("closing.md promotes passing decisions with `fwx decision new --adr` before step 3's `fwx stage <phase folder> closed`",
+          in_order(closing, promote, "fwx stage <phase folder> closed"), "'%s' is not before 'fwx stage <phase folder> closed'" % promote)
+    criteria = ["hard to reverse", "surprising without context", "real trade-off"]
+    check("closing.md names the three criteria of a durable decision", all(c in closing for c in criteria), "missing: %s" % [c for c in criteria if c not in closing])
+    after_pr = closing[closing.find("gh pr create"):] if "gh pr create" in closing else ""
+    after_pr_steps = [ln.split("**")[1] for ln in after_pr.splitlines() if re.match(r"\d+\. \*\*", ln)]
+    after_pr_bans = ("babysit", "watch", "gh pr merge", "gh pr checks", "wait for CI", "poll")
+    check("closing.md has a step after `gh pr create`", bool(after_pr_steps), "no numbered step after it")
+    check("closing.md adds no merge, babysit or watch to the steps after the pull request",
+          not [w for w in after_pr_bans if w in after_pr.replace("fwx walk", "")] and "merge it" not in after_pr, "found: %s" % [w for w in after_pr_bans if w in after_pr])
+    check("control: a closing text that promotes after `closed` fails", not in_order("fwx stage <phase folder> closed then fwx decision new --adr", promote, "fwx stage <phase folder> closed"))
+    check("control: a step that babysits the pull request is caught", "babysit" in "6. **Babysit.** After `gh pr create`, babysit the PR until CI is green.".split("gh pr create")[1])
     s0 = step(texts["SKILL.md"], 0)
     need = ["--state merged", "status --porcelain", ".claude/worktrees/", "no force", "git branch -d"]
     check("SKILL.md step 0 clears merged worktrees: merged PR, clean, no force", all(w in s0 for w in need), "missing: %s" % [w for w in need if w not in s0])
