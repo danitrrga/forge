@@ -39,6 +39,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -497,7 +498,7 @@ MIXED = {"test_ok.py": "pass\n", "test_big.py": "x = 1\n" * 400 + "pass\n", "tes
 repo = toy({}, top=MIXED)
 one = forge(repo, "--jobs", "1")
 four = forge(repo, "--jobs", "4")
-head = lambda r: [l for l in r.stdout.splitlines()[:-1] if not l.startswith(" ")]  # a failing file's output is indented under its FAIL line
+head = lambda r: [l for l in r.stdout.splitlines()[:-1] if not l.startswith((" ", "Failed files"))]  # a failing file's output is indented under its FAIL line; then the block that names the failed files
 ok("no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind", len(head(one)) == 6 and
    [l.split()[0] for l in sorted(head(one))] == ["FAIL", "PASS", "PASS", "PASS", "SKIP", "WARN"] , one.stdout + one.stderr)
 eq("no group, --jobs 1 and --jobs 4 print the same: stdout", four.stdout, one.stdout)
@@ -597,6 +598,55 @@ eq("--jobs 2, SIGINT: the exit code is the one of an interrupted --jobs 1 run", 
 ok("--jobs 1, SIGINT: it was an interruption (non-zero exit)", rc1 != 0, repr((rc1, err1[-200:])))
 ok("--jobs 2, SIGINT: the interruption is named on stderr as with --jobs 1", ("KeyboardInterrupt" in err2) == ("KeyboardInterrupt" in err1),
    err2[-300:])
+
+# ---- a failed run ends with the names of the failed files; a test's temp dir is never inside a checkout -------------------------
+# Written first and run on master (a worktree of origin/master with this file copied in; the first FAILs it printed). An fwx fixer spent
+# 42 minutes rerunning `forge test --jobs 4` six times because the gate keeps the last 40 lines and the FAIL lines scrolled out; 13 to 17
+# tests failed falsely when TMPDIR sat inside a checkout (DTC-119):
+#   FAIL: no group, a failed file: the last 12 lines name it and its FAIL line
+#   FAIL: forge test fwx, a failed file: the last 12 lines name it and its FAIL line
+#   FAIL: no group, TMPDIR inside a checkout: the test saw a temp dir outside it: exit code: got 1, want 0
+#   FAIL: forge test fwx, TMPDIR inside a checkout: the test saw a temp dir outside it: exit code: got 1, want 0
+# (the probe printed on master: FAIL: temp dir <checkout>/.scratch/tmp is inside a git checkout)
+NOISY_BAD = ('import sys\nprint("FAIL: the broken case: got 1, want 2")\n'
+             'for i in range(200):\n    print("noise line %d" % i)\nsys.exit(1)\n')
+RUNS = (("no group", ("--jobs", "2"), {}, "test_%s.py"), ("forge test fwx", ("fwx", "--jobs", "2"), None, "tests/test_%s.py"))
+for label, args, _, name in RUNS:
+    top = label == "no group"
+    files = {name % "noisy": NOISY_BAD, name % "fine": "pass\n"}
+    repo = toy({} if top else files, top=files if top else None)
+    out = forge(repo, *args).stdout.splitlines()
+    ok("%s, a failed file: the last 12 lines name it and its FAIL line" % label,
+       any("test_noisy.py" in l and "FAIL: the broken case" in l for l in out[-12:]) and "noise line 0" not in "\n".join(out[-12:]),
+       "\n".join(out[-12:]))
+    repo = toy({} if top else {name % "fine": "pass\n"}, top={name % "fine": "pass\n"} if top else None)
+    ok("%s, a run with no failed file prints no failed-files block" % label, "Failed files" not in forge(repo, *args).stdout, label)
+eq("no group, a failed file: the SUMMARY line is still the last", last(forge(toy({}, top={"test_noisy.py": NOISY_BAD}))),
+   "SUMMARY: 0 passed, 0 warnings, 1 failures")
+
+TMP_PROBE = ('import os, subprocess, sys, tempfile\n'
+             'd = tempfile.gettempdir()\n'
+             'if subprocess.run(["git", "-C", d, "rev-parse", "--is-inside-work-tree"], capture_output=True).returncode == 0:\n'
+             '    print("FAIL: temp dir %s is inside a git checkout" % d)\n    sys.exit(1)\n'
+             'with open(os.environ["PROBE_OUT"], "w") as f:\n    f.write(os.environ.get("TMPDIR", ""))\n')
+for label, args, _, name in RUNS:
+    top = label == "no group"
+    repo = toy({} if top else {name % "probe": TMP_PROBE}, top={name % "probe": TMP_PROBE} if top else None)
+    inside = os.path.join(repo, ".scratch", "tmp")  # a folder of the checkout, as an fwx agent's scratch TMPDIR is
+    os.makedirs(inside)
+    out_file = os.path.join(HOME, "probe-%s.txt" % label.replace(" ", "-"))
+    r = forge(repo, *args, TMPDIR=inside, PROBE_OUT=out_file)
+    eq("%s, TMPDIR inside a checkout: the test saw a temp dir outside it: exit code" % label, r.returncode, 0)
+    seen = open(out_file).read() if os.path.isfile(out_file) else ""
+    ok("%s, TMPDIR inside a checkout: the test's TMPDIR was a fresh folder under /tmp" % label, seen.startswith("/tmp/") and seen != inside, seen)
+    ok("%s, TMPDIR inside a checkout: the private temp dir is removed after the run" % label, bool(seen) and not os.path.exists(seen), seen)
+    outside = tempfile.mkdtemp(dir="/tmp", prefix="forge-group-out-")  # a TMPDIR that is already outside any checkout is not touched
+    try:
+        r = forge(repo, *args, TMPDIR=outside, PROBE_OUT=out_file)
+        eq("%s, TMPDIR outside a checkout: exit code" % label, r.returncode, 0)
+        eq("%s, TMPDIR outside a checkout: left as it was" % label, open(out_file).read(), outside)
+    finally:
+        shutil.rmtree(outside, ignore_errors=True)
 
 sandbox.cleanup(bool(fails))
 if checks == 0:
