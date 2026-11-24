@@ -214,6 +214,11 @@ def main():
     check("step 7's refused-call cite names the rule on skills and workflows", bool(titled) and titled.group(1) == "Skills and workflows",
           "'rule %s applies' is %s" % (cited.group(1) if cited else "?", '"%s"' % titled.group(1) if titled else "no rule"))
     check("control: a cite of a rule with another title is caught", re.search(r"^8\. \*\*([^*]+?)\.\*\*", "7. **Skills and workflows.** x\n8. **Generated config.** y", re.M).group(1) != "Skills and workflows")
+    # r4-F2: step 7 still excused "a split proposed at step 2 with no pre-mortem run" after step 2 stopped proposing a split, a case that cannot happen.
+    # Seen red before the parenthesis went: FAIL: step 7 names no split proposed at step 2 -> step 7 still says 'a split proposed at step 2'
+    check("step 7 names no split proposed at step 2", "split proposed at step 2" not in step(skill, 7),
+          "step 7 still says 'a split proposed at step 2'")
+    check("control: a step 7 with the old parenthesis is caught", "split proposed at step 2" in "except when the phase is already in `discuss` (a split proposed at step 2 with no pre-mortem run)")
     check("step 8 reads `review: blocking` and the plan accepts that value", "`review: blocking`" in s8 and "blocking" in plan.REVIEWS,
           "step 8 names it: %s; plan.REVIEWS: %s" % ("`review: blocking`" in s8, plan.REVIEWS))
     check("steps 5 and 8 read `ui: true` and plan.py has a task key `ui`", "`ui: true`" in skill and '"ui"' in open(os.path.join(ROOT, "lib", "fwx", "plan.py"), encoding="utf-8").read(),
