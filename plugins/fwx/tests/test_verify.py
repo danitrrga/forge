@@ -114,7 +114,9 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -799,6 +801,41 @@ finally:
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+
+# ---- two checkouts of one repo never run the recipe at the same time (the gate lock) ----------------------------------
+# Control, on the code before the lock: the second gate started while the first was still inside its check, so the case below
+# FAILed with "two gates of one repo ran one after the other: second started <t>, first ended <t>" (the exact output is in the PR).
+
+stamp_dir = helpers.mkdtemp("fwx-gate-")  # outside every checkout, so the trees stay clean
+stamp = helpers.write(stamp_dir, "stamp.py", "import json, os, sys, time\n"
+                      "t0 = time.time()\nopen(os.path.join(sys.argv[1], '%d.start' % os.getpid()), 'w').close()\ntime.sleep(2)\n"
+                      "json.dump([t0, time.time()], open(os.path.join(sys.argv[1], '%d.json' % os.getpid()), 'w'))\n")
+stamps = os.path.join(stamp_dir, "out")
+os.makedirs(stamps)
+repo, phase = make(["python3 %s %s" % (shlex.quote(stamp), shlex.quote(stamps))])
+other = helpers.add_worktree(repo, "gate-b")
+FWX = [sys.executable, os.path.join(ROOT, "bin", "fwx"), "verify", "--dir", phase]
+first = subprocess.Popen(FWX, cwd=repo, env=helpers.clean_env(**ENV), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+for _ in range(300):  # start the second only once the first is inside its check, so the second has to wait if there is a lock
+    if first.poll() is not None or any(f.endswith(".start") for f in os.listdir(stamps)):
+        break
+    time.sleep(0.1)
+second = subprocess.Popen(FWX, cwd=other, env=helpers.clean_env(**ENV), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+out1, err1 = first.communicate(timeout=120)
+out2, err2 = second.communicate(timeout=120)
+s.eq("both gates of the one repo are green", (first.returncode, second.returncode), (0, 0))
+times = sorted(json.load(open(os.path.join(stamps, f))) for f in os.listdir(stamps) if f.endswith(".json"))
+s.eq("both gates ran their check", len(times), 2)
+if len(times) == 2:
+    s.ok("two gates of one repo ran one after the other: second started %.1f, first ended %.1f" % (times[1][0], times[0][1]),
+         times[1][0] >= times[0][1])
+common = helpers.git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+lock = os.path.join(common, "fwx", "gate.lock")
+waited = [e for e in (err1, err2) if "fwx: waiting for another gate of this repo to finish (lock %s)" % lock in e]
+s.eq("exactly one of them said it was waiting, naming the lock", len(waited), 1)
+
+r = helpers.fwx(repo, "verify", "--dir", phase, env=ENV)
+s.ok("a gate on its own does not wait", "waiting for another gate" not in r.stderr and r.returncode == 0, r.stderr)
 
 r = helpers.fwx(ROOT, "help")
 s.ok("`fwx help` lists verify", any(line.split()[:2] == ["fwx", "verify"] for line in r.stdout.splitlines()), r.stdout)
