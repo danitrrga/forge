@@ -27,11 +27,12 @@ MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; 
 
 
 def _seed():
-    """Sonnet for every role, then the seed's exceptions: the planner decides direction (Opus), the detector is
-    mechanical (Haiku), the UI walker starts cheap, the analytics verifier escalates on a big job."""
+    """Sonnet for every role, then the seed's exceptions: the planner decides direction (Opus), the detector, the
+    decisions log and the state files are mechanical (Haiku), the UI walker starts cheap, the analytics verifier escalates on a big job."""
     models = {r: {z: "sonnet" for z in SIZES} for r in ROLES}
     models["planner"] = {z: "opus" for z in SIZES}
-    models["detector"] = {z: "haiku" for z in SIZES}
+    for r in ("detector", "decisions", "state"):
+        models[r] = {z: "haiku" for z in SIZES}
     models["ui-walker"]["small"] = "haiku"
     models["analytics-verifier"]["big"] = "opus"
     return models
