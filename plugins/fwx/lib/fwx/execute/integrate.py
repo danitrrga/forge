@@ -110,15 +110,24 @@ def _show(top, rev, path):
     return r.stdout if r.returncode == 0 else None
 
 
-def _quick(top, cfg):
-    """{ran, cmds, rc}: project.checks_quick, run in the checkout; rc is 0 or the first exit that is not."""
+def _quick(top, cfg, say=lambda line: None):
+    """{ran, cmds, rc}: project.checks_quick, run in the checkout; rc is 0 or the first exit that is not. A check stopped by
+    `project.check_timeout_s` is rc 1 as before, and the result also has `timed_out` (those commands) and `limit` (the seconds each
+    had), so that it is not taken for a failing check; `say` says so with what to do (only then: the shape is unchanged otherwise)."""
     cmds = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
-    rc = 0
+    limit = cfg["project"]["check_timeout_s"]
+    rc, late = 0, []
     for c in cmds:
-        got = verify.run_check(c, top, cfg["project"]["check_timeout_s"])["rc"]
-        if got != 0 and rc == 0:
-            rc = 1 if got is None else got
-    return {"ran": bool(cmds), "cmds": cmds, "rc": rc}
+        r = verify.run_check(c, top, limit)
+        if r["timed_out"]:
+            late.append(c)
+            say("quick check %s timed out after %d s: raise `project.check_timeout_s` if the check needs longer" % (c, limit))
+        if r["rc"] != 0 and rc == 0:
+            rc = 1 if r["rc"] is None else r["rc"]
+    out = {"ran": bool(cmds), "cmds": cmds, "rc": rc}
+    if late:
+        out.update(timed_out=late, limit=limit)
+    return out
 
 
 def _changed(top, base):
@@ -183,7 +192,7 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
     # (the marker makes it a no-op when no dependency file changed).
     if _setup_again(top, cfg["project"]["worktree_setup"], result, say):
         return 1, result
-    result["quick"] = _quick(top, cfg)
+    result["quick"] = _quick(top, cfg, say)
     result["ok"] = result["quick"]["rc"] == 0
     if final and result["ok"]:
         code, ev = verify.verify(top, part_dir, say)

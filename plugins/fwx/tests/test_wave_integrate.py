@@ -241,6 +241,7 @@ def case_integrate_quick(R, S):
     q = v.get("quick") or {}
     S.eq("quick red: ok false, merged anyway, ran with its exit", (v.get("ok"), v.get("merged"), q.get("ran"), q.get("rc"), q.get("cmds")),
          (False, [b1], True, 3, ["exit 3"]))
+    S.ok("quick red by its own exit: no timed_out, no limit in the result", "timed_out" not in q and "limit" not in q, "quick: %s" % q)
     sg = Scene(quick=["true"])
     b = sg.agent("one", [("src/a.py", "a1\n", None)])
     v = ok_json(S, "integrate, quick green", sg.integrate(R, b))
@@ -249,8 +250,15 @@ def case_integrate_quick(R, S):
     nap = "%s -c 'import time; time.sleep(2)'" % shlex.quote(sys.executable)
     st = Scene(quick=[nap], check_timeout_s=1)
     b = st.agent("one", [("src/a.py", "a1\n", None)])
-    v = ok_json(S, "integrate, quick over the project's limit", st.integrate(R, b), code=1)
+    r = st.integrate(R, b)
+    v = ok_json(S, "integrate, quick over the project's limit", r, code=1)
     S.eq("quick over check_timeout_s: ok false, rc 1 (the check was killed)", (v.get("ok"), (v.get("quick") or {}).get("rc")), (False, 1))
+    # PR 223, CodeRabbit: the result said rc 1 and nothing else, so a stopped check looked like a failing one. Report it as the gate does:
+    # which check timed out, the limit it had, and what to do about it.
+    # Seen red: FAIL: quick over check_timeout_s: the result names the check that timed out and its limit: got (None, None), want ([<nap>], 1)
+    q = v.get("quick") or {}
+    S.eq("quick over check_timeout_s: the result names the check that timed out and its limit", (q.get("timed_out"), q.get("limit")), ([nap], 1))
+    S.ok("quick over check_timeout_s: stderr says to raise project.check_timeout_s", "timed out after 1 s" in r.stderr and "raise `project.check_timeout_s`" in r.stderr, r.stderr)
     sc.stop()
     sg.stop()
     st.stop()
