@@ -32,6 +32,12 @@ the second shortened the limit of `run_check` through its default argument (sinc
   FAIL: reuse: a record of other checks on the same sha stands in for nothing: the checks run again: got (0, 4), want (0, 3)
   FAIL: timeout: a base check that outlives its limit is NOT RUN, exit 77, nothing on stdout: got (1, '{"status": "needs-owner", "reason": "base b80b4d9d is red: ...python3 -c \'import time; time.sleep(30)\'=none", ...')
 
+Red before a small plan could skip the post-mortem (08.3 T31; `case_small_plan`), on 6e4e54c, then with plan.md's `security_review` accepted
+and `prepare` still loading postmortem.md:
+  FAIL: small, no postmortem, security_review true: exit: got (2, 'fwx wave new: plan.md: security_review: unknown field'), want (0, '')
+  FAIL: small, no postmortem, security_review true: exit: got (2, 'fwx wave new: .../phases/01-alpha/postmortem.md: file: cannot be read (No such file or directory)'), want (0, '')
+Controls added (a normal plan may skip it; a missing key defaults to false; the planner's value ignored; a protected path does not force the review).
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
 be in the file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (188 checks). The first FAIL
 line of each, seen red:
@@ -90,7 +96,7 @@ class Scene:
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
 
     def __init__(self, tasks=None, recipe=("true",), base_ref="head", security=False, wt=True, config=None, size="normal",
-                 sub=False, settings=None, user=None, plan_extra=None):
+                 sub=False, settings=None, user=None, plan_extra=None, postmortem=True):
         self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\nconfig/forge.json\n",
                                       "src/a.py": "a\n", "src/b.py": "b\n"})
         cfg = {"schema": 1, "project": {"checks": list(recipe)}}
@@ -119,9 +125,9 @@ class Scene:
         post = front({"verdict": "ok", "security_review": security, "round": 1})
         helpers.write(self.phase, "context.md", "# context\n")
         helpers.write(self.phase, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
-        if sub:
+        if sub and postmortem:
             self.write_postmortem_as_the_step(plan, post)
-        else:
+        elif postmortem and not sub:
             helpers.write(self.part, "postmortem.md", post)
         self.name = os.path.basename(self.part)
 
@@ -220,9 +226,16 @@ def case_models(R, S):
     a = ok_args(S, "models", sc.prepare(R))
     m = a.get("models") or {}
     S.eq("models: executor by the task's size", m.get("executor"), {"T1": "haiku", "T2": "opus"})
-    S.eq("models: runner is executor small, verifier is small, reviewer and fixer by the plan's size",
-         (m.get("runner"), m.get("review_verifier"), m.get("reviewer"), m.get("fixer"), m.get("security_reviewer")),
-         ("haiku", "haiku", "opus", "opus", "fable"))
+    S.eq("models: runner is its own role (the seed's haiku; this config's executor small is haiku too)", m.get("runner"), "haiku")
+    S.eq("models: verifier is small, reviewer and fixer by the plan's size",
+         (m.get("review_verifier"), m.get("reviewer"), m.get("fixer"), m.get("security_reviewer")),
+         ("haiku", "opus", "opus", "fable"))
+    so = Scene(config={"models": {"executor": {"small": "opus", "normal": "opus", "big": "opus"}}})
+    S.eq("models: executor small opus and no runner row: the runner is still haiku",
+         (ok_args(S, "models, runner apart", so.prepare(R)).get("models") or {}).get("runner"), "haiku")
+    sr = Scene(config={"models": {"runner": {"small": "sonnet", "normal": "sonnet", "big": "sonnet"}}})
+    S.eq("models: a runner row the file sets is the runner's model, whatever the executor's",
+         (ok_args(S, "models, runner set", sr.prepare(R)).get("models") or {}).get("runner"), "sonnet")
     sd = Scene()
     m = ok_args(S, "models, defaults", sd.prepare(R)).get("models") or {}
     roles = ["runner", "fixer", "reviewer", "review_verifier", "security_reviewer"]
@@ -359,6 +372,38 @@ def case_security(R, S):
     sec = ok_args(S, "security flag", pl.prepare(R, "--security")).get("security") or {}
     S.eq("security: --security", sec.get("needed"), True)
     S.ok("security: why names the flag", "--security" in sec.get("why", ""), repr(sec))
+
+
+def case_small_plan(R, S):
+    """08.3 T31: a small plan may skip the post-mortem, and then the planner's `security_review` stands in for it."""
+    protected = {"project": {"checks": ["true"], "protected_paths": ["src/a.py"]}}
+    login = [task("T1", 1, ["app/home.py"])]
+    login_ignored = Scene(postmortem=False, size="small", tasks=login, plan_extra={"security_review": True})
+    sec = ok_args(S, "small, no postmortem, security_review true", login_ignored.prepare(R)).get("security") or {}
+    S.eq("small: security_review true on a file no glob protects", sec.get("needed"), True)
+    S.ok("small: why names plan.md", "plan.md" in sec.get("why", ""), repr(sec))
+    no = Scene(postmortem=False, size="small", plan_extra={"security_review": False})
+    sec = ok_args(S, "small, no postmortem, security_review false", no.prepare(R)).get("security") or {}
+    S.eq("small: security_review false on no protected path", (sec.get("needed"), sec.get("why")), (False, "not asked for"))
+    guarded = Scene(postmortem=False, size="small", config=protected, plan_extra={"security_review": False})
+    sec = ok_args(S, "small, security_review false, a task on a protected path", guarded.prepare(R)).get("security") or {}
+    S.eq("small: a protected path forces the review", sec.get("needed"), True)
+    S.ok("small: why names the protected path", "protected" in sec.get("why", "") and "src/a.py" in sec.get("why", ""), repr(sec))
+    for name in ("src/auth/login.py", ".github/workflows/x.yml"):  # the defaults decide and integrate use, with no project glob
+        d = Scene(postmortem=False, size="small", tasks=[task("T1", 1, [name])], plan_extra={"security_review": False})
+        sec = ok_args(S, "small, security_review false, default protected path %s" % name, d.prepare(R)).get("security") or {}
+        S.eq("small: a default protected path forces the review (%s)" % name, sec.get("needed"), True)
+        S.ok("small: why names the default protected path (%s)" % name, name in sec.get("why", ""), repr(sec))
+    keyless = Scene(postmortem=False, size="small")
+    refused(S, "small, no postmortem, no security_review", keyless, keyless.prepare(R), "security_review")
+    for size in ("normal", "big"):
+        n = Scene(postmortem=False, size=size, plan_extra={"security_review": False})
+        refused(S, "%s, no postmortem, with security_review" % size, n, n.prepare(R), "postmortem.md")
+    typed = Scene(postmortem=False, size="small", plan_extra={"security_review": "yes"})
+    refused(S, "small, security_review of another type", typed, typed.prepare(R), "security_review")
+    sub = Scene(postmortem=False, size="small", sub=True, plan_extra={"security_review": True})
+    sec = ok_args(S, "small subphase, no postmortem", sub.prepare(R)).get("security") or {}
+    S.eq("small subphase: security_review comes from the subphase's plan.md", sec.get("needed"), True)
 
 
 def case_done(R, S):
@@ -734,9 +779,114 @@ def case_base_timeout(R, S):
     S.ok("timeout: the message names the limit the project set (2 s), not a fixed one", code == 77 and "timed out after 2 s" in err, "exit %s: %s" % (code, err[:300]))
 
 
+def tool_dir(gh=None):
+    """A PATH of its own: git and the shells, and `gh` only when `gh` is given (the shell text of a fake: it logs its arguments
+    to `calls`, next to it, and then runs `gh`). Without one, no gh exists for the run, whatever this machine has installed."""
+    d = helpers.mkdtemp("fwx-tools-")
+    for tool in ("git", "bash", "sh"):
+        found = shutil.which(tool)
+        if found:
+            os.symlink(found, os.path.join(d, tool))
+    if gh is not None:
+        fake = os.path.join(d, "gh")
+        open(fake, "w").write('#!/bin/sh\necho "$@" >> %s\n%s\n' % (shlex.quote(os.path.join(d, "calls")), gh))
+        os.chmod(fake, 0o755)
+    return d
+
+
+def case_base_ci(R, S):
+    """A base sha that GitHub ran the CI workflow on, for a push to the default branch, with every such run completed and successful, is not
+    run again here. The fake `gh` answers what `--jq` would print, one tab-separated `path status conclusion` line per workflow run, and
+    only for the exact query wave new must send (`actions/runs?head_sha=<base>&event=push&branch=<default branch>`): any other query
+    makes it exit 1, so a return to a query that also sees pull request runs (they may skip suites) runs the checks here and fails the green case.
+    A CI answer writes no evidence row (no check ran here); anything but a lone green answer runs the checks as before.
+    Seen failing against the first version of this fix (the check-runs query, an ancestry test, a row with source ci; no origin/master in the toy):
+      FAIL: ci green: the checks are not run here: got (0, 1), want (0, 0)
+      FAIL: ci green: says CI passed: got 'fwx wave new: base checks: CI not used (there is no origin/master here); running the checks here\\n'
+      FAIL: ci green: no evidence row: got ['profile'], want []
+      FAIL: ci green: runs of other workflows are ignored: got (0, 1, False), want (0, 0, True)
+    The fall-back cases hold at that head too (it never trusted the push query); the controls in MUTANTS show them able to fail."""
+    url = "https://github.com/example/toy.git"
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    CI = ".github/workflows/ci.yml"
+
+    def scene(origin=url, branch="master"):
+        project = {"checks": [counting(runs)]}
+        if branch is not None:
+            project["default_branch"] = branch
+        sc = Scene(recipe=[counting(runs)], config={"project": project})
+        if origin:
+            helpers.git(sc.repo, "remote", "add", "origin", origin)
+        return sc
+
+    def stub(sc, lines, branch="master", tail=""):
+        """The fake gh: `lines` is what the push query prints ((path, status, conclusion) rows); any other query is an error."""
+        text = "".join('printf "%s\\t%s\\t%s\\n"' % row + "\n" for row in lines)
+        want = "repos/example/toy/actions/runs?head_sha=%s&event=push&branch=%s&per_page=100" % (sc.head(), branch)
+        return ('case "$*" in "api %s --jq "*) ;; *) echo "unexpected query: $*" >&2; exit 1;; esac\n' % want) + text + tail
+
+    def go(sc, tools):
+        before = ran(runs)
+        r = sc.prepare(R, env={"PATH": tools})
+        return r, ran(runs) - before
+
+    def asked(tools):
+        return open(os.path.join(tools, "calls")).read() if os.path.exists(os.path.join(tools, "calls")) else ""
+
+    def source_rows(sc):
+        return [json.loads(x["detail"])["source"] for x in evidence_rows(sc) if x.get("kind") == "evidence"]
+
+    ok = (CI, "completed", "success")
+    sc = scene()
+    base = sc.head()
+    tools = tool_dir(stub(sc, [ok]))
+    r, n = go(sc, tools)
+    S.eq("ci green: the checks are not run here", (r.returncode, n), (0, 0))
+    S.ok("ci green: says CI passed", "base checks: CI passed %s (%s on master, success)" % (base[:7], CI) in r.stderr, "got %r" % r.stderr)
+    S.eq("ci green: no evidence row", source_rows(sc), [])
+    calls = asked(tools)
+    S.ok("ci green: asked GitHub for this repository, this exact sha, push runs of the default branch",
+         calls.count("repos/example/toy/actions/runs?head_sha=%s&event=push&branch=master" % base) == 1, calls)
+    r2, n2 = go(sc, tools)
+    S.ok("ci green: the next wave new asks GitHub again and still runs and writes nothing",
+         (r2.returncode, n2, source_rows(sc), len(asked(tools).splitlines())) == (0, 0, [], 2), r2.stderr)
+    sc = scene()
+    r, n = go(sc, tool_dir(stub(sc, [("other", "x", "y"), ("%s" % ".github/workflows/checks.yml", "completed", "success"), ok])))
+    S.eq("ci green: runs of other workflows are ignored", (r.returncode, n, "CI passed" in r.stderr), (0, 0, True))
+    for label, lines, tail in [
+            ("only a pull request run (the push query finds nothing)", [], ""),
+            ("another workflow's push run is green", [(".github/workflows/checks.yml", "completed", "success")], ""),
+            ("the push run is in progress", [(CI, "in_progress", "")], ""),
+            ("the push run is queued", [(CI, "queued", "")], ""),
+            ("the push run failed", [(CI, "completed", "failure")], ""),
+            ("the push run was skipped", [(CI, "completed", "skipped")], ""),
+            ("one push run green, another failed", [ok, (CI, "completed", "failure")], ""),
+            ("one push run green, another in progress", [ok, (CI, "in_progress", "")], ""),
+            ("gh exits non-zero, even after printing success", [ok], "exit 1\n")]:
+        sc = scene()
+        r, n = go(sc, tool_dir(stub(sc, lines, tail=tail)))
+        S.eq("ci not used, %s: the checks run here" % label, (r.returncode, n), (0, 1))
+        S.ok("ci not used, %s: one line says why" % label, r.stderr.count("base checks: CI not used") == 1 and "CI passed" not in r.stderr, r.stderr)
+        S.eq("ci not used, %s: the row is the local one, not CI's" % label, source_rows(sc), ["profile"])
+    for label, origin, branch, gh in [
+            ("no default_branch", url, None, True),
+            ("an empty default_branch", url, "", True),
+            ("gh is not installed", url, "master", False),
+            ("the origin is not on GitHub", "https://git.example.org/o/r.git", "master", True),
+            ("there is no origin", None, "master", True)]:
+        sc = scene(origin, branch)
+        r, n = go(sc, tool_dir(stub(sc, [ok], branch=branch or "") if gh else None))
+        S.eq("ci not used, %s: the checks run here" % label, (r.returncode, n), (0, 1))
+        S.ok("ci not used, %s: one line says why" % label, r.stderr.count("base checks: CI not used") == 1 and "CI passed" not in r.stderr, r.stderr)
+        S.eq("ci not used, %s: the row is the local one, not CI's" % label, source_rows(sc), ["profile"])
+    sc = scene(branch="main")  # a green push run of another branch name than the project's default branch is not asked for, so it is not found
+    r, n = go(sc, tool_dir(stub(sc, [ok], branch="master")))
+    S.eq("ci not used, the query names the configured branch (main), the stub wants master: the checks run here", (r.returncode, n), (0, 1))
+
+
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
-         case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout]
+         case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
@@ -746,6 +896,18 @@ MUTANTS = [
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
     ("red base not run", case_red_base, P, "results = [verify.run_check(c, top, timeout) for c in recipe]", "results = []",
      "prepare exit 0 on a red base"),
+    ("CI: a run that is not completed and green is trusted", case_base_ci, P, "    if bad:\n", "    if False:\n",
+     "ci not used, the push run is in progress: the checks run here"),
+    ("CI: another workflow's run counts", case_base_ci, P, "for x in rows if x[0] == CI_WORKFLOW]", "for x in rows]",
+     "ci not used, another workflow's push run is green: the checks run here"),
+    ("CI: the query sees pull request runs", case_base_ci, P, "head_sha=%s&event=push&branch=%s", "head_sha=%s&branch=%s",
+     "ci green: the checks are not run here"),
+    ("CI: no default branch is trusted", case_base_ci, P, "    if not isinstance(branch, str) or not branch:\n", "    if False:\n",
+     "ci not used, no default_branch: the checks run here"),
+    ("CI: gh's exit status ignored", case_base_ci, P, "if r.returncode != 0:", "if False:",
+     "ci not used, gh exits non-zero, even after printing success: the checks run here"),
+    ("CI: a CI answer leaves an evidence row", case_base_ci, P, "    if _ci_green(top, base, say, cfg):\n",
+     "    if _ci_green(top, base, say, cfg):\n        _remember(part, base, recipe, folders, cfg)\n", "ci green: no evidence row"),
     ("record of another sha stands in", case_base_reuse, P, 'row.get("sha") != base or ', "",
      "reuse: stale record, a record of an older sha stands in for nothing"),
     ("sibling part's record not read", case_base_reuse_sibling, P, "    for d in own + siblings:\n", "    for d in own:\n",
@@ -774,8 +936,16 @@ MUTANTS = [
     ("checks from the checkout", case_worktree_checks, P, "return config.load(top)",
      'return dict(config.DEFAULTS, project=dict(config.DEFAULTS["project"], checks=[]))', "from a worktree: exit: got (2,"),
     ("subphase as a phase", case_subphase, P, "if _is_subphase(part) else part", "if False else part", "subphase: context.md is the parent's"),
-    ("postmortem from the subphase", case_subphase, P, 'post = _load(plan.load_postmortem, owner["postmortem"], "postmortem.md")',
-     'post = _load(plan.load_postmortem, paths["postmortem"], "postmortem.md")', "subphase: exit: got (2,"),
+    ("postmortem from the subphase", case_subphase, P, 'why = _security_why(data, owner["postmortem"], cfg)',
+     'why = _security_why(data, paths["postmortem"], cfg)', "subphase: exit: got (2,"),
+    ("a normal plan may skip the postmortem", case_small_plan, P, 'if data["size"]["tag"] != "small":', "if False:",
+     "normal, no postmortem, with security_review: exit"),
+    ("a missing security_review defaults to false", case_small_plan, P, 'if "security_review" not in data:',
+     'if data.setdefault("security_review", False) is None:', "small, no postmortem, no security_review: exit"),
+    ("the planner's security_review ignored", case_small_plan, P, 'why = ["plan.md security_review is true"] if data["security_review"] else []',
+     "why = []", "small: security_review true on a file no glob protects"),
+    ("a protected path does not force the review", case_small_plan, P, "        if hit:\n", "        if False:\n",
+     "small: a protected path forces the review"),
     ("from gate, the head as the base", case_from_gate, P, "base = _part_base(top, branch, name)", "base = verify.head(top)", "the base is where the part's first run started"),
     ("from gate runs the base", case_from_gate, P, "red = None if gating else _base_is_green(", "red = _base_is_green(", "from gate: exit"),
     ("from gate with a task not done", case_from_gate, P, "        if todo:\n", "        if False:\n", "from gate, a task not done"),

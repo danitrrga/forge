@@ -201,7 +201,7 @@ const runnerPrompt = (cmd) =>
   'You are the runner: you run one command and report it, nothing else. This is no task, so you have no brief and skip the base check and the scratch folder. ' +
   'Run the command below once with Bash and return its standard output exactly as printed and its exit code. Do not retry it, do not fix anything, do not run another command.\n' + cmd
 
-// The runner: an executor of size small with a {stdout, rc} schema. null if it never returned one.
+// The runner: an executor agent on the `runner` model (haiku in the seed) with a {stdout, rc} schema. null if it never returned one.
 async function exec(step, cmd, retry) {
   for (let i = 0; i < (retry ? 2 : 1); i++) {
     const r = await ask('executor', { label: 'executor:runner-' + step, model: A.models.runner, phase: cur, schema: RUN_SCHEMA, prompt: runnerPrompt(cmd) })
@@ -223,7 +223,7 @@ async function run(step, cmd, retry) {
 const reportTail = (unit) => '/.fwx-agent/' + RUN + '/' + unit + '/report.json'
 const scratchOrder = (unit) =>
   'REPORT: run `fwx scratch new ' + RUN + ' ' + unit + '`: it prints a folder of your own worktree that git ignores. Your TMPDIR is tmp/ inside that folder; ' +
-  'write the JSON of your standing orders to report.json directly in that folder, not in tmp/ (the Write tool is enough), and reply with the one line they give, naming that report.json by its full path.'
+  'write the JSON of your standing orders to report.json directly in that folder, not in tmp/ (the file-write tool is enough), and reply with the one line they give, naming that report.json by its full path.'
 async function readFile(unit, path) {
   const p = String(path).replace(/\\/g, '/')
   if (!p.endsWith(reportTail(unit)) || /(^|\/)\.\.(\/|$)/.test(p)) return null

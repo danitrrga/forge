@@ -448,6 +448,22 @@ def check_breaker_links(s):
     s.ok("control: a breaker paragraph without the link rule fails the check", not says("Use every control of your screens like someone in a hurry or with odd data."), "says() passed on the old paragraph")
 
 
+def check_hurried_commands(s):
+    """The breaker's Hurried journey (double click, go back and forward) and the verifier, which repeats the walker's steps, can only run it
+    if both texts list the commands: `dblclick`, `forward`, and `go-forward` for `pw`. Seen red on the shortened lists of part 08.2
+    (finding r1-F2), which had dropped them:
+      FAIL: ui-walker.md lists the commands of the Hurried journey (dblclick, forward, go-forward): missing ['dblclick @e3', 'forward', 'go-forward']
+    Negative control: the same check on a list without them must name them."""
+    want = ("dblclick @e3", "`forward`", "go-forward")
+
+    def missing(text):
+        return [w for w in want if w not in text]
+    for name in ("ui-walker.md", "ui-verifier.md"):
+        with open(os.path.join(ROOT, "agents", name), encoding="utf-8") as f:
+            s.eq("%s lists the commands of the Hurried journey (dblclick, forward, go-forward): missing" % name, missing(f.read()), [])
+    s.eq("control: a command list without them is named", missing("`click @e3`, `back`, `reload`; `pw`: `go-back`"), list(want))
+
+
 def check_down_fails(script, s):
     rec, err = go(script, answers_over={"executor:runner-down": R(DOWN, 1)})
     rec = finish(s, "down fails", rec, err)
@@ -1013,6 +1029,7 @@ def check_all(script, s):
     check_screens_login(script, s)
     check_critic_context(script, s)
     check_breaker_links(s)
+    check_hurried_commands(s)
     check_verify(script, s)
     check_recheck(script, s)
     check_args(script, s)
