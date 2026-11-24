@@ -13,7 +13,6 @@ removed the checks that pinned wording (the steps' sentences, the sub-steps of s
 skills' "another model", the shared marker `Noticed:`) together with their red logs.
 
 Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the first FAIL line printed):
-  skills/session/SKILL.md, "fwx budget" -> "fwx budgett":  FAIL: fwx budgett exists -> not in `fwx --help`
   references/part-report.md, "fwx report lint" -> "fwx report check":  FAIL: part-report.md saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch
   references/ui-review.md, "details.unverified" -> "details.unverfied":  FAIL: references/ui-review.md cites only fields the workflow returns -> not returned: ['unverfied']
   references/ui-review.md, "`support` `approved`" -> "`support` `approvd`":  FAIL: ui-review.md names the support of `not_defect` and `redo`, each a value `fwx decision new` accepts -> ui-review.md {'not_defect': 'approvd', 'redo': 'chosen'}, SUPPORT ('chosen', 'approved', 'unexamined', 'agent-assumption')

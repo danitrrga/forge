@@ -15,9 +15,8 @@ A row is (new name, old name, module, handler arguments, help):
 
 ROWS = [
     # one word
-    ("budget", None, "budget", [], "the session's context and weekly quota budget: [--json] [--transcript PATH]"),
     ("model", None, "model", [], "the model for a role and size: <role> <size>"),
-    ("statusline", None, "statusline", [], "the status-bar line, saving the session's budget"),
+    ("statusline", None, "statusline", [], "the status-bar line"),
     ("rounds", None, "rounds", [], "count a job's implement-verify rounds against the cap: <dir> [--use MOTIVE | --reset MOTIVE]"),
     ("stage", None, "stage", [], "change the stage of a phase or a job, only where data/stages.json allows it: <dir> <stage> [--why TEXT]"),
     ("decide", None, "decide", [], "the merge decision for the facts of a PR: --facts FILE"),

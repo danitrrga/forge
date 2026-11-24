@@ -24,7 +24,6 @@ Controls, each seen red on a copy of the repo with statusline.py changed in one 
       FAIL: cwd outside a git repository: exit code: got 1, want 0
       FAIL: cwd outside a git repository: no traceback or stderr: stderr: '... raise ConfigError("not in a git repos...
       FAIL: a path-like session id: exit code: got 1, want 0
-      FAIL: sessions folder without write permission: exit code: got 1, want 0
   - `time.sleep(0.15)` at the top of main, FWX_TIMING=1:
       timing: median 196.6 ms of 10 (min 195.3, max 209.4)
       FAIL: timing: median of 10 runs under 100 ms: median 196.6 ms

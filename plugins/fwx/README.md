@@ -10,8 +10,7 @@ moved into forge with its history, so forge's pull requests review it; forge's R
 ```
 python3 bin/fwx help    # lists the commands
 python3 bin/fwx model executor normal    # the model for a role and size
-python3 bin/fwx statusline    # the status-bar line, and saves the session budget
-python3 bin/fwx budget    # context and quota left
+python3 bin/fwx statusline    # the status-bar line
 python3 bin/fwx phase new <slug>    # the next phase folder, the session bound to it; `phase list` shows them, `phase remove <dir>` deletes one whose discuss was cancelled; `session attach <phase dir>` binds the session to one
 python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
 python3 bin/fwx milestone new [vN]    # the next milestone of a scope
