@@ -160,6 +160,9 @@ PROJECT_FIELDS = {
     # Shell commands (e.g. ["npm ci"]) the framework runs inside each worktree it makes, before any check runs there: a
     # fresh worktree has none of the project's installed dependencies. `fwx wave setup` runs them; each must name something.
     "worktree_setup": (list, str),
+    # The seconds a check of the project may run before fwx stops it (fwx's own default is 1200): a project whose suite needs longer sets it.
+    # A positive whole number of at most 7 days (fwx's MAX_CHECK_TIMEOUT_S); project_error rejects a bool, which is an int in Python.
+    "check_timeout_s": int,
     # The profiles a session of the project can run with (forge/profiles.py): {"default": label, "offered": {name: row}}. Its shape
     # and its names are checked by profiles.shape_error, asked from project_error below.
     "profiles": dict,
@@ -177,7 +180,7 @@ UI_IMAGE_KEYS = (("dockerfile", str, True, False), ("expect", str, True, False))
 # The values a string field may hold, checked after its type. Kept beside PROJECT_FIELDS and read only for a field
 # that has a row there, so a field without its row is not checked at all.
 PROJECT_CHOICES = {"factory": ("off", "trial")}
-_TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object", float: "positive number"}
+_TYPE_NAMES = {str: "string", bool: "boolean", list: "list", dict: "JSON object", float: "positive number", int: "positive whole number"}
 
 
 def worktree_guard_on(prof):
@@ -258,6 +261,8 @@ def project_error(prof):
         return "linear_project is empty"
     if any(not c.strip() for c in prof.get("worktree_setup", ())):
         return "worktree_setup has an empty command"
+    if "check_timeout_s" in prof and (isinstance(prof["check_timeout_s"], bool) or not 0 < prof["check_timeout_s"] <= 7 * 24 * 3600):
+        return "check_timeout_s is not a positive whole number of seconds, at most 604800 (7 days)"
     for field, keys in (("app_run", APP_RUN_KEYS), ("ui_image", UI_IMAGE_KEYS)):
         if field in prof:
             why = _object_error(field, prof[field], keys)
