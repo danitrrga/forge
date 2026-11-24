@@ -610,6 +610,65 @@ def case_summary(R, S):
     S.eq("summary, a run that only reverted: the evidence of the head decides, gate got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), r.returncode), ("pass", 0))
 
 
+def plant(sc, step, args, result, code=0):
+    """A call recorded in the run's files, as `wave.py` `_record` writes it: the calls of the other commands (`report`, `findings`, `fix-round`)
+    that `summary` reads, with the results those commands print (their own tests pin those shapes)."""
+    d = os.path.join(sc.common, "fwx", "runs", sc.run)
+    os.makedirs(d, exist_ok=True)
+    n = 1 + max([int(f.split("-")[0]) for f in os.listdir(d)], default=0)
+    with open(os.path.join(d, "%d-%s.json" % (n, step)), "w", encoding="utf-8") as f:
+        json.dump({"step": step, "exit": code, "args": args, "result": result}, f)
+
+
+def case_summary_report(R, S):
+    """`fwx wave --run R` carries what the part report reads, from the run's own files: execute.js returned it in `details` (09.5 T54)."""
+    def item(where, issue, size="small"):
+        return {"where": where, "what": "w " + where, "fix": "f " + where, "size": size, "issue": issue}
+    unfiled, filed, large = item("src/x.py:1", None), item("src/y.py:2", "DTC-1"), item("src/z.py:3", None, "large")
+    sc = Scene()
+    fixes = [{"id": "r1-F1", "file": "src/a.py", "line": 1, "claim": "c1", "evidence": "e1", "severity": "high"}]
+    consider = {"id": "r1-F2", "file": "src/b.py", "line": 2, "claim": "c2", "severity": "low"}
+    note, dismissed = {"id": "r1-F3", "claim": "c3"}, {"id": "r1-F4", "reason": "not a defect"}
+    crit = [{"id": "C1", "met": "yes", "evidence": "e"}, {"id": "C2", "met": "unproven", "evidence": "e"}]
+    plant(sc, "report", {"unit": "T1"}, {"next": "merge", "branch": "b1", "outside": [unfiled, filed]})
+    plant(sc, "report", {"unit": "T2"}, {"next": "retry", "branch": None, "outside": [item("src/gone.py:9", None)]})
+    plant(sc, "report", {"unit": "T3"}, {"next": "stop", "why": "executor did not return: T3", "gap": "executor did not return: T3", "outside": []})
+    plant(sc, "findings", {"run": sc.run}, {"next": "relaunch", "reported": 0, "criteria": [], "fix": [], "consider": [], "note": [], "dismissed": [], "file": []})
+    plant(sc, "findings", {"run": sc.run}, {"next": "verify", "reported": 5, "criteria": [{"id": "C1", "met": "no", "evidence": "first"}],
+                                            "fix": [], "consider": [], "note": [], "dismissed": [], "file": []})
+    plant(sc, "findings", {"run": sc.run}, {"next": "fix", "reported": 5, "criteria": crit, "fix": fixes, "consider": [consider], "note": [note],
+                                            "dismissed": [dismissed], "file": [large]})
+    plant(sc, "findings", {"run": sc.run}, {"next": "stop", "gap": "reviewer did not return", "reported": 0, "criteria": [], "fix": [], "consider": [],
+                                            "note": [], "dismissed": [], "file": []})
+    plant(sc, "fix-round", {"why": "gate red"}, {"ok": True, "spent": True, "rounds": "1/3", "why": "gate red"})
+    plant(sc, "fix-round", {"why": "again"}, {"ok": False, "spent": False, "rounds": "3/3", "why": "again"}, 1)
+    plant(sc, "integrate", {"findings": ["r2-F1"], "final": False}, {"ok": False, "merged": []}, 1)
+    b = sc.agent("one", [("src/a.py", "a1\n", ["r1-F1"])])
+    tip = helpers.git(sc.repo, "rev-parse", "refs/heads/" + b).strip()
+    ok_json(S, "summary report, the merge of the fix", sc.integrate(R, b, extra=("--findings", "r1-F1", "--final")))
+    r = summ(R, sc)
+    v = J(r) or {}
+    S.eq("summary report: gate and exit are unchanged", (v.get("gate"), r.returncode), ("pass", 0))
+    want = {"findings": {"reported": 5, "fix": 1, "consider": [consider], "note": [note], "dismissed": [dismissed],
+                         "fixed": [{"id": "r1-F1", "commit": tip, "severity": "high"}], "outside": [large]},
+            "criteria": crit, "outside": [unfiled], "tried": ["1/3: gate red"], "gaps": ["executor did not return: T3", "reviewer did not return"],
+            "protected": []}
+    for k, w in want.items():
+        S.ok("fwx wave --run R has %s -> %s" % (k, "present" if k in v else "missing"), k in v)
+        S.eq("fwx wave --run R: %s" % k, v.get(k), w)
+    # a finding whose merge was refused is not fixed, and a run with no calls of those commands has the groups empty
+    S.eq("summary report, a run of no reports and no review: the groups are empty",
+         [(J(summ(R, Scene(), "--part-dir", Scene().part)) or {}).get(k) for k in ("outside", "tried", "gaps", "criteria", "protected")], [[], [], [], [], []])
+    sp = Scene(protected=["src/a.py"])
+    b = sp.agent("one", [("src/a.py", "a1\n", None)])
+    ok_json(S, "summary report, a final merge that touches a protected path", sp.integrate(R, b, extra=("--final",)))
+    S.eq("summary report: protected is the last final merge's", (J(summ(R, sp)) or {}).get("protected"), ["src/a.py"])
+    S.eq("summary report, a run with a merge and no review: fixed is empty",
+         ((J(summ(R, sp)) or {}).get("findings") or {}).get("fixed"), [])
+    sc.stop()
+    sp.stop()
+
+
 def case_step_files(R, S):
     sc = Scene()
     b = sc.agent("one", [("src/a.py", "a1\n", ["F1"])])
@@ -778,7 +837,7 @@ def case_next_rules(R, S):
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
          case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
-         case_step_files, case_next, case_next_rules]
+         case_summary_report, case_step_files, case_next, case_next_rules]
 
 I = "lib/fwx/execute/integrate.py"
 C = "lib/fwx/execute/cleanup.py"
