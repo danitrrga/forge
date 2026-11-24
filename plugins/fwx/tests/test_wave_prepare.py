@@ -220,9 +220,16 @@ def case_models(R, S):
     a = ok_args(S, "models", sc.prepare(R))
     m = a.get("models") or {}
     S.eq("models: executor by the task's size", m.get("executor"), {"T1": "haiku", "T2": "opus"})
-    S.eq("models: runner is executor small, verifier is small, reviewer and fixer by the plan's size",
-         (m.get("runner"), m.get("review_verifier"), m.get("reviewer"), m.get("fixer"), m.get("security_reviewer")),
-         ("haiku", "haiku", "opus", "opus", "fable"))
+    S.eq("models: runner is its own role (the seed's haiku; this config's executor small is haiku too)", m.get("runner"), "haiku")
+    S.eq("models: verifier is small, reviewer and fixer by the plan's size",
+         (m.get("review_verifier"), m.get("reviewer"), m.get("fixer"), m.get("security_reviewer")),
+         ("haiku", "opus", "opus", "fable"))
+    so = Scene(config={"models": {"executor": {"small": "opus", "normal": "opus", "big": "opus"}}})
+    S.eq("models: executor small opus and no runner row: the runner is still haiku",
+         (ok_args(S, "models, runner apart", so.prepare(R)).get("models") or {}).get("runner"), "haiku")
+    sr = Scene(config={"models": {"runner": {"small": "sonnet", "normal": "sonnet", "big": "sonnet"}}})
+    S.eq("models: a runner row the file sets is the runner's model, whatever the executor's",
+         (ok_args(S, "models, runner set", sr.prepare(R)).get("models") or {}).get("runner"), "sonnet")
     sd = Scene()
     m = ok_args(S, "models, defaults", sd.prepare(R)).get("models") or {}
     roles = ["runner", "fixer", "reviewer", "review_verifier", "security_reviewer"]

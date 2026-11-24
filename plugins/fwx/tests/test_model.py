@@ -49,6 +49,16 @@ check("executor small from a worktree subfolder", sub, ["executor", "small"], 0,
 check("a size the file lacks gives the seed", main, ["executor", "big"], 0, "sonnet\n")
 check("a role the file lacks gives the seed", main, ["planner", "normal"], 0, "opus\n")
 
+check("runner small: the seed gives haiku", main, ["runner", "small"], 0, "haiku\n")
+check("runner big: the seed gives haiku", main, ["runner", "big"], 0, "haiku\n")
+opus_exec = helpers.toy_repo()
+helpers.write(opus_exec, ".claude/fwx.json", '{"schema": 1, "models": {"executor": {"small": "opus"}}}\n')
+check("runner small with executor small opus and no runner row: still haiku", opus_exec, ["runner", "small"], 0, "haiku\n")
+own = helpers.toy_repo()
+helpers.write(own, ".claude/fwx.json", '{"schema": 1, "models": {"runner": {"small": "sonnet"}}}\n')
+check("runner small the file sets: that value", own, ["runner", "small"], 0, "sonnet\n")
+check("runner normal the file leaves out: the seed", own, ["runner", "normal"], 0, "haiku\n")
+
 check("nosuch small", main, ["nosuch", "small"], 2, "", ("nosuch", "executor", "planner", "vision"))
 check("executor huge", main, ["executor", "huge"], 2, "", ("huge", "small", "normal", "big"))
 check("without arguments", main, [], 2, "", ("usage",))
