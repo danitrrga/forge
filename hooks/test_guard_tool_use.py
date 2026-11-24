@@ -1841,6 +1841,14 @@ ORCA_CASES = [
                       "orca orchestration send --to orca_session_id:ea71", "orca agent read ea71",
                       "ORCA_NEW_TOPIC='<why it is unrelated>'", "instead"],
          world={"path:" + REPO: [orca_chat("antigravity", "ea71")]}, asked=["path:" + REPO]),
+    # r1-S1: the title is shown as `orca agent list --json` gives it, so a long or multi-line one made the refusal noisy. Red before the
+    # clip: "orca 'orca agent launch --agent gemini': wanted 'orca_session_id:g7 (first line second line xxxxxxxx...\u2026)' in the
+    # message" (the title came through with its newlines and all 200 x); the session id stays whole.
+    dict(label="a long multi-line title is collapsed and cut to 80 characters, the session id intact", cmd="orca agent launch --agent gemini",
+         want=2, why=["orca_session_id:g7 (first line second line " + "x" * (80 - len("first line second line ") - 1) + "\u2026)",
+                      "orca orchestration send --to orca_session_id:g7 ", "orca agent read g7"],
+         absent=["\n\nsecond", "x" * 80, "line two\n"],
+         world={"path:" + REPO: [orca_chat("gemini", "g7", "first line\n\n  second line \n" + "x" * 200)]}),
     dict(label="--agent=VALUE and --json", cmd="orca agent launch --agent=gemini --json", want=2, why=["orca_session_id:g1"],
          world={"path:" + REPO: [orca_chat("gemini", "g1")]}),
     dict(label="agent name in another case", cmd="orca agent launch --agent Gemini", want=2, why=["orca_session_id:g1"],
@@ -1927,6 +1935,9 @@ def orca_row(c):
     for text in c.get("why", []):
         if text.lower() not in err.lower():
             return "%swanted %r in the message, got %r" % (who, text, err.strip()[:200])
+    for text in c.get("absent", []):
+        if text in err:
+            return "%swanted %r absent from the message, got %r" % (who, text, err.strip()[:300])
     if rc == 2:
         msg = bad_message(err)  # a refusal also owes the right selector sequence and the time bound below
         if msg:
