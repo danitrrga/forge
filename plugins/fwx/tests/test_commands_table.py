@@ -18,6 +18,10 @@ Seen red with the row `wave report` (09.5 T51) in this table and not in lib/fwx/
   FAIL: wave report: routes to wave ['report', 'A', 'B']: got 'STUB wave ["summary", "report", "A", "B"]', want 'STUB wave ["report", "A", "B"]'
   FAIL: --help lists `fwx wave report`: got False, want True
 
+Seen red with the rows `wave review` and `wave findings` (09.5 T53) in this table and not in lib/fwx/routes.py:
+  FAIL: wave findings: routes to wave ['findings', 'A', 'B']: got 'STUB wave ["summary", "findings", "A", "B"]', want 'STUB wave ["findings", "A", "B"]'
+  FAIL: --help lists `fwx wave review`: got False, want True
+
 Controls, each a copy of lib/fwx/routes.py changed in one place, seen red on the check named (the scenario is run on the copy):
   - the row `phase new` removed:
       FAIL: phase new: routes to state ['new-phase', 'A', 'B']: got ['fwx phase: unknown verb: new'], want 'STUB state ["new-phase", "A", "B"]'
@@ -66,7 +70,7 @@ DECIDED = [
     ("project state", None, "project_state", []),
     ("wave new", "wave prepare", "wave", ["prepare"]), ("base", "wave check-base", "wave", ["check-base"]),
     ("scratch new", "wave scratch", "wave", ["scratch"]), ("wave merge", "wave integrate", "wave", ["integrate"]),
-    ("wave report", None, "wave", ["report"]), ("wave fix", "wave fix-round", "wave", ["fix-round"]), ("wave revert", None, "wave", ["revert"]),
+    ("wave report", None, "wave", ["report"]), ("wave review", None, "wave", ["review"]), ("wave findings", None, "wave", ["findings"]), ("wave fix", "wave fix-round", "wave", ["fix-round"]), ("wave revert", None, "wave", ["revert"]),
     ("wave remove", "wave cleanup", "wave", ["cleanup"]), ("wave", "wave summary", "wave", ["summary"]),
     ("walk start", "walk up", "walk", ["up"]), ("walk stop", "walk down", "walk", ["down"]),
     ("walk stop --orphans", "walk sweep", "walk", ["sweep"]), ("walk ab", None, "walk", ["ab"]), ("walk pw", None, "walk", ["pw"]),
@@ -220,7 +224,7 @@ def scenario(work):
     r = run(work, "wave", "--help")
     verbs = {re.split(r"\s{2,}", line.strip()[4:], maxsplit=1)[0] for line in r.stdout.splitlines() if line.startswith("  fwx ")}
     check("`fwx wave --help` lists the verbs of wave and no other object",
-          verbs, {"wave", "wave new", "wave merge", "wave fix", "wave revert", "wave remove", "wave setup", "wave report"})
+          verbs, {"wave", "wave new", "wave merge", "wave fix", "wave revert", "wave remove", "wave setup", "wave report", "wave review", "wave findings"})
     return out
 
 
