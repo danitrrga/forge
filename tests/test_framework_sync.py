@@ -857,6 +857,7 @@ for label, field, value in (("checks_quick list", "checks_quick", ["pnpm tsc", "
                             ("worktree_setup list", "worktree_setup", ["npm ci", "make deps"]),
                             ("worktree_setup empty", "worktree_setup", []),
                             ("check_timeout_s 2700", "check_timeout_s", 2700),
+                            ("check_timeout_s 604800 (7 days)", "check_timeout_s", 604800),
                             ("ui_image in a subfolder", "ui_image", dict(GOOD_IMG, dockerfile="ui/Dockerfile"))):
     why = lib.project_error({"project": "x", "project_path": "/x", field: value})
     check("project_error accepts %s -- %s" % (label, why), why is None, why)
@@ -894,6 +895,10 @@ for label, field, value, word in (
         ("check_timeout_s \"2700\"", "check_timeout_s", "2700", "check_timeout_s"),
         ("check_timeout_s 12.5", "check_timeout_s", 12.5, "check_timeout_s"),
         ("check_timeout_s true", "check_timeout_s", True, "check_timeout_s"),
+        # Above 7 days: 10**400 passed, then fwx's run_check raised OverflowError after it had started the child (PR 223 review).
+        # Red before the bound: FAIL project_error rejects check_timeout_s 604801, naming check_timeout_s -- None -- None
+        ("check_timeout_s 604801", "check_timeout_s", 604801, "check_timeout_s"),
+        ("check_timeout_s 10**400", "check_timeout_s", 10 ** 400, "check_timeout_s"),
         ("ui_image as a string", "ui_image", "Dockerfile", "ui_image"),
         ("ui_image without dockerfile", "ui_image", {"expect": "Sign in"}, "dockerfile"),
         ("ui_image without expect", "ui_image", {"dockerfile": "Dockerfile.ui"}, "expect"),

@@ -23,6 +23,7 @@ ROLES = ("orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem
          "vision")
 SIZES = ("small", "normal", "big")
 ALIASES = ("sonnet", "opus", "haiku", "fable")  # a model is one of these, never a full id
+MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; a bigger number overflows the wait on the child
 
 
 def _seed():
@@ -167,8 +168,9 @@ def _check_timeout(cfg, path):
     if not isinstance(project, dict):
         raise _bad(path, "project is %r, not a table, so project.check_timeout_s cannot be read" % (project,))
     v = project.get("check_timeout_s")
-    if not _count(v):
-        raise _bad(path, "project.check_timeout_s is %r, not a positive whole number of seconds" % (v,))
+    if not _count(v) or v > MAX_CHECK_TIMEOUT_S:
+        raise _bad(path, "project.check_timeout_s is %r, not a positive whole number of seconds (at most %d, 7 days)"
+                   % (v if len(repr(v)) < 40 else "a number of %d digits" % len(str(v)), MAX_CHECK_TIMEOUT_S))
 
 
 def _check_walk(cfg, path):
