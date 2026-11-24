@@ -115,7 +115,7 @@ def _quick(top, cfg):
     cmds = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
     rc = 0
     for c in cmds:
-        got = verify.run_check(c, top)["rc"]
+        got = verify.run_check(c, top, cfg["project"]["check_timeout_s"])["rc"]
         if got != 0 and rc == 0:
             rc = 1 if got is None else got
     return {"ran": bool(cmds), "cmds": cmds, "rc": rc}

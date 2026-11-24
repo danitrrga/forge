@@ -41,6 +41,7 @@ The first FAIL line of each mutant, seen red:
 """
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -76,10 +77,12 @@ class Scene:
     """A main checkout on master, the integration checkout (a linked worktree on `phase`), the part's folder in the main
     checkout's `.fwx/`, and fake executors: a linked worktree each, on `worktree-agent-<name>`, born from `phase`."""
 
-    def __init__(self, quick=(), protected=(), checks=("true",)):
+    def __init__(self, quick=(), protected=(), checks=("true",), check_timeout_s=None):
         self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\n", "src/a.py": "a\n", "src/b.py": "b\n"})
-        helpers.write(self.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {
-            "checks": list(checks), "checks_quick": list(quick), "protected_paths": list(protected)}}))
+        project = {"checks": list(checks), "checks_quick": list(quick), "protected_paths": list(protected)}
+        if check_timeout_s:
+            project["check_timeout_s"] = check_timeout_s
+        helpers.write(self.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": project}))
         self.cwd = helpers.add_worktree(self.repo, "phase")
         self.part = os.path.join(self.repo, ".fwx", "milestones", "v1", "phases", "01-alpha")
         os.makedirs(self.part)
@@ -242,8 +245,15 @@ def case_integrate_quick(R, S):
     b = sg.agent("one", [("src/a.py", "a1\n", None)])
     v = ok_json(S, "integrate, quick green", sg.integrate(R, b))
     S.eq("quick green: ok true, ran with exit 0", (v.get("ok"), v.get("quick", {}).get("ran"), v.get("quick", {}).get("rc")), (True, True, 0))
+    # DTC-113: the quick check runs under the project's own limit. A 2 s check with `check_timeout_s` 1 is stopped, which is not a pass.
+    nap = "%s -c 'import time; time.sleep(2)'" % shlex.quote(sys.executable)
+    st = Scene(quick=[nap], check_timeout_s=1)
+    b = st.agent("one", [("src/a.py", "a1\n", None)])
+    v = ok_json(S, "integrate, quick over the project's limit", st.integrate(R, b), code=1)
+    S.eq("quick over check_timeout_s: ok false, rc 1 (the check was killed)", (v.get("ok"), (v.get("quick") or {}).get("rc")), (False, 1))
     sc.stop()
     sg.stop()
+    st.stop()
 
 
 def case_integrate_dirty(R, S):

@@ -7,7 +7,7 @@ its own checkout): the commit is its HEAD, the tree is clean when `git status` s
 documents the checks do not prove; the row this writes lives there, so counting it would make every second run dirty),
 and the checks are the effective recipe of `evidence.plan_checks`. A dirty tree, an empty recipe or a folder outside a
 repository run nothing and write nothing (exit 2). Every check runs, even after a red one, each with a time limit
-(`CHECK_TIMEOUT_S`, 20 minutes) and its output, stdout and stderr together, kept in its last `KEEP_CHARS`. HEAD is
+(`project.check_timeout_s`, default `CHECK_TIMEOUT_S`, 20 minutes) and its output, stdout and stderr together, kept in its last `KEEP_CHARS`. HEAD is
 read again at the end: a HEAD that moved proves neither commit, so the row says `clean: false` and the run exits 2.
 
 The row is written through `state.append_audit`: the sha, `rc` 0 or 1, and as its detail the JSON of the evidence,
@@ -39,7 +39,7 @@ import time
 from fwx import config, state
 from fwx.core import evidence
 
-CHECK_TIMEOUT_S = 20 * 60
+CHECK_TIMEOUT_S = config.DEFAULTS["project"]["check_timeout_s"]  # the default; a project sets its own: project.check_timeout_s
 KEEP_CHARS = 64000
 TAIL_LINES = 40
 TAIL_CHARS = 4000
@@ -228,14 +228,16 @@ def _destination(root, dir):
     return state.resolve(root)["phase_dir"]
 
 
-def verify(cwd, dir=None, say=lambda line: None, timeout=CHECK_TIMEOUT_S, environ=None):
+def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
     """Run the gate. Returns `(code, ev)`: code 0 green, 1 a red check, 2 it could not prove the commit; `ev` the evidence
     dict (None when nothing ran). `say` receives each progress line. State and config problems raise
-    state.StateError or config.ConfigError before anything runs."""
+    state.StateError or config.ConfigError before anything runs. `timeout` is each check's limit in seconds, the
+    project's `check_timeout_s` when None."""
     root = toplevel(cwd)
     sha = head(root)
     where = _destination(root, dir)
     cfg = config.load(root)
+    timeout = timeout or cfg["project"]["check_timeout_s"]
     recipe = evidence.plan_checks(cfg["project"]["checks"], root)
     if is_dirty(root):
         say("the tree has uncommitted changes, so this run could not prove the commit: commit first and run again")
