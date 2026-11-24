@@ -303,6 +303,10 @@ def main():
         check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
         check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
     check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
+    # the runner has its own model role (haiku in the seed): step 6 reads it from `fwx model runner small`, not from the executor's.
+    # Seen red on d348f8d: FAIL: SKILL.md step 6 reads models.runner from `fwx model runner small` -> missing
+    s6 = step(texts["SKILL.md"], 6)
+    check("SKILL.md step 6 reads models.runner from `fwx model runner small`", "`models.runner` from `fwx model runner small`" in s6 and "models.runner` from `fwx model executor" not in s6, "missing")
 
     # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when.
     # Seen red on 239aa07 (step 8 and the playbook did not mention it):

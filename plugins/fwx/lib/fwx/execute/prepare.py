@@ -440,7 +440,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         "part_dir": part, "phase_dir": phase, "checkout": top, "branch": branch, "base": base, "isolation": "native",
         "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                   "plan": str(paths["plan"]), "postmortem": str(owner["postmortem"]), "config": os.path.join(main, config.FILE)},
-        "models": {"runner": _model(cfg, "executor", "small"),
+        "models": {"runner": _model(cfg, "runner", "small"),
                    "executor": {t["id"]: _model(cfg, "executor", t["size"]) for t in tasks},
                    "fixer": _model(cfg, "executor", size), "reviewer": _model(cfg, "reviewer", size),
                    "review_verifier": _model(cfg, "review-verifier", "small"),

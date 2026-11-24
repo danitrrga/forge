@@ -149,6 +149,11 @@
         "small": "sonnet",
         "normal": "sonnet",
         "big": "sonnet"
+      },
+      "runner": {
+        "small": "haiku",
+        "normal": "haiku",
+        "big": "haiku"
       }
     },
     "limits": {
