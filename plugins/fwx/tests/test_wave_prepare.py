@@ -644,7 +644,7 @@ def case_base_reuse(R, S):
 def case_base_reuse_sibling(R, S):
     """A phase with several part folders on one base: a green record in a sibling part's audit.tsv stands in for the run, as one in the
     part's own does (DTC-117). Seen failing before the fix: "sibling: a green record in another part of the phase is reused, no check
-    runs: got (0, 1), want (0, 0)" (the part ran the checks again). A record of another sha in a sibling stands in for nothing."""
+    runs: got (0, 2), want (0, 1)" (the part ran the checks again). A record of another sha in a sibling stands in for nothing."""
     runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
     sc = Scene(recipe=[counting(runs)], sub=True)
     other = os.path.join(sc.phase, "03.2-gamma")
@@ -714,6 +714,8 @@ MUTANTS = [
      "prepare exit 0 on a red base"),
     ("record of another sha stands in", case_base_reuse, P, 'row.get("sha") != base or ', "",
      "reuse: stale record, a record of an older sha stands in for nothing"),
+    ("sibling part's record not read", case_base_reuse_sibling, P, "for d in {*folders, *(str(s) for f in folders for s in state.subphases(f))}:",
+     "for d in folders:", "sibling: a green record in another part of the phase is reused"),
     ("record of other checks stands in", case_base_reuse, P, "if got == [(c, 0) for c in recipe]:", "if True:",
      "reuse: a record of other checks on the same sha stands in for nothing"),
     ("green base not recorded", case_base_reuse, P, "        _remember(part, base, recipe, {part, phase}, cfg)\n", "        pass\n",

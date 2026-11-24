@@ -242,9 +242,10 @@ def _cap(cfg, unattended):
 
 
 def _record(base, recipe, folders):
-    """The green `evidence` row in the audit of one of `folders` that stands in for a run of `recipe` at `base`: the same sha, rc 0,
-    and the commands of its evidence exactly the recipe, each with exit 0 (a row of other checks proves nothing about these). None if none."""
-    for d in folders:
+    """The green `evidence` row in the audit of one of `folders`, or of a part folder inside one (a phase's sibling parts share its base),
+    that stands in for a run of `recipe` at `base`: the same sha, rc 0, and the commands of its evidence exactly the recipe, each with
+    exit 0 (a row of other checks proves nothing about these). None if none."""
+    for d in {*folders, *(str(s) for f in folders for s in state.subphases(f))}:
         for row in state.read_rows(state.phase_paths(d)["audit"]):
             if row.get("kind") != "evidence" or row.get("sha") != base or row.get("rc", "").strip() != "0":
                 continue
