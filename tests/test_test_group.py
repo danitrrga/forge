@@ -433,9 +433,22 @@ eq("no group, --jobs 2: summary", last(r), "SUMMARY: 2 passed, 0 warnings, 0 fai
 d = sandbox.mkdtemp("forge-group-top-")
 repo = toy({}, top={"test_a.py": RENDEZVOUS % {"d": d, "me": "a", "other": "b", "wait": 1},
                     "test_b.py": RENDEZVOUS % {"d": d, "me": "b", "other": "a", "wait": 1}})
-r = forge(repo)
-eq("no group, no --jobs: one file after the other (the first cannot see the second): exit code", r.returncode, 1)
-ok("no group, no --jobs: one FAIL, one PASS", last(r) == "SUMMARY: 1 passed, 0 warnings, 1 failures", r.stdout + r.stderr)
+r = forge(repo, "--jobs", "1")
+eq("no group, --jobs 1: one file after the other (the first cannot see the second): exit code", r.returncode, 1)
+ok("no group, --jobs 1: one FAIL, one PASS", last(r) == "SUMMARY: 1 passed, 0 warnings, 1 failures", r.stdout + r.stderr)
+# ---- no group, no --jobs: parallel by default, min(4, CPUs) files at once -------------------------------------------------------
+# Written first and run on the serial default (`workers = 1`), the first FAILs it printed:
+#   FAIL: no group, no --jobs on a machine with several cores: parallel: exit code: got 1, want 0
+#   FAIL: default workers: 16 CPUs: 4: got 'no cli.default_workers', want 4   (the unit check after the start-order cases)
+# Controls (the engine copy mutated in one place): the default back to 1: the two checks above; the cap 8 (`min(4,` -> `min(8,`):
+#   FAIL: default workers: 16 CPUs: 4: got 8, want 4
+if (os.cpu_count() or 1) > 1:
+    d = sandbox.mkdtemp("forge-group-top-")
+    rv = lambda me, other: RENDEZVOUS % {"d": d, "me": me, "other": other, "wait": 60}
+    repo = toy({}, top={"test_a.py": rv("a", "b"), "test_b.py": rv("b", "a")})
+    r = forge(repo)
+    eq("no group, no --jobs on a machine with several cores: parallel: exit code", r.returncode, 0)
+    eq("no group, no --jobs on a machine with several cores: parallel: summary", last(r), "SUMMARY: 2 passed, 0 warnings, 0 failures")
 # ---- no group: a failing file's output is shown (the tail of it), a passing file's never ----------------------------------------
 # Written first and run on master, where run_one captured the output and threw it away: CI showed only
 # `FAIL test_worktree_guard.py python3 hooks/test_worktree_guard.py` and the summary (DTC-67). The first FAILs it printed:
@@ -504,6 +517,14 @@ eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, 
    cli.start_order(["hooks/test_guard_tool_use.py", "tests/test_new.py", "tests/test_nosuch.py", "tests/test_switch.py", "tests/test_run.py",
                     "tests/test_lib.py"]),
    ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
+# The default width of the run with no group: min(4, CPUs), 1 where the count is unknown; the real count is swapped out for the check.
+real_count = os.cpu_count
+try:
+    for cpus, want in ((None, 1), (1, 1), (2, 2), (4, 4), (16, 4)):
+        os.cpu_count = lambda cpus=cpus: cpus
+        eq("default workers: %s CPUs: %s" % (cpus, want), getattr(cli, "default_workers", lambda: "no cli.default_workers")(), want)
+finally:
+    os.cpu_count = real_count
 ok("start order: SLOW_FIRST names at least one file", len(cli.SLOW_FIRST) > 0, repr(cli.SLOW_FIRST))
 tracked = subprocess.run(["git", "-C", sandbox.FORGE, "ls-files"], capture_output=True, text=True, check=True).stdout.split()
 ok("start order: every SLOW_FIRST name is a tracked file (a renamed test would leave the list stale)",
