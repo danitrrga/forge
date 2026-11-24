@@ -484,7 +484,7 @@ for args, label in (((), "nothing"), ((ph,), "no step"), ((ph, "plans"), "unknow
     r = run(repo, "brief", *args)
     s.eq("brief %s: exit" % label, r.returncode, 2)
     s.ok("brief %s: nothing on stdout" % label, r.stdout == "", r.stdout)
-nogit = helpers.mkdtemp("fwx-nogit-")
+nogit = helpers.mkdtemp_nogit()
 r = run(nogit, "status", nogit, "premortem")
 s.eq("status outside a git repository: exit", r.returncode, 2)
 r = helpers.fwx(repo, "plan", "lint", ph)

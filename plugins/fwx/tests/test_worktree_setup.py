@@ -165,7 +165,7 @@ def case_main_checkout(R, S):
     S.eq("main checkout: refused with exit 2", r.returncode, 2)
     S.ok("main checkout: says why", "linked worktree" in r.stderr, r.stderr)
     S.ok("main checkout: nothing ran there", not sc.has("deps/installed", sc.repo) and not sc.has(".fwx-agent", sc.repo))
-    outside = helpers.mkdtemp("fwx-nogit-")
+    outside = helpers.mkdtemp_nogit()
     r = R(outside, "wave", "setup", env=sc.env)
     S.eq("outside a repository: exit 2, nothing made", (r.returncode, os.listdir(outside)), (2, []))
     for argv in (["--bogus"], ["extra"]):

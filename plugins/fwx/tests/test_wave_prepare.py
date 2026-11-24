@@ -518,7 +518,7 @@ def case_check_base(R, S):
     for bad in ("HEAD", "phase", "abc", "zzzzzzz"):
         S.eq("check-base: %r is not a sha: usage error" % bad, cb(sc.cwd, bad).returncode, 2)
     S.eq("check-base: no argument", cb(sc.cwd).returncode, 2)
-    outside = helpers.mkdtemp("fwx-nogit-")
+    outside = helpers.mkdtemp_nogit()
     r = cb(outside, base)
     S.eq("check-base: outside git fails closed", (r.returncode, "not a linked worktree: %s" % outside in r.stderr), (42, True))
 
@@ -627,7 +627,7 @@ def case_scratch(R, S):
                         ("an empty unit", [run, ""]), ("a third word", [run, "T1", "x"])):
         r = sc2(*argv)
         S.eq("scratch: %s: usage error, nothing printed" % label, (r.returncode, r.stdout, "usage: fwx scratch new" in r.stderr), (2, "", True))
-    outside = helpers.mkdtemp("fwx-nogit-")
+    outside = helpers.mkdtemp_nogit()
     r = sc2(run, "T1", cwd=outside)
     S.eq("scratch: outside a repository: exit 2, nothing made", (r.returncode, r.stdout, os.listdir(outside)), (2, "", []))
 
