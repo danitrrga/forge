@@ -527,13 +527,25 @@ eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, 
                     "tests/test_lib.py"]),
    ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
 # The default width of the run with no group: min(4, CPUs), 1 where the count is unknown; the real count is swapped out for the check.
-real_count = os.cpu_count
+# The CPUs are the ones this process may use (sched_getaffinity: a taskset, a container's cpuset), the host's count where that call does not exist.
+real_count, real_affinity = os.cpu_count, getattr(os, "sched_getaffinity", None)
 try:
     for cpus, want in ((None, 1), (1, 1), (2, 2), (4, 4), (16, 4)):
         os.cpu_count = lambda cpus=cpus: cpus
-        eq("default workers: %s CPUs: %s" % (cpus, want), getattr(cli, "default_workers", lambda: "no cli.default_workers")(), want)
+        if real_affinity:
+            del os.sched_getaffinity  # no affinity call: the host's count
+        eq("default workers, host count only: %s CPUs: %s" % (cpus, want), cli.default_workers(), want)
+        if real_affinity:
+            os.sched_getaffinity = real_affinity
+    if real_affinity:
+        os.cpu_count = lambda: 64  # a host with many cores, a process that may use only some
+        for usable, want in ((1, 1), (2, 2), (16, 4)):
+            os.sched_getaffinity = lambda pid, usable=usable: set(range(usable))
+            eq("default workers, affinity: %s usable of 64 CPUs: %s" % (usable, want), cli.default_workers(), want)
 finally:
     os.cpu_count = real_count
+    if real_affinity:
+        os.sched_getaffinity = real_affinity
 ok("start order: SLOW_FIRST names at least one file", len(cli.SLOW_FIRST) > 0, repr(cli.SLOW_FIRST))
 tracked = subprocess.run(["git", "-C", sandbox.FORGE, "ls-files"], capture_output=True, text=True, check=True).stdout.split()
 ok("start order: every SLOW_FIRST name is a tracked file (a renamed test would leave the list stale)",
