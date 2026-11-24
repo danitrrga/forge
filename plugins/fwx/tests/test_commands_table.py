@@ -56,7 +56,6 @@ DECIDED = [
     ("context new", "context-base build", "context_base", ["build"]), ("context seal", "context-base seal", "context_base", ["seal"]),
     ("context lint", "context-base check", "context_base", ["check"]), ("context audit", "context-base audit", "context_base", ["audit"]),
     ("discuss", "discuss start", "discuss", ["start"]),
-    ("playbook list", "playbooks tree", "playbooks", ["tree"]), ("playbook lint", "playbooks check", "playbooks", ["check"]),
     ("linear list", None, "linear", ["list"]), ("linear list --waiting", "linear waiting", "linear", ["waiting"]),
     ("linear new", "linear create", "linear", ["create"]), ("linear comment", None, "linear", ["comment"]),
     ("linear label", None, "linear", ["label"]),
@@ -89,7 +88,7 @@ DEFAULTS = [
     (["linear", "--project", "P", "--waiting", "--json"], "linear", ["waiting", "--project", "P", "--json"]),
     (["discuss", "--json"], "discuss", ["start", "--json"]),
 ]
-OBJECT_OLD = {"context-base": "context", "playbooks": "playbook"}
+OBJECT_OLD = {"context-base": "context"}
 # the module whose handlers print their own argparse help for `--help`: the router leaves its rows to them
 OWN_HELP = "state"
 
@@ -193,7 +192,13 @@ def scenario(work):
                        # names are not refused with a "now ...": there is no natural target. Red on master (both were rows of the table):
                        #   FAIL: fwx capacity: exit 2 and 'unknown command: capacity': got (0, False, ...)
                        #   FAIL: fwx walk capacity: exit 2 and 'unknown verb: capacity': got (0, False, ...)
-                       (("capacity",), "unknown command: capacity"), (("walk", "capacity"), "unknown verb: capacity")):
+                       (("capacity",), "unknown command: capacity"), (("walk", "capacity"), "unknown verb: capacity"),
+                       # the workflow tree is a picture only (D19): its checker and both commands are gone, and the old object is not
+                       # redirected to a new one that is gone too. Red at d348f8d (both were rows, `playbooks` an OLD_OBJECTS entry):
+                       #   FAIL: fwx playbook list: exit 2 and 'unknown command: playbook': got (0, False, 'STUB playbooks ["tree"]\n'), want (2, True, '')
+                       #   FAIL: fwx playbooks list: exit 2 and 'unknown command: playbooks': got (2, False, ''), want (2, True, '')  (stderr said it was now `fwx playbook`)
+                       (("playbook", "list"), "unknown command: playbook"), (("playbook", "lint"), "unknown command: playbook"),
+                       (("playbooks", "list"), "unknown command: playbooks")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing

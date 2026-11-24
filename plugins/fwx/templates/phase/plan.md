@@ -24,11 +24,12 @@
     }
   ],
   "not_built": [{"what": "<something raised and left out>", "why": "<the reason>"}],
-  "later": [{"what": "<something noticed on the way>", "why": "<the reason it waits>"}]
+  "later": [{"what": "<something noticed on the way>", "why": "<the reason it waits>"}],
+  "security_review": false
 }
 ---
 <!-- referent: none, own text: no source has a plan as a document; the frontmatter is fixed by the plan format -->
-<!-- Keep `subphase` only in a phase with subphases. Keep `firefox` only when `ui` is true and the change may behave differently in Firefox. Delete `review` to take the default. -->
+<!-- Keep `subphase` only in a phase with subphases. Keep `firefox` only when `ui` is true and the change may behave differently in Firefox. Delete `review` to take the default. Keep `security_review` only in a small plan that skips the post-mortem (true when a task writes authentication, authorisation, payment, secrets or other code whose failure is a security failure); delete it in any other plan. -->
 
 ## Goal
 <What the work achieves, in a paragraph for the owner. Name the problem it solves, not the files it changes.>

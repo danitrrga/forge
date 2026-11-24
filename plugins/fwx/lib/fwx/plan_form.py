@@ -16,7 +16,7 @@ the history); no `T<n>`, `C<n>` or `D<n>` in the prose that `tasks`, `criteria` 
 `premortem.md`: `## Verdict`, `## Failure reasons`, `## Size`, and the verdict matches the failure reasons listed. `postmortem.md`:
 its six headings; each finding (a list item under `## Findings`) has a severity and an `evidence:` field, a blocker or warning
 with `unproven` evidence is an error, and the verdict matches the findings; `security_review` is true when a task writes a file
-that `project.protected_paths` covers.
+that the decide table's default protected paths or `project.protected_paths` cover; with no `postmortem.md`, the same rule applies to `plan.md`'s own `security_review` when it is false.
 
 Length is counted in words, not lines: a cap in lines is passed by one long line. The two figures are 12 words to the line of the
 300 and 400 lines the plan format first named (no measurement behind them yet); `## Goal` also keeps its ten lines, which is the
@@ -26,14 +26,14 @@ What cannot run says so: a cite with no main checkout to look in, and a protecte
 `NOT RUN, NOT ARMED` warning (neither a pass nor an error). A cite or a protected path the plan does not have is nothing to look at
 and gives nothing.
 
-Imports the standard library, `config`, `plan` and `core.globs`; the checks that need git or the configuration reach them only when
+Imports the standard library, `config`, `plan`, `core.decide` and `core.globs`; the checks that need git or the configuration reach them only when
 a cite or a task asks.
 """
 import os
 import re
 
 from fwx import config, plan, state
-from fwx.core import globs
+from fwx.core import decide, globs
 
 HEADINGS = {
     "plan.md": ("Goal", "Approach"),
@@ -262,8 +262,22 @@ def _postmortem(f, rel, data, sections):
         f.error(rel, "findings", "verdict objections without a blocker or warning finding")
 
 
+def protected_glob(protected, name):
+    """The first glob of `protected` that covers the file or folder `name` of a task, else None (`fwx wave new` asks the same question)."""
+    p = plan._norm(name) if isinstance(name, str) else ""
+    return next((g for g in protected if p and (globs.matches(p, g) or globs.matches(p + "/", g))), None)
+
+
+def protected_paths(cfg):
+    """The globs a task may not write without the security review: `project.protected_paths`, then the decide table's defaults
+    (what `fwx decide` and `fwx wave integrate` read, so a plan is judged by the same list they are)."""
+    own = cfg["project"].get("protected_paths")
+    own = [g for g in own if isinstance(g, str)] if isinstance(own, list) else []
+    return own + list(decide.load_table()["default_protected_paths"])
+
+
 def _security(f, rel, seen):
-    """security_review is true when a task writes a path the project protects."""
+    """security_review (postmortem.md's, or plan.md's when the plan has no post-mortem) is true when a task writes a path the project protects."""
     tasks = [(r, t) for r, d in seen.items() if d is not None for t in plan._tasks_of(d) if isinstance(t.get("files"), list)]
     if not tasks:
         return
@@ -272,12 +286,10 @@ def _security(f, rel, seen):
     except config.ConfigError as e:
         f.warn(rel, "security_review", "NOT RUN, NOT ARMED: the protected paths are unknown (%s)" % e)
         return
-    protected = cfg["project"].get("protected_paths")
-    protected = [g for g in protected if isinstance(g, str)] if isinstance(protected, list) else []
+    protected = protected_paths(cfg)
     for r, t in tasks:
         for name in t["files"]:
-            p = plan._norm(name) if isinstance(name, str) else ""
-            glob = next((g for g in protected if p and (globs.matches(p, g) or globs.matches(p + "/", g))), None)
+            glob = protected_glob(protected, name)
             if glob:
                 f.error(rel, "security_review", "task %s%s touches a protected path (%s): security_review must be true"
                         % (t["id"], "" if r == "plan.md" else " of " + r, glob))
@@ -315,3 +327,5 @@ def check(dir, seen, out):
     post = _valid(post_path, plan._postmortem_problems) if os.path.exists(post_path) else None
     if post is not None and post["security_review"] is False:
         _security(f, "postmortem.md", seen)
+    elif not os.path.exists(post_path) and isinstance(seen.get("plan.md"), dict) and seen["plan.md"].get("security_review") is False:
+        _security(f, "plan.md", seen)  # a small plan skips the post-mortem: the planner's value gets the same rule

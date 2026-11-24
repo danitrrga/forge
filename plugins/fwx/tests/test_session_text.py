@@ -125,12 +125,6 @@ def step(text, n):
     return m.group(0) if m else ""
 
 
-def block(playbook, node):
-    """The block of `node` in a playbook: from its `### <id> ·` heading to the next heading."""
-    m = re.search(r"^### %s ·.*?(?=^### |\Z)" % re.escape(node), playbook, re.S | re.M)
-    return m.group(0) if m else ""
-
-
 def commit_effect(line, stale=False, demo=True, twice=False):
     """Run rule 4's commit line in a toy repo holding the documents of a phase beside what the UI walk leaves, and say what it did:
     (exit code, tracked files under .fwx/, untracked ones, files of the last commit, exit code of a second run or None). `<main_checkout>` is
@@ -169,6 +163,17 @@ def _commit_effect(line, toy, stale, demo, twice):
     untracked = run("git status --porcelain -uall").stdout.split("\n")
     last = run("git show --name-only --format= HEAD").stdout.split()
     return r.returncode, [f for f in tracked if f.startswith(".fwx/")], [u[3:] for u in untracked if u.startswith("?? ")], last, again
+
+
+def line_no(text, start):
+    """The 1-based line of the first line of `text` starting with `start`, looking only below `## Steps` (the fixed rules above it are numbered too), or 0."""
+    lines = text.splitlines()
+    top = next((i for i, ln in enumerate(lines) if ln.startswith("## Steps")), 0)
+    return next((i for i, ln in enumerate(lines, 1) if i > top and ln.startswith(start)), 0)
+
+
+def rule6_of(text):
+    return next((ln for ln in text.split("## Steps")[0].splitlines() if ln.startswith("6. **")), "")
 
 
 def in_order(text, *words):
@@ -263,20 +268,15 @@ def main():
         else:
             check("fwx %s exists" % cmd, False, "not in `fwx --help`")
 
-    # The playbook and the skill say the same of a rejected fix: `fwx review read` only sorts the answers (walk.py `cmd_review_answers`
+    # The skill says what a rejected fix records: `fwx review read` only sorts the answers (walk.py `cmd_review_answers`
     # writes review/answers.json and no decision), and the `decisions` agent records `not_defect` with support `approved` and `redo` with
-    # support `chosen`. PR 125 made the playbook say a `redo` records nothing while this skill (what the session follows) records it.
+    # support `chosen`.
     # Seen red on 93e43d9 (the playbook said `redo` records nothing; the skill did not say that the command writes no decision):
     #   FAIL: the playbook and ui-review.md both say what the decisions agent records for each rejection -> playbook {}, ui-review.md {'not_defect': 'approved', 'redo': 'chosen'}
     #   FAIL: the playbook and ui-review.md both say `review read` writes no decision -> playbook False, ui-review.md False
-    with open(os.path.join(ROOT, "playbooks", "ui-walk.md"), encoding="utf-8") as f:
-        playbook = f.read()
-    rej = playbook[playbook.index("### p_REJ"):]
     want = {"not_defect": "approved", "redo": "chosen"}
-    check("the playbook and ui-review.md both say what the decisions agent records for each rejection",
-          supports(rej) == want and supports(review) == want, "playbook %s, ui-review.md %s" % (supports(rej), supports(review)))
-    check("the playbook and ui-review.md both say `review read` writes no decision", "no decision" in rej and "no decision" in review,
-          "playbook %s, ui-review.md %s" % ("no decision" in rej, "no decision" in review))
+    check("ui-review.md says what the decisions agent records for each rejection", supports(review) == want, "ui-review.md %s" % supports(review))
+    check("ui-review.md says `review read` writes no decision", "no decision" in review, "ui-review.md %s" % ("no decision" in review))
     check("control: a text that records a `redo` as approved is not the wanted one", supports("`not_defect` with support `approved`, `redo` with support `approved`") != want)
 
     # A walk that did not finish is not "no findings": `fix_file` is null then, and step 6 once read that as nothing to fix. The session texts
@@ -284,7 +284,7 @@ def main():
     # returns, which tests/test_ui_walk_workflow.py pins key by key), so a renamed field breaks this check.
     # Seen red on 1afad4d (no session text read them):
     #   FAIL: SKILL.md step 6 tells the owner the reason, the unverified findings and that the walk did not pass -> missing: ['reason', 'unverified', 'passed']
-    #   (and the same for references/ui-review.md, playbooks/ui-walk.md and playbooks/session.md)
+    #   (and the same for references/ui-review.md)
     with open(os.path.join(ROOT, "workflows", "ui-walk.js"), encoding="utf-8") as f:
         js = f.read()
     returned = returned_fields(js)
@@ -298,21 +298,20 @@ def main():
     check("references/ui-review.md says what to do when `details.fix_file` is null", "`details.fix_file` null" in review and "do not run the command" in review, "missing")
     check("control: `details.reason` is flagged, `reason` is a top-level field only", cited_missing("read `details.reason`", returned) == ["reason"], "got %s" % cited_missing("read `details.reason`", returned))
     check("control: a details field is read as a details field", cited_missing("read `details.gaps` and `details.fix_file`", returned) == [])
-    with open(os.path.join(ROOT, "playbooks", "session.md"), encoding="utf-8") as f:
-        session_pb = f.read()
-    for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review), ("playbooks/ui-walk.md", playbook),
-                       ("playbooks/session.md", session_pb)):
+    for name, text in (("SKILL.md step 6", step(texts["SKILL.md"], 6)), ("references/ui-review.md", review)):
         absent = [w for w in ("reason", "unverified", "passed") if w not in text]
         check("%s tells the owner the reason, the unverified findings and that the walk did not pass" % name, not absent, "missing: %s" % absent)
         check("%s cites only fields the workflow returns" % name, not cited_missing(text, returned), "not returned: %s" % cited_missing(text, returned))
     check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
+    # the runner has its own model role (haiku in the seed): step 6 reads it from `fwx model runner small`, not from the executor's.
+    # Seen red on d348f8d: FAIL: SKILL.md step 6 reads models.runner from `fwx model runner small` -> missing
+    s6 = step(texts["SKILL.md"], 6)
+    check("SKILL.md step 6 reads models.runner from `fwx model runner small`", "`models.runner` from `fwx model runner small`" in s6 and "models.runner` from `fwx model executor" not in s6, "missing")
 
-    # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when, and the
-    # playbook's block of the owner's review carries the matching exit. `fwx playbook lint` compares that exit with the table by itself.
+    # After the owner's review of a part the walk can be repeated (the stage table allows `phase-review -> ui-walk`): step 8 says when.
     # Seen red on 239aa07 (step 8 and the playbook did not mention it):
     #   FAIL: step 8 says when the walk is repeated from `phase-review` -> no 'asks for the UI walk again' with 'step 6' and '`phase-review -> ui-walk`'
     # (reworded after the review of PR 129 into numbered sub-steps; the checks follow the new words)
-    #   FAIL: playbooks/session.md n_L8 exits `loop n_C12` -> missing
     from fwx.core import stages  # noqa: E402
     check("the stage table allows phase-review -> ui-walk", stages.allowed("session", "phase-review", "ui-walk"), "refused")
     check("step 8 says when the walk is repeated from `phase-review`",
@@ -358,14 +357,10 @@ def main():
           all(w in s0 for w in ("amendment", "`planning` or `postmortem` row", "after an `executing` row", "make no branch at step 4")),
           "step 0 has %s" % ("no 'amendment'" if "amendment" not in s0 else "the sentence without one of its parts"))
     check("control: a step 0 without the sentence is caught", "amendment" not in "Go to the step of the last stage: none or `discuss` 1; `planning` 2; `postmortem` 3.")
-    l8 = block(session_pb, "n_L8")
-    check("playbooks/session.md n_L8 exits `loop n_C12`", "- loop n_C12:" in l8, "missing")
     # A decision of the owner's review that changes a fact the plan states sends the phase back to the planner (the table allows
-    # `phase-review -> planning`); the `source` the skill tells the `decisions` agent to use is the one `plan_step.py` looks for, and the
-    # playbook's block of the review and of the plan carry the matching exit and sentence.
+    # `phase-review -> planning`); the `source` the skill tells the `decisions` agent to use is the one `plan_step.py` looks for.
     # Seen red on 83c37cb (step 8 and the playbook said nothing of it):
     #   FAIL: step 8 sends a post-plan decision back to the planner -> no 'planning' with 'steps 2 and 3' and 'review of part <N>'
-    #   FAIL: playbooks/session.md n_L8 exits `loop n_C2` -> missing
     from fwx import plan_step  # noqa: E402
     check("the stage table allows phase-review -> planning", stages.allowed("session", "phase-review", "planning"), "refused")
     check("step 8 sends a post-plan decision back to the planner",
@@ -378,8 +373,6 @@ def main():
     check("step 2 writes stage `planning` and step 3 stage `postmortem`", "Stage `planning`" in step(texts["SKILL.md"], 2) and "Stage `postmortem`" in step(texts["SKILL.md"], 3), "missing")
     check("step 8 gives the decision the source the briefs look for",
           "`source` `review of part <N>`" in s8 and bool(plan_step._REVIEWED.match("review of part 1")), "the skill and plan_step._REVIEWED disagree")
-    check("playbooks/session.md n_L8 exits `loop n_C2`", "- loop n_C2:" in l8, "missing")
-    check("playbooks/session.md n_C2 names the decision of the review as what a replan attends", "his review" in block(session_pb, "n_C2"), "missing")
     # Rehearsal of a whole session (F-2): the session tried to edit `.claude/fwx.json` (a `sed -i`, then `Edit`, both refused) and no rule said not
     # to. forge generates that file and rewrites it at every session start. Rule 9 says so, names the owner's way out and forbids the edit.
     # Seen red on b4c52fc: FAIL: rule 9 says `.claude/fwx.json` is generated by forge, a wrong value goes to the owner through the `forge` CLI, and the file is never edited -> no rule 9
@@ -432,21 +425,37 @@ def main():
     check("control: `commit -- .fwx` after the find-built add commits a previously tracked walk file", any(f.endswith("demo-state.json") for f in commit_effect(
         "cd <main_checkout> && find .fwx -type f ! -name '.*' \\( -name '*.md' -o -name '*.tsv' -o -path '*/demo/*.html' \\) -print0 | git add --pathspec-from-file=- --pathspec-file-nul && git commit -m \"<message>\" -- .fwx",
         stale=True)[3]), "the control line did not commit it")
-    check("control: block() cuts one block", "### n_L9" not in l8 and l8.startswith("### n_L8"), l8[:40])
 
     # DTC-34: the worktree of a phase is removed by the next session, once its PR is merged and it is clean, never at the close.
     closing = read(os.path.join("references", "closing.md"))
-    cleanup = next((ln for ln in closing.splitlines() if ln.startswith("4. **Cleanup.**")), "")
-    check("closing.md step 4 found", "fwx walk stop --orphans" in cleanup, "not found")
-    check("closing.md step 4 does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
-    check("closing.md step 4 says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    cleanup = next((ln for ln in closing.splitlines() if re.match(r"\d+\. \*\*Cleanup\.\*\*", ln)), "")
+    check("closing.md the cleanup step found", "fwx walk stop --orphans" in cleanup, "not found")
+    check("closing.md the cleanup step does not remove the phase worktree", "git worktree remove" not in cleanup, "`git worktree remove` is in it")
+    check("closing.md the cleanup step says the worktree stays until its PR is merged", "stays" in cleanup and "merged" in cleanup, "no 'stays' or no 'merged'")
+    # 08.4 T41 (D24, D35, D11): before `closed` the orchestrator promotes the phase's decisions that pass Pocock's three criteria to the
+    # durable record (`fwx decision new --adr`), and fwx's work ends at the pull request: nothing that merges, babysits or watches follows `gh pr create`.
+    # Seen red on the 6e4e54c closing.md (rc=1):
+    #   FAIL: closing.md promotes passing decisions with `fwx decision new --adr` before step 3's `fwx stage <phase folder> closed` -> 'fwx decision new --adr' is not before 'fwx stage <phase folder> closed'
+    #   FAIL: closing.md names the three criteria of a durable decision -> missing: ['hard to reverse', 'surprising without context', 'real trade-off']
+    #   (the later checks pass on it; their controls below show they can fail)
+    promote = "fwx decision new --adr"
+    check("closing.md promotes passing decisions with `fwx decision new --adr` before step 3's `fwx stage <phase folder> closed`",
+          in_order(closing, promote, "fwx stage <phase folder> closed"), "'%s' is not before 'fwx stage <phase folder> closed'" % promote)
+    criteria = ["hard to reverse", "surprising without context", "real trade-off"]
+    check("closing.md names the three criteria of a durable decision", all(c in closing for c in criteria), "missing: %s" % [c for c in criteria if c not in closing])
+    after_pr = closing[closing.find("gh pr create"):] if "gh pr create" in closing else ""
+    after_pr_steps = [ln.split("**")[1] for ln in after_pr.splitlines() if re.match(r"\d+\. \*\*", ln)]
+    after_pr_bans = ("babysit", "watch", "gh pr merge", "gh pr checks", "wait for CI", "poll")
+    check("closing.md has a step after `gh pr create`", bool(after_pr_steps), "no numbered step after it")
+    check("closing.md adds no merge, babysit or watch to the steps after the pull request",
+          not [w for w in after_pr_bans if w in after_pr.replace("fwx walk", "")] and "merge it" not in after_pr, "found: %s" % [w for w in after_pr_bans if w in after_pr])
+    check("control: a closing text that promotes after `closed` fails", not in_order("fwx stage <phase folder> closed then fwx decision new --adr", promote, "fwx stage <phase folder> closed"))
+    check("control: a step that babysits the pull request is caught", "babysit" in "6. **Babysit.** After `gh pr create`, babysit the PR until CI is green.".split("gh pr create")[1])
     s0 = step(texts["SKILL.md"], 0)
     need = ["--state merged", "status --porcelain", ".claude/worktrees/", "no force", "git branch -d"]
     check("SKILL.md step 0 clears merged worktrees: merged PR, clean, no force", all(w in s0 for w in need), "missing: %s" % [w for w in need if w not in s0])
     check("SKILL.md step 0 never uses `git branch -D`", "branch -D" not in s0, "`git branch -D` is in it")
     check("SKILL.md step 0 clears worktrees before the retake and the resume", in_order(s0, "--state merged", "retake", "fwx session --json"), "order is not sweep, retake, resume")
-    check("playbooks/session.md n_L3 clears merged worktrees (--state merged)", "--state merged" in block(session_pb, "n_L3"), "missing")
-    check("playbooks/session.md n_L10 no longer removes the phase worktree", "removes only the phase worktree" not in block(session_pb, "n_L10"), "'removes only the phase worktree' still in it")
     # The owner leaving changes nothing: the session passes no `--unattended` (the factory's flag) and says so.
     # Seen red on the text before the change (rc=1):
     #   FAIL: no line of SKILL.md tells the session to pass --unattended -> line 46: '5. **Execute a part.** ... (add `--unattended` when the owner says he is leaving); it prints ...'
@@ -456,7 +465,7 @@ def main():
     check("no line of SKILL.md tells the session to pass --unattended", not bad, ("line %d: %r" % bad[0]) if bad else "")
     check("SKILL.md says the owner leaving changes nothing",
           any("he is leaving, nothing changes" in ln and "no `--unattended`" in ln and "end your turn for his answer" in ln
-              and "no recommendation unasked; when he asks what you recommend" in ln for ln in texts["SKILL.md"].splitlines()),
+              and "`Recommended:" in ln for ln in texts["SKILL.md"].splitlines()),
           "no line with 'he is leaving, nothing changes' and 'no `--unattended`'")
     check("control: 'add `--unattended` when the owner says he is leaving' is caught", leave_re.search("(add `--unattended` when the owner says he is leaving)") is not None)
     check("control: 'you pass no `--unattended`' is not caught", leave_re.search("you pass no `--unattended` (only the factory does)") is None)
@@ -465,6 +474,67 @@ def main():
     check("control: a step 0 without the rule is caught", not all(w in "0. **Where you are.** Run `fwx session --json`." for w in need))
     check("control: a step 0 with `git branch -D` is caught", "branch -D" in "then `git branch -D <branch>`")
     check("control: step 0 is cut by step()", step("## Steps\n0. **A.** x\n1. **B.** y\n", 0).startswith("0. **A.**") and "y" not in step("## Steps\n0. **A.** x\n1. **B.** y\n", 0))
+
+    # 08.3 (D9, D10, D14, D17): the session asks for no pre-mortem unless the owner does, skips the post-mortem of a small plan, records
+    # decisions itself with `fwx decision new` (no `decisions` agent) and every question to the owner carries a recommendation. The texts
+    # are the session skill, its references and the three critique skills; the discuss skill is another task's.
+    # Seen red on 6e4e54c (the texts before this change):
+    #   FAIL: step 1 runs the pre-mortem only when the owner asks -> SKILL.md:34: '1. **Pre-mortem.** Stage `premortem`. Call `fwx:pre-mortem` with ...' has no owner request before the stage row
+    #   FAIL: step 3 skips the post-mortem when `plan.md`'s `size.tag` is `small` -> SKILL.md:38: '3. **Post-mortem.** Stage `postmortem`. ...' names no `size.tag`, no `small` or no step 4 before the stage row
+    #   FAIL: no text launches or names the `decisions` agent, and its file is gone -> SKILL.md:18, SKILL.md:19, SKILL.md:34, SKILL.md:50, SKILL.md:55, SKILL.md:67, references/factory-return.md:9, references/ui-review.md:8, agents/decisions.md exists
+    #   FAIL: no text tells the session to ask without a recommendation -> SKILL.md:22, SKILL.md:60, references/factory-return.md:8
+    # (and one FAIL each for: a question carries `Recommended:`, the critique skills run on another model on request, the plan skill passes on a
+    # planner's `back-to-discuss`, step 2 sends it to step 7, step 4 says a skipped post-mortem leaves nothing to stop for.)
+    skill_files = {"SKILL.md": os.path.join(SESSION, "SKILL.md"),
+                   "references/ui-review.md": os.path.join(SESSION, "references", "ui-review.md"),
+                   "references/factory-return.md": os.path.join(SESSION, "references", "factory-return.md"),
+                   "references/closing.md": os.path.join(SESSION, "references", "closing.md"),
+                   "references/part-report.md": os.path.join(SESSION, "references", "part-report.md")}
+    for name in ("plan", "pre-mortem", "post-mortem"):
+        skill_files["skills/%s/SKILL.md" % name] = os.path.join(ROOT, "skills", name, "SKILL.md")
+    scanned = {}
+    for name, path in skill_files.items():
+        with open(path, encoding="utf-8") as f:
+            scanned[name] = f.read()
+    skill = texts["SKILL.md"]
+
+    def first_line(text, n):
+        return next((ln.strip() for ln in text.splitlines()[line_no(text, "%d. **" % n) - 1:] if re.match(r"%d\. \*\*" % n, ln)), "")
+
+    s1, s3, s4 = step(skill, 1), step(skill, 3), step(skill, 4)
+    ahead1 = s1.split("Stage `premortem`")[0]
+    check("step 1 runs the pre-mortem only when the owner asks",
+          "Stage `premortem`" in s1 and "owner asks" in ahead1 and "step 2" in ahead1,
+          "SKILL.md:%d: %r has no owner request before the stage row" % (line_no(skill, "1. **"), first_line(skill, 1)[:90]))
+    ahead3 = s3.split("Stage `postmortem`")[0]
+    check("step 3 skips the post-mortem when `plan.md`'s `size.tag` is `small`",
+          "Stage `postmortem`" in s3 and "`size.tag`" in ahead3 and "`small`" in ahead3 and "step 4" in ahead3,
+          "SKILL.md:%d: %r names no `size.tag`, no `small` or no step 4 before the stage row" % (line_no(skill, "3. **Post-mortem"), first_line(skill, 3)[:90]))
+    check("step 2 sends a planner's `back-to-discuss` to step 7", "`back-to-discuss`" in step(skill, 2) and "step 7" in step(skill, 2),
+          "SKILL.md:%d: step 2 names no `back-to-discuss` -> step 7" % line_no(skill, "2. **Plan"))
+    check("step 4 says a skipped post-mortem leaves nothing to stop for", "skipped" in s4, "SKILL.md:%d: step 4 does not say it" % line_no(skill, "4. **Go"))
+
+    decisions_hits = ["%s:%d" % (n, i) for n, t in scanned.items() for i, ln in enumerate(t.splitlines(), 1) if re.search(r"`(fwx:)?decisions`|decisions agent", ln)]
+    if os.path.exists(os.path.join(ROOT, "agents", "decisions.md")):
+        decisions_hits.append("agents/decisions.md exists")
+    check("no text launches or names the `decisions` agent, and its file is gone", not decisions_hits, ", ".join(decisions_hits))
+    recorders = [n for n in ("SKILL.md", "references/ui-review.md", "references/factory-return.md") if "fwx decision new" not in scanned[n]]
+    check("the session, the UI review and the factory return record decisions with `fwx decision new`", not recorders, "missing in %s" % recorders)
+    silent = ["%s:%d" % (n, i) for n, t in scanned.items() for i, ln in enumerate(t.splitlines(), 1)
+              if re.search(r"never recommend|no recommendation|without a recommendation|unasked", ln, re.I)]
+    check("no text tells the session to ask without a recommendation", not silent, ", ".join(silent))
+    asking = [n for n, t in (("SKILL.md rule 6", rule6_of(skill)), ("SKILL.md step 4", s4), ("SKILL.md step 8", step(skill, 8)),
+                             ("references/ui-review.md", review), ("references/factory-return.md", scanned["references/factory-return.md"])) if "Recommended:" not in t]
+    check("every question to the owner carries a `Recommended:` line", not asking, "no `Recommended:` in %s" % asking)
+    for name in ("pre-mortem", "post-mortem"):
+        t = scanned["skills/%s/SKILL.md" % name]
+        check("skills/%s runs on another model on request: a Claude model as the launch's model, another provider's through Orca" % name,
+              "another model" in t and "Orca" in t and "`model: " in t, "skills/%s/SKILL.md names no 'another model', 'Orca' or '`model: '" % name)
+    check("skills/plan hands on a planner's `back-to-discuss`", "`back-to-discuss`" in scanned["skills/plan/SKILL.md"], "skills/plan/SKILL.md names no `back-to-discuss`")
+    check("control: a decisions-agent line is caught", re.search(r"`(fwx:)?decisions`|decisions agent", "record it by the `decisions` agent") is not None)
+    check("control: `decisions.tsv` is not a decisions-agent line", re.search(r"`(fwx:)?decisions`|decisions agent", "read `decisions.tsv`") is None)
+    check("control: 'no recommendation unasked' is caught", re.search(r"no recommendation|unasked", "it carries no recommendation unasked", re.I) is not None)
+    check("control: step 1 of the old text has no owner request", "owner asks" not in "1. **Pre-mortem.** Stage `premortem`. Call `fwx:pre-mortem` with the folder.".split("Stage `premortem`")[0])
 
     # control: the checks above can fail.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})

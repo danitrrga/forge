@@ -27,7 +27,7 @@ tests/               the suites; tests/sandbox.py builds a toy world
 python3 bin/forge sync          # dry-run of every generator; --apply writes; NAME or --all set the scope
 python3 bin/forge skills        # dry-run of the user-scope steps (online skills, skill links); --apply writes
 python3 bin/forge doctor        # one PASS/FAIL/SKIP line per check, exit 1 on a FAIL; `doctor NAME` scopes it to a project
-python3 bin/forge test          # every tracked test_*.py but plugins/fwx's, at nice 19; `--mutants` runs only the on-demand guard mutants
+python3 bin/forge test          # every tracked test_*.py but plugins/fwx's, min(4, CPUs) files at once at nice 19 (`--jobs 1`: one after the other); `--mutants` runs only the on-demand guard mutants
 python3 bin/forge test fwx      # plugins/fwx's suite, in parallel (about 4 minutes); `--jobs N`, `--expect-not-run PATH[,PATH]` (paths relative to plugins/fwx);
                                 # exit 0 all passed, 77 a test could not run, 1 a failure, 2 an unknown group
 python3 tests/test_<name>.py    # one suite: each is a plain script (no pytest) that prints its FAILs and exits 1 on any
@@ -97,17 +97,13 @@ ask only where the standard says to:
 
 - **Security**: a PR that touches the risky paths of `.coderabbit.yaml` or carries the label `security`. Ask BEFORE merge; its
   approval is required: the status `CodeRabbit approval` (`coderabbit-gate.yml`) stays pending until it approves the head commit.
-- **Architecture**: a PR that changes a contract between parts (the generator's sequence, project fields, the stage table, the
-  `decide` rules, the `.fwx/` format, the configuration schema, a new CLI command). Ask while the PR is open and wait for the
-  answer before merging (the approval status is not required).
-- **Logic**: code that decides with nobody watching (fwx core: verify, decide, stages, rounds; wave new/merge; workflows)
-  and the PR that closes a whole part. Same as Architecture.
-- **Never**: UI, documentation, data, texts for agents (prompts, playbooks, skills: they have their own review), test-only PRs,
-  renames and moves, Dependabot.
+- **Never**: every other PR, architecture and logic included (a contract between parts, fwx core, a PR that closes a part). Its
+  review is the part's own fwx reviewer and security reviewer, or a separate reviewer agent outside a phase, and the PR body says
+  what they found. CodeRabbit reviews about one PR an hour, one at a time, and that queue was the merge bottleneck.
 
 A PR gets at most one external review, asked only after its separate adversarial review, the fixes and a second pass over them
 (CodeRabbit does not review a closed PR, so a request after the merge gets "Pull request is closed"). What it finds is fixed and
-checked by the coordinator, with no second review. When several reviews wait, the order is security, architecture, logic, oldest
+checked by the coordinator, with no second review. When several security reviews wait, the oldest goes
 first. A finding that is not a real defect is dismissed with one line saying why. A PR too large for CodeRabbit gets a separate
 reviewer agent instead of being split. On a Dependabot PR the owner's approval releases the gate. A security PR CodeRabbit never approves (the owner cannot approve
 their own PR) is merged by the owner with GitHub's admin bypass, only through a PR; agents never do (`gh pr merge --admin` is denied).

@@ -166,8 +166,8 @@ finally:
 
 # --- roles, sizes, model()
 s.eq("sizes", config.SIZES, ("small", "normal", "big"))
-s.eq("21 roles", len(config.ROLES), 21)
-for role in ("orchestrator", "pre-mortem", "planner", "executor", "review-verifier", "ui-walker", "vision"):
+s.eq("22 roles", len(config.ROLES), 22)
+for role in ("orchestrator", "pre-mortem", "planner", "executor", "review-verifier", "ui-walker", "vision", "runner"):
     s.ok("role %s" % role, role in config.ROLES)
 s.eq("the seed has every role and size", sorted((r, z) for r in config.ROLES for z in config.SIZES),
      sorted((r, z) for r, v in config.DEFAULTS["models"].items() for z in v))
@@ -178,6 +178,7 @@ s.eq("seed: planner is opus", config.model(cfg, "planner", "normal"), "opus")
 s.eq("seed: pre-mortem is sonnet", config.model(cfg, "pre-mortem", "normal"), "sonnet")
 s.eq("seed: detector is haiku", config.model(cfg, "detector", "normal"), "haiku")
 s.eq("seed: executor is sonnet", config.model(cfg, "executor", "big"), "sonnet")
+s.eq("seed: runner is haiku at every size", [config.model(cfg, "runner", z) for z in config.SIZES], ["haiku"] * 3)
 for role, size, what in (("nosuch", "small", "role"), ("executor", "huge", "size")):
     try:
         config.model(cfg, role, size)
@@ -254,5 +255,36 @@ if has_cap:
         s.ok("an unknown role raises", False, "returned")
     except config.ConfigError as e:
         s.ok("an unknown role: the message lists the roles", all(r in str(e) for r in config.ROLES), str(e))
+
+# --- the time limit of one check: project.check_timeout_s, a positive whole number of seconds, default 1200 (DTC-113)
+# Seen red on master (no such key: the default table had none, and a bad value was never looked at):
+#   FAIL: no file value: project.check_timeout_s is the default 1200: got 'missing', want 1200
+#   FAIL: check_timeout_s 0 is a ConfigError: load accepted it   (the same for -5, a string, 12.5, true, null and a list)
+tdir = helpers.toy_repo()
+cfg, _ = load(tdir)
+s.eq("no file value: project.check_timeout_s is the default 1200",
+     cfg["project"].get("check_timeout_s", "missing") if isinstance(cfg, dict) else cfg, 1200)
+put(tdir, {"schema": 1, "project": {"check_timeout_s": 2700}})
+cfg, _ = load(tdir)
+s.eq("a file value is read", cfg["project"].get("check_timeout_s", "missing") if isinstance(cfg, dict) else cfg, 2700)
+for label, value in (("0", 0), ("-5", -5), ("a string", "1200"), ("a float", 12.5), ("true", True), ("null", None), ("a list", [1])):
+    put(tdir, {"schema": 1, "project": {"check_timeout_s": value}})
+    refuses("check_timeout_s %s" % label, tdir, "project.check_timeout_s")
+# An upper bound of 7 days (604800 s): 10**400 passed, then run_check raised OverflowError after starting the child, which nobody killed (PR 223 review).
+# Seen red: FAIL: check_timeout_s 604801 is a ConfigError: load accepted it   (also 10**400)
+put(tdir, {"schema": 1, "project": {"check_timeout_s": 604800}})
+cfg, _ = load(tdir)
+s.eq("check_timeout_s 604800 (7 days) is accepted", cfg["project"].get("check_timeout_s") if isinstance(cfg, dict) else cfg, 604800)
+for label, value in (("604801", 604801), ("10**400", 10 ** 400)):
+    put(tdir, {"schema": 1, "project": {"check_timeout_s": value}})
+    refuses("check_timeout_s %s" % label, tdir, "project.check_timeout_s")
+# A `project` that is no table has no such key to read: a ConfigError naming the key, never an AttributeError out of load (PR 223 review).
+# Seen red: Traceback ...: AttributeError: 'str' object has no attribute 'get'   (config.py _check_timeout)
+for label, value in (("a string", "x"), ("a list", [1]), ("an empty list", []), ("a number", 3), ("null", None)):
+    put(tdir, {"schema": 1, "project": value})
+    try:
+        refuses("project %s: check_timeout_s" % label, tdir, "project.check_timeout_s")
+    except AttributeError as e:
+        s.ok("project %s: load raises a ConfigError, not %s" % (label, type(e).__name__), False, str(e))
 
 s.done()

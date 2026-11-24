@@ -41,7 +41,7 @@ def load():
 CASES = [
     ("a change in the fwx plugin's lib selects fwx", "pull_request", ["plugins/fwx/lib/fwx/state.py"], True, False),
     ("a document of the fwx plugin selects fwx: it is a skill or a playbook, read by its tests", "pull_request",
-     ["plugins/fwx/playbooks/execute.md"], True, False),
+     ["plugins/fwx/playbooks/principles.md"], True, False),
     ("the README's image under plugins/fwx/docs, pinned by the engine suite, selects both", "pull_request",
      ["plugins/fwx/docs/workflow-tree.svg"], True, True),
     ("bin/forge, which the fwx suite starts, selects both", "pull_request", ["bin/forge"], True, True),

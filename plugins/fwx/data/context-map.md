@@ -1,5 +1,5 @@
 fwx is an agentic framework for Claude Code: a phase moves through stages (data/stages.json), and its state lives in `.fwx/`.
-Agents write only what their task names; the owner decides what is not decided yet.
-Put each fix in the strongest layer: code, then a check, then prose. A check is trusted only after it was seen failing; `NOT RUN` is not green.
+You own the result: its quality, speed and fit with the code around it. Push back, with a reason and an alternative, on a brief, plan or question that looks wrong, the owner's too.
+Write only what your task names; what the owner has not decided is theirs. Fix where it works best: code, a check or a line of instructions. Trust a check only after seeing it fail; `NOT RUN` is not green.
 Commands: `fwx phase`, `fwx decision`, `fwx stage`, `fwx verify`, `fwx decide`, `fwx rounds`, `fwx model`, `fwx budget`.
 Before building anything, look for a command, a skill or an agent that already does it.

@@ -41,6 +41,7 @@ The first FAIL line of each mutant, seen red:
 """
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -76,10 +77,12 @@ class Scene:
     """A main checkout on master, the integration checkout (a linked worktree on `phase`), the part's folder in the main
     checkout's `.fwx/`, and fake executors: a linked worktree each, on `worktree-agent-<name>`, born from `phase`."""
 
-    def __init__(self, quick=(), protected=(), checks=("true",)):
+    def __init__(self, quick=(), protected=(), checks=("true",), check_timeout_s=None):
         self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\n", "src/a.py": "a\n", "src/b.py": "b\n"})
-        helpers.write(self.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {
-            "checks": list(checks), "checks_quick": list(quick), "protected_paths": list(protected)}}))
+        project = {"checks": list(checks), "checks_quick": list(quick), "protected_paths": list(protected)}
+        if check_timeout_s:
+            project["check_timeout_s"] = check_timeout_s
+        helpers.write(self.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": project}))
         self.cwd = helpers.add_worktree(self.repo, "phase")
         self.part = os.path.join(self.repo, ".fwx", "milestones", "v1", "phases", "01-alpha")
         os.makedirs(self.part)
@@ -238,12 +241,27 @@ def case_integrate_quick(R, S):
     q = v.get("quick") or {}
     S.eq("quick red: ok false, merged anyway, ran with its exit", (v.get("ok"), v.get("merged"), q.get("ran"), q.get("rc"), q.get("cmds")),
          (False, [b1], True, 3, ["exit 3"]))
+    S.ok("quick red by its own exit: no timed_out, no limit in the result", "timed_out" not in q and "limit" not in q, "quick: %s" % q)
     sg = Scene(quick=["true"])
     b = sg.agent("one", [("src/a.py", "a1\n", None)])
     v = ok_json(S, "integrate, quick green", sg.integrate(R, b))
     S.eq("quick green: ok true, ran with exit 0", (v.get("ok"), v.get("quick", {}).get("ran"), v.get("quick", {}).get("rc")), (True, True, 0))
+    # DTC-113: the quick check runs under the project's own limit. A 2 s check with `check_timeout_s` 1 is stopped, which is not a pass.
+    nap = "%s -c 'import time; time.sleep(2)'" % shlex.quote(sys.executable)
+    st = Scene(quick=[nap], check_timeout_s=1)
+    b = st.agent("one", [("src/a.py", "a1\n", None)])
+    r = st.integrate(R, b)
+    v = ok_json(S, "integrate, quick over the project's limit", r, code=1)
+    S.eq("quick over check_timeout_s: ok false, rc 1 (the check was killed)", (v.get("ok"), (v.get("quick") or {}).get("rc")), (False, 1))
+    # PR 223, CodeRabbit: the result said rc 1 and nothing else, so a stopped check looked like a failing one. Report it as the gate does:
+    # which check timed out, the limit it had, and what to do about it.
+    # Seen red: FAIL: quick over check_timeout_s: the result names the check that timed out and its limit: got (None, None), want ([<nap>], 1)
+    q = v.get("quick") or {}
+    S.eq("quick over check_timeout_s: the result names the check that timed out and its limit", (q.get("timed_out"), q.get("limit")), ([nap], 1))
+    S.ok("quick over check_timeout_s: stderr says to raise project.check_timeout_s", "timed out after 1 s" in r.stderr and "raise `project.check_timeout_s`" in r.stderr, r.stderr)
     sc.stop()
     sg.stop()
+    st.stop()
 
 
 def case_integrate_dirty(R, S):
