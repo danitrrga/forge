@@ -641,6 +641,21 @@ def case_base_reuse(R, S):
     S.eq("reuse: a red base leaves no record, so the next run runs the checks again", (codes, ran(runs), bad.audit_exists()), ((1, 1), 5, False))
 
 
+def case_base_moved(R, S):
+    """A base check that commits (HEAD moves) or leaves a file (the checkout is dirty) proves nothing about the sha it started at, so
+    no green row of that sha may be written for a later `fwx wave new` to reuse. Seen failing before the fix (DTC-77, CodeRabbit on
+    PR 222): "moved: a check that commits: exit: got (0, 1), want (2, 0)" (it exited 0 and wrote one evidence row of the old sha)."""
+    commit = "git -c user.name=t -c user.email=t@example.test commit -q --allow-empty -m moved"
+    for label, check, needle in (("a check that commits", commit, "HEAD moved"),
+                                 ("a check that leaves an untracked file", "touch left-by-check.txt", "uncommitted changes")):
+        sc = Scene(recipe=[check])
+        r = sc.prepare(R)
+        green = [x for x in evidence_rows(sc) if x.get("kind") == "evidence"] if sc.audit_exists() else []
+        S.eq("moved: %s: exit" % label, (r.returncode, len(green)), (2, 0))
+        S.eq("moved: %s: stdout empty" % label, r.stdout, "")
+        S.ok("moved: %s: the refusal says %r" % (label, needle), needle in r.stderr, "stderr %r" % r.stderr[:300])
+
+
 def timeout_run(sc, seconds, root):
     """`fwx wave new` as the command runs it, with the time limit of a check shortened: (exit code, stdout, stderr)."""
     code = ("import sys; sys.path.insert(0, %r); from fwx.core import verify; verify.run_check.__defaults__ = (%d,); "  # the limit is run_check's default
@@ -668,7 +683,7 @@ def case_base_timeout(R, S):
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_timeout]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_moved, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
