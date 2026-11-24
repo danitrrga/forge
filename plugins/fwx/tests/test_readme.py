@@ -130,7 +130,7 @@ def known(const, py, hooks):
                 or re.search(r"\$\{?%s\b" % re.escape(const), hooks))
 
 
-PHRASES = ("ask an agent", "fixed core", "Linux")
+PHRASES = (".claude/fwx.json", "setup tool", "forge sync", "ask an agent", "fixed core", "Linux")
 
 
 def config_section(text):
@@ -260,6 +260,8 @@ def config_control(name, text, which, needle):
 
 config_control("without walk", re.sub(r"`walk[.`][^`]*`?", "`x`", real), 0, "walk")
 config_control("without project.check_timeout_s", re.sub(r"`(project\.)?check_timeout_s`", "`x`", real), 1, "check_timeout_s")
+# r1-F2: PHRASES held only the last three, so a section without the file's name or its setup tool still passed. Seen red before they joined it:
+#   FAIL: control without '.claude/fwx.json': fails naming '.claude/fwx.json': missing: []   (likewise 'setup tool', 'forge sync')
 for phrase in PHRASES:
     config_control("without %r" % phrase, real.replace(phrase, "x"), 2, phrase)
 s.done()
