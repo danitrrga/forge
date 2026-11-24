@@ -1947,7 +1947,7 @@ def _creates_issue(seg):
 
 
 # ------------------------------------------------------------------ the Orca chat rule
-ORCA_TIMEOUT = 3.0  # seconds, for every `orca` call of one check together
+ORCA_TIMEOUT = 3.0  # seconds, for every `orca` call of one command together (all its launches share one deadline)
 ORCA_WALK_UP = 6  # folders tried from the working directory upward, to find the one Orca knows as a worktree
 ORCA_OWN_AGENTS = ("claude", "claude-agent-teams")
 
@@ -1961,13 +1961,15 @@ def orca_chat_refusal(pcmd):
     "agent", "title", "updatedAt", ...}]}}. `claude` is not covered: a Claude session starting a Claude worker is the
     normal way to split work. A steering rule, not a security one: when `orca` is missing, fails, answers no list
     or takes over ORCA_TIMEOUT seconds, the launch is allowed and a one-line note says the check was skipped, so
-    a stopped Orca never blocks work."""
+    a stopped Orca never blocks work. One deadline covers every launch of pcmd: a timed-out hook is let through by
+    Claude Code and skips the checks after this one."""
+    deadline = time.monotonic() + ORCA_TIMEOUT
     for seg in pieces(pcmd):
         launch = _orca_launch(seg)
         if not launch:
             continue
         agent, worktree = launch
-        chats, why = orca_open_chats(agent, worktree)
+        chats, why = orca_open_chats(agent, worktree, deadline)
         if why:
             sys.stderr.write("guard_tool_use: note - open Orca chat check skipped for a new %s chat: %s\n"
                              % (agent, why))
@@ -2008,11 +2010,13 @@ def _option(args, name):
     return ""
 
 
-def orca_open_chats(agent, worktree):
+def orca_open_chats(agent, worktree, deadline=None):
     """(the open chats of `agent`, None), or (None, why the answer is unknown). The worktree is the launch's own
     `--worktree` selector; without one it is the first of the working directory and its parents that Orca knows
-    (`path:` takes a worktree's root and refuses a subfolder, as the launch itself resolves the folder upward)."""
-    deadline = time.monotonic() + ORCA_TIMEOUT
+    (`path:` takes a worktree's root and refuses a subfolder, as the launch itself resolves the folder upward).
+    deadline is a time.monotonic() value shared by the calls of one command; without it the call has its own."""
+    if deadline is None:
+        deadline = time.monotonic() + ORCA_TIMEOUT
     selectors, d = [worktree], os.path.abspath(CWD[0])
     if not worktree:
         selectors = []

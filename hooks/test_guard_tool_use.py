@@ -1883,6 +1883,13 @@ ORCA_CASES = [
          why=["chat check skipped"], mode="garbage", world={}),
     dict(label="fail open: orca takes over 3 s", cmd="orca agent launch --agent gemini", want=0,
          why=["chat check skipped"], mode="slow", world={}, within=7),
+    # One deadline for the whole command, not one per launch: five launches against a stalled Orca must end near
+    # ORCA_TIMEOUT, since the hook's own 10 s limit lets a call through and skips the checks that come after this one.
+    # Red before (a deadline per launch): "orca 'orca agent launch --agent gemini --prompt p0; ...': orca was called
+    # ['agent list --worktree path:<repo> --json' x5], wanted the list of ['path:<repo>'] only" (5 calls, 5 x 3 s).
+    dict(label="fail open: several launches share one 3 s deadline", want=0, why=["chat check skipped"], mode="slow",
+         cmd="; ".join("orca agent launch --agent gemini --prompt p%d" % i for i in range(5)), world={},
+         asked=["path:" + REPO], within=6),
     dict(label="fail open: no worktree of orca holds the folder", cmd="orca agent launch --agent gemini", want=0,
          why=["chat check skipped"], world={}),
     dict(label="fail open: orca is not installed", cmd="orca agent launch --agent gemini", want=0,
@@ -1921,8 +1928,10 @@ def orca_row(c):
         if text.lower() not in err.lower():
             return "%swanted %r in the message, got %r" % (who, text, err.strip()[:200])
     if rc == 2:
-        return bad_message(err)
-    if "BLOCKED" in err:
+        msg = bad_message(err)  # a refusal also owes the right selector sequence and the time bound below
+        if msg:
+            return msg
+    elif "BLOCKED" in err:
         return "%sallowed but the stderr says BLOCKED" % who
     if "asked" in c:
         calls_file = os.path.join(d, "calls")
