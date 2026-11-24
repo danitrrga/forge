@@ -641,6 +641,27 @@ def case_base_reuse(R, S):
     S.eq("reuse: a red base leaves no record, so the next run runs the checks again", (codes, ran(runs), bad.audit_exists()), ((1, 1), 5, False))
 
 
+def case_base_reuse_sibling(R, S):
+    """A phase with several part folders on one base: a green record in a sibling part's audit.tsv stands in for the run, as one in the
+    part's own does (DTC-117). Seen failing before the fix: "sibling: a green record in another part of the phase is reused, no check
+    runs: got (0, 1), want (0, 0)" (the part ran the checks again). A record of another sha in a sibling stands in for nothing."""
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    sc = Scene(recipe=[counting(runs)], sub=True)
+    other = os.path.join(sc.phase, "03.2-gamma")
+    os.makedirs(other)
+    green = lambda sha: state.append_audit(other, "evidence", sha=sha, rc=0, detail=json.dumps(
+        {"sha": sha, "clean": True, "source": "profile", "commands": [{"cmd": counting(runs), "rc": 0}], "rc": 0}))
+    green("0" * 40)
+    r0 = sc.prepare(R)
+    S.eq("sibling: a sibling's record of another sha is not reused: the checks run", (r0.returncode, ran(runs)), (0, 1))
+    sc.commit("more.txt", "another commit")
+    green(sc.head())
+    r1 = sc.prepare(R)
+    S.eq("sibling: a green record in another part of the phase is reused, no check runs", (r1.returncode, ran(runs)), (0, 1))
+    S.ok("sibling: and says it reused the record of the sha", "base checks: reused the passing record of %s" % sc.head()[:7] in r1.stderr, r1.stderr)
+    S.eq("sibling: the part writes no row of its own for the reused base (only the one of r0 stands)", len(evidence_rows(sc)), 1)
+
+
 def case_base_moved(R, S):
     """A base check that commits (HEAD moves) proves nothing about the sha it started at, so no green row of that sha may be written
     for a later `fwx wave new` to reuse. Seen failing before the fix (DTC-77, CodeRabbit on PR 222): "moved: a check that commits: exit:
@@ -681,7 +702,7 @@ def case_base_timeout(R, S):
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_moved, case_base_timeout]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_moved, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
