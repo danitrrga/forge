@@ -207,6 +207,13 @@ def main():
     nagging = {n: ws for n, ws in nagging.items() if ws}
     check("no session text names `fwx budget` or its fields", not nagging, ", ".join("%s: %s" % kv for kv in sorted(nagging.items())))
     check("control: a text that names `fwx budget` is caught", any(w in "7. **Budget.** Run `fwx budget --json`" for w in ("fwx budget", "used_percentage")))
+    # r1-F1: step 7 sent a refused `fwx:discuss` call to "rule 8" after the budget rule's removal renumbered the rules ("Generated config" became 8).
+    # Seen red before the cite followed: FAIL: step 7's refused-call cite names the rule on skills and workflows -> 'rule 8 applies' is "Generated config"
+    cited = re.search(r"If the call is refused, rule (\d+) applies", step(skill, 7))
+    titled = re.search(r"^%s\. \*\*([^*]+?)\.\*\*" % (cited.group(1) if cited else "0"), skill, re.M)
+    check("step 7's refused-call cite names the rule on skills and workflows", bool(titled) and titled.group(1) == "Skills and workflows",
+          "'rule %s applies' is %s" % (cited.group(1) if cited else "?", '"%s"' % titled.group(1) if titled else "no rule"))
+    check("control: a cite of a rule with another title is caught", re.search(r"^8\. \*\*([^*]+?)\.\*\*", "7. **Skills and workflows.** x\n8. **Generated config.** y", re.M).group(1) != "Skills and workflows")
     check("step 8 reads `review: blocking` and the plan accepts that value", "`review: blocking`" in s8 and "blocking" in plan.REVIEWS,
           "step 8 names it: %s; plan.REVIEWS: %s" % ("`review: blocking`" in s8, plan.REVIEWS))
     check("steps 5 and 8 read `ui: true` and plan.py has a task key `ui`", "`ui: true`" in skill and '"ui"' in open(os.path.join(ROOT, "lib", "fwx", "plan.py"), encoding="utf-8").read(),
