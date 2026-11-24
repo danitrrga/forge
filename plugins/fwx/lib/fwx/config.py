@@ -23,6 +23,7 @@ ROLES = ("orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem
          "vision")
 SIZES = ("small", "normal", "big")
 ALIASES = ("sonnet", "opus", "haiku", "fable")  # a model is one of these, never a full id
+MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; a bigger number overflows the wait on the child
 
 
 def _seed():
@@ -42,7 +43,7 @@ DEFAULTS = {
     "project": {"name": None, "main_checkout": None, "linear_project": None, "default_branch": None,
                 "factory_branch": "factory", "checks": [], "protected_paths": [],
                 "production": {"branches": [], "commands": []}, "verdict_command": None, "ui": False,
-                "checks_quick": [], "app_run": None, "worktree_setup": []},
+                "checks_quick": [], "app_run": None, "worktree_setup": [], "check_timeout_s": 20 * 60},
     "factory": {"mode": "off", "ui_bugs": False, "watchdog_nudge_min": 30, "watchdog_fail_min": 30,
                 "cost_warn_x_median": 3, "tick_trigger": None, "classifier": "suggest"},
     "weekly": {"on": True, "min_sessions": 5, "trigger": None, "precision_low": 0.7, "precision_min_marks": 20,
@@ -160,6 +161,18 @@ def setup_commands(cwd=None):
     return _setup_list(data.get("project"), path)
 
 
+def _check_timeout(cfg, path):
+    """project.check_timeout_s: the seconds a check of the project may run before it is stopped (default 1200). A project whose suite
+    needs longer sets it; anything but a positive whole number is refused here, once, so every caller can read the key as it is."""
+    project = cfg.get("project")
+    if not isinstance(project, dict):
+        raise _bad(path, "project is %r, not a table, so project.check_timeout_s cannot be read" % (project,))
+    v = project.get("check_timeout_s")
+    if not _count(v) or v > MAX_CHECK_TIMEOUT_S:
+        raise _bad(path, "project.check_timeout_s is %r, not a positive whole number of seconds (at most %d, 7 days)"
+                   % (v if len(repr(v)) < 40 else "a number of %d digits" % len(str(v)), MAX_CHECK_TIMEOUT_S))
+
+
 def _check_walk(cfg, path):
     """walk.browser_executable: null (the browser agent-browser finds) or the path of the browser the UI walk must use instead,
     e.g. a headless shell, so that a wrapper around the system browser (an extension, a window flag) never reaches the walk."""
@@ -202,6 +215,7 @@ def load(cwd=None, quiet=False):
     _validate(cfg, source)
     _check_walk(cfg, source)
     _check_setup(cfg, source)
+    _check_timeout(cfg, source)
     cfg["_source"] = source
     return cfg
 

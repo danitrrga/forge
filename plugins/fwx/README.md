@@ -84,6 +84,10 @@ owner present, nobody present) and `per_project` maps a role to its own number (
 executor's as `cap` in the `args` of `execute`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
 are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
 
+`project.check_timeout_s` (default `1200`) is the seconds one check of `project.checks` or `checks_quick` may run before fwx stops it: `fwx verify`, the
+gate, `fwx wave new`'s base checks and `fwx wave merge` use it, and a base check stopped by it is `NOT RUN` and names the limit it had. A project whose suite
+needs longer sets it (forge's project field of the same name); anything but a positive whole number is an error that names the key.
+
 `walk.browser_executable` (default `null`) is the path of the browser the UI walk uses instead of the one `agent-browser`
 finds, for a machine where that one goes through a wrapper (an extension, a window flag): `fwx walk ab` then adds
 `--executable-path <path>` to every call. If the file is not there, `fwx walk start` is `NOT RUN, NOT ARMED` (exit 0, `armed: false`).

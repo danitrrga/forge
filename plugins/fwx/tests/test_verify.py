@@ -112,6 +112,7 @@ Controls of the rest, each seen red on a copy of the repo with one thing changed
 """
 import json
 import os
+import shlex
 import shutil
 import sys
 
@@ -205,10 +206,10 @@ ENV = {"PATH": NO_GH, "CLAUDE_CODE_SESSION_ID": "", "FAKE_GH_STATE": GH_STATE}
 GH_ENV = dict(ENV, PATH=WITH_GH)
 
 
-def make(recipe, files=None):
-    """A toy repo whose committed `.claude/fwx.json` has `recipe` as its checks, and the phase folder `.fwx` holds."""
+def make(recipe, files=None, project=None):
+    """A toy repo whose committed `.claude/fwx.json` has `recipe` as its checks (and the other `project` keys given), and the phase folder `.fwx` holds."""
     f = {"README": "toy\n", "sub/x.txt": "x\n",
-         ".claude/fwx.json": json.dumps({"schema": 1, "project": {"checks": recipe}})}
+         ".claude/fwx.json": json.dumps({"schema": 1, "project": dict(project or {}, checks=recipe)})}
     f.update(files or {})
     repo = helpers.toy_repo(f)
     return repo, str(state.new_phase("work", cwd=repo))
@@ -359,6 +360,28 @@ if isinstance(parsed, dict):
     s.eq("--json has the facts.evidence shape, plus source and rc", sorted(parsed), ["clean", "commands", "rc", "sha", "source"])
     s.eq("--json is what the row's detail holds", parsed, json.loads(rows(phase)[-1]["detail"]))
     s.eq("--json is the evidence of HEAD", evidence.evidence_state(parsed, head(repo), ["true"])["state"], "verified")
+
+# ---- the time limit of a check is the project's: project.check_timeout_s (DTC-113) ---------------------------------------
+# Seen red on master (the limit was the constant CHECK_TIMEOUT_S, 20 minutes, whatever the file said):
+#   FAIL: a check of 2 s with check_timeout_s 1: exit 1 and rc none: got (0, [0]), want (1, [None])
+#   FAIL: a check of 2 s with check_timeout_s 1: the limit actually used is named: fwx verify: running 1 check from the project at 8b3f2e7 ...
+#   FAIL: check_timeout_s 0 is a configuration error: exit 2, no row: got (0, [{'date': ..., 'kind': 'evidence', ...}]), want (2, [])
+
+NAP = "%s -c 'import time; time.sleep(2)'" % shlex.quote(sys.executable)
+repo, phase = make([NAP], project={"check_timeout_s": 1})
+r = run(repo)
+got = rows(phase)
+s.eq("a check of 2 s with check_timeout_s 1: exit 1 and rc none",
+     (r.returncode, [c["rc"] for c in json.loads(got[-1]["detail"])["commands"]] if got else []), (1, [None]))
+s.ok("a check of 2 s with check_timeout_s 1: the limit actually used is named", "timed out after 1 s" in r.stderr, r.stderr)
+# PR 223 review. Seen red: FAIL: a timed-out check says to raise project.check_timeout_s: fwx verify: running 1 check from the project at ...
+s.ok("a timed-out check says to raise project.check_timeout_s", "raise `project.check_timeout_s`" in r.stderr, r.stderr)
+repo, phase = make([NAP])
+s.eq("the same check with no configured limit passes (the default is 1200 s)", run(repo).returncode, 0)
+repo, phase = make([NAP], project={"check_timeout_s": 0})
+r = run(repo)
+s.eq("check_timeout_s 0 is a configuration error: exit 2, no row", (r.returncode, rows(phase)), (2, []))
+s.ok("and the error names the key", "project.check_timeout_s" in r.stderr, r.stderr)
 
 # ---- the built-in check: no file of a one-use or old-version name is added (the range from the default branch) -----------
 
