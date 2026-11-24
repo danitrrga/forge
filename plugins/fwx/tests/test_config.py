@@ -255,4 +255,19 @@ if has_cap:
     except config.ConfigError as e:
         s.ok("an unknown role: the message lists the roles", all(r in str(e) for r in config.ROLES), str(e))
 
+# --- the time limit of one check: project.check_timeout_s, a positive whole number of seconds, default 1200 (DTC-113)
+# Seen red on master (no such key: the default table had none, and a bad value was never looked at):
+#   FAIL: no file value: project.check_timeout_s is the default 1200: got 'missing', want 1200
+#   FAIL: check_timeout_s 0 is a ConfigError: load accepted it   (the same for -5, a string, 12.5, true, null and a list)
+tdir = helpers.toy_repo()
+cfg, _ = load(tdir)
+s.eq("no file value: project.check_timeout_s is the default 1200",
+     cfg["project"].get("check_timeout_s", "missing") if isinstance(cfg, dict) else cfg, 1200)
+put(tdir, {"schema": 1, "project": {"check_timeout_s": 2700}})
+cfg, _ = load(tdir)
+s.eq("a file value is read", cfg["project"].get("check_timeout_s", "missing") if isinstance(cfg, dict) else cfg, 2700)
+for label, value in (("0", 0), ("-5", -5), ("a string", "1200"), ("a float", 12.5), ("true", True), ("null", None), ("a list", [1])):
+    put(tdir, {"schema": 1, "project": {"check_timeout_s": value}})
+    refuses("check_timeout_s %s" % label, tdir, "project.check_timeout_s")
+
 s.done()
