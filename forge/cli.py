@@ -1542,7 +1542,7 @@ def cmd_test(a):
             print("forge test: --mutants runs only the on-demand suites of the run with no group", file=sys.stderr)
             return 2
         from forge import testgroup  # not at the top: threads and signals that every other command (session-start) never needs
-        return testgroup.main(os.path.join(lib.ROOT, GROUPS[group]), expect, jobs, GROUPS[group])
+        return testgroup.main(os.path.join(lib.ROOT, GROUPS[group]), expect, jobs, GROUPS[group], getattr(a, "shard", None))
     if expect:
         print("forge test: --expect-not-run needs a group (groups: %s)" % ", ".join(GROUPS), file=sys.stderr)
         return 2
@@ -1553,6 +1553,11 @@ def cmd_test(a):
         if error:
             print(error.replace(testgroup.NAME, "forge test"), file=sys.stderr)
             return 2
+    from forge import testgroup
+    shard, error = testgroup.parse_shard(getattr(a, "shard", None))
+    if error:
+        print(error.replace(testgroup.NAME, "forge test"), file=sys.stderr)
+        return 2
     # A git that fails (not a repository, not installed) or a list with no tests is a FAIL: until
     # an attack round either ran zero tests and printed "0 failures" with exit 0.
     # Two histories own the files once the engine and the private data are split (forge/publish.py): the
@@ -1597,6 +1602,12 @@ def cmd_test(a):
         elif mutants:
             continue
         todo.append(f)
+    if shard:  # the on-demand files are said in every slice and never dealt; the others go to slices in start_order's order
+        mine = set(testgroup.take_shard(start_order(todo), shard))
+        print("shard %d/%d: %d of %d test file(s)" % (shard[0], shard[1], len(mine), len(todo)))
+        if not mine:  # looking at zero is a failure
+            results.append(lib.Result("FAIL", "shard %d/%d" % shard, "no test file in this slice: %d file(s) in %d slices" % (len(todo), shard[1])))
+        todo = [f for f in todo if f in mine]
 
     def run_one(f):
         # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr, and -u (unbuffered)
@@ -2083,7 +2094,9 @@ def build_parser():
     t.add_argument("--expect-not-run", action="append", metavar="PATH[,PATH...]",
                    help="with a group: tests that cannot run where this is called from, as the group lists them (repeatable); with it a test "
                         "that exits 77 and is not declared makes the run exit 77, and a run in which nothing passed exits 1")
-    t.add_argument("--jobs", action="append", metavar="N", help="how many test files run at once (default: the CPUs, at most 8, with a group; at most 4 with none; 1 is one after the other)")
+    t.add_argument("--jobs", action="append", metavar="N", help="how many test files run at once (default: min(4, CPUs) with none, the CPUs at most 8 with a group; 1 is one after the other)")
+    t.add_argument("--shard", action="append", metavar="I/N", help="run only the I-th of N slices of the files (CI runs the slices on separate runners; "
+                   "together they are every file, once); a slice with no file is a failure")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
     t.set_defaults(fn=cmd_test)
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
