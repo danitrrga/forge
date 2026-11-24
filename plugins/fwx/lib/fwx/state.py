@@ -192,16 +192,13 @@ def sessions_dir(cwd=None):
     return os.path.join(r.stdout.strip(), "fwx", "sessions")
 
 
-_sessions_dir = sessions_dir  # the name `fwx statusline` and `fwx budget` import
-
-
 def read_session(cwd=None, session=None):
     """`{subproject, phase_dir}` of the session (phase_dir relative to the checkout that holds `.fwx/`), or None when
     there is no session id or no file. The file lives in the git common dir, so every worktree reads the same one."""
     sid = session_id(session)
     if sid is None:
         return None
-    path = os.path.join(_sessions_dir(cwd), sid + ".json")
+    path = os.path.join(sessions_dir(cwd), sid + ".json")
     try:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
@@ -229,7 +226,7 @@ def write_session(cwd=None, session=None, *, subproject=None, phase_dir=None):
         if not full.startswith(str(root) + os.sep):
             raise StateError("%s is not inside %s" % (phase_dir, root))
         stored = os.path.relpath(full, str(root.parent))
-    _put_session(_sessions_dir(cwd), sid, subproject, stored)
+    _put_session(sessions_dir(cwd), sid, subproject, stored)
 
 
 def _put_session(d, sid, subproject, stored):
@@ -639,7 +636,7 @@ def cancel_phase(phase_dir):
     except OSError:
         return
     for n in names:
-        if not n.endswith(".json") or n.endswith(".budget.json"):
+        if not n.endswith(".json") or n.endswith(".budget.json"):  # a `.budget.json` is an old session's leftover, not a binding
             continue
         try:
             with open(os.path.join(sessions, n), encoding="utf-8") as f:

@@ -1,36 +1,34 @@
 #!/usr/bin/env python3
-"""The discuss skill's text: no model name, a model on every agent launch, a recommendation on every question, and no `decisions` agent.
+"""The discuss skill's text where code reads it or the owner set the rule: no model name and a `models.<role>.<size>` key on every agent launch
+(the model comes from the configuration), a recommendation on every question, no `decisions` agent, no verdict page waited on or served, and
+the verdict keys that `fwx discuss --json` prints reach the demo.
 
 Plain Python, no network: it reads skills/discuss/ and agents/demo.md of the checkout it sits in (`python3 tests/test_discuss_skill.py [ROOT]`
 reads another tree). The question lines the format check looks at are the round format of rounds.md (from `**Q1**` to the first `---`).
 
-08-steering D9 and D29 reversed the old rule "never recommend an option unasked": every question ends with `Recommended: <letter>, because ...`,
-and no discuss text says never recommend. D17: the orchestrator records decisions itself with `fwx decision new`, so the discuss launches no
-`decisions` agent. D14: step 3 offers a route (direct change, focused fix or full process) the owner confirms. D23: reentry.md's split is
-the wayfinder mode, a milestone as the map and one phase per decision ticket.
-Seen red on the 6e4e54c texts (rc=1, 43 checks; the first FAIL of each check):
-  FAIL: rounds.md's question format ends with a Recommended: line -> last line of the format: 'b. <option>: <what it implies>'
-  FAIL: no discuss text says never recommend -> SKILL.md:6 <!-- referent: ... the owner decides without recommendations; ...  (also SKILL.md:8, :22, rounds.md:1 and :33)
-  FAIL: the discuss launches no `decisions` agent -> SKILL.md:24 5. **Record.** With decisions in the turn, launch `decisions` (`models.decisions.small`) ...  (also SKILL.md:30)
-  FAIL: step 3 offers a route, direct change, focused fix or full process, that the owner confirms -> step 3: '3. **What does the owner ask?** Unsure: ask in round one. ...
-  FAIL: step 5 records with fwx decision new, launches nothing, and names Pocock's three criteria -> step 5: '5. **Record.** With decisions in the turn, launch `decisions` ...
-  FAIL: reentry.md's split is the wayfinder mode: a map and a decision ticket per phase -> reentry.md lacks one of: wayfinder, Destination, ...
-Each check has a control on a toy: the good toy passes, then one change makes its check fail.
-Held from before (seen red on planted copies): no model name (planted "Use sonnet." in SKILL.md: FAIL: no model name -> SKILL.md names 'sonnet'), and every launch names its
-model (`models.researcher.small` taken out of a launch: FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher`:).
-No verdict page is waited on or served, and no opener is named: no .md under skills/, agents/ and playbooks/ names `verdict wait`,
-`--serve` or `xdg-open` (how a page is opened for the owner is in his own instructions).
-Seen red on master before the texts changed (first match per file; 18 .md files looked at):
-  FAIL: no verdict wait, serve or opener in the discuss and the agents -> agents/demo.md names '--serve'
-  FAIL: no verdict wait, serve or opener in the discuss and the agents -> skills/discuss/SKILL.md names 'xdg-open'
-Widened to every skill and playbook, red before the session texts changed (32 .md files looked at):
-  FAIL: ... -> playbooks/session.md names 'xdg-open'
-  FAIL: ... -> skills/session/SKILL.md names 'xdg-open'
-  FAIL: ... -> skills/session/references/ui-review.md names 'xdg-open'
-The verdict keys reach the demo (16 checks); red on the texts before the fix (rc=1, 32 .md files looked at):
-  FAIL: step 7 names verdict_tool and verdict_command in the sentence that launches demo -> step 7 launch clause: ' (`models.demo.normal`)'
-  FAIL: demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them -> agents/demo.md has no line with 'fwx discuss --json' and both keys
-Length is not checked here: it is measured and reported, not capped. Each change also has an in-file control on a toy (the "control:" checks).
+08-steering D9 and D29: every question ends with `Recommended: <letter>, because ...`, and no discuss text says never recommend. D17: the
+orchestrator records decisions itself with `fwx decision new`, so the discuss launches no `decisions` agent. The owner opens a verdict page in
+his own way: no .md under skills/, agents/ and playbooks/ names `verdict wait`, `--serve` or `xdg-open`.
+09.3 T33 removed the checks that pinned wording with their red logs: step 3's route sentence, step 5's three criteria, reentry.md's wayfinder
+words, the last line of step 7's turn, and the `recommend` key of the demo's example.
+
+Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the FAIL line printed):
+  rounds.md, "Recommended: <letter>, because <why>" -> "Pick: <letter>":
+    FAIL: rounds.md's question format ends with a Recommended: line -> last line of the format: 'Pick: <letter>'
+  SKILL.md, "Record each decision" -> "Never recommend an option; record each decision":
+    FAIL: no discuss text says never recommend -> SKILL.md:25 5. **Record.** Never recommend an option; record each decision of the turn yours
+  SKILL.md, "`models.researcher.small`" -> "`sonnet`":
+    FAIL: no model name -> SKILL.md names 'sonnet'   and   FAIL: every launch names its model -> Then `fwx phase new <slug> [--subproject S]` and launch two or three `researcher` (`sonnet
+  SKILL.md step 5 changed to "Launch `decisions` to record each decision of the turn":
+    FAIL: the discuss launches no `decisions` agent -> SKILL.md:25 5. **Record.** Launch `decisions` to record each decision of the turn, a row onl
+    FAIL: step 5 records with fwx decision new and launches nothing -> step 5: '5. **Record.** Launch `decisions` to record each decision of the turn, a row only for a de'
+  skills/discuss/SKILL.md with "xdg-open" put in step 7 ("`demo` (" -> "xdg-open `demo` ("):
+    FAIL: no verdict wait, serve or opener in the skills, agents and playbooks -> skills/discuss/SKILL.md names 'xdg-open'
+  agents/demo.md, "`verdict_command`" -> "`verdict_cmd`":
+    FAIL: demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them -> agents/demo.md has no line with 'fwx discuss --json' and both keys
+  lib/fwx/commands/discuss.py, '"verdict_command"' -> '"verdict_cmd"':
+    FAIL: fwx discuss --json prints the keys verdict_tool and verdict_command that step 7 and demo.md name -> lib/fwx/commands/discuss.py has no such key
+Each kept check has a control on a toy: the good toy passes, then one change makes its check fail.
 """
 import json
 import os
@@ -89,9 +87,6 @@ def problems(files, demo_text):
     for sentence in re.split(r"(?<=[.;:])\s+", skill):
         if LAUNCH.search(sentence) and "models." not in sentence:
             out.append(("every launch names its model", sentence.strip()[:90]))
-    for block in re.findall(r"```json\n(.*?)```", demo_text, flags=re.S):
-        if re.search(r'"(recommend|pick)"\s*:', block):
-            out.append(("demo example has no recommend key", block[:60]))
     return out
 
 
@@ -127,7 +122,7 @@ check("the skill, agent and playbook texts are looked at (zero is a failure)", l
 for name, detail in waiting(agent_texts):
     check(name, False, detail)
 
-check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and "```json" in demo)
+check("the texts are looked at", len(files["SKILL.md"].split()) > 300 and len(demo.split()) > 50)
 
 # D9: every question carries a recommendation, and nothing in the discuss says the opposite.
 ok, last = format_ends_with_recommended(files["rounds.md"])
@@ -145,40 +140,21 @@ def step(text, n):
     return m.group(0) if m else ""
 
 
-def route_line(step3):
-    return all(w in step3 for w in ("direct change", "focused fix", "full process", "confirm"))
-
-
 def records_itself(step5):
-    return ("fwx decision new" in step5 and "launch" not in step5.lower()
-            and all(w in step5 for w in ("hard to reverse", "surprising without context", "trade-off")))
+    return "fwx decision new" in step5 and "launch" not in step5.lower()
 
 
-def wayfinder(text):
-    return all(w in text for w in ("wayfinder", "Destination", "Decisions so far", "Not yet specified", "Out of scope", "decision ticket"))
-
-
-check("step 3 offers a route, direct change, focused fix or full process, that the owner confirms", route_line(step(files["SKILL.md"], 3)),
-      "step 3: %r" % step(files["SKILL.md"], 3)[:90])
-check("step 5 records with fwx decision new, launches nothing, and names Pocock's three criteria", records_itself(step(files["SKILL.md"], 5)),
-      "step 5: %r" % step(files["SKILL.md"], 5)[:90])
-check("reentry.md's split is the wayfinder mode: a map and a decision ticket per phase", wayfinder(files["reentry.md"]),
-      "reentry.md lacks one of: wayfinder, Destination, Decisions so far, Not yet specified, Out of scope, decision ticket")
+check("step 5 records with fwx decision new and launches nothing", records_itself(step(files["SKILL.md"], 5)), "step 5: %r" % step(files["SKILL.md"], 5)[:90])
 
 # the verdict keys reach the demo: the launch sentence of step 7 names both, and the demo gets them itself when its prompt lacks them
 step7 = [l for l in files["SKILL.md"].splitlines() if l.startswith("7. ")]
 launch7 = step7[0].split("launch `demo`", 1)[-1].split(";", 1)[0] if step7 and "launch `demo`" in step7[0] else ""
 check("step 7 names verdict_tool and verdict_command in the sentence that launches demo",
       "`verdict_tool`" in launch7 and "`verdict_command`" in launch7, "step 7 launch clause: %r" % launch7[:90])
-# the turn that builds the verdict page ends with where it is (the rehearsal's owner message named the page earlier in the turn, not last)
-# Seen red on the old step 7 (it said "open the page ... say in one line it is ready and end the turn"):
-#   FAIL: step 7 makes the last line of the turn name the page, its path or the orca tab -> step 7: "waiting on it. His pasted answer's pick and note go into `Approved UI` of `context.md`. ..."
-def last_line_names_page(step):
-    return re.search(r"last line[^.;]*\bnames? the page\b", step) is not None and "path" in step and "orca tab" in step
-check("step 7 makes the last line of the turn name the page, its path or the orca tab",
-      bool(step7) and last_line_names_page(step7[0]), "step 7: %r" % (step7[0][-200:] if step7 else ""))
-check("control: the old step 7 does not pass the last-line check",
-      not last_line_names_page("open the page for the owner the way the user's instructions say, say in one line it is ready and end the turn"))
+with open(os.path.join(ROOT, "lib", "fwx", "commands", "discuss.py"), encoding="utf-8") as fh:
+    discuss_src = fh.read()
+check("fwx discuss --json prints the keys verdict_tool and verdict_command that step 7 and demo.md name",
+      '"verdict_tool"' in discuss_src and '"verdict_command"' in discuss_src, "lib/fwx/commands/discuss.py has no such key")
 gets = [l for l in demo.splitlines() if "fwx discuss --json" in l and "`verdict_tool`" in l and "`verdict_command`" in l]
 check("demo.md tells the agent to read verdict_tool and verdict_command from fwx discuss --json when its prompt lacks them",
       len(gets) == 1, "agents/demo.md has no line with 'fwx discuss --json' and both keys")
@@ -187,11 +163,10 @@ for name, detail in problems(files, demo):
 
 # controls: the good toy passes first, then each change makes its own check fail
 good = {"SKILL.md": "launch `researcher` (`models.researcher.small`): the map.\n", "rounds.md": "**Q1** - x\na. one: it implies y\n"}
-check("control: the good toy passes", problems(good, "```json\n{\"options\": [\"a\"]}\n```") == [])
+check("control: the good toy passes", problems(good, "") == [])
 for label, files2, demo2, want in [
     ("a model name", dict(good, **{"SKILL.md": good["SKILL.md"] + "Use sonnet.\n"}), "", "no model name"),
     ("a launch without models.", dict(good, **{"SKILL.md": "launch `demo` for the figure.\n"}), "", "every launch names its model"),
-    ("a recommend key", good, "```json\n{\"recommend\": 1}\n```", "demo example has no recommend key"),
 ]:
     got = [c for c, _ in problems(files2, demo2)]
     check("control: " + label, want in got, "got %s" % got)
@@ -209,15 +184,10 @@ for bad in ("Never recommend an option.", "Questions go with no recommendation."
 check("control: a recommendation rule passes", never_recommend({"a.md": "Every question ends with a Recommended line.\n"}) == [])
 check("control: a launch of decisions fails", len(decisions_agent({"a.md": "launch `decisions` (`models.decisions.small`)"})) == 1)
 check("control: the decision CLI passes", decisions_agent({"a.md": "record it with `fwx decision new`"}) == [])
-GOOD3 = "3. **What?** Route: direct change, focused fix or full process; the owner confirms.\n"
-check("control: the good step 3 passes", route_line(step(GOOD3 + "4. x\n", 3)))
-check("control: a step 3 with no route fails", not route_line(step("3. **What?** Trivial: plain Claude.\n4. x\n", 3)))
-GOOD5 = "5. **Record.** `fwx decision new`: hard to reverse, surprising without context and a real trade-off.\n6. x\n"
+GOOD5 = "5. **Record.** `fwx decision new` with the decision and its why.\n6. x\n"
 check("control: the good step 5 passes", records_itself(step(GOOD5, 5)))
 check("control: a step 5 that launches an agent fails", not records_itself(step(GOOD5.replace("5. **Record.**", "5. **Record.** Launch an agent;"), 5)))
-check("control: a step 5 with no criteria fails", not records_itself(step("5. **Record.** `fwx decision new`.\n6. x\n", 5)))
-check("control: the wayfinder text passes", wayfinder("wayfinder: Destination, Decisions so far, Not yet specified, Out of scope, one decision ticket per phase"))
-check("control: the old split fails", not wayfinder("make the other phases with `fwx phase new`"))
+check("control: a step 5 with no decision command fails", not records_itself(step("5. **Record.** Write the row by hand.\n6. x\n", 5)))
 
 check("control: a text with no wait passes", waiting({"a.md": "show the page."}) == [])
 for bad in ("verdict wait <dir>", "verdict <dir> --serve", "end with its `xdg-open` line"):

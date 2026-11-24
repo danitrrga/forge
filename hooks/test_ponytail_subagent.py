@@ -11,6 +11,12 @@ ruleset, got exit 0, stdout ''" and the same for fwx:security-reviewer, 2 of 40 
 already passed, as they must. Earlier: before the hook existed every case failed ("can't open file .../ponytail_subagent.py",
 17 of 17), and with the allowlist check removed 7 failed, from "gsd-planner: want no output, got the
 ruleset" to "(empty agent_type): want no output, got the ruleset".
+Seen to fail first for the review sentence (09.3 T31), on the hook as it was: "fwx:reviewer is told to run
+ponytail:ponytail-review, and to go on without it when it is not available -> not in its context" and the same for
+fwx:security-reviewer, 2 of 39 cases failed (Ponytail 5.3.2's own ruleset does not mention its review skill).
+Seen to fail first for the review sentence with a ruleset that does not build, on the hook as it was: "fwx:reviewer,
+ruleset build fails: want exit 0, the review sentence without the ruleset, the error on stderr; got exit 1, stdout ''"
+and the same for fwx:security-reviewer, 2 of 42 cases failed.
 The per-session cases (SEQUENCES) were added before the UserPromptSubmit half: 7 of 32 failed on the hook
 without it ("off: (silent, executor, planner, a new session) = (True, 'full', '-', 'full'), want (True, '-',
 '-', 'full')"). Mutated after: the session level ignored, 7 failed; "stop ponytail" ignored, "stop ponytail:
@@ -84,6 +90,11 @@ for agent in ON:
         ok = False
     if r.returncode != 0 or not ok:
         fails.append("%s: want the full ruleset, got exit %d, stdout %r, stderr %r" % (agent, r.returncode, r.stdout[:120], r.stderr[-200:]))
+    # Ponytail's own ruleset never says to run its review skill; the reviewers' texts no longer do either.
+    checked += 1
+    text = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if ok else ""
+    if "ponytail:ponytail-review" not in text or "the skill is not available" not in text.lower():
+        fails.append("%s is told to run ponytail:ponytail-review, and to go on without it when it is not available -> not in its context" % agent)
 
 for agent in OFF:
     checked += 1
@@ -103,6 +114,29 @@ r = run(toy(with_plugin=False), start("fwx:reviewer"))
 if r.stdout.strip() or r.returncode != 1 or "ponytail@ponytail" not in r.stderr:
     fails.append("no plugin: want exit 1, no stdout, stderr naming ponytail@ponytail; got exit %d, stdout %r, stderr %r"
                  % (r.returncode, r.stdout[:120], r.stderr[-200:]))
+
+# An install whose ruleset does not build (the builder throws): the reviewers still get the review sentence, nothing
+# else, and the error is on stderr; any other agent still gets nothing.
+broken = toy()
+for root, _, fs in os.walk(os.path.join(broken, "plugins", "cache")):
+    for f in fs:
+        if f == "ponytail-instructions.js":
+            with open(os.path.join(root, f), "w") as fh:
+                fh.write("exports.getPonytailInstructions = m => { throw new Error('boom'); };\n")
+for agent in ON:
+    checked += 1
+    r = run(broken, start(agent))
+    try:
+        text = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+    except (ValueError, KeyError, TypeError):
+        text = ""
+    if r.returncode != 0 or "ponytail:ponytail-review" not in text or "PONYTAIL MODE ACTIVE" in text or "did not build its ruleset" not in r.stderr:
+        fails.append("%s, ruleset build fails: want exit 0, the review sentence without the ruleset, the error on stderr; got exit %d, stdout %r, stderr %r"
+                     % (agent, r.returncode, r.stdout[:120], r.stderr[-120:]))
+checked += 1
+r = run(broken, start("fwx:executor"))
+if r.stdout.strip():
+    fails.append("fwx:executor, ruleset build fails: want no output, got %r" % r.stdout[:120])
 
 # A manual change holds for its session and no other: a new session starts at the default again.
 # (prompts in order, the level the session's executor then gets)

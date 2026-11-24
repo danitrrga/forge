@@ -998,6 +998,8 @@ def settings_cases(tmp):
         "factory-orchestrator", "intake", "classifier", "detector", "analytics-verifier", "vision", "runner")}
     seed["planner"] = {z: "opus" for z in seed["planner"]}
     seed["detector"] = {z: "haiku" for z in seed["detector"]}
+    seed["decisions"] = {z: "haiku" for z in seed["decisions"]}
+    seed["state"] = {z: "haiku" for z in seed["state"]}
     seed["runner"] = {z: "haiku" for z in seed["runner"]}
     seed["ui-walker"]["small"] = "haiku"
     seed["analytics-verifier"]["big"] = "opus"

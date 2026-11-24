@@ -12,7 +12,11 @@ Checked, for the real README and for edited copies in a toy repo:
     there: the directory before it must exist);
   - every UPPER_CASE name in backticks is assigned in a .py of lib/ or bin/, or read by a script of githooks/
     (an environment variable the hooks take, which no Python assigns);
-  - reading zero paths or zero constants is a failure.
+  - reading zero paths or zero constants is a failure;
+  - `## Configuration` names every key of `DEFAULTS` (read from the `lib/fwx/config.py` of the repo under test) and every key
+    of its `project` table, each as a backticked name (`key`, `key.sub` or `parent.key`), and carries the phrases that say how
+    a key is changed: `ask an agent`, `fixed core` (what is not configurable) and `Linux` (the one platform). A section that
+    lists the keys and says nothing about changing them fails.
 
 Why: "documentation carries no figures or lists copied from the code: it points at the constant, the file or the
 command that gives them". Without a check that compares, it broke every round.
@@ -25,6 +29,7 @@ Controls (each is the real README with one change, in a toy copy of the repo, an
   - a constant that does not exist
   - a README with no path
   - a README with no constant
+  - the Configuration section without `walk`, without `project.check_timeout_s`, without each of the three phrases
 Seen red, each on a copy of this test with one check switched off (`if <check>:` made `if False:`), 12 checks each:
   - subcommands named but not in the code:
       FAIL: control an invented subcommand: fails with 'named but not in the code': problems: []
@@ -48,6 +53,7 @@ with the sentence put back the check says: subcommands named but not in the code
 of named_paths skipped every path with a placeholder and the real README then read zero paths:
   FAIL: the real README against the code: got ['read zero paths'], want []
 """
+import importlib.util
 import os
 import re
 import shutil
@@ -124,6 +130,37 @@ def known(const, py, hooks):
                 or re.search(r"\$\{?%s\b" % re.escape(const), hooks))
 
 
+PHRASES = (".claude/fwx.json", "setup tool", "forge sync", "ask an agent", "fixed core", "Linux")
+
+
+def config_section(text):
+    m = re.search(r"^## Configuration\n(.*?)(?=^## |\Z)", text, re.S | re.M)
+    return m.group(1) if m else ""
+
+
+def config_keys(root):
+    """`(DEFAULTS' keys, DEFAULTS["project"]'s keys)` of the lib/fwx/config.py of the repo at `root`."""
+    spec = importlib.util.spec_from_file_location("fwx_config_of_" + str(abs(hash(root))), os.path.join(root, "lib", "fwx", "config.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return list(mod.DEFAULTS), list(mod.DEFAULTS["project"])
+
+
+def config_tokens(section):
+    return re.findall(r"`([^`\n]+)`", section)
+
+
+def config_problems(root, readme):
+    """`(top keys not named, project keys not named, phrases missing)` of the `## Configuration` section of `readme`. A top key is
+    named by `key` or `key.sub`, a project key by `key` or `project.key`."""
+    section = config_section(readme)
+    top, project = config_keys(root)
+    toks = config_tokens(section)
+    return ([k for k in top if not any(t == k or t.startswith(k + ".") for t in toks)],
+            [k for k in project if not any(t in (k, "project." + k) for t in toks)],
+            [p for p in PHRASES if p not in section])
+
+
 def problems(root, readme):
     """The failures of `readme` against the code at `root`, as strings; no failure is an empty list."""
     have = commands(root)
@@ -190,4 +227,64 @@ control("a command added to the table only", real, "extra")
 with open(routes, "w", encoding="utf-8") as fh:
     fh.write(routes_text)
 s.eq("the README against the code again, the command gone", problems(toy, real), [])
+
+def config_check(label, miss, what):
+    """One line each, so a failure reads `FAIL: <label> -> missing a, b`."""
+    s.ok(label + (" -> missing " + ", ".join(miss) if miss else ""), not miss)
+    return what
+
+
+top_keys, project_keys = config_keys(toy)
+s.ok("DEFAULTS has keys to name", len(top_keys) > 5 and len(project_keys) > 5, "%d top, %d project" % (len(top_keys), len(project_keys)))
+top_miss, project_miss, phrase_miss = config_problems(toy, real)
+config_check("## Configuration names every key of DEFAULTS", top_miss, None)
+config_check("## Configuration names every key of its project", project_miss, None)
+config_check("## Configuration says how to change a key", phrase_miss, None)
+
+
+# r1-F1: "Changing a key" sent an agent to a source forge ignores for some keys (forge/framework.py `_document`). Its subsection must say where each
+# of them really comes from. Seen red before the README listed them:
+#   FAIL: "Changing a key" names where factory.mode, factory.ui_bugs, project.name, default_branch, factory_branch and integrations come from -> missing `factory_ui_bugs`, ...
+EXCEPTIONS = ("`factory_ui_bugs`", "`project`", "read from git", "`project.factory_branch`", "`integrations`")
+
+
+def changing_a_key(readme):
+    m = re.search(r"^### Changing a key\n(.*?)(?=^#{2,3} |\Z)", config_section(readme), re.S | re.M)
+    return m.group(1) if m else ""
+
+
+def exceptions_missing(readme):
+    sub = changing_a_key(readme)
+    return [e for e in EXCEPTIONS if e not in sub] if sub else list(EXCEPTIONS)
+
+
+miss = exceptions_missing(real)
+s.ok('"Changing a key" names where factory.mode, factory.ui_bugs, project.name, default_branch, factory_branch and integrations come from'
+     + (" -> missing " + ", ".join(miss) if miss else ""), not miss)
+for e in EXCEPTIONS:
+    s.ok("control without %s in 'Changing a key': fails" % e, exceptions_missing(real.replace(e, "x")) == [e])
+
+
+def config_false_readback(readme):
+    """What `## Configuration` names as the command that reads a changed key back, when `fwx session --json` prints no config value
+    (it shows the stage, the branch and the paths, never rounds, limits, weekly, factory, integrations, paths, linear or checks)."""
+    return [c for c in ("fwx session --json",) if c in config_section(readme)]
+
+
+bad_readback = config_false_readback(real)
+s.ok("## Configuration names no command that does not read a key back" + (" -> " + ", ".join(bad_readback) if bad_readback else ""), not bad_readback)
+s.ok("control a section that sends the agent to `fwx session --json`: fails", config_false_readback(real.replace("### What is not configurable", "Run `fwx session --json`.\n\n### What is not configurable", 1)) == ["fwx session --json"])
+
+
+def config_control(name, text, which, needle):
+    got = config_problems(toy, text)[which]
+    s.ok("control %s: fails naming %r" % (name, needle), needle in got, "missing: %r" % got)
+
+
+config_control("without walk", re.sub(r"`walk[.`][^`]*`?", "`x`", real), 0, "walk")
+config_control("without project.check_timeout_s", re.sub(r"`(project\.)?check_timeout_s`", "`x`", real), 1, "check_timeout_s")
+# r1-F2: PHRASES held only the last three, so a section without the file's name or its setup tool still passed. Seen red before they joined it:
+#   FAIL: control without '.claude/fwx.json': fails naming '.claude/fwx.json': missing: []   (likewise 'setup tool', 'forge sync')
+for phrase in PHRASES:
+    config_control("without %r" % phrase, real.replace(phrase, "x"), 2, phrase)
 s.done()

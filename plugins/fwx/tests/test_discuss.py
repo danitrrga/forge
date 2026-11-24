@@ -120,7 +120,7 @@ s.eq("framework off: one line, nothing else", (len(r.stdout.splitlines()), r.std
 on = toy()
 r = helpers.fwx(on, "discuss", "--json")
 s.eq("framework on: exit", r.returncode, 0)
-outside = helpers.mkdtemp("fwx-nogit-")
+outside = helpers.mkdtemp_nogit()
 r = helpers.fwx(outside, "discuss", "--json")
 s.eq("outside a repository: exit 2", (r.returncode, r.stdout, "git repository" in r.stderr), (2, "", True))
 s.eq("an unknown flag: exit 2", helpers.fwx(on, "discuss", "--nope").returncode, 2)

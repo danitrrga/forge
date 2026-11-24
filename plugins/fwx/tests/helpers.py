@@ -19,6 +19,7 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 _made = []
+_nogit = []  # the dirs mkdtemp_nogit made: git must not climb out of them
 
 
 def clean_env(**extra):
@@ -27,6 +28,8 @@ def clean_env(**extra):
     that turn off the user's and the system's git configuration. `extra` goes on top."""
     e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     e.update(GIT_ENV)
+    if _nogit:
+        e["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(_nogit)
     e.update(extra)
     return e
 
@@ -95,6 +98,28 @@ def mkdtemp(prefix):
     sys.exit, SIGTERM), unless FWX_TEST_KEEP=1. SIGKILL and os._exit skip it."""
     d = os.path.realpath(tempfile.mkdtemp(prefix=prefix))
     _made.append(d)
+    return d
+
+
+def _in_work_tree(d):
+    r = subprocess.run(["git", "-C", d, "rev-parse", "--is-inside-work-tree"], env=clean_env(), capture_output=True, text=True)
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+def mkdtemp_nogit(prefix="fwx-nogit-"):
+    """A temp dir that is outside every git repository, for the cases that expect "not a git repository". An fwx executor
+    sets TMPDIR inside its worktree's scratch folder (on purpose: Claude Code refuses an isolated agent's writes outside its
+    worktree), so mkdtemp() there is inside a repository and fwx would resolve .fwx/ to the real main checkout and write
+    into it (seen: `fwx milestone new` and `fwx phase new x` of test_state_cli.py made a real milestone and phase). So when the
+    temp root is inside a work tree the dir is made under /tmp, and GIT_CEILING_DIRECTORIES names the dir itself, in this
+    process and in clean_env(), so git cannot climb into a repository even if one is above /tmp."""
+    base = tempfile.gettempdir()
+    if _in_work_tree(base):
+        base = "/tmp"
+    d = os.path.realpath(tempfile.mkdtemp(prefix=prefix, dir=base))
+    _made.append(d)
+    _nogit.append(d)
+    os.environ["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(_nogit)
     return d
 
 
