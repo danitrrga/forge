@@ -453,6 +453,8 @@ def case_agents(R, S):
              "fwx scratch new %s %s" % (run, unit) in fields["REPORT"] and "report.json" in fields["REPORT"] and "TMPDIR" in fields["REPORT"] and "one line" in fields["REPORT"],
              fields["REPORT"])
         S.ok("%s: STANDING names the agent definition" % name, "agents/executor.md" in fields["STANDING"], fields["STANDING"])
+        S.ok("%s: REPORT says the file-write tool is enough, naming no harness tool (08-steering's wording)" % name,
+             "file-write tool" in fields["REPORT"] and "Write tool" not in fields["REPORT"], fields["REPORT"])
     r = sections(texts["resolve"])[0]
     S.ok("resolver: GOAL names the branch, the files, the merge command and the ban on rebase",
          all(w in r["GOAL"] for w in ("worktree-agent-two", "src/a.py, src/c.py", "git merge --no-commit worktree-agent-two", "Never rebase")), r["GOAL"])

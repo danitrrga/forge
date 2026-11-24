@@ -150,6 +150,7 @@ def case_review(R, S):
                         ("the scratch order", "fwx scratch new %s r1" % RUN), ("report.json in the scratch folder", "report.json"),
                         ("the reply line it must give", "reviewed <report path> looked_at=")):
         S.ok("wave review: the reviewer's brief names %s" % label, want in text, "missing %r" % want)
+    S.ok("wave review: the reviewer's REPORT says the file-write tool is enough, naming no harness tool (08-steering's wording)", "file-write tool" in text and "Write tool" not in text, text[-600:])
     S.ok("wave review: no security brief without a reason", all("sec" not in f for f in W.files("briefs")), str(W.files("briefs")))
     S.eq("wave review: the call is recorded", W.files(), ["1-review.json", "briefs"])
     # the second pass reviews only the commits of a fix, and its units are r2
