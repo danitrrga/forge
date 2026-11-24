@@ -22,17 +22,24 @@ one-use file (brief, checkpoint, handoff, tomorrow or scratch, `.md` and `.txt` 
 that says what to do instead. Green it is silent and adds no command, so a green run's evidence is what it was. `.fwx/` is
 exempt (fwx writes its own state there). With no default branch to measure from it says `NOT RUN, NOT ARMED` and adds nothing.
 
+The whole recipe runs under an exclusive lock on `<git-common-dir>/fwx/gate.lock` (`gate_lock`), so two gates of one repo, from two
+worktrees, run one after the other: two at once take twice as long each and fail on load. The second says it waits and its
+time limits start once it holds the lock. The lock is a flock, so it goes with the process however that ends.
+
 The output tail of a red check goes to the terminal, so secrets are taken out of it first: the value of any environment
 variable named like a credential, and the shapes of tokens (`redact`). Nothing else of the output is kept or written.
 
 Imports only the standard library, state, config and core.evidence.
 """
+import contextlib
+import fcntl
 import json
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -108,6 +115,28 @@ def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
         text = out.read().decode("utf-8", "replace")[-KEEP_CHARS:]
     return {"cmd": command, "rc": rc, "seconds": time.monotonic() - started, "output": text + note,
             "timed_out": timed_out, "limit": timeout}
+
+
+@contextlib.contextmanager
+def gate_lock(root):
+    """Hold the repo's gate lock, `<git-common-dir>/fwx/gate.lock`, for the block: the same file from every worktree of the repo,
+    so a second gate waits here. It says so once on stderr, before it blocks. Released on any exit; the kernel frees it if the process dies."""
+    r = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if r.returncode or not r.stdout.strip():
+        raise state.StateError("cannot find the git directory of %s to lock the gate: %s" % (root, r.stderr.strip()))
+    folder = os.path.join(r.stdout.strip(), "fwx")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "gate.lock")
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.stderr.write("fwx: waiting for another gate of this repo to finish (lock %s)\n" % path)
+            fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield path
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _git(root, *args):
@@ -249,7 +278,8 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
     source = "profile" if evidence.plan_checks(cfg["project"]["checks"], _NO_ROOT) else "package"
     say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",
                                                    "project" if source == "profile" else "package.json scripts", sha[:7]))
-    results = [run_check(command, root, timeout) for command in recipe]
+    with gate_lock(root):
+        results = [run_check(command, root, timeout) for command in recipe]
     started = time.monotonic()
     marked, known = added_files(root, cfg, sha)
     if not known:
