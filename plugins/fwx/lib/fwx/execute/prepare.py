@@ -26,7 +26,7 @@ Then the base is run: the effective recipe (`evidence.plan_checks`) in the check
 already hold a green `evidence` row for the base sha whose commands are exactly the recipe (`base checks: reused the passing record
 of <sha7>`). A base that ran green leaves such a row in the part's audit, so the next `wave new` on that base (a relaunch, a part that
 starts where the last stopped) runs nothing: the checks of a large project take longer than the rest of the command together. A red
-check is RedBase: needs-owner, no round spent, no row. A check killed by its time limit (`verify.CHECK_TIMEOUT_S`) proved nothing, red
+check is RedBase: needs-owner, no round spent, no row. A check killed by its time limit (`project.check_timeout_s`, default `verify.CHECK_TIMEOUT_S`) proved nothing, red
 or green: it is NotRun, a machine condition with its own exit and no row, unless another check of the recipe is red, which is RedBase.
 
 What else it works out: the run id `<part>-<sha7>-<n>` (n counts the runs of that base already made in the git common
@@ -266,10 +266,19 @@ def _cap(cfg, unattended):
 
 
 def _record(base, recipe, folders):
-    """The green `evidence` row in the audit of one of `folders` that stands in for a run of `recipe` at `base`: the same sha, rc 0,
-    and the commands of its evidence exactly the recipe, each with exit 0 (a row of other checks proves nothing about these). None if none."""
-    for d in folders:
-        for row in state.read_rows(state.phase_paths(d)["audit"]):
+    """The green `evidence` row in the audit of one of `folders`, or of a part folder inside one (a phase's sibling parts share its base),
+    that stands in for a run of `recipe` at `base`: the same sha, rc 0, and the commands of its evidence exactly the recipe, each with
+    exit 0 (a row of other checks proves nothing about these). None if none."""
+    own = sorted(folders)
+    siblings = [s for s in dict.fromkeys(str(s) for f in own for s in state.subphases(f)) if s not in own]
+    for d in own + siblings:
+        try:
+            rows = state.read_rows(state.phase_paths(d)["audit"])
+        except (OSError, UnicodeDecodeError):
+            if d in own:
+                raise
+            continue  # another part's unreadable file is not this part's to fail on
+        for row in rows:
             if row.get("kind") != "evidence" or row.get("sha") != base or row.get("rc", "").strip() != "0":
                 continue
             try:
@@ -281,18 +290,19 @@ def _record(base, recipe, folders):
     return None
 
 
-def _base_is_green(top, base, recipe, folders, say):
-    """None when the base passes (or a green evidence row says so), else the red results. NotRun when no check is red and one ran out of time."""
+def _base_is_green(top, base, recipe, folders, say, timeout):
+    """None when the base passes (or a green evidence row says so), else the red results. NotRun when no check is red and one ran out of time
+    (`timeout` seconds each: the project's `check_timeout_s`)."""
     if _record(base, recipe, folders):
         say("base checks: reused the passing record of %s" % base[:7])
         return None
-    results = [verify.run_check(c, top) for c in recipe]
+    results = [verify.run_check(c, top, timeout) for c in recipe]
     red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]
     late = [r for r in results if r["timed_out"]]
     if not red and late:
         raise NotRun("NOT RUN: the base checks at %s did not finish: %s timed out after %d s. That is the machine, not the code: the base is "
-                     "neither red nor green, no round was spent and nothing was recorded. Run it again when the machine is less loaded: "
-                     "a base that passes is recorded, and the next `fwx wave new` on it reuses the record"
+                     "neither red nor green, no round was spent and nothing was recorded. Run it again when the machine is less loaded, or raise `project.check_timeout_s` if the check needs longer. "
+                     "A base that passes is recorded, and the next `fwx wave new` on it reuses the record"
                      % (base[:8], ", ".join(r["cmd"] for r in late), late[0]["limit"]))
     return red or None
 
@@ -402,7 +412,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
     made = _briefs(data, ctx, fixing, size, quick, revert is None and not gating)
     _setup(top, cfg, say)
-    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say)
+    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say, cfg["project"]["check_timeout_s"])
     if red:
         used, cap = rounds.count(state.read_rows(paths["audit"])), rounds.cap(top)
         reason = "base %s is red: %s" % (base[:8], ", ".join("%s=%s" % (r["cmd"], "none" if r["rc"] is None else r["rc"]) for r in red))
