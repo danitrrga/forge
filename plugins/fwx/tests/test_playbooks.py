@@ -29,6 +29,7 @@ postmortem is allowed by neither, which is what the control needs.
 import copy
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -278,5 +279,43 @@ for args, label in ((["check", "--only", "nosuch"], "an unknown playbook"), (["c
          "%s %r" % (r.returncode, r.stderr))
 r = cli("lint", "--only", "nosuch")
 s.ok("check --only nosuch names the valid playbooks", "session" in r.stderr and "execute" in r.stderr, r.stderr)
+
+# ---- playbooks/style.md: the family table holds every role of config.ROLES once, and the sentence under it counts them right
+# (a new role gets a family before it gets a file; the count in the sentence drifted when `runner` was added).
+# Seen red on 6047865 (ROLES has 22, the file says 21 and has no `runner` row):
+#   FAIL: style.md family table has every role of ROLES exactly once, and the sentence under it says how many:
+#         missing ['runner'], repeated or unknown []; says [21], ROLES has 22
+from fwx import config  # noqa: E402
+
+
+def style_roles(text):
+    """The roles named in the family table of style.md (the backticked names in the last column of its rows) and the numbers that
+    follow 'all' in the sentence that counts them."""
+    rows = [ln for ln in text.splitlines() if ln.startswith("| ") and not ln.startswith(("| Family", "|---"))]
+    named = [r for ln in rows for r in re.findall(r"`([a-z-]+)`", ln.split("|")[3])]
+    return named, [int(n) for n in re.findall(r"These are all (\d+) roles", text)]
+
+
+def style_problems(text, roles):
+    named, said = style_roles(text)
+    out = []
+    missing = sorted(set(roles) - set(named))
+    repeated = sorted({r for r in named if named.count(r) > 1} | (set(named) - set(roles)))
+    if missing or repeated:
+        out.append("missing %s, repeated or unknown %s" % (missing, repeated))
+    if said != [len(roles)]:
+        out.append("says %s, ROLES has %d" % (said, len(roles)))
+    return out
+
+
+with open(os.path.join(helpers.ROOT, "playbooks", "style.md"), encoding="utf-8") as f:
+    style = f.read()
+probs = style_problems(style, config.ROLES)
+s.ok("style.md family table has every role of ROLES exactly once, and the sentence under it says how many", not probs, "; ".join(probs))
+ctl = ("| Family | Colour | Roles |\n|---|---|---|\n| a | red | `x`, `y` |\n| b | blue | `y` |\n\nThese are all 3 roles of `ROLES`.\n")
+good_ctl = ctl.replace("| b | blue | `y` |\n", "").replace("`x`, `y`", "`x`, `y`, `z`")
+s.eq("control: a role missing and one repeated are caught", style_problems(ctl, ("x", "y", "z")), ["missing ['z'], repeated or unknown ['y']"])
+s.eq("control: a table that holds every role once with the right count passes", style_problems(good_ctl, ("x", "y", "z")), [])
+s.eq("control: a count that does not match is caught", style_problems(good_ctl.replace("all 3", "all 4"), ("x", "y", "z")), ["says [4], ROLES has 3"])
 
 s.done()
