@@ -26,6 +26,12 @@ keeps a subphase's own plan.md, state.md, report and audit.tsv only; `case_subph
   FAIL: subphase security: exit: got (2, 'fwx wave new: .../phases/03-alpha/03.1-beta/postmortem.md: file: cannot be read ...
 Control: a subphase with no postmortem.md anywhere is still refused, and the refusal names the phase's file.
 
+Red before `wave new` recorded its green base and kept a timeout apart from a red check (DTC-77; `case_base_reuse`, `case_base_timeout`;
+the second shortens the limit of `run_check` through its default argument, which is what made it a red base: `...=none`, `timed out after 1 s`):
+  FAIL: reuse: a second wave new on the same base runs no check: got (0, 2), want (0, 1)
+  FAIL: reuse: a record of other checks on the same sha stands in for nothing: the checks run again: got (0, 4), want (0, 3)
+  FAIL: timeout: a base check that outlives its limit is NOT RUN, exit 77, nothing on stdout: got (1, '{"status": "needs-owner", "reason": "base b80b4d9d is red: ...python3 -c \'import time; time.sleep(30)\'=none", ...')
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
 be in the file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (188 checks). The first FAIL
 line of each, seen red:
@@ -45,6 +51,7 @@ line of each, seen red:
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -65,6 +72,7 @@ def runner(root):
     def run(cwd, *args, env=None):
         return subprocess.run([sys.executable, os.path.join(root, "bin", "fwx")] + list(args), cwd=cwd,
                               env=helpers.clean_env(**(env or {})), capture_output=True, text=True)
+    run.root = root  # the tree a mutant control runs on
     return run
 
 
@@ -199,7 +207,8 @@ def case_base(R, S):
     S.eq("args: linear is false for a project with no Linear project (an outside item needs no issue key there)", a.get("linear"), False)
     lin = Scene(config={"project": {"checks": ["true"], "linear_project": "forge"}})
     S.eq("args: linear is true for a project with a Linear project", json.loads(lin.prepare(R).stdout or "{}").get("linear"), True)
-    S.ok("prepare wrote nothing in the part", not sc.audit_exists())
+    S.eq("prepare wrote one evidence row, the green base, and nothing else in the part",
+         [x.get("kind") for x in state.read_rows(os.path.join(sc.part, "audit.tsv"))], ["evidence"])
 
 
 def case_models(R, S):
@@ -244,9 +253,12 @@ def case_red_base(R, S):
     sha = ok.head()
     sys.path.insert(0, os.path.join(ROOT, "lib"))
     from fwx import state  # noqa: E402
-    state.append_audit(ok.part, "evidence", sha=sha, rc="0", detail="{}")
+    state.append_audit(ok.part, "evidence", sha=sha, rc="0", detail=json.dumps({"commands": [{"cmd": "false", "rc": 0}]}))
     ev = ok.prepare(R)
-    S.eq("red base: a green evidence row for the sha stands in for the run: exit", ev.returncode, 0)
+    S.eq("red base: a green evidence row for the sha and the checks stands in for the run: exit", ev.returncode, 0)
+    thin = Scene(recipe=["false"])
+    state.append_audit(thin.part, "evidence", sha=thin.head(), rc="0", detail="{}")
+    S.eq("red base: a green row that names no commands proves nothing about these checks", thin.prepare(R).returncode, 1)
     other = Scene(recipe=["false"])
     state.append_audit(other.part, "evidence", sha="0" * 40, rc="0", detail="{}")
     S.eq("red base: a green row for another sha does not", other.prepare(R).returncode, 1)
@@ -397,7 +409,8 @@ def case_fix_options(R, S):
     a = ok_args(S, "options", sc.prepare(R, "--fix", f, "--revert", "F1,F2", "--control-findings", f))
     S.eq("options: fix (with --revert nothing is launched, so fix.brief is None: 3.4 U9)", a.get("fix"), {"source": f, "findings": findings, "brief": None})
     S.eq("options: revert, control findings", (a.get("revert"), a.get("control_findings")), (["F1", "F2"], findings))
-    refused(S, "--fix with a file that is not there", sc, sc.prepare(R, "--fix", f + ".none"), "--fix")
+    fresh = Scene()  # the runs above recorded their green base in `sc`'s audit: a refusal is judged on a part nothing ran in
+    refused(S, "--fix with a file that is not there", fresh, fresh.prepare(R, "--fix", f + ".none"), "--fix")
 
 
 def case_from_gate(R, S):
@@ -589,9 +602,86 @@ def case_dispatch(R, S):
     S.ok("`fwx help` lists wave", "wave" in h.stdout, h.stdout)
 
 
+def counting(runs, mark="x"):
+    """A check that passes and leaves one line in `runs`: how many times it ran, outside the repository."""
+    return "echo %s >> %s" % (mark, shlex.quote(runs))
+
+
+def ran(runs):
+    return len(open(runs).read().split()) if os.path.exists(runs) else 0
+
+
+def evidence_rows(sc):
+    return state.read_rows(os.path.join(sc.part, "audit.tsv"))
+
+
+def case_base_reuse(R, S):
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    sc = Scene(recipe=[counting(runs)])
+    base = sc.head()
+    r1 = sc.prepare(R)
+    S.eq("reuse: the first wave new runs the checks once", (r1.returncode, ran(runs)), (0, 1))
+    S.eq("reuse: the green base is recorded as one evidence row of the sha, with the checks it ran",
+         [(x.get("kind"), x.get("sha"), x.get("rc"), [c["cmd"] for c in json.loads(x["detail"])["commands"]]) for x in evidence_rows(sc)],
+         [("evidence", base, "0", [counting(runs)])])
+    r2 = sc.prepare(R)
+    S.eq("reuse: a second wave new on the same base runs no check", (r2.returncode, ran(runs)), (0, 1))
+    S.ok("reuse: and says it reused the record of the sha", "base checks: reused the passing record of %s" % base[:7] in r2.stderr, r2.stderr)
+    S.eq("reuse: it writes no second row", len(evidence_rows(sc)), 1)
+    sc.commit("more.txt", "another commit")
+    r3 = sc.prepare(R)
+    S.eq("reuse: stale record, a record of an older sha stands in for nothing: the checks run again", (r3.returncode, ran(runs)), (0, 2))
+    helpers.write(sc.repo, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"checks": [counting(runs, "y")]}}))
+    r4 = sc.prepare(R)
+    S.eq("reuse: a record of other checks on the same sha stands in for nothing: the checks run again", (r4.returncode, ran(runs)), (0, 3))
+    r5 = sc.prepare(R)
+    S.eq("reuse: the new checks are recorded and reused in turn", (r5.returncode, ran(runs)), (0, 3))
+    bad = Scene(recipe=[counting(runs, "z") + "; exit 3"])
+    codes = (bad.prepare(R).returncode, bad.prepare(R).returncode)
+    S.eq("reuse: a red base leaves no record, so the next run runs the checks again", (codes, ran(runs), bad.audit_exists()), ((1, 1), 5, False))
+
+
+def case_base_moved(R, S):
+    """A base check that commits (HEAD moves) proves nothing about the sha it started at, so no green row of that sha may be written
+    for a later `fwx wave new` to reuse. Seen failing before the fix (DTC-77, CodeRabbit on PR 222): "moved: a check that commits: exit:
+    got (0, 1), want (2, 0)" (it exited 0 and wrote one evidence row of the old sha). A check that only leaves a file is not a move: `fwx
+    verify` counts `clean` as `HEAD == sha` too (case_worktree_checks leaves one and passes)."""
+    sc = Scene(recipe=["git -c user.name=t -c user.email=t@example.test commit -q --allow-empty -m moved"])
+    r = sc.prepare(R)
+    green = [x for x in evidence_rows(sc) if x.get("kind") == "evidence"] if sc.audit_exists() else []
+    S.eq("moved: a check that commits: exit", (r.returncode, len(green)), (2, 0))
+    S.eq("moved: a check that commits: stdout empty", r.stdout, "")
+    S.ok("moved: a check that commits: the refusal says 'HEAD moved'", "HEAD moved" in r.stderr, "stderr %r" % r.stderr[:300])
+
+
+def timeout_run(sc, seconds, root):
+    """`fwx wave new` as the command runs it, with the time limit of a check shortened: (exit code, stdout, stderr)."""
+    code = ("import sys; sys.path.insert(0, %r); from fwx.core import verify; verify.run_check.__defaults__ = (%d,); "  # the limit is run_check's default
+            "from fwx.commands import wave; sys.exit(wave.do_prepare(sys.argv[1:]))" % (os.path.join(root, "lib"), seconds))
+    r = subprocess.run([sys.executable, "-c", code, "--part-dir", sc.part, "--plane", "session", "--branch", "phase"], cwd=sc.cwd,
+                       env=helpers.clean_env(**sc.env), capture_output=True, text=True)
+    return r.returncode, r.stdout, r.stderr
+
+
+def case_base_timeout(R, S):
+    slow = "%s -c 'import time; time.sleep(30)'" % shlex.quote(sys.executable)
+    sc = Scene(recipe=[slow])
+    code, out_, err = timeout_run(sc, 1, R.root)
+    S.eq("timeout: a base check that outlives its limit is NOT RUN, exit 77, nothing on stdout", (code, out_), (77, ""))
+    S.ok("timeout: the message says NOT RUN, names the check and the limit, and is not the red-base line",
+         "NOT RUN" in err and "timed out after 1 s" in err and "time.sleep(30)" in err and "is red" not in err, err)
+    S.ok("timeout: and says how to go on", "Run it again" in err, err)
+    S.ok("timeout: nothing is recorded as a pass or a failure, and no round is spent", not sc.audit_exists())
+    both = Scene(recipe=["echo boom; exit 3", slow])
+    code, out_, err = timeout_run(both, 1, R.root)
+    S.eq("timeout: a check that is red beside one that timed out is still a red base", (code, json.loads(out_ or "{}").get("status")), (1, "needs-owner"))
+    fast = Scene(recipe=["true"])
+    S.eq("timeout: a check inside its limit is not affected", timeout_run(fast, 1, R.root)[0], 0)
+
+
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_moved, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
@@ -601,6 +691,16 @@ MUTANTS = [
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
     ("red base not run", case_red_base, P, "results = [verify.run_check(c, top) for c in recipe]", "results = []",
      "prepare exit 0 on a red base"),
+    ("record of another sha stands in", case_base_reuse, P, 'row.get("sha") != base or ', "",
+     "reuse: stale record, a record of an older sha stands in for nothing"),
+    ("record of other checks stands in", case_base_reuse, P, "if got == [(c, 0) for c in recipe]:", "if True:",
+     "reuse: a record of other checks on the same sha stands in for nothing"),
+    ("green base not recorded", case_base_reuse, P, "        _remember(part, base, recipe, {part, phase}, cfg)\n", "        pass\n",
+     "reuse: the green base is recorded as one evidence row"),
+    ("moved base recorded as green", case_base_moved, P, "        _unmoved(top, base)\n", "        pass\n", "moved: a check that commits: exit"),
+    ("timeout is red",case_base_timeout, P, 'red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]', 'red = [r for r in results if r["rc"] != 0]',
+     "timeout: a base check that outlives its limit is NOT RUN"),
+    ("timeout hides a red check", case_base_timeout, P, "if not red and late:", "if late:", "timeout: a check that is red beside one that timed out"),
     ("ignored file allowed", case_ignored, P, "ignored = _ignored(top, tasks)", "ignored = []", "prepare exit 0 with ignored config/forge.json"),
     ("default branch allowed", case_default_branch, P, "if branch in _defaults(top, cfg):", "if False:", "the refusal names the default branch"),
     ("baseRef not read", case_base_ref, P, "value = _base_ref(top, main, environ)", 'value = "head"', "prepare exit 0 with baseRef absent"),
