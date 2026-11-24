@@ -222,7 +222,7 @@ def case_threshold(R, S):
     fb = v.get("brief") or ""
     S.ok("3 findings: the fixer's brief is the next free `_fix-<n>.md`", os.path.basename(fb) == "_fix-2.md" and os.path.isfile(fb), fb)
     text = read(fb) if os.path.isfile(fb) else ""
-    for label, want in (("each id", "r1-F3"), ("each claim", "claim of r1-F2"), ("the id in its commit trailer", "Fwx-Finding: <id>"), ("the run's trailer", "Fwx-Run: " + RUN),
+    for label, want in (("each id", "r1-F3"), ("each claim", "claim of F2"), ("the id in its commit trailer", "Fwx-Finding: <id>"), ("the run's trailer", "Fwx-Run: " + RUN),
                         ("the scratch order of the fixer", "fwx scratch new %s fix-2" % RUN), ("the file of a finding", "src/a.py"), ("the plan", "plan.md")):
         S.ok("3 findings: the fixer's brief names %s" % label, want in text, "missing %r" % want)
     S.eq("3 findings: the head the fixer starts from", v.get("head"), W.to)
@@ -239,7 +239,7 @@ def case_threshold(R, S):
     vb = v.get("brief") or ""
     S.ok("4 findings: the verifier's brief is a file of the run", os.path.isfile(vb), vb)
     text = read(vb) if os.path.isfile(vb) else ""
-    for label, want in (("every finding id", "r1-F4"), ("a claim", "claim of r1-F3"), ("its diff", "%s..%s" % (W.frm, W.to)),
+    for label, want in (("every finding id", "r1-F4"), ("a claim", "claim of F3"), ("its diff", "%s..%s" % (W.frm, W.to)),
                         ("the scratch order of the verifier", "fwx scratch new %s r1-verifier" % RUN), ("the reply line", "verdicts <report path>")):
         S.ok("4 findings: the verifier's brief names %s" % label, want in text, "missing %r" % want)
     S.eq("4 findings: the unit of the verifier", v.get("unit"), "r1-verifier")
@@ -336,7 +336,7 @@ def case_misses(R, S):
         del rep["criteria"]
         return rep
     for label, kw in (
-            ("looked_at is empty", dict(looked=())),
+            ("looked_at is empty", dict(looked_at=[])),
             ("a finding with a line that is no number", dict(findings=[finding(line="3")])),
             ("a finding with no claim", dict(findings=[finding(claim="")])),
             ("a finding with an unknown severity", dict(findings=[finding(severity="urgent")])),
@@ -385,19 +385,21 @@ def case_misses(R, S):
     r, v = W.find(R, W.reply("r1", [], crit=criteria(c2="unproven")))
     nxt(S, "an unproven criterion needs no finding", v, "done")
     # only a path inside the unit's scratch folder is read
-    W = World()
-    W.review(R)
-    good = W.reply("r1", [finding("F1")])
-    other = W.reply("r9", [finding("F1")])
-    os.makedirs(os.path.join(W.dirs["r1"], "sub"))
-    climbing = good.replace(W.dirs["r1"] + "/.fwx-agent", W.dirs["r1"] + "/sub/../.fwx-agent")
-    for label, line in (("the report of another unit", other),
-                        ("the report of another run", W.reply("r1", [finding("F1")], run="02-other-1")),
-                        ("a path that climbs out of the folder", climbing),
-                        ("a file that is not report.json", good.replace("report.json", "other.json")),
-                        ("looked_at=0 on the line", good.replace("looked_at=1", "looked_at=0"))):
-        r, v = W.find(R, line)
+    def not_read(label, make):
+        W = World()
+        W.review(R)
+        good = W.reply("r1", [finding("F1")])
+        r, v = W.find(R, make(W, good))
         nxt(S, "%s is not read" % label, v, "relaunch")
+
+    def climbing(W, good):
+        os.makedirs(os.path.join(W.dirs["r1"], "sub"))
+        return good.replace(W.dirs["r1"] + "/.fwx-agent", W.dirs["r1"] + "/sub/../.fwx-agent")
+    not_read("the report of another unit", lambda W, good: W.reply("r9", [finding("F1")]))
+    not_read("the report of another run", lambda W, good: W.reply("r1", [finding("F1")], run="02-other-1"))
+    not_read("a path that climbs out of the folder", climbing)
+    not_read("a file that is not report.json", lambda W, good: good.replace("report.json", "other.json"))
+    not_read("looked_at=0 on the line", lambda W, good: good.replace("looked_at=1", "looked_at=0"))
     # the security reviewer's miss alone is relaunched; the reviewer's good report is passed again with it
     W = World()
     W.review(R, "--security")
@@ -413,7 +415,15 @@ def case_misses(R, S):
     r, v = W.find(R, ok, "no line at all")
     nxt(S, "a second miss of the security reviewer ends the run", v, "stop")
     S.eq("the second miss: why", v.get("why"), "security-reviewer did not return")
-    # a miss is counted per unit and per pass: the next pass starts at none
+    # a miss is counted per unit: the reviewer's second launch does not make the security reviewer's first a second
+    W = World()
+    W.review(R, "--security")
+    ok = W.reply("r1", [finding("F1")])
+    W.find(R, "no line at all", W.reply("r1-sec", []))
+    r, v = W.find(R, ok, "no line at all")
+    nxt(S, "a miss is counted per unit", v, "relaunch")
+    S.eq("the security reviewer is the one relaunched", [x.get("unit") for x in v.get("relaunch") or []], ["r1-sec"])
+    # a miss is counted per pass: the next pass starts at none
     W = World()
     W.review(R)
     W.find(R, "nothing")
@@ -429,10 +439,11 @@ def case_misses(R, S):
 
 # ---------------------------------------------------------------------------------------------------- wave findings: the verdicts
 
-def four(W, R, out=()):
-    """A pass with four items, waiting for the verifier."""
+def four(W, R, out=(), sec=False):
+    """A pass with four items, waiting for the verifier (with `sec`, the security reviewer reads and finds nothing)."""
     W.review(R)
-    r, v = W.find(R, W.reply("r1", [finding("F1"), finding("F2"), finding("F3"), finding("F4")] if not out else [finding("F1"), finding("F2")], out=out))
+    lines = [W.reply("r1", [finding("F1"), finding("F2"), finding("F3"), finding("F4")] if not out else [finding("F1"), finding("F2")], out=out)]
+    r, v = W.find(R, *(lines + ([W.reply("r1-sec", [])] if sec else [])))
     return v
 
 
@@ -443,14 +454,14 @@ def case_verdicts(R, S):
     S.eq("wave findings --verdicts: exit", (r.returncode, r.stderr.strip()[:200]), (0, ""))
     nxt(S, "a verdict `fix` is fixed", v, "fix")
     S.eq("the ids to fix", v.get("ids"), ["r1-F1"])
-    S.eq("consider: id, file, line, claim, severity", v.get("consider"), [{"id": "r1-F2", "file": "src/a.py", "line": 3, "claim": "claim of r1-F2", "severity": "medium"}])
-    S.eq("note: id and claim", v.get("note"), [{"id": "r1-F3", "claim": "claim of r1-F3"}])
+    S.eq("consider: id, file, line, claim, severity", v.get("consider"), [{"id": "r1-F2", "file": "src/a.py", "line": 3, "claim": "claim of F2", "severity": "medium"}])
+    S.eq("note: id and claim", v.get("note"), [{"id": "r1-F3", "claim": "claim of F3"}])
     S.eq("dismissed: id and the verifier's reason", v.get("dismissed"), [{"id": "r1-F4", "reason": "because r1-F4"}])
     S.eq("the route of each id", v.get("routes"), {"r1-F1": "fix", "r1-F2": "consider", "r1-F3": "note", "r1-F4": "dismissed"})
     S.eq("fix: the finding with the verifier's severity", [(f["id"], f["severity"]) for f in v.get("fix") or []], [("r1-F1", "medium")])
     S.eq("reported counts every item of the pass", v.get("reported"), 4)
     fb = v.get("brief") or ""
-    S.ok("the fixer's brief names only the finding to fix", os.path.isfile(fb) and "claim of r1-F1" in read(fb) and "claim of r1-F2" not in read(fb), fb)
+    S.ok("the fixer's brief names only the finding to fix", os.path.isfile(fb) and "claim of F1" in read(fb) and "claim of F2" not in read(fb), fb)
     S.ok("`why` is the text for `wave fix --why`", (v.get("why") or "").startswith("review findings to fix: r1-F1"), v.get("why"))
     S.eq("the head the fixer starts from", v.get("head"), W.to)
     # nothing to fix
@@ -462,7 +473,7 @@ def case_verdicts(R, S):
     # a protected path ends the flow with the owner, as at d348f8d
     W = World()
     W.final_merge(["src/secret/k.py"])
-    four(W, R)
+    four(W, R, sec=True)
     r, v = W.verdicts(R, {"r1-F1": "dismiss", "r1-F2": "dismiss", "r1-F3": "dismiss", "r1-F4": "dismiss"})
     nxt(S, "nothing to fix but a protected path: the owner", v, "owner")
     S.ok("the owner is told the path", "protected path: src/secret/k.py" in (v.get("why") or ""), v.get("why"))
@@ -506,7 +517,7 @@ def case_verdicts(R, S):
     W = World()
     four(W, R)
     p = W.path("r9-verifier")
-    helpers.write(os.path.dirname(p), "report.json", json.dumps({"verdicts": []}))
+    helpers.write(os.path.dirname(p), "report.json", json.dumps({"verdicts": [{"id": i, "verdict": "fix", "severity": "low", "reason": "r"} for i in ("r1-F1", "r1-F2", "r1-F3", "r1-F4")]}))
     r, v = W.say_verdicts(R, "verdicts %s" % p)
     nxt(S, "the verdicts of another unit are not read", v, "relaunch")
     # no verifier awaited
@@ -563,21 +574,23 @@ MUTANTS = [
      "a control finding is not added to the second pass"),
     ("a report is read once and never relaunched", case_misses, V_, "    if prior >= 1:\n", "    if True:\n",
      "a reply that is no line of a report relaunches the reviewer -> next stop"),
-    ("the misses of every unit are one count", case_misses, V_, 'if unit in [x.get("unit") for x in (rec.get("result") or {}).get("relaunch") or []]', "if (rec.get(\"result\") or {}).get(\"relaunch\")",
-     "the reviewer reads, the security reviewer misses: relaunch"),
+    ("the misses of every unit are one count", case_misses, V_, 'if x.get("unit") == unit:', "if True:",
+     "a miss is counted per unit -> next stop"),
     ("an empty looked_at is a review", case_misses, V_, ' or not rep["looked_at"]', "",
      "a report where looked_at is empty relaunches"),
-    ("looked_at=0 on the line is read", case_misses, V_, "or int(m.group(2)) == 0", "or False",
+    ("looked_at=0 on the line is read", case_misses, V_, "    if int(m.group(2)) == 0:\n        return None, None\n", "    if False:\n        return None, None\n",
      "looked_at=0 on the line is not read"),
-    ("any path that names a report is read", case_misses, V_, "if not path.endswith(tail) or", "if False or",
+    ("any path that names a report is read", case_misses, V_, 'if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None\n',
+     'if ".." in path.split("/"):\n        return None\n',
      "the report of another unit is not read"),
-    ("a path that climbs is read", case_misses, V_, ' or ".." in path.split("/")', "",
+    ("a path that climbs is read", case_misses, V_, '.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None\n', '.endswith(_tail(run, unit)):\n        return None\n',
      "a path that climbs out of the folder is not read"),
-    ("the finding's shape is not checked", case_misses, V_, "or not _valid(f)", "or False",
+    ("the finding's shape is not checked", case_misses, V_, 'if any(not _valid(f) for f in rep["findings"]):', "if False:",
      "a finding with a line that is no number relaunches"),
     ("a reviewer's outside item may carry a key", case_misses, V_, 'outside_problem(rep, "reviewer", False)', 'outside_problem(rep, "executor", False)',
      "a reviewer's outside item with a key is rejected: relaunch"),
-    ("the rejection is not the reason of the second miss", case_misses, V_, "why = \"%s returned a report that was rejected: %s\" % (role, rejected) if rejected else", "why = \"%s did not return\" % role if True else",
+    ("the rejection is not the reason of the second miss", case_misses, V_, 'why = "%s returned a report that was rejected: %s" % (m["role"], rejected) if rejected else "%s did not return" % m["role"]',
+     'why = "%s did not return" % m["role"]',
      "the reason is the rejection, not `did not return`"),
     ("an unmet criterion needs no finding", case_misses, V_, 'if c["met"] == "no" and not any(', 'if False and not any(',
      "a criterion that is not met and that no finding names relaunches"),
@@ -591,9 +604,11 @@ MUTANTS = [
      "a protected path of the last final merge launches the security reviewer"),
     ("a verdict `consider` is fixed", case_verdicts, V_, 'elif verdict == "consider":', 'elif verdict == "fix":',
      "consider: id, file, line, claim, severity"),
-    ("a verdict missing for an id is read", case_verdicts, V_, "    if missing:\n", "    if False:\n",
+    ("the verdicts of any unit are read", case_verdicts, V_, 'if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None, ""', 'if False:\n        return None, ""',
+     "the verdicts of another unit are not read"),
+    ("a verdict missing for an id is read", case_verdicts, V_, '    if missing:\n        return None, "no verdict', '    if False:\n        return None, "no verdict',
      "a verdict missing for an id relaunches the verifier"),
-    ("a verdict that is none of the four groups is read", case_verdicts, V_, "or d.get(\"verdict\") not in VERDICTS", "",
+    ("a verdict that is none of the four groups is read", case_verdicts, V_, 'elif d.get("verdict") not in VERDICTS:', "elif False:",
      "a verdict that is none of the four groups relaunches"),
     ("a protected path does not end the flow with the owner", case_verdicts, V_, "if protected else", "if False else",
      "nothing to fix but a protected path: the owner"),

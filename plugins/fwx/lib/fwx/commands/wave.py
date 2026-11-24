@@ -48,6 +48,12 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
   wave report --part-dir D --run R --unit U --line "<last line of the reply>" --plane session|factory
       exit 0 with `next` merge|relaunch|retry|owner|stop (execute/report.py says what each means and what it reads); a miss is
       counted from the run's own files, so each call is recorded; 2 a usage error, an unreadable plan or configuration
+  wave review --part-dir D --run R --from A --to B [--security]
+      exit 0 with `next` launch: the briefs of the pass's reviewer, and of the security reviewer when `--security`, the post-mortem or a
+      protected path of the run's last final merge asks for it (execute/review.py); 2 a ref that is no commit, an unreadable plan, a usage error
+  wave findings --run R (--report "<last line of a reviewer's reply>"... | --verdicts "<last line of the verifier's reply>") [--control-findings F]
+      exit 0 with `next` relaunch|stop|verify|fix|owner|done (execute/review.py says what each means): the findings numbered by the pass, the
+      verifier only above three items, the verdicts routed; the part is the one the run's `wave review` named; 2 a call with no pass to read
   wave --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
       that merged branches passes only when its own last `wave merge --final` was green (`why` says when it was not): the evidence
       row is the part's, so another run's green gate on the same head is not this run's
@@ -58,7 +64,7 @@ import re
 import sys
 
 from fwx import config, plan_step, routes, state
-from fwx.execute import base, cleanup, integrate, prepare as prep, report, worktree_setup
+from fwx.execute import base, cleanup, integrate, prepare as prep, report, review, worktree_setup
 
 PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
@@ -72,6 +78,8 @@ USAGES = {
     "cleanup": "usage: fwx wave remove --run R\n",
     "summary": "usage: fwx wave --run R [--part-dir D]\n",
     "report": "usage: fwx wave report --part-dir D --run R --unit U --line \"<last line of the reply>\" --plane session|factory\n",
+    "review": "usage: fwx wave review --part-dir D --run R --from A --to B [--security]\n",
+    "findings": "usage: fwx wave findings --run R (--report \"<last line of a reviewer's reply>\"... | --verdicts \"<last line of the verifier's reply>\") [--control-findings F]\n",
 }
 _RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
@@ -256,16 +264,18 @@ def _recorded_branches(top, run):
 
 
 def do_step(step, argv):
-    """integrate, fix-round, revert, cleanup, summary and report: parse, run, print the JSON, record it."""
-    flags = ("--final",) if step == "integrate" else ()
+    """integrate, fix-round, revert, cleanup, summary, report, review and findings: parse, run, print the JSON, record it."""
+    flags = {"integrate": ("--final",), "review": ("--security",)}.get(step, ())
     valued = {"integrate": ("--part-dir", "--run", "--findings"), "fix-round": ("--part-dir", "--why", "--run"),
               "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir"),
-              "report": ("--part-dir", "--run", "--unit", "--line", "--plane")}[step]
-    parsed = _parse(argv, flags, valued, many=("--branches",) if step == "integrate" else ())
+              "report": ("--part-dir", "--run", "--unit", "--line", "--plane"), "review": ("--part-dir", "--run", "--from", "--to"),
+              "findings": ("--run", "--verdicts", "--control-findings")}[step]
+    parsed = _parse(argv, flags, valued, many={"integrate": ("--branches",), "findings": ("--report",)}.get(step, ()))
     need = {"integrate": ("--part-dir", "--run") + (() if parsed and "--final" in parsed[0] else ("--branches",)), "fix-round": ("--part-dir", "--why"),
             "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",),
-            "report": ("--part-dir", "--run", "--unit", "--line", "--plane")}[step]
+            "report": ("--part-dir", "--run", "--unit", "--line", "--plane"), "review": ("--part-dir", "--run", "--from", "--to"), "findings": ("--run",)}[step]
     if parsed is None or parsed[1] or any(k not in parsed[0] for k in need) \
+            or (step == "findings" and (("--report" in parsed[0]) == ("--verdicts" in parsed[0]))) \
             or ("--run" in parsed[0] and not _RUN_NAME.match(parsed[0]["--run"])) \
             or ("--findings" in parsed[0] and not _ids(parsed[0]["--findings"])) \
             or (step == "report" and (not base.NAME.match(parsed[0]["--unit"]) or parsed[0]["--plane"] not in ("session", "factory"))):
@@ -295,6 +305,15 @@ def do_step(step, argv):
         elif step == "report":
             args = {"part_dir": part, "run": run, "unit": got["--unit"], "line": got["--line"], "plane": got["--plane"]}
             code, result = report.judge(".", part, run, got["--unit"], got["--line"], got["--plane"], _steps(top, run))
+        elif step == "review":
+            args = {"part_dir": part, "run": run, "from": got["--from"], "to": got["--to"], "security": "--security" in got}
+            code, result = review.review(".", part, run, got["--from"], got["--to"], "--security" in got, _steps(top, run))
+        elif step == "findings":
+            part = _part_of(top, run)
+            if part is None:
+                raise base.WaveError("no call of run %s names a part: `fwx wave review` comes first" % run)
+            args = {"part_dir": part, "run": run, "report": got.get("--report"), "verdicts": got.get("--verdicts"), "control_findings": got.get("--control-findings")}
+            code, result = review.findings(".", part, run, got.get("--report"), got.get("--verdicts"), got.get("--control-findings"), _steps(top, run))
         elif step == "cleanup":
             args = {"run": run}
             result = cleanup.cleanup(".", run, _recorded_branches(top, run))
