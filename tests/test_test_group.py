@@ -483,6 +483,15 @@ for jobs in ((), ("--jobs", "4")):
     ok("%s: a passing file stays silent" % tag, "passing chatter" not in r.stdout + r.stderr, r.stdout)
     eq("%s: the summary line is last" % tag, last(r), "SUMMARY: 1 passed, 0 warnings, 1 failures")
 
+# A file that ends non-zero with no output at all (a signal, a silent exit) says how it ended: "(the file printed nothing)" alone hid the
+# cause of a test_run.py failure under load. Written first, run on the code that printed only that:
+#   FAIL: no group, a silent file killed by SIGKILL: the FAIL line says the signal: ... (the file printed nothing)
+for label, body, said in (("killed by SIGKILL", "import os, signal\nos.kill(os.getpid(), signal.SIGKILL)\n", "killed by SIGKILL"),
+                          ("exit 3", "raise SystemExit(3)\n", "exit code 3")):
+    repo = toy({}, top={"test_silent.py": body})
+    r = forge(repo, "--jobs", "1")
+    ok("no group, a silent file, %s: the FAIL line says how it ended" % label, "(the file printed nothing; %s)" % said in r.stdout, r.stdout)
+
 MIXED = {"test_ok.py": "pass\n", "test_big.py": "x = 1\n" * 400 + "pass\n", "test_bad.py": BAD, "test_skip.py": SKIP,
          "hooks/test_guard_mutants.py": "raise SystemExit(1)\n", "tests/test_zeta.py": "pass\n"}
 repo = toy({}, top=MIXED)
