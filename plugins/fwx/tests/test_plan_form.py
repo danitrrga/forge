@@ -306,6 +306,19 @@ case("a protected folder", phase(lambda f: task(f, "T2").update(files=["./.githu
      ["postmortem.md: security_review: task T2 touches a protected path (.github/workflows/**): security_review must be true"])
 case("a path that is not protected", phase(lambda f: task(f, "T1").update(files=[".github/CODEOWNERS", "src/workflows/x.yml"])), exact=(0, 0))
 case("a protected path and no postmortem yet", phase(ci, post=None), exact=(0, 0))
+# 08.3 T31: a small plan skips the post-mortem, so the planner's value in plan.md gets the same rule
+small_ci = lambda value: (lambda f: (ci(f), f.update(security_review=value)))
+case("no postmortem, plan security_review false on a protected path", phase(small_ci(False), post=None),
+     ["plan.md: security_review: task T1 touches a protected path (.github/workflows/**): security_review must be true"])
+case("no postmortem, plan security_review true on a protected path", phase(small_ci(True), post=None), exact=(0, 0))
+case("no postmortem, plan security_review false on no protected path", phase(lambda f: f.update(security_review=False), post=None), exact=(0, 0))
+r = plan.check_phase(phase(small_ci(False)))
+s.eq("a postmortem decides: plan.md's value is not judged beside it", [e for e in r["errors"] if "security_review" in e],
+     ["postmortem.md: security_review: task T1 touches a protected path (.github/workflows/**): security_review must be true"])
+d = phase(small_ci(False), post=None, in_repo=False)
+r = plan.check_phase(d)
+s.ok("no postmortem, no configuration: NOT RUN, NOT ARMED for plan.md, no error", r["errors"] == [] and any(
+    w.startswith("plan.md: security_review: NOT RUN, NOT ARMED") for w in r["warnings"]), repr(r))
 d = phase(ci, in_repo=False)
 r = plan.check_phase(d)
 s.ok("a protected path check with no configuration: NOT RUN, NOT ARMED, no error", r["errors"] == [] and any(

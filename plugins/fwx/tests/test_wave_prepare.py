@@ -90,7 +90,7 @@ class Scene:
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
 
     def __init__(self, tasks=None, recipe=("true",), base_ref="head", security=False, wt=True, config=None, size="normal",
-                 sub=False, settings=None, user=None, plan_extra=None):
+                 sub=False, settings=None, user=None, plan_extra=None, postmortem=True):
         self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\nconfig/forge.json\n",
                                       "src/a.py": "a\n", "src/b.py": "b\n"})
         cfg = {"schema": 1, "project": {"checks": list(recipe)}}
@@ -119,9 +119,9 @@ class Scene:
         post = front({"verdict": "ok", "security_review": security, "round": 1})
         helpers.write(self.phase, "context.md", "# context\n")
         helpers.write(self.phase, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
-        if sub:
+        if sub and postmortem:
             self.write_postmortem_as_the_step(plan, post)
-        else:
+        elif postmortem and not sub:
             helpers.write(self.part, "postmortem.md", post)
         self.name = os.path.basename(self.part)
 
@@ -359,6 +359,33 @@ def case_security(R, S):
     sec = ok_args(S, "security flag", pl.prepare(R, "--security")).get("security") or {}
     S.eq("security: --security", sec.get("needed"), True)
     S.ok("security: why names the flag", "--security" in sec.get("why", ""), repr(sec))
+
+
+def case_small_plan(R, S):
+    """08.3 T31: a small plan may skip the post-mortem, and then the planner's `security_review` stands in for it."""
+    protected = {"project": {"checks": ["true"], "protected_paths": ["src/a.py"]}}
+    login = [task("T1", 1, ["app/auth/login.py"])]
+    login_ignored = Scene(postmortem=False, size="small", tasks=login, plan_extra={"security_review": True})
+    sec = ok_args(S, "small, no postmortem, security_review true", login_ignored.prepare(R)).get("security") or {}
+    S.eq("small: security_review true on a file no glob protects", sec.get("needed"), True)
+    S.ok("small: why names plan.md", "plan.md" in sec.get("why", ""), repr(sec))
+    no = Scene(postmortem=False, size="small", plan_extra={"security_review": False})
+    sec = ok_args(S, "small, no postmortem, security_review false", no.prepare(R)).get("security") or {}
+    S.eq("small: security_review false on no protected path", (sec.get("needed"), sec.get("why")), (False, "not asked for"))
+    guarded = Scene(postmortem=False, size="small", config=protected, plan_extra={"security_review": False})
+    sec = ok_args(S, "small, security_review false, a task on a protected path", guarded.prepare(R)).get("security") or {}
+    S.eq("small: a protected path forces the review", sec.get("needed"), True)
+    S.ok("small: why names the protected path", "protected" in sec.get("why", "") and "src/a.py" in sec.get("why", ""), repr(sec))
+    keyless = Scene(postmortem=False, size="small")
+    refused(S, "small, no postmortem, no security_review", keyless, keyless.prepare(R), "security_review")
+    for size in ("normal", "big"):
+        n = Scene(postmortem=False, size=size, plan_extra={"security_review": False})
+        refused(S, "%s, no postmortem, with security_review" % size, n, n.prepare(R), "postmortem.md")
+    typed = Scene(postmortem=False, size="small", plan_extra={"security_review": "yes"})
+    refused(S, "small, security_review of another type", typed, typed.prepare(R), "security_review")
+    sub = Scene(postmortem=False, size="small", sub=True, plan_extra={"security_review": True})
+    sec = ok_args(S, "small subphase, no postmortem", sub.prepare(R)).get("security") or {}
+    S.eq("small subphase: security_review comes from the subphase's plan.md", sec.get("needed"), True)
 
 
 def case_done(R, S):
@@ -680,7 +707,7 @@ def case_base_timeout(R, S):
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
-         case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
+         case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
          case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_moved, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
