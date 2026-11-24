@@ -802,7 +802,12 @@ def case_base_ci(R, S):
       FAIL: ci green: says CI passed: got ''
       FAIL: ci green: one evidence row, ... its source CI: got [('evidence', '7dba5a...', '0', [...], 'profile')], want [(..., 'ci')]
       FAIL: ci not used, the run failed: one line says why   (and the same for each case that must fall back)
-    (the checks ran: wave new knew nothing of CI)."""
+    (the checks ran: wave new knew nothing of CI).
+    A green run of a sha that is not on origin/master is not trusted (CI on a pull request commit can skip suites). Seen failing before that code:
+      FAIL: ci green but the base is not on origin/master: the checks run here: got (0, 0), want (0, 1)
+      FAIL: ci green but the base is not on origin/master: one line says why: fwx wave new: base checks: CI passed 4075bc9 (All checks SUCCESS)
+      FAIL: ci green but the base is not on origin/master: the row is the local one: got ['ci'], want ['profile']
+      FAIL: ci green but there is no origin/master here: the checks run here, one line: got (0, 0, 0), want (0, 1, 1)"""
     url = "https://github.com/example/toy.git"
     runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
 
@@ -810,6 +815,7 @@ def case_base_ci(R, S):
         sc = Scene(recipe=[counting(runs)])
         if origin:
             helpers.git(sc.repo, "remote", "add", "origin", origin)
+            helpers.git(sc.repo, "update-ref", "refs/remotes/origin/master", "HEAD")  # the base is on origin/master, as a merged base is
         return sc
 
     def go(sc, tools):
@@ -837,6 +843,22 @@ def case_base_ci(R, S):
     r2, n2 = go(sc, tools)
     S.ok("ci green: the next wave new reuses the CI record, no second question", (r2.returncode, n2, len(evidence_rows(sc)),
          "reused the passing record" in r2.stderr, len(asked().splitlines())) == (0, 0, 1, True, 1), r2.stderr)
+    # a green run of a sha that is not on origin/master proves nothing: CI on a pull request can skip suites, CI on master runs all
+    sc = scene()
+    sc.commit("off-master.txt", "work on the phase branch")
+    off = sc.head()
+    tools = tool_dir('printf "success\\n"')
+    r, n = go(sc, tools)
+    S.eq("ci green but the base is not on origin/master: the checks run here", (r.returncode, n), (0, 1))
+    S.ok("ci green but the base is not on origin/master: one line says why",
+         r.stderr.count("base checks: CI not used (%s is not on origin/master); running the checks here" % off[:7]) == 1 and "CI passed" not in r.stderr, r.stderr)
+    S.ok("ci green but the base is not on origin/master: GitHub is not asked", asked() == "", asked())
+    S.eq("ci green but the base is not on origin/master: the row is the local one",
+         [json.loads(x["detail"])["source"] for x in evidence_rows(sc)], ["profile"])
+    sc = scene()
+    helpers.git(sc.repo, "update-ref", "-d", "refs/remotes/origin/master")
+    r, n = go(sc, tool_dir('printf "success\\n"'))
+    S.eq("ci green but there is no origin/master here: the checks run here, one line", (r.returncode, n, r.stderr.count("base checks: CI not used")), (0, 1, 1))
     for label, answer, origin, gh in [
             ("the run failed", 'printf "failure\\n"', url, True),
             ("the run is pending", 'printf "pending\\n"', url, True),
@@ -868,6 +890,8 @@ MUTANTS = [
      "prepare exit 0 on a red base"),
     ("CI: only a red run is not green", case_base_ci, P, 'if any(c != "success" for c in got):', 'if any(c == "failure" for c in got):',
      "ci not used, the run is pending: the checks run here"),
+    ("CI: a base off the default branch is trusted", case_base_ci, P, "    if off:\n", "    if False:\n",
+     "ci green but the base is not on origin/master: the checks run here"),
     ("CI: gh's exit status ignored", case_base_ci, P, "if r.returncode != 0:", "if False:",
      "ci not used, gh exits non-zero, even after printing success: the checks run here"),
     ("record of another sha stands in", case_base_reuse, P, 'row.get("sha") != base or ', "",
