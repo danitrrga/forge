@@ -24,7 +24,8 @@ exempt (fwx writes its own state there). With no default branch to measure from 
 
 The whole recipe runs under an exclusive lock on `<git-common-dir>/fwx/gate.lock` (`gate_lock`), so two gates of one repo, from two
 worktrees, run one after the other: two at once take twice as long each and fail on load. The second says it waits and its
-time limits start once it holds the lock. The lock is a flock, so it goes with the process however that ends.
+time limits start once it holds the lock. The lock is a flock, so it goes with the process however that ends. While it is held `FWX_GATE_LOCK=<path>` is in the environment of the
+checks, and a `gate_lock` that finds its own path there does not lock again: a check that runs `fwx verify` would otherwise wait for its parent.
 
 The output tail of a red check goes to the terminal, so secrets are taken out of it first: the value of any environment
 variable named like a credential, and the shapes of tokens (`redact`). Nothing else of the output is kept or written.
@@ -52,6 +53,7 @@ TAIL_LINES = 40
 TAIL_CHARS = 4000
 COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
+GATE_LOCK_ENV = "FWX_GATE_LOCK"  # the lock path, exported to the checks while the gate holds the lock
 ADDED_FILES_CHECK = "fwx added-files"
 _ONE_USE_EXT = (".md", ".txt")
 _ONE_USE = {"brief", "checkpoint", "handoff", "tomorrow", "scratch"}  # whole words of a name, split on - _ . and spaces
@@ -127,15 +129,24 @@ def gate_lock(root):
     folder = os.path.join(r.stdout.strip(), "fwx")
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, "gate.lock")
+    if os.environ.get(GATE_LOCK_ENV) == path:  # a check of the recipe running `fwx verify`: its own gate already holds the lock
+        yield path
+        return
     with open(path, "a") as f:
         try:
             fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             sys.stderr.write("fwx: waiting for another gate of this repo to finish (lock %s)\n" % path)
             fcntl.flock(f, fcntl.LOCK_EX)
+        before = os.environ.get(GATE_LOCK_ENV)
+        os.environ[GATE_LOCK_ENV] = path  # the checks inherit it, so a nested gate of this repo does not wait for its own parent
         try:
             yield path
         finally:
+            if before is None:
+                os.environ.pop(GATE_LOCK_ENV, None)
+            else:
+                os.environ[GATE_LOCK_ENV] = before
             fcntl.flock(f, fcntl.LOCK_UN)
 
 
