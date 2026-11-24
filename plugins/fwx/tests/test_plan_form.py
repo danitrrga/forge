@@ -18,6 +18,10 @@ error or warning; the rest are the same cases seen through the exit code, the co
   FAIL: warning: 3601 words: 'plan.md: body: 3601 words, over 3600: is every line needed?' not in []
 The clean cases (0 errors, 0 warnings) pass on the old checker, as they must: they are what the new one must not break.
 
+Red before plan.md's `security_review` got the protected-path rule (08.3 T31), with the key accepted by plan.py:
+  FAIL: error: no postmortem, plan security_review false on a protected path: 'plan.md: security_review: task T1 touches a protected path (.github/workflows/**): security_review must be true' not in []
+  FAIL: no postmortem, no configuration: NOT RUN, NOT ARMED for plan.md, no error: {'errors': [], 'warnings': [...no main checkout...]}
+
 Controls: each check of plan_form switched off or bent in turn on a copy (the 26 mutants are in the commit message): the cases of
 that check fail, the clean ones keep passing.
 """

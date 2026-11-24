@@ -26,6 +26,10 @@ Controls, each seen red on a copy of the repo with one thing changed (351 checks
       FAIL: discuss -> executing: exit 1: got 0, want 1
   - the table lets premortem go to executing (6 failed):
       FAIL: session: premortem -> executing is forbidden: got True
+  - the table lacks discuss -> planning, planning -> executing and planning -> discuss (08.3 T31):
+      FAIL: session: discuss -> planning is allowed: got False
+      FAIL: small phase: -> planning: exit: got 1, want 0
+  - the table lets planning go to closed (08.3 T31): `session: planning -> closed is forbidden` and `small phase: -> closed: exit` fail
   - the table drops ui-walk -> discuss (1 failed):
       FAIL: session: ui-walk -> discuss is allowed: got False
   - the table lacks ui-walk -> executing (the walk's fixes go back to the executors; seen red on master, 1 failed):

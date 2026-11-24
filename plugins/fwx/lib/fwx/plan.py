@@ -9,7 +9,8 @@ load_postmortem, section, check_phase. A `load_*` takes the path of the file (no
 frontmatter as a dict, or raises PlanError for the first problem. `load_plan` does not look at what needs the whole folder:
 two tasks of a wave writing the same file, a `part` above `size.parts` (the tasks of a subphase's plan carry the part
 of the phase's task that owns them), or a subphase folder, are for `check_phase`, so a plan whose tasks clash still
-loads and the caller (3.4's `prepare`) decides what to do with it.
+loads and the caller (3.4's `prepare`) decides what to do with it. `plan.md` may carry a boolean `security_review`, the planner's
+answer in a small plan that skips the post-mortem; `fwx wave new` and `fwx plan lint` read it only when there is no postmortem.md.
 
 Imports the standard library and `state` (for `read_rows`); nothing here needs the configuration or a git repository.
 """
@@ -186,8 +187,9 @@ def _reasons(p, items, field):
 
 def _plan_problems(data):
     p = _Problems()
-    keys = ("size", "criteria", "tasks", "not_built", "later")
+    keys = ("size", "criteria", "tasks", "not_built", "later", "security_review")
     p.unknown(data, keys, "")
+    p.value(data, "security_review", "", lambda v: isinstance(v, bool), "true or false", required=False)
     size = _object(p, data, "size", "", ("tag", "parts", "agents"))
     if size is not None:
         p.one_of(size, "tag", "size", TAGS)
