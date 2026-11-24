@@ -6,7 +6,9 @@ the base fails its own checks, and NotRun (exit 77) when a base check ran out of
 written last, and the evidence row of a base that ran green (below).
 
 The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.md` and `decisions.tsv` of the phase that
-holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`). Refused with
+holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`); a missing
+`postmortem.md` is accepted only for a `small` plan that says `security_review` (_security_why: the planner's answer and a task on a
+`project.protected_paths` glob stand in for the post-mortem's). Refused with
 exit 2, in this order of cost: a plan that does not load; a task file that git ignores (the executor could not commit it); the
 requested branch is a default branch, or is not the one the checkout is on; the checkout holds uncommitted work; the effective
 `worktree.baseRef` is not `head`; the project has no checks. Why the baseRef: without it a workflow agent's worktree is made from
@@ -46,14 +48,14 @@ so a refusal and a red base leave nothing behind. With `--fix` the one brief is 
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
 shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's fix.json (`normalize`), `--revert` a list of finding ids; anything else is refused.
 
-Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
+Imports the standard library, fwx.plan, plan_form, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
 """
 import json
 import os
 import re
 import shlex
 
-from fwx import config, plan, plan_step, state
+from fwx import config, plan, plan_form, plan_step, state
 from fwx.core import evidence, rounds, verify
 from fwx.execute import brief, worktree_setup
 from fwx.execute.base import WaveError, git, linked, out, toplevel
@@ -102,6 +104,28 @@ def _load(loader, path, label):
         return loader(path, label)
     except plan.PlanError as e:
         raise WaveError(str(e))
+
+
+def _security_why(data, post_path, cfg):
+    """The reasons the security review is needed, from the post-mortem, or from the plan when a small plan skips it (a missing
+    postmortem.md is accepted only then, and the plan must say `security_review`: a default would let an unasked-for review through).
+    A task on a `project.protected_paths` glob forces the review in a plan with no post-mortem, whatever the planner wrote."""
+    if os.path.exists(post_path):
+        post = _load(plan.load_postmortem, post_path, "postmortem.md")
+        return ["postmortem.md security_review is true"] if post["security_review"] else []
+    if data["size"]["tag"] != "small":
+        raise WaveError("%s is missing: only a small plan may skip the post-mortem, and this one is %s" % (post_path, data["size"]["tag"]))
+    if "security_review" not in data:
+        raise WaveError("plan.md: security_review: missing: a small plan that skips the post-mortem says whether it needs the security review "
+                        "(true or false), because nothing else would ask")
+    why = ["plan.md security_review is true"] if data["security_review"] else []
+    protected = [g for g in cfg["project"].get("protected_paths") or [] if isinstance(g, str)]
+    for t in data["tasks"]:
+        hit = next(((f, g) for f in t["files"] for g in [plan_form.protected_glob(protected, f)] if g), None)
+        if hit:
+            why.append("task %s writes %s, a protected path (%s)" % (t["id"], hit[0], hit[1]))
+            break
+    return why
 
 
 def _ignored(top, tasks):
@@ -331,8 +355,8 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     paths = state.phase_paths(part)
     data = _load(plan.load_plan, paths["plan"], "plan.md")
     owner = state.phase_paths(phase)  # context, decisions and the critique are the phase's; a subphase has its own plan and audit only
-    post = _load(plan.load_postmortem, owner["postmortem"], "postmortem.md")
     tasks = data["tasks"]
+    why = _security_why(data, owner["postmortem"], cfg)
     ignored = _ignored(top, tasks)
     if ignored:
         raise WaveError("a task writes a file git ignores, so its commit would not hold it: %s" % ", ".join(ignored))
@@ -399,7 +423,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
                       "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"], "files": [plan._norm(f) for f in t["files"]],
                                  "brief": made[t["id"]][0]["brief"] if t["id"] in made else None,
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
-    why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
+    why = why + ["--security"] * bool(security)
     return {
         "run": run, "plane": plane, "unattended": plane == "factory" or unattended, "cap": cap,
         "linear": bool(cfg["project"].get("linear_project")),  # an unfixed `outside` item needs its issue key only where there is a Linear project

@@ -32,6 +32,12 @@ the second shortens the limit of `run_check` through its default argument, which
   FAIL: reuse: a record of other checks on the same sha stands in for nothing: the checks run again: got (0, 4), want (0, 3)
   FAIL: timeout: a base check that outlives its limit is NOT RUN, exit 77, nothing on stdout: got (1, '{"status": "needs-owner", "reason": "base b80b4d9d is red: ...python3 -c \'import time; time.sleep(30)\'=none", ...')
 
+Red before a small plan could skip the post-mortem (08.3 T31; `case_small_plan`), on 6e4e54c, then with plan.md's `security_review` accepted
+and `prepare` still loading postmortem.md:
+  FAIL: small, no postmortem, security_review true: exit: got (2, 'fwx wave new: plan.md: security_review: unknown field'), want (0, '')
+  FAIL: small, no postmortem, security_review true: exit: got (2, 'fwx wave new: .../phases/01-alpha/postmortem.md: file: cannot be read (No such file or directory)'), want (0, '')
+Controls added (a normal plan may skip it; a missing key defaults to false; the planner's value ignored; a protected path does not force the review).
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each line must
 be in the file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (188 checks). The first FAIL
 line of each, seen red:
@@ -90,7 +96,7 @@ class Scene:
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
 
     def __init__(self, tasks=None, recipe=("true",), base_ref="head", security=False, wt=True, config=None, size="normal",
-                 sub=False, settings=None, user=None, plan_extra=None):
+                 sub=False, settings=None, user=None, plan_extra=None, postmortem=True):
         self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\nconfig/forge.json\n",
                                       "src/a.py": "a\n", "src/b.py": "b\n"})
         cfg = {"schema": 1, "project": {"checks": list(recipe)}}
@@ -119,9 +125,9 @@ class Scene:
         post = front({"verdict": "ok", "security_review": security, "round": 1})
         helpers.write(self.phase, "context.md", "# context\n")
         helpers.write(self.phase, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
-        if sub:
+        if sub and postmortem:
             self.write_postmortem_as_the_step(plan, post)
-        else:
+        elif postmortem and not sub:
             helpers.write(self.part, "postmortem.md", post)
         self.name = os.path.basename(self.part)
 
@@ -359,6 +365,33 @@ def case_security(R, S):
     sec = ok_args(S, "security flag", pl.prepare(R, "--security")).get("security") or {}
     S.eq("security: --security", sec.get("needed"), True)
     S.ok("security: why names the flag", "--security" in sec.get("why", ""), repr(sec))
+
+
+def case_small_plan(R, S):
+    """08.3 T31: a small plan may skip the post-mortem, and then the planner's `security_review` stands in for it."""
+    protected = {"project": {"checks": ["true"], "protected_paths": ["src/a.py"]}}
+    login = [task("T1", 1, ["app/auth/login.py"])]
+    login_ignored = Scene(postmortem=False, size="small", tasks=login, plan_extra={"security_review": True})
+    sec = ok_args(S, "small, no postmortem, security_review true", login_ignored.prepare(R)).get("security") or {}
+    S.eq("small: security_review true on a file no glob protects", sec.get("needed"), True)
+    S.ok("small: why names plan.md", "plan.md" in sec.get("why", ""), repr(sec))
+    no = Scene(postmortem=False, size="small", plan_extra={"security_review": False})
+    sec = ok_args(S, "small, no postmortem, security_review false", no.prepare(R)).get("security") or {}
+    S.eq("small: security_review false on no protected path", (sec.get("needed"), sec.get("why")), (False, "not asked for"))
+    guarded = Scene(postmortem=False, size="small", config=protected, plan_extra={"security_review": False})
+    sec = ok_args(S, "small, security_review false, a task on a protected path", guarded.prepare(R)).get("security") or {}
+    S.eq("small: a protected path forces the review", sec.get("needed"), True)
+    S.ok("small: why names the protected path", "protected" in sec.get("why", "") and "src/a.py" in sec.get("why", ""), repr(sec))
+    keyless = Scene(postmortem=False, size="small")
+    refused(S, "small, no postmortem, no security_review", keyless, keyless.prepare(R), "security_review")
+    for size in ("normal", "big"):
+        n = Scene(postmortem=False, size=size, plan_extra={"security_review": False})
+        refused(S, "%s, no postmortem, with security_review" % size, n, n.prepare(R), "postmortem.md")
+    typed = Scene(postmortem=False, size="small", plan_extra={"security_review": "yes"})
+    refused(S, "small, security_review of another type", typed, typed.prepare(R), "security_review")
+    sub = Scene(postmortem=False, size="small", sub=True, plan_extra={"security_review": True})
+    sec = ok_args(S, "small subphase, no postmortem", sub.prepare(R)).get("security") or {}
+    S.eq("small subphase: security_review comes from the subphase's plan.md", sec.get("needed"), True)
 
 
 def case_done(R, S):
@@ -680,7 +713,7 @@ def case_base_timeout(R, S):
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
-         case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
+         case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
          case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_moved, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
@@ -715,8 +748,16 @@ MUTANTS = [
     ("checks from the checkout", case_worktree_checks, P, "return config.load(top)",
      'return dict(config.DEFAULTS, project=dict(config.DEFAULTS["project"], checks=[]))', "from a worktree: exit: got (2,"),
     ("subphase as a phase", case_subphase, P, "if _is_subphase(part) else part", "if False else part", "subphase: context.md is the parent's"),
-    ("postmortem from the subphase", case_subphase, P, 'post = _load(plan.load_postmortem, owner["postmortem"], "postmortem.md")',
-     'post = _load(plan.load_postmortem, paths["postmortem"], "postmortem.md")', "subphase: exit: got (2,"),
+    ("postmortem from the subphase", case_subphase, P, 'why = _security_why(data, owner["postmortem"], cfg)',
+     'why = _security_why(data, paths["postmortem"], cfg)', "subphase: exit: got (2,"),
+    ("a normal plan may skip the postmortem", case_small_plan, P, 'if data["size"]["tag"] != "small":', "if False:",
+     "normal, no postmortem, with security_review: exit"),
+    ("a missing security_review defaults to false", case_small_plan, P, 'if "security_review" not in data:',
+     'if data.setdefault("security_review", False) is None:', "small, no postmortem, no security_review: exit"),
+    ("the planner's security_review ignored", case_small_plan, P, 'why = ["plan.md security_review is true"] if data["security_review"] else []',
+     "why = []", "small: security_review true on a file no glob protects"),
+    ("a protected path does not force the review", case_small_plan, P, "        if hit:\n", "        if False:\n",
+     "small: a protected path forces the review"),
     ("from gate, the head as the base", case_from_gate, P, "base = _part_base(top, branch, name)", "base = verify.head(top)", "the base is where the part's first run started"),
     ("from gate runs the base", case_from_gate, P, "red = None if gating else _base_is_green(", "red = _base_is_green(", "from gate: exit"),
     ("from gate with a task not done", case_from_gate, P, "        if todo:\n", "        if False:\n", "from gate, a task not done"),

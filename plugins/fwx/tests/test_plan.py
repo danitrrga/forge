@@ -182,6 +182,18 @@ case("frontmatter that is a list", phase(raw="---\n[1]\n---\n" + BODY), ["plan.m
 case("no plan.md", helpers.mkdtemp("fwx-plan-"), ["plan.md: file: missing"])
 case("a missing top-level field", mutated(lambda f: f.pop("size")), ["plan.md: size: missing"])
 case("a missing later", mutated(lambda f: f.pop("later")), ["plan.md: later: missing"])
+# 08.3 T31: the planner's security_review, optional (a small plan that skips the post-mortem carries it)
+for label, v in (("true", True), ("false", False)):
+    case("security_review %s is accepted" % label, mutated(lambda f, v=v: f.update(security_review=v)), exact=(0, 0))
+    try:
+        got = plan.load_plan(os.path.join(mutated(lambda f, v=v: f.update(security_review=v)), "plan.md")).get("security_review")
+    except plan.PlanError as e:
+        got = str(e)
+    s.eq("load_plan keeps security_review %s" % label, got, v)
+for label, v in (("a string", "yes"), ("a number", 1), ("null", None)):
+    case("security_review as %s" % label, mutated(lambda f, v=v: f.update(security_review=v)), ["plan.md: security_review: must be true or false"])
+raises("load_plan: security_review \"yes\" raises", lambda: plan.load_plan(os.path.join(
+    mutated(lambda f: f.update(security_review="yes")), "plan.md"), "plan.md"), "plan.md: security_review: must be true or false", "security_review")
 case("an unknown top-level field", mutated(lambda f: f.update(extra=1)), ["plan.md: extra: unknown field"])
 case("size.parts of another type", mutated(lambda f: f["size"].update(parts="2")), ["plan.md: size.parts: must be an integer of at least 1"])
 case("size.parts a bool", mutated(lambda f: f["size"].update(parts=True)), ["plan.md: size.parts: must be an integer of at least 1"])
