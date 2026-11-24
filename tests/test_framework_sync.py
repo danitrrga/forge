@@ -974,6 +974,12 @@ wt_.run()
 pt = (load(fwfile(ppt)) or {}).get("project", {})
 check("fields: check_timeout_s reaches project.check_timeout_s -- %s" % pt.get("check_timeout_s", "missing from fwx.json"),
       pt.get("check_timeout_s") == 2700, pt)
+# The omission is only worth anything when a project object was loaded to inspect: a missing or unreadable file makes `pd` {} and the
+# plain `not in` passes having looked at nothing (CodeRabbit, PR 223). Control: with the file name of `pd` pointed at nothing the first
+# check fails ("fields: the file of a project without check_timeout_s was loaded (a project object to inspect) -- {}") where the plain
+# omission check alone still passed.
+check("fields: the file of a project without check_timeout_s was loaded (a project object to inspect) -- %s" % pd,
+      isinstance(pd, dict) and bool(pd) and "checks" in pd, pd)
 check("fields: without check_timeout_s, project.check_timeout_s is not written -- %s" % pd.get("check_timeout_s", "missing from fwx.json"),
       "check_timeout_s" not in pd, pd)
 
