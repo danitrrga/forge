@@ -35,4 +35,4 @@ Only when your prompt gives `verdict_command` and asks for the demo in the app. 
 
 ## Return
 
-The absolute path of the page (with `verdict_tool` null, of each figure instead), and the question with its lettered options, then under 100 words: one line per variant (its letter and what it shows), the variants you dropped and why, and for the app demo the capture folder and what the status command printed. Then one line saying which option you would pick and why: the orchestrator puts it to the owner as a recommendation, and the owner may overrule it.
+The absolute path of the page (with `verdict_tool` null, of each figure instead), and the question with its lettered options, then under 100 words: one line per variant (its letter and what it shows), the variants you dropped and why, and for the app demo the capture folder and what the status command printed. Then one line on which option you would pick and why; the orchestrator relays it as a recommendation.

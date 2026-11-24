@@ -13,8 +13,8 @@ Your prompt gives absolute paths for the folder you write in, `context.md`, `dec
 ## What good state is
 
 - **Facts you read, not what you remember.** Every line comes from the audit log, the decision log, the plan or git. A status you cannot trace to one of them stays out.
-- **One pointer beats a paragraph.** Do not duplicate what specs, plans, ADRs, issues, commits and diffs already say: give the path or URL. Redact API keys, passwords and personal data.
-- **Say what is unproven.** An assumption nobody confirmed, a check that did not run, a number you could not read: each is a line, never a smoothing over.
+- **One pointer beats a paragraph.** What specs, plans, ADRs, issues, commits and diffs already say, give as a path or URL. Redact API keys, passwords and personal data.
+- **Say what is unproven.** An unconfirmed assumption, a check that did not run, a number you could not read: each is a line.
 
 ## Read
 
