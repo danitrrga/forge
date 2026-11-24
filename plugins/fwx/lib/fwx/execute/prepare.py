@@ -299,9 +299,22 @@ CI_TIMEOUT_S = 20
 _GITHUB = re.compile(r"(?:https?://(?:[^/@]+@)?|ssh://git@|git@)github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?\Z")
 
 
-def _ci_green(top, base, say):
-    """True only when GitHub says the check run `CI_CHECK` of the sha `base` ended `success` (every run of that name, and at least one).
-    Anything else, including not being able to ask, is False with one stderr line saying why: the caller then runs the checks here."""
+def _on_default_branch(top, base, cfg):
+    """None when `base` is `origin/<default branch>` or an ancestor of it (local ref only, no fetch), else the reason it cannot be trusted:
+    CI on a pull request commit can skip the engine or fwx suite while `All checks` still says success, CI on a push to the default branch runs them all."""
+    names = sorted(_defaults(top, cfg))
+    refs = [n for n in names if git(top, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/%s^{commit}" % n).returncode == 0]
+    if not refs:
+        return "there is no origin/%s here" % names[0]
+    for n in refs:
+        if git(top, "merge-base", "--is-ancestor", base, "refs/remotes/origin/%s" % n).returncode == 0:
+            return None
+    return "%s is not on origin/%s" % (base[:7], refs[0])
+
+
+def _ci_green(top, base, say, cfg):
+    """True only when `base` is on origin's default branch and GitHub says the check run `CI_CHECK` of that sha ended `success` (every run of that
+    name, and at least one). Anything else, including not being able to ask, is False with one stderr line saying why: the caller then runs the checks here."""
     def no(why):
         say("base checks: CI not used (%s); running the checks here" % why)
         return False
@@ -310,6 +323,9 @@ def _ci_green(top, base, say):
     found = _GITHUB.match(url or "")
     if not found:
         return no("the origin is not a GitHub repository" if url else "no origin remote")
+    off = _on_default_branch(top, base, cfg)
+    if off:
+        return no(off)
     api = "repos/%s/%s/commits/%s/check-runs?check_name=%s&per_page=100" % (found.group(1), found.group(2), base, CI_CHECK.replace(" ", "%20"))
     try:
         r = subprocess.run(["gh", "api", api, "--jq", '.check_runs[] | (.conclusion // "pending")'], cwd=top, capture_output=True, text=True,
@@ -336,7 +352,7 @@ def _base_is_green(top, base, recipe, folders, say, timeout, part=None, cfg=None
     if _record(base, recipe, folders):
         say("base checks: reused the passing record of %s" % base[:7])
         return None
-    if _ci_green(top, base, say):
+    if _ci_green(top, base, say, cfg):
         _remember(part, base, recipe, folders, cfg, "ci")
         return None
     results = [verify.run_check(c, top, timeout) for c in recipe]
