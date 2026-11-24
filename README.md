@@ -334,7 +334,7 @@ forge sync [NAME | --all] [--apply]                         what would change (o
 forge skills [--apply]                                      online skills from the manifest, the skill links in ~/.claude/skills
 forge doctor [NAME]                                         one line per check; exit 1 on a FAIL
 forge log [--since DATE] [NAME]                             the journal of what sync --apply and session start wrote
-forge test [fwx] [--mutants]                                every tracked test_*.py but plugins/fwx's, at nice 19; `fwx`: that suite alone, in parallel (--jobs N, --expect-not-run P,..)
+forge test [fwx] [--mutants]                                every tracked test_*.py but plugins/fwx's, up to 4 at once at nice 19 (--jobs N; 1 is serial); `fwx`: that suite alone (--jobs N, --expect-not-run P,..)
 forge toolchain [--fix]                                     the third-party tools config/toolchain.json pins, installed by mise
 forge start NAME [ARGS...]                                  claude started with the environment a launcher of config/forge.json declares
 forge start @NAME [--dry-run] [ARGS...]                     claude started with a profile of this project, by flags alone: no file of the project is written
