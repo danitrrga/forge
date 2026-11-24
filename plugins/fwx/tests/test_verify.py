@@ -113,8 +113,12 @@ Controls of the rest, each seen red on a copy of the repo with one thing changed
 import json
 import os
 import shlex
+import select
 import shutil
+import subprocess
 import sys
+import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -607,6 +611,33 @@ res = core_verify.run_check("echo out; echo err >&2; exit 3", ROOT)
 s.eq("a check's exit status and both streams", (res["rc"], "out" in res["output"], "err" in res["output"]), (3, True, True))
 s.eq("a check that ends on its own did not time out", res["timed_out"], False)
 s.eq("a command that cannot start did not time out either", core_verify.run_check("true", os.path.join(ROOT, "no-such-folder"))["timed_out"], False)
+# A check run with TMPDIR inside a checkout (an agent's scratch folder is one) gets a private TMPDIR under /tmp, removed after; a TMPDIR
+# outside any checkout is left alone. Seen red on the code before the swap (run_check passed the environment on as it was):
+#   FAIL: TMPDIR inside a checkout: the check's temp dir is outside any work tree: got (1, False), want (0, True)
+#   FAIL: TMPDIR inside a checkout: the private folder is under /tmp and gone after the check: <the checkout's own scratch-tmp folder>
+# Control: `_child_env` yielding the environment unchanged gives the two FAILs above and keeps "outside" passing.
+tmp_toy = helpers.toy_repo()
+tmp_inside = os.path.join(tmp_toy, "scratch-tmp")
+os.makedirs(tmp_inside)
+tmp_probe = ("%s -c 'import os, subprocess, tempfile; d = tempfile.gettempdir(); print(os.environ[\"TMPDIR\"]); "
+             "raise SystemExit(subprocess.run([\"git\", \"-C\", d, \"rev-parse\", \"--is-inside-work-tree\"], "
+             "capture_output=True).returncode == 0)'" % sys.executable)
+saved_tmp = os.environ.get("TMPDIR")
+try:
+    os.environ["TMPDIR"] = tmp_inside
+    res = core_verify.run_check(tmp_probe, tmp_toy)
+    private = res["output"].strip().splitlines()[0] if res["output"].strip() else ""
+    s.eq("TMPDIR inside a checkout: the check's temp dir is outside any work tree", (res["rc"], private != tmp_inside), (0, True))
+    s.ok("TMPDIR inside a checkout: the private folder is under /tmp and gone after the check", private.startswith("/tmp/") and not os.path.exists(private), private)
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="fwx-verify-out-") as tmp_outside:
+        os.environ["TMPDIR"] = tmp_outside
+        res = core_verify.run_check(tmp_probe, tmp_toy)
+        s.eq("TMPDIR outside a checkout: left as it was", (res["rc"], res["output"].strip()), (0, tmp_outside))
+finally:
+    if saved_tmp is None:
+        os.environ.pop("TMPDIR", None)
+    else:
+        os.environ["TMPDIR"] = saved_tmp
 s.eq("the line for a report names a missing exit", core_verify.evidence_line("a" * 40, [{"cmd": "x", "rc": None}]),
      "evidence %s x=none" % ("a" * 40))
 
@@ -799,6 +830,65 @@ finally:
             os.environ.pop(k, None)
         else:
             os.environ[k] = v
+
+# ---- two checkouts of one repo never run the recipe at the same time (the gate lock) ----------------------------------
+# Control, on the code before the lock: the second gate started while the first was still inside its check, so the case below
+# FAILed with "two gates of one repo ran one after the other: second started <t>, first ended <t>" (the exact output is in the PR).
+
+# The order is forced, not timed: the first check holds the lock until the test writes `release`, and the test writes it only
+# once the second gate has printed its waiting line. A loaded machine cannot let the second arrive after the first has finished.
+stamp_dir = helpers.mkdtemp("fwx-gate-")  # outside every checkout, so the trees stay clean
+stamps = os.path.join(stamp_dir, "out")
+release = os.path.join(stamp_dir, "release")
+os.makedirs(stamps)
+stamp = helpers.write(stamp_dir, "stamp.py", "import json, os, sys, time\n"
+                      "t0 = time.time()\nopen(os.path.join(sys.argv[1], '%d.start' % os.getpid()), 'w').close()\n"
+                      "for _ in range(300):\n    if os.path.exists(sys.argv[2]):\n        break\n    time.sleep(0.1)\n"
+                      "json.dump([t0, time.time()], open(os.path.join(sys.argv[1], '%d.json' % os.getpid()), 'w'))\n")
+repo, phase = make(["python3 %s %s %s" % (shlex.quote(stamp), shlex.quote(stamps), shlex.quote(release))])
+other = helpers.add_worktree(repo, "gate-b")
+FWX = [sys.executable, os.path.join(ROOT, "bin", "fwx"), "verify", "--dir", phase]
+first = subprocess.Popen(FWX, cwd=repo, env=helpers.clean_env(**ENV), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+for _ in range(300):  # start the second only once the first is inside its check, so the second has to wait if there is a lock
+    if first.poll() is not None or any(f.endswith(".start") for f in os.listdir(stamps)):
+        break
+    time.sleep(0.1)
+second = subprocess.Popen(FWX, cwd=other, env=helpers.clean_env(**ENV), stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+seen = b""
+for _ in range(150):  # up to 30 s for the second to say it waits; without a lock it never does and its check waits for `release` too
+    if select.select([second.stderr], [], [], 0.2)[0]:
+        seen += os.read(second.stderr.fileno(), 4096)
+    if b"waiting for another gate" in seen or second.poll() is not None:
+        break
+open(release, "w").close()
+out1, err1 = first.communicate(timeout=120)
+out2, err2 = second.communicate(timeout=120)
+err2 = seen.decode("utf-8", "replace") + err2.decode("utf-8", "replace")
+s.eq("both gates of the one repo are green", (first.returncode, second.returncode), (0, 0))
+times = sorted(json.load(open(os.path.join(stamps, f))) for f in os.listdir(stamps) if f.endswith(".json"))
+s.eq("both gates ran their check", len(times), 2)
+if len(times) == 2:
+    s.ok("two gates of one repo ran one after the other: second started %.1f, first ended %.1f" % (times[1][0], times[0][1]),
+         times[1][0] >= times[0][1])
+common = helpers.git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+lock = os.path.join(common, "fwx", "gate.lock")
+waited = [e for e in (err1, err2) if "fwx: waiting for another gate of this repo to finish (lock %s)" % lock in e]
+s.eq("exactly one of them said it was waiting, naming the lock", len(waited), 1)
+
+r = helpers.fwx(repo, "verify", "--dir", phase, env=ENV)
+s.ok("a gate on its own does not wait", "waiting for another gate" not in r.stderr and r.returncode == 0, r.stderr)
+
+# A check of the recipe that itself runs `fwx verify` on the repo does not wait for the lock its own gate holds (the lock path is
+# exported as FWX_GATE_LOCK while it is held). Control, on the head before that: the inner gate blocked in flock until the outer
+# one killed the check at its 6 s limit, so the outer gate ended red: "FAIL: a check that runs fwx verify on the same repo does
+# not deadlock on the gate lock: exit 1 in 6.x s".
+inner = "%s %s verify" % (shlex.quote(sys.executable), shlex.quote(os.path.join(ROOT, "bin", "fwx")))
+repo, phase = make(['[ -n "$FWX_TEST_INNER" ] || FWX_TEST_INNER=1 %s' % inner], project={"check_timeout_s": 6})
+t0 = time.monotonic()
+r = helpers.fwx(repo, "verify", "--dir", phase, env=ENV)
+took = time.monotonic() - t0
+s.ok("a check that runs fwx verify on the same repo does not deadlock on the gate lock: exit %s in %.1f s" % (r.returncode, took),
+     r.returncode == 0, r.stderr)
 
 r = helpers.fwx(ROOT, "help")
 s.ok("`fwx help` lists verify", any(line.split()[:2] == ["fwx", "verify"] for line in r.stdout.splitlines()), r.stdout)
