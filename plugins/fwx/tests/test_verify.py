@@ -579,8 +579,11 @@ res = core_verify.run_check("%s -c 'import time; time.sleep(30)'" % sys.executab
 s.eq("a check past its limit has no exit status", res["rc"], None)
 s.ok("it is killed at the limit, not waited for", res["seconds"] < 10, str(res["seconds"]))
 s.ok("and says it timed out", "timed out" in res["output"], res["output"])
+s.eq("a timed-out check says so, with its limit: it proved nothing, which is not a red check", (res["timed_out"], res["limit"]), (True, 1))
 res = core_verify.run_check("echo out; echo err >&2; exit 3", ROOT)
 s.eq("a check's exit status and both streams", (res["rc"], "out" in res["output"], "err" in res["output"]), (3, True, True))
+s.eq("a check that ends on its own did not time out", res["timed_out"], False)
+s.eq("a command that cannot start did not time out either", core_verify.run_check("true", os.path.join(ROOT, "no-such-folder"))["timed_out"], False)
 s.eq("the line for a report names a missing exit", core_verify.evidence_line("a" * 40, [{"cmd": "x", "rc": None}]),
      "evidence %s x=none" % ("a" * 40))
 

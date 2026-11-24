@@ -77,7 +77,7 @@ def base():
              "size": "small", "ui": False},
             {"id": "T2", "part": 1, "type": "bug", "wave": 1, "files": ["b.py"], "depends_on": [], "tests": [test()],
              "size": "small", "ui": False},
-            {"id": "T3", "part": 1, "type": "feature", "wave": 2, "files": ["c.py"], "depends_on": ["T1", "T2"], "tests": [],
+            {"id": "T3", "part": 1, "type": "feature", "wave": 2, "files": ["c.py"], "depends_on": ["T1", "T2"], "tests": [test()],
              "size": "small", "ui": False},
         ],
         "not_built": [{"what": "x", "why": "y"}],
@@ -182,6 +182,18 @@ case("frontmatter that is a list", phase(raw="---\n[1]\n---\n" + BODY), ["plan.m
 case("no plan.md", helpers.mkdtemp("fwx-plan-"), ["plan.md: file: missing"])
 case("a missing top-level field", mutated(lambda f: f.pop("size")), ["plan.md: size: missing"])
 case("a missing later", mutated(lambda f: f.pop("later")), ["plan.md: later: missing"])
+# 08.3 T31: the planner's security_review, optional (a small plan that skips the post-mortem carries it)
+for label, v in (("true", True), ("false", False)):
+    case("security_review %s is accepted" % label, mutated(lambda f, v=v: f.update(security_review=v)), exact=(0, 0))
+    try:
+        got = plan.load_plan(os.path.join(mutated(lambda f, v=v: f.update(security_review=v)), "plan.md")).get("security_review")
+    except plan.PlanError as e:
+        got = str(e)
+    s.eq("load_plan keeps security_review %s" % label, got, v)
+for label, v in (("a string", "yes"), ("a number", 1), ("null", None)):
+    case("security_review as %s" % label, mutated(lambda f, v=v: f.update(security_review=v)), ["plan.md: security_review: must be true or false"])
+raises("load_plan: security_review \"yes\" raises", lambda: plan.load_plan(os.path.join(
+    mutated(lambda f: f.update(security_review="yes")), "plan.md"), "plan.md"), "plan.md: security_review: must be true or false", "security_review")
 case("an unknown top-level field", mutated(lambda f: f.update(extra=1)), ["plan.md: extra: unknown field"])
 case("size.parts of another type", mutated(lambda f: f["size"].update(parts="2")), ["plan.md: size.parts: must be an integer of at least 1"])
 case("size.parts a bool", mutated(lambda f: f["size"].update(parts=True)), ["plan.md: size.parts: must be an integer of at least 1"])
@@ -214,10 +226,13 @@ case("no tasks", mutated(lambda f: f.update(tasks=[])), ["plan.md: tasks: empty"
 case("depends_on an id that does not exist", mutated(lambda f: task(f, "T3").update(depends_on=["T9"])), ["plan.md: tasks[T3].depends_on: T9 is not a task of this plan"])
 case("depends_on a task of the same wave", mutated(lambda f: task(f, "T2").update(depends_on=["T1"])), ["plan.md: tasks[T2].depends_on: T1 is in wave 1, not before wave 1"])
 case("depends_on a later wave", mutated(lambda f: task(f, "T1").update(depends_on=["T3"])), ["plan.md: tasks[T1].depends_on: T3 is in wave 2, not before wave 1"])
-case("a bug with ui false and no tests", mutated(lambda f: task(f, "T2").update(tests=[])), ["plan.md: tasks[T2].tests: empty (a bug task with ui false needs a test)"])
-case("a refactor with ui false and no tests", mutated(lambda f: task(f, "T1").update(type="refactor", tests=[])), ["plan.md: tasks[T1].tests: empty (a refactor task with ui false needs a test)"])
+case("a bug with ui false and no tests", mutated(lambda f: task(f, "T2").update(tests=[])), ["plan.md: tasks[T2].tests: empty (a bug task with ui false needs a test: add one with run, measures and red)"])
+case("a refactor with ui false and no tests", mutated(lambda f: task(f, "T1").update(type="refactor", tests=[])), ["plan.md: tasks[T1].tests: empty (a refactor task with ui false needs a test: add one with run, measures and red)"])
 case("a bug with ui true needs no tests", mutated(lambda f: task(f, "T2").update(tests=[], ui=True)), exact=(0, 0))
-case("a feature without tests is fine", mutated(lambda f: task(f, "T1").update(tests=[])), exact=(0, 0))
+# DTC-70. Before the fix this printed no error: `fwx plan lint` accepted a feature with ui false and tests [] and only
+# `fwx wave new` refused it later ("task T11: ACCEPTANCE is empty / VERIFY is empty"); the case failed with "expected 1 error(s), got 0".
+case("a feature with ui false and no tests", mutated(lambda f: task(f, "T1").update(tests=[])), ["plan.md: tasks[T1].tests: empty (a feature task with ui false needs a test: add one with run, measures and red)"])
+case("a feature with ui true needs no tests", mutated(lambda f: task(f, "T1").update(tests=[], ui=True)), exact=(0, 0))
 case("a test without run", mutated(lambda f: task(f, "T1")["tests"][0].pop("run")), ["plan.md: tasks[T1].tests[0].run: missing"])
 case("a test with an empty measures", mutated(lambda f: task(f, "T1")["tests"][0].update(measures="")), ["plan.md: tasks[T1].tests[0].measures: empty"])
 case("a test without red", mutated(lambda f: task(f, "T1")["tests"][0].pop("red")), ["plan.md: tasks[T1].tests[0].red: missing"])
@@ -260,7 +275,7 @@ raises("load_premortem: an invalid file raises", lambda: plan.load_premortem(os.
 # ---- warnings: they do not change the exit
 five = lambda f: (f["size"].update(tag="small", agents=1), f.update(tasks=[
     {"id": "T%d" % i, "part": 1, "type": "feature", "wave": i, "files": ["f%d.py" % i], "depends_on": ["T%d" % (i - 1)] if i > 1 else [],
-     "tests": [], "size": "small", "ui": False} for i in range(1, 6)]))
+     "tests": [test()], "size": "small", "ui": False} for i in range(1, 6)]))
 case("more tasks than the band", mutated(five), warnings=["plan.md: tasks: 5 tasks, the small band is 4"], exact=(0, 1))
 case("a plan at its band is fine", mutated(lambda f: (five(f), f["tasks"].pop())), exact=(0, 0))
 case("size.tag differs from the premortem", phase(extra={"premortem.md": fm_text(dict(PRE, size_tag="small")) + PREB}),
@@ -307,12 +322,12 @@ s.ok("the same for a plan that cites neither",
 # ---- a phase with two subphases
 SUB = lambda part, n: {"size": {"tag": "small", "parts": 1, "agents": 1}, "criteria": base()["criteria"], "not_built": [], "later": [],
                        "tasks": [{"id": "S%d" % n, "part": part, "type": "feature", "wave": 1, "files": ["s%d.py" % n], "depends_on": [],
-                                  "tests": [], "size": "small", "ui": False}]}
+                                  "tests": [test()], "size": "small", "ui": False}]}
 top = lambda: {"size": {"tag": "normal", "parts": 2, "agents": 1}, "criteria": base()["criteria"], "not_built": [], "later": [],
                "tasks": [{"id": "T1", "part": 1, "subphase": "01.1-a", "type": "feature", "wave": 1, "files": ["a.py"], "depends_on": [],
-                          "tests": [], "size": "small", "ui": False},
+                          "tests": [test()], "size": "small", "ui": False},
                          {"id": "T2", "part": 2, "subphase": "01.2-b", "type": "feature", "wave": 2, "files": ["b.py"], "depends_on": ["T1"],
-                          "tests": [], "size": "small", "ui": False}]}
+                          "tests": [test()], "size": "small", "ui": False}]}
 subs = lambda: {"01.1-a/plan.md": fm_text(SUB(1, 1)) + SBODY, "01.2-b/plan.md": fm_text(SUB(2, 2)) + SBODY}
 parts = phase(top(), body=TBODY, extra=subs())
 r = case("two subphases", parts, exact=(0, 0))

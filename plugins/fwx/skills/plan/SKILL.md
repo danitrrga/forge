@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Launches a fresh planner agent on a finished discuss, checks the plan it writes and returns the one-line status. Use once the phase is in its planning stage, after the pre-mortem, and again to replan.
+description: Launches a fresh planner agent on a finished discuss, checks the plan it writes and returns the one-line status. Use once the phase is in its planning stage, after the discuss (or the pre-mortem, when the owner asked for one), and again to replan.
 user-invocable: false
 ---
 <!-- referent: pstack plugins/pstack/skills/thermos/SKILL.md @36885ea -->
@@ -14,4 +14,4 @@ You are given the phase folder, the language of the conversation, and whether an
 2. Launch the `Agent` tool with that `agent` as `subagent_type` and exactly that `model`: the owner chose it in the fwx configuration, so it holds over any default of yours. The prompt is "Run `fwx plan brief <dir> plan` and follow it." with `--unattended` added if it applies, then "Write in <language>." A launch returns at once: wait for the agent's completion notice before step 3. If the launch fails or the agent returns an error, launch it once more the same way.
 3. Run `fwx plan lint <dir>`. On exit 1 with `plan.md: file: missing`, launch once more as in step 2 and check again. On any other exit 1, `SendMessage` its output to the same agent, once, as the errors to fix before it replies as before, and wait for its notice.
 4. Run `fwx plan status <dir> plan`, with `--unattended` if it applies.
-5. Reply with what the planner returned and, last, the line `fwx plan status` printed, unchanged; a `failed` status goes back with its reason.
+5. Reply with what the planner returned and, last, the line `fwx plan status` printed, unchanged; a `failed` status goes back with its reason. A planner that returns `back-to-discuss` (it found the owner's intent misread) with its words ends your reply with `{"status": "back-to-discuss", "reason": "back-to-discuss: <its sentence>", "phase_dir": "<dir>"}` in place of the status line, because the session sends the phase back to the discuss.

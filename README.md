@@ -96,8 +96,8 @@ behind every "built".
    verified. An objection is a claim to judge, not something to build: it is checked against the code before the plan
    changes (Every's rule: risk has no natural limit, any design has one more way to fail). A script checks the plan's
    structure first (`fwx plan lint`). Built.
-5. **You are asked only what is yours.** A question to you is about taste or direction. It comes with the options and
-   what each one implies, and with no recommendation, so you decide without pressure. What the system can settle alone
+5. **You are asked only what is yours.** A question to you is about taste or direction. It comes with the options,
+   what each one implies and a recommendation with its reason, and you decide. What the system can settle alone
    it settles, notes and goes on. Built in the discuss skill.
 6. **Whoever checks did not make it.** Reviewers, a verifier that re-checks each finding, and a security reviewer are
    agents other than the executors, and they may find nothing. A dead agent, an empty return or a missing file is a
@@ -347,6 +347,7 @@ forge shim [--shell fish|zsh|bash] | --check @NAME         print a shell functio
 forge completion fish|zsh|bash                          print the completion script of a shell (nothing is installed): commands and flags from the parser, and the projects, this directory's `@` profiles and the `--on`/`--off` values (`forge config --names`) asked of `forge` at each tab; `claude @` completes too, every other `claude` word is left to what completed it before
 forge lock [--apply]                                        record the versions mise does not install (plugins, outside skills, MCP packages)
 forge versions [--md]                                       those and the toolchain pins, for release notes
+forge update [NAME... | --all] [--apply]                    what each `track: latest` entry of config/toolchain.json would move to (tools by `mise latest`, online-skill archives by `git ls-remote`, pip libraries by PyPI, only with a wheel for the pinned python); `--apply` writes the file, then runs `forge toolchain --fix`, `forge skills --apply` (when an archive changed) and `forge lock --apply`, stopping at the first failure; a frozen entry is skipped with its why
 forge commit -m MESSAGE (PATH... | --all)                   commit each changed path to the history that owns it
 forge lint [--root DIR] --all                               personal data in the files the engine publishes (--root: another repository's)
 forge metrics NAME [--baseline]                             a project's harness cost, from its Claude Code transcripts

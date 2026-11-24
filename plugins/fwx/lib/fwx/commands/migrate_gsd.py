@@ -4,9 +4,10 @@
       Reads the `.planning/` of the repository you stand in (tracked, untracked and ignored files) and prints what the
       conversion would do with each file, phase, backlog item, `.gitignore` line, reference and unmerged branch. Writes nothing.
   apply [--json] [--milestone-map FILE] [--close IDS] [--open IDS]
-      In a worktree, on a branch that is not the default one: `git mv` of what is kept, `git rm` of what is purged and of the
-      backlog (not migrated), the generated files (`milestones/<vN>/MILESTONE.md` with the base SHA and the recovery command, a
-      `gsd-roadmap-entry.md` per open phase only the ROADMAP had, a stage row per closed phase through `state.append_audit`),
+      In a worktree, on a branch that is not the default one: `git mv` of what is kept, `git rm` of what is purged, the
+      backlog (open quick tasks, `todos/pending`, `BACKLOG.md`, `999.x` phases) moved as it is, content not converted, to
+      `backlog/<its path>` under `.fwx/` (the workstream's folder in a workstream), the generated files (`milestones/<vN>/MILESTONE.md`
+      with the base SHA and the recovery command, a `gsd-roadmap-entry.md` per open phase only the ROADMAP had, a stage row per closed phase through `state.append_audit`),
       the `.fwx/` twin under each `.gitignore` line that names `.planning/`, and the rules of each tracked `.gitignore` inside
       `.planning/` written anew at the matching folder of `.fwx/` (one that moves whole with rules that need no mapping just
       moves); a phase only the ROADMAP has and `--close` names is made closed, with its roadmap entry; the folders of
@@ -21,7 +22,7 @@
       `$(cmd)/.planning`; not `$HOME`) is kind `hand`: listed, never rewritten, said to need a hand. In a `.gitignore` a line
       that already has its `.fwx` twin is not listed, and a proposal is the twin `apply` would write. `--rewrite` changes, in the
       named files only, the paths that moved (when their new path exists); `--prefix` changes `.planning` for `.fwx` in every
-      path of the named files. What a purged file was cited by is never touched. The changed files are staged.
+      path of the named files (a file that moved goes to its real new path, and stays as it is when that path does not exist, as with `--rewrite`). What a purged file was cited by is never touched. The changed files are staged.
   leftovers [--apply] [--milestone-map FILE]
       In the main checkout, after the conversion is merged: the ignored and untracked files still under `.planning/` move to
       their destination with `os.rename` (an ignored file only if git would still ignore it there, else nothing moves), the
@@ -105,7 +106,7 @@ RE_AUDIT = re.compile(r"v(\d+)\.\d+-MILESTONE-AUDIT\.md\Z")
 # match kinds: name (a file at the scope root), tree (anything below the folder), glob (fnmatch on the path),
 #             regex (re.match on the path, group 1 is the milestone's major)
 # dest kinds: scope (<dest>/<same name>), actual (<dest>/milestones/<current>/<name>), major (<dest>/milestones/v<group 1>/<rest>),
-#             none (the file goes nowhere)
+#             backlog (<dest>/backlog/<same path>: moved as it is, never converted), none (the file goes nowhere)
 ROWS = (
     ("project", "keep", "name", ("PROJECT.md",), "scope"),
     ("milestone-docs", "keep", "name", MILESTONE_DOCS, "actual"),
@@ -114,8 +115,8 @@ ROWS = (
     ("machine-state", "purge", "name", STATE_NAMES, "none"),
     ("generated", "purge", "tree", ("codebase", "intel", "debug", "ui-reviews", "todos/done", "todos/completed"), "none"),
     ("research-summary", "purge", "glob", tuple("research/%s.md" % n for n in ("STACK", "FEATURES", "ARCHITECTURE", "PITFALLS", "SUMMARY")), "none"),
-    ("backlog", "backlog", "tree", ("todos/pending",), "none"),
-    ("backlog", "backlog", "name", ("BACKLOG.md",), "none"),
+    ("backlog", "backlog", "tree", ("todos/pending",), "backlog"),
+    ("backlog", "backlog", "name", ("BACKLOG.md",), "backlog"),
 )
 # inside a phase folder (first row that matches wins)
 PHASE_KEEP = ("*-CONTEXT.md", "*-SUMMARY.md", "*-VERIFICATION.md", "*-UAT.md", "*-HUMAN-UAT.md", "*-LEARNINGS.md", "*-SECURITY.md",
@@ -532,12 +533,12 @@ def classify_tracked(sc, inner):
         return phase_file(sc, key, m.group(3))
     parts = inner.split("/")
     if len(parts) >= 3 and parts[0] == "phases" and parts[1].startswith("999."):
-        return "backlog", None, "backlog"
+        return "backlog", "backlog/" + inner, "backlog"
     if len(parts) >= 3 and parts[0] == "phases" and RE_PHASE_DIR.match(parts[1]):
         return phase_file(sc, "phases/" + parts[1], "/".join(parts[2:]))
     if len(parts) >= 3 and parts[0] == "quick":
         done = any(n.endswith("SUMMARY.md") for n, t, _ in sc.files if t and n.startswith("quick/%s/" % parts[1]) and n.count("/") == 2)
-        return ("purge", None, "quick-done") if done else ("backlog", None, "quick-open")
+        return ("purge", None, "quick-done") if done else ("backlog", "backlog/" + inner, "quick-open")
     for row in ROWS:
         g = match_row(row, inner)
         if g is None:
@@ -546,6 +547,8 @@ def classify_tracked(sc, inner):
         base = inner.rsplit("/", 1)[-1]
         if dest == "scope":
             return action, inner, rule
+        if dest == "backlog":
+            return action, "backlog/" + inner, rule
         if dest == "actual":
             return action, "milestones/%s/%s" % (sc.actual, base), rule
         if dest == "major":
@@ -605,7 +608,7 @@ def carry_gitignore(sc, mapper, src, inner, action, dest):
         out.append(("%s%s%s" % (neg, "/" if pat.startswith("/") else "", new[len(here) + 1:]) if new.startswith(here + "/") else body)
                    + line[len(body):])
     mapped = "".join(out)
-    if action == "keep" and dest and "%s/%s" % (sc.dest, dest) == here + "/.gitignore" and mapped == text:
+    if action in ("keep", "backlog") and dest and "%s/%s" % (sc.dest, dest) == here + "/.gitignore" and mapped == text:
         return None
     return here + "/.gitignore", mapped
 
@@ -648,7 +651,7 @@ def analyze(src, opts):
             action, dest, rule = classify(sc, inner, tracked)
             if tracked and posixpath.basename(inner) == ".gitignore" and src.islink(sc.prefix + inner):
                 notes.append("%s/%s%s is a symbolic link: it is never read as a rules file, so its rules are NOT written again (needs a hand: "
-                             "%s)" % (SCOPE_SRC, sc.prefix, inner, "the link moves as it is" if action == "keep" and dest
+                             "%s)" % (SCOPE_SRC, sc.prefix, inner, "the link moves as it is" if action in ("keep", "backlog") and dest
                                       else "the link is removed with its folder; write the rules you want where they belong"))
             elif tracked and posixpath.basename(inner) == ".gitignore":
                 carry = carry_gitignore(sc, shape, src, inner, action, dest)
@@ -656,7 +659,7 @@ def analyze(src, opts):
                     notes.append("%s/%s%s: its rules are NOT written again: the folder it sits in goes to a milestone this project has "
                                  "several of and the converter cannot pick one (%s). Write the rules by hand where they belong"
                                  % (SCOPE_SRC, sc.prefix, inner,
-                                    "the file moves with its rules unchanged" if action == "keep" and dest else "the file is removed with its folder"))
+                                    "the file moves with its rules unchanged" if action in ("keep", "backlog") and dest else "the file is removed with its folder"))
                     carry = None
                 if carry:
                     sc.carried[inner] = carry
@@ -712,7 +715,7 @@ def backlog_items(scopes, src, files):
             members = sorted(n for n, t, _ in sc.files if n == item or n.startswith(item + "/"))
             texts = [src.read(sc.prefix + n) for n in members if n.endswith(".md")]
             title = first_title(next((t for t in texts if t), None), parts[1] if len(parts) >= 3 else item)
-            out.append({"src": full, "title": title})
+            out.append({"src": full, "title": title, "dest": "%s/backlog/%s" % (sc.dest, item)})
     return sorted(out, key=lambda b: b["src"])
 
 
@@ -731,7 +734,9 @@ class Mapper:
         if len(parts) >= 2 and parts[0] == "workstreams":
             sc, head, parts = self.scopes.get(parts[1]), "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
         tail = parts
-        if parts and parts[0] == "phases":
+        if self.is_backlog(sc, parts):
+            tail = ["backlog"] + parts
+        elif parts and parts[0] == "phases":
             known = [p for p in (sc.phases if sc else []) if len(parts) >= 2 and p["key"] == "phases/" + parts[1]]
             others = {p["milestone"] for p in (sc.phases if sc else []) if p["milestone"]}
             ms = known[0]["milestone"] if known else (others.pop() if len(others) == 1 else "*")
@@ -746,6 +751,27 @@ class Mapper:
             tail = ["milestones", sc.actual, parts[0]]
         return "/".join([head] + tail) + ("/" if rest.endswith("/") and tail else "")
 
+    def is_backlog(self, sc, parts):
+        """Whether a path of a scope, by its shape, is backlog (what `classify_tracked` sends to `backlog/`): `BACKLOG.md`, a `999.x`
+        phase, `todos/pending` and a quick task that has files and no tracked SUMMARY. A folder that holds both these and other
+        files (`todos`, `quick`, `phases`) is not: `gitignore_all` gives its line a twin for each destination."""
+        if not parts:
+            return False
+        glob = lambda x: any(c in x for c in "*?[")
+        if parts[0] == "BACKLOG.md":
+            return len(parts) == 1
+        if parts[0] == "todos":
+            return len(parts) >= 2 and parts[1] == "pending"
+        if parts[0] == "phases":
+            return len(parts) >= 2 and parts[1].startswith("999.")
+        if parts[0] == "quick":
+            if len(parts) == 1 or glob(parts[1]):
+                return False
+            key = "quick/%s/" % parts[1]      # open as `classify_tracked` reads it: it has files and no tracked SUMMARY
+            names = [(n, t) for n, t, _ in sc.files if n.startswith(key)] if sc else []
+            return bool(names) and not any(t and n.endswith("SUMMARY.md") and n.count("/") == 2 for n, t in names)
+        return False
+
     def cite(self, token):
         """(kind, new) of a token that starts with `.planning`: moved, purged or prefix."""
         rest = token[len(SCOPE_SRC):].lstrip("/")
@@ -754,15 +780,23 @@ class Mapper:
             return "prefix", SCOPE_DEST + token[len(SCOPE_SRC):]
         if not any(c in stem for c in "*?[") and stem in self.files:
             f = self.files[stem]
-            if f["action"] in ("keep", "leftover_move"):
+            if f["action"] in ("keep", "leftover_move", "backlog"):
                 return "moved", f["dest"]
             return "purged", None
         if any(c in stem for c in "*?["):
-            hits = [f for n, f in self.files.items() if fnmatch.fnmatchcase(n, stem) or fnmatch.fnmatchcase(n, stem + "/*")]
+            named = [(n, f) for n, f in self.files.items() if fnmatch.fnmatchcase(n, stem) or fnmatch.fnmatchcase(n, stem + "/*")]
         else:
-            hits = [f for n, f in self.files.items() if n.startswith(stem + "/")]
-        if hits and all(f["action"] in ("purge", "backlog", "leftover_delete") for f in hits):
+            named = [(n, f) for n, f in self.files.items() if n.startswith(stem + "/")]
+        hits = [f for _, f in named]
+        live = [(n, f) for n, f in named if f["action"] not in ("purge", "leftover_delete")]
+        if hits and not live:
             return "purged", None
+        if live and all(f["action"] == "backlog" for _, f in live):     # a folder of backlog files: `backlog/` goes in after the scope's folder
+            n, f = live[0]
+            inner = f["dest"].split("/backlog/", 1)[1]
+            prefix = n[:len(n) - len(inner)]
+            if rest.startswith(prefix):
+                return "moved", f["dest"][:len(f["dest"]) - len(inner)] + rest[len(prefix):]
         if hits:
             return "moved", self.structure(rest)
         return "prefix", SCOPE_DEST + token[len(SCOPE_SRC):]
@@ -778,6 +812,24 @@ class Mapper:
             return m.group(1) + self.files[stem]["dest"] + ("/" if rest.endswith("/") else "")
         return m.group(1) + self.structure(rest) if rest else m.group(1) + SCOPE_DEST + "/"
 
+    def gitignore_all(self, line):
+        """Every `.fwx` twin of a `.gitignore` line, the first being `gitignore(line)`. A line that names `todos`, `quick` or `phases`
+        (or a glob directly under one) names a folder that holds backlog and other files, which go to different places: it gets a
+        second twin for the backlog's own, `backlog/<same path>`. Decided by shape, not by the files there: the ignored ones are
+        in another checkout when `apply` runs."""
+        out = [self.gitignore(line)]
+        m = re.match(r"(!?/?)(\.planning)(/.*)?\Z", line.rstrip())
+        if not m:
+            return out
+        rest = (m.group(3) or "/")[1:]
+        parts = [p for p in rest.split("/") if p]
+        head = SCOPE_DEST
+        if len(parts) >= 2 and parts[0] == "workstreams":
+            head, parts = "%s/subprojects/%s" % (SCOPE_DEST, parts[1]), parts[2:]
+        if parts and parts[0] in ("todos", "quick", "phases") and (len(parts) == 1 or (len(parts) == 2 and any(c in parts[1] for c in "*?["))):
+            out.append(m.group(1) + "/".join([head, "backlog"] + parts) + ("/" if rest.endswith("/") else ""))
+        return out
+
 
 # `.planning` as a path of its own: after a space, a quote, `=`, `(`, `!` and the like, at the start of a line, or after `./` or a
 # leading `/`; never after a letter, `/` (`a/.planning`, a URL, `$HOME/.planning`), `~`, `-`, `.`, and never `.planning.bak`.
@@ -786,6 +838,11 @@ class Mapper:
 _BEFORE = "\\s\"'`=(!{\\[,;|&<>"
 RE_TOKEN = re.compile(r"(?:(?<![^%s])|(?<=^/)|(?<=[%s]/)|(?<=^\./)|(?<=[%s]\./)|(?<=:/)|(?<=:\^)|(?<=\)))\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])"
                       r"(/[^\s\"'`<>()\[\]{},;|&$#]*)?" % (_BEFORE, _BEFORE, _BEFORE))
+# a path that climbs to `.planning`: `../../.planning/x` (never after a letter, digit, `.`, `/`, `~`, `$`, `}`, `)` or `-`, so
+# `docs/../.planning` and a URL are no reference; `"/../.."` after a quote is: a base path joined with a string). It counts only when
+# the `../` run climbs from the folder of the file that holds it exactly to the repository root (`tokens(here=...)`).
+RE_REL = re.compile(r"(?:(?<=[\"'`]/)|(?<![A-Za-z0-9_.~$})/-]))(?P<up>(?:\.\./)+)"
+                    r"(?P<tok>\.planning(?![A-Za-z0-9_-]|\.[A-Za-z0-9_])(?:/[^\s\"'`<>()\[\]{},;|&$#]*)?)")
 _PS_BEFORE = "(?:^|[%s])" % _BEFORE
 RE_PS_MAGIC = re.compile(_PS_BEFORE + r":\([^()\s]*\)\Z")
 RE_PS_TOP = re.compile(_PS_BEFORE + r":/\Z")
@@ -799,9 +856,11 @@ RE_HOME = re.compile(r"\$\{?HOME\}?\Z")
 HAND_WHY = "needs a hand: the path is built from a variable, so the converter cannot know where it points"
 
 
-def tokens(line, mapper):
+def tokens(line, mapper, here=None):
     """(column, token, kind, new) of each `.planning` path of a line: the one reading of a line, so that what `refs` lists is
-    what --rewrite and --prefix change. `hand` is a path built from a variable: listed, never rewritten."""
+    what --rewrite and --prefix change. `hand` is a path built from a variable: listed, never rewritten. `here` is the folder of
+    the file the line is in, relative to the repository (`""` for its root): with it a path that climbs by `../` from there to the
+    repository root is read too, its token and its new path both keeping the `../`. None reads no relative path."""
     found, hand_at, home_at = [], set(), set()
     for m in RE_HAND.finditer(line):
         if RE_HOME.match(m.group("expr")):
@@ -817,6 +876,14 @@ def tokens(line, mapper):
         token = m.group(0).rstrip(".:!?")
         kind, new = mapper.cite(token)
         found.append((m.start(), token, kind, new))
+    if here is not None and "../" in line:
+        depth = len([p for p in here.split("/") if p])
+        for m in RE_REL.finditer(line):
+            if m.group("up").count("../") != depth or m.start("tok") in hand_at or m.start("tok") in home_at:
+                continue
+            tok = m.group("tok").rstrip(".:!?")
+            kind, new = mapper.cite(tok)
+            found.append((m.start("up"), m.group("up") + tok, kind, m.group("up") + new if new else None))
     return sorted(found, key=lambda f: f[0])
 
 
@@ -840,7 +907,7 @@ def scan_refs(repo, mapper):
         for n, line in enumerate(text, 1):
             if SCOPE_SRC not in line or (gi is not None and gitignore_handled(line, mapper, gi)):
                 continue
-            for _, token, kind, new in tokens(line, mapper):
+            for _, token, kind, new in tokens(line, mapper, None if gi is not None else posixpath.dirname(p)):
                 if gi is not None and kind == "prefix":    # a `.gitignore` pattern goes where `apply` sends its twin, not by prefix alone
                     twin = mapper.gitignore(token)
                     if twin != SCOPE_DEST + token[len(SCOPE_SRC):]:
@@ -853,8 +920,8 @@ def gitignore_handled(line, mapper, lines):
     """Whether a `.gitignore` line already has its `.fwx` twin in the same file: `apply` wrote it, so `refs` does not offer the
     old line again (and `--prefix` would only break what `apply` got right)."""
     body = line.rstrip("\r\n").rstrip()
-    twin = mapper.gitignore(body)
-    return twin != body and twin in lines
+    twins = mapper.gitignore_all(body)
+    return twins[0] != body and all(twin in lines for twin in twins)
 
 
 def git_facts(repo):
@@ -882,7 +949,7 @@ def git_facts(repo):
                 break
     base = default or cur or "HEAD"
     branches = []
-    for b in _text(repo, "branch", "--no-merged", base, "--format=%(refname:short)").splitlines():
+    for b in _text(repo, "for-each-ref", "--no-merged", base, "--format=%(refname:short)", "refs/heads").splitlines():   # not `git branch`: it lists a detached HEAD too
         b = b.strip()
         if not b:
             continue
@@ -910,21 +977,31 @@ def build(repo, src, opts):
         with open(path, encoding="utf-8", errors="replace") as f:
             for line in f.read().splitlines():
                 if SCOPE_SRC in line and not line.lstrip().startswith("#"):
-                    gitignore.append({"old": line, "new": mapper.gitignore(line)})
+                    gitignore += [{"old": line, "new": twin} for twin in mapper.gitignore_all(line)]
     dests = {}
     for f in files:
-        if f["dest"] and f["action"] in ("keep", "leftover_move"):
+        if f["dest"] and f["action"] in ("keep", "leftover_move", "backlog"):
             dests.setdefault(f["dest"], []).append(f["src"])
     for sc in scopes:       # a carried `.gitignore` is written anew: its destination does not exist yet, so only this sees two of them
         for inner, (target, _rules) in sc.carried.items():
             dests.setdefault(target, []).append("%s/%s%s" % (SCOPE_SRC, sc.prefix, inner))
     clash = ["%s <- %s" % (d, ", ".join(s)) for d, s in sorted(dests.items()) if len(s) > 1]
+    for d in sorted(dests):     # a file whose destination is a folder that another destination lies under
+        parent = posixpath.dirname(d)
+        while parent:
+            if parent in dests:
+                clash.append("%s <- %s is a file, and %s <- %s needs it to be a folder"
+                             % (parent, ", ".join(dests[parent]), d, ", ".join(dests[d])))
+            parent = posixpath.dirname(parent)
     if clash:
         raise Refuse("two files for one destination:\n  " + "\n  ".join(clash))
     return scopes, files, mapper, phases, gitignore, notes, root
 
 
 # ---- output ------------------------------------------------------------------------------------------------------------
+
+BACKLOG_LINE = "backlog (moved as it is to .fwx/backlog/, .fwx/subprojects/<ws>/backlog/ in a workstream; content not converted): %d"
+
 
 def human(n):
     for unit in ("B", "KB", "MB", "GB"):
@@ -966,8 +1043,8 @@ def render(doc, notes, files, refs_only=False):
             out += ["  %s%s" % (f["src"], (" -> " + f["dest"]) if f["dest"] else "") for f in rows[:50]]
             if len(rows) > 50:
                 out.append("  ... %d more (see --json)" % (len(rows) - 50))
-        out.append("backlog (not migrated): %d" % len(doc["backlog"]))
-        out += ["  %s  %s" % (b["src"], b["title"]) for b in doc["backlog"]]
+        out.append(BACKLOG_LINE % len(doc["backlog"]))
+        out += ["  %s  %s  ->  %s" % (b["src"], b["title"], b["dest"]) for b in doc["backlog"]]
         out.append(".gitignore lines: %d" % len(doc["gitignore"]))
         out += ["  %s  =>  %s" % (g["old"], g["new"]) for g in doc["gitignore"]]
     kinds = {}
@@ -1199,7 +1276,7 @@ def milestone_text(ms, base, totals_, state_ms):
     block = ("\n## Migrated from GSD\n\n"
              "- Base commit: %s (the last commit that holds the old `.planning/`)\n"
              "- Date: %s\n"
-             "- Whole conversion: %d files kept (%d unknown to GSD, kept at their own path), %d purged, %d of backlog not migrated, "
+             "- Whole conversion: %d files kept (%d unknown to GSD, kept at their own path), %d purged, %d of backlog moved as they are to `backlog/`, "
              "%d ignored or untracked files left for `fwx migrate-gsd leftovers`\n"
              "- Get a removed file back: `git show %s:.planning/<path>` (inside a workstream: `.planning/workstreams/<name>/<path>`)\n"
              % (base, datetime.now(timezone.utc).strftime("%Y-%m-%d"), n("keep"), n("unknown"), n("purge"), n("backlog"),
@@ -1384,8 +1461,8 @@ def plan_apply(repo, opts):
     job = Job(repo, base)
     job.before = status_all(repo)
     job.base_entries = tree_entries(repo, base)
-    job.moves = [(f["src"], f["dest"]) for f in files if f["tracked"] and f["action"] == "keep"]
-    job.removes = [f["src"] for f in files if f["tracked"] and f["action"] in ("purge", "backlog")]
+    job.moves = [(f["src"], f["dest"]) for f in files if f["tracked"] and f["action"] in ("keep", "backlog")]
+    job.removes = [f["src"] for f in files if f["tracked"] and f["action"] == "purge"]
     if not job.moves and not job.removes:
         raise Refuse("0 tracked files to convert: .planning/ holds only ignored or untracked files, which `leftovers` moves "
                      "after the merge")
@@ -1434,10 +1511,10 @@ def plan_apply(repo, opts):
         if rel not in taken and not os.path.lexists(_abs(repo, rel)):
             job.gens.append((rel, milestone_text(ms, base, job.totals, job.root_state)))
     # the bases file: one line per run, so that every base stays written down, in a file, after later merges and re-runs
-    line = ("- %s base %s (branch %s): %d kept files moved, %d files removed (%d of them backlog, not migrated); "
+    line = ("- %s base %s (branch %s): %d files moved (%d of them backlog, moved as they are to `backlog/`), %d files removed; "
             "get a removed file back with `git show %s:.planning/<path>`\n"
-            % (datetime.now(timezone.utc).strftime("%Y-%m-%d"), base, branch, len(job.moves), len(job.removes),
-               job.totals["backlog"]["files"], base))
+            % (datetime.now(timezone.utc).strftime("%Y-%m-%d"), base, branch, len(job.moves), job.totals["backlog"]["files"],
+               len(job.removes), base))
     if os.path.lexists(_abs(repo, BASES)):
         if BASES in set(_lines(repo, "ls-files", "-z", "--", BASES)):
             job.append_to = (BASES, line)
@@ -1560,18 +1637,20 @@ def step_gitignore(job):
         text = f.read().decode("utf-8", "surrogateescape")
     lines = text.splitlines(keepends=True)
     have = {l.rstrip("\r\n") for l in lines}
-    pending = {g["old"]: g["new"] for g in job.twins}
+    pending = {}
+    for g in job.twins:
+        pending.setdefault(g["old"], []).append(g["new"])
     out = []
     for line in lines:
         bare = line.rstrip("\r\n")
         out.append(line)
-        new = pending.get(bare)
-        if new is not None and new not in have:
-            eol = line[len(bare):] or "\n"
-            if not line[len(bare):]:
-                out[-1] = line + "\n"
-            out.append(new + eol)
-            have.add(new)
+        for new in pending.get(bare, ()):
+            if new not in have:
+                eol = line[len(bare):] or "\n"
+                if not line[len(bare):]:
+                    out[-1] = line + "\n"
+                out.append(new + eol)
+                have.add(new)
     if out != lines:
         data = "".join(out).encode("utf-8", "surrogateescape")
         with open(path, "wb") as f:
@@ -1598,7 +1677,7 @@ def indexed_last_stage(repo, rel):
 
 def verify(job):
     """The checks after the work, each against what git says and not against what the steps meant: the blob of every kept file
-    is the same at its destination, every purged or backlog file is gone, `state.phases` sees each phase folder and
+    is the same at its destination (a backlog file too), every purged file is gone, `state.phases` sees each phase folder and
     `state.last_stage` says closed for each closed phase. Only paths apply wrote are judged: a file of the owner's that
     changed meanwhile is none of its business."""
     repo, problems = job.repo, []
@@ -1716,12 +1795,12 @@ def commit_message(job):
     lines = ["chore(fwx): migrate GSD .planning/ to .fwx/ (base %s)" % job.base, "",
              "Converted by `fwx migrate-gsd apply`. The commit %s (tag %s) still holds every file this conversion removed or moved."
              % (job.base, job.tag),
-             "Moved %d kept files, removed %d (purge %d, backlog %d, not migrated), generated %d, closed phases %d."
-             % (len(job.moves), len(job.removes), n("purge"), n("backlog"), len(job.gens), len(job.closed)),
+             "Moved %d files (backlog %d, as they are), removed %d (purge), generated %d, closed phases %d."
+             % (len(job.moves), n("backlog"), len(job.removes), len(job.gens), len(job.closed)),
              "Get a removed file back: git show %s:.planning/<path>" % job.base]
     if job.backlog:
-        lines += ["", "Backlog not migrated (it was in .planning/, recover it with the base):"]
-        lines += ["  - %s  %s" % (b["src"], b["title"]) for b in job.backlog]
+        lines += ["", "Backlog moved as it is, content not converted:"]
+        lines += ["  - %s  %s  ->  %s" % (b["src"], b["title"], b["dest"]) for b in job.backlog]
     return "\n".join(lines) + "\n"
 
 
@@ -1815,8 +1894,8 @@ def cmd_apply(repo, got):
     out = ["fwx migrate-gsd apply: %s (branch %s)" % (repo, branch),
            "base %s: every removed or moved file is there; get one back with `git show %s:.planning/<path>`" % (job.base, job.base),
            "tag %s names the base, so a rebase or a squash of this branch cannot lose it" % job.tag,
-           "moved %d, removed %d (purge %d, backlog %d), generated %d, stage rows %d, .gitignore twins %d; all staged, nothing committed"
-           % (len(job.moves), len(job.removes), job.totals["purge"]["files"], job.totals["backlog"]["files"], len(job.gens),
+           "moved %d (backlog %d), removed %d (purge), generated %d, stage rows %d, .gitignore twins %d; all staged, nothing committed"
+           % (len(job.moves), job.totals["backlog"]["files"], len(job.removes), len(job.gens),
               len(job.audit_rows), len(job.twins)),
            "checks passed: the blob of each of the %d kept files is the same at its destination, each of the %d removed files is gone, "
            "state.phases sees %d phase folder(s), state.last_stage says closed for %d" % (len(job.moves), len(job.removes),
@@ -1825,8 +1904,8 @@ def cmd_apply(repo, got):
            % (n_root, ("; %d more are in workstreams, which `fwx phase list --subproject <name>` lists" % (len(job.phases) - n_root))
               if len(job.phases) > n_root else ""),
            "ignored or untracked files left where they are for `fwx migrate-gsd leftovers`: %d" % n_left,
-           "backlog (not migrated, recover with the base): %d" % len(job.backlog)]
-    out += ["  %s  %s" % (b["src"], b["title"]) for b in job.backlog]
+           BACKLOG_LINE % len(job.backlog)]
+    out += ["  %s  %s  ->  %s" % (b["src"], b["title"], b["dest"]) for b in job.backlog]
     if job.notes:
         out.append("notes:")
         out += ["  " + n for n in job.notes]
@@ -1844,21 +1923,33 @@ def dest_exists(repo, new):
     return os.path.lexists(_abs(repo, new.rstrip("/")))
 
 
-def rewrite_line(line, mapper, repo, mode, gitignore_lines=None):
+def rewrite_line(line, mapper, repo, mode, gitignore_lines=None, here=None):
     """(new line, [(old, new, kind)] changed, [(old, kind, why)] left). `rewrite` changes the paths that moved and whose new
     place exists; `prefix` changes `.planning` for `.fwx` in every path. One pass over the tokens, so a longer path is never
     cut by a shorter one and nothing is changed twice."""
     out, last, changed, left = [], 0, [], []
     if gitignore_lines is not None and gitignore_handled(line, mapper, gitignore_lines):
         return line, changed, left
-    for col, token, kind, new in tokens(line, mapper):
+    for col, token, kind, new in tokens(line, mapper, here):
         if kind == "hand":
             left.append((token, kind, HAND_WHY))
             continue
+        up = re.match(r"(?:\.\./)*", token).group(0)       # the `../` run of a relative path, kept as it is
         if mode == "prefix":
-            repl = SCOPE_DEST + token[len(SCOPE_SRC):]
+            if kind == "purged":
+                left.append((token, kind, "it names a file the conversion removed"))
+                continue
+            repl = up + SCOPE_DEST + token[len(up) + len(SCOPE_SRC):]
             if gitignore_lines is not None and kind in ("moved", "prefix"):
                 repl = mapper.gitignore(token)      # a `.gitignore` pattern follows the mapping `apply` used for its twin
+            elif kind == "moved":                   # the real new path, the one --rewrite writes (`.fwx/milestones/v1/...`), not the blunt prefix
+                if new is None or ("milestones/*/" in new and "milestones/*/" not in token):
+                    left.append((token, kind, "its milestone is not one"))
+                    continue
+                if not dest_exists(repo, new[len(up):]):     # as --rewrite: a path that is not there (yet) is not written
+                    left.append((token, kind, "%s does not exist (run it with the --milestone-map of apply)" % new))
+                    continue
+                repl = new
         elif kind != "moved":
             left.append((token, kind, "it names a file the conversion removed" if kind == "purged"
                          else "it is a path of tool configuration: --prefix"))
@@ -1866,7 +1957,7 @@ def rewrite_line(line, mapper, repo, mode, gitignore_lines=None):
         elif new is None or ("milestones/*/" in new and "milestones/*/" not in token):
             left.append((token, kind, "its milestone is not one"))
             continue
-        elif not dest_exists(repo, new):
+        elif not dest_exists(repo, new[len(up):]):
             left.append((token, kind, "%s does not exist (run it with the --milestone-map of apply)" % new))
             continue
         else:
@@ -1936,7 +2027,7 @@ def apply_rewrites(repo, mapper, rewrite, prefix):
         for n, line in enumerate(text.splitlines(keepends=True), 1):
             if SCOPE_SRC in line:
                 body = line.rstrip("\r\n")
-                nl, ch, lf = rewrite_line(body, mapper, repo, mode, gi)
+                nl, ch, lf = rewrite_line(body, mapper, repo, mode, gi, None if gi is not None else posixpath.dirname(rel))
                 line = nl + line[len(body):]
                 changed += [(rel, n, o, w, k) for o, w, k in ch]
                 left += [(rel, n, o, k, why) for o, k, why in lf]

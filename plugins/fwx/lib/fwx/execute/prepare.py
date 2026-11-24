@@ -1,11 +1,14 @@
 """`fwx wave new`: validate a part and give `execute` its `args` (3.4 U2; the shape is C.3 of the plan).
 
 `prepare(cwd, ...)` works on the integration checkout `cwd` is in (the session's worktree, on the phase branch) and returns
-the args dict; it raises WaveError (exit 2) for anything that must stop the run before it starts, and RedBase (exit 1) when
-the base fails its own checks. It writes no audit row; the only files are the briefs (below), written last.
+the args dict; it raises WaveError (exit 2) for anything that must stop the run before it starts, RedBase (exit 1) when
+the base fails its own checks, and NotRun (exit 77) when a base check ran out of time. The only files are the briefs (below),
+written last, and the evidence row of a base that ran green (below).
 
 The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.md` and `decisions.tsv` of the phase that
-holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`). Refused with
+holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`); a missing
+`postmortem.md` is accepted only for a `small` plan that says `security_review` (_security_why: the planner's answer and a task on a
+default protected path or a `project.protected_paths` glob stand in for the post-mortem's). Refused with
 exit 2, in this order of cost: a plan that does not load; a task file that git ignores (the executor could not commit it); the
 requested branch is a default branch, or is not the one the checkout is on; the checkout holds uncommitted work; the effective
 `worktree.baseRef` is not `head`; the project has no checks. Why the baseRef: without it a workflow agent's worktree is made from
@@ -19,8 +22,12 @@ dependency files): the phase worktree comes from a plain `git worktree add` and 
 so the base and every later check would be red for a reason that has nothing to do with the work. A setup that fails stops the run
 with exit 2 before the base is run.
 
-Then the base is run: the effective recipe (`evidence.plan_checks`) in the checkout, unless the part's audit rows already
-holds a green `evidence` row for the base sha. A red check is RedBase: needs-owner, no round spent.
+Then the base is run: the effective recipe (`evidence.plan_checks`) in the checkout, unless the audit rows of the part or its phase
+already hold a green `evidence` row for the base sha whose commands are exactly the recipe (`base checks: reused the passing record
+of <sha7>`). A base that ran green leaves such a row in the part's audit, so the next `wave new` on that base (a relaunch, a part that
+starts where the last stopped) runs nothing: the checks of a large project take longer than the rest of the command together. A red
+check is RedBase: needs-owner, no round spent, no row. A check killed by its time limit (`verify.CHECK_TIMEOUT_S`) proved nothing, red
+or green: it is NotRun, a machine condition with its own exit and no row, unless another check of the recipe is red, which is RedBase.
 
 What else it works out: the run id `<part>-<sha7>-<n>` (n counts the runs of that base already made in the git common
 dir); the tasks already done (a commit reachable from the phase branch whose trailer says `Fwx-Task: <part>/<task>`); each
@@ -41,14 +48,14 @@ so a refusal and a red base leave nothing behind. With `--fix` the one brief is 
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
 shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's fix.json (`normalize`), `--revert` a list of finding ids; anything else is refused.
 
-Imports the standard library, fwx.plan, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
+Imports the standard library, fwx.plan, plan_form, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
 """
 import json
 import os
 import re
 import shlex
 
-from fwx import config, plan, plan_step, state
+from fwx import config, plan, plan_form, plan_step, state
 from fwx.core import evidence, rounds, verify
 from fwx.execute import brief, worktree_setup
 from fwx.execute.base import WaveError, git, linked, out, toplevel
@@ -56,6 +63,10 @@ from fwx.execute.base import WaveError, git, linked, out, toplevel
 PLANES = ("session", "factory")
 STARTS = ("gate",)
 _PHASE_NAME = re.compile(r"\d+(\.\d+)*-.+\Z")
+
+
+class NotRun(Exception):
+    """A base check ran out of time, so the base is neither green nor red: nothing is recorded and no round is spent."""
 
 
 class RedBase(Exception):
@@ -93,6 +104,28 @@ def _load(loader, path, label):
         return loader(path, label)
     except plan.PlanError as e:
         raise WaveError(str(e))
+
+
+def _security_why(data, post_path, cfg):
+    """The reasons the security review is needed, from the post-mortem, or from the plan when a small plan skips it (a missing
+    postmortem.md is accepted only then, and the plan must say `security_review`: a default would let an unasked-for review through).
+    A task on a default protected path (decide's table) or a `project.protected_paths` glob forces the review in a plan with no post-mortem, whatever the planner wrote."""
+    if os.path.exists(post_path):
+        post = _load(plan.load_postmortem, post_path, "postmortem.md")
+        return ["postmortem.md security_review is true"] if post["security_review"] else []
+    if data["size"]["tag"] != "small":
+        raise WaveError("%s is missing: only a small plan may skip the post-mortem, and this one is %s" % (post_path, data["size"]["tag"]))
+    if "security_review" not in data:
+        raise WaveError("plan.md: security_review: missing: a small plan that skips the post-mortem says whether it needs the security review "
+                        "(true or false), because nothing else would ask")
+    why = ["plan.md security_review is true"] if data["security_review"] else []
+    protected = plan_form.protected_paths(cfg)
+    for t in data["tasks"]:
+        hit = next(((f, g) for f in t["files"] for g in [plan_form.protected_glob(protected, f)] if g), None)
+        if hit:
+            why.append("task %s writes %s, a protected path (%s)" % (t["id"], hit[0], hit[1]))
+            break
+    return why
 
 
 def _ignored(top, tasks):
@@ -232,15 +265,58 @@ def _cap(cfg, unattended):
         raise WaveError(str(e))
 
 
-def _base_is_green(top, base, recipe, folders, say):
-    """None when the base passes (or a green evidence row of the part says so), else the red results."""
+def _record(base, recipe, folders):
+    """The green `evidence` row in the audit of one of `folders` that stands in for a run of `recipe` at `base`: the same sha, rc 0,
+    and the commands of its evidence exactly the recipe, each with exit 0 (a row of other checks proves nothing about these). None if none."""
     for d in folders:
         for row in state.read_rows(state.phase_paths(d)["audit"]):
-            if row.get("kind") == "evidence" and row.get("sha") == base and row.get("rc", "").strip() == "0":
-                say("base %s: a green evidence row stands in for a run" % base[:7])
-                return None
+            if row.get("kind") != "evidence" or row.get("sha") != base or row.get("rc", "").strip() != "0":
+                continue
+            try:
+                got = [(c["cmd"], c["rc"]) for c in json.loads(row.get("detail", ""))["commands"]]
+            except (ValueError, KeyError, TypeError):
+                continue
+            if got == [(c, 0) for c in recipe]:
+                return row
+    return None
+
+
+def _base_is_green(top, base, recipe, folders, say):
+    """None when the base passes (or a green evidence row says so), else the red results. NotRun when no check is red and one ran out of time."""
+    if _record(base, recipe, folders):
+        say("base checks: reused the passing record of %s" % base[:7])
+        return None
     results = [verify.run_check(c, top) for c in recipe]
-    return [r for r in results if r["rc"] != 0] or None
+    red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]
+    late = [r for r in results if r["timed_out"]]
+    if not red and late:
+        raise NotRun("NOT RUN: the base checks at %s did not finish: %s timed out after %d s. That is the machine, not the code: the base is "
+                     "neither red nor green, no round was spent and nothing was recorded. Run it again when the machine is less loaded: "
+                     "a base that passes is recorded, and the next `fwx wave new` on it reuses the record"
+                     % (base[:8], ", ".join(r["cmd"] for r in late), late[0]["limit"]))
+    return red or None
+
+
+def _unmoved(top, base):
+    """WaveError if HEAD is no longer `base` after the base checks: a check that commits or checks out proves nothing about `base`, and a
+    green row of `base` written then would be reused by the next run. This is what `fwx verify` calls not clean (`clean` is `HEAD == sha`)."""
+    try:
+        now = verify.head(top)
+    except state.StateError as e:
+        raise WaveError(str(e))
+    if now != base:
+        raise WaveError("HEAD moved from %s to %s while the base checks ran, so they prove neither commit: nothing was recorded"
+                        % (base[:8], now[:8]))
+
+
+def _remember(part, base, recipe, folders, cfg):
+    """The evidence row of a base that ran green (shaped as `fwx verify` writes it), unless a record already stands in for the run.
+    `clean` is True because `_unmoved` has just measured it, as `fwx verify` does."""
+    if _record(base, recipe, folders):
+        return
+    source = "profile" if evidence.plan_checks(cfg["project"]["checks"], os.devnull) else "package"
+    ev = {"sha": base, "clean": True, "source": source, "commands": [{"cmd": c, "rc": 0} for c in recipe], "rc": 0}
+    state.append_audit(part, "evidence", detail=json.dumps(ev), rc=0, sha=base)
 
 
 def _write(made, folder, claim):
@@ -279,8 +355,8 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     paths = state.phase_paths(part)
     data = _load(plan.load_plan, paths["plan"], "plan.md")
     owner = state.phase_paths(phase)  # context, decisions and the critique are the phase's; a subphase has its own plan and audit only
-    post = _load(plan.load_postmortem, owner["postmortem"], "postmortem.md")
     tasks = data["tasks"]
+    why = _security_why(data, owner["postmortem"], cfg)
     ignored = _ignored(top, tasks)
     if ignored:
         raise WaveError("a task writes a file git ignores, so its commit would not hold it: %s" % ", ".join(ignored))
@@ -332,6 +408,9 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         reason = "base %s is red: %s" % (base[:8], ", ".join("%s=%s" % (r["cmd"], "none" if r["rc"] is None else r["rc"]) for r in red))
         raise RedBase({"status": "needs-owner", "reason": reason, "phase_dir": phase, "rounds": "%d/%d" % (used, cap)},
                       "\n".join("--- %s\n%s" % (r["cmd"], verify.tail(r["output"])) for r in red))
+    if not gating:
+        _unmoved(top, base)
+        _remember(part, base, recipe, {part, phase}, cfg)
     _write(made, folder, gating)
     if not gating and not revert and not fixing and tasks and len(_done(top, branch, name, tasks)) == len(tasks):
         say("every task is already on %s: `execute` has nothing to run; to run the gate and the review on it: "
@@ -344,7 +423,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
                       "tasks": [{"id": t["id"], "type": t["type"], "size": t["size"], "ui": t["ui"], "files": [plan._norm(f) for f in t["files"]],
                                  "brief": made[t["id"]][0]["brief"] if t["id"] in made else None,
                                  "trailer": "%s/%s" % (name, t["id"])} for t in tasks if t["wave"] == n]})
-    why = [w for w, on_ in (("postmortem.md security_review is true", post["security_review"]), ("--security", security)) if on_]
+    why = why + ["--security"] * bool(security)
     return {
         "run": run, "plane": plane, "unattended": plane == "factory" or unattended, "cap": cap,
         "linear": bool(cfg["project"].get("linear_project")),  # an unfixed `outside` item needs its issue key only where there is a Linear project

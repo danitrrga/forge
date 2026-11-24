@@ -42,7 +42,7 @@ from forge import lib, mcp, profiles, render, selector, suggest
 
 TYPES = ("skill", "set", "server", "option")
 ORDER = ("set", "skill", "server", "option")  # the order the flags are applied in: a set goes before the skills that were taken from it
-OPTIONS = ("ui", "command_guard", "enableAllProjectMcpServers")
+OPTIONS = ("ui", "command_guard", "enableAllProjectMcpServers", "framework")
 FORGE_REL = "config/forge.json"
 
 
@@ -435,7 +435,24 @@ class Plan:
             self.record(op, "option", name, changed=False, note="already %s" % op)
         else:
             self.proj[name] = op == "on"
-            self.record(op, "option", name, "%s in %s" % (name, self.project_rel()))
+            layer = "%s in %s" % (name, self.project_rel())
+            if name == "framework" and op == "on":
+                layer += self.framework_ready()
+            self.record(op, "option", name, layer)
+
+    def framework_ready(self):
+        """What the framework needs before it is on, the way `forge new --framework` leaves a project: plugins_keep (the plugin is turned on
+        through it), filled from the plugins the project already has on when the key is absent (a present one, even `[]`, is the owner's and stays). Refusal when the generator would still refuse the
+        project, so a change is never written that every sync then stops on. Returns the text for the layer column."""
+        from forge import framework, new  # not at import: forge/new.py imports this module
+        added = ""
+        if "plugins_keep" not in self.proj:
+            self.proj["plugins_keep"] = new.framework_plugins([], self.forge)
+            added = " and plugins_keep (the plugins the project had on)"
+        why = lib.project_error(self.proj) or framework.plan(self.proj, self.name).error
+        if why:
+            raise Refusal("framework cannot be switched on for project '%s': %s. Every sync of it would stop on that" % (self.name, why))
+        return added
 
     # -- a profile's row
     def profile_row(self):

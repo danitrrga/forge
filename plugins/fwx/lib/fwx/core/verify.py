@@ -83,10 +83,11 @@ def _shell():
 def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
     """Run one command with the shell in `cwd`: `{cmd, rc, seconds, output}`. `rc` is the exit status, or None when the
     command was killed by the time limit (its whole process group) or could not start; `output` is the last KEEP_CHARS
-    of stdout and stderr together, with the reason appended in those two cases."""
+    of stdout and stderr together, with the reason appended in those two cases. `timed_out` tells the first from the second:
+    a command that ran out of time proved nothing, which is not a red check, and `limit` is the time it had."""
     started = time.monotonic()
     with tempfile.TemporaryFile() as out:
-        rc, note = None, ""
+        rc, note, timed_out = None, "", False
         try:
             proc = subprocess.Popen([_shell(), "-c", command], cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
                                     stderr=subprocess.STDOUT, start_new_session=True)
@@ -101,11 +102,12 @@ def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
                 except OSError:
                     pass
                 proc.wait()
-                note = "\ntimed out after %d s" % timeout
+                note, timed_out = "\ntimed out after %d s" % timeout, True
         out.seek(0, os.SEEK_END)
         out.seek(max(0, out.tell() - 4 * KEEP_CHARS))
         text = out.read().decode("utf-8", "replace")[-KEEP_CHARS:]
-    return {"cmd": command, "rc": rc, "seconds": time.monotonic() - started, "output": text + note}
+    return {"cmd": command, "rc": rc, "seconds": time.monotonic() - started, "output": text + note,
+            "timed_out": timed_out, "limit": timeout}
 
 
 def _git(root, *args):
