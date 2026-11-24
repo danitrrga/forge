@@ -779,9 +779,84 @@ def case_base_timeout(R, S):
     S.ok("timeout: the message names the limit the project set (2 s), not a fixed one", code == 77 and "timed out after 2 s" in err, "exit %s: %s" % (code, err[:300]))
 
 
+def tool_dir(gh=None):
+    """A PATH of its own: git and the shells, and `gh` only when `gh` is given (the shell text of a fake: it logs its arguments
+    to `calls`, next to it, and then runs `gh`). Without one, no gh exists for the run, whatever this machine has installed."""
+    d = helpers.mkdtemp("fwx-tools-")
+    for tool in ("git", "bash", "sh"):
+        found = shutil.which(tool)
+        if found:
+            os.symlink(found, os.path.join(d, tool))
+    if gh is not None:
+        fake = os.path.join(d, "gh")
+        open(fake, "w").write('#!/bin/sh\necho "$@" >> %s\n%s\n' % (shlex.quote(os.path.join(d, "calls")), gh))
+        os.chmod(fake, 0o755)
+    return d
+
+
+def case_base_ci(R, S):
+    """A base sha with a green `All checks` run on GitHub is not run again here. The fake `gh` answers what
+    `--jq` would print: one conclusion per line of the run named `All checks`. Anything but a lone green answer runs the checks as before.
+    Seen failing before the code (python3 tests/test_wave_prepare.py, the CI case):
+      FAIL: ci green: the checks are not run here: got (0, 1), want (0, 0)
+      FAIL: ci green: says CI passed: got ''
+      FAIL: ci green: one evidence row, ... its source CI: got [('evidence', '7dba5a...', '0', [...], 'profile')], want [(..., 'ci')]
+      FAIL: ci not used, the run failed: one line says why   (and the same for each case that must fall back)
+    (the checks ran: wave new knew nothing of CI)."""
+    url = "https://github.com/example/toy.git"
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+
+    def scene(origin=url):
+        sc = Scene(recipe=[counting(runs)])
+        if origin:
+            helpers.git(sc.repo, "remote", "add", "origin", origin)
+        return sc
+
+    def go(sc, tools):
+        before = ran(runs)
+        r = sc.prepare(R, env={"PATH": tools})
+        return r, ran(runs) - before
+
+    tools = tool_dir('printf "success\\n"')
+
+    def asked():
+        return open(os.path.join(tools, "calls")).read() if os.path.exists(os.path.join(tools, "calls")) else ""
+
+    sc = scene()
+    base = sc.head()
+    r, n = go(sc, tools)
+    S.eq("ci green: the checks are not run here", (r.returncode, n), (0, 0))
+    S.ok("ci green: says CI passed", "base checks: CI passed %s (All checks SUCCESS)" % base[:7] in r.stderr, "got %r" % r.stderr)
+    rows = evidence_rows(sc)
+    S.eq("ci green: one evidence row, of the sha, green, with the recipe's commands, its source CI",
+         [(x.get("kind"), x.get("sha"), x.get("rc"), [c["cmd"] for c in json.loads(x["detail"])["commands"]], json.loads(x["detail"])["source"])
+          for x in rows], [("evidence", base, "0", [counting(runs)], "ci")])
+    calls = asked()
+    S.ok("ci green: asked GitHub about this repository and this exact sha, for the check named All checks",
+         "repos/example/toy/commits/%s/check-runs" % base in calls and "All%20checks" in calls, calls)
+    r2, n2 = go(sc, tools)
+    S.ok("ci green: the next wave new reuses the CI record, no second question", (r2.returncode, n2, len(evidence_rows(sc)),
+         "reused the passing record" in r2.stderr, len(asked().splitlines())) == (0, 0, 1, True, 1), r2.stderr)
+    for label, answer, origin, gh in [
+            ("the run failed", 'printf "failure\\n"', url, True),
+            ("the run is pending", 'printf "pending\\n"', url, True),
+            ("the run was skipped", 'printf "skipped\\n"', url, True),
+            ("the check is absent", "true", url, True),
+            ("one run of two is red", 'printf "success\\nfailure\\n"', url, True),
+            ("gh exits non-zero, even after printing success", 'printf "success\\n"; exit 1', url, True),
+            ("gh is not installed", None, url, False),
+            ("the origin is not on GitHub", 'printf "success\\n"', "https://git.example.org/o/r.git", True),
+            ("there is no origin", 'printf "success\\n"', None, True)]:
+        sc = scene(origin)
+        r, n = go(sc, tool_dir(answer if gh else None))
+        S.eq("ci not used, %s: the checks run here" % label, (r.returncode, n), (0, 1))
+        S.ok("ci not used, %s: one line says why" % label, r.stderr.count("base checks: CI not used") == 1 and "CI passed" not in r.stderr, r.stderr)
+        S.eq("ci not used, %s: the row is the local one, not CI's" % label, [json.loads(x["detail"])["source"] for x in evidence_rows(sc)], ["profile"])
+
+
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
@@ -791,6 +866,10 @@ MUTANTS = [
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
     ("red base not run", case_red_base, P, "results = [verify.run_check(c, top, timeout) for c in recipe]", "results = []",
      "prepare exit 0 on a red base"),
+    ("CI: only a red run is not green", case_base_ci, P, 'if any(c != "success" for c in got):', 'if any(c == "failure" for c in got):',
+     "ci not used, the run is pending: the checks run here"),
+    ("CI: gh's exit status ignored", case_base_ci, P, "if r.returncode != 0:", "if False:",
+     "ci not used, gh exits non-zero, even after printing success: the checks run here"),
     ("record of another sha stands in", case_base_reuse, P, 'row.get("sha") != base or ', "",
      "reuse: stale record, a record of an older sha stands in for nothing"),
     ("sibling part's record not read", case_base_reuse_sibling, P, "    for d in own + siblings:\n", "    for d in own:\n",
