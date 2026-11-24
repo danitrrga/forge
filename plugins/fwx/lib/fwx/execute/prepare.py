@@ -24,7 +24,10 @@ with exit 2 before the base is run.
 
 Then the base is run: the effective recipe (`evidence.plan_checks`) in the checkout, unless the audit rows of the part or its phase
 already hold a green `evidence` row for the base sha whose commands are exactly the recipe (`base checks: reused the passing record
-of <sha7>`). A base that ran green leaves such a row in the part's audit, so the next `wave new` on that base (a relaunch, a part that
+of <sha7>`), or GitHub CI already passed the base: the check run named `All checks` of that exact sha has the conclusion `success` (`gh api`,
+asked for at most CI_TIMEOUT_S; `base checks: CI passed <sha7> (All checks SUCCESS)`); the row it leaves has `source: "ci"`. Any other answer,
+or none (no gh, not signed in, no GitHub origin, network down, timeout, the check absent, pending, red or skipped), is not green: one stderr
+line says why and the recipe runs here as before. A base that ran green leaves such a row in the part's audit, so the next `wave new` on that base (a relaunch, a part that
 starts where the last stopped) runs nothing: the checks of a large project take longer than the rest of the command together. A red
 check is RedBase: needs-owner, no round spent, no row. A check killed by its time limit (`project.check_timeout_s`, default `verify.CHECK_TIMEOUT_S`) proved nothing, red
 or green: it is NotRun, a machine condition with its own exit and no row, unless another check of the recipe is red, which is RedBase.
@@ -54,6 +57,7 @@ import json
 import os
 import re
 import shlex
+import subprocess
 
 from fwx import config, plan, plan_form, plan_step, state
 from fwx.core import evidence, rounds, verify
@@ -290,11 +294,50 @@ def _record(base, recipe, folders):
     return None
 
 
-def _base_is_green(top, base, recipe, folders, say, timeout):
-    """None when the base passes (or a green evidence row says so), else the red results. NotRun when no check is red and one ran out of time
-    (`timeout` seconds each: the project's `check_timeout_s`)."""
+CI_CHECK = "All checks"
+CI_TIMEOUT_S = 20
+_GITHUB = re.compile(r"(?:https?://(?:[^/@]+@)?|ssh://git@|git@)github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?\Z")
+
+
+def _ci_green(top, base, say):
+    """True only when GitHub says the check run `CI_CHECK` of the sha `base` ended `success` (every run of that name, and at least one).
+    Anything else, including not being able to ask, is False with one stderr line saying why: the caller then runs the checks here."""
+    def no(why):
+        say("base checks: CI not used (%s); running the checks here" % why)
+        return False
+
+    url = out(top, "remote", "get-url", "origin")
+    found = _GITHUB.match(url or "")
+    if not found:
+        return no("the origin is not a GitHub repository" if url else "no origin remote")
+    api = "repos/%s/%s/commits/%s/check-runs?check_name=%s&per_page=100" % (found.group(1), found.group(2), base, CI_CHECK.replace(" ", "%20"))
+    try:
+        r = subprocess.run(["gh", "api", api, "--jq", '.check_runs[] | (.conclusion // "pending")'], cwd=top, capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, timeout=CI_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return no("gh did not answer in %d s" % CI_TIMEOUT_S)
+    except OSError as e:
+        return no("cannot run gh: %s" % e)
+    if r.returncode != 0:
+        return no("gh failed: %s" % ((r.stderr.strip().splitlines() or ["exit %d" % r.returncode])[0][:120]))
+    got = r.stdout.split()
+    if not got:
+        return no("no check run named %s for %s" % (CI_CHECK, base[:7]))
+    if any(c != "success" for c in got):
+        return no("%s is %s" % (CI_CHECK, ", ".join(sorted(set(got)))))
+    say("base checks: CI passed %s (%s SUCCESS)" % (base[:7], CI_CHECK))
+    return True
+
+
+def _base_is_green(top, base, recipe, folders, say, timeout, part=None, cfg=None):
+    """None when the base passes (or a green evidence row, or a green CI run of the sha, says so), else the red results. NotRun when no check is
+    red and one ran out of time (`timeout` seconds each: the project's `check_timeout_s`). The CI answer is recorded here, as an evidence row of
+    source `ci` with the recipe's commands (it is the row the next run reuses), since no check ran for `_unmoved` to guard."""
     if _record(base, recipe, folders):
         say("base checks: reused the passing record of %s" % base[:7])
+        return None
+    if _ci_green(top, base, say):
+        _remember(part, base, recipe, folders, cfg, "ci")
         return None
     results = [verify.run_check(c, top, timeout) for c in recipe]
     red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]
@@ -319,12 +362,12 @@ def _unmoved(top, base):
                         % (base[:8], now[:8]))
 
 
-def _remember(part, base, recipe, folders, cfg):
+def _remember(part, base, recipe, folders, cfg, source=None):
     """The evidence row of a base that ran green (shaped as `fwx verify` writes it), unless a record already stands in for the run.
     `clean` is True because `_unmoved` has just measured it, as `fwx verify` does."""
     if _record(base, recipe, folders):
         return
-    source = "profile" if evidence.plan_checks(cfg["project"]["checks"], os.devnull) else "package"
+    source = source or ("profile" if evidence.plan_checks(cfg["project"]["checks"], os.devnull) else "package")
     ev = {"sha": base, "clean": True, "source": source, "commands": [{"cmd": c, "rc": 0} for c in recipe], "rc": 0}
     state.append_audit(part, "evidence", detail=json.dumps(ev), rc=0, sha=base)
 
@@ -412,7 +455,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
     quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
     made = _briefs(data, ctx, fixing, size, quick, revert is None and not gating)
     _setup(top, cfg, say)
-    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say, cfg["project"]["check_timeout_s"])
+    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say, cfg["project"]["check_timeout_s"], part, cfg)
     if red:
         used, cap = rounds.count(state.read_rows(paths["audit"])), rounds.cap(top)
         reason = "base %s is red: %s" % (base[:8], ", ".join("%s=%s" % (r["cmd"], "none" if r["rc"] is None else r["rc"]) for r in red))
