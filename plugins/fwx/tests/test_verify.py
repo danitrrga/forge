@@ -115,6 +115,7 @@ import os
 import shlex
 import shutil
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
@@ -607,6 +608,33 @@ res = core_verify.run_check("echo out; echo err >&2; exit 3", ROOT)
 s.eq("a check's exit status and both streams", (res["rc"], "out" in res["output"], "err" in res["output"]), (3, True, True))
 s.eq("a check that ends on its own did not time out", res["timed_out"], False)
 s.eq("a command that cannot start did not time out either", core_verify.run_check("true", os.path.join(ROOT, "no-such-folder"))["timed_out"], False)
+# A check run with TMPDIR inside a checkout (an agent's scratch folder is one) gets a private TMPDIR under /tmp, removed after; a TMPDIR
+# outside any checkout is left alone. Seen red on the code before the swap (run_check passed the environment on as it was):
+#   FAIL: TMPDIR inside a checkout: the check's temp dir is outside any work tree: got (1, False), want (0, True)
+#   FAIL: TMPDIR inside a checkout: the private folder is under /tmp and gone after the check: <the checkout's own scratch-tmp folder>
+# Control: `_child_env` yielding the environment unchanged gives the two FAILs above and keeps "outside" passing.
+tmp_toy = helpers.toy_repo()
+tmp_inside = os.path.join(tmp_toy, "scratch-tmp")
+os.makedirs(tmp_inside)
+tmp_probe = ("%s -c 'import os, subprocess, tempfile; d = tempfile.gettempdir(); print(os.environ[\"TMPDIR\"]); "
+             "raise SystemExit(subprocess.run([\"git\", \"-C\", d, \"rev-parse\", \"--is-inside-work-tree\"], "
+             "capture_output=True).returncode == 0)'" % sys.executable)
+saved_tmp = os.environ.get("TMPDIR")
+try:
+    os.environ["TMPDIR"] = tmp_inside
+    res = core_verify.run_check(tmp_probe, tmp_toy)
+    private = res["output"].strip().splitlines()[0] if res["output"].strip() else ""
+    s.eq("TMPDIR inside a checkout: the check's temp dir is outside any work tree", (res["rc"], private != tmp_inside), (0, True))
+    s.ok("TMPDIR inside a checkout: the private folder is under /tmp and gone after the check", private.startswith("/tmp/") and not os.path.exists(private), private)
+    with tempfile.TemporaryDirectory(dir="/tmp", prefix="fwx-verify-out-") as tmp_outside:
+        os.environ["TMPDIR"] = tmp_outside
+        res = core_verify.run_check(tmp_probe, tmp_toy)
+        s.eq("TMPDIR outside a checkout: left as it was", (res["rc"], res["output"].strip()), (0, tmp_outside))
+finally:
+    if saved_tmp is None:
+        os.environ.pop("TMPDIR", None)
+    else:
+        os.environ["TMPDIR"] = saved_tmp
 s.eq("the line for a report names a missing exit", core_verify.evidence_line("a" * 40, [{"cmd": "x", "rc": None}]),
      "evidence %s x=none" % ("a" * 40))
 

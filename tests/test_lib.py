@@ -866,7 +866,7 @@ def cli_test_cases(tmp):
                 with contextlib.redirect_stdout(io.StringIO()) as o:
                     rc = cli.cmd_test(argparse.Namespace(mutants=False, jobs=jobs))
                 want("forge test, jobs %s: the 4 files and the file list ran, none with a preexec_fn" % jobs,
-                     (rc, len(started), [c for c in started if c is not None], o.getvalue().count("PASS  test_p")), (0, 5, [], 4))
+                     (rc, len(started), [c for c in started if c is not None], o.getvalue().count("PASS  test_p")), (0, 6, [], 4))  # 6 runs: the file list, testgroup.private_tmp's probe, the 4 files
         finally:
             subprocess.run = real_run
         os.environ["PATH"] = os.path.join(tmp, "cmdtest", "no-bin")
