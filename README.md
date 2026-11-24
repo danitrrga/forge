@@ -157,7 +157,6 @@ source in a `referent:` line.
 
 ```sh
 python3 plugins/fwx/bin/fwx --help              # every command, one line each
-python3 plugins/fwx/bin/fwx playbook list      # the workflow tree by playbook, in words (--raw: the id form agents read)
 python3 bin/forge test fwx                      # fwx's own suite, a group of forge test (forge test with no group leaves it out; CI runs it as the fwx job)
 ```
 
