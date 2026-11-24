@@ -144,6 +144,7 @@ s.ok("control: a rubric with no escalation criterion is found", rubric_problems(
 # separate commands (a hedge, "some harnesses refuse", read as optional and cost 3 refused compound git commands), and the rubric must not
 # reward the opposite. Red before the fix (o1-F1):
 #   FAIL: executor.md tells the agent plainly to run plain, separate commands, with no hedge: got ['hedged: "Some harnesses refuse"'], want []
+#   (o1-F2) FAIL: session-rubric.md does not reward running commands together: got ['rewards: "Independent commands were run together"'], want []
 def plain_problems(text):
     found = []
     if "run plain, separate commands" not in text:
@@ -154,7 +155,13 @@ def plain_problems(text):
     return found
 
 
+def rubric_chain_problems(text):
+    return ['rewards: "%s"' % w for w in ("Independent commands were run together",) if w in text]
+
+
 s.eq("executor.md tells the agent plainly to run plain, separate commands, with no hedge", plain_problems(read("agents/executor.md")), [])
+s.eq("session-rubric.md does not reward running commands together", rubric_chain_problems(read("docs/session-rubric.md")), [])
 s.ok("control: a hedged executor sentence is found", plain_problems("Some harnesses refuse a shell command that joins commands: run plain, separate commands") != [])
 s.ok("control: an executor with no such rule is found", plain_problems("Only in your own worktree.") != [])
+s.ok("control: a rubric that rewards chaining is found", rubric_chain_problems("- Independent commands were run together.") != [])
 s.done()

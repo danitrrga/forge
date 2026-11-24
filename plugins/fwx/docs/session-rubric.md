@@ -76,7 +76,6 @@ Scored on the transcript.
   (the project's own checks run later, on the merged commit).
 - After two failed fixes of the same problem, the session attacked the premise (what it assumed) instead of trying a third
   variation of the same fix.
-- Independent commands were run together.
 
 Scale: 9 to 10, no wasted step; 6 to 8, a few redundant calls; 3 to 5, a loop or a long detour that cost a large part of the
 session; 0 to 2, most of the session was wasted. Report the tokens and the number of tool calls beside the score, as figures, and
