@@ -242,6 +242,29 @@ config_check("## Configuration names every key of its project", project_miss, No
 config_check("## Configuration says how to change a key", phrase_miss, None)
 
 
+# r1-F1: "Changing a key" sent an agent to a source forge ignores for some keys (forge/framework.py `_document`). Its subsection must say where each
+# of them really comes from. Seen red before the README listed them:
+#   FAIL: "Changing a key" names where factory.mode, factory.ui_bugs, project.name, default_branch, factory_branch and integrations come from -> missing `factory_ui_bugs`, ...
+EXCEPTIONS = ("`factory_ui_bugs`", "`project`", "read from git", "`project.factory_branch`", "`integrations`")
+
+
+def changing_a_key(readme):
+    m = re.search(r"^### Changing a key\n(.*?)(?=^#{2,3} |\Z)", config_section(readme), re.S | re.M)
+    return m.group(1) if m else ""
+
+
+def exceptions_missing(readme):
+    sub = changing_a_key(readme)
+    return [e for e in EXCEPTIONS if e not in sub] if sub else list(EXCEPTIONS)
+
+
+miss = exceptions_missing(real)
+s.ok('"Changing a key" names where factory.mode, factory.ui_bugs, project.name, default_branch, factory_branch and integrations come from'
+     + (" -> missing " + ", ".join(miss) if miss else ""), not miss)
+for e in EXCEPTIONS:
+    s.ok("control without %s in 'Changing a key': fails" % e, exceptions_missing(real.replace(e, "x")) == [e])
+
+
 def config_false_readback(readme):
     """What `## Configuration` names as the command that reads a changed key back, when `fwx session --json` prints no config value
     (it shows the stage, the branch and the paths, never rounds, limits, weekly, factory, integrations, paths, linear or checks)."""
