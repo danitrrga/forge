@@ -4,7 +4,7 @@
 <!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/orchestrate.md @36885ea (the shape: one line saying who owns what, the units delegated with a complete brief) -->
 <!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/worktree-cleanup.md @36885ea (short numbered steps; cleanup that lists what it keeps) -->
 <!-- referent: pstack plugins/pstack/skills/poteto-mode/playbooks/bug-fix.md @36885ea (the failing test first, in its own commit) -->
-<!-- Differs from the referents: one block per node of the tree, because `fwx playbook lint` compares them; cleanup never forces or deletes by hand (the referent prunes with `--force` after a human decision; here `fwx wave remove` removes only merged worktrees); the gate is a script, not the coordinator's judgment. Written from `workflows/execute.js` and `lib/fwx/execute/`: where this text and the code differ, the code rules. -->
+<!-- Differs from the referents: one block per node of the tree; cleanup never forces or deletes by hand (the referent prunes with `--force` after a human decision; here `fwx wave remove` removes only merged worktrees); the gate is a script, not the coordinator's judgment. Written from `workflows/execute.js` and `lib/fwx/execute/`: where this text and the code differ, the code rules. -->
 
 Version: 2
 
