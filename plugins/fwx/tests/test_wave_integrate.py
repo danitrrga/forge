@@ -560,6 +560,12 @@ def case_summary(R, S):
     S.eq("summary: head, the evidence line, the rounds", (v.get("head"), v.get("evidence_line"), v.get("rounds")),
          (sc.head(), "evidence %s true=0 python3 t.py=0" % sc.head(), "0/3"))
 
+    # `fwx wave --run R --json` is what the part report reads (09.5 C4, 09.6): JSON is the only output, so the flag changes nothing
+    # Red before: fwx wave --run R --json: exit: got 2, want 0   (stderr: usage: fwx wave --run R [--part-dir D])
+    j = summ(R, sc, "--part-dir", sc.part, "--json")
+    S.eq("fwx wave --run R --json: exit, and the same JSON as without the flag", (j.returncode, J(j)), (0, J(summ(R, sc, "--part-dir", sc.part))))
+    S.eq("fwx wave --run R --json: stderr", j.stderr.strip(), "")
+
     sr = Scene()
     sr.evidence(0)
     sr.evidence(1)
