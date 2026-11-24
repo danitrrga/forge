@@ -22,17 +22,25 @@ one-use file (brief, checkpoint, handoff, tomorrow or scratch, `.md` and `.txt` 
 that says what to do instead. Green it is silent and adds no command, so a green run's evidence is what it was. `.fwx/` is
 exempt (fwx writes its own state there). With no default branch to measure from it says `NOT RUN, NOT ARMED` and adds nothing.
 
+The whole recipe runs under an exclusive lock on `<git-common-dir>/fwx/gate.lock` (`gate_lock`), so two gates of one repo, from two
+worktrees, run one after the other: two at once take twice as long each and fail on load. The second says it waits and its
+time limits start once it holds the lock. The lock is a flock, so it goes with the process however that ends. While it is held `FWX_GATE_LOCK=<path>` is in the environment of the
+checks, and a `gate_lock` that finds its own path there does not lock again: a check that runs `fwx verify` would otherwise wait for its parent.
+
 The output tail of a red check goes to the terminal, so secrets are taken out of it first: the value of any environment
 variable named like a credential, and the shapes of tokens (`redact`). Nothing else of the output is kept or written.
 
 Imports only the standard library, state, config and core.evidence.
 """
+import contextlib
+import fcntl
 import json
 import os
 import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -45,6 +53,7 @@ TAIL_LINES = 40
 TAIL_CHARS = 4000
 COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
+GATE_LOCK_ENV = "FWX_GATE_LOCK"  # the lock path, exported to the checks while the gate holds the lock
 ADDED_FILES_CHECK = "fwx added-files"
 _ONE_USE_EXT = (".md", ".txt")
 _ONE_USE = {"brief", "checkpoint", "handoff", "tomorrow", "scratch"}  # whole words of a name, split on - _ . and spaces
@@ -80,17 +89,41 @@ def _shell():
     return shutil.which("bash") or "/bin/sh"
 
 
+@contextlib.contextmanager
+def _child_env():
+    """The environment a check runs in. When its temp dir (TMPDIR, else the default) is inside a git work tree, TMPDIR is a fresh folder
+    under /tmp for the length of the block and removed after: a test that expects its temp dir outside any repository fails falsely
+    otherwise (13 to 17 of forge's did). A TMPDIR outside a checkout is left as it is."""
+    env = dict(os.environ)
+    here = env.get("TMPDIR") or tempfile.gettempdir()
+    probe = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}  # a hook's GIT_DIR would make every folder look inside
+    try:
+        inside = subprocess.run(["git", "-C", here, "rev-parse", "--is-inside-work-tree"], env=probe, capture_output=True, text=True)
+        inside = inside.returncode == 0 and inside.stdout.strip() == "true"
+    except OSError:
+        inside = False
+    if not inside:
+        yield env
+        return
+    made = tempfile.mkdtemp(prefix="fwx-check-", dir="/tmp" if os.path.isdir("/tmp") else None)
+    env["TMPDIR"] = made
+    try:
+        yield env
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+
+
 def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
     """Run one command with the shell in `cwd`: `{cmd, rc, seconds, output}`. `rc` is the exit status, or None when the
     command was killed by the time limit (its whole process group) or could not start; `output` is the last KEEP_CHARS
     of stdout and stderr together, with the reason appended in those two cases. `timed_out` tells the first from the second:
     a command that ran out of time proved nothing, which is not a red check, and `limit` is the time it had."""
     started = time.monotonic()
-    with tempfile.TemporaryFile() as out:
+    with tempfile.TemporaryFile() as out, _child_env() as env:
         rc, note, timed_out = None, "", False
         try:
             proc = subprocess.Popen([_shell(), "-c", command], cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
+                                    stderr=subprocess.STDOUT, start_new_session=True, env=env)
         except OSError as e:
             proc, note = None, "\ncould not start: %s" % e
         if proc:
@@ -108,6 +141,37 @@ def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
         text = out.read().decode("utf-8", "replace")[-KEEP_CHARS:]
     return {"cmd": command, "rc": rc, "seconds": time.monotonic() - started, "output": text + note,
             "timed_out": timed_out, "limit": timeout}
+
+
+@contextlib.contextmanager
+def gate_lock(root):
+    """Hold the repo's gate lock, `<git-common-dir>/fwx/gate.lock`, for the block: the same file from every worktree of the repo,
+    so a second gate waits here. It says so once on stderr, before it blocks. Released on any exit; the kernel frees it if the process dies."""
+    r = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if r.returncode or not r.stdout.strip():
+        raise state.StateError("cannot find the git directory of %s to lock the gate: %s" % (root, r.stderr.strip()))
+    folder = os.path.join(r.stdout.strip(), "fwx")
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, "gate.lock")
+    if os.environ.get(GATE_LOCK_ENV) == path:  # a check of the recipe running `fwx verify`: its own gate already holds the lock
+        yield path
+        return
+    with open(path, "a") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            sys.stderr.write("fwx: waiting for another gate of this repo to finish (lock %s)\n" % path)
+            fcntl.flock(f, fcntl.LOCK_EX)
+        before = os.environ.get(GATE_LOCK_ENV)
+        os.environ[GATE_LOCK_ENV] = path  # the checks inherit it, so a nested gate of this repo does not wait for its own parent
+        try:
+            yield path
+        finally:
+            if before is None:
+                os.environ.pop(GATE_LOCK_ENV, None)
+            else:
+                os.environ[GATE_LOCK_ENV] = before
+            fcntl.flock(f, fcntl.LOCK_UN)
 
 
 def _git(root, *args):
@@ -249,7 +313,8 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
     source = "profile" if evidence.plan_checks(cfg["project"]["checks"], _NO_ROOT) else "package"
     say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",
                                                    "project" if source == "profile" else "package.json scripts", sha[:7]))
-    results = [run_check(command, root, timeout) for command in recipe]
+    with gate_lock(root):
+        results = [run_check(command, root, timeout) for command in recipe]
     started = time.monotonic()
     marked, known = added_files(root, cfg, sha)
     if not known:

@@ -1122,10 +1122,12 @@ NOT_RUN = 77
 SESSION_START_TIMEOUT = 60
 
 
-def report(results):
-    """One line per result, then the summary line /gm and /sec-audit grep for. Exit 1 on a FAIL."""
+def report(results, before_summary=()):
+    """One line per result, then `before_summary` (lines), then the summary line /gm and /sec-audit grep for. Exit 1 on a FAIL."""
     for r in results:
         print("%-4s  %-22s %s" % (r.level, r.name, r.detail))
+    for line in before_summary:
+        print(line)
     n = collections.Counter(r.level for r in results)
     print("SUMMARY: %d passed, %d warnings, %d failures" % (n["PASS"], n["WARN"], n["FAIL"]))
     return 1 if n["FAIL"] else 0

@@ -33,10 +33,13 @@ child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends SIG
 test's own cleanup runs), SIGKILL to what is left after 5 s, and exits 128 + the signal, so nothing a test started outlives the run.
 SIGKILL of the runner itself cannot be caught and leaves them.
 """
+import contextlib
 import os
+import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -53,6 +56,48 @@ def clean_env():
     """The environment without GIT_*: inside a git hook GIT_DIR and GIT_INDEX_FILE point at the
     repo being committed, and a test that builds its own repos must not reach it."""
     return {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+
+def inside_checkout(directory):
+    """Whether `directory` is inside a git work tree. A test that makes a temp dir and expects to be outside any repository (it builds
+    its own, or asks git where it is) fails falsely when TMPDIR sits in a checkout: 13 to 17 of forge's files did (DTC-119)."""
+    try:
+        r = subprocess.run(["git", "-C", directory, "rev-parse", "--is-inside-work-tree"], env=clean_env(),
+                           capture_output=True, text=True)
+    except OSError:  # no git, or no such folder: nothing there to be inside of
+        return False
+    return r.returncode == 0 and r.stdout.strip() == "true"
+
+
+@contextlib.contextmanager
+def private_tmp(env):
+    """The environment for test children, a copy of `env`. When its temp dir (TMPDIR, else the default) is
+    inside a git work tree, TMPDIR is a fresh folder under /tmp for the length of the with block, removed after; otherwise TMPDIR is left as it is."""
+    env = dict(env)
+    here = env.get("TMPDIR") or tempfile.gettempdir()
+    if not inside_checkout(here):
+        yield env
+        return
+    made = tempfile.mkdtemp(prefix="forge-test-", dir="/tmp" if os.path.isdir("/tmp") else None)
+    env["TMPDIR"] = made
+    try:
+        yield env
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+
+
+def failed_lines(failed):
+    """The lines that end a run's output when files failed: `failed` is [(name, output)]; one line each, the name and the first FAIL
+    line of its output (else its last line) with a count of the others, so a tail of the output names every failed file. [] for none."""
+    if not failed:
+        return []
+    out = ["Failed files (%d):" % len(failed)]
+    for name, output in failed:
+        lines = [l.strip() for l in output.splitlines() if l.strip()]
+        marks = [l for l in lines if l.startswith("FAIL")]
+        why = (marks[0] if marks else lines[-1] if lines else "(no output)")
+        out.append("  %s: %s%s" % (name, why[:140], " (+%d more FAIL lines)" % (len(marks) - 1) if len(marks) > 1 else ""))
+    return out
 
 
 def test_files(root, env):
@@ -192,7 +237,13 @@ def _group_alive(pgid):
 
 
 def main(root, expect_values, jobs_values, label, shard_values=None):
-    """Run the group whose folder is `root` (an absolute path; `label` is its path as the listing names it, for the SKIP line)."""
+    """Run the group whose folder is `root` (an absolute path; `label` is its path as the listing names it, for the SKIP line).
+    The children get a TMPDIR outside any checkout (private_tmp)."""
+    with private_tmp(clean_env()) as env:
+        return run_group(root, expect_values, jobs_values, label, shard_values, env)
+
+
+def run_group(root, expect_values, jobs_values, label, shard_values, env):
     expect, jobs, error = check(expect_values, jobs_values)
     if error:
         sys.stderr.write(error + "\n")
@@ -202,7 +253,6 @@ def main(root, expect_values, jobs_values, label, shard_values=None):
         sys.stderr.write(error + "\n")
         return 2
     jobs = jobs or default_jobs()
-    env = clean_env()
     if not os.path.isdir(root):
         # A checkout without the plugin: nothing to look at is a SKIP that says so, unless the caller named a test of it, which is
         # a declared path that is no test file.
@@ -224,6 +274,7 @@ def main(root, expect_values, jobs_values, label, shard_values=None):
         sys.stderr.write("%s: git could not list the tests of %s: %s\n" % (NAME, root, e))
         return 1
     passed = failed = not_run = expected = 0
+    failures = []  # (file, output) of each failed file, for the lines that end the run
     unknown = sorted(expect - set(files))
     for rel in unknown:
         sys.stderr.write("%s: --expect-not-run names %s, which is no tests/test_*.py file\n" % (NAME, rel))
@@ -260,6 +311,7 @@ def main(root, expect_values, jobs_values, label, shard_values=None):
                 print("FAIL  %s (exit %d)" % (rel, code))
                 for line in output.splitlines():
                     print("    " + line)
+                failures.append((rel, output))
             sys.stdout.flush()
     except Interrupted as e:
         for s in STOP:  # no second signal may cut the cleanup short
@@ -277,6 +329,8 @@ def main(root, expect_values, jobs_values, label, shard_values=None):
             signal.signal(s, h)
     pool.shutdown(wait=True)
     total = passed + failed + not_run + expected
+    for line in failed_lines(failures):  # the last lines of the output: a tail of it names every failed file
+        print(line)
     print("%d test file(s): %d passed, %d failed, %d not run%s"
           % (total, passed, failed, not_run, ", %d expected not run" % expected if expected else ""))
     # Everything declared away proves nothing, of a whole run. A slice has no such rule: it may hold only declared files (CI's two, dealt
