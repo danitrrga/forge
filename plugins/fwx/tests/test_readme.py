@@ -242,6 +242,17 @@ config_check("## Configuration names every key of its project", project_miss, No
 config_check("## Configuration says how to change a key", phrase_miss, None)
 
 
+def config_false_readback(readme):
+    """What `## Configuration` names as the command that reads a changed key back, when `fwx session --json` prints no config value
+    (it shows the stage, the branch and the paths, never rounds, limits, weekly, factory, integrations, paths, linear or checks)."""
+    return [c for c in ("fwx session --json",) if c in config_section(readme)]
+
+
+bad_readback = config_false_readback(real)
+s.ok("## Configuration names no command that does not read a key back" + (" -> " + ", ".join(bad_readback) if bad_readback else ""), not bad_readback)
+s.ok("control a section that sends the agent to `fwx session --json`: fails", config_false_readback(real.replace("### What is not configurable", "Run `fwx session --json`.\n\n### What is not configurable", 1)) == ["fwx session --json"])
+
+
 def config_control(name, text, which, needle):
     got = config_problems(toy, text)[which]
     s.ok("control %s: fails naming %r" % (name, needle), needle in got, "missing: %r" % got)
