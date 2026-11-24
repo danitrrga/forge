@@ -662,6 +662,40 @@ def case_base_reuse_sibling(R, S):
     S.eq("sibling: the part writes no row of its own for the reused base (only the one of r0 stands)", len(evidence_rows(sc)), 1)
 
 
+def case_base_reuse_sibling_edges(R, S):
+    """DTC-117 review. Seen failing before the fix: "sibling bytes: another part's audit.tsv that is not UTF-8 does not block this part:
+    got (1, ...UnicodeDecodeError..." and the same for a directory named audit.tsv (IsADirectoryError): `wave new` crashed on a file of
+    another part. A sibling record on the same sha for other commands stands in for nothing."""
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+
+    def sibling(sc, name):
+        folder = os.path.join(sc.phase, name)
+        os.makedirs(folder)
+        return folder
+
+    def green(folder, sha, cmd):
+        state.append_audit(folder, "evidence", sha=sha, rc=0, detail=json.dumps(
+            {"sha": sha, "clean": True, "source": "profile", "commands": [{"cmd": cmd, "rc": 0}], "rc": 0}))
+
+    sc = Scene(recipe=[counting(runs)], sub=True)
+    with open(os.path.join(sibling(sc, "03.2-gamma"), "audit.tsv"), "wb") as f:
+        f.write(b"\xff\xfe")
+    os.makedirs(os.path.join(sibling(sc, "03.3-delta"), "audit.tsv"))
+    r = sc.prepare(R)
+    S.eq("sibling bytes: another part's audit.tsv that is not UTF-8, or a directory, does not block this part: it runs the checks",
+         (r.returncode, ran(runs), "Traceback" in r.stderr), (0, 1, False))
+    sc = Scene(recipe=[counting(runs)], sub=True)
+    with open(os.path.join(sibling(sc, "03.2-gamma"), "audit.tsv"), "wb") as f:
+        f.write(b"\xff\xfe")
+    green(sibling(sc, "03.3-delta"), sc.head(), counting(runs))
+    r = sc.prepare(R)
+    S.eq("sibling bytes: an unreadable audit beside a readable one: the readable record is reused", (r.returncode, ran(runs)), (0, 1))
+    sc = Scene(recipe=[counting(runs)], sub=True)
+    green(sibling(sc, "03.2-gamma"), sc.head(), counting(runs, "other"))
+    r = sc.prepare(R)
+    S.eq("sibling commands: a sibling record on the same sha for other commands is not reused: the checks run", (r.returncode, ran(runs)), (0, 2))
+
+
 def case_base_moved(R, S):
     """A base check that commits (HEAD moves) proves nothing about the sha it started at, so no green row of that sha may be written
     for a later `fwx wave new` to reuse. Seen failing before the fix (DTC-77, CodeRabbit on PR 222): "moved: a check that commits: exit:
@@ -702,7 +736,7 @@ def case_base_timeout(R, S):
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_moved, case_base_timeout]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
