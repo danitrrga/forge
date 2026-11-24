@@ -8,7 +8,7 @@ written last, and the evidence row of a base that ran green (below).
 The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.md` and `decisions.tsv` of the phase that
 holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`); a missing
 `postmortem.md` is accepted only for a `small` plan that says `security_review` (_security_why: the planner's answer and a task on a
-`project.protected_paths` glob stand in for the post-mortem's). Refused with
+default protected path or a `project.protected_paths` glob stand in for the post-mortem's). Refused with
 exit 2, in this order of cost: a plan that does not load; a task file that git ignores (the executor could not commit it); the
 requested branch is a default branch, or is not the one the checkout is on; the checkout holds uncommitted work; the effective
 `worktree.baseRef` is not `head`; the project has no checks. Why the baseRef: without it a workflow agent's worktree is made from
@@ -109,7 +109,7 @@ def _load(loader, path, label):
 def _security_why(data, post_path, cfg):
     """The reasons the security review is needed, from the post-mortem, or from the plan when a small plan skips it (a missing
     postmortem.md is accepted only then, and the plan must say `security_review`: a default would let an unasked-for review through).
-    A task on a `project.protected_paths` glob forces the review in a plan with no post-mortem, whatever the planner wrote."""
+    A task on a default protected path (decide's table) or a `project.protected_paths` glob forces the review in a plan with no post-mortem, whatever the planner wrote."""
     if os.path.exists(post_path):
         post = _load(plan.load_postmortem, post_path, "postmortem.md")
         return ["postmortem.md security_review is true"] if post["security_review"] else []
@@ -119,7 +119,7 @@ def _security_why(data, post_path, cfg):
         raise WaveError("plan.md: security_review: missing: a small plan that skips the post-mortem says whether it needs the security review "
                         "(true or false), because nothing else would ask")
     why = ["plan.md security_review is true"] if data["security_review"] else []
-    protected = [g for g in cfg["project"].get("protected_paths") or [] if isinstance(g, str)]
+    protected = plan_form.protected_paths(cfg)
     for t in data["tasks"]:
         hit = next(((f, g) for f in t["files"] for g in [plan_form.protected_glob(protected, f)] if g), None)
         if hit:

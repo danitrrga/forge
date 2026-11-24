@@ -16,7 +16,7 @@ the history); no `T<n>`, `C<n>` or `D<n>` in the prose that `tasks`, `criteria` 
 `premortem.md`: `## Verdict`, `## Failure reasons`, `## Size`, and the verdict matches the failure reasons listed. `postmortem.md`:
 its six headings; each finding (a list item under `## Findings`) has a severity and an `evidence:` field, a blocker or warning
 with `unproven` evidence is an error, and the verdict matches the findings; `security_review` is true when a task writes a file
-that `project.protected_paths` covers; with no `postmortem.md`, the same rule applies to `plan.md`'s own `security_review` when it is false.
+that the decide table's default protected paths or `project.protected_paths` cover; with no `postmortem.md`, the same rule applies to `plan.md`'s own `security_review` when it is false.
 
 Length is counted in words, not lines: a cap in lines is passed by one long line. The two figures are 12 words to the line of the
 300 and 400 lines the plan format first named (no measurement behind them yet); `## Goal` also keeps its ten lines, which is the
@@ -26,14 +26,14 @@ What cannot run says so: a cite with no main checkout to look in, and a protecte
 `NOT RUN, NOT ARMED` warning (neither a pass nor an error). A cite or a protected path the plan does not have is nothing to look at
 and gives nothing.
 
-Imports the standard library, `config`, `plan` and `core.globs`; the checks that need git or the configuration reach them only when
+Imports the standard library, `config`, `plan`, `core.decide` and `core.globs`; the checks that need git or the configuration reach them only when
 a cite or a task asks.
 """
 import os
 import re
 
 from fwx import config, plan, state
-from fwx.core import globs
+from fwx.core import decide, globs
 
 HEADINGS = {
     "plan.md": ("Goal", "Approach"),
@@ -268,6 +268,14 @@ def protected_glob(protected, name):
     return next((g for g in protected if p and (globs.matches(p, g) or globs.matches(p + "/", g))), None)
 
 
+def protected_paths(cfg):
+    """The globs a task may not write without the security review: `project.protected_paths`, then the decide table's defaults
+    (what `fwx decide` and `fwx wave integrate` read, so a plan is judged by the same list they are)."""
+    own = cfg["project"].get("protected_paths")
+    own = [g for g in own if isinstance(g, str)] if isinstance(own, list) else []
+    return own + list(decide.load_table()["default_protected_paths"])
+
+
 def _security(f, rel, seen):
     """security_review (postmortem.md's, or plan.md's when the plan has no post-mortem) is true when a task writes a path the project protects."""
     tasks = [(r, t) for r, d in seen.items() if d is not None for t in plan._tasks_of(d) if isinstance(t.get("files"), list)]
@@ -278,8 +286,7 @@ def _security(f, rel, seen):
     except config.ConfigError as e:
         f.warn(rel, "security_review", "NOT RUN, NOT ARMED: the protected paths are unknown (%s)" % e)
         return
-    protected = cfg["project"].get("protected_paths")
-    protected = [g for g in protected if isinstance(g, str)] if isinstance(protected, list) else []
+    protected = protected_paths(cfg)
     for r, t in tasks:
         for name in t["files"]:
             glob = protected_glob(protected, name)

@@ -308,7 +308,12 @@ case("a protected path with security_review false", phase(ci),
 case("a protected path with security_review true", phase(ci, post_fm=dict(POST, security_review=True)), exact=(0, 0))
 case("a protected folder", phase(lambda f: task(f, "T2").update(files=["./.github/workflows/"])),
      ["postmortem.md: security_review: task T2 touches a protected path (.github/workflows/**): security_review must be true"])
-case("a path that is not protected", phase(lambda f: task(f, "T1").update(files=[".github/CODEOWNERS", "src/workflows/x.yml"])), exact=(0, 0))
+case("a path that is not protected", phase(lambda f: task(f, "T1").update(files=["docs/CODEOWNERS", "src/workflows/x.yml"])), exact=(0, 0))
+# the default protected paths of the decide table apply with no project glob, as `fwx decide` and `wave new` read them
+case("a default protected path with security_review false", phase(lambda f: task(f, "T1").update(files=["src/auth/login.py"])),
+     ["postmortem.md: security_review: task T1 touches a protected path (**/auth/**): security_review must be true"])
+case("a default protected path with security_review true", phase(lambda f: task(f, "T1").update(files=["src/auth/login.py"]),
+                                                               post_fm=dict(POST, security_review=True)), exact=(0, 0))
 case("a protected path and no postmortem yet", phase(ci, post=None), exact=(0, 0))
 # 08.3 T31: a small plan skips the post-mortem, so the planner's value in plan.md gets the same rule
 small_ci = lambda value: (lambda f: (ci(f), f.update(security_review=value)))
