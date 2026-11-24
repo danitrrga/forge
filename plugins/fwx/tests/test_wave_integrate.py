@@ -730,6 +730,7 @@ def case_next(R, S):
     v = ok_json(S, "next, a green wave", sc.integrate(R, b1))
     S.eq("a green wave says next wave -> %s" % (v.get("next") or "no next"), v.get("next"), "wave")
     S.ok("a green wave: why is a sentence and no brief is written", bool(v.get("why")) and not v.get("brief"), repr((v.get("why"), v.get("brief"))))
+    S.eq("a green wave: no agent follows, so no unit", v.get("unit"), None)
     S.eq("a green wave writes no brief file", sc.step_files(), ["1-integrate.json"])
     sc.stop()
 
@@ -742,6 +743,8 @@ def case_next(R, S):
     text = runs_file(sc, v.get("brief"))
     S.ok("a conflict: the brief is a file in the run's briefs folder", bool(text), repr(v.get("brief")))
     S.eq("the resolver's brief is the first of its kind", os.path.basename(v.get("brief") or ""), "_resolve-1.md")
+    # G1: the session passes `--unit` to `wave report` for the agent that follows, so the result names it (the folder `fwx scratch new <run> <unit>` makes)
+    S.eq("a conflict: the unit of the resolver that follows", v.get("unit"), "resolve-1")
     S.ok("a conflict: the head it names is the new one, after the merge of the first branch", v.get("head") == sc.head() != sc.base,
          repr((v.get("head"), sc.head(), sc.base)))
     has(S, "resolver", text, "fwx base %s" % sc.head(), "git merge --no-commit %s" % b2, "src/a.py", "Fwx-Run: %s" % sc.run, "Fwx-Task: 01-alpha/two",
@@ -755,6 +758,7 @@ def case_next(R, S):
     S.eq("a second resolver's brief is a new file, the first stays", (os.path.basename(v2.get("brief") or ""), bool(runs_file(sc, v.get("brief")))),
          ("_resolve-2.md", True))
     has(S, "second resolver", runs_file(sc, v2.get("brief")), "fwx scratch new %s resolve-2" % sc.run)
+    S.eq("a second conflict: the unit is the next resolver's", v2.get("unit"), "resolve-2")
     sc.stop()
 
     sq = Scene(quick=["exit 3"])
@@ -764,6 +768,7 @@ def case_next(R, S):
     S.ok("quick red: why says the exit, the head and the command", "exit 3" in (v.get("why") or "") and sq.head() in (v.get("why") or ""), repr(v.get("why")))
     text = runs_file(sq, v.get("brief"))
     S.eq("the fixer's brief is the first of its kind", os.path.basename(v.get("brief") or ""), "_fix-1.md")
+    S.eq("quick red: the unit of the fixer that follows", v.get("unit"), "fix-1")
     has(S, "fixer", text, "fwx base %s" % sq.head(), "src/a.py", "src/b.py", "Fwx-Run: %s" % sq.run, "no rebase", "nothing written in `.fwx/`",
         "fwx linear new --template general", "fwx scratch new %s fix-1" % sq.run, "exit 3", "A defect you see outside this work is yours")
     S.ok("quick red: no Fwx-Finding trailer without findings", "Fwx-Finding: <id>" not in text)
@@ -775,6 +780,7 @@ def case_next(R, S):
     S.eq("findings not one per commit says next fix -> %s" % (v.get("next") or "no next"), v.get("next"), "fix")
     text = runs_file(sf, v.get("brief"))
     has(S, "findings fixer", text, "Fwx-Finding: <id>", "F1", "F2", "one commit per finding", b, "fwx base %s" % sf.head())
+    S.eq("findings not one per commit: the unit of the fixer that follows", v.get("unit"), "fix-1")
     sf.stop()
 
     # G2: the fixer of a refused attempt is told where the text of the findings is: the oldest fixer's brief that names them, whichever round it was
@@ -793,6 +799,7 @@ def case_next(R, S):
     text = runs_file(sr, v.get("brief"))
     has(S, "a later fix round", text, "holds the text of each finding: " + os.path.join(briefs, "_fix-2.md"))
     S.ok("a later fix round: neither the gate fixer's brief nor the refused attempt's is named", all(os.path.join(briefs, n) not in text for n in ("_fix-1.md", "_fix-3.md")))
+    S.eq("a later fix round: the unit", v.get("unit"), "fix-4")
     sr.stop()
     so = Scene()
     briefs = os.path.join(so.common, "fwx", "runs", so.run, "briefs")
@@ -892,6 +899,8 @@ MUTANTS = [
      "integrate --final with no branch: exit"),
     ("a refused attempt's fixer is pointed at the oldest brief that names the findings", case_next, I, "for _n, name in sorted(found):", "for _n, name in sorted(found, reverse=True):",
      "a later fix round: the brief has"),
+    ("the agent's unit is not returned", case_next, I, 'result["unit"], result["brief"] = _write_brief(', '_u, result["brief"] = _write_brief(',
+     "unit of the resolver that follows"),
     ("fix-round never spends", case_fix_round, I, 'rounds.record(part_dir, "use", why)', "pass", "a conflict with nothing counted: rounds 0/3"),
     ("fix-round spends on a counted failure", case_fix_round, I, "if not counted:", "if True:", "red evidence of HEAD: rounds 2/3"),
     ("fix-round decides by the counter after", case_fix_round, I, "before = rounds.count(rows[:-1]) if counted else rounds.count(rows)",

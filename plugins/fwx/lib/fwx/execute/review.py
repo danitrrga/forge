@@ -12,8 +12,8 @@ prints `next`:
   relaunch  nothing usable from `relaunch[*].unit`, the first time: launch it again with its brief and `note`, no round spent
   stop      a second miss: the run ends failed with `why` (`gap` is the line for the part report)
   verify    more than three items: the verifier's brief is `brief`, its unit `unit`; call `findings --verdicts` with its reply
-  fix       `ids` are to be fixed: `why` is the text of `fwx wave fix --why`, `brief` the fixer's, `head` the BASE it starts from, `ids` the
-            value of `wave merge --findings`
+  fix       `ids` are to be fixed: `why` is the text of `fwx wave fix --why`, `brief` the fixer's, `unit` its unit (what `wave report --unit` takes), `head` the BASE it
+            starts from, `ids` the value of `wave merge --findings`
   owner     nothing to fix, but the last final merge named a protected path (execute.js ends the run there) or no brief could be written
   done      nothing to fix; `file` are the reviewer's large `outside` items, for the session to file as Linear issues
 Every result also carries `items` (the pass's findings with their ids), `outside_of` (the outside item each id came from), `reported`, `criteria`
@@ -272,7 +272,7 @@ def _route(items, outside_of, by):
 
 
 def _fixer(top, part_dir, run, fix):
-    """(path of the fixer's brief, head): the brief of `brief.fix_facts` for the findings to fix, the findings in a file beside it."""
+    """(unit, path of the fixer's brief, head): the brief of `brief.fix_facts` for the findings to fix, the findings in a file beside it."""
     data, _, ctx = _context(top, part_dir, run)
     cfg = config.load(top)
     unit, path = brief.next_unit(ctx["folder"], "fix")
@@ -287,7 +287,7 @@ def _fixer(top, part_dir, run, fix):
     if problems:
         raise WaveError("; ".join(problems))
     brief.put(path, brief.render(facts))
-    return path, out(top, "rev-parse", "HEAD")
+    return unit, path, out(top, "rev-parse", "HEAD")
 
 
 def _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, groups, routes, **kw):
@@ -299,10 +299,11 @@ def _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, group
         ids = [f["id"] for f in fix]
         why = "review findings to fix: %s" % ", ".join(ids)
         try:
-            path, head = _fixer(top, part_dir, run, fix)
+            unit, path, head = _fixer(top, part_dir, run, fix)
         except (WaveError, config.ConfigError, state.StateError, plan.PlanError, OSError) as e:
             return _result("owner", tag, why="no brief could be written for the fixer (%s): %s" % (e, why), **common)
-        return _result("fix", tag, why=why, ids=ids, brief=path, head=head, **common)
+        # `unit` is the fixer's, which `wave report --unit` reads, and not the verifier's that `common` may carry
+        return _result("fix", tag, why=why, ids=ids, brief=path, head=head, **dict(common, unit=unit))
     protected = _protected(steps)
     next_, why = ("owner", "protected path: %s" % ", ".join(protected)) if protected else ("done", "nothing is left to fix")
     return _result(next_, tag, why=why, **common)

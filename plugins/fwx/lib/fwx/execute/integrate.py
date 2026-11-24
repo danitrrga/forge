@@ -216,7 +216,7 @@ def _findings_brief(folder, findings):
 
 
 def _write_brief(top, part_dir, run, cfg, result, why, branches, findings):
-    """The path of the brief written for the resolver or the fixer this result calls for, or raise WaveError saying why none could be."""
+    """(unit, path) of the brief written for the resolver or the fixer this result calls for, or raise WaveError saying why none could be."""
     part = _resolve_part(part_dir)
     try:
         data = plan.load_plan(state.phase_paths(part)["plan"])
@@ -244,7 +244,7 @@ def _write_brief(top, part_dir, run, cfg, result, why, branches, findings):
     if missing:
         raise WaveError("; ".join(missing))
     brief.put(path, brief.render_agent(facts))
-    return path
+    return unit, path
 
 
 def _resolve_part(part_dir):
@@ -255,16 +255,17 @@ def _resolve_part(part_dir):
 
 
 def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
-    """(exit code, result): `_merge`'s result, with `next` and `why` (`next_step`) and `brief`: for `resolve` and `fix`, the path of the
-    brief written for that agent (execute/brief.py), whose BASE is the head the merge left; else None. When the brief cannot be written
+    """(exit code, result): `_merge`'s result, with `next` and `why` (`next_step`) and `brief` and `unit`: for `resolve` and `fix`, the path
+    of the brief written for that agent (execute/brief.py), whose BASE is the head the merge left, and the agent's unit (`resolve-1`, `fix-2`: the folder
+    `fwx scratch new <run> <unit>` makes, so what `wave report --unit` takes); else None. When the brief cannot be written
     (the plan or a context file is missing) `next` is `owner` and `why` says so, followed by the failure."""
     code, result = _merge(cwd, part_dir, run, branches, findings, final, say)
     result["next"], result["why"] = next_step(result, final)
-    result["brief"] = None
+    result["brief"] = result["unit"] = None
     if result["next"] in ("resolve", "fix"):
         try:
             top = _top(cwd)
-            result["brief"] = _write_brief(top, part_dir, run, config.load(top), result, result["why"], branches, findings)
+            result["unit"], result["brief"] = _write_brief(top, part_dir, run, config.load(top), result, result["why"], branches, findings)
         except (WaveError, config.ConfigError, state.StateError, OSError) as e:
             result["next"], result["why"] = "owner", "no brief could be written for the %s (%s): %s" % (
                 "resolver" if result["next"] == "resolve" else "fixer", e, result["why"])

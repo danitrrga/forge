@@ -248,6 +248,8 @@ def case_threshold(R, S):
                         ("the scratch order of the fixer", "fwx scratch new %s fix-2" % RUN), ("the file of a finding", "src/a.py"), ("the plan", "plan.md")):
         S.ok("3 findings: the fixer's brief names %s" % label, want in text, "missing %r" % want)
     S.eq("3 findings: the head the fixer starts from", v.get("head"), W.to)
+    # G1: `unit` is the agent that follows (what `wave report --unit` reads), the fixer here
+    S.eq("3 findings: the unit of the fixer that follows", v.get("unit"), "fix-2")
     S.eq("3 findings: the groups", [len(v.get(k) or []) for k in ("fix", "consider", "note", "dismissed", "file")], [3, 0, 0, 0, 0])
     S.eq("3 findings: reported", v.get("reported"), 3)
     S.eq("the criteria of the pass are returned", [c["id"] + c["met"] for c in v.get("criteria") or []], ["C1yes", "C2yes"])
@@ -486,6 +488,9 @@ def case_verdicts(R, S):
     S.ok("the fixer's brief names only the finding to fix", os.path.isfile(fb) and "claim of F1" in read(fb) and "claim of F2" not in read(fb), fb)
     S.ok("`why` is the text for `wave fix --why`", (v.get("why") or "").startswith("review findings to fix: r1-F1"), v.get("why"))
     S.eq("the head the fixer starts from", v.get("head"), W.to)
+    # G1: after the verifier, `unit` is the fixer's, not `r1-verifier`
+    # Red before: FAIL: the unit of the fixer that follows the verifier: got 'r1-verifier', want 'fix-1'
+    S.eq("the unit of the fixer that follows the verifier", v.get("unit"), "fix-1")
     # D25 (09-trim): a verified finding of severity low goes to consider, never to fix; only medium and high trigger a fix round and a new gate
     # Red before: FAIL: D25: a low `fix` verdict is not fixed, a medium and a high one are: got ['r1-F1', 'r1-F2', 'r1-F3', 'r1-F4'], want ['r1-F2', 'r1-F3', 'r1-F4']
     W = World()
@@ -640,6 +645,10 @@ MUTANTS = [
      "a protected path of the last final merge launches the security reviewer"),
     ("a missing postmortem.md is an error again", case_small_plan, V_, 'asked = prepare._security_why(data, owner["postmortem"], config.load(top))',
      'asked = plan.load_postmortem(owner["postmortem"]) and []', "small plan, no postmortem, security_review false: exit"),
+    ("the fixer's unit is the verifier's", case_verdicts, V_, "**dict(common, unit=unit))", "**common)",
+     "the unit of the fixer that follows the verifier"),
+    ("the fixer's unit is not returned", case_threshold, V_, "**dict(common, unit=unit))", "**dict(common, unit=None))",
+     "3 findings: the unit of the fixer that follows"),
     ("a low `fix` verdict is fixed (D25 undone)", case_verdicts, V_, 'severity == "low"\n', 'severity == "never"\n',
      "D25: a low `fix` verdict is not fixed, a medium and a high one are"),
     ("a verdict `consider` is fixed", case_verdicts, V_, 'elif verdict == "consider":', 'elif verdict == "fix":',
