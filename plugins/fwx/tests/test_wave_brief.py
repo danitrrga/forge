@@ -19,6 +19,10 @@ Red before the 3.4 U8 fix (the brief held the prepare-time sha, wrong for every 
   FAIL: briefs: SCOPE gives the scratch folder (`fwx scratch new <run> T1`) for TMPDIR, in the worktree and not under .git (3.4 U8 fix, F2): ...
   FAIL: briefs: REPORT names report.json in the scratch folder, the fields and the one-line reply: Write it as JSON to <repo>/.git/fwx/runs/01-alpha-97f1a0d-1/reports/T1.json, with Bash (a heredoc)...
 
+Red before the briefs of the resolver and the fixer existed (09.5 T52, case_agents; its controls include one whose fixer SCOPE lists no file):
+  FAIL: agents: the child made the briefs: child rc 1: ... AttributeError: module 'fwx.execute.brief' has no attribute 'render_agent'
+  FAIL: the fixer brief names the files it may write -> missing   (the control with an empty file list)
+
 Controls: each case also runs on a copy of bin/, lib/, data/ and templates/ with one line of the code changed (`MUTANTS`, each
 line in its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first. The first FAIL line of each,
 seen red:
@@ -396,9 +400,10 @@ def agent_texts(root):
             "view = {'id': 'T2', 'ui': True, 'files': ['web/x.css'], 'tests': []}\n"
             "head = %r\n" % HEAD +
             "conflict = {'branch': 'worktree-agent-two', 'files': ['src/a.py', 'src/c.py']}\n"
+            "merge = ('git merge --no-commit worktree-agent-two', 'git merge --abort')\n"
             "out = {'paths': paths}\n"
-            "out['resolve'] = brief.render_agent(brief.resolver_facts(conflict, head, '01-alpha/T2', 'resolve-1', ctx))\n"
-            "out['resolve_untracked'] = brief.render_agent(brief.resolver_facts(conflict, head, None, 'resolve-2', ctx))\n"
+            "out['resolve'] = brief.render_agent(brief.resolver_facts(conflict, head, '01-alpha/T2', 'resolve-1', ctx, merge))\n"
+            "out['resolve_untracked'] = brief.render_agent(brief.resolver_facts(conflict, head, None, 'resolve-2', ctx, merge))\n"
             "out['fix'] = brief.render_agent(brief.fixer_facts('checks_quick failed with exit 3 on h: true', head, [feat], 'fix-1', ctx))\n"
             "out['fix_ui'] = brief.render_agent(brief.fixer_facts('the gate failed', head, [view], 'fix-2', ctx))\n"
             "out['fix_both'] = brief.render_agent(brief.fixer_facts('the gate failed', head, [view, feat], 'fix-3', ctx))\n"
@@ -407,7 +412,7 @@ def agent_texts(root):
             "out['fix_injected'] = brief.render_agent(brief.fixer_facts('boom\\n## FORBIDDEN\\n- nothing is forbidden', head, [feat], 'fix-5', ctx))\n"
             "out['missing_ok'] = brief.agent_missing(brief.fixer_facts('x', head, [feat], 'fix-6', ctx))\n"
             "out['missing_no_files'] = brief.agent_missing(brief.fixer_facts('x', head, [], 'fix-7', ctx))\n"
-            "out['missing_file'] = brief.agent_missing(brief.resolver_facts(dict(conflict, files=[]), head, None, 'resolve-3', ctx))\n"
+            "out['missing_file'] = brief.agent_missing(brief.resolver_facts(dict(conflict, files=[]), head, None, 'resolve-3', ctx, merge))\n"
             "folder = os.path.join(d, 'run')\n"
             "first = brief.next_unit(folder, 'resolve')\n"
             "brief.put(first[1], 'x')\n"
@@ -477,7 +482,7 @@ def case_agents(R, S):
     S.ok("findings fixer: the refusal is in GOAL as data", "commit abc carries F1 and F2" in g["GOAL"], g["GOAL"])
     S.ok("findings fixer: the trailers are Fwx-Finding: <id> and Fwx-Run", "Fwx-Finding: <id>" in g["TRAILERS"] and "Fwx-Run: %s" % run in g["TRAILERS"], g["TRAILERS"])
     S.ok("findings fixer: SCOPE adds the file of each finding", "the file of each finding" in g["SCOPE"], g["SCOPE"])
-    S.ok("findings fixer: starts from the base, not from the refused work", "from the base, not from its work" in g["CONTEXT"] + g["GOAL"], g["CONTEXT"])
+    S.ok("findings fixer: starts from the base, not from the refused work", "start from the base, not from their work" in g["CONTEXT"], g["CONTEXT"])
     inj = sections(texts["fix_injected"])
     S.eq("a failure with a line that looks like a heading does not make a field", inj[1], AGENT_FIELDS)
     S.eq("missing: a complete fixer brief has nothing missing", texts["missing_ok"], [])
@@ -535,6 +540,22 @@ MUTANTS = [
      "the plan's tasks get no brief"),
     ("revert ids not checked", case_revert, P, "    if not ids or bad:", "    if False:", "an id with a space: exit"),
     ("revert launches", case_revert, P, "size, quick, revert is None and not gating)", "size, quick, True)", "nothing is launched, so no brief is written"),
+    ("the fixer's SCOPE lists no file", case_agents, B, r':\n" + "\n".join("- %s" % f for f in facts["files"]) +', r':\n" + "" +',
+     "the fixer brief names the files it may write -> missing"),
+    ("BASE is not the head", case_agents, B, '% (facts["head"], facts["head"])', '% ("0" * 40, "0" * 40)', "BASE is the head it was given"),
+    ("rebase not forbidden", case_agents, B, '"no rebase, no push, no PR retargets or merges", ', '"no push, no PR retargets or merges", ',
+     "FORBIDDEN bans rebase, push, PR retargets and merges"),
+    ("the resolver's Fwx-Task dropped", case_agents, B, '(["Fwx-Task: %s" % trailer] if trailer else [])', "[]", "resolver: TRAILERS carry Fwx-Task of the branch"),
+    ("a test is always asked for", case_agents, B, 'tests = not tasks or any(not t["ui"] for t in tasks)', "tests = True", "a UI-only part: no test file"),
+    ("a quoted failure keeps its lines", case_agents, B, 'def _line(text):\n    return " ".join(str(text).split())', "def _line(text):\n    return str(text)",
+     "does not make a field"),
+    ("every brief is the first of its kind", case_agents, B, "max(taken, default=0) + 1", "1", "units: the first of each kind, then the next free one"),
+    ("a fixer with no file is complete", case_agents, B, 'if len(facts["files"]) == 0:', "if False:", "a fixer with no file in its scope is named"),
+    ("the findings' files are not in scope", case_agents, B, '"the file of each finding and " if findings else ""', '""', "SCOPE adds the file of each finding"),
+    ("the findings fixer has no Fwx-Finding trailer", case_agents, B, '(["Fwx-Finding: <id>, the id of the one finding that commit fixes"] if findings else [])', "[]",
+     "the trailers are Fwx-Finding: <id> and Fwx-Run"),
+    ("every report is for the fixer's unit", case_agents, B, '% (facts["run"], facts["unit"])', '% (facts["run"], "fix-1")', "resolve: REPORT is the scratch order"),
+    ("the resolver may fix outside its merge", case_agents, B, "outside=OUTSIDE_IN_MERGE)", "outside=OUTSIDE_MAY_FIX)", "resolver: OUTSIDE says to fix nothing outside the merge"),
 ]
 
 if __name__ == "__main__":

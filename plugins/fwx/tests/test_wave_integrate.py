@@ -19,6 +19,10 @@ Red before `summary` looked at the run's own gate (3.4 U8 fix, F3: `summary --ru
   FAIL: summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got 'pass': got ('pass', 0), want ('fail', 1)
   FAIL: summary, the run's own last gate is red, later green evidence: gate got 'pass': got ('pass', 0), want ('fail', 1)
 
+Red before `next` existed (09.5 T52; case_next and case_next_rules, a conflict, a red check, findings, a lock, a final merge, a result that names no cause):
+  FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
+  FAIL: next_step: one answer per case (AttributeError: module 'fwx.execute.integrate' has no attribute 'next_step'): got 0, want 12
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each `old` must be in
 its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (138 checks, 170 with the controls).
 The first FAIL line of each mutant, seen red:
@@ -689,7 +693,7 @@ def case_next(R, S):
     S.eq("the fixer's brief is the first of its kind", os.path.basename(v.get("brief") or ""), "_fix-1.md")
     has(S, "fixer", text, "fwx base %s" % sq.head(), "src/a.py", "src/b.py", "Fwx-Run: %s" % sq.run, "no rebase", "nothing written in `.fwx/`",
         "fwx linear new --template general", "fwx scratch new %s fix-1" % sq.run, "exit 3", "A defect you see outside this work is yours")
-    S.ok("quick red: no Fwx-Finding trailer without findings", "Fwx-Finding" not in text)
+    S.ok("quick red: no Fwx-Finding trailer without findings", "Fwx-Finding: <id>" not in text)
     sq.stop()
 
     sf = Scene()
@@ -809,6 +813,19 @@ MUTANTS = [
     ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),
     ("step files all numbered 0", case_step_files, W, "n = 1 + max(", "n = 0 * max(", "step files: one per call, numbered"),
+    ("a conflict goes to a fixer", case_next, I, 'return "resolve", "the branch', 'return "fix", "the branch', "a conflict says next resolve"),
+    ("a verify that could not run is fixed", case_next_rules, I, 'if v["rc"] != 1:', "if False:", "a verify that could not run says next owner"),
+    ("trusted edits go to the review", case_next, I, 'if result["trusted"]:', "if False:", "trusted edits say next owner"),
+    ("the last wave is never the final one", case_next, I, "if not final:", "if True:", "a green final merge says next review"),
+    ("a live lock is not named", case_next, I, 'if result["locked"]:\n        return "owner"', 'if False:\n        return "owner"',
+     "a live lock: why names the branch"),
+    ("the resolver starts from another base", case_next, I, 'facts = brief.resolver_facts(c, result["head"],', 'facts = brief.resolver_facts(c, "0" * 40,',
+     "resolver: the brief has 'fwx base"),
+    ("the resolver's task trailer is not read", case_next, I, '_trailer_of(top, c["branch"], _branch(top))', "None", "resolver: the brief has 'Fwx-Task: 01-alpha/two'"),
+    ("a brief that cannot be written stops the merge", case_next, I, "except (WaveError, config.ConfigError, state.StateError, OSError) as e:\n            result[\"next\"]",
+     "except config.ConfigError as e:\n            result[\"next\"]", "no plan to scope the resolver from: exit"),
+    ("a second brief overwrites no file but is no new unit", case_next, I, 'unit, path = brief.next_unit(folder, kind)', 'unit, path = kind + "-1", os.path.join(folder, "briefs", "_%s-1.md" % kind)',
+     "a second resolver's brief is a new file"),
 ]
 
 
