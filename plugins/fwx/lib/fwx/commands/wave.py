@@ -45,6 +45,9 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
       rounds are spent and nothing was spent now, 2 usage
   wave revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
   wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named from the run's files
+  wave report --part-dir D --run R --unit U --line "<last line of the reply>" --plane session|factory
+      exit 0 with `next` merge|relaunch|retry|owner|stop (execute/report.py says what each means and what it reads); a miss is
+      counted from the run's own files, so each call is recorded; 2 a usage error, an unreadable plan or configuration
   wave --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
       that merged branches passes only when its own last `wave merge --final` was green (`why` says when it was not): the evidence
       row is the part's, so another run's green gate on the same head is not this run's
@@ -55,7 +58,7 @@ import re
 import sys
 
 from fwx import config, plan_step, routes, state
-from fwx.execute import base, cleanup, integrate, prepare as prep, worktree_setup
+from fwx.execute import base, cleanup, integrate, prepare as prep, report, worktree_setup
 
 PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
@@ -68,6 +71,7 @@ USAGES = {
     "revert": "usage: fwx wave revert --part-dir D --run R --findings IDS\n",
     "cleanup": "usage: fwx wave remove --run R\n",
     "summary": "usage: fwx wave --run R [--part-dir D]\n",
+    "report": "usage: fwx wave report --part-dir D --run R --unit U --line \"<last line of the reply>\" --plane session|factory\n",
 }
 _RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
@@ -252,16 +256,19 @@ def _recorded_branches(top, run):
 
 
 def do_step(step, argv):
-    """integrate, fix-round, revert, cleanup and summary: parse, run, print the JSON, record it."""
+    """integrate, fix-round, revert, cleanup, summary and report: parse, run, print the JSON, record it."""
     flags = ("--final",) if step == "integrate" else ()
     valued = {"integrate": ("--part-dir", "--run", "--findings"), "fix-round": ("--part-dir", "--why", "--run"),
-              "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir")}[step]
+              "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir"),
+              "report": ("--part-dir", "--run", "--unit", "--line", "--plane")}[step]
     parsed = _parse(argv, flags, valued, many=("--branches",) if step == "integrate" else ())
     need = {"integrate": ("--part-dir", "--run") + (() if parsed and "--final" in parsed[0] else ("--branches",)), "fix-round": ("--part-dir", "--why"),
-            "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",)}[step]
+            "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",),
+            "report": ("--part-dir", "--run", "--unit", "--line", "--plane")}[step]
     if parsed is None or parsed[1] or any(k not in parsed[0] for k in need) \
             or ("--run" in parsed[0] and not _RUN_NAME.match(parsed[0]["--run"])) \
-            or ("--findings" in parsed[0] and not _ids(parsed[0]["--findings"])):
+            or ("--findings" in parsed[0] and not _ids(parsed[0]["--findings"])) \
+            or (step == "report" and (not base.NAME.match(parsed[0]["--unit"]) or parsed[0]["--plane"] not in ("session", "factory"))):
         sys.stderr.write(USAGES[step])
         return 2
     got = parsed[0]
@@ -285,6 +292,9 @@ def do_step(step, argv):
         elif step == "revert":
             args = {"part_dir": part, "run": run, "findings": findings}
             code, result = integrate.revert(".", part, findings, say)
+        elif step == "report":
+            args = {"part_dir": part, "run": run, "unit": got["--unit"], "line": got["--line"], "plane": got["--plane"]}
+            code, result = report.judge(".", part, run, got["--unit"], got["--line"], got["--plane"], _steps(top, run))
         elif step == "cleanup":
             args = {"run": run}
             result = cleanup.cleanup(".", run, _recorded_branches(top, run))

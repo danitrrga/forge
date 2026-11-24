@@ -56,6 +56,7 @@ ROWS = [
     ("wave", "wave summary", "wave", ["summary"], "did a run's gate pass (the default of `wave`): --run R [--part-dir D]"),
     ("wave new", "wave prepare", "wave", ["prepare"], "prepare a part for `execute`: --part-dir D --plane session|factory --branch W [...]"),
     ("wave merge", "wave integrate", "wave", ["integrate"], "join the branches of a wave and run the gate: --part-dir D --run R (--branches B... | --final)"),
+    ("wave report", None, "wave", ["report"], "judge an executor's report and say what comes next: --part-dir D --run R --unit U --line \"<last line>\" --plane session|factory"),
     ("wave fix", "wave fix-round", "wave", ["fix-round"], "decide whether a failure may be fixed, spending a round: --part-dir D --why TEXT [--run R]"),
     ("wave revert", None, "wave", ["revert"], "undo the commits of findings: --part-dir D --run R --findings IDS"),
     ("wave remove", "wave cleanup", "wave", ["cleanup"], "remove what a run's waves left: --run R"),
