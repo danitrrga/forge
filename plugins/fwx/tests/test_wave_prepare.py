@@ -875,7 +875,7 @@ def case_base_ci(R, S):
             ("the origin is not on GitHub", "https://git.example.org/o/r.git", "master", True),
             ("there is no origin", None, "master", True)]:
         sc = scene(origin, branch)
-        r, n = go(sc, tool_dir(stub(sc, [ok]) if gh else None))
+        r, n = go(sc, tool_dir(stub(sc, [ok], branch=branch or "") if gh else None))
         S.eq("ci not used, %s: the checks run here" % label, (r.returncode, n), (0, 1))
         S.ok("ci not used, %s: one line says why" % label, r.stderr.count("base checks: CI not used") == 1 and "CI passed" not in r.stderr, r.stderr)
         S.eq("ci not used, %s: the row is the local one, not CI's" % label, source_rows(sc), ["profile"])
@@ -896,12 +896,18 @@ MUTANTS = [
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
     ("red base not run", case_red_base, P, "results = [verify.run_check(c, top, timeout) for c in recipe]", "results = []",
      "prepare exit 0 on a red base"),
-    ("CI: only a red run is not green", case_base_ci, P, 'if any(c != "success" for c in got):', 'if any(c == "failure" for c in got):',
-     "ci not used, the run is pending: the checks run here"),
-    ("CI: a base off the default branch is trusted", case_base_ci, P, "    if off:\n", "    if False:\n",
-     "ci green but the base is not on origin/master: the checks run here"),
+    ("CI: a run that is not completed and green is trusted", case_base_ci, P, "    if bad:\n", "    if False:\n",
+     "ci not used, the push run is in progress: the checks run here"),
+    ("CI: another workflow's run counts", case_base_ci, P, "for x in rows if x[0] == CI_WORKFLOW]", "for x in rows]",
+     "ci not used, another workflow's push run is green: the checks run here"),
+    ("CI: the query sees pull request runs", case_base_ci, P, "head_sha=%s&event=push&branch=%s", "head_sha=%s&branch=%s",
+     "ci green: the checks are not run here"),
+    ("CI: no default branch is trusted", case_base_ci, P, "    if not isinstance(branch, str) or not branch:\n", "    if False:\n",
+     "ci not used, no default_branch: the checks run here"),
     ("CI: gh's exit status ignored", case_base_ci, P, "if r.returncode != 0:", "if False:",
      "ci not used, gh exits non-zero, even after printing success: the checks run here"),
+    ("CI: a CI answer leaves an evidence row", case_base_ci, P, "    if _ci_green(top, base, say, cfg):\n",
+     "    if _ci_green(top, base, say, cfg):\n        _remember(part, base, recipe, folders, cfg)\n", "ci green: no evidence row"),
     ("record of another sha stands in", case_base_reuse, P, 'row.get("sha") != base or ', "",
      "reuse: stale record, a record of an older sha stands in for nothing"),
     ("sibling part's record not read", case_base_reuse_sibling, P, "    for d in own + siblings:\n", "    for d in own:\n",
