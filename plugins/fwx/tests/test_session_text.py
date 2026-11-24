@@ -245,6 +245,10 @@ def main():
     check("control: `details.reason` is flagged, `reason` is a top-level field only", cited_missing("read `details.reason`", returned) == ["reason"], "got %s" % cited_missing("read `details.reason`", returned))
     check("control: a details field is read as a details field", cited_missing("read `details.gaps` and `details.fix_file`", returned) == [])
     check("control: a cited field the workflow does not return is caught", cited_missing("read `details.unverfied`", returned) == ["unverfied"])
+    # the runner has its own model role (haiku in the seed): step 6 reads it from `fwx model runner small`, not from the executor's.
+    # Seen red on d348f8d: FAIL: SKILL.md step 6 reads models.runner from `fwx model runner small` -> missing
+    s6 = step(texts["SKILL.md"], 6)
+    check("SKILL.md step 6 reads models.runner from `fwx model runner small`", "`models.runner` from `fwx model runner small`" in s6 and "models.runner` from `fwx model executor" not in s6, "missing")
 
     # Rule 4: the documents are committed in the main checkout, only the documents: `.md` and `.tsv` files and the `demo/` pages, so the walk's
     # `demo-state.json` (demo session cookies), logs and screenshots stay untracked. The command line is run here as written, in a toy repo. A

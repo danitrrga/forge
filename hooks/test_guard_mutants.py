@@ -77,6 +77,22 @@ MUTANTS = {
         ("    for seg in pieces(pcmd):\n        if _creates_issue(seg):\n            return (\"gh issue create is refused:",
          "    if not any(os.path.isfile(os.path.join(d, \"scripts\", \"backlog\", \"backlog.mjs\")) for d in (PROJECT, CWD[0])):\n"
          "        return None\n    for seg in pieces(pcmd):\n        if _creates_issue(seg):\n            return (\"gh issue create is refused:"),
+    "drop the Orca chat rule (a second chat of the same agent opens)":
+        ("            reason = orca_chat_refusal(pcmd) if \"orca\" in low else None\n", "            reason = None\n"),
+    "Orca chat rule counts every agent's chats, not the launched agent's":
+        ("str(a.get(\"agent\")).lower() == agent]", "True]"),
+    "Orca chat rule ignores ORCA_NEW_TOPIC":
+        ("    has_topic = has_topic or any(n == \"ORCA_NEW_TOPIC\" and v.strip() for n, v in assigns)\n", ""),
+    "Orca chat rule takes an empty ORCA_NEW_TOPIC as a reason":
+        ("n == \"ORCA_NEW_TOPIC\" and v.strip()", "n == \"ORCA_NEW_TOPIC\""),
+    "Orca chat rule covers claude too":
+        ("agent in ORCA_OWN_AGENTS else", "False else"),
+    "Orca chat rule asks only the working directory, no walk up to the worktree":
+        ("ORCA_WALK_UP = 6", "ORCA_WALK_UP = 1"),
+    "Orca chat rule crashes when orca is not installed (exit 1 does not block, but the note is lost)":
+        ("        except OSError as e:\n            return None, \"orca did not run", "        except ZeroDivisionError as e:\n            return None, \"orca did not run"),
+    "Orca chat rule waits for a slow orca without a limit":
+        ("                               timeout=left, stdin", "                               timeout=None, stdin"),
     "drop git commit -n":
         ('        if re.match(r"^-[a-zA-Z]+$", a) and "n" in a[1:]:', "        if False:"),
     "drop .env.example exclusion (over-block)":

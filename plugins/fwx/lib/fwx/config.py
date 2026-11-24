@@ -20,7 +20,7 @@ FILE = os.path.join(".claude", "fwx.json")
 ROLES = ("orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem", "planner", "post-mortem",
          "executor", "reviewer", "review-verifier", "security-reviewer", "ui-walker", "ui-verifier",
          "skill-proposer", "factory-orchestrator", "intake", "classifier", "detector", "analytics-verifier",
-         "vision")
+         "vision", "runner")
 SIZES = ("small", "normal", "big")
 ALIASES = ("sonnet", "opus", "haiku", "fable")  # a model is one of these, never a full id
 MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; a bigger number overflows the wait on the child
@@ -28,10 +28,11 @@ MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; 
 
 def _seed():
     """Sonnet for every role, then the seed's exceptions: the planner decides direction (Opus), the detector, the
-    decisions log and the state files are mechanical (Haiku), the UI walker starts cheap, the analytics verifier escalates on a big job."""
+    decisions log, the state files and the runner (an agent that only runs one shell command and returns its output) are
+    mechanical (Haiku), the UI walker starts cheap, the analytics verifier escalates on a big job."""
     models = {r: {z: "sonnet" for z in SIZES} for r in ROLES}
     models["planner"] = {z: "opus" for z in SIZES}
-    for r in ("detector", "decisions", "state"):
+    for r in ("detector", "decisions", "state", "runner"):
         models[r] = {z: "haiku" for z in SIZES}
     models["ui-walker"]["small"] = "haiku"
     models["analytics-verifier"]["big"] = "opus"

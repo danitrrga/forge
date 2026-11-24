@@ -166,8 +166,8 @@ finally:
 
 # --- roles, sizes, model()
 s.eq("sizes", config.SIZES, ("small", "normal", "big"))
-s.eq("21 roles", len(config.ROLES), 21)
-for role in ("orchestrator", "pre-mortem", "planner", "executor", "review-verifier", "ui-walker", "vision"):
+s.eq("22 roles", len(config.ROLES), 22)
+for role in ("orchestrator", "pre-mortem", "planner", "executor", "review-verifier", "ui-walker", "vision", "runner"):
     s.ok("role %s" % role, role in config.ROLES)
 s.eq("the seed has every role and size", sorted((r, z) for r in config.ROLES for z in config.SIZES),
      sorted((r, z) for r, v in config.DEFAULTS["models"].items() for z in v))
@@ -183,6 +183,7 @@ for role in ("decisions", "state"):
          "got %r" % [config.model(cfg, role, z) for z in config.SIZES])
 s.ok("seed: planner is opus at every size", all(config.model(cfg, "planner", z) == "opus" for z in config.SIZES))
 s.eq("seed: executor is sonnet", config.model(cfg, "executor", "big"), "sonnet")
+s.eq("seed: runner is haiku at every size", [config.model(cfg, "runner", z) for z in config.SIZES], ["haiku"] * 3)
 for role, size, what in (("nosuch", "small", "role"), ("executor", "huge", "size")):
     try:
         config.model(cfg, role, size)
