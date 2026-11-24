@@ -39,6 +39,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -1494,11 +1495,21 @@ def start_order(files):
 TAIL_LINES = 100
 
 
-def failure_tail(output):
-    """The last TAIL_LINES lines of a failing file's output, indented under its FAIL line, as one string starting with a newline ("" for none)."""
+def failure_tail(output, code=None):
+    """The last TAIL_LINES lines of a failing file's output, indented under its FAIL line, as one string starting with a newline. A file that
+    printed nothing says how it ended instead (`code` is subprocess's: negative for a signal), since a silent death is the one case where
+    the output cannot say it."""
     lines = output.splitlines()
     if not lines:
-        return "\n    (the file printed nothing)"
+        how = ""
+        if code is not None and code < 0:
+            try:
+                how = "; killed by %s" % signal.Signals(-code).name
+            except ValueError:
+                how = "; killed by signal %d" % -code
+        elif code is not None:
+            how = "; exit code %d" % code
+        return "\n    (the file printed nothing%s)" % how
     cut = max(0, len(lines) - TAIL_LINES)
     head = ["    (%d earlier line(s) not shown)" % cut] if cut else []
     return "\n" + "\n".join(head + ["    " + l for l in lines[cut:]])
@@ -1594,7 +1605,7 @@ def cmd_test(a):
             return lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why)
         if r.returncode == 0:
             return lib.Result("PASS", os.path.basename(f), f)  # success is silent: its output is dropped
-        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s" % (f, failure_tail(r.stdout)))
+        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s" % (f, failure_tail(r.stdout, r.returncode)))
 
     if workers == 1:
         results.extend(run_one(f) for f in todo)
