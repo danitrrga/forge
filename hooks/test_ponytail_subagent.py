@@ -11,6 +11,9 @@ ruleset, got exit 0, stdout ''" and the same for fwx:security-reviewer, 2 of 40 
 already passed, as they must. Earlier: before the hook existed every case failed ("can't open file .../ponytail_subagent.py",
 17 of 17), and with the allowlist check removed 7 failed, from "gsd-planner: want no output, got the
 ruleset" to "(empty agent_type): want no output, got the ruleset".
+Seen to fail first for the review sentence (09.3 T31), on the hook as it was: "fwx:reviewer is told to run
+ponytail:ponytail-review, and to go on without it when it is not available -> not in its context" and the same for
+fwx:security-reviewer, 2 of 39 cases failed (Ponytail 5.3.2's own ruleset does not mention its review skill).
 The per-session cases (SEQUENCES) were added before the UserPromptSubmit half: 7 of 32 failed on the hook
 without it ("off: (silent, executor, planner, a new session) = (True, 'full', '-', 'full'), want (True, '-',
 '-', 'full')"). Mutated after: the session level ignored, 7 failed; "stop ponytail" ignored, "stop ponytail:
@@ -84,6 +87,11 @@ for agent in ON:
         ok = False
     if r.returncode != 0 or not ok:
         fails.append("%s: want the full ruleset, got exit %d, stdout %r, stderr %r" % (agent, r.returncode, r.stdout[:120], r.stderr[-200:]))
+    # Ponytail's own ruleset never says to run its review skill; the reviewers' texts no longer do either.
+    checked += 1
+    text = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"] if ok else ""
+    if "ponytail:ponytail-review" not in text or "the skill is not available" not in text.lower():
+        fails.append("%s is told to run ponytail:ponytail-review, and to go on without it when it is not available -> not in its context" % agent)
 
 for agent in OFF:
     checked += 1

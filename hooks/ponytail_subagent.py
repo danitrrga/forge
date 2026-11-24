@@ -15,7 +15,8 @@ reviewing, so `fwx:executor` and `fwx:review-verifier` are not listed.
 
 The list is an allowlist checked here, not a hook matcher, so a missing or unknown agent_type gets
 nothing. The text is Ponytail's own, built by the installed plugin's hooks/ponytail-instructions.js:
-forge copies none of it. A broken install exits 1, which Claude Code shows and does not block on.
+forge copies none of it; the one sentence after it, which tells the reviewers to run the plugin's review skill, is the
+hook's. A broken install exits 1, which Claude Code shows and does not block on.
 
 A `/ponytail lite|full|ultra|off`, a bare `/ponytail`, "stop ponytail" or "normal mode" changes the level
 these agents get for the rest of the session: the plugin keeps its mode per project, shared by every
@@ -29,6 +30,9 @@ import json, os, re, subprocess, sys, time
 PLUGIN = "ponytail@ponytail"
 LEVEL = "full"
 AGENTS = {"fwx:reviewer", "fwx:security-reviewer"}
+# Ponytail's ruleset does not name its review skill, so the reviewers' own texts used to; the hook says it once for all projects.
+REVIEW = ("\n\nRun the skill `ponytail:ponytail-review` on the diff you review, and judge what it returns by the same rules as "
+          "your other findings. If the skill is not available, go on without it and leave it out of the report: it is not a criterion.")
 BUILD = "process.stdout.write(require(process.argv[1]).getPonytailInstructions(process.argv[2]))"
 LEVELS = ("off", "lite", "full", "ultra")
 SESSION_ID = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
@@ -122,7 +126,7 @@ def main():
     except Exception as e:  # never block a subagent: say why on stderr and let it run without
         print("ponytail_subagent: %s: %s" % (type(e).__name__, e), file=sys.stderr)
         return 1
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": text}}))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": text + REVIEW}}))
     return 0
 
 

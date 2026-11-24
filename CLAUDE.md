@@ -63,6 +63,9 @@ only rollback: a `.bak` file is written once, ever.
    `.claude/settings.local.json`. Edit the source (`config/`, a project file, `forge/`) and run the generator.
 7. **Never read, print or copy a value from `credentials/`.** `config/secrets.json` links to it and the
    registry refers to a secret as `${VAR}`.
+8. **A `copied-from:` header sits only over text or code taken word for word.** Over code that was reimplemented the
+   header is `referent:` (a header once claimed a copy of a file that had been rewritten). `plugins/fwx/NOTICE` lists the
+   sources of the copies.
 
 ## Optional integrations
 
