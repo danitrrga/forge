@@ -77,6 +77,7 @@ def forge(repo, *args):
                           stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=300)
 
 
+SKIP_TEXT = 'print("NOT RUN, NOT ARMED: no such tool")\nraise SystemExit(77)\n'
 NAMES = ["test_a.py", "test_b.py", "test_c.py", "test_d.py", "test_e.py", "test_f.py", "test_g.py"]
 # sizes differ, so the order the files are dealt in is not the alphabetical one
 BODY = {n: "x = 1\n" * (10 * (i + 1)) for i, n in enumerate(NAMES)}
@@ -157,6 +158,37 @@ eq("no group, 9 shards of 7 files: the ninth has no file: exit 1", r.returncode,
 ok("no group, the empty shard is a FAIL line", "FAIL  shard 9/9" in r.stdout, r.stdout + r.stderr)
 r = forge(grepo, "fwx", "--shard", "1/3", "--expect-not-run", "tests/test_g.py")
 eq("group, --expect-not-run names a file of another shard: it is a known file, not a typo: exit 0", r.returncode, 0)
+
+# ---- the real fwx suite: its three slow files are dealt to three different shards -------------------------------------------------------
+# The deal is by bytes unless the slow files are pinned first: replayed over the real files by size alone, test_walk and
+# test_ui_walk_workflow both land in shard 1 of 3 (the first FAIL below on the code before FWX_SLOW_FIRST existed).
+fwx_root = os.path.join(FORGE, "plugins", "fwx")
+fwx_files = testgroup.test_files(fwx_root, env())
+slow = tuple(getattr(testgroup, "FWX_SLOW_FIRST", ()))
+ok("FWX_SLOW_FIRST names the slow fwx files", len(slow) == 3, repr(slow))
+ok("every FWX_SLOW_FIRST name is a tracked fwx test (a renamed file would leave the list stale)", all(f in fwx_files for f in slow), repr(slow))
+deal = testgroup.start_order(fwx_files, fwx_root) if hasattr(testgroup, "start_order") else sorted(
+    fwx_files, key=lambda f: (-os.path.getsize(os.path.join(fwx_root, f)), f))
+home = {f: i for i in range(1, 4) for f in take_shard(deal, (i, 3))}
+WANT_SLOW = ("tests/test_walk.py", "tests/test_execute_workflow.py", "tests/test_ui_walk_workflow.py")
+eq("the three slow fwx files are in three different shards of 3", sorted(home.get(f, 0) for f in WANT_SLOW), [1, 2, 3])
+eq("the fwx shards of 3 together are every file, once", sorted(f for i in (1, 2, 3) for f in take_shard(deal, (i, 3))), sorted(fwx_files))
+
+# ---- a shard that holds only declared files, and one with an undeclared exit 77 --------------------------------------------------------
+# Three slices of four files: test_a and test_b pass, test_decl exits 77 and is declared, test_skip exits 77 and is not. The sizes make
+# the deal test_a, test_decl, test_skip, test_b: shard 1 = a, b; shard 2 = decl alone; shard 3 = skip alone. Before this was handled,
+# shard 2 exited 1 (`expect and passed == 0`: "everything declared away proves nothing", true of a whole run, not of one slice).
+PAD = lambda n: "# pad\n" * n
+srepo = toy({"plugins/fwx/tests/test_a.py": "pass\n" + PAD(60), "plugins/fwx/tests/test_decl.py": SKIP_TEXT + PAD(30),
+             "plugins/fwx/tests/test_skip.py": SKIP_TEXT + PAD(20), "plugins/fwx/tests/test_b.py": "pass\n" + PAD(10)})
+codes = [forge(srepo, "fwx", "--shard", "%d/3" % i, "--expect-not-run", "tests/test_decl.py").returncode for i in (1, 2, 3)]
+eq("--shard 1/3 .. 3/3 with one declared and one undeclared 77: the declared-only shard is 0, the undeclared 77 is 77", codes, [0, 0, 77])
+codes = [forge(srepo, "fwx", "--shard", "%d/2" % i, "--expect-not-run", "tests/test_decl.py").returncode for i in (1, 2)]
+eq("--shard 1/2, 2/2: the shard with the undeclared 77 exits 77, the other 0", sorted(codes), [0, 77])
+r = forge(srepo, "fwx", "--expect-not-run", "tests/test_decl.py")
+eq("no shard: the whole run with an undeclared 77 is still 77", r.returncode, 77)
+only = toy({"plugins/fwx/tests/test_decl.py": SKIP_TEXT})
+eq("no shard: everything declared away proves nothing, still exit 1", forge(only, "fwx", "--expect-not-run", "tests/test_decl.py").returncode, 1)
 
 # ---- the workflow: every sharded job names the shards 1/N .. N/N, once each ------------------------------------------------------------
 text = open(os.path.join(FORGE, ".github", "workflows", "checks.yml")).read()
