@@ -19,6 +19,10 @@ Red before `summary` looked at the run's own gate (3.4 U8 fix, F3: `summary --ru
   FAIL: summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got 'pass': got ('pass', 0), want ('fail', 1)
   FAIL: summary, the run's own last gate is red, later green evidence: gate got 'pass': got ('pass', 0), want ('fail', 1)
 
+Red before `next` existed (09.5 T52; case_next and case_next_rules, a conflict, a red check, findings, a lock, a final merge, a result that names no cause):
+  FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
+  FAIL: next_step: one answer per case (AttributeError: module 'fwx.execute.integrate' has no attribute 'next_step'): got 0, want 12
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each `old` must be in
 its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (138 checks, 170 with the controls).
 The first FAIL line of each mutant, seen red:
@@ -48,7 +52,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
-from test_wave_prepare import mutant_tree, runner  # noqa: E402
+from test_wave_prepare import CRIT, front, mutant_tree, runner, task  # noqa: E402
 
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -86,6 +90,11 @@ class Scene:
         self.cwd = helpers.add_worktree(self.repo, "phase")
         self.part = os.path.join(self.repo, ".fwx", "milestones", "v1", "phases", "01-alpha")
         os.makedirs(self.part)
+        # what a brief is made from: the part's plan (its tasks' files and tests) and the phase's context and decisions
+        helpers.write(self.part, "plan.md", front({"size": {"tag": "normal", "parts": 1, "agents": 2}, "criteria": CRIT, "not_built": [], "later": [],
+                                                   "tasks": [task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])]}))
+        helpers.write(self.part, "context.md", "# context\n")
+        helpers.write(self.part, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
         self.base = self.head()
         self.run = "01-alpha-%s-1" % self.base[:7]
         self.common = os.path.join(self.repo, ".git")
@@ -623,9 +632,153 @@ def case_step_files(R, S):
     sc.stop()
 
 
+# ---------------------------------------------------------------------------------------------------- next
+
+def runs_file(sc, path):
+    """The text of a file the result names, which must be inside the run's briefs folder of the git common dir (never under the worktree)."""
+    want = os.path.join(os.path.realpath(sc.common), "fwx", "runs", sc.run, "briefs")
+    ok = isinstance(path, str) and os.path.isabs(path) and os.path.realpath(path).startswith(want + os.sep) and os.path.isfile(path)
+    return open(path, encoding="utf-8").read() if ok else ""
+
+
+def has(S, label, text, *needles):
+    for n in needles:
+        S.ok("%s: the brief has %r" % (label, n), n in text, "brief: %s" % text[:300].replace("\n", " | "))
+
+
+def case_next(R, S):
+    """C2: each result of `wave merge` says what follows (`next`, `why`) and, for resolve and fix, writes the brief and gives its path.
+    Seen red at d348f8d (python3 tests/test_wave_integrate.py):
+      FAIL: a green wave says next wave -> no next: got None, want 'wave'
+      FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
+      FAIL: quick red says next fix -> no next: got None, want 'fix'"""
+    sc = Scene()
+    b1 = sc.agent("one", [("src/a.py", "a1\n", None)])
+    v = ok_json(S, "next, a green wave", sc.integrate(R, b1))
+    S.eq("a green wave says next wave -> %s" % (v.get("next") or "no next"), v.get("next"), "wave")
+    S.ok("a green wave: why is a sentence and no brief is written", bool(v.get("why")) and not v.get("brief"), repr((v.get("why"), v.get("brief"))))
+    S.eq("a green wave writes no brief file", sc.step_files(), ["1-integrate.json"])
+    sc.stop()
+
+    sc = Scene()
+    b1 = sc.agent("one", [("src/a.py", "mine\n", None)])
+    b2 = sc.agent("two", [("src/a.py", "yours\n", None)])
+    v = ok_json(S, "next, a conflict", sc.integrate(R, b1, b2), code=1)
+    S.eq("a conflict says next resolve -> %s" % (v.get("next") or "no next"), v.get("next"), "resolve")
+    S.ok("a conflict: why names the branch and the file", b2 in (v.get("why") or "") and "src/a.py" in (v.get("why") or ""), repr(v.get("why")))
+    text = runs_file(sc, v.get("brief"))
+    S.ok("a conflict: the brief is a file in the run's briefs folder", bool(text), repr(v.get("brief")))
+    S.eq("the resolver's brief is the first of its kind", os.path.basename(v.get("brief") or ""), "_resolve-1.md")
+    S.ok("a conflict: the head it names is the new one, after the merge of the first branch", v.get("head") == sc.head() != sc.base,
+         repr((v.get("head"), sc.head(), sc.base)))
+    has(S, "resolver", text, "fwx base %s" % sc.head(), "git merge --no-commit %s" % b2, "src/a.py", "Fwx-Run: %s" % sc.run, "Fwx-Task: 01-alpha/two",
+        "no rebase", "no push", "nothing written in `.fwx/`", "fwx linear new --template general", "fix nothing outside it",
+        "fwx scratch new %s resolve-1" % sc.run, "git merge --abort", "`question`")
+    S.ok("the resolver's brief names the plan and the file of the quick checks", os.path.join(sc.part, "plan.md") in text
+         and os.path.join(sc.repo, ".claude", "fwx.json") in text, text[:200])
+    S.ok("a conflict: no Fwx-Finding trailer in the resolver's brief", "Fwx-Finding" not in text)
+    S.ok("a conflict: the tree is clean, no merge is open", sc.clean())
+    v2 = ok_json(S, "next, the same conflict again", sc.integrate(R, b2), code=1)
+    S.eq("a second resolver's brief is a new file, the first stays", (os.path.basename(v2.get("brief") or ""), bool(runs_file(sc, v.get("brief")))),
+         ("_resolve-2.md", True))
+    has(S, "second resolver", runs_file(sc, v2.get("brief")), "fwx scratch new %s resolve-2" % sc.run)
+    sc.stop()
+
+    sq = Scene(quick=["exit 3"])
+    b = sq.agent("one", [("src/a.py", "a1\n", None)])
+    v = ok_json(S, "next, quick red", sq.integrate(R, b), code=1)
+    S.eq("quick red says next fix -> %s" % (v.get("next") or "no next"), v.get("next"), "fix")
+    S.ok("quick red: why says the exit, the head and the command", "exit 3" in (v.get("why") or "") and sq.head() in (v.get("why") or ""), repr(v.get("why")))
+    text = runs_file(sq, v.get("brief"))
+    S.eq("the fixer's brief is the first of its kind", os.path.basename(v.get("brief") or ""), "_fix-1.md")
+    has(S, "fixer", text, "fwx base %s" % sq.head(), "src/a.py", "src/b.py", "Fwx-Run: %s" % sq.run, "no rebase", "nothing written in `.fwx/`",
+        "fwx linear new --template general", "fwx scratch new %s fix-1" % sq.run, "exit 3", "A defect you see outside this work is yours")
+    S.ok("quick red: no Fwx-Finding trailer without findings", "Fwx-Finding: <id>" not in text)
+    sq.stop()
+
+    sf = Scene()
+    b = sf.agent("fix", [("src/a.py", "a1\n", ["F1", "F2"])])
+    v = ok_json(S, "next, one commit for two findings", sf.integrate(R, b, extra=("--findings", "F1,F2")), code=2)
+    S.eq("findings not one per commit says next fix -> %s" % (v.get("next") or "no next"), v.get("next"), "fix")
+    text = runs_file(sf, v.get("brief"))
+    has(S, "findings fixer", text, "Fwx-Finding: <id>", "F1", "F2", "one commit per finding", b, "fwx base %s" % sf.head())
+    sf.stop()
+
+    sl = Scene()
+    b_live = sl.agent("live", [("src/a.py", "a1\n", None)])
+    sl.lock(b_live, *sl.live())
+    v = ok_json(S, "next, a live lock", sl.integrate(R, b_live), code=2)
+    S.eq("a live lock says next owner -> %s" % (v.get("next") or "no next"), v.get("next"), "owner")
+    S.ok("a live lock: why names the branch, no brief", b_live in (v.get("why") or "") and not v.get("brief"), repr(v))
+    sl.stop()
+
+    sg = Scene(checks=["exit 1"])
+    b = sg.agent("one", [("src/a.py", "a1\n", None)])
+    v = ok_json(S, "next, a red gate", sg.integrate(R, b, extra=("--final",)), code=1)
+    S.eq("a red gate says next fix -> %s" % (v.get("next") or "no next"), v.get("next"), "fix")
+    has(S, "gate fixer", runs_file(sg, v.get("brief")), "the gate failed on %s" % sg.head())
+    sg.stop()
+
+    sw = Scene()
+    b = sw.agent("one", [(".github/workflows/ci.yml", "name: x\n", None)])
+    v = ok_json(S, "next, trusted edits", sw.integrate(R, b, extra=("--final",)))
+    S.eq("trusted edits say next owner -> %s" % (v.get("next") or "no next"), v.get("next"), "owner")
+    S.ok("trusted edits: why names the file, no brief", ".github/workflows/ci.yml" in (v.get("why") or "") and not v.get("brief"), repr(v))
+    sw.stop()
+
+    sp = Scene()
+    b = sp.agent("one", [("src/a.py", "a1\n", None)])
+    v = ok_json(S, "next, a green final merge", sp.integrate(R, b, extra=("--final",)))
+    S.eq("a green final merge says next review -> %s" % (v.get("next") or "no next"), v.get("next"), "review")
+    sp.stop()
+
+    sn = Scene()
+    b1 = sn.agent("one", [("src/a.py", "mine\n", None)])
+    b2 = sn.agent("two", [("src/a.py", "yours\n", None)])
+    os.remove(os.path.join(sn.part, "plan.md"))
+    v = ok_json(S, "next, a conflict and no plan to scope the resolver from", sn.integrate(R, b1, b2), code=1)
+    S.eq("no plan: the owner is asked and no brief is written -> %s" % (v.get("next") or "no next"), (v.get("next"), v.get("brief")), ("owner", None))
+    S.ok("no plan: why says which file is missing", "plan.md" in (v.get("why") or ""), repr(v.get("why")))
+    sn.stop()
+
+
+def case_next_rules(R, S):
+    """The rules of `next` on results that are hard to make in a toy repo: a setup that failed after the merges, a verify that could not
+    run (which is not a red gate), and the order when several things are wrong at once."""
+    base = {"ok": False, "head": "h", "merged": [], "conflict": None, "locked": [], "findings_check": {"ok": True, "problems": []},
+            "quick": {"ran": False, "cmds": [], "rc": 0}, "verify": {"ran": False, "rc": None, "line": ""}, "trusted": [], "protected": []}
+    code = ("import json, sys\nfrom fwx.execute import integrate\n"
+            "base = %r\n"
+            "print(json.dumps([integrate.next_step(dict(base, **over), final) for over, final in json.loads(sys.argv[1])]))\n" % base)
+    cases = [
+        ("a setup that failed", {"setup": "worktree setup failed: npm ci exited 1"}, False, "owner", "npm ci exited 1"),
+        ("a verify that could not run", {"verify": {"ran": True, "rc": 2, "line": ""}}, True, "owner", "verify could not run (exit 2)"),
+        ("a red gate", {"verify": {"ran": True, "rc": 1, "line": "evidence h x=1"}}, True, "fix", "the gate failed on h: evidence h x=1"),
+        ("red quick checks", {"quick": {"ran": True, "cmds": ["a", "b"], "rc": 4}}, False, "fix", "checks_quick failed with exit 4 on h: a ; b"),
+        ("a quick check that timed out", {"quick": {"ran": True, "cmds": ["a"], "rc": 1, "timed_out": ["a"], "limit": 9}}, False, "fix", "stopped after 9 s"),
+        ("a result that says nothing", {}, False, "owner", "says why in no field"),
+        ("a green merge", {"ok": True}, False, "wave", "merged"),
+        ("a green final", {"ok": True}, True, "review", "review"),
+        ("a green final with trusted edits", {"ok": True, "trusted": ["x.yml"]}, True, "owner", "x.yml"),
+        ("a lock and a conflict", {"locked": [{"branch": "b"}], "conflict": {"branch": "c", "files": ["f"]}}, False, "owner", "a live agent holds b"),
+        ("a setup that failed after a conflict", {"setup": "worktree setup failed: x", "conflict": {"branch": "c", "files": ["f"]}}, False, "owner", "worktree setup failed: x"),
+        ("a conflict", {"conflict": {"branch": "c", "files": ["f", "g"]}}, False, "resolve", "the branch c conflicts in f, g"),
+    ]
+    r = subprocess.run([sys.executable, "-c", code, json.dumps([[c[1], c[2]] for c in cases])],
+                       env=helpers.clean_env(PYTHONPATH=os.path.join(R.root, "lib")), capture_output=True, text=True)
+    try:
+        got = json.loads(r.stdout)
+    except ValueError:
+        got = []
+    S.eq("next_step: one answer per case (%s)" % r.stderr.strip()[-160:], len(got), len(cases))
+    for (label, _over, _final, want, needle), (nxt, why) in zip(cases, got):
+        S.eq("%s says next %s -> %s" % (label, want, nxt or "no next"), nxt, want)
+        S.ok("%s: why has %r" % (label, needle), needle in why, repr(why))
+
+
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
          case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
-         case_step_files]
+         case_step_files, case_next, case_next_rules]
 
 I = "lib/fwx/execute/integrate.py"
 C = "lib/fwx/execute/cleanup.py"
@@ -660,6 +813,19 @@ MUTANTS = [
     ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),
     ("step files all numbered 0", case_step_files, W, "n = 1 + max(", "n = 0 * max(", "step files: one per call, numbered"),
+    ("a conflict goes to a fixer", case_next, I, 'return "resolve", "the branch', 'return "fix", "the branch', "a conflict says next resolve"),
+    ("a verify that could not run is fixed", case_next_rules, I, 'if v["rc"] != 1:', "if False:", "a verify that could not run says next owner"),
+    ("trusted edits go to the review", case_next, I, 'if result["trusted"]:', "if False:", "trusted edits say next owner"),
+    ("the last wave is never the final one", case_next, I, "if not final:", "if True:", "a green final merge says next review"),
+    ("a live lock is not named", case_next, I, 'if result["locked"]:\n        return "owner"', 'if False:\n        return "owner"',
+     "a live lock: why names the branch"),
+    ("the resolver starts from another base", case_next, I, 'facts = brief.resolver_facts(c, result["head"],', 'facts = brief.resolver_facts(c, "0" * 40,',
+     "resolver: the brief has 'fwx base"),
+    ("the resolver's task trailer is not read", case_next, I, '_trailer_of(top, c["branch"], _branch(top))', "None", "resolver: the brief has 'Fwx-Task: 01-alpha/two'"),
+    ("a brief that cannot be written stops the merge", case_next, I, "except (WaveError, config.ConfigError, state.StateError, OSError) as e:\n            result[\"next\"]",
+     "except config.ConfigError as e:\n            result[\"next\"]", "no plan to scope the resolver from: exit"),
+    ("a second brief overwrites no file but is no new unit", case_next, I, 'unit, path = brief.next_unit(folder, kind)', 'unit, path = kind + "-1", os.path.join(folder, "briefs", "_%s-1.md" % kind)',
+     "a second resolver's brief is a new file"),
 ]
 
 

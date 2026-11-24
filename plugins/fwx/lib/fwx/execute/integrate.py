@@ -15,20 +15,25 @@ green, runs the gate (`core.verify`) and reports the trusted edits (with a `work
 `<base>..HEAD`, `base` being the sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
 is (the re-entry of `prepare --from gate`).
 
+The result also says what follows (`next_step`, as integrate() of workflows/execute.js sorts it): `next` is wave, review, resolve, fix or
+owner, `why` the text for `fwx wave fix --why`, and `brief` for resolve and fix the path of the brief written for that agent
+(execute/brief.py `resolver_facts`, `fixer_facts`), whose BASE is the head the merge left. A brief that cannot be written (no plan, a missing
+context file) makes the next step `owner` and says why. The session spends the round with `fix_round` before it launches either agent.
+
 `fix_round(cwd, part_dir, why)` decides whether a failure may be fixed and spends the round for it. If the last audit row is
 the red evidence of the checkout's HEAD, `verify` already made that failure a round and nothing more is spent. A failure is
 allowed only when fewer than `rounds` were spent before it: the third round is fixed, only the failure after it ends the job.
 
 `revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first, and then runs the setup again like `integrate`
 (`setup` in the result on a failure). `summary(...)` says whether the gate
-of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.core and execute.base, cleanup and worktree_setup.
+of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.plan, fwx.plan_step, fwx.core and execute.base, brief, cleanup and worktree_setup.
 """
 import json
 import os
 
-from fwx import config, state
+from fwx import config, plan, plan_step, state
 from fwx.core import decide, evidence, globs, rounds, trusted, verify
-from fwx.execute import cleanup, worktree_setup
+from fwx.execute import brief, cleanup, worktree_setup
 from fwx.execute.base import WaveError, git, linked, out
 
 
@@ -137,7 +142,115 @@ def _changed(top, base):
     return [p for p in r.stdout.splitlines() if p]
 
 
+def _oneline(text, limit=600):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def next_step(result, final):
+    """(next, why) for a merge result, as integrate() of workflows/execute.js sorts it. `next` is `wave` (merged: launch the next wave, or
+    merge the last with --final), `review` (the gate is green: review the diff), `resolve` (a conflict: a resolver), `fix` (a red check, a red
+    gate, commits that are not one per finding: a fixer) or `owner` (nothing an agent can fix: a verify that could not run, trusted edits, a
+    failed setup, a live lock, or a result that names no cause). For `resolve` and `fix`, `why` is the text for `fwx wave fix --why`."""
+    if result["ok"]:
+        if not final:
+            return "wave", "merged %s on %s: launch the next wave, or merge the last one with --final" % (", ".join(result["merged"]) or "nothing", result["head"])
+        if result["trusted"]:
+            return "owner", "the diff edits what the checks take as good, so the owner decides: %s" % ", ".join(result["trusted"])
+        return "review", "the gate is green on %s: review the diff since the run's base" % result["head"]
+    if result["locked"]:
+        return "owner", "a live agent holds %s: nothing was merged" % ", ".join(x["branch"] for x in result["locked"])
+    if isinstance(result.get("setup"), str) and result["setup"].strip():
+        return "owner", _oneline(result["setup"])
+    if result["findings_check"]["ok"] is False:
+        return "fix", "the commits were not one per finding: %s" % "; ".join(result["findings_check"]["problems"])
+    if result["conflict"]:
+        return "resolve", "the branch %s conflicts in %s" % (result["conflict"]["branch"], ", ".join(result["conflict"]["files"]))
+    q, v = result["quick"], result["verify"]
+    if q["ran"] and q["rc"] != 0:
+        why = "checks_quick failed with exit %s on %s: %s" % (q["rc"], result["head"], " ; ".join(q["cmds"]))
+        if q.get("timed_out"):
+            why += " (stopped after %s s: %s; raise project.check_timeout_s if the check needs longer)" % (q["limit"], " ; ".join(q["timed_out"]))
+        return "fix", why
+    if v["ran"] and v["rc"] != 0:
+        if v["rc"] != 1:
+            return "owner", "verify could not run (exit %s): %s" % (v["rc"], v["line"] or "no line")
+        return "fix", "the gate failed on %s: %s" % (result["head"], v["line"])
+    return "owner", "integrate was not ok and its result says why in no field"
+
+
+def _owner_dir(part):
+    """The folder of the phase a part belongs to: its context, decisions and critique are the phase's; a subphase has its own plan and audit."""
+    parent = os.path.dirname(part)
+    return parent if part in [str(p) for p in state.subphases(parent)] else part
+
+
+def _trailer_of(top, branch, phase):
+    """The `Fwx-Task` value of the newest commit of `branch` that has one, or None."""
+    r = git(top, "log", "refs/heads/" + branch, "--not", phase, "--no-merges", "--format=%(trailers:key=Fwx-Task,valueonly,unfold)%x1e")
+    for rec in r.stdout.split("\x1e") if r.returncode == 0 else []:
+        if rec.strip():
+            return rec.strip().splitlines()[0].strip()
+    return None
+
+
+def _write_brief(top, part_dir, run, cfg, result, why, branches, findings):
+    """The path of the brief written for the resolver or the fixer this result calls for, or raise WaveError saying why none could be."""
+    part = _resolve_part(part_dir)
+    try:
+        data = plan.load_plan(state.phase_paths(part)["plan"])
+    except (plan.PlanError, OSError) as e:
+        raise WaveError("the plan of the part cannot be read: %s" % e)
+    owner = state.phase_paths(_owner_dir(part))
+    paths = {"context": str(owner["context"]), "decisions": str(owner["decisions"]), "plan": str(state.phase_paths(part)["plan"]),
+             "config": os.path.join(config.main_checkout(top), config.FILE)}
+    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    folder = brief.folder_of(common, run)
+    ctx = {"run": run, "part": os.path.basename(part), "folder": folder, "paths": paths,
+           "quick": evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)}
+    kind = "resolve" if result["next"] == "resolve" else "fix"
+    unit, path = brief.next_unit(folder, kind)
+    if kind == "resolve":
+        c = result["conflict"]
+        facts = brief.resolver_facts(c, result["head"], _trailer_of(top, c["branch"], _branch(top)), unit, ctx,
+                                     ("git merge --no-commit %s" % c["branch"], "git merge --abort"))
+    else:
+        findings_failed = result["findings_check"]["ok"] is False
+        earlier = os.path.join(folder, "briefs", brief.FIX + ".md")
+        facts = brief.fixer_facts(why, result["head"], data["tasks"], unit, ctx, findings=list(findings) if findings_failed else (),
+                                  refused=list(branches) if findings_failed else (), fix_brief=earlier if findings_failed and os.path.isfile(earlier) else None)
+    missing = brief.agent_missing(facts)
+    if missing:
+        raise WaveError("; ".join(missing))
+    brief.put(path, brief.render_agent(facts))
+    return path
+
+
+def _resolve_part(part_dir):
+    try:
+        return plan_step.resolve(part_dir)
+    except plan_step.CannotRun as e:
+        raise WaveError(str(e))
+
+
 def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
+    """(exit code, result): `_merge`'s result, with `next` and `why` (`next_step`) and `brief`: for `resolve` and `fix`, the path of the
+    brief written for that agent (execute/brief.py), whose BASE is the head the merge left; else None. When the brief cannot be written
+    (the plan or a context file is missing) `next` is `owner` and `why` says so, followed by the failure."""
+    code, result = _merge(cwd, part_dir, run, branches, findings, final, say)
+    result["next"], result["why"] = next_step(result, final)
+    result["brief"] = None
+    if result["next"] in ("resolve", "fix"):
+        try:
+            top = _top(cwd)
+            result["brief"] = _write_brief(top, part_dir, run, config.load(top), result, result["why"], branches, findings)
+        except (WaveError, config.ConfigError, state.StateError, OSError) as e:
+            result["next"], result["why"] = "owner", "no brief could be written for the %s (%s): %s" % (
+                "resolver" if result["next"] == "resolve" else "fixer", e, result["why"])
+    return code, result
+
+
+def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
     """(exit code, result). The result is C.2's: {ok, head, merged, conflict, locked, findings_check, quick, verify, trusted,
     protected}, and `setup` (the line `worktree setup failed: ...`) only when the setup after the merges failed. Raises WaveError for what stops it before it merges anything and cleanup.NoProc without /proc."""
     top = _top(cwd)
