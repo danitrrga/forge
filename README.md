@@ -96,8 +96,8 @@ behind every "built".
    verified. An objection is a claim to judge, not something to build: it is checked against the code before the plan
    changes (Every's rule: risk has no natural limit, any design has one more way to fail). A script checks the plan's
    structure first (`fwx plan lint`). Built.
-5. **You are asked only what is yours.** A question to you is about taste or direction. It comes with the options and
-   what each one implies, and with no recommendation, so you decide without pressure. What the system can settle alone
+5. **You are asked only what is yours.** A question to you is about taste or direction. It comes with the options,
+   what each one implies and a recommendation with its reason, and you decide. What the system can settle alone
    it settles, notes and goes on. Built in the discuss skill.
 6. **Whoever checks did not make it.** Reviewers, a verifier that re-checks each finding, and a security reviewer are
    agents other than the executors, and they may find nothing. A dead agent, an empty return or a missing file is a
