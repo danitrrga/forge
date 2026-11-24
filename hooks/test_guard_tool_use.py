@@ -1787,6 +1787,154 @@ BACKLOG_CASES = [
     ("gh issue create --title t --repo other/repo", BL_WITH, BL_WITH, 0),
     ("gh issue create --repo=other/repo --title t", BL_WITH, BL_WITH, 0),
 ]
+# The Orca chat rule: `orca agent launch --agent X` is refused while a chat of the same agent X is listed by
+# `orca agent list` in the worktree the launch lands in, and the refusal names that chat so the agent sends to it. An
+# unrelated topic goes through with ORCA_NEW_TOPIC='<why>' in front of the command. A steering rule, not a security
+# one: when `orca` is missing, errors, answers something that is not the list, or takes over 3 s, the launch is
+# allowed with a one-line note. `claude` is outside the rule (a Claude session starting a Claude worker is the normal
+# way to split work). `orca` is a fake on a PATH that holds nothing else, which answers from a world.json the row
+# writes: {"mode": ok|error|garbage|unavailable|slow, "worktrees": {selector: [agent rows]}}, and logs each call's
+# argv to `calls`. Real shape, measured with `orca agent list --json`: {"ok": true, "result": {"agents":
+# [{"orcaSessionId", "kind": "chat"|"terminal", "agent": "antigravity", "state", "worktreeId": "<repo>::<path>",
+# "title", "updatedAt", ...}]}}; an unknown `--worktree path:X` is {"ok": false, "error": {"code":
+# "selector_not_found"}} with exit 1, and a subdirectory of a worktree is such an unknown path.
+# Red before the rule: every refusal row is rc=0 (the allow rows pass without it, as they must), e.g. "orca
+# 'orca agent launch --agent antigravity --prompt hi': wanted rc=2, got rc=0 ()".
+ORCA_FAKE = """#!%s
+import json, os, sys, time
+here = os.path.dirname(os.path.abspath(__file__))
+world = json.load(open(os.path.join(here, "world.json")))
+open(os.path.join(here, "calls"), "a").write(" ".join(sys.argv[1:]) + "\\n")
+mode = world["mode"]
+if mode == "slow":
+    time.sleep(10)
+if mode == "error":
+    sys.stderr.write("orca: the Orca runtime is not running\\n")
+    sys.exit(1)
+if mode == "garbage":
+    print("not json at all")
+    sys.exit(0)
+if mode == "unavailable":
+    print(json.dumps({"ok": False, "error": {"code": "runtime_unavailable"}}))
+    sys.exit(1)
+a = sys.argv[1:]
+sel = a[a.index("--worktree") + 1] if "--worktree" in a else None
+if a[:2] == ["agent", "list"] and sel in world["worktrees"]:
+    print(json.dumps({"ok": True, "result": {"agents": world["worktrees"][sel]}}))
+    sys.exit(0)
+print(json.dumps({"ok": False, "error": {"code": "selector_not_found", "message": "selector_not_found"}}))
+sys.exit(1)
+""" % sys.executable
+OR_SUB = os.path.join(REPO, "sub", "dir")
+
+
+def orca_chat(agent, sid, title="Design chat", updated=1, kind="chat"):
+    return {"orcaSessionId": sid, "kind": kind, "agent": agent, "state": "done", "title": title, "updatedAt": updated,
+            "worktreeId": "repo-id::" + REPO}
+
+
+ORCA_CASES = [
+    # dict keys: label, cmd, want (rc), why (texts the stderr must hold), world ({selector: [chats]}, None: no orca),
+    # mode, cwd, env, asked (the selectors `orca agent list` is called with, in order; [] means orca is not run).
+    dict(label="same agent open: refused, names the chat", cmd="orca agent launch --agent antigravity --prompt hi",
+         want=2, why=["an open antigravity chat exists in this project", "orca_session_id:ea71 (Design chat)",
+                      "orca orchestration send --to orca_session_id:ea71", "orca agent read ea71",
+                      "ORCA_NEW_TOPIC='<why it is unrelated>'", "instead"],
+         world={"path:" + REPO: [orca_chat("antigravity", "ea71")]}, asked=["path:" + REPO]),
+    dict(label="--agent=VALUE and --json", cmd="orca agent launch --agent=gemini --json", want=2, why=["orca_session_id:g1"],
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}),
+    dict(label="agent name in another case", cmd="orca agent launch --agent Gemini", want=2, why=["orca_session_id:g1"],
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}),
+    dict(label="a terminal agent counts too", cmd="orca agent launch --agent codex --surface terminal", want=2,
+         why=["orca_session_id:c1"], world={"path:" + REPO: [orca_chat("codex", "c1", "Codex run", kind="terminal")]}),
+    dict(label="behind cd and an env assignment", cmd="cd x && FOO=1 orca agent launch --agent gemini", want=2,
+         why=["orca_session_id:g1"], world={"path:" + REPO: [orca_chat("gemini", "g1")]}),
+    dict(label="nested bash -c", cmd="bash -c 'orca agent launch --agent gemini --prompt x'", want=2,
+         why=["orca_session_id:g1"], world={"path:" + REPO: [orca_chat("gemini", "g1")]}),
+    dict(label="two open: the latest one is named, the count is said", cmd="orca agent launch --agent gemini", want=2,
+         why=["orca_session_id:g2 (Newer)", "2 open"],
+         world={"path:" + REPO: [orca_chat("gemini", "g1", "Older", 1), orca_chat("gemini", "g2", "Newer", 9)]}),
+    dict(label="cwd in a subfolder: the walk up finds the worktree", cmd="orca agent launch --agent gemini", want=2,
+         why=["orca_session_id:g1"], cwd=OR_SUB, world={"path:" + REPO: [orca_chat("gemini", "g1")]},
+         asked=["path:" + OR_SUB, "path:" + os.path.dirname(OR_SUB), "path:" + REPO]),
+    dict(label="--worktree is the one asked", cmd="orca agent launch --agent gemini --worktree path:/elsewhere", want=2,
+         why=["orca_session_id:g9"], world={"path:/elsewhere": [orca_chat("gemini", "g9")]}, asked=["path:/elsewhere"]),
+    dict(label="ORCA_NEW_TOPIC with a reason lets it through, orca not run",
+         cmd="ORCA_NEW_TOPIC='unrelated: billing question' orca agent launch --agent gemini", want=0,
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}, asked=[]),
+    dict(label="env ORCA_NEW_TOPIC", cmd="env ORCA_NEW_TOPIC=other orca agent launch --agent gemini", want=0,
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}, asked=[]),
+    dict(label="an empty ORCA_NEW_TOPIC is no reason", cmd="ORCA_NEW_TOPIC= orca agent launch --agent gemini", want=2,
+         why=["orca_session_id:g1"], world={"path:" + REPO: [orca_chat("gemini", "g1")]}),
+    dict(label="only another agent's chat is open", cmd="orca agent launch --agent gemini", want=0,
+         world={"path:" + REPO: [orca_chat("codex", "c1"), orca_chat("claude", "k1")]}),
+    dict(label="the same agent open in another worktree only", cmd="orca agent launch --agent gemini --worktree path:/elsewhere",
+         want=0, world={"path:" + REPO: [orca_chat("gemini", "g1")], "path:/elsewhere": []}),
+    dict(label="no session at all", cmd="orca agent launch --agent gemini", want=0, world={"path:" + REPO: []}),
+    dict(label="claude is outside the rule, orca not run", cmd="orca agent launch --agent claude", want=0,
+         world={"path:" + REPO: [orca_chat("claude", "k1")]}, asked=[]),
+    dict(label="a launch with no --agent is left to orca", cmd="orca agent launch --json", want=0,
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}, asked=[]),
+    dict(label="fail open: orca exits 1", cmd="orca agent launch --agent gemini", want=0, why=["chat check skipped"],
+         mode="error", world={}),
+    dict(label="fail open: orca says it is unavailable", cmd="orca agent launch --agent gemini", want=0,
+         why=["chat check skipped", "runtime_unavailable"], mode="unavailable", world={}),
+    dict(label="fail open: orca prints no JSON", cmd="orca agent launch --agent gemini", want=0,
+         why=["chat check skipped"], mode="garbage", world={}),
+    dict(label="fail open: orca takes over 3 s", cmd="orca agent launch --agent gemini", want=0,
+         why=["chat check skipped"], mode="slow", world={}, within=7),
+    dict(label="fail open: no worktree of orca holds the folder", cmd="orca agent launch --agent gemini", want=0,
+         why=["chat check skipped"], world={}),
+    dict(label="fail open: orca is not installed", cmd="orca agent launch --agent gemini", want=0,
+         why=["chat check skipped"], world=None),
+    dict(label="orca agent list is left alone", cmd="orca agent list --json", want=0,
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}, asked=[]),
+    dict(label="orca agent read is left alone", cmd="orca agent read g1", want=0, world={}, asked=[]),
+    dict(label="orca orchestration send is left alone", cmd="orca orchestration send --to orca_session_id:g1 --subject s",
+         want=0, world={}, asked=[]),
+    dict(label="a name in an echo or a search is no launch",
+         cmd="echo orca agent launch --agent gemini; grep 'orca agent launch' notes.md", want=0,
+         world={"path:" + REPO: [orca_chat("gemini", "g1")]}, asked=[]),
+]
+
+
+def orca_row(c):
+    """One ORCA_CASES row: the command run with the fake `orca` as the only program on PATH."""
+    d = sandbox.mkdtemp("guard-test-orca-")
+    world = c["world"]
+    if world is not None:
+        with open(os.path.join(d, "world.json"), "w") as fh:
+            json.dump({"mode": c.get("mode", "ok"), "worktrees": world}, fh)
+        script = os.path.join(d, "orca")
+        with open(script, "w") as fh:
+            fh.write(ORCA_FAKE)
+        os.chmod(script, 0o755)
+    env = {"PATH": d}
+    env.update(c.get("env") or {})
+    start = time.monotonic()
+    rc, err = run_tool("Bash", {"command": c["cmd"]}, env, cwd=c.get("cwd") or REPO)
+    took = time.monotonic() - start
+    who = "orca %r: " % c["cmd"]
+    if rc != c["want"]:
+        return "%swanted rc=%s, got rc=%s (%s)" % (who, c["want"], rc, err.strip()[16:160])
+    for text in c.get("why", []):
+        if text.lower() not in err.lower():
+            return "%swanted %r in the message, got %r" % (who, text, err.strip()[:200])
+    if rc == 2:
+        return bad_message(err)
+    if "BLOCKED" in err:
+        return "%sallowed but the stderr says BLOCKED" % who
+    if "asked" in c:
+        calls_file = os.path.join(d, "calls")
+        calls = open(calls_file).read().splitlines() if os.path.exists(calls_file) else []
+        asked = [x.split("--worktree ")[1].split()[0] for x in calls if x.startswith("agent list --worktree ")]
+        if asked != c["asked"] or len(calls) != len(c["asked"]):
+            return "%sorca was called %r, wanted the list of %r only" % (who, calls, c["asked"])
+    if c.get("within") and took > c["within"]:
+        return "%stook %.1f s, the limit is %s s" % (who, took, c["within"])
+    return None
+
+
 FORGE_FILE_CASES = [
     # 1. Red before: "Read <repo>/.env.sample: wanted rc=0 '', got rc=2 BLOCKED - protected
     #    file or directory".
@@ -3235,6 +3383,8 @@ def check(case):
             if "gh issue create is refused" not in err or "backlog" in err:
                 return "backlog %r blocked for the wrong reason: %s" % (cmd, err.strip()[16:90])
             return bad_message(err)
+    elif kind == "orca":
+        return orca_row(case[1])
     elif kind == "bypass-env":
         # The downstream project's guard turned itself off on GUARD_BYPASS=1; the core has no off
         # switch inside a session (the project is the switch). Red on forge's old guard:
@@ -3259,6 +3409,7 @@ def main():
              + [("file",) + fc for fc in FORGE_FILE_CASES] + [("malformed", m) for m in FORGE_MALFORMED]
              + [("bypass-env",)] + [("rooted",) + r for r in ROOTED]
              + [("backlog",) + c for c in BACKLOG_CASES]
+             + [("orca", c) for c in ORCA_CASES]
              + [("config",) + c for c in CONFIG_CASES] + CONSENT_CASES)
     # test_guard_mutants.py only needs to know that a weakened guard fails at least one case,
     # so it sets GUARD_TEST_FAIL_FAST and the run stops at the first failure.
