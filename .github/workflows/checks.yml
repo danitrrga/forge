@@ -84,7 +84,7 @@ jobs:
         if: ${{ !cancelled() }}
         run: python3 tests/test_measure_login.py
 
-  # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (54 test files, 1605 s of file time at 4 at once,
+  # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (50 test files, 1605 s of file time at 4 at once,
   # 403 s median on one runner: the long pole of a run that does not change the engine);
   # `forge test` with no group leaves them out, so this job is where they run in CI. It runs as 3 shards on 3 runners (`--shard I/N`: the
   # files are dealt one by one, FWX_SLOW_FIRST first, then the largest; test_walk, test_execute_workflow and test_ui_walk_workflow, 461 s,
