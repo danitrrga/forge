@@ -23,6 +23,14 @@ Red before `next` existed (09.5 T52; case_next and case_next_rules, a conflict, 
   FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
   FAIL: next_step: one answer per case (AttributeError: module 'fwx.execute.integrate' has no attribute 'next_step'): got 0, want 12
 
+Red before `summary` carried what the part report reads (09.5 T54, case_summary_report; the same line for criteria, outside, tried, gaps, protected):
+  FAIL: fwx wave --run R has findings -> missing
+The controls of that case, first FAIL of each (the retry's item, a pass counted at its verify call too, a refused round, a refused merge, no commit, a gap):
+  FAIL: fwx wave --run R: outside: got [{... 'src/x.py:1' ...}, {... 'src/gone.py:9' ...}]
+  FAIL: fwx wave --run R: findings: got {'reported': 10, 'fix': 1, ...} (want 'reported': 5)
+  FAIL: fwx wave --run R: tried: got ['1/3: gate red', '3/3: again'], want ['1/3: gate red']
+  FAIL: fwx wave --run R: gaps: got [], want ['executor did not return: T3', 'reviewer did not return']
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each `old` must be in
 its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (138 checks, 170 with the controls).
 The first FAIL line of each mutant, seen red:
@@ -871,6 +879,16 @@ MUTANTS = [
     ("summary takes any run's gate", case_summary, I, "why = _own_gate(run, steps) if run else None", "why = None", "an earlier run that never ran the gate"),
     ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),
+    ("the report keeps a retry's outside items", case_summary_report, I, 'if step == "report" and res.get("next") == "merge":', 'if step == "report":',
+     "fwx wave --run R: outside"),
+    ("the report counts a pass at its verify call too", case_summary_report, I, 'if res.get("next") in ("fix", "owner", "done"):', "if True:",
+     "fwx wave --run R: findings"),
+    ("the report counts a round that was refused", case_summary_report, I, 'elif step == "fix-round" and res.get("ok") is True:', 'elif step == "fix-round":',
+     "fwx wave --run R: tried"),
+    ("the report takes a refused merge's findings as fixed", case_summary_report, I, 'if args.get("findings") and res.get("ok") is True:', 'if args.get("findings"):',
+     "fwx wave --run R: findings"),
+    ("the report names no commit of a fixed finding", case_summary_report, I, "commit.setdefault(i, sha)", "commit.setdefault(i, None)", "fwx wave --run R: findings"),
+    ("the report takes a gap of no call", case_summary_report, I, 'gaps.append(res["gap"])', "pass", "fwx wave --run R: gaps"),
     ("step files all numbered 0", case_step_files, W, "n = 1 + max(", "n = 0 * max(", "step files: one per call, numbered"),
     ("a conflict goes to a fixer", case_next, I, 'return "resolve", "the branch', 'return "fix", "the branch', "a conflict says next resolve"),
     ("a verify that could not run is fixed", case_next_rules, I, 'if v["rc"] != 1:', "if False:", "a verify that could not run says next owner"),

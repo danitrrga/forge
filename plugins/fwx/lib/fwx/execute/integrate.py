@@ -26,7 +26,10 @@ allowed only when fewer than `rounds` were spent before it: the third round is f
 
 `revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first, and then runs the setup again like `integrate`
 (`setup` in the result on a failure). `summary(...)` says whether the gate
-of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.plan, fwx.plan_step, fwx.core and execute.base, brief, cleanup and worktree_setup.
+of the run passes, and carries what the part report reads, from the run's own recorded calls (`_kept`; 09.5 T54, what execute.js returned in
+`details`): `findings` ({reported, fix, consider, note, dismissed, fixed: [{id, commit, severity}], outside}: the passes `wave findings` ended,
+and the commits of the `Fwx-Finding` trailers of the findings a `wave merge --findings` merged), `criteria`, `outside` (the items of the reports
+that were merged and have no issue), `tried` (one line per round spent), `gaps` and `protected`. Imports the standard library, fwx.state, fwx.config, fwx.plan, fwx.plan_step, fwx.core and execute.base, brief, cleanup and worktree_setup.
 """
 import json
 import os
@@ -403,20 +406,64 @@ def _own_gate(run, steps):
     return None
 
 
+def _kept(top, steps):
+    """What the part report reads from the run's recorded calls, as execute.js kept it in `st`: {findings, criteria, outside, tried, gaps, protected}.
+    Only what a call that stands leaves counts: the unfiled `outside` items of a report that was merged (not a retry's), a pass `wave findings`
+    ended (`fix`, `owner` or `done`: the `verify` call before it carries the same items), a round that was spent, and the findings of a
+    `wave merge --findings` that was ok."""
+    found = {"reported": 0, "fix": 0, "consider": [], "note": [], "dismissed": [], "fixed": [], "outside": []}
+    criteria, outside, tried, gaps, protected, severity, merged = {}, [], [], [], [], {}, []
+    for rec in steps:
+        res, args, step = rec.get("result"), rec.get("args"), rec.get("step")
+        res, args = res if isinstance(res, dict) else {}, args if isinstance(args, dict) else {}
+        if isinstance(res.get("gap"), str) and res["gap"] not in gaps:
+            gaps.append(res["gap"])
+        if step == "report" and res.get("next") == "merge":
+            outside += [o for o in res.get("outside") or [] if isinstance(o, dict) and o.get("issue") is None]
+        elif step == "findings":
+            for c in res.get("criteria") or []:
+                if isinstance(c, dict) and "id" in c:
+                    criteria[c["id"]] = c
+            if res.get("next") in ("fix", "owner", "done"):
+                found["reported"] += res.get("reported") or 0
+                found["fix"] += len(res.get("fix") or [])
+                for f in res.get("fix") or []:
+                    severity[f.get("id")] = f.get("severity")
+                for group in ("consider", "note", "dismissed"):
+                    found[group] += res.get(group) or []
+                found["outside"] += res.get("file") or []
+        elif step == "fix-round" and res.get("ok") is True:
+            text = _oneline(res.get("why", ""), 400)
+            tried.append("%s: %s" % (res["rounds"], text) if res.get("rounds") else text)
+        elif step == "integrate":
+            if args.get("findings") and res.get("ok") is True:
+                merged += [i for i in args["findings"] if i not in merged]
+            if args.get("final"):
+                protected = list(res.get("protected") or [])
+    commit = {}
+    if merged:
+        for sha, ids in _commits(top, "HEAD"):
+            for i in ids:
+                commit.setdefault(i, sha)
+    found["fixed"] = [{"id": i, "commit": commit.get(i), "severity": severity.get(i)} for i in merged]
+    return {"findings": found, "criteria": list(criteria.values()), "outside": outside, "tried": tried, "gaps": gaps, "protected": protected}
+
+
 def summary(cwd, part_dir, run=None, steps=()):
-    """(exit code, result): {gate, head, evidence_line, rounds, why}. `pass` when the last evidence row of the part is green and is
+    """(exit code, result): {gate, head, evidence_line, rounds, why} and what `_kept` reads from the run's calls. `pass` when the last evidence row of the part is green and is
     HEAD's, and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
     commit's, or the run did not pass its gate (exit 1, `why` says it); `none` with no evidence row or no part (exit 2)."""
     top = _top(cwd)
     head = verify.head(top)
+    kept = _kept(top, steps)
     if not part_dir:
-        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}
+        return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}, **kept)
     rows = state.read_rows(state.phase_paths(part_dir)["audit"])
     cap = rounds.cap(part_dir)
     used = "%d/%d" % (rounds.count(rows), cap)
     seen = [r for r in rows if r.get("kind") == "evidence"]
     if not seen:
-        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": used, "why": ""}
+        return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": used, "why": ""}, **kept)
     last = seen[-1]
     rc, sha = last.get("rc", "").strip(), last.get("sha", "")
     why = _own_gate(run, steps) if run else None
@@ -426,4 +473,4 @@ def summary(cwd, part_dir, run=None, steps=()):
         line = verify.evidence_line(sha, commands)
     except (ValueError, KeyError, TypeError):
         line = "evidence %s rc=%s" % (sha, rc)
-    return (0 if gate == "pass" else 1), {"gate": gate, "head": head, "evidence_line": line, "rounds": used, "why": why or ""}
+    return (0 if gate == "pass" else 1), dict({"gate": gate, "head": head, "evidence_line": line, "rounds": used, "why": why or ""}, **kept)
