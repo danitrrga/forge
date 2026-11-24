@@ -90,6 +90,7 @@ s.ok("fwx help lists model", any(line.split()[:2] == ["fwx", "model"] for line i
 # Seen red on 6047865 (ROLES has 22, the file says 21 and has no `runner` row):
 #   FAIL: style.md family table has every role of ROLES exactly once, and the sentence under it says how many:
 #         missing ['runner'], repeated or unknown []; says [21], ROLES has 22
+sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
 from fwx import config  # noqa: E402
 
 
