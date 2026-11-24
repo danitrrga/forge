@@ -54,7 +54,7 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
   wave findings --run R (--report "<last line of a reviewer's reply>"... | --verdicts "<last line of the verifier's reply>") [--control-findings F]
       exit 0 with `next` relaunch|stop|verify|fix|owner|done (execute/review.py says what each means): the findings numbered by the pass, the
       verifier only above three items, the verdicts routed; the part is the one the run's `wave review` named; 2 a call with no pass to read
-  wave --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
+  wave --run R [--part-dir D] [--json]  exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
       that merged branches passes only when its own last `wave merge --final` was green (`why` says when it was not): the evidence
       row is the part's, so another run's green gate on the same head is not this run's
 """
@@ -76,7 +76,7 @@ USAGES = {
     "fix-round": "usage: fwx wave fix --part-dir D --why TEXT [--run R]\n",
     "revert": "usage: fwx wave revert --part-dir D --run R --findings IDS\n",
     "cleanup": "usage: fwx wave remove --run R\n",
-    "summary": "usage: fwx wave --run R [--part-dir D]\n",
+    "summary": "usage: fwx wave --run R [--part-dir D] [--json]\n",
     "report": "usage: fwx wave report --part-dir D --run R --unit U --line \"<last line of the reply>\" --plane session|factory\n",
     "review": "usage: fwx wave review --part-dir D --run R --from A --to B [--security]\n",
     "findings": "usage: fwx wave findings --run R (--report \"<last line of a reviewer's reply>\"... | --verdicts \"<last line of the verifier's reply>\") [--control-findings F]\n",
@@ -265,7 +265,7 @@ def _recorded_branches(top, run):
 
 def do_step(step, argv):
     """integrate, fix-round, revert, cleanup, summary, report, review and findings: parse, run, print the JSON, record it."""
-    flags = {"integrate": ("--final",), "review": ("--security",)}.get(step, ())
+    flags = {"integrate": ("--final",), "review": ("--security",), "summary": ("--json",)}.get(step, ())  # summary: JSON is its only output
     valued = {"integrate": ("--part-dir", "--run", "--findings"), "fix-round": ("--part-dir", "--why", "--run"),
               "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir"),
               "report": ("--part-dir", "--run", "--unit", "--line", "--plane"), "review": ("--part-dir", "--run", "--from", "--to"),

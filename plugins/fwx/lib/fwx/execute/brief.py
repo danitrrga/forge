@@ -267,7 +267,7 @@ def render_agent(facts):
         ("FORBIDDEN", "\n".join("- " + f for f in AGENT_FORBIDDEN)),
         ("OUTSIDE", facts["outside"][0].upper() + facts["outside"][1:]),
         ("REPORT", "Run `fwx scratch new %s %s`: it prints a folder of your own worktree that git ignores. Your TMPDIR is tmp/ inside that folder; write the JSON "
-                   "of your standing orders to report.json directly in that folder, not in tmp/ (the Write tool is enough), and reply with the one line they give, "
+                   "of your standing orders to report.json directly in that folder, not in tmp/ (the file-write tool is enough), and reply with the one line they give, "
                    "naming that report.json by its full path." % (facts["run"], facts["unit"])),
         ("STANDING", "Your standing orders are your agent definition, %s; they hold beside everything above." % STANDING),
     ]
@@ -305,7 +305,7 @@ def render_review(facts):
     """The brief of a reviewer, a security reviewer or a review-verifier as text."""
     kind, ctx_run, unit = facts["kind"], facts["run"], facts["unit"]
     scratch = ("Run `fwx scratch new %s %s`: it prints a folder of your own worktree that git ignores. Your TMPDIR is tmp/ inside that folder; write your report "
-               "to report.json directly in that folder, not in tmp/ (the Write tool is enough)" % (ctx_run, unit))
+               "to report.json directly in that folder, not in tmp/ (the file-write tool is enough)" % (ctx_run, unit))
     diff = "%s..%s, %s" % (facts["from"], facts["to"], "the whole of this run" if facts["whole"] else "the commits of a fix only")
     pieces = [("DIFF", diff), ("CONTEXT", "\n".join(facts["context"]))]
     if kind == "reviewer":

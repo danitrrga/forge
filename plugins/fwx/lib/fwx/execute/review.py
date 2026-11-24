@@ -12,8 +12,8 @@ prints `next`:
   relaunch  nothing usable from `relaunch[*].unit`, the first time: launch it again with its brief and `note`, no round spent
   stop      a second miss: the run ends failed with `why` (`gap` is the line for the part report)
   verify    more than three items: the verifier's brief is `brief`, its unit `unit`; call `findings --verdicts` with its reply
-  fix       `ids` are to be fixed: `why` is the text of `fwx wave fix --why`, `brief` the fixer's, `head` the BASE it starts from, `ids` the
-            value of `wave merge --findings`
+  fix       `ids` are to be fixed: `why` is the text of `fwx wave fix --why`, `brief` the fixer's, `unit` its unit (what `wave report --unit` takes), `head` the BASE it
+            starts from, `ids` the value of `wave merge --findings`
   owner     nothing to fix, but the last final merge named a protected path (execute.js ends the run there) or no brief could be written
   done      nothing to fix; `file` are the reviewer's large `outside` items, for the session to file as Linear issues
 Every result also carries `items` (the pass's findings with their ids), `outside_of` (the outside item each id came from), `reported`, `criteria`
@@ -21,11 +21,13 @@ and the groups `fix`, `consider`, `note`, `dismissed`, `file` with `routes` (id 
 
 The one behaviour that is not a port is the threshold: the verifier runs only above `THRESHOLD` items (D10), where execute.js ran it on any. Below
 it every item is fixed, a large `outside` item excepted (it is too big for a round: it goes to `file`).
+D25 (09-trim): a verdict `fix` of severity `low` (the verifier's) goes to `consider`, never to `fix`: only medium and high cost a fix round
+and a new gate. Below the threshold nothing is verified, so every item is still fixed.
 
 State is read from the run's own recorded calls (`steps`, oldest first), never from variables of a running script: the pass, its items, and the
 misses of each unit (a unit's name holds its pass, so a miss of one pass never counts in the next). Only a `report.json` inside the folder
 `fwx scratch new <run> <unit>` makes is read. Imports the standard library, fwx.config, fwx.plan, fwx.plan_step, fwx.state and execute.base,
-brief, integrate and report.
+brief, integrate, prepare and report.
 """
 import json
 import os
@@ -33,7 +35,7 @@ import re
 
 from fwx import config, plan, plan_step, state
 from fwx.core import evidence
-from fwx.execute import brief, integrate
+from fwx.execute import brief, integrate, prepare
 from fwx.execute.base import WaveError, out, toplevel
 from fwx.execute.report import last_line, norm_path, outside_problem
 
@@ -101,14 +103,13 @@ def review(cwd, part_dir, run, frm, to, security, steps):
             raise WaveError("%s is not a commit of this repository" % ref)
     data, owner, ctx = _context(top, part_dir, run)
     try:
-        post = plan.load_postmortem(owner["postmortem"])
-    except (plan.PlanError, OSError) as e:
-        raise WaveError("the post-mortem of the phase cannot be read: %s" % e)
+        asked = prepare._security_why(data, owner["postmortem"], config.load(top))  # as `wave new` decides it: a small plan may have no post-mortem
+    except (config.ConfigError, state.StateError) as e:
+        raise WaveError(str(e))
     tag = "r%d" % (1 + sum(1 for r in steps if r.get("step") == "review"))
     protected = _protected(steps)
-    sec = security or post["security_review"] or bool(protected)
-    why = [w for w, on in (("--security", security), ("postmortem.md security_review is true", post["security_review"]),
-                           ("the last final merge named a protected path", bool(protected))) if on]
+    why = (["--security"] if security else []) + asked + (["the last final merge named a protected path"] if protected else [])
+    sec = bool(why)
     agents = [("reviewer", tag, "review-%s" % tag)] + ([("security-reviewer", tag + "-sec", "review-%s-sec" % tag)] if sec else [])
     made = []
     for kind, unit, name in agents:
@@ -247,15 +248,19 @@ def _route(items, outside_of, by):
         ident = it["id"]
         d = (by or {}).get(ident)
         verdict = d["verdict"] if d else "fix"
+        severity = d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]
+        demoted = verdict == "fix" and d is not None and severity == "low"
+        if demoted:
+            verdict = "consider"  # D25: a verified finding of severity low is listed for the owner; only medium and high cost a fix round and a new gate
         if _large(outside_of, ident) and verdict == "fix":
             # too big for a fix round: returned for the session to file as a Linear issue
             groups["file"].append(outside_of[ident])
             routes[ident] = "file"
         elif verdict == "fix":
-            groups["fix"].append(dict(it, severity=d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]))
+            groups["fix"].append(dict(it, severity=severity))
             routes[ident] = "fix"
         elif verdict == "consider":
-            groups["consider"].append({"id": ident, "file": it["file"], "line": it["line"], "claim": it["claim"], "severity": d["severity"]})
+            groups["consider"].append({"id": ident, "file": it["file"], "line": it["line"], "claim": it["claim"], "severity": severity if demoted else d["severity"]})
             routes[ident] = "consider"
         elif verdict == "note":
             groups["note"].append({"id": ident, "claim": it["claim"]})
@@ -267,7 +272,7 @@ def _route(items, outside_of, by):
 
 
 def _fixer(top, part_dir, run, fix):
-    """(path of the fixer's brief, head): the brief of `brief.fix_facts` for the findings to fix, the findings in a file beside it."""
+    """(unit, path of the fixer's brief, head): the brief of `brief.fix_facts` for the findings to fix, the findings in a file beside it."""
     data, _, ctx = _context(top, part_dir, run)
     cfg = config.load(top)
     unit, path = brief.next_unit(ctx["folder"], "fix")
@@ -282,7 +287,7 @@ def _fixer(top, part_dir, run, fix):
     if problems:
         raise WaveError("; ".join(problems))
     brief.put(path, brief.render(facts))
-    return path, out(top, "rev-parse", "HEAD")
+    return unit, path, out(top, "rev-parse", "HEAD")
 
 
 def _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, groups, routes, **kw):
@@ -294,10 +299,11 @@ def _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, group
         ids = [f["id"] for f in fix]
         why = "review findings to fix: %s" % ", ".join(ids)
         try:
-            path, head = _fixer(top, part_dir, run, fix)
+            unit, path, head = _fixer(top, part_dir, run, fix)
         except (WaveError, config.ConfigError, state.StateError, plan.PlanError, OSError) as e:
             return _result("owner", tag, why="no brief could be written for the fixer (%s): %s" % (e, why), **common)
-        return _result("fix", tag, why=why, ids=ids, brief=path, head=head, **common)
+        # `unit` is the fixer's, which `wave report --unit` reads, and not the verifier's that `common` may carry
+        return _result("fix", tag, why=why, ids=ids, brief=path, head=head, **dict(common, unit=unit))
     protected = _protected(steps)
     next_, why = ("owner", "protected path: %s" % ", ".join(protected)) if protected else ("done", "nothing is left to fix")
     return _result(next_, tag, why=why, **common)
