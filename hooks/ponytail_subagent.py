@@ -121,12 +121,16 @@ def main():
     level = session_level(session)
     if level == "off":
         return 0
+    text = ""
     try:
         text = ruleset(level)
-    except Exception as e:  # never block a subagent: say why on stderr and let it run without
+    except Exception as e:  # never block a subagent: say why on stderr and let it run without the ruleset
         print("ponytail_subagent: %s: %s" % (type(e).__name__, e), file=sys.stderr)
-        return 1
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": text + REVIEW}}))
+        if isinstance(e, LookupError):  # not installed: the review skill is not there either, nothing to add
+            return 1
+        # An install whose ruleset did not build still has the review skill: the reviewer keeps its instruction.
+        # Only exit 0 delivers stdout to the agent.
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": (text + REVIEW).lstrip()}}))
     return 0
 
 

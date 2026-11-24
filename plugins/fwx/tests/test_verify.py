@@ -60,6 +60,11 @@ Controls, each seen red on a copy of the repo with one thing changed (first FAIL
       FAIL: a rename carries previous_path: got None, want 'hooks/old.py'
       FAIL: a file carries its patch, which U3a reads for package.json: got '', want '@@ -1 +1 @@ ...'
       FAIL: mergeable null while GitHub computes: running, and mergeable true for the schema: got (True, False), want (True, True)
+  - `default_names` ignores `project.default_branch`:
+      FAIL: `project.default_branch` is a name of the default branch: got ['trunk'], want ['dev', 'trunk']
+  - `default_names` ignores a live origin/HEAD:
+      FAIL: a live origin/HEAD names its branch: got ['main', 'master'], want ['trunk']
+      FAIL: `project.default_branch` is a name of the default branch: got ['dev'], want ['dev', 'trunk']
   - `--dir` ignored, `--json` printing the line, `--pr` not validated:
       FAIL: --dir writes the row in that folder, not in the phase: got (0, 1), want (1, 0)
       FAIL: --json prints JSON on stdout: evidence 118f4c27... true=0

@@ -20,6 +20,9 @@ Controls seen red, each on a copy of config.py changed in one place (78 checks e
       FAIL: label_to_linear maps a neutral name: got 'needs-owner', want 'toy-needs-help'
   - no check for two neutral names sent to one Linear name:
       FAIL: two neutral names to one Linear name: label_to_linear raises: returned
+  - the seed's planner at "big" changed to sonnet (`models["planner"] = {z: ("sonnet" if z == "big" else "opus") ...}`),
+    1 failed; "seed: planner is opus" (normal size) still passed, as it must:
+      FAIL: seed: planner is opus at every size
   - the missing-file line printed on every call:
       FAIL: no file, second call: no more lines: got 'fwx: no .claude/fwx.json at <main>/.claude/fwx.json; using defaults\\n', want ''
 """
