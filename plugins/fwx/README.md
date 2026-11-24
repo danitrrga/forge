@@ -128,7 +128,7 @@ The `project` table:
 
 ### Changing a key
 
-The file is generated, so change its source and not the file. To change one, ask an agent: say which key and which value, and it edits the setup tool's source (for forge, `config/projects/<name>.json` for a `project` key, `config/forge.json`'s `framework` section for any other), then runs `forge sync`. Where no setup tool writes the file, it edits `.claude/fwx.json` by hand to the schema above. Either way it ends by running the command that reads the key (`fwx model <role> <size>` for a model, `fwx session --json` for the rest) to show the new value is the one in force.
+The file is generated, so change its source and not the file. To change one, ask an agent: say which key and which value, and it edits the setup tool's source (for forge, `config/projects/<name>.json` for a `project` key, `config/forge.json`'s `framework` section for any other), then runs `forge sync`. Where no setup tool writes the file, it edits `.claude/fwx.json` by hand to the schema above. Either way, for a model it ends by running `fwx model <role> <size>` to show the new value is the one in force; no command reads the other keys back, so for those it re-reads the file.
 
 ### What is not configurable
 
