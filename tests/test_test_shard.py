@@ -20,6 +20,9 @@ Controls (a copy of forge/testgroup.py changed in one place, the suite run on th
       FAIL: group, N=2: every file ran exactly once: got ['tests/test_a.py', 'tests/test_a.py', 'tests/test_c.py', ...
   the suite job's matrix loses its third entry (["1/4", "2/4", "3/4", "4/4"] -> ["1/4", "2/4", "4/4"]), the one FAIL:
       FAIL: the suite job's matrix is exactly 1/4 .. 4/4, once each: got ['1/4', '2/4', '4/4'], want ['1/4', '2/4', '3/4', '4/4']
+Fix round of the review (each seen failing before the code, the 3 FAILs are in the commit message of the red test):
+  FWX_SLOW_FIRST emptied: FAIL: FWX_SLOW_FIRST names the slow fwx files: () and the three slow files in shards [1, 1, 3]
+  the slice exemption removed (`and not shard`): FAIL: --shard 1/3 .. 3/3 with one declared and one undeclared 77: ...: got [0, 1, 1], want [0, 0, 77]
 """
 import os
 import re

@@ -13,7 +13,7 @@ wants 0 lets them run. Exit 2 on a usage error. A group whose folder is absent (
 `--expect-not-run PATH[,PATH...]` (repeatable, also `--expect-not-run=PATH`) declares tests that cannot run where this is called from
 (CI has no key, no private tree). A declared test that exits 77 prints `EXPECTED NOT RUN: PATH: reason` and no longer turns the exit to
 77; an undeclared 77 still does. A declared test that runs counts as any other, so a failing one is still 1. The declaration widens
-nothing else: a run in which no test passed is 1 (everything declared away proves nothing), and so is a declared path that is no test
+nothing else: a run in which no test passed is 1 (everything declared away proves nothing; a `--shard` slice is exempt, the others carry the passes), and so is a declared path that is no test
 file (a typo would silently un-declare it). Why a flag and not a list file: the reason sits beside the command in the workflow, and
 there is no second file to forget.
 
@@ -27,7 +27,7 @@ first line printed says how much the slice looked at (`shard I/N: K of M test fi
 Each file is still its own process with its own exit code, its output captured whole, so a failing file's lines are never mixed with
 another's. What a reader sees does not depend on N: the per-file lines and the summary are printed in the order of the file names, each
 as soon as it and every file before it has finished, so for a given set of results the output and the exit code are the same at any N.
-Start order is largest file first (the slowest files of a suite are mostly its largest; a longest-first order keeps the last worker from
+Start order is the FWX_SLOW_FIRST files, then the largest file first (the slowest files of a suite are mostly its largest; a longest-first order keeps the last worker from
 starting the one long file; a duration table would have to be written somewhere and would rot, and the size costs one `stat`). Each
 child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends SIGTERM to every running child's whole process group (the
 test's own cleanup runs), SIGKILL to what is left after 5 s, and exits 128 + the signal, so nothing a test started outlives the run.
@@ -98,6 +98,18 @@ def parse_shard(values):
     if len(parts) == 2 and all(p.isascii() and p.isdigit() for p in parts) and 1 <= int(parts[0]) <= int(parts[1]):
         return (int(parts[0]), int(parts[1])), None
     return None, "%s: --shard wants I/N with 1 <= I <= N (both whole numbers), got %r" % (NAME, values[0])
+
+
+# The fwx files that take minutes (measured on the 4-CPU CI runner, 4 files at once: 461 s, 332 s, 200 s; the next is 94 s) are dealt first, in
+# this order, so with 3 shards each gets one: by size alone test_walk and test_ui_walk_workflow land in the same shard. A stale name costs
+# minutes, never a result (tests/test_test_shard.py checks that every name is a tracked file).
+FWX_SLOW_FIRST = ("tests/test_walk.py", "tests/test_execute_workflow.py", "tests/test_ui_walk_workflow.py")
+
+
+def start_order(files, root):
+    """The order the files start in and are dealt to the slices in: FWX_SLOW_FIRST, then the largest first, ties by name."""
+    return sorted(files, key=lambda f: (f not in FWX_SLOW_FIRST, FWX_SLOW_FIRST.index(f) if f in FWX_SLOW_FIRST else 0,
+                                        -_size(os.path.join(root, f)), f))
 
 
 def take_shard(order, shard):
@@ -215,8 +227,8 @@ def main(root, expect_values, jobs_values, label, shard_values=None):
     unknown = sorted(expect - set(files))
     for rel in unknown:
         sys.stderr.write("%s: --expect-not-run names %s, which is no tests/test_*.py file\n" % (NAME, rel))
-    # largest first, ties by name: the order the files start in (and are dealt to the slices in); the order they are printed in is `files`
-    start = sorted(files, key=lambda f: (-_size(os.path.join(root, f)), f))
+    # the order the files start in (and are dealt to the slices in); the order they are printed in is `files`
+    start = start_order(files, root)
     mine = set(take_shard(start, shard))
     if shard:
         print("shard %d/%d: %d of %d test file(s)" % (shard[0], shard[1], len(mine), len(files)))
@@ -267,6 +279,8 @@ def main(root, expect_values, jobs_values, label, shard_values=None):
     total = passed + failed + not_run + expected
     print("%d test file(s): %d passed, %d failed, %d not run%s"
           % (total, passed, failed, not_run, ", %d expected not run" % expected if expected else ""))
-    if failed or total == 0 or unknown or (expect and passed == 0):
+    # Everything declared away proves nothing, of a whole run. A slice has no such rule: it may hold only declared files (CI's two, dealt
+    # together) while the other slices carry the passes; a slice that looked at nothing (total 0), failed or could not run still is 1 or 77.
+    if failed or total == 0 or unknown or (expect and passed == 0 and not shard):
         return 1
     return 77 if not_run else 0
