@@ -138,4 +138,23 @@ s.ok("control: a reviewer that does not say a defect nearby is an `outside` item
 s.ok("control: a rubric with no security dimension is found",
      rubric_problems(read("docs/session-rubric.md").replace("## Security", "## Safety"), ("security",)) != [])
 s.ok("control: a rubric with no escalation criterion is found", rubric_problems("Only what the task names is written.") != [])
+
+
+# An isolated agent's Bash call is refused when it chains commands around git or `export TMPDIR`, so the executor is told plainly to run
+# separate commands (a hedge, "some harnesses refuse", read as optional and cost 3 refused compound git commands), and the rubric must not
+# reward the opposite. Red before the fix (o1-F1):
+#   FAIL: executor.md tells the agent plainly to run plain, separate commands, with no hedge: got ['hedged: "Some harnesses refuse"'], want []
+def plain_problems(text):
+    found = []
+    if "run plain, separate commands" not in text:
+        found.append("does not say: run plain, separate commands")
+    for hedge in ("Some harnesses refuse", "some harnesses refuse"):
+        if hedge in text:
+            found.append('hedged: "%s"' % hedge)
+    return found
+
+
+s.eq("executor.md tells the agent plainly to run plain, separate commands, with no hedge", plain_problems(read("agents/executor.md")), [])
+s.ok("control: a hedged executor sentence is found", plain_problems("Some harnesses refuse a shell command that joins commands: run plain, separate commands") != [])
+s.ok("control: an executor with no such rule is found", plain_problems("Only in your own worktree.") != [])
 s.done()
