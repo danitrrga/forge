@@ -138,3 +138,12 @@ skill-data/dogfood/SKILL.md (errors and console after acting, a recording for an
 OneRedOak/claude-code-workflows, https://github.com/OneRedOak/claude-code-workflows, commit
 29a34c725313c7621f426f838ed31cf482473fb4 (MIT), design-review/design-review-agent.md (the live screen first, problems over
 prescriptions); and the owner's own ui-walk skill of a project, .claude/skills/ui-walk/walker.md and verifier.md @76eca414.
+
+t3dotgg/tstack, https://github.com/t3dotgg/tstack, commit 11e37a74d0a6868c121cd0910ab2b3bd9873b92a (MIT), Copyright (c) 2026 Theo Browne.
+  Only its peer-review and code-review material is used (D4).
+  agents/reviewer.md: "Skip style unless it hides a bug." (line 71) and "blocker = intended case wrong. should = real bug callers will hit,
+  in intent. nit = rest." (line 74) of skills/sol-loop/SKILL.md, word for word. Read for the same agent: the reviewer's brief and the
+  proof of a finding (lines 64-92 of the same file), in words of its own.
+  agents/review-verifier.md: "Check each finding and severity yourself. Another path, rare case, or small cost is a nit, whatever label
+  it came with." (lines 82-83 of skills/sol-loop/SKILL.md), word for word.
+  Read for agents/security-reviewer.md: lines 64-92 of skills/sol-loop/SKILL.md, in words of its own. No text is copied.
