@@ -122,8 +122,7 @@ finding for you, and a difference from the approved design is reported, not fail
 In an earlier trial of this idea the walkers missed a fault that had been planted as a control, so a walk plants one
 on a screen no walker is told about, and a walk that does not find it proves nothing and says so. And the walk touches
 only a local app with demo data and a demo account: its browser tool refuses any other address. The walk finds; the
-session fixes, one commit per finding. The walk is built and merged (the playbook `plugins/fwx/playbooks/ui-walk.md`, the
-workflow `plugins/fwx/workflows/ui-walk.js`, the `fwx walk` command and the walker agents) and parked until forge is
+session fixes, one commit per finding. The walk is built and merged (the workflow `plugins/fwx/workflows/ui-walk.js`, the `fwx walk` command and the walker agents) and parked until forge is
 practically finished: in the live walks so far the planted fault was never found, so a walk says its result does not count.
 Its UI-system rebuild is the work that follows.
 
@@ -148,8 +147,8 @@ source in a `referent:` line.
   security reviewer); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
   client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline and budget
   commands; the session skill that carries a work item from discuss to close (`plugins/fwx/skills/session/`); the UI walk
-  (`plugins/fwx/workflows/ui-walk.js`, `fwx walk`), parked; the playbooks of the session and of the UI walk; and
-  forge's framework step that installs all of it. No real session has closed yet.
+  (`plugins/fwx/workflows/ui-walk.js`, `fwx walk`), parked; and forge's
+  framework step that installs all of it. No real session has closed yet.
 - **Retired:** MemPalace, a memory store that was tried and removed. The code projects keep claude-mem-lite, and Hindsight
   stays an optional integration.
 - **Planned, not built:** the factory's unattended runner, the weekly improvement, and an interactive version of the
@@ -157,7 +156,6 @@ source in a `referent:` line.
 
 ```sh
 python3 plugins/fwx/bin/fwx --help              # every command, one line each
-python3 plugins/fwx/bin/fwx playbook list      # the workflow tree by playbook, in words (--raw: the id form agents read)
 python3 bin/forge test fwx                      # fwx's own suite, a group of forge test (forge test with no group leaves it out; CI runs it as the fwx job)
 ```
 

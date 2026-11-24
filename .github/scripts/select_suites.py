@@ -31,12 +31,10 @@ SKIP = ("README.md", "CLAUDE.md", "AGENTS.md", "docs/assets/*")
 DOC_READERS = ("tests/test_readme.py", "tests/test_registry_names.py", "tests/test_measure_login.py")
 
 # ROWS: (pattern, fwx, suite, why). First match wins; `*` crosses `/` (fnmatch).
-# What the fwx suite reads outside plugins/fwx (traced by running it on a copy of plugins/fwx alone: every file passes,
-# and tests/test_public_tree.py is the one that looks further, running `bin/forge lint` on the checkout it sits in):
-#   bin/forge, forge/cli.py, forge/lib.py   the runner (`forge test fwx`) and the lint it starts
-#   forge/testgroup.py                       the group runner
-#   forge/publish.py, publish/engine.gitignore   the lint rules that test applies
-# Any other forge/ module is only imported by that lint; one that fails to import also fails the engine suite.
+# What the fwx suite reads outside plugins/fwx: nothing but the runner (a copy of plugins/fwx alone passes every file):
+#   bin/forge, forge/cli.py, forge/lib.py, forge/testgroup.py   the runner (`forge test fwx`) and its group runner
+# The forge/publish.py and publish/engine.gitignore rows are what the fwx suite read before it stopped running `bin/forge lint`
+# (the rows stay: one that over-selects costs CI minutes only).
 ROWS = (
     (".github/*", True, True, "CI itself"),
     ("githooks/ci-local", True, True, "CI itself"),
