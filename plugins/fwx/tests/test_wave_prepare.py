@@ -795,85 +795,93 @@ def tool_dir(gh=None):
 
 
 def case_base_ci(R, S):
-    """A base sha with a green `All checks` run on GitHub is not run again here. The fake `gh` answers what
-    `--jq` would print: one conclusion per line of the run named `All checks`. Anything but a lone green answer runs the checks as before.
-    Seen failing before the code (python3 tests/test_wave_prepare.py, the CI case):
+    """A base sha that GitHub ran the CI workflow on, for a push to the default branch, with every such run completed and successful, is not
+    run again here. The fake `gh` answers what `--jq` would print, one tab-separated `path status conclusion` line per workflow run, and
+    only for the exact query wave new must send (`actions/runs?head_sha=<base>&event=push&branch=<default branch>`): any other query
+    makes it exit 1, so a return to a query that also sees pull request runs (they may skip suites) runs the checks here and fails the green case.
+    A CI answer writes no evidence row (no check ran here); anything but a lone green answer runs the checks as before.
+    Seen failing against the first version of this fix (the check-runs query, an ancestry test, a row with source ci; no origin/master in the toy):
       FAIL: ci green: the checks are not run here: got (0, 1), want (0, 0)
-      FAIL: ci green: says CI passed: got ''
-      FAIL: ci green: one evidence row, ... its source CI: got [('evidence', '7dba5a...', '0', [...], 'profile')], want [(..., 'ci')]
-      FAIL: ci not used, the run failed: one line says why   (and the same for each case that must fall back)
-    (the checks ran: wave new knew nothing of CI).
-    A green run of a sha that is not on origin/master is not trusted (CI on a pull request commit can skip suites). Seen failing before that code:
-      FAIL: ci green but the base is not on origin/master: the checks run here: got (0, 0), want (0, 1)
-      FAIL: ci green but the base is not on origin/master: one line says why: fwx wave new: base checks: CI passed 4075bc9 (All checks SUCCESS)
-      FAIL: ci green but the base is not on origin/master: the row is the local one: got ['ci'], want ['profile']
-      FAIL: ci green but there is no origin/master here: the checks run here, one line: got (0, 0, 0), want (0, 1, 1)"""
+      FAIL: ci green: says CI passed: got 'fwx wave new: base checks: CI not used (there is no origin/master here); running the checks here\\n'
+      FAIL: ci green: no evidence row: got ['profile'], want []
+      FAIL: ci green: runs of other workflows are ignored: got (0, 1, False), want (0, 0, True)
+    The fall-back cases hold at that head too (it never trusted the push query); the controls in MUTANTS show them able to fail."""
     url = "https://github.com/example/toy.git"
     runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    CI = ".github/workflows/ci.yml"
 
-    def scene(origin=url):
-        sc = Scene(recipe=[counting(runs)])
+    def scene(origin=url, branch="master"):
+        project = {"checks": [counting(runs)]}
+        if branch is not None:
+            project["default_branch"] = branch
+        sc = Scene(recipe=[counting(runs)], config={"project": project})
         if origin:
             helpers.git(sc.repo, "remote", "add", "origin", origin)
-            helpers.git(sc.repo, "update-ref", "refs/remotes/origin/master", "HEAD")  # the base is on origin/master, as a merged base is
         return sc
+
+    def stub(sc, lines, branch="master", tail=""):
+        """The fake gh: `lines` is what the push query prints ((path, status, conclusion) rows); any other query is an error."""
+        text = "".join('printf "%s\\t%s\\t%s\\n"' % row + "\n" for row in lines)
+        want = "repos/example/toy/actions/runs?head_sha=%s&event=push&branch=%s&per_page=100" % (sc.head(), branch)
+        return ('case "$*" in "api %s --jq "*) ;; *) echo "unexpected query: $*" >&2; exit 1;; esac\n' % want) + text + tail
 
     def go(sc, tools):
         before = ran(runs)
         r = sc.prepare(R, env={"PATH": tools})
         return r, ran(runs) - before
 
-    tools = tool_dir('printf "success\\n"')
-
-    def asked():
+    def asked(tools):
         return open(os.path.join(tools, "calls")).read() if os.path.exists(os.path.join(tools, "calls")) else ""
 
+    def source_rows(sc):
+        return [json.loads(x["detail"])["source"] for x in evidence_rows(sc) if x.get("kind") == "evidence"]
+
+    ok = (CI, "completed", "success")
     sc = scene()
     base = sc.head()
+    tools = tool_dir(stub(sc, [ok]))
     r, n = go(sc, tools)
     S.eq("ci green: the checks are not run here", (r.returncode, n), (0, 0))
-    S.ok("ci green: says CI passed", "base checks: CI passed %s (All checks SUCCESS)" % base[:7] in r.stderr, "got %r" % r.stderr)
-    rows = evidence_rows(sc)
-    S.eq("ci green: one evidence row, of the sha, green, with the recipe's commands, its source CI",
-         [(x.get("kind"), x.get("sha"), x.get("rc"), [c["cmd"] for c in json.loads(x["detail"])["commands"]], json.loads(x["detail"])["source"])
-          for x in rows], [("evidence", base, "0", [counting(runs)], "ci")])
-    calls = asked()
-    S.ok("ci green: asked GitHub about this repository and this exact sha, for the check named All checks",
-         "repos/example/toy/commits/%s/check-runs" % base in calls and "All%20checks" in calls, calls)
+    S.ok("ci green: says CI passed", "base checks: CI passed %s (%s on master, success)" % (base[:7], CI) in r.stderr, "got %r" % r.stderr)
+    S.eq("ci green: no evidence row", source_rows(sc), [])
+    calls = asked(tools)
+    S.ok("ci green: asked GitHub for this repository, this exact sha, push runs of the default branch",
+         calls.count("repos/example/toy/actions/runs?head_sha=%s&event=push&branch=master" % base) == 1, calls)
     r2, n2 = go(sc, tools)
-    S.ok("ci green: the next wave new reuses the CI record, no second question", (r2.returncode, n2, len(evidence_rows(sc)),
-         "reused the passing record" in r2.stderr, len(asked().splitlines())) == (0, 0, 1, True, 1), r2.stderr)
-    # a green run of a sha that is not on origin/master proves nothing: CI on a pull request can skip suites, CI on master runs all
+    S.ok("ci green: the next wave new asks GitHub again and still runs and writes nothing",
+         (r2.returncode, n2, source_rows(sc), len(asked(tools).splitlines())) == (0, 0, [], 2), r2.stderr)
     sc = scene()
-    sc.commit("off-master.txt", "work on the phase branch")
-    off = sc.head()
-    tools = tool_dir('printf "success\\n"')
-    r, n = go(sc, tools)
-    S.eq("ci green but the base is not on origin/master: the checks run here", (r.returncode, n), (0, 1))
-    S.ok("ci green but the base is not on origin/master: one line says why",
-         r.stderr.count("base checks: CI not used (%s is not on origin/master); running the checks here" % off[:7]) == 1 and "CI passed" not in r.stderr, r.stderr)
-    S.ok("ci green but the base is not on origin/master: GitHub is not asked", asked() == "", asked())
-    S.eq("ci green but the base is not on origin/master: the row is the local one",
-         [json.loads(x["detail"])["source"] for x in evidence_rows(sc)], ["profile"])
-    sc = scene()
-    helpers.git(sc.repo, "update-ref", "-d", "refs/remotes/origin/master")
-    r, n = go(sc, tool_dir('printf "success\\n"'))
-    S.eq("ci green but there is no origin/master here: the checks run here, one line", (r.returncode, n, r.stderr.count("base checks: CI not used")), (0, 1, 1))
-    for label, answer, origin, gh in [
-            ("the run failed", 'printf "failure\\n"', url, True),
-            ("the run is pending", 'printf "pending\\n"', url, True),
-            ("the run was skipped", 'printf "skipped\\n"', url, True),
-            ("the check is absent", "true", url, True),
-            ("one run of two is red", 'printf "success\\nfailure\\n"', url, True),
-            ("gh exits non-zero, even after printing success", 'printf "success\\n"; exit 1', url, True),
-            ("gh is not installed", None, url, False),
-            ("the origin is not on GitHub", 'printf "success\\n"', "https://git.example.org/o/r.git", True),
-            ("there is no origin", 'printf "success\\n"', None, True)]:
-        sc = scene(origin)
-        r, n = go(sc, tool_dir(answer if gh else None))
+    r, n = go(sc, tool_dir(stub(sc, [("other", "x", "y"), ("%s" % ".github/workflows/checks.yml", "completed", "success"), ok])))
+    S.eq("ci green: runs of other workflows are ignored", (r.returncode, n, "CI passed" in r.stderr), (0, 0, True))
+    for label, lines, tail in [
+            ("only a pull request run (the push query finds nothing)", [], ""),
+            ("another workflow's push run is green", [(".github/workflows/checks.yml", "completed", "success")], ""),
+            ("the push run is in progress", [(CI, "in_progress", "")], ""),
+            ("the push run is queued", [(CI, "queued", "")], ""),
+            ("the push run failed", [(CI, "completed", "failure")], ""),
+            ("the push run was skipped", [(CI, "completed", "skipped")], ""),
+            ("one push run green, another failed", [ok, (CI, "completed", "failure")], ""),
+            ("one push run green, another in progress", [ok, (CI, "in_progress", "")], ""),
+            ("gh exits non-zero, even after printing success", [ok], "exit 1\n")]:
+        sc = scene()
+        r, n = go(sc, tool_dir(stub(sc, lines, tail=tail)))
         S.eq("ci not used, %s: the checks run here" % label, (r.returncode, n), (0, 1))
         S.ok("ci not used, %s: one line says why" % label, r.stderr.count("base checks: CI not used") == 1 and "CI passed" not in r.stderr, r.stderr)
-        S.eq("ci not used, %s: the row is the local one, not CI's" % label, [json.loads(x["detail"])["source"] for x in evidence_rows(sc)], ["profile"])
+        S.eq("ci not used, %s: the row is the local one, not CI's" % label, source_rows(sc), ["profile"])
+    for label, origin, branch, gh in [
+            ("no default_branch", url, None, True),
+            ("an empty default_branch", url, "", True),
+            ("gh is not installed", url, "master", False),
+            ("the origin is not on GitHub", "https://git.example.org/o/r.git", "master", True),
+            ("there is no origin", None, "master", True)]:
+        sc = scene(origin, branch)
+        r, n = go(sc, tool_dir(stub(sc, [ok]) if gh else None))
+        S.eq("ci not used, %s: the checks run here" % label, (r.returncode, n), (0, 1))
+        S.ok("ci not used, %s: one line says why" % label, r.stderr.count("base checks: CI not used") == 1 and "CI passed" not in r.stderr, r.stderr)
+        S.eq("ci not used, %s: the row is the local one, not CI's" % label, source_rows(sc), ["profile"])
+    sc = scene(branch="main")  # a green push run of another branch name than the project's default branch is not asked for, so it is not found
+    r, n = go(sc, tool_dir(stub(sc, [ok], branch="master")))
+    S.eq("ci not used, the query names the configured branch (main), the stub wants master: the checks run here", (r.returncode, n), (0, 1))
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
