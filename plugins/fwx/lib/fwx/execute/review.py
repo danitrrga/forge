@@ -21,6 +21,8 @@ and the groups `fix`, `consider`, `note`, `dismissed`, `file` with `routes` (id 
 
 The one behaviour that is not a port is the threshold: the verifier runs only above `THRESHOLD` items (D10), where execute.js ran it on any. Below
 it every item is fixed, a large `outside` item excepted (it is too big for a round: it goes to `file`).
+D25 (09-trim): a verdict `fix` of severity `low` (the verifier's) goes to `consider`, never to `fix`: only medium and high cost a fix round
+and a new gate. Below the threshold nothing is verified, so every item is still fixed.
 
 State is read from the run's own recorded calls (`steps`, oldest first), never from variables of a running script: the pass, its items, and the
 misses of each unit (a unit's name holds its pass, so a miss of one pass never counts in the next). Only a `report.json` inside the folder
@@ -246,15 +248,19 @@ def _route(items, outside_of, by):
         ident = it["id"]
         d = (by or {}).get(ident)
         verdict = d["verdict"] if d else "fix"
+        severity = d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]
+        demoted = verdict == "fix" and d is not None and severity == "low"
+        if demoted:
+            verdict = "consider"  # D25: a verified finding of severity low is listed for the owner; only medium and high cost a fix round and a new gate
         if _large(outside_of, ident) and verdict == "fix":
             # too big for a fix round: returned for the session to file as a Linear issue
             groups["file"].append(outside_of[ident])
             routes[ident] = "file"
         elif verdict == "fix":
-            groups["fix"].append(dict(it, severity=d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]))
+            groups["fix"].append(dict(it, severity=severity))
             routes[ident] = "fix"
         elif verdict == "consider":
-            groups["consider"].append({"id": ident, "file": it["file"], "line": it["line"], "claim": it["claim"], "severity": d["severity"]})
+            groups["consider"].append({"id": ident, "file": it["file"], "line": it["line"], "claim": it["claim"], "severity": severity if demoted else d["severity"]})
             routes[ident] = "consider"
         elif verdict == "note":
             groups["note"].append({"id": ident, "claim": it["claim"]})

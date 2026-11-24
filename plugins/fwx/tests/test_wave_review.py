@@ -104,9 +104,10 @@ class World:
         r = R(self.S.cwd, "wave", "findings", "--run", run, "--report", *lines, *extra, env=self.env)
         return r, J(r) or {}
 
-    def verdicts(self, R, verdicts, run=RUN, unit="r1-verifier", raw=None):
-        """Write the verifier's report (`verdicts`: {id: verdict}; severity medium) and ask the command to route it."""
-        rows = [{"id": i, "verdict": v, "severity": "none" if v == "dismiss" else "medium", "reason": "because " + i} for i, v in (verdicts or {}).items()]
+    def verdicts(self, R, verdicts, run=RUN, unit="r1-verifier", raw=None, severity=None):
+        """Write the verifier's report (`verdicts`: {id: verdict}; severity medium, or `severity`: {id: severity}) and ask the command to route it."""
+        rows = [{"id": i, "verdict": v, "severity": (severity or {}).get(i, "none" if v == "dismiss" else "medium"), "reason": "because " + i}
+                for i, v in (verdicts or {}).items()]
         p = self.path(unit, run)
         helpers.write(os.path.dirname(p), "report.json", json.dumps(raw if raw is not None else {"verdicts": rows}))
         return self.say_verdicts(R, "verdicts %s" % p, run)
@@ -485,6 +486,20 @@ def case_verdicts(R, S):
     S.ok("the fixer's brief names only the finding to fix", os.path.isfile(fb) and "claim of F1" in read(fb) and "claim of F2" not in read(fb), fb)
     S.ok("`why` is the text for `wave fix --why`", (v.get("why") or "").startswith("review findings to fix: r1-F1"), v.get("why"))
     S.eq("the head the fixer starts from", v.get("head"), W.to)
+    # D25 (09-trim): a verified finding of severity low goes to consider, never to fix; only medium and high trigger a fix round and a new gate
+    # Red before: FAIL: D25: a low `fix` verdict is not fixed, a medium and a high one are: got ['r1-F1', 'r1-F2', 'r1-F3', 'r1-F4'], want ['r1-F2', 'r1-F3', 'r1-F4']
+    W = World()
+    four(W, R)
+    r, v = W.verdicts(R, {"r1-F1": "fix", "r1-F2": "fix", "r1-F3": "fix", "r1-F4": "fix"}, severity={"r1-F1": "low", "r1-F2": "medium", "r1-F3": "high"})
+    S.eq("D25: a low `fix` verdict is not fixed, a medium and a high one are", v.get("ids"), ["r1-F2", "r1-F3", "r1-F4"])
+    S.eq("D25: the low one is in consider, with its severity", v.get("consider"), [{"id": "r1-F1", "file": "src/a.py", "line": 3, "claim": "claim of F1", "severity": "low"}])
+    S.eq("D25: the routes", v.get("routes"), {"r1-F1": "consider", "r1-F2": "fix", "r1-F3": "fix", "r1-F4": "fix"})
+    S.ok("D25: the fixer's brief holds no low finding", os.path.isfile(v.get("brief") or "") and "claim of F1" not in read(v["brief"]) and "claim of F2" in read(v["brief"]), v.get("brief"))
+    W = World()
+    four(W, R)
+    r, v = W.verdicts(R, {"r1-F1": "fix", "r1-F2": "dismiss", "r1-F3": "dismiss", "r1-F4": "dismiss"}, severity={"r1-F1": "low"})
+    nxt(S, "D25: nothing but a low `fix` verdict is done: no fix round", v, "done")
+    S.eq("D25: and it is listed for the owner", [c["id"] for c in v.get("consider") or []], ["r1-F1"])
     # nothing to fix
     W = World()
     four(W, R)
@@ -532,13 +547,13 @@ def case_verdicts(R, S):
     nxt(S, "a reply that is no line of a report relaunches the verifier", v, "relaunch")
     W = World()
     four(W, R)
-    r, v = W.verdicts(R, None, raw={"verdicts": [{"id": i, "verdict": "fix", "severity": "low", "reason": "r"} for i in ("r1-F1", "r1-F2", "r1-F3", "r1-F4")], "extra": 1})
+    r, v = W.verdicts(R, None, raw={"verdicts": [{"id": i, "verdict": "fix", "severity": "medium", "reason": "r"} for i in ("r1-F1", "r1-F2", "r1-F3", "r1-F4")], "extra": 1})
     nxt(S, "a verdicts file with every id is read", v, "fix")
     S.eq("every id fixed", v.get("ids"), ["r1-F1", "r1-F2", "r1-F3", "r1-F4"])
     W = World()
     four(W, R)
     p = W.path("r9-verifier")
-    helpers.write(os.path.dirname(p), "report.json", json.dumps({"verdicts": [{"id": i, "verdict": "fix", "severity": "low", "reason": "r"} for i in ("r1-F1", "r1-F2", "r1-F3", "r1-F4")]}))
+    helpers.write(os.path.dirname(p), "report.json", json.dumps({"verdicts": [{"id": i, "verdict": "fix", "severity": "medium", "reason": "r"} for i in ("r1-F1", "r1-F2", "r1-F3", "r1-F4")]}))
     r, v = W.say_verdicts(R, "verdicts %s" % p)
     nxt(S, "the verdicts of another unit are not read", v, "relaunch")
     # no verifier awaited
@@ -625,6 +640,8 @@ MUTANTS = [
      "a protected path of the last final merge launches the security reviewer"),
     ("a missing postmortem.md is an error again", case_small_plan, V_, 'asked = prepare._security_why(data, owner["postmortem"], config.load(top))',
      'asked = plan.load_postmortem(owner["postmortem"]) and []', "small plan, no postmortem, security_review false: exit"),
+    ("a low `fix` verdict is fixed (D25 undone)", case_verdicts, V_, 'severity == "low"\n', 'severity == "never"\n',
+     "D25: a low `fix` verdict is not fixed, a medium and a high one are"),
     ("a verdict `consider` is fixed", case_verdicts, V_, 'elif verdict == "consider":', 'elif verdict == "fix":',
      "consider: id, file, line, claim, severity"),
     ("the verdicts of any unit are read", case_verdicts, V_, 'if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):\n        return None, ""', 'if False:\n        return None, ""',
