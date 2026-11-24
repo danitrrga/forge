@@ -89,17 +89,41 @@ def _shell():
     return shutil.which("bash") or "/bin/sh"
 
 
+@contextlib.contextmanager
+def _child_env():
+    """The environment a check runs in. When its temp dir (TMPDIR, else the default) is inside a git work tree, TMPDIR is a fresh folder
+    under /tmp for the length of the block and removed after: a test that expects its temp dir outside any repository fails falsely
+    otherwise (13 to 17 of forge's did). A TMPDIR outside a checkout is left as it is."""
+    env = dict(os.environ)
+    here = env.get("TMPDIR") or tempfile.gettempdir()
+    probe = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}  # a hook's GIT_DIR would make every folder look inside
+    try:
+        inside = subprocess.run(["git", "-C", here, "rev-parse", "--is-inside-work-tree"], env=probe, capture_output=True, text=True)
+        inside = inside.returncode == 0 and inside.stdout.strip() == "true"
+    except OSError:
+        inside = False
+    if not inside:
+        yield env
+        return
+    made = tempfile.mkdtemp(prefix="fwx-check-", dir="/tmp" if os.path.isdir("/tmp") else None)
+    env["TMPDIR"] = made
+    try:
+        yield env
+    finally:
+        shutil.rmtree(made, ignore_errors=True)
+
+
 def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
     """Run one command with the shell in `cwd`: `{cmd, rc, seconds, output}`. `rc` is the exit status, or None when the
     command was killed by the time limit (its whole process group) or could not start; `output` is the last KEEP_CHARS
     of stdout and stderr together, with the reason appended in those two cases. `timed_out` tells the first from the second:
     a command that ran out of time proved nothing, which is not a red check, and `limit` is the time it had."""
     started = time.monotonic()
-    with tempfile.TemporaryFile() as out:
+    with tempfile.TemporaryFile() as out, _child_env() as env:
         rc, note, timed_out = None, "", False
         try:
             proc = subprocess.Popen([_shell(), "-c", command], cwd=cwd, stdin=subprocess.DEVNULL, stdout=out,
-                                    stderr=subprocess.STDOUT, start_new_session=True)
+                                    stderr=subprocess.STDOUT, start_new_session=True, env=env)
         except OSError as e:
             proc, note = None, "\ncould not start: %s" % e
         if proc:
