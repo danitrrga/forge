@@ -370,7 +370,7 @@ def case_security(R, S):
 def case_small_plan(R, S):
     """08.3 T31: a small plan may skip the post-mortem, and then the planner's `security_review` stands in for it."""
     protected = {"project": {"checks": ["true"], "protected_paths": ["src/a.py"]}}
-    login = [task("T1", 1, ["app/auth/login.py"])]
+    login = [task("T1", 1, ["app/home.py"])]
     login_ignored = Scene(postmortem=False, size="small", tasks=login, plan_extra={"security_review": True})
     sec = ok_args(S, "small, no postmortem, security_review true", login_ignored.prepare(R)).get("security") or {}
     S.eq("small: security_review true on a file no glob protects", sec.get("needed"), True)
@@ -382,6 +382,11 @@ def case_small_plan(R, S):
     sec = ok_args(S, "small, security_review false, a task on a protected path", guarded.prepare(R)).get("security") or {}
     S.eq("small: a protected path forces the review", sec.get("needed"), True)
     S.ok("small: why names the protected path", "protected" in sec.get("why", "") and "src/a.py" in sec.get("why", ""), repr(sec))
+    for name in ("src/auth/login.py", ".github/workflows/x.yml"):  # the defaults decide and integrate use, with no project glob
+        d = Scene(postmortem=False, size="small", tasks=[task("T1", 1, [name])], plan_extra={"security_review": False})
+        sec = ok_args(S, "small, security_review false, default protected path %s" % name, d.prepare(R)).get("security") or {}
+        S.eq("small: a default protected path forces the review (%s)" % name, sec.get("needed"), True)
+        S.ok("small: why names the default protected path (%s)" % name, name in sec.get("why", ""), repr(sec))
     keyless = Scene(postmortem=False, size="small")
     refused(S, "small, no postmortem, no security_review", keyless, keyless.prepare(R), "security_review")
     for size in ("normal", "big"):
