@@ -642,18 +642,16 @@ def case_base_reuse(R, S):
 
 
 def case_base_moved(R, S):
-    """A base check that commits (HEAD moves) or leaves a file (the checkout is dirty) proves nothing about the sha it started at, so
-    no green row of that sha may be written for a later `fwx wave new` to reuse. Seen failing before the fix (DTC-77, CodeRabbit on
-    PR 222): "moved: a check that commits: exit: got (0, 1), want (2, 0)" (it exited 0 and wrote one evidence row of the old sha)."""
-    commit = "git -c user.name=t -c user.email=t@example.test commit -q --allow-empty -m moved"
-    for label, check, needle in (("a check that commits", commit, "HEAD moved"),
-                                 ("a check that leaves an untracked file", "touch left-by-check.txt", "uncommitted changes")):
-        sc = Scene(recipe=[check])
-        r = sc.prepare(R)
-        green = [x for x in evidence_rows(sc) if x.get("kind") == "evidence"] if sc.audit_exists() else []
-        S.eq("moved: %s: exit" % label, (r.returncode, len(green)), (2, 0))
-        S.eq("moved: %s: stdout empty" % label, r.stdout, "")
-        S.ok("moved: %s: the refusal says %r" % (label, needle), needle in r.stderr, "stderr %r" % r.stderr[:300])
+    """A base check that commits (HEAD moves) proves nothing about the sha it started at, so no green row of that sha may be written
+    for a later `fwx wave new` to reuse. Seen failing before the fix (DTC-77, CodeRabbit on PR 222): "moved: a check that commits: exit:
+    got (0, 1), want (2, 0)" (it exited 0 and wrote one evidence row of the old sha). A check that only leaves a file is not a move: `fwx
+    verify` counts `clean` as `HEAD == sha` too (case_worktree_checks leaves one and passes)."""
+    sc = Scene(recipe=["git -c user.name=t -c user.email=t@example.test commit -q --allow-empty -m moved"])
+    r = sc.prepare(R)
+    green = [x for x in evidence_rows(sc) if x.get("kind") == "evidence"] if sc.audit_exists() else []
+    S.eq("moved: a check that commits: exit", (r.returncode, len(green)), (2, 0))
+    S.eq("moved: a check that commits: stdout empty", r.stdout, "")
+    S.ok("moved: a check that commits: the refusal says 'HEAD moved'", "HEAD moved" in r.stderr, "stderr %r" % r.stderr[:300])
 
 
 def timeout_run(sc, seconds, root):
@@ -699,7 +697,8 @@ MUTANTS = [
      "reuse: a record of other checks on the same sha stands in for nothing"),
     ("green base not recorded", case_base_reuse, P, "        _remember(part, base, recipe, {part, phase}, cfg)\n", "        pass\n",
      "reuse: the green base is recorded as one evidence row"),
-    ("timeout is red", case_base_timeout, P, 'red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]', 'red = [r for r in results if r["rc"] != 0]',
+    ("moved base recorded as green", case_base_moved, P, "        _unmoved(top, base)\n", "        pass\n", "moved: a check that commits: exit"),
+    ("timeout is red",case_base_timeout, P, 'red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]', 'red = [r for r in results if r["rc"] != 0]',
      "timeout: a base check that outlives its limit is NOT RUN"),
     ("timeout hides a red check", case_base_timeout, P, "if not red and late:", "if late:", "timeout: a check that is red beside one that timed out"),
     ("ignored file allowed", case_ignored, P, "ignored = _ignored(top, tasks)", "ignored = []", "prepare exit 0 with ignored config/forge.json"),

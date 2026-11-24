@@ -273,8 +273,21 @@ def _base_is_green(top, base, recipe, folders, say):
     return red or None
 
 
+def _unmoved(top, base):
+    """WaveError if HEAD is no longer `base` after the base checks: a check that commits or checks out proves nothing about `base`, and a
+    green row of `base` written then would be reused by the next run. This is what `fwx verify` calls not clean (`clean` is `HEAD == sha`)."""
+    try:
+        now = verify.head(top)
+    except state.StateError as e:
+        raise WaveError(str(e))
+    if now != base:
+        raise WaveError("HEAD moved from %s to %s while the base checks ran, so they prove neither commit: nothing was recorded"
+                        % (base[:8], now[:8]))
+
+
 def _remember(part, base, recipe, folders, cfg):
-    """The evidence row of a base that ran green (shaped as `fwx verify` writes it), unless a record already stands in for the run."""
+    """The evidence row of a base that ran green (shaped as `fwx verify` writes it), unless a record already stands in for the run.
+    `clean` is True because `_unmoved` has just measured it, as `fwx verify` does."""
     if _record(base, recipe, folders):
         return
     source = "profile" if evidence.plan_checks(cfg["project"]["checks"], os.devnull) else "package"
@@ -372,6 +385,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         raise RedBase({"status": "needs-owner", "reason": reason, "phase_dir": phase, "rounds": "%d/%d" % (used, cap)},
                       "\n".join("--- %s\n%s" % (r["cmd"], verify.tail(r["output"])) for r in red))
     if not gating:
+        _unmoved(top, base)
         _remember(part, base, recipe, {part, phase}, cfg)
     _write(made, folder, gating)
     if not gating and not revert and not fixing and tasks and len(_done(top, branch, name, tasks)) == len(tasks):
