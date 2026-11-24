@@ -432,7 +432,7 @@ s.eq("new-phase with a map over the cap: the phase is bound", (session_file(big_
      ".fwx/milestones/v1/phases/01-alpha")
 
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
-nogit = helpers.mkdtemp("fwx-nogit-")
+nogit = helpers.mkdtemp_nogit()
 for args in (["session"], ["phase", "list"], ["session", "attach", "--root"], ["phase", "new", "x"], ["milestone", "new"], ["decision", "new", "--decision", "a", "--why", "b",
              "--support", "chosen"]):
     r = st(nogit, *args)

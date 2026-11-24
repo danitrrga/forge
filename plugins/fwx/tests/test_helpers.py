@@ -7,6 +7,13 @@ included, so the toy repo's commit lands in the other repo):
   FAIL: toy_repo with GIT_DIR set: the toy repo has its own commit: got '2', want '1'
   FAIL: toy_repo is on master: got 'git rev-parse --abbrev-ref HEAD failed (128): fatal: not a git repository ...'
   FAIL: add_worktree makes a worktree: git worktree add -q -b side ... failed (128): fatal: not a git repository ...
+
+Control for mkdtemp_nogit, seen red on the code before it (the nogit cases made their folder with mkdtemp(), so with TMPDIR
+inside a repository that has its own .fwx/, `fwx phase new x` and `fwx milestone new` ran in that repository and wrote to it;
+test_state_cli.py with such a TMPDIR exited 1):
+  FAIL: mkdtemp_nogit with TMPDIR inside a repository: the folder is outside it: got True, want False
+  FAIL: mkdtemp_nogit with TMPDIR inside a repository: fwx phase new x exits 2: got 0, want 2
+  FAIL: mkdtemp_nogit with TMPDIR inside a repository: that repository is unchanged: got ['01-x'], want []
 """
 import os
 import sys
@@ -134,5 +141,28 @@ except OSError:
 finally:
     probe.close()
 s.ok("free_port: the caller can bind what it was given", bound)
+
+# mkdtemp_nogit with TMPDIR inside a repository that has its own .fwx/ (what an executor's TMPDIR is): the folder is not in any
+# repository, fwx refuses there with exit 2, and the repository is left as it was.
+import tempfile
+with tempfile.TemporaryDirectory(prefix="nogit-ctl-") as top:
+    repo = os.path.join(top, "repo")
+    os.makedirs(os.path.join(repo, "scratch", "tmp"))
+    os.makedirs(os.path.join(repo, ".fwx", "milestones", "v1", "phases"))
+    helpers.git(repo, "init", "-q")
+    helpers.write(repo, ".fwx/PROJECT.md", "# p\n")
+    child = subprocess.run([sys.executable, "-c", (
+        "import os, sys; sys.path.insert(0, %r); import helpers\n"
+        "d = helpers.mkdtemp_nogit()\n"
+        "inside = helpers._in_work_tree(d)\n"
+        "r = helpers.fwx(d, 'phase', 'new', 'x')\n"
+        "print(inside, r.returncode)\n") % os.path.dirname(os.path.realpath(__file__))],
+        capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=120,
+        env=helpers.clean_env(TMPDIR=os.path.join(repo, "scratch", "tmp")))
+    inside, code = (child.stdout.split() + ["?", "?"])[:2]
+    s.eq("mkdtemp_nogit with TMPDIR inside a repository: the folder is outside it", inside, "False")
+    s.eq("mkdtemp_nogit with TMPDIR inside a repository: fwx phase new x exits 2", code, "2")
+    s.eq("mkdtemp_nogit with TMPDIR inside a repository: that repository is unchanged",
+         sorted(os.listdir(os.path.join(repo, ".fwx", "milestones", "v1", "phases"))), [])
 
 s.done()
