@@ -1469,8 +1469,9 @@ GROUPS = {"fwx": "plugins/fwx"}
 FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
-# The files that take minutes (measured on the 4-CPU CI runner, one after the other: 516 s, 329 s, 105 s, 89 s; every other file is under 60 s) start
-# first under --jobs N: by size alone they begin 150 to 300 s late and the run waits for them. A stale name costs minutes, never a result.
+# The files that take minutes (test_switch, test_run, test_new and test_messages: each 2 to 3 minutes on a loaded 16-CPU machine; every other
+# file is under about 25 s) start first when files run at once: by size alone they begin late and the run waits for them. A stale name costs
+# minutes, never a result.
 SLOW_FIRST = ("tests/test_run.py", "tests/test_switch.py", "tests/test_messages.py", "tests/test_new.py")
 
 
@@ -1503,12 +1504,19 @@ def failure_tail(output):
     return "\n" + "\n".join(head + ["    " + l for l in lines[cut:]])
 
 
+def default_workers():
+    """How many files the run with no group starts at once when --jobs is not given: min(4, CPUs), 1 where the count is unknown. Four is
+    what CI runs (--jobs 4) and what test_run, test_switch and test_messages use inside for their mutants; every child is niced (lib.run_low),
+    so a foreground tool still gets its cores. Serial is --jobs 1."""
+    return min(4, os.cpu_count() or 1)
+
+
 def cmd_test(a):
     """forge test [GROUP [--expect-not-run PATH[,PATH...]]] [--jobs N] [--mutants]: every test but the ones of a group, or one group.
 
     A group is a suite run on its own, with its own exit codes (forge/testgroup.py); `fwx` is the plugin's (plugins/fwx/tests). The
     --expect-not-run belongs to a group, and --mutants to the run with no group; combined otherwise they exit 2, as does a group nobody has.
-    --jobs N runs up to N files at once, in a group (default: the CPUs, at most 8) and in the run with no group (default: 1)."""
+    --jobs N runs up to N files at once, in a group (default: the CPUs, at most 8) and in the run with no group (default: min(4, CPUs); --jobs 1 runs them one after the other)."""
     group = getattr(a, "group", None)
     expect, jobs = getattr(a, "expect_not_run", None), getattr(a, "jobs", None)
     if group is not None:
@@ -1523,7 +1531,7 @@ def cmd_test(a):
     if expect:
         print("forge test: --expect-not-run needs a group (groups: %s)" % ", ".join(GROUPS), file=sys.stderr)
         return 2
-    workers = 1  # one file after the other unless --jobs says otherwise: the owner's machine keeps its cores
+    workers = default_workers()  # --jobs N replaces it; --jobs 1 is one file after the other
     if jobs:
         from forge import testgroup
         _, workers, error = testgroup.check(None, jobs)
@@ -2060,7 +2068,7 @@ def build_parser():
     t.add_argument("--expect-not-run", action="append", metavar="PATH[,PATH...]",
                    help="with a group: tests that cannot run where this is called from, as the group lists them (repeatable); with it a test "
                         "that exits 77 and is not declared makes the run exit 77, and a run in which nothing passed exits 1")
-    t.add_argument("--jobs", action="append", metavar="N", help="how many test files run at once (default: the CPUs, at most 8, with a group; 1 with none)")
+    t.add_argument("--jobs", action="append", metavar="N", help="how many test files run at once (default: the CPUs, at most 8, with a group; at most 4 with none; 1 is one after the other)")
     t.add_argument("--mutants", action="store_true", help="run only the on-demand suites (the guard's mutant check)")
     t.set_defaults(fn=cmd_test)
     t = sub.add_parser("toolchain", help="the third-party tools config/toolchain.json pins, installed by mise")
