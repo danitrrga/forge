@@ -9,18 +9,16 @@ or None} of every plan file it read (`plan.md` and the `plan.md` of each subphas
 errors and warnings as `<file>: <field>: <reason>`. A plan file whose frontmatter did not load is left alone here: its
 structure error is the one to fix first. Everything is an error but the first budget step.
 
-Per plan file: `## Goal` then `## Approach`; a `## Goal` of fewer than ten non-empty lines and 150 words; no edit history (git is
-the history); no `T<n>`, `C<n>` or `D<n>` in the prose that `tasks`, `criteria` or `decisions.tsv` does not define; every
-`` `file:line` `` cite points at a file with that line (in the phase folder or the main checkout); the body under 3600 words
-(a warning) and 4800 (an error); a non-empty `## Size` when the plan exceeds its band or differs from `premortem.md`.
-`premortem.md`: `## Verdict`, `## Failure reasons`, `## Size`, and the verdict matches the failure reasons listed. `postmortem.md`:
-its six headings; each finding (a list item under `## Findings`) has a severity and an `evidence:` field, a blocker or warning
+Per plan file: no edit history (git is the history); no `T<n>`, `C<n>` or `D<n>` in the prose that `tasks`, `criteria` or
+`decisions.tsv` does not define; every `` `file:line` `` cite points at a file with that line (in the phase folder or the main
+checkout); a non-empty `## Size` when the plan exceeds its band or differs from `premortem.md`. Nothing caps the `## Goal` or the
+body, and `plan.md` has no required heading. `premortem.md`: `## Verdict`, `## Failure reasons`, and the verdict matches the failure
+reasons listed. `postmortem.md`: `## Verdict`, `## Findings` and `## Needs from the owner before executing`; each finding (a list item under `## Findings`) has a severity and an `evidence:` field, a blocker or warning
 with `unproven` evidence is an error, and the verdict matches the findings; `security_review` is true when a task writes a file
 that the decide table's default protected paths or `project.protected_paths` cover; with no `postmortem.md`, the same rule applies to `plan.md`'s own `security_review` when it is false.
 
-Length is counted in words, not lines: a cap in lines is passed by one long line. The two figures are 12 words to the line of the
-300 and 400 lines the plan format first named (no measurement behind them yet); `## Goal` also keeps its ten lines, which is the
-shape it must have, with a word cap beside it for the same reason.
+A heading is required only where a script reads it (`## Verdict`, `## Findings`, `## Failure reasons` and the post-mortem's needs
+section); no order of headings is checked.
 
 What cannot run says so: a cite with no main checkout to look in, and a protected-path check with no configuration, give a
 `NOT RUN, NOT ARMED` warning (neither a pass nor an error). A cite or a protected path the plan does not have is nothing to look at
@@ -36,12 +34,9 @@ from fwx import config, plan, state
 from fwx.core import decide, globs
 
 HEADINGS = {
-    "plan.md": ("Goal", "Approach"),
-    "premortem.md": ("Verdict", "Failure reasons", "Size"),
-    "postmortem.md": ("Verdict", "Findings", "Criteria", "Checked", "Needs from the owner before executing", "Not found wrong"),
+    "premortem.md": ("Verdict", "Failure reasons"),
+    "postmortem.md": ("Verdict", "Findings", "Needs from the owner before executing"),
 }
-GOAL_LINES, GOAL_WORDS = 10, 150   # a Goal of this many non-empty lines, or more words, is an error
-WORDS_WARN, WORDS_ERROR = 3600, 4800
 SEVERITIES = ("blocker", "warning", "info")
 
 _HISTORY = re.compile(r"(?:Ajustado el|Revisado el|Adjusted on)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4})", re.I)
@@ -108,15 +103,9 @@ class _Form:
         return self._main
 
     def headings(self, rel, scanned):
-        order = scanned[2]
-        required = [h for h in HEADINGS[os.path.basename(rel)]]
-        for h in required:
-            if h not in order:
+        for h in HEADINGS[os.path.basename(rel)]:
+            if h not in scanned[2]:
                 self.error(rel, "## " + h, "missing")
-        present = [h for h in required if h in order]
-        for a, b in zip(present, present[1:]):
-            if order.index(b) < order.index(a):
-                self.error(rel, "## " + b, "comes before ## " + a)
 
 
 def _in(root, rel):
@@ -129,17 +118,6 @@ def _lines_of(path):
     with open(path, "rb") as f:
         data = f.read()
     return data.count(b"\n") + (1 if data and not data.endswith(b"\n") else 0)
-
-
-def _goal(f, rel, sections):
-    if "Goal" not in sections:
-        return
-    text = [t for t, _ in sections["Goal"] if t.strip()]
-    words = sum(len(t.split()) for t in text)
-    if len(text) >= GOAL_LINES:
-        f.error(rel, "## Goal", "%d lines, under ten required" % len(text))
-    if words >= GOAL_WORDS:
-        f.error(rel, "## Goal", "%d words, under %d required" % (words, GOAL_WORDS))
 
 
 def _prose(body):
@@ -193,14 +171,6 @@ def _cites(f, rel, body):
                 f.error(rel, "body", "%s:%d is past its end (%d lines)" % (name, last, _lines_of(path)))
     if unlooked:
         f.warn(rel, "body", "NOT RUN, NOT ARMED: %d cite(s) not looked at, no main checkout (%s)" % (unlooked, why))
-
-
-def _budget(f, rel, body):
-    n = sum(len(t.split()) for t, _ in body)
-    if n > WORDS_ERROR:
-        f.error(rel, "body", "%d words, over the %d allowed" % (n, WORDS_ERROR))
-    elif n > WORDS_WARN:
-        f.warn(rel, "body", "%d words, over %d: is every line needed?" % (n, WORDS_WARN))
 
 
 def _size(f, rel, data, sections, premortem):
@@ -307,12 +277,9 @@ def check(dir, seen, out):
         if scanned is None:
             continue
         body, sections, _ = scanned
-        f.headings(rel, scanned)
-        _goal(f, rel, sections)
         _history(f, rel, body)
         _ids(f, rel, body, data, decisions)
         _cites(f, rel, body)
-        _budget(f, rel, body)
         _size(f, rel, data, sections, premortem)
     for name, semantic in (("premortem.md", _premortem), ("postmortem.md", _postmortem)):
         path = os.path.join(dir, name)

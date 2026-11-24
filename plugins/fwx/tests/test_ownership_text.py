@@ -2,19 +2,23 @@
 """The ownership rule in the texts of agents (principles.md rule 12): one place states it, the rest point to it, and no text still narrows
 an agent's scope to its brief.
 
-What this can check is the words: that rule 12 exists with its source and its enforcers named, that the texts which used to say "leave it" or
-"report what the diff breaks, not everything wrong in the files it touches" are gone, and that each agent file points at the rule and
-carries the shape of an `outside` item where it reports one. What happens to an item is checked in code (test_execute_workflow.py).
+What this can check is the words, and only the words that carry the owner's rule or that code reads: that rule 12 exists with the owner's
+quotes and an enforcer, that no agent text says "leave it" or "report what the diff breaks, not everything wrong in the files it touches",
+that each agent file points at the rule, and that the agents which report a defect outside their task name the `outside` item that
+`workflows/execute.js` validates (a report without its shape is rejected there). What happens to an item is checked in code
+(test_execute_workflow.py). Wording beyond that (the words of the escalation, the rubric's dimensions, the hedge on chained commands) is not
+pinned here: 09.3 T33 removed those checks with their red logs.
 
-Red on master (the executor said "The bigger picture narrows your scope; it never widens it", the reviewers "not everything wrong in
-the files it touches", the principles had eleven rules); the FAIL lines:
-  FAIL: principles.md: rule 12 states the ownership rule, its source and its enforcers: got ['principles.md: rule 12 states the ownership rule: not found'], want []
-  FAIL: a text still narrows an agent's scope to its brief (state the rule once, in principles.md rule 12, and point at it): got ['agents/executor.md: "narrows your scope"',
-    'agents/executor.md: "Report what you saw outside your task and leave it"', 'agents/reviewer.md: "not everything wrong in the files it touches"',
-    'agents/security-reviewer.md: "not everything wrong in the files it touches"', 'data/executor-brief.md: "no fixes outside"',
-    'playbooks/execute.md: "scope the brief already forbids"', 'workflows/execute.js: "no fixes outside"'], want []
-  FAIL: each agent file points at the rule and carries what it must say: got ['agents/executor.md does not point at principles.md rule 12', ...]
-Controls (each check run on a text with its subject put back, and it must say so): see `control_*` below.
+Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the FAIL line printed):
+  playbooks/principles.md with "Enforced by" changed to "Checked by":
+    FAIL: principles.md: rule 12 states the ownership rule and its source: got ['principles.md: rule 12 names no enforcer (a rule with none is a guideline, rule 1)'], want []
+  agents/executor.md with "You own the result, not only your task" changed to "The bigger picture narrows your scope":
+    FAIL: a text still narrows an agent's scope to its brief (state the rule once, in principles.md rule 12, and point at it): got ['agents/executor.md: "narrows your scope"'], want []
+  agents/reviewer.md with "rule 12" changed to "rule 11":
+    FAIL: each agent file points at rule 12 and the agents that report a defect outside their task name `outside`: got ['agents/reviewer.md does not point at principles.md rule 12'], want []
+  agents/reviewer.md with "`outside`" changed to "item":
+    FAIL: each agent file points at rule 12 and the agents that report a defect outside their task name `outside`: got ['agents/reviewer.md does not say `outside`'], want []
+Controls (each check run on a text with its subject put back, and it must say so): see the `control:` checks.
 """
 import os
 import re
@@ -35,18 +39,11 @@ NARROWING = [
     ("scope the brief already forbids", "there is no forbidden scope, only the coordination limits"),
 ]
 TEXT_DIRS = ("agents", "skills", "playbooks", "workflows", "data", "templates")
-# the files that point at the rule, and the words each must carry besides
-POINTERS = {
-    "agents/executor.md": ["`outside`", "its own commit", "size", "issue", "status `question`", "first in `outside`", "input that crosses a boundary"],
-    "agents/reviewer.md": ["`outside`", "never dismiss"],
-    "agents/security-reviewer.md": ["`outside`", "never dismiss"],
-    "agents/review-verifier.md": ["not introduced"],
-    "agents/planner.md": ["other software", "the people who use"],
-    "agents/pre-mortem.md": ["other software", "the people who use"],
-    "skills/session/SKILL.md": ["Linear issue", "part report", "outside: <where>"],
-    "agents/state.md": ["Outside"],
-    "data/executor-brief.md": ["`outside`", "issue"],
-}
+# The files that point at the rule. The agents that report a defect outside their task also carry the word `outside`: it is the key of the
+# item that workflows/execute.js validates, and a report without it is rejected there.
+POINTERS = ["agents/executor.md", "agents/reviewer.md", "agents/security-reviewer.md", "agents/review-verifier.md", "agents/planner.md",
+            "agents/pre-mortem.md", "skills/session/SKILL.md", "data/executor-brief.md"]
+REPORTS_OUTSIDE = ("agents/executor.md", "agents/reviewer.md", "agents/security-reviewer.md", "data/executor-brief.md")
 
 
 def read(rel, root=ROOT):
@@ -81,43 +78,23 @@ def rule_problems(principles):
             found.append("principles.md: the owner's words are not quoted: %s" % quote)
     if "Enforced by" not in body:
         found.append("principles.md: rule 12 names no enforcer (a rule with none is a guideline, rule 1)")
-    for big in ("status `question`", "first in `outside`"):
-        if big not in body:
-            found.append("principles.md: rule 12 does not say what a big defect does (%s)" % big)
-    for enforcer in ("workflows/execute.js", "git diff", "files it before it returns"):
-        if enforcer not in body:
-            found.append("principles.md: rule 12 does not name %s as an enforcer" % enforcer)
     return found
 
 
 def pointer_problems(read_text):
     found = []
-    for rel, words in POINTERS.items():
+    for rel in POINTERS:
         text = read_text(rel)
-        if not re.search(r"principles\.md`? rule 12", text) and rel != "agents/state.md":
+        if not re.search(r"principles\.md`? rule 12", text):
             found.append("%s does not point at %s" % (rel, RULE))
-        for w in words:
-            if w not in text:
-                found.append("%s does not say %s" % (rel, w))
+        if rel in REPORTS_OUTSIDE and "`outside`" not in text:
+            found.append("%s does not say `outside`" % rel)
     return found
 
 
-# What the rubric must judge, by the rule it comes from: an agent is responsible for what it sees wrong, not for solving it all
-RUBRIC_WORDS = {
-    "ownership": ["small and easy", "status `question`", "first in `outside`"],
-    "security": ["\n## Security\n", "secrets", "input crossing a boundary", "permissions", "auth paths", "scores low"],
-}
-
-
-def rubric_problems(text, dims=("ownership", "security")):
-    return ["session-rubric.md does not say %s (%s)" % (w, d) for d in dims for w in RUBRIC_WORDS[d] if w not in text]
-
-
-s.eq("session-rubric.md judges what an agent does with a defect it sees (fixed when small, `question` or an `outside` item flagged first when big) and has a Security dimension",
-     rubric_problems(read("docs/session-rubric.md")), [])
-s.eq("principles.md: rule 12 states the ownership rule, its source and its enforcers", rule_problems(read("playbooks/principles.md")), [])
+s.eq("principles.md: rule 12 states the ownership rule and its source", rule_problems(read("playbooks/principles.md")), [])
 s.eq("a text still narrows an agent's scope to its brief (state the rule once, in " + RULE + ", and point at it)", narrowing(texts()), [])
-s.eq("each agent file points at the rule and carries what it must say", pointer_problems(read), [])
+s.eq("each agent file points at rule 12 and the agents that report a defect outside their task name `outside`", pointer_problems(read), [])
 looked = texts()
 s.ok("the narrowing check looked at the agent, skill, playbook and workflow texts (looking at nothing is a failure)",
      len(looked) > 30 and "agents/executor.md" in looked and "workflows/execute.js" in looked, str(len(looked)))
@@ -128,40 +105,9 @@ s.ok("control: the narrowing check finds the old executor sentence",
 s.ok("control: ... and the old reviewer sentence", narrowing({"agents/reviewer.md": "not everything wrong in the files it touches"}) != [])
 s.ok("control: ... and the old FORBIDDEN line", narrowing({"workflows/execute.js": "FORBIDDEN: no rebase, no fixes outside this work"}) != [])
 s.ok("control: a rule 12 with no enforcer is found", rule_problems("12. **Agents own the result.** Source: the owner.\n") != [])
-s.ok("control: a rule 12 with no escalation of a big defect is found",
-     any("big defect" in p for p in rule_problems(read("playbooks/principles.md").replace("first in `outside`", "in `outside`"))))
 s.ok("control: a missing rule 12 is found", rule_problems("11. **x.** y\n") != [])
 s.ok("control: an executor that does not point at the rule is found",
      any("executor.md does not point" in p for p in pointer_problems(lambda rel: "" if rel == "agents/executor.md" else read(rel))))
 s.ok("control: a reviewer that does not say a defect nearby is an `outside` item is found",
      any("reviewer.md does not say `outside`" in p for p in pointer_problems(lambda rel: read(rel).replace("`outside`", "") if rel == "agents/reviewer.md" else read(rel))))
-s.ok("control: a rubric with no security dimension is found",
-     rubric_problems(read("docs/session-rubric.md").replace("## Security", "## Safety"), ("security",)) != [])
-s.ok("control: a rubric with no escalation criterion is found", rubric_problems("Only what the task names is written.") != [])
-
-
-# An isolated agent's Bash call is refused when it chains commands around git or `export TMPDIR`, so the executor is told plainly to run
-# separate commands (a hedge, "some harnesses refuse", read as optional and cost 3 refused compound git commands), and the rubric must not
-# reward the opposite. Red before the fix (o1-F1):
-#   FAIL: executor.md tells the agent plainly to run plain, separate commands, with no hedge: got ['hedged: "Some harnesses refuse"'], want []
-#   (o1-F2) FAIL: session-rubric.md does not reward running commands together: got ['rewards: "Independent commands were run together"'], want []
-def plain_problems(text):
-    found = []
-    if "run plain, separate commands" not in text:
-        found.append("does not say: run plain, separate commands")
-    for hedge in ("Some harnesses refuse", "some harnesses refuse"):
-        if hedge in text:
-            found.append('hedged: "%s"' % hedge)
-    return found
-
-
-def rubric_chain_problems(text):
-    return ['rewards: "%s"' % w for w in ("Independent commands were run together",) if w in text]
-
-
-s.eq("executor.md tells the agent plainly to run plain, separate commands, with no hedge", plain_problems(read("agents/executor.md")), [])
-s.eq("session-rubric.md does not reward running commands together", rubric_chain_problems(read("docs/session-rubric.md")), [])
-s.ok("control: a hedged executor sentence is found", plain_problems("Some harnesses refuse a shell command that joins commands: run plain, separate commands") != [])
-s.ok("control: an executor with no such rule is found", plain_problems("Only in your own worktree.") != [])
-s.ok("control: a rubric that rewards chaining is found", rubric_chain_problems("- Independent commands were run together.") != [])
 s.done()

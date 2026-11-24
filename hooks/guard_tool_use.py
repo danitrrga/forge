@@ -1950,6 +1950,7 @@ def _creates_issue(seg):
 ORCA_TIMEOUT = 3.0  # seconds, for every `orca` call of one command together (all its launches share one deadline)
 ORCA_WALK_UP = 6  # folders tried from the working directory upward, to find the one Orca knows as a worktree
 ORCA_OWN_AGENTS = ("claude", "claude-agent-teams")
+ORCA_TITLE_MAX = 80  # characters of a chat title shown in the refusal, the ellipsis included
 
 
 def orca_chat_refusal(pcmd):
@@ -1976,7 +1977,9 @@ def orca_chat_refusal(pcmd):
             continue
         if chats:
             last = max(chats, key=lambda c: c.get("updatedAt") if isinstance(c.get("updatedAt"), (int, float)) else 0)
-            sid, title = last.get("orcaSessionId"), last.get("title") or "untitled"
+            sid, title = last.get("orcaSessionId"), " ".join(str(last.get("title") or "").split()) or "untitled"
+            if len(title) > ORCA_TITLE_MAX:  # a long or multi-line title would make the refusal noisy; the id stays whole
+                title = title[:ORCA_TITLE_MAX - 1].rstrip() + "\u2026"
             return ("an open %s chat exists in this project: orca_session_id:%s (%s)%s. Instead of a new chat, send to "
                     "it: orca orchestration send --to orca_session_id:%s --subject <s> --body <text>, read with orca "
                     "agent read %s. A new chat is only for an unrelated topic: prefix the command with "

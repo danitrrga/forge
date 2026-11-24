@@ -20,6 +20,9 @@ Controls seen red, each on a copy of config.py changed in one place (78 checks e
       FAIL: label_to_linear maps a neutral name: got 'needs-owner', want 'toy-needs-help'
   - no check for two neutral names sent to one Linear name:
       FAIL: two neutral names to one Linear name: label_to_linear raises: returned
+  - the seed's planner at "big" changed to sonnet (`models["planner"] = {z: ("sonnet" if z == "big" else "opus") ...}`),
+    1 failed; "seed: planner is opus" (normal size) still passed, as it must:
+      FAIL: seed: planner is opus at every size
   - the missing-file line printed on every call:
       FAIL: no file, second call: no more lines: got 'fwx: no .claude/fwx.json at <main>/.claude/fwx.json; using defaults\\n', want ''
 """
@@ -173,6 +176,11 @@ cfg = config.DEFAULTS
 s.eq("seed: planner is opus", config.model(cfg, "planner", "normal"), "opus")
 s.eq("seed: pre-mortem is sonnet", config.model(cfg, "pre-mortem", "normal"), "sonnet")
 s.eq("seed: detector is haiku", config.model(cfg, "detector", "normal"), "haiku")
+for role in ("decisions", "state"):
+    s.ok("seed: %s is haiku at every size" % role,
+         all(config.model(cfg, role, z) == "haiku" for z in config.SIZES),
+         "got %r" % [config.model(cfg, role, z) for z in config.SIZES])
+s.ok("seed: planner is opus at every size", all(config.model(cfg, "planner", z) == "opus" for z in config.SIZES))
 s.eq("seed: executor is sonnet", config.model(cfg, "executor", "big"), "sonnet")
 s.eq("seed: runner is haiku at every size", [config.model(cfg, "runner", z) for z in config.SIZES], ["haiku"] * 3)
 for role, size, what in (("nosuch", "small", "role"), ("executor", "huge", "size")):

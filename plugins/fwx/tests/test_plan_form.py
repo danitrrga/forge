@@ -22,6 +22,14 @@ Red before plan.md's `security_review` got the protected-path rule (08.3 T31), w
   FAIL: error: no postmortem, plan security_review false on a protected path: 'plan.md: security_review: task T1 touches a protected path (.github/workflows/**): security_review must be true' not in []
   FAIL: no postmortem, no configuration: NOT RUN, NOT ARMED for plan.md, no error: {'errors': [], 'warnings': [...no main checkout...]}
 
+09.4 T41 removed the Goal caps, the body budget, the plan.md headings, the pre-mortem's Size and the post-mortem's Criteria, Checked
+and Not found wrong, and every order check. Red before the code, quoted (30 FAIL lines; 'got (errors, warnings)'):
+  FAIL: nothing at all: ## Goal of twelve lines is fine: got (['plan.md: ## Goal: 12 lines, under ten required'], []), want ([], [])
+  FAIL: nothing at all: plan.md without ## Approach is fine: got (['plan.md: ## Approach: missing'], []), want ([], [])
+  FAIL: nothing at all: 5000 words in a fence: got (['plan.md: body: 5026 words, over the 4800 allowed'], []), want ([], [])
+  FAIL: nothing at all: 3601 words: got ([], ['plan.md: body: 3601 words, over 3600: is every line needed?']), want ([], [])
+The kept checks (Verdict, Findings, Needs and Failure reasons present; history, ids, cites, ## Size, protected paths) keep their cases.
+
 Controls: each check of plan_form switched off or bent in turn on a copy (the 26 mutants are in the commit message): the cases of
 that check fail, the clean ones keep passing.
 """
@@ -162,28 +170,28 @@ r = case("a clean phase", phase(), exact=(0, 0))
 s.eq("the clean phase: counts", (r["plans"], r["tasks"]), (1, 3))
 case("a clean phase with no premortem and no postmortem", phase(pre=None, post=None), exact=(0, 0))
 
-# ---- the headings of the body, in order
-case("plan.md without ## Goal", phase(body=APPROACH + SIZE), ["plan.md: ## Goal: missing"])
-case("plan.md without ## Approach", phase(body=GOAL + SIZE), ["plan.md: ## Approach: missing"])
-case("plan.md with ## Approach before ## Goal", phase(body=APPROACH + GOAL + SIZE), ["plan.md: ## Approach: comes before ## Goal"])
+# ---- headings: only those a script reads are required (09.4 T41); Goal, Approach, the pre-mortem's Size and the post-mortem's
+# Criteria, Checked and Not found wrong are not, and no order is checked
+case("plan.md without ## Goal is fine", phase(body=APPROACH + SIZE), exact=(0, 0))
+case("plan.md without ## Approach is fine", phase(body=GOAL + SIZE.replace("Normal.", "Normal, D1.")), exact=(0, 0))
+case("plan.md with ## Approach before ## Goal is fine", phase(body=APPROACH + GOAL + SIZE), exact=(0, 0))
 case("plan.md with no ## Size is fine when nothing warns", phase(body=GOAL + APPROACH), exact=(0, 0))
-case("a ## Goal inside a fence is not a heading", phase(body="```\n## Goal\nx\n```\n" + APPROACH + SIZE), ["plan.md: ## Goal: missing"])
+case("premortem.md without ## Verdict", phase(pre="## Failure reasons\nNone.\n\n## Size\nNormal.\n"), ["premortem.md: ## Verdict: missing"])
 case("premortem.md without ## Failure reasons", phase(pre="## Verdict\nok\n\n## Size\nNormal.\n"), ["premortem.md: ## Failure reasons: missing"])
-case("premortem.md: ## Size inside a fence is not a heading", phase(pre="## Verdict\nok\n\n## Failure reasons\nNone.\n\n```\n## Size\nx\n```\n"), ["premortem.md: ## Size: missing"])
-case("premortem.md with ## Size before ## Verdict", phase(pre="## Size\nNormal.\n\n## Verdict\nok\n\n## Failure reasons\nNone.\n"), ["premortem.md: ## Size: comes before ## Failure reasons"])
-for heading in ("Verdict", "Findings", "Criteria", "Checked", "Needs from the owner before executing", "Not found wrong"):
+case("premortem.md: ## Failure reasons inside a fence is not a heading", phase(pre="## Verdict\nok\n\n```\n## Failure reasons\nx\n```\n"), ["premortem.md: ## Failure reasons: missing"])
+case("premortem.md without ## Size is fine", phase(pre="## Verdict\nok\n\n## Failure reasons\nNone.\n"), exact=(0, 0))
+case("premortem.md with ## Size before ## Verdict is fine", phase(pre="## Size\nNormal.\n\n## Verdict\nok\n\n## Failure reasons\nNone.\n"), exact=(0, 0))
+for heading in ("Verdict", "Findings", "Needs from the owner before executing"):
     case("postmortem.md without ## " + heading, phase(post=POST_BODY.replace("## " + heading + "\n", "## Other\n")), ["postmortem.md: ## %s: missing" % heading])
-case("postmortem.md with ## Checked before ## Criteria", phase(post=POST_BODY.replace("## Criteria\nC1 and C2 can fail.\n\n## Checked\nthe tests.\n", "## Checked\nthe tests.\n\n## Criteria\nC1 and C2 can fail.\n")),
-     ["postmortem.md: ## Checked: comes before ## Criteria"])
+for heading in ("Criteria", "Checked", "Not found wrong"):
+    case("postmortem.md without ## %s is fine" % heading, phase(post=POST_BODY.replace("## " + heading + "\n", "## Other\n")), exact=(0, 0))
+case("postmortem.md with ## Checked before ## Criteria is fine", phase(post=POST_BODY.replace("## Criteria\nC1 and C2 can fail.\n\n## Checked\nthe tests.\n", "## Checked\nthe tests.\n\n## Criteria\nC1 and C2 can fail.\n")),
+     exact=(0, 0))
 
-# ---- ## Goal: under ten non-empty lines, and short in words
+# ---- ## Goal has no line or word cap
 goal = lambda n: "## Goal\n" + "".join("line %d\n\n" % i for i in range(n))
-case("## Goal of twelve lines", phase(body=goal(12) + APPROACH + SIZE), ["plan.md: ## Goal: 12 lines, under ten required"])
-case("## Goal of ten lines", phase(body=goal(10) + APPROACH + SIZE), ["plan.md: ## Goal: 10 lines, under ten required"])
-case("## Goal of nine lines, blanks between them", phase(body=goal(9) + APPROACH + SIZE), exact=(0, 0))
-case("## Goal of nine lines in a fence counts them", phase(body="## Goal\n```\n" + "x\n" * 12 + "```\n\n" + APPROACH + SIZE), ["plan.md: ## Goal: 14 lines, under ten required"])
-case("## Goal of one line of 200 words", phase(body="## Goal\n" + words(200) + "\n\n" + APPROACH + SIZE), ["plan.md: ## Goal: 200 words, under 150 required"])
-case("## Goal of 149 words", phase(body="## Goal\n" + words(149) + "\n\n" + APPROACH + SIZE), exact=(0, 0))
+case("## Goal of twelve lines is fine", phase(body=goal(12) + APPROACH + SIZE), exact=(0, 0))
+case("## Goal of one line of 200 words is fine", phase(body="## Goal\n" + words(200) + "\n\n" + APPROACH + SIZE), exact=(0, 0))
 
 # ---- no edit history
 DATE = "-".join(("2001", "01", "02"))  # built, not written: the guard refuses a literal date in an engine file
@@ -224,17 +232,10 @@ s.ok("a cite with no checkout: says NOT RUN, NOT ARMED", len(r["warnings"]) == 1
 s.ok("a cite with no checkout: the command prints it", "NOT RUN, NOT ARMED" in cli(d).stdout and cli(d).returncode == 0, cli(d).stdout)
 case("no cite, no checkout: nothing to look at is no warning", phase(body=NOCITE, post=None, in_repo=False), exact=(0, 0))
 
-# ---- the budget of the body, in words
-case("3600 words, long lines", phase(body=padded(3600)), exact=(0, 0))
-case("3601 words", phase(body=padded(3601)), warnings=["plan.md: body: 3601 words, over 3600: is every line needed?"], exact=(0, 1))
-case("4800 words", phase(body=padded(4800)), warnings=["plan.md: body: 4800 words, over 3600: is every line needed?"], exact=(0, 1))
-case("4801 words", phase(body=padded(4801)), ["plan.md: body: 4801 words, over the 4800 allowed"])
-fenced = GOAL + APPROACH + "```\n" + words(4801) + "\n```\n" + SIZE
-case("4801 words in a fence still count", phase(body=fenced), ["plan.md: body: %d words, over the 4800 allowed" % len(fenced.split())])
-r = case("450 short lines are 1350 words: lines are not the measure", phase(body=padded(1350, line=False)), exact=(0, 0))
-s.ok("the padded body has 450+ lines", len(padded(1350, line=False).splitlines()) > 450)
-long = GOAL + APPROACH + ("%s\n" % words(25)) * 150 + SIZE
-case("a body of 150 lines of 25 words is over 3600 words", phase(body=long), warnings=["plan.md: body: %d words, over 3600: is every line needed?" % len(long.split())], exact=(0, 1))
+# ---- the body has no word budget
+case("3601 words", phase(body=padded(3601)), exact=(0, 0))
+case("4801 words", phase(body=padded(4801)), exact=(0, 0))
+case("5000 words in a fence", phase(body=GOAL + APPROACH + "```\n" + words(5000) + "\n```\n" + SIZE), exact=(0, 0))
 
 # ---- ## Size must say something when the plan warned about its size
 five = lambda f: (f["size"].update(tag="small", agents=1), f.update(tasks=[
@@ -343,8 +344,8 @@ top = lambda f: f.update(size={"tag": "normal", "parts": 2, "agents": 1}, tasks=
 SBODY = GOAL + "## Approach\nS1 first, for C1 and D1.\n\n" + SIZE
 subs = lambda b1=SBODY, b2=SBODY.replace("S1", "S2"): {"01.1-a/plan.md": fm_text(SUB(1, 1)) + b1, "01.2-b/plan.md": fm_text(SUB(2, 2)) + b2}
 case("two subphases, clean", phase(top, body=GOAL + "## Approach\nT1, then T2; D1 and C1.\n\n" + SIZE, pre_fm=dict(PRE, parts=2), extra=subs()), exact=(0, 0))
-case("a subphase without ## Approach", phase(top, body=GOAL + "## Approach\nT1, then T2; D1 and C1.\n\n" + SIZE, pre_fm=dict(PRE, parts=2), extra=subs(b1=GOAL + SIZE)),
-     ["01.1-a/plan.md: ## Approach: missing"])
+case("a subphase without ## Approach is fine", phase(top, body=GOAL + "## Approach\nT1, then T2; D1 and C1.\n\n" + SIZE, pre_fm=dict(PRE, parts=2), extra=subs(b1=GOAL + SIZE)),
+     exact=(0, 0))
 case("a subphase citing D9", phase(top, body=GOAL + "## Approach\nT1, then T2; D1 and C1.\n\n" + SIZE, pre_fm=dict(PRE, parts=2), extra=subs(b2=SBODY.replace("D1", "D9"))),
      ["01.2-b/plan.md: body: D9 is not defined in decisions.tsv"])
 

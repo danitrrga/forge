@@ -56,14 +56,14 @@
         "big": "sonnet"
       },
       "decisions": {
-        "small": "sonnet",
-        "normal": "sonnet",
-        "big": "sonnet"
+        "small": "haiku",
+        "normal": "haiku",
+        "big": "haiku"
       },
       "state": {
-        "small": "sonnet",
-        "normal": "sonnet",
-        "big": "sonnet"
+        "small": "haiku",
+        "normal": "haiku",
+        "big": "haiku"
       },
       "demo": {
         "small": "sonnet",

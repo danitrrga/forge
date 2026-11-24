@@ -16,12 +16,6 @@ killed by the limit or never started. It goes to `dir` when given, else to the p
 finds it, always in the main checkout whatever worktree the run was launched from; with neither it writes nothing and
 says so.
 
-One check is built in, after the project's own: `added_files`. A file the commits since the default branch ADD (or rename to), named like a
-one-use file (brief, checkpoint, handoff, tomorrow or scratch, `.md` and `.txt` only) or like an old version (`.bak` or `.orig`;
-`-old`, `-copy`, ` copy`, `-backup` or `-v2` only with the living file beside it, any extension), is a red command of the evidence, `fwx added-files`, and each file gets one line
-that says what to do instead. Green it is silent and adds no command, so a green run's evidence is what it was. `.fwx/` is
-exempt (fwx writes its own state there). With no default branch to measure from it says `NOT RUN, NOT ARMED` and adds nothing.
-
 The whole recipe runs under an exclusive lock on `<git-common-dir>/fwx/gate.lock` (`gate_lock`), so two gates of one repo, from two
 worktrees, run one after the other: two at once take twice as long each and fail on load. The second says it waits and its
 time limits start once it holds the lock. The lock is a flock, so it goes with the process however that ends. While it is held `FWX_GATE_LOCK=<path>` is in the environment of the
@@ -54,14 +48,6 @@ TAIL_CHARS = 4000
 COMMENT_MARKER = "<!-- fwx:evidence -->"
 _SECRET_NAME = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|AUTH", re.I)
 GATE_LOCK_ENV = "FWX_GATE_LOCK"  # the lock path, exported to the checks while the gate holds the lock
-ADDED_FILES_CHECK = "fwx added-files"
-_ONE_USE_EXT = (".md", ".txt")
-_ONE_USE = {"brief", "checkpoint", "handoff", "tomorrow", "scratch"}  # whole words of a name, split on - _ . and spaces
-_BACKUP = re.compile(r"\.(?:bak|orig)(?:\.|\Z)", re.I)
-_VERSION = re.compile(r"(?:-old|-copy| copy|-backup|-v\d+)(?=\.|\Z)", re.I)
-ADDED_FILE_TIP = ("is never committed: put it in your scratch folder (fwx scratch new), which git ignores; for an old version, "
-                  "keep only the living file, since git holds the history. If this file really belongs in the project, rename "
-                  "it without the marker.")
 _NO_ROOT = os.devnull  # a root with no package.json: `plan_checks` then returns only the project's checks
 
 
@@ -203,22 +189,6 @@ def toplevel(cwd):
     return r.stdout.strip()
 
 
-def marker(name, exists=lambda path: False):
-    """`"one-use"`, `"old"` or None for the file `name` (a path: only its last part is read; `.fwx/` is the caller's). A
-    `.bak` or `.orig` is old; `-old`, `-copy`, ` copy`, `-backup` and `-v2` are old only when `exists(<the path without that
-    marker>)`: `plan-v2.md` beside `plan.md` is an old version, a lone `api-v2.md` is a living file."""
-    base = os.path.basename(name)
-    if base.lower().endswith(_ONE_USE_EXT) and _ONE_USE.intersection(re.split(r"[-_. ]+", base.lower())):
-        return "one-use"
-    if _BACKUP.search(base):
-        return "old"
-    for m in _VERSION.finditer(base):
-        stem = base[:m.start()] + base[m.end():]
-        if stem and exists(os.path.join(os.path.dirname(name), stem)):
-            return "old"
-    return None
-
-
 def default_names(root, cfg):
     """The names of the default branch: the configuration's, the remote's, else main and master."""
     names = set()
@@ -228,48 +198,6 @@ def default_names(root, cfg):
     if r.returncode == 0 and r.stdout.strip() and _git(root, "rev-parse", "--verify", "--quiet", "refs/remotes/origin/HEAD^{commit}").returncode == 0:
         names.add(r.stdout.strip().split("/", 1)[-1])
     return names or {"main", "master"}
-
-
-def _default_refs(root, cfg):
-    """The refs of the default branch that exist: its local branch and its `origin/` copy."""
-    refs = ["refs/%s/%s" % (kind, n) for n in sorted(default_names(root, cfg)) for kind in ("heads", "remotes/origin")]
-    return [ref for ref in refs if _git(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}").returncode == 0]
-
-
-def _range_base(root, cfg, rev="HEAD"):
-    """The merge base of `rev` with the default branch (the nearest, when the local branch and `origin/` differ), or None."""
-    best = None
-    for ref in _default_refs(root, cfg):
-        mb = _git(root, "merge-base", rev, ref)
-        if mb.returncode:
-            continue
-        n = _git(root, "rev-list", "--count", mb.stdout.strip() + ".." + rev).stdout.strip()
-        if n.isdigit() and (best is None or int(n) < best[0]):
-            best = (int(n), mb.stdout.strip())
-    return best and best[1]
-
-
-def _committed(root, rev, path):
-    """Whether `path` is a file or a symlink of the commit `rev`: not a folder, and not a file only the working tree holds."""
-    r = _git(root, "cat-file", "-t", "%s:%s" % (rev, path))
-    return r.returncode == 0 and r.stdout.strip() == "blob"
-
-
-def added_files(root, cfg, rev="HEAD"):
-    """`(lines, known)`: one line per file added or renamed to since the merge base with the default branch whose name marks it as one-use or
-    an old version, in the commit `rev` (the one verified), and False for `known` when there is no base to measure from."""
-    base = _range_base(root, cfg, rev)
-    if base is None:
-        return [], False
-    r = _git(root, "diff", "-z", "--name-only", "--diff-filter=AR", "-M", base, rev)
-    if r.returncode:
-        raise state.StateError("git diff failed in %s: %s" % (root, r.stderr.strip()))
-    lines = []
-    for f in sorted(f for f in r.stdout.split("\0") if f):
-        kind = None if f.startswith(state.PLAN_DIR.rstrip("/") + "/") else marker(f, lambda p: _committed(root, rev, p))
-        if kind:
-            lines.append("%s: %s %s" % (f, "a one-use file" if kind == "one-use" else "an old version", ADDED_FILE_TIP))
-    return lines, True
 
 
 def evidence_line(sha, commands):
@@ -315,12 +243,6 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
                                                    "project" if source == "profile" else "package.json scripts", sha[:7]))
     with gate_lock(root):
         results = [run_check(command, root, timeout) for command in recipe]
-    started = time.monotonic()
-    marked, known = added_files(root, cfg, sha)
-    if not known:
-        say("%s: no default branch to measure the added files from" % "NOT RUN, NOT ARMED")
-    if marked:
-        results.append({"cmd": ADDED_FILES_CHECK, "rc": 1, "seconds": time.monotonic() - started, "output": None, "lines": marked})
     moved = head(root) != sha
     if moved:
         say("HEAD moved while the checks ran, so they prove neither commit")
@@ -329,11 +251,7 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
         say("%s %s · %.1f s%s" % ("passed" if ok else "failed", r["cmd"], r["seconds"],
                                   "" if ok else " · exit %s" % ("none" if r["rc"] is None else r["rc"])))
     for r in results:
-        if r["rc"] != 0 and r["output"] is None:
-            say("\n--- %s" % r["cmd"])
-            for line in r["lines"]:
-                say(line)
-        elif r["rc"] != 0:
+        if r["rc"] != 0:
             say("\n--- %s\n%s" % (r["cmd"], tail(r["output"], environ)))
     green = all(r["rc"] == 0 for r in results)
     ev = {"sha": sha, "clean": not moved, "source": source, "commands": [{"cmd": r["cmd"], "rc": r["rc"]} for r in results],
