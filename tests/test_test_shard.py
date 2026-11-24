@@ -15,9 +15,11 @@ Written first and run on master, where `--shard` did not exist (the first FAILs 
   FAIL: the workflow's engine job shards its suite: no `--shard` in the job
 Controls (a copy of forge/testgroup.py changed in one place, the suite run on the copy; the mutations are not kept):
   the dealing skips the last file (`order[i - 1::n]` -> `order[i - 1::n][:-1]`):
-      FAIL: group, N=3: every file ran exactly once: ...
+      FAIL: group, N=1: every file ran exactly once: got ['tests/test_b.py', 'tests/test_c.py', ...] (test_a.py missing)
   every shard takes the first slice (`i - 1` -> `0`):
-      FAIL: group, N=2: every file ran exactly once: ...
+      FAIL: group, N=2: every file ran exactly once: got ['tests/test_a.py', 'tests/test_a.py', 'tests/test_c.py', ...
+  the suite job's matrix loses its third entry (["1/4", "2/4", "3/4", "4/4"] -> ["1/4", "2/4", "4/4"]), the one FAIL:
+      FAIL: the suite job's matrix is exactly 1/4 .. 4/4, once each: got ['1/4', '2/4', '4/4'], want ['1/4', '2/4', '3/4', '4/4']
 """
 import os
 import re

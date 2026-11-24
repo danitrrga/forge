@@ -17,6 +17,12 @@ nothing else: a run in which no test passed is 1 (everything declared away prove
 file (a typo would silently un-declare it). Why a flag and not a list file: the reason sits beside the command in the workflow, and
 there is no second file to forget.
 
+`--shard I/N` runs only the I-th of N slices of the files (1 <= I <= N), so CI can run the slices on separate runners: a suite that is
+CPU-bound on one runner gets shorter only with more runners, never with more files at once. The files are dealt one by one, largest
+first, to slices 1, 2, .. N, 1, 2, ..: the slices together are every file, once, and the few big files land in different slices. The
+first line printed says how much the slice looked at (`shard I/N: K of M test file(s)`); a slice that gets no file is a failure.
+`--shard` is a usage error (exit 2) for anything but `I/N` of whole numbers, and given twice.
+
 `--jobs N` runs up to N files at once (default: the CPUs this process may use, at most 8; `--jobs 1` is one file after another).
 Each file is still its own process with its own exit code, its output captured whole, so a failing file's lines are never mixed with
 another's. What a reader sees does not depend on N: the per-file lines and the summary are printed in the order of the file names, each
@@ -80,6 +86,27 @@ def check(expect_values, jobs_values):
             return None, None, "%s: --jobs wants a whole number of 1 or more, got %r" % (NAME, value)
         jobs = int(value)
     return out, jobs, None
+
+
+def parse_shard(values):
+    """((I, N) or None, None) from what argparse collected for --shard, or (None, one error line); None for "not given"."""
+    if not values:
+        return None, None
+    if len(values) > 1:
+        return None, "%s: --shard wants I/N, given twice" % NAME
+    parts = values[0].split("/")
+    if len(parts) == 2 and all(p.isascii() and p.isdigit() for p in parts) and 1 <= int(parts[0]) <= int(parts[1]):
+        return (int(parts[0]), int(parts[1])), None
+    return None, "%s: --shard wants I/N with 1 <= I <= N (both whole numbers), got %r" % (NAME, values[0])
+
+
+def take_shard(order, shard):
+    """The files of slice (I, N) of `order`: every N-th from the I-th, so `order`'s big files at its head are spread over the slices.
+    None is the whole list."""
+    if shard is None:
+        return list(order)
+    i, n = shard
+    return list(order)[i - 1::n]
 
 
 def default_jobs():
@@ -152,9 +179,13 @@ def _group_alive(pgid):
     return True
 
 
-def main(root, expect_values, jobs_values, label):
+def main(root, expect_values, jobs_values, label, shard_values=None):
     """Run the group whose folder is `root` (an absolute path; `label` is its path as the listing names it, for the SKIP line)."""
     expect, jobs, error = check(expect_values, jobs_values)
+    if error:
+        sys.stderr.write(error + "\n")
+        return 2
+    shard, error = parse_shard(shard_values)
     if error:
         sys.stderr.write(error + "\n")
         return 2
@@ -184,6 +215,14 @@ def main(root, expect_values, jobs_values, label):
     unknown = sorted(expect - set(files))
     for rel in unknown:
         sys.stderr.write("%s: --expect-not-run names %s, which is no tests/test_*.py file\n" % (NAME, rel))
+    # largest first, ties by name: the order the files start in (and are dealt to the slices in); the order they are printed in is `files`
+    start = sorted(files, key=lambda f: (-_size(os.path.join(root, f)), f))
+    mine = set(take_shard(start, shard))
+    if shard:
+        print("shard %d/%d: %d of %d test file(s)" % (shard[0], shard[1], len(mine), len(files)))
+        sys.stdout.flush()
+        files = [f for f in files if f in mine]
+        start = [f for f in start if f in mine]
     children = Children()
     pool = ThreadPoolExecutor(max_workers=jobs)
 
@@ -192,8 +231,6 @@ def main(root, expect_values, jobs_values, label):
 
     old = {s: signal.signal(s, stop) for s in STOP}  # before the first child starts: no window in which a signal leaves one running
     try:
-        # largest first, ties by name: the order the files start in; the order they are printed in is `files`
-        start = sorted(files, key=lambda f: (-_size(os.path.join(root, f)), f))
         futures = {rel: pool.submit(children.run, rel, root, env) for rel in start}
         for rel in files:
             code, output = futures[rel].result()
