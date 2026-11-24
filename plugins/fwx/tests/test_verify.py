@@ -345,7 +345,7 @@ s.eq("no phase for the session and no --dir: the exit is the checks' (0)", r.ret
 s.ok("it says no row was written", "no evidence row was written" in r.stderr, r.stderr)
 s.ok("and it makes no `.fwx`", not os.path.exists(os.path.join(repo, ".fwx")))
 
-r = run(helpers.mkdtemp("fwx-nogit-"))
+r = run(helpers.mkdtemp_nogit())
 s.eq("outside a git repository: exit 2", r.returncode, 2)
 s.ok("outside a git repository says so", "not inside a git repository" in r.stderr, r.stderr)
 

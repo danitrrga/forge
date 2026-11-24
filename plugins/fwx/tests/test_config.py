@@ -145,24 +145,20 @@ for alias in ("sonnet", "opus", "haiku", "fable"):
     s.ok("%s is an alias" % alias, alias in config.ALIASES)
 
 # --- outside a git repo
-outside = helpers.mkdtemp("fwx-nogit-")
-os.environ["GIT_CEILING_DIRECTORIES"] = outside  # a /tmp inside some repo must not turn this into a repo
+outside = helpers.mkdtemp_nogit()
+cfg, _ = load(outside)
+s.ok("outside a git repo is a ConfigError", isinstance(cfg, config.ConfigError), "load returned a configuration")
+s.ok("outside a git repo: the message says so", isinstance(cfg, Exception) and "git" in str(cfg), "load returned a configuration")
 try:
-    cfg, _ = load(outside)
-    s.ok("outside a git repo is a ConfigError", isinstance(cfg, config.ConfigError), "load returned a configuration")
-    s.ok("outside a git repo: the message says so", isinstance(cfg, Exception) and "git" in str(cfg), "load returned a configuration")
-    try:
-        config.main_checkout(outside)
-        s.ok("main_checkout outside a repo raises", False, "returned")
-    except config.ConfigError:
-        s.ok("main_checkout outside a repo raises", True)
-    try:
-        config.main_checkout(os.path.join(outside, "missing"))
-        s.ok("main_checkout of a missing folder raises", False, "returned")
-    except config.ConfigError:
-        s.ok("main_checkout of a missing folder raises", True)
-finally:
-    del os.environ["GIT_CEILING_DIRECTORIES"]
+    config.main_checkout(outside)
+    s.ok("main_checkout outside a repo raises", False, "returned")
+except config.ConfigError:
+    s.ok("main_checkout outside a repo raises", True)
+try:
+    config.main_checkout(os.path.join(outside, "missing"))
+    s.ok("main_checkout of a missing folder raises", False, "returned")
+except config.ConfigError:
+    s.ok("main_checkout of a missing folder raises", True)
 
 # --- roles, sizes, model()
 s.eq("sizes", config.SIZES, ("small", "normal", "big"))

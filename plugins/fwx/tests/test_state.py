@@ -140,7 +140,7 @@ s.eq("plan_root from a subfolder of a linked worktree is <main>/.fwx",
 s.eq("plan_root from the worktree root", str(state.plan_root(cwd=wt)), os.path.join(main, ".fwx"))
 s.ok("plan_root creates nothing", not os.path.exists(os.path.join(main, ".fwx")) and not os.path.exists(os.path.join(wt, ".fwx")))
 try:
-    state.plan_root(cwd=helpers.mkdtemp("fwx-nogit-"))
+    state.plan_root(cwd=helpers.mkdtemp_nogit())
     s.ok("plan_root outside a git repository raises", False, "returned")
 except state.config.ConfigError as e:
     s.ok("plan_root outside a git repository raises ConfigError naming the folder", "not in a git repository" in str(e))
@@ -356,7 +356,7 @@ refuses("stage with a detail starting with a space", lambda: state.append_audit(
 refuses("evidence without a sha", lambda: state.append_audit(ad, "evidence", "checks", rc=0), "sha")
 refuses("evidence with an empty sha", lambda: state.append_audit(ad, "evidence", "checks", sha=""), "sha")
 refuses("stage without a sha outside a repository",
-        lambda: state.append_audit(ad, "stage", "executing", cwd=helpers.mkdtemp("fwx-nogit-")), "HEAD")
+        lambda: state.append_audit(ad, "stage", "executing", cwd=helpers.mkdtemp_nogit()), "HEAD")
 refuses("a kind outside AUDIT_KINDS", lambda: state.append_audit(ad, "note", "hello"), "note")
 s.eq("every refusal left audit.tsv byte for byte", read(aud), before)
 nf = mk(ar, "other-dir")

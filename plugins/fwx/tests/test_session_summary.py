@@ -141,7 +141,7 @@ rc, got = session(broken)
 s.eq("a broken fwx.json: session --json still answers, project null", (rc, got.get("project", "MISSING"), bool(got.get("phase_dir"))), (0, None, True))
 
 # ---- outside a repository: still exit 2, no traceback --------------------------------------------------------------------
-nogit = helpers.mkdtemp("fwx-nogit-")
+nogit = helpers.mkdtemp_nogit()
 r = helpers.fwx(nogit, "session", "--json", env=ENV)
 s.eq("outside a repository: exit code 2", r.returncode, 2)
 s.ok("outside a repository: no traceback", "Traceback" not in r.stderr, r.stderr[-300:])

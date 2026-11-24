@@ -75,9 +75,8 @@ s.eq("with no file: one stderr line", len(r.stderr.strip().splitlines()), 1)
 bad = helpers.toy_repo()
 helpers.write(bad, ".claude/fwx.json", '{"schema": 2}\n')
 check("with a schema it does not know", bad, ["executor", "small"], 2, "", ("schema", "forge sync"))
-outside = helpers.mkdtemp("fwx-nogit-")
-r = helpers.fwx(outside, "model", "executor", "small", env={"PYTHONDONTWRITEBYTECODE": "1",
-                                                           "GIT_CEILING_DIRECTORIES": outside})
+outside = helpers.mkdtemp_nogit()
+r = helpers.fwx(outside, "model", "executor", "small", env={"PYTHONDONTWRITEBYTECODE": "1"})
 s.eq("fwx model outside a git repo: exit code", r.returncode, 2)
 s.ok("fwx model outside a git repo: no traceback", "Traceback" not in r.stderr, "stderr: %s" % r.stderr)
 
