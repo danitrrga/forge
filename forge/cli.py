@@ -1516,10 +1516,14 @@ def failure_tail(output, code=None):
 
 
 def default_workers():
-    """How many files the run with no group starts at once when --jobs is not given: min(4, CPUs), 1 where the count is unknown. Four is
-    what CI runs (--jobs 4) and what test_run, test_switch and test_messages use inside for their mutants; every child is niced (lib.run_low),
-    so a foreground tool still gets its cores. Serial is --jobs 1."""
-    return min(4, os.cpu_count() or 1)
+    """How many files the run with no group starts at once when --jobs is not given: min(4, CPUs this process may use), 1 where the count is
+    unknown. Four is what CI runs (--jobs 4) and what test_run, test_switch and test_messages use inside for their mutants; every child is niced
+    (lib.run_low), so a foreground tool still gets its cores. Serial is --jobs 1."""
+    try:
+        cpus = len(os.sched_getaffinity(0))  # a taskset or a cpuset counts, as in forge/testgroup.py
+    except AttributeError:
+        cpus = os.cpu_count() or 1
+    return min(4, cpus)
 
 
 def cmd_test(a):
