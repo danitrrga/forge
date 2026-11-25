@@ -22,6 +22,11 @@ absolute path, and ** would hide the project's own file) were accepted by the `/
   FAIL project_error: '*/CLAUDE.md' is refused, naming it and the two valid forms -- None  (likewise '*.md', '*upper/CLAUDE.md', '**')
 The '  ! ' prefix check on the hand-edit line, seen red with the print's prefix taken out of forge/skills.py:
   FAIL edited by hand: named on a '  ! ' line -- <path>: claudeMdExcludes was edited by hand, left in place
+The accepting checks, seen red under a mutation of the validator in forge/lib.py (each put back, 1 of 29 red each):
+  entries starting with **/ rejected (startswith(("/",))):
+    FAIL project_error: '**/monorepo/CLAUDE.md' is fine -- claude_md_excludes entry '**/monorepo/CLAUDE.md' is not absolute: it must start with / or **/
+  an empty list rejected (a `== []` guard returning "claude_md_excludes is empty"):
+    FAIL project_error: an empty list is fine (declared, nothing excluded) -- claude_md_excludes is empty
 Controls on the finished code, each mutation put back from a copy of forge/skills.py, each seen red: the key not written
 (crash, KeyError: 'claudeMdExcludes', exit 1); no claim recorded (4 FAIL); the prune branch dropped (3); the prune
 ignoring the digest, so a hand edit is removed (2)."""
@@ -110,7 +115,8 @@ for bad in ("x/CLAUDE.md", "~/x/CLAUDE.md", "./CLAUDE.md", "*/CLAUDE.md", "*.md"
 for good in ("/x/CLAUDE.md", "**/monorepo/CLAUDE.md"):
     check("project_error: %r is fine" % good, lib.project_error({"claude_md_excludes": [good]}) is None,
           lib.project_error({"claude_md_excludes": [good]}))
-check("project_error: an empty list is fine (declared, nothing excluded)", lib.project_error({"claude_md_excludes": []}) is None)
+check("project_error: an empty list is fine (declared, nothing excluded)", lib.project_error({"claude_md_excludes": []}) is None,
+      lib.project_error({"claude_md_excludes": []}))
 
 # 2. Declared: written whole, claimed, named in the line; a dry-run writes and records nothing.
 p = project()
