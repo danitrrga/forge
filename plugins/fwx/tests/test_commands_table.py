@@ -348,9 +348,9 @@ for p in slash_texts:
     looked += seen
     rel = os.path.relpath(p, helpers.ROOT)
     s.eq("%s names no skill or workflow: write it or remove the line" % rel, ["%s:%s" % (rel, b) for b in bad], [])
-s.ok("the `/fwx:` scan looked at %d names in %d files (zero is a failure)" % (looked, len(slash_texts)), looked > 0 and "execute" in known, looked)
+s.ok("the `/fwx:` scan looked at %d names in %d files (zero is a failure)" % (looked, len(slash_texts)), looked > 0 and "ui-walk" in known, looked)
 # control: a text that names `/fwx:nope` is caught, and a real name is not
 s.eq("control: a text that names `/fwx:nope` is caught", _unknown_slash("a\nthen give `/fwx:nope`", known), (["2: /fwx:nope"], 1))
-s.eq("control: a text that names a skill and a workflow is not", _unknown_slash("`/fwx:discuss` and /fwx:execute", known), ([], 2))
+s.eq("control: a text that names a skill and a workflow is not", _unknown_slash("`/fwx:discuss` and /fwx:ui-walk", known), ([], 2))
 
 s.done()

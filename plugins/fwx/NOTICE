@@ -9,7 +9,7 @@ used with the author's permission.
   sentences after it, word for word. Read for the same agent, in words of its own: lines 43-47 (the resolution of a merge conflict), line 65 (the
   question when no test can express the bug), line 16 (a question with two or three concrete options), line 19 (nothing uncommitted
   at hand-in), line 27 (the acceptance check before code) and line 53 (the assumptions list of the report).
-  Read for workflows/execute.js: playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
+  Read for lib/fwx/execute/integrate.py (fix_round, next_step): playbooks/factory.md (three fix rounds per job and then `failed`; the conflict goes to a resolver), in words of its own.
   Files ported to Python by part 2.4 (each carries a `copied-from:` header naming the file and the commit):
     lib/fwx/core/globs.py    from lib/globs.ts
     lib/fwx/core/trusted.py  from lib/trusted-checks.ts
@@ -68,9 +68,6 @@ pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   playbooks/autopilot-full.md, in words of its own.
   agents/review-verifier.md: "Trace the call site." of skills/interrogate/references/lead-judgment.md line 11, word for word. Read for
   the same agent: the four groups of skills/interrogate/SKILL.md (lines 52-58), in words of its own.
-  Text quoted in a comment of workflows/execute.js: "After a second miss, record a gap. A gap does not count as a pass" of skills/swarm/SKILL.md
-  (Phase C), word for word. Read for the same file: playbooks/orchestrate.md (the brief per worker; "Never resume-chain a brief. Respawn fresh
-  with consolidated scope"; "A worker may self-report. A verifier overrides it on the same key"), in words of its own.
   Read for the shape of skills/pre-mortem/SKILL.md, skills/plan/SKILL.md and skills/post-mortem/SKILL.md: skills/thermos/SKILL.md.
   Read for the shape of skills/session/SKILL.md: playbooks/session-pickup.md (step 0: read the trail, redo nothing), playbooks/pause-safely.md
   (the cut), playbooks/multi-phase-plan.md and playbooks/orchestrate.md (the walk through parts, one writer per file), in words of its own.

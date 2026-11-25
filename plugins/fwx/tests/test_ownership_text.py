@@ -5,8 +5,8 @@ an agent's scope to its brief.
 What this can check is the words, and only the words that carry the owner's rule or that code reads: that rule 12 exists with the owner's
 quotes and an enforcer, that no agent text says "leave it" or "report what the diff breaks, not everything wrong in the files it touches",
 that each agent file points at the rule, and that the agents which report a defect outside their task name the `outside` item that
-`workflows/execute.js` validates (a report without its shape is rejected there). What happens to an item is checked in code
-(test_execute_workflow.py). Wording beyond that (the words of the escalation, the rubric's dimensions, the hedge on chained commands) is not
+`fwx wave report` validates (a report without its shape is rejected there). What happens to an item is checked in code
+(test_wave_report.py). Wording beyond that (the words of the escalation, the rubric's dimensions, the hedge on chained commands) is not
 pinned here: 09.3 T33 removed those checks with their red logs.
 
 Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the FAIL line printed):
@@ -40,7 +40,7 @@ NARROWING = [
 ]
 TEXT_DIRS = ("agents", "skills", "playbooks", "workflows", "data", "templates")
 # The files that point at the rule. The agents that report a defect outside their task also carry the word `outside`: it is the key of the
-# item that workflows/execute.js validates, and a report without it is rejected there.
+# item that `fwx wave report` validates, and a report without it is rejected there.
 POINTERS = ["agents/executor.md", "agents/reviewer.md", "agents/security-reviewer.md", "agents/review-verifier.md", "agents/planner.md",
             "agents/pre-mortem.md", "skills/session/SKILL.md", "data/executor-brief.md"]
 REPORTS_OUTSIDE = ("agents/executor.md", "agents/reviewer.md", "agents/security-reviewer.md", "data/executor-brief.md")
@@ -97,13 +97,13 @@ s.eq("a text still narrows an agent's scope to its brief (state the rule once, i
 s.eq("each agent file points at rule 12 and the agents that report a defect outside their task name `outside`", pointer_problems(read), [])
 looked = texts()
 s.ok("the narrowing check looked at the agent, skill, playbook and workflow texts (looking at nothing is a failure)",
-     len(looked) > 30 and "agents/executor.md" in looked and "workflows/execute.js" in looked, str(len(looked)))
+     len(looked) > 30 and "agents/executor.md" in looked and "workflows/ui-walk.js" in looked, str(len(looked)))
 
 # controls: each check, shown on a text that has the fault
 s.ok("control: the narrowing check finds the old executor sentence",
      narrowing({"agents/executor.md": "The bigger picture narrows your scope; it never widens it."}) != [])
 s.ok("control: ... and the old reviewer sentence", narrowing({"agents/reviewer.md": "not everything wrong in the files it touches"}) != [])
-s.ok("control: ... and the old FORBIDDEN line", narrowing({"workflows/execute.js": "FORBIDDEN: no rebase, no fixes outside this work"}) != [])
+s.ok("control: ... and the old FORBIDDEN line", narrowing({"workflows/ui-walk.js": "FORBIDDEN: no rebase, no fixes outside this work"}) != [])
 s.ok("control: a rule 12 with no enforcer is found", rule_problems("12. **Agents own the result.** Source: the owner.\n") != [])
 s.ok("control: a missing rule 12 is found", rule_problems("11. **x.** y\n") != [])
 s.ok("control: an executor that does not point at the rule is found",

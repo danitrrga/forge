@@ -189,8 +189,6 @@ def case_template(R, S):
     S.ok("template: it does not spell the shared files (one place assembles them, 2.5 U9)",
          not any(w in text.replace("plan.md", "") for w in ("context.md", "decisions.tsv")), text)
     S.ok("template: no model name", not re.search(r"sonnet|opus|haiku|fable", text, re.I))
-    js = read(os.path.join(ROOT, "workflows", "execute.js"))
-    S.ok("template: the fixer's and resolver's prompt names the file-write tool too, no harness tool", "file-write tool" in js and "Write tool" not in js)
 
 
 def case_refused(R, S):
@@ -390,8 +388,8 @@ HEAD = "0123456789abcdef0123456789abcdef01234567"
 
 
 def agent_texts(root):
-    """The briefs of the resolver and the fixer (3.5 T52): what fixerPrompt and resolverPrompt of workflows/execute.js carry, written as a
-    file because the session has no runner to hand them over in a prompt. {name: text}, made by brief.py in a child python."""
+    """The briefs of the resolver and the fixer (3.5 T52): what the fixer and the resolver are handed, written as a
+    file because a worker has no prompt to carry them in. {name: text}, made by brief.py in a child python."""
     code = ("import json, os\n"
             "from fwx.execute import brief\n"
             "d = %r\n" % helpers.mkdtemp("fwx-agent-brief-") +

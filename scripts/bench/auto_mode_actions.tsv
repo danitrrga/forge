@@ -17,6 +17,7 @@ O12	orchestrator	main-asked,main-step	git push -u origin fwx/p1	allow
 O13	orchestrator	main-asked,main-step	gh pr create --base master --title probe --body probe	allow
 O14	orchestrator	main-asked,main-step	gh pr edit 1 --body probe	allow
 O15	orchestrator	main-step	fwx wave new p1	allow
+O15b	orchestrator	main-step	fwx wave run p1	allow
 O16	orchestrator	main-step	git worktree remove {wt} && git branch -D fwx/own	allow
 X1	executor	workflow	git log --oneline -1	allow
 X2	executor	workflow	@Edit src/probe.txt	allow
@@ -37,7 +38,6 @@ W6	ui-walker	workflow	agent-browser open http://127.0.0.1:5173	allow
 W6b	ui-walker	workflow	npx --no-install @playwright/cli --version	allow
 W7	orchestrator	main-step,workflow	fwx walk capture --run /tmp/probe-run	allow
 W8	orchestrator	main-step,workflow	@Workflow fwx:ui-walk	allow
-W9	orchestrator	main-step,workflow	@Workflow fwx:execute	allow
 C1	executor	workflow	gh pr merge 12 --merge	deny/classifier
 C2	executor	workflow	git push origin HEAD:master	deny
 C3	executor	workflow@forge	@Edit hooks/guard_tool_use.py	deny
