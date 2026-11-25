@@ -16,7 +16,9 @@ reviewer and the verifier), prepared (the settings copy with the 5-minute cache 
 (a worker has no agent type), the base context a subagent gets from SubagentStart (data/context-base.tsv's row for its role), its brief and the
 line asking it to send `worker_done`. With no base context the run is refused (exit 2) and nobody starts.
 
-A worker is polled through `worker-show`. `succeeded` or `failed` is settled. `ready` and idle on two polls IDLE_S apart means it ended its turn
+A worker is polled through `worker-show`. `succeeded` or `failed` is settled; when a `succeeded` worker's transcript does not yet match
+`orca.REPLY_LINE` (`worker_done` flips state inside the tool call before the final assistant reply line lands), `poll()` waits up to
+`min(idle_s, REPLY_GRACE_S)` and re-reads the transcript before settling and calling `worker-release`. `ready` and idle on two polls IDLE_S apart means it ended its turn
 without `worker_done`: its last line is read from its transcript, it is stopped and the line is judged as its reply. A worker that Orca says is
 waiting on a prompt only a person can answer is left alone for the owner to answer in Orca, until its limit; past its limit (LIMIT_S, by role) a
 worker is stopped and the run ends failed. Every dispatch not settled gets `worker-stop` before `worker-release`: on a limit, on idle, and in
@@ -59,6 +61,7 @@ LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 6
 DECIDED = "## Decided\n"
 STATES = ("done", "failed", "needs-owner")
 RELEASE_TRIES = 3
+REPLY_GRACE_S = 15.0
 ASK = ("\nThis run has an orchestrator. A blocking question or a blocker is asked mid-task with the `ask` command from your Orca preamble (the whole question, each "
        "option with what it implies), not reported as `question`: after it, end your turn and wait. The answer comes as mail and you carry on in this same worktree.")
 
@@ -401,7 +404,16 @@ class Run:
         waiting = _waiting(info)
         if state in orca.SETTLED:
             rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
-            rec["line"] = self.reply(rec)
+            line = self.reply(rec)
+            if state == "succeeded" and not orca.REPLY_LINE.match(line):
+                now = time.time()
+                if not rec.get("settled_since"):
+                    rec["settled_since"] = now
+                    self.save()
+                if now - rec["settled_since"] < min(self.idle_s, REPLY_GRACE_S):
+                    return None
+            rec["settled_since"] = None
+            rec["line"] = line
             self.settle(rec, state)
             return rec["line"]
         parked = state == "ready" and info.get("activity") == "idle"

@@ -17,7 +17,7 @@ Orchestrator steering (Orca 1.4.273, live probe): a worker's `worker_done` and a
 --terminal T --run R --peek [--types a,b]` lists the unread ones of that run (only those types when `--types` is given) and never marks them read, `--peek` with `--all` is refused, a
 check with neither consumes; `send --type escalation` from a run's terminal is refused (`sender_not_assignee`), `--type status` to `orca_session_id:<uuid>` lands in `state.json["chat"]`
 (`behave["status_fail"]` refuses it); mode `ask` (`{mode: ask, question}`) posts a `question` and parks the worker (ready, idle, not waiting on a person), and a `send` to its `dispatch:<id>`
-wakes it: it works (running, activity working, for one `worker-show`), commits, posts its `worker_done` and settles. `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
+wakes it: it works (running, activity working, for one `worker-show`), commits, posts its `worker_done` and settles. `merge: <unit>` makes a resolver merge that unit's branch. `reply_delay: S` keeps a `succeeded` worker's reply line out of `worker-read` for `S` seconds after its first `succeeded` `worker-show` (and drops it if `worker-release` runs early). The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
 """
 import json
 import os
@@ -325,7 +325,8 @@ def main(argv):
         state["launches"][key] = launch = state["launches"].get(key, 0) + 1
         reply, mode, pspec = play(behave, wt, marker, launch) if marker else ("", "hang", {})
         state["dispatches"][did] = {"unit": unit, "mode": mode, "state": "running", "reply": reply, "worktree": wt, "released": False,
-                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing"), "launch": launch, "orca_run": flag(argv, "--run"),
+                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing"), "reply_delay": pspec.get("reply_delay", 0),
+                                    "settled_at": None, "launch": launch, "orca_run": flag(argv, "--run"),
                                     "before_park": pspec.get("before_park"), "after_answer": pspec.get("after_answer")}
         if mode == "ask":
             post(state, run=flag(argv, "--run"), type="question", subject="Question", body=pspec.get("question", "which one?"), to="run:" + str(flag(argv, "--run")),
@@ -343,14 +344,21 @@ def main(argv):
         if d is None or d["mode"] == "showfail":
             say(rc=1, error={"code": "unavailable", "message": "worker-show failed"})
         d["shows"] = d.get("shows", 0) + 1
-        say(dict(shape(d), dispatchId=flag(argv, "--dispatch"), liveness="alive"))
+        sh = shape(d)
+        if sh.get("state") == "succeeded" and d.get("settled_at") is None:
+            d["settled_at"] = time.time()
+        say(dict(sh, dispatchId=flag(argv, "--dispatch"), liveness="alive"))
     if argv[:2] == ["orchestration", "worker-read"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
         cur = flag(argv, "--cursor")
-        done_log(dispatch=flag(argv, "--dispatch"), cursor=cur)
+        delay = (d or {}).get("reply_delay") or 0
+        settled_at = (d or {}).get("settled_at")
+        ready = (not delay) or (settled_at is not None and not (d or {}).get("released") and time.time() - settled_at >= delay)
+        done_log(dispatch=flag(argv, "--dispatch"), cursor=cur, reply_ready=ready)
         user = {"role": "user", "blocks": [{"type": "text", "text": "the spec"}]}
-        asst = [{"role": "assistant", "blocks": [{"type": "text", "text": "working\n" + (d or {}).get("reply", "")}]}]
-        if (d or {}).get("trailing"):
+        text = ("working\n" + (d or {}).get("reply", "")) if ready else "working"
+        asst = [{"role": "assistant", "blocks": [{"type": "text", "text": text}]}]
+        if ready and (d or {}).get("trailing"):
             asst.append({"role": "assistant", "blocks": [{"type": "text", "text": d["trailing"]}]})
         if cur == "cur-end":
             msgs, nxt, limited = [], "cur-end", False
