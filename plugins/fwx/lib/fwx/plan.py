@@ -11,6 +11,8 @@ two tasks of a wave writing the same file, a `part` above `size.parts` (the task
 of the phase's task that owns them), or a subphase folder, are for `check_phase`, so a plan whose tasks clash still
 loads and the caller (3.4's `prepare`) decides what to do with it. `plan.md` may carry a boolean `security_review`, the planner's
 answer in a small plan that skips the post-mortem; `fwx wave new` and `fwx plan lint` read it only when there is no postmortem.md.
+`plan.md` may carry a string `repo`, the repository of `project.repos` its part works in; this module checks only that it is a string,
+and `plan_form` checks it against the configuration.
 
 Imports the standard library and `state` (for `read_rows`); nothing here needs the configuration or a git repository.
 """
@@ -187,8 +189,9 @@ def _reasons(p, items, field):
 
 def _plan_problems(data):
     p = _Problems()
-    keys = ("size", "criteria", "tasks", "not_built", "later", "security_review")
+    keys = ("size", "criteria", "tasks", "not_built", "later", "security_review", "repo")
     p.unknown(data, keys, "")
+    p.value(data, "repo", "", _text, "a non-empty string", required=False)
     p.value(data, "security_review", "", lambda v: isinstance(v, bool), "true or false", required=False)
     size = _object(p, data, "size", "", ("tag", "parts", "agents"))
     if size is not None:
