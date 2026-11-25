@@ -1632,12 +1632,20 @@ def cmd_test(a):
         todo = [f for f in todo if f in mine]
 
     failed_output = {}  # file -> its output, for the lines that end the run
+    import threading
+    stopping = threading.Event()
 
     def run_one(f):
         # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr, and -u (unbuffered)
         # keeps its place against the stdout lines printed before it.
+        def go():
+            return lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env)
+
         began = time.monotonic()
-        r = lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env)
+        r = go()
+        first = testgroup.killed(r.returncode, r.stdout)  # a file killed by a signal is run once more, never twice more
+        if first and not stopping.is_set():
+            r = go()
         secs = time.monotonic() - began
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
@@ -1645,17 +1653,20 @@ def cmd_test(a):
             why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
             return lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why)
         if r.returncode == 0:
+            if first:  # green only on the second run: a warning in the summary, never a quiet pass
+                return lib.Result("WARN", os.path.basename(f), "passed on the second run (the first: %s)  %s  %.1fs" % (first, f, secs))
             return lib.Result("PASS", os.path.basename(f), "%s  %.1fs" % (f, secs))  # success is silent: its output is dropped; its seconds are not
         failed_output[f] = r.stdout
-        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s" % (f, failure_tail(r.stdout, r.returncode)))
+        again = "\n    (run twice; the first: %s, the second failed too)" % first if first else ""
+        return lib.Result("FAIL", os.path.basename(f), "python3 %s%s%s" % (f, again, failure_tail(r.stdout, r.returncode)))
 
     with testgroup.private_tmp(os.environ) as child_env:  # TMPDIR outside any checkout for the children, and gone after
-        run_all(todo, workers, run_one, results)
+        run_all(todo, workers, run_one, results, stopping)
     # The failed files named last (before the SUMMARY line): a reader that keeps only the tail of the output, as fwx's gate does, still sees them.
     return lib.report(results, testgroup.failed_lines([(os.path.basename(f), failed_output[f]) for f in todo if f in failed_output]))
 
 
-def run_all(todo, workers, run_one, results):
+def run_all(todo, workers, run_one, results, stopping=None):
     """Run `todo` with run_one, `workers` at once, appending the results to `results` in the order of `todo`."""
     if workers == 1:
         results.extend(run_one(f) for f in todo)
@@ -1668,6 +1679,10 @@ def run_all(todo, workers, run_one, results):
         try:
             futures = {f: pool.submit(run_one, f) for f in start_order(todo)}
             results.extend(futures[f].result() for f in todo)
+        except BaseException:
+            if stopping is not None:
+                stopping.set()
+            raise
         finally:
             pool.shutdown(wait=True, cancel_futures=True)  # an interrupt: the running files finish, the queued ones never start
 

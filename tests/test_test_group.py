@@ -648,6 +648,94 @@ for label, args, _, name in RUNS:
         eq("%s, TMPDIR outside a checkout: exit code" % label, r.returncode, 0)
         eq("%s, TMPDIR outside a checkout: left as it was" % label, open(out_file).read(), outside)
 
+# ---- a file killed by a signal is run once more; a logic failure never is ----------------------------------------------------------
+# A file that dies of SIGKILL (the OOM killer, a load spike) or prints that a grandchild did (`rc=-9`, `-SIGKILL`) says nothing about the
+# code, and a false red cost a fix round of 20 to 60 minutes. It is run once more: green the second time is a PASS with a WARN line that
+# names the file and says "passed on the second run"; red twice stays a FAIL (two runs, never a loop); an exit 1 with no such mark is
+# never run again, so a real failure is not masked. Written first and run on the code that never retried (first FAILs it printed, both
+# runners, the rest alike):
+#   FAIL: no group, killed by SIGKILL on run 1, green on run 2: exit code: got 1, want 0
+#   FAIL: no group, killed by SIGKILL on run 1, green on run 2: ran twice: got 1, want 2
+#   FAIL: forge test fwx, prints rc=-9 and exits 1 on run 1, green on run 2: exit code: got 1, want 0
+# Controls, each the code changed in one place, the suite run, the number of FAILs and the first one:
+#   - every non-zero exit is retried (killed() returns a reason for any code not 0 or 77), 12:
+#       FAIL: a failing file's output is contiguous: x is one block, right after its FAIL line: first lines at [3, 4, 5]
+#   - the group ignores the second run's code (`code, out, again = self._once` -> `_c, _o, again = ...`), 9:
+#       FAIL: forge test fwx, killed by SIGKILL on run 1, green on run 2: exit code: got 1, want 0
+#   - the run with no group ignores the second run's code (`r = go()` -> `go()` in cli.py), 18:
+#       FAIL: no group, killed by SIGKILL on run 1, green on run 2: exit code: got 1, want 0
+#   - the group runs a third time (a second `_once` after the retry), 5:
+#       FAIL: forge test fwx, killed by SIGKILL on run 1, green on run 2: ran twice: got 3, want 2
+RETRY = ('import os, signal, sys\n'
+         'log = %(log)r\n'
+         'n = len(open(log).read().splitlines()) if os.path.exists(log) else 0\n'
+         'open(log, "a").write("run\\n")\n'
+         '%(body)s\n')
+KILL = 'os.kill(os.getpid(), signal.SIGKILL)'
+FAIL_RC9 = 'print("FAIL: the grandchild died: rc=-9"); sys.exit(1)'
+FAIL_SIG = 'print("child returned -SIGKILL"); sys.exit(1)'
+ASSERT = 'print("FAIL: the broken case"); sys.exit(1)'
+for label, args, name in (("no group", ("--jobs", "1"), "test_%s.py"), ("no group, --jobs 2", ("--jobs", "2"), "test_%s.py"),
+                          ("forge test fwx", ("fwx", "--jobs", "2"), "tests/test_%s.py")):
+    top = label.startswith("no group")
+    for tag, body, want_rc, want_runs, said in (
+            ("killed by SIGKILL on run 1, green on run 2", "if n == 0:\n    %s" % KILL, 0, 2, "killed by SIGKILL"),
+            ("prints rc=-9 and exits 1 on run 1, green on run 2", "if n == 0:\n    %s" % FAIL_RC9, 0, 2, "rc=-9"),
+            ("prints -SIGKILL and exits 1 on run 1, green on run 2", "if n == 0:\n    %s" % FAIL_SIG, 0, 2, "-SIGKILL"),
+            ("killed by SIGKILL on both runs", KILL, 1, 2, None),
+            ("prints rc=-9 and exits 1 on both runs", FAIL_RC9, 1, 2, None),
+            ("a plain assertion failure", ASSERT, 1, 1, None),
+            ("exit 77 (NOT RUN) mentioning rc=-9", 'print("NOT RUN: saw rc=-9"); sys.exit(77)', 0 if top else 77, 1, None),
+            ("a passing file", "pass", 0, 1, None)):
+        log = os.path.join(HOME, "retry-%s.log" % re.sub(r"\W+", "-", label + tag))
+        text = RETRY % {"log": log, "body": body}
+        repo = toy({} if top else {name % "flaky": text}, top={name % "flaky": text} if top else None)
+        r = forge(repo, *args)
+        t = "%s, %s" % (label, tag)
+        runs = len(open(log).read().splitlines()) if os.path.exists(log) else 0
+        eq("%s: exit code" % t, r.returncode, want_rc)
+        eq("%s: ran %s" % (t, "exactly once" if want_runs == 1 else "twice, never a third time" if want_rc else "twice"), runs, want_runs)
+        warn = [l for l in r.stdout.splitlines() if l.startswith("WARN") and "test_flaky.py" in l]
+        if said:
+            ok("%s: a WARN line names the file, says it passed on the second run and what killed the first" % t,
+               len(warn) == 1 and "passed on the second run" in warn[0] and said in warn[0], r.stdout)
+            ok("%s: it is not counted as a failure" % t, ("0 failures" if top else "0 failed") in last(r), last(r))
+        else:
+            if "exit 77" not in tag:
+                ok("%s: no WARN line for the file" % t, not warn, r.stdout)
+            ok("%s: no passed-on-the-second-run note" % t, "passed on the second run" not in r.stdout, r.stdout)
+        if want_rc == 1:
+            ok("%s: a FAIL line names the file" % t, any(l.startswith("FAIL") and "test_flaky.py" in l for l in r.stdout.splitlines()), r.stdout)
+
+# Ctrl-C (SIGINT to the process group) during parallel `forge test --jobs 2` must NOT retry interrupted files.
+# Seen red before excluding STOP signals from killed() and passing a stopping event to run_one:
+#   FAIL: no group, --jobs 2, SIGINT: interrupted file is NOT retried (runs once): got 2, want 1
+#   FAIL: no group, --jobs 2, SIGINT: runner exits promptly (4.01s): took 4.01s
+sigint_log = os.path.join(HOME, "retry-sigint.log")
+sigint_ready = os.path.join(HOME, "retry-sigint.ready")
+sigint_body = ('import os, time\n'
+               'open(%r, "a").write("run\\n")\n'
+               'open(%r, "w").write("1")\n'
+               'time.sleep(4)\n' % (sigint_log, sigint_ready))
+repo = toy({}, top={"test_slow.py": sigint_body})
+env = dict(os.environ, HOME=HOME)
+p = subprocess.Popen([sys.executable, os.path.join(repo, "bin", "forge"), "test", "--jobs", "2"],
+                     cwd=repo, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+deadline = time.monotonic() + 10
+while time.monotonic() < deadline and not os.path.exists(sigint_ready):
+    time.sleep(0.05)
+t0 = time.monotonic()
+os.killpg(p.pid, signal.SIGINT)
+try:
+    p.wait(timeout=4)
+except subprocess.TimeoutExpired:
+    os.killpg(p.pid, signal.SIGKILL)
+    p.wait()
+dt = time.monotonic() - t0
+sigint_runs = len(open(sigint_log).read().splitlines()) if os.path.exists(sigint_log) else 0
+eq("no group, --jobs 2, SIGINT: interrupted file is NOT retried (runs once)", sigint_runs, 1)
+ok("no group, --jobs 2, SIGINT: runner exits promptly (%.2fs)" % dt, dt < 2.0, "took %.2fs" % dt)
+
 sandbox.cleanup(bool(fails))
 if checks == 0:
     fails.append("FAIL: no check ran")
