@@ -43,6 +43,7 @@ import socket
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import unquote, urlsplit
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -3148,25 +3149,72 @@ def guarded(case, R, S):
         S.ok("%s: raised" % case.__name__, False, "%s: %s" % (type(e).__name__, e))
 
 
-if __name__ == "__main__":
+MUTANT_MARK = "MUTANT-RESULT "
+
+
+def setup_world():
     CWD[0] = helpers.mkdtemp("fwx-walk-cwd-")
     FAKE_DIR_FOR[0] = helpers.mkdtemp("fwx-walk-bin-")
     for name, target in (("python3", PY), ("git", GIT)):
         os.symlink(target, os.path.join(FAKE_DIR_FOR[0], name))
+
+
+def one_mutant(i):
+    """Runs mutant `i` alone, in this process (a worker of the pool below), and prints its result as one MUTANT_MARK JSON line.
+    A mutant has its own process because the scenes, CWD and fake PATH are module state and `stop_scenes()` ends every scene of the
+    process, so two mutants in one process would kill each other's app."""
+    setup_world()
+    name, case, old, new, needle = MUTANTS[i]
+    m = helpers.FirstFail(lambda f, needle=needle: needle in f)  # the control reads one FAIL: the case stops at it
+    out = {"built": None, "fails": [], "checks": 0}
+    try:
+        tree = copy_tree(ROOT, (W, old, new))
+    except (AssertionError, OSError) as e:
+        out["built"] = str(e)
+        print(MUTANT_MARK + json.dumps(out))
+        return
+    m.run(guarded, case, runner(tree), m)
+    stop_scenes()
+    helpers.remove(tree)
+    out.update(fails=m.fails, checks=m.checks)
+    print(MUTANT_MARK + json.dumps(out))
+
+
+def pool_mutants():
+    """Every mutant in its own process, min(4, CPUs) at a time, started before the real cases (which run in this process meanwhile).
+    Returns the results in the order of MUTANTS, so the lines printed come out the same on every run."""
+    def work(i):
+        r = subprocess.run([sys.executable, os.path.abspath(__file__), "--mutant", str(i)], capture_output=True, text=True)
+        lines = [l for l in r.stdout.splitlines() if l.startswith(MUTANT_MARK)]
+        if r.returncode or len(lines) != 1:
+            return {"built": "the worker ended with rc %d and %d result lines: %s" % (r.returncode, len(lines), (r.stderr or r.stdout)[-300:]),
+                    "fails": [], "checks": 0}
+        return json.loads(lines[0][len(MUTANT_MARK):])
+    pool = ThreadPoolExecutor(max_workers=min(4, os.cpu_count() or 1))
+    return pool, [pool.submit(work, i) for i in range(len(MUTANTS))]
+
+
+if __name__ == "__main__":
+    if len(sys.argv) == 3 and sys.argv[1] == "--mutant":
+        one_mutant(int(sys.argv[2]))
+        sys.exit(0)
+    pool, pending = pool_mutants()
+    setup_world()
     real = runner(ROOT)
     for case in CASES:
         guarded(case, real, s)
-    for name, case, old, new, needle in MUTANTS:
-        m = helpers.FirstFail(lambda f, needle=needle: needle in f)  # the control reads one FAIL: the case stops at it
-        try:
-            tree = copy_tree(ROOT, (W, old, new))
-        except (AssertionError, OSError) as e:
-            s.ok("control %s: built" % name, False, str(e))
+    ran = 0
+    for (name, case, old, new, needle), fut in zip(MUTANTS, pending):
+        res = fut.result()
+        if res["built"]:
+            s.ok("control %s: built" % name, False, res["built"])
             continue
-        m.run(guarded, case, runner(tree), m)
-        stop_scenes()
-        s.ok("control %s: the case fails" % name, bool(m.fails), "the mutant passed all %d checks" % m.checks)
-        s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in m.fails),
-             "FAILs: %s" % "; ".join(f[:140] for f in m.fails[:3]))
-        helpers.remove(tree)
+        ran += 1
+        fails = res["fails"]
+        s.ok("control %s: the case fails" % name, bool(fails), "the mutant passed all %d checks" % res["checks"])
+        s.ok("control %s: fails with %r" % (name, needle), any(needle in f for f in fails),
+             "FAILs: %s" % "; ".join(f[:140] for f in fails[:3]))
+    pool.shutdown()
+    s.ok("the mutants ran: %d of %d" % (ran, len(MUTANTS)), ran == len(MUTANTS) and ran > 0)
+    print("%d mutants ran" % ran)
     s.done()
