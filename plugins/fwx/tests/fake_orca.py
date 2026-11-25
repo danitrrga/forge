@@ -10,7 +10,9 @@ State is in $FAKE_ORCA_DIR: `behave.json` (what the test wants), `state.json` (r
 agent waiting on a prompt), `hang` (never ends), `later` (running until the test creates `go-<unit>`), `fail` (Orca says failed),
 `failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `release_fail: [unit]` makes `worker-release` of
 that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
-in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
+in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `discover_after: N` makes Orca discover a worktree only after N `worktree show` calls on its path (the first N answer `selector_not_found`, as Orca 1.4.273 does for a worktree made with git that it has not
+found yet), and `start_not_found: M` makes the first M `worker-start`s on a worktree answer `selector_not_found` even when `show` knows it; with `discover_after` set, `worker-start` on a worktree that is not yet discovered answers `selector_not_found`
+too (neither set: every worktree is known at once, as before). `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
 """
 import json
 import os
@@ -173,6 +175,15 @@ def main(argv):
         state["repos"].append(os.path.realpath(flag(argv, "--path")))
         done_log()
         say({"repo": {"path": flag(argv, "--path")}})
+    if argv[:2] == ["worktree", "show"]:
+        wt = (flag(argv, "--worktree") or "")[len("path:"):]
+        seen = state.setdefault("shows", {})
+        seen[wt] = seen.get(wt, 0) + 1
+        if seen[wt] <= behave.get("discover_after", 0):
+            done_log(refused="selector_not_found", show=wt)
+            say(rc=1, error={"code": "selector_not_found", "message": "No workspace matches --worktree path:%s." % wt})
+        done_log(show=wt)
+        say({"worktree": {"path": wt}})
     if argv[:2] == ["terminal", "create"]:
         state["n_terms"] = state.get("n_terms", 0) + 1
         handle = "term_%d" % state["n_terms"]
@@ -221,6 +232,12 @@ def main(argv):
             done_log(refused="creation flags beside --worktree: %s" % bad)
             say(rc=1, error={"code": "invalid_argument", "message": "creation flags %s cannot go with --worktree path:" % bad})
         wt = wt[len("path:"):]
+        tries = state.setdefault("start_tries", {})
+        tries[wt] = tries.get(wt, 0) + 1
+        late = behave.get("discover_after", 0)
+        if (late and state.get("shows", {}).get(wt, 0) <= late) or tries[wt] <= behave.get("start_not_found", 0):
+            done_log(refused="selector_not_found", start_try=wt)
+            say(rc=1, error={"code": "selector_not_found", "message": "No workspace matches --worktree path:%s. Nothing was started; no effects were applied." % wt})
         marker_path = os.path.join(git(wt, "rev-parse", "--absolute-git-dir").stdout.strip(), "fwx-worker.json")
         marker = load_abs(marker_path)
         spec_file = flag(argv, "--spec-file")
