@@ -58,7 +58,7 @@ class OrcaError(WaveError):
 
 
 def _env():
-    return {k: v for k, v in os.environ.items() if k not in SESSION_VARS}
+    return {k: v for k, v in os.environ.items() if k not in SESSION_VARS and k != "ORCA_TERMINAL_HANDLE"}
 
 
 def call(*args, timeout=120):
@@ -116,8 +116,11 @@ def ensure_repo(path):
 
 
 def own_terminal():
-    """The handle of the Orca terminal this process runs in (`ORCA_TERMINAL_HANDLE`, which Orca sets in a terminal's environment and `_env` keeps), or None."""
-    return os.environ.get("ORCA_TERMINAL_HANDLE") or None
+    """The handle of the live Orca PTY terminal this process runs in (`ORCA_TERMINAL_HANDLE`, ignoring non-PTY `structworker_*` and closed handles), or None."""
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE") or ""
+    if not handle or handle.startswith("structworker_") or not terminal_alive(handle):
+        return None
+    return handle
 
 
 def terminal_create(path, title):
@@ -156,14 +159,14 @@ def _not_found(e):
     return "selector_not_found" in str(e)
 
 
-def start(run, spec_file, model, worktree, sender):
+def start(run, spec_file, model, worktree, sender, title=None):
     """`worker-start` in `worktree`, once Orca knows it: Orca discovers a worktree made with git only after a while (`selector_not_found` until then),
     so ask `worktree show` and retry a `selector_not_found` of `worker-start` for DISCOVER_S; past that, OrcaError naming the worktree."""
     bound, poll = _seconds("FWX_ORCA_DISCOVER_S", DISCOVER_S), _seconds("FWX_ORCA_DISCOVER_POLL_S", DISCOVER_POLL_S)
     deadline = time.monotonic() + bound
     never = "orca never discovered the worktree %s in %d s" % (worktree, bound)
     args = ("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
-            "--worktree", "path:" + worktree, "--from", sender)
+            "--worktree", "path:" + worktree, "--from", sender) + (("--task-title", title) if title else ())
     while True:
         try:
             result("worktree", "show", "--worktree", "path:" + worktree)

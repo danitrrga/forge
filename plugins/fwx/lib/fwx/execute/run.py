@@ -313,6 +313,10 @@ class Run:
     def unreachable(self, e, what):
         return Stop("needs-owner", "cannot reach the orchestrator %s (%s), so %s" % (self.orchestrator, e, what))
 
+    def _check_sender(self):
+        if not orca.terminal_alive(self.st["terminal"]):
+            raise Fenced("the run's terminal %s was closed; resume with `fwx wave run --resume %s`" % (self.st["terminal"], self.run))
+
     def announce(self, key, line):
         """A status line to the orchestrator, once per `key` (a resumed run does not repeat it)."""
         if not self.orchestrator or key in self.st.setdefault("announced", []):
@@ -320,6 +324,7 @@ class Run:
         try:
             self.tell(line, line)
         except orca.OrcaError as e:
+            self._check_sender()
             raise self.unreachable(e, "the run stopped after: %s" % line)
         self.st["announced"].append(key)
         self.save()
@@ -329,7 +334,12 @@ class Run:
         if not self.orchestrator:
             return
         done = self.st.setdefault("forwarded", {})
-        for m in orca.peek_questions(self.st["terminal"], self.orca_run):
+        try:
+            msgs = orca.peek_questions(self.st["terminal"], self.orca_run)
+        except orca.OrcaError:
+            self._check_sender()
+            raise
+        for m in msgs:
             if m["id"] in done:
                 continue
             open_ = [w for w in self.st["workers"].values() if w.get("dispatch") and not w["released"]]
@@ -344,6 +354,7 @@ class Run:
             try:
                 self.tell(subject, body)
             except orca.OrcaError as e:
+                self._check_sender()
                 raise self.unreachable(e, "the %s of %s is unanswered: %s" % (m["type"], who, subject[len(who) + 3:][:100]))
             done[m["id"]] = dispatch
             if rec:
@@ -382,8 +393,7 @@ class Run:
         rec = self.st["workers"].get(key)
         if rec:
             return rec
-        if not orca.terminal_alive(self.st["terminal"]):
-            raise Fenced("the run's terminal %s was closed; resume with `fwx wave run --resume %s`" % (self.st["terminal"], self.run))
+        self._check_sender()
         name = job.unit if k == 1 else "%s-%d" % (job.unit, k)
         worktree = os.path.join(self.main, ".claude", "worktrees", "%s-%s" % (self.run, name))
         branch = "worktree-%s-%s" % (self.run, name) if job.branch else None
@@ -394,8 +404,13 @@ class Run:
         orca.prepare_worker(self.main, worktree, job.role, self.run, job.unit)
         rec = {"unit": job.unit, "role": job.role, "worktree": os.path.realpath(worktree), "dispatch": None, "state": None, "released": False,
                "line": None, "started": time.time(), "idle_since": None}
+        title = "%s %s (%s%s)" % (os.path.basename(self.part), job.unit, job.role, ", #%d" % k if k > 1 else "")
+        try:
+            rec["dispatch"] = orca.start(self.orca_run, spec, job.model, worktree, self.st["terminal"], title=title)
+        except orca.OrcaError:
+            self._check_sender()
+            raise
         self.st["workers"][key] = rec
-        rec["dispatch"] = orca.start(self.orca_run, spec, job.model, worktree, self.st["terminal"])
         self.save()
         progress("worker %s started (%s, %s%s)" % (job.unit, job.role, job.model, ", attempt %d" % k if k > 1 else ""))
         return rec

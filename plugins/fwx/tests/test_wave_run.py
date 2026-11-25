@@ -746,6 +746,9 @@ def case_progress(root, S):
         r"gate started", r"gate passed", r"wave 2 merged", r"review started", r"worker r1 started", r"worker r1 done", r"review findings", r"run \S+ done"]), None)
     S.ok("progress: each line is one plain line (no escape codes, no carriage returns)", all("\x1b" not in x and "\r" not in x for x in r.stdout.splitlines()), "got %r" % r.stdout[:200])
     S.ok("progress: a started line names the unit and the role", any(re.search(r"worker T1 started.*executor", x) for x in lines), "got %r" % lines[:6])
+    titles = [(c["start"]["unit"], c["start"].get("title")) for c in w.calls() if c.get("start")]
+    S.ok("progress: every worker-start carries a readable --task-title naming part, unit and role",
+         bool(titles) and all(isinstance(t, str) and "01-alpha" in t and u in t for u, t in titles), "got %r" % titles)
     w2 = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
     p = start_run(w2, root, FWX_RUN_LIMIT_S="60")
     live = reader(p)
@@ -800,34 +803,50 @@ def case_own_terminal(root, S):
     calls = w.calls()
     S.eq("own terminal: without the variable one terminal is created and then closed", ([c["argv"][:2] for c in calls if c["argv"][:2] in (["terminal", "create"], ["terminal", "close"])]),
          [["terminal", "create"], ["terminal", "close"]])
+    # Non-PTY structured worker handle or stale/closed handle must NOT be adopted: fall back to terminal_create.
+    # Seen red before validating ORCA_TERMINAL_HANDLE:
+    #   FAIL: own terminal (structworker): falls back to a created terminal and ends done: exit 1, ... terminal_not_found: sender structworker_deadbeef is not a live terminal
+    #   FAIL: own terminal (closed): falls back to a created terminal and ends done: exit 1, ... terminal_not_found: sender term_gone is not a live terminal
+    for label, handle in (("structworker", "structworker_deadbeef"), ("closed", "term_gone")):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])])
+        r = w.run(root=root, ORCA_TERMINAL_HANDLE=handle)
+        m = line_of(r)
+        S.ok("own terminal (%s): falls back to a created terminal and ends done" % label, bool(m) and m.group(2) == "done" and r.returncode == 0,
+             "exit %d, got %r %r" % (r.returncode, r.stdout[-240:], r.stderr[-200:]))
+        made = [c["terminal"] for c in w.calls() if c["argv"][:2] == ["terminal", "create"]]
+        S.eq("own terminal (%s): created its own terminal instead of adopting %s" % (label, handle), len(made), 1)
+        sent = [c["sender"] for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"] and "sender" in c]
+        S.eq("own terminal (%s): run-create used the created terminal" % label, sent, made)
 
 
 def case_fenced(root, S):
     """The owner closes the run's sender terminal mid-run (live, run 10-nested-repos-f97847b-3: `worker-start failed (exit 1): consumer_fenced`). Before each
-    worker-start the run looks at its sender; a gone one ends the run needs-owner (exit 3) naming the terminal and the resume command, leaves its state active, and
-    `--resume` makes a new terminal and a new Orca run, then carries on.
+    worker-start and on OrcaError in steer/announce/launch, a gone sender ends the run needs-owner (exit 3) naming the terminal and the resume command,
+    leaves its state active, and `--resume` makes a new terminal and a new Orca run, then carries on.
     Seen red on the code before it:
       FAIL: fenced: the run stops needs-owner naming its closed terminal: got 'run <id> failed: orca: orca orchestration worker-start failed (exit 1): consumer_fenced: worker-start needs the coordinator bound to the Run ...'
-      FAIL: fenced: exit 3 -> exit 1"""
-    w = world(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])], behave={"close_sender_after": 1})
-    r = w.run(root=root)
-    m = re.search(r"run (\S+) needs-owner: the run's terminal (\S+) was closed; resume with `fwx wave run --resume (\S+)`\Z", r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "")
-    S.ok("fenced: the run stops needs-owner naming its closed terminal", bool(m) and m.group(1) == m.group(3) and m.group(2) in w.terminals(), "got %r %r" % (r.stdout[-300:], r.stderr[-200:]))
-    S.eq("fenced: exit 3 -> exit %d" % r.returncode, r.returncode, 3)
-    S.ok("fenced: no raw consumer_fenced in the output", "consumer_fenced" not in r.stdout + r.stderr, "got %r" % (r.stdout[-300:] + r.stderr[-300:]))
-    S.eq("fenced: only T1 was started", units(w), ["T1"])
-    if not m:
-        return
-    run = m.group(1)
-    S.eq("fenced: the state stays active, so --resume is allowed", w.state(run)["state"], "active")
-    del w.behave["close_sender_after"]
-    w.set_behave()
-    r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
-    m2 = line_of(r2)
-    S.ok("fenced: the resume goes on to done", bool(m2) and m2.group(2) == "done", "got %r %r" % (r2.stdout[-300:], r2.stderr[-300:]))
-    S.eq("fenced: the resume started T2 and the reviewer, not T1 again", units(w), ["T1", "T2", "r1"])
-    S.eq("fenced: the resume made a new terminal and a new Orca run", (len(w.terminals()), len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]])), (2, 2))
-    S.ok("fenced: the new terminal is closed at the end", not any(t["open"] for t in w.terminals().values()), "terminals %r" % w.terminals())
+      FAIL: fenced: exit 3 -> exit 1
+      FAIL: fenced (orchestrator): the run stops needs-owner naming its closed terminal: got '... failed: orca: orca orchestration check failed (exit 1): terminal_not_found: no live terminal term_1 (1 worktree kept)'"""
+    for label, extra in (("plain", ()), ("orchestrator", ("--orchestrator", ORCH))):
+        w = world(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])], behave={"close_sender_after": 1})
+        r = w.run(*extra, root=root)
+        m = re.search(r"run (\S+) needs-owner: the run's terminal (\S+) was closed; resume with `fwx wave run --resume (\S+)`\Z", r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "")
+        S.ok("fenced (%s): the run stops needs-owner naming its closed terminal" % label, bool(m) and m.group(1) == m.group(3) and m.group(2) in w.terminals(), "got %r %r" % (r.stdout[-300:], r.stderr[-200:]))
+        S.eq("fenced (%s): exit 3 -> exit %d" % (label, r.returncode), r.returncode, 3)
+        S.ok("fenced (%s): no raw consumer_fenced in the output" % label, "consumer_fenced" not in r.stdout + r.stderr, "got %r" % (r.stdout[-300:] + r.stderr[-300:]))
+        S.eq("fenced (%s): only T1 was started" % label, units(w), ["T1"])
+        if not m:
+            continue
+        run = m.group(1)
+        S.eq("fenced (%s): the state stays active, so --resume is allowed" % label, w.state(run)["state"], "active")
+        del w.behave["close_sender_after"]
+        w.set_behave()
+        r2 = subprocess.run(w.argv(root, "--resume", run, *extra), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+        m2 = line_of(r2)
+        S.ok("fenced (%s): the resume goes on to done" % label, bool(m2) and m2.group(2) == "done", "got %r %r" % (r2.stdout[-300:], r2.stderr[-300:]))
+        S.eq("fenced (%s): the resume started T2 and the reviewer, not T1 again" % label, units(w), ["T1", "T2", "r1"])
+        S.eq("fenced (%s): the resume made a new terminal and a new Orca run" % label, (len(w.terminals()), len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]])), (2, 2))
+        S.ok("fenced (%s): the new terminal is closed at the end" % label, not any(t["open"] for t in w.terminals().values()), "terminals %r" % w.terminals())
 
 
 # ---------------------------------------------------------------------------------------------------------------------- orchestrator steering
@@ -1222,13 +1241,22 @@ MUTANTS = [
      'if state == "succeeded" and not orca.REPLY_LINE.match(line):', "if False:",
      "reply grace: delayed reply after worker_done finishes done"),
     ("a progress line is not flushed", case_progress, "lib/fwx/execute/run.py", "    sys.stdout.flush()\n", "    pass\n", "progress: a line is out while the first worker still works"),
-    ("ORCA_TERMINAL_HANDLE is ignored", case_own_terminal, "lib/fwx/execute/orca.py", 'return os.environ.get("ORCA_TERMINAL_HANDLE") or None', "return None",
+    ("worker-start omits --task-title", case_progress, "lib/fwx/execute/run.py", 'title=title)', 'title=None)',
+     "progress: every worker-start carries a readable --task-title naming part, unit and role"),
+    ("ORCA_TERMINAL_HANDLE is ignored", case_own_terminal, "lib/fwx/execute/orca.py", 'handle = os.environ.get("ORCA_TERMINAL_HANDLE") or ""', 'handle = ""',
      "own terminal (success): no terminal was created"),
+    ("non-PTY or closed ORCA_TERMINAL_HANDLE is adopted", case_own_terminal, "lib/fwx/execute/orca.py",
+     'if not handle or handle.startswith("structworker_") or not terminal_alive(handle):', 'if not handle:',
+     "own terminal (structworker): falls back to a created terminal and ends done"),
     ("the run closes the terminal it ran in", case_own_terminal, "lib/fwx/execute/run.py", 'if st.get("terminal") and not st.get("terminal_made", True):', "if False:",
      "own terminal (success): no terminal was closed"),
     ("no look at the sender before a worker-start", case_fenced, "lib/fwx/execute/run.py", 'if not orca.terminal_alive(self.st["terminal"]):', "if False:",
-     "fenced: the run stops needs-owner naming its closed terminal"),
-    ("a resume keeps the Orca run of a lost terminal", case_fenced, "lib/fwx/execute/run.py", 'self.st["orca_run"] = None', "pass", "fenced: the resume goes on to done"),
+     "fenced (plain): the run stops needs-owner naming its closed terminal"),
+    ("steer skips sender check when peek_questions fails", case_fenced, "lib/fwx/execute/run.py",
+     '        try:\n            msgs = orca.peek_questions(self.st["terminal"], self.orca_run)\n        except orca.OrcaError:\n            self._check_sender()\n            raise',
+     '        msgs = orca.peek_questions(self.st["terminal"], self.orca_run)',
+     "fenced (orchestrator): the run stops needs-owner naming its closed terminal"),
+    ("a resume keeps the Orca run of a lost terminal", case_fenced, "lib/fwx/execute/run.py", 'self.st["orca_run"] = None', "pass", "fenced (plain): the resume goes on to done"),
 ]
 
 

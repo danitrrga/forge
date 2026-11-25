@@ -432,6 +432,8 @@ MUTANTS = [
      "a CI row with a command that failed is not the base's checks"),
     ("a red CI run's URL is dropped before the fixer", case_red, I, 'line + (" (%s)" % ", ".join(urls) if urls else "")', "line",
      "a red CI run's URL reaches `why` and the fixer's brief"),
+    ("the waiting CI run's URL is never said", case_green, CG, 'say("CI run %s" % ", ".join(str(r.get("html_url") or r.get("id")) for r in runs))', "pass",
+     "the URL of the CI run is said while waiting"),
 ]
 
 

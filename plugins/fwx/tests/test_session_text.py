@@ -278,10 +278,11 @@ def main():
     # Seen red on the text before it (`--worktree path:<worktree>`, no `cd`):
     #   FAIL: step 5 creates the driver terminal in the main checkout's workspace and cd's into the phase worktree -> worktree path:<main checkout> False, cd <worktree> && False
     def driver(text):
-        return "--worktree path:<main checkout>" in text and 'fwx <phase> part <N>" --command "cd <worktree> && ' in text
-    check("step 5 creates the driver terminal in the main checkout's workspace and cd's into the phase worktree",
-          driver(s5), "worktree path:<main checkout> %s, cd <worktree> && %s" % ("--worktree path:<main checkout>" in s5, "--command \"cd <worktree> && " in s5))
+        return "--worktree path:<main checkout>" in text and "fwx <phase> part <N>\" --command \"sh -c 'cd <worktree> && " in text
+    check("step 5 creates the driver terminal in the main checkout's workspace and runs via sh -c (fish/bash/zsh safe)",
+          driver(s5), "worktree path:<main checkout> %s, sh -c cd <worktree> && %s" % ("--worktree path:<main checkout>" in s5, "sh -c 'cd <worktree> && " in s5))
     check("control: the old step 5 text is caught", not driver('orca terminal create --worktree path:<worktree> --title "fwx <phase> part <N>" --command "<the wave run command>; echo exit"'))
+    check("control: bare $? without sh -c (fails in fish) is caught", not driver('orca terminal create --worktree path:<main checkout> --title "fwx <phase> part <N>" --command "cd <worktree> && <the wave run command>; echo exit \\$?"'))
     stale = [(os.path.basename(n), k) for n, t in texts.items() for k, l in enumerate(t.splitlines(), 1) if "wave run" in l and "in the background" in l]
     check("no text still tells the session to run `fwx wave run` \"in the background\" (steps 5 and 6 and ui-review.md point at step 5)", not stale, "%s" % stale)
     check("control: a line that says it is caught", bool([1 for l in ["run `fwx wave run ... --fix f` in the background"] if "wave run" in l and "in the background" in l]))

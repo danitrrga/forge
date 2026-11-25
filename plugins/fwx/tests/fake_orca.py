@@ -344,7 +344,7 @@ def main(argv):
         done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings, "settings_mode": fmode,
                         "status": git(wt, "status", "--porcelain").stdout, "head": git(wt, "rev-parse", "HEAD").stdout.strip(),
                         "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"), "sender": sender,
-                        "files_at_start": sorted(os.listdir(wt))})
+                        "title": flag(argv, "--task-title"), "files_at_start": sorted(os.listdir(wt))})
         say({"dispatchId": did, "taskId": "task_%d" % state["n"], "runId": flag(argv, "--run"), "state": "running"})
     if argv[:2] == ["orchestration", "worker-show"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
