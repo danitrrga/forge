@@ -503,11 +503,14 @@ def worktree_guard_smoke(only=None):
 
 # Ponytail for the framework's reviewing agents (hooks/ponytail_subagent.py), which a
 # project wires in its own `hooks` block. For each project that does: exactly one entry under each of
-# SubagentStart and UserPromptSubmit (without the second a manual /ponytail never reaches the agents), and
-# the SubagentStart command gives fwx:reviewer Ponytail's ruleset and fwx:executor nothing. The probe runs
-# the real install, so a Ponytail update that moved its builder is a FAIL, not a silent no-op.
+# SubagentStart and UserPromptSubmit (without the second a manual /ponytail never reaches the agents), or
+# one under each of those and SessionStart too (the reviewer workers of `fwx wave run` are top-level sessions
+# that SubagentStart never reaches). The SubagentStart command gives fwx:reviewer Ponytail's ruleset and
+# fwx:executor nothing, and a wired SessionStart command gives a reviewer worker the ruleset and an executor
+# worker nothing. The probe runs the real install, so a Ponytail update that moved its builder is a FAIL,
+# not a silent no-op.
 PONYTAIL_SCRIPT, PONYTAIL_TIMEOUT = "ponytail_subagent.py", 15
-PONYTAIL_EVENTS = ("SubagentStart", "UserPromptSubmit")
+PONYTAIL_EVENTS = (("SubagentStart", "UserPromptSubmit"), ("SessionStart", "SubagentStart", "UserPromptSubmit"))
 
 
 def ponytail_entries(prof):
@@ -520,23 +523,41 @@ def ponytail_problem(prof, entries):
     """Why this project's Ponytail hook would not scope Ponytail in a session, or None."""
     if prof.get("frozen"):
         return "the project wires it but is frozen, so forge writes none of its hooks"
-    if sorted(e for e, _ in entries) != list(PONYTAIL_EVENTS):
-        return "the project runs %s under %s, want once under each of %s" % (PONYTAIL_SCRIPT, [e for e, _ in entries], list(PONYTAIL_EVENTS))
-    command = dict(entries)["SubagentStart"]
+    events = sorted(e for e, _ in entries)
+    if events not in [list(s) for s in PONYTAIL_EVENTS]:
+        return "the project runs %s under %s, want once under each of %s or of %s" % (PONYTAIL_SCRIPT, events, *map(list, PONYTAIL_EVENTS))
+    commands = dict(entries)
     for agent, wanted in (("fwx:reviewer", True), ("fwx:executor", False)):
-        payload = json.dumps({"hook_event_name": "SubagentStart", "agent_type": agent})
-        try:
-            r = subprocess.run(command, shell=True, input=payload, text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
-        except subprocess.TimeoutExpired:
-            return "%s got no answer in %d s" % (agent, PONYTAIL_TIMEOUT)
-        try:
-            got = json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"].startswith("PONYTAIL MODE ACTIVE")
-        except (ValueError, KeyError, TypeError, AttributeError):
-            got = False
-        if r.returncode != 0 or got != wanted or (not wanted and r.stdout.strip()):
-            last = (r.stderr.strip().splitlines() or [""])[-1]
-            return "%s %s (exit %d%s)" % (agent, "got no ruleset" if wanted else "got output", r.returncode,
-                                          ": " + last if last else "")
+        why = ponytail_probe(commands["SubagentStart"], {"hook_event_name": "SubagentStart", "agent_type": agent}, agent, wanted)
+        if why:
+            return why
+    if "SessionStart" in commands:
+        for role, wanted in (("reviewer", True), ("executor", False)):
+            with tempfile.TemporaryDirectory(prefix="forge-ponytail-") as tree:
+                if subprocess.run(["git", "init", "-q", tree], capture_output=True).returncode != 0:
+                    return "git init failed in %s, so a SessionStart worker could not be probed" % tree
+                with open(os.path.join(tree, ".git", "fwx-worker.json"), "w") as fh:
+                    json.dump({"role": role}, fh)
+                why = ponytail_probe(commands["SessionStart"], {"hook_event_name": "SessionStart", "cwd": tree}, "a %s worker" % role, wanted)
+            if why:
+                return why
+    return None
+
+
+def ponytail_probe(command, payload, who, wanted):
+    """Run one hook `command` on `payload`: why `who` did (not) get Ponytail's ruleset when it `wanted` (not), or None."""
+    try:
+        r = subprocess.run(command, shell=True, input=json.dumps(payload), text=True, capture_output=True, timeout=PONYTAIL_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return "%s got no answer in %d s" % (who, PONYTAIL_TIMEOUT)
+    try:
+        out = json.loads(r.stdout)["hookSpecificOutput"]
+        got = out["hookEventName"] == payload["hook_event_name"] and out["additionalContext"].startswith("PONYTAIL MODE ACTIVE")
+    except (ValueError, KeyError, TypeError, AttributeError):
+        got = False
+    if r.returncode != 0 or got != wanted or (not wanted and r.stdout.strip()):
+        last = (r.stderr.strip().splitlines() or [""])[-1]
+        return "%s %s (exit %d%s)" % (who, "got no ruleset" if wanted else "got output", r.returncode, ": " + last if last else "")
     return None
 
 
