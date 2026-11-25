@@ -1081,7 +1081,7 @@ CHECKS = [
     ("instruction files", instruction_file_blocks, "forge never writes in a project: the change is in that project's repo"),
     ("command guard", command_guard_smoke, "forge sync --apply; if the entry is there, hooks/guard_tool_use.py itself does not refuse"),
     ("worktree guard", worktree_guard_smoke, "forge sync --apply; if the entry is there, hooks/worktree_guard.py itself does not refuse"),
-    ("ponytail", ponytail_row, "the project's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit; a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
+    ("ponytail", ponytail_row, "the project's hooks run hooks/ponytail_subagent.py once under SubagentStart and once under UserPromptSubmit (and once under SessionStart for the reviewer workers of `fwx wave run`); a probe that fails names Ponytail's install (claude plugin install ponytail@ponytail)"),
     ("memory", ["scripts/sync/memory_doctor.py"], "python3 scripts/sync/memory_doctor.py --verbose"),
     ("toolchain", toolchain.row, "forge toolchain --fix (writes mise's forge.toml, installs what is missing; a pip version that differs is only reported)"),
     ("owned", owned_row, "forge sync --apply rewrites the record from what forge writes (an entry changed by hand is left alone, or repaired when its row still exists)"),
