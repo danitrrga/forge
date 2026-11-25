@@ -437,6 +437,41 @@ def main():
     check("control: `decisions.tsv` is not a decisions-agent line", re.search(r"`(fwx:)?decisions`|decisions agent", "read `decisions.tsv`") is None)
     check("control: 'no recommendation unasked' is caught", re.search(r"no recommendation|unasked", "it carries no recommendation unasked", re.I) is not None)
 
+    # Orca worker launch in pre-mortem and post-mortem skills: --spec-file (never --spec with backticks), the role's
+    # agent file named in the spec because an Orca worker has no subagent_type, and end the turn instead of polling.
+    # Seen red on origin/master:
+    #   FAIL: skills/pre-mortem/SKILL.md Orca worker launch uses --spec-file, names agents/pre-mortem.md, and ends the turn -> worker-start does not pass --spec-file (or still passes --spec): ...; does not point the worker at ${CLAUDE_PLUGIN_ROOT}/agents/pre-mortem.md; does not tell the session to end its turn for worker_done and not poll
+    #   FAIL: skills/post-mortem/SKILL.md Orca worker launch uses --spec-file, names agents/post-mortem.md, and ends the turn -> ...
+    def mortem_worker_problems(text, agent_rel):
+        out = []
+        m = re.search(r"`orca orchestration worker-start[^`]*`", text)
+        cmd = m.group(0) if m else ""
+        if "--spec-file" not in cmd or re.search(r"--spec(?!-file)\b", cmd):
+            out.append("worker-start does not pass --spec-file (or still passes --spec): %r" % cmd)
+        agent_ref = "${CLAUDE_PLUGIN_ROOT}/" + agent_rel
+        if agent_ref not in text:
+            out.append("does not point the worker at %s" % agent_ref)
+        if "end your turn" not in text or "do not poll" not in text:
+            out.append("does not tell the session to end its turn for worker_done and not poll")
+        return out
+
+    for name in ("pre-mortem", "post-mortem"):
+        agent_rel = "agents/%s.md" % name
+        check("%s agent file exists on disk" % agent_rel, os.path.isfile(os.path.join(ROOT, agent_rel)))
+        probs = mortem_worker_problems(scanned["skills/%s/SKILL.md" % name], agent_rel)
+        check("skills/%s/SKILL.md Orca worker launch uses --spec-file, names %s, and ends the turn" % (name, agent_rel),
+              not probs, "; ".join(probs))
+    good_worker = ("read ${CLAUDE_PLUGIN_ROOT}/agents/post-mortem.md; "
+                   "`orca orchestration worker-start --agent antigravity --spec-file <file> --json`; "
+                   "end your turn and let worker_done wake you (do not poll).")
+    check("control: good mortem worker text passes", mortem_worker_problems(good_worker, "agents/post-mortem.md") == [])
+    check("control: worker-start with --spec is caught",
+          any("--spec-file" in p for p in mortem_worker_problems(good_worker.replace("--spec-file <file>", '--spec "Run `fwx`"'), "agents/post-mortem.md")))
+    check("control: missing agent file pointer is caught",
+          any("agents/post-mortem.md" in p for p in mortem_worker_problems(good_worker.replace("${CLAUDE_PLUGIN_ROOT}/agents/post-mortem.md", "brief"), "agents/post-mortem.md")))
+    check("control: missing end-turn / do-not-poll rule is caught",
+          any("end its turn" in p for p in mortem_worker_problems(good_worker.replace("end your turn", "wait"), "agents/post-mortem.md")))
+
     # controls of the checks above.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
     check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx report lint on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))

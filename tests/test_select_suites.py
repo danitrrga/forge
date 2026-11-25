@@ -47,6 +47,7 @@ CASES = [
     ("bin/forge, which the fwx suite starts, selects both", "pull_request", ["bin/forge"], True, True),
     ("forge/publish.py, whose lint the fwx suite runs on its own tree, selects both", "pull_request", ["forge/publish.py"], True, True),
     ("forge/testgroup.py, the fwx runner, selects both", "pull_request", ["forge/testgroup.py"], True, True),
+    ("forge/tmpscope.py, imported by forge/testgroup.py, selects both", "pull_request", ["forge/tmpscope.py"], True, True),
     ("README.md alone selects neither", "pull_request", ["README.md"], False, False),
     ("CLAUDE.md alone selects neither", "pull_request", ["CLAUDE.md"], False, False),
     ("a README image selects neither", "pull_request", ["docs/assets/banner.png"], False, False),
@@ -174,6 +175,17 @@ def check_cli_git(script):
         git(d, "commit", "-qm", "move a file out of the plugin")
         r, outfile = run_cli(["--event", "pull_request", "--base", base, "--head", git(d, "rev-parse", "HEAD")], cwd=d, script=script)
         want("git: a file renamed from plugins/fwx/ to forge/ selects fwx", outfile, "fwx=true\nsuite=true\n")
+        # forge/tmpscope.py is imported at module top by forge/testgroup.py, so a PR touching only it must select fwx.
+        # Seen red on origin/master:
+        #   FAIL real classifier, forge/tmpscope.py, imported by forge/testgroup.py, selects both: fwx=False suite=True, want fwx=True suite=True
+        #   FAIL real script, git: a diff touching only forge/tmpscope.py selects fwx: got 'fwx=false\nsuite=true\n', want 'fwx=true\nsuite=true\n'
+        git(d, "checkout", "-q", "-b", "tmpscope-only", base)
+        with open(os.path.join(d, "forge", "tmpscope.py"), "w") as fh:
+            fh.write("x = 1\n")
+        git(d, "add", "forge/tmpscope.py")
+        git(d, "commit", "-qm", "touch tmpscope only")
+        r, outfile = run_cli(["--event", "pull_request", "--base", base, "--head", git(d, "rev-parse", "HEAD")], cwd=d, script=script)
+        want("git: a diff touching only forge/tmpscope.py selects fwx", outfile, "fwx=true\nsuite=true\n")
     return out
 
 
@@ -230,7 +242,7 @@ def main():
     # The command line and the git diff, on the real script; then the same cases on copies of it with one thing broken.
     for f in check_cli_git(SCRIPT):
         failures.append("real script, " + f)
-    looked[0] += 14
+    looked[0] += 15
     with open(SCRIPT, encoding="utf-8") as fh:
         script_text = fh.read()
     with tempfile.TemporaryDirectory() as td:
