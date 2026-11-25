@@ -206,6 +206,9 @@ def case_green(R, S):
          [("ci", head, 0, "0", [{"cmd": "ci:%s:run-101" % CI, "rc": 0}])])
     S.ok("the result line is the evidence line of the row", (v.get("verify") or {}).get("line", "").startswith("evidence %s ci:%s:run-101=0" % (head, CI)), repr(v.get("verify")))
     r2 = w.final(R)
+    # The run's URL is said as soon as the run exists (the owner watches the gate wait; `fwx wave run` echoes these lines). Seen red before the line:
+    #   FAIL: the URL of the CI run is said while waiting -> stderr 'fwx wave merge: pushed phase at ...\nfwx wave merge: waiting for CI on pull request #1\n...' has no 'CI run '
+    S.ok("the URL of the CI run is said while waiting", "CI run %s" % (RUN_URL % 101) in r.stderr, r.stderr)
     S.eq("a second gate on the same head: green again", (r2.returncode, w.ran()), (0, 0))
     S.eq("the draft is opened once", len(w.gh_state()["created"]), 1)
     stop_scenes()
@@ -429,6 +432,8 @@ MUTANTS = [
      "a CI row with a command that failed is not the base's checks"),
     ("a red CI run's URL is dropped before the fixer", case_red, I, 'line + (" (%s)" % ", ".join(urls) if urls else "")', "line",
      "a red CI run's URL reaches `why` and the fixer's brief"),
+    ("the waiting CI run's URL is never said", case_green, CG, 'say("CI run %s" % ", ".join(str(r.get("html_url") or r.get("id")) for r in runs))', "pass",
+     "the URL of the CI run is said while waiting"),
 ]
 
 

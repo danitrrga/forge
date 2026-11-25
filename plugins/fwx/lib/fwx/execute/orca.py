@@ -9,7 +9,8 @@ This is the one module that starts a worker, the seam 01-factory adds `claude -p
     refuses its `worker-release` (`dispatch_inactive`) until `worker-stop` ran (research/orca-boundary.md): the caller stops it first;
   - Orca knows a worktree only once it has discovered it, a few seconds after `git worktree add` (`selector_not_found` until then; no Orca command makes it
     discover a path at once), so `start` waits until `orca worktree show` finds it and retries a `selector_not_found` of `worker-start`, for DISCOVER_S;
-  - `run-create` and `worker-start` are sent from a terminal fwx made for the run (`terminal_create`, closed when the run ends, named with `--from`),
+  - `run-create` and `worker-start` are sent from the terminal the run itself runs in (`own_terminal`: `ORCA_TERMINAL_HANDLE`, never closed by fwx), else
+    from one fwx made for the run (`terminal_create`, closed when the run ends), named with `--from`,
     because with those variables gone Orca has no sender for them (`no_active_sender_terminal`; `orchestration send` takes `--from` too, fwx sends none,
     the workers do from their own terminals; worker-show, -read, -stop and -release take none); the workers' `worker_done` go to the run's inbox, not to any chat;
   - `repo` is added once, and not at all when `orca repo list` already shows the checkout.
@@ -57,7 +58,7 @@ class OrcaError(WaveError):
 
 
 def _env():
-    return {k: v for k, v in os.environ.items() if k not in SESSION_VARS}
+    return {k: v for k, v in os.environ.items() if k not in SESSION_VARS and k != "ORCA_TERMINAL_HANDLE"}
 
 
 def call(*args, timeout=120):
@@ -114,6 +115,14 @@ def ensure_repo(path):
     return True
 
 
+def own_terminal():
+    """The handle of the live Orca PTY terminal this process runs in (`ORCA_TERMINAL_HANDLE`, ignoring non-PTY `structworker_*` and closed handles), or None."""
+    handle = os.environ.get("ORCA_TERMINAL_HANDLE") or ""
+    if not handle or handle.startswith("structworker_") or not terminal_alive(handle):
+        return None
+    return handle
+
+
 def terminal_create(path, title):
     """A terminal in the checkout `path`, titled `title`, and its handle: the sender `run-create` needs, as the session variables that would have
     named one are stripped (Orca 1.4.273: `no_active_sender_terminal`). It is created in the background, not focused."""
@@ -150,14 +159,14 @@ def _not_found(e):
     return "selector_not_found" in str(e)
 
 
-def start(run, spec_file, model, worktree, sender):
+def start(run, spec_file, model, worktree, sender, title=None):
     """`worker-start` in `worktree`, once Orca knows it: Orca discovers a worktree made with git only after a while (`selector_not_found` until then),
     so ask `worktree show` and retry a `selector_not_found` of `worker-start` for DISCOVER_S; past that, OrcaError naming the worktree."""
     bound, poll = _seconds("FWX_ORCA_DISCOVER_S", DISCOVER_S), _seconds("FWX_ORCA_DISCOVER_POLL_S", DISCOVER_POLL_S)
     deadline = time.monotonic() + bound
     never = "orca never discovered the worktree %s in %d s" % (worktree, bound)
     args = ("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
-            "--worktree", "path:" + worktree, "--from", sender)
+            "--worktree", "path:" + worktree, "--from", sender) + (("--task-title", title) if title else ())
     while True:
         try:
             result("worktree", "show", "--worktree", "path:" + worktree)
