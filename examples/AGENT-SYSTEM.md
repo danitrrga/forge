@@ -48,7 +48,7 @@ change), then with `--apply`, and restart the affected session.
 | Add a hook for one project | the project's own `.claude/settings.json`, which forge never touches; use an absolute path and the interpreter for the file (`python3`, `node`, `bash`) | restart the session |
 | Switch an integration on or off | `integrations` in `config/forge.json` | `python3 bin/forge sync --apply --all` |
 | Edit this document | `docs/AGENT-SYSTEM.md` in forge | `python3 scripts/sync/sync_system_doc.py --apply` |
-| Keep your own rules loaded in every project | markdown lines in `config/system-pointer-extra.md`; they go inside the pointer block of each managed project's `CLAUDE.md` (and so `AGENTS.md`), after the pointer text. Absent or blank adds nothing; a file that cannot be read or holds a pointer marker stops the sync with a `!` line | `python3 scripts/sync/sync_system_doc.py --apply` |
+| Keep your own rules loaded in every project | markdown lines in `config/system-pointer-extra.md`; they go inside the pointer block of each managed project's `CLAUDE.md` (and so `AGENTS.md`), after the pointer text. Absent or blank adds nothing; a source that is not a regular file, is over 8 KiB, cannot be read or holds a pointer marker stops the sync with a `!` line | `python3 scripts/sync/sync_system_doc.py --apply` |
 
 `forge sync` without `--apply` changes nothing. `forge sync NAME` limits it to one project and writes no
 user-scope file; `--all` runs every project even from inside a session.

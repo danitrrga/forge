@@ -56,6 +56,10 @@ import sync_system_doc as sd  # noqa: E402
 DOC = os.path.join(TOY, "AGENT-SYSTEM.md")
 shutil.copy(os.path.join(sandbox.FORGE, "tests", "fixtures", "config", "AGENT-SYSTEM.md"), DOC)
 sd.CANON = DOC
+# The script reads the user's own pointer lines from config/ of the checkout it sits in: pointed into the toy, a real
+# config/system-pointer-extra.md (a broken link there made main() return 1 and this suite crash at p5's AGENTS.md:
+# "FileNotFoundError: ... projects/p5/AGENTS.md") cannot leak in.
+sd.EXTRA = os.path.join(TOY, "system-pointer-extra.md")
 lib.PROJECTS = os.path.join(TOY, "projects")
 os.makedirs(lib.PROJECTS)
 LINE = ".claude/AGENT-SYSTEM.md"

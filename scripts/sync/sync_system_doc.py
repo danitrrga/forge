@@ -115,19 +115,34 @@ def profiles_paragraph(proj_dir, profs):
             % (names[0], proj_dir))
 
 
+EXTRA_MAX = 8 * 1024  # bytes: the text is loaded in every session of every project, so a larger file is a mistake
+
+
 def extra_lines():
-    """(text to put inside the block, why not): the user's lines from config/system-pointer-extra.md, stripped, as a
-    paragraph of their own; "" for a file that is absent or blank, which leaves every block what it was. A source that
-    cannot be read as UTF-8 text, or that holds a forge marker (the next sync would replace the block up to the wrong END),
-    is a reason and no text: the caller stops before writing, since a block written without the lines would take the
-    user's rules out of every project at once, with nothing said."""
-    try:
-        with open(EXTRA, encoding="utf-8") as fh:
-            text = fh.read().strip()
-    except FileNotFoundError:
+    """(text to put inside the block, why not): the user's lines from config/system-pointer-extra.md, as a paragraph of
+    their own, a BOM dropped and the blank lines around it removed but not the indentation of its first line; "" for a
+    file that is absent or blank, which leaves every block what it was. Absent means nothing is there at all (lexists):
+    a link that leads nowhere is a source that is broken. A source that is not a regular file (a folder, a FIFO, a
+    device), is over EXTRA_MAX bytes, cannot be read as UTF-8, or holds a forge marker (the next sync would replace the
+    block up to the wrong END) is a reason and no text: the caller stops before writing, since a block written without
+    the lines would take the user's rules out of every project at once, with nothing said."""
+    if not os.path.lexists(EXTRA):
         return "", None
+    try:
+        if not os.path.isfile(EXTRA):  # follows links: a link to a regular file is fine, a broken one is not a file
+            return "", "%s is not a regular file (a broken link, a folder or a special file); fix or remove it" % EXTRA
+        size = os.stat(EXTRA).st_size
+        if size > EXTRA_MAX:
+            return "", "%s is %d bytes, over the %d-byte limit of text loaded in every project" % (EXTRA, size, EXTRA_MAX)
+        with open(EXTRA, encoding="utf-8-sig") as fh:
+            lines = fh.read().split("\n")
     except (OSError, UnicodeDecodeError) as e:
         return "", "%s cannot be read: %s" % (EXTRA, e)
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    text = "\n".join(lines)
     if has_marker(text):
         return "", "%s holds a forge marker (BEGIN/END of the pointer block); take it out" % EXTRA
     return ("\n" + text + "\n" if text else ""), None

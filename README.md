@@ -191,8 +191,9 @@ registered and a name that is not kebab-case. By default forge writes no file gi
 
 The pointer block that `sync_system_doc.py` keeps in each managed project's `CLAUDE.md` (Codex reads it through the `AGENTS.md`
 link) can carry rules of your own: put markdown in `config/system-pointer-extra.md` and the next sync adds it inside the block,
-after the pointer text. A missing or blank file adds nothing. A file that cannot be read as UTF-8 or that holds one of the
-block's own markers stops the sync with a `!` line and exit 1 before anything is written.
+after the pointer text. A missing or blank file adds nothing. A source that is not a regular file (a broken link, a folder), is
+over 8 KiB (it loads in every session of every project), cannot be read as UTF-8 or holds one of the block's own markers stops
+the sync with a `!` line and exit 1 before anything is written.
 
 `forge new NAME [--path DIR] [--stack generic] [--framework] [--yes] [--apply]` makes the project in `projects_dir` of
 `config/forge.json` (or in `DIR`, which must exist): its folder, `git init`, a `.gitignore` written first, a one-line `README.md`, the
