@@ -305,6 +305,31 @@ def case_nested(root, S):
     S.ok("nested: the leftover worktree is gone", not os.path.exists(reviewer), "still there")
 
 
+def case_nested_resume(root, S):
+    """A cut run of repo a resumed from a worktree of repo b (the same branch name in both, by design) is refused before any step, naming both repos,
+    and goes on from a's own worktree. Seen red on the code before the check (python3 tests/test_wave_run.py):
+      FAIL: nested resume from repo b: exit 2, no worker, both repos named: got (1, ..., ['T1']), want (2, True, ['T1'])"""
+    w = world(nested={"a": ["true"], "b": ["true"]}, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
+    sc = w.scene
+    a, b = sc.nested["a"], sc.nested["b"]
+    p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    w.procs.append(p)
+    end = time.time() + 20
+    while time.time() < end and not (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())):
+        time.sleep(0.1)
+    p.kill()
+    p.wait()
+    run = w.runs()[0] if w.runs() else ""
+    S.eq("nested resume: the first run started T1", units(w), ["T1"])
+    bwt, _ = w.second_part("b")
+    r = subprocess.run(w.argv(root, "--resume", run), cwd=bwt, env=w.env(), capture_output=True, text=True, timeout=120)
+    S.eq("nested resume from repo b: exit 2, no worker, both repos named", (r.returncode, a in r.stderr and bwt in r.stderr, units(w)), (2, True, ["T1"]))
+    helpers.write(w.dir, "go-T1", "")
+    r = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+    m = line_of(r)
+    S.ok("nested resume from a's own worktree: the run goes on to done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+
+
 def case_failure(root, S):
     w = world(cap=3, tasks=[task("T1", 1, ["src/a.py"]), task("T2", 1, ["src/b.py"]), task("T3", 1, ["src/c.py"])],
               behave={"units": {"T1": "wait", "T2": "ok", "T3": "hang"}})
@@ -750,7 +775,7 @@ def case_terminal_resume(root, S):
 
 
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover, case_nested]
+         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover, case_nested, case_nested_resume]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -788,6 +813,8 @@ MUTANTS = [
      "nested: `orca repo add` named a"),
     ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'where if where and os.path.isdir(where) else "."', '"."',
      "nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit"),
+    ("resume from any worktree on the branch", case_nested_resume, "lib/fwx/commands/wave.py", "            if own != here:", "            if False:",
+     "nested resume from repo b: exit 2, no worker, both repos named"),
     ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
      "worker-read stops at end cursor"),
 ]
