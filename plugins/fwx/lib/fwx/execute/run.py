@@ -290,7 +290,7 @@ class Run:
         rec = {"unit": job.unit, "role": job.role, "worktree": os.path.realpath(worktree), "dispatch": None, "state": None, "released": False,
                "line": None, "started": time.time(), "idle_since": None}
         self.st["workers"][key] = rec
-        rec["dispatch"] = orca.start(self.orca_run, spec, job.model, worktree)
+        rec["dispatch"] = orca.start(self.orca_run, spec, job.model, worktree, self.st["terminal"])
         self.save()
         return rec
 

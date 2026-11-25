@@ -7,8 +7,9 @@ This is the one module that starts a worker, the seam 01-factory adds `claude -p
     `--display-name`, `--comment`, `--setup`): Orca refuses them together, and fwx made the worktree so that it could prepare it;
   - a worker is released only once it is settled: a dispatch that ended its turn without `worker_done` stays `ready` and idle, and Orca
     refuses its `worker-release` (`dispatch_inactive`) until `worker-stop` ran (research/orca-boundary.md): the caller stops it first;
-  - `run-create` is sent from a terminal fwx made for the run (`terminal_create`, closed when the run ends), because with those variables gone
-    Orca has no sender for it; the workers' `worker_done` go to the run's inbox, not to any chat;
+  - `run-create` and `worker-start` are sent from a terminal fwx made for the run (`terminal_create`, closed when the run ends, named with `--from`),
+    because with those variables gone Orca has no sender for them (`no_active_sender_terminal`; `orchestration send` takes `--from` too, fwx sends none,
+    the workers do from their own terminals; worker-show, -read, -stop and -release take none); the workers' `worker_done` go to the run's inbox, not to any chat;
   - `repo` is added once, and not at all when `orca repo list` already shows the checkout.
 
 `prepare_worker` is the part of a start that is fwx's: the worktree holds a copy of the main checkout's `.claude/settings.local.json` with
@@ -130,9 +131,9 @@ def run_create(objective, sender):
     return run
 
 
-def start(run, spec_file, model, worktree):
+def start(run, spec_file, model, worktree, sender):
     got = result("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
-                 "--worktree", "path:" + worktree)
+                 "--worktree", "path:" + worktree, "--from", sender)
     dispatch = _first(got, ("dispatchId",))
     if not dispatch:
         raise OrcaError("orca worker-start named no dispatch: %s" % json.dumps(got)[:200])

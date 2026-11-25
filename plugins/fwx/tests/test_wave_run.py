@@ -581,7 +581,11 @@ def case_terminal(root, S):
     """Orca 1.4.273 refuses `orchestration run-create` with no sender terminal once the session variables are stripped (`no_active_sender_terminal`), so
     the run makes one terminal (`fwx run <R>`, in the main checkout), names it with `--from` and closes it however the run ends.
     Seen red on the code before the fix (every case that runs a part): FAIL: loop: exit, stderr -> got (1, 'orca: orca orchestration run-create failed
-    (exit 1): no_active_sender_terminal: Could not determine the calling terminal ...'), want (0, '')."""
+    (exit 1): no_active_sender_terminal: Could not determine the calling terminal ...'), want (0, '').
+    The same for `worker-start` (live, Orca 1.4.273, run 10-nested-repos-0c34fbb-1: `orca orchestration worker-start failed (exit 1):
+    no_active_sender_terminal`): the fake refuses it, and `send`, with no `--from`. Seen red on the code before that fix: test_wave_run.py exit 1, the first case
+    reached no worker (`IndexError: list index out of range` at case_loop's `starts[0]["spec"]`), and its mutant below fails with
+    FAIL: terminal (success): every worker-start names that terminal -> got [], terminals ['term_1']."""
     for name, behave, status in (("success", {}, "done"), ("failure", {"units": {"T1": "failed-report"}}, "failed"), ("raised error", {"units": {"T1": "showfail"}}, "failed")):
         w = world(tasks=[task("T1", 1, ["src/a.py"])], behave=behave)
         r = w.run(root=root)
@@ -593,6 +597,8 @@ def case_terminal(root, S):
         S.ok("the terminal is closed after a %s -> open" % name, bool(terms) and not any(t["open"] for t in terms.values()), "terminals %r" % terms)
         sent = [c["sender"] for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"] and "sender" in c]
         S.eq("terminal (%s): run-create names that terminal" % name, sent, list(terms)[:1])
+        starts = [c["start"]["sender"] for c in w.calls() if c["argv"][:2] == ["orchestration", "worker-start"] and "start" in c]
+        S.ok("terminal (%s): every worker-start names that terminal" % name, bool(starts) and starts == [list(terms)[0]] * len(starts), "got %r, terminals %r" % (starts, list(terms)))
         S.ok("terminal (%s): no call carries an Orca session variable" % name, all(not any(c["env"].values()) for c in w.calls()))
         if m:
             S.ok("terminal (%s): the state no longer holds an open terminal" % name, not w.state(m.group(1)).get("terminal"), "got %r" % w.state(m.group(1)).get("terminal"))
@@ -660,7 +666,8 @@ MUTANTS = [
     ("a waiting worker is stopped as idle", case_waiting, "lib/fwx/execute/run.py", 'if state == "ready" and info.get("activity") == "idle" and not waiting:', 'if state == "ready" and info.get("activity") == "idle":',
      "left alone until its limit, not stopped as idle"),
     ("the run's terminal is never closed", case_terminal, "lib/fwx/execute/run.py", "orca.terminal_close(st[\"terminal\"])", "pass", "the terminal is closed after a success -> open"),
-    ("run-create with no sender", case_terminal, "lib/fwx/execute/orca.py", ', "--from", sender)', ")", "terminal (success): run-create names that terminal"),
+    ("run-create with no sender", case_terminal, "lib/fwx/execute/orca.py", '"--objective", objective, "--from", sender)', '"--objective", objective)', "terminal (success): run-create names that terminal"),
+    ("worker-start with no sender", case_terminal, "lib/fwx/execute/orca.py", '"path:" + worktree, "--from", sender)', '"path:" + worktree)', "terminal (success): every worker-start names that terminal"),
     ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
      "worker-read stops at end cursor"),
 ]

@@ -9,7 +9,7 @@ State is in $FAKE_ORCA_DIR: `behave.json` (what the test wants), `state.json` (r
 `bad-outside` (a report whose `outside` item is malformed), `idle` (done, but it never settles: state ready, activity idle), `wait` (an
 agent waiting on a prompt), `hang` (never ends), `later` (running until the test creates `go-<unit>`), `fail` (Orca says failed),
 `failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `release_fail: [unit]` makes `worker-release` of
-that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create` with no `--from` (and none of the session variables
+that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
 in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
 """
 import json
@@ -193,7 +193,8 @@ def main(argv):
             term["open"] = False
         done_log(terminal=handle)
         say({"terminal": {"handle": handle, "title": term["title"]}} if argv[1] == "show" else {"closed": True, "handle": handle})
-    if argv[:2] == ["orchestration", "run-create"]:
+    def need_sender():
+        """`run-create`, `worker-start` and `send` take a sender terminal: `--from`, or the session variables / ORCA_TERMINAL_HANDLE of a live Orca terminal."""
         sender = flag(argv, "--from")
         if sender is None and not any(os.environ.get(k) for k in SESSION_VARS + ("ORCA_TERMINAL_HANDLE",)):  # as Orca 1.4.273 answers
             done_log(refused="no_active_sender_terminal")
@@ -202,10 +203,18 @@ def main(argv):
         if sender is not None and not state.setdefault("terminals", {}).get(sender, {}).get("open"):
             done_log(refused="sender_not_open")
             say(rc=1, error={"code": "terminal_not_found", "message": "sender %s is not a live terminal" % sender})
+        return sender
+
+    if argv[:2] == ["orchestration", "send"]:
+        done_log(sender=need_sender())
+        say({"sent": True})
+    if argv[:2] == ["orchestration", "run-create"]:
+        sender = need_sender()
         state["runs"] += 1
         done_log(sender=sender)
         say({"run": {"id": "run_%d" % state["runs"], "objective": flag(argv, "--objective")}})
     if argv[:2] == ["orchestration", "worker-start"]:
+        sender = need_sender()
         wt = (flag(argv, "--worktree") or "")
         bad = [c for c in CREATION if c in argv]
         if not wt.startswith("path:") or bad:
@@ -239,7 +248,7 @@ def main(argv):
                                     "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing")}
         done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings, "settings_mode": fmode,
                         "status": git(wt, "status", "--porcelain").stdout, "head": git(wt, "rev-parse", "HEAD").stdout.strip(),
-                        "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"),
+                        "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"), "sender": sender,
                         "files_at_start": sorted(os.listdir(wt))})
         say({"dispatchId": did, "taskId": "task_%d" % state["n"], "runId": flag(argv, "--run"), "state": "running"})
     if argv[:2] == ["orchestration", "worker-show"]:
