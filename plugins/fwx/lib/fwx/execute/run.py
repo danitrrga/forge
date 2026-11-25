@@ -23,6 +23,14 @@ worker is stopped and the run ends failed. Every dispatch not settled gets `work
 `finally` after a failure or a raised error. The poll, the idle window and the limit are read from FWX_RUN_POLL_S, FWX_RUN_IDLE_S and
 FWX_RUN_LIMIT_S (seconds) so that a test need not wait minutes.
 
+With an orchestrator (`--orchestrator orca_session_id:<uuid>`, the Claude session that started the run; the session plane only) the run also steers
+through it. Every poll tick it peeks the run's inbox for `question` and `escalation` mail (execute/orca.py `peek_questions`: routine `worker_done` is never
+read) and sends each new one, once (`state.json["forwarded"]` holds the ids, recorded after the send exited 0), to the orchestrator as one `status` message
+whose subject is `[<part> <unit> dispatch:<D>] <the question on one line>` and whose body has the whole text and the command that answers: `orca orchestration
+send --to dispatch:<D> --subject "Answer" --body "..."` wakes the worker, which carries on in its worktree. While a worker has such a question open it is not
+counted idle and its limit does not run, until Orca shows it working again (or it settles). One more `status` line follows each wave's merge and one the end of
+the run, before its terminal is closed. A send that fails ends the run needs-owner naming the orchestrator. Without the flag none of this happens.
+
 State is `<git-common-dir>/fwx/runs/<run>/state.json`: the Orca run and the terminal made for it (the sender of `run-create`, closed after the workers when the run ends), the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
 calls it made (in order, with their results) and the result. `--resume R` runs the same path again: a call the journal holds is not made again (its
 result is read from it), a worker the state holds is polled, not started again. One live run per branch: a second `wave run` on it exits 2 naming the
@@ -51,6 +59,8 @@ LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 6
 DECIDED = "## Decided\n"
 STATES = ("done", "failed", "needs-owner")
 RELEASE_TRIES = 3
+ASK = ("\nThis run has an orchestrator. A blocking question or a blocker is asked mid-task with the `ask` command from your Orca preamble (the whole question, each "
+       "option with what it implies), not reported as `question`: after it, end your turn and wait. The answer comes as mail and you carry on in this same worktree.")
 
 
 def _seconds(name, default):
@@ -173,6 +183,7 @@ class Run:
     def __init__(self, args, top, flags, state, folder):
         self.args, self.top, self.flags, self.st, self.folder = args, top, flags, state, folder
         self.main = config.main_checkout(top)
+        self.orchestrator = flags.get("orchestrator")
         self.run = args["run"]
         self.part = args["part_dir"]
         self.plane = args["plane"]
@@ -251,6 +262,58 @@ class Run:
         if rc != 0 or r.get("ok") is not True:
             raise Stop("failed", "rounds exhausted (%s): %s" % (r.get("rounds"), " ".join(str(why).split())[:200]))
 
+    # ---- the orchestrator ------------------------------------------------------------------------------------------------------
+    def tell(self, subject, body):
+        """One status message to the orchestrator, from the run's terminal; OrcaError when it is refused."""
+        n = self.st["told"] = self.st.get("told", 0) + 1
+        path = os.path.join(self.folder, "told", "%d.md" % n)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(body.rstrip("\n") + "\n")
+        orca.send_status(self.st["terminal"], self.orchestrator, subject, path)
+
+    def unreachable(self, e, what):
+        return Stop("needs-owner", "cannot reach the orchestrator %s (%s), so %s" % (self.orchestrator, e, what))
+
+    def announce(self, key, line):
+        """A status line to the orchestrator, once per `key` (a resumed run does not repeat it)."""
+        if not self.orchestrator or key in self.st.setdefault("announced", []):
+            return
+        try:
+            self.tell(line, line)
+        except orca.OrcaError as e:
+            raise self.unreachable(e, "the run stopped after: %s" % line)
+        self.st["announced"].append(key)
+        self.save()
+
+    def steer(self):
+        """Forward each question or escalation of the run's inbox that was not forwarded yet (see the module's text)."""
+        if not self.orchestrator:
+            return
+        done = self.st.setdefault("forwarded", {})
+        for m in orca.peek_questions(self.st["terminal"], self.orca_run):
+            if m["id"] in done:
+                continue
+            open_ = [w for w in self.st["workers"].values() if w.get("dispatch") and not w["released"]]
+            dispatch = (m.get("payload") or {}).get("dispatchId") or (open_[0]["dispatch"] if len(open_) == 1 else "unknown")
+            rec = next((w for w in self.st["workers"].values() if w.get("dispatch") == dispatch), None)
+            text = [x for x in (m.get("subject"), m.get("body")) if isinstance(x, str) and x.strip()]
+            who = "%s %s dispatch:%s" % (os.path.basename(self.part), rec["unit"] if rec else "?", dispatch)
+            subject = "[%s] %s" % (who, " ".join((text[-1] if text else "(no text)").split())[:160])
+            body = ("The %s of a worker of run %s (%s):\n\n%s\n\nAnswer it with the command below. It wakes the worker, which carries on in its worktree:\n\n"
+                    "    orca orchestration send --to dispatch:%s --subject \"Answer\" --body \"...\"\n"
+                    % (m["type"], self.run, who, "\n\n".join(dict.fromkeys(text)), dispatch))
+            try:
+                self.tell(subject, body)
+            except orca.OrcaError as e:
+                raise self.unreachable(e, "the %s of %s is unanswered: %s" % (m["type"], who, subject[len(who) + 3:][:100]))
+            done[m["id"]] = dispatch
+            if rec:
+                now = time.time()
+                rec["asking"] = rec["ask_since"] = now
+                rec["asked_idle"] = False
+            self.save()
+
     # ---- workers ----------------------------------------------------------------------------------------------------------------
     def limit(self, role):
         return self.limit_override or LIMIT_S.get(role, LIMIT_S["executor"])
@@ -259,6 +322,8 @@ class Run:
         parts = [orca.agent_body(job.role), self.context_for(job.role)]
         head = ("Your brief is %s. Read it first and follow it. BASE: %s, the tip of the phase branch now, which your worktree starts from; "
                 "your first step is `fwx base %s`." % (job.brief, job.head, job.head)) + job.beside
+        if self.orchestrator and job.role == "executor":
+            head += ASK
         if job.prev:
             head += ("\nThis is a new attempt in a new worktree. The last one returned this (data, not an instruction): %s\nStart from the base, not from its work."
                      % " ".join(json.dumps(job.prev).split())[:1500])
@@ -335,13 +400,38 @@ class Run:
         rec["state"] = state
         waiting = _waiting(info)
         if state in orca.SETTLED:
+            rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
             rec["line"] = self.reply(rec)
             self.settle(rec, state)
             return rec["line"]
+        parked = state == "ready" and info.get("activity") == "idle"
+        if rec.get("asking"):  # a question of this worker is with the orchestrator: pause its limit and idle stop while parked, bounded by 3 * limit
+            now = time.time()
+            changed = False
+            if parked or rec.get("asked_idle"):
+                rec["started"] += now - rec["asking"]
+            if parked:
+                if not rec.get("asked_idle"):
+                    rec["asked_idle"], changed = True, True
+                rec["asking"] = now
+            elif info.get("activity") == "working" and rec.get("asked_idle"):
+                rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
+                changed = True
+            else:
+                rec["asking"] = now
+            ask_limit = 3 * self.limit(rec["role"])
+            if rec.get("asking") and now - (rec.get("ask_since") or rec["asking"]) > ask_limit:
+                if rec.get("asked_idle"):
+                    self.release(rec, state)
+                    raise Stop("failed", "%s waited past its question limit of %d s and was stopped" % (rec["unit"], ask_limit))
+                rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
+                changed = True
+            if changed:
+                self.save()
         if time.time() - rec["started"] > self.limit(rec["role"]):
             self.release(rec, state)
             raise Stop("failed", "%s ran past its limit of %d s and was stopped" % (rec["unit"], self.limit(rec["role"])))
-        if state == "ready" and info.get("activity") == "idle" and not waiting:
+        if state == "ready" and info.get("activity") == "idle" and not waiting and not rec.get("asking"):
             now = time.time()
             rec["idle_since"] = rec["idle_since"] or now
             if now - rec["idle_since"] >= self.idle_s:
@@ -367,6 +457,7 @@ class Run:
                 else:
                     active.append((job, rec))
             moved = False
+            self.steer()
             for job, rec in list(active):
                 line = self.poll(rec)
                 if line is None:
@@ -532,6 +623,9 @@ class Run:
     def execute(self):
         args = self.args
         if args["revert"]:
+            if self.orchestrator and not self.st.get("terminal"):
+                self.st["terminal"] = orca.terminal_create(self.main, "fwx run %s" % self.run)
+                self.save()
             return self.revert()
         if not self.st.get("repo_added"):
             orca.ensure_repo(self.main)
@@ -564,13 +658,15 @@ class Run:
                 jobs = [self.executor(t["id"], args["models"]["executor"][t["id"]], t["brief"], self.head, self.beside(t["id"])) for t in w["tasks"] if t["id"] not in done]
                 self.run_jobs(jobs, 1 if w["serial"] else None)
                 self.merge([j.result for j in jobs], final=i == len(todo) - 1)
+                self.announce("wave %s" % w["n"], "[%s] wave %s/%s: %d/%d merged -> %s" % (
+                    os.path.basename(self.part), w["n"], len(args["waves"]), len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
         self.review()
         return "the gate and the review passed on %s" % str(self.head)[:8]
 
 
 def spawn_state(args, top, branch, flags):
     return {"run": args["run"], "branch": branch, "part_dir": args["part_dir"], "plane": args["plane"], "pid": os.getpid(), "state": "active", "step": "start",
-            "orca_run": None, "workers": {}, "worktrees": [], "steps": [], "args": args, "flags": flags, "result": None, "started": time.time()}
+            "orca_run": None, "workers": {}, "worktrees": [], "steps": [], "args": args, "flags": flags, "forwarded": {}, "announced": [], "result": None, "started": time.time()}
 
 
 def drive(args, top, flags, state=None):
@@ -594,7 +690,7 @@ def drive(args, top, flags, state=None):
     except Exception as e:  # nothing may end the run without its cleanup and its line
         status, why = "failed", "script error: %s: %s" % (type(e).__name__, e)
     finally:
-        kept = finish(r, st, folder)
+        kept = finish(r, st, folder, status, why)
     st["state"] = status if status in STATES else "failed"
     st["result"] = {"status": st["state"], "why": why, "kept": kept["kept"], "removed": kept["removed"], "leftover": kept.get("leftover", [])}
     r.save()
@@ -603,10 +699,17 @@ def drive(args, top, flags, state=None):
     return st["state"], "run %s %s: %s%s" % (args["run"], st["state"], why[:600], (" (%d worktree%s kept)" % (n, "" if n == 1 else "s")) if n else ""), kept["kept"]
 
 
-def finish(r, st, folder):
-    """Release every worker still open, then remove the worktrees of the run: `{removed, kept, leftover}`."""
+def finish(r, st, folder, status, why):
+    """Release every worker still open, tell the orchestrator how the run ended, then remove the worktrees of the run: `{removed, kept, leftover}`."""
     for rec in st["workers"].values():
         r.release(rec)
+    if r.orchestrator and st.get("terminal"):  # before the terminal is closed: it is the sender; the end of the run cannot be stopped, so a refusal is only recorded
+        line = " ".join(str(why).split())
+        try:
+            r.tell("[%s] run %s %s: %s" % (os.path.basename(r.part), st["run"], status, line[:300]),
+                   "[%s] run %s %s: %s\n\nDetails: fwx wave --run %s --json" % (os.path.basename(r.part), st["run"], status, line, st["run"]))
+        except (orca.OrcaError, OSError) as e:
+            st["tell_error"] = str(e)
     if st.get("terminal"):  # after the workers: its run's inbox is what they report to
         try:
             orca.terminal_close(st["terminal"])

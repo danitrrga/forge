@@ -285,6 +285,12 @@ def main():
     for name, (text, flags) in need.items():
         given = set().union(*run_flags(text)) if run_flags(text) else set()
         check("%s runs `fwx wave run` with %s" % (name, " and ".join(sorted(flags))), flags <= given, "its run commands carry %s" % sorted(given))
+    # Orchestrator steering: the session starts every run with `--orchestrator` (its own chat) and says how a forwarded question is answered. Seen red on the text before:
+    #   FAIL: step 5 starts `fwx wave run` with --orchestrator and says how a forwarded question is answered -> missing ['--orchestrator', 'orca_session_id:$ORCA_AGENT_SESSION_ID', ...]
+    def steering(text):
+        return [w for w in ("--orchestrator", "orca_session_id:$ORCA_AGENT_SESSION_ID", "orca orchestration send --to dispatch:<D>", "taste or direction") if w not in text]
+    check("step 5 starts `fwx wave run` with --orchestrator and says how a forwarded question is answered", not steering(s5) and any("--orchestrator" in f for f in run_flags(s5)), "missing %s" % steering(s5))
+    check("control: a step 5 without the flag is caught", bool(steering("5. **Execute a part.** Run `fwx wave run --part-dir <part> --plane session --branch <branch>`.")))
     fields = set(wave_review._result("done", "r1")) | set(wave_report._result("merge"))
     cited_fields = result_fields(s5)
     check("step 5 reads the leftovers from fields the run's own files have", len(cited_fields) >= 3 and set(cited_fields) <= fields, "cites %s, the files have %s" % (cited_fields, sorted(fields)))
@@ -310,6 +316,13 @@ def main():
     claims_none = [n for n, t in agents.items() if re.search(r"no brief file|their prompt is the brief", t)]
     check("no agent says it has no brief file", not claims_none, "still says it in %s" % claims_none)
     check("control: an agent text that says 'there is no brief file' is caught", bool(re.search(r"no brief file", "Your prompt is your brief, there is no brief file")))
+    # The owner talks only to the orchestrator: a worker's question goes to it, never to him. Seen red on the texts before:
+    #   FAIL: workers never address the owner: step 5 and executor.md say so -> missing ['SKILL.md step 5', 'executor.md']
+    said = {"SKILL.md step 5": "Workers never address the owner", "executor.md": "goes to the orchestrator (the coordinator), never to the owner"}
+    texts_of = {"SKILL.md step 5": s5, "executor.md": agents["executor"]}
+    missing = [k for k, v in said.items() if v not in texts_of[k]]
+    check("workers never address the owner: step 5 and executor.md say so", not missing, "missing %s" % missing)
+    check("control: a text without the sentence is caught", "Workers never address the owner" not in "5. **Execute a part.** The worker waits for the answer.")
     unread = [n for n in ("reviewer", "security-reviewer", "review-verifier") if "names a brief file" not in agents[n]]
     check("the reviewers and the verifier read the brief file their prompt names", not unread, "no 'names a brief file' in %s" % unread)
     reply = re.search(r"`(verdicts <report path>)`", agents["review-verifier"])

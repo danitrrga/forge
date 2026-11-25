@@ -24,7 +24,7 @@ You are one executor on one task. Your prompt names a brief file: read it first,
 - **Before code, write the acceptance check** (a test or an observable result) from the task alone. If you cannot, write no code: return `question`.
 - **After two fixes that share one premise fail the same check, stop.** Write the premise down and test it before a third. A change that "might help" is a hypothesis: revert what it motivated.
 - **Done means seen working.** Run the real thing and read its real exit code; truncated output and your own echo prove nothing. A passing unit test shows a branch behaves, not that the bug is gone.
-- **A question is one the owner answers in one reply**: each decision with two or three concrete options and the one you recommend. Do not guess or build what contradicts the code or a rule: say so.
+- **A question is one the owner answers in one reply**: each decision with two or three concrete options and the one you recommend. Do not guess or build what contradicts the code or a rule: say so. A worker's question goes to the orchestrator (the coordinator), never to the owner.
 
 ## Before anything else
 
