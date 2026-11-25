@@ -266,6 +266,15 @@ def case_loop(root, S):
     S.ok("loop: `wave list` prints one line per run", listing.returncode == 0 and len(rows) == 1 and run in rows[0] and "done" in rows[0], "got %r" % listing.stdout)
 
 
+def stop_lags(w, run, unit, stopped):
+    """Seconds from the runner's own start stamp of `unit` (state.json, taken before it launches the worker) to each recorded stop. The fake's call
+    time `t` is taken after the fake process boots, so measuring from the fake's `worker-start` lags the runner's limit clock by that boot time
+    (up to ~0.7 s on a loaded 4-CPU CI runner: `stopped after [2.2] s` against a 2.5 s limit). A stop is only ever sent after the limit
+    passed on the runner's clock, so every lag here is >= LIMIT (0.05 s of clock rounding), and a stop as idle (IDLE_S = 0.4 s) is far below it."""
+    rec = w.state(run)["workers"].get("%s/1" % unit) or {}
+    return [t - rec["started"] for t in stopped] if rec.get("started") else []
+
+
 def case_failure(root, S):
     w = world(cap=3, tasks=[task("T1", 1, ["src/a.py"]), task("T2", 1, ["src/b.py"]), task("T3", 1, ["src/c.py"])],
               behave={"units": {"T1": "wait", "T2": "ok", "T3": "hang"}})
@@ -287,10 +296,10 @@ def case_failure(root, S):
     calls = w.calls()
     for unit in ("T1", "T3"):
         k = next(k for k, d in w.dispatches().items() if d["unit"] == unit)
-        started = next(c["t"] for c in calls if c.get("start", {}).get("unit") == unit)
         stopped = [c["t"] for c in calls if c.get("dispatch") == k and c["argv"][1] == "worker-stop"]
+        lags = stop_lags(w, m.group(1), unit, stopped)
         S.ok("failure: %s (%s) is left alone until its limit, then stopped" % (unit, "waiting on a prompt" if unit == "T1" else "running"),
-             len(stopped) == 1 and stopped[0] - started >= LIMIT - 0.3, "stopped after %r s" % ([round(t - started, 2) for t in stopped]))
+             len(stopped) == 1 and len(lags) == 1 and lags[0] >= LIMIT - 0.05, "stopped after %r s" % ([round(t, 2) for t in lags]))
     refused = [c["refused"] for c in calls if c.get("refused")]
     S.ok("every dispatch is released -> %s" % (refused[0] if refused else "released"), all(d["released"] for d in w.dispatches().values()) and not refused)
     S.eq("failure: no reviewer ran", [x for x in units(w) if x.startswith("r")], [])
@@ -579,11 +588,11 @@ def case_waiting(root, S):
         r = w.run(root=root)
         calls = w.calls()
         k = next(iter(w.dispatches()), None)
-        started = next((c["t"] for c in calls if c.get("start", {}).get("unit") == "T1"), 0)
         stopped = [c["t"] for c in calls if c.get("dispatch") == k and c["argv"][1] == "worker-stop"]
+        lags = stop_lags(w, w.runs()[0], "T1", stopped) if w.runs() else []
         S.ok("waiting (%s): left alone until its limit, not stopped as idle" % label,
-             r.returncode == 1 and len(stopped) == 1 and stopped[0] - started >= LIMIT - 0.3,
-             "exit %d, stopped after %r s" % (r.returncode, [round(t - started, 2) for t in stopped]))
+             r.returncode == 1 and len(stopped) == 1 and len(lags) == 1 and lags[0] >= LIMIT - 0.05,
+             "exit %d, stopped after %r s" % (r.returncode, [round(t, 2) for t in lags]))
 
 
 def case_review_fix(root, S):
@@ -1122,7 +1131,8 @@ def case_steer_asking(root, S):
     orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
     run = w.runs()[0] if w.runs() else ""
     wait_for(lambda: (w.dispatches().get("ctx_1") or {}).get("shows", 0) >= 2 and (w.dispatches().get("ctx_1") or {}).get("mode") == "woken-hang")
-    time.sleep(0.15)  # let poll process woken working state
+    # poll persists the cleared asking state a tick after the woken show; a blind sleep raced it on a loaded 4-CPU runner
+    wait_for(lambda: w.state(run)["workers"].get("T1/1", {}).get("asking") is None, secs=5)
     saved_after = (w.state(run)["workers"].get("T1/1") or {}) if run else {}
     S.eq("asking resume-after-answer: poll persisted cleared asking state in state.json", saved_after.get("asking"), None)
     kill_group(p)
