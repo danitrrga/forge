@@ -21,7 +21,7 @@
       "intake": ["discuss", "needs-owner", "failed"],
       "discuss": ["premortem", "planning", "needs-owner", "failed"],
       "premortem": ["planning", "discuss", "failed", "needs-owner"],
-      "planning": ["postmortem", "failed", "needs-owner"],
+      "planning": ["postmortem", "executing", "discuss", "failed", "needs-owner"],
       "postmortem": ["planning", "executing", "discuss", "failed", "needs-owner"],
       "executing": ["pr", "failed", "needs-owner"],
       "pr": ["babysit", "failed", "needs-owner"],

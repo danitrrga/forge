@@ -29,6 +29,9 @@ Controls, each seen red on a copy of the repo with one thing changed (351 checks
   - the table lacks discuss -> planning, planning -> executing and planning -> discuss (08.3 T31):
       FAIL: session: discuss -> planning is allowed: got False
       FAIL: small phase: -> planning: exit: got 1, want 0
+  - the factory table lacks planning -> executing and planning -> discuss (DTC-116: a small job skips the post-mortem like a small phase; seen red on master, 2 failed):
+      FAIL: factory: planning -> discuss is allowed: got False
+      FAIL: factory: planning -> executing is allowed: got False
   - the table lets planning go to closed (08.3 T31): `session: planning -> closed is forbidden` and `small phase: -> closed: exit` fail
   - the table drops ui-walk -> discuss (1 failed):
       FAIL: session: ui-walk -> discuss is allowed: got False
@@ -88,7 +91,7 @@ FACTORY = {
     "intake": ["discuss", "needs-owner"],
     "discuss": ["premortem", "planning", "needs-owner"],
     "premortem": ["planning", "discuss"],
-    "planning": ["postmortem"],
+    "planning": ["postmortem", "executing", "discuss"],
     "postmortem": ["planning", "executing", "discuss"],
     "executing": ["pr"],
     "pr": ["babysit"],
