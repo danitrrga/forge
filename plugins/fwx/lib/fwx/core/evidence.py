@@ -14,7 +14,9 @@ with `state` and what the state names:
 - `no_checks`: the recipe is empty, or (no recipe) the evidence ran no command. Decided before any evidence is looked at.
 - `missing`: no evidence. `stale` (`sha`): evidence of another commit, so it proves nothing about this one.
 - `dirty` (`sha`): the tree held more than the commit.
-- `incomplete` (`missing`): commands of the recipe the evidence did not run.
+- `incomplete` (`missing`): commands of the recipe the evidence did not run. Evidence of `source` `ci` (the gate on GitHub CI,
+  `core.ci_gate`) names the CI run, not the recipe's commands: it runs none of them, so it is judged by its own commands' exits and
+  is `incomplete` only when it names no command.
 - `untrusted` (`mismatched`, `missing`): it ran commands outside the recipe and left some of the recipe's out, so an agent
   that swapped `test` for `true` proves nothing. Commands outside the recipe that pass are not compared (a setup step).
 - `failed` (`failed`, `passed`, `total`): a command exited non-zero or never exited, whether or not the recipe lists it.
@@ -38,6 +40,7 @@ PACKAGE_MANAGERS = [
     (("package-lock.json",), "npm run"),
 ]
 DEFAULT_RUNNER = "npm run"
+CI_SOURCE = "ci"  # the `source` of evidence the gate took from GitHub CI (core.ci_gate)
 
 
 def _commands(checks):
@@ -102,7 +105,8 @@ def evidence_state(evidence, head_sha, required):
     if not clean:
         return {"state": "dirty", "sha": sha}
     ran = [cmd for cmd, _ in rows]
-    missing = [c for c in recipe or [] if c not in ran]
+    ci = evidence.get("source") == CI_SOURCE and bool(rows)
+    missing = [] if ci else [c for c in recipe or [] if c not in ran]
     if missing:
         outside = [cmd for cmd in dict.fromkeys(ran) if cmd not in recipe]
         if outside:

@@ -18,7 +18,7 @@ twice or disables an unknown one, so a rule cannot vanish quietly from the file;
 The 19 rules, in the order of the table. First, the 12 of marshal: `review-label` (the issue has the label `review`, in any case), `agent` (no assessment, or it recommends
 handing over, or it is not confident), `ci-failed` (a check of `pr.checks` is `failure`), `conflict` (`pr.mergeable` is false),
 `trusted-edit` (the PR edits what its checks run: `core.trusted`), `evidence-head` (no evidence, or evidence of another
-commit), `evidence-dirty`, `evidence-recipe` (the evidence did not run the recipe, or ran other commands), `evidence-failed`,
+commit), `evidence-dirty`, `evidence-recipe` (the evidence did not run the recipe, or ran other commands; evidence of `source` `ci`, the gate's CI run, stands for the recipe: `core.evidence`), `evidence-failed`,
 `no-checks` (the effective recipe `project.checks` is empty), `review-findings` (`review.open_medium_high` above 0) and
 `still-running` (`pr.running`, `review.running` or a check `pending`: `pending`, no handover). Then the 7 that U5b adds:
 

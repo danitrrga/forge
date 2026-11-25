@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """One path writes the phase branch (3.4 U3): only lib/fwx/execute/integrate.py runs `git merge` or `git revert`, and nothing
-in lib/fwx/ runs `git rebase`, `git push` or `git reset --hard`. The check reads the code (ast), not the behaviour.
+in lib/fwx/ runs `git rebase` or `git reset --hard`. `git push` is lib/fwx/core/ci_gate.py's alone (09.6 T64: the end-of-part gate
+pushes the phase branch so that CI can run on it; a push writes the remote, not the branch) and never forced: no `--force`, `-f`,
+`--force-with-lease`, `--mirror` and no `+` refspec, in any module. The check reads the code (ast), not the behaviour.
 
 The idea is marshal-factory's `merge-service.ts` and its ESLint rule (one module may merge); the check is ours.
 
@@ -22,6 +24,15 @@ with its own rule switched off, the first FAIL line of each:
   shell strings off:       FAIL: planted a shell line: names the file and line: got [], want 'git rebase outside the allowed path: lib/fwx/zz_planted.py:5'
   reset --hard off:        FAIL: planted reset --hard: names the file and line: got [], want 'git reset --hard outside the allowed path: lib/fwx/zz_planted.py:5'
   GIT_CALLERS emptied:     FAIL: real lib: read some files (42) and some git calls (2): files 42, calls 2
+
+Red before core/ci_gate.py existed (09.6 T64): FAIL: a planted push in ci_gate.py is allowed: got None, want [] (the module was absent).
+Controls of the push rule (09.6 T64), each on a copy of this file with one line changed, the first FAIL:
+  the force rule off:        FAIL: planted push --force: names the file and line: got ['git push outside the allowed path: lib/fwx/zz_planted.py:5'], want 'git push --force is never allowed: lib/fwx/zz_planted.py:5'
+  the shell force rule off:  FAIL: planted in ci_gate.py, a shell line with --force: named with its file and line: got [], want 'git push --force is never allowed'
+  `-f` not a force flag:     FAIL: planted in ci_gate.py, push -f: named with its file and line: got [], want 'git push -f is never allowed'
+  `+` not a force flag:      FAIL: planted in ci_gate.py, push of a + refspec: named with its file and line: got [], want 'git push +refspec is never allowed'
+  push allowed everywhere:   FAIL: planted push: names the file and line: got [], want 'git push outside the allowed path: lib/fwx/zz_planted.py:5'
+  push allowed nowhere:      FAIL: real lib: no git command outside its path: got ['git push outside the allowed path: lib/fwx/core/ci_gate.py:178'], want []
 """
 import ast
 import os
@@ -35,10 +46,13 @@ import helpers  # noqa: E402
 ROOT = helpers.ROOT
 s = helpers.Suite()
 ALLOWED = "lib/fwx/execute/integrate.py"
+PUSHER = "lib/fwx/core/ci_gate.py"
 ONLY_THERE = ("merge", "revert")  # words only ALLOWED may run
-NEVER = ("rebase", "push")  # words no module may run
+NEVER = ("rebase",)  # words no module may run
 GIT_CALLERS = ("git", "_git", "out")
 SHELL = re.compile(r"\bgit\s+(?:-\S+\s+(?:\S+\s+)?)*(merge|revert|rebase|push)\b|\bgit\s+(?:-\S+\s+)*reset\s+--hard\b")
+SHELL_FORCE = re.compile(r"\bgit\b[^\n]*\bpush\b[^\n]*\s(--force\S*|--mirror|-[a-zA-Z]*f[a-zA-Z]*|\+\S+)")
+FORCE_FLAG = re.compile(r"--force\S*|--mirror|-[a-zA-Z]*f[a-zA-Z]*|\+\S+")  # a push argument that overwrites the remote's branch
 
 
 def _docstrings(tree):
@@ -76,6 +90,13 @@ def _is_git(call, strings):
     return name in GIT_CALLERS or starts
 
 
+def _forced(arg):
+    """The hit word of a `git push` argument that overwrites the remote's branch, else None."""
+    if not FORCE_FLAG.fullmatch(arg):
+        return None
+    return "push +refspec" if arg.startswith("+") else "push %s" % arg
+
+
 def scan(root):
     """([(rule, rel path, line)], files read, git calls read) of the .py files under root/lib/fwx."""
     found, files, calls = [], 0, 0
@@ -85,7 +106,7 @@ def scan(root):
             if not n.endswith(".py"):
                 continue
             path = os.path.join(dirpath, n)
-            rel = os.path.relpath(path, root)
+            rel = os.path.relpath(path, root).replace(os.sep, "/")
             files += 1
             with open(path, encoding="utf-8") as f:
                 tree = ast.parse(f.read(), filename=path)
@@ -95,26 +116,36 @@ def scan(root):
                     m = SHELL.search(node.value)
                     if m:
                         word = m.group(1) or "reset --hard"
-                        if word in NEVER or word == "reset --hard" or rel != ALLOWED:
+                        if word in NEVER or word == "reset --hard" or rel != (PUSHER if word == "push" else ALLOWED):
                             found.append((word, rel, node.lineno))
+                    m = SHELL_FORCE.search(node.value)
+                    if m:
+                        found.append((_forced(m.group(1)) or "push " + m.group(1), rel, node.lineno))
                 if not isinstance(node, ast.Call):
                     continue
                 strings = _strings(node)
                 if not _is_git(node, strings):
                     continue
                 calls += 1
+                pushing = "push" in [w.strip() for w in strings]
                 for word in strings:
                     w = word.strip()
                     if w in NEVER or (w == "reset" and "--hard" in strings):
-                        found.append(("rebase" if w == "rebase" else "push" if w == "push" else "reset --hard", rel, node.lineno))
+                        found.append(("rebase" if w == "rebase" else "reset --hard", rel, node.lineno))
+                    elif w == "push" and rel != PUSHER:
+                        found.append((w, rel, node.lineno))
                     elif w in ONLY_THERE and rel != ALLOWED:
                         found.append((w, rel, node.lineno))
+                    elif pushing and _forced(w):
+                        found.append((_forced(w), rel, node.lineno))
     return found, files, calls
 
 
 def message(hit):
     word, rel, line = hit
-    return "git %s outside the allowed path: %s:%d" % (word, rel.replace(os.sep, "/"), line)
+    if word.startswith("push "):
+        return "git %s is never allowed: %s:%d" % (word, rel, line)
+    return "git %s outside the allowed path: %s:%d" % (word, rel, line)
 
 
 def tree_with(module_text):
@@ -131,7 +162,18 @@ PLANTED = [
     ("reset --hard", "from fwx.execute.base import git\n\n\ndef f(top):\n    git(top, \"reset\", \"--hard\", \"HEAD~1\")\n", "git reset --hard outside the allowed path: lib/fwx/zz_planted.py:5"),
     ("merge in another module", "from fwx.execute.base import git\n\n\ndef f(top, b):\n    git(top, \"merge\", \"--no-ff\", b)\n", "git merge outside the allowed path: lib/fwx/zz_planted.py:5"),
     ("revert in another module", "from fwx.execute.base import git\n\n\ndef f(top, c):\n    git(top, \"revert\", \"--no-edit\", c)\n", "git revert outside the allowed path: lib/fwx/zz_planted.py:5"),
+    ("push --force", "from fwx.execute.base import git\n\n\ndef f(top):\n    git(top, \"push\", \"--force\", \"origin\")\n", "git push --force is never allowed: lib/fwx/zz_planted.py:5"),
     ("a shell line", "import os\n\n\ndef f():\n    os.system(\"git -C x rebase main\")\n", "git rebase outside the allowed path: lib/fwx/zz_planted.py:5"),
+]
+PUSH_LINES = [  # appended to the real ci_gate.py, the one module that may push: what it may not do even there
+    ("push --force", 'def planted(top):\n    return _git(top, "push", "--force", "origin", "x")\n', "git push --force is never allowed"),
+    ("push -f", 'def planted(top):\n    return _git(top, "push", "-f", "origin", "x")\n', "git push -f is never allowed"),
+    ("push -fu", 'def planted(top):\n    return _git(top, "push", "-fu", "origin", "x")\n', "git push -fu is never allowed"),
+    ("push --force-with-lease", 'def planted(top):\n    return _git(top, "push", "--force-with-lease", "origin", "x")\n', "git push --force-with-lease is never allowed"),
+    ("push --mirror", 'def planted(top):\n    return _git(top, "push", "--mirror", "origin")\n', "git push --mirror is never allowed"),
+    ("push of a + refspec", 'def planted(top):\n    return _git(top, "push", "origin", "+refs/heads/x:refs/heads/x")\n', "git push +refspec is never allowed"),
+    ("a shell line with --force", 'def planted():\n    return "git -C x push --force origin x"\n', "git push --force is never allowed"),
+    ("a shell line with a + refspec", 'def planted():\n    return "git push origin +x:x"\n', "git push +refspec is never allowed"),
 ]
 INNOCENT = [
     ("docstrings and comments", '"""Never `git rebase`, `git push` or `git reset --hard`, and `git merge` is integrate.py\'s."""\n# git rebase here is a comment\n\n\ndef f():\n    """git push in a docstring"""\n    return 1\n'),
@@ -157,14 +199,28 @@ if __name__ == "__main__":
         got = [message(h) for h in scan(t)[0]]
         s.eq("not code, not git: %s" % name, got, [])
     # the allowed path may merge and revert, never rebase
-    dest = helpers.mkdtemp("fwx-writer-")
-    shutil.copytree(os.path.join(ROOT, "lib"), os.path.join(dest, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
-    p = os.path.join(dest, ALLOWED)
-    if os.path.exists(p):
+    def appended(rel, text):
+        """The messages for a copy of lib/ whose `rel` has `text` added at its end; None when `rel` is not there."""
+        dest = helpers.mkdtemp("fwx-writer-")
+        shutil.copytree(os.path.join(ROOT, "lib"), os.path.join(dest, "lib"), ignore=shutil.ignore_patterns("__pycache__"))
+        p = os.path.join(dest, rel)
+        if not os.path.exists(p):
+            return None
         with open(p, "a", encoding="utf-8") as f:
-            f.write('\n\ndef planted(top):\n    return git(top, "rebase", "x")\n')
-        got = [message(h) for h in scan(dest)[0]]
-        s.ok("integrate.py may not rebase either", any(g.startswith("git rebase outside the allowed path: lib/fwx/execute/integrate.py:") for g in got), repr(got))
-    else:
-        s.ok("integrate.py exists", False, p)
+            f.write("\n\n" + text)
+        return [message(h) for h in scan(dest)[0]]
+    got = appended(ALLOWED, 'def planted(top):\n    return git(top, "rebase", "x")\n')
+    s.ok("integrate.py may not rebase either", got is not None and any(g.startswith("git rebase outside the allowed path: lib/fwx/execute/integrate.py:") for g in got), repr(got))
+    got = appended(ALLOWED, 'def planted(top):\n    return git(top, "push", "origin", "x")\n')
+    s.ok("integrate.py may not push", got is not None and any(g.startswith("git push outside the allowed path: lib/fwx/execute/integrate.py:") for g in got), repr(got))
+    got = appended(PUSHER, 'def planted(top):\n    return _git(top, "push", "origin", "x")\n')
+    s.eq("a planted push in ci_gate.py is allowed", got, [])
+    got = appended(PUSHER, 'def planted(top):\n    return _git(top, "rebase", "x")\n')
+    s.ok("ci_gate.py may not rebase", got is not None and any(g.startswith("git rebase outside the allowed path: lib/fwx/core/ci_gate.py:") for g in got), repr(got))
+    for name, text, want in PUSH_LINES:
+        got = appended(PUSHER, text)
+        s.ok("planted in ci_gate.py, %s: named with its file and line" % name,
+             got is not None and any(g.startswith(want + ": lib/fwx/core/ci_gate.py:") for g in got), "got %r, want %r" % (got, want))
+    s.ok("real lib: ci_gate.py holds the push the rule allows", os.path.exists(os.path.join(ROOT, PUSHER)) and
+         '"push"' in open(os.path.join(ROOT, PUSHER), encoding="utf-8").read(), PUSHER)
     s.done()
