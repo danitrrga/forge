@@ -187,6 +187,10 @@ def do_run(argv):
             on = base.out(top, "symbolic-ref", "--short", "-q", "HEAD")
             if on != branch:
                 raise base.WaveError("run %s works on %s and the checkout %s is on %s: check %s out first" % (saved["run"], branch, top, on or "no branch (detached HEAD)", branch))
+            # two repos of one phase share the branch name, and the run's job heads are commits of its own repo only
+            own, here = (os.path.realpath(config.repo_checkout(p)) for p in (saved["args"]["checkout"], top))
+            if own != here:
+                raise base.WaveError("run %s works in the repository %s and the checkout %s is a worktree of %s: resume it from a worktree of %s" % (saved["run"], own, top, here, own))
         live = run_mod.holder(top, branch)
         if live:
             raise base.WaveError("run %s is already running on %s (pid %s): wait for it, or start again with `fwx wave run --resume %s` once it ended"
