@@ -79,7 +79,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
-from test_execute_workflow import R, blank, finish, labels, launched, mutate, overlap, run_capped  # noqa: E402
+from workflow_helpers import R, blank, finish, labels, launched, mutate, overlap, run_capped  # noqa: E402
 
 ROOT = helpers.ROOT
 VERIFIER_TEXT = os.path.join(ROOT, "agents", "ui-verifier.md")
