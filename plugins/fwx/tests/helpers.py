@@ -15,10 +15,12 @@ import socket
 import subprocess
 import sys
 import tempfile
+import threading
 
 ROOT = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 GIT_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1"}
 _made = []
+_made_lock = threading.Lock()
 _nogit = []  # the dirs mkdtemp_nogit made: git must not climb out of them
 
 
@@ -97,7 +99,8 @@ def mkdtemp(prefix):
     """A temp dir removed when the process ends however it ends (cleanup(), a failing check, an uncaught exception,
     sys.exit, SIGTERM), unless FWX_TEST_KEEP=1. SIGKILL and os._exit skip it."""
     d = os.path.realpath(tempfile.mkdtemp(prefix=prefix))
-    _made.append(d)
+    with _made_lock:
+        _made.append(d)
     return d
 
 
@@ -117,9 +120,10 @@ def mkdtemp_nogit(prefix="fwx-nogit-"):
     if _in_work_tree(base):
         base = "/tmp"
     d = os.path.realpath(tempfile.mkdtemp(prefix=prefix, dir=base))
-    _made.append(d)
-    _nogit.append(d)
-    os.environ["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(_nogit)
+    with _made_lock:
+        _made.append(d)
+        _nogit.append(d)
+        os.environ["GIT_CEILING_DIRECTORIES"] = os.pathsep.join(_nogit)
     return d
 
 
@@ -143,20 +147,23 @@ def remove(d):
     FWX_TEST_KEEP=1."""
     if not keeping():
         rmtree(d)
-        if d in _made:
-            _made.remove(d)
+        with _made_lock:
+            if d in _made:
+                _made.remove(d)
 
 
 def cleanup(failed=False, label="kept:"):
     """Remove every dir mkdtemp made so far. With FWX_TEST_KEEP=1 they are printed instead, so they can be looked at.
     `failed` is accepted for the callers that pass it and changes nothing: a failing run cleans too."""
+    with _made_lock:
+        dirs = list(_made)
+        del _made[:]
     if keeping():
-        if _made:
-            print(label, " ".join(_made))
+        if dirs:
+            print(label, " ".join(dirs))
     else:
-        for d in _made:
+        for d in dirs:
             rmtree(d)
-    del _made[:]
 
 
 @atexit.register

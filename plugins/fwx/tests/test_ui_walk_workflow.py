@@ -77,12 +77,14 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
 from workflow_helpers import R, blank, finish, labels, launched, mutate, overlap, run_capped  # noqa: E402
 
 CONTROL_JOBS = 4  # controls run at once
+_STOP = threading.Event()
 ROOT = helpers.ROOT
 VERIFIER_TEXT = os.path.join(ROOT, "agents", "ui-verifier.md")
 SCRIPT = os.path.join(ROOT, "workflows", "ui-walk.js")
@@ -165,6 +167,8 @@ def green():
 
 
 def go(script, answers_over=None, args_over=None, answers=None):
+    if _STOP.is_set():
+        raise helpers.Found()
     args = json.loads(json.dumps(ARGS))
     if callable(args_over):
         args_over(args)
@@ -1132,9 +1136,11 @@ MUTANTS = [
 ]
 
 
-def run_control(src, name, old, new, want):
+def run_control(src, old, new, want):
     """One mutant, in its own temp dir. Returns None when the anchor is not in the script exactly once, else the FAILs the run read.
     Nothing here touches shared state (a private temp dir, a private FirstFail, a node process per run), so controls run side by side."""
+    if _STOP.is_set():
+        return []
     m = mutate(src, old, new)
     if m is None:
         return None
@@ -1149,7 +1155,10 @@ def run_control(src, name, old, new, want):
 
 def run_good():
     good = helpers.Suite()
-    check_all(SCRIPT, good)
+    try:
+        check_all(SCRIPT, good)
+    except helpers.Found:
+        return []
     return good.fails
 
 
@@ -1159,15 +1168,23 @@ def check_controls(s):
     with open(SCRIPT, encoding="utf-8") as f:
         src = f.read()
     # CONTROL_JOBS wide (the runs are node subprocesses, so threads do); results are read back in MUTANTS order, so the report is the same as a serial run's.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=CONTROL_JOBS) as pool:
+    # Explicit shutdown(cancel_futures=True) + _STOP lets SIGTERM unwind and clean temp dirs within forge test's grace window.
+    _STOP.clear()
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=min(CONTROL_JOBS, os.cpu_count() or 1))
+    try:
         good = pool.submit(run_good)
-        runs = [pool.submit(run_control, src, *mut) for mut in MUTANTS]
+        runs = [pool.submit(run_control, src, old, new, want) for _, old, new, want in MUTANTS]
         for (name, old, new, want), run in zip(MUTANTS, runs):
             fails = run.result()
             if not s.ok("control %s: the anchor is in the script exactly once" % name, fails is not None):
                 continue
             s.ok("control %s: red with %r" % (name, want), any(f.startswith(want) for f in fails), "got %r" % (fails[:2],))
         s.eq("control: the real script is green under the same checks", good.result(), [])
+    except BaseException:
+        _STOP.set()
+        raise
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def main():
