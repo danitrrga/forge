@@ -273,7 +273,8 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
 
 
 def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
-    """(exit code, result). The result is C.2's: {ok, head, merged, conflict, locked, findings_check, quick, verify, trusted,
+    """(exit code, result). The result is C.2's: {ok, head, merged, conflict, remaining (the branches after the one that conflicted,
+    not merged yet: the caller merges them after the resolver), locked, findings_check, quick, verify, trusted,
     protected}, and `setup` (the line `worktree setup failed: ...`) only when the setup after the merges failed. Raises WaveError for what stops it before it merges anything and cleanup.NoProc without /proc."""
     top = _top(cwd)
     phase = _branch(top)
@@ -287,7 +288,7 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
             raise WaveError("%s is the phase branch: it cannot be merged into itself" % b)
         if git(top, "rev-parse", "--verify", "--quiet", "refs/heads/" + b).returncode:
             raise WaveError("no branch %s" % b)
-    result = {"ok": False, "head": verify.head(top), "merged": [], "conflict": None, "locked": [],
+    result = {"ok": False, "head": verify.head(top), "merged": [], "conflict": None, "remaining": [], "locked": [],
               "findings_check": {"ok": True, "problems": []}, "quick": {"ran": False, "cmds": [], "rc": 0},
               "verify": {"ran": False, "rc": None, "line": ""}, "trusted": [], "protected": []}
     by_branch = {w["branch"]: w for w in cleanup.worktrees(top)[1:] if w["branch"]}
@@ -312,6 +313,7 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
                 raise WaveError("git merge %s failed, not for a conflict (merged before it: %s): %s"
                                 % (b, ", ".join(result["merged"]) or "none", r.stderr.strip() or r.stdout.strip()))
             result["conflict"] = {"branch": b, "files": files}
+            result["remaining"] = branches[len(result["merged"]) + 1:]  # not merged yet, after the one that conflicted: the run merges them after the resolver
             break
         result["merged"].append(b)
     for b in result["merged"]:

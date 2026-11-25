@@ -68,6 +68,7 @@ class World:
     def env(self, **extra):
         e = {"PATH": self.bin + os.pathsep + os.environ["PATH"], "FAKE_ORCA_DIR": self.dir, "CLAUDE_CONFIG_DIR": self.scene.conf,
              "FWX_RUN_POLL_S": "0.05", "FWX_RUN_IDLE_S": "0.4", "FWX_RUN_LIMIT_S": str(LIMIT),
+             "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
              "ORCA_AGENT_SESSION_ID": "leak", "ORCA_AGENT_SESSION_SPAWN_TOKEN": "leak", "ORCA_STRUCTURED_SESSION": "leak"}
         e.update(extra)
         return helpers.clean_env(**e)
@@ -271,6 +272,38 @@ def case_gate_red(root, S):
         S.eq("gate: one round spent", len(w.steps(m.group(1), "fix-round")), 1)
 
 
+def case_retry(root, S):
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": ["failed-report", "ok"]}})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("retry: a failed report is retried in a new worktree and the run is done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("retry: the same task is started twice, then the review", units(w), ["T1", "T1", "r1"])
+    starts = w.starts()
+    S.ok("retry: the second spec quotes the last report as data, the first does not", len(starts) > 1 and "new attempt in a new worktree" in starts[1]["spec"]
+         and "could not do it" in starts[1]["spec"] and "new attempt" not in starts[0]["spec"])
+    S.ok("retry: the two worktrees differ", len(starts) > 1 and starts[0]["worktree"] != starts[1]["worktree"])
+    if m:
+        S.eq("retry: one round spent", len(w.steps(m.group(1), "fix-round")), 1)
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "question"}})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("owner: a question ends the run needs-owner with the question, exit 3", bool(m) and m.group(2) == "needs-owner" and "which one do you mean?" in m.group(3) and r.returncode == 3,
+         "exit %d, got %r" % (r.returncode, r.stdout[-300:]))
+    S.eq("owner: no reviewer started", units(w), ["T1"])
+
+
+def case_conflict(root, S):
+    tasks = [task("T1", 1, ["src/a.py"]), task("T2", 1, ["src/a.py"]), task("T3", 1, ["src/c.py"])]
+    w = world(tasks=tasks, behave={"files": {"T1": {"src/a.py": "one\n"}, "T2": {"src/a.py": "two\n"}, "T3": {"src/c.py": "c1\n"}},
+                                   "units": {"resolve-1": {"mode": "ok", "merge": "T2"}}})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("conflict: a conflicting branch goes to a resolver and the run is done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("conflict: the serial wave, the resolver, the review", units(w), ["T1", "T2", "T3", "resolve-1", "r1"])
+    S.eq("conflict: the branch after the conflicting one is merged after the resolver", open(os.path.join(w.cwd, "src", "c.py")).read() if os.path.exists(os.path.join(w.cwd, "src", "c.py")) else None, "c1\n")
+    S.eq("conflict: no worktree of the run is left", [p for p in w.worktrees() if os.path.realpath(p) not in (os.path.realpath(w.repo), os.path.realpath(w.cwd))], [])
+
+
 def case_fix(root, S):
     w = world(behave={"units": {"fix": {"mode": "ok", "files": {"src/a.py": "fixed "}, "findings": ["F1"]}}})
     path = helpers.write(w.dir, "fix.json", json.dumps([{"id": "F1", "file": "src/a.py", "line": 1, "claim": "wrong", "evidence": "seen", "severity": "high"}]))
@@ -316,7 +349,7 @@ def case_refusals(root, S):
     w = world(recipe=("false",))
     r = w.run(root=root)
     S.eq("red base: exit 1 and no Orca call", (r.returncode, w.calls()), (1, []))
-    w = world(context=False)
+    w = world(context=False, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "hang"}})  # a worker that started would hang: one start, not a run
     r = w.run(root=root)
     n = len(w.starts())
     S.ok("no base context, no worker -> %d start" % n, r.returncode == 2 and n == 0, "exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
@@ -349,7 +382,7 @@ def case_resume(root, S):
     p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     w.procs.append(p)
     end = time.time() + 20
-    while time.time() < end and not w.starts():
+    while time.time() < end and not (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())):
         time.sleep(0.1)
     S.eq("resume: the first run started T1", units(w), ["T1"])
     p.kill()
@@ -363,7 +396,7 @@ def case_resume(root, S):
     S.ok("resume: every dispatch is released", all(d["released"] for d in w.dispatches().values()))
 
 
-CASES = [case_loop, case_failure, case_error, case_gate_red, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
+CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume]
 
 def mutant_tree(path, old, new):
@@ -382,12 +415,12 @@ def mutant_tree(path, old, new):
 MUTANTS = [
     ("the cap read as unlimited", case_loop, "lib/fwx/execute/run.py", "self.cap = args[\"cap\"]", "self.cap = 10 ** 6", "never more open workers than the cap -> 2 open, cap 1"),
     ("cleanup without the run's worktrees", case_loop, "lib/fwx/execute/cleanup.py", "or w[\"path\"] in owned", "or False", "a reviewer worktree with no commit is removed -> kept"),
-    ("release with no stop before it", case_loop, "lib/fwx/execute/run.py", "if state not in orca.SETTLED:", "if False:", "every dispatch is released -> dispatch_inactive"),
+    ("release with no stop before it", case_loop, "lib/fwx/execute/orca.py", "if state not in SETTLED:", "if False:", "every dispatch is released -> dispatch_inactive"),
     ("a forced removal", case_failure, "lib/fwx/execute/cleanup.py", "if wt[\"branch\"] and not merged(top, wt[\"branch\"]):", "if False:",
      "an executor worktree with unmerged commits stays -> removed"),
     ("the settings copied as they are", case_loop, "lib/fwx/execute/orca.py", "env[\"FORCE_PROMPT_CACHING_5M\"] = \"1\"", "pass",
      "the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M"),
-    ("a start with no base context", case_refusals, "lib/fwx/execute/run.py", "if not context:", "if False:", "no base context, no worker -> 1 start"),
+    ("a start with no base context", case_refusals, "lib/fwx/execute/run.py", 'if not text.strip() and not self.args["revert"]:', "if False:", "no base context, no worker -> 1 start"),
 ]
 
 

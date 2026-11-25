@@ -7,8 +7,8 @@ State is in $FAKE_ORCA_DIR: `behave.json` (what the test wants), `state.json` (r
 `behave.json`: {"units": {unit: mode | [mode per launch] | {mode, files, findings}}, "files": {unit: {path: text}}, "criteria": [ids],
 "registered": [paths]}. A mode is `ok` (the worker commits, writes its report and `worker_done`), `garbled` (a reply that names no report),
 `bad-outside` (a report whose `outside` item is malformed), `idle` (done, but it never settles: state ready, activity idle), `wait` (an
-agent waiting on a prompt), `hang` (never ends), `later` (running until the test creates `go-<unit>`), `fail` (Orca says failed) and
-`showfail` (worker-show fails). The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
+agent waiting on a prompt), `hang` (never ends), `later` (running until the test creates `go-<unit>`), `fail` (Orca says failed),
+`failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
 """
 import json
 import os
@@ -88,12 +88,21 @@ def play(behave, wt, marker, launch):
         return "I could not finish this one", mode
     if mode in ("hang", "wait", "showfail"):
         return "", mode
+    if role == "executor" and mode in ("failed-report", "question", "bad-outside"):  # no commit: the report is all there is
+        rep = {"failed-report": {"status": "failed", "reason": "could not do it"}, "question": {"status": "question", "question": "which one do you mean?"},
+               "bad-outside": {"status": "done", "branch": git(wt, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip(), "outside": [{"where": "x"}]}}[mode]
+        with open(report, "w", encoding="utf-8") as f:
+            json.dump(rep, f)
+        return "%s %s commits=0" % (rep["status"], report), mode
     if role == "executor":
         branch = git(wt, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
         files = spec.get("files") or (behave.get("files") or {}).get(unit) or {"work/%s.txt" % unit: "x\n"}
         part = run.rsplit("-", 2)[0]
         findings = spec.get("findings") or []
-        if findings:
+        if spec.get("merge"):  # a resolver: merges the branch that conflicted, taking its side, and commits with the run's trailer
+            git(wt, "merge", "--no-ff", "-q", "-X", "theirs", "-m", "resolve", "worktree-%s-%s" % (run, spec["merge"]))
+            git(wt, "commit", "--amend", "-q", "-m", "resolve\n\nFwx-Run: " + run)
+        elif findings:
             for i, f in enumerate(findings):
                 commit(wt, {k: "%s%s\n" % (v, f) for k, v in files.items()}, "fix " + f, ["Fwx-Finding: " + f, "Fwx-Run: " + run])
         else:
@@ -113,7 +122,7 @@ def shape(d):
     mode, state = d["mode"], d["state"]
     if state in ("stopped",):
         return {"state": "stopped", "stage": "process_stopped"}
-    if mode in ("ok", "bad-outside", "garbled"):
+    if mode in ("ok", "bad-outside", "garbled", "failed-report", "question"):
         return {"state": "succeeded", "stage": "settled"}
     if mode == "fail":
         return {"state": "failed", "stage": "settled"}
