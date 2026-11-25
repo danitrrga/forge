@@ -16,7 +16,8 @@ WHAT IT DOES (idempotent, dry-run by default)
     1. copy the doc -> <project>/.claude/AGENT-SYSTEM.md  (with a GENERATED banner)
     2. ensure <project>/.gitignore ignores .claude/AGENT-SYSTEM.md
     3. ensure <project>/CLAUDE.md exists and contains the pointer block
-       (replaced between stable markers -> never touches the rest of the file)
+       (replaced between stable markers -> never touches the rest of the file); the block ends with the
+       user's own lines when config/system-pointer-extra.md has any (extra_lines)
     4. make <project>/AGENTS.md a symlink to CLAUDE.md
 
   What it creates and could not recognise afterwards is recorded in the ownership record (forge/owned.py,
@@ -34,11 +35,13 @@ import os, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
 from forge import lib, owned  # noqa: E402
-from forge.system_doc import BEGIN, CANON, END, GEN_BANNER, ROOT_FS, block_span, marker_error  # noqa: E402
+from forge.system_doc import BEGIN, CANON, END, GEN_BANNER, ROOT_FS, block_span, has_marker, marker_error  # noqa: E402
 # A SessionStart run writes its own project only; a refused --apply is a dry-run.
 CTX = lib.context(sys.argv[1:])
 PART = "system-doc"  # this script's share of the ownership record's claims on a file
 LINK_VALUE = "symlink:CLAUDE.md"
+# The user's own always-loaded lines, placed inside every block (extra_lines). User data: config/ is outside the public history.
+EXTRA = os.path.join(ROOT, "config", "system-pointer-extra.md")
 
 # La linea en blanco tras BEGIN no es cosmetica. `gsd-tools
 # generate-claude-md` normaliza el fichero dejando un renglon vacio entre el
@@ -112,15 +115,33 @@ def profiles_paragraph(proj_dir, profs):
             % (names[0], proj_dir))
 
 
-def pointer(proj_dir, profs):
-    """POINTER, plus a note when a frozen project lies below proj_dir. Claude Code loads a parent
+def extra_lines():
+    """(text to put inside the block, why not): the user's lines from config/system-pointer-extra.md, stripped, as a
+    paragraph of their own; "" for a file that is absent or blank, which leaves every block what it was. A source that
+    cannot be read as UTF-8 text, or that holds a forge marker (the next sync would replace the block up to the wrong END),
+    is a reason and no text: the caller stops before writing, since a block written without the lines would take the
+    user's rules out of every project at once, with nothing said."""
+    try:
+        with open(EXTRA, encoding="utf-8") as fh:
+            text = fh.read().strip()
+    except FileNotFoundError:
+        return "", None
+    except (OSError, UnicodeDecodeError) as e:
+        return "", "%s cannot be read: %s" % (EXTRA, e)
+    if has_marker(text):
+        return "", "%s holds a forge marker (BEGIN/END of the pointer block); take it out" % EXTRA
+    return ("\n" + text + "\n" if text else ""), None
+
+
+def pointer(proj_dir, profs, user=""):
+    """POINTER, plus the user's lines (`user`, from extra_lines), plus a note when a frozen project lies below proj_dir. Claude Code loads a parent
     directory's CLAUDE.md in every session below it, so every session of a frozen project reads the dev
     project's ~/dev/CLAUDE.md, whose "overwritten on every SessionStart" and AGENT-SYSTEM.md
     pointer are false for a frozen project: forge writes nothing there (a study of that project,
     section 1.3 point 3; plan step 4)."""
     frozen = sorted(n for n, p in profs.items() if p.get("frozen") and p.get("project_path")
                     and os.path.normpath(p["project_path"]).startswith(proj_dir + os.sep))
-    extra = ui_paragraph(proj_dir, profs) + profiles_paragraph(proj_dir, profs)
+    extra = ui_paragraph(proj_dir, profs) + profiles_paragraph(proj_dir, profs) + user
     base = POINTER[:-len(END)] + extra + END if extra else POINTER
     if not frozen:
         return base
@@ -301,6 +322,10 @@ def main():
     other projects still run. It once returned None, so every one of those exited 0."""
     if not os.path.exists(CANON):
         sys.exit("! canonical doc missing: %s" % CANON)
+    user, why = extra_lines()
+    if why:
+        print("! " + why)
+        return 1
     print("MODE:", "APPLY" if CTX.apply else "DRY-RUN (pass --apply to write)")
     profs, failed = read_projects()
     # Named by file, as --project and the session scope name them, in the order of their paths.
@@ -346,7 +371,7 @@ def main():
                 if refused:
                     changes.append((refused, os.path.join(proj_dir, "CLAUDE.md")))
                 else:
-                    ensure_pointer(proj_dir, "CLAUDE.md", changes, pointer(proj_dir, profs))
+                    ensure_pointer(proj_dir, "CLAUDE.md", changes, pointer(proj_dir, profs, user))
                     ensure_agents_md(proj_dir, changes)
         except MarkerError as e:
             print("  ! %-20s %s -- left as it is, fix the markers by hand" % (tag, e))

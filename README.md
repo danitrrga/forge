@@ -189,6 +189,11 @@ exits with `forge doctor`'s status.
 registered and a name that is not kebab-case. By default forge writes no file git tracks in the project: no pointer in its
 `CLAUDE.md`, no `.gitignore` line. The flag allows it.
 
+The pointer block that `sync_system_doc.py` keeps in each managed project's `CLAUDE.md` (Codex reads it through the `AGENTS.md`
+link) can carry rules of your own: put markdown in `config/system-pointer-extra.md` and the next sync adds it inside the block,
+after the pointer text. A missing or blank file adds nothing. A file that cannot be read as UTF-8 or that holds one of the
+block's own markers stops the sync with a `!` line and exit 1 before anything is written.
+
 `forge new NAME [--path DIR] [--stack generic] [--framework] [--yes] [--apply]` makes the project in `projects_dir` of
 `config/forge.json` (or in `DIR`, which must exist): its folder, `git init`, a `.gitignore` written first, a one-line `README.md`, the
 project file, its `skill_keep.extras` row and `forge sync --apply NAME`. Without `--apply` it prints the plan and writes nothing.
