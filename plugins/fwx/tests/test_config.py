@@ -423,4 +423,26 @@ put(ws, {"schema": 1, "project": {"repos": {"a": {"path": "a", "checks": ["x"]}}
 s.eq("a file that declares nothing named a: the repo b is still its own home", config.main_checkout(b), b)
 s.ok("repos is part of the defaults", config.DEFAULTS["project"].get("repos") == {}, "got %r" % config.DEFAULTS["project"].get("repos"))
 
+# A file that is not UTF-8 is an UnreadableFile (it raised UnicodeDecodeError, a traceback in `fwx session --json`), and an explicit
+# `"repos": null` reads as no repos (it reached plan_form as None).
+# Seen red before the fix:
+#   FAIL: a non-UTF-8 file: load raises UnreadableFile: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+#   FAIL: a non-UTF-8 file: setup_commands raises UnreadableFile: UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte
+#   FAIL: "repos": null is normalized to {}: got None, want {}
+ws2 = os.path.realpath(helpers.toy_repo())
+os.makedirs(os.path.join(ws2, ".claude"), exist_ok=True)
+with open(os.path.join(ws2, ".claude", "fwx.json"), "wb") as f:
+    f.write(b"\xff\xfe{}")
+for label, call in (("load", lambda: config.load(cwd=ws2)), ("setup_commands", lambda: config.setup_commands(ws2))):
+    try:
+        call()
+        s.ok("a non-UTF-8 file: %s raises UnreadableFile" % label, False, "returned")
+    except config.UnreadableFile:
+        s.ok("a non-UTF-8 file: %s raises UnreadableFile" % label, True)
+    except Exception as e:  # noqa: BLE001 - the failure under test is any other type
+        s.ok("a non-UTF-8 file: %s raises UnreadableFile" % label, False, "%s: %s" % (type(e).__name__, e))
+put(ws2, {"schema": 1, "project": {"repos": None}})
+cfg, _ = load(ws2)
+s.eq('"repos": null is normalized to {}', cfg["project"].get("repos", "<absent>") if isinstance(cfg, dict) else cfg, {})
+
 s.done()

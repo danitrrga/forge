@@ -254,8 +254,8 @@ def _repos_error(repos):
                 return "%s.%s is not a key of a repos entry (known: path, %s)" % (at, key, ", ".join(REPO_LISTS))
             if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
                 return "%s.%s is not a list of strings" % (at, key)
-        if any(not c.strip() for c in entry.get("worktree_setup", ())):
-            return "%s.worktree_setup has an empty command" % at
+            if any(not x.strip() for x in v):  # fwx's config._strings refuses a blank entry in every one of these lists
+                return "%s.%s has an empty entry" % (at, key)
     return None
 
 

@@ -68,6 +68,8 @@ def part_repos(r):
     if not repos or not phase:
         return None
     base = "%s-%s" % (r["milestone"], os.path.basename(phase))
+    if r.get("subproject"):  # two subprojects with a phase of one slug must not share a worktree
+        base = "%s-%s" % (r["subproject"], base)
     out = []
     for part in r["subphases"] or [phase]:
         name = plan_form.part_repo(part, cfg)

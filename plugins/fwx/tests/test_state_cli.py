@@ -493,7 +493,16 @@ r = st(ws, "phase", "new", "feature", "--subproject", "a", **sid)
 sub_phase = r.stdout.strip()
 got = js(st(ws, "session", "--json", **sid).stdout)
 s.eq("a phase of subproject a: its one part works in a",
-     got.get("part_repos"), [{"name": "a", "path": a, "default_branch": "main", "worktree": os.path.join(ws, ".claude", "worktrees", "a-v1-01-feature")}])
+     got.get("part_repos"), [{"name": "a", "path": a, "default_branch": "main", "worktree": os.path.join(ws, ".claude", "worktrees", "a-a-v1-01-feature")}])
+# two subprojects with a phase of the same slug, both working in repo a, must not share one worktree
+# Seen red before the fix: FAIL: two subprojects, same phase slug, same repo: two worktrees: got 1, want 2
+sub_a_wt = got["part_repos"][0]["worktree"] if got.get("part_repos") else None
+r = st(ws, "phase", "new", "feature", "--subproject", "web", session="sess-w")
+plan_with(r.stdout.strip(), repo="a")
+web = js(st(ws, "session", "--json", session="sess-w").stdout).get("part_repos") or [{}]
+s.eq("two subprojects, same phase slug, same repo: two worktrees", len({sub_a_wt, web[0].get("worktree")}), 2)
+s.eq("subproject phase: the worktree name carries the subproject", web[0].get("worktree"),
+     os.path.join(ws, ".claude", "worktrees", "a-web-v1-01-feature"))
 for label, cwd in (("the workspace", ws), ("repo a", a), ("a worktree of repo a", a_wt)):
     got = js(st(cwd, "session", "--json", **sid).stdout)
     s.eq("session --json, from %s: fwx_dir is the workspace's" % label, got.get("fwx_dir"), os.path.join(ws, ".git", "fwx"))

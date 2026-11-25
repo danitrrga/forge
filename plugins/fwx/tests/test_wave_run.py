@@ -342,13 +342,11 @@ def case_nested_resume(root, S):
     w = world(nested={"a": ["true"], "b": ["true"]}, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
     sc = w.scene
     a, b = sc.nested["a"], sc.nested["b"]
-    p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    w.procs.append(p)
+    p = start_run(w, root, FWX_RUN_LIMIT_S="60")
     end = time.time() + 20
     while time.time() < end and not (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())):
         time.sleep(0.1)
-    p.kill()
-    p.wait()
+    kill_group(p)  # the whole group: a fake orca call in flight would save a stale state.json after the kill
     run = w.runs()[0] if w.runs() else ""
     S.eq("nested resume: the first run started T1", units(w), ["T1"])
     bwt, _ = w.second_part("b")

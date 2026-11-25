@@ -1039,6 +1039,13 @@ for label, value, word in (
         ("worktree_setup as a string", {"a": {"path": "a", "worktree_setup": "npm ci"}}, "repos.a.worktree_setup"),
         ("worktree_setup with an empty command", {"a": {"path": "a", "worktree_setup": [" "]}}, "repos.a.worktree_setup"),
         ("protected_paths as a string", {"a": {"path": "a", "protected_paths": "x"}}, "repos.a.protected_paths"),
+        # Seen red before the fix (only worktree_setup was checked for a blank string, and fwx's config._strings refuses all four):
+        #   FAIL: project_error rejects repos with checks with a blank command, naming repos.a.checks -- None
+        #   FAIL: project_error rejects repos with checks_quick with a blank command, naming repos.a.checks_quick -- None
+        #   FAIL: project_error rejects repos with protected_paths with a blank pattern, naming repos.a.protected_paths -- None
+        ("checks with a blank command", {"a": {"path": "a", "checks": ["make", "  "]}}, "repos.a.checks"),
+        ("checks_quick with a blank command", {"a": {"path": "a", "checks_quick": [""]}}, "repos.a.checks_quick"),
+        ("protected_paths with a blank pattern", {"a": {"path": "a", "protected_paths": [" "]}}, "repos.a.protected_paths"),
         ("a key it has no slot for", {"a": {"path": "a", "extra": 1}}, "repos.a.extra")):
     why = lib.project_error({"project": "x", "project_path": "/x", "repos": value})
     check("project_error rejects repos with %s, naming %s -- %s" % (label, word, why), why is not None and word in why, why)

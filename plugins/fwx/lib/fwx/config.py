@@ -118,6 +118,8 @@ def _read(path):
         return None
     except OSError as e:
         raise _unreadable(path, "cannot be read (%s)" % e.strerror)
+    except UnicodeDecodeError as e:
+        raise _unreadable(path, "is not UTF-8 text (%s)" % e.reason)
     try:
         data = json.loads(text)
     except ValueError as e:
@@ -315,6 +317,8 @@ def load(cwd=None, quiet=False):
         for key in REPO_KEYS:
             cfg["project"][key] = copy.deepcopy(entry.get(key, DEFAULTS["project"][key]))
     _check_timeout(cfg, source)
+    if cfg["project"].get("repos") is None:  # an explicit `"repos": null` means none, as a missing key does
+        cfg["project"]["repos"] = {}
     cfg["_source"] = source
     return cfg
 
