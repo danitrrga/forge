@@ -1076,12 +1076,19 @@ def row(rows, name):
 # fwx:reviewer with a ruleset; MODE "all" answers every agent, "none" answers none, "crash" exits 1.
 STUB_PONYTAIL = """import json, sys
 MODE = %r
-agent = json.load(sys.stdin).get("agent_type")
+data = json.load(sys.stdin)
+event = data.get("hook_event_name")
+agent = data.get("agent_type")
+if event == "SessionStart":  # a worker is told apart by the marker in its worktree's git dir
+    try:
+        agent = "fwx:" + json.load(open(data["cwd"] + "/.git/fwx-worker.json"))["role"]
+    except (OSError, ValueError, KeyError):
+        agent = None
 if MODE == "crash":
     print("ponytail_subagent: LookupError: ponytail@ponytail is not installed", file=sys.stderr)
     sys.exit(1)
 if MODE == "all" or (MODE == "ok" and agent == "fwx:reviewer"):
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": "PONYTAIL MODE ACTIVE"}}))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": event, "additionalContext": "PONYTAIL MODE ACTIVE"}}))
 """
 
 
@@ -1115,6 +1122,27 @@ def ponytail_cases(tmp):
     for stub, says in (("all", "fwx:executor"), ("none", "fwx:reviewer"), ("crash", "not installed")):
         rows = smoke(ponytail_world(tmp, stub, stub=stub), "ponytail_row")
         want("a hook that answers %s" % stub, (levels(rows), says in rows[0][2]), (["FAIL"], True))
+    # The workers of `fwx wave run` need SessionStart as well, so a project wires either two events or the three, and the
+    # SessionStart command is probed with a reviewer and an executor marker. Red before: "wired under the three events =
+    # ['FAIL'], want ['PASS']" (the row named [...SessionStart...] against "once under each of [SubagentStart, UserPromptSubmit]").
+    three = ("SessionStart", "SubagentStart", "UserPromptSubmit")
+    rows = smoke(ponytail_world(tmp, "three", events=three), "ponytail_row")
+    want("wired under the three events", (levels(rows), rows[0][1]), (["PASS"], "ponytail three"))
+    for stub in ("all", "none", "crash"):
+        rows = smoke(ponytail_world(tmp, "three-" + stub, events=three, stub=stub), "ponytail_row")
+        want("three events, a hook that answers %s" % stub, levels(rows), ["FAIL"])
+    # A stub whose SubagentStart answer is right and whose SessionStart one is not is a FAIL naming the worker: the
+    # control that the SessionStart command is probed at all.
+    root = ponytail_world(tmp, "three-deaf", events=three)
+    with open(os.path.join(root, "hooks", "ponytail_subagent.py"), "w") as fh:
+        fh.write(STUB_PONYTAIL.replace('if event == "SessionStart":', 'if False:') % "ok")
+    rows = smoke(root, "ponytail_row")
+    want("a SessionStart command that gives a reviewer worker nothing", (levels(rows), "worker" in rows[0][2]), (["FAIL"], True))
+    for label, kw in (("SessionStart without SubagentStart", {"events": ("SessionStart", "UserPromptSubmit")}),
+                      ("SessionStart alone", {"events": ("SessionStart",)}),
+                      ("PreToolUse beside the three", {"events": three + ("PreToolUse",)})):
+        rows = smoke(ponytail_world(tmp, label.replace(" ", "-"), **kw), "ponytail_row")
+        want(label, levels(rows), ["FAIL"])
     for label, kw in (("wired under PreToolUse", {"events": ("PreToolUse",)}),
                       ("wired once more, under PreToolUse", {"events": ("SubagentStart", "UserPromptSubmit", "PreToolUse")}),
                       ("UserPromptSubmit missing", {"events": ("SubagentStart",)}),
