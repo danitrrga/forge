@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """SubagentStart: give Ponytail's ruleset to the framework's two reviewers (`fwx:reviewer`,
 `fwx:security-reviewer`), and to no other.
+SessionStart: the same for a worker of `fwx wave run`, which is a top-level session where SubagentStart never fires: its
+worktree's git dir holds `fwx-worker.json` (`{"role", ...}`), and a role in WORKER_ROLES gets what those agents get, at the
+level of its own session; any other role, no marker or one that cannot be read gets nothing.
 UserPromptSubmit: remember a manual `/ponytail` change for the rest of that session, and only that session.
 
 Ponytail (the `ponytail@ponytail` Claude Code plugin) writes the smallest change, which is what a dense
@@ -30,6 +33,7 @@ import json, os, re, subprocess, sys, time
 PLUGIN = "ponytail@ponytail"
 LEVEL = "full"
 AGENTS = {"fwx:reviewer", "fwx:security-reviewer"}
+WORKER_ROLES = {"reviewer", "security-reviewer"}
 # Ponytail's ruleset does not name its review skill, so the reviewers' own texts used to; the hook says it once for all projects.
 REVIEW = ("\n\nRun the skill `ponytail:ponytail-review` on the diff you review, and judge what it returns by the same rules as "
           "your other findings. If the skill is not available, go on without it and leave it out of the report: it is not a criterion.")
@@ -104,6 +108,21 @@ def ruleset(level):
     return r.stdout
 
 
+def worker_role(cwd):
+    """The role in the fwx-worker.json of the git dir `cwd` is in, None when there is none or it cannot be read."""
+    if not isinstance(cwd, str) or not os.path.isdir(cwd):
+        return None
+    try:
+        r = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=cwd, capture_output=True, text=True, timeout=10)
+        if r.returncode != 0:
+            return None
+        with open(os.path.join(r.stdout.strip(), "fwx-worker.json"), encoding="utf-8") as fh:
+            role = json.load(fh).get("role")
+    except (OSError, ValueError, AttributeError, subprocess.SubprocessError):
+        return None
+    return role if isinstance(role, str) else None
+
+
 def main():
     try:
         data = json.loads(sys.stdin.read())
@@ -116,7 +135,10 @@ def main():
         except OSError as e:  # never block a prompt
             print("ponytail_subagent: %s" % e, file=sys.stderr)
         return 0
-    if agent not in AGENTS:
+    if event == "SessionStart":
+        if worker_role(data.get("cwd")) not in WORKER_ROLES:
+            return 0
+    elif agent not in AGENTS:
         return 0
     level = session_level(session)
     if level == "off":
@@ -130,7 +152,7 @@ def main():
             return 1
         # An install whose ruleset did not build still has the review skill: the reviewer keeps its instruction.
         # Only exit 0 delivers stdout to the agent.
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SubagentStart", "additionalContext": (text + REVIEW).lstrip()}}))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart" if event == "SessionStart" else "SubagentStart", "additionalContext": (text + REVIEW).lstrip()}}))
     return 0
 
 

@@ -6,12 +6,13 @@ measured), and a pid can be reused. So `lock_state` is `live` only when `/proc/P
 when the pid is gone or has another start time; `unknown` for a lock whose reason is not that form (it is never taken for
 stale: it cannot be shown dead); `none` for an unlocked worktree. Without `/proc` nothing can be said: NoProc.
 
-A worktree belongs to run `R` when a commit on its branch that the base does not have carries `Fwx-Run: R`, or when an
-`integrate` call of the run named its branch (`recorded`). The base is the sha in the run id (`<part>-<sha7>-<n>`).
+A worktree belongs to run `R` when a commit on its branch that the base does not have carries `Fwx-Run: R`, when an
+`integrate` call of the run named its branch (`recorded`), or when `fwx wave run` made it for the run (`owned`: the paths in the run's
+`state.json`, a detached reviewer's or a commit-less one included). The base is the sha in the run id (`<part>-<sha7>-<n>`).
 
 `cleanup(cwd, run, recorded)` removes what is safe and says why for the rest: an unlocked, clean worktree whose branch is merged
 into the checkout's branch goes (`git worktree remove`, never `--force`, then `git branch -d`); a live one, a dirty one, one with
-commits that are not merged and one whose lock could not be cleared stay, in `kept` with the reason. A stale lock is cleared
+commits that are not merged (a detached one whose HEAD is not on the checkout's branch included) and one whose lock could not be cleared stay, in `kept` with the reason. A stale lock is cleared
 (`git worktree unlock`) and then the worktree is treated like any other. `leftover` lists the processes whose current directory
 is inside a worktree of the run (a runaway shell of an agent was the largest thing left running); none is killed. The phase
 branch, the main checkout and a worktree of another run are never candidates.
@@ -22,6 +23,7 @@ folders of other runs and the ignore file stay; `scratch` in the result lists wh
 
 Imports the standard library and execute.base.
 """
+import json
 import os
 import re
 import shutil
@@ -128,6 +130,10 @@ def remove(top, wt):
         return "dirty: uncommitted or untracked files"
     if wt["branch"] and not merged(top, wt["branch"]):
         return "unmerged commits on %s" % wt["branch"]
+    if not wt["branch"]:
+        head = out(wt["path"], "rev-parse", "HEAD")
+        if not head or git(top, "merge-base", "--is-ancestor", head, "HEAD").returncode:
+            return "detached HEAD %s is not on the checkout's branch" % (head or "unknown")[:8]
     r = git(top, "worktree", "remove", wt["path"])
     if r.returncode:
         return "git worktree remove refused: %s" % r.stderr.strip()
@@ -178,8 +184,28 @@ def _scratch(top, run):
     return [] if os.path.exists(folder) else [folder]
 
 
-def cleanup(cwd, run, recorded=()):
-    """`{removed, kept, leftover, scratch}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch)."""
+def recorded_of(common, run):
+    """(branches, paths) a run's own files name: the branches its `integrate` calls merged and the worktrees `fwx wave run` made for it."""
+    folder = os.path.join(common, "fwx", "runs", run)
+    branches, paths = set(), set()
+    for name in os.listdir(folder) if os.path.isdir(folder) else []:
+        try:
+            with open(os.path.join(folder, name), encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if rec.get("step") == "integrate":
+            branches.update((rec.get("args") or {}).get("branches") or [])
+        if name == "state.json":
+            paths.update(w["path"] for w in rec.get("worktrees") or [] if isinstance(w, dict) and w.get("path"))
+    return branches, paths
+
+
+def cleanup(cwd, run, recorded=(), owned=(), hold=None):
+    """`{removed, kept, leftover, scratch}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch). `hold` is {path: why}:
+    a worktree there is kept with that reason whatever its state (a worker whose release is unconfirmed may still use it)."""
     _need_proc()
     top = out(cwd, "rev-parse", "--show-toplevel")
     if top is None:
@@ -190,13 +216,17 @@ def cleanup(cwd, run, recorded=()):
         raise WaveError("the checkout %s is on no branch: cleanup runs from the phase branch's checkout" % top)
     base = base_of(top, run)
     every = worktrees(top)
-    mine = [w for w in every[1:] if w["path"] != top and w["branch"] and w["branch"] != phase
-            and of_run(top, base, run, w["branch"], set(recorded))]
+    owned = {os.path.realpath(p) for p in owned}
+    mine = [w for w in every[1:] if w["path"] != top and w["branch"] != phase
+            and (w["branch"] and of_run(top, base, run, w["branch"], set(recorded)) or w["path"] in owned)]
     scratch = _scratch(top, run)
     result = {"removed": [], "kept": [], "leftover": leftover([w["path"] for w in mine]), "scratch": scratch}
     for w in mine:
         item = {"worktree": w["path"], "branch": w["branch"]}
         state, was_stale = lock_state(w), False
+        if w["path"] in (hold or {}):
+            result["kept"].append(dict(item, why=hold[w["path"]]))
+            continue
         if state == "live":
             result["kept"].append(dict(item, why="live agent (pid %s)" % pid_of(w)))
             continue

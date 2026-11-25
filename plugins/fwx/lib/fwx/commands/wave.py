@@ -1,5 +1,5 @@
-"""Prepare a part for `execute`, check an executor's base, and join, fix, undo and clean up its waves:
-fwx wave [new|merge|fix|revert|remove|setup] ..., `fwx base`, `fwx scratch new`. `fwx wave` alone is the summary.
+"""Prepare a part, run it, check an executor's base, and join, fix, undo and clean up its waves:
+fwx wave [new|run|list|merge|fix|revert|remove|setup] ..., `fwx base`, `fwx scratch new`. `fwx wave` alone is the summary.
 The steps keep their old names inside: in the run's files (`<n>-<step>.json`), in the `step` of a call, in this file's functions.
 
 `wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS]
@@ -11,6 +11,12 @@ the base is not red; run it again), 2 for anything that must stop the run before
 written. A base that ran green is recorded as an `evidence` row of the part, and a second `wave new` on the same base and checks
 reuses it. `--from gate` is the way back
 into the checks once every task is on the phase branch (the tree's n_C7F loops to n_C7): execute/prepare.py says what it changes.
+
+`wave run` takes the flags of `wave new` (or `--resume R`), prepares the part in process, exits as `wave new` does (1, 77, 2) before it
+starts anyone, then drives the part to its end with every agent an Orca worker (execute/run.py says how, execute/orca.py is the one module that
+talks to Orca) and prints one line, `run <R> <done|failed|needs-owner>: <why>`, exit 0, 1 and 3 for the three; it exits 2 when a live run already
+holds the branch (naming it and `--resume`) and when there is no base context to give a worker. `wave list` prints one line per run (id, part,
+branch, state, pid and whether it lives, open workers of the total, last step).
 
 `fwx base <sha> [--worktree P]` is step 0 of every agent that writes: exit 0 when the current folder is a linked worktree
 (the one at `P`, when given) whose HEAD is `<sha>` (a fresh worktree, as Claude Code made it and nothing written in it, is first moved there: execute/base.py `_fresh`),
@@ -44,8 +50,17 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
       exit 0 the failure may be fixed (a round spent, or the evidence already counted), 1 the
       rounds are spent and nothing was spent now, 2 usage
   wave revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
-  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named from the run's files
-  wave --run R [--part-dir D]     exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
+  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named and the worktrees `wave run` made from the run's files
+  wave report --part-dir D --run R --unit U --line "<last line of the reply>" --plane session|factory
+      exit 0 with `next` merge|relaunch|retry|owner|stop (execute/report.py says what each means and what it reads); a miss is
+      counted from the run's own files, so each call is recorded; 2 a usage error, an unreadable plan or configuration
+  wave review --part-dir D --run R --from A --to B [--security]
+      exit 0 with `next` launch: the briefs of the pass's reviewer, and of the security reviewer when `--security`, the post-mortem or a
+      protected path of the run's last final merge asks for it (execute/review.py); 2 a ref that is no commit, an unreadable plan, a usage error
+  wave findings --run R (--report "<last line of a reviewer's reply>"... | --verdicts "<last line of the verifier's reply>") [--control-findings F]
+      exit 0 with `next` relaunch|stop|verify|fix|owner|done (execute/review.py says what each means): the findings numbered by the pass, the
+      verifier only above three items, the verdicts routed; the part is the one the run's `wave review` named; 2 a call with no pass to read
+  wave --run R [--part-dir D] [--json]  exit 0 gate pass, 1 fail, 2 none; the part comes from the run's files unless given. A run
       that merged branches passes only when its own last `wave merge --final` was green (`why` says when it was not): the evidence
       row is the part's, so another run's green gate on the same head is not this run's
 """
@@ -55,10 +70,13 @@ import re
 import sys
 
 from fwx import config, plan_step, routes, state
-from fwx.execute import base, cleanup, integrate, prepare as prep, worktree_setup
+from fwx.execute import base, cleanup, integrate, prepare as prep, report, review, run as run_mod, worktree_setup
 
 PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
+RUN_USAGE = ("usage: fwx wave run --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] "
+             "[--control-findings F] [--from gate]   |   fwx wave run --resume R\n")
+LIST_USAGE = "usage: fwx wave list\n"
 CHECK_USAGE = "usage: fwx base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
 SETUP_USAGE = "usage: fwx wave setup [--force]\n"
 SCRATCH_USAGE = "usage: fwx scratch new <run> <unit>   (each one folder name: letters, digits, `.`, `_`, `-`)\n"
@@ -67,7 +85,10 @@ USAGES = {
     "fix-round": "usage: fwx wave fix --part-dir D --why TEXT [--run R]\n",
     "revert": "usage: fwx wave revert --part-dir D --run R --findings IDS\n",
     "cleanup": "usage: fwx wave remove --run R\n",
-    "summary": "usage: fwx wave --run R [--part-dir D]\n",
+    "summary": "usage: fwx wave --run R [--part-dir D] [--json]\n",
+    "report": "usage: fwx wave report --part-dir D --run R --unit U --line \"<last line of the reply>\" --plane session|factory\n",
+    "review": "usage: fwx wave review --part-dir D --run R --from A --to B [--security]\n",
+    "findings": "usage: fwx wave findings --run R (--report \"<last line of a reviewer's reply>\"... | --verdicts \"<last line of the verifier's reply>\") [--control-findings F]\n",
 }
 _RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 
@@ -103,30 +124,105 @@ def _parse(argv, flags, valued, many=()):
     return got, pos
 
 
-def do_prepare(argv):
-    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from"))
-    if parsed is None or parsed[1] or any(k not in parsed[0] for k in ("--part-dir", "--plane", "--branch")):
-        sys.stderr.write(PREPARE_USAGE)
-        return 2
-    got = parsed[0]
+def prepared(got, say):
+    """(exit code, args) for the flags of `wave new`: the args of the part, or the code `wave new` exits with and nothing else (the
+    reason is on stderr, a red base's JSON on stdout)."""
     revert = [i.strip() for i in got["--revert"].split(",") if i.strip()] if "--revert" in got else None
-
-    def say(line):
-        sys.stderr.write("fwx wave new: %s\n" % line)
     try:
         args = prep.prepare(".", got["--part-dir"], got["--plane"], got["--branch"], "--unattended" in got, "--security" in got,
                             got.get("--fix"), revert, got.get("--control-findings"), got.get("--from"), say=say)
     except prep.RedBase as e:
         print(json.dumps(e.status))
         sys.stderr.write("fwx wave new: %s\n%s\nrounds %s\n" % (e, e.shown, e.status["rounds"]))
-        return 1
+        return 1, None
     except prep.NotRun as e:
         sys.stderr.write("fwx wave new: %s\n" % e)
-        return 77
+        return 77, None
     except (base.WaveError, config.ConfigError, state.StateError, plan_step.CannotRun) as e:
         sys.stderr.write("fwx wave new: %s\n" % e)
+        return 2, None
+    return 0, args
+
+
+def do_prepare(argv):
+    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from"))
+    if parsed is None or parsed[1] or any(k not in parsed[0] for k in ("--part-dir", "--plane", "--branch")):
+        sys.stderr.write(PREPARE_USAGE)
         return 2
+
+    def say(line):
+        sys.stderr.write("fwx wave new: %s\n" % line)
+    code, args = prepared(parsed[0], say)
+    if code:
+        return code
     print(json.dumps(args))
+    return 0
+
+
+def do_run(argv):
+    """`wave run`: the flags of `wave new`, or `--resume R`. Exit 0 a run that ended done, 1 failed, 3 needs-owner (its line on stdout);
+    before any worker: what `wave new` exits with (1 a red base, 77 a base check out of time, 2 a refusal), and 2 for a live run on the branch."""
+    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from", "--resume"))
+    if parsed is None or parsed[1] or ("--resume" not in parsed[0] and any(k not in parsed[0] for k in ("--part-dir", "--plane", "--branch"))):
+        sys.stderr.write(RUN_USAGE)
+        return 2
+    got = parsed[0]
+
+    def say(line):
+        sys.stderr.write("fwx wave run: %s\n" % line)
+    try:
+        top = base.toplevel(os.getcwd())
+        if top is None:
+            raise base.WaveError("not inside a git repository: %s" % os.getcwd())
+        saved = None
+        if "--resume" in got:
+            if not _RUN_NAME.match(got["--resume"]) or run_mod.load_state(top, got["--resume"]) is None:
+                raise base.WaveError("--resume %s: no such run (`fwx wave list`)" % got["--resume"])
+            saved = run_mod.load_state(top, got["--resume"])
+            if saved["state"] != "active":
+                raise base.WaveError("run %s ended %s: there is nothing to resume" % (saved["run"], saved["state"]))
+        branch = saved["branch"] if saved else got["--branch"]
+        if saved:  # `prepare` refuses a checkout that is not on the branch for a new run; a resumed run merges into whatever is checked out
+            on = base.out(top, "symbolic-ref", "--short", "-q", "HEAD")
+            if on != branch:
+                raise base.WaveError("run %s works on %s and the checkout %s is on %s: check %s out first" % (saved["run"], branch, top, on or "no branch (detached HEAD)", branch))
+        live = run_mod.holder(top, branch)
+        if live:
+            raise base.WaveError("run %s is already running on %s (pid %s): wait for it, or start again with `fwx wave run --resume %s` once it ended"
+                                 % (live["run"], branch, live.get("pid"), live["run"]))
+        lock = run_mod.lock_branch(top, branch)  # held to the end of the process: a second command that passed the check above before this run was recorded stops here
+        if saved:
+            args, flags = saved["args"], saved["flags"]
+        else:
+            code, args = prepared(got, lambda line: sys.stderr.write("fwx wave new: %s\n" % line))
+            if code:
+                return code
+            ctrl = got.get("--control-findings")
+            flags = {"control": os.path.abspath(ctrl) if ctrl else None}
+        status, line, kept = run_mod.drive(args, top, flags, saved)
+    except (base.WaveError, config.ConfigError, state.StateError) as e:
+        sys.stderr.write("fwx wave run: %s\n" % e)
+        return 2
+    for k in kept:
+        say("kept %s: %s" % (k["worktree"], k["why"]))
+    print(line)
+    return {"done": 0, "failed": 1, "needs-owner": 3}[status]
+
+
+def do_list(argv):
+    if argv:
+        sys.stderr.write(LIST_USAGE)
+        return 2
+    try:
+        top = base.toplevel(os.getcwd())
+        if top is None:
+            raise base.WaveError("not inside a git repository: %s" % os.getcwd())
+        rows = run_mod.listing(top)
+    except base.WaveError as e:
+        sys.stderr.write("fwx wave list: %s\n" % e)
+        return 2
+    for row in rows:
+        print(row)
     return 0
 
 
@@ -243,25 +339,22 @@ def _part_of(top, run):
     return None
 
 
-def _recorded_branches(top, run):
-    found = set()
-    for rec in _steps(top, run):
-        if rec.get("step") == "integrate":
-            found.update(rec.get("args", {}).get("branches") or [])
-    return found
-
-
 def do_step(step, argv):
-    """integrate, fix-round, revert, cleanup and summary: parse, run, print the JSON, record it."""
-    flags = ("--final",) if step == "integrate" else ()
+    """integrate, fix-round, revert, cleanup, summary, report, review and findings: parse, run, print the JSON, record it."""
+    flags = {"integrate": ("--final",), "review": ("--security",), "summary": ("--json",)}.get(step, ())  # summary: JSON is its only output
     valued = {"integrate": ("--part-dir", "--run", "--findings"), "fix-round": ("--part-dir", "--why", "--run"),
-              "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir")}[step]
-    parsed = _parse(argv, flags, valued, many=("--branches",) if step == "integrate" else ())
+              "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run", "--part-dir"),
+              "report": ("--part-dir", "--run", "--unit", "--line", "--plane"), "review": ("--part-dir", "--run", "--from", "--to"),
+              "findings": ("--run", "--verdicts", "--control-findings")}[step]
+    parsed = _parse(argv, flags, valued, many={"integrate": ("--branches",), "findings": ("--report",)}.get(step, ()))
     need = {"integrate": ("--part-dir", "--run") + (() if parsed and "--final" in parsed[0] else ("--branches",)), "fix-round": ("--part-dir", "--why"),
-            "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",)}[step]
+            "revert": ("--part-dir", "--run", "--findings"), "cleanup": ("--run",), "summary": ("--run",),
+            "report": ("--part-dir", "--run", "--unit", "--line", "--plane"), "review": ("--part-dir", "--run", "--from", "--to"), "findings": ("--run",)}[step]
     if parsed is None or parsed[1] or any(k not in parsed[0] for k in need) \
+            or (step == "findings" and (("--report" in parsed[0]) == ("--verdicts" in parsed[0]))) \
             or ("--run" in parsed[0] and not _RUN_NAME.match(parsed[0]["--run"])) \
-            or ("--findings" in parsed[0] and not _ids(parsed[0]["--findings"])):
+            or ("--findings" in parsed[0] and not _ids(parsed[0]["--findings"])) \
+            or (step == "report" and (not base.NAME.match(parsed[0]["--unit"]) or parsed[0]["--plane"] not in ("session", "factory"))):
         sys.stderr.write(USAGES[step])
         return 2
     got = parsed[0]
@@ -285,9 +378,21 @@ def do_step(step, argv):
         elif step == "revert":
             args = {"part_dir": part, "run": run, "findings": findings}
             code, result = integrate.revert(".", part, findings, say)
+        elif step == "report":
+            args = {"part_dir": part, "run": run, "unit": got["--unit"], "line": got["--line"], "plane": got["--plane"]}
+            code, result = report.judge(".", part, run, got["--unit"], got["--line"], got["--plane"], _steps(top, run))
+        elif step == "review":
+            args = {"part_dir": part, "run": run, "from": got["--from"], "to": got["--to"], "security": "--security" in got}
+            code, result = review.review(".", part, run, got["--from"], got["--to"], "--security" in got, _steps(top, run))
+        elif step == "findings":
+            part = _part_of(top, run)
+            if part is None:
+                raise base.WaveError("no call of run %s names a part: `fwx wave review` comes first" % run)
+            args = {"part_dir": part, "run": run, "report": got.get("--report"), "verdicts": got.get("--verdicts"), "control_findings": got.get("--control-findings")}
+            code, result = review.findings(".", part, run, got.get("--report"), got.get("--verdicts"), got.get("--control-findings"), _steps(top, run))
         elif step == "cleanup":
             args = {"run": run}
-            result = cleanup.cleanup(".", run, _recorded_branches(top, run))
+            result = cleanup.cleanup(".", run, *cleanup.recorded_of(base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), run))
             code = 0
         else:
             part = part or _part_of(top, run)
@@ -310,6 +415,10 @@ def do_step(step, argv):
 def main(argv):
     if argv and argv[0] == "prepare":
         return do_prepare(argv[1:])
+    if argv and argv[0] == "run":
+        return do_run(argv[1:])
+    if argv and argv[0] == "list":
+        return do_list(argv[1:])
     if argv and argv[0] == "check-base":
         return do_check_base(argv[1:])
     if argv and argv[0] == "scratch":
@@ -318,5 +427,5 @@ def main(argv):
         return do_setup(argv[1:])
     if argv and argv[0] in USAGES:
         return do_step(argv[0], argv[1:])
-    sys.stderr.write("usage: fwx wave [new|merge|fix|revert|remove|setup] ...   (fwx base and fwx scratch new are their own commands)\n")
+    sys.stderr.write("usage: fwx wave [new|run|list|merge|fix|revert|remove|setup] ...   (fwx base and fwx scratch new are their own commands)\n")
     return 2

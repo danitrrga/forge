@@ -29,6 +29,9 @@ Controls, each seen red on a copy of the repo with one thing changed (351 checks
   - the table lacks discuss -> planning, planning -> executing and planning -> discuss (08.3 T31):
       FAIL: session: discuss -> planning is allowed: got False
       FAIL: small phase: -> planning: exit: got 1, want 0
+  - the factory table lacks planning -> executing and planning -> discuss (DTC-116: a small job skips the post-mortem like a small phase; seen red on master, 2 failed):
+      FAIL: factory: planning -> discuss is allowed: got False
+      FAIL: factory: planning -> executing is allowed: got False
   - the table lets planning go to closed (08.3 T31): `session: planning -> closed is forbidden` and `small phase: -> closed: exit` fail
   - the table drops ui-walk -> discuss (1 failed):
       FAIL: session: ui-walk -> discuss is allowed: got False
@@ -88,7 +91,7 @@ FACTORY = {
     "intake": ["discuss", "needs-owner"],
     "discuss": ["premortem", "planning", "needs-owner"],
     "premortem": ["planning", "discuss"],
-    "planning": ["postmortem"],
+    "planning": ["postmortem", "executing", "discuss"],
     "postmortem": ["planning", "executing", "discuss"],
     "executing": ["pr"],
     "pr": ["babysit"],
@@ -339,6 +342,14 @@ s.eq("the regenerated base passes `context lint`", r.returncode, 0)
 r = helpers.fwx(base_repo, "stage", bphase, "executing", env=SESS)
 s.eq("a refused stage: exit 1", r.returncode, 1)
 s.eq("a refused stage leaves the base as it was", stage_in_base(bfile), "premortem")
+
+# a stage change on a subphase refreshes its phase's base (context.md is the phase's), never one of its own
+bsub = str(state.new_subphase(bphase, "first"))
+os.remove(bfile)
+r = helpers.fwx(base_repo, "stage", bsub, "reviewing", "--why", "part 1", env=SESS)
+s.eq("stage of a subphase: exit 0, nothing on stderr", (r.returncode, r.stderr), (0, ""))
+s.eq("stage of a subphase: the phase's base is rebuilt", stage_in_base(bfile), "premortem")
+s.ok("stage of a subphase: it has no base of its own", not os.path.exists(cb.base_path(bsub)), cb.base_path(bsub))
 
 # a factory job folder gets its base on the claim-to-intake change, with no context.md in it
 bjob = os.path.join(base_repo, ".fwx", "factory", "KEY-9")

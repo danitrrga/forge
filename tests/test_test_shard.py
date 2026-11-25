@@ -173,12 +173,13 @@ eq("group, --expect-not-run names a file of another shard: it is a known file, n
 fwx_root = os.path.join(FORGE, "plugins", "fwx")
 fwx_files = testgroup.test_files(fwx_root, env())
 slow = tuple(getattr(testgroup, "FWX_SLOW_FIRST", ()))
+WANT_SLOW = ("tests/test_walk.py", "tests/test_ui_walk_workflow.py", "tests/test_worktree_setup.py")
 ok("FWX_SLOW_FIRST names the slow fwx files", len(slow) == 3, repr(slow))
+eq("FWX_SLOW_FIRST is the three slowest fwx files, in this order (the execute suite is gone: test_worktree_setup took its place)", slow, WANT_SLOW)
 ok("every FWX_SLOW_FIRST name is a tracked fwx test (a renamed file would leave the list stale)", all(f in fwx_files for f in slow), repr(slow))
 deal = testgroup.start_order(fwx_files, fwx_root) if hasattr(testgroup, "start_order") else sorted(
     fwx_files, key=lambda f: (-os.path.getsize(os.path.join(fwx_root, f)), f))
 home = {f: i for i in range(1, 4) for f in take_shard(deal, (i, 3))}
-WANT_SLOW = ("tests/test_walk.py", "tests/test_execute_workflow.py", "tests/test_ui_walk_workflow.py")
 eq("the three slow fwx files are in three different shards of 3", sorted(home.get(f, 0) for f in WANT_SLOW), [1, 2, 3])
 eq("the fwx shards of 3 together are every file, once", sorted(f for i in (1, 2, 3) for f in take_shard(deal, (i, 3))), sorted(fwx_files))
 

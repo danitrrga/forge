@@ -110,10 +110,10 @@ def parse_shard(values):
     return None, "%s: --shard wants I/N with 1 <= I <= N (both whole numbers), got %r" % (NAME, values[0])
 
 
-# The fwx files that take minutes (measured on the 4-CPU CI runner, 4 files at once: 461 s, 332 s, 200 s; the next is 94 s) are dealt first, in
-# this order, so with 3 shards each gets one: by size alone test_walk and test_ui_walk_workflow land in the same shard. A stale name costs
-# minutes, never a result (tests/test_test_shard.py checks that every name is a tracked file).
-FWX_SLOW_FIRST = ("tests/test_walk.py", "tests/test_execute_workflow.py", "tests/test_ui_walk_workflow.py")
+# The slowest fwx files (measured on a 16-CPU workstation: 290 s, 121 s, 75 s; the next of the five largest is 39 s) are dealt
+# first, in this order, so with 3 shards each gets one: by size alone test_walk and test_ui_walk_workflow land in the same shard. A stale name
+# costs minutes, never a result (tests/test_test_shard.py checks that every name is a tracked file).
+FWX_SLOW_FIRST = ("tests/test_walk.py", "tests/test_ui_walk_workflow.py", "tests/test_worktree_setup.py")
 
 
 def start_order(files, root):

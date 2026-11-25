@@ -36,6 +36,15 @@ UNSHARE = ("unshare", "-rn")
 PROBE = ("import socket, sys\ntry:\n    socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=0.2)\n"
          "    print('reachable')\nexcept OSError:\n    print('unreachable')")
 _made = []
+KEEP_ENV = "FORGE_TEST_KEEP"
+
+
+def keeping():
+    """Whether the run was asked to keep its temp dirs for a look: FORGE_TEST_KEEP=1 in the environment. Off
+    by default: /tmp is RAM on this machine, and a test that leaves a folder there, passing or failing, is a bug
+    in that test (ORDERS 14). Before this, a failing run kept every dir it made (14 `forge-s0-*` of ~115 MB per
+    failing test_sync_fixture run, 71 of them at once) and a crashed or killed run kept them without a word."""
+    return os.environ.get(KEEP_ENV) == "1"
 
 
 def _tmp_outside_checkout():
@@ -43,18 +52,25 @@ def _tmp_outside_checkout():
     its toy worlds inside that checkout and fails falsely, e.g. `FAIL forge test outside a git repository = (False, 1, False, True), want
     (True, 1, True, True)`, 34 failures over 405 cases in test_lib.py (DTC-124). `forge test` already hands its children a TMPDIR outside any
     checkout; this does the same for a direct run, with the same function (testgroup.private_tmp), at the first `import sandbox`, before any
-    tempfile call, and removes the folder when the process ends."""
+    tempfile call, and removes the folder when the process ends (unless FORGE_TEST_KEEP=1, when it keeps the folder and prints where it is)."""
     # Loaded by path from forge/tmpscope.py (stdlib only): `import forge` here would put the package in sys.modules and change which `forge`
     # a suite that imports forge.hooks from a seeded copy of the engine gets (hooks/test_guard_tool_use.py, "config/forge.json missing").
     spec = importlib.util.spec_from_file_location("forge_tmpscope", os.path.join(FORGE, "forge", "tmpscope.py"))
     tmpscope = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(tmpscope)
     stack = contextlib.ExitStack()
-    env = stack.enter_context(tmpscope.private_tmp(os.environ))
+    env = stack.enter_context(tmpscope.private_tmp(os.environ, keep=keeping))
     if env.get("TMPDIR") != os.environ.get("TMPDIR"):
-        os.environ["TMPDIR"] = env["TMPDIR"]
+        made = os.path.realpath(env["TMPDIR"])
+        os.environ["TMPDIR"] = made
         tempfile.tempdir = None  # tempfile cached the old one
-        atexit.register(stack.close)
+
+        def _release_tmp():
+            if keeping():
+                print("kept (TMPDIR outside checkout):", made)
+            stack.close()
+
+        atexit.register(_release_tmp)
     else:
         stack.close()
 
@@ -74,17 +90,6 @@ def git(cwd, *args):
                            "-c", "commit.gpgsign=false", "-c", "maintenance.auto=false",
                            "-c", "gc.auto=0"] + list(args),
                           env=dict(os.environ, **GIT_ENV), capture_output=True, text=True, check=True).stdout
-
-
-KEEP_ENV = "FORGE_TEST_KEEP"
-
-
-def keeping():
-    """Whether the run was asked to keep its temp dirs for a look: FORGE_TEST_KEEP=1 in the environment. Off
-    by default: /tmp is RAM on this machine, and a test that leaves a folder there, passing or failing, is a bug
-    in that test (ORDERS 14). Before this, a failing run kept every dir it made (14 `forge-s0-*` of ~115 MB per
-    failing test_sync_fixture run, 71 of them at once) and a crashed or killed run kept them without a word."""
-    return os.environ.get(KEEP_ENV) == "1"
 
 
 def mkdtemp(prefix):

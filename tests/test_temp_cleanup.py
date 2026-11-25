@@ -138,6 +138,29 @@ with tempfile.TemporaryDirectory(prefix="temp-cleanup-") as top:
     want("TMPDIR in a checkout: nothing left in the checkout's TMPDIR", left(tmp), [])
     want("TMPDIR in a checkout: the replacement folder is gone after the run", os.path.exists(os.path.dirname(where)), False)
 
+    # With FORGE_TEST_KEEP=1 and TMPDIR inside a checkout, _tmp_outside_checkout's atexit must keep the replacement
+    # folder (and the kept dirs inside it) and say where it is, rather than deleting what sandbox.cleanup() just kept.
+    # Seen red on origin/master:
+    #   FAIL TMPDIR in a checkout with FORGE_TEST_KEEP=1: kept dir still exists after exit (stderr '') = False, want True
+    #   FAIL TMPDIR in a checkout with FORGE_TEST_KEEP=1: stdout names the kept dir and replacement TMPDIR = False, want True
+    keep_probe = os.path.join(scripts, "incheckout_keep.py")
+    with open(keep_probe, "w") as fh:
+        fh.write(TOY + "d = sandbox.mkdtemp('keep-incheckout-')\nprint('MADE', d)\nsandbox.cleanup(True)\n")
+    r = subprocess.run([sys.executable, keep_probe], env=child_env(tmp, **{sandbox.KEEP_ENV: "1"}), capture_output=True, text=True, timeout=120)
+    n += 1
+    made_lines = [l.split(" ", 1)[1] for l in r.stdout.splitlines() if l.startswith("MADE ")]
+    kept_dir = made_lines[0] if made_lines else ""
+    kept_parent = os.path.dirname(kept_dir) if kept_dir else ""
+    try:
+        want("TMPDIR in a checkout with FORGE_TEST_KEEP=1: kept dir still exists after exit (stderr %r)" % r.stderr.strip()[-120:],
+             bool(kept_dir) and os.path.isdir(kept_dir), True)
+        want("TMPDIR in a checkout with FORGE_TEST_KEEP=1: stdout names the kept dir and replacement TMPDIR",
+             bool(kept_dir) and ("kept: " + kept_dir) in r.stdout and ("kept (TMPDIR outside checkout): " + kept_parent) in r.stdout, True)
+        want("TMPDIR in a checkout with FORGE_TEST_KEEP=1: nothing left in the checkout's TMPDIR", left(tmp), [])
+    finally:
+        if kept_parent and os.path.basename(kept_parent).startswith("forge-test-"):
+            sandbox.rmtree(kept_parent)
+
     # The bench: skill_bench.verdict on two tasks whose oracle code makes temp dirs of its own (a dir each per run), and
     # the one suite that called skill_bench.fresh and never removed its dir. The tasks are found, not named: a task
     # that is pruned from the bench (arch-refactor-01 was) must not turn this case red, and finding fewer than two
