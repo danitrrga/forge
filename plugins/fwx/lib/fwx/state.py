@@ -243,8 +243,9 @@ def _put_session(d, sid, subproject, stored):
 
 
 def resolve(cwd=None, session=None):
-    """Where the session is: `{main_checkout, plan_root, has_subprojects, subproject, milestone, phase_dir, subphases,
-    candidates, paths}`, every path a string, nothing written. The subproject and the phase come from the session file;
+    """Where the session is: `{main_checkout, fwx_dir, plan_root, has_subprojects, subproject, milestone, phase_dir, subphases,
+    candidates, paths}`, every path a string, nothing written. `fwx_dir` is where fwx keeps its run files (`config.fwx_dir`),
+    the same from every worktree and every nested repository of the workspace. The subproject and the phase come from the session file;
     with no phase bound (or a bound one that is gone) the only open phase of the scope's current milestone is the
     phase, and with several or none `phase_dir` is None and `candidates` lists the open ones. Binding is the caller's."""
     main = config.main_checkout(cwd)
@@ -260,7 +261,7 @@ def resolve(cwd=None, session=None):
             phase, milestone = p, os.path.basename(os.path.dirname(os.path.dirname(p)))
     if phase is None and len(candidates) == 1:
         phase = candidates[0]
-    return {"main_checkout": main, "plan_root": str(root), "has_subprojects": has_subprojects(root),
+    return {"main_checkout": main, "fwx_dir": config.fwx_dir(cwd), "plan_root": str(root), "has_subprojects": has_subprojects(root),
             "subproject": subproject, "milestone": milestone, "phase_dir": phase,
             "subphases": [str(p) for p in subphases(phase)] if phase else [],
             "candidates": candidates,
