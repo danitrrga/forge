@@ -30,6 +30,7 @@ Controls, each a copy of lib/ with one line changed (MUTANTS), seen red on the c
   an open question does not stop the idle clock / pause the limit: FAIL: an open question pauses the idle stop and the limit: the run still waits after 3.2 s -> exit 1
   the status is sent as an escalation:        FAIL: a question reaches the orchestrator once -> 0 sends over many ticks: got 0, want 1 (the fake refuses it: sender_not_assignee)
   the ask line with no orchestrator:          FAIL: off: no executor is told to ask -> 4 starts
+  settled succeeded worker does not wait:     FAIL: reply grace: delayed reply after worker_done finishes done: exit 1, got 'run <id> failed: executor did not return: T1 (2 worktrees kept)\n'
 """
 import fcntl
 import json
@@ -989,9 +990,49 @@ def case_steer_asking(root, S):
          res.returncode == 1 and bool(m) and m.group(2) == "failed" and "limit" in m.group(3))
 
 
+def case_reply_grace(root, S):
+    """A worker that sends `worker_done` flips `state` to `succeeded` inside the Bash tool call, 1.1-1.8 s before its final reply line lands in the transcript.
+    `poll()` waits up to `min(idle_s, 15.0)` while a `succeeded` worker's transcript lacks `REPLY_LINE`, re-reading the transcript before calling `worker-release`;
+    a reply already present has zero added latency, and a garbled reply still fails after the grace.
+    Seen red on the code before the fix:
+      FAIL: reply grace: delayed reply after worker_done finishes done: exit 1, got 'run 01-alpha-4257563-1 failed: executor did not return: T1 (2 worktrees kept)\\n'
+      FAIL: reply grace: no relaunch of T1: got ['T1', 'T1'], want ['T1', 'r1']
+      FAIL: reply grace: transcript re-read until reply appeared: reads [(7, False)]"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {"mode": "ok", "reply_delay": 1.5}}})
+    r = w.run(root=root, FWX_RUN_IDLE_S="3.0", FWX_RUN_LIMIT_S="10")
+    m = line_of(r)
+    S.ok("reply grace: delayed reply after worker_done finishes done", bool(m) and m.group(2) == "done" and r.returncode == 0,
+         "exit %d, got %r %r" % (r.returncode, r.stdout[-240:], r.stderr[-200:]))
+    S.eq("reply grace: no relaunch of T1", units(w), ["T1", "r1"])
+    calls = w.calls()
+    t1_reads = [(i, c.get("reply_ready")) for i, c in enumerate(calls) if c.get("dispatch") == "ctx_1" and c["argv"][:2] == ["orchestration", "worker-read"]]
+    t1_rel = [i for i, c in enumerate(calls) if c.get("dispatch") == "ctx_1" and c["argv"][:2] == ["orchestration", "worker-release"]]
+    S.ok("reply grace: transcript re-read until reply appeared", len(t1_reads) >= 2 and t1_reads[0][1] is False and t1_reads[-1][1] is True, "reads %r" % t1_reads)
+    S.ok("reply grace: worker-release waited until after the reply was read", bool(t1_rel) and bool(t1_reads) and t1_reads[-1][1] is True and t1_rel[0] > t1_reads[-1][0],
+         "reads %r, release %r" % (t1_reads, t1_rel))
+    r1_did = next((k for k, d in w.dispatches().items() if d["unit"] == "r1"), None)
+    r1_reads = [c for c in calls if r1_did and c.get("dispatch") == r1_did and c["argv"][:2] == ["orchestration", "worker-read"]]
+    S.eq("reply grace: reply already present adds zero extra polls", len(r1_reads), 1)
+    # A worker whose transcript never gets a reply line still fails after the grace, well before the worker limit.
+    w2 = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "garbled"}})
+    r2 = w2.run(root=root, FWX_RUN_IDLE_S="0.4", FWX_RUN_LIMIT_S="5")
+    m2 = line_of(r2)
+    S.ok("reply grace: garbled reply still fails after the grace",
+         r2.returncode == 1 and bool(m2) and m2.group(2) == "failed" and "executor did not return: T1" in m2.group(3),
+         "exit %d, got %r %r" % (r2.returncode, r2.stdout[-240:], r2.stderr[-200:]))
+    calls2 = w2.calls()
+    for did in ("ctx_1", "ctx_2"):
+        rt = [c["t"] for c in calls2 if c.get("dispatch") == did and c["argv"][:2] == ["orchestration", "worker-read"]]
+        relt = [c["t"] for c in calls2 if c.get("dispatch") == did and c["argv"][:2] == ["orchestration", "worker-release"]]
+        S.ok("reply grace: garbled %s waited the grace then released before limit" % did,
+             len(rt) >= 2 and bool(relt) and 0.3 <= relt[0] - rt[0] < 2.0,
+             "reads=%d, dt=%r" % (len(rt), round(relt[0] - rt[0], 2) if rt and relt else None))
+    S.ok("reply grace: garbled dispatches all released", bool(w2.dispatches()) and all(d["released"] for d in w2.dispatches().values()))
+
+
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
-         case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking]
+         case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -1038,6 +1079,9 @@ MUTANTS = [
     ("the status is sent as an escalation", case_steer, "lib/fwx/execute/orca.py", '"--type", "status"', '"--type", "escalation"', "a question reaches the orchestrator once"),
     ("factory plane accepts --orchestrator", case_steer_off, "lib/fwx/commands/wave.py", ' or got.get("--plane") == "factory"', "",
      "refusals: --plane factory: stderr explains the refusal (not usage)"),
+    ("a settled succeeded worker does not wait for its reply line", case_reply_grace, "lib/fwx/execute/run.py",
+     'if state == "succeeded" and not orca.REPLY_LINE.match(line):', "if False:",
+     "reply grace: delayed reply after worker_done finishes done"),
 ]
 
 
