@@ -152,6 +152,9 @@ def _document(prof, name, ppath):
         doc["project"]["worktree_setup"] = list(prof["worktree_setup"])
     if "check_timeout_s" in prof:  # likewise: without it the file is as it was and fwx applies its default (1200 s)
         doc["project"]["check_timeout_s"] = prof["check_timeout_s"]
+    if prof.get("repos"):  # likewise: a workspace without nested repos leaves the file as it was
+        doc["project"]["repos"] = {n: dict(r, default_branch=_default_branch(os.path.join(ppath, r["path"])))
+                                   for n, r in prof["repos"].items()}
     for key in ("rounds", "critique_rounds_unattended"):
         if key in section:
             doc[key] = section[key]
