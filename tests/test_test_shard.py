@@ -22,6 +22,9 @@ Controls (a copy of forge/testgroup.py changed in one place, the suite run on th
       FAIL: the suite job's matrix is exactly 1/4 .. 4/4, once each: got ['1/4', '2/4', '4/4'], want ['1/4', '2/4', '3/4', '4/4']
 Fix round of the review (each seen failing before the code, the 3 FAILs are in the commit message of the red test):
   FWX_SLOW_FIRST emptied: FAIL: FWX_SLOW_FIRST names the slow fwx files: () and the three slow files in shards [1, 1, 3]
+  (the 12-file rebalance, mutations on a copy, not kept:)
+  test_publish.py dropped from SLOW_FIRST: FAIL: SLOW_FIRST names 12 engine files: ... and FAIL: engine shards of 4: the 12 SLOW_FIRST files split [3, 3, 3, 3]: got [3, 3, 3, 2], want [3, 3, 3, 3]
+  test_wave_run.py dropped from FWX_SLOW_FIRST: FAIL: FWX_SLOW_FIRST names the 12 slowest fwx files: 11 and FAIL: the 12 FWX_SLOW_FIRST files split [4, 4, 4] across the 3 shards: got [4, 4, 3], want [4, 4, 4]
   the slice exemption removed (`and not shard`): FAIL: --shard 1/3 .. 3/3 with one declared and one undeclared 77: ...: got [0, 1, 1], want [0, 0, 77]
 """
 import os
@@ -149,24 +152,31 @@ eq("take_shard: the slices of any N are the whole list, once", sorted(f for n in
    sorted(order * 3))
 eq("take_shard: no shard asked for is the whole list", take_shard(order, None), order)
 
-# ---- the real engine suite: the two heavy files are not piled into one shard of 4 ----------------------------------------------------
-# tests/test_run.py runs 4 inner workers and hooks/test_guard_tool_use.py takes about six cores by itself: on a 4-CPU runner they were the
-# slowest shard of the whole check (the deal by SLOW_FIRST position put them both in shard 1 of 4). The list is the one `forge test` builds
-# (git ls-files "*test_*.py", without the fwx group, benchmarks and on-demand files).
+# ---- the real engine suite: the heavy files are spread over the 4 shards by their measured seconds -----------------------------------
+# A CI run printed every file's seconds: the old five-file SLOW_FIRST left shard 2/4 at 581 s (test_run 311 s + test_publish 109 s) and
+# shard 1/4 at 621 s, against 380 s for shard 4/4. The list is the one `forge test` builds (git ls-files "*test_*.py", without the fwx
+# group, benchmarks and on-demand files). The 12 slowest files are dealt round-robin, three to each of the 4 shards.
+# Seen failing on the code before the change (SLOW_FIRST of five files), the exact FAIL lines (8 FAIL of 120 checks with the fwx ones below):
+#   FAIL: engine shards of 4: the 4 heaviest files are in 4 different shards: got [1, 1, 2, 4], want [1, 2, 3, 4]
+#   FAIL: engine shards of 4: tests/test_run.py and tests/test_publish.py are in different shards: tests/test_run.py in shard 2, tests/test_publish.py in shard 2
+#   FAIL: SLOW_FIRST names 12 engine files: ('tests/test_switch.py', 'tests/test_run.py', 'tests/test_messages.py', 'tests/test_new.py', 'hooks/test_guard_tool_use.py')
+#   FAIL: engine shards of 4: the 12 SLOW_FIRST files split [3, 3, 3, 3]: got [2, 1, 1, 1], want [3, 3, 3, 3]
 real = [f for f in subprocess.run(["git", "-C", FORGE, "ls-files", "-z", "*test_*.py"], capture_output=True, text=True, check=True).stdout.split("\0")
         if f and os.path.basename(f).startswith("test_") and f.endswith(".py") and not f.startswith("benchmarks/")
         and not f.startswith(cli.FWX_PREFIX) and f not in cli.ON_DEMAND]
-HEAVY = ("tests/test_run.py", "hooks/test_guard_tool_use.py")
-ok("the engine's real list holds both heavy files (looking at zero is a failure)", all(f in real for f in HEAVY), repr([f for f in HEAVY if f not in real]))
+HEAVY4 = ("tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "tests/test_ask.py")
+PAIRS = (("tests/test_run.py", "tests/test_publish.py"), ("tests/test_run.py", "hooks/test_guard_tool_use.py"))
+ok("the engine's real list holds the heavy files (looking at zero is a failure)",
+   all(f in real for f in HEAVY4 + sum(PAIRS, ())), repr([f for f in HEAVY4 + sum(PAIRS, ()) if f not in real]))
 real_order = cli.start_order(real)
 real_home = {f: i for i in range(1, 5) for f in take_shard(real_order, (i, 4))}
-# FAIL before the change (SLOW_FIRST without the guard file, then it is dealt by size): see the commit message for the exact line.
-ok("engine shards of 4: test_run.py and test_guard_tool_use.py are in different shards", real_home.get(HEAVY[0]) != real_home.get(HEAVY[1]),
-   "both in shard %s" % real_home.get(HEAVY[0]))
-ok("hooks/test_guard_tool_use.py is in SLOW_FIRST", HEAVY[1] in cli.SLOW_FIRST, repr(cli.SLOW_FIRST))
-ok("engine shards of 4: no shard holds two of the SLOW_FIRST files bar one pair (5 slow files, 4 shards)",
-   sorted(sum(1 for f in take_shard(real_order, (i, 4)) if f in cli.SLOW_FIRST) for i in range(1, 5)) == [1, 1, 1, 2],
-   repr([[f for f in take_shard(real_order, (i, 4)) if f in cli.SLOW_FIRST] for i in range(1, 5)]))
+eq("engine shards of 4: the 4 heaviest files are in 4 different shards", sorted(real_home.get(f, 0) for f in HEAVY4), [1, 2, 3, 4])
+for a, b in PAIRS:
+    ok("engine shards of 4: %s and %s are in different shards" % (a, b), real_home.get(a) is not None and real_home.get(a) != real_home.get(b),
+       "%s in shard %s, %s in shard %s" % (a, real_home.get(a), b, real_home.get(b)))
+ok("SLOW_FIRST names 12 engine files", len(cli.SLOW_FIRST) == 12, repr(cli.SLOW_FIRST))
+eq("engine shards of 4: the 12 SLOW_FIRST files split [3, 3, 3, 3]",
+   [sum(1 for f in take_shard(real_order, (i, 4)) if f in cli.SLOW_FIRST) for i in range(1, 5)], [3, 3, 3, 3])
 
 # ---- each PASS line ends with the file's seconds, in both runners ---------------------------------------------------------------------
 # So the next balancing of the shards reads the times instead of guessing them. Before: FAIL: group PASS line ends with the seconds: got
@@ -200,20 +210,28 @@ ok("no group, the empty shard is a FAIL line", "FAIL  shard 9/9" in r.stdout, r.
 r = forge(grepo, "fwx", "--shard", "1/3", "--expect-not-run", "tests/test_g.py")
 eq("group, --expect-not-run names a file of another shard: it is a known file, not a typo: exit 0", r.returncode, 0)
 
-# ---- the real fwx suite: its three slow files are dealt to three different shards -------------------------------------------------------
-# The deal is by bytes unless the slow files are pinned first: replayed over the real files by size alone, test_walk and
-# test_ui_walk_workflow both land in shard 1 of 3 (the first FAIL below on the code before FWX_SLOW_FIRST existed).
+# ---- the real fwx suite: its 12 slowest files are dealt four to each of 3 shards -------------------------------------------------------
+# The deal is by bytes unless the slow files are pinned first. A CI run printed every file's seconds: with the old three-file
+# FWX_SLOW_FIRST shard 1/3 took 773 s, shard 2/3 583 s (test_wave_run 272 s + test_ui_walk_workflow 94 s) and shard 3/3 169 s.
+# Seen failing on the code before the change (FWX_SLOW_FIRST of three files), the exact FAIL lines:
+#   FAIL: FWX_SLOW_FIRST names the 12 slowest fwx files: 3
+#   FAIL: the three heaviest fwx files are in three different shards of 3: got [1, 1, 2], want [1, 2, 3]
+#   FAIL: test_wave_run.py and test_ui_walk_workflow.py are in different shards of 3: test_wave_run in shard 2, test_ui_walk_workflow in shard 2
+#   FAIL: the 12 FWX_SLOW_FIRST files split [4, 4, 4] across the 3 shards: got [1, 1, 1], want [4, 4, 4]
 fwx_root = os.path.join(FORGE, "plugins", "fwx")
 fwx_files = testgroup.test_files(fwx_root, env())
 slow = tuple(getattr(testgroup, "FWX_SLOW_FIRST", ()))
-WANT_SLOW = ("tests/test_walk.py", "tests/test_ui_walk_workflow.py", "tests/test_worktree_setup.py")
-ok("FWX_SLOW_FIRST names the slow fwx files", len(slow) == 3, repr(slow))
-eq("FWX_SLOW_FIRST is the three slowest fwx files, in this order (the execute suite is gone: test_worktree_setup took its place)", slow, WANT_SLOW)
+WANT_HEAVY3 = ("tests/test_wave_run.py", "tests/test_walk.py", "tests/test_wave_review.py")
+ok("FWX_SLOW_FIRST names the 12 slowest fwx files", len(slow) == 12, repr(len(slow)))
 ok("every FWX_SLOW_FIRST name is a tracked fwx test (a renamed file would leave the list stale)", all(f in fwx_files for f in slow), repr(slow))
 deal = testgroup.start_order(fwx_files, fwx_root) if hasattr(testgroup, "start_order") else sorted(
     fwx_files, key=lambda f: (-os.path.getsize(os.path.join(fwx_root, f)), f))
 home = {f: i for i in range(1, 4) for f in take_shard(deal, (i, 3))}
-eq("the three slow fwx files are in three different shards of 3", sorted(home.get(f, 0) for f in WANT_SLOW), [1, 2, 3])
+eq("the three heaviest fwx files are in three different shards of 3", sorted(home.get(f, 0) for f in WANT_HEAVY3), [1, 2, 3])
+ok("test_wave_run.py and test_ui_walk_workflow.py are in different shards of 3", home.get("tests/test_wave_run.py") is not None
+   and home.get("tests/test_wave_run.py") != home.get("tests/test_ui_walk_workflow.py"),
+   "test_wave_run in shard %s, test_ui_walk_workflow in shard %s" % (home.get("tests/test_wave_run.py"), home.get("tests/test_ui_walk_workflow.py")))
+eq("the 12 FWX_SLOW_FIRST files split [4, 4, 4] across the 3 shards", [sum(1 for f in take_shard(deal, (i, 3)) if f in slow) for i in (1, 2, 3)], [4, 4, 4])
 eq("the fwx shards of 3 together are every file, once", sorted(f for i in (1, 2, 3) for f in take_shard(deal, (i, 3))), sorted(fwx_files))
 
 # ---- a shard that holds only declared files, and one with an undeclared exit 77 --------------------------------------------------------

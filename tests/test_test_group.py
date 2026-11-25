@@ -523,13 +523,14 @@ for label, args in (("--jobs 0", ("--jobs", "0")), ("--jobs abc", ("--jobs", "ab
 # ---- --jobs N start order: the slow files first, then the largest ---------------------------------------------------------------
 # Written first and run on the code before start_order existed (the one FAIL it printed):
 #   FAIL: start order: ...: AttributeError: module 'forge.cli' has no attribute 'start_order'
+# Seen red on the five-file SLOW_FIRST order (test_switch before test_run): FAIL: start order: ...: got ['tests/test_switch.py', 'tests/test_run.py', ...], want ['tests/test_run.py', 'tests/test_switch.py', ...]
 # Control (SLOW_FIRST emptied in a copy of forge/cli.py): FAIL: start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name
 from forge import cli  # noqa: E402
 
 eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name",
    cli.start_order(["hooks/test_guard_tool_use.py", "tests/test_new.py", "tests/test_nosuch.py", "tests/test_switch.py", "tests/test_run.py",
                     "tests/test_lib.py"]),
-   ["tests/test_switch.py", "tests/test_run.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
+   ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
 # The default width of the run with no group: min(4, CPUs), 1 where the count is unknown; the real count is swapped out for the check.
 # The CPUs are the ones this process may use (sched_getaffinity: a taskset, a container's cpuset), the host's count where that call does not exist.
 real_count, real_affinity = os.cpu_count, getattr(os, "sched_getaffinity", None)
