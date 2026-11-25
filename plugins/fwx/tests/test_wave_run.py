@@ -25,6 +25,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -644,15 +645,19 @@ def case_terminal(root, S):
 def case_terminal_resume(root, S):
     """A resumed run uses the terminal its state names while it is live, makes a new one when Orca lost it, and closes it at the end.
     Orca answers `terminal show` of a closed handle ok with `terminal.orphaned: true`, not an error. Seen red on code that read only an error as gone:
-    FAIL: terminal resume (gone): terminals made: got 1, want 2."""
+    FAIL: terminal resume (gone): terminals made: got 1, want 2.
+    The same FAIL came on CI (PR 252, shard 3/3) from a race older than that PR: `p.kill()` killed only fwx, and a fake orca call of its poll still in flight
+    saved the `state.json` it had read before the `open: False` edit below, so the resumed run found its terminal open again. With a fake whose `worker-show`
+    sleeps 0.25 s before it saves, on master f97847b: FAIL: terminal resume (gone): terminals made: got 1, want 2 (2 runs of 4, and 6 of 6 clean with the group kill). Killing the process group
+    ends the in-flight fake with fwx."""
     for name, lose in (("live", False), ("gone", True)):
         w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
-        p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
         w.procs.append(p)
         end = time.time() + 20
         while time.time() < end and not (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())):
             time.sleep(0.1)
-        p.kill()
+        os.killpg(p.pid, signal.SIGKILL)  # the whole group: a fake orca of the run still in flight would save its stale state.json after the edit below
         p.wait()
         run = w.runs()[0] if w.runs() else ""
         first = (w.state(run).get("terminal") if run else None) or ""
