@@ -285,6 +285,12 @@ def main():
     for name, (text, flags) in need.items():
         given = set().union(*run_flags(text)) if run_flags(text) else set()
         check("%s runs `fwx wave run` with %s" % (name, " and ".join(sorted(flags))), flags <= given, "its run commands carry %s" % sorted(given))
+    # Orchestrator steering: the session starts every run with `--orchestrator` (its own chat) and says how a forwarded question is answered. Seen red on the text before:
+    #   FAIL: step 5 starts `fwx wave run` with --orchestrator and says how a forwarded question is answered -> missing ['--orchestrator', 'orca_session_id:$ORCA_AGENT_SESSION_ID', ...]
+    def steering(text):
+        return [w for w in ("--orchestrator", "orca_session_id:$ORCA_AGENT_SESSION_ID", "orca orchestration send --to dispatch:<D>", "taste or direction") if w not in text]
+    check("step 5 starts `fwx wave run` with --orchestrator and says how a forwarded question is answered", not steering(s5) and any("--orchestrator" in f for f in run_flags(s5)), "missing %s" % steering(s5))
+    check("control: a step 5 without the flag is caught", bool(steering("5. **Execute a part.** Run `fwx wave run --part-dir <part> --plane session --branch <branch>`.")))
     fields = set(wave_review._result("done", "r1")) | set(wave_report._result("merge"))
     cited_fields = result_fields(s5)
     check("step 5 reads the leftovers from fields the run's own files have", len(cited_fields) >= 3 and set(cited_fields) <= fields, "cites %s, the files have %s" % (cited_fields, sorted(fields)))

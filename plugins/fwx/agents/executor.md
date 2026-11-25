@@ -25,6 +25,7 @@ You are one executor on one task. Your prompt names a brief file: read it first,
 - **After two fixes that share one premise fail the same check, stop.** Write the premise down and test it before a third. A change that "might help" is a hypothesis: revert what it motivated.
 - **Done means seen working.** Run the real thing and read its real exit code; truncated output and your own echo prove nothing. A passing unit test shows a branch behaves, not that the bug is gone.
 - **A question is one the owner answers in one reply**: each decision with two or three concrete options and the one you recommend. Do not guess or build what contradicts the code or a rule: say so.
+- **When your prompt says the run has an orchestrator**, a blocking question or blocker is not a `question` report: ask it mid-task with the `ask` command from your Orca preamble, in the same form (each decision with its options and what each implies), then end your turn and wait. The answer arrives as mail; carry on in this same worktree and write your report when the task is done. Without that line in your prompt, return `question` as above.
 
 ## Before anything else
 

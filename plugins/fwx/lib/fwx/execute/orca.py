@@ -13,6 +13,8 @@ This is the one module that starts a worker, the seam 01-factory adds `claude -p
     because with those variables gone Orca has no sender for them (`no_active_sender_terminal`; `orchestration send` takes `--from` too, fwx sends none,
     the workers do from their own terminals; worker-show, -read, -stop and -release take none); the workers' `worker_done` go to the run's inbox, not to any chat;
   - `repo` is added once, and not at all when `orca repo list` already shows the checkout.
+  - with an orchestrator (`--orchestrator`), a worker's question is read with `check --peek --types question,escalation` and what the run tells the orchestrator is one
+    `status` message from the run's terminal (`peek_questions`, `send_status`); the orchestrator answers a worker with `send --to dispatch:<id>`, which wakes it.
 
 `prepare_worker` is the part of a start that is fwx's: the worktree holds a copy of the main checkout's `.claude/settings.local.json` with
 `env.FORCE_PROMPT_CACHING_5M` `1` merged in (a worker is a top-level session and writes its cache at one hour without it; `worker-start`
@@ -175,6 +177,29 @@ def start(run, spec_file, model, worktree, sender):
 
 def show(dispatch):
     return result("orchestration", "worker-show", "--dispatch", dispatch)
+
+
+def _messages(node):
+    """The messages (dicts with a string `id` and `type`) of an answer, wherever Orca nests them."""
+    if isinstance(node, list) and node and all(isinstance(x, dict) and isinstance(x.get("id"), str) and isinstance(x.get("type"), str) for x in node):
+        return node
+    for v in (node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()):
+        found = _messages(v)
+        if found:
+            return found
+    return []
+
+
+def peek_questions(term, run):
+    """The unread `question` and `escalation` mail of the run's inbox, as Orca lists it (`--peek` marks nothing read, so a worker's routine
+    `worker_done` mail stays unread beside it: Orca 1.4.273, live probe; `--peek` and `--all` cannot be combined)."""
+    return _messages(result("orchestration", "check", "--terminal", term, "--run", run, "--peek", "--types", "question,escalation"))
+
+
+def send_status(term, to, subject, body_file):
+    """One `status` message from the run's terminal to `to` (an `orca_session_id:<uuid>` chat): it wakes that chat. An `escalation` from the run's
+    terminal is refused (`sender_not_assignee`), a status is not."""
+    result("orchestration", "send", "--from", term, "--to", to, "--type", "status", "--subject", subject, "--body-file", body_file)
 
 
 def last_text(dispatch):
