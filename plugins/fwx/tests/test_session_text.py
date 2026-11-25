@@ -263,8 +263,20 @@ def main():
     old_prepare = mentions(session_texts, "wave new")
     check("the session runs no `fwx wave new`: `fwx wave run` prepares the part itself", not old_prepare, where(old_prepare))
     s5, s6 = step(skill, 5), step(skill, 6)
-    check("step 5 runs `fwx wave run` in the background", bool(run_flags(s5)) and "run_in_background" in s5, "run commands %s, run_in_background %s" % (run_flags(s5), "run_in_background" in s5))
-    check("control: a step 5 with no background run is caught", not ("run_in_background" in "5. **Execute a part.** Run `fwx wave run --part-dir <part>` and wait."))
+    # The owner wants every `fwx wave run` visible in Orca: with Orca answering, step 5 starts it in its own terminal (not focused, titled after
+    # the part) and follows it with `fwx wave list`; without Orca it is still a background run. Seen red on the text before this rule:
+    #   FAIL: step 5 starts `fwx wave run` in its own Orca terminal when Orca answers, else in the background -> run commands [...], missing ['runtimeReachable', 'orca terminal create', '--title'], run_in_background True, never --focus False
+    #   FAIL: no text still tells the session to run `fwx wave run` "in the background" (steps 5 and 6 and ui-review.md point at step 5) -> [('SKILL.md', 49), ('SKILL.md', 52), ('ui-review.md', 10)]
+    def wave_in_terminal(text):
+        return [w for w in ("runtimeReachable", "orca terminal create", "--title", "fwx wave list") if w not in text]
+    check("step 5 starts `fwx wave run` in its own Orca terminal when Orca answers, else in the background",
+          bool(run_flags(s5)) and not wave_in_terminal(s5) and "run_in_background" in s5 and "--focus`" in s5 and "never `--focus`" in s5,
+          "run commands %s, missing %s, run_in_background %s, never --focus %s" % (run_flags(s5), wave_in_terminal(s5), "run_in_background" in s5, "never `--focus`" in s5))
+    check("control: a step 5 with only a background run is caught",
+          bool(wave_in_terminal("5. **Execute a part.** Run `fwx wave run --part-dir <part>` with `run_in_background`.")))
+    stale = [(os.path.basename(n), k) for n, t in texts.items() for k, l in enumerate(t.splitlines(), 1) if "wave run" in l and "in the background" in l]
+    check("no text still tells the session to run `fwx wave run` \"in the background\" (steps 5 and 6 and ui-review.md point at step 5)", not stale, "%s" % stale)
+    check("control: a line that says it is caught", bool([1 for l in ["run `fwx wave run ... --fix f` in the background"] if "wave run" in l and "in the background" in l]))
     accepted = set(re.findall(r"--[a-z-]+", wave_cmd.RUN_USAGE))
     named = {f for text in texts.values() for flags in run_flags(text) for f in flags}
     check("every flag of a `fwx wave run` the texts give is one `wave run` takes", named <= accepted and len(named) >= 6, "named %s, not taken: %s" % (sorted(named), sorted(named - accepted)))
@@ -273,6 +285,12 @@ def main():
     for name, (text, flags) in need.items():
         given = set().union(*run_flags(text)) if run_flags(text) else set()
         check("%s runs `fwx wave run` with %s" % (name, " and ".join(sorted(flags))), flags <= given, "its run commands carry %s" % sorted(given))
+    # Orchestrator steering: the session starts every run with `--orchestrator` (its own chat) and says how a forwarded question is answered. Seen red on the text before:
+    #   FAIL: step 5 starts `fwx wave run` with --orchestrator and says how a forwarded question is answered -> missing ['--orchestrator', 'orca_session_id:$ORCA_AGENT_SESSION_ID', ...]
+    def steering(text):
+        return [w for w in ("--orchestrator", "orca_session_id:$ORCA_AGENT_SESSION_ID", "orca orchestration send --to dispatch:<D>", "taste or direction") if w not in text]
+    check("step 5 starts `fwx wave run` with --orchestrator and says how a forwarded question is answered", not steering(s5) and any("--orchestrator" in f for f in run_flags(s5)), "missing %s" % steering(s5))
+    check("control: a step 5 without the flag is caught", bool(steering("5. **Execute a part.** Run `fwx wave run --part-dir <part> --plane session --branch <branch>`.")))
     fields = set(wave_review._result("done", "r1")) | set(wave_report._result("merge"))
     cited_fields = result_fields(s5)
     check("step 5 reads the leftovers from fields the run's own files have", len(cited_fields) >= 3 and set(cited_fields) <= fields, "cites %s, the files have %s" % (cited_fields, sorted(fields)))
@@ -298,6 +316,13 @@ def main():
     claims_none = [n for n, t in agents.items() if re.search(r"no brief file|their prompt is the brief", t)]
     check("no agent says it has no brief file", not claims_none, "still says it in %s" % claims_none)
     check("control: an agent text that says 'there is no brief file' is caught", bool(re.search(r"no brief file", "Your prompt is your brief, there is no brief file")))
+    # The owner talks only to the orchestrator: a worker's question goes to it, never to him. Seen red on the texts before:
+    #   FAIL: workers never address the owner: step 5 and executor.md say so -> missing ['SKILL.md step 5', 'executor.md']
+    said = {"SKILL.md step 5": "Workers never address the owner", "executor.md": "goes to the orchestrator (the coordinator), never to the owner"}
+    texts_of = {"SKILL.md step 5": s5, "executor.md": agents["executor"]}
+    missing = [k for k, v in said.items() if v not in texts_of[k]]
+    check("workers never address the owner: step 5 and executor.md say so", not missing, "missing %s" % missing)
+    check("control: a text without the sentence is caught", "Workers never address the owner" not in "5. **Execute a part.** The worker waits for the answer.")
     unread = [n for n in ("reviewer", "security-reviewer", "review-verifier") if "names a brief file" not in agents[n]]
     check("the reviewers and the verifier read the brief file their prompt names", not unread, "no 'names a brief file' in %s" % unread)
     reply = re.search(r"`(verdicts <report path>)`", agents["review-verifier"])

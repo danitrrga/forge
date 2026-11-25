@@ -12,7 +12,12 @@ agent waiting on a prompt), `hang` (never ends), `later` (running until the test
 that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
 in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `discover_after: N` makes Orca discover a worktree only after N `worktree show` calls on its path (the first N answer `selector_not_found`, as Orca 1.4.273 does for a worktree made with git that it has not
 found yet), and `start_not_found: M` makes the first M `worker-start`s on a worktree answer `selector_not_found` even when `show` knows it; with `discover_after` set, `worker-start` on a worktree that is not yet discovered answers `selector_not_found`
-too (neither set: every worktree is known at once, as before). `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
+too (neither set: every worktree is known at once, as before).
+Orchestrator steering (Orca 1.4.273, live probe): a worker's `worker_done` and a worker's `question` land in the run's inbox (`state.json["inbox"]`); `orchestration check
+--terminal T --run R --peek [--types a,b]` lists the unread ones of that run (only those types when `--types` is given) and never marks them read, `--peek` with `--all` is refused, a
+check with neither consumes; `send --type escalation` from a run's terminal is refused (`sender_not_assignee`), `--type status` to `orca_session_id:<uuid>` lands in `state.json["chat"]`
+(`behave["status_fail"]` refuses it); mode `ask` (`{mode: ask, question}`) posts a `question` and parks the worker (ready, idle, not waiting on a person), and a `send` to its `dispatch:<id>`
+wakes it: it works (running, activity working, for one `worker-show`), commits, posts its `worker_done` and settles. `merge: <unit>` makes a resolver merge that unit's branch. `reply_delay: S` keeps a `succeeded` worker's reply line out of `worker-read` for `S` seconds after its first `succeeded` `worker-show` (and drops it if `worker-release` runs early). The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
 """
 import json
 import os
@@ -90,16 +95,16 @@ def commit(wt, files, message, trailers):
     git(wt, "commit", "-q", "-m", message + "\n\n" + "\n".join(trailers))
 
 
-def play(behave, wt, marker, launch):
+def play(behave, wt, marker, launch, force=None):
     """What the worker does and says: (reply, mode, spec)."""
     role, run, unit = marker["role"], marker["run"], marker["unit"]
     spec = mode_of(behave, unit, launch)
-    mode = spec.get("mode", "ok")
+    mode = force or spec.get("mode", "ok")
     folder = scratch(wt, run, unit)
     report = os.path.join(folder, "report.json")
     if mode == "garbled":
         return "I could not finish this one", mode, spec
-    if mode in ("hang", "wait", "wait-unknown", "wait-absent", "showfail"):
+    if mode in ("hang", "wait", "wait-unknown", "wait-absent", "showfail", "ask"):
         return "", mode, spec
     if role == "executor" and mode in ("failed-report", "question", "bad-outside"):  # no commit: the report is all there is
         rep = {"failed-report": {"status": "failed", "reason": "could not do it"}, "question": {"status": "question", "question": "which one do you mean?"},
@@ -140,6 +145,15 @@ def shape(d):
         return {"state": "succeeded", "stage": "settled"}
     if mode == "fail":
         return {"state": "failed", "stage": "settled"}
+    if mode == "ask":  # the worker asked and ended its turn: ready and idle, not waiting on a person (optional pre-park shapes first)
+        pre = d.get("before_park") or []
+        if d.get("shows", 0) <= len(pre):
+            return pre[max(0, d.get("shows", 1) - 1)]
+        return {"state": "ready", "stage": "input_accepted", "activity": "idle", "waitingOnHuman": False}
+    if mode == "woken":  # answered: working for one show, then done
+        return {"state": "succeeded", "stage": "settled"} if d.get("shows", 0) >= 2 else {"state": "running", "stage": "working", "activity": "working"}
+    if mode == "woken-hang":  # answered: stays working forever
+        return {"state": "running", "stage": "working", "activity": "working"}
     if mode == "later":
         return {"state": "succeeded", "stage": "settled"} if os.path.exists(os.path.join(DIR, "go-" + d["unit"])) else {"state": "running", "stage": "working"}
     if mode == "idle":
@@ -151,6 +165,16 @@ def shape(d):
     if mode == "wait-absent":
         return {"state": "ready", "stage": "input_accepted", "activity": "idle"}
     return {"state": "running", "stage": "working"}
+
+
+def post(state, **m):
+    """A message in the inbox of Orca run `m["run"]`."""
+    state["msgs"] = state.get("msgs", 0) + 1
+    state.setdefault("inbox", []).append(dict({"id": "msg_%d" % state["msgs"], "handled": False, "body": "", "subject": "", "from": "", "to": "", "payload": {}}, **m))
+
+
+def shown(m):
+    return {k: m[k] for k in ("id", "type", "from", "to", "subject", "handled", "body", "payload")}
 
 
 def main(argv):
@@ -217,8 +241,47 @@ def main(argv):
         return sender
 
     if argv[:2] == ["orchestration", "send"]:
-        done_log(sender=need_sender())
+        sender = need_sender()
+        to, typ, subject = flag(argv, "--to"), flag(argv, "--type"), flag(argv, "--subject")
+        body = flag(argv, "--body")
+        if body is None and flag(argv, "--body-file"):
+            with open(flag(argv, "--body-file"), encoding="utf-8") as f:
+                body = f.read()
+        sent = {"to": to, "type": typ, "subject": subject, "body": body}
+        if typ == "escalation" and sender is not None:  # Orca 1.4.273: only the worker a task was dispatched to may escalate; a run's terminal is nobody's assignee
+            done_log(sender=sender, send=sent, refused="sender_not_assignee")
+            say(rc=1, error={"code": "sender_not_assignee", "message": "only the assignee of a dispatched task may send an escalation"})
+        if (to or "").startswith("orca_session_id:"):
+            if behave.get("status_fail"):
+                done_log(sender=sender, send=sent, refused="status_fail")
+                say(rc=1, error={"code": "unavailable", "message": "the chat of %s cannot be reached" % to})
+            state.setdefault("chat", []).append(dict(sent, **{"from": sender}))
+        d = state["dispatches"].get(to[len("dispatch:"):]) if (to or "").startswith("dispatch:") else None
+        if d and d["mode"] == "ask":  # a worker parked on `ask` is woken by mail to its dispatch: it carries on and finishes (or hangs when after_answer is "hang")
+            if d.get("after_answer") == "hang":
+                d.update(mode="woken-hang", answered=body, shows=0)
+            else:
+                marker = load_abs(os.path.join(git(d["worktree"], "rev-parse", "--absolute-git-dir").stdout.strip(), "fwx-worker.json"))
+                reply, _, _ = play(behave, d["worktree"], marker, d["launch"], "ok")
+                d.update(reply=reply, mode="woken", answered=body, shows=0)
+                post(state, run=d["orca_run"], type="worker_done", subject="done " + d["unit"], to="run:" + str(d["orca_run"]), payload={"dispatchId": to[len("dispatch:"):]})
+        done_log(sender=sender, send=sent)
         say({"sent": True})
+    if argv[:2] == ["orchestration", "check"]:
+        term = flag(argv, "--terminal")
+        if "--peek" in argv and "--all" in argv:
+            done_log(refused="invalid_argument")
+            say(rc=1, error={"code": "invalid_argument", "message": "--peek and --all cannot be combined"})
+        if term is not None and not state.setdefault("terminals", {}).get(term, {}).get("open"):
+            done_log(refused="terminal_not_found")
+            say(rc=1, error={"code": "terminal_not_found", "message": "no live terminal %s" % term})
+        types = flag(argv, "--types")
+        rows = [m for m in state.get("inbox", []) if m["run"] == flag(argv, "--run") and (("--all" in argv) or not m["handled"]) and (not types or m["type"] in types.split(","))]
+        if "--peek" not in argv and "--all" not in argv:
+            for m in rows:
+                m["handled"] = True
+        done_log(check={"peek": "--peek" in argv, "types": types, "ids": [m["id"] for m in rows]})
+        say({"messages": [shown(m) for m in rows]})
     if argv[:2] == ["orchestration", "run-create"]:
         sender = need_sender()
         state["runs"] += 1
@@ -262,7 +325,14 @@ def main(argv):
         state["launches"][key] = launch = state["launches"].get(key, 0) + 1
         reply, mode, pspec = play(behave, wt, marker, launch) if marker else ("", "hang", {})
         state["dispatches"][did] = {"unit": unit, "mode": mode, "state": "running", "reply": reply, "worktree": wt, "released": False,
-                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing")}
+                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing"), "reply_delay": pspec.get("reply_delay", 0),
+                                    "settled_at": None, "launch": launch, "orca_run": flag(argv, "--run"),
+                                    "before_park": pspec.get("before_park"), "after_answer": pspec.get("after_answer")}
+        if mode == "ask":
+            post(state, run=flag(argv, "--run"), type="question", subject="Question", body=pspec.get("question", "which one?"), to="run:" + str(flag(argv, "--run")),
+                 payload={"dispatchId": did})
+        elif mode in ("ok", "bad-outside", "failed-report", "question"):
+            post(state, run=flag(argv, "--run"), type="worker_done", subject="done " + unit, to="run:" + str(flag(argv, "--run")), payload={"dispatchId": did})
         done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings, "settings_mode": fmode,
                         "status": git(wt, "status", "--porcelain").stdout, "head": git(wt, "rev-parse", "HEAD").stdout.strip(),
                         "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"), "sender": sender,
@@ -273,14 +343,22 @@ def main(argv):
         done_log(dispatch=flag(argv, "--dispatch"))
         if d is None or d["mode"] == "showfail":
             say(rc=1, error={"code": "unavailable", "message": "worker-show failed"})
-        say(dict(shape(d), dispatchId=flag(argv, "--dispatch"), liveness="alive"))
+        d["shows"] = d.get("shows", 0) + 1
+        sh = shape(d)
+        if sh.get("state") == "succeeded" and d.get("settled_at") is None:
+            d["settled_at"] = time.time()
+        say(dict(sh, dispatchId=flag(argv, "--dispatch"), liveness="alive"))
     if argv[:2] == ["orchestration", "worker-read"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
         cur = flag(argv, "--cursor")
-        done_log(dispatch=flag(argv, "--dispatch"), cursor=cur)
+        delay = (d or {}).get("reply_delay") or 0
+        settled_at = (d or {}).get("settled_at")
+        ready = (not delay) or (settled_at is not None and not (d or {}).get("released") and time.time() - settled_at >= delay)
+        done_log(dispatch=flag(argv, "--dispatch"), cursor=cur, reply_ready=ready)
         user = {"role": "user", "blocks": [{"type": "text", "text": "the spec"}]}
-        asst = [{"role": "assistant", "blocks": [{"type": "text", "text": "working\n" + (d or {}).get("reply", "")}]}]
-        if (d or {}).get("trailing"):
+        text = ("working\n" + (d or {}).get("reply", "")) if ready else "working"
+        asst = [{"role": "assistant", "blocks": [{"type": "text", "text": text}]}]
+        if ready and (d or {}).get("trailing"):
             asst.append({"role": "assistant", "blocks": [{"type": "text", "text": d["trailing"]}]})
         if cur == "cur-end":
             msgs, nxt, limited = [], "cur-end", False

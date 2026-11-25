@@ -12,7 +12,9 @@ written. A base that ran green is recorded as an `evidence` row of the part, and
 reuses it. `--from gate` is the way back
 into the checks once every task is on the phase branch (the tree's n_C7F loops to n_C7): execute/prepare.py says what it changes.
 
-`wave run` takes the flags of `wave new` (or `--resume R`), prepares the part in process, exits as `wave new` does (1, 77, 2) before it
+`wave run` takes the flags of `wave new` (or `--resume R`) and `--orchestrator orca_session_id:<uuid>` (the chat that started it: the run sends it each worker's question
+and escalation, one line per wave and one at the end, and the chat answers a worker with `orca orchestration send --to dispatch:<D>`; saved with the run, accepted again
+on `--resume` to refresh it, refused with `--plane factory` and `--unattended`; execute/run.py says how), prepares the part in process, exits as `wave new` does (1, 77, 2) before it
 starts anyone, then drives the part to its end with every agent an Orca worker (execute/run.py says how, execute/orca.py is the one module that
 talks to Orca) and prints one line, `run <R> <done|failed|needs-owner>: <why>`, exit 0, 1 and 3 for the three; it exits 2 when a live run already
 holds the branch (naming it and `--resume`) and when there is no base context to give a worker. `wave list` prints one line per run (id, part,
@@ -76,7 +78,7 @@ from fwx.execute import base, cleanup, integrate, prepare as prep, report, revie
 PREPARE_USAGE = ("usage: fwx wave new --part-dir D --plane session|factory --branch W [--unattended] [--security] "
                  "[--fix F] [--revert IDS] [--control-findings F] [--from gate]\n")
 RUN_USAGE = ("usage: fwx wave run --part-dir D --plane session|factory --branch W [--unattended] [--security] [--fix F] [--revert IDS] "
-             "[--control-findings F] [--from gate]   |   fwx wave run --resume R\n")
+             "[--control-findings F] [--from gate] [--orchestrator orca_session_id:<uuid>]   |   fwx wave run --resume R [--orchestrator orca_session_id:<uuid>]\n")
 LIST_USAGE = "usage: fwx wave list\n"
 CHECK_USAGE = "usage: fwx base <sha> [--worktree P]   (sha: 7 to 40 hex digits)\n"
 SETUP_USAGE = "usage: fwx wave setup [--force]\n"
@@ -92,6 +94,7 @@ USAGES = {
     "findings": "usage: fwx wave findings --run R (--report \"<last line of a reviewer's reply>\"... | --verdicts \"<last line of the verifier's reply>\") [--control-findings F]\n",
 }
 _RUN_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_ORCHESTRATOR = re.compile(r"orca_session_id:[0-9A-Za-z][0-9A-Za-z-]*\Z")
 
 
 def _parse(argv, flags, valued, many=()):
@@ -163,11 +166,18 @@ def do_prepare(argv):
 def do_run(argv):
     """`wave run`: the flags of `wave new`, or `--resume R`. Exit 0 a run that ended done, 1 failed, 3 needs-owner (its line on stdout);
     before any worker: what `wave new` exits with (1 a red base, 77 a base check out of time, 2 a refusal), and 2 for a live run on the branch."""
-    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from", "--resume"))
+    parsed = _parse(argv, ("--unattended", "--security"), ("--part-dir", "--plane", "--branch", "--fix", "--revert", "--control-findings", "--from", "--resume", "--orchestrator"))
     if parsed is None or parsed[1] or ("--resume" not in parsed[0] and any(k not in parsed[0] for k in ("--part-dir", "--plane", "--branch"))):
         sys.stderr.write(RUN_USAGE)
         return 2
     got = parsed[0]
+    orch = got.get("--orchestrator")
+    if orch is not None and not _ORCHESTRATOR.match(orch):
+        sys.stderr.write("fwx wave run: --orchestrator takes orca_session_id:<uuid> (the address of the chat that starts the run), not %r\n" % orch)
+        return 2
+    if orch and ("--unattended" in got or got.get("--plane") == "factory"):
+        sys.stderr.write("fwx wave run: --orchestrator is for the session plane with its owner present: a factory or unattended run has nobody to steer it\n")
+        return 2
 
     def say(line):
         sys.stderr.write("fwx wave run: %s\n" % line)
@@ -182,6 +192,8 @@ def do_run(argv):
             saved = run_mod.load_state(top, got["--resume"])
             if saved["state"] != "active":
                 raise base.WaveError("run %s ended %s: there is nothing to resume" % (saved["run"], saved["state"]))
+            if orch and (saved["args"].get("plane") == "factory" or saved["args"].get("unattended")):
+                raise base.WaveError("--orchestrator: run %s is a factory or unattended run, which has nobody to steer it" % saved["run"])
         branch = saved["branch"] if saved else got["--branch"]
         if saved:  # `prepare` refuses a checkout that is not on the branch for a new run; a resumed run merges into whatever is checked out
             on = base.out(top, "symbolic-ref", "--short", "-q", "HEAD")
@@ -198,12 +210,14 @@ def do_run(argv):
         lock = run_mod.lock_branch(top, branch)  # held to the end of the process: a second command that passed the check above before this run was recorded stops here
         if saved:
             args, flags = saved["args"], saved["flags"]
+            if orch:  # a resumed run goes on to the address given now: the session that started it may be another chat
+                flags["orchestrator"] = orch
         else:
             code, args = prepared(got, lambda line: sys.stderr.write("fwx wave new: %s\n" % line))
             if code:
                 return code
             ctrl = got.get("--control-findings")
-            flags = {"control": os.path.abspath(ctrl) if ctrl else None}
+            flags = {"control": os.path.abspath(ctrl) if ctrl else None, "orchestrator": orch}
         status, line, kept = run_mod.drive(args, top, flags, saved)
     except (base.WaveError, config.ConfigError, state.StateError) as e:
         sys.stderr.write("fwx wave run: %s\n" % e)
