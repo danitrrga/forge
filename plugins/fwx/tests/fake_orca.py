@@ -169,6 +169,10 @@ def main(argv):
         state.setdefault("terminals", {})[handle] = {"title": flag(argv, "--title"), "worktree": flag(argv, "--worktree"), "open": True}
         done_log(terminal=handle)
         say({"terminal": {"handle": handle, "title": flag(argv, "--title"), "worktree": flag(argv, "--worktree")}})
+    if argv[:2] == ["terminal", "show"] and flag(argv, "--terminal") in state.get("terminals", {}) and not state["terminals"][flag(argv, "--terminal")]["open"]:
+        term = state["terminals"][flag(argv, "--terminal")]  # a closed handle is not an error in Orca 1.4.273: ok, with `orphaned: true`
+        done_log(terminal=flag(argv, "--terminal"), orphaned=True)
+        say({"terminal": {"handle": flag(argv, "--terminal"), "title": term["title"], "worktreePath": term["worktree"], "orphaned": True}})
     if argv[:2] in (["terminal", "show"], ["terminal", "close"]):
         handle = flag(argv, "--terminal")
         term = state.setdefault("terminals", {}).get(handle)

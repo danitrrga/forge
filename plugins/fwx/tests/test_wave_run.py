@@ -599,7 +599,9 @@ def case_terminal(root, S):
 
 
 def case_terminal_resume(root, S):
-    """A resumed run uses the terminal its state names while it is live, makes a new one when Orca lost it, and closes it at the end."""
+    """A resumed run uses the terminal its state names while it is live, makes a new one when Orca lost it, and closes it at the end.
+    Orca answers `terminal show` of a closed handle ok with `terminal.orphaned: true`, not an error. Seen red on code that read only an error as gone:
+    FAIL: terminal resume (gone): terminals made: got 1, want 2."""
     for name, lose in (("live", False), ("gone", True)):
         w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
         p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)

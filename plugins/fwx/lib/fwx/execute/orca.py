@@ -109,11 +109,13 @@ def terminal_create(path, title):
 
 
 def terminal_alive(handle):
+    """Whether Orca still has the terminal: a closed handle is not an error, `show` answers ok with `terminal.orphaned: true` (Orca 1.4.273)."""
     try:
-        result("terminal", "show", "--terminal", handle)
+        got = result("terminal", "show", "--terminal", handle)
     except OrcaError:
         return False
-    return True
+    term = got.get("terminal")
+    return isinstance(term, dict) and term.get("orphaned") is not True
 
 
 def terminal_close(handle):
