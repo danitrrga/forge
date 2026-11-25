@@ -96,10 +96,18 @@ class Scene:
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
 
     def __init__(self, tasks=None, recipe=("true",), base_ref="head", security=False, wt=True, config=None, size="normal",
-                 sub=False, settings=None, user=None, plan_extra=None, postmortem=True):
-        self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n.claude/\nconfig/forge.json\n",
-                                      "src/a.py": "a\n", "src/b.py": "b\n"})
+                 sub=False, settings=None, user=None, plan_extra=None, postmortem=True, nested=None, part_repo="first"):
+        """`nested` is {repo name: its checks}: git repositories inside the workspace's folder, ignored by it, each declared in
+        `project.repos`; the part works in `part_repo` (the first one unless told, None for the workspace itself) and `cwd` is that
+        repo's phase worktree under the workspace's `.claude/worktrees/`."""
+        ignore = ".fwx/\n.claude/\nconfig/forge.json\n" + "".join("%s/\n" % n for n in nested or {})
+        self.repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ignore, "src/a.py": "a\n", "src/b.py": "b\n"})
+        self.nested = {n: self.nested_repo(n) for n in nested or {}}
+        self.part_repo = next(iter(self.nested), None) if part_repo == "first" else part_repo
+        self.code = self.nested[self.part_repo] if self.part_repo else self.repo
         cfg = {"schema": 1, "project": {"checks": list(recipe)}}
+        if nested:
+            cfg["project"]["repos"] = {n: {"path": n, "checks": list(c)} for n, c in nested.items()}
         cfg.update(config or {})
         helpers.write(self.repo, ".claude/fwx.json", json.dumps(cfg))
         local = settings if settings is not None else ({"worktree": {"baseRef": base_ref}} if base_ref else None)
@@ -109,7 +117,9 @@ class Scene:
         if user is not None:
             helpers.write(self.conf, "settings.json", json.dumps(user))
         self.env = {"CLAUDE_CONFIG_DIR": self.conf}
-        if wt:
+        if wt and nested:
+            self.cwd = self.worktree(self.part_repo)
+        elif wt:
             self.cwd = helpers.add_worktree(self.repo, "phase")
         else:
             helpers.git(self.repo, "checkout", "-q", "-b", "phase")
@@ -120,6 +130,8 @@ class Scene:
         plan = {"size": {"tag": size, "parts": 1, "agents": 2}, "criteria": CRIT,
                 "tasks": tasks if tasks is not None else [task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"], size="big")],
                 "not_built": [], "later": []}
+        if self.part_repo:
+            plan["repo"] = self.part_repo
         plan.update(plan_extra or {})
         helpers.write(self.part, "plan.md", front(plan))
         post = front({"verdict": "ok", "security_review": security, "round": 1})
@@ -130,6 +142,24 @@ class Scene:
         elif postmortem and not sub:
             helpers.write(self.part, "postmortem.md", post)
         self.name = os.path.basename(self.part)
+
+    def nested_repo(self, name):
+        """A git repository `name` inside the workspace's folder, with a file only it has (`MARK_<NAME>`), for a check to look for."""
+        d = os.path.join(self.repo, name)
+        os.makedirs(d)
+        helpers.git(d, "init", "-q", "-b", "master")
+        for rel, text in {"README": "nested %s\n" % name, "src/a.py": "a\n", "src/b.py": "b\n", "MARK_" + name.upper(): "1\n"}.items():
+            helpers.write(d, rel, text)
+        helpers.git(d, "add", "-A")
+        helpers.git(d, "commit", "-q", "-m", name)
+        return os.path.realpath(d)
+
+    def worktree(self, repo, branch="phase"):
+        """A linked worktree on `branch` of nested repo `repo` (the workspace when None), where fwx makes its own: under the workspace's `.claude/worktrees/`."""
+        code = self.nested[repo] if repo else self.repo
+        wt = os.path.join(self.repo, ".claude", "worktrees", "%s-%s" % (repo or "ws", branch))
+        helpers.git(code, "worktree", "add", "-q", "-b", branch, wt)
+        return os.path.realpath(wt)
 
     def write_postmortem_as_the_step(self, plan, post):
         """The post-mortem of a phase with subphases, written where the step writes it: the phase has its own plan.md and a
@@ -884,9 +914,36 @@ def case_base_ci(R, S):
     S.eq("ci not used, the query names the configured branch (main), the stub wants master: the checks run here", (r.returncode, n), (0, 1))
 
 
+def case_nested(R, S):
+    """A workspace whose code lives in nested repos (DTC-64): a part is prepared in a worktree of the repo it works in, and in no other.
+    Seen red on the code before the check existed (the toy has `a` and `b` declared, the part names `a`):
+      FAIL: nested: part of repo a from a worktree of the workspace: exit: got 0, want 2
+      FAIL: nested: part of repo a from a worktree of repo b: exit: got 0, want 2
+      FAIL: nested: a part of the workspace from a worktree of repo a: exit: got 0, want 2"""
+    checks = {"a": ["test -f MARK_A"], "b": ["test -f MARK_B"]}
+    sc = Scene(nested=checks, tasks=[task("T1", 1, ["src/x.py"])])
+    ws_wt, b_wt = sc.worktree(None), sc.worktree("b")
+    for label, cwd, there in (("a worktree of the workspace", ws_wt, sc.repo), ("a worktree of repo b", b_wt, sc.nested["b"])):
+        r = sc.prepare(R, cwd=cwd)
+        who = "nested: part of repo a from %s" % label
+        refused(S, who, sc, r, "repo a")
+        S.ok("%s: the refusal names the repo's path" % who, sc.nested["a"] in r.stderr, "stderr %r" % r.stderr[:300])
+        S.ok("%s: the refusal names the checkout" % who, cwd in r.stderr, "stderr %r" % r.stderr[:300])
+    ws = Scene(nested=checks, part_repo=None, tasks=[task("T1", 1, ["src/x.py"])])
+    refused(S, "nested: a part of the workspace from a worktree of repo a", ws, ws.prepare(R, cwd=ws.worktree("a")), "workspace")
+    a = ok_args(S, "nested: part of repo a from a's worktree", sc.prepare(R))
+    S.eq("nested: the checkout is a's worktree", a.get("checkout"), sc.cwd)
+    S.eq("nested: the configuration is the workspace's file", (a.get("paths") or {}).get("config"), os.path.join(sc.repo, ".claude", "fwx.json"))
+    S.eq("nested: the briefs are in the workspace's state folder", os.path.dirname(os.path.dirname(os.path.dirname(((a.get("waves") or [{}])[0].get("tasks") or [{}])[0].get("brief") or ""))),
+         os.path.join(sc.repo, ".git", "fwx", "runs"))
+    rows = [x for x in state.read_rows(os.path.join(sc.part, "audit.tsv")) if x.get("kind") == "evidence"]
+    S.eq("nested: the base ran a's checks, not the workspace's", [c["cmd"] for c in json.loads(rows[0]["detail"])["commands"]] if rows else None, checks["a"])
+    S.ok("nested: nothing of fwx's is made in a's own .git", not os.path.exists(os.path.join(sc.nested["a"], ".git", "fwx")))
+
+
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
