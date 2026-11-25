@@ -297,6 +297,11 @@ for label, value in (("a string", "x"), ("a list", [1]), ("an empty list", []), 
 #   FAIL: home of a declared repo's worktree: got '<tmp>/ws/a', want '<tmp>/ws'
 #   AttributeError: module 'fwx.config' has no attribute 'repo_checkout'   (the next case)
 #   FAIL: setup of repo a: got [], want ['echo a-setup']   (setup_commands read the plugin's own missing file)
+# Controls seen red, each on config.py changed in one place:
+#   - `_home` never walks up:                  FAIL: main_checkout from repo a is the workspace: got '<tmp>/ws/a', want '<tmp>/ws'
+#   - an entry's missing key inherits the workspace's:  FAIL: repo c leaves checks out: the default, not the workspace's: got ['echo ws-check'], want []
+#   - setup_commands ignores the entry:        FAIL: setup_commands from repo a: got ['echo ws-setup'], want ['echo a-setup']
+#   - no containment check on `path`:          FAIL: a path that is the workspace itself, load from the workspace, is a ConfigError: load accepted it
 def nested(ws, name):
     """A git repository `name` inside the workspace's folder, ignored by it and no submodule: its own commit, its own history."""
     d = os.path.join(ws, name)
