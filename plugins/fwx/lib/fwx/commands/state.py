@@ -58,14 +58,14 @@ def part_repos(r):
     to make there, `<repo>-<milestone>-<phase>` so two repositories of one phase never share a folder, or the workspace itself
     (name null) at `<milestone>-<phase>`. A repository the plan names and `project.repos` lacks has a null path and worktree
     (`fwx plan lint` refuses that plan). Null with no phase and with no `project.repos`, where nothing changes."""
+    main, phase = r["main_checkout"], r["phase_dir"]
     try:
-        cfg = config.load(quiet=True)
+        cfg = config.load(main, quiet=True)  # the workspace's own, not the nested repo's entry laid over it where the command runs
     except config.ConfigError:  # a broken fwx.json must not stop `fwx session`, as in state.summary
         return None
     repos = cfg["project"]["repos"]
-    if not repos or not r["phase_dir"]:
+    if not repos or not phase:
         return None
-    main, phase = r["main_checkout"], r["phase_dir"]
     base = "%s-%s" % (r["milestone"], os.path.basename(phase))
     out = []
     for part in r["subphases"] or [phase]:

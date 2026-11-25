@@ -483,6 +483,11 @@ if cross_parts:
     s.eq("root-scope phase, parts of a and b: two different worktrees", len({e["worktree"] for e in cross_parts[:2]}), 2)
 else:
     s.ok("session --json names the part's repo: no key part_repos", False, "part_repos is %r" % (cross_parts,))
+# the entry of the workspace's own part is the workspace's, whichever folder the command runs from (the configuration read from repo a overlays a's keys)
+# Seen red before the fix: FAIL: part_repos from repo a: the workspace's own part keeps the workspace's default branch: got 'main', want 'master'
+for label, cwd in (("repo a", a), ("a worktree of repo a", a_wt)):
+    from_a = js(st(cwd, "session", "--json", **sid).stdout).get("part_repos") or [None, None, {}]
+    s.eq("part_repos from %s: the workspace's own part keeps the workspace's default branch" % label, from_a[2] and from_a[2].get("default_branch"), "master")
 # a phase of subproject `a`: its one part, with no plan.md of its own, works in the subproject's repo
 r = st(ws, "phase", "new", "feature", "--subproject", "a", **sid)
 sub_phase = r.stdout.strip()
