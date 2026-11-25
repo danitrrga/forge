@@ -266,13 +266,14 @@ def case_loop(root, S):
     S.ok("loop: `wave list` prints one line per run", listing.returncode == 0 and len(rows) == 1 and run in rows[0] and "done" in rows[0], "got %r" % listing.stdout)
 
 
-def stop_lags(w, run, unit, stopped):
-    """Seconds from the runner's own start stamp of `unit` (state.json, taken before it launches the worker) to each recorded stop. The fake's call
+def stop_lags(w, run, unit, stopped, since=None):
+    """Seconds from `since` (default: the runner's own start stamp of `unit` in state.json) to each recorded stop. The fake's call
     time `t` is taken after the fake process boots, so measuring from the fake's `worker-start` lags the runner's limit clock by that boot time
-    (up to ~0.7 s on a loaded 4-CPU CI runner: `stopped after [2.2] s` against a 2.5 s limit). A stop is only ever sent after the limit
-    passed on the runner's clock, so every lag here is >= LIMIT (0.05 s of clock rounding), and a stop as idle (IDLE_S = 0.4 s) is far below it."""
+    (up to ~0.7 s on a loaded 4-CPU CI runner: `stopped after [2.2] s` against a 2.5 s limit). In a multi-worker wave, when the earliest worker
+    hits LIMIT first, `finish()` tears down later-started siblings immediately, so pass the earliest worker's `started` as `since`."""
     rec = w.state(run)["workers"].get("%s/1" % unit) or {}
-    return [t - rec["started"] for t in stopped] if rec.get("started") else []
+    t0 = since if since is not None else rec.get("started")
+    return [t - t0 for t in stopped] if t0 else []
 
 
 def case_failure(root, S):
@@ -294,12 +295,17 @@ def case_failure(root, S):
     others = [x["worktree"] for x in starts if x["unit"] in ("T1", "T3")]
     S.ok("failure: the worktrees with no work are removed", all(not os.path.exists(p) for p in others), "left %r" % [p for p in others if os.path.exists(p)])
     calls = w.calls()
+    earliest = min((st["workers"].get("%s/1" % u) or {}).get("started", float("inf")) for u in ("T1", "T3"))
+    stops = {}
     for unit in ("T1", "T3"):
         k = next(k for k, d in w.dispatches().items() if d["unit"] == unit)
         stopped = [c["t"] for c in calls if c.get("dispatch") == k and c["argv"][1] == "worker-stop"]
-        lags = stop_lags(w, m.group(1), unit, stopped)
+        stops[unit] = stopped
+        lags = stop_lags(w, m.group(1), unit, stopped, since=earliest)
         S.ok("failure: %s (%s) is left alone until its limit, then stopped" % (unit, "waiting on a prompt" if unit == "T1" else "running"),
              len(stopped) == 1 and len(lags) == 1 and lags[0] >= LIMIT - 0.05, "stopped after %r s" % ([round(t, 2) for t in lags]))
+    S.ok("failure: T3 is torn down only after T1 hit its limit", bool(stops["T1"]) and bool(stops["T3"]) and stops["T3"][0] >= stops["T1"][0],
+         "stops=%r" % stops)
     refused = [c["refused"] for c in calls if c.get("refused")]
     S.ok("every dispatch is released -> %s" % (refused[0] if refused else "released"), all(d["released"] for d in w.dispatches().values()) and not refused)
     S.eq("failure: no reviewer ran", [x for x in units(w) if x.startswith("r")], [])
@@ -1124,16 +1130,19 @@ def case_steer_asking(root, S):
          r.returncode == 1 and bool(m) and m.group(2) == "failed" and "limit" in m.group(3))
 
     # 3. Resume after an answer: poll persists cleared asking state so the resumed run still enforces the limit.
+    # Give pre-kill `p` a generous limit (10s) so `release()` cannot mask an unpersisted `asking` clear; `r2` overrides 1.2s.
     w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {"mode": "ask", "question": "resume?", "after_answer": "hang"}}})
-    p = start_run(w, root, "--orchestrator", ORCH, FWX_RUN_LIMIT_S="1.2")
+    p = start_run(w, root, "--orchestrator", ORCH, FWX_RUN_LIMIT_S="10")
     wait_for(lambda: (w.runs() and w.state(w.runs()[0]).get("forwarded")) or p.poll() is not None)
-    time.sleep(0.25)  # let poll observe parked state
-    orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
     run = w.runs()[0] if w.runs() else ""
+    wait_for(lambda: (run and w.state(run)["workers"].get("T1/1", {}).get("asked_idle") is True) or p.poll() is not None, secs=5)
+    orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
     wait_for(lambda: (w.dispatches().get("ctx_1") or {}).get("shows", 0) >= 2 and (w.dispatches().get("ctx_1") or {}).get("mode") == "woken-hang")
-    # poll persists the cleared asking state a tick after the woken show; a blind sleep raced it on a loaded 4-CPU runner
-    wait_for(lambda: w.state(run)["workers"].get("T1/1", {}).get("asking") is None, secs=5)
+    # poll persists the cleared asking state a tick after the woken show; stop waiting if `p` exited early.
+    wait_for(lambda: (run and "T1/1" in w.state(run)["workers"] and w.state(run)["workers"]["T1/1"].get("asking") is None) or p.poll() is not None, secs=3)
     saved_after = (w.state(run)["workers"].get("T1/1") or {}) if run else {}
+    S.ok("asking resume-after-answer: runner is still alive before kill (release did not mask persistence)", p.poll() is None and not saved_after.get("released"),
+         "poll=%r released=%r" % (p.poll(), saved_after.get("released")))
     S.eq("asking resume-after-answer: poll persisted cleared asking state in state.json", saved_after.get("asking"), None)
     kill_group(p)
     r2 = subprocess.Popen(w.argv(root, "--resume", run, "--orchestrator", ORCH), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="1.2"),
