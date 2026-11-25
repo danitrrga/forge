@@ -14,6 +14,9 @@ Seen failing on the code before the field (d6d71b9), 12 of 20 checks red, the fi
   FAIL declared: the key is written whole -- {}
   FAIL declared: the key is claimed -- []
 and likewise the dry-run line, the empty-path message, the changed list, the line naming the hand edit.
+Relative and ~ entries (Claude Code matches absolute paths, so they match nothing): seen failing before the check, 3 of 26 red:
+  FAIL project_error: 'x/CLAUDE.md' is refused, naming it and the two valid forms -- None
+  (likewise '~/x/CLAUDE.md' and './CLAUDE.md').
 Controls on the finished code, each mutation put back from a copy of forge/skills.py, each seen red: the key not written
 (crash, KeyError: 'claudeMdExcludes', exit 1); no claim recorded (4 FAIL); the prune branch dropped (3); the prune
 ignoring the digest, so a hand edit is removed (2)."""
@@ -95,6 +98,13 @@ check("project_error: a string is not a list", lib.project_error({"claude_md_exc
 check("project_error: a list with a number is not a list of strings", lib.project_error({"claude_md_excludes": [1]}) is not None)
 check("project_error: an empty path names nothing", lib.project_error({"claude_md_excludes": [" "]}) == "claude_md_excludes has an empty path",
       lib.project_error({"claude_md_excludes": [" "]}))
+for bad in ("x/CLAUDE.md", "~/x/CLAUDE.md", "./CLAUDE.md"):  # Claude Code matches absolute paths, so these match nothing
+    why = lib.project_error({"claude_md_excludes": [UP, bad]})
+    check("project_error: %r is refused, naming it and the two valid forms" % bad,
+          why == "claude_md_excludes entry %r is not absolute: it must start with / or **/" % bad, why)
+for good in ("/x/CLAUDE.md", "**/monorepo/CLAUDE.md", "*/CLAUDE.md"):
+    check("project_error: %r is fine" % good, lib.project_error({"claude_md_excludes": [good]}) is None,
+          lib.project_error({"claude_md_excludes": [good]}))
 check("project_error: an empty list is fine (declared, nothing excluded)", lib.project_error({"claude_md_excludes": []}) is None)
 
 # 2. Declared: written whole, claimed, named in the line; a dry-run writes and records nothing.
