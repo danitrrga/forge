@@ -76,10 +76,7 @@ def _context(top, part_dir, run):
         raise WaveError("the plan of the part cannot be read: %s" % e)
     owner = state.phase_paths(integrate._owner_dir(part))
     paths = {"context": str(owner["context"]), "decisions": str(owner["decisions"]), "plan": str(state.phase_paths(part)["plan"])}
-    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if not common:
-        raise WaveError("cannot find the git common dir of %s" % top)
-    return data, owner, {"run": run, "part": os.path.basename(part), "folder": brief.folder_of(common, run), "paths": paths}
+    return data, owner, {"run": run, "part": os.path.basename(part), "folder": brief.folder_of(config.fwx_dir(top), run), "paths": paths}
 
 
 def _write(path, facts, text):

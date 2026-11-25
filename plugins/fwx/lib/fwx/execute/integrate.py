@@ -224,8 +224,7 @@ def _write_brief(top, part_dir, run, cfg, result, why, branches, findings):
     owner = state.phase_paths(_owner_dir(part))
     paths = {"context": str(owner["context"]), "decisions": str(owner["decisions"]), "plan": str(state.phase_paths(part)["plan"]),
              "config": os.path.join(config.main_checkout(top), config.FILE)}
-    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    folder = brief.folder_of(common, run)
+    folder = brief.folder_of(config.fwx_dir(top), run)
     ctx = {"run": run, "part": os.path.basename(part), "folder": folder, "paths": paths,
            "quick": evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)}
     kind = "resolve" if result["next"] == "resolve" else "fix"

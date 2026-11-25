@@ -9,7 +9,7 @@ Where a brief and the base-context file meet (2.5 U9): `shared_context(paths)` i
 agent of the phase reads (`context.md`, `decisions.tsv`, `plan.md`). When the briefs rely on the base file, that function is
 what changes; nothing else here spells those names, and the template does not.
 
-A run's briefs live in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md` (written by `put`); the fixer's is `_fix.md`: no task
+A run's briefs live in `<fwx folder>/runs/<run>/briefs/<task>.md` (written by `put`); the fixer's is `_fix.md`: no task
 id can start with an underscore (`ID`), so the name cannot clash. What an agent writes is not there: its report and its TMPDIR
 are in a folder of its own worktree that git ignores, made by `fwx scratch new <run> <unit>` (execute/base.py), because Claude
 Code asks permission for anything under `.git` and refuses an isolated agent's write outside its worktree. The brief does not
@@ -50,8 +50,8 @@ def shared_context(paths):
     return ["- %s: %s" % (name, paths[key]) for name, key in (("context.md", "context"), ("decisions.tsv", "decisions"), ("plan.md", "plan"))]
 
 
-def folder_of(common, run):
-    return os.path.join(common, "fwx", "runs", run)
+def folder_of(fwx_folder, run):
+    return os.path.join(fwx_folder, "runs", run)
 
 
 def _context(paths, previous):

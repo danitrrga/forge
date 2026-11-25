@@ -39,7 +39,7 @@ dependencies again; a failure is exit 1 and `setup` in the JSON).
 prints its path (execute/base.py says why it is not under `.git`): exit 0, 2 for a usage error or outside a repository.
 
 The rest is 3.4 U3 (execute/integrate.py and execute/cleanup.py say what each does); each prints its result as one JSON
-object on stdout and also writes it, with the exit code and its arguments, to `<git-common-dir>/fwx/runs/<run>/<n>-<step>.json`
+object on stdout and also writes it, with the exit code and its arguments, to `<fwx folder>/runs/<run>/<n>-<step>.json`
 (`n` counts the run's files; `wave new` and `base` write none, and neither does a call that stops on a usage error or on
 something that must stop it before it starts, exit 2 with a reason on stderr):
   wave merge --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]
@@ -297,11 +297,8 @@ def _ids(text):
 
 
 def _record(top, run, step, args, result, code):
-    """Write the call's result to <git-common-dir>/fwx/runs/<run>/<n>-<step>.json and return the path."""
-    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if not common:
-        raise base.WaveError("cannot find the git common dir of %s" % top)
-    folder = os.path.join(common, "fwx", "runs", run)
+    """Write the call's result to <fwx folder>/runs/<run>/<n>-<step>.json and return the path."""
+    folder = os.path.join(config.fwx_dir(top), "runs", run)
     os.makedirs(folder, exist_ok=True)
     n = 1 + max([int(m.group(1)) for m in (re.match(r"(\d+)-", f) for f in os.listdir(folder)) if m], default=0)
     path = os.path.join(folder, "%d-%s.json" % (n, step))
@@ -316,8 +313,7 @@ def _record(top, run, step, args, result, code):
 
 def _steps(top, run):
     """The calls the run's own files record, oldest first: [{step, exit, args, result}]; a file that cannot be read is left out."""
-    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    folder = os.path.join(common or "", "fwx", "runs", run)
+    folder = os.path.join(config.fwx_dir(top), "runs", run)
     names = sorted((f for f in os.listdir(folder) if re.match(r"\d+-", f)), key=lambda f: int(f.split("-")[0])) if os.path.isdir(folder) else []
     found = []
     for name in names:
@@ -392,7 +388,7 @@ def do_step(step, argv):
             code, result = review.findings(".", part, run, got.get("--report"), got.get("--verdicts"), got.get("--control-findings"), _steps(top, run))
         elif step == "cleanup":
             args = {"run": run}
-            result = cleanup.cleanup(".", run, *cleanup.recorded_of(base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), run))
+            result = cleanup.cleanup(".", run, *cleanup.recorded_of(config.fwx_dir(top), run))
             code = 0
         else:
             part = part or _part_of(top, run)

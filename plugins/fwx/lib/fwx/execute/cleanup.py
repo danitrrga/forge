@@ -184,9 +184,9 @@ def _scratch(top, run):
     return [] if os.path.exists(folder) else [folder]
 
 
-def recorded_of(common, run):
+def recorded_of(fwx_folder, run):
     """(branches, paths) a run's own files name: the branches its `integrate` calls merged and the worktrees `fwx wave run` made for it."""
-    folder = os.path.join(common, "fwx", "runs", run)
+    folder = os.path.join(fwx_folder, "runs", run)
     branches, paths = set(), set()
     for name in os.listdir(folder) if os.path.isdir(folder) else []:
         try:
