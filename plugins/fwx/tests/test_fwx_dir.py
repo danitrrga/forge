@@ -8,8 +8,10 @@ back one file at a time.
 
 Seen red on lib/fwx as of the phase's T1 (config.fwx_dir existed, nothing called it):
   FAIL: modules that find fwx's folder themselves: commands/walk.py, commands/wave.py, core/verify.py, execute/integrate.py, execute/prepare.py, execute/review.py, execute/run.py, state.py
-Controls: a copy of lib/fwx with `--git-common-dir` added to one string in lib/fwx/commands/stage.py is listed (the class, not the eight);
-an ALLOWED name removed from the list makes that module a FAIL; a scan that reads no module is a FAIL (the same copy with an empty lib).
+Controls: `X = "--git-common-dir"` appended to lib/fwx/commands/stage.py made the run print
+  FAIL: modules that find fwx's folder themselves: commands/stage.py
+(the class, not the eight); the toy-lib cases below prove, on every run, that a code string is found, a docstring is not, an allowed
+module is skipped, and a scan of an empty lib reads zero modules.
 """
 import ast
 import os

@@ -23,7 +23,7 @@ worker is stopped and the run ends failed. Every dispatch not settled gets `work
 `finally` after a failure or a raised error. The poll, the idle window and the limit are read from FWX_RUN_POLL_S, FWX_RUN_IDLE_S and
 FWX_RUN_LIMIT_S (seconds) so that a test need not wait minutes.
 
-State is `<git-common-dir>/fwx/runs/<run>/state.json`: the Orca run and the terminal made for it (the sender of `run-create`, closed after the workers when the run ends), the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
+State is `<fwx folder>/runs/<run>/state.json`: the Orca run and the terminal made for it (the sender of `run-create`, closed after the workers when the run ends), the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
 calls it made (in order, with their results) and the result. `--resume R` runs the same path again: a call the journal holds is not made again (its
 result is read from it), a worker the state holds is polled, not started again. One live run per branch: a second `wave run` on it exits 2 naming the
 run and `--resume`, and a lock on the branch (`lock_branch`, held until the process ends) closes the gap before the first record is written. A settled
@@ -44,7 +44,7 @@ import time
 
 from fwx import config, context_base
 from fwx.execute import cleanup, orca
-from fwx.execute.base import WaveError, out
+from fwx.execute.base import WaveError
 
 FWX = os.path.join(orca.PLUGIN, "bin", "fwx")
 LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 60, "review-verifier": 15 * 60}
@@ -83,7 +83,7 @@ def alive(pid):
 
 
 def runs_folder(top):
-    return os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir") or "", "fwx", "runs")
+    return os.path.join(config.fwx_dir(top), "runs")
 
 
 def lock_path(top, branch):
@@ -616,7 +616,7 @@ def finish(r, st, folder):
                 st.setdefault("release_errors", []).append("terminal %s: %s" % (st["terminal"], e))
             else:
                 st["terminal"] = None
-    branches, paths = cleanup.recorded_of(os.path.dirname(os.path.dirname(runs_folder(r.top))), st["run"])
+    branches, paths = cleanup.recorded_of(config.fwx_dir(r.top), st["run"])
     try:
         hold = {os.path.realpath(w["worktree"]): "its worker could not be released, so it may still be using it"
                 for w in st["workers"].values() if w.get("dispatch") and not w["released"]}

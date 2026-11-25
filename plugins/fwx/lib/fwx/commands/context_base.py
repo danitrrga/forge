@@ -1,6 +1,6 @@
 """Build, seal, check and audit the base-context file every agent of a phase is handed: fwx context new|seal|lint|audit.
 
-  new <dir> [--map F]        write the base of a phase, subphase or job folder (`<git-common-dir>/fwx/context-base/<phase>.md`)
+  new <dir> [--map F]        write the base of a phase, subphase or job folder (`<fwx folder>/context-base/<phase>.md`)
                              when it changed; prints `wrote <path> <n> units (map <m>, goal <g>, decided <d>)`, or `unchanged ...`
   seal <file> [--source F]   put the mark on a file written by hand, and with --source the sha of the document it shortens
   lint <dir> | --file F | --project P   [--source F] [--map F] [--hook-command CMD]

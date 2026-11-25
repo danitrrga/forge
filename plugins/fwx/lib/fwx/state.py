@@ -186,15 +186,14 @@ def session_id(explicit=None):
 
 
 def sessions_dir(cwd=None):
-    """`<git-common-dir>/fwx/sessions`, the same folder from every worktree. Creates nothing."""
-    config.main_checkout(cwd)  # ConfigError outside a repository, with its message
-    r = _git(os.getcwd() if cwd is None else cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    return os.path.join(r.stdout.strip(), "fwx", "sessions")
+    """`<fwx folder>/sessions` (`config.fwx_dir`: ConfigError outside a repository), the same folder from every worktree and every
+    nested repository of a workspace. Creates nothing."""
+    return os.path.join(config.fwx_dir(cwd), "sessions")
 
 
 def read_session(cwd=None, session=None):
     """`{subproject, phase_dir}` of the session (phase_dir relative to the checkout that holds `.fwx/`), or None when
-    there is no session id or no file. The file lives in the git common dir, so every worktree reads the same one."""
+    there is no session id or no file. The file lives in fwx's one state folder, so every worktree reads the same one."""
     sid = session_id(session)
     if sid is None:
         return None

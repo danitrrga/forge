@@ -44,7 +44,7 @@ and with `--fix` or `--revert`. It launches nothing, so it writes no brief and d
 red or not), and `base` is where the part's first run started (the oldest `Fwx-Run: <part>-<sha7>-<n>` of the phase branch), not
 the head: the review and the trusted-edit report diff from it. The run id continues that numbering. The result has `from: "gate"`.
 
-The briefs (3.4 U9, execute/brief.py): one file per task in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md`, its path in
+The briefs (3.4 U9, execute/brief.py): one file per task in `<fwx folder>/runs/<run>/briefs/<task>.md`, its path in
 `waves[].tasks[].brief`. They hold no base sha (a later wave starts from a later head: the workflow names it in the prompt) and
 no path for a report: an agent writes in the folder `fwx scratch new` makes in its own worktree. They are built, and checked, before the base is run: a field that
 is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
@@ -200,9 +200,8 @@ def _part_base(top, branch, part_name):
 
 
 def _run_id(top, part_name, base):
-    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
     prefix = "%s-%s-" % (part_name, base[:7])
-    runs = os.path.join(common or "", "fwx", "runs")
+    runs = os.path.join(config.fwx_dir(top), "runs")
     made = [d for d in os.listdir(runs) if d.startswith(prefix)] if os.path.isdir(runs) else []
     return "%s%d" % (prefix, len(made) + 1)
 
@@ -414,8 +413,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         base = verify.head(top)
     run = _run_id(top, name, base)
     size = data["size"]["tag"]
-    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    folder = brief.folder_of(common, run)
+    folder = brief.folder_of(config.fwx_dir(top), run)
     ctx = {"run": run, "part": name, "folder": folder,
            "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                      "plan": str(paths["plan"])}}

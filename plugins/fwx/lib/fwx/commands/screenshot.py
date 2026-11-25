@@ -3,7 +3,7 @@
 `--run` is a run folder or a namespace, as for `fwx walk ab`. The screens are `--screens` (a JSON text, or the path of a file holding
 it) or, without it, the `screens` of the run's `run.json`: a list of URLs or of `{url, theme}` (theme `light` or `dark`, default
 `light`: the theme the screen was walked in), or `{screens: [...]}`. Each is opened at 1440 wide in the run's own browser session and
-captured as a PNG in `--out`, default the run's captures folder (`<git-common-dir>/fwx/walks/<run>/shots/`, outside the work
+captured as a PNG in `--out`, default the run's captures folder (`<fwx folder>/walks/<run>/shots/`, outside the work
 tree). It serves the part review and the factory handoff; widths, other themes and states are not here.
 
 Every browser call goes through `fwx walk ab`, so its guards hold (the app's own hosts only, the run's namespace and idle timeout, no
