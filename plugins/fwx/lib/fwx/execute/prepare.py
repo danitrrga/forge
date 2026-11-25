@@ -9,7 +9,8 @@ The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.
 holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`); a missing
 `postmortem.md` is accepted only for a `small` plan that says `security_review` (_security_why: the planner's answer and a task on a
 default protected path or a `project.protected_paths` glob stand in for the post-mortem's). Refused with
-exit 2, in this order of cost: a plan that does not load; a task file that git ignores (the executor could not commit it); the
+exit 2, in this order of cost: a plan that does not load; a checkout that is not a worktree of the repository the part works in (the plan's `repo`,
+else the workspace: nested repos, `project.repos`); a task file that git ignores (the executor could not commit it); the
 requested branch is a default branch, or is not the one the checkout is on; the checkout holds uncommitted work; the effective
 `worktree.baseRef` is not `head`; the project has no checks. Why the baseRef: without it a workflow agent's worktree is made from
 `origin/<default branch>`, not from the phase branch, and nothing says so (research/execute-measures.md, measured).
@@ -130,6 +131,21 @@ def _security_why(data, post_path, cfg):
             why.append("task %s writes %s, a protected path (%s)" % (t["id"], hit[0], hit[1]))
             break
     return why
+
+
+def _repo_checked(top, main, part, cfg):
+    """WaveError unless `top` is a worktree of the repository the part works in: the repo its plan names (`plan_form.part_repo`), else
+    the workspace itself. The tasks name that repo's files, its checks and branch are the ones that run here, and a worktree of any
+    other repo holds none of the code."""
+    named = plan_form.part_repo(part, cfg)
+    repos = cfg["project"]["repos"]
+    if named is not None and named not in repos:
+        raise WaveError("%s: repo %s names no repo of project.repos (%s)" % (os.path.join(part, "plan.md"), named, ", ".join(repos) or "none declared"))
+    want = os.path.realpath(os.path.join(main, repos[named]["path"]) if named else main)
+    have = os.path.realpath(config.repo_checkout(top))
+    if have != want:
+        raise WaveError("the part works in %s (%s) and the checkout %s is a worktree of %s: run `fwx wave new` from a worktree of %s"
+                        % ("repo " + named if named else "the workspace", want, top, have, "repo " + named if named else "the workspace"))
 
 
 def _ignored(top, tasks):
@@ -370,6 +386,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         part = plan_step.resolve(part_dir)
     except plan_step.CannotRun as e:
         raise WaveError(str(e))
+    _repo_checked(top, main, part, cfg)
     phase = os.path.dirname(part) if _is_subphase(part) else part
     paths = state.phase_paths(part)
     data = _load(plan.load_plan, paths["plan"], "plan.md")

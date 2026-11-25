@@ -1025,6 +1025,8 @@ MUTANTS = [
     ("fresh: default branch allowed", case_check_base_moves_fresh, B, "if branch in default:", "if False:",
      "moves-fresh: the default branch's name: exit 0, want 42"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
+    ("the part's repo not checked", case_nested, P, "    if have != want:\n", "    if False:\n",
+     "nested: part of repo a from a worktree of the workspace: exit: got 0, want 2"),
 ]
 
 
