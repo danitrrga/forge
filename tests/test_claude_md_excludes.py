@@ -17,6 +17,11 @@ and likewise the dry-run line, the empty-path message, the changed list, the lin
 Relative and ~ entries (Claude Code matches absolute paths, so they match nothing): seen failing before the check, 3 of 26 red:
   FAIL project_error: 'x/CLAUDE.md' is refused, naming it and the two valid forms -- None
   (likewise '~/x/CLAUDE.md' and './CLAUDE.md').
+Single-star entries and a bare ** (a * does not cross /, so '*/CLAUDE.md', '*.md', '*upper/CLAUDE.md' match nothing against an
+absolute path, and ** would hide the project's own file) were accepted by the `/ or *` check: 4 of 29 red:
+  FAIL project_error: '*/CLAUDE.md' is refused, naming it and the two valid forms -- None  (likewise '*.md', '*upper/CLAUDE.md', '**')
+The '  ! ' prefix check on the hand-edit line, seen red with the print's prefix taken out of forge/skills.py:
+  FAIL edited by hand: named on a '  ! ' line -- <path>: claudeMdExcludes was edited by hand, left in place
 Controls on the finished code, each mutation put back from a copy of forge/skills.py, each seen red: the key not written
 (crash, KeyError: 'claudeMdExcludes', exit 1); no claim recorded (4 FAIL); the prune branch dropped (3); the prune
 ignoring the digest, so a hand edit is removed (2)."""
@@ -98,11 +103,11 @@ check("project_error: a string is not a list", lib.project_error({"claude_md_exc
 check("project_error: a list with a number is not a list of strings", lib.project_error({"claude_md_excludes": [1]}) is not None)
 check("project_error: an empty path names nothing", lib.project_error({"claude_md_excludes": [" "]}) == "claude_md_excludes has an empty path",
       lib.project_error({"claude_md_excludes": [" "]}))
-for bad in ("x/CLAUDE.md", "~/x/CLAUDE.md", "./CLAUDE.md"):  # Claude Code matches absolute paths, so these match nothing
+for bad in ("x/CLAUDE.md", "~/x/CLAUDE.md", "./CLAUDE.md", "*/CLAUDE.md", "*.md", "*upper/CLAUDE.md", "**"):  # none can match an absolute path (a single * does not cross /); a bare ** would hide the project's own file
     why = lib.project_error({"claude_md_excludes": [UP, bad]})
     check("project_error: %r is refused, naming it and the two valid forms" % bad,
           why == "claude_md_excludes entry %r is not absolute: it must start with / or **/" % bad, why)
-for good in ("/x/CLAUDE.md", "**/monorepo/CLAUDE.md", "*/CLAUDE.md"):
+for good in ("/x/CLAUDE.md", "**/monorepo/CLAUDE.md"):
     check("project_error: %r is fine" % good, lib.project_error({"claude_md_excludes": [good]}) is None,
           lib.project_error({"claude_md_excludes": [good]}))
 check("project_error: an empty list is fine (declared, nothing excluded)", lib.project_error({"claude_md_excludes": []}) is None)
@@ -135,7 +140,7 @@ d["claudeMdExcludes"] = [UP, "/by/hand/CLAUDE.md"]
 lib.write_json(slp(p), d)
 line, printed = run(p, **OTHER)
 check("edited by hand: the list stays", doc(p).get("claudeMdExcludes") == [UP, "/by/hand/CLAUDE.md"], doc(p))
-check("edited by hand: named on a '  ! ' line", "claudeMdExcludes was edited by hand" in printed, printed)
+check("edited by hand: named on a '  ! ' line", any(l.startswith("  ! ") and "claudeMdExcludes was edited by hand" in l for l in printed.splitlines()), printed)
 
 # 5. A project without the field: no key, and a key set by hand is never touched or claimed.
 p = project()

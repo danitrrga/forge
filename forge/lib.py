@@ -265,9 +265,10 @@ def project_error(prof):
         return "linear_project is empty"
     if any(not c.strip() for c in prof.get("claude_md_excludes", ())):
         return "claude_md_excludes has an empty path"
-    # Claude Code matches the patterns against absolute file paths: a relative or ~ entry would silently match nothing.
+    # Claude Code matches the patterns against absolute file paths: a relative or ~ entry silently matches nothing, and neither does
+    # a single * (it does not cross /); a bare ** would hide the project's own file. So an entry starts with / or **/.
     for c in prof.get("claude_md_excludes", ()):
-        if not c.startswith(("/", "*")):
+        if not c.startswith(("/", "**/")):
             return "claude_md_excludes entry %r is not absolute: it must start with / or **/" % c
     if any(not c.strip() for c in prof.get("worktree_setup", ())):
         return "worktree_setup has an empty command"
