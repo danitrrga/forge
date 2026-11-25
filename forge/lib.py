@@ -136,6 +136,10 @@ PROJECT_FIELDS = {
     "project": str, "project_path": str,
     "servers": (list, str), "skills_keep": (list, str), "plugins_keep": (list, str),
     "mcpjson_approved": (list, str), "mcpjson_disabled": (list, str),
+    # Absolute paths or globs of the CLAUDE.md files this project must not load, written whole as `claudeMdExcludes` into its
+    # settings.local.json: for a project nested in another one's folder, the file of the folder above (it has to be named: a
+    # glob over the folder would match the project's own file too).
+    "claude_md_excludes": (list, str),
     "env": (dict, str), "permissions": dict, "hooks": dict,
     "frozen": bool, "ui": bool, "writes_tracked_files": bool, "enableAllProjectMcpServers": bool, "command_guard": bool,
     "worktree_guard": frozenset({bool, dict}),
@@ -259,6 +263,13 @@ def project_error(prof):
     # An empty name would be written to the framework's file as the project, and Linear would match none.
     if "linear_project" in prof and not prof["linear_project"].strip():
         return "linear_project is empty"
+    if any(not c.strip() for c in prof.get("claude_md_excludes", ())):
+        return "claude_md_excludes has an empty path"
+    # Claude Code matches the patterns against absolute file paths: a relative or ~ entry silently matches nothing, and neither does
+    # a single * (it does not cross /); a bare ** would hide the project's own file. So an entry starts with / or **/.
+    for c in prof.get("claude_md_excludes", ()):
+        if not c.startswith(("/", "**/")):
+            return "claude_md_excludes entry %r is not absolute: it must start with / or **/" % c
     if any(not c.strip() for c in prof.get("worktree_setup", ())):
         return "worktree_setup has an empty command"
     if "check_timeout_s" in prof and (isinstance(prof["check_timeout_s"], bool) or not 0 < prof["check_timeout_s"] <= 7 * 24 * 3600):
