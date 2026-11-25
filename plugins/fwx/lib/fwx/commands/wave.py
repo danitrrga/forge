@@ -211,6 +211,7 @@ def do_run(argv):
             code, args = prepared(got, lambda line: sys.stderr.write("fwx wave new: %s\n" % line))
             if code:
                 return code
+            run_mod.progress("base check passed at %s" % args["base"][:8])
             ctrl = got.get("--control-findings")
             flags = {"control": os.path.abspath(ctrl) if ctrl else None, "orchestrator": orch}
         status, line, kept = run_mod.drive(args, top, flags, saved)

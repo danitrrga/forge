@@ -42,6 +42,10 @@ every worktree it made that holds no unmerged or uncommitted work and whose work
 rest in `kept` with the reason. It ends with one line, `run <R> <done|failed|needs-owner>: <why>`; the details are
 `fwx wave --run R --json`.
 
+Progress: the run prints one plain line per step to stdout as it happens, flushed (`progress`: the base check, each worker started, done or failed, each wave merged,
+the gate and its CI wait as `gate: ...` lines, the review and its findings), and the result line last; no redraws. Its sender terminal is the one it runs in when Orca
+set ORCA_TERMINAL_HANDLE (`sender`; left open), else one it makes and closes.
+
 Imports the standard library, fwx.config, fwx.context_base and execute.base, cleanup and orca.
 """
 import fcntl
@@ -50,6 +54,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 
 from fwx import config, context_base
@@ -66,6 +71,12 @@ ASK = ("\nThis run has an orchestrator. A blocking question or a blocker is aske
        "option with what it implies), not reported as `question`: after it, end your turn and wait. The answer comes as mail and you carry on in this same worktree.")
 
 
+def progress(line):
+    """One plain line of what the run is doing, on stdout and flushed at once: the owner watches the run scroll by in its terminal."""
+    sys.stdout.write(" ".join(str(line).split()) + "\n")
+    sys.stdout.flush()
+
+
 def _seconds(name, default):
     try:
         return float(os.environ[name])
@@ -75,6 +86,11 @@ def _seconds(name, default):
 
 class Refused(WaveError):
     """Something that must stop the run before any worker starts (exit 2)."""
+
+
+class Fenced(Exception):
+    """The run's sender terminal is gone: Orca would refuse the next `worker-start` with `consumer_fenced`. The run stops where it is, as a killed one does
+    (its state stays `active`, its workers are left), and `--resume` makes a new terminal and a new Orca run."""
 
 
 class Stop(Exception):
@@ -229,8 +245,9 @@ class Run:
         return self.context if sections == "map+decided" else self.context.split(DECIDED, 1)[0]
 
     # ---- the fwx wave calls, journaled ---------------------------------------------------------------------------------------
-    def step(self, *words, no_json=False):
-        """(exit code, the JSON the call printed). A call the journal already holds (a resumed run) is not made again."""
+    def step(self, *words, no_json=False, echo=None):
+        """(exit code, the JSON the call printed). A call the journal already holds (a resumed run) is not made again. `echo` is a prefix: each stderr
+        line of the call is shown as a progress line behind it while the call runs (the gate's CI wait is minutes long)."""
         i, journal = self.seq, self.st["steps"]
         self.seq += 1
         if i < len(journal):
@@ -238,7 +255,7 @@ class Run:
                 raise Stop("failed", "the journal of run %s has `%s` at step %d and the run now makes `%s`: it cannot be resumed" % (
                     self.run, " ".join(journal[i]["words"][:2]), i, " ".join(words[:2])))
             return journal[i]["rc"], journal[i]["result"]
-        r = subprocess.run([sys.executable, FWX] + list(words), cwd=self.top, capture_output=True, text=True)
+        r = self.call(words, echo)
         result = None
         for row in reversed(r.stdout.strip().splitlines()):
             try:
@@ -256,8 +273,26 @@ class Run:
         self.save()
         return r.returncode, result
 
-    def wave(self, verb, *words):
-        return self.step("wave", verb, "--run", self.run, *words)
+    def call(self, words, echo):
+        argv = [sys.executable, FWX] + list(words)
+        if echo is None:
+            return subprocess.run(argv, cwd=self.top, capture_output=True, text=True)
+        p = subprocess.Popen(argv, cwd=self.top, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        err = []
+
+        def pump():
+            for row in p.stderr:
+                err.append(row)
+                progress("%s %s" % (echo, row.split(": ", 1)[-1].strip() if row.startswith("fwx ") else row.strip()))
+        t = threading.Thread(target=pump, daemon=True)
+        t.start()
+        text = p.stdout.read()
+        p.wait()
+        t.join()
+        return subprocess.CompletedProcess(argv, p.returncode, text, "".join(err))
+
+    def wave(self, verb, *words, echo=None):
+        return self.step("wave", verb, "--run", self.run, *words, echo=echo)
 
     def spend(self, why):
         """A round for a failure (`wave fix`): ends the run when the rounds are spent."""
@@ -347,6 +382,8 @@ class Run:
         rec = self.st["workers"].get(key)
         if rec:
             return rec
+        if not orca.terminal_alive(self.st["terminal"]):
+            raise Fenced("the run's terminal %s was closed; resume with `fwx wave run --resume %s`" % (self.st["terminal"], self.run))
         name = job.unit if k == 1 else "%s-%d" % (job.unit, k)
         worktree = os.path.join(self.main, ".claude", "worktrees", "%s-%s" % (self.run, name))
         branch = "worktree-%s-%s" % (self.run, name) if job.branch else None
@@ -360,6 +397,7 @@ class Run:
         self.st["workers"][key] = rec
         rec["dispatch"] = orca.start(self.orca_run, spec, job.model, worktree, self.st["terminal"])
         self.save()
+        progress("worker %s started (%s, %s%s)" % (job.unit, job.role, job.model, ", attempt %d" % k if k > 1 else ""))
         return rec
 
     def release(self, rec, state=None):
@@ -454,6 +492,10 @@ class Run:
             rec["idle_since"] = None
         return None
 
+    def finished(self, job, line):
+        ok = str(line).split(" ", 1)[0] in ("done", "reviewed", "verdicts")
+        progress("worker %s done" % job.unit if ok else "worker %s failed: %s" % (job.unit, str(line or "no reply")[:200]))
+
     def run_jobs(self, jobs, width=None):
         """Start and judge `jobs`, at most `cap` open at once (`width` fewer where the wave is serial); a worker is released as it settles."""
         queue, active = list(jobs), []
@@ -464,6 +506,7 @@ class Run:
                 rec = self.launch(job)
                 if rec["line"] is not None:
                     self.settle(rec)
+                    self.finished(job, rec["line"])
                     if not job.on_line(rec["line"]):
                         queue.insert(0, job)
                 else:
@@ -477,6 +520,7 @@ class Run:
                 moved = True
                 active.remove((job, rec))
                 self.save()
+                self.finished(job, line)
                 if not job.on_line(line):
                     queue.insert(0, job)
             if active and not moved:
@@ -526,9 +570,15 @@ class Run:
             words += (["--branches"] + pending) if pending else []
             words += (["--findings", ",".join(keep)]) if keep else []
             words += ["--final"] if final else []
-            rc, r = self.wave(*words)
+            if final:
+                progress("gate started (final merge, then the checks)")
+            rc, r = self.wave(*words, echo="gate:" if final else None)
             if r.get("head"):
                 self.head = r["head"]
+            if final:
+                ran = r.get("verify") or {}
+                progress(("gate %s: %s" % ("passed" if r.get("ok") is True else "failed", ran.get("line") or "no evidence line")) if ran.get("ran")
+                         else "final merge failed before the gate: %s" % " ".join(str(r.get("why") or "no reason given").split())[:200])
             nxt = r.get("next")
             if r.get("ok") is True:
                 if nxt == "owner":
@@ -568,6 +618,7 @@ class Run:
     def review_pass(self, frm, first):
         """One review of `frm..head`: the result of `wave findings` that asks for a fixer, or None when nothing is left to fix."""
         self.at("review")
+        progress("review started on %s..%s" % (str(frm)[:8], str(self.head)[:8]))
         rc, r = self.wave("review", "--part-dir", self.part, "--from", frm, "--to", self.head, *(["--security"] if self.args["security"]["needed"] else []))
         if rc != 0:
             raise Stop("failed", "wave review exited %d: %s" % (rc, r))
@@ -582,6 +633,7 @@ class Run:
                 said = [(" " + lines[x["unit"]]) if lines[x["unit"]].startswith("-") else (lines[x["unit"]] or "no reply") for x in units]
                 rc, r = self.wave("findings", "--report", *said, *control)
             nxt = r.get("next")
+            progress("review findings: %d found, %d to fix, next %s" % (len(r.get("items") or []), len(r.get("fix") or []), nxt))
             if nxt == "verify":
                 verifier = r["unit"]
                 self.reviewers([{"role": "review-verifier", "unit": verifier, "brief": r["brief"]}], lines)
@@ -632,21 +684,36 @@ class Run:
             raise Stop("failed", "the gate failed after the revert: %s" % " ".join("%s=%s" % (c.get("cmd"), c.get("rc")) for c in g.get("commands") or []))
         return "the reverts passed the gate on %s" % str(self.head)[:8]
 
+    def sender(self):
+        """The terminal that `--from` names, in `st["terminal"]`: the one this run itself runs in (Orca sets ORCA_TERMINAL_HANDLE there, so the owner sees the run's
+        lines in it), else one made for the run and found again on a resume while Orca still has it. `st["terminal_made"]` says which: only a made one is closed."""
+        own, term = orca.own_terminal(), self.st.get("terminal")
+        if own:
+            if term and term != own and self.st.get("terminal_made", True):  # a resume in another terminal: the one the killed run made is no longer wanted
+                try:
+                    orca.terminal_close(term)
+                except orca.OrcaError:
+                    pass
+            self.st["terminal"], self.st["terminal_made"] = own, False
+        elif not (term and self.st.get("terminal_made", True) and orca.terminal_alive(term)):
+            self.st["terminal"], self.st["terminal_made"] = orca.terminal_create(self.main, "fwx run %s" % self.run), True
+        self.save()
+        return self.st["terminal"]
+
     def execute(self):
         args = self.args
         if args["revert"]:
-            if self.orchestrator and not self.st.get("terminal"):
-                self.st["terminal"] = orca.terminal_create(self.main, "fwx run %s" % self.run)
-                self.save()
+            if self.orchestrator:
+                self.sender()
             return self.revert()
         if not self.st.get("repo_added"):
             orca.ensure_repo(self.main)
             self.st["repo_added"] = True
             self.save()
-        term = self.st.get("terminal")
-        if not term or not orca.terminal_alive(term):  # a resumed run keeps its terminal while Orca still has it
-            self.st["terminal"] = term = orca.terminal_create(self.main, "fwx run %s" % self.run)
-            self.save()
+        before = self.st.get("terminal")
+        term = self.sender()
+        if term != before:  # an Orca run is bound to the terminal that made it: another terminal needs its own
+            self.st["orca_run"] = None
         self.orca_run = self.st.get("orca_run") or orca.run_create("fwx wave run %s" % self.run, term)
         self.st["orca_run"] = self.orca_run
         self.save()
@@ -670,6 +737,7 @@ class Run:
                 jobs = [self.executor(t["id"], args["models"]["executor"][t["id"]], t["brief"], self.head, self.beside(t["id"])) for t in w["tasks"] if t["id"] not in done]
                 self.run_jobs(jobs, 1 if w["serial"] else None)
                 self.merge([j.result for j in jobs], final=i == len(todo) - 1)
+                progress("wave %s merged: %d/%d tasks, head %s" % (w["n"], len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
                 self.announce("wave %s" % w["n"], "[%s] wave %s/%s: %d/%d merged -> %s" % (
                     os.path.basename(self.part), w["n"], len(args["waves"]), len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
         self.review()
@@ -689,10 +757,14 @@ def drive(args, top, flags, state=None):
     st["pid"], st["state"] = os.getpid(), "active"
     r = Run(args, top, flags, st, folder)
     r.save()
-    status, why = "failed", ""
+    progress("run %s %s: %s, branch %s, %d wave%s" % (args["run"], "resumed" if state else "started", os.path.basename(args["part_dir"]), args["branch"],
+                                                      len(args["waves"]), "" if len(args["waves"]) == 1 else "s"))
+    status, why, fenced = "failed", "", False
     try:
         why = r.execute()
         status = "done"
+    except Fenced as e:
+        status, why, fenced = "needs-owner", str(e), True
     except Stop as e:
         status, why = e.status, e.reason
     except orca.OrcaError as e:
@@ -702,7 +774,10 @@ def drive(args, top, flags, state=None):
     except Exception as e:  # nothing may end the run without its cleanup and its line
         status, why = "failed", "script error: %s: %s" % (type(e).__name__, e)
     finally:
-        kept = finish(r, st, folder, status, why)
+        kept = finish(r, st, folder, status, why) if not fenced else {"kept": [], "removed": []}
+    if fenced:  # nothing is released or removed and the state stays active: the resume carries on from it
+        r.save()
+        return "needs-owner", "run %s needs-owner: %s" % (args["run"], why), []
     st["state"] = status if status in STATES else "failed"
     st["result"] = {"status": st["state"], "why": why, "kept": kept["kept"], "removed": kept["removed"], "leftover": kept.get("leftover", [])}
     r.save()
@@ -722,6 +797,8 @@ def finish(r, st, folder, status, why):
                    "[%s] run %s %s: %s\n\nDetails: fwx wave --run %s --json" % (os.path.basename(r.part), st["run"], status, line, st["run"]))
         except (orca.OrcaError, OSError) as e:
             st["tell_error"] = str(e)
+    if st.get("terminal") and not st.get("terminal_made", True):  # the terminal the run ran in is the owner's: left open
+        st["terminal"] = None
     if st.get("terminal"):  # after the workers: its run's inbox is what they report to
         try:
             orca.terminal_close(st["terminal"])

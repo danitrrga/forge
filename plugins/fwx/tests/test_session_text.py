@@ -274,6 +274,14 @@ def main():
           "run commands %s, missing %s, run_in_background %s, never --focus %s" % (run_flags(s5), wave_in_terminal(s5), "run_in_background" in s5, "never `--focus`" in s5))
     check("control: a step 5 with only a background run is caught",
           bool(wave_in_terminal("5. **Execute a part.** Run `fwx wave run --part-dir <part>` with `run_in_background`.")))
+    # The driver terminal opens in the main checkout's workspace (the owner's view), not in the phase worktree's own, and cd's into the worktree itself.
+    # Seen red on the text before it (`--worktree path:<worktree>`, no `cd`):
+    #   FAIL: step 5 creates the driver terminal in the main checkout's workspace and cd's into the phase worktree -> worktree path:<main checkout> False, cd <worktree> && False
+    def driver(text):
+        return "--worktree path:<main checkout>" in text and 'fwx <phase> part <N>" --command "cd <worktree> && ' in text
+    check("step 5 creates the driver terminal in the main checkout's workspace and cd's into the phase worktree",
+          driver(s5), "worktree path:<main checkout> %s, cd <worktree> && %s" % ("--worktree path:<main checkout>" in s5, "--command \"cd <worktree> && " in s5))
+    check("control: the old step 5 text is caught", not driver('orca terminal create --worktree path:<worktree> --title "fwx <phase> part <N>" --command "<the wave run command>; echo exit"'))
     stale = [(os.path.basename(n), k) for n, t in texts.items() for k, l in enumerate(t.splitlines(), 1) if "wave run" in l and "in the background" in l]
     check("no text still tells the session to run `fwx wave run` \"in the background\" (steps 5 and 6 and ui-review.md point at step 5)", not stale, "%s" % stale)
     check("control: a line that says it is caught", bool([1 for l in ["run `fwx wave run ... --fix f` in the background"] if "wave run" in l and "in the background" in l]))
