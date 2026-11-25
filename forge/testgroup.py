@@ -38,6 +38,7 @@ started was killed), says nothing about the code: it is run once more (`killed`)
 names the file and says it passed on the second run; red twice is a FAIL, never a third run. An exit 1 with no such mark is never rerun.
 """
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -55,23 +56,26 @@ GRACE_S = 5
 STOP = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
 
 
-KILL_MARKS = ("rc=-9", "-SIGKILL")  # what a test prints when a process it started was killed (its own exit code is then 1)
+KILL_MARKS = (re.compile(r"\brc=-9\b"), re.compile(r"-SIGKILL\b"))  # what a test prints when a process it started was killed (its own exit code is then 1)
 
 
 def killed(code, output):
-    """Why a finished file may be run once more, or None: it died of a signal (code < 0), or it failed (not 0, not 77) with a KILL_MARKS
-    string in its output. A plain failure, a pass and a NOT RUN are never retried: only a death that cannot be a logic result is."""
+    """Why a finished file may be run once more, or None: it died of a non-stop signal (code < 0, excluding SIGINT/SIGTERM/SIGHUP), or it
+    failed (not 0, not 77) with a KILL_MARKS match in its output. A plain failure, a pass, a NOT RUN and Ctrl-C are never retried."""
     if code is None:  # the runner was stopped before the file started
         return None
     if code < 0:
+        if -code in STOP:  # user interrupt or runner termination: never re-run
+            return None
         try:
             return "killed by %s" % signal.Signals(-code).name
         except ValueError:
             return "killed by signal %d" % -code
     if code not in (0, 77):
-        for mark in KILL_MARKS:
-            if mark in output:
-                return "its output holds %s" % mark
+        for pat in KILL_MARKS:
+            m = pat.search(output)
+            if m:
+                return "its output holds %s" % m.group(0)
     return None
 
 
