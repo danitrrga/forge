@@ -263,8 +263,20 @@ def main():
     old_prepare = mentions(session_texts, "wave new")
     check("the session runs no `fwx wave new`: `fwx wave run` prepares the part itself", not old_prepare, where(old_prepare))
     s5, s6 = step(skill, 5), step(skill, 6)
-    check("step 5 runs `fwx wave run` in the background", bool(run_flags(s5)) and "run_in_background" in s5, "run commands %s, run_in_background %s" % (run_flags(s5), "run_in_background" in s5))
-    check("control: a step 5 with no background run is caught", not ("run_in_background" in "5. **Execute a part.** Run `fwx wave run --part-dir <part>` and wait."))
+    # The owner wants every `fwx wave run` visible in Orca: with Orca answering, step 5 starts it in its own terminal (not focused, titled after
+    # the part) and follows it with `fwx wave list`; without Orca it is still a background run. Seen red on the text before this rule:
+    #   FAIL: step 5 starts `fwx wave run` in its own Orca terminal when Orca answers, else in the background -> run commands [...], missing ['runtimeReachable', 'orca terminal create', '--title'], run_in_background True, never --focus False
+    #   FAIL: no text still tells the session to run `fwx wave run` "in the background" (steps 5 and 6 and ui-review.md point at step 5) -> [('SKILL.md', 49), ('SKILL.md', 52), ('ui-review.md', 10)]
+    def wave_in_terminal(text):
+        return [w for w in ("runtimeReachable", "orca terminal create", "--title", "fwx wave list") if w not in text]
+    check("step 5 starts `fwx wave run` in its own Orca terminal when Orca answers, else in the background",
+          bool(run_flags(s5)) and not wave_in_terminal(s5) and "run_in_background" in s5 and "--focus`" in s5 and "never `--focus`" in s5,
+          "run commands %s, missing %s, run_in_background %s, never --focus %s" % (run_flags(s5), wave_in_terminal(s5), "run_in_background" in s5, "never `--focus`" in s5))
+    check("control: a step 5 with only a background run is caught",
+          bool(wave_in_terminal("5. **Execute a part.** Run `fwx wave run --part-dir <part>` with `run_in_background`.")))
+    stale = [(os.path.basename(n), k) for n, t in texts.items() for k, l in enumerate(t.splitlines(), 1) if "wave run" in l and "in the background" in l]
+    check("no text still tells the session to run `fwx wave run` \"in the background\" (steps 5 and 6 and ui-review.md point at step 5)", not stale, "%s" % stale)
+    check("control: a line that says it is caught", bool([1 for l in ["run `fwx wave run ... --fix f` in the background"] if "wave run" in l and "in the background" in l]))
     accepted = set(re.findall(r"--[a-z-]+", wave_cmd.RUN_USAGE))
     named = {f for text in texts.values() for flags in run_flags(text) for f in flags}
     check("every flag of a `fwx wave run` the texts give is one `wave run` takes", named <= accepted and len(named) >= 6, "named %s, not taken: %s" % (sorted(named), sorted(named - accepted)))
