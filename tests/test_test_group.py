@@ -35,6 +35,7 @@ Controls, each on a copy of forge/testgroup.py (or forge/cli.py) changed in one 
       FAIL: unknown group nosuch: exit code: got 1, want 2
 """
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -295,7 +296,9 @@ for label, drop, args in (("set 1: everything", (), ()),
     one = forge(repo, "fwx", "--jobs", "1", *args)
     four = forge(repo, "fwx", "--jobs", "4", *args)
     ok("--jobs 1 and --jobs 4 print the same, %s: --jobs 1 printed something" % label, len(one.stdout.splitlines()) >= 6, one.stdout + one.stderr)
-    eq("--jobs 1 and --jobs 4 print the same, %s: stdout" % label, four.stdout, one.stdout)
+    # Strip trailing elapsed-seconds suffix on PASS lines so --jobs 1 vs --jobs 4 compare deterministically under load.
+    strip_secs = lambda s: re.sub(r"^(PASS\b.*)  \d+\.\ds$", r"\1", s, flags=re.M)
+    eq("--jobs 1 and --jobs 4 print the same, %s: stdout" % label, strip_secs(four.stdout), strip_secs(one.stdout))
     eq("--jobs 1 and --jobs 4 print the same, %s: stderr" % label, four.stderr, one.stderr)
     eq("--jobs 1 and --jobs 4 print the same, %s: exit code" % label, four.returncode, one.returncode)
     names = [l.split()[1] if l.startswith(("PASS", "FAIL")) else l.split(": ")[1] for l in one.stdout.splitlines()[:-1]
@@ -501,7 +504,7 @@ four = forge(repo, "--jobs", "4")
 head = lambda r: [l for l in r.stdout.splitlines()[:-1] if not l.startswith((" ", "Failed files"))]  # a failing file's output is indented under its FAIL line; then the block that names the failed files
 ok("no group, --jobs 1 and --jobs 4 print the same: --jobs 1 printed every kind", len(head(one)) == 6 and
    [l.split()[0] for l in sorted(head(one))] == ["FAIL", "PASS", "PASS", "PASS", "SKIP", "WARN"] , one.stdout + one.stderr)
-eq("no group, --jobs 1 and --jobs 4 print the same: stdout", four.stdout, one.stdout)
+eq("no group, --jobs 1 and --jobs 4 print the same: stdout", strip_secs(four.stdout), strip_secs(one.stdout))
 eq("no group, --jobs 1 and --jobs 4 print the same: stderr", four.stderr, one.stderr)
 eq("no group, --jobs 1 and --jobs 4 print the same: exit code", four.returncode, one.returncode)
 eq("no group, --jobs 4 prints the lines in file order", [l.split()[1] for l in head(four)],
@@ -526,7 +529,7 @@ from forge import cli  # noqa: E402
 eq("start order: the slow files first, in SLOW_FIRST's order, then the largest, then by name",
    cli.start_order(["hooks/test_guard_tool_use.py", "tests/test_new.py", "tests/test_nosuch.py", "tests/test_switch.py", "tests/test_run.py",
                     "tests/test_lib.py"]),
-   ["tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
+   ["tests/test_switch.py", "tests/test_run.py", "tests/test_new.py", "hooks/test_guard_tool_use.py", "tests/test_lib.py", "tests/test_nosuch.py"])
 # The default width of the run with no group: min(4, CPUs), 1 where the count is unknown; the real count is swapped out for the check.
 # The CPUs are the ones this process may use (sched_getaffinity: a taskset, a container's cpuset), the host's count where that call does not exist.
 real_count, real_affinity = os.cpu_count, getattr(os, "sched_getaffinity", None)

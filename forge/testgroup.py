@@ -154,10 +154,11 @@ class Children:
         self.stopped = False
 
     def run(self, rel, root, env):
-        """(exit code, output) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave."""
+        """(exit code, output, seconds) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave."""
         with self.lock:
             if self.stopped:
-                return None, ""
+                return None, "", 0.0
+            began = time.monotonic()
             p = subprocess.Popen([sys.executable, rel], cwd=root, env=env, stdin=subprocess.DEVNULL,
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, start_new_session=True)
             self.live[p.pid] = p
@@ -166,7 +167,7 @@ class Children:
         finally:
             with self.lock:
                 self.live.pop(p.pid, None)
-        return p.returncode, out
+        return p.returncode, out, time.monotonic() - began
 
     def kill_all(self):
         """SIGTERM to every group, SIGKILL to what is still there after GRACE_S. Returns how many were running."""
@@ -261,10 +262,10 @@ def run_group(root, expect_values, jobs_values, label, shard_values, env):
     try:
         futures = {rel: pool.submit(children.run, rel, root, env) for rel in start}
         for rel in files:
-            code, output = futures[rel].result()
+            code, output, secs = futures[rel].result()
             if code == 0:
                 passed += 1
-                print("PASS  " + rel)
+                print("PASS  %s  %.1fs" % (rel, secs))
             elif code == 77 and rel in expect:
                 expected += 1
                 print("%s: %s: %s" % (EXPECTED, rel, reason(output)))
