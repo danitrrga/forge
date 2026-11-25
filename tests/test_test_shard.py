@@ -149,6 +149,39 @@ eq("take_shard: the slices of any N are the whole list, once", sorted(f for n in
    sorted(order * 3))
 eq("take_shard: no shard asked for is the whole list", take_shard(order, None), order)
 
+# ---- the real engine suite: the two heavy files are not piled into one shard of 4 ----------------------------------------------------
+# tests/test_run.py runs 4 inner workers and hooks/test_guard_tool_use.py takes about six cores by itself: on a 4-CPU runner they were the
+# slowest shard of the whole check (the deal by SLOW_FIRST position put them both in shard 1 of 4). The list is the one `forge test` builds
+# (git ls-files "*test_*.py", without the fwx group, benchmarks and on-demand files).
+real = [f for f in subprocess.run(["git", "-C", FORGE, "ls-files", "-z", "*test_*.py"], capture_output=True, text=True, check=True).stdout.split("\0")
+        if f and os.path.basename(f).startswith("test_") and f.endswith(".py") and not f.startswith("benchmarks/")
+        and not f.startswith(cli.FWX_PREFIX) and f not in cli.ON_DEMAND]
+HEAVY = ("tests/test_run.py", "hooks/test_guard_tool_use.py")
+ok("the engine's real list holds both heavy files (looking at zero is a failure)", all(f in real for f in HEAVY), repr([f for f in HEAVY if f not in real]))
+real_order = cli.start_order(real)
+real_home = {f: i for i in range(1, 5) for f in take_shard(real_order, (i, 4))}
+# FAIL before the change (SLOW_FIRST without the guard file, then it is dealt by size): see the commit message for the exact line.
+ok("engine shards of 4: test_run.py and test_guard_tool_use.py are in different shards", real_home.get(HEAVY[0]) != real_home.get(HEAVY[1]),
+   "both in shard %s" % real_home.get(HEAVY[0]))
+ok("hooks/test_guard_tool_use.py is in SLOW_FIRST", HEAVY[1] in cli.SLOW_FIRST, repr(cli.SLOW_FIRST))
+ok("engine shards of 4: no shard holds two of the SLOW_FIRST files bar one pair (5 slow files, 4 shards)",
+   sorted(sum(1 for f in take_shard(real_order, (i, 4)) if f in cli.SLOW_FIRST) for i in range(1, 5)) == [1, 1, 1, 2],
+   repr([[f for f in take_shard(real_order, (i, 4)) if f in cli.SLOW_FIRST] for i in range(1, 5)]))
+
+# ---- each PASS line ends with the file's seconds, in both runners ---------------------------------------------------------------------
+# So the next balancing of the shards reads the times instead of guessing them. Before: FAIL: group PASS line ends with the seconds: got
+# ['PASS  tests/test_a.py'] (and the same for the no-group line).
+SECS = re.compile(r"\s\d+\.\ds$")
+slept = "import time\ntime.sleep(0.3)\n"
+for label, base, files, prefix in (("group", ("fwx",), {"plugins/fwx/tests/test_a.py": slept}, "PASS  tests/test_a.py"),
+                                   ("no group", (), {"test_a.py": slept}, "PASS  test_a.py")):
+    r = forge(toy(files), *base)
+    lines = [l for l in r.stdout.splitlines() if l.startswith(prefix)]
+    ok("%s: one PASS line for the file" % label, len(lines) == 1, r.stdout + r.stderr)
+    ok("%s: the PASS line ends with the seconds, e.g. 0.3s" % label, bool(lines) and bool(SECS.search(lines[0])), repr(lines))
+    ok("%s: the seconds are the file's own time, not zero (the file sleeps 0.3 s)" % label,
+       bool(lines) and bool(SECS.search(lines[0])) and float(lines[0].rsplit(None, 1)[1][:-1]) >= 0.3, repr(lines))
+
 # ---- a malformed --shard is a usage error; a shard with no file is a failure -----------------------------------------------------------
 for label, args in (("0/3", ("--shard", "0/3")), ("4/3", ("--shard", "4/3")), ("1/0", ("--shard", "1/0")), ("abc", ("--shard", "abc")),
                     ("1-3", ("--shard", "1-3")), ("-1/3", ("--shard=-1/3",)), ("1/3/5", ("--shard", "1/3/5")), ("empty", ("--shard=",)),

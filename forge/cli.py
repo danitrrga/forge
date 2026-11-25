@@ -1493,8 +1493,9 @@ FWX_PREFIX = GROUPS["fwx"] + "/"
 
 # The files that take minutes (test_switch, test_run, test_new and test_messages: each 2 to 3 minutes on a loaded 16-CPU machine; every other
 # file is under about 25 s) start first when files run at once: by size alone they begin late and the run waits for them. A stale name costs
-# minutes, never a result.
-SLOW_FIRST = ("tests/test_run.py", "tests/test_switch.py", "tests/test_messages.py", "tests/test_new.py")
+# minutes, never a result. hooks/test_guard_tool_use.py takes about six cores by itself. The five are dealt to the shards in this order, so the
+# fifth lands with the first: test_run (4 inner workers) is second, so it shares its shard with no other slow file.
+SLOW_FIRST = ("tests/test_switch.py", "tests/test_run.py", "tests/test_messages.py", "tests/test_new.py", "hooks/test_guard_tool_use.py")
 
 
 def _size(path):
@@ -1635,14 +1636,16 @@ def cmd_test(a):
     def run_one(f):
         # nice 19 and idle I/O: a foreground tool keeps its cores. stderr joins stdout, as in a terminal: a traceback is on stderr, and -u (unbuffered)
         # keeps its place against the stdout lines printed before it.
+        began = time.monotonic()
         r = lib.run_low([sys.executable, "-u", f], cwd=lib.ROOT, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=child_env)
+        secs = time.monotonic() - began
         if r.returncode == lib.NOT_RUN:
             # A test that lacks a tool or the network says so and exits 77: yellow, never a pass
             # (CLAUDE.md, rule 4). Its last line is why, after "NOT RUN: ".
             why = (r.stdout.strip().splitlines() or [f])[-1].removeprefix("NOT RUN: ")
             return lib.Result("WARN", os.path.basename(f), "NOT RUN, NOT ARMED: %s" % why)
         if r.returncode == 0:
-            return lib.Result("PASS", os.path.basename(f), f)  # success is silent: its output is dropped
+            return lib.Result("PASS", os.path.basename(f), "%s  %.1fs" % (f, secs))  # success is silent: its output is dropped; its seconds are not
         failed_output[f] = r.stdout
         return lib.Result("FAIL", os.path.basename(f), "python3 %s%s" % (f, failure_tail(r.stdout, r.returncode)))
 
