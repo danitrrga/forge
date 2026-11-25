@@ -48,6 +48,7 @@ from test_wave_prepare import CRIT, Scene, task  # noqa: E402
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "lib"))
 from fwx import context_base  # noqa: E402
+from fwx.execute import orca as orca_mod  # noqa: E402
 
 s = helpers.Suite()
 FAKE = os.path.join(ROOT, "tests", "fake_orca.py")
@@ -731,9 +732,9 @@ def kill_group(p):
     p.wait()
 
 
-def finish_run(p):
+def finish_run(p, timeout=60):
     try:
-        out, err = p.communicate(timeout=60)
+        out, err = p.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
         kill_group(p)
         out, err = p.communicate()
@@ -830,6 +831,16 @@ def case_steer_lines(root, S):
     starts = w.starts()
     S.eq("lines: every executor is told to ask, no reviewer is", [(x["unit"], "This run has an orchestrator" in x["spec"]) for x in starts], [("T1", True), ("T2", True), ("T3", True), ("r1", False)])
     S.ok("lines: the executor's spec names the `ask` command", bool(starts) and "`ask` command from your Orca preamble" in starts[0]["spec"])
+    w = world()
+    w.put_done(tasks=("T1",), findings=("X1",))
+    r = w.run("--revert", "X1", "--orchestrator", ORCH, root=root)
+    m = line_of(r)
+    S.ok("lines: --revert with --orchestrator is done", bool(m) and m.group(2) == "done" and r.returncode == 0, "got %r %r" % (r.stdout[-200:], r.stderr[-200:]))
+    if m:
+        got_rev = sent(w, ORCH)
+        S.eq("lines: --revert with --orchestrator sends its final status line and closes its terminal",
+             ([x["subject"].split(": ")[0] for x in got_rev], any(t["open"] for t in w.terminals().values())),
+             (["[%s] run %s done" % (os.path.basename(w.part), m.group(1))], False))
 
 
 def case_steer_off(root, S):
@@ -843,15 +854,18 @@ def case_steer_off(root, S):
     S.eq("off: the run is done", (r.returncode, bool(line_of(r))), (0, True))
     kinds = [c["argv"][:2] for c in w.calls() if c["argv"][:2] in (["orchestration", "check"], ["orchestration", "send"])]
     S.eq("off: no peek and no send", kinds, [])
-    S.ok("off: no executor is told to ask -> %d starts" % len(w.starts()), all("This run has an orchestrator" not in x["spec"] for x in w.starts()) and len(w.starts()) == 4)
-    for label, flags in (("--plane factory", ["--plane", "factory"]), ("--unattended", ["--unattended"]), ("a malformed address", [])):
+    S.ok("off: no executor is told to ask -> %d starts" % len(w.starts()),
+         all("This run has an orchestrator" not in x["spec"] and "`ask` command from your Orca preamble" not in x["spec"] for x in w.starts()) and len(w.starts()) == 4)
+    for label, flags, expect in (("--plane factory", [], "factory or unattended"), ("--unattended", ["--unattended"], "factory or unattended"),
+                                 ("a malformed address", [], "orca_session_id:")):
         w = world()
-        argv = w.argv(root, "--orchestrator", ORCH if flags else "chat-1", *flags)
-        if "factory" in flags:
-            argv.remove("session")
+        argv = w.argv(root, "--orchestrator", "chat-1" if label == "a malformed address" else ORCH, *flags)
+        if label == "--plane factory":
+            argv[argv.index("session")] = "factory"
         r = subprocess.run(argv, cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=60)
         S.eq("refusals: %s --orchestrator: exit 2, no Orca call" % label, (r.returncode, w.calls()), (2, []))
-        S.ok("refusals: %s: stderr names the orchestrator" % label, "orchestrator" in r.stderr, "stderr %r" % r.stderr[-300:])
+        S.ok("refusals: %s: stderr explains the refusal (not usage)" % label,
+             "usage:" not in r.stderr and "orchestrator" in r.stderr and expect in r.stderr, "stderr %r" % r.stderr[-300:])
     w = world()
     name = "01-alpha-0000000-8"
     helpers.write(os.path.join(w.common, "fwx", "runs", name), "state.json", json.dumps({
@@ -903,11 +917,81 @@ def case_fake_orca(root, S):
     S.eq("fake: an escalation from a run's terminal is refused", (rc, (body.get("error") or {}).get("code")), (1, "sender_not_assignee"))
     rc, body = call("orchestration", "send", "--from", "term_1", "--to", ORCH, "--type", "status", "--subject", "s", "--body", "b")
     S.eq("fake: a status to an orchestrator address is accepted and reaches its chat", (rc, [x["subject"] for x in w.state_json().get("chat", [])]), (0, ["s"]))
+    S.eq("orca._messages skips malformed entries instead of dropping the list",
+         orca_mod._messages({"messages": [{"id": "m1", "type": "question"}, {"bad": 1}, "junk", None]}),
+         [{"id": "m1", "type": "question"}])
+
+
+def case_steer_asking(root, S):
+    """Asking state edges:
+    - a transient non-working activity before the worker parks never clears `asking` early (the waiting worker is not stopped as idle);
+    - a fast answer between polls (worker never seen parked) does not pause the limit clock forever;
+    - a resume after an answer keeps the cleared asking state (persisted in state.json) so the worker's limit still enforces;
+    - an unanswered parked worker is bounded (3 * limit) and cannot pause the limit forever.
+    Seen red on the code before the fixes:
+      FAIL: asking transient: finishes done once answered: exit 1, 'run ... failed: executor did not return: T1 (1 worktree kept)'
+      FAIL: asking fast-answer: hanging worker still hits its limit -> exit -9, ''
+      FAIL: asking resume-after-answer: poll persisted cleared asking state in state.json: got <ts>, want None
+      FAIL: asking resume-after-answer: resumed run enforces the limit -> exit -9, ''
+      FAIL: asking bounded: unanswered worker stops past 3x limit -> exit -9, ''"""
+    # 1. Transient missing activity while finishing turn before parking must not clear `asking` early.
+    pre = [{"state": "running", "stage": "working"}, {"state": "running", "stage": "working", "activity": "working"}]
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {"mode": "ask", "question": "which one?", "before_park": pre}}})
+    p = start_run(w, root, "--orchestrator", ORCH)
+    wait_for(lambda: sent(w, ORCH) or p.poll() is not None)
+    time.sleep(0.9)  # past idle_s (0.4s) after the two pre-park shows (~0.1s)
+    S.ok("asking transient: waiting worker is not stopped as idle after pre-park non-working activity", p.poll() is None, "exit %r" % p.poll())
+    orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "ok")
+    r = finish_run(p, timeout=20)
+    m = line_of(r)
+    S.ok("asking transient: finishes done once answered", bool(m) and m.group(2) == "done" and r.returncode == 0, "exit %d, %r" % (r.returncode, r.stdout[-200:]))
+
+    # 2. Fast answer between polls (never seen parked): limit clock still stops a hanging worker.
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {
+        "mode": "ask", "question": "fast?", "before_park": [{"state": "running", "stage": "working", "activity": "working"}] * 80, "after_answer": "hang"}}})
+    p = start_run(w, root, "--orchestrator", ORCH, FWX_RUN_LIMIT_S="0.8")
+    wait_for(lambda: sent(w, ORCH) or p.poll() is not None)
+    orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
+    r = finish_run(p, timeout=3.0)
+    m = line_of(r)
+    S.ok("asking fast-answer: hanging worker still hits its limit -> exit %d, %r" % (r.returncode, r.stdout[-200:]),
+         r.returncode == 1 and bool(m) and m.group(2) == "failed" and "limit" in m.group(3))
+
+    # 3. Resume after an answer: poll persists cleared asking state so the resumed run still enforces the limit.
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {"mode": "ask", "question": "resume?", "after_answer": "hang"}}})
+    p = start_run(w, root, "--orchestrator", ORCH, FWX_RUN_LIMIT_S="1.2")
+    wait_for(lambda: (w.runs() and w.state(w.runs()[0]).get("forwarded")) or p.poll() is not None)
+    time.sleep(0.25)  # let poll observe parked state
+    orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
+    run = w.runs()[0] if w.runs() else ""
+    wait_for(lambda: (w.dispatches().get("ctx_1") or {}).get("shows", 0) >= 2 and (w.dispatches().get("ctx_1") or {}).get("mode") == "woken-hang")
+    time.sleep(0.15)  # let poll process woken working state
+    saved_after = (w.state(run)["workers"].get("T1/1") or {}) if run else {}
+    S.eq("asking resume-after-answer: poll persisted cleared asking state in state.json", saved_after.get("asking"), None)
+    kill_group(p)
+    r2 = subprocess.Popen(w.argv(root, "--resume", run, "--orchestrator", ORCH), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="1.2"),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    w.procs.append(r2)
+    res = finish_run(r2, timeout=3.5)
+    m = line_of(res)
+    S.ok("asking resume-after-answer: resumed run enforces the limit -> exit %d, %r" % (res.returncode, res.stdout[-200:]),
+         res.returncode == 1 and bool(m) and m.group(2) == "failed" and "limit" in m.group(3))
+
+    # 4. Stuck-asking parked worker with no answer is bounded (3 * limit), never pauses forever.
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": {"mode": "ask", "question": "anyone there?"}}})
+    p = start_run(w, root, "--orchestrator", ORCH, FWX_RUN_LIMIT_S="0.6")
+    wait_for(lambda: sent(w, ORCH) or p.poll() is not None)
+    time.sleep(0.85)  # past 0.6s limit and 0.4s idle_s: still waiting
+    S.ok("asking bounded: still waiting past 1x limit -> exit %r" % p.poll(), p.poll() is None)
+    res = finish_run(p, timeout=3.0)
+    m = line_of(res)
+    S.ok("asking bounded: unanswered worker stops past 3x limit -> exit %d, %r" % (res.returncode, res.stdout[-200:]),
+         res.returncode == 1 and bool(m) and m.group(2) == "failed" and "limit" in m.group(3))
 
 
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
-         case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable]
+         case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -952,6 +1036,8 @@ MUTANTS = [
     ("executors are told to ask with no orchestrator", case_steer_off, "lib/fwx/execute/run.py", 'if self.orchestrator and job.role == "executor":', 'if job.role == "executor":',
      "off: no executor is told to ask"),
     ("the status is sent as an escalation", case_steer, "lib/fwx/execute/orca.py", '"--type", "status"', '"--type", "escalation"', "a question reaches the orchestrator once"),
+    ("factory plane accepts --orchestrator", case_steer_off, "lib/fwx/commands/wave.py", ' or got.get("--plane") == "factory"', "",
+     "refusals: --plane factory: stderr explains the refusal (not usage)"),
 ]
 
 

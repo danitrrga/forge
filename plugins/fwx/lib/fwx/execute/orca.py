@@ -180,9 +180,11 @@ def show(dispatch):
 
 
 def _messages(node):
-    """The messages (dicts with a string `id` and `type`) of an answer, wherever Orca nests them."""
-    if isinstance(node, list) and node and all(isinstance(x, dict) and isinstance(x.get("id"), str) and isinstance(x.get("type"), str) for x in node):
-        return node
+    """The messages (dicts with a string `id` and `type`) of an answer, wherever Orca nests them; malformed entries in a list are skipped."""
+    if isinstance(node, list):
+        found = [x for x in node if isinstance(x, dict) and isinstance(x.get("id"), str) and isinstance(x.get("type"), str)]
+        if found:
+            return found
     for v in (node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()):
         found = _messages(v)
         if found:

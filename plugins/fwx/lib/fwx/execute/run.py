@@ -309,7 +309,9 @@ class Run:
                 raise self.unreachable(e, "the %s of %s is unanswered: %s" % (m["type"], who, subject[len(who) + 3:][:100]))
             done[m["id"]] = dispatch
             if rec:
-                rec["asking"], rec["asked_idle"] = time.time(), False
+                now = time.time()
+                rec["asking"] = rec["ask_since"] = now
+                rec["asked_idle"] = False
             self.save()
 
     # ---- workers ----------------------------------------------------------------------------------------------------------------
@@ -398,16 +400,34 @@ class Run:
         rec["state"] = state
         waiting = _waiting(info)
         if state in orca.SETTLED:
+            rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
             rec["line"] = self.reply(rec)
             self.settle(rec, state)
             return rec["line"]
-        if rec.get("asking"):  # a question of this worker is with the orchestrator: its limit does not run, and it is not idle, until it works again
+        parked = state == "ready" and info.get("activity") == "idle"
+        if rec.get("asking"):  # a question of this worker is with the orchestrator: pause its limit and idle stop while parked, bounded by 3 * limit
             now = time.time()
-            rec["started"] += now - rec["asking"]
-            if info.get("activity") == "working" and rec.get("asked_idle"):
-                rec["asking"] = rec["asked_idle"] = None
+            changed = False
+            if parked or rec.get("asked_idle"):
+                rec["started"] += now - rec["asking"]
+            if parked:
+                if not rec.get("asked_idle"):
+                    rec["asked_idle"], changed = True, True
+                rec["asking"] = now
+            elif info.get("activity") == "working" and rec.get("asked_idle"):
+                rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
+                changed = True
             else:
-                rec["asking"], rec["asked_idle"] = now, bool(rec.get("asked_idle")) or info.get("activity") != "working"
+                rec["asking"] = now
+            ask_limit = 3 * self.limit(rec["role"])
+            if rec.get("asking") and now - (rec.get("ask_since") or rec["asking"]) > ask_limit:
+                if rec.get("asked_idle"):
+                    self.release(rec, state)
+                    raise Stop("failed", "%s waited past its question limit of %d s and was stopped" % (rec["unit"], ask_limit))
+                rec["asking"] = rec["asked_idle"] = rec["ask_since"] = None
+                changed = True
+            if changed:
+                self.save()
         if time.time() - rec["started"] > self.limit(rec["role"]):
             self.release(rec, state)
             raise Stop("failed", "%s ran past its limit of %d s and was stopped" % (rec["unit"], self.limit(rec["role"])))
@@ -603,6 +623,9 @@ class Run:
     def execute(self):
         args = self.args
         if args["revert"]:
+            if self.orchestrator and not self.st.get("terminal"):
+                self.st["terminal"] = orca.terminal_create(self.main, "fwx run %s" % self.run)
+                self.save()
             return self.revert()
         if not self.st.get("repo_added"):
             orca.ensure_repo(self.main)

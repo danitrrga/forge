@@ -145,10 +145,15 @@ def shape(d):
         return {"state": "succeeded", "stage": "settled"}
     if mode == "fail":
         return {"state": "failed", "stage": "settled"}
-    if mode == "ask":  # the worker asked and ended its turn: ready and idle, not waiting on a person
+    if mode == "ask":  # the worker asked and ended its turn: ready and idle, not waiting on a person (optional pre-park shapes first)
+        pre = d.get("before_park") or []
+        if d.get("shows", 0) <= len(pre):
+            return pre[max(0, d.get("shows", 1) - 1)]
         return {"state": "ready", "stage": "input_accepted", "activity": "idle", "waitingOnHuman": False}
     if mode == "woken":  # answered: working for one show, then done
         return {"state": "succeeded", "stage": "settled"} if d.get("shows", 0) >= 2 else {"state": "running", "stage": "working", "activity": "working"}
+    if mode == "woken-hang":  # answered: stays working forever
+        return {"state": "running", "stage": "working", "activity": "working"}
     if mode == "later":
         return {"state": "succeeded", "stage": "settled"} if os.path.exists(os.path.join(DIR, "go-" + d["unit"])) else {"state": "running", "stage": "working"}
     if mode == "idle":
@@ -252,11 +257,14 @@ def main(argv):
                 say(rc=1, error={"code": "unavailable", "message": "the chat of %s cannot be reached" % to})
             state.setdefault("chat", []).append(dict(sent, **{"from": sender}))
         d = state["dispatches"].get(to[len("dispatch:"):]) if (to or "").startswith("dispatch:") else None
-        if d and d["mode"] == "ask":  # a worker parked on `ask` is woken by mail to its dispatch: it carries on and finishes
-            marker = load_abs(os.path.join(git(d["worktree"], "rev-parse", "--absolute-git-dir").stdout.strip(), "fwx-worker.json"))
-            reply, _, _ = play(behave, d["worktree"], marker, d["launch"], "ok")
-            d.update(reply=reply, mode="woken", answered=body, shows=0)
-            post(state, run=d["orca_run"], type="worker_done", subject="done " + d["unit"], to="run:" + str(d["orca_run"]), payload={"dispatchId": to[len("dispatch:"):]})
+        if d and d["mode"] == "ask":  # a worker parked on `ask` is woken by mail to its dispatch: it carries on and finishes (or hangs when after_answer is "hang")
+            if d.get("after_answer") == "hang":
+                d.update(mode="woken-hang", answered=body, shows=0)
+            else:
+                marker = load_abs(os.path.join(git(d["worktree"], "rev-parse", "--absolute-git-dir").stdout.strip(), "fwx-worker.json"))
+                reply, _, _ = play(behave, d["worktree"], marker, d["launch"], "ok")
+                d.update(reply=reply, mode="woken", answered=body, shows=0)
+                post(state, run=d["orca_run"], type="worker_done", subject="done " + d["unit"], to="run:" + str(d["orca_run"]), payload={"dispatchId": to[len("dispatch:"):]})
         done_log(sender=sender, send=sent)
         say({"sent": True})
     if argv[:2] == ["orchestration", "check"]:
@@ -317,7 +325,8 @@ def main(argv):
         state["launches"][key] = launch = state["launches"].get(key, 0) + 1
         reply, mode, pspec = play(behave, wt, marker, launch) if marker else ("", "hang", {})
         state["dispatches"][did] = {"unit": unit, "mode": mode, "state": "running", "reply": reply, "worktree": wt, "released": False,
-                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing"), "launch": launch, "orca_run": flag(argv, "--run")}
+                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing"), "launch": launch, "orca_run": flag(argv, "--run"),
+                                    "before_park": pspec.get("before_park"), "after_answer": pspec.get("after_answer")}
         if mode == "ask":
             post(state, run=flag(argv, "--run"), type="question", subject="Question", body=pspec.get("question", "which one?"), to="run:" + str(flag(argv, "--run")),
                  payload={"dispatchId": did})
