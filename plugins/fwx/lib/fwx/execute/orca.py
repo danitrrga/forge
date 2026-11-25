@@ -17,6 +17,7 @@ clean. Imports the standard library and execute.base.
 """
 import json
 import os
+import re
 import subprocess
 
 from fwx.execute.base import WaveError, git, out
@@ -26,6 +27,11 @@ SESSION_VARS = ("ORCA_AGENT_SESSION_ID", "ORCA_AGENT_SESSION_SPAWN_TOKEN", "ORCA
 SETTLED = ("succeeded", "failed", "stopped")
 SETTINGS = os.path.join(".claude", "settings.local.json")
 MARKER = "fwx-worker.json"
+REPLY_LINE = re.compile(
+    r"(?:(?:done|wrong-base|question|failed) \S+/\.fwx-agent/\S+/report\.json commits=\d+"
+    r"|reviewed \S+/\.fwx-agent/\S+/report\.json looked_at=\d+ findings=\d+ criteria_no=\d+ criteria_unproven=\d+"
+    r"|verdicts \S+/\.fwx-agent/\S+/report\.json)\Z"
+)
 
 
 class OrcaError(WaveError):
@@ -112,21 +118,33 @@ def show(dispatch):
 
 
 def last_text(dispatch):
-    """The last text the worker's assistant wrote, from its transcript (every page of it); None when there is none."""
+    """The last text the worker's assistant wrote, from its transcript (every page of it); None when there is none.
+    When a later assistant turn adds closing prose after `worker_done`, the last line matching a worker reply grammar wins."""
     messages, cursor = [], None
     for _ in range(50):
         got = result("orchestration", "worker-read", "--dispatch", dispatch, "--source", "transcript", "--limit", "200",
                      *(["--cursor", cursor] if cursor else []))
-        messages += (got.get("transcript") or {}).get("messages") or []
-        cursor = _first(got, ("nextCursor", "cursor"))
-        if not cursor:
+        tr = got.get("transcript") or {}
+        batch = tr.get("messages") or []
+        messages += batch
+        nxt = _first(got, ("nextCursor", "cursor"))
+        if not batch or tr.get("limited") is False or not nxt or nxt == cursor:
             break
+        cursor = nxt
+    fallback = None
     for m in reversed(messages):
         if isinstance(m, dict) and m.get("role") == "assistant":
             texts = [b.get("text") for b in m.get("blocks") or [] if isinstance(b, dict) and b.get("type") == "text" and isinstance(b.get("text"), str)]
-            if texts and texts[-1].strip():
-                return texts[-1]
-    return None
+            for text in reversed(texts):
+                lines = [x.strip() for x in text.strip().splitlines() if x.strip()]
+                if not lines:
+                    continue
+                if fallback is None:
+                    fallback = text
+                for line in reversed(lines):
+                    if REPLY_LINE.match(line):
+                        return line
+    return fallback
 
 
 def stop(dispatch):

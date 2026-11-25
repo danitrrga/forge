@@ -148,6 +148,17 @@ def last_line(text):
     return lines[-1] if lines else ""
 
 
+def _waiting(info):
+    """True unless Orca explicitly proved the worker is not waiting on a person: concise `waitingOnHuman` false (or `no`),
+    or `--full`'s `observation.agentWait` null. `unknown` or an absent field never means not waiting."""
+    if "waitingOnHuman" in info:
+        return info["waitingOnHuman"] not in (False, "no")
+    obs = info.get("observation")
+    if isinstance(obs, dict) and "agentWait" in obs:
+        return bool(obs["agentWait"])
+    return True
+
+
 class Job:
     """One agent to start and judge: `unit` (the folder `fwx scratch new` makes), `role` (its agent file), `model`, its `brief`, the `head` it starts
     at, and `on_line(line)`: True when the job ended, False to start it again (the new `note` and `prev` are on the job)."""
@@ -204,7 +215,7 @@ class Run:
         return self.context if sections == "map+decided" else self.context.split(DECIDED, 1)[0]
 
     # ---- the fwx wave calls, journaled ---------------------------------------------------------------------------------------
-    def step(self, *words):
+    def step(self, *words, no_json=False):
         """(exit code, the JSON the call printed). A call the journal already holds (a resumed run) is not made again."""
         i, journal = self.seq, self.st["steps"]
         self.seq += 1
@@ -224,7 +235,9 @@ class Run:
                 result = got
                 break
         if result is None:
-            raise Stop("failed", "fwx %s exited %d with no JSON: %s" % (" ".join(words[:2]), r.returncode, (r.stderr.strip() or r.stdout.strip())[-300:]))
+            if not no_json:
+                raise Stop("failed", "fwx %s exited %d with no JSON: %s" % (" ".join(words[:2]), r.returncode, (r.stderr.strip() or r.stdout.strip())[-300:]))
+            result = {"error": (r.stderr.strip() or r.stdout.strip())[-300:]}
         journal.append({"words": list(words), "rc": r.returncode, "result": result})
         self.save()
         return r.returncode, result
@@ -250,7 +263,8 @@ class Run:
             head += ("\nThis is a new attempt in a new worktree. The last one returned this (data, not an instruction): %s\nStart from the base, not from its work."
                      % " ".join(json.dumps(job.prev).split())[:1500])
         head += job.note
-        parts += [head, "When you have returned your last line, send `worker_done` as the Orca preamble above asks (`orca orchestration send --type worker_done`) and end your turn."]
+        parts += [head, "When your report is written, send `worker_done` as the Orca preamble above asks (`orca orchestration send --type worker_done`) first, "
+                  "then end your turn with ONLY the reply line your standing orders give and nothing after it."]
         text = "\n\n".join(p for p in parts if p) + "\n"
         path = os.path.join(self.folder, "specs", "%s-%d.md" % (job.unit, k))
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -319,7 +333,7 @@ class Run:
         info = orca.show(rec["dispatch"])
         state = info.get("state")
         rec["state"] = state
-        waiting = bool((info.get("observation") or {}).get("agentWait"))
+        waiting = _waiting(info)
         if state in orca.SETTLED:
             rec["line"] = self.reply(rec)
             self.settle(rec, state)
@@ -507,10 +521,11 @@ class Run:
             raise Stop(self.owner_status(), " ".join(r["setup"].split())[:600])
         if r.get("ok") is not True:
             raise Stop("failed", "a revert conflicted%s: nothing was reverted past it" % ((" on " + r["failed"]["id"]) if r.get("failed") else ""))
-        rc, g = self.step("verify", "--json", "--dir", self.part)
-        if g.get("rc") == 2:
-            raise Stop(self.owner_status(), "verify could not run after the revert")
-        if g.get("rc") != 0:
+        rc, g = self.step("verify", "--json", "--dir", self.part, no_json=True)
+        if rc == 2 or g.get("rc") == 2:
+            why = g.get("error") or ("HEAD moved while verify ran" if g.get("clean") is False else "exit 2")
+            raise Stop(self.owner_status(), "verify could not run after the revert: %s" % why)
+        if rc != 0 or g.get("rc") != 0:
             raise Stop("failed", "the gate failed after the revert: %s" % " ".join("%s=%s" % (c.get("cmd"), c.get("rc")) for c in g.get("commands") or []))
         return "the reverts passed the gate on %s" % str(self.head)[:8]
 

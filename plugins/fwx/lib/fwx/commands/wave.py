@@ -197,7 +197,8 @@ def do_run(argv):
             code, args = prepared(got, lambda line: sys.stderr.write("fwx wave new: %s\n" % line))
             if code:
                 return code
-            flags = {"control": got.get("--control-findings")}
+            ctrl = got.get("--control-findings")
+            flags = {"control": os.path.abspath(ctrl) if ctrl else None}
         status, line, kept = run_mod.drive(args, top, flags, saved)
     except (base.WaveError, config.ConfigError, state.StateError) as e:
         sys.stderr.write("fwx wave run: %s\n" % e)

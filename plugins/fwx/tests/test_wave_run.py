@@ -336,6 +336,28 @@ def case_revert(root, S):
     S.ok("revert: done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
     S.eq("revert: no worker, no Orca call", (w.starts(), w.calls()), ([], []))
     S.ok("revert: the finding's commit is reverted on the phase branch", helpers.git(w.cwd, "log", "-1", "--format=%s").startswith("Revert"))
+    # verify exits 2 when HEAD moves during checks: routed to needs-owner (exit 3), not failed (exit 1).
+    # Seen red before the fix: FAIL: revert with HEAD moving during verify: needs-owner (exit 3): exit 1, got 'run ... failed: the gate failed after the revert: ...'
+    move = "python3 -c \"import os,subprocess; os.path.exists('src/f-X1.txt') or subprocess.check_call(['git','commit','--allow-empty','-q','-m','moved'])\""
+    w = world(recipe=(move,))
+    w.put_done(tasks=("T1",), findings=("X1",))
+    r = w.run("--revert", "X1", root=root)
+    m = line_of(r)
+    S.ok("revert with HEAD moving during verify: needs-owner (exit 3)", r.returncode == 3 and bool(m) and m.group(2) == "needs-owner" and "verify could not run" in m.group(3),
+         "exit %d, got %r %r" % (r.returncode, r.stdout[-300:], r.stderr[-300:]))
+    # verify exits 2 with no JSON (e.g. reverting the commit that provided package.json's only check script): needs-owner (exit 3), not failed.
+    # Seen red before the fix: FAIL: revert with verify exiting 2 and no JSON: needs-owner (exit 3): exit 1, got 'run ... failed: fwx verify --json exited 2 with no JSON: ...'
+    w = world(recipe=())
+    helpers.write(w.bin, "npm", "#!/bin/sh\nexit 0\n", 0o755)
+    base = helpers.git(w.cwd, "rev-parse", "HEAD").strip()
+    run_id = "01-alpha-%s-1" % base[:7]
+    helpers.write(w.cwd, "package.json", json.dumps({"scripts": {"test": "true"}}))
+    helpers.git(w.cwd, "add", "-A")
+    helpers.git(w.cwd, "commit", "-q", "-m", "fix X1\n\nFwx-Finding: X1\nFwx-Run: %s" % run_id)
+    r = w.run("--revert", "X1", root=root)
+    m = line_of(r)
+    S.ok("revert with verify exiting 2 and no JSON: needs-owner (exit 3)", r.returncode == 3 and bool(m) and m.group(2) == "needs-owner" and "verify could not run" in m.group(3),
+         "exit %d, got %r %r" % (r.returncode, r.stdout[-300:], r.stderr[-300:]))
 
 
 def case_security(root, S):
@@ -476,8 +498,80 @@ def case_settings_mode(root, S):
     S.eq("a worker's settings copy is mode 0600 -> %s" % [oct(m) for m in modes], modes and set(modes), {0o600})
 
 
+def case_transcript(root, S):
+    """`orca.last_text` stops on an empty page or `limited: false` even with a non-empty end cursor, and picks the last reply line
+    even when closing prose follows `worker_done`; the spec puts `worker_done` before the final reply line.
+    Seen red before the fix:
+      FAIL: transcript: trailing prose causes no relaunch: got ['T1', 'T1'], want ['T1', 'r1']
+      FAIL: transcript: worker-read stops at end cursor (3 for 2-page limited=True, 1 for limited=False): got (50, None), want (3, 1)"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])],
+              behave={"units": {"T1": {"mode": "ok", "pages": 2, "trailing": "Done, I sent worker_done to the coordinator."}}})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("transcript: done despite trailing prose and multi-page transcript", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("transcript: trailing prose causes no relaunch", units(w), ["T1", "r1"])
+    reads = {}
+    for c in w.calls():
+        if c["argv"][:2] == ["orchestration", "worker-read"]:
+            reads[c["dispatch"]] = reads.get(c["dispatch"], 0) + 1
+    by_unit = {d["unit"]: reads.get(k, 0) for k, d in w.dispatches().items()}
+    S.eq("transcript: worker-read stops at end cursor (3 for 2-page limited=True, 1 for limited=False)", (by_unit.get("T1"), by_unit.get("r1")), (3, 1))
+    spec = w.starts()[0]["spec"] if w.starts() else ""
+    S.ok("transcript: spec puts worker_done before ending the turn with the reply line",
+         "worker_done" in spec and "first" in spec[spec.rfind("worker_done") - 80:] and "When you have returned your last line" not in spec, spec[-260:])
+
+
+def case_waiting(root, S):
+    """A ready/idle worker whose `waitingOnHuman` is true, `unknown` or absent may be waiting on a person and is left alone until its limit,
+    not stopped at IDLE_S.
+    Seen red before the fix:
+      FAIL: waiting (unknown): left alone until its limit, not stopped as idle: exit 1, stopped after [1.85] s
+      FAIL: waiting (absent): left alone until its limit, not stopped as idle: exit 1, stopped after [1.86] s"""
+    for label, mode in (("true", "wait"), ("unknown", "wait-unknown"), ("absent", "wait-absent")):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": mode}})
+        r = w.run(root=root)
+        calls = w.calls()
+        k = next(iter(w.dispatches()), None)
+        started = next((c["t"] for c in calls if c.get("start", {}).get("unit") == "T1"), 0)
+        stopped = [c["t"] for c in calls if c.get("dispatch") == k and c["argv"][1] == "worker-stop"]
+        S.ok("waiting (%s): left alone until its limit, not stopped as idle" % label,
+             r.returncode == 1 and len(stopped) == 1 and stopped[0] - started >= LIMIT - 0.3,
+             "exit %d, stopped after %r s" % (r.returncode, [round(t - started, 2) for t in stopped]))
+
+
+def case_review_fix(root, S):
+    """A reviewer returning findings triggers `review()`'s fixer + re-merge + second pass; `--control-findings` given as a relative path
+    from a subdirectory still reaches `wave findings`.
+    Seen red before the fix:
+      FAIL: control-findings relative from subdir: done and fixed r1-C1: exit 1, units ['T1', 'r1'], out '... --control-findings ... cannot be read ...'"""
+    finding = {"id": "F1", "file": "src/a.py", "line": 1, "claim": "wrong value", "evidence": "seen", "severity": "high"}
+    w = world(tasks=[task("T1", 1, ["src/a.py"])],
+              behave={"units": {"r1": {"mode": "ok", "findings": [finding]},
+                                "fix-1": {"mode": "ok", "files": {"src/a.py": "fixed "}, "findings": ["r1-F1"]}}})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("review fix: done after fixer and second pass", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("review fix: executor, r1, fix-1, r2", units(w), ["T1", "r1", "fix-1", "r2"])
+    if m:
+        S.eq("review fix: one round spent", len(w.steps(m.group(1), "fix-round")), 1)
+    S.ok("review fix: Fwx-Finding trailer merged on phase branch", "Fwx-Finding: r1-F1" in helpers.git(w.cwd, "log", "-n", "5"))
+    # relative `--control-findings` from a subdirectory of the worktree
+    w2 = world(tasks=[task("T1", 1, ["src/a.py"])],
+               behave={"units": {"fix-1": {"mode": "ok", "files": {"src/a.py": "ctrl "}, "findings": ["r1-C1"]}}})
+    helpers.write(w2.cwd, "sub/keep.txt", "k\n")
+    helpers.git(w2.cwd, "add", "-A")
+    helpers.git(w2.cwd, "commit", "-q", "-m", "add subdir")
+    ctrl_abs = helpers.write(w2.dir, "ctrl.json", json.dumps([{"id": "C1", "file": "src/a.py", "line": 1, "claim": "control", "evidence": "seen", "severity": "high"}]))
+    subdir = os.path.join(w2.cwd, "sub")
+    ctrl_rel = os.path.relpath(ctrl_abs, subdir)
+    r2 = w2.run("--control-findings", ctrl_rel, root=root, cwd=subdir)
+    m2 = line_of(r2)
+    S.ok("control-findings relative from subdir: done and fixed r1-C1", bool(m2) and m2.group(2) == "done" and units(w2) == ["T1", "r1", "fix-1", "r2"],
+         "exit %d, units %r, out %r, err %r" % (r2.returncode, units(w2), r2.stdout[-200:], r2.stderr[-200:]))
+
+
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode]
+         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -501,6 +595,10 @@ MUTANTS = [
     ("the settings copied as they are", case_loop, "lib/fwx/execute/orca.py", "env[\"FORCE_PROMPT_CACHING_5M\"] = \"1\"", "pass",
      "the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M"),
     ("a start with no base context", case_refusals, "lib/fwx/execute/run.py", 'if not text.strip() and not self.args["revert"]:', "if False:", "no base context, no worker -> 1 start"),
+    ("a waiting worker is stopped as idle", case_waiting, "lib/fwx/execute/run.py", 'if state == "ready" and info.get("activity") == "idle" and not waiting:', 'if state == "ready" and info.get("activity") == "idle":',
+     "left alone until its limit, not stopped as idle"),
+    ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
+     "worker-read stops at end cursor"),
 ]
 
 

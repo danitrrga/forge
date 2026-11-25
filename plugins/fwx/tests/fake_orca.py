@@ -79,22 +79,22 @@ def commit(wt, files, message, trailers):
 
 
 def play(behave, wt, marker, launch):
-    """What the worker does and says: (reply, mode)."""
+    """What the worker does and says: (reply, mode, spec)."""
     role, run, unit = marker["role"], marker["run"], marker["unit"]
     spec = mode_of(behave, unit, launch)
-    mode = spec["mode"]
+    mode = spec.get("mode", "ok")
     folder = scratch(wt, run, unit)
     report = os.path.join(folder, "report.json")
     if mode == "garbled":
-        return "I could not finish this one", mode
-    if mode in ("hang", "wait", "showfail"):
-        return "", mode
+        return "I could not finish this one", mode, spec
+    if mode in ("hang", "wait", "wait-unknown", "wait-absent", "showfail"):
+        return "", mode, spec
     if role == "executor" and mode in ("failed-report", "question", "bad-outside"):  # no commit: the report is all there is
         rep = {"failed-report": {"status": "failed", "reason": "could not do it"}, "question": {"status": "question", "question": "which one do you mean?"},
                "bad-outside": {"status": "done", "branch": git(wt, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip(), "outside": [{"where": "x"}]}}[mode]
         with open(report, "w", encoding="utf-8") as f:
             json.dump(rep, f)
-        return "%s %s commits=0" % (rep["status"], report), mode
+        return "%s %s commits=0" % (rep["status"], report), mode, spec
     if role == "executor":
         branch = git(wt, "symbolic-ref", "--short", "-q", "HEAD").stdout.strip()
         files = spec.get("files") or (behave.get("files") or {}).get(unit) or {"work/%s.txt" % unit: "x\n"}
@@ -112,11 +112,12 @@ def play(behave, wt, marker, launch):
         rep = {"status": "done", "branch": branch, "outside": [{"where": "x"}] if mode == "bad-outside" else []}
         with open(report, "w", encoding="utf-8") as f:
             json.dump(rep, f)
-        return "done %s commits=1" % report, mode
-    rep = {"looked_at": ["a"], "findings": [], "outside": [], "criteria": [{"id": c, "met": "yes", "evidence": "seen"} for c in behave.get("criteria", [])]}
+        return "done %s commits=1" % report, mode, spec
+    findings = spec.get("findings") or []
+    rep = {"looked_at": ["a"], "findings": findings, "outside": [], "criteria": [{"id": c, "met": "yes", "evidence": "seen"} for c in behave.get("criteria", [])]}
     with open(report, "w", encoding="utf-8") as f:
         json.dump(rep, f)
-    return "reviewed %s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % report, mode
+    return "reviewed %s looked_at=1 findings=%d criteria_no=0 criteria_unproven=0" % (report, len(findings)), mode, spec
 
 
 def shape(d):
@@ -130,9 +131,13 @@ def shape(d):
     if mode == "later":
         return {"state": "succeeded", "stage": "settled"} if os.path.exists(os.path.join(DIR, "go-" + d["unit"])) else {"state": "running", "stage": "working"}
     if mode == "idle":
-        return {"state": "ready", "stage": "idle", "activity": "idle"}
+        return {"state": "ready", "stage": "idle", "activity": "idle", "waitingOnHuman": False}
     if mode == "wait":
-        return {"state": "running", "stage": "working", "observation": {"agentWait": {"kind": "prompt", "evidence": "hook"}}}
+        return {"state": "ready", "stage": "input_accepted", "activity": "idle", "waitingOnHuman": True}
+    if mode == "wait-unknown":
+        return {"state": "ready", "stage": "input_accepted", "activity": "idle", "waitingOnHuman": "unknown"}
+    if mode == "wait-absent":
+        return {"state": "ready", "stage": "input_accepted", "activity": "idle"}
     return {"state": "running", "stage": "working"}
 
 
@@ -190,8 +195,9 @@ def main(argv):
         unit = (marker or {}).get("unit", "?")
         key = "%s/%s" % ((marker or {}).get("run"), unit)
         state["launches"][key] = launch = state["launches"].get(key, 0) + 1
-        reply, mode = play(behave, wt, marker, launch) if marker else ("", "hang")
-        state["dispatches"][did] = {"unit": unit, "mode": mode, "state": "running", "reply": reply, "worktree": wt, "released": False}
+        reply, mode, pspec = play(behave, wt, marker, launch) if marker else ("", "hang", {})
+        state["dispatches"][did] = {"unit": unit, "mode": mode, "state": "running", "reply": reply, "worktree": wt, "released": False,
+                                    "pages": pspec.get("pages", 1), "trailing": pspec.get("trailing")}
         done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings, "settings_mode": fmode,
                         "status": git(wt, "status", "--porcelain").stdout, "head": git(wt, "rev-parse", "HEAD").stdout.strip(),
                         "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"),
@@ -205,10 +211,23 @@ def main(argv):
         say(dict(shape(d), dispatchId=flag(argv, "--dispatch"), liveness="alive"))
     if argv[:2] == ["orchestration", "worker-read"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
-        done_log(dispatch=flag(argv, "--dispatch"))
-        msgs = [{"role": "user", "blocks": [{"type": "text", "text": "the spec"}]},
-                {"role": "assistant", "blocks": [{"type": "text", "text": "working\n" + (d or {}).get("reply", "")}]}]
-        say({"dispatchId": flag(argv, "--dispatch"), "source": "transcript", "transcript": {"messages": msgs}})
+        cur = flag(argv, "--cursor")
+        done_log(dispatch=flag(argv, "--dispatch"), cursor=cur)
+        user = {"role": "user", "blocks": [{"type": "text", "text": "the spec"}]}
+        asst = [{"role": "assistant", "blocks": [{"type": "text", "text": "working\n" + (d or {}).get("reply", "")}]}]
+        if (d or {}).get("trailing"):
+            asst.append({"role": "assistant", "blocks": [{"type": "text", "text": d["trailing"]}]})
+        if cur == "cur-end":
+            msgs, nxt, limited = [], "cur-end", False
+        elif (d or {}).get("pages", 1) > 1 and not cur:
+            msgs, nxt, limited = [user], "cur-1", True
+        elif (d or {}).get("pages", 1) > 1 and cur == "cur-1":
+            msgs, nxt, limited = asst, "cur-end", True
+        else:
+            msgs, nxt, limited = [user] + asst, "cur-end", False
+        say({"dispatchId": flag(argv, "--dispatch"), "source": "transcript",
+             "transcript": {"messages": msgs, "nextCursor": nxt, "limited": limited, "returnedMessageCount": len(msgs)},
+             "cursor": nxt})
     if argv[:2] == ["orchestration", "worker-stop"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
         if d and d["state"] != "stopped" and shape(d)["state"] not in ("succeeded", "failed"):
