@@ -130,9 +130,9 @@ def _valid(f):
             and isinstance(f.get("line"), int) and not isinstance(f.get("line"), bool) and f.get("severity") in brief.SEVERITY)
 
 
-def _read_review(line, run, unit):
+def _read_review(line, run, unit, want=()):
     """None when the line names no report of `unit`; else (report, rejection): the report is None for a miss, and the rejection is the
-    reason when the report was read but is one to write again."""
+    reason when the report was read but is one to write again. `want` are the criterion ids the report must answer (the general reviewer's)."""
     m = REVIEW_LINE.match(last_line(line))
     path = m.group(1).replace("\\", "/") if m else ""
     if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):
@@ -161,6 +161,9 @@ def _read_review(line, run, unit):
         # a criterion that is not met is also a finding: a report where no finding names it lacks what it was asked for
         if c["met"] == "no" and not any(c["id"] in "%s %s" % (f["claim"], f["evidence"]) for f in rep["findings"]):
             return None, "criterion %s is not met and no finding names it: the claim or the evidence of the finding that reports it contains `%s`" % (c["id"], c["id"])
+    left = [i for i in want if i not in {c["id"] for c in rep["criteria"]}]
+    if left:  # `criteria: []` would otherwise let a review with nothing checked end as done
+        return None, "the report has no result for criteria %s: `criteria` holds one entry per criterion of the plan" % ", ".join(left)
     return rep, None
 
 
@@ -282,12 +285,16 @@ def _fixer(top, part_dir, run, fix):
     with open(source, "x", encoding="utf-8") as f:
         json.dump(fix, f, indent=1)
         f.write("\n")
-    quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
-    facts = brief.fix_facts(fix, source, data["tasks"], quick, data["size"]["tag"], ctx, unit)
-    problems = brief.missing(facts)
-    if problems:
-        raise WaveError("; ".join(problems))
-    brief.put(path, brief.render(facts))
+    try:
+        quick = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
+        facts = brief.fix_facts(fix, source, data["tasks"], quick, data["size"]["tag"], ctx, unit)
+        problems = brief.missing(facts)
+        if problems:
+            raise WaveError("; ".join(problems))
+        brief.put(path, brief.render(facts))
+    except BaseException:
+        os.unlink(source)  # next_unit counts the brief files only: a source left alone would make the next call's exclusive open fail for good
+        raise
     return unit, path, out(top, "rev-parse", "HEAD")
 
 
@@ -342,10 +349,11 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
     tag = passed["pass"]
     units = [(x["role"], x["unit"]) for x in passed["reviewers"]]
     reports, misses = {}, []
+    asked = [c["id"] for c in _context(top, part_dir, run)[0]["criteria"]]
     for x in passed["reviewers"]:
         found = None
         for line in lines:
-            found = _read_review(line, run, x["unit"])
+            found = _read_review(line, run, x["unit"], asked if x["role"] == "reviewer" else ())
             if found is not None:
                 break
         rep, rejected = found if found else (None, None)

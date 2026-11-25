@@ -203,8 +203,9 @@ def recorded_of(common, run):
     return branches, paths
 
 
-def cleanup(cwd, run, recorded=(), owned=()):
-    """`{removed, kept, leftover, scratch}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch)."""
+def cleanup(cwd, run, recorded=(), owned=(), hold=None):
+    """`{removed, kept, leftover, scratch}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch). `hold` is {path: why}:
+    a worktree there is kept with that reason whatever its state (a worker whose release is unconfirmed may still use it)."""
     _need_proc()
     top = out(cwd, "rev-parse", "--show-toplevel")
     if top is None:
@@ -223,6 +224,9 @@ def cleanup(cwd, run, recorded=(), owned=()):
     for w in mine:
         item = {"worktree": w["path"], "branch": w["branch"]}
         state, was_stale = lock_state(w), False
+        if w["path"] in (hold or {}):
+            result["kept"].append(dict(item, why=hold[w["path"]]))
+            continue
         if state == "live":
             result["kept"].append(dict(item, why="live agent (pid %s)" % pid_of(w)))
             continue

@@ -245,6 +245,10 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None, ci=
     protected = default_names(root, cfg) | set((cfg["project"].get("production") or {}).get("branches") or [])
     ev = ci_gate.run(root, sha, cfg, say, timeout, protected) if ci else None
     moved = False
+    if ev is not None and head(root) != sha:  # the wait for CI can be long: the local path below compares HEAD the same way
+        moved = True
+        say("HEAD moved while CI ran, so it proves neither commit")
+        ev = dict(ev, clean=False, rc=1)
     if ev is None:
         source = "profile" if evidence.plan_checks(cfg["project"]["checks"], _NO_ROOT) else "package"
         say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",

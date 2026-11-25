@@ -8,7 +8,8 @@ State is in $FAKE_ORCA_DIR: `behave.json` (what the test wants), `state.json` (r
 "registered": [paths]}. A mode is `ok` (the worker commits, writes its report and `worker_done`), `garbled` (a reply that names no report),
 `bad-outside` (a report whose `outside` item is malformed), `idle` (done, but it never settles: state ready, activity idle), `wait` (an
 agent waiting on a prompt), `hang` (never ends), `later` (running until the test creates `go-<unit>`), `fail` (Orca says failed),
-`failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
+`failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `release_fail: [unit]` makes `worker-release` of
+that unit's dispatches fail with an error object whose `message` is null. `merge: <unit>` makes a resolver merge that unit's branch. The worker reads its role, run and unit from the marker `fwx-worker.json` in its git dir, as the real one does.
 """
 import json
 import os
@@ -180,6 +181,10 @@ def main(argv):
                 settings = json.load(f)
         except (OSError, ValueError):
             settings = None
+        try:
+            fmode = os.stat(os.path.join(wt, ".claude", "settings.local.json")).st_mode & 0o777
+        except OSError:
+            fmode = None
         state["n"] += 1
         did = "ctx_%d" % state["n"]
         unit = (marker or {}).get("unit", "?")
@@ -187,7 +192,7 @@ def main(argv):
         state["launches"][key] = launch = state["launches"].get(key, 0) + 1
         reply, mode = play(behave, wt, marker, launch) if marker else ("", "hang")
         state["dispatches"][did] = {"unit": unit, "mode": mode, "state": "running", "reply": reply, "worktree": wt, "released": False}
-        done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings,
+        done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings, "settings_mode": fmode,
                         "status": git(wt, "status", "--porcelain").stdout, "head": git(wt, "rev-parse", "HEAD").stdout.strip(),
                         "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"),
                         "files_at_start": sorted(os.listdir(wt))})
@@ -212,6 +217,9 @@ def main(argv):
         say({"dispatchId": flag(argv, "--dispatch"), "processAction": "closed_agent_terminal"})
     if argv[:2] == ["orchestration", "worker-release"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
+        if d and d["unit"] in behave.get("release_fail", []):  # an error object whose `message` is null, as Orca was not seen to send but may
+            done_log(dispatch=flag(argv, "--dispatch"), refused="release_fail")
+            say(rc=1, error={"code": "internal", "message": None})
         if d is None or shape(d)["state"] not in ("succeeded", "failed", "stopped"):
             done_log(dispatch=flag(argv, "--dispatch"), refused="dispatch_inactive")
             say(rc=1, error={"code": "dispatch_inactive", "message": "only a settled worker can release"})

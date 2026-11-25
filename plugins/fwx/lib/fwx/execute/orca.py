@@ -50,7 +50,10 @@ def _json(r, args):
         body = None
     if r.returncode != 0 or not isinstance(body, dict) or body.get("ok") is not True:
         err = body.get("error") if isinstance(body, dict) else None
-        why = (err.get("code", "") + ": " + err.get("message", "")) if isinstance(err, dict) else (r.stderr.strip() or r.stdout.strip())[:200]
+        if isinstance(err, dict) and isinstance(err.get("code"), str) and isinstance(err.get("message"), str):
+            why = err["code"] + ": " + err["message"]
+        else:  # an error object with a null or missing field must stay an OrcaError: a TypeError here skipped the rest of a release
+            why = (r.stderr.strip() or r.stdout.strip())[:200]
         raise OrcaError("orca %s failed (exit %d): %s" % (" ".join(args[:2]), r.returncode, why))
     return body.get("result") or {}
 
@@ -179,7 +182,9 @@ def prepare_worker(main, worktree, role, run, unit):
     if not gitdir or not common:
         raise WaveError("%s is not a worktree" % worktree)
     try:
-        with open(dest, "w", encoding="utf-8") as f:
+        # 0600: the copy holds the project's `env`, and a file made with the default mode would be readable by other users
+        with open(os.open(dest, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
+            os.fchmod(f.fileno(), 0o600)
             json.dump(settings, f, indent=1)
             f.write("\n")
         with open(os.path.join(gitdir, MARKER), "w", encoding="utf-8") as f:

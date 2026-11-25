@@ -376,6 +376,14 @@ def case_misses(R, S):
     helpers.write(os.path.dirname(W.path("r1")), "report.json", json.dumps({"looked_at": ["a"], "findings": []}))
     r, v = W.find(R, line)
     nxt(S, "a report with no `criteria` relaunches", v, "relaunch")
+    # the general reviewer answers for every criterion of the plan: an empty or partial list is a report to write again (CodeRabbit 4696262780).
+    # Seen red on the code before the fix: FAIL: a report with `criteria: []` relaunches -> next done, want relaunch
+    for label, crit in (("`criteria: []`", []), ("one of the plan's two criteria", criteria()[:1])):
+        W = World()
+        W.review(R)
+        r, v = W.find(R, W.reply("r1", [], crit=crit))
+        nxt(S, "a report with %s relaunches" % label, v, "relaunch")
+        S.ok("the note names the criterion left out", "C2" in ((v.get("relaunch") or [{}])[0].get("note") or "") or crit == [], json.dumps(v)[:200])
     # a malformed outside item is rejected with its reason, which the second rejection ends the run with
     W = World()
     W.review(R)
@@ -600,7 +608,41 @@ def case_usage(R, S):
     S.eq("outside a repository: exit 2", r.returncode, 2)
 
 
-CASES = [case_review, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage]
+def case_fixer_retry(R, S):
+    """A fixer brief that could not be written leaves no `_findings-<unit>.json` behind (CodeRabbit 4696262791): the next call allocates the same
+    unit from the brief files alone and opens its source exclusively. In process (the fault is a write that fails). Seen red on the code before
+    the fix: FAIL: the failed brief leaves no findings file -> ['_findings-fix-1.json'] and FAIL: the retry after it works -> FileExistsError."""
+    sys.path.insert(0, os.path.join(ROOT, "lib"))
+    from fwx.execute import brief as brief_mod, review as review_mod
+    W = World()
+    saved_env = dict(os.environ)
+    os.environ.update(W.env)
+    real_put, folder = brief_mod.put, os.path.join(W.run_dir(), "briefs")
+    f = finding("r1-F1")
+
+    def failing(path, text):
+        raise OSError(28, "No space left on device")
+    brief_mod.put = failing
+    try:
+        try:
+            review_mod._fixer(W.S.cwd, W.S.part, RUN, [f])
+        except OSError:
+            pass
+        left = [n for n in sorted(os.listdir(folder)) if n.startswith("_findings-")] if os.path.isdir(folder) else []
+        S.eq("the failed brief leaves no findings file -> %s" % left, left, [])
+        brief_mod.put = real_put
+        try:
+            got = review_mod._fixer(W.S.cwd, W.S.part, RUN, [f])[0]
+        except FileExistsError as e:
+            got = "FileExistsError: %s" % e
+        S.eq("the retry after it works -> %s" % got, got, "fix-1")
+    finally:
+        brief_mod.put = real_put
+        os.environ.clear()
+        os.environ.update(saved_env)
+
+
+CASES = [case_review, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [

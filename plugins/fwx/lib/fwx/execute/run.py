@@ -26,12 +26,16 @@ FWX_RUN_LIMIT_S (seconds) so that a test need not wait minutes.
 State is `<git-common-dir>/fwx/runs/<run>/state.json`: the Orca run, the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
 calls it made (in order, with their results) and the result. `--resume R` runs the same path again: a call the journal holds is not made again (its
 result is read from it), a worker the state holds is polled, not started again. One live run per branch: a second `wave run` on it exits 2 naming the
-run and `--resume`. Whatever the ending, the run removes every worktree it made that holds no unmerged or uncommitted work (execute/cleanup.py,
-which never forces) and names the rest in `kept` with the reason. It ends with one line, `run <R> <done|failed|needs-owner>: <why>`; the details are
+run and `--resume`, and a lock on the branch (`lock_branch`, held until the process ends) closes the gap before the first record is written. A settled
+worker that cannot be released after RELEASE_TRIES keeps its slot: the run ends failed and starts nobody beside it. Whatever the ending, the run removes
+every worktree it made that holds no unmerged or uncommitted work and whose worker was released (execute/cleanup.py, which never forces) and names the
+rest in `kept` with the reason. It ends with one line, `run <R> <done|failed|needs-owner>: <why>`; the details are
 `fwx wave --run R --json`.
 
 Imports the standard library, fwx.config, fwx.context_base and execute.base, cleanup and orca.
 """
+import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -46,6 +50,7 @@ FWX = os.path.join(orca.PLUGIN, "bin", "fwx")
 LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 60, "review-verifier": 15 * 60}
 DECIDED = "## Decided\n"
 STATES = ("done", "failed", "needs-owner")
+RELEASE_TRIES = 3
 
 
 def _seconds(name, default):
@@ -70,6 +75,8 @@ class Stop(Exception):
 def alive(pid):
     try:
         os.kill(int(pid), 0)
+    except PermissionError:
+        return True  # the process exists, it is only not ours to signal
     except (OSError, ValueError, TypeError):
         return False
     return True
@@ -77,6 +84,24 @@ def alive(pid):
 
 def runs_folder(top):
     return os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir") or "", "fwx", "runs")
+
+
+def lock_path(top, branch):
+    return os.path.join(runs_folder(top), ".lock-%s" % hashlib.sha1(branch.encode("utf-8")).hexdigest()[:16])
+
+
+def lock_branch(top, branch):
+    """The open, exclusively locked file of `branch`'s one-run lock: take it before looking for a live run and keep it until the process ends
+    (the lock goes with it, so a run that was killed blocks nobody). Two `wave run` commands on one branch cannot both pass this."""
+    path = lock_path(top, branch)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    f = open(path, "a")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        raise WaveError("another `fwx wave run` on %s is starting or running (lock %s): wait for it" % (branch, path))
+    return f
 
 
 def load_state(top, run):
@@ -271,6 +296,18 @@ class Run:
             self.st.setdefault("release_errors", []).append("%s: %s" % (rec["dispatch"], e))
         self.save()
 
+    def settle(self, rec, state=None):
+        """Release a settled worker before its slot is used again: retried a few times, and when it will not go the run ends failed, since a worker
+        whose stop or release failed may still be running and another one must not start beside it (the cap)."""
+        for k in range(RELEASE_TRIES):
+            self.release(rec, state)
+            if rec["released"]:
+                return
+            if k + 1 < RELEASE_TRIES:
+                time.sleep(self.poll_s)
+        raise Stop("failed", "%s could not be released (%s): its worker may still be running, so no other worker was started"
+                   % (rec["unit"], (self.st.get("release_errors") or ["no answer"])[-1][:200]))
+
     def reply(self, rec):
         try:
             return last_line(orca.last_text(rec["dispatch"]))
@@ -285,7 +322,7 @@ class Run:
         waiting = bool((info.get("observation") or {}).get("agentWait"))
         if state in orca.SETTLED:
             rec["line"] = self.reply(rec)
-            self.release(rec, state)
+            self.settle(rec, state)
             return rec["line"]
         if time.time() - rec["started"] > self.limit(rec["role"]):
             self.release(rec, state)
@@ -295,7 +332,7 @@ class Run:
             rec["idle_since"] = rec["idle_since"] or now
             if now - rec["idle_since"] >= self.idle_s:
                 rec["line"] = self.reply(rec)
-                self.release(rec, state)
+                self.settle(rec, state)
                 return rec["line"]
         else:
             rec["idle_since"] = None
@@ -310,6 +347,7 @@ class Run:
                 job = queue.pop(0)
                 rec = self.launch(job)
                 if rec["line"] is not None:
+                    self.settle(rec)
                     if not job.on_line(rec["line"]):
                         queue.insert(0, job)
                 else:
@@ -552,7 +590,9 @@ def finish(r, st, folder):
         r.release(rec)
     branches, paths = cleanup.recorded_of(os.path.dirname(os.path.dirname(runs_folder(r.top))), st["run"])
     try:
-        got = cleanup.cleanup(r.top, st["run"], branches, paths)
+        hold = {os.path.realpath(w["worktree"]): "its worker could not be released, so it may still be using it"
+                for w in st["workers"].values() if w.get("dispatch") and not w["released"]}
+        got = cleanup.cleanup(r.top, st["run"], branches, paths, hold)
     except (WaveError, cleanup.NoProc) as e:
         return {"removed": [], "kept": [{"worktree": w["path"], "branch": w.get("branch"), "why": "cleanup could not run: %s" % e} for w in st["worktrees"]], "leftover": []}
     return got

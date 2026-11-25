@@ -18,6 +18,7 @@ Controls, each a copy of lib/ with one line changed (MUTANTS), seen red on the c
   the settings copied as they are:            FAIL: the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M
   a start with no base context:               FAIL: no base context, no worker -> 1 start
 """
+import fcntl
 import json
 import os
 import re
@@ -388,6 +389,12 @@ def case_resume(root, S):
     p.kill()
     p.wait()
     run = w.runs()[0] if w.runs() else ""
+    # a resumed run merges into whatever is checked out: on another branch it is refused before any step (CodeRabbit 4696262664).
+    # Seen red on the code before the fix: FAIL: resume on another branch: exit 2, no step, no worker -> got (0, ...), want (2, ...)
+    helpers.git(w.cwd, "checkout", "-q", "-b", "elsewhere")
+    r = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+    S.eq("resume on another branch: exit 2, the branch named, no worker started", (r.returncode, "is on elsewhere" in r.stderr and "phase" in r.stderr, units(w)), (2, True, ["T1"]))
+    helpers.git(w.cwd, "checkout", "-q", "phase")
     helpers.write(w.dir, "go-T1", "")
     r = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
     m = line_of(r)
@@ -396,8 +403,81 @@ def case_resume(root, S):
     S.ok("resume: every dispatch is released", all(d["released"] for d in w.dispatches().values()))
 
 
+def case_lock(root, S):
+    """Two `wave run` on one branch cannot both pass the check for a live run before either is recorded (CodeRabbit 4696262872): a branch lock held
+    for the whole command. Seen red on the code before the fix: FAIL: a branch whose lock is held: the run exits 2 and starts nobody -> got (0, ['T1', 'r1'])."""
+    sys.path.insert(0, os.path.join(ROOT, "lib"))
+    from fwx.execute import run as run_mod
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
+    if not S.ok("run.py names the branch lock", hasattr(run_mod, "lock_path")):
+        return
+    path = run_mod.lock_path(w.repo, "phase")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "a") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        r = w.run(root=root)
+        S.eq("a branch whose lock is held: the run exits 2 and starts nobody", (r.returncode, "starting or running" in r.stderr, units(w)), (2, True, []))
+    r = w.run(root=root)
+    S.eq("the lock released (its holder gone): the run goes", (r.returncode, units(w)), (0, ["T1", "r1"]))
+    S.ok("the lock file does not read as a run", [x for x in w.fwx("wave", "list").stdout.splitlines() if x.strip()] != [] and ".lock" not in w.fwx("wave", "list").stdout)
+
+
+def case_release(root, S):
+    """A worker whose release fails keeps its slot and its worktree (CodeRabbit 4696262860, 4696262886, and the null `message` of 4696262711).
+    Seen red on the code before the fix:
+      FAIL: cap 1, T1 cannot be released: no other worker starts -> ['T1', 'T2', 'T3', 'r1']
+      FAIL: the reviewer whose release failed keeps its worktree -> removed
+      FAIL: orca's error with a null message is an OrcaError, the run ends with a line -> exit 1 / script error: TypeError"""
+    w = world(behave={"release_fail": ["T1"]})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.eq("cap 1, T1 cannot be released: no other worker starts", units(w), ["T1"])
+    S.ok("the run ends failed naming the worker that could not be released", bool(m) and m.group(2) == "failed" and "T1 could not be released" in m.group(3), "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.ok("an orca error whose message is null does not become a script error", not m or "TypeError" not in m.group(3), m.group(3) if m else r.stderr[-200:])
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"release_fail": ["r1"]})
+    r = w.run(root=root)
+    m = line_of(r)
+    reviewer = next((x["worktree"] for x in w.starts() if x["unit"] == "r1"), "")
+    S.ok("the reviewer whose release failed keeps its worktree -> %s" % ("kept" if os.path.isdir(reviewer) else "removed"), bool(reviewer) and os.path.isdir(reviewer))
+    S.ok("and the line says it was kept", bool(m) and "kept" in r.stdout and "1 worktree kept" in m.group(3), "got %r" % r.stdout[-300:])
+    S.ok("a worker whose release failed is not named a worktree to remove: the kept reason says why", "could not be released" in r.stderr, r.stderr[-300:])
+
+
+def case_alive(root, S):
+    """A pid whose signal 0 is refused (EPERM) is a live process (CodeRabbit 4696262805). Seen red on the code before the fix:
+    FAIL: alive(pid) when kill answers EPERM -> False"""
+    sys.path.insert(0, os.path.join(ROOT, "lib"))
+    from fwx.execute import run as run_mod
+    real = os.kill
+
+    def kill(pid, sig):
+        raise PermissionError(1, "Operation not permitted")
+    os.kill = kill
+    try:
+        got = run_mod.alive(1)
+    finally:
+        os.kill = real
+    S.eq("alive(pid) when kill answers EPERM -> %s" % got, got, True)
+    S.eq("a pid that is gone is not alive", run_mod.alive(2 ** 22 + 12345), False)
+
+
+def case_settings_mode(root, S):
+    """The settings copy of a worker is private when the original is (CodeRabbit 4696262748). Seen red on the code before the fix:
+    FAIL: a worker's settings copy is mode 0600 -> 0644"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
+    os.chmod(os.path.join(w.repo, ".claude", "settings.local.json"), 0o600)
+    old = os.umask(0o022)
+    try:
+        r = w.run(root=root)
+    finally:
+        os.umask(old)
+    modes = [x["settings_mode"] for x in w.starts()]
+    S.ok("the run ends done", bool(line_of(r)) and line_of(r).group(2) == "done", r.stderr[-200:])
+    S.eq("a worker's settings copy is mode 0600 -> %s" % [oct(m) for m in modes], modes and set(modes), {0o600})
+
+
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume]
+         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""

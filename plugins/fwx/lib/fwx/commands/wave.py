@@ -182,10 +182,15 @@ def do_run(argv):
             if saved["state"] != "active":
                 raise base.WaveError("run %s ended %s: there is nothing to resume" % (saved["run"], saved["state"]))
         branch = saved["branch"] if saved else got["--branch"]
+        if saved:  # `prepare` refuses a checkout that is not on the branch for a new run; a resumed run merges into whatever is checked out
+            on = base.out(top, "symbolic-ref", "--short", "-q", "HEAD")
+            if on != branch:
+                raise base.WaveError("run %s works on %s and the checkout %s is on %s: check %s out first" % (saved["run"], branch, top, on or "no branch (detached HEAD)", branch))
         live = run_mod.holder(top, branch)
         if live:
             raise base.WaveError("run %s is already running on %s (pid %s): wait for it, or start again with `fwx wave run --resume %s` once it ended"
                                  % (live["run"], branch, live.get("pid"), live["run"]))
+        lock = run_mod.lock_branch(top, branch)  # held to the end of the process: a second command that passed the check above before this run was recorded stops here
         if saved:
             args, flags = saved["args"], saved["flags"]
         else:
