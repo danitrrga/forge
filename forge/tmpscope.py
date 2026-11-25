@@ -26,9 +26,10 @@ def inside_checkout(directory):
 
 
 @contextlib.contextmanager
-def private_tmp(env):
+def private_tmp(env, keep=None):
     """The environment for test children, a copy of `env`. When its temp dir (TMPDIR, else the default) is
-    inside a git work tree, TMPDIR is a fresh folder under /tmp for the length of the with block, removed after; otherwise TMPDIR is left as it is."""
+    inside a git work tree, TMPDIR is a fresh folder under /tmp for the length of the with block, removed after
+    (unless `keep` is given and `keep()` is true); otherwise TMPDIR is left as it is."""
     env = dict(env)
     here = env.get("TMPDIR") or tempfile.gettempdir()
     if not inside_checkout(here):
@@ -39,4 +40,5 @@ def private_tmp(env):
     try:
         yield env
     finally:
-        shutil.rmtree(made, ignore_errors=True)
+        if not (keep and keep()):
+            shutil.rmtree(made, ignore_errors=True)

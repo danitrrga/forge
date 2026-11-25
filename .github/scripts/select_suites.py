@@ -32,7 +32,7 @@ DOC_READERS = ("tests/test_readme.py", "tests/test_registry_names.py", "tests/te
 
 # ROWS: (pattern, fwx, suite, why). First match wins; `*` crosses `/` (fnmatch).
 # What the fwx suite reads outside plugins/fwx: nothing but the runner (a copy of plugins/fwx alone passes every file):
-#   bin/forge, forge/cli.py, forge/lib.py, forge/testgroup.py   the runner (`forge test fwx`) and its group runner
+#   bin/forge, forge/cli.py, forge/lib.py, forge/testgroup.py, forge/tmpscope.py   the runner (`forge test fwx`), its group runner and temp-dir scope
 # The forge/publish.py and publish/engine.gitignore rows are what the fwx suite read before it stopped running `bin/forge lint`
 # (the rows stay: one that over-selects costs CI minutes only).
 ROWS = (
@@ -42,6 +42,7 @@ ROWS = (
     ("forge/cli.py", True, True, "read by the fwx suite"),
     ("forge/lib.py", True, True, "read by the fwx suite"),
     ("forge/testgroup.py", True, True, "read by the fwx suite"),
+    ("forge/tmpscope.py", True, True, "read by the fwx suite"),
     ("forge/publish.py", True, True, "read by the fwx suite"),
     ("publish/engine.gitignore", True, True, "read by the fwx suite"),
     # The engine suite reads one folder of the plugin: README.md shows plugins/fwx/docs/workflow-tree.svg, which tests/test_publish.py pins by
