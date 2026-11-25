@@ -50,7 +50,8 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
       exit 0 the failure may be fixed (a round spent, or the evidence already counted), 1 the
       rounds are spent and nothing was spent now, 2 usage
   wave revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
-  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named and the worktrees `wave run` made from the run's files
+  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named and the worktrees `wave run` made from the run's files,
+      and works in the checkout the run's `state.json` names (`args.checkout`: a nested repo's phase worktree), else the current folder
   wave report --part-dir D --run R --unit U --line "<last line of the reply>" --plane session|factory
       exit 0 with `next` merge|relaunch|retry|owner|stop (execute/report.py says what each means and what it reads); a miss is
       counted from the run's own files, so each call is recorded; 2 a usage error, an unreadable plan or configuration
@@ -388,7 +389,8 @@ def do_step(step, argv):
             code, result = review.findings(".", part, run, got.get("--report"), got.get("--verdicts"), got.get("--control-findings"), _steps(top, run))
         elif step == "cleanup":
             args = {"run": run}
-            result = cleanup.cleanup(".", run, *cleanup.recorded_of(config.fwx_dir(top), run))
+            where = ((run_mod.load_state(top, run) or {}).get("args") or {}).get("checkout")  # the run's own checkout: its repo may not be this one's
+            result = cleanup.cleanup(where if where and os.path.isdir(where) else ".", run, *cleanup.recorded_of(config.fwx_dir(top), run))
             code = 0
         else:
             part = part or _part_of(top, run)
