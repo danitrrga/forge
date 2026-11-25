@@ -983,6 +983,66 @@ check("fields: the file of a project without check_timeout_s was loaded (a proje
 check("fields: without check_timeout_s, project.check_timeout_s is not written -- %s" % pd.get("check_timeout_s", "missing from fwx.json"),
       "check_timeout_s" not in pd, pd)
 
+# `repos`: the nested git repositories of a workspace project, each a subproject whose work happens in worktrees of its own repo
+# (DTC-64). The generated file carries each entry with the checkout's path relative to the workspace, the keys the entry sets, and
+# `default_branch` read from that repo's git (origin/HEAD, else the checked-out branch). A key the entry leaves out stays out: fwx reads
+# it as the default, never as the workspace's value.
+# Red before the field: FAIL: repos written: project.repos missing from the document -- None
+def nested(parent, sub, head_branch, origin_head=None):
+    d = os.path.join(parent, sub)
+    os.makedirs(d)
+    sandbox.git(d, "init", "-q", "-b", head_branch)
+    if origin_head:
+        sandbox.git(d, "remote", "add", "origin", "https://example.org/toy-org/%s.git" % sub)
+        sandbox.git(d, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/" + origin_head)
+    return d
+
+
+ppq = project()
+nested(ppq, "alpha", "alpha-head", origin_head="alpha-trunk")
+nested(ppq, "beta", "beta-head")
+wq = World()
+wq.put(project_file(ppq, name="nestedrepos", repos={
+    "alpha": {"path": "alpha", "checks": ["make a"], "checks_quick": ["make aq"], "worktree_setup": ["npm ci"], "protected_paths": ["a/**"]},
+    "beta": {"path": "beta"}}))
+code, out = wq.run()
+pq = (load(fwfile(ppq)) or {}).get("project", {})
+rq = pq.get("repos")
+check("repos written: project.repos missing from the document -- %s" % rq, isinstance(rq, dict) and set(rq) == {"alpha", "beta"}, pq)
+rq = rq if isinstance(rq, dict) else {}
+check("repos: an entry carries its path and the keys it sets, with default_branch from origin/HEAD -- %s" % rq.get("alpha"),
+      rq.get("alpha") == {"path": "alpha", "checks": ["make a"], "checks_quick": ["make aq"], "worktree_setup": ["npm ci"],
+                          "protected_paths": ["a/**"], "default_branch": "alpha-trunk"}, rq)
+check("repos: without origin/HEAD default_branch is the repo's own branch, and a key the entry leaves out is not written -- %s" % rq.get("beta"),
+      rq.get("beta") == {"path": "beta", "default_branch": "beta-head"}, rq)
+check("repos: the workspace's own checks stay its own -- %s" % pq.get("checks"), pq.get("checks") == ["make test", "make lint"], pq)
+# A project without `repos` leaves the document as it was: no key (rule 2, the dry-run is byte-identical).
+check("repos: without the field project.repos is not written -- %s" % pd.get("repos", "missing from fwx.json"),
+      "repos" not in pd and "checks" in pd, pd)
+
+GOOD_REPO = {"path": "alpha", "checks": ["make a"]}
+for label, value in (("one entry", {"alpha": GOOD_REPO}), ("a path in a subfolder", {"a": {"path": "plugins/a"}}), ("no entry", {}),
+                     ("every key", {"a": {"path": "a", "checks": [], "checks_quick": ["x"], "worktree_setup": ["y"], "protected_paths": ["z/**"]}})):
+    why = lib.project_error({"project": "x", "project_path": "/x", "repos": value})
+    check("project_error accepts repos with %s -- %s" % (label, why), why is None, why)
+for label, value, word in (
+        ("repos as a list", [GOOD_REPO], "repos"),
+        ("an entry that is a string", {"a": "alpha"}, "repos.a"),
+        ("an entry without path", {"a": {"checks": ["x"]}}, "repos.a.path"),
+        ("an empty path", {"a": {"path": ""}}, "repos.a.path"),
+        ("a path that is a number", {"a": {"path": 3}}, "repos.a.path"),
+        ("an absolute path", {"a": {"path": "/etc"}}, "repos.a.path"),
+        ("a path with ..", {"a": {"path": "../x"}}, "repos.a.path"),
+        ("a path that climbs in the middle", {"a": {"path": "x/../../y"}}, "repos.a.path"),
+        ("checks as a string", {"a": {"path": "a", "checks": "make a"}}, "repos.a.checks"),
+        ("checks_quick with a non-string", {"a": {"path": "a", "checks_quick": ["x", 3]}}, "repos.a.checks_quick"),
+        ("worktree_setup as a string", {"a": {"path": "a", "worktree_setup": "npm ci"}}, "repos.a.worktree_setup"),
+        ("worktree_setup with an empty command", {"a": {"path": "a", "worktree_setup": [" "]}}, "repos.a.worktree_setup"),
+        ("protected_paths as a string", {"a": {"path": "a", "protected_paths": "x"}}, "repos.a.protected_paths"),
+        ("a key it has no slot for", {"a": {"path": "a", "extra": 1}}, "repos.a.extra")):
+    why = lib.project_error({"project": "x", "project_path": "/x", "repos": value})
+    check("project_error rejects repos with %s, naming %s -- %s" % (label, word, why), why is not None and word in why, why)
+
 sandbox.cleanup(bool(failures))
 for f in failures:
     print("FAIL", f)
