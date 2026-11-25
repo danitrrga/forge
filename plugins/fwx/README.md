@@ -26,7 +26,8 @@ python3 bin/fwx discuss --json    # what the discuss opens with: the configurati
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx project state --json    # open PRs, the default branch's CI and open Linear issues; a section without `gh` login or LINEAR_API_KEY is `{"not_run": ...}`, exit 77
 python3 bin/fwx decide --facts <file>    # the merge decision for the facts of a PR: merge, handover or pending, with the rule behind each reason
-python3 bin/fwx wave new --part-dir <dir> --plane session --branch <phase branch>    # validates a part and prints the args of `execute`; `wave merge`, `wave fix`, `wave revert` and `wave remove` are the steps after it, `wave` alone says whether the gate passed; `wave setup [--force]` runs the project's `worktree_setup` in the current worktree (exit 1: it failed)
+python3 bin/fwx wave run --part-dir <dir> --plane session --branch <phase branch>    # runs a whole part: validates it and checks its base, then every wave, the gate and the review, each agent an Orca worker; prints `run <R> <done|failed|needs-owner>: <why>` and exits 0, 1 or 3 (before any worker: 1 a red base, 77 a base check out of time, 2 a refusal); `--fix F`, `--revert IDS`, `--from gate` and `--resume R` take a correction, a revert, the gate again and a cut run up; `wave list` shows the runs
+python3 bin/fwx wave new --part-dir <dir> --plane session --branch <phase branch>    # only the validation and the base checks of `wave run`, printing the part's args; `wave merge`, `wave fix`, `wave revert`, `wave remove`, `wave report`, `wave review` and `wave findings` are the steps `wave run` makes, each recorded in the run's files, `wave` alone says whether the gate passed; `wave setup [--force]` runs the project's `worktree_setup` in the current worktree (exit 1: it failed)
 python3 bin/fwx base <sha>    # an executor's step 0: exit 0 when the worktree starts at that commit, 42 when not, 43 when the project's `worktree_setup` failed in it
 python3 bin/fwx scratch new <run> <unit>    # makes the folder git ignores, in its own worktree where an agent writes its report
 python3 bin/fwx verify    # runs the checks on a clean tree at HEAD and records the evidence row; exit 0 green, 1 red, 2 cannot prove the commit
@@ -80,8 +81,8 @@ ones. `linear.labels` maps a label's neutral name in this repository to the name
 name with no entry is used as it is.
 
 `limits` is the most agents at once, a fixed number that nothing measures: `default_cap` is `{"supervised": 3, "unattended": 4}` (the
-owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave new` prints the
-executor's as `cap` in the `args` of `execute`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
+owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave run` (and `wave new`) read the
+executor's as `cap` of the part's `args`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
 are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
 
 `project.check_timeout_s` (default `1200`) is the seconds one check of `project.checks` or `checks_quick` may run before fwx stops it: `fwx verify`, the
@@ -116,7 +117,7 @@ The `project` table:
 - `project.name`, `project.main_checkout`: the project's name and main checkout; forge writes them, and without a file they are the folder's name and path.
 - `project.linear_project`: the Linear project the framework files issues in (default none; forge uses the project file's `linear_project`, else the remote's name).
 - `project.default_branch`: the branch pull requests go to, which `fwx verify` treats as the default branch (forge reads it from git); `project.factory_branch` (default `"factory"`) is where factory work lands.
-- `project.checks` (default `[]`): the commands that gate a wave; `project.checks_quick` (`[]`) are the quick ones `fwx wave` runs in each worktree.
+- `project.checks` (default `[]`): the commands that gate a wave; `project.checks_quick` (`[]`) are the quick ones `fwx wave` runs in each worktree. At the end of a part the gate is GitHub CI when it can answer (the branch is pushed and a draft pull request opened, and the CI run on it stands for `project.checks`); with no GitHub origin, no CI file or no answer, `project.checks` run here. A check CI cannot run goes in `checks_quick`, which always runs here.
 - `project.protected_paths` (`[]`): globs a task may not write without the security review, added to the decide table's own.
 - `project.production` (`{"branches": [], "commands": []}`): the branches a merge ships to users from and the commands that deploy; a deploy runs only through the consent window.
 - `project.verdict_command` (default none): the command the demo agent runs to show a UI change in the app.

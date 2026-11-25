@@ -1188,36 +1188,22 @@ def check_gate_entry_and_stage(script, s):
 
 
 def agent_problems(texts):
-    """What an agent file says about its input and its output, against what the script does: the reviewers get their brief inline
-    and write a report file named in the prompt (one reply line), the verifier gets its brief inline and answers through the
-    structured output (no file, no reply line)."""
+    """What an agent file says about its output, against what the script does: the reviewers write a report file named in the prompt (one
+    reply line). Their input and the verifier's answer are the session's `fwx wave run` form since 09.6 T61 (a brief file; `verdicts <path>`),
+    which tests/test_session_text.py pins; this suite is deleted with the workflow."""
     found = []
-    for name in ("reviewer", "security-reviewer", "review-verifier"):
-        text = texts.get(name, "")
-        if re.search(r"brief file", text) and not re.search(r"no brief file", text):
-            found.append("%s: names a brief file, the script gives the brief in the prompt" % name)
-        if "Your prompt is your brief" not in text:
-            found.append("%s: does not say its prompt is its brief" % name)
     for name in ("reviewer", "security-reviewer"):
         if "reviewed <report path>" not in texts.get(name, ""):
             found.append("%s: lost its one-line reply (`reviewed <report path> ...`)" % name)
     # readReview rejects a report where no finding contains the id of a criterion whose `met` is `no`
     if "must contain the criterion's `id`" not in texts.get("reviewer", ""):
         found.append("reviewer: is not told that a finding must contain the id of each criterion it marks `no` (the script rejects the report)")
-    # a task executor reads a brief file; the fixer and the conflict resolver have none, their prompt is the brief
-    if "no brief file" not in texts.get("executor", ""):
-        found.append("executor: does not say that the fixer and the resolver have no brief file")
     # an isolated agent's Bash refuses compound commands and heredocs (measured, 3.4 U8 fix): the executor is told what to do instead
     if "plain, separate commands" not in texts.get("executor", ""):
         found.append("executor: is not told that an isolated agent's Bash refuses joined commands and heredocs (plain, separate commands, Write for files)")
     # a fix comes with its test, except where the task is UI or the plan lists no tests (a fixer wrote tests/x.test.mjs for a part with `tests: []`)
     if not re.search(r"The test goes in that same commit.*except where the task is UI or the plan lists no tests", texts.get("executor", "")):
         found.append("executor: the test of a fix has no exception for a UI task or a plan that lists no tests")
-    v = texts.get("review-verifier", "")
-    if "structured output" not in v:
-        found.append("review-verifier: does not say it answers through the structured output")
-    if re.search(r"verified <|report path|file your report", v):
-        found.append("review-verifier: still writes a report file and replies with a line, the script reads neither")
     return found
 
 
@@ -1227,16 +1213,12 @@ def check_agents(s):
         with open(os.path.join(ROOT, "agents", name + ".md"), encoding="utf-8") as f:
             texts[name] = f.read()
     s.eq("agents: reviewer, security-reviewer and review-verifier say what the script does (agents/*.md vs workflows/execute.js)", agent_problems(texts), [])
-    old = {n: t.replace("Your prompt is your brief", "Your prompt names a brief file") for n, t in texts.items()}
-    s.ok("agents: control, the old wording is found", len(agent_problems(old)) >= 3, repr(agent_problems(old)))
     s.ok("agents: control, a reviewer not told to put the criterion's id in a finding is found",
          any("criterion it marks" in p for p in agent_problems({**texts, "reviewer": texts["reviewer"].replace("must contain the criterion's `id`", "names the fault")})), "")
     s.ok("agents: control, an executor not told to run plain, separate commands is found",
          any("plain, separate" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("plain, separate commands", "commands")})), "")
     s.ok("agents: control, an executor whose fix test has no exception is found",
          any("test of a fix" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("except where the task is UI or the plan lists no tests", "always")})), "")
-    s.ok("agents: control, an executor that knows no promptless fixer is found",
-         any("executor" in p for p in agent_problems({**texts, "executor": texts["executor"].replace("no brief file", "no file")})), "")
     # what the script gives each one, so the agent files cannot drift from it
     rec, err = go(SCRIPT, answers_over={"security-reviewer:r1": review_line("r1", "security-reviewer"), "executor:runner-report-r1-sec": review_report(criteria=[])},
                   args_over=lambda a: a.update(security={"needed": True, "why": "x"}))

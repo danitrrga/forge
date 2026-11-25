@@ -22,6 +22,17 @@ Seen red on copies of the real texts (a copy of plugins/fwx with the pinned word
   SKILL.md, "fwx session --json" -> "fwx session --jsn":  FAIL: SKILL.md step 0 clears worktrees before the retake and the resume -> order is not sweep, retake, resume
   references/factory-return.md, "fwx decision new" -> "the `decisions` agent" (D17):  FAIL: no text launches or names the `decisions` agent, and its file is gone -> references/factory-return.md:9
   SKILL.md, "Recommended:" -> "Suggested:" (D9):  FAIL: every question to the owner carries a `Recommended:` line -> no `Recommended:` in ['SKILL.md rule 6', 'SKILL.md step 4', 'SKILL.md step 8']
+09.6 T61 (the session runs `fwx wave run`; the same kind of copy, the first FAIL line printed):
+  SKILL.md, the texts at a8f5904 (`fwx:execute` at :23, :46, :52):  FAIL: the session names no fwx:execute -> SKILL.md:23, :46, :52, ui-review.md:10
+  references/ui-review.md, "fwx wave run ... --revert" -> "fwx wave new ... --revert":  FAIL: the session runs no `fwx wave new`: `fwx wave run` prepares the part itself -> ui-review.md:10
+  references/ui-review.md, "--revert" -> "--revertt":  FAIL: every flag of a `fwx wave run` the texts give is one `wave run` takes -> named [..., '--revertt'], not taken: ['--revertt']
+  SKILL.md, "with `run_in_background`" -> "and wait":  FAIL: step 5 runs `fwx wave run` in the background -> run commands [...], run_in_background False
+  SKILL.md, "`result.consider`" -> "`result.considr`":  FAIL: step 5 reads the leftovers from fields the run's own files have -> cites ['file', 'considr', ...], the files have [...]
+  SKILL.md, a correction's `executing` row -> a first one (`part <N> branch <branch>`):  FAIL: step 5 writes no first `executing` row for a part -> writes ['`part <N> branch <branch>`']
+  references/closing.md, "gh pr ready <number>" -> "mark it ready":  FAIL: closing.md marks the gate's draft pull request ready and writes its body -> missing `gh pr ready`, `gh pr edit` or the fallback `gh pr create`
+  references/closing.md, the `fwx wave list` sweep -> "remove each run":  FAIL: closing.md sweeps the runs `fwx wave list` shows with `fwx wave remove --run` -> no 'fwx wave list' ... 'fwx wave remove --run' in order
+  agents/review-verifier.md, "`verdicts <report path>`" -> "`verdicts <path>`":  FAIL: the verifier replies with the line `wave findings --verdicts` reads -> no `verdicts <report path>` in agents/review-verifier.md, or review.VERDICT_LINE does not read it
+  agents/reviewer.md, "names a brief file" -> "is your brief, there is no brief file":  FAIL: no agent says it has no brief file -> still says it in ['reviewer']
 Each kept check also has a control on a toy text (the "control:" checks).
 """
 import os
@@ -159,8 +170,33 @@ def in_order(text, *words):
 
 
 def fwx_commands(text):
-    """Top-level `fwx <name>` words; `fwx:execute` (a workflow) has a colon and is not one."""
+    """Top-level `fwx <name>` words; `fwx:ui-walk` (a workflow) has a colon and is not one."""
     return set(re.findall(r"\bfwx ([a-z][a-z-]*)\b", text))
+
+
+def mentions(texts, word):
+    """{file name: [line numbers]} of the lines of each text that name `word`."""
+    return {os.path.basename(n): [i for i, ln in enumerate(t.splitlines(), 1) if word in ln] for n, t in texts.items() if word in t}
+
+
+def where(found):
+    """`SKILL.md:23, :46, ui-review.md:10` for the result of `mentions`."""
+    return ", ".join("%s:%s" % (n, ", :".join(map(str, ls))) for n, ls in sorted(found.items()))
+
+
+def run_flags(text):
+    """The flags of each `fwx wave run ...` command a text gives, between backticks: [{flag, ...}] one set per command."""
+    return [set(re.findall(r"--[a-z-]+", c)) for c in re.findall(r"`(fwx wave run [^`]*)`", text)]
+
+
+def result_fields(text):
+    """The `result.<field>` words of a text: fields of what a run's own files record (`<n>-findings.json`, `<n>-report.json`)."""
+    return re.findall(r"`result\.([a-z_]+)`", text)
+
+
+def first_executing_rows(text):
+    """The `part <N> branch <B>` rows a text has the session write: a part's first `executing` row (step 4 writes the phase's)."""
+    return re.findall(r"`part <N> branch[^`]*`", text)
 
 
 def main():
@@ -172,6 +208,8 @@ def main():
     sys.path.insert(0, os.path.join(ROOT, "lib"))
     from fwx import plan, state  # noqa: E402
     from fwx.core import stages  # noqa: E402
+    from fwx.commands import wave as wave_cmd  # noqa: E402
+    from fwx.execute import report as wave_report, review as wave_review  # noqa: E402
 
     # Every command the texts name exists, or is skipped with its reason.
     out = subprocess.run([sys.executable, os.path.join(ROOT, "bin", "fwx"), "--help"], capture_output=True, text=True)
@@ -214,11 +252,59 @@ def main():
     check("step 7's refused-call cite names the rule on skills and workflows", bool(titled) and titled.group(1) == "Skills and workflows",
           "'rule %s applies' is %s" % (cited.group(1) if cited else "?", '"%s"' % titled.group(1) if titled else "no rule"))
     check("control: a cite of a rule with another title is caught", re.search(r"^8\. \*\*([^*]+?)\.\*\*", "7. **Skills and workflows.** x\n8. **Generated config.** y", re.M).group(1) != "Skills and workflows")
-    # r4-F2: step 7 still excused "a split proposed at step 2 with no pre-mortem run" after step 2 stopped proposing a split, a case that cannot happen.
-    # Seen red before the parenthesis went: FAIL: step 7 names no split proposed at step 2 -> step 7 still says 'a split proposed at step 2'
-    check("step 7 names no split proposed at step 2", "split proposed at step 2" not in step(skill, 7),
-          "step 7 still says 'a split proposed at step 2'")
-    check("control: a step 7 with the old parenthesis is caught", "split proposed at step 2" in "except when the phase is already in `discuss` (a split proposed at step 2 with no pre-mortem run)")
+    # 09.6 T61: a part runs as one `fwx wave run` (prepared in process, every agent an Orca worker), so the session launches no `fwx:execute` workflow
+    # (rule 7 keeps the Workflow tool for `fwx:ui-walk`) and runs no `fwx wave new` of its own. Seen red at 3bb7ef7:
+    #   FAIL: the session names no fwx:execute -> SKILL.md:23, :46, :52, ui-review.md:10
+    session_texts = {n: t for n, t in texts.items()}
+    old_workflow = mentions(session_texts, "fwx:execute")
+    check("the session names no fwx:execute", not old_workflow, where(old_workflow))
+    check("control: a text that launches fwx:execute is caught, one that launches fwx:ui-walk is not",
+          bool(mentions({"a.md": "Launch `fwx:execute` now"}, "fwx:execute")) and not mentions({"a.md": "Launch `fwx:ui-walk` now"}, "fwx:execute"))
+    old_prepare = mentions(session_texts, "wave new")
+    check("the session runs no `fwx wave new`: `fwx wave run` prepares the part itself", not old_prepare, where(old_prepare))
+    s5, s6 = step(skill, 5), step(skill, 6)
+    check("step 5 runs `fwx wave run` in the background", bool(run_flags(s5)) and "run_in_background" in s5, "run commands %s, run_in_background %s" % (run_flags(s5), "run_in_background" in s5))
+    check("control: a step 5 with no background run is caught", not ("run_in_background" in "5. **Execute a part.** Run `fwx wave run --part-dir <part>` and wait."))
+    accepted = set(re.findall(r"--[a-z-]+", wave_cmd.RUN_USAGE))
+    named = {f for text in texts.values() for flags in run_flags(text) for f in flags}
+    check("every flag of a `fwx wave run` the texts give is one `wave run` takes", named <= accepted and len(named) >= 6, "named %s, not taken: %s" % (sorted(named), sorted(named - accepted)))
+    check("control: a flag `wave run` does not take is caught", {"--part-dir", "--rounds"} - accepted == {"--rounds"})
+    need = {"step 5": (s5, {"--from", "--fix", "--resume"}), "step 6": (s6, {"--fix"}), "references/ui-review.md": (review, {"--revert", "--fix"})}
+    for name, (text, flags) in need.items():
+        given = set().union(*run_flags(text)) if run_flags(text) else set()
+        check("%s runs `fwx wave run` with %s" % (name, " and ".join(sorted(flags))), flags <= given, "its run commands carry %s" % sorted(given))
+    fields = set(wave_review._result("done", "r1")) | set(wave_report._result("merge"))
+    cited_fields = result_fields(s5)
+    check("step 5 reads the leftovers from fields the run's own files have", len(cited_fields) >= 3 and set(cited_fields) <= fields, "cites %s, the files have %s" % (cited_fields, sorted(fields)))
+    check("control: a `result.` field the files do not have is caught", result_fields("read `result.unverfied`") == ["unverfied"] and "unverfied" not in fields)
+    # A subphase starts in `executing` (stages.start_of), so `executing -> executing` is refused: step 5 writes no first `executing` row, only a correction's.
+    toy = os.path.join(os.sep, "p", ".fwx", "milestones", "v1", "phases", "01-a", "01.1-b")
+    check("the table starts a subphase in `executing` and refuses `executing` after itself", stages.start_of(toy) == "executing" and not stages.allowed("session", "executing", "executing"),
+          "start %s" % stages.start_of(toy))
+    check("step 5 writes no first `executing` row for a part", not first_executing_rows(s5), "writes %s" % first_executing_rows(s5))
+    check("control: a step 5 that writes `executing` first is caught", bool(first_executing_rows("write stage `executing` first (`part <N> branch <branch>`)")) and not first_executing_rows("stage `executing` (`part <N> corrections`)"))
+
+    # the close: the runs `fwx wave list` shows are swept, and the gate's draft pull request is marked ready, not created again.
+    check("closing.md sweeps the runs `fwx wave list` shows with `fwx wave remove --run`", in_order(closing, "fwx wave list", "fwx wave remove --run"), "no 'fwx wave list' ... 'fwx wave remove --run' in order")
+    check("closing.md marks the gate's draft pull request ready and writes its body", in_order(closing, "gh pr ready", "gh pr edit") and "gh pr create" in closing, "missing `gh pr ready`, `gh pr edit` or the fallback `gh pr create`")
+    check("control: a closing that only creates the pull request is caught", not in_order("`gh pr create` with a body", "gh pr ready", "gh pr edit"))
+
+    # 09.6 T61: every worker of `fwx wave run` is given a brief file (execute/brief.py writes the executor's, the fixer's, the resolver's and each review brief), and the
+    # verifier's reply is the line `wave findings --verdicts` reads (review.VERDICT_LINE), not a structured output.
+    agents = {}
+    for name in ("executor", "reviewer", "security-reviewer", "review-verifier"):
+        with open(os.path.join(ROOT, "agents", name + ".md"), encoding="utf-8") as f:
+            agents[name] = f.read()
+    claims_none = [n for n, t in agents.items() if re.search(r"no brief file|their prompt is the brief", t)]
+    check("no agent says it has no brief file", not claims_none, "still says it in %s" % claims_none)
+    check("control: an agent text that says 'there is no brief file' is caught", bool(re.search(r"no brief file", "Your prompt is your brief, there is no brief file")))
+    unread = [n for n in ("reviewer", "security-reviewer", "review-verifier") if "names a brief file" not in agents[n]]
+    check("the reviewers and the verifier read the brief file their prompt names", not unread, "no 'names a brief file' in %s" % unread)
+    reply = re.search(r"`(verdicts <report path>)`", agents["review-verifier"])
+    check("the verifier replies with the line `wave findings --verdicts` reads", bool(reply) and bool(wave_review.VERDICT_LINE.match(reply.group(1).replace("<report path>", "/x/report.json"))),
+          "no `verdicts <report path>` in agents/review-verifier.md, or review.VERDICT_LINE does not read it")
+    check("control: a verifier that answers through a structured output has no such line", re.search(r"`(verdicts <report path>)`", "you answer through the structured output, `{verdicts: [...]}`") is None)
+
     check("step 8 reads `review: blocking` and the plan accepts that value", "`review: blocking`" in s8 and "blocking" in plan.REVIEWS,
           "step 8 names it: %s; plan.REVIEWS: %s" % ("`review: blocking`" in s8, plan.REVIEWS))
     check("steps 5 and 8 read `ui: true` and plan.py has a task key `ui`", "`ui: true`" in skill and '"ui"' in open(os.path.join(ROOT, "lib", "fwx", "plan.py"), encoding="utf-8").read(),
