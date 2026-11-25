@@ -13,10 +13,18 @@ A toy world, no network: the repo's `origin` URL is a GitHub one (so the regex m
 push lands there and nowhere else); `gh` is a script that answers from a scenario file and logs every call; PATH holds git, bash, sh and
 that script only. The waits are shortened by `FWX_CI_POLL_S` and `FWX_CI_NO_RUN_S`, which the code reads for this purpose.
 
-Seen red at aaf03fa-era code (no ci_gate.py, `verify` with no `ci`), the first FAIL of each case:
-  FAIL: a green CI run of the head is the gate: the local checks ran: got 1, want 0
-  FAIL: a conflicting draft pull request runs the local gate ... (the local gate was the only one)
-Controls, each a copy of lib/ with one line changed (`MUTANTS`), seen red with the FAIL named there; the good code passes first.
+Seen red at 3bb7ef7 (no core/ci_gate.py, `verify` with no `ci`), the first FAILs: 82 checks, all the CI ones failing because the local gate was
+the only one:
+  FAIL: a green CI run of the head is the gate: the local checks did not run: got 1, want 0
+  FAIL: the phase branch is pushed to origin, at the head: got '', want '<sha>'
+  FAIL: decide: a green CI row of the head is evidence for the recipe: got (['evidence-recipe'], 0), want ([], 0)
+Controls: each of `MUTANTS` is a copy of lib/ with one line changed and must fail with the FAIL named there; the good code passes first
+(86 checks, 126 with the controls). Some of them, the FAIL seen:
+  a failed run is not red:        FAIL: a failed CI run is a red gate: exit and gate rc: got (0, 0), want (1, 1)
+  verify takes CI by default:     FAIL: fwx verify by hand pushes nothing: got '<sha>', want ''
+  the branch is pushed with a +:  FAIL: a rejected push is never forced: the remote branch is as it was: got '<sha>', want '<the remote's sha>'
+  the default branch is pushed:   FAIL: the default branch is never pushed: the local gate runs: got (0, 0, '<sha>', [...gh calls...])
+  CI evidence judged by recipe:   FAIL: decide: a green CI row of the head is evidence for the recipe: got (['evidence-recipe'], 0), want ([], 0)
 """
 import json
 import os
@@ -216,6 +224,19 @@ def case_red(R, S):
     stop_scenes()
 
 
+def case_runs(R, S):
+    other = dict(run_of(201, "completed", "failure"), path=".github/workflows/checks.yml")
+    w = World(polls=[[other, run_of(202, "completed", "success"), run_of(203, "in_progress")], [other, run_of(202, "completed", "success"), run_of(203, "completed", "success")]])
+    r = w.final(R)
+    S.eq("every run of the workflow is waited for: two polls, green", (r.returncode, w.gh_state()["polls"], w.ran()), (0, 2, 0))
+    S.eq("one command names all the runs of the workflow, and none of another workflow's", [x["commands"] for x in w.rows()], [[{"cmd": "ci:%s:run-202,203" % CI, "rc": 0}]])
+    stop_scenes()
+    w = World(polls=[[dict(run_of(204, "completed", "success"), path=CI + "@refs/pull/7/merge")]])
+    r = w.final(R)
+    S.eq("a run path that carries its ref is the workflow's", (r.returncode, [x["source"] for x in w.rows()]), (0, ["ci"]))
+    stop_scenes()
+
+
 def case_quick_red(R, S):
     w = World(project={"checks_quick": ["exit 1"]})
     r = w.final(R)
@@ -311,6 +332,12 @@ def case_base_reuse(R, S):
     S.eq("a green CI row of the base stands in for its checks: none runs", (r.returncode, ran(runs)), (0, n))
     S.ok("and says it reused the record", "base checks: reused the passing record of %s" % sc3.head()[:7] in r.stderr, r.stderr)
     S.eq("it writes no second row", len(evidence_rows(sc3)), 1)
+    sc5 = PrepScene(recipe=[counting(runs, "v")])
+    ev = {"sha": sc5.head(), "clean": True, "source": "ci", "commands": [{"cmd": "ci:%s:run-9" % CI, "rc": 0}, {"cmd": "ci:%s:run-10" % CI, "rc": 1}], "rc": 0}
+    state.append_audit(sc5.part, "evidence", detail=json.dumps(ev), rc=0, sha=sc5.head())
+    n = ran(runs)
+    r = sc5.prepare(R)
+    S.eq("a CI row with a command that failed is not the base's checks: the checks run", (r.returncode, ran(runs)), (0, n + 1))
     sc4 = PrepScene(recipe=[counting(runs, "w")])
     ev = {"sha": sc4.head(), "clean": True, "source": "profile", "commands": [{"cmd": "something else", "rc": 0}], "rc": 0}
     state.append_audit(sc4.part, "evidence", detail=json.dumps(ev), rc=0, sha=sc4.head())
@@ -357,8 +384,44 @@ def case_decide(R, S):
     S.eq("decide: a CI row with no command proves nothing", reasons(dict(ev(), commands=[])), (["evidence-recipe"], 0))
 
 
-CASES = [case_green, case_red, case_quick_red, case_fallback, case_by_hand, case_final_after_merge, case_base_reuse, case_decide]
-MUTANTS = []
+CASES = [case_green, case_red, case_runs, case_quick_red, case_fallback, case_by_hand, case_final_after_merge, case_base_reuse, case_decide]
+CG, V, E, I, P = ("lib/fwx/core/ci_gate.py", "lib/fwx/core/verify.py", "lib/fwx/core/evidence.py", "lib/fwx/execute/integrate.py", "lib/fwx/execute/prepare.py")
+# (name, case, file, old line, new line, the FAIL it must produce); each `old` is in its file exactly once.
+MUTANTS = [
+    ("a failed run is not red", case_red, CG, 'failed = [r for r in runs if r.get("conclusion") == "failure"]', "failed = []",
+     "a failed CI run is a red gate: exit and gate rc"),
+    ("a failed job is not named", case_red, CG, 'j.get("conclusion") == "failure" and j.get("name")', 'j.get("conclusion") == "success" and j.get("name")',
+     "the red row is CI's, rc 1, one command per failed job"),
+    ("verify takes CI by default", case_by_hand, V, "environ=None, ci=False):", "environ=None, ci=True):", "fwx verify by hand pushes nothing"),
+    ("the final merge keeps the local gate", case_green, I, "verify.verify(top, part_dir, say, ci=True)", "verify.verify(top, part_dir, say)",
+     "a green CI run of the head is the gate: the local checks did not run"),
+    ("the branch is pushed with a +", case_fallback, CG, '"refs/heads/%s:refs/heads/%s" % (branch, branch)', '"+refs/heads/%s:refs/heads/%s" % (branch, branch)',
+     "a rejected push is never forced"),
+    ("an open draft is not looked for", case_green, CG, "if isinstance(open_, list) and open_ and", "if False and", "the draft is opened once"),
+    ("the lookup of the draft names no owner", case_green, CG, 'quote("%s:%s" % (owner, branch), safe=":/")', 'quote(branch, safe=":/")', "the draft is opened once"),
+    ("a conflict is not seen", case_fallback, CG, '.get("mergeable") is False:', '.get("mergeable") is False and False:',
+     "a conflicting draft pull request: the local gate runs and is green"),
+    ("the default branch is pushed", case_fallback, CG, "    if branch in protected:\n", "    if False:\n", "the default branch is never pushed"),
+    ("a production branch is pushed", case_fallback, V, ' | set((cfg["project"].get("production") or {}).get("branches") or [])', "",
+     "a production branch is never pushed"),
+    ("no run is green", case_fallback, CG, "            if runs and all(r.get(", "            if all(r.get(", "no run within the window: the local gate runs and is green"),
+    ("a cancelled run is green", case_fallback, CG, "    if odd:\n", "    if False:\n", "a cancelled run: the local gate runs and is green"),
+    ("a run in progress is waited for no longer", case_runs, CG, 'all(r.get("status") == "completed" for r in runs)', 'any(r.get("status") == "completed" for r in runs)',
+     "every run of the workflow is waited for"),
+    ("another workflow's run counts", case_runs, CG, ' and str(r.get("path") or "").split("@")[0] == CI_WORKFLOW]', "]",
+     "every run of the workflow is waited for"),
+    ("a run path with its ref is not the workflow's", case_runs, CG, 'str(r.get("path") or "").split("@")[0] == CI_WORKFLOW', 'str(r.get("path") or "") == CI_WORKFLOW',
+     "a run path that carries its ref is the workflow's"),
+    ("the poll sees every event", case_green, CG, "&event=pull_request&per_page=100", "&per_page=100", "a green CI run of the head is the gate: the local checks did not run"),
+    ("CI evidence is judged by the recipe", case_decide, E, "ci = evidence.get(\"source\") == CI_SOURCE and bool(rows)", "ci = False",
+     "decide: a green CI row of the head is evidence for the recipe"),
+    ("CI evidence with no command is green", case_decide, E, 'evidence.get("source") == CI_SOURCE and bool(rows)', 'evidence.get("source") == CI_SOURCE',
+     "decide: a CI row with no command proves nothing"),
+    ("any green row stands in for the base", case_base_reuse, P, 'detail.get("source") == evidence.CI_SOURCE and got and', "got and",
+     "a green row of other checks that is not CI's still stands in for nothing"),
+    ("a CI row's failed command is ignored", case_base_reuse, P, "got and all(rc == 0 for _, rc in got))", "got)",
+     "a CI row with a command that failed is not the base's checks"),
+]
 
 
 if __name__ == "__main__":

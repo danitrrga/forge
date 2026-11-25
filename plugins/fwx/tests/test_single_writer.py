@@ -24,6 +24,15 @@ with its own rule switched off, the first FAIL line of each:
   shell strings off:       FAIL: planted a shell line: names the file and line: got [], want 'git rebase outside the allowed path: lib/fwx/zz_planted.py:5'
   reset --hard off:        FAIL: planted reset --hard: names the file and line: got [], want 'git reset --hard outside the allowed path: lib/fwx/zz_planted.py:5'
   GIT_CALLERS emptied:     FAIL: real lib: read some files (42) and some git calls (2): files 42, calls 2
+
+Red before core/ci_gate.py existed (09.6 T64): FAIL: a planted push in ci_gate.py is allowed: got None, want [] (the module was absent).
+Controls of the push rule (09.6 T64), each on a copy of this file with one line changed, the first FAIL:
+  the force rule off:        FAIL: planted push --force: names the file and line: got ['git push outside the allowed path: lib/fwx/zz_planted.py:5'], want 'git push --force is never allowed: lib/fwx/zz_planted.py:5'
+  the shell force rule off:  FAIL: planted in ci_gate.py, a shell line with --force: named with its file and line: got [], want 'git push --force is never allowed'
+  `-f` not a force flag:     FAIL: planted in ci_gate.py, push -f: named with its file and line: got [], want 'git push -f is never allowed'
+  `+` not a force flag:      FAIL: planted in ci_gate.py, push of a + refspec: named with its file and line: got [], want 'git push +refspec is never allowed'
+  push allowed everywhere:   FAIL: planted push: names the file and line: got [], want 'git push outside the allowed path: lib/fwx/zz_planted.py:5'
+  push allowed nowhere:      FAIL: real lib: no git command outside its path: got ['git push outside the allowed path: lib/fwx/core/ci_gate.py:178'], want []
 """
 import ast
 import os
@@ -111,7 +120,7 @@ def scan(root):
                             found.append((word, rel, node.lineno))
                     m = SHELL_FORCE.search(node.value)
                     if m:
-                        found.append((_forced(m.group(1)), rel, node.lineno))
+                        found.append((_forced(m.group(1)) or "push " + m.group(1), rel, node.lineno))
                 if not isinstance(node, ast.Call):
                     continue
                 strings = _strings(node)
