@@ -249,14 +249,15 @@ def _route(items, outside_of, by):
         d = (by or {}).get(ident)
         verdict = d["verdict"] if d else "fix"
         severity = d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]
+        if _large(outside_of, ident) and verdict == "fix":
+            # too big for a fix round whatever its severity: returned for the session to file as a Linear issue
+            groups["file"].append(outside_of[ident])
+            routes[ident] = "file"
+            continue
         demoted = verdict == "fix" and d is not None and severity == "low"
         if demoted:
             verdict = "consider"  # D25: a verified finding of severity low is listed for the owner; only medium and high cost a fix round and a new gate
-        if _large(outside_of, ident) and verdict == "fix":
-            # too big for a fix round: returned for the session to file as a Linear issue
-            groups["file"].append(outside_of[ident])
-            routes[ident] = "file"
-        elif verdict == "fix":
+        if verdict == "fix":
             groups["fix"].append(dict(it, severity=severity))
             routes[ident] = "fix"
         elif verdict == "consider":
