@@ -103,9 +103,12 @@ _n = [0]
 def phase(change=None, body=BODY, pre=PRE_BODY, post=POST_BODY, pre_fm=PRE, post_fm=POST, decisions=DECISIONS, extra=None, in_repo=True,
           root=None, scope=".fwx"):
     """A phase folder with plan.md, premortem.md, postmortem.md and decisions.tsv; `pre` or `post` None leaves the file out.
-    `root` is the repository it is made in (default REPO) and `scope` the folder of the plan files in it."""
+    `root` is the repository it is made in (default REPO) and `scope` the folder of the plan files in it. `in_repo=False` is a folder git
+    cannot place in any repository, even with TMPDIR inside a worktree (an executor's scratch folder is), where the toy would otherwise
+    find that worktree's configuration and checkout. Seen red there before the fix: 6 FAILs, among them
+    `FAIL: repo with no configuration: NOT RUN, NOT ARMED, no error: {'errors': ['plan.md: repo: a names no repo of project.repos (none)'] ...}`."""
     _n[0] += 1
-    d = os.path.join(root or REPO, scope, "p%d" % _n[0]) if in_repo else helpers.mkdtemp("fwx-form-")
+    d = os.path.join(root or REPO, scope, "p%d" % _n[0]) if in_repo else helpers.mkdtemp_nogit("fwx-form-")
     fm = base()
     if change:
         change(fm)
