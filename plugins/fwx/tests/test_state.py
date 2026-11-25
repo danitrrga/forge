@@ -88,7 +88,9 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
 
 sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
-from fwx import state  # noqa: E402
+from fwx import config, context_base, state  # noqa: E402
+from fwx.core import verify  # noqa: E402
+from fwx.execute import brief, cleanup, run as run_mod  # noqa: E402
 
 for k in [k for k in os.environ if k.startswith("GIT_")]:  # a hook run exports GIT_DIR: not for these toy repos
     del os.environ[k]
@@ -706,5 +708,47 @@ s.ok("templates/phase/plan.md: every task carries `part`", plan_fm.get("tasks") 
 bad = helpers.mkdtemp("fwx-badtpl-")
 helpers.write(bad, "plan.md", '---\n{"a": 1,}\n---\n## Goal\n')
 s.eq("control: a trailing comma in the frontmatter is caught", frontmatter(os.path.join(bad, "plan.md"))[1].endswith("frontmatter is not JSON"), True)
+
+# ---- a workspace whose code lives in nested repos (DTC-64): one state folder, `<workspace>/.git/fwx`, from every worktree ----------
+# Seen red with T1 alone (config.fwx_dir exists, state.py and the run modules still ask their own repository):
+#   FAIL: session file in the workspace: <ws>/.git/fwx/sessions/ns1.json missing (written to <ws>/a/.git/fwx/sessions)
+#   (and the same for the gate lock, runs_folder, brief.folder_of's and cleanup.recorded_of's folders and context_base.base_path)
+ws = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\na/\n"}))
+na = os.path.join(ws, "a")
+os.makedirs(na)
+helpers.git(na, "init", "-q", "-b", "master")
+helpers.write(na, "README", "a\n")
+helpers.git(na, "add", "-A")
+helpers.git(na, "commit", "-q", "-m", "a")
+helpers.write(ws, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"repos": {"a": {"path": "a"}}}}))
+na_wt = helpers.add_worktree(na, "side")
+nphase = mk(ws, ".fwx", "milestones", "v1", "phases", "01-n")
+mk(ws, ".fwx", "milestones", "v1", "phases", "02-m")  # two open phases: resolve binds nothing by itself, only the file can answer
+ws_fwx = os.path.join(ws, ".git", "fwx")
+nenv = {"CLAUDE_CODE_SESSION_ID": "ns1"}
+
+r = helpers.fwx(na_wt, "session", "attach", nphase, env=nenv)
+s.eq("session attach from a worktree of repo a: exit code", r.returncode, 0)
+nfile = os.path.join(ws_fwx, "sessions", "ns1.json")
+s.ok("session file in the workspace: %s missing (written to %s)" % (nfile, os.path.join(na, ".git", "fwx", "sessions")),
+     os.path.isfile(nfile))
+r = helpers.fwx(ws, "session", "--json", env=nenv)
+s.eq("session --json at the workspace root: exit code", r.returncode, 0)
+try:
+    s.eq("session --json at the workspace root reads the binding back", json.loads(r.stdout).get("phase_dir"), nphase)
+except ValueError:
+    s.ok("session --json at the workspace root prints JSON", False, r.stdout[-200:] + r.stderr[-200:])
+
+with verify.gate_lock(na_wt) as lock:
+    s.eq("gate_lock from a worktree of repo a locks the workspace's file", lock, os.path.join(ws_fwx, "gate.lock"))
+s.eq("runs_folder from a worktree of repo a", run_mod.runs_folder(na_wt), os.path.join(ws_fwx, "runs"))
+s.eq("brief.folder_of takes the fwx folder", brief.folder_of(config.fwx_dir(na_wt), "r1"), os.path.join(ws_fwx, "runs", "r1"))
+rec = mk(ws_fwx, "runs", "r1")
+helpers.write(rec, "1-integrate.json", json.dumps({"step": "integrate", "exit": 0, "args": {"branches": ["task-branch"]}, "result": {}}))
+s.ok("cleanup.recorded_of takes the fwx folder and reads that run's files",
+     "task-branch" in cleanup.recorded_of(config.fwx_dir(na_wt), "r1")[0], repr(cleanup.recorded_of(config.fwx_dir(na_wt), "r1")))
+s.eq("context_base.base_path from a worktree of repo a's phase", context_base.base_path(nphase),
+     os.path.join(ws_fwx, "context-base", "fwx__milestones__v1__phases__01-n.md"))
+s.ok("nothing of fwx is left in the nested repo: %s" % os.path.join(na, ".git", "fwx"), not os.path.exists(os.path.join(na, ".git", "fwx")))
 
 s.done()
