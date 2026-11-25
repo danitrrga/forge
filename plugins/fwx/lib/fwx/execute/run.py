@@ -23,7 +23,7 @@ worker is stopped and the run ends failed. Every dispatch not settled gets `work
 `finally` after a failure or a raised error. The poll, the idle window and the limit are read from FWX_RUN_POLL_S, FWX_RUN_IDLE_S and
 FWX_RUN_LIMIT_S (seconds) so that a test need not wait minutes.
 
-State is `<git-common-dir>/fwx/runs/<run>/state.json`: the Orca run, the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
+State is `<git-common-dir>/fwx/runs/<run>/state.json`: the Orca run and the terminal made for it (the sender of `run-create`, closed after the workers when the run ends), the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
 calls it made (in order, with their results) and the result. `--resume R` runs the same path again: a call the journal holds is not made again (its
 result is read from it), a worker the state holds is polled, not started again. One live run per branch: a second `wave run` on it exits 2 naming the
 run and `--resume`, and a lock on the branch (`lock_branch`, held until the process ends) closes the gap before the first record is written. A settled
@@ -533,13 +533,17 @@ class Run:
         args = self.args
         if args["revert"]:
             return self.revert()
-        self.orca_run = self.st.get("orca_run") or orca.run_create("fwx wave run %s" % self.run)
-        self.st["orca_run"] = self.orca_run
-        self.save()
         if not self.st.get("repo_added"):
             orca.ensure_repo(self.main)
             self.st["repo_added"] = True
             self.save()
+        term = self.st.get("terminal")
+        if not term or not orca.terminal_alive(term):  # a resumed run keeps its terminal while Orca still has it
+            self.st["terminal"] = term = orca.terminal_create(self.main, "fwx run %s" % self.run)
+            self.save()
+        self.orca_run = self.st.get("orca_run") or orca.run_create("fwx wave run %s" % self.run, term)
+        self.st["orca_run"] = self.orca_run
+        self.save()
         done = set(args["done"])
         if args["from"] == "gate":
             self.at("gate")
@@ -603,6 +607,15 @@ def finish(r, st, folder):
     """Release every worker still open, then remove the worktrees of the run: `{removed, kept, leftover}`."""
     for rec in st["workers"].values():
         r.release(rec)
+    if st.get("terminal"):  # after the workers: its run's inbox is what they report to
+        try:
+            orca.terminal_close(st["terminal"])
+            st["terminal"] = None
+        except orca.OrcaError as e:
+            if orca.terminal_alive(st["terminal"]):
+                st.setdefault("release_errors", []).append("terminal %s: %s" % (st["terminal"], e))
+            else:
+                st["terminal"] = None
     branches, paths = cleanup.recorded_of(os.path.dirname(os.path.dirname(runs_folder(r.top))), st["run"])
     try:
         hold = {os.path.realpath(w["worktree"]): "its worker could not be released, so it may still be using it"

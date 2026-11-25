@@ -7,6 +7,8 @@ This is the one module that starts a worker, the seam 01-factory adds `claude -p
     `--display-name`, `--comment`, `--setup`): Orca refuses them together, and fwx made the worktree so that it could prepare it;
   - a worker is released only once it is settled: a dispatch that ended its turn without `worker_done` stays `ready` and idle, and Orca
     refuses its `worker-release` (`dispatch_inactive`) until `worker-stop` ran (research/orca-boundary.md): the caller stops it first;
+  - `run-create` is sent from a terminal fwx made for the run (`terminal_create`, closed when the run ends), because with those variables gone
+    Orca has no sender for it; the workers' `worker_done` go to the run's inbox, not to any chat;
   - `repo` is added once, and not at all when `orca repo list` already shows the checkout.
 
 `prepare_worker` is the part of a start that is fwx's: the worktree holds a copy of the main checkout's `.claude/settings.local.json` with
@@ -96,8 +98,32 @@ def ensure_repo(path):
     return True
 
 
-def run_create(objective):
-    got = result("orchestration", "run-create", "--objective", objective)
+def terminal_create(path, title):
+    """A terminal in the checkout `path`, titled `title`, and its handle: the sender `run-create` needs, as the session variables that would have
+    named one are stripped (Orca 1.4.273: `no_active_sender_terminal`). It is created in the background, not focused."""
+    got = result("terminal", "create", "--worktree", "path:" + path, "--title", title)
+    handle = _first(got, ("handle",))
+    if not handle:
+        raise OrcaError("orca terminal create named no handle: %s" % json.dumps(got)[:200])
+    return handle
+
+
+def terminal_alive(handle):
+    """Whether Orca still has the terminal: a closed handle is not an error, `show` answers ok with `terminal.orphaned: true` (Orca 1.4.273)."""
+    try:
+        got = result("terminal", "show", "--terminal", handle)
+    except OrcaError:
+        return False
+    term = got.get("terminal")
+    return isinstance(term, dict) and term.get("orphaned") is not True
+
+
+def terminal_close(handle):
+    result("terminal", "close", "--terminal", handle)
+
+
+def run_create(objective, sender):
+    got = result("orchestration", "run-create", "--objective", objective, "--from", sender)
     run = _first(got, ("runId", "id"), "run_")
     if not run:
         raise OrcaError("orca run-create named no run: %s" % json.dumps(got)[:200])

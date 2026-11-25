@@ -121,6 +121,13 @@ class World:
         out = helpers.git(self.repo, "worktree", "list", "--porcelain")
         return [line.split(" ", 1)[1] for line in out.splitlines() if line.startswith("worktree ")]
 
+    def terminals(self):
+        try:
+            with open(os.path.join(self.dir, "state.json"), encoding="utf-8") as f:
+                return json.load(f).get("terminals", {})
+        except (OSError, ValueError):
+            return {}
+
     def put_done(self, tasks=("T1", "T2", "T3"), findings=()):
         """Tasks already on the phase branch, committed as an executor's merge leaves them (`Fwx-Task` and `Fwx-Run`)."""
         base = helpers.git(self.cwd, "rev-parse", "HEAD").strip()
@@ -570,8 +577,60 @@ def case_review_fix(root, S):
          "exit %d, units %r, out %r, err %r" % (r2.returncode, units(w2), r2.stdout[-200:], r2.stderr[-200:]))
 
 
+def case_terminal(root, S):
+    """Orca 1.4.273 refuses `orchestration run-create` with no sender terminal once the session variables are stripped (`no_active_sender_terminal`), so
+    the run makes one terminal (`fwx run <R>`, in the main checkout), names it with `--from` and closes it however the run ends.
+    Seen red on the code before the fix (every case that runs a part): FAIL: loop: exit, stderr -> got (1, 'orca: orca orchestration run-create failed
+    (exit 1): no_active_sender_terminal: Could not determine the calling terminal ...'), want (0, '')."""
+    for name, behave, status in (("success", {}, "done"), ("failure", {"units": {"T1": "failed-report"}}, "failed"), ("raised error", {"units": {"T1": "showfail"}}, "failed")):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])], behave=behave)
+        r = w.run(root=root)
+        m = line_of(r)
+        S.ok("terminal: the %s ends %s" % (name, status), bool(m) and m.group(2) == status, "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+        terms = w.terminals()
+        S.eq("terminal (%s): one made, titled for the run, in the main checkout" % name, [(t["title"], t["worktree"]) for t in terms.values()],
+             [("fwx run " + m.group(1), "path:" + os.path.realpath(w.repo))] if m else [])
+        S.ok("the terminal is closed after a %s -> open" % name, bool(terms) and not any(t["open"] for t in terms.values()), "terminals %r" % terms)
+        sent = [c["sender"] for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"] and "sender" in c]
+        S.eq("terminal (%s): run-create names that terminal" % name, sent, list(terms)[:1])
+        S.ok("terminal (%s): no call carries an Orca session variable" % name, all(not any(c["env"].values()) for c in w.calls()))
+        if m:
+            S.ok("terminal (%s): the state no longer holds an open terminal" % name, not w.state(m.group(1)).get("terminal"), "got %r" % w.state(m.group(1)).get("terminal"))
+
+
+def case_terminal_resume(root, S):
+    """A resumed run uses the terminal its state names while it is live, makes a new one when Orca lost it, and closes it at the end.
+    Orca answers `terminal show` of a closed handle ok with `terminal.orphaned: true`, not an error. Seen red on code that read only an error as gone:
+    FAIL: terminal resume (gone): terminals made: got 1, want 2."""
+    for name, lose in (("live", False), ("gone", True)):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
+        p = subprocess.Popen(w.argv(root), cwd=w.cwd, env=w.env(FWX_RUN_LIMIT_S="60"), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        w.procs.append(p)
+        end = time.time() + 20
+        while time.time() < end and not (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())):
+            time.sleep(0.1)
+        p.kill()
+        p.wait()
+        run = w.runs()[0] if w.runs() else ""
+        first = (w.state(run).get("terminal") if run else None) or ""
+        S.ok("terminal resume (%s): the killed run's state names its open terminal" % name, bool(first) and w.terminals().get(first, {}).get("open") is True, "got %r %r" % (first, w.terminals()))
+        if lose and first:
+            with open(os.path.join(w.dir, "state.json"), encoding="utf-8") as f:
+                data = json.load(f)
+            data["terminals"][first]["open"] = False
+            helpers.write(w.dir, "state.json", json.dumps(data))
+        helpers.write(w.dir, "go-T1", "")
+        r = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+        m = line_of(r)
+        S.ok("terminal resume (%s): the run goes on to done" % name, bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+        terms = w.terminals()
+        S.eq("terminal resume (%s): terminals made" % name, len(terms), 2 if lose else 1)
+        S.ok("terminal resume (%s): none left open" % name, not any(t["open"] for t in terms.values()), "terminals %r" % terms)
+        S.eq("terminal resume (%s): one run in Orca (the resumed run did not create another)" % name, len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]]), 1)
+
+
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix]
+         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -597,6 +656,8 @@ MUTANTS = [
     ("a start with no base context", case_refusals, "lib/fwx/execute/run.py", 'if not text.strip() and not self.args["revert"]:', "if False:", "no base context, no worker -> 1 start"),
     ("a waiting worker is stopped as idle", case_waiting, "lib/fwx/execute/run.py", 'if state == "ready" and info.get("activity") == "idle" and not waiting:', 'if state == "ready" and info.get("activity") == "idle":',
      "left alone until its limit, not stopped as idle"),
+    ("the run's terminal is never closed", case_terminal, "lib/fwx/execute/run.py", "orca.terminal_close(st[\"terminal\"])", "pass", "the terminal is closed after a success -> open"),
+    ("run-create with no sender", case_terminal, "lib/fwx/execute/orca.py", ', "--from", sender)', ")", "terminal (success): run-create names that terminal"),
     ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
      "worker-read stops at end cursor"),
 ]
