@@ -531,6 +531,13 @@ def case_verdicts(R, S):
     four(W, R, out=[outside(size="large"), outside(where="src/y.py:2")])
     r, v = W.verdicts(R, {"r1-F1": "dismiss", "r1-F2": "dismiss", "r1-O1": "dismiss", "r1-O2": "note"})
     S.eq("a dismissed large outside item is not filed", v.get("file"), [])
+    # D25 demotes a low `fix` to consider, but a large outside item is too big for a fix round whatever its severity: it is still filed
+    W = World()
+    four(W, R, out=[outside(size="large"), outside(where="src/y.py:2")])
+    r, v = W.verdicts(R, {"r1-F1": "dismiss", "r1-F2": "dismiss", "r1-O1": "fix", "r1-O2": "fix"}, severity={"r1-O1": "low", "r1-O2": "low"})
+    S.eq("a large outside item rated low is returned in `file`", [o.get("where") for o in v.get("file") or []], ["src/z.py:7"])
+    S.eq("a small outside item rated low is in consider", [c["id"] for c in v.get("consider") or []], ["r1-O2"])
+    S.eq("the routes of the two low outside items", v.get("routes"), {"r1-F1": "dismissed", "r1-F2": "dismissed", "r1-O1": "file", "r1-O2": "consider"})
     # a verdict that is not usable
     W = World()
     four(W, R)
