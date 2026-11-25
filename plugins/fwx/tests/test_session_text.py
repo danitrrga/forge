@@ -22,6 +22,17 @@ Seen red on copies of the real texts (a copy of plugins/fwx with the pinned word
   SKILL.md, "fwx session --json" -> "fwx session --jsn":  FAIL: SKILL.md step 0 clears worktrees before the retake and the resume -> order is not sweep, retake, resume
   references/factory-return.md, "fwx decision new" -> "the `decisions` agent" (D17):  FAIL: no text launches or names the `decisions` agent, and its file is gone -> references/factory-return.md:9
   SKILL.md, "Recommended:" -> "Suggested:" (D9):  FAIL: every question to the owner carries a `Recommended:` line -> no `Recommended:` in ['SKILL.md rule 6', 'SKILL.md step 4', 'SKILL.md step 8']
+09.6 T61 (the session runs `fwx wave run`; the same kind of copy, the first FAIL line printed):
+  SKILL.md, the texts at a8f5904 (`fwx:execute` at :23, :46, :52):  FAIL: the session names no fwx:execute -> SKILL.md:23, :46, :52, ui-review.md:10
+  references/ui-review.md, "fwx wave run ... --revert" -> "fwx wave new ... --revert":  FAIL: the session runs no `fwx wave new`: `fwx wave run` prepares the part itself -> ui-review.md:10
+  references/ui-review.md, "--revert" -> "--revertt":  FAIL: every flag of a `fwx wave run` the texts give is one `wave run` takes -> named [..., '--revertt'], not taken: ['--revertt']
+  SKILL.md, "with `run_in_background`" -> "and wait":  FAIL: step 5 runs `fwx wave run` in the background -> run commands [...], run_in_background False
+  SKILL.md, "`result.consider`" -> "`result.considr`":  FAIL: step 5 reads the leftovers from fields the run's own files have -> cites ['file', 'considr', ...], the files have [...]
+  SKILL.md, a correction's `executing` row -> a first one (`part <N> branch <branch>`):  FAIL: step 5 writes no first `executing` row for a part -> writes ['`part <N> branch <branch>`']
+  references/closing.md, "gh pr ready <number>" -> "mark it ready":  FAIL: closing.md marks the gate's draft pull request ready and writes its body -> missing `gh pr ready`, `gh pr edit` or the fallback `gh pr create`
+  references/closing.md, the `fwx wave list` sweep -> "remove each run":  FAIL: closing.md sweeps the runs `fwx wave list` shows with `fwx wave remove --run` -> no 'fwx wave list' ... 'fwx wave remove --run' in order
+  agents/review-verifier.md, "`verdicts <report path>`" -> "`verdicts <path>`":  FAIL: the verifier replies with the line `wave findings --verdicts` reads -> no `verdicts <report path>` in agents/review-verifier.md, or review.VERDICT_LINE does not read it
+  agents/reviewer.md, "names a brief file" -> "is your brief, there is no brief file":  FAIL: no agent says it has no brief file -> still says it in ['reviewer']
 Each kept check also has a control on a toy text (the "control:" checks).
 """
 import os

@@ -101,7 +101,7 @@ behind every "built".
    it settles, notes and goes on. Built in the discuss skill.
 6. **Whoever checks did not make it.** Reviewers, a verifier that re-checks each finding, and a security reviewer are
    agents other than the executors, and they may find nothing. A dead agent, an empty return or a missing file is a
-   failure to report, never "no findings". Built in the `execute` workflow.
+   failure to report, never "no findings". Built in `fwx wave run`.
 7. **Every agent starts from the same base context.** Once the problem is stated, one text, built once per phase and
    capped in size, says what the codebase holds, what you want and how the machinery fits. A `SubagentStart` hook hands
    it to every agent that is launched, by agent type, so a prompt carries only its own part and agents do not each read
@@ -142,9 +142,9 @@ source in a `referent:` line.
 
 ### What exists today
 
-- **Built, on the default branch:** the discuss, pre-mortem, plan and post-mortem skills and agents; the `execute`
-  workflow (waves of executors in worktrees, up to three fix rounds per job, the gate, reviewers, the verifier, the
-  security reviewer); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
+- **Built, on the default branch:** the discuss, pre-mortem, plan and post-mortem skills and agents; `fwx wave run`
+  (a part's waves of executors in worktrees, each agent an Orca worker, up to three fix rounds per job, the gate, reviewers, the verifier, the
+  security reviewer; the gate is GitHub CI when it can answer and the project's `checks` here when not, and a check CI cannot run goes in `checks_quick`); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
   client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline
   command; the session skill that carries a work item from discuss to close (`plugins/fwx/skills/session/`); the UI walk
   (`plugins/fwx/workflows/ui-walk.js`, `fwx walk`), parked; and forge's
