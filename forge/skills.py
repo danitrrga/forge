@@ -293,6 +293,18 @@ def _prune_base_ref(sl, c, slp_short):
     return 1
 
 
+def _prune_excludes(sl, c, slp_short):
+    """Take the claimed claudeMdExcludes out of the file, when unchanged; an edited one stays and is named on one '  ! '
+    line. Returns 1 for one removed, else 0."""
+    if "claudeMdExcludes" not in sl:
+        return 0
+    if not owned.removable(c, sl["claudeMdExcludes"]):
+        print("  ! %s: claudeMdExcludes was edited by hand, left in place" % slp_short)
+        return 0
+    del sl["claudeMdExcludes"]
+    return 1
+
+
 def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(), framework=None):
     """Owns <project>/.claude/settings.local.json: everything the project says goes there, merged
     into the file. For a claude project carrying `plugins_keep` and/or `skills_keep`, that is:
@@ -307,6 +319,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         Claude Code passes these to the session AND to every subprocess it spawns, so this
         is the supported way to give plugin hooks (which get no env of their own) per-project
         configuration -- see the comment at the env block below.
+      * claudeMdExcludes -- the project's `claude_md_excludes` (paths or globs of CLAUDE.md files it must not load),
+        written whole; taken out again once the project stops declaring it, if still what forge wrote.
       * hooks -- the project's `hooks` ({event: [group, ...]}) appended to the file's, never
         removing anything: a command already in that event is not added again, and a hook written
         by hand beside it stays. How a project's own forge hooks reach that project only.
@@ -348,7 +362,7 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
     slp = os.path.join(ppath, ".claude", "settings.local.json")
     declared = (trim or prof.get("permissions") or prof.get("env") or prof.get("hooks") or prof.get("command_guard")
                 or prof.get("worktree_guard") or prof.get("mcpjson_approved") is not None or prof.get("mcpjson_disabled") is not None
-                or prof.get("enableAllProjectMcpServers") is not None
+                or prof.get("enableAllProjectMcpServers") is not None or prof.get("claude_md_excludes") is not None
                 or any(row[5] for row in project_hooks))
     # A project that declares none of it still owns the keys written only while declared: read
     # the file, and leave early only when it holds none of them. Returning first, as it once did,
@@ -414,6 +428,16 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
         # but a STALE one left from before would keep every skill off. Absent == all available.
         # Untrimmed, the same stale map hid the skills of a project that stopped trimming.
         removed.append("skillOverrides")
+
+    # claudeMdExcludes: the list of CLAUDE.md files the project must not load (a nested project and the folder above it),
+    # written whole from `claude_md_excludes`. Claimed like the keys above, and taken out by the prune loop below once the
+    # project stops declaring it, while it is still what forge wrote: left behind it would keep hiding a file.
+    excludes = prof.get("claude_md_excludes")
+    excludes_summary = ""
+    if excludes is not None:
+        sl["claudeMdExcludes"] = list(excludes)
+        written.append(("key", ["claudeMdExcludes"], sl["claudeMdExcludes"], None))
+        excludes_summary = ", CLAUDE.md excludes %d" % len(excludes)
 
     # permissions pass-through (ADR-010): persist a per-project
     # permission allowlist via the project so it survives SessionStart, instead of hand-editing
@@ -546,6 +570,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
             pruned += _prune_marketplace(sl, c, slp_short)
         elif c["kind"] == "key" and c["at"] == ["worktree", "baseRef"]:
             pruned += _prune_base_ref(sl, c, slp_short)
+        elif c["kind"] == "key" and c["at"] == ["claudeMdExcludes"]:
+            pruned += _prune_excludes(sl, c, slp_short)
     pruned_summary = (", pruned %d" % pruned if pruned else "") + market_summary
 
     # .mcp.json approval, owned by the project when it declares `mcpjson_approved` (the list) or
@@ -593,7 +619,8 @@ def write_settings_local(ctx, prof, secrets=None, errors=None, project_hooks=(),
                      if trim else "untrimmed (pass-through only)")
     removed_summary = ", %s removed" % " and ".join(removed) if removed else ""
     summary = "overrides -> %s (%s%s%s%s%s%s%s)" % (
-        slp_short, skill_summary, removed_summary, perm_summary, env_summary, hooks_summary, mcp_summary, pruned_summary)
+        slp_short, skill_summary, removed_summary, perm_summary, env_summary, hooks_summary, mcp_summary + excludes_summary,
+        pruned_summary)
     # The file carries resolved secrets from here on, so it is 0600 (mcp.loose_secrets, the rule
     # ~/.claude.json follows): set when written, and corrected when the content is current but the
     # mode is not, since Claude Code rewrites this file too.
