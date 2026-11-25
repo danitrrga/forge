@@ -291,4 +291,131 @@ for label, value in (("a string", "x"), ("a list", [1]), ("an empty list", []), 
     except AttributeError as e:
         s.ok("project %s: load raises a ConfigError, not %s" % (label, type(e).__name__), False, str(e))
 
+# --- a workspace whose code lives in nested repos (DTC-64): `project.repos` names them, and a command run in one of them, or in
+# a linked worktree of one, finds the workspace's file, the workspace's state folder and that repo's own checks and setup.
+# Seen red on the code before `repos` existed (config.py with no repo_checkout and no fwx_dir):
+#   FAIL: home of a declared repo's worktree: got '<tmp>/ws/a', want '<tmp>/ws'
+#   AttributeError: module 'fwx.config' has no attribute 'repo_checkout'   (the next case)
+#   FAIL: setup of repo a: got [], want ['echo a-setup']   (setup_commands read the plugin's own missing file)
+def nested(ws, name):
+    """A git repository `name` inside the workspace's folder, ignored by it and no submodule: its own commit, its own history."""
+    d = os.path.join(ws, name)
+    os.makedirs(d)
+    helpers.git(d, "init", "-q", "-b", "master")
+    helpers.write(d, "README", "nested %s\n" % name)
+    helpers.git(d, "add", "-A")
+    helpers.git(d, "commit", "-q", "-m", name)
+    return os.path.realpath(d)
+
+
+def missing(name):
+    return lambda cwd: "no config.%s" % name  # a case reads the answer, so the first absent function does not end the run
+
+
+fwx_dir = getattr(config, "fwx_dir", missing("fwx_dir"))
+repo_checkout = getattr(config, "repo_checkout", missing("repo_checkout"))
+ws = os.path.realpath(helpers.toy_repo())
+a, b, c = (nested(ws, n) for n in ("a", "b", "c"))
+a_wt = helpers.add_worktree(a, "side")
+a_sub = os.path.join(a, "src")
+os.makedirs(a_sub)
+ws_wt = helpers.add_worktree(ws, "side")
+ws_file = put(ws, {"schema": 1, "project": {
+    "name": "wsname", "linear_project": "ws-linear", "default_branch": "master", "checks": ["echo ws-check"],
+    "checks_quick": ["echo ws-quick"], "worktree_setup": ["echo ws-setup"], "protected_paths": ["ws/**"],
+    "repos": {"a": {"path": "a", "checks": ["echo a-check"], "checks_quick": ["echo a-quick"],
+                    "worktree_setup": ["echo a-setup"], "protected_paths": ["src/guarded/**"], "default_branch": "trunk"},
+              "c": {"path": "c"}}}})
+for label, cwd in (("repo a", a), ("a folder of repo a", a_sub), ("a linked worktree of repo a", a_wt)):
+    s.eq("main_checkout from %s is the workspace" % label, config.main_checkout(cwd), ws)
+    s.eq("fwx_dir from %s is the workspace's" % label, fwx_dir(cwd), os.path.join(ws, ".git", "fwx"))
+s.eq("main_checkout from the workspace", config.main_checkout(ws), ws)
+s.eq("main_checkout from a worktree of the workspace", config.main_checkout(ws_wt), ws)
+s.eq("fwx_dir from the workspace", fwx_dir(ws), os.path.join(ws, ".git", "fwx"))
+s.eq("fwx_dir from a worktree of the workspace", fwx_dir(ws_wt), os.path.join(ws, ".git", "fwx"))
+s.eq("home of a repo the file does not declare is itself", config.main_checkout(b), b)
+s.eq("fwx_dir of a repo the file does not declare is its own", fwx_dir(b), os.path.join(b, ".git", "fwx"))
+s.ok("fwx_dir makes nothing", not os.path.exists(os.path.join(ws, ".git", "fwx")) and not os.path.exists(os.path.join(a, ".git", "fwx")),
+     "a folder exists")
+s.eq("repo_checkout from a linked worktree of a declared repo", repo_checkout(a_wt), a)
+s.eq("repo_checkout from a folder of a declared repo", repo_checkout(a_sub), a)
+s.eq("repo_checkout from the workspace", repo_checkout(ws), ws)
+s.eq("repo_checkout from a worktree of the workspace", repo_checkout(ws_wt), ws)
+s.eq("repo_checkout of an undeclared nested repo", repo_checkout(b), b)
+for label, cwd in (("a linked worktree of a", a_wt), ("a", a)):
+    cfg, err = load(cwd)
+    s.eq("load from %s: _source is the workspace's file" % label, cfg.get("_source") if isinstance(cfg, dict) else cfg, ws_file)
+    s.eq("load from %s: stderr is quiet" % label, err, "")
+    if isinstance(cfg, dict):
+        p = cfg["project"]
+        s.eq("load from %s: the repo's checks" % label, p["checks"], ["echo a-check"])
+        s.eq("load from %s: the repo's checks_quick" % label, p["checks_quick"], ["echo a-quick"])
+        s.eq("load from %s: the repo's setup" % label, p["worktree_setup"], ["echo a-setup"])
+        s.eq("load from %s: the repo's protected paths" % label, p["protected_paths"], ["src/guarded/**"])
+        s.eq("load from %s: the repo's default branch" % label, p["default_branch"], "trunk")
+        s.eq("load from %s: the workspace's name" % label, p["name"], "wsname")
+        s.eq("load from %s: main_checkout is the workspace" % label, p["main_checkout"], ws)
+        s.eq("load from %s: the workspace's Linear project" % label, p["linear_project"], "ws-linear")
+cfg, _ = load(c)
+if isinstance(cfg, dict):  # an entry that leaves a key out gets fwx's default, never the workspace's value
+    for key in ("checks", "checks_quick", "worktree_setup", "protected_paths"):
+        s.eq("repo c leaves %s out: the default, not the workspace's" % key, cfg["project"][key], [])
+    s.eq("repo c leaves default_branch out: the default", cfg["project"]["default_branch"], config.DEFAULTS["project"]["default_branch"])
+else:
+    s.ok("load from repo c", False, str(cfg))
+for label, cwd in (("the workspace", ws), ("a worktree of the workspace", ws_wt)):
+    cfg, _ = load(cwd)
+    if isinstance(cfg, dict):
+        p = cfg["project"]
+        s.eq("load from %s: its checks" % label, p["checks"], ["echo ws-check"])
+        s.eq("load from %s: its checks_quick" % label, p["checks_quick"], ["echo ws-quick"])
+        s.eq("load from %s: its setup" % label, p["worktree_setup"], ["echo ws-setup"])
+        s.eq("load from %s: its protected paths" % label, p["protected_paths"], ["ws/**"])
+        s.eq("load from %s: its default branch" % label, p["default_branch"], "master")
+    else:
+        s.ok("load from %s" % label, False, str(cfg))
+for label, cwd, want in (("a worktree of repo a", a_wt, ["echo a-setup"]), ("repo a", a, ["echo a-setup"]),
+                         ("repo c, which names no setup, never the workspace's", c, []),
+                         ("the workspace", ws, ["echo ws-setup"]), ("a worktree of the workspace", ws_wt, ["echo ws-setup"]),
+                         ("an undeclared repo (its own file is missing)", b, [])):
+    try:
+        got = config.setup_commands(cwd)
+    except config.ConfigError as e:
+        got = e
+    s.eq("setup_commands from %s" % label, got, want)
+# a repo that has a file of its own is its own project: never re-homed, even when the workspace declares it
+helpers.write(a, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"name": "own", "checks": ["echo own"]}}))
+s.eq("a repo with its own file is its own home", config.main_checkout(a), a)
+s.eq("a repo with its own file keeps its own state folder", fwx_dir(a), os.path.join(a, ".git", "fwx"))
+cfg, _ = load(a)
+s.eq("a repo with its own file: its own checks", cfg["project"]["checks"] if isinstance(cfg, dict) else cfg, ["echo own"])
+os.remove(os.path.join(a, ".claude", "fwx.json"))
+
+# a `repos` entry is checked where it is read, and the message names the key
+for label, entry, needle in (("a path outside the workspace", {"path": "../elsewhere"}, "project.repos.a.path"),
+                             ("an absolute path", {"path": ws}, "project.repos.a.path"),
+                             ("a path that is the workspace itself", {"path": "."}, "project.repos.a.path"),
+                             ("a missing path", {"path": "nosuch"}, "project.repos.a.path"),
+                             ("a path that is no string", {"path": 3}, "project.repos.a.path"),
+                             ("no path", {"checks": []}, "project.repos.a.path"),
+                             ("checks that is a string", {"path": "a", "checks": "make"}, "project.repos.a.checks"),
+                             ("a setup that is a string", {"path": "a", "worktree_setup": "make"}, "project.repos.a.worktree_setup"),
+                             ("an entry that is no table", "a", "project.repos.a")):
+    put(ws, {"schema": 1, "project": {"repos": {"a": entry}}})
+    for where, cwd in (("the workspace", ws), ("repo a", a_wt)):
+        cfg, _ = load(cwd)
+        if s.ok("%s, load from %s, is a ConfigError" % (label, where), isinstance(cfg, config.ConfigError), "load accepted it"):
+            s.ok("%s, load from %s: the message names %s" % (label, where, needle), needle in str(cfg), "message: %s" % cfg)
+    try:
+        config.setup_commands(a_wt)
+        s.ok("%s: setup_commands from repo a raises" % label, False, "returned")
+    except config.ConfigError as e:
+        s.ok("%s: setup_commands from repo a raises, naming %s" % (label, needle), needle in str(e), "message: %s" % e)
+put(ws, {"schema": 1, "project": {"repos": "a"}})
+cfg, _ = load(ws)
+s.ok("repos that is no table is a ConfigError naming project.repos", isinstance(cfg, config.ConfigError) and "project.repos" in str(cfg), str(cfg))
+put(ws, {"schema": 1, "project": {"repos": {"a": {"path": "a", "checks": ["x"]}}}})
+s.eq("a file that declares nothing named a: the repo b is still its own home", config.main_checkout(b), b)
+s.ok("repos is part of the defaults", config.DEFAULTS["project"].get("repos") == {}, "got %r" % config.DEFAULTS["project"].get("repos"))
+
 s.done()
