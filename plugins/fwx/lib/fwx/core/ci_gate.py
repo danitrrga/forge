@@ -138,7 +138,7 @@ def _verdict(root, owner, repo, sha, runs, say):
     """(evidence, None) for finished runs that decide the gate, (None, why) when they do not (the local gate then runs)."""
     failed = [r for r in runs if r.get("conclusion") == "failure"]
     if failed:
-        commands = []
+        commands, urls = [], []
         for r in failed:
             jobs = []
             try:
@@ -148,9 +148,15 @@ def _verdict(root, owner, repo, sha, runs, say):
                 jobs = [j.get("name") for j in got.get("jobs") or [] if isinstance(j, dict) and j.get("conclusion") == "failure" and j.get("name")]
             except gh.GhError:
                 pass  # the names are for the fixer; the run itself is red either way
-            say("CI failed at %s: run %s, failed jobs: %s, %s" % (sha[:7], r.get("id"), ", ".join(jobs) or "none named", r.get("html_url") or "no URL"))
+            url = r.get("html_url") if isinstance(r.get("html_url"), str) and r.get("html_url") else ""
+            if url and url not in urls:
+                urls.append(url)
+            say("CI failed at %s: run %s, failed jobs: %s, %s" % (sha[:7], r.get("id"), ", ".join(jobs) or "none named", url or "no URL"))
             commands += [{"cmd": "ci:%s:run-%s:%s" % (CI_WORKFLOW, r.get("id"), j), "rc": 1} for j in jobs] or [{"cmd": "ci:%s:run-%s" % (CI_WORKFLOW, r.get("id")), "rc": 1}]
-        return _evidence(sha, commands, 1), None
+        ev = _evidence(sha, commands, 1)
+        if urls:
+            ev["urls"] = urls
+        return ev, None
     odd = sorted({"run %s ended %s" % (r.get("id"), r.get("conclusion") or "with no conclusion") for r in runs if r.get("conclusion") != "success"})
     if odd:
         return None, "; ".join(odd)

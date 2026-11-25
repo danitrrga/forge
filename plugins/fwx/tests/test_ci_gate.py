@@ -221,6 +221,12 @@ def case_red(R, S):
          [("ci", "1", ["ci:%s:run-102:suite" % CI])])
     S.ok("stderr names the failed job and the run's URL", "suite" in r.stderr and RUN_URL % 102 in r.stderr, r.stderr)
     S.ok("a fixer is the next step", v.get("next") == "fix" and "suite" in (v.get("why") or ""), "%r %r" % (v.get("next"), v.get("why")))
+    # Seen red before passing `urls` through verify/integrate:
+    #   FAIL: a red CI run's URL reaches `why` and the fixer's brief: why='the gate failed on ...: evidence ... ci:...:run-102:suite=1' brief_has=False
+    brief = open(v["brief"], encoding="utf-8").read() if v.get("brief") and os.path.exists(v["brief"]) else ""
+    S.ok("a red CI run's URL reaches `why` and the fixer's brief", RUN_URL % 102 in (v.get("why") or "") and RUN_URL % 102 in brief,
+         "why=%r brief_has=%s" % (v.get("why"), RUN_URL % 102 in brief))
+    S.ok("the audited CI evidence row carries no extra `urls` key", "urls" not in (w.rows()[0] if w.rows() else {}), repr(w.rows()[:1]))
     stop_scenes()
 
 
@@ -421,6 +427,8 @@ MUTANTS = [
      "a green row of other checks that is not CI's still stands in for nothing"),
     ("a CI row's failed command is ignored", case_base_reuse, P, "got and all(rc == 0 for _, rc in got))", "got)",
      "a CI row with a command that failed is not the base's checks"),
+    ("a red CI run's URL is dropped before the fixer", case_red, I, 'line + (" (%s)" % ", ".join(urls) if urls else "")', "line",
+     "a red CI run's URL reaches `why` and the fixer's brief"),
 ]
 
 

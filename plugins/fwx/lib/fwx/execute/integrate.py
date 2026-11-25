@@ -332,7 +332,9 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
     result["ok"] = result["quick"]["rc"] == 0
     if final and result["ok"]:
         code, ev = verify.verify(top, part_dir, say, ci=True)
-        result["verify"] = {"ran": True, "rc": code, "line": verify.evidence_line(ev["sha"], ev["commands"]) if ev else ""}
+        line = verify.evidence_line(ev["sha"], ev["commands"]) if ev else ""
+        urls = [u for u in (ev or {}).get("urls") or [] if isinstance(u, str) and u]
+        result["verify"] = {"ran": True, "rc": code, "line": line + (" (%s)" % ", ".join(urls) if urls else "")}
         result["ok"] = code == 0
         if result["ok"]:
             changed = _changed(top, base)

@@ -273,5 +273,5 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None, ci=
     if where is None:
         say("no phase folder for this session and no --dir: no evidence row was written")
     else:
-        state.append_audit(where, "evidence", detail=json.dumps(ev), rc=ev["rc"], sha=sha)
+        state.append_audit(where, "evidence", detail=json.dumps({k: v for k, v in ev.items() if k != "urls"}), rc=ev["rc"], sha=sha)
     return (2 if moved else ev["rc"]), ev
