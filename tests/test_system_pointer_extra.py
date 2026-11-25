@@ -161,7 +161,7 @@ def main():
     rc, out = run()
     check("a source with a BOM and an indented first line: no BOM in the block, the indentation kept",
           rc == 0 and read(claude_md) == plain[:-len(END)] + "\n    indented first line\n- rule\n" + END + "\n"
-          and "﻿" not in (read(claude_md) or ""), (rc, read(claude_md)))
+          and "\ufeff" not in (read(claude_md) or ""), (rc, read(claude_md)))
     check("the same source leaves the user's text around the block in the other project",
           (read(keep_md) or "").startswith(before_text) and (read(keep_md) or "").endswith(END + after_text), read(keep_md))
 
