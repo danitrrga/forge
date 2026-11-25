@@ -25,7 +25,7 @@ with exit 2 before the base is run.
 Then the base is run: the effective recipe (`evidence.plan_checks`) in the checkout, unless the audit rows of the part or its phase
 already hold a green `evidence` row for the base sha whose commands are exactly the recipe (`base checks: reused the passing record
 of <sha7>`), or GitHub CI already passed the base: the workflow `.github/workflows/ci.yml` ran on a push of that exact sha to `project.default_branch`
-and every such run is completed with the conclusion success (`gh api .../actions/runs`, asked for at most CI_TIMEOUT_S; `base checks: CI passed
+and every such run is completed with the conclusion success (`gh api .../actions/runs`, asked for at most `ci_gate.CI_TIMEOUT_S`; `base checks: CI passed
 <sha7> (.github/workflows/ci.yml on <branch>, success)`); no row is written for it, so the next `wave new` asks again. Any other answer,
 or none (no gh, not signed in, no GitHub origin, no `default_branch`, network down, timeout, only a pull request run, no run, in progress, red or
 skipped), is not green: one stderr line says why and the recipe runs here as before. A base that ran green leaves such a row in the part's audit, so the next `wave new` on that base (a relaunch, a part that
@@ -52,17 +52,15 @@ so a refusal and a red base leave nothing behind. With `--fix` the one brief is 
 plan get none; with `--revert` nothing is launched, so there is none. `--fix` and `--control-findings` are lists of findings in the
 shape of plan C.5 (execute/brief.py `finding_problems`), or the rows of a walk's fix.json (`normalize`), `--revert` a list of finding ids; anything else is refused.
 
-Imports the standard library, fwx.plan, plan_form, plan_step, state, config, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
+Imports the standard library, fwx.plan, plan_form, plan_step, state, config, core.ci_gate, core.evidence, core.rounds, core.verify and execute.base, execute.brief and execute.worktree_setup.
 """
 import json
 import os
 import re
 import shlex
-import subprocess
-from urllib.parse import quote
 
 from fwx import config, plan, plan_form, plan_step, state
-from fwx.core import evidence, rounds, verify
+from fwx.core import ci_gate, evidence, rounds, verify
 from fwx.execute import brief, worktree_setup
 from fwx.execute.base import WaveError, git, linked, out, toplevel
 
@@ -274,7 +272,8 @@ def _cap(cfg, unattended):
 def _record(base, recipe, folders):
     """The green `evidence` row in the audit of one of `folders`, or of a part folder inside one (a phase's sibling parts share its base),
     that stands in for a run of `recipe` at `base`: the same sha, rc 0, and the commands of its evidence exactly the recipe, each with
-    exit 0 (a row of other checks proves nothing about these). None if none."""
+    exit 0 (a row of other checks proves nothing about these), or evidence of GitHub CI (`source: ci`, the gate of a part that ended on
+    this sha: CI ran the recipe, as the pull request's suite selection chose it) with every command at exit 0. None if none."""
     own = sorted(folders)
     siblings = [s for s in dict.fromkeys(str(s) for f in own for s in state.subphases(f)) if s not in own]
     for d in own + siblings:
@@ -288,54 +287,13 @@ def _record(base, recipe, folders):
             if row.get("kind") != "evidence" or row.get("sha") != base or row.get("rc", "").strip() != "0":
                 continue
             try:
-                got = [(c["cmd"], c["rc"]) for c in json.loads(row.get("detail", ""))["commands"]]
+                detail = json.loads(row.get("detail", ""))
+                got = [(c["cmd"], c["rc"]) for c in detail["commands"]]
             except (ValueError, KeyError, TypeError):
                 continue
-            if got == [(c, 0) for c in recipe]:
+            if got == [(c, 0) for c in recipe] or (detail.get("source") == evidence.CI_SOURCE and got and all(rc == 0 for _, rc in got)):
                 return row
     return None
-
-
-CI_WORKFLOW = ".github/workflows/ci.yml"  # the workflow whose last job is `All checks`; on a push to the default branch it runs every suite
-CI_TIMEOUT_S = 20
-_GITHUB = re.compile(r"(?:https?://(?:[^/@]+@)?|ssh://git@|git@)github\.com[:/]([\w.-]+)/([\w.-]+?)(?:\.git)?/?\Z")
-
-
-def _ci_green(top, base, say, cfg):
-    """True only when GitHub has run `CI_WORKFLOW` on a push of the sha `base` to `project.default_branch` (that one name), at least once, and
-    every such run is completed with the conclusion success. A pull request run of the same sha does not count: it may skip suites, and the
-    sha of a merged pull request head has only that. Anything else, including not being able to ask, is False with one stderr line saying
-    why: the caller then runs the checks here. No row is written for a CI answer: no check ran here."""
-    def no(why):
-        say("base checks: CI not used (%s); running the checks here" % why)
-        return False
-
-    branch = ((cfg or {}).get("project") or {}).get("default_branch")
-    if not isinstance(branch, str) or not branch:
-        return no("project.default_branch is not set")
-    url = out(top, "remote", "get-url", "origin")
-    found = _GITHUB.match(url or "")
-    if not found:
-        return no("the origin is not a GitHub repository" if url else "no origin remote")
-    api = "repos/%s/%s/actions/runs?head_sha=%s&event=push&branch=%s&per_page=100" % (found.group(1), found.group(2), base, quote(branch, safe=""))
-    try:
-        r = subprocess.run(["gh", "api", api, "--jq", '.workflow_runs[] | [.path, .status, (.conclusion // "")] | @tsv'], cwd=top,
-                           capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=CI_TIMEOUT_S)
-    except subprocess.TimeoutExpired:
-        return no("gh did not answer in %d s" % CI_TIMEOUT_S)
-    except OSError as e:
-        return no("cannot run gh: %s" % e)
-    if r.returncode != 0:
-        return no("gh failed: %s" % ((r.stderr.strip().splitlines() or ["exit %d" % r.returncode])[0][:120]))
-    rows = [line.split("\t") + ["", ""] for line in r.stdout.splitlines()]
-    got = [(x[1], x[2]) for x in rows if x[0] == CI_WORKFLOW]
-    if not got:
-        return no("no push run of %s for %s on %s" % (CI_WORKFLOW, base[:7], branch))
-    bad = sorted({" ".join(x).strip() for x in got if x != ("completed", "success")})
-    if bad:
-        return no("%s on %s is %s" % (CI_WORKFLOW, branch, ", ".join(bad)))
-    say("base checks: CI passed %s (%s on %s, success)" % (base[:7], CI_WORKFLOW, branch))
-    return True
 
 
 def _base_is_green(top, base, recipe, folders, say, timeout, part=None, cfg=None):
@@ -346,7 +304,7 @@ def _base_is_green(top, base, recipe, folders, say, timeout, part=None, cfg=None
     if _record(base, recipe, folders):
         say("base checks: reused the passing record of %s" % base[:7])
         return None
-    if _ci_green(top, base, say, cfg):
+    if ci_gate.base_green(top, base, say, cfg):
         return []
     results = [verify.run_check(c, top, timeout) for c in recipe]
     red = [r for r in results if r["rc"] != 0 and not r["timed_out"]]

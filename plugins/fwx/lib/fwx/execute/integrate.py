@@ -1,7 +1,7 @@
 """The only path that writes the phase branch, and the one place that spends a round (3.4 U3; shapes in C.2 of the plan).
 
-Only this module runs `git merge` and `git revert`; nothing in lib/fwx/ runs `git rebase`, `git push` or `git reset --hard`
-(tests/test_single_writer.py reads the code to check it). No function here writes a `stage` row, and only `fix_round` writes a
+Only this module runs `git merge` and `git revert`; nothing in lib/fwx/ runs `git rebase` or `git reset --hard`, and the only `git push`
+(never forced) is core/ci_gate.py's (tests/test_single_writer.py reads the code to check it). No function here writes a `stage` row, and only `fix_round` writes a
 round.
 
 `integrate(cwd, ...)` merges the branches of a wave into the branch the checkout `cwd` is on, with `--no-ff`, in the order
@@ -11,9 +11,14 @@ given. It refuses (exit 2, nothing merged) a checkout with uncommitted changes, 
 it aborts that merge and stops (the earlier ones stay). Then it runs the project's `worktree_setup` again in the checkout (a no-op unless a merge changed a dependency file; a failure
 stops here with `setup` in the result and exit 1) and then `project.checks_quick`, removes the
 worktrees of the branches it merged (only unlocked, clean ones: a stale lock is `cleanup`'s), and, with `final` and everything
-green, runs the gate (`core.verify`) and reports the trusted edits (with a `worktree_setup`, also the files it installs from: core.trusted) and the protected paths of
+green, runs the gate (`core.verify` with `ci=True`: GitHub CI when it can answer, else the project's checks here) and reports the trusted edits (with a `worktree_setup`, also the files it installs from: core.trusted) and the protected paths of
 `<base>..HEAD`, `base` being the sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
 is (the re-entry of `prepare --from gate`).
+
+The result also says what follows (`next_step`): `next` is wave, review, resolve, fix or
+owner, `why` the text for `fwx wave fix --why`, and `brief` for resolve and fix the path of the brief written for that agent
+(execute/brief.py `resolver_facts`, `fixer_facts`), whose BASE is the head the merge left. A brief that cannot be written (no plan, a missing
+context file) makes the next step `owner` and says why. The session spends the round with `fix_round` before it launches either agent.
 
 `fix_round(cwd, part_dir, why)` decides whether a failure may be fixed and spends the round for it. If the last audit row is
 the red evidence of the checkout's HEAD, `verify` already made that failure a round and nothing more is spent. A failure is
@@ -21,14 +26,17 @@ allowed only when fewer than `rounds` were spent before it: the third round is f
 
 `revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first, and then runs the setup again like `integrate`
 (`setup` in the result on a failure). `summary(...)` says whether the gate
-of the run passes. Imports the standard library, fwx.state, fwx.config, fwx.core and execute.base, cleanup and worktree_setup.
+of the run passes, and carries what the part report reads, from the run's own recorded calls (`_kept`; 09.5 T54): `findings` ({reported, fix, consider, note, dismissed, fixed: [{id, commit, severity}], outside}: the passes `wave findings` ended,
+and the commits of the `Fwx-Finding` trailers of the findings a `wave merge --findings` merged), `criteria`, `outside` (the items of the reports
+that were merged and have no issue), `tried` (one line per round spent), `gaps` and `protected`. Imports the standard library, fwx.state, fwx.config, fwx.plan, fwx.plan_step, fwx.core and execute.base, brief, cleanup and worktree_setup.
 """
 import json
 import os
+import re
 
-from fwx import config, state
+from fwx import config, plan, plan_step, state
 from fwx.core import decide, evidence, globs, rounds, trusted, verify
-from fwx.execute import cleanup, worktree_setup
+from fwx.execute import brief, cleanup, worktree_setup
 from fwx.execute.base import WaveError, git, linked, out
 
 
@@ -137,8 +145,135 @@ def _changed(top, base):
     return [p for p in r.stdout.splitlines() if p]
 
 
+def _oneline(text, limit=600):
+    text = " ".join(str(text).split())
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
+def next_step(result, final):
+    """(next, why) for a merge result. `next` is `wave` (merged: launch the next wave, or
+    merge the last with --final), `review` (the gate is green: review the diff), `resolve` (a conflict: a resolver), `fix` (a red check, a red
+    gate, commits that are not one per finding: a fixer) or `owner` (nothing an agent can fix: a verify that could not run, trusted edits, a
+    failed setup, a live lock, or a result that names no cause). For `resolve` and `fix`, `why` is the text for `fwx wave fix --why`."""
+    if result["ok"]:
+        if not final:
+            return "wave", "merged %s on %s: launch the next wave, or merge the last one with --final" % (", ".join(result["merged"]) or "nothing", result["head"])
+        if result["trusted"]:
+            return "owner", "the diff edits what the checks take as good, so the owner decides: %s" % ", ".join(result["trusted"])
+        return "review", "the gate is green on %s: review the diff since the run's base" % result["head"]
+    if result["locked"]:
+        return "owner", "a live agent holds %s: nothing was merged" % ", ".join(x["branch"] for x in result["locked"])
+    if isinstance(result.get("setup"), str) and result["setup"].strip():
+        return "owner", _oneline(result["setup"])
+    if result["findings_check"]["ok"] is False:
+        return "fix", "the commits were not one per finding: %s" % "; ".join(result["findings_check"]["problems"])
+    if result["conflict"]:
+        return "resolve", "the branch %s conflicts in %s" % (result["conflict"]["branch"], ", ".join(result["conflict"]["files"]))
+    q, v = result["quick"], result["verify"]
+    if q["ran"] and q["rc"] != 0:
+        why = "checks_quick failed with exit %s on %s: %s" % (q["rc"], result["head"], " ; ".join(q["cmds"]))
+        if q.get("timed_out"):
+            why += " (stopped after %s s: %s; raise project.check_timeout_s if the check needs longer)" % (q["limit"], " ; ".join(q["timed_out"]))
+        return "fix", why
+    if v["ran"] and v["rc"] != 0:
+        if v["rc"] != 1:
+            return "owner", "verify could not run (exit %s): %s" % (v["rc"], v["line"] or "no line")
+        return "fix", "the gate failed on %s: %s" % (result["head"], v["line"])
+    return "owner", "integrate was not ok and its result says why in no field"
+
+
+def _owner_dir(part):
+    """The folder of the phase a part belongs to: its context, decisions and critique are the phase's; a subphase has its own plan and audit."""
+    parent = os.path.dirname(part)
+    return parent if part in [str(p) for p in state.subphases(parent)] else part
+
+
+def _trailer_of(top, branch, phase):
+    """The `Fwx-Task` value of the newest commit of `branch` that has one, or None."""
+    r = git(top, "log", "refs/heads/" + branch, "--not", phase, "--no-merges", "--format=%(trailers:key=Fwx-Task,valueonly,unfold)%x1e")
+    for rec in r.stdout.split("\x1e") if r.returncode == 0 else []:
+        if rec.strip():
+            return rec.strip().splitlines()[0].strip()
+    return None
+
+
+def _findings_brief(folder, findings):
+    """The brief of the fixer that holds the text of the findings: the oldest `_fix-<n>.md` of the run (`_fix.md`, `wave new --fix`, counts as the
+    first) that names every id of `findings`, or None. The oldest, because a fixer sent after a refused attempt lists the ids too and points back to
+    it; the fixer of a red check or gate names no finding, so it is never the one."""
+    briefs = os.path.join(folder, "briefs")
+    found = [(int(m.group(1) or 0), f) for f, m in ((f, re.fullmatch(r"%s(?:-(\d+))?\.md" % brief.FIX, f)) for f in (os.listdir(briefs) if os.path.isdir(briefs) else [])) if m]
+    for _n, name in sorted(found):
+        try:
+            with open(os.path.join(briefs, name), encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        if all(re.search(r"(?<![\w.-])%s(?![\w.-])" % re.escape(i), text) for i in findings):
+            return os.path.join(briefs, name)
+    return None
+
+
+def _write_brief(top, part_dir, run, cfg, result, why, branches, findings):
+    """(unit, path) of the brief written for the resolver or the fixer this result calls for, or raise WaveError saying why none could be."""
+    part = _resolve_part(part_dir)
+    try:
+        data = plan.load_plan(state.phase_paths(part)["plan"])
+    except (plan.PlanError, OSError) as e:
+        raise WaveError("the plan of the part cannot be read: %s" % e)
+    owner = state.phase_paths(_owner_dir(part))
+    paths = {"context": str(owner["context"]), "decisions": str(owner["decisions"]), "plan": str(state.phase_paths(part)["plan"]),
+             "config": os.path.join(config.main_checkout(top), config.FILE)}
+    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    folder = brief.folder_of(common, run)
+    ctx = {"run": run, "part": os.path.basename(part), "folder": folder, "paths": paths,
+           "quick": evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)}
+    kind = "resolve" if result["next"] == "resolve" else "fix"
+    unit, path = brief.next_unit(folder, kind)
+    if kind == "resolve":
+        c = result["conflict"]
+        facts = brief.resolver_facts(c, result["head"], _trailer_of(top, c["branch"], _branch(top)), unit, ctx,
+                                     ("git merge --no-commit %s" % c["branch"], "git merge --abort"))
+    else:
+        findings_failed = result["findings_check"]["ok"] is False
+        earlier = _findings_brief(folder, findings) if findings_failed else None
+        facts = brief.fixer_facts(why, result["head"], data["tasks"], unit, ctx, findings=list(findings) if findings_failed else (),
+                                  refused=list(branches) if findings_failed else (), fix_brief=earlier)
+    missing = brief.agent_missing(facts)
+    if missing:
+        raise WaveError("; ".join(missing))
+    brief.put(path, brief.render_agent(facts))
+    return unit, path
+
+
+def _resolve_part(part_dir):
+    try:
+        return plan_step.resolve(part_dir)
+    except plan_step.CannotRun as e:
+        raise WaveError(str(e))
+
+
 def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
-    """(exit code, result). The result is C.2's: {ok, head, merged, conflict, locked, findings_check, quick, verify, trusted,
+    """(exit code, result): `_merge`'s result, with `next` and `why` (`next_step`) and `brief` and `unit`: for `resolve` and `fix`, the path
+    of the brief written for that agent (execute/brief.py), whose BASE is the head the merge left, and the agent's unit (`resolve-1`, `fix-2`: the folder
+    `fwx scratch new <run> <unit>` makes, so what `wave report --unit` takes); else None. When the brief cannot be written
+    (the plan or a context file is missing) `next` is `owner` and `why` says so, followed by the failure."""
+    code, result = _merge(cwd, part_dir, run, branches, findings, final, say)
+    result["next"], result["why"] = next_step(result, final)
+    result["brief"] = result["unit"] = None
+    if result["next"] in ("resolve", "fix"):
+        try:
+            top = _top(cwd)
+            result["unit"], result["brief"] = _write_brief(top, part_dir, run, config.load(top), result, result["why"], branches, findings)
+        except (WaveError, config.ConfigError, state.StateError, OSError) as e:
+            result["next"], result["why"] = "owner", "no brief could be written for the %s (%s): %s" % (
+                "resolver" if result["next"] == "resolve" else "fixer", e, result["why"])
+    return code, result
+
+
+def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda line: None):
+    """(exit code, result). The result is C.2's: {ok, head, merged, conflict, remaining (the branches after the one that conflicted,
+    not merged yet: the caller merges them after the resolver), locked, findings_check, quick, verify, trusted,
     protected}, and `setup` (the line `worktree setup failed: ...`) only when the setup after the merges failed. Raises WaveError for what stops it before it merges anything and cleanup.NoProc without /proc."""
     top = _top(cwd)
     phase = _branch(top)
@@ -152,7 +287,7 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
             raise WaveError("%s is the phase branch: it cannot be merged into itself" % b)
         if git(top, "rev-parse", "--verify", "--quiet", "refs/heads/" + b).returncode:
             raise WaveError("no branch %s" % b)
-    result = {"ok": False, "head": verify.head(top), "merged": [], "conflict": None, "locked": [],
+    result = {"ok": False, "head": verify.head(top), "merged": [], "conflict": None, "remaining": [], "locked": [],
               "findings_check": {"ok": True, "problems": []}, "quick": {"ran": False, "cmds": [], "rc": 0},
               "verify": {"ran": False, "rc": None, "line": ""}, "trusted": [], "protected": []}
     by_branch = {w["branch"]: w for w in cleanup.worktrees(top)[1:] if w["branch"]}
@@ -177,6 +312,7 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
                 raise WaveError("git merge %s failed, not for a conflict (merged before it: %s): %s"
                                 % (b, ", ".join(result["merged"]) or "none", r.stderr.strip() or r.stdout.strip()))
             result["conflict"] = {"branch": b, "files": files}
+            result["remaining"] = branches[len(result["merged"]) + 1:]  # not merged yet, after the one that conflicted: the run merges them after the resolver
             break
         result["merged"].append(b)
     for b in result["merged"]:
@@ -195,8 +331,10 @@ def integrate(cwd, part_dir, run, branches, findings=(), final=False, say=lambda
     result["quick"] = _quick(top, cfg, say)
     result["ok"] = result["quick"]["rc"] == 0
     if final and result["ok"]:
-        code, ev = verify.verify(top, part_dir, say)
-        result["verify"] = {"ran": True, "rc": code, "line": verify.evidence_line(ev["sha"], ev["commands"]) if ev else ""}
+        code, ev = verify.verify(top, part_dir, say, ci=True)
+        line = verify.evidence_line(ev["sha"], ev["commands"]) if ev else ""
+        urls = [u for u in (ev or {}).get("urls") or [] if isinstance(u, str) and u]
+        result["verify"] = {"ran": True, "rc": code, "line": line + (" (%s)" % ", ".join(urls) if urls else "")}
         result["ok"] = code == 0
         if result["ok"]:
             changed = _changed(top, base)
@@ -290,20 +428,64 @@ def _own_gate(run, steps):
     return None
 
 
+def _kept(top, steps):
+    """What the part report reads from the run's recorded calls, {findings, criteria, outside, tried, gaps, protected}.
+    Only what a call that stands leaves counts: the unfiled `outside` items of a report that was merged (not a retry's), a pass `wave findings`
+    ended (`fix`, `owner` or `done`: the `verify` call before it carries the same items), a round that was spent, and the findings of a
+    `wave merge --findings` that was ok."""
+    found = {"reported": 0, "fix": 0, "consider": [], "note": [], "dismissed": [], "fixed": [], "outside": []}
+    criteria, outside, tried, gaps, protected, severity, merged = {}, [], [], [], [], {}, []
+    for rec in steps:
+        res, args, step = rec.get("result"), rec.get("args"), rec.get("step")
+        res, args = res if isinstance(res, dict) else {}, args if isinstance(args, dict) else {}
+        if isinstance(res.get("gap"), str) and res["gap"] not in gaps:
+            gaps.append(res["gap"])
+        if step == "report" and res.get("next") == "merge":
+            outside += [o for o in res.get("outside") or [] if isinstance(o, dict) and o.get("issue") is None]
+        elif step == "findings":
+            for c in res.get("criteria") or []:
+                if isinstance(c, dict) and "id" in c:
+                    criteria[c["id"]] = c
+            if res.get("next") in ("fix", "owner", "done"):
+                found["reported"] += res.get("reported") or 0
+                found["fix"] += len(res.get("fix") or [])
+                for f in res.get("fix") or []:
+                    severity[f.get("id")] = f.get("severity")
+                for group in ("consider", "note", "dismissed"):
+                    found[group] += res.get(group) or []
+                found["outside"] += res.get("file") or []
+        elif step == "fix-round" and res.get("ok") is True:
+            text = _oneline(res.get("why", ""), 400)
+            tried.append("%s: %s" % (res["rounds"], text) if res.get("rounds") else text)
+        elif step == "integrate":
+            if args.get("findings") and res.get("ok") is True:
+                merged += [i for i in args["findings"] if i not in merged]
+            if args.get("final"):
+                protected = list(res.get("protected") or [])
+    commit = {}
+    if merged:
+        for sha, ids in _commits(top, "HEAD"):
+            for i in ids:
+                commit.setdefault(i, sha)
+    found["fixed"] = [{"id": i, "commit": commit.get(i), "severity": severity.get(i)} for i in merged]
+    return {"findings": found, "criteria": list(criteria.values()), "outside": outside, "tried": tried, "gaps": gaps, "protected": protected}
+
+
 def summary(cwd, part_dir, run=None, steps=()):
-    """(exit code, result): {gate, head, evidence_line, rounds, why}. `pass` when the last evidence row of the part is green and is
+    """(exit code, result): {gate, head, evidence_line, rounds, why} and what `_kept` reads from the run's calls. `pass` when the last evidence row of the part is green and is
     HEAD's, and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
     commit's, or the run did not pass its gate (exit 1, `why` says it); `none` with no evidence row or no part (exit 2)."""
     top = _top(cwd)
     head = verify.head(top)
+    kept = _kept(top, steps)
     if not part_dir:
-        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}
+        return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}, **kept)
     rows = state.read_rows(state.phase_paths(part_dir)["audit"])
     cap = rounds.cap(part_dir)
     used = "%d/%d" % (rounds.count(rows), cap)
     seen = [r for r in rows if r.get("kind") == "evidence"]
     if not seen:
-        return 2, {"gate": "none", "head": head, "evidence_line": "", "rounds": used, "why": ""}
+        return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": used, "why": ""}, **kept)
     last = seen[-1]
     rc, sha = last.get("rc", "").strip(), last.get("sha", "")
     why = _own_gate(run, steps) if run else None
@@ -313,4 +495,4 @@ def summary(cwd, part_dir, run=None, steps=()):
         line = verify.evidence_line(sha, commands)
     except (ValueError, KeyError, TypeError):
         line = "evidence %s rc=%s" % (sha, rc)
-    return (0 if gate == "pass" else 1), {"gate": gate, "head": head, "evidence_line": line, "rounds": used, "why": why or ""}
+    return (0 if gate == "pass" else 1), dict({"gate": gate, "head": head, "evidence_line": line, "rounds": used, "why": why or ""}, **kept)

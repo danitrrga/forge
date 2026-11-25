@@ -38,6 +38,7 @@ from fwx.core import stages  # noqa: E402
 s = helpers.Suite()
 ENV = {"CLAUDE_CODE_SESSION_ID": "sess-sum"}
 NEW = ("project", "stage", "part", "parts", "branch")
+OWN = NEW + ("progress", "part_stages")  # what state.summary and the command add to what state.resolve gives
 SHA = "a" * 40
 
 
@@ -65,7 +66,7 @@ repo = helpers.toy_repo(FILES)
 rc, got = session(repo)
 s.eq("no phase: exit code 1 as before", rc, 1)
 s.eq("no phase: project is the configured name, the rest null", new_keys(got), ("toy", None, None, None, None))
-old = {k: v for k, v in got.items() if k not in NEW and k != "progress"}
+old = {k: v for k, v in got.items() if k not in OWN}
 s.eq("no phase: progress is null", got.get("progress", "MISSING"), None)
 s.eq("no phase: the old keys are what state.resolve returns", old, state.resolve(repo, session="sess-sum"))
 
@@ -83,7 +84,7 @@ rc, got = session(repo)
 s.eq("executing part 1 of 2: progress", got.get("progress", "MISSING"), 0.444)
 s.eq("executing part 1 of 2: project, stage, part, parts, branch", new_keys(got), ("toy", "executing", 1, 2, "fwx/x"))
 s.eq("executing part 1 of 2: exit code", rc, 0)
-s.eq("executing part 1 of 2: the old keys are state.resolve's", {k: v for k, v in got.items() if k not in NEW and k != "progress"},
+s.eq("executing part 1 of 2: the old keys are state.resolve's", {k: v for k, v in got.items() if k not in OWN},
      state.resolve(repo, session="sess-sum"))
 stage(phase, "reviewing part 1")
 rc, got = session(repo)
@@ -120,6 +121,36 @@ s.eq("progress: SESSION_ORDER holds every session stage of data/stages.json but 
      sorted(all_stages - {"cancelled"}), sorted(stages.SESSION_ORDER))
 rc, got = session(repo)
 s.eq("session --json: progress at `closing` is none (not a stage of the table)", got.get("progress", "MISSING"), None)
+
+# ---- parts running in parallel: each subphase's own rows are read, so each part shows its stage and branch ----------------
+# Rows carry a date (a sortable token here: a date literal trips the private-data lint); the summary reads the phase's and every subphase's together, oldest first, and the latest row wins.
+par = helpers.toy_repo(FILES)
+pp = helpers.fwx(par, "phase", "new", "para", env=ENV).stdout.strip()
+sub1, sub2 = state.new_subphase(pp, "first"), state.new_subphase(pp, "second")
+
+
+def row(folder, date, detail):
+    state.append_row(os.path.join(str(folder), "audit.tsv"), state.AUDIT_COLUMNS, [date, "stage", SHA, detail, ""])
+
+
+row(pp, "d0", "executing")
+row(sub1, "d1", "executing part 1 branch fwx/p1")
+row(sub2, "d2", "executing part 2 branch fwx/p2")
+rc, got = session(par)
+s.eq("the summary names part 2's stage: the latest row is in its subphase", new_keys(got), ("toy", "executing", 2, 2, "fwx/p2"))
+row(sub1, "d3", "reviewing part 1")
+rc, got = session(par)
+s.eq("part 1 reviewing is the latest row: stage and part are its, the branch stays the last one named",
+     new_keys(got), ("toy", "reviewing", 1, 2, "fwx/p2"))
+s.eq("part_stages names each part's own stage and branch",
+     got.get("part_stages", "MISSING"),
+     [{"part": 1, "stage": "reviewing", "branch": "fwx/p1"}, {"part": 2, "stage": "executing", "branch": "fwx/p2"}])
+row(pp, "d4", "closing")
+rc, got = session(par)
+s.eq("a later phase row moves the stage on, the parts keep theirs",
+     (got.get("stage"), [(p["part"], p["stage"]) for p in got.get("part_stages") or []]), ("closing", [(1, "reviewing"), (2, "executing")]))
+rc, got = session(helpers.toy_repo(FILES))
+s.eq("no phase: part_stages is null", got.get("part_stages", "MISSING"), None)
 
 # ---- no subphases: parts is 1 -------------------------------------------------------------------------------------------
 one = helpers.toy_repo(FILES)

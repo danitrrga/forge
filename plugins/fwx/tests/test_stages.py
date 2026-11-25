@@ -343,6 +343,14 @@ r = helpers.fwx(base_repo, "stage", bphase, "executing", env=SESS)
 s.eq("a refused stage: exit 1", r.returncode, 1)
 s.eq("a refused stage leaves the base as it was", stage_in_base(bfile), "premortem")
 
+# a stage change on a subphase refreshes its phase's base (context.md is the phase's), never one of its own
+bsub = str(state.new_subphase(bphase, "first"))
+os.remove(bfile)
+r = helpers.fwx(base_repo, "stage", bsub, "reviewing", "--why", "part 1", env=SESS)
+s.eq("stage of a subphase: exit 0, nothing on stderr", (r.returncode, r.stderr), (0, ""))
+s.eq("stage of a subphase: the phase's base is rebuilt", stage_in_base(bfile), "premortem")
+s.ok("stage of a subphase: it has no base of its own", not os.path.exists(cb.base_path(bsub)), cb.base_path(bsub))
+
 # a factory job folder gets its base on the claim-to-intake change, with no context.md in it
 bjob = os.path.join(base_repo, ".fwx", "factory", "KEY-9")
 os.makedirs(bjob)

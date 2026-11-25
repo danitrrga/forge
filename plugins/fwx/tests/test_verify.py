@@ -270,6 +270,35 @@ s.eq("such a row proves nothing (core.evidence: dirty)",
                                           "--allow-empty -q -m moved"])["state"], "dirty")
 s.ok("the move is said on stderr", "HEAD moved" in r.stderr, r.stderr)
 
+# HEAD moving while GitHub CI runs (the CI path of the gate, not the local one): CodeRabbit 4696262703. A fake `ci_gate.run` commits while
+# it "waits" and returns green for the sha it started from. Seen red on the code before the fix:
+#   FAIL: HEAD moving while CI ran: exit 2: got 0, want 2
+from fwx.core import ci_gate  # noqa: E402
+repo, phase = make(["true"])
+before = head(repo)
+real_ci = ci_gate.run
+
+
+def moving_ci(root, sha, cfg, say, timeout, protected, commit=True):
+    if commit:
+        helpers.git(root, "-c", "user.email=t@t", "-c", "user.name=t", "-c", "core.hooksPath=/dev/null", "commit", "--allow-empty", "-q", "-m", "moved")
+    return {"sha": sha, "clean": True, "source": "ci", "commands": [{"cmd": "ci:x", "rc": 0}], "rc": 0}
+
+
+ci_gate.run = moving_ci
+try:
+    code, ev = core_verify.verify(repo, dir=phase, say=lambda line: None, ci=True)
+    got = rows(phase)
+    s.eq("HEAD moving while CI ran: exit 2", code, 2)
+    s.eq("HEAD moving while CI ran: the row is for the sha CI saw, clean false, rc 1",
+         (got[0]["sha"], json.loads(got[0]["detail"]).get("clean"), got[0]["rc"]) if got else None, (before, False, "1"))
+    repo, phase = make(["true"])
+    ci_gate.run = lambda *a, **k: moving_ci(*a, commit=False, **k)
+    code, ev = core_verify.verify(repo, dir=phase, say=lambda line: None, ci=True)
+    s.eq("HEAD still while CI ran: exit 0, clean", (code, ev["clean"]), (0, True))
+finally:
+    ci_gate.run = real_ci
+
 # ---- worktrees, folders and the destination of the row ----------------------------------------------------------------
 
 repo, phase = make(["true"])

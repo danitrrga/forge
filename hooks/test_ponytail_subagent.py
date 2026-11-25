@@ -55,7 +55,7 @@ def toy(with_plugin=True):
 
 def run(cfg, payload):
     # HOME is the toy too: the session levels live under it (~/.local/state/forge/ponytail).
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg, HOME=cfg)
+    env = dict({k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, CLAUDE_CONFIG_DIR=cfg, HOME=cfg)  # no GIT_DIR of a caller's hook
     return subprocess.run([sys.executable, HOOK], input=payload, env=env, capture_output=True, text=True, timeout=30)
 
 
@@ -176,6 +176,104 @@ run(cfg, prompt("/ponytail off", "../../escape"))
 stray = [os.path.join(dp, f) for dp, _, fs in os.walk(cfg) for f in fs if "escape" in f or f == "ponytail"]
 if stray or level(cfg, "../../escape") != "full":
     fails.append("session id ../../escape: want nothing written and full, got %s and %s" % (stray, level(cfg, "../../escape")))
+
+# SessionStart: a worker (a top-level session, so no SubagentStart) whose worktree's git dir holds fwx-worker.json with the
+# role reviewer or security-reviewer gets what those agents get, under hookEventName SessionStart; any other role, no marker or
+# a marker that cannot be read gets nothing.
+# A git hook that runs this suite exports GIT_DIR and GIT_WORK_TREE, and `cwd=` does not override them: with them inherited the fixture's
+# `commit --allow-empty` landed in the caller's repository (15 commits there, seen on a repo set up with GIT_DIR before this change).
+# The fixture's git sees no repository-location variable.
+def fixture_env(cwd):
+    return dict({k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, HOME=cwd, GIT_CONFIG_NOSYSTEM="1")
+
+
+def git(*args, cwd):
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.test", *args], cwd=cwd, check=True,
+                   capture_output=True, env=fixture_env(cwd))
+
+
+def worker_tree(marker, linked=True):
+    """A worktree (a linked one, as `fwx wave run` makes, or a main checkout) whose git dir holds `marker` as fwx-worker.json
+    (a str is written as it is, a dict as JSON, None writes nothing); returns the worktree."""
+    main = sandbox.mkdtemp("ponytail-worker-")
+    git("init", "-q", cwd=main)
+    git("commit", "-q", "--allow-empty", "-m", "x", cwd=main)
+    tree = main
+    if linked:
+        tree = os.path.join(main, "wt")
+        git("worktree", "add", "-q", "--detach", tree, cwd=main)
+    gitdir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=tree, capture_output=True, text=True, check=True, env=fixture_env(tree)).stdout.strip()
+    if marker is not None:
+        with open(os.path.join(gitdir, "fwx-worker.json"), "w") as fh:
+            fh.write(marker if isinstance(marker, str) else json.dumps(marker))
+    return tree
+
+
+def session_start(cwd, session="w1"):
+    d = {"hook_event_name": "SessionStart", "session_id": session, "source": "startup"}
+    if cwd is not None:
+        d["cwd"] = cwd
+    return json.dumps(d)
+
+
+def worker_text(cfg, tree, session="w1"):
+    """What a SessionStart in `tree` puts in the worker's context ("" for nothing), the hook event name and the exit code."""
+    r = run(cfg, session_start(tree, session))
+    if not r.stdout.strip():
+        return "", None, r.returncode
+    out = json.loads(r.stdout)["hookSpecificOutput"]
+    return out["additionalContext"], out["hookEventName"], r.returncode
+
+
+for role in ("reviewer", "security-reviewer"):
+    for linked in (True, False):
+        checked += 1
+        text, event, rc = worker_text(cfg, worker_tree({"role": role, "run": "r", "unit": "T1"}, linked))
+        if rc != 0 or event != "SessionStart" or not text.startswith("PONYTAIL MODE ACTIVE — level: full") or "ponytail:ponytail-review" not in text:
+            fails.append("a %s worker gets the ruleset at SessionStart (%s worktree) -> %r, event %r, exit %d"
+                         % (role, "linked" if linked else "main", text[:60] or "nothing", event, rc))
+
+tree = worker_tree({"role": "reviewer", "run": "r", "unit": "T1"})
+checked += 1
+run(cfg, prompt("/ponytail ultra", "w2"))
+if "level: ultra" not in worker_text(cfg, tree, "w2")[0]:
+    fails.append("a reviewer worker gets the level its own session holds (/ponytail ultra) -> %r" % worker_text(cfg, tree, "w2")[0][:60])
+checked += 1
+run(cfg, prompt("/ponytail off", "w3"))
+if worker_text(cfg, tree, "w3")[0]:
+    fails.append("a reviewer worker whose session is off gets nothing -> the ruleset")
+
+for label, marker in (("role executor", {"role": "executor"}), ("role review-verifier", {"role": "review-verifier"}),
+                      ("role fixer", {"role": "fixer"}), ("no role", {"run": "r"}), ("role a list", {"role": ["reviewer"]}),
+                      ("role in another case", {"role": "Reviewer"}), ("no marker", None), ("a marker that is not JSON", "{oops"),
+                      ("a marker that is a list", '["reviewer"]'), ("an empty marker", "")):
+    checked += 1
+    text, _, rc = worker_text(cfg, worker_tree(marker))
+    if rc != 0 or text:
+        fails.append("%s gets nothing at SessionStart -> exit %d, %r" % (label, rc, text[:60]))
+
+# A SessionStart with no cwd, a cwd that is not a directory or one that is no repository is the same silence.
+for label, cwd in (("no cwd", None), ("a cwd that does not exist", os.path.join(cfg, "nowhere")), ("a cwd that is no repository", cfg),
+                   ("a cwd that is not a string", 5)):
+    checked += 1
+    r = run(cfg, session_start(cwd))
+    if r.returncode != 0 or r.stdout.strip():
+        fails.append("SessionStart with %s: want silence and exit 0, got exit %d, stdout %r" % (label, r.returncode, r.stdout[:80]))
+
+# The same two failures as SubagentStart: a ruleset that does not build leaves the review sentence, a missing install exits 1.
+checked += 1
+text, event, rc = worker_text(broken, tree)
+if rc != 0 or event != "SessionStart" or "ponytail:ponytail-review" not in text or "PONYTAIL MODE ACTIVE" in text:
+    fails.append("a reviewer worker, ruleset build fails: want exit 0 and the review sentence alone, got exit %d, %r" % (rc, text[:80]))
+checked += 1
+r = run(toy(with_plugin=False), session_start(tree))
+if r.stdout.strip() or r.returncode != 1 or "ponytail@ponytail" not in r.stderr:
+    fails.append("a reviewer worker, no plugin: want exit 1, no stdout, stderr naming it; got exit %d, stdout %r" % (r.returncode, r.stdout[:80]))
+
+# A SubagentStart is still answered under its own event name.
+checked += 1
+if json.loads(run(cfg, start("fwx:reviewer")).stdout)["hookSpecificOutput"]["hookEventName"] != "SubagentStart":
+    fails.append("fwx:reviewer at SubagentStart is answered under SubagentStart")
 
 sandbox.cleanup(fails)
 for f in fails:

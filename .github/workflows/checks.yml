@@ -87,8 +87,8 @@ jobs:
   # fwx, the framework imported under plugins/fwx, is the `fwx` group of `forge test` (49 test files, 1605 s of file time at 4 at once,
   # 403 s median on one runner: the long pole of a run that does not change the engine);
   # `forge test` with no group leaves them out, so this job is where they run in CI. It runs as 3 shards on 3 runners (`--shard I/N`: the
-  # files are dealt one by one, FWX_SLOW_FIRST first, then the largest; test_walk, test_execute_workflow and test_ui_walk_workflow, 461 s,
-  # 332 s and 200 s on one runner, are pinned first so that each lands in its own shard, which tests/test_test_shard.py checks. The test
+  # files are dealt one by one, FWX_SLOW_FIRST first, then the largest; test_walk, test_ui_walk_workflow and test_worktree_setup, 290 s,
+  # 121 s and 75 s on a 16-CPU workstation (the next of the five largest, test_wave_prepare, took 39 s), are pinned first so that each lands in its own shard, which tests/test_test_shard.py checks. The test
   # declared below can land in a shard of its own, which is not a failure: only a whole run that passed nothing is). tests/test_test_shard.py checks that the entries of `shard` are exactly 1/N .. N/N and that the
   # shards of a suite are every file once. `forge test fwx` exits 1 when no test
   # file ran (and when the plugin folder is missing and a path is declared, as here) and 77 when none failed but one could
