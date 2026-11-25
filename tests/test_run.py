@@ -491,9 +491,10 @@ def cases(mutate=None):
                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             wait_for(lambda: jload(read(out) or "") is not None, 15)
             proc.send_signal(signal.SIGINT)
-            got = wait_for(lambda: os.path.exists(out + ".int"), 5)
+            # 30 s, not 5, for the same reason as the SIGKILL case below: both ends return the moment the event happens
+            got = wait_for(lambda: os.path.exists(out + ".int"), 30)
             try:
-                rc = proc.wait(timeout=5)
+                rc = proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 rc = None
             want("10: INT sent to forge run is passed on to the child, and forge run ends with the child's exit (a swallowed INT leaves both alive)",
@@ -507,14 +508,18 @@ def cases(mutate=None):
         if sys.platform.startswith("linux"):
             pid = None
             try:
-                e, out = fenv(dict(FAKE_MODE="hang", FAKE_SLEEP="30"))
+                # FAKE_SLEEP must outlast the 30 s wait below, or the child ends by itself and the orphan mutant passes (seen: "FAIL control orphan")
+                e, out = fenv(dict(FAKE_MODE="hang", FAKE_SLEEP="120"))
                 proc = subprocess.Popen([sys.executable, os.path.join(w.forge, "bin", "forge"), "run", "@toy-b", "hi"], cwd=multi, env=e,
                                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 wait_for(lambda: jload(read(out) or "") is not None, 15)
                 pid = (jload(read(out) or "") or {}).get("pid")
                 os.kill(proc.pid, signal.SIGKILL)
                 proc.wait()
-                want("10: forge run killed with SIGKILL: the child does not outlive it", bool(pid) and wait_for(lambda: not alive(pid), 5), True)
+                # 30 s, not 5: the kernel delivers the parent-death signal at once, but on a loaded CI runner the child may wait that long to be
+                # scheduled and exit (case 10 failed three times at 5 s on CI, never locally). wait_for returns as soon as the child is gone,
+                # so a healthy run costs nothing; the orphan mutant never kills the child and still fails after the full wait.
+                want("10: forge run killed with SIGKILL: the child does not outlive it", bool(pid) and wait_for(lambda: not alive(pid), 30), True)
             finally:
                 if pid and alive(pid):
                     os.kill(pid, signal.SIGKILL)
