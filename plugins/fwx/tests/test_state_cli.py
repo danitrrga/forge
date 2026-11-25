@@ -437,10 +437,11 @@ s.eq("new-phase with a map over the cap: the phase is bound", (session_file(big_
 #   FAIL: session --json, from repo a: fwx_dir is the workspace's: got None, want '<ws>/.git/fwx'
 # and a root-scope phase whose two parts both took the hand-named `<milestone>-<phase>` worktree collided
 # (`fatal: '<ws>/.claude/worktrees/v1-01-cross' already exists`, the post-mortem's reproduction).
-# Controls, each seen red on lib/fwx/state.py changed in one place:
-#   - the worktree name leaves the repo out:  FAIL: root-scope phase, parts of a and b: two different worktrees: got [...v1-01-cross, ...v1-01-cross]
-#   - part_repos ignores the plan's `repo`:   FAIL: root-scope phase, parts of a and b: the repos: got [None, None], want ['a', 'b']
-#   - part_repos is {} with no repos:         FAIL: no project.repos: part_repos is null: got []
+# Controls, each seen red on lib/fwx/commands/state.py (or lib/fwx/state.py) changed in one place:
+#   - the worktree name leaves the repo out:  FAIL: root-scope phase, parts of a and b: two different worktrees: got 1, want 2
+#   - part_repos ignores the plan's `repo`:   FAIL: root-scope phase, parts of a, b and the workspace: the repos: got [None, None, None], want ['a', 'b', None]
+#   - part_repos skips the `repos` check:    FAIL: no project.repos: part_repos is null: part_repos is [{'name': None, 'path': '<ws>', ...}]
+#   - fwx_dir is `<main>/.fwx`:               FAIL: session --json, from repo a: fwx_dir is the workspace's: got '<ws>/.fwx', want '<ws>/.git/fwx'
 def nested_repo(ws, name):
     d = os.path.join(ws, name)
     os.makedirs(d)
