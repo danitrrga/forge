@@ -44,7 +44,7 @@ something in it, and a change to the dependency file made after the setup in a w
 and `revert` after the branch changed under it, before their checks, and `fwx wave setup` is the call anywhere else.
 
 When `fwx base` ends 43 it also leaves the line in `.fwx-agent/worktree-setup-failed.json` (`record_failure`), the fact that ends
-a job in `workflows/execute.js`.
+a job (`fwx wave report` reads it, report.py `SETUP_RECORD`).
 
 Imports only the standard library and execute.base.
 """

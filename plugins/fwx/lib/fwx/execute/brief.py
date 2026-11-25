@@ -156,8 +156,8 @@ def render(facts):
 
 
 # ---- the briefs of the agents a merge calls for: the conflict resolver and the fixer of a failure (3.5 T52) -----------------------
-# What fixerPrompt and resolverPrompt of workflows/execute.js hand over in a prompt, as a file under the run's briefs folder, because the
-# session that follows `fwx wave merge` has no runner to carry a prompt. The base is the head the merge left, which is why these briefs
+# What the conflict resolver and the fixer are handed, as a file under the run's briefs folder, because a worker is started from a spec file
+# and has no prompt to carry them in. The base is the head the merge left, which is why these briefs
 # are written after it and name it, unlike a task's (whose base the wave's launch gives). Every value quoted is one line, so that a
 # failure's text cannot make a field of its own.
 AGENT_KINDS = ("resolve", "fix")
@@ -277,7 +277,7 @@ def render_agent(facts):
 
 
 # ---- the briefs of a review pass (09.5 T53): the reviewer, the security reviewer and the review-verifier -------------------------------
-# What reviewPrompt and verifierPrompt of workflows/execute.js hand over in a prompt, as files under the run's briefs folder (`_review-<pass>.md`,
+# What the reviewer, the security reviewer and the review-verifier are handed, as files under the run's briefs folder (`_review-<pass>.md`,
 # `_review-<pass>-sec.md`, `_verify-<pass>.md`). The reply line of each is the one its agent definition gives, except the verifier's: a session has
 # no structured output to carry its verdicts, so it writes them to report.json like the others and replies `verdicts <report path>`.
 REVIEW_KINDS = ("reviewer", "security-reviewer", "review-verifier")

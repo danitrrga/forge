@@ -15,7 +15,7 @@ green, runs the gate (`core.verify` with `ci=True`: GitHub CI when it can answer
 `<base>..HEAD`, `base` being the sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
 is (the re-entry of `prepare --from gate`).
 
-The result also says what follows (`next_step`, as integrate() of workflows/execute.js sorts it): `next` is wave, review, resolve, fix or
+The result also says what follows (`next_step`): `next` is wave, review, resolve, fix or
 owner, `why` the text for `fwx wave fix --why`, and `brief` for resolve and fix the path of the brief written for that agent
 (execute/brief.py `resolver_facts`, `fixer_facts`), whose BASE is the head the merge left. A brief that cannot be written (no plan, a missing
 context file) makes the next step `owner` and says why. The session spends the round with `fix_round` before it launches either agent.
@@ -26,8 +26,7 @@ allowed only when fewer than `rounds` were spent before it: the third round is f
 
 `revert(cwd, part_dir, finding_ids)` reverts the commit of each finding, the newest first, and then runs the setup again like `integrate`
 (`setup` in the result on a failure). `summary(...)` says whether the gate
-of the run passes, and carries what the part report reads, from the run's own recorded calls (`_kept`; 09.5 T54, what execute.js returned in
-`details`): `findings` ({reported, fix, consider, note, dismissed, fixed: [{id, commit, severity}], outside}: the passes `wave findings` ended,
+of the run passes, and carries what the part report reads, from the run's own recorded calls (`_kept`; 09.5 T54): `findings` ({reported, fix, consider, note, dismissed, fixed: [{id, commit, severity}], outside}: the passes `wave findings` ended,
 and the commits of the `Fwx-Finding` trailers of the findings a `wave merge --findings` merged), `criteria`, `outside` (the items of the reports
 that were merged and have no issue), `tried` (one line per round spent), `gaps` and `protected`. Imports the standard library, fwx.state, fwx.config, fwx.plan, fwx.plan_step, fwx.core and execute.base, brief, cleanup and worktree_setup.
 """
@@ -152,7 +151,7 @@ def _oneline(text, limit=600):
 
 
 def next_step(result, final):
-    """(next, why) for a merge result, as integrate() of workflows/execute.js sorts it. `next` is `wave` (merged: launch the next wave, or
+    """(next, why) for a merge result. `next` is `wave` (merged: launch the next wave, or
     merge the last with --final), `review` (the gate is green: review the diff), `resolve` (a conflict: a resolver), `fix` (a red check, a red
     gate, commits that are not one per finding: a fixer) or `owner` (nothing an agent can fix: a verify that could not run, trusted edits, a
     failed setup, a live lock, or a result that names no cause). For `resolve` and `fix`, `why` is the text for `fwx wave fix --why`."""
@@ -428,7 +427,7 @@ def _own_gate(run, steps):
 
 
 def _kept(top, steps):
-    """What the part report reads from the run's recorded calls, as execute.js kept it in `st`: {findings, criteria, outside, tried, gaps, protected}.
+    """What the part report reads from the run's recorded calls, {findings, criteria, outside, tried, gaps, protected}.
     Only what a call that stands leaves counts: the unfiled `outside` items of a report that was merged (not a retry's), a pass `wave findings`
     ended (`fix`, `owner` or `done`: the `verify` call before it carries the same items), a round that was spent, and the findings of a
     `wave merge --findings` that was ok."""
