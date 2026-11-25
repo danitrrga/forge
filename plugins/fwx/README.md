@@ -125,6 +125,7 @@ The `project` table:
 - `project.app_run` (default none): how the UI walk starts the app.
 - `project.worktree_setup` (`[]`): the shell commands `fwx wave setup` runs in each new worktree, before any check.
 - `project.check_timeout_s` (`1200`): above.
+- `project.repos` (`{}`): the git repositories nested in the workspace's folder, each its own repository and no submodule: a table of a name to an entry with a `path` (relative to the workspace, a folder inside it) and, for that repository only, any of `checks`, `checks_quick`, `worktree_setup`, `protected_paths` and `default_branch`. An entry's key replaces the workspace's value and a key it leaves out is the default, never the workspace's: a plugin must not run the workspace's checks or setup. Every other `project` key stays the workspace's. A path outside the workspace or that is not a folder is a `ConfigError` naming the key. Run fwx in such a repository, or in a worktree of it, and the workspace is its home: `.claude/fwx.json`, `.fwx/` and everything fwx writes under `<workspace>/.git/fwx` (`config.fwx_dir`) stay at the workspace, while `config.repo_checkout` is the repository itself. A repository with a `.claude/fwx.json` of its own is its own project and is never re-homed.
 
 ### Changing a key
 
