@@ -316,6 +316,13 @@ def main():
     claims_none = [n for n, t in agents.items() if re.search(r"no brief file|their prompt is the brief", t)]
     check("no agent says it has no brief file", not claims_none, "still says it in %s" % claims_none)
     check("control: an agent text that says 'there is no brief file' is caught", bool(re.search(r"no brief file", "Your prompt is your brief, there is no brief file")))
+    # The owner talks only to the orchestrator: a worker's question goes to it, never to him. Seen red on the texts before:
+    #   FAIL: workers never address the owner: step 5 and executor.md say so -> missing ['SKILL.md step 5', 'executor.md']
+    said = {"SKILL.md step 5": "Workers never address the owner", "executor.md": "goes to the orchestrator (the coordinator), never to the owner"}
+    texts_of = {"SKILL.md step 5": s5, "executor.md": agents["executor"]}
+    missing = [k for k, v in said.items() if v not in texts_of[k]]
+    check("workers never address the owner: step 5 and executor.md say so", not missing, "missing %s" % missing)
+    check("control: a text without the sentence is caught", "Workers never address the owner" not in "5. **Execute a part.** The worker waits for the answer.")
     unread = [n for n in ("reviewer", "security-reviewer", "review-verifier") if "names a brief file" not in agents[n]]
     check("the reviewers and the verifier read the brief file their prompt names", not unread, "no 'names a brief file' in %s" % unread)
     reply = re.search(r"`(verdicts <report path>)`", agents["review-verifier"])
