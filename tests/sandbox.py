@@ -6,7 +6,9 @@ The name does not match `*test_*.py`, so `forge test` never runs it; the suites 
 A suite under skills/ is also reached through the ~/.claude/skills links, so it finds this file
 through a realpath-derived root, never an abspath one (that would be ~/.claude)."""
 import atexit
+import contextlib
 import hashlib
+import importlib.util
 import json
 import os
 import shutil
@@ -34,6 +36,30 @@ UNSHARE = ("unshare", "-rn")
 PROBE = ("import socket, sys\ntry:\n    socket.create_connection(('127.0.0.1', int(sys.argv[1])), timeout=0.2)\n"
          "    print('reachable')\nexcept OSError:\n    print('unreachable')")
 _made = []
+
+
+def _tmp_outside_checkout():
+    """A suite run directly (`python3 tests/test_x.py`) with TMPDIR inside a git checkout (`fwx scratch new` puts it in the worktree) builds
+    its toy worlds inside that checkout and fails falsely, e.g. `FAIL forge test outside a git repository = (False, 1, False, True), want
+    (True, 1, True, True)`, 34 failures over 405 cases in test_lib.py (DTC-124). `forge test` already hands its children a TMPDIR outside any
+    checkout; this does the same for a direct run, with the same function (testgroup.private_tmp), at the first `import sandbox`, before any
+    tempfile call, and removes the folder when the process ends."""
+    # Loaded by path from forge/tmpscope.py (stdlib only): `import forge` here would put the package in sys.modules and change which `forge`
+    # a suite that imports forge.hooks from a seeded copy of the engine gets (hooks/test_guard_tool_use.py, "config/forge.json missing").
+    spec = importlib.util.spec_from_file_location("forge_tmpscope", os.path.join(FORGE, "forge", "tmpscope.py"))
+    tmpscope = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tmpscope)
+    stack = contextlib.ExitStack()
+    env = stack.enter_context(tmpscope.private_tmp(os.environ))
+    if env.get("TMPDIR") != os.environ.get("TMPDIR"):
+        os.environ["TMPDIR"] = env["TMPDIR"]
+        tempfile.tempdir = None  # tempfile cached the old one
+        atexit.register(stack.close)
+    else:
+        stack.close()
+
+
+_tmp_outside_checkout()
 
 
 def git(cwd, *args):

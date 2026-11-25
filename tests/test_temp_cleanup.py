@@ -117,6 +117,27 @@ with tempfile.TemporaryDirectory(prefix="temp-cleanup-") as top:
          ["cleanup-fail", "cleanup-fail"])
     want("control FORGE_TEST_KEEP=1: it says where they are", "kept:" in r.stdout, True)
 
+    # DTC-124: a suite run directly with TMPDIR inside a git checkout (`fwx scratch new` puts it in the worktree) gets a TMPDIR outside
+    # it from `import sandbox`, and the folder is removed at exit. Seen failing with the guard's call removed from sandbox.py:
+    #   FAIL TMPDIR in a checkout: the suite's tempfile dir is outside any checkout (stderr '') = (True, 'True'), want (False, 'False')
+    #   FAIL TMPDIR in a checkout: nothing left in the checkout's TMPDIR = ['incheckout-4ocpcy5m'], want []  (and the replacement-folder case)
+    repo = os.path.join(top, "repo")
+    os.makedirs(repo)
+    subprocess.run(["git", "init", "-q", repo], env=dict(os.environ, **sandbox.GIT_ENV), check=True, capture_output=True)
+    tmp = os.path.join(repo, "tmp")
+    os.makedirs(tmp)
+    probe = os.path.join(scripts, "incheckout.py")
+    with open(probe, "w") as fh:
+        fh.write(TOY.replace("import os, sys", "import os, sys, tempfile") + "sys.path.insert(0, %r)\nfrom forge import testgroup\n" % FORGE
+                 + "d = tempfile.mkdtemp(prefix='incheckout-')\nprint(d, testgroup.inside_checkout(d))\n")
+    r = subprocess.run([sys.executable, probe], env=child_env(tmp), capture_output=True, text=True, timeout=120)
+    n += 1
+    where, _, inside = r.stdout.strip().rpartition(" ")
+    want("TMPDIR in a checkout: the suite's tempfile dir is outside any checkout (stderr %r)" % r.stderr.strip()[-120:],
+         (os.path.dirname(where) == tmp, inside), (False, "False"))
+    want("TMPDIR in a checkout: nothing left in the checkout's TMPDIR", left(tmp), [])
+    want("TMPDIR in a checkout: the replacement folder is gone after the run", os.path.exists(os.path.dirname(where)), False)
+
     # The bench: skill_bench.verdict on two tasks whose oracle code makes temp dirs of its own (a dir each per run), and
     # the one suite that called skill_bench.fresh and never removed its dir. The tasks are found, not named: a task
     # that is pruned from the bench (arch-refactor-01 was) must not turn this case red, and finding fewer than two
