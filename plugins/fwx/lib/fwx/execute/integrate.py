@@ -1,7 +1,7 @@
 """The only path that writes the phase branch, and the one place that spends a round (3.4 U3; shapes in C.2 of the plan).
 
-Only this module runs `git merge` and `git revert`; nothing in lib/fwx/ runs `git rebase`, `git push` or `git reset --hard`
-(tests/test_single_writer.py reads the code to check it). No function here writes a `stage` row, and only `fix_round` writes a
+Only this module runs `git merge` and `git revert`; nothing in lib/fwx/ runs `git rebase` or `git reset --hard`, and the only `git push`
+(never forced) is core/ci_gate.py's (tests/test_single_writer.py reads the code to check it). No function here writes a `stage` row, and only `fix_round` writes a
 round.
 
 `integrate(cwd, ...)` merges the branches of a wave into the branch the checkout `cwd` is on, with `--no-ff`, in the order
@@ -11,7 +11,7 @@ given. It refuses (exit 2, nothing merged) a checkout with uncommitted changes, 
 it aborts that merge and stops (the earlier ones stay). Then it runs the project's `worktree_setup` again in the checkout (a no-op unless a merge changed a dependency file; a failure
 stops here with `setup` in the result and exit 1) and then `project.checks_quick`, removes the
 worktrees of the branches it merged (only unlocked, clean ones: a stale lock is `cleanup`'s), and, with `final` and everything
-green, runs the gate (`core.verify`) and reports the trusted edits (with a `worktree_setup`, also the files it installs from: core.trusted) and the protected paths of
+green, runs the gate (`core.verify` with `ci=True`: GitHub CI when it can answer, else the project's checks here) and reports the trusted edits (with a `worktree_setup`, also the files it installs from: core.trusted) and the protected paths of
 `<base>..HEAD`, `base` being the sha in the run id. It reports; it spends no round. With `final` and no branch nothing is merged: it is the gate on the head as it
 is (the re-entry of `prepare --from gate`).
 
@@ -330,7 +330,7 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
     result["quick"] = _quick(top, cfg, say)
     result["ok"] = result["quick"]["rc"] == 0
     if final and result["ok"]:
-        code, ev = verify.verify(top, part_dir, say)
+        code, ev = verify.verify(top, part_dir, say, ci=True)
         result["verify"] = {"ran": True, "rc": code, "line": verify.evidence_line(ev["sha"], ev["commands"]) if ev else ""}
         result["ok"] = code == 0
         if result["ok"]:

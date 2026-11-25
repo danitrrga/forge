@@ -10,6 +10,10 @@ repository run nothing and write nothing (exit 2). Every check runs, even after 
 (`project.check_timeout_s`, default `CHECK_TIMEOUT_S`, 20 minutes) and its output, stdout and stderr together, kept in its last `KEEP_CHARS`. HEAD is
 read again at the end: a HEAD that moved proves neither commit, so the row says `clean: false` and the run exits 2.
 
+With `ci=True` (the final merge of `wave merge`, not `fwx verify` by hand and not a revert) the gate is first GitHub CI on the pushed
+branch (`core.ci_gate`): its answer is the evidence, `source: ci`, and no local check runs; when CI cannot give one, a line says why
+and the checks run here as before.
+
 The row is written through `state.append_audit`: the sha, `rc` 0 or 1, and as its detail the JSON of the evidence,
 `{sha, clean, source, commands: [{cmd, rc}], rc}`, which is the shape of `facts.evidence`. `rc` is null for a check
 killed by the limit or never started. It goes to `dir` when given, else to the phase of the session as `state.resolve`
@@ -24,7 +28,7 @@ checks, and a `gate_lock` that finds its own path there does not lock again: a c
 The output tail of a red check goes to the terminal, so secrets are taken out of it first: the value of any environment
 variable named like a credential, and the shapes of tokens (`redact`). Nothing else of the output is kept or written.
 
-Imports only the standard library, state, config and core.evidence.
+Imports only the standard library, state, config, core.evidence and core.ci_gate.
 """
 import contextlib
 import fcntl
@@ -39,7 +43,7 @@ import tempfile
 import time
 
 from fwx import config, state
-from fwx.core import evidence
+from fwx.core import ci_gate, evidence
 
 CHECK_TIMEOUT_S = config.DEFAULTS["project"]["check_timeout_s"]  # the default; a project sets its own: project.check_timeout_s
 KEEP_CHARS = 64000
@@ -220,11 +224,11 @@ def _destination(root, dir):
     return state.resolve(root)["phase_dir"]
 
 
-def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
+def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None, ci=False):
     """Run the gate. Returns `(code, ev)`: code 0 green, 1 a red check, 2 it could not prove the commit; `ev` the evidence
     dict (None when nothing ran). `say` receives each progress line. State and config problems raise
     state.StateError or config.ConfigError before anything runs. `timeout` is each check's limit in seconds, the
-    project's `check_timeout_s` when None."""
+    project's `check_timeout_s` when None. `ci` takes GitHub CI as the gate when it can (module docstring)."""
     root = toplevel(cwd)
     sha = head(root)
     where = _destination(root, dir)
@@ -238,26 +242,30 @@ def verify(cwd, dir=None, say=lambda line: None, timeout=None, environ=None):
         say("no checks defined: `project.checks` in .claude/fwx.json is empty and package.json has no test, lint, "
             "typecheck or build script")
         return 2, None
-    source = "profile" if evidence.plan_checks(cfg["project"]["checks"], _NO_ROOT) else "package"
-    say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",
-                                                   "project" if source == "profile" else "package.json scripts", sha[:7]))
-    with gate_lock(root):
-        results = [run_check(command, root, timeout) for command in recipe]
-    moved = head(root) != sha
-    if moved:
-        say("HEAD moved while the checks ran, so they prove neither commit")
-    for r in results:
-        ok = r["rc"] == 0
-        say("%s %s · %.1f s%s" % ("passed" if ok else "failed", r["cmd"], r["seconds"],
-                                  "" if ok else " · exit %s" % ("none" if r["rc"] is None else r["rc"])))
-    for r in results:
-        if r["rc"] != 0:
-            say("\n--- %s\n%s" % (r["cmd"], tail(r["output"], environ)))
-    green = all(r["rc"] == 0 for r in results)
-    ev = {"sha": sha, "clean": not moved, "source": source, "commands": [{"cmd": r["cmd"], "rc": r["rc"]} for r in results],
-          "rc": 0 if green and not moved else 1}
+    protected = default_names(root, cfg) | set((cfg["project"].get("production") or {}).get("branches") or [])
+    ev = ci_gate.run(root, sha, cfg, say, timeout, protected) if ci else None
+    moved = False
+    if ev is None:
+        source = "profile" if evidence.plan_checks(cfg["project"]["checks"], _NO_ROOT) else "package"
+        say("running %d check%s from the %s at %s" % (len(recipe), "" if len(recipe) == 1 else "s",
+                                                       "project" if source == "profile" else "package.json scripts", sha[:7]))
+        with gate_lock(root):
+            results = [run_check(command, root, timeout) for command in recipe]
+        moved = head(root) != sha
+        if moved:
+            say("HEAD moved while the checks ran, so they prove neither commit")
+        for r in results:
+            ok = r["rc"] == 0
+            say("%s %s · %.1f s%s" % ("passed" if ok else "failed", r["cmd"], r["seconds"],
+                                      "" if ok else " · exit %s" % ("none" if r["rc"] is None else r["rc"])))
+        for r in results:
+            if r["rc"] != 0:
+                say("\n--- %s\n%s" % (r["cmd"], tail(r["output"], environ)))
+        green = all(r["rc"] == 0 for r in results)
+        ev = {"sha": sha, "clean": not moved, "source": source, "commands": [{"cmd": r["cmd"], "rc": r["rc"]} for r in results],
+              "rc": 0 if green and not moved else 1}
     say("%s at %s · %d/%d checks" % ("verified" if ev["rc"] == 0 else "not verified", sha[:7],
-                                      sum(r["rc"] == 0 for r in results), len(results)))
+                                      sum(c["rc"] == 0 for c in ev["commands"]), len(ev["commands"])))
     if where is None:
         say("no phase folder for this session and no --dir: no evidence row was written")
     else:
