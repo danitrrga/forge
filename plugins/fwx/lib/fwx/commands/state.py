@@ -61,8 +61,9 @@ def part_repos(r):
     main, phase = r["main_checkout"], r["phase_dir"]
     try:
         cfg = config.load(main, quiet=True)  # the workspace's own, not the nested repo's entry laid over it where the command runs
-    except config.ConfigError:  # a broken fwx.json must not stop `fwx session`, as in state.summary
+    except config.UnreadableFile:  # a fwx.json that is no JSON must not stop `fwx session`, as in state.summary
         return None
+    # any other ConfigError (a wrong `project.repos` entry) stops the command, as it does from inside the nested repo: null would read as "no nested repos"
     repos = cfg["project"]["repos"]
     if not repos or not phase:
         return None

@@ -74,6 +74,10 @@ class ConfigError(Exception):
     """The configuration cannot be used; the message names the fix."""
 
 
+class UnreadableFile(ConfigError):
+    """The file cannot be read, is no JSON or is no object (not a wrong value in it): `fwx session --json` still answers then."""
+
+
 def _git(cwd, *args):
     try:
         return subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True)
@@ -113,13 +117,13 @@ def _read(path):
     except FileNotFoundError:
         return None
     except OSError as e:
-        raise _bad(path, "cannot be read (%s)" % e.strerror)
+        raise _unreadable(path, "cannot be read (%s)" % e.strerror)
     try:
         data = json.loads(text)
     except ValueError as e:
-        raise _bad(path, "is not valid JSON (%s)" % e)
+        raise _unreadable(path, "is not valid JSON (%s)" % e)
     if not isinstance(data, dict):
-        raise _bad(path, "is not a JSON object")
+        raise _unreadable(path, "is not a JSON object")
     return data
 
 
@@ -210,6 +214,10 @@ def _merge(base, over):
 def _bad(path, what):
     fix = "run `forge sync`, or edit the file by hand to the schema in README.md" if path else "run `forge sync`"
     return ConfigError("%s: %s; %s" % (path or "configuration", what, fix))
+
+
+def _unreadable(path, what):
+    return UnreadableFile(str(_bad(path, what)))
 
 
 def _validate(cfg, path):

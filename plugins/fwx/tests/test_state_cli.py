@@ -510,6 +510,19 @@ s.ok("no project.repos: part_repos is null", "part_repos" in got and got["part_r
 got = js(st(plain, "session", "--json", session="sess-none").stdout)
 s.ok("no phase bound and none open to resolve: part_repos is null", got.get("part_repos", "<absent>") is None, repr(got.get("part_repos", "<absent>")))
 
+# a broken `project.repos` entry stops `fwx session --json` at the workspace root, as it does inside the nested repo (it printed part_repos null, exit 0)
+# Seen red on f97847b: FAIL: broken project.repos entry, session --json at the root: exit 2: got 0, want 2
+#   FAIL: broken project.repos entry, session --json at the root: names the entry: ''  (empty stderr)
+broken = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\na/\n"}))
+nested_repo(broken, "a")
+helpers.write(broken, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"name": "broken", "default_branch": "master",
+              "repos": {"a": {"path": "a", "default_branch": "main"}, "b": {"path": "missing"}}}}))
+st(broken, "phase", "new", "alpha", session="sess-b")
+for label, cwd in (("at the root", broken), ("inside repo a", os.path.join(broken, "a"))):
+    r = st(cwd, "session", "--json", session="sess-b")
+    s.eq("broken project.repos entry, session --json %s: exit 2" % label, r.returncode, 2)
+    s.ok("broken project.repos entry, session --json %s: names the entry" % label, "project.repos.b.path" in r.stderr, repr(r.stderr))
+
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
 nogit = helpers.mkdtemp_nogit()
 for args in (["session"], ["phase", "list"], ["session", "attach", "--root"], ["phase", "new", "x"], ["milestone", "new"], ["decision", "new", "--decision", "a", "--why", "b",
