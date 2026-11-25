@@ -273,28 +273,40 @@ _BRANCH = re.compile(r"(?:^|\s)branch (\S+)")
 
 
 def summary(resolved, cwd=None):
-    """What a status chip shows, for a `resolve()` result: `{project, stage, part, parts, branch}`. `project` is the
-    `project.name` of `.claude/fwx.json`, None where that file is missing or cannot be read. With no phase the rest is None. `stage` is
-    `last_stage`. `part` is N of the last stage row whose detail says `part <N>`, `parts` the phase's subphases or 1, and
-    both are None while no stage row names a part. `branch` is B of the last stage row that says `branch <B>`, else None."""
+    """What a status chip shows, for a `resolve()` result: `{project, stage, part, parts, branch, part_stages}`. `project` is the
+    `project.name` of `.claude/fwx.json`, None where that file is missing or cannot be read. With no phase the rest is None.
+    The stage rows read are the phase's and each subphase's (parts running in parallel write their own), oldest `date` first,
+    the phase's before the subphases' on a tie. `stage` is the target of the last row. `part` is N of the last row whose detail
+    says `part <N>`, `parts` the phase's subphases or 1, and both are None while no row names a part. `branch` is B of the last
+    row that says `branch <B>`, else None. `part_stages` is `[{part, stage, branch}]`, one per part named, in part order, each
+    with the stage of its last row and the branch of its last row that names one; None while no row names a part."""
     try:
         cfg = config.load(cwd, quiet=True)
     except config.ConfigError:  # a broken fwx.json must not stop `fwx session`, which never read it before
         cfg = {}
     out = {"project": cfg["project"]["name"] if cfg.get("_source") else None,
-           "stage": None, "part": None, "parts": None, "branch": None}
+           "stage": None, "part": None, "parts": None, "branch": None, "part_stages": None}
     phase = resolved.get("phase_dir")
     if not phase:
         return out
-    out["stage"] = last_stage(phase)
-    for row in read_rows(os.path.join(phase, "audit.tsv")):
-        if row.get("kind") != "stage":
-            continue
-        part, branch = _PART.search(row.get("detail", "")), _BRANCH.search(row.get("detail", ""))
+    rows = []
+    for d in [phase] + [str(s) for s in subphases(phase)]:
+        rows += [r for r in read_rows(os.path.join(d, "audit.tsv")) if r.get("kind") == "stage"]
+    rows.sort(key=lambda r: r.get("date", ""))
+    by_part = {}
+    for row in rows:
+        detail = row.get("detail", "")
+        out["stage"] = detail.split(" ", 1)[0] or out["stage"]
+        part, branch = _PART.search(detail), _BRANCH.search(detail)
         if part:
-            out["part"], out["parts"] = int(part.group(1)), len(resolved.get("subphases") or []) or 1
+            n = int(part.group(1))
+            out["part"], out["parts"] = n, len(resolved.get("subphases") or []) or 1
+            by_part.setdefault(n, {"part": n, "stage": None, "branch": None})["stage"] = out["stage"]
         if branch:
             out["branch"] = branch.group(1)
+            if part:
+                by_part[n]["branch"] = branch.group(1)
+    out["part_stages"] = [by_part[n] for n in sorted(by_part)] or None
     return out
 
 
