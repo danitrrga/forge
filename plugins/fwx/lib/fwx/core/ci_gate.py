@@ -189,10 +189,14 @@ def run(root, sha, cfg, say, timeout, protected):
     try:
         number = _pull(root, owner, repo, branch, cfg, say)
         say("waiting for CI on pull request #%d" % number)
+        told = False
         while True:
             if (gh.api("repos/%s/%s/pulls/%d" % (owner, repo, number), cwd=root) or {}).get("mergeable") is False:
                 return no("pull request #%d conflicts with its base, and CI does not run on a conflicting pull request" % number)
             runs = _runs(root, owner, repo, sha)
+            if runs and not told:  # the run exists: its address, for whoever watches the wait
+                told = True
+                say("CI run %s" % ", ".join(str(r.get("html_url") or r.get("id")) for r in runs))
             waited = time.monotonic() - started
             if runs and all(r.get("status") == "completed" for r in runs):
                 ev, why = _verdict(root, owner, repo, sha, runs, say)

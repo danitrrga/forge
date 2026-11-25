@@ -31,6 +31,19 @@ Controls, each a copy of lib/ with one line changed (MUTANTS), seen red on the c
   the status is sent as an escalation:        FAIL: a question reaches the orchestrator once -> 0 sends over many ticks: got 0, want 1 (the fake refuses it: sender_not_assignee)
   the ask line with no orchestrator:          FAIL: off: no executor is told to ask -> 4 starts
   settled succeeded worker does not wait:     FAIL: reply grace: delayed reply after worker_done finishes done: exit 1, got 'run <id> failed: executor did not return: T1 (2 worktrees kept)\n'
+  a progress line is not flushed:             FAIL: progress: a line is out while the first worker still works
+  ORCA_TERMINAL_HANDLE is ignored:            FAIL: own terminal (success): no terminal was created -> got ['term_8']
+  the run closes the terminal it ran in:      FAIL: own terminal (success): no terminal was closed
+  no look at the sender before a worker-start: FAIL: fenced: the run stops needs-owner naming its closed terminal
+  a resume keeps the Orca run of a lost terminal: FAIL: fenced: the resume goes on to done
+
+Visible runs (case_progress, case_own_terminal, case_fenced), seen red on the code before them (the first lines):
+  FAIL: progress: the lines come in order -> first missing: got 'base check passed', want None
+  FAIL: progress: a line is out while the first worker still works -> got []
+  FAIL: own terminal (success): no terminal was created -> got ['term_8']: got ['term_8'], want []
+  FAIL: own terminal (success): run-create names the terminal of the environment: got ['term_8'], want ['term_ext']
+  FAIL: fenced: the run stops needs-owner naming its closed terminal: got '... run <id> failed: orca: orca orchestration worker-start failed (exit 1): consumer_fenced: ...'
+  FAIL: fenced: exit 3 -> exit 1: got 1, want 3
 """
 import fcntl
 import json
@@ -40,6 +53,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -88,7 +102,10 @@ class World:
              "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t",
              "ORCA_AGENT_SESSION_ID": "leak", "ORCA_AGENT_SESSION_SPAWN_TOKEN": "leak", "ORCA_STRUCTURED_SESSION": "leak"}
         e.update(extra)
-        return helpers.clean_env(**e)
+        env = helpers.clean_env(**e)
+        if "ORCA_TERMINAL_HANDLE" not in extra:  # a suite run inside a real Orca terminal inherits its handle: only a case that sets it may have it
+            env.pop("ORCA_TERMINAL_HANDLE", None)
+        return env
 
     def argv(self, root, *flags, part=None):
         return [sys.executable, os.path.join(root, "bin", "fwx"), "wave", "run", "--part-dir", part or self.part, "--plane", "session", "--branch", "phase"] + list(flags)
@@ -784,7 +801,146 @@ def case_terminal_resume(root, S):
         terms = w.terminals()
         S.eq("terminal resume (%s): terminals made" % name, len(terms), 2 if lose else 1)
         S.ok("terminal resume (%s): none left open" % name, not any(t["open"] for t in terms.values()), "terminals %r" % terms)
-        S.eq("terminal resume (%s): one run in Orca (the resumed run did not create another)" % name, len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]]), 1)
+        S.eq("terminal resume (%s): Orca runs made (a Run is bound to its terminal: a new terminal makes a new one)" % name,
+             len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]]), 2 if lose else 1)
+
+
+# ---------------------------------------------------------------------------------------------------------------------- what the owner sees
+
+def reader(p):
+    """The lines `p` prints to stdout, collected as they come by a thread: [lines], so a test can look before the process ends."""
+    got = []
+    threading.Thread(target=lambda: [got.append(x.rstrip("\n")) for x in p.stdout], daemon=True).start()
+    return got
+
+
+def in_order(lines, needles):
+    """None when the regexes of `needles` match `lines` in that order (other lines may lie between), else the first needle that did not."""
+    at = 0
+    for n in needles:
+        hit = next((i for i in range(at, len(lines)) if re.search(n, lines[i])), None)
+        if hit is None:
+            return n
+        at = hit + 1
+    return None
+
+
+def case_progress(root, S):
+    """`fwx wave run` prints one plain line per step to stdout as it goes, flushed, and the result line stays the last one.
+    Seen red on the code before it (a run printed only its last line):
+      FAIL: progress: the lines come in order -> first missing: 'base check passed'
+      FAIL: progress: a line is out while the first worker still works -> got []"""
+    w = world()
+    r = w.run(root=root)
+    lines = r.stdout.splitlines()
+    m = line_of(r)
+    S.ok("progress: the run is done and its result line is the last", bool(m) and m.group(2) == "done" and LINE.match(lines[-1]) is not None, "got %r %r" % (r.stdout[-300:], r.stderr[-200:]))
+    S.eq("progress: the lines come in order -> first missing", in_order(lines, [
+        r"base check passed", r"worker T1 started", r"worker T1 done", r"worker T2 started", r"worker T2 done", r"wave 1 merged", r"worker T3 started", r"worker T3 done",
+        r"gate started", r"gate passed", r"wave 2 merged", r"review started", r"worker r1 started", r"worker r1 done", r"review findings", r"run \S+ done"]), None)
+    S.ok("progress: each line is one plain line (no escape codes, no carriage returns)", all("\x1b" not in x and "\r" not in x for x in r.stdout.splitlines()), "got %r" % r.stdout[:200])
+    S.ok("progress: a started line names the unit and the role", any(re.search(r"worker T1 started.*executor", x) for x in lines), "got %r" % lines[:6])
+    titles = [(c["start"]["unit"], c["start"].get("title")) for c in w.calls() if c.get("start")]
+    S.ok("progress: every worker-start carries a readable --task-title naming part, unit and role",
+         bool(titles) and all(isinstance(t, str) and "01-alpha" in t and u in t for u, t in titles), "got %r" % titles)
+    w2 = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
+    p = start_run(w2, root, FWX_RUN_LIMIT_S="60")
+    live = reader(p)
+    end = time.time() + 20
+    while time.time() < end and not any("worker T1 started" in x for x in live):
+        time.sleep(0.05)
+    S.ok("progress: a line is out while the first worker still works -> got %r" % live[:3], p.poll() is None and any("worker T1 started" in x for x in live))
+    helpers.write(w2.dir, "go-T1", "")
+    try:
+        p.wait(timeout=60)
+    except subprocess.TimeoutExpired:
+        kill_group(p)
+    time.sleep(0.3)  # the reader thread drains the pipe
+    S.ok("progress: the run still ends done", bool(live) and bool(LINE.match(live[-1])) and LINE.match(live[-1]).group(2) == "done", "got %r" % live[-3:])
+    w3 = world(tasks=[task("T1", 1, ["src/a.py"])], recipe=(BAD,), behave={"units": {"T1": {"mode": "ok", "files": {"src/a.py": "a1\n", "BAD": "1\n"}}, "fix-1": {"mode": "ok", "files": {"BAD": None}}}})
+    r3 = w3.run(root=root)
+    S.eq("progress: a red gate says so, then the fixer starts and the gate passes -> first missing", in_order(r3.stdout.splitlines(), [
+        r"gate started", r"gate failed", r"worker fix-1 started", r"worker fix-1 done", r"gate started", r"gate passed"]), None)
+    f = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "failed-report"}})
+    rf = f.run(root=root)
+    S.ok("progress: a worker that failed says failed", any(re.search(r"worker T1 failed", x) for x in rf.stdout.splitlines()), "got %r" % rf.stdout[-300:])
+    S.ok("progress: the failed run's last line is its result", bool(line_of(rf)) and line_of(rf).group(2) == "failed", "got %r" % rf.stdout[-200:])
+
+
+def case_own_terminal(root, S):
+    """Run inside an Orca terminal (ORCA_TERMINAL_HANDLE set), `fwx wave run` uses that terminal as the sender and creates none; the run never closes
+    a terminal it did not create, however it ends. Without the variable it makes and closes its own, as before (case_terminal).
+    Seen red on the code before it:
+      FAIL: own terminal (success): no terminal was created -> got ['term_1'] ... """
+    mine = {"term_ext": {"title": "the owner's shell", "worktree": "path:elsewhere", "open": True}}
+    for name, behave, status in (("success", {}, "done"), ("failure", {"units": {"T1": "failed-report"}}, "failed"), ("raised error", {"units": {"T1": "showfail"}}, "failed")):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])], behave=behave)
+        helpers.write(w.dir, "state.json", json.dumps({"repos": [], "runs": 0, "n": 0, "dispatches": {}, "launches": {}, "terminals": mine, "n_terms": 7}))
+        r = w.run(root=root, ORCA_TERMINAL_HANDLE="term_ext")
+        m = line_of(r)
+        S.ok("own terminal (%s): the run ends %s" % (name, status), bool(m) and m.group(2) == status, "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+        calls = w.calls()
+        made = [c["terminal"] for c in calls if c["argv"][:2] == ["terminal", "create"]]
+        S.eq("own terminal (%s): no terminal was created -> got %r" % (name, made), made, [])
+        sent = [c["sender"] for c in calls if c["argv"][:2] == ["orchestration", "run-create"] and "sender" in c]
+        S.eq("own terminal (%s): run-create names the terminal of the environment" % name, sent, ["term_ext"])
+        starts = [c["start"]["sender"] for c in calls if c["argv"][:2] == ["orchestration", "worker-start"] and "start" in c]
+        S.ok("own terminal (%s): every worker-start names it" % name, bool(starts) and set(starts) == {"term_ext"}, "got %r" % starts)
+        closed = [c for c in calls if c["argv"][:2] == ["terminal", "close"]]
+        S.eq("own terminal (%s): no terminal was closed -> got %r" % (name, [c["argv"] for c in closed]), closed, [])
+        S.ok("own terminal (%s): the owner's terminal is still open" % name, w.terminals().get("term_ext", {}).get("open") is True, "got %r" % w.terminals())
+        S.ok("own terminal (%s): the three session variables are still stripped from every call" % name, all(not any(c["env"].values()) for c in calls))
+        if m:
+            S.ok("own terminal (%s): the state no longer holds a terminal" % name, not w.state(m.group(1)).get("terminal"), "got %r" % w.state(m.group(1)).get("terminal"))
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
+    r = w.run(root=root)
+    calls = w.calls()
+    S.eq("own terminal: without the variable one terminal is created and then closed", ([c["argv"][:2] for c in calls if c["argv"][:2] in (["terminal", "create"], ["terminal", "close"])]),
+         [["terminal", "create"], ["terminal", "close"]])
+    # Non-PTY structured worker handle or stale/closed handle must NOT be adopted: fall back to terminal_create.
+    # Seen red before validating ORCA_TERMINAL_HANDLE:
+    #   FAIL: own terminal (structworker): falls back to a created terminal and ends done: exit 1, ... terminal_not_found: sender structworker_deadbeef is not a live terminal
+    #   FAIL: own terminal (closed): falls back to a created terminal and ends done: exit 1, ... terminal_not_found: sender term_gone is not a live terminal
+    for label, handle in (("structworker", "structworker_deadbeef"), ("closed", "term_gone")):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])])
+        r = w.run(root=root, ORCA_TERMINAL_HANDLE=handle)
+        m = line_of(r)
+        S.ok("own terminal (%s): falls back to a created terminal and ends done" % label, bool(m) and m.group(2) == "done" and r.returncode == 0,
+             "exit %d, got %r %r" % (r.returncode, r.stdout[-240:], r.stderr[-200:]))
+        made = [c["terminal"] for c in w.calls() if c["argv"][:2] == ["terminal", "create"]]
+        S.eq("own terminal (%s): created its own terminal instead of adopting %s" % (label, handle), len(made), 1)
+        sent = [c["sender"] for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"] and "sender" in c]
+        S.eq("own terminal (%s): run-create used the created terminal" % label, sent, made)
+
+
+def case_fenced(root, S):
+    """The owner closes the run's sender terminal mid-run (live, run 10-nested-repos-f97847b-3: `worker-start failed (exit 1): consumer_fenced`). Before each
+    worker-start and on OrcaError in steer/announce/launch, a gone sender ends the run needs-owner (exit 3) naming the terminal and the resume command,
+    leaves its state active, and `--resume` makes a new terminal and a new Orca run, then carries on.
+    Seen red on the code before it:
+      FAIL: fenced: the run stops needs-owner naming its closed terminal: got 'run <id> failed: orca: orca orchestration worker-start failed (exit 1): consumer_fenced: worker-start needs the coordinator bound to the Run ...'
+      FAIL: fenced: exit 3 -> exit 1
+      FAIL: fenced (orchestrator): the run stops needs-owner naming its closed terminal: got '... failed: orca: orca orchestration check failed (exit 1): terminal_not_found: no live terminal term_1 (1 worktree kept)'"""
+    for label, extra in (("plain", ()), ("orchestrator", ("--orchestrator", ORCH))):
+        w = world(tasks=[task("T1", 1, ["src/a.py"]), task("T2", 2, ["src/b.py"])], behave={"close_sender_after": 1})
+        r = w.run(*extra, root=root)
+        m = re.search(r"run (\S+) needs-owner: the run's terminal (\S+) was closed; resume with `fwx wave run --resume (\S+)`\Z", r.stdout.strip().splitlines()[-1] if r.stdout.strip() else "")
+        S.ok("fenced (%s): the run stops needs-owner naming its closed terminal" % label, bool(m) and m.group(1) == m.group(3) and m.group(2) in w.terminals(), "got %r %r" % (r.stdout[-300:], r.stderr[-200:]))
+        S.eq("fenced (%s): exit 3 -> exit %d" % (label, r.returncode), r.returncode, 3)
+        S.ok("fenced (%s): no raw consumer_fenced in the output" % label, "consumer_fenced" not in r.stdout + r.stderr, "got %r" % (r.stdout[-300:] + r.stderr[-300:]))
+        S.eq("fenced (%s): only T1 was started" % label, units(w), ["T1"])
+        if not m:
+            continue
+        run = m.group(1)
+        S.eq("fenced (%s): the state stays active, so --resume is allowed" % label, w.state(run)["state"], "active")
+        del w.behave["close_sender_after"]
+        w.set_behave()
+        r2 = subprocess.run(w.argv(root, "--resume", run, *extra), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+        m2 = line_of(r2)
+        S.ok("fenced (%s): the resume goes on to done" % label, bool(m2) and m2.group(2) == "done", "got %r %r" % (r2.stdout[-300:], r2.stderr[-300:]))
+        S.eq("fenced (%s): the resume started T2 and the reviewer, not T1 again" % label, units(w), ["T1", "T2", "r1"])
+        S.eq("fenced (%s): the resume made a new terminal and a new Orca run" % label, (len(w.terminals()), len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]])), (2, 2))
+        S.ok("fenced (%s): the new terminal is closed at the end" % label, not any(t["open"] for t in w.terminals().values()), "terminals %r" % w.terminals())
 
 
 # ---------------------------------------------------------------------------------------------------------------------- orchestrator steering
@@ -1126,7 +1282,8 @@ def case_reply_grace(root, S):
 
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
-         case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace, case_nested, case_nested_resume]
+         case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
+         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -1184,6 +1341,23 @@ MUTANTS = [
     ("a settled succeeded worker does not wait for its reply line", case_reply_grace, "lib/fwx/execute/run.py",
      'if state == "succeeded" and not orca.REPLY_LINE.match(line):', "if False:",
      "reply grace: delayed reply after worker_done finishes done"),
+    ("a progress line is not flushed", case_progress, "lib/fwx/execute/run.py", "    sys.stdout.flush()\n", "    pass\n", "progress: a line is out while the first worker still works"),
+    ("worker-start omits --task-title", case_progress, "lib/fwx/execute/run.py", 'title=title)', 'title=None)',
+     "progress: every worker-start carries a readable --task-title naming part, unit and role"),
+    ("ORCA_TERMINAL_HANDLE is ignored", case_own_terminal, "lib/fwx/execute/orca.py", 'handle = os.environ.get("ORCA_TERMINAL_HANDLE") or ""', 'handle = ""',
+     "own terminal (success): no terminal was created"),
+    ("non-PTY or closed ORCA_TERMINAL_HANDLE is adopted", case_own_terminal, "lib/fwx/execute/orca.py",
+     'if not handle or handle.startswith("structworker_") or not terminal_alive(handle):', 'if not handle:',
+     "own terminal (structworker): falls back to a created terminal and ends done"),
+    ("the run closes the terminal it ran in", case_own_terminal, "lib/fwx/execute/run.py", 'if st.get("terminal") and not st.get("terminal_made", True):', "if False:",
+     "own terminal (success): no terminal was closed"),
+    ("no look at the sender before a worker-start", case_fenced, "lib/fwx/execute/run.py", 'if not orca.terminal_alive(self.st["terminal"]):', "if False:",
+     "fenced (plain): the run stops needs-owner naming its closed terminal"),
+    ("steer skips sender check when peek_questions fails", case_fenced, "lib/fwx/execute/run.py",
+     '        try:\n            msgs = orca.peek_questions(self.st["terminal"], self.orca_run)\n        except orca.OrcaError:\n            self._check_sender()\n            raise',
+     '        msgs = orca.peek_questions(self.st["terminal"], self.orca_run)',
+     "fenced (orchestrator): the run stops needs-owner naming its closed terminal"),
+    ("a resume keeps the Orca run of a lost terminal", case_fenced, "lib/fwx/execute/run.py", 'self.st["orca_run"] = None', "pass", "fenced (plain): the resume goes on to done"),
 ]
 
 

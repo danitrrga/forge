@@ -11,7 +11,8 @@ agent waiting on a prompt), `hang` (never ends), `later` (running until the test
 `failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `release_fail: [unit]` makes `worker-release` of
 that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
 in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `discover_after: N` makes Orca discover a worktree only after N `worktree show` calls on its path (the first N answer `selector_not_found`, as Orca 1.4.273 does for a worktree made with git that it has not
-found yet), and `start_not_found: M` makes the first M `worker-start`s on a worktree answer `selector_not_found` even when `show` knows it; with `discover_after` set, `worker-start` on a worktree that is not yet discovered answers `selector_not_found`
+found yet), and `close_sender_after: N` closes the sender terminal after the N-th `worker-start`, and a `worker-start` from a closed terminal, or one that is not the terminal the Run was created from,
+answers `consumer_fenced`; `start_not_found: M` makes the first M `worker-start`s on a worktree answer `selector_not_found` even when `show` knows it; with `discover_after` set, `worker-start` on a worktree that is not yet discovered answers `selector_not_found`
 too (neither set: every worktree is known at once, as before).
 Orchestrator steering (Orca 1.4.273, live probe): a worker's `worker_done` and a worker's `question` land in the run's inbox (`state.json["inbox"]`); `orchestration check
 --terminal T --run R --peek [--types a,b]` lists the unread ones of that run (only those types when `--types` is given) and never marks them read, `--peek` with `--all` is refused, a
@@ -285,9 +286,14 @@ def main(argv):
     if argv[:2] == ["orchestration", "run-create"]:
         sender = need_sender()
         state["runs"] += 1
+        state.setdefault("bound", {})["run_%d" % state["runs"]] = sender  # a Run is bound to the terminal that made it (Orca 1.4.273)
         done_log(sender=sender)
         say({"run": {"id": "run_%d" % state["runs"], "objective": flag(argv, "--objective")}})
     if argv[:2] == ["orchestration", "worker-start"]:
+        frm, bound = flag(argv, "--from"), state.get("bound", {}).get(flag(argv, "--run"))
+        if frm is not None and (not state.setdefault("terminals", {}).get(frm, {}).get("open") or (bound is not None and bound != frm)):
+            done_log(sender=frm, refused="consumer_fenced")  # a closed sender, or one the Run is not bound to
+            say(rc=1, error={"code": "consumer_fenced", "message": "worker-start needs the coordinator bound to the Run, or a worker on an active Dispatch in it."})
         sender = need_sender()
         wt = (flag(argv, "--worktree") or "")
         bad = [c for c in CREATION if c in argv]
@@ -333,10 +339,12 @@ def main(argv):
                  payload={"dispatchId": did})
         elif mode in ("ok", "bad-outside", "failed-report", "question"):
             post(state, run=flag(argv, "--run"), type="worker_done", subject="done " + unit, to="run:" + str(flag(argv, "--run")), payload={"dispatchId": did})
+        if behave.get("close_sender_after") == state["n"] and sender in state.get("terminals", {}):  # the owner closes the run's terminal after the N-th start
+            state["terminals"][sender]["open"] = False
         done_log(start={"dispatch": did, "unit": unit, "role": (marker or {}).get("role"), "launch": launch, "marker": marker, "spec": spec, "settings": settings, "settings_mode": fmode,
                         "status": git(wt, "status", "--porcelain").stdout, "head": git(wt, "rev-parse", "HEAD").stdout.strip(),
                         "open_before": len(open_now), "worktree": wt, "agent": flag(argv, "--agent"), "model": flag(argv, "--model"), "run": flag(argv, "--run"), "sender": sender,
-                        "files_at_start": sorted(os.listdir(wt))})
+                        "title": flag(argv, "--task-title"), "files_at_start": sorted(os.listdir(wt))})
         say({"dispatchId": did, "taskId": "task_%d" % state["n"], "runId": flag(argv, "--run"), "state": "running"})
     if argv[:2] == ["orchestration", "worker-show"]:
         d = state["dispatches"].get(flag(argv, "--dispatch"))
