@@ -70,6 +70,7 @@ once; the first matching FAIL line of each, seen red):
       written the control stayed green: FAIL: control the quota is capped at two: red with 'FAIL: quota from the cap: 2 tramos, a cap of 5': got []
 """
 import collections
+import concurrent.futures
 import json
 import os
 import re
@@ -81,6 +82,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
 from workflow_helpers import R, blank, finish, labels, launched, mutate, overlap, run_capped  # noqa: E402
 
+CONTROL_JOBS = 4  # controls run at once
 ROOT = helpers.ROOT
 VERIFIER_TEXT = os.path.join(ROOT, "agents", "ui-verifier.md")
 SCRIPT = os.path.join(ROOT, "workflows", "ui-walk.js")
@@ -1130,25 +1132,42 @@ MUTANTS = [
 ]
 
 
+def run_control(src, name, old, new, want):
+    """One mutant, in its own temp dir. Returns None when the anchor is not in the script exactly once, else the FAILs the run read.
+    Nothing here touches shared state (a private temp dir, a private FirstFail, a node process per run), so controls run side by side."""
+    m = mutate(src, old, new)
+    if m is None:
+        return None
+    mdir = helpers.mkdtemp("fwx-uwmut-")
+    try:
+        sub = helpers.FirstFail(lambda f, want=want: f.startswith(want))  # the control reads one FAIL: the run stops at it
+        sub.run(check_all, helpers.write(mdir, "ui-walk.js", m), sub)
+    finally:
+        helpers.remove(mdir)
+    return sub.fails
+
+
+def run_good():
+    good = helpers.Suite()
+    check_all(SCRIPT, good)
+    return good.fails
+
+
 def check_controls(s):
     if not os.path.exists(SCRIPT):
         return
     with open(SCRIPT, encoding="utf-8") as f:
         src = f.read()
-    for name, old, new, want in MUTANTS:
-        m = mutate(src, old, new)
-        if not s.ok("control %s: the anchor is in the script exactly once" % name, m is not None):
-            continue
-        mdir = helpers.mkdtemp("fwx-uwmut-")
-        try:
-            sub = helpers.FirstFail(lambda f, want=want: f.startswith(want))  # the control reads one FAIL: the run stops at it
-            sub.run(check_all, helpers.write(mdir, "ui-walk.js", m), sub)
-        finally:
-            helpers.remove(mdir)
-        s.ok("control %s: red with %r" % (name, want), any(f.startswith(want) for f in sub.fails), "got %r" % (sub.fails[:2],))
-    good = helpers.Suite()
-    check_all(SCRIPT, good)
-    s.eq("control: the real script is green under the same checks", good.fails, [])
+    # CONTROL_JOBS wide (the runs are node subprocesses, so threads do); results are read back in MUTANTS order, so the report is the same as a serial run's.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=CONTROL_JOBS) as pool:
+        good = pool.submit(run_good)
+        runs = [pool.submit(run_control, src, *mut) for mut in MUTANTS]
+        for (name, old, new, want), run in zip(MUTANTS, runs):
+            fails = run.result()
+            if not s.ok("control %s: the anchor is in the script exactly once" % name, fails is not None):
+                continue
+            s.ok("control %s: red with %r" % (name, want), any(f.startswith(want) for f in fails), "got %r" % (fails[:2],))
+        s.eq("control: the real script is green under the same checks", good.result(), [])
 
 
 def main():
