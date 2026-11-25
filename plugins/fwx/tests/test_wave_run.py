@@ -17,6 +17,8 @@ Controls, each a copy of lib/ with one line changed (MUTANTS), seen red on the c
   a forced removal:                           FAIL: an executor worktree with unmerged commits stays -> removed
   the settings copied as they are:            FAIL: the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M
   a start with no base context:               FAIL: no base context, no worker -> 1 start
+  worker-start without waiting for the worktree: FAIL: discover: worker-start waited for Orca to know the worktree -> 0 show calls
+  a selector_not_found is not retried:        FAIL: discover: the run is done -> run <id> failed: orca: orca orchestration worker-start failed (exit 1): selector_not_found
 """
 import fcntl
 import json
@@ -120,6 +122,13 @@ class World:
     def worktrees(self):
         out = helpers.git(self.repo, "worktree", "list", "--porcelain")
         return [line.split(" ", 1)[1] for line in out.splitlines() if line.startswith("worktree ")]
+
+    def state_json(self):
+        try:
+            with open(os.path.join(self.dir, "state.json"), encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
 
     def terminals(self):
         try:
@@ -577,6 +586,34 @@ def case_review_fix(root, S):
          "exit %d, units %r, out %r, err %r" % (r2.returncode, units(w2), r2.stdout[-200:], r2.stderr[-200:]))
 
 
+def case_discover(root, S):
+    """Orca knows a worktree only once it has discovered it: `worker-start` of one fwx had just made with `git worktree add` answered
+    `selector_not_found` (live, Orca 1.4.273, run 10-nested-repos-f97847b-1: `orca orchestration worker-start failed (exit 1): selector_not_found: No workspace
+    matches --worktree path:.../10-nested-repos-f97847b-1-T5. Nothing was started; no effects were applied.`). Orca has no command that makes it discover a path at once
+    (`orca help worktree`, `orca help repo`: only `worktree create` and `repo add`), so fwx polls `worktree show` and retries a `selector_not_found` of `worker-start`.
+    Seen red on the code before the fix (the fake knows a worktree only after 2 `worktree show` calls):
+    FAIL: discover: the run is done -> got 'run <id> failed: orca orchestration worker-start failed (exit 1): selector_not_found: No workspace matches --worktree path:...'."""
+    fast = {"FWX_ORCA_DISCOVER_POLL_S": "0.05"}
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"discover_after": 2})
+    r = w.run(root=root, **fast)
+    m = line_of(r)
+    S.ok("discover: the run is done -> %s" % (r.stdout.strip().splitlines() or ["no output"])[-1][:200], bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    shows = [c["show"] for c in w.calls() if "show" in c and c["argv"][:2] == ["worktree", "show"]]
+    S.ok("discover: worker-start waited for Orca to know the worktree -> %d show calls" % len(shows), len(shows) >= 3 and len(set(shows)) <= len(units(w)), "shows %r" % shows)
+    S.eq("discover: the units started", units(w), ["T1", "r1"])
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"start_not_found": 2})
+    r = w.run(root=root, **fast)
+    m = line_of(r)
+    S.ok("discover: a selector_not_found of worker-start itself is retried and the run is done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("discover: the first worker-start of a worktree was tried 3 times", w.state_json()["start_tries"].get(w.starts()[0]["worktree"]) if w.starts() else None, 3)
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"discover_after": 10 ** 6})
+    r = w.run(root=root, FWX_ORCA_DISCOVER_POLL_S="0.05", FWX_ORCA_DISCOVER_S="0.4")
+    m = line_of(r)
+    S.ok("discover: a worktree Orca never knows ends the run failed, naming it", bool(m) and m.group(2) == "failed" and "-T1" in m.group(3) and "never discovered" in m.group(3),
+         "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("discover: no worker started and the worktree is removed", (units(w), [p for p in w.worktrees() if "-T1" in p]), ([], []))
+
+
 def case_terminal(root, S):
     """Orca 1.4.273 refuses `orchestration run-create` with no sender terminal once the session variables are stripped (`no_active_sender_terminal`), so
     the run makes one terminal (`fwx run <R>`, in the main checkout), names it with `--from` and closes it however the run ends.
@@ -639,7 +676,7 @@ def case_terminal_resume(root, S):
 
 
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume]
+         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -668,6 +705,9 @@ MUTANTS = [
     ("the run's terminal is never closed", case_terminal, "lib/fwx/execute/run.py", "orca.terminal_close(st[\"terminal\"])", "pass", "the terminal is closed after a success -> open"),
     ("run-create with no sender", case_terminal, "lib/fwx/execute/orca.py", '"--objective", objective, "--from", sender)', '"--objective", objective)', "terminal (success): run-create names that terminal"),
     ("worker-start with no sender", case_terminal, "lib/fwx/execute/orca.py", '"path:" + worktree, "--from", sender)', '"path:" + worktree)', "terminal (success): every worker-start names that terminal"),
+    ("worker-start without waiting for the worktree", case_discover, "lib/fwx/execute/orca.py", 'result("worktree", "show", "--worktree", "path:" + worktree)', "pass",
+     "worker-start waited for Orca to know the worktree -> 0 show calls"),
+    ("a selector_not_found is not retried", case_discover, "lib/fwx/execute/orca.py", "if not _not_found(e):", "if True:", "discover: the run is done"),
     ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
      "worker-read stops at end cursor"),
 ]

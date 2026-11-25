@@ -7,6 +7,8 @@ This is the one module that starts a worker, the seam 01-factory adds `claude -p
     `--display-name`, `--comment`, `--setup`): Orca refuses them together, and fwx made the worktree so that it could prepare it;
   - a worker is released only once it is settled: a dispatch that ended its turn without `worker_done` stays `ready` and idle, and Orca
     refuses its `worker-release` (`dispatch_inactive`) until `worker-stop` ran (research/orca-boundary.md): the caller stops it first;
+  - Orca knows a worktree only once it has discovered it, a few seconds after `git worktree add` (`selector_not_found` until then; no Orca command makes it
+    discover a path at once), so `start` waits until `orca worktree show` finds it and retries a `selector_not_found` of `worker-start`, for DISCOVER_S;
   - `run-create` and `worker-start` are sent from a terminal fwx made for the run (`terminal_create`, closed when the run ends, named with `--from`),
     because with those variables gone Orca has no sender for them (`no_active_sender_terminal`; `orchestration send` takes `--from` too, fwx sends none,
     the workers do from their own terminals; worker-show, -read, -stop and -release take none); the workers' `worker_done` go to the run's inbox, not to any chat;
@@ -22,6 +24,7 @@ import json
 import os
 import re
 import subprocess
+import time
 
 from fwx.execute.base import WaveError, git, out
 
@@ -35,6 +38,16 @@ REPLY_LINE = re.compile(
     r"|reviewed \S+/\.fwx-agent/\S+/report\.json looked_at=\d+ findings=\d+ criteria_no=\d+ criteria_unproven=\d+"
     r"|verdicts \S+/\.fwx-agent/\S+/report\.json)\Z"
 )
+
+
+DISCOVER_S, DISCOVER_POLL_S = 60.0, 1.0  # how long `start` waits for Orca to discover a worktree, and how often it asks; FWX_ORCA_DISCOVER_S / FWX_ORCA_DISCOVER_POLL_S
+
+
+def _seconds(name, default):
+    try:
+        return float(os.environ[name])
+    except (KeyError, ValueError):
+        return default
 
 
 class OrcaError(WaveError):
@@ -131,9 +144,29 @@ def run_create(objective, sender):
     return run
 
 
+def _not_found(e):
+    return "selector_not_found" in str(e)
+
+
 def start(run, spec_file, model, worktree, sender):
-    got = result("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
-                 "--worktree", "path:" + worktree, "--from", sender)
+    """`worker-start` in `worktree`, once Orca knows it: Orca discovers a worktree made with git only after a while (`selector_not_found` until then),
+    so ask `worktree show` and retry a `selector_not_found` of `worker-start` for DISCOVER_S; past that, OrcaError naming the worktree."""
+    bound, poll = _seconds("FWX_ORCA_DISCOVER_S", DISCOVER_S), _seconds("FWX_ORCA_DISCOVER_POLL_S", DISCOVER_POLL_S)
+    deadline = time.monotonic() + bound
+    never = "orca never discovered the worktree %s in %d s" % (worktree, bound)
+    args = ("orchestration", "worker-start", "--spec-file", spec_file, "--run", run, "--agent", "claude", "--model", model,
+            "--worktree", "path:" + worktree, "--from", sender)
+    while True:
+        try:
+            result("worktree", "show", "--worktree", "path:" + worktree)
+            got = result(*args)
+            break
+        except OrcaError as e:
+            if not _not_found(e):
+                raise
+            if time.monotonic() >= deadline:
+                raise OrcaError("%s (last answer: %s)" % (never, e))
+            time.sleep(poll)
     dispatch = _first(got, ("dispatchId",))
     if not dispatch:
         raise OrcaError("orca worker-start named no dispatch: %s" % json.dumps(got)[:200])
