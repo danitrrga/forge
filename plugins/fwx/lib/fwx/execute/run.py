@@ -11,7 +11,7 @@ The review is `wave review`, the reviewers (and the security reviewer where `wav
 so, a fixer for what is to be fixed, `wave merge --final --findings`, and the next pass, until `wave findings` says `done`.
 
 Every agent is an Orca worker (execute/orca.py: the one module that talks to Orca) of one Orca run per part, never more at once than the cap.
-Each gets a worktree made here under `<main checkout>/.claude/worktrees/` at the sha its brief names (a branch for an executor, detached for a
+Each gets a worktree of the part's repository (the workspace's own, or the nested repository its plan names) made here under `<main checkout>/.claude/worktrees/` at the sha its brief names (a branch for an executor, detached for a
 reviewer and the verifier), prepared (the settings copy with the 5-minute cache switch, the marker), and a spec file: the body of its agent file
 (a worker has no agent type), the base context a subagent gets from SubagentStart (data/context-base.tsv's row for its role), its brief and the
 line asking it to send `worker_done`. With no base context the run is refused (exit 2) and nobody starts.
@@ -172,7 +172,8 @@ class Job:
 class Run:
     def __init__(self, args, top, flags, state, folder):
         self.args, self.top, self.flags, self.st, self.folder = args, top, flags, state, folder
-        self.main = config.main_checkout(top)
+        self.main = config.main_checkout(top)  # the workspace: where the worktrees go and the settings come from
+        self.repo = config.repo_checkout(top)  # the repository the part works in: where every worktree is made, and what Orca is told about
         self.run = args["run"]
         self.part = args["part_dir"]
         self.plane = args["plane"]
@@ -283,7 +284,7 @@ class Run:
         worktree = os.path.join(self.main, ".claude", "worktrees", "%s-%s" % (self.run, name))
         branch = "worktree-%s-%s" % (self.run, name) if job.branch else None
         spec = self.spec(job, k)
-        orca.make_worktree(self.main, worktree, job.head, branch)
+        orca.make_worktree(self.repo, worktree, job.head, branch)
         self.st["worktrees"].append({"path": os.path.realpath(worktree), "branch": branch, "role": job.role, "unit": job.unit})
         self.save()
         orca.prepare_worker(self.main, worktree, job.role, self.run, job.unit)
@@ -534,12 +535,12 @@ class Run:
         if args["revert"]:
             return self.revert()
         if not self.st.get("repo_added"):
-            orca.ensure_repo(self.main)
+            orca.ensure_repo(self.repo)
             self.st["repo_added"] = True
             self.save()
         term = self.st.get("terminal")
         if not term or not orca.terminal_alive(term):  # a resumed run keeps its terminal while Orca still has it
-            self.st["terminal"] = term = orca.terminal_create(self.main, "fwx run %s" % self.run)
+            self.st["terminal"] = term = orca.terminal_create(self.repo, "fwx run %s" % self.run)
             self.save()
         self.orca_run = self.st.get("orca_run") or orca.run_create("fwx wave run %s" % self.run, term)
         self.st["orca_run"] = self.orca_run

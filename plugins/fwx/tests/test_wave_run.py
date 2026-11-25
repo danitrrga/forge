@@ -299,7 +299,8 @@ def case_nested(root, S):
     S.eq("nested: the worker's worktree is a worktree of a, under the workspace's .claude/worktrees", (common, os.path.realpath(reviewer).startswith(os.path.join(lsc.repo, ".claude", "worktrees") + os.sep)),
          (os.path.join(lsc.nested["a"], ".git"), True))
     away = lsc.worktree("b")
-    rr = helpers.fwx(away, "wave", "remove", "--run", ml.group(1), env={"CLAUDE_CONFIG_DIR": lsc.conf})
+    rr = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "remove", "--run", ml.group(1)], cwd=away,
+                        env=helpers.clean_env(CLAUDE_CONFIG_DIR=lsc.conf), capture_output=True, text=True)
     S.eq("nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit", (rr.returncode, rr.stderr.strip()[-200:]), (0, ""))
     S.ok("nested: the leftover worktree is gone", not os.path.exists(reviewer), "still there")
 
@@ -781,6 +782,12 @@ MUTANTS = [
     ("worker-start without waiting for the worktree", case_discover, "lib/fwx/execute/orca.py", 'result("worktree", "show", "--worktree", "path:" + worktree)', "pass",
      "worker-start waited for Orca to know the worktree -> 0 show calls"),
     ("a selector_not_found is not retried", case_discover, "lib/fwx/execute/orca.py", "if not _not_found(e):", "if True:", "discover: the run is done"),
+    ("a worker's worktree made in the workspace's repo", case_nested, "lib/fwx/execute/run.py", "orca.make_worktree(self.repo,", "orca.make_worktree(self.main,",
+     "nested: the run is done"),
+    ("Orca told about the workspace, not the part's repo", case_nested, "lib/fwx/execute/run.py", "orca.ensure_repo(self.repo)", "orca.ensure_repo(self.main)",
+     "nested: `orca repo add` named a"),
+    ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'where if where and os.path.isdir(where) else "."', '"."',
+     "nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit"),
     ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
      "worker-read stops at end cursor"),
 ]
