@@ -138,10 +138,16 @@ def parse_shard(values):
     return None, "%s: --shard wants I/N with 1 <= I <= N (both whole numbers), got %r" % (NAME, values[0])
 
 
-# The slowest fwx files (measured on a 16-CPU workstation: 290 s, 121 s, 75 s; the next of the five largest is 39 s) are dealt
-# first, in this order, so with 3 shards each gets one: by size alone test_walk and test_ui_walk_workflow land in the same shard. A stale name
+# The twelve slowest fwx files (measured per file in CI: test_wave_run 272 s, test_walk 175 s, test_wave_review 163 s, then nine
+# smaller ones, test_ui_walk_workflow 94 s among them) are dealt first, in this order, round-robin, four to each of the 3 shards, so every shard sums to about 470-510 s:
+# the three heaviest are in three different shards, and by size alone test_wave_run and test_ui_walk_workflow land in the same one. A stale name
 # costs minutes, never a result (tests/test_test_shard.py checks that every name is a tracked file).
-FWX_SLOW_FIRST = ("tests/test_walk.py", "tests/test_ui_walk_workflow.py", "tests/test_worktree_setup.py")
+FWX_SLOW_FIRST = (
+    "tests/test_wave_run.py", "tests/test_walk.py", "tests/test_wave_review.py",
+    "tests/test_ci_gate.py", "tests/test_ui_walk_workflow.py", "tests/test_wave_integrate.py",
+    "tests/test_wave_report.py", "tests/test_walk_selftest.py", "tests/test_migrate_gsd.py",
+    "tests/test_wave_prepare.py", "tests/test_screenshot.py", "tests/test_worktree_setup.py",
+)
 
 
 def start_order(files, root):

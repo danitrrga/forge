@@ -1491,11 +1491,16 @@ GROUPS = {"fwx": "plugins/fwx"}
 FWX_PREFIX = GROUPS["fwx"] + "/"
 
 
-# The files that take minutes (test_switch, test_run, test_new and test_messages: each 2 to 3 minutes on a loaded 16-CPU machine; every other
-# file is under about 25 s) start first when files run at once: by size alone they begin late and the run waits for them. A stale name costs
-# minutes, never a result. hooks/test_guard_tool_use.py takes about six cores by itself. The five are dealt to the shards in this order, so the
-# fifth lands with the first: test_run (4 inner workers) is second, so it shares its shard with no other slow file.
-SLOW_FIRST = ("tests/test_switch.py", "tests/test_run.py", "tests/test_messages.py", "tests/test_new.py", "hooks/test_guard_tool_use.py")
+# The twelve slowest engine files (measured per file in CI: test_run 311 s, test_publish 109 s, the rest of the twelve in between) start first
+# when files run at once: by size alone they begin late and the run waits for them. A stale name costs minutes, never a result. hooks/test_guard_tool_use.py takes
+# about six cores by itself. They are dealt round-robin to the 4 shards in this order, three to each, so every shard sums to about 470-500 s:
+# the four heaviest (test_run, test_switch, test_new, test_ask) are in four different shards, test_run (4 inner workers) with light companions,
+# and test_publish, test_configure, test_messages and the guard file each in a shard that does not hold test_run.
+SLOW_FIRST = (
+    "tests/test_run.py", "tests/test_switch.py", "tests/test_new.py", "tests/test_ask.py",
+    "tests/test_profiles.py", "tests/test_publish.py", "tests/test_messages.py", "tests/test_configure.py",
+    "tests/test_doctor.py", "tests/test_test_group.py", "hooks/test_guard_tool_use.py", "tests/test_framework_ignore_block.py",
+)
 
 
 def _size(path):
