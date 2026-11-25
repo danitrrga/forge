@@ -55,7 +55,7 @@ def toy(with_plugin=True):
 
 def run(cfg, payload):
     # HOME is the toy too: the session levels live under it (~/.local/state/forge/ponytail).
-    env = dict(os.environ, CLAUDE_CONFIG_DIR=cfg, HOME=cfg)
+    env = dict({k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, CLAUDE_CONFIG_DIR=cfg, HOME=cfg)  # no GIT_DIR of a caller's hook
     return subprocess.run([sys.executable, HOOK], input=payload, env=env, capture_output=True, text=True, timeout=30)
 
 
@@ -180,9 +180,16 @@ if stray or level(cfg, "../../escape") != "full":
 # SessionStart: a worker (a top-level session, so no SubagentStart) whose worktree's git dir holds fwx-worker.json with the
 # role reviewer or security-reviewer gets what those agents get, under hookEventName SessionStart; any other role, no marker or
 # a marker that cannot be read gets nothing.
+# A git hook that runs this suite exports GIT_DIR and GIT_WORK_TREE, and `cwd=` does not override them: with them inherited the fixture's
+# `commit --allow-empty` landed in the caller's repository (15 commits there, seen on a repo set up with GIT_DIR before this change).
+# The fixture's git sees no repository-location variable.
+def fixture_env(cwd):
+    return dict({k: v for k, v in os.environ.items() if not k.startswith("GIT_")}, HOME=cwd, GIT_CONFIG_NOSYSTEM="1")
+
+
 def git(*args, cwd):
     subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.test", *args], cwd=cwd, check=True,
-                   capture_output=True, env=dict(os.environ, HOME=cwd, GIT_CONFIG_NOSYSTEM="1"))
+                   capture_output=True, env=fixture_env(cwd))
 
 
 def worker_tree(marker, linked=True):
@@ -195,7 +202,7 @@ def worker_tree(marker, linked=True):
     if linked:
         tree = os.path.join(main, "wt")
         git("worktree", "add", "-q", "--detach", tree, cwd=main)
-    gitdir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=tree, capture_output=True, text=True, check=True).stdout.strip()
+    gitdir = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=tree, capture_output=True, text=True, check=True, env=fixture_env(tree)).stdout.strip()
     if marker is not None:
         with open(os.path.join(gitdir, "fwx-worker.json"), "w") as fh:
             fh.write(marker if isinstance(marker, str) else json.dumps(marker))
