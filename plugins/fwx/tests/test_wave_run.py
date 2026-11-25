@@ -613,6 +613,9 @@ def case_terminal_resume(root, S):
         p.wait()
         run = w.runs()[0] if w.runs() else ""
         first = (w.state(run).get("terminal") if run else None) or ""
+        end = time.time() + 20  # the fake saves its registry atomically, but the check waits for what it reads rather than reading once
+        while time.time() < end and not w.terminals().get(first, {}).get("open"):
+            time.sleep(0.05)
         S.ok("terminal resume (%s): the killed run's state names its open terminal" % name, bool(first) and w.terminals().get(first, {}).get("open") is True, "got %r %r" % (first, w.terminals()))
         if lose and first:
             with open(os.path.join(w.dir, "state.json"), encoding="utf-8") as f:

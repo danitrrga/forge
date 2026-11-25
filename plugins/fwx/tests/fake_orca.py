@@ -34,11 +34,20 @@ def load(name, default):
 
 
 def save(name, data):
-    with open(os.path.join(DIR, name), "w", encoding="utf-8") as f:
+    """Atomic: a reader (the test, or another call of the fake) sees the old file or the new one, never a half-written one."""
+    path = os.path.join(DIR, name)
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f)
+    os.replace(tmp, path)
+
+
+STATE = {}  # the state of the call in progress: `say` saves it before it prints, for every command
 
 
 def say(result=None, rc=0, error=None):
+    if STATE:
+        save("state.json", STATE)
     print(json.dumps({"ok": error is None, "result": result} if error is None else {"ok": False, "error": error}))
     sys.exit(rc)
 
@@ -143,7 +152,8 @@ def shape(d):
 
 
 def main(argv):
-    state = load("state.json", {"repos": [], "runs": 0, "n": 0, "dispatches": {}, "launches": {}})
+    state = STATE
+    state.update(load("state.json", {"repos": [], "runs": 0, "n": 0, "dispatches": {}, "launches": {}}))
     behave = load("behave.json", {})
     env = {k: (k in os.environ) for k in SESSION_VARS}
     log = {"argv": argv, "env": env, "t": time.time(), "cwd": os.getcwd()}
