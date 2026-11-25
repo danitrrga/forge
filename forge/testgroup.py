@@ -32,6 +32,10 @@ starting the one long file; a duration table would have to be written somewhere 
 child runs in its own session: SIGINT, SIGTERM or SIGHUP to the runner sends SIGTERM to every running child's whole process group (the
 test's own cleanup runs), SIGKILL to what is left after 5 s, and exits 128 + the signal, so nothing a test started outlives the run.
 SIGKILL of the runner itself cannot be caught and leaves them.
+
+A file that was killed by a signal (a negative exit code), or that exits non-zero with `rc=-9` or `-SIGKILL` in its output (a grandchild it
+started was killed), says nothing about the code: it is run once more (`killed`). Green the second time is a PASS plus a WARN line that
+names the file and says it passed on the second run; red twice is a FAIL, never a third run. An exit 1 with no such mark is never rerun.
 """
 import os
 import signal
@@ -49,6 +53,26 @@ NAME = "forge test fwx"  # what the messages say: the group is the only one ther
 MAX_DEFAULT_JOBS = 8
 GRACE_S = 5
 STOP = (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)
+
+
+KILL_MARKS = ("rc=-9", "-SIGKILL")  # what a test prints when a process it started was killed (its own exit code is then 1)
+
+
+def killed(code, output):
+    """Why a finished file may be run once more, or None: it died of a signal (code < 0), or it failed (not 0, not 77) with a KILL_MARKS
+    string in its output. A plain failure, a pass and a NOT RUN are never retried: only a death that cannot be a logic result is."""
+    if code is None:  # the runner was stopped before the file started
+        return None
+    if code < 0:
+        try:
+            return "killed by %s" % signal.Signals(-code).name
+        except ValueError:
+            return "killed by signal %d" % -code
+    if code not in (0, 77):
+        for mark in KILL_MARKS:
+            if mark in output:
+                return "its output holds %s" % mark
+    return None
 
 
 def failed_lines(failed):
@@ -154,7 +178,17 @@ class Children:
         self.stopped = False
 
     def run(self, rel, root, env):
-        """(exit code, output, seconds) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave."""
+        """(exit code, output, seconds, why) of one test file; its stdout and stderr in one string, as a single `subprocess.run` gave.
+        A file that `killed` says it was is run once more, and what that second run gave is the result; `why` is what ended the first run
+        (None when there was no second run)."""
+        code, out, secs = self._once(rel, root, env)
+        why = killed(code, out)
+        if why is None:
+            return code, out, secs, None
+        code, out, again = self._once(rel, root, env)
+        return code, out, secs + again, why
+
+    def _once(self, rel, root, env):
         with self.lock:
             if self.stopped:
                 return None, "", 0.0
@@ -262,10 +296,12 @@ def run_group(root, expect_values, jobs_values, label, shard_values, env):
     try:
         futures = {rel: pool.submit(children.run, rel, root, env) for rel in start}
         for rel in files:
-            code, output, secs = futures[rel].result()
+            code, output, secs, why = futures[rel].result()
             if code == 0:
                 passed += 1
                 print("PASS  %s  %.1fs" % (rel, secs))
+                if why:
+                    print("WARN  %s: passed on the second run (the first: %s)" % (rel, why))
             elif code == 77 and rel in expect:
                 expected += 1
                 print("%s: %s: %s" % (EXPECTED, rel, reason(output)))
@@ -274,7 +310,9 @@ def run_group(root, expect_values, jobs_values, label, shard_values, env):
                 print("%s: %s: %s" % (NOT_RUN, rel, reason(output)))
             else:
                 failed += 1
-                print("FAIL  %s (exit %d)" % (rel, code))
+                print("FAIL  %s (exit %s)" % (rel, code))
+                if why:
+                    print("    (run twice: the first run was %s, the second failed too)" % why)
                 for line in output.splitlines():
                     print("    " + line)
                 failures.append((rel, output))
