@@ -72,6 +72,7 @@ DECIDED = [
     ("scratch new", "wave scratch", "wave", ["scratch"]), ("wave merge", "wave integrate", "wave", ["integrate"]),
     ("wave report", None, "wave", ["report"]), ("wave review", None, "wave", ["review"]), ("wave findings", None, "wave", ["findings"]), ("wave fix", "wave fix-round", "wave", ["fix-round"]), ("wave revert", None, "wave", ["revert"]),
     ("wave remove", "wave cleanup", "wave", ["cleanup"]), ("wave", "wave summary", "wave", ["summary"]),
+    ("wave run", None, "wave", ["run"]), ("wave list", None, "wave", ["list"]),
     ("walk start", "walk up", "walk", ["up"]), ("walk stop", "walk down", "walk", ["down"]),
     ("walk stop --orphans", "walk sweep", "walk", ["sweep"]), ("walk ab", None, "walk", ["ab"]), ("walk pw", None, "walk", ["pw"]),
     ("control new", "walk arm-control", "walk", ["arm-control"]), ("control judge", None, "walk", ["control-judge"]), ("walk converge", "walk findings", "walk", ["findings"]),
@@ -227,7 +228,7 @@ def scenario(work):
     r = run(work, "wave", "--help")
     verbs = {re.split(r"\s{2,}", line.strip()[4:], maxsplit=1)[0] for line in r.stdout.splitlines() if line.startswith("  fwx ")}
     check("`fwx wave --help` lists the verbs of wave and no other object",
-          verbs, {"wave", "wave new", "wave merge", "wave fix", "wave revert", "wave remove", "wave setup", "wave report", "wave review", "wave findings"})
+          verbs, {"wave", "wave new", "wave merge", "wave fix", "wave revert", "wave remove", "wave setup", "wave report", "wave review", "wave findings", "wave run", "wave list"})
     return out
 
 
