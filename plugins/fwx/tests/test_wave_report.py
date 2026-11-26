@@ -81,10 +81,10 @@ class World:
         self.S = wp.Scene(tasks=tasks if tasks is not None else TASKS, config={"project": project})
         self.dirs = {}
 
-    def agent(self, unit, changes=None):
-        """A worktree on `worktree-agent-<unit>` from `phase`, one commit for `changes` ({path: text, or None to delete}); its branch."""
+    def agent(self, unit, changes=None, at=None):
+        """A worktree (at `at`, else a folder of its own) on `worktree-agent-<unit>` from `phase`, one commit for `changes` ({path: text, or None to delete}); its branch."""
         branch = "worktree-agent-" + unit
-        wt = os.path.join(helpers.mkdtemp("fwx-agent-"), unit)
+        wt = at or os.path.join(helpers.mkdtemp("fwx-agent-"), unit)
         helpers.git(self.S.repo, "worktree", "add", "-q", "-b", branch, wt, "phase")
         self.dirs[unit] = os.path.realpath(wt)
         for rel, text in (changes or {}).items():
@@ -117,6 +117,10 @@ class World:
         """Write the unit's report and judge it: (result, what it printed)."""
         self.write(unit, status, run, **fields)
         return self.say(R, unit, self.line(unit, status, run), plane, run)
+
+    def state(self, run, unit, k=1):
+        """The run's state.json with the worker of `unit` (what `wave run` keeps: the worktree the worker was started in)."""
+        helpers.write(os.path.join(self.S.repo, ".git", "fwx", "runs", run), "state.json", json.dumps({"workers": {"%s/%d" % (unit, k): {"unit": unit, "worktree": self.dir(unit)}}}))
 
     def files(self, run=RUN):
         d = os.path.join(self.S.repo, ".git", "fwx", "runs", run)
@@ -235,6 +239,33 @@ def case_misses(R, S):
     br = W.agent("T4")
     steps = [W.say(R, "T4", "nothing", run=run)[1].get("next"), W.judge(R, "T4", run=run, branch=br)[1].get("next")]
     S.eq("a miss, then a good report: relaunch, merge", steps, ["relaunch", "merge"])
+
+
+# ---------------------------------------------------------------------------------------------------- a relative path
+
+def case_relative(R, S):
+    """live-e2e.md defect 1: a worker wrote its report path relative to the repository (`.claude/worktrees/<run>-T1/.fwx-agent/...`), `open` read it
+    against the driver's cwd, the report was missing, the finished task relaunched and its worktree left. A relative path is read where the run
+    state says the worker's worktree is (it must end with the path's folder part), and a path that points anywhere else is still a miss.
+    Seen red before the fix: FAIL: a report path relative to the repository (a worktree path from the repository) is read -> next relaunch: want next 'merge', got 'relaunch'
+    ({"next": "relaunch", ..., "why": "the report is missing or is not one"}); the same for a path from the worktree itself and one with ./ in front."""
+    W = World()
+    wt = os.path.join(W.S.repo, ".claude", "worktrees", "r-rel-T1")
+    br = W.agent("T1", {"src/a.py": "a2\n"}, at=wt)
+    for i, (label, want) in enumerate((("a worktree path from the repository", "merge"), ("a path from the worktree itself", "merge"),
+                                       ("a path from the repository with ./ in front", "merge"), ("a worktree of another worker", "relaunch"),
+                                       ("a folder part that climbs", "relaunch"), ("a folder part that only ends the same way", "relaunch"))):
+        run = "r-rel%d" % i  # a run of its own: a second miss of one run is a stop
+        W.write("T1", run=run, branch=br)
+        W.state(run, "T1")
+        tail = ".fwx-agent/%s/T1/report.json" % run
+        line = {0: ".claude/worktrees/r-rel-T1/" + tail, 1: tail, 2: "./.claude/worktrees/r-rel-T1/" + tail, 3: ".claude/worktrees/r-rel-T2/" + tail,
+                4: ".claude/../.claude/worktrees/r-rel-T1/" + tail, 5: "x" + "r-rel-T1/" + tail}[i]
+        r, v = W.say(R, "T1", "done %s commits=2" % line, run=run)
+        nxt(S, "a report path relative to the repository (%s) is read" % label, v, want)
+    W.write("T1", run="r-nostate", branch=br)
+    r, v = W.say(R, "T1", "done .fwx-agent/r-nostate/T1/report.json commits=2", run="r-nostate")
+    nxt(S, "a relative path of a run with no state is a miss", v, "relaunch")
 
 
 # ---------------------------------------------------------------------------------------------------- outside
@@ -445,7 +476,7 @@ def case_usage(R, S):
     S.eq("outside a repository: exit 2", r.returncode, 2)
 
 
-CASES = [case_good, case_misses, case_outside, case_branching, case_setup, case_scope, case_usage]
+CASES = [case_good, case_misses, case_relative, case_outside, case_branching, case_setup, case_scope, case_usage]
 R_ = "lib/fwx/execute/report.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
