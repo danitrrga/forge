@@ -191,7 +191,7 @@ def do_run(argv):
             if not _RUN_NAME.match(got["--resume"]) or run_mod.load_state(top, got["--resume"]) is None:
                 raise base.WaveError("--resume %s: no such run (`fwx wave list`)" % got["--resume"])
             saved = run_mod.load_state(top, got["--resume"])
-            if saved["state"] != "active":
+            if saved["state"] != "active" and not (saved.get("result") or {}).get("interrupted"):  # a run a signal cut ended failed, and is the one failed run to resume
                 raise base.WaveError("run %s ended %s: there is nothing to resume" % (saved["run"], saved["state"]))
             if orch and (saved["args"].get("plane") == "factory" or saved["args"].get("unattended")):
                 raise base.WaveError("--orchestrator: run %s is a factory or unattended run, which has nobody to steer it" % saved["run"])

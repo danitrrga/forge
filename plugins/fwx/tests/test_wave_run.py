@@ -1075,7 +1075,7 @@ def case_signals(root, S):
       FAIL: SIGTERM: its made terminal is closed: got terminals {'term_1': {... 'open': True}}
       FAIL: SIGTERM: the resume started the cut task again and then the reviewer: got ['T1', 'r1'], want ['T1', 'T1', 'r1']
     SIGHUP the same (exit -1); SIGINT: exit -2 with a KeyboardInterrupt traceback and the state still `active` (its workers and terminal were released by `finish`).
-    Controls (MUTANTS): the handler not installed, and the cut worker not marked, each red on this case."""
+    Controls (MUTANTS): the handler not installed, the cut worker not marked, and the resume check not knowing an interrupted run, each red on this case."""
     for name in ("SIGTERM", "SIGHUP", "SIGINT"):
         w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
         p = start_run(w, root, FWX_RUN_LIMIT_S="60")
@@ -1539,6 +1539,12 @@ MUTANTS = [
     ("--json is not read", case_list_json, "lib/fwx/commands/wave.py", 'if argv and argv != ["--json"]:', "if argv:", "list --json: exit 0 and one JSON document"),
     ("the events are not capped", case_list_json, "lib/fwx/execute/run.py", "EVENTS = 8", "EVENTS = 10 ** 6", "list --json: the events are the last 8 progress lines"),
     ("a resume keeps the Orca run of a lost terminal", case_fenced, "lib/fwx/execute/run.py", 'self.st["orca_run"] = None', "pass", "fenced (plain): the resume goes on to done"),
+    ("no handler for SIGTERM, SIGHUP and SIGINT", case_signals, "lib/fwx/execute/run.py", "    caught = catch_signals()\n", "    caught = {}\n",
+     "SIGTERM: the run says failed and names the signal"),
+    ("a worker a signal cut is not marked, so the resume polls its released dispatch", case_signals, "lib/fwx/execute/run.py", 'rec["interrupted"] = True', "pass",
+     "SIGTERM: the resume started the cut task again and then the reviewer"),
+    ("a run a signal cut is not resumable", case_signals, "lib/fwx/commands/wave.py",
+     'if saved["state"] != "active" and not (saved.get("result") or {}).get("interrupted"):', 'if saved["state"] != "active":', "SIGTERM: --resume takes the run up"),
 ]
 
 

@@ -42,6 +42,10 @@ every worktree it made that holds no unmerged or uncommitted work and whose work
 rest in `kept` with the reason. It ends with one line, `run <R> <done|failed|needs-owner>: <why>`; the details are
 `fwx wave --run R --json`.
 
+A SIGTERM, SIGHUP (the owner closed the terminal the run borrows) or SIGINT to the driver goes the way an exception does: the workers are stopped and released, the terminal it made is
+closed, and the run ends `failed` with `interrupted by <signal>` as its why and `result.interrupted` set. That is the one failed run `--resume` takes: the workers the
+signal cut are marked `interrupted`, and the resume starts their tasks again (a new worktree each) instead of polling a released dispatch.
+
 Progress: the run prints one plain line per step to stdout as it happens, flushed (`progress`: the base check, each worker started, done or failed, each wave merged,
 the gate and its CI wait as `gate: ...` lines, the review and its findings), and the result line last; no redraws. `Run.note` also keeps the last EVENTS of these lines in
 `state.json["events"]`, and `listing_json` (`fwx wave list --json`) gives them with the planned waves and the workers to the Orca panel and chip. Its sender terminal is the one it runs in when Orca
@@ -54,6 +58,7 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import threading
@@ -96,12 +101,50 @@ class Fenced(Exception):
     (its state stays `active`, its workers are left), and `--resume` makes a new terminal and a new Orca run."""
 
 
+class Interrupted(BaseException):
+    """SIGTERM, SIGHUP (the owner closed the terminal the run borrows) or SIGINT reached the driver. A BaseException, like KeyboardInterrupt, so that no `except
+    Exception` on the way swallows it; `drive` ends the run through its cleanup and records it failed and resumable."""
+
+    def __init__(self, name):
+        super().__init__(name)
+        self.name = name
+
+
 class Stop(Exception):
     """The run ends here: `status` is done, failed or needs-owner."""
 
     def __init__(self, status, reason):
         super().__init__(reason)
         self.status, self.reason = status, reason
+
+
+SIGNALS = ("SIGTERM", "SIGHUP", "SIGINT")
+
+
+def catch_signals():
+    """Turn each of SIGNALS into `Interrupted` in the driver (the main thread only), except one the caller ignores on purpose (`nohup`). The first signal also
+    ignores them all, so that the cleanup it starts is not cut by a second one. {signal name: the handler it had}, for `hold_signals` and `restore_signals`."""
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+    caught = {n: signal.getsignal(getattr(signal, n)) for n in SIGNALS}
+    caught = {n: old for n, old in caught.items() if old != signal.SIG_IGN}
+
+    def raise_it(num, _frame):
+        hold_signals(caught)
+        raise Interrupted(signal.Signals(num).name)
+    for n in caught:
+        signal.signal(getattr(signal, n), raise_it)
+    return caught
+
+
+def hold_signals(caught):
+    for n in caught:
+        signal.signal(getattr(signal, n), signal.SIG_IGN)
+
+
+def restore_signals(caught):
+    for n, old in caught.items():
+        signal.signal(getattr(signal, n), old)
 
 
 def alive(pid):
@@ -324,8 +367,12 @@ class Run:
                 progress("%s %s" % (echo, row.split(": ", 1)[-1].strip() if row.startswith("fwx ") else row.strip()))
         t = threading.Thread(target=pump, daemon=True)
         t.start()
-        text = p.stdout.read()
-        p.wait()
+        try:
+            text = p.stdout.read()
+            p.wait()
+        except BaseException:  # a signal to the driver: the call is not left running (`subprocess.run` does the same)
+            p.kill()
+            raise
         t.join()
         return subprocess.CompletedProcess(argv, p.returncode, text, "".join(err))
 
@@ -430,6 +477,10 @@ class Run:
         k = self.counts[job.unit] = self.counts.get(job.unit, 0) + 1
         key = "%s/%d" % (job.unit, k)
         rec = self.st["workers"].get(key)
+        while rec and rec.get("interrupted"):  # the attempt a signal cut: its worker is released and its worktree may hold work, so this launch is the next attempt
+            k = self.counts[job.unit] = k + 1
+            key = "%s/%d" % (job.unit, k)
+            rec = self.st["workers"].get(key)
         if rec:
             return rec
         self._check_sender()
@@ -808,15 +859,22 @@ def drive(args, top, flags, state=None):
     folder = os.path.join(runs_folder(top), args["run"])
     os.makedirs(folder, exist_ok=True)
     st = state or spawn_state(args, top, args["branch"], flags)
-    st["pid"], st["state"] = os.getpid(), "active"
+    st["pid"], st["state"], st["result"] = os.getpid(), "active", None
     r = Run(args, top, flags, st, folder)
     r.save()
     r.note("run %s %s: %s, branch %s, %d wave%s" % (args["run"], "resumed" if state else "started", os.path.basename(args["part_dir"]), args["branch"],
                                                       len(args["waves"]), "" if len(args["waves"]) == 1 else "s"))
-    status, why, fenced = "failed", "", False
+    status, why, fenced, signalled = "failed", "", False, None
+    caught = catch_signals()
     try:
         why = r.execute()
         status = "done"
+    except Interrupted as e:  # the workers it cut are released by `finish`, and the resume starts their tasks again
+        status, signalled = "failed", e.name
+        why = "interrupted by %s: resume with `fwx wave run --resume %s`" % (e.name, args["run"])
+        for rec in st["workers"].values():
+            if rec["line"] is None:
+                rec["interrupted"] = True
     except Fenced as e:
         status, why, fenced = "needs-owner", str(e), True
     except Stop as e:
@@ -828,12 +886,16 @@ def drive(args, top, flags, state=None):
     except Exception as e:  # nothing may end the run without its cleanup and its line
         status, why = "failed", "script error: %s: %s" % (type(e).__name__, e)
     finally:
+        hold_signals(caught)
         kept = finish(r, st, folder, status, why) if not fenced else {"kept": [], "removed": []}
+        restore_signals(caught)
     if fenced:  # nothing is released or removed and the state stays active: the resume carries on from it
         r.save()
         return "needs-owner", "run %s needs-owner: %s" % (args["run"], why), []
     st["state"] = status if status in STATES else "failed"
     st["result"] = {"status": st["state"], "why": why, "kept": kept["kept"], "removed": kept["removed"], "leftover": kept.get("leftover", [])}
+    if signalled:
+        st["result"]["interrupted"] = signalled
     r.save()
     why = " ".join(str(why).split())
     n = len(kept["kept"])
