@@ -469,6 +469,26 @@ def main():
     asking = [n for n, t in (("SKILL.md rule 6", rule6_of(skill)), ("SKILL.md step 4", step(skill, 4)), ("SKILL.md step 8", s8),
                              ("references/ui-review.md", review), ("references/factory-return.md", scanned["references/factory-return.md"])) if "Recommended:" not in t]
     check("every question to the owner carries a `Recommended:` line", not asking, "no `Recommended:` in %s" % asking)
+    # 01.2 T23 (D2, D7): a phase holds a handful of rows (rule 6), and closing.md's step 3 carries the three tests of an ADR word for word from
+    # domain-modeling, with its copied-from header. Seen red at c538909 (the texts before this task):
+    #   FAIL: SKILL.md rule 6 says a phase holds a handful of rows -> rule 6 has no 'handful of rows'
+    #   FAIL: closing.md step 3 quotes the three ADR tests word for word, under a copied-from header -> missing ['**Hard to reverse**: the ...', ..., 'the copied-from header']
+    check("SKILL.md rule 6 says a phase holds a handful of rows", "handful of rows" in rule6_of(skill), "rule 6 has no 'handful of rows'")
+    check("control: a rule 6 without the line is caught", "handful of rows" not in rule6_of("6. **Questions.** Ask the owner only what needs his taste.\n## Steps"))
+    ADR_TESTS = ("**Hard to reverse**: the cost of changing your mind later is meaningful",
+                 "**Surprising without context**: a future reader will wonder \"why did they do it this way?\"",
+                 "**The result of a real trade-off**: there were genuine alternatives and you picked one for specific reasons")
+
+    def adr_problems(text):
+        step3 = next((ln for ln in text.splitlines() if re.match(r"3\. \*\*Record\.\*\*", ln)), "")
+        head = "\n".join(text.splitlines()[:6])
+        return ["%s ..." % t[:24] for t in ADR_TESTS if t not in step3] + ([] if re.search(
+            r"copied-from: mattpocock/skills skills/engineering/domain-modeling/SKILL\.md @49dd158", head) else ["the copied-from header"])
+    check("closing.md step 3 quotes the three ADR tests word for word, under a copied-from header", not adr_problems(closing), "missing %s" % adr_problems(closing))
+    good_adr = "<!-- copied-from: mattpocock/skills skills/engineering/domain-modeling/SKILL.md @49dd158 -->\n3. **Record.** " + "; ".join(ADR_TESTS) + "\n"
+    check("control: the good closing toy passes", adr_problems(good_adr) == [], "got %s" % adr_problems(good_adr))
+    check("control: a paraphrased test is caught", len(adr_problems(good_adr.replace("meaningful", "high"))) == 1)
+    check("control: a closing with no copied-from header is caught", adr_problems(good_adr.replace("copied-from:", "referent:")) == ["the copied-from header"])
     check("control: a decisions-agent line is caught", re.search(r"`(fwx:)?decisions`|decisions agent", "record it by the `decisions` agent") is not None)
     check("control: `decisions.tsv` is not a decisions-agent line", re.search(r"`(fwx:)?decisions`|decisions agent", "read `decisions.tsv`") is None)
     check("control: 'no recommendation unasked' is caught", re.search(r"no recommendation|unasked", "it carries no recommendation unasked", re.I) is not None)
