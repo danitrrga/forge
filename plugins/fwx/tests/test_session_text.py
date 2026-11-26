@@ -276,6 +276,16 @@ def main():
     check("closing.md writes the pull request body from the same template and the closing stage row with the PR link", not closing_body(closing), "missing %s" % closing_body(closing))
     check("control: a closing whose body has its own four sections is caught", bool(closing_body("`gh pr edit` with ## Why, ## What changed; `fwx stage <phase folder> closed`")))
 
+    # 01.3 r1-F1: evidence rows are written to the part folder (execute/run.py runs `verify --dir self.part`), so a phase with subphases has none in its
+    # own audit.tsv. The closing body must read them per part, fall back to the phase folder only when the plan has no subphases, and say a part
+    # with no row rather than guess. Seen red at eccd269 (closing.md read "the last `evidence` row of the phase's `audit.tsv`"):
+    #   FAIL: closing.md reads the evidence rows per part and says a part with none -> missing ["`evidence` row of each part's `audit.tsv`", "the phase folder's", 'no subphases', 'no evidence row']
+    def closing_evidence(text):
+        return [w for w in ("`evidence` row of each part's `audit.tsv`", "the phase folder's", "no subphases", "no evidence row") if w not in text]
+    check("closing.md reads the evidence rows per part and says a part with none", not closing_evidence(closing), "missing %s" % closing_evidence(closing))
+    check("control: a closing that reads only the phase's audit.tsv is caught",
+          bool(closing_evidence("the last `evidence` row of the phase's `audit.tsv` (the commit, the command and its exit code)")))
+
     # 09.4 D13: the budget nag is gone, so no session text tells an agent to run `fwx budget` or to read its fields, and no check reads the
     # deleted lib/fwx/commands/budget.py. Seen red before the texts changed (rule 7, step 2 and step 5 still named it):
     #   FAIL: no session text names `fwx budget` or its fields -> SKILL.md: ['fwx budget', 'used_percentage', 'week_tight']
