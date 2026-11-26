@@ -966,6 +966,8 @@ MUTANTS = [
      "red evidence: gate"),
     ("summary ignores the sha of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if rc == "0" and not why else "fail"',
      "evidence of another sha: gate"),
+    ("summary compares with the cwd's HEAD", case_summary, I, '% branch) if branch else None)', '% branch) if False else None)',
+     "summary, from the main checkout: gate"),
     ("summary takes any run's gate", case_summary, I, "why = _own_gate(run, steps) if run else None", "why = None", "an earlier run that never ran the gate"),
     ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),

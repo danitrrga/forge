@@ -440,7 +440,7 @@ def _own_gate(run, steps):
     return None
 
 
-def _kept(top, steps):
+def _kept(top, steps, head="HEAD"):
     """What the part report reads from the run's recorded calls, {findings, criteria, outside, tried, gaps, protected}.
     Only what a call that stands leaves counts: the unfiled `outside` items of a report that was merged (not a retry's), a pass `wave findings`
     ended (`fix`, `owner` or `done`: the `verify` call before it carries the same items), a round that was spent, and the findings of a
@@ -476,20 +476,20 @@ def _kept(top, steps):
                 protected = list(res.get("protected") or [])
     commit = {}
     if merged:
-        for sha, ids in _commits(top, "HEAD"):
+        for sha, ids in _commits(top, head):
             for i in ids:
                 commit.setdefault(i, sha)
     found["fixed"] = [{"id": i, "commit": commit.get(i), "severity": severity.get(i)} for i in merged]
     return {"findings": found, "criteria": list(criteria.values()), "outside": outside, "tried": tried, "gaps": gaps, "protected": protected}
 
 
-def summary(cwd, part_dir, run=None, steps=()):
+def summary(cwd, part_dir, run=None, steps=(), branch=None):
     """(exit code, result): {gate, head, evidence_line, rounds, why} and what `_kept` reads from the run's calls. `pass` when the last evidence row of the part is green and is
-    HEAD's, and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
+    the head of `branch` (the run's own, so every checkout of the repo gives the same answer; the cwd's HEAD when the run records none), and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
     commit's, or the run did not pass its gate (exit 1, `why` says it); `none` with no evidence row or no part (exit 2)."""
     top = _top(cwd)
-    head = verify.head(top)
-    kept = _kept(top, steps)
+    head = (out(top, "rev-parse", "--verify", "-q", "refs/heads/%s^{commit}" % branch) if branch else None) or verify.head(top)
+    kept = _kept(top, steps, head)
     if not part_dir:
         return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}, **kept)
     rows = state.read_rows(state.phase_paths(part_dir)["audit"])
