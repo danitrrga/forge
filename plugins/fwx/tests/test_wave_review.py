@@ -708,7 +708,26 @@ def case_routes(R, S):
     S.ok("the reviewer's brief says `.fwx/` files are not reviewable", "not reviewable" in text, text[-500:])
 
 
-CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry, case_recorded, case_routes]
+def case_goal_and_ui(R, S):
+    """The reviewer's brief gives the phase goal (the Intent of context.md) and, for a part with a UI task, the paths under `Approved UI`;
+    a part with no UI task gets no such section (context.md criterion 2).
+
+    Seen red before the code: FAIL: a UI part: the reviewer's brief gives the phase goal / the approved prototypes (the brief held the
+    context.md path and the plan's criteria only)."""
+    ctx = "# context\n\n## Intent\nShip the one-home rule for the working documents.\n\n## What success means\n1. one home\n\n## Approved UI\ndemo/figure-b.html\n\n## Research\nNone.\n"
+    for label, tasks, ui in (("a UI part", TASKS + [wp.task("T3", 3, ["web/page.html"], ui=True)], True), ("a part with no UI task", TASKS, False)):
+        W = World(tasks=tasks)
+        helpers.write(W.S.phase, "context.md", ctx)
+        r, v = W.review(R)
+        text = read(v["reviewers"][0]["brief"]) if v.get("reviewers") else ""
+        S.ok("%s: the reviewer's brief gives the phase goal" % label, "Ship the one-home rule for the working documents." in text, text[:600])
+        S.ok("%s: the reviewer's brief %s the approved prototypes" % (label, "gives" if ui else "has no section of"),
+             ("demo/figure-b.html" in text and os.path.join(W.S.phase) in text) == ui and ("## APPROVED UI" in text) == ui, text[:900])
+        sec = read(W.review(R, "--security")[1]["reviewers"][1]["brief"])
+        S.ok("%s: the security reviewer's brief has neither" % label, "Ship the one-home rule" not in sec and "APPROVED UI" not in sec, sec[:400])
+
+
+CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry, case_recorded, case_routes, case_goal_and_ui]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
@@ -780,6 +799,10 @@ MUTANTS = [
      "nothing to fix but a protected path: the owner"),
     ("a large outside item is filed when dismissed", case_verdicts, V_, 'if _large(outside_of, ident) and verdict == "fix" and not forced:', "if _large(outside_of, ident) and not forced:",
      "a dismissed large outside item is not filed"),
+    ("the prototypes go to a part with no UI task", case_goal_and_ui, V_, 'if any(x["ui"] for x in data["tasks"]) else None', "if True else None",
+     "a part with no UI task: the reviewer's brief has no section of the approved prototypes"),
+    ("the reviewer gets no goal", case_goal_and_ui, V_, 'plan.section(owner["context"], "Intent")', "None",
+     "the reviewer's brief gives the phase goal"),
     ("one of --report and --verdicts is not needed", case_usage, W_, '(("--report" in parsed[0]) == ("--verdicts" in parsed[0]))', '(("--report" in parsed[0]) and ("--verdicts" in parsed[0]))',
      "usage (neither --report nor --verdicts)"),
 ]
