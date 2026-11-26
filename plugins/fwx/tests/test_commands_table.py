@@ -58,7 +58,6 @@ DECIDED = [
     ("phase list", "state list", "state", ["list"]), ("phase new", "state new-phase", "state", ["new-phase"]),
     ("subphase new", "state new-subphase", "state", ["new-subphase"]), ("milestone new", "state new-milestone", "state", ["new-milestone"]),
     ("phase remove", "state cancel", "state", ["cancel"]), ("decision new", "state decision", "state", ["decision"]),
-    ("decision list", "state decisions", "state", ["decisions"]),
     ("state lint", "state check state", "state", ["check-state"]), ("report lint", "state check report", "state", ["check-report"]),
     ("plan lint", "plan check", "plan", ["check"]), ("plan brief", None, "plan", ["brief"]), ("plan status", None, "plan", ["status"]),
     ("discuss", "discuss start", "discuss", ["start"]),
@@ -85,7 +84,6 @@ DECIDED = [
 DEFAULTS = [
     (["wave", "--run", "R"], "wave", ["summary", "--run", "R"]),
     (["session", "--json"], "state", ["resolve", "--json"]),
-    (["decision", "--all"], "state", ["decisions", "--all"]),
     (["linear", "--label", "L"], "linear", ["list", "--label", "L"]),
     (["linear", "--project", "P", "list", "--waiting"], "linear", ["waiting", "--project", "P"]),
     (["linear", "--project", "P", "new"], "linear", ["create", "--project", "P"]),
@@ -207,7 +205,13 @@ def scenario(work):
                        # modules existed (the rows were there, `context-base` an OLD_OBJECTS entry):
                        #   FAIL: fwx context new .: exit 2 and 'unknown command: context': got (0, False, 'STUB context_base ["build", "."]\n')
                        (("context", "new", "."), "unknown command: context"), (("context", "lint", "."), "unknown command: context"),
-                       (("context-base", "build"), "unknown command: context-base")):
+                       (("context-base", "build"), "unknown command: context-base"),
+                       # `fwx decision list` is gone (the rows are read from decisions.tsv, or through `state.decisions_in_force`): no row, no
+                       # default verb for `decision`, and the old `state decisions` name is not redirected to a command that is gone. Red
+                       # at c538909 (the row and the default were there; the stub handler answered):
+                       #   FAIL: fwx decision list: exit 2 and 'unknown verb: list': got (0, False, 'STUB state ["decisions"]\n')
+                       (("decision", "list"), "unknown verb: list"), (("decision",), "needs a verb"), (("decision", "--all"), "unknown verb: --all"),
+                       (("state", "decisions"), "unknown verb: decisions")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing
