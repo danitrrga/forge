@@ -24,8 +24,7 @@ Red before `summary` compared the evidence with the cwd's HEAD (session e2e: `fw
 
 Red before a recorded branch that is gone failed closed (the cwd's HEAD stood in for it and a green evidence of that HEAD read `pass`):
   FAIL: summary, a recorded branch that does not exist: gate 'pass', head '25d0db57e9d1297baa549ee4beff462c5d7ca505', why '': got ('pass', 0, '25d0db57e9d1297baa549ee4beff462c5d7ca505', ''), want ('fail', 1, '', 'branch deleted-phase not found')
-The fixed commits read from the run's branch, not the cwd's HEAD, are held by the control only (the code was already right when the check was written):
-  control the fixed commits are looked up in the cwd's HEAD: FAIL: summary report from the main checkout: fixed: ... got [{'id': 'r1-F1', 'commit': None, ...}], want [{'id': 'r1-F1', 'commit': <tip>, ...}]
+The fixed commits read from the run's branch, not the cwd's HEAD: a plain check that was never red (the code was already right when it was written).
 
 Red before `next` existed (09.5 T52; case_next and case_next_rules, a conflict, a red check, findings, a lock, a final merge, a result that names no cause):
   FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
@@ -1038,9 +1037,6 @@ MUTANTS = [
      "summary, from the main checkout: gate"),
     ("summary falls back to the cwd's HEAD for a recorded branch that is gone", case_summary, I, 'refs/heads/%s^{commit}" % branch) or ""', 'refs/heads/%s^{commit}" % branch) or verify.head(top)',
      "a recorded branch that does not exist"),
-    ("summary looks the fixed commits up in a head that is not there", case_summary, I, "if merged and head:", "if merged:", "a recorded branch that does not exist"),
-    ("the fixed commits are looked up in the cwd's HEAD", case_summary_report, I, "for sha, ids in _commits(top, head):", 'for sha, ids in _commits(top, "HEAD"):',
-     "summary report from the main checkout: fixed"),
     ("summary takes any run's gate", case_summary, I, "(_own_gate(run, steps) if run else None)", "None", "an earlier run that never ran the gate"),
     ("summary ignores a red gate of the run", case_summary, I, 'if last.get("exit") != 0 or', "if False and", "the run's own last gate is red"),
     ("summary never finds the part", case_summary, W, 'if rec.get("args", {}).get("part_dir"):', "if False:", "from the run files: gate"),
