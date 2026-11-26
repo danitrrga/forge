@@ -35,14 +35,10 @@ ROWS = [
     ("decision list", "state decisions", "state", ["decisions"], "the rows of a decisions.tsv in force (or --all), or those a topic touches (--grep)"),
     ("state lint", "state check state", "state", ["check-state"], "lint a state.md: an error for a rule, a WARN line for a length"),
     ("report lint", "state check report", "state", ["check-report"], "lint a phase report: an error for a rule, a WARN line for a length"),
-    # the plan and the base context
+    # the plan
     ("plan lint", "plan check", "plan", ["check"], "lint the plan files of a phase: <dir> [--json]"),
     ("plan brief", None, "plan", ["brief"], "the brief the agent of a step runs: <dir> <premortem|plan|postmortem> [--unattended] [--diff BASE..BRANCH] [--head]"),
     ("plan status", None, "plan", ["status"], "the status line of a step once it has run: <dir> <premortem|plan|postmortem> [--unattended]"),
-    ("context new", "context-base build", "context_base", ["build"], "write the base-context file of a phase, subphase or job folder: <dir> [--map F]"),
-    ("context seal", "context-base seal", "context_base", ["seal"], "put the mark on a base file written by hand: <file> [--source F]"),
-    ("context lint", "context-base check", "context_base", ["check"], "lint the base context of a phase: <dir> | --file F | --project P"),
-    ("context audit", "context-base audit", "context_base", ["audit"], "which agent of a session did not get the base its type should get"),
     # Linear
     ("linear list", None, "linear", ["list"], "the issues of the project with a label: [--project NAME] --label L [--json]"),
     ("linear list --waiting", "linear waiting", "linear", ["waiting"], "the issues waiting for the owner, and how many: [--json]"),
@@ -82,8 +78,6 @@ ROWS = [
     ("review read", "walk review-answers", "walk", ["review-answers"], "the owner's answers from the review page"),
 ]
 
-# An old name of a whole object that no longer exists (any verb of it): the object that replaced it.
-OLD_OBJECTS = {"context-base": "context"}
 # An old name that two new ones replaced, or that is now a command of another tool: the text after "now", whole.
 OLD_EXTRA = {("state", "check"): "'fwx state lint' or 'fwx report lint'",
              ("test",): "'forge test fwx'"}
@@ -91,7 +85,7 @@ OLD_EXTRA = {("state", "check"): "'fwx state lint' or 'fwx report lint'",
 LEADING = {"linear": ("--project",)}
 # The verb that `fwx OBJECT` alone runs, for an object whose default is one of its verbs (an object with a row of its own, such as
 # `wave` or `session`, is that row's default).
-DEFAULTS = {"decision": "list", "context": "lint", "linear": "list"}
+DEFAULTS = {"decision": "list", "linear": "list"}
 # The one module whose handlers print their own argparse help for `-h` and `--help` after a verb: `route` leaves them that. For every
 # other module the router answers with the object's table, so no handler runs (and none needs a key, a project or a configuration).
 OWN_HELP = "state"
@@ -130,8 +124,6 @@ def refusal(argv):
         key = tuple(argv[:n])
         if len(key) == n and key in OLD_EXTRA:
             return "fwx %s: now %s" % (" ".join(key), OLD_EXTRA[key])
-    if argv and argv[0] in OLD_OBJECTS:
-        return "fwx %s: now 'fwx %s'" % (argv[0], OLD_OBJECTS[argv[0]])
     return None
 
 

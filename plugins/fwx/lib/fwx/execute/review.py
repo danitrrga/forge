@@ -112,9 +112,12 @@ def review(cwd, part_dir, run, frm, to, security, steps):
     why = (["--security"] if security else []) + asked + (["the last final merge named a protected path"] if protected else [])
     sec = bool(why)
     agents = [("reviewer", tag, "review-%s" % tag)] + ([("security-reviewer", tag + "-sec", "review-%s-sec" % tag)] if sec else [])
+    goal = plan.section(owner["context"], "Intent")
+    prototypes = plan.section(owner["context"], "Approved UI") if any(x["ui"] for x in data["tasks"]) else None
     made = []
     for kind, unit, name in agents:
-        facts = brief.review_facts(kind, tag, unit, frm, to, ctx, criteria=data["criteria"] if kind == "reviewer" else (), protected=protected, only=only)
+        facts = brief.review_facts(kind, tag, unit, frm, to, ctx, criteria=data["criteria"] if kind == "reviewer" else (), protected=protected, only=only,
+                                   goal=goal if kind == "reviewer" else None, prototypes=prototypes if kind == "reviewer" else None)
         made.append({"role": kind, "unit": unit, "brief": _write(brief.review_path(ctx["folder"], name), facts, brief.render_review(facts))})
     return 0, {"next": "launch", "why": "launch each reviewer with its brief, then `fwx wave findings --run %s --report \"<last line of each reply>\"...`" % run,
                "pass": tag, "from": frm, "to": to, "reviewers": made, "security": " and ".join(why) or "not asked for", "protected": protected}

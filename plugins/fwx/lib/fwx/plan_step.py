@@ -8,8 +8,7 @@ audit file (`critique_round`), not from lib/fwx/core/rounds.py, which counts imp
 
 `dir` is a phase folder in any checkout; every path in a brief and in a status is that folder's place in the main checkout
 (`state.plan_root`), so a launch from a worktree names the files the agents write to. The paths a brief lists for every agent
-of the phase (`_common`) are kept apart from the ones of the step (`_step_files`): the base-context file later takes over the
-first group.
+of the phase (`_common`) are kept apart from the ones of the step (`_step_files`).
 
 Missing what a step needs raises Missing (the command's exit 1); what cannot be read at all (not a folder, no usable
 configuration) raises CannotRun (exit 2). Imports the standard library, config, state and plan.

@@ -13,8 +13,8 @@ so, a fixer for what is to be fixed, `wave merge --final --findings`, and the ne
 Every agent is an Orca worker (execute/orca.py: the one module that talks to Orca) of one Orca run per part, never more at once than the cap.
 Each gets a worktree of the part's repository (the workspace's own, or the nested repository its plan names) made here under `<main checkout>/.claude/worktrees/` at the sha its brief names (a branch for an executor, detached for a
 reviewer and the verifier), prepared (the settings copy with the 5-minute cache switch, the marker), and a spec file: the body of its agent file
-(a worker has no agent type), the base context a subagent gets from SubagentStart (data/context-base.tsv's row for its role), its brief and the
-line asking it to send `worker_done`. With no base context the run is refused (exit 2) and nobody starts.
+(a worker has no agent type), its brief and the line asking it to send `worker_done`. What an executor reads besides is named in its brief
+(execute/brief.py): there is no shared base context.
 
 A worker is polled through `worker-show`. `succeeded` or `failed` is settled; when a `succeeded` worker's transcript does not yet match
 `orca.REPLY_LINE` (`worker_done` flips state inside the tool call before the final assistant reply line lands), `poll()` waits up to
@@ -48,7 +48,7 @@ the gate and its CI wait as `gate: ...` lines, the review and its findings), and
 set ORCA_TERMINAL_HANDLE (`sender`; left open), else one it makes in the phase worktree it runs from (never in the main checkout, which would put a tab in the owner's own workspace) and closes.
 Its status mail to the orchestrator has a short subject and a body that adds to it, never the same text twice.
 
-Imports the standard library, fwx.config, fwx.context_base and execute.base, cleanup and orca.
+Imports the standard library, fwx.config and execute.base, cleanup and orca.
 """
 import fcntl
 import hashlib
@@ -59,13 +59,12 @@ import sys
 import threading
 import time
 
-from fwx import config, context_base
+from fwx import config
 from fwx.execute import cleanup, orca
 from fwx.execute.base import WaveError
 
 FWX = os.path.join(orca.PLUGIN, "bin", "fwx")
 LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 60, "review-verifier": 15 * 60}
-DECIDED = "## Decided\n"
 STATES = ("done", "failed", "needs-owner")
 RELEASE_TRIES = 3
 REPLY_GRACE_S = 15.0
@@ -240,7 +239,6 @@ class Run:
         self.seq, self.counts = 0, {}
         self.poll_s, self.idle_s = _seconds("FWX_RUN_POLL_S", 5.0), _seconds("FWX_RUN_IDLE_S", 60.0)
         self.limit_override = _seconds("FWX_RUN_LIMIT_S", 0.0)
-        self.context = self.read_context()
 
     # ---- state ----------------------------------------------------------------------------------------------------------------
     def save(self):
@@ -264,24 +262,6 @@ class Run:
     def at(self, step):
         self.st["step"] = step
         self.save()
-
-    def read_context(self):
-        """The phase's base-context file, or Refused: a worker starts with it or not at all."""
-        path = context_base.base_path(self.args["phase_dir"])
-        try:
-            with open(path, encoding="utf-8") as f:
-                text = f.read()
-        except OSError:
-            text = ""
-        if not text.strip() and not self.args["revert"]:
-            raise Refused("no base context at %s: no worker starts without it; `fwx context new %s` writes it" % (path, self.args["phase_dir"]))
-        return text
-
-    def context_for(self, role):
-        sections = context_base.sections_for("fwx:" + role)
-        if sections == "none":
-            return ""
-        return self.context if sections == "map+decided" else self.context.split(DECIDED, 1)[0]
 
     # ---- the fwx wave calls, journaled ---------------------------------------------------------------------------------------
     def step(self, *words, no_json=False, echo=None):
@@ -408,7 +388,7 @@ class Run:
         return self.limit_override or LIMIT_S.get(role, LIMIT_S["executor"])
 
     def spec(self, job, k):
-        parts = [orca.agent_body(job.role), self.context_for(job.role)]
+        parts = [orca.agent_body(job.role)]
         head = ("Your brief is %s. Read it first and follow it. BASE: %s, the tip of the phase branch now, which your worktree starts from; "
                 "your first step is `fwx base %s`." % (job.brief, job.head, job.head)) + job.beside
         if self.orchestrator and job.role == "executor":

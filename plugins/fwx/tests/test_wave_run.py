@@ -22,7 +22,7 @@ Controls, each a copy of lib/ with one line changed (MUTANTS), seen red on the c
   release with no stop before it:             FAIL: every dispatch is released -> dispatch_inactive
   a forced removal:                           FAIL: an executor worktree with unmerged commits stays -> removed
   the settings copied as they are:            FAIL: the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M
-  a start with no base context:               FAIL: no base context, no worker -> 1 start
+  a spec with a base-context mark:            FAIL: no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark
   worker-start without waiting for the worktree: FAIL: discover: worker-start waited for Orca to know the worktree -> 0 show calls
   a selector_not_found is not retried:        FAIL: discover: the run is done -> run <id> failed: orca: orca orchestration worker-start failed (exit 1): selector_not_found
   the peek also takes worker_done:            FAIL: routine worker_done never reaches the orchestrator -> ['[01-alpha T1 dispatch:ctx_1] done T1', ...]
@@ -62,7 +62,6 @@ from test_wave_prepare import CRIT, Scene, front, task  # noqa: E402
 
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "lib"))
-from fwx import context_base  # noqa: E402
 from fwx.execute import orca as orca_mod  # noqa: E402
 
 s = helpers.Suite()
@@ -75,9 +74,9 @@ FILES = {"T1": {"src/a.py": "a1\n"}, "T2": {"src/b.py": "b1\n"}, "T3": {"src/c.p
 
 
 class World:
-    """A Scene (toy repo, phase worktree, the part's plan) with a fake orca on a PATH of its own and the base context in place."""
+    """A Scene (toy repo, phase worktree, the part's plan) with a fake orca on a PATH of its own."""
 
-    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, context=True, registered=(), nested=None):
+    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, registered=(), nested=None):
         self.scene = Scene(tasks=tasks or THREE, recipe=recipe, settings={"worktree": {"baseRef": "head"}, "env": {"KEEP_ME": "1"}}, nested=nested,
                            config={"limits": {"per_project": {"executor": cap}, "default_cap": {"supervised": 3, "unattended": 4}}})
         sc = self.scene
@@ -87,9 +86,6 @@ class World:
         helpers.write(self.bin, "orca", "#!/bin/sh\nexec %s %s \"$@\"\n" % (sys.executable, FAKE), 0o755)
         self.behave = dict({"files": FILES, "criteria": [c["id"] for c in CRIT], "registered": list(registered)}, **(behave or {}))
         self.set_behave()
-        if context:
-            path = context_base.base_path(self.part)
-            helpers.write(os.path.dirname(path), os.path.basename(path), "# map\nBASE-MAP-TEXT\n## Decided\nBASE-DECIDED-TEXT\n")
         self.common = os.path.join(sc.repo, ".git")  # fwx's folder is the workspace's, whichever repo the part works in
         self.procs = []
 
@@ -115,7 +111,7 @@ class World:
 
     def second_part(self, repo, phase="02-beta", tasks=None):
         """Another part of the workspace, working in nested repo `repo`: its phase worktree on branch `phase` (the first part's branch name), its
-        plan naming the repo, its post-mortem and its base context. (the worktree, the part's folder)"""
+        plan naming the repo and its post-mortem. (the worktree, the part's folder)"""
         sc = self.scene
         cwd = sc.worktree(repo)
         part = os.path.join(sc.repo, ".fwx", "milestones", "v1", "phases", phase)
@@ -125,8 +121,6 @@ class World:
         helpers.write(part, "postmortem.md", front({"verdict": "ok", "security_review": False, "round": 1}))
         helpers.write(part, "context.md", "# context\n")
         helpers.write(part, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
-        path = context_base.base_path(part)
-        helpers.write(os.path.dirname(path), os.path.basename(path), "# map\nBASE-MAP-TEXT\n## Decided\nBASE-DECIDED-TEXT\n")
         return cwd, part
 
     def fwx(self, *args):
@@ -254,11 +248,9 @@ def case_loop(root, S):
         S.eq(who + ": the marker names role, run and unit", ((x["marker"] or {}).get("run"), (x["marker"] or {}).get("unit")), (run, x["unit"]))
         S.eq(who + ": agent claude and a model", (x["agent"], bool(x["model"])), ("claude", True))
         spec = x["spec"] or ""
-        S.ok(who + ": the spec holds the base context, the brief line and the worker_done line",
-             "BASE-MAP-TEXT" in spec and "Your brief is" in spec and "worker_done" in spec and "# " in spec, "spec %r" % spec[:200])
+        S.ok(who + ": the spec holds the agent body, the brief line and the worker_done line",
+             orca_mod.agent_body(x["marker"]["role"]) in spec and "Your brief is" in spec and "worker_done" in spec, "spec %r" % spec[:200])
     S.eq("loop: roles", [(x["unit"], x["marker"]["role"]) for x in starts if x["unit"] in ("T1", "r1")], [("T1", "executor"), ("T1", "executor"), ("r1", "reviewer")])
-    S.ok("loop: the executor's spec has the executor's decided section, the reviewer's has not",
-         "BASE-DECIDED-TEXT" in starts[0]["spec"] and "BASE-DECIDED-TEXT" not in starts[-1]["spec"])
     calls = w.calls()
     S.ok("loop: no call carries an Orca session variable", all(not any(c["env"].values()) for c in calls), "got %r" % [c["env"] for c in calls if any(c["env"].values())][:1])
     S.eq("loop: one `orca repo add`", len([c for c in calls if c["argv"][:2] == ["repo", "add"]]), 1)
@@ -558,11 +550,14 @@ def case_refusals(root, S):
     w = world(recipe=("false",))
     r = w.run(root=root)
     S.eq("red base: exit 1 and no Orca call", (r.returncode, w.calls()), (1, []))
-    w = world(context=False, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "hang"}})  # a worker that started would hang: one start, not a run
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
     r = w.run(root=root)
-    n = len(w.starts())
-    S.ok("no base context, no worker -> %d start" % n, r.returncode == 2 and n == 0, "exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
-    S.ok("no base context: the reason names the file", "base" in r.stderr.lower(), "got %r" % r.stderr[-200:])
+    starts = [x for x in w.starts() if x["marker"]["role"] == "executor"]
+    S.ok("no base-context file: the run starts its executor -> %d start, exit %d, stderr %r" % (len(starts), r.returncode, r.stderr[-200:]),
+         r.returncode == 0 and len(starts) == 1)
+    spec = starts[0]["spec"] if starts else ""
+    S.ok("no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark",
+         orca_mod.agent_body("executor") in spec and "Your brief is" in spec and "# Base context" not in spec, "spec %r" % spec[:200])
 
 
 def case_registered(root, S):
@@ -796,7 +791,7 @@ def case_discover(root, S):
     m = line_of(r)
     S.ok("discover: a worktree Orca never knows ends the run failed, naming it", bool(m) and m.group(2) == "failed" and "-T1" in m.group(3) and "never discovered" in m.group(3),
          "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
-    S.eq("discover: no worker started and the worktree is removed", (units(w), [p for p in w.worktrees() if "-T1" in p]), ([], []))
+    S.eq("discover: no worker started and the worktree is removed", (units(w), [p for p in w.worktrees() if "-T1" in os.path.basename(p)]), ([], []))
 
 
 def case_terminal(root, S):
@@ -1489,7 +1484,8 @@ MUTANTS = [
      "an executor worktree with unmerged commits stays -> removed"),
     ("the settings copied as they are", case_loop, "lib/fwx/execute/orca.py", "env[\"FORCE_PROMPT_CACHING_5M\"] = \"1\"", "pass",
      "the worker's settings write the cache at 5 minutes -> env has no FORCE_PROMPT_CACHING_5M"),
-    ("a start with no base context", case_refusals, "lib/fwx/execute/run.py", 'if not text.strip() and not self.args["revert"]:', "if False:", "no base context, no worker -> 1 start"),
+    ("a spec with a base-context mark", case_refusals, "lib/fwx/execute/run.py", "parts = [orca.agent_body(job.role)]", 'parts = [orca.agent_body(job.role), "# Base context"]',
+     "no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark"),
     ("a waiting worker is stopped as idle", case_waiting, "lib/fwx/execute/run.py", 'if state == "ready" and info.get("activity") == "idle" and not waiting and not rec.get("asking"):',
      'if state == "ready" and info.get("activity") == "idle" and not rec.get("asking"):',
      "left alone until its limit, not stopped as idle"),
