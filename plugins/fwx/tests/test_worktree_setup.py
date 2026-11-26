@@ -868,7 +868,7 @@ MUTANTS = [
      "marker: a new untracked lockfile"),
     ("a failure to write the log is a traceback", case_io_errors, W, "    except OSError as e:\n        raise WaveError(\"cannot write the log of the setup",
      "    except ZeroDivisionError as e:\n        raise WaveError(\"cannot write the log of the setup", "log is a directory: setup"),
-    ("integrate does not call the setup", case_integrate_setup, "lib/fwx/execute/integrate.py", "    if _setup_again(top, cfg[\"project\"][\"worktree_setup\"], result, say):\n        return 1, result\n", "",
+    ("integrate does not call the setup", case_integrate_setup, "lib/fwx/execute/integrate.py", "    if _setup_again(top, cfg[\"project\"][\"worktree_setup\"], result, say):\n        drop_merged()\n        return 1, result\n", "",
      "two waves: wave 1 changes the lockfile"),
     ("check-base reads the whole configuration", case_unrelated_config, C, "worktree_setup.run(os.getcwd(), config.setup_commands(os.getcwd()))",
      'worktree_setup.run(os.getcwd(), config.load(os.getcwd())["project"]["worktree_setup"])', "config tolerance, a model table error: check-base exit"),
