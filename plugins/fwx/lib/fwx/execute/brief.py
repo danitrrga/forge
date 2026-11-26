@@ -282,7 +282,7 @@ def render_agent(facts):
 # no structured output to carry its verdicts, so it writes them to report.json like the others and replies `verdicts <report path>`.
 REVIEW_KINDS = ("reviewer", "security-reviewer", "review-verifier")
 AGENTS = Path(__file__).resolve().parents[3] / "agents"
-REVIEW_FORBIDDEN = ["no writing in the repository: your report and your TMPDIR are in your scratch folder only", "no push, no PR retargets or merges, nothing written in `.fwx/`"]
+REVIEW_FORBIDDEN = ["no writing in the repository: your report and your TMPDIR are in your scratch folder only", "no push, no PR retargets or merges, nothing written in `.fwx/`", "files under `.fwx/` are not reviewable: report nothing about them"]
 VERDICT_ROW = "`{id, verdict: fix|consider|note|dismiss, severity: none|low|medium|high, reason, catchable_by: code|check|rule|none}`"
 
 

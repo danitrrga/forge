@@ -1407,7 +1407,14 @@ def case_reply_grace(root, S):
     S.ok("reply grace: garbled dispatches all released", bool(w2.dispatches()) and all(d["released"] for d in w2.dispatches().values()))
 
 
-CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
+def case_reply_line(root, S):
+    """A worker that echoes its report path relative to its own worktree (no folder before `.fwx-agent/`) still ends with a reply line."""
+    for line in ("done .fwx-agent/r/T1/report.json commits=2", "reviewed .fwx-agent/r/r1/report.json looked_at=1 findings=0 criteria_no=0 criteria_unproven=0",
+                 "verdicts .fwx-agent/r/r1-verifier/report.json"):
+        S.ok("a reply line with no folder before .fwx-agent/: %s" % line.split()[0], bool(orca_mod.REPLY_LINE.match(line)), "no match for %r" % line)
+
+
+CASES = [case_reply_line, case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
          case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
