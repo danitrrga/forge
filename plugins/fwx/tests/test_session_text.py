@@ -32,6 +32,8 @@ Seen red on copies of the real texts (a copy of plugins/fwx with the pinned word
   references/closing.md, the `fwx wave list` sweep -> "remove each run":  FAIL: closing.md sweeps the runs `fwx wave list` shows with `fwx wave remove --run` -> no 'fwx wave list' ... 'fwx wave remove --run' in order
   agents/review-verifier.md, "`verdicts <report path>`" -> "`verdicts <path>`":  FAIL: the verifier replies with the line `wave findings --verdicts` reads -> no `verdicts <report path>` in agents/review-verifier.md, or review.VERDICT_LINE does not read it
   agents/reviewer.md, "names a brief file" -> "is your brief, there is no brief file":  FAIL: no agent says it has no brief file -> still says it in ['reviewer']
+01.3 T32 (the orchestrator writes the report from the template; the same copy-and-change, the first FAIL line printed):
+  references/closing.md, `--why "PR <url>"` -> `--why "done"`:  FAIL: closing.md writes the pull request body from the same template and the closing stage row with the PR link -> missing ['--why "PR <url>"']
 Each kept check also has a control on a toy text (the "control:" checks).
 """
 import os
