@@ -43,8 +43,8 @@
     return e
   }
   const span = (cls, text) => el('span', { class: cls }, text)
-  const item = (state, name, tag) =>
-    el('div', { class: 'row', role: 'listitem', 'data-state': state }, span('mark', MARK[state]), span('name', name), tag ? span('tag', tag) : null)
+  const item = (state, name, tag, mark) =>
+    el('div', { class: 'row', role: 'listitem', 'data-state': state }, span('mark', mark || MARK[state]), span('name', name), tag ? span('tag', tag) : null)
 
   function render(s) {
     root.replaceChildren()
@@ -65,6 +65,15 @@
       el('div', { class: 'bar-label' },
         span('', s.phase ? (s.stage || 'no stage') + (s.part && s.parts ? ' · part ' + s.part + '/' + s.parts : '') : 'no phase'),
         span('muted', pct === null ? '' : pct + '%')))
+
+    const r = s.activeRun
+    if (r) {
+      const rows = el('div', { class: 'parts', role: 'list' })
+      for (const x of s.flow) rows.append(item(x.state, x.name, x.tag, x.failed ? '✕' : null))
+      const flow = el('div', { role: 'list' }, item('current', r.part, r.step || 'running'), rows)
+      if (r.events.length) flow.append(el('div', { class: 'muted', style: 'font-size:11px;margin-top:4px' }, r.events[r.events.length - 1]))
+      root.append(el('h2', {}, 'Workflow'), flow)
+    }
 
     if (s.phases.length) {
       const list = el('div', { role: 'list' })

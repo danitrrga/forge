@@ -43,8 +43,10 @@ rest in `kept` with the reason. It ends with one line, `run <R> <done|failed|nee
 `fwx wave --run R --json`.
 
 Progress: the run prints one plain line per step to stdout as it happens, flushed (`progress`: the base check, each worker started, done or failed, each wave merged,
-the gate and its CI wait as `gate: ...` lines, the review and its findings), and the result line last; no redraws. Its sender terminal is the one it runs in when Orca
-set ORCA_TERMINAL_HANDLE (`sender`; left open), else one it makes and closes.
+the gate and its CI wait as `gate: ...` lines, the review and its findings), and the result line last; no redraws. `Run.note` also keeps the last EVENTS of these lines in
+`state.json["events"]`, and `listing_json` (`fwx wave list --json`) gives them with the planned waves and the workers to the Orca panel and chip. Its sender terminal is the one it runs in when Orca
+set ORCA_TERMINAL_HANDLE (`sender`; left open), else one it makes in the phase worktree it runs from (never in the main checkout, which would put a tab in the owner's own workspace) and closes.
+Its status mail to the orchestrator has a short subject and a body that adds to it, never the same text twice.
 
 Imports the standard library, fwx.config, fwx.context_base and execute.base, cleanup and orca.
 """
@@ -67,6 +69,7 @@ DECIDED = "## Decided\n"
 STATES = ("done", "failed", "needs-owner")
 RELEASE_TRIES = 3
 REPLY_GRACE_S = 15.0
+EVENTS = 8  # the last progress lines kept in state.json["events"], for `wave list --json` (the Orca panel)
 ASK = ("\nThis run has an orchestrator. A blocking question or a blocker is asked mid-task with the `ask` command from your Orca preamble (the whole question, each "
        "option with what it implies), not reported as `question`: after it, end your turn and wait. The answer comes as mail and you carry on in this same worktree.")
 
@@ -172,6 +175,22 @@ def listing(top):
     return rows
 
 
+def listing_json(top):
+    """One dict per run for `fwx wave list --json` (the Orca panel and chip read it): identity, planned waves, workers and the last progress lines."""
+    rows = []
+    for st in all_states(top):
+        args = st.get("args") or {}
+        rows.append({
+            "run": st.get("run"), "part": os.path.basename(st.get("part_dir") or "?"), "branch": st.get("branch"), "state": st.get("state"),
+            "pid": st.get("pid") if isinstance(st.get("pid"), int) else None, "alive": alive(st.get("pid")), "step": st.get("step"),
+            "started": st.get("started"), "orca_run": st.get("orca_run"),
+            "waves": [{"n": w["n"], "tasks": [t["id"] for t in w.get("tasks", [])]} for w in args.get("waves") or []],
+            "workers": [{"unit": w.get("unit"), "role": w.get("role"), "state": w.get("state"), "released": bool(w.get("released")), "line": w.get("line")}
+                        for w in (st.get("workers") or {}).values()],
+            "events": list(st.get("events") or [])[-EVENTS:], "result": st.get("result")})
+    return rows
+
+
 def last_line(text):
     lines = [x.strip() for x in str(text or "").strip().splitlines() if x.strip()]
     return lines[-1] if lines else ""
@@ -221,6 +240,14 @@ class Run:
             json.dump(self.st, f, indent=1)
             f.write("\n")
         os.replace(tmp, path)
+
+    def note(self, line):
+        """`progress`, and the line kept (the last EVENTS) in the state for `wave list --json`: called per step of the run, never per poll tick."""
+        progress(line)
+        events = self.st.setdefault("events", [])
+        events.append(" ".join(str(line).split())[:200])
+        del events[:-EVENTS]
+        self.save()
 
     def at(self, step):
         self.st["step"] = step
@@ -317,15 +344,16 @@ class Run:
         if not orca.terminal_alive(self.st["terminal"]):
             raise Fenced("the run's terminal %s was closed; resume with `fwx wave run --resume %s`" % (self.st["terminal"], self.run))
 
-    def announce(self, key, line):
-        """A status line to the orchestrator, once per `key` (a resumed run does not repeat it)."""
+    def announce(self, key, subject, body):
+        """A status message to the orchestrator, once per `key` (a resumed run does not repeat it): a short subject and a body that adds to it, never the same text
+        twice (Orca shows both as one card)."""
         if not self.orchestrator or key in self.st.setdefault("announced", []):
             return
         try:
-            self.tell(line, line)
+            self.tell(subject, body)
         except orca.OrcaError as e:
             self._check_sender()
-            raise self.unreachable(e, "the run stopped after: %s" % line)
+            raise self.unreachable(e, "the run stopped after: %s" % subject)
         self.st["announced"].append(key)
         self.save()
 
@@ -412,7 +440,7 @@ class Run:
             raise
         self.st["workers"][key] = rec
         self.save()
-        progress("worker %s started (%s, %s%s)" % (job.unit, job.role, job.model, ", attempt %d" % k if k > 1 else ""))
+        self.note("worker %s started (%s, %s%s)" % (job.unit, job.role, job.model, ", attempt %d" % k if k > 1 else ""))
         return rec
 
     def release(self, rec, state=None):
@@ -509,7 +537,7 @@ class Run:
 
     def finished(self, job, line):
         ok = str(line).split(" ", 1)[0] in ("done", "reviewed", "verdicts")
-        progress("worker %s done" % job.unit if ok else "worker %s failed: %s" % (job.unit, str(line or "no reply")[:200]))
+        self.note("worker %s done" % job.unit if ok else "worker %s failed: %s" % (job.unit, str(line or "no reply")[:200]))
 
     def run_jobs(self, jobs, width=None):
         """Start and judge `jobs`, at most `cap` open at once (`width` fewer where the wave is serial); a worker is released as it settles."""
@@ -586,13 +614,13 @@ class Run:
             words += (["--findings", ",".join(keep)]) if keep else []
             words += ["--final"] if final else []
             if final:
-                progress("gate started (final merge, then the checks)")
+                self.note("gate started (final merge, then the checks)")
             rc, r = self.wave(*words, echo="gate:" if final else None)
             if r.get("head"):
                 self.head = r["head"]
             if final:
                 ran = r.get("verify") or {}
-                progress(("gate %s: %s" % ("passed" if r.get("ok") is True else "failed", ran.get("line") or "no evidence line")) if ran.get("ran")
+                self.note(("gate %s: %s" % ("passed" if r.get("ok") is True else "failed", ran.get("line") or "no evidence line")) if ran.get("ran")
                          else "final merge failed before the gate: %s" % " ".join(str(r.get("why") or "no reason given").split())[:200])
             nxt = r.get("next")
             if r.get("ok") is True:
@@ -633,7 +661,7 @@ class Run:
     def review_pass(self, frm, first):
         """One review of `frm..head`: the result of `wave findings` that asks for a fixer, or None when nothing is left to fix."""
         self.at("review")
-        progress("review started on %s..%s" % (str(frm)[:8], str(self.head)[:8]))
+        self.note("review started on %s..%s" % (str(frm)[:8], str(self.head)[:8]))
         rc, r = self.wave("review", "--part-dir", self.part, "--from", frm, "--to", self.head, *(["--security"] if self.args["security"]["needed"] else []))
         if rc != 0:
             raise Stop("failed", "wave review exited %d: %s" % (rc, r))
@@ -648,7 +676,7 @@ class Run:
                 said = [(" " + lines[x["unit"]]) if lines[x["unit"]].startswith("-") else (lines[x["unit"]] or "no reply") for x in units]
                 rc, r = self.wave("findings", "--report", *said, *control)
             nxt = r.get("next")
-            progress("review findings: %d found, %d to fix, next %s" % (len(r.get("items") or []), len(r.get("fix") or []), nxt))
+            self.note("review findings: %d found, %d to fix, next %s" % (len(r.get("items") or []), len(r.get("fix") or []), nxt))
             if nxt == "verify":
                 verifier = r["unit"]
                 self.reviewers([{"role": "review-verifier", "unit": verifier, "brief": r["brief"]}], lines)
@@ -711,7 +739,7 @@ class Run:
                     pass
             self.st["terminal"], self.st["terminal_made"] = own, False
         elif not (term and self.st.get("terminal_made", True) and orca.terminal_alive(term)):
-            self.st["terminal"], self.st["terminal_made"] = orca.terminal_create(self.main, "fwx run %s" % self.run), True
+            self.st["terminal"], self.st["terminal_made"] = orca.terminal_create(self.top, "fwx run %s" % self.run), True
         self.save()
         return self.st["terminal"]
 
@@ -729,7 +757,7 @@ class Run:
         term = self.sender()
         if term != before:  # an Orca run is bound to the terminal that made it: another terminal needs its own
             self.st["orca_run"] = None
-        self.orca_run = self.st.get("orca_run") or orca.run_create("fwx wave run %s" % self.run, term)
+        self.orca_run = self.st.get("orca_run") or orca.run_create("fwx %s (%s)" % (os.path.basename(self.part), self.run), term)
         self.st["orca_run"] = self.orca_run
         self.save()
         done = set(args["done"])
@@ -752,9 +780,9 @@ class Run:
                 jobs = [self.executor(t["id"], args["models"]["executor"][t["id"]], t["brief"], self.head, self.beside(t["id"])) for t in w["tasks"] if t["id"] not in done]
                 self.run_jobs(jobs, 1 if w["serial"] else None)
                 self.merge([j.result for j in jobs], final=i == len(todo) - 1)
-                progress("wave %s merged: %d/%d tasks, head %s" % (w["n"], len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
-                self.announce("wave %s" % w["n"], "[%s] wave %s/%s: %d/%d merged -> %s" % (
-                    os.path.basename(self.part), w["n"], len(args["waves"]), len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
+                self.note("wave %s merged: %d/%d tasks, head %s" % (w["n"], len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
+                self.announce("wave %s" % w["n"], "[%s] wave %s/%s merged" % (os.path.basename(self.part), w["n"], len(args["waves"])),
+                              "%d/%d tasks -> %s" % (len([j for j in jobs if j.result]), len(jobs), str(self.head)[:8]))
         self.review()
         return "the gate and the review passed on %s" % str(self.head)[:8]
 
@@ -772,7 +800,7 @@ def drive(args, top, flags, state=None):
     st["pid"], st["state"] = os.getpid(), "active"
     r = Run(args, top, flags, st, folder)
     r.save()
-    progress("run %s %s: %s, branch %s, %d wave%s" % (args["run"], "resumed" if state else "started", os.path.basename(args["part_dir"]), args["branch"],
+    r.note("run %s %s: %s, branch %s, %d wave%s" % (args["run"], "resumed" if state else "started", os.path.basename(args["part_dir"]), args["branch"],
                                                       len(args["waves"]), "" if len(args["waves"]) == 1 else "s"))
     status, why, fenced = "failed", "", False
     try:
@@ -808,8 +836,7 @@ def finish(r, st, folder, status, why):
     if r.orchestrator and st.get("terminal"):  # before the terminal is closed: it is the sender; the end of the run cannot be stopped, so a refusal is only recorded
         line = " ".join(str(why).split())
         try:
-            r.tell("[%s] run %s %s: %s" % (os.path.basename(r.part), st["run"], status, line[:300]),
-                   "[%s] run %s %s: %s\n\nDetails: fwx wave --run %s --json" % (os.path.basename(r.part), st["run"], status, line, st["run"]))
+            r.tell("[%s] run %s %s" % (os.path.basename(r.part), st["run"], status), "%s\n\nDetails: fwx wave --run %s --json" % (line, st["run"]))
         except (orca.OrcaError, OSError) as e:
             st["tell_error"] = str(e)
     if st.get("terminal") and not st.get("terminal_made", True):  # the terminal the run ran in is the owner's: left open
