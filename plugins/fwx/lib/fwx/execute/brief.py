@@ -5,10 +5,6 @@ empty, which `prepare` turns into exit 2 ("a brief with an empty field is not la
 data/executor-brief.md, whose nine fields come in the order of pstack's brief (orchestrate.md l.40-53). The text that is
 the same for every task lives in that file; what varies is computed here, from the plan, the git state and the run.
 
-Where a brief and the base-context file meet (2.5 U9): `shared_context(paths)` is the one place that names the files every
-agent of the phase reads (`context.md`, `decisions.tsv`, `plan.md`). When the briefs rely on the base file, that function is
-what changes; nothing else here spells those names, and the template does not.
-
 A run's briefs live in `<fwx folder>/runs/<run>/briefs/<task>.md` (written by `put`); the fixer's is `_fix.md`: no task
 id can start with an underscore (`ID`), so the name cannot clash. What an agent writes is not there: its report and its TMPDIR
 are in a folder of its own worktree that git ignores, made by `fwx scratch new <run> <unit>` (execute/base.py), because Claude
@@ -46,7 +42,7 @@ WALK_KEYS = ("source", "verdict", "screen", "steps", "expected", "type", "kind",
 
 
 def shared_context(paths):
-    """The lines of CONTEXT every agent of the phase gets: the files it reads. The seam 2.5 U9 moves."""
+    """The lines of CONTEXT every agent of the phase gets: the files it reads, by path."""
     return ["- %s: %s" % (name, paths[key]) for name, key in (("context.md", "context"), ("decisions.tsv", "decisions"), ("plan.md", "plan"))]
 
 

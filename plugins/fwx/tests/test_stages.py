@@ -45,20 +45,11 @@ Controls, each seen red on a copy of the repo with one thing changed (351 checks
       FAIL: validator: a stage nobody reaches: wanted 'island' in []
   - the command names the audit file in its own source (1 failed):
       FAIL: outside state.py, lib/ never names the audit file: got ['lib/fwx/commands/stage.py'], want []
-
-2.5 U4 (the base context follows the stage), seen red on lib/fwx/commands/stage.py and state.py put back to master (364 checks):
-  FAIL: new-phase left a base in the discuss stage: got 'no file', want 'discuss'
-  FAIL: stage premortem: the base is regenerated with stage=premortem: got 'no file', want 'premortem'
-  - `stage` does not call the refresh (new-phase does; 5 failed):
-      FAIL: stage premortem: the base is regenerated with stage=premortem: got 'discuss', want 'premortem'
-  - `stage` exits 1 when the refresh fails, after the row is written (2 failed):
-      FAIL: stage with a map over the cap: exit 0: got 1, want 0
 """
 import itertools
 import json
 import os
 import re
-import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
@@ -310,72 +301,17 @@ s.eq("closed -> ui-walk stays refused (negative control)", r.returncode, 1)
 r = helpers.fwx(repo, "stage", closed, "planning")
 s.eq("closed -> planning stays refused (negative control)", r.returncode, 1)
 
-# ---- the base context follows the stage (2.5 U4) --------------------------------------------------------------------
-
-import subprocess  # noqa: E402
-
-sys.path.insert(0, os.path.join(ROOT, "lib"))
-from fwx import context_base as cb  # noqa: E402
-
-base_repo = helpers.toy_repo()
-SESS = {"CLAUDE_CODE_SESSION_ID": "sess-base"}
-r = helpers.fwx(base_repo, "phase", "new", "alpha", env=SESS)
-bphase = r.stdout.strip()
-bfile = cb.base_path(bphase)
-
-
-def stage_in_base(path):
-    if not os.path.exists(path):
-        return "no file"
-    with open(path, encoding="utf-8") as f:
-        m = re.search(r"<!-- built stage=(\S+) ", f.read())
-    return m.group(1) if m else None
-
-
-s.eq("new-phase left a base in the discuss stage", stage_in_base(bfile), "discuss")
-r = helpers.fwx(base_repo, "stage", bphase, "premortem", "--why", "first pass", env=SESS)
-s.eq("stage premortem: exit 0, nothing on stderr", (r.returncode, r.stderr), (0, ""))
-s.eq("stage premortem: the base is regenerated with stage=premortem", stage_in_base(bfile),
-     "premortem")
-r = helpers.fwx(base_repo, "context", "lint", bphase, env=SESS)
-s.eq("the regenerated base passes `context lint`", r.returncode, 0)
-r = helpers.fwx(base_repo, "stage", bphase, "executing", env=SESS)
-s.eq("a refused stage: exit 1", r.returncode, 1)
-s.eq("a refused stage leaves the base as it was", stage_in_base(bfile), "premortem")
-
-# a stage change on a subphase refreshes its phase's base (context.md is the phase's), never one of its own
-bsub = str(state.new_subphase(bphase, "first"))
-os.remove(bfile)
-r = helpers.fwx(base_repo, "stage", bsub, "reviewing", "--why", "part 1", env=SESS)
-s.eq("stage of a subphase: exit 0, nothing on stderr", (r.returncode, r.stderr), (0, ""))
-s.eq("stage of a subphase: the phase's base is rebuilt", stage_in_base(bfile), "premortem")
-s.ok("stage of a subphase: it has no base of its own", not os.path.exists(cb.base_path(bsub)), cb.base_path(bsub))
-
-# a factory job folder gets its base on the claim-to-intake change, with no context.md in it
-bjob = os.path.join(base_repo, ".fwx", "factory", "KEY-9")
-os.makedirs(bjob)
-r = helpers.fwx(base_repo, "stage", bjob, "intake", env=SESS)
-s.eq("stage of a factory job: exit 0", (r.returncode, r.stderr), (0, ""))
-s.ok("stage of a factory job: its base is built", os.path.exists(cb.base_path(bjob)) and stage_in_base(cb.base_path(bjob)) == "intake",
-     cb.base_path(bjob))
-
-# a map over the cap: the change is done and recorded, the command exits as it would have, stderr says why
-big = helpers.mkdtemp("fwx-bigmap-")
-for sub in ("bin", "lib", "data", "templates"):
-    shutil.copytree(os.path.join(ROOT, sub), os.path.join(big, sub), ignore=shutil.ignore_patterns("__pycache__"))
-helpers.write(big, "data/context-map.md", "x" * 9500 + "\n")
-big_repo = helpers.toy_repo()
-r = subprocess.run([sys.executable, os.path.join(big, "bin", "fwx"), "phase", "new", "alpha"], cwd=big_repo,
-                   env=helpers.clean_env(**SESS), capture_output=True, text=True)
-bigphase = r.stdout.strip()
-s.ok("the copy with a big map still makes the phase", r.returncode == 0 and os.path.isdir(bigphase), r.stdout + r.stderr)
-r = subprocess.run([sys.executable, os.path.join(big, "bin", "fwx"), "stage", bigphase, "premortem"], cwd=big_repo,
-                   env=helpers.clean_env(**SESS), capture_output=True, text=True)
-s.eq("stage with a map over the cap: exit 0", r.returncode, 0)
-s.ok("stage with a map over the cap: the stage row stays", state.last_stage(bigphase) == "premortem", str(state.last_stage(bigphase)))
-s.ok("stage with a map over the cap: stderr is one `fwx stage: context-base: ... over the cap` line",
-     re.fullmatch(r"fwx stage: context-base: .*over the cap.*\n", r.stderr) is not None, repr(r.stderr))
-s.eq("stage with a map over the cap: still says what it did", r.stdout.strip(), "discuss -> premortem")
+# ---- a stage change refreshes nothing else ------------------------------------------------------------------------------
+# The base-context file (`<fwx folder>/context-base/`) is gone: `fwx phase new` and `fwx stage` write only the audit row and the stage
+# line. Seen red while the refresh existed (the same sequence left the file behind):
+#   FAIL: new phase and a stage change leave no context-base folder: got ['fwx__milestones__v1__phases__01-alpha.md'], want []
+none_repo = helpers.toy_repo()
+none_env = {"CLAUDE_CODE_SESSION_ID": "sess-none"}
+none_phase = helpers.fwx(none_repo, "phase", "new", "alpha", env=none_env).stdout.strip()
+r = helpers.fwx(none_repo, "stage", none_phase, "premortem", "--why", "first pass", env=none_env)
+s.eq("stage premortem: exit 0, nothing on stderr, the line says what it did", (r.returncode, r.stderr, r.stdout.strip()), (0, "", "discuss -> premortem"))
+leftover = os.path.join(none_repo, ".git", "fwx", "context-base")
+s.eq("new phase and a stage change leave no context-base folder", sorted(os.listdir(leftover)) if os.path.isdir(leftover) else [], [])
 
 # ---- no one else writes the audit file -----------------------------------------------------------------------------
 

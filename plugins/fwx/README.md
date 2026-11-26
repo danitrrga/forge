@@ -21,7 +21,6 @@ python3 bin/fwx session    # the session's phase; `fwx --help` lists every comma
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count
 python3 bin/fwx plan lint <dir>    # the structure of a phase's plan.md (and each subphase's), premortem.md and postmortem.md; exit 1 on an error; --json
-python3 bin/fwx context new <dir>    # the base-context file every agent of a phase starts with; `context seal` marks a hand-written one, `context lint` fails on one over the cap, edited or stale
 python3 bin/fwx discuss --json    # what the discuss opens with: the configuration, the phases, the models and what waits in Linear; read-only
 python3 bin/fwx linear list --label factory --json    # the project's Linear issues; needs LINEAR_API_KEY
 python3 bin/fwx project state --json    # open PRs, the default branch's CI and open Linear issues; a section without `gh` login or LINEAR_API_KEY is `{"not_run": ...}`, exit 77
@@ -104,7 +103,7 @@ name with no entry is used as it is.
 
 `limits` is the most agents at once, a fixed number that nothing measures: `default_cap` is `{"supervised": 3, "unattended": 4}` (the
 owner present, nobody present) and `per_project` maps a role to its own number (`executor`, `ui-walker`). `fwx wave run` (and `wave new`) read the
-executor's as `cap` of the part's `args`, `fwx walk start` the walkers' as `capacity.cap`, and the built base context states them to every agent that gets a base (the `map` and `map+decided` kinds of `data/context-base.tsv`; the `none` kinds get none), but not one written by hand and sealed with `fwx context seal`, which is not built. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
+executor's as `cap` of the part's `args`, `fwx walk start` the walkers' as `capacity.cap`. A value that is not a positive whole number is an error that names the key, never "no limit". The agents of other sessions
 are not counted, and the older keys `on`, `ram_min_free_gb` and `ram_per_agent_mb` are ignored.
 
 `project.check_timeout_s` (default `1200`) is the seconds one check of `project.checks` or `checks_quick` may run before fwx stops it: `fwx verify`, the
