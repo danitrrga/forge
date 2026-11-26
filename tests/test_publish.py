@@ -102,7 +102,7 @@ def write(root, rel, text, mode=None):
         os.chmod(p, mode)
 
 
-def toy(name, overlay=False, deny=False, hooks=False):
+def toy(name, overlay=False, deny=False, hooks=False, fwx_lib=False):
     """A toy checkout with the real bin/forge, forge/ package and githooks/ in it. With `overlay`: an
     engine history that tracks what its allowlist un-ignores, and a data history beside it."""
     _n[0] += 1
@@ -113,6 +113,9 @@ def toy(name, overlay=False, deny=False, hooks=False):
     shutil.copytree(os.path.join(FORGE, "forge"), os.path.join(root, "forge"), ignore=shutil.ignore_patterns("__pycache__"))
     if os.path.isdir(os.path.join(FORGE, "githooks")):
         shutil.copytree(os.path.join(FORGE, "githooks"), os.path.join(root, "githooks"))
+    if fwx_lib:
+        shutil.copytree(os.path.join(FORGE, "plugins", "fwx", "lib"), os.path.join(root, "plugins", "fwx", "lib"),
+                        ignore=shutil.ignore_patterns("__pycache__"))
     if deny and os.path.exists(DENY):
         write(root, "config/publish-deny.txt", open(DENY).read())
     git_out(root, "init", "-q")
@@ -1068,6 +1071,59 @@ def push_scope_cases():
     lacks("a tip git cannot list", out, "PASS", "no new commit")
 
 
+# --- 5c. forge commit and the layout of `.fwx/`
+def layout_cases():
+    # Red before the change, at 56a196a, each message from the unchecked code:
+    #  "layout: a bad path = exit: got 0, want 2" (`forge commit -m m .fwx/Notes.md` commits it to the private history);
+    # checking `a.paths` instead of the routed paths: "layout: --all with a bad path = exit: got 0, want 2" (paths are empty);
+    # checking the deleted paths too: "layout: a rename to lowercase = exit: got 2, want 0" on `.fwx/PROJECT.md`.
+    root = toy("layout", overlay=True, fwx_lib=True)
+    write(root, ".fwx/project.md", "p\n")
+    write(root, "notes.txt", "n\n")
+    want("layout: seed = exit", forge(root, "commit", "--all", "-m", "seed")[0], 0)
+    e0, d0 = head(root), head(root, data=True)
+    # A plain file name is not a file of the root: the check names it and neither history moves.
+    write(root, ".fwx/Notes.md", "x\n")
+    write(root, "notes.txt", "changed\n")
+    for label, argv in (("a bad path", ["commit", "-m", "m", ".fwx/Notes.md"]), ("the folder holding it", ["commit", "-m", "m", ".fwx"]),
+                        ("--all with it changed", ["commit", "--all", "-m", "m"])):
+        code, out = forge(root, *argv)
+        want("layout: %s = exit" % label, code, 2)
+        has("layout: %s" % label, out, ".fwx/Notes.md: upper-case letter or space in a name; belongs in")
+        want("layout: %s = neither history moved" % label, (head(root), head(root, data=True)), (e0, d0))
+    os.remove(os.path.join(root, ".fwx", "Notes.md"))
+    # A good path, even beside a changed one outside .fwx/, commits.
+    write(root, ".fwx/adr.tsv", "a\n")
+    code, out = forge(root, "commit", "-m", "good", ".fwx/adr.tsv")
+    want("layout: a good path = exit", code, 0)
+    want("layout: a good path: files", files_of(root, data=True), [".fwx/adr.tsv"])
+    # A rename to lowercase and a deletion each commit: the old side is gone from disk and is not checked.
+    write(root, ".fwx/PROJECT.md", "p\n")
+    git_out(root, "add", "-f", ".fwx/PROJECT.md", data=True)
+    git_out(root, "commit", "-q", "-m", "legacy", data=True)
+    os.remove(os.path.join(root, ".fwx", "PROJECT.md"))
+    write(root, ".fwx/project.md", "renamed\n")
+    code, out = forge(root, "commit", "-m", "rename", ".fwx/PROJECT.md", ".fwx/project.md")
+    want("layout: a rename to lowercase = exit", code, 0)
+    want("layout: a rename: files", files_of(root, data=True), [".fwx/PROJECT.md", ".fwx/project.md"])
+    os.remove(os.path.join(root, ".fwx", "adr.tsv"))
+    code, out = forge(root, "commit", "-m", "delete", ".fwx/adr.tsv")
+    want("layout: a deletion = exit", code, 0)
+    want("layout: a deletion: files", files_of(root, data=True), [".fwx/adr.tsv"])
+    # Without the plugin's lib the commit goes on and says the check did not run.
+    root = toy("layout-nolib", overlay=True)
+    write(root, ".fwx/Notes.md", "x\n")
+    code, out = forge(root, "commit", "--all", "-m", "no lib")
+    want("layout without the plugin's lib = exit", code, 0)
+    has("layout without the plugin's lib", out, "NOT RUN, NOT ARMED: fwx layout check (")
+    want("layout without the plugin's lib: committed", files_of(root, data=True), [".fwx/Notes.md"])
+    # Nothing under .fwx/ changed: no line about the check at all.
+    root = toy("layout-none", overlay=True)
+    write(root, "notes.txt", "n\n")
+    code, out = forge(root, "commit", "--all", "-m", "none")
+    lacks("layout, nothing under .fwx/", out, "NOT ARMED", "layout")
+
+
 def main():
     public_cases()
     pinned_asset_cases()
@@ -1081,6 +1137,7 @@ def main():
     root_cases()
     commit_cases()
     commit_edge_cases()
+    layout_cases()
     hook_cases()
     push_scope_cases()
     for msg in failures:
