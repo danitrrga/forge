@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-from fwx import config, context_base, plan_form, routes, state
+from fwx import config, plan_form, routes, state
 from fwx.core import stages
 
 PROG = "fwx state"  # main() sets it to the name the command ran under (`fwx phase new`), for the messages
@@ -147,10 +147,6 @@ def cmd_use(a):
 
 def cmd_new_phase(a):
     folder = state.new_phase(a.slug, subproject=a.subproject, milestone=a.milestone, session=a.session)
-    try:  # the phase is made: a base that cannot be built is a line on stderr, never another exit code
-        context_base.refresh(folder)
-    except Exception as e:
-        sys.stderr.write("%s: context-base: %s\n" % (PROG, e))
     print(folder)
     return 0
 

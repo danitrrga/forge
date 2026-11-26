@@ -94,7 +94,6 @@ DEFAULTS = [
     (["linear", "--project", "P", "--waiting", "--json"], "linear", ["waiting", "--project", "P", "--json"]),
     (["discuss", "--json"], "discuss", ["start", "--json"]),
 ]
-OBJECT_OLD = {}
 # the module whose handlers print their own argparse help for `--help`: the router leaves its rows to them
 OWN_HELP = "state"
 
@@ -156,10 +155,6 @@ def scenario(work):
         r = run(work, *words)
         check("default of `%s`: routes to %s %s" % (" ".join(words), module, want), r.stdout.strip() or r.stderr.strip().splitlines()[:1],
               stub(module, want))
-    for old, new in OBJECT_OLD.items():
-        r = run(work, old)
-        check("old object `%s` is refused, naming `fwx %s`" % (old, new), (r.returncode, r.stdout, r.stderr),
-              (2, "", "fwx %s: now 'fwx %s'\n" % (old, new)))
     r = run(work, "state", "check")
     check("old `state check` names both new names", (r.returncode, r.stderr), (2, "fwx state check: now 'fwx state lint' or 'fwx report lint'\n"))
     # `fwx test` left the table: the suite is run by forge as a group (`forge test fwx`), and the refusal names that, outside fwx. Red on master
@@ -256,7 +251,7 @@ else:
     s.eq("every command file has a row", sorted(files - {r[2] for r in routes.ROWS}), [])
     s.eq("every row names a command file", sorted({r[2] for r in routes.ROWS} - files), [])
     s.eq("the routes hold no `context` default and no old `context-base` name",
-         ("context" in routes.DEFAULTS, "context-base" in routes.OLD_OBJECTS), (False, False))
+         ("context" in routes.DEFAULTS, routes.refusal(["context-base", "build"])), (False, None))
     s.eq("the table has the rows of the decided table, no more, no fewer",
          sorted((r[0], r[1], r[2], r[3]) for r in routes.ROWS), sorted((n, o, m, a) for n, o, m, a in DECIDED))
 
