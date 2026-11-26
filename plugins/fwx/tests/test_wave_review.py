@@ -178,6 +178,24 @@ def case_review(R, S):
     S.eq("wave review outside a repository: exit 2", r.returncode, 2)
 
 
+def case_default_merge(R, S):
+    """What the default branch brought in by a merge after the run's base is not the part's: the reviewer's brief names only the
+    part's own files; with no merge the brief says nothing of it."""
+    W = World()
+    helpers.write(W.S.repo, "src/m.py", "m\n")
+    helpers.git(W.S.repo, "add", "-A")
+    helpers.git(W.S.repo, "commit", "-q", "-m", "master moves")
+    helpers.git(W.S.cwd, "merge", "-q", "--no-edit", "master")
+    W.S.commit("src/a.py", "the part's own edit")
+    r, v = W.review(R, to=W.S.head())
+    text = read((v.get("reviewers") or [{}])[0].get("brief") or "")
+    S.ok("default merge: the brief restricts the diff to the part's own files", "Review only these files of the diff: n.txt, src/a.py." in text, text[:400])
+    S.ok("default merge: master's file is not listed", "src/m.py" not in text, text[:400])
+    r, v = World().review(R)
+    text = read((v.get("reviewers") or [{}])[0].get("brief") or "")
+    S.ok("default merge, control: with no merge the brief has no such line", "Review only" not in text, text[:400])
+
+
 def case_security(R, S):
     """The security reviewer is launched when asked (`--security`), when the plan's post-mortem asks for it, or when the last final merge
     named a protected path (execute.js: `A.security.needed || st.protected.length > 0`)."""
@@ -642,7 +660,7 @@ def case_fixer_retry(R, S):
         os.environ.update(saved_env)
 
 
-CASES = [case_review, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
+CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
@@ -692,8 +710,10 @@ MUTANTS = [
      "the post-mortem's security_review launches the security reviewer"),
     ("a protected path asks for no security review", case_security, V_, '(["the last final merge named a protected path"] if protected else [])', "[]",
      "a protected path of the last final merge launches the security reviewer"),
-    ("a missing postmortem.md is an error again", case_small_plan, V_, 'asked = prepare._security_why(data, owner["postmortem"], config.load(top))',
+    ("a missing postmortem.md is an error again", case_small_plan, V_, 'asked = prepare._security_why(data, owner["postmortem"], cfg)',
      'asked = plan.load_postmortem(owner["postmortem"]) and []', "small plan, no postmortem, security_review false: exit"),
+    ("the review reads the default branch's edits as the part's", case_default_merge, V_, "only = own if own !=", "only = None if True or own !=",
+     "default merge: the brief restricts the diff to the part's own files"),
     ("the fixer's unit is the verifier's", case_verdicts, V_, "**dict(common, unit=unit))", "**common)",
      "the unit of the fixer that follows the verifier"),
     ("the fixer's unit is not returned", case_threshold, V_, "**dict(common, unit=unit))", "**dict(common, unit=None))",

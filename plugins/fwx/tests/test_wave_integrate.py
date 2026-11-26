@@ -31,6 +31,9 @@ The controls of that case, first FAIL of each (the retry's item, a pass counted 
   FAIL: fwx wave --run R: tried: got ['1/3: gate red', '3/3: again'], want ['1/3: gate red']
   FAIL: fwx wave --run R: gaps: got [], want ['executor did not return: T3', 'reviewer did not return']
 
+Red before the gate ignored what the default branch brought (case_integrate_default_merge):
+  FAIL: default merge: master's CI and protected edits are not the part's: got (['The pull request edits CI workflows (.github/workflows/ci.yml).'], ['.github/workflows/ci.yml', 'src/secret/k.py']), want ([], [])
+
 Controls: each case also runs on a copy of bin/ and lib/ with one line of the code changed (`MUTANTS` below, each `old` must be in
 its file exactly once), and must fail with the text in `MUTANTS`; the good code passes first (138 checks, 170 with the controls).
 The first FAIL line of each mutant, seen red:
@@ -382,6 +385,32 @@ def case_integrate_final(R, S):
     S.eq("final, red gate: ok false and nothing said about trust", (v.get("ok"), v.get("verify", {}).get("rc"), v.get("trusted")), (False, 1, []))
     sg.stop()
     sr.stop()
+
+
+def case_integrate_default_merge(R, S):
+    """The default branch merged into the phase branch after the run's base is not the part's work: the gate's trusted edits and
+    protected paths read only the files that also differ from the merge-base with the default branch (run-failures finding (a): a
+    Dependabot edit of `.github/workflows/` on master made a part look like it edited CI and went to the owner)."""
+    sc = Scene(protected=["src/secret/**"])
+    helpers.write(sc.repo, ".github/workflows/ci.yml", "name: bumped\n")
+    helpers.write(sc.repo, "src/secret/k.py", "k\n")
+    helpers.git(sc.repo, "add", "-A")
+    helpers.git(sc.repo, "commit", "-q", "-m", "master: a bump of CI and a secret file")
+    helpers.git(sc.cwd, "merge", "-q", "--no-edit", "master")
+    b = sc.agent("one", [("src/a.py", "a1\n", None)])
+    v = ok_json(S, "final after the default branch was merged in", sc.integrate(R, b, extra=("--final",)))
+    S.eq("default merge: master's CI and protected edits are not the part's", (v.get("trusted"), v.get("protected")), ([], []))
+    sc.stop()
+    sp = Scene()
+    helpers.write(sp.repo, ".github/workflows/ci.yml", "name: bumped\n")
+    helpers.git(sp.repo, "add", "-A")
+    helpers.git(sp.repo, "commit", "-q", "-m", "master: a bump of CI")
+    helpers.git(sp.cwd, "merge", "-q", "--no-edit", "master")
+    b = sp.agent("one", [(".github/workflows/ci.yml", "name: mine\n", None)])
+    v = ok_json(S, "final, the part edits the file master also changed", sp.integrate(R, b, extra=("--final",)))
+    S.eq("default merge, control: the part's own edit of that file still counts",
+         (bool(v.get("trusted")), v.get("protected")), (True, [".github/workflows/ci.yml"]))
+    sp.stop()
 
 
 def case_integrate_gate_only(R, S):
@@ -882,7 +911,7 @@ def case_next_rules(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_final, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
+         case_integrate_findings, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
          case_summary_report, case_step_files, case_next, case_next_rules]
 
 I = "lib/fwx/execute/integrate.py"
@@ -897,6 +926,8 @@ MUTANTS = [
     ("a commit may carry two findings", case_integrate_findings, I, "if len(ids) > 1:", "if False:", "one commit for two findings: refused"),
     ("integrate --final needs a branch", case_integrate_gate_only, W, '(() if parsed and "--final" in parsed[0] else ("--branches",))', '("--branches",)',
      "integrate --final with no branch: exit"),
+    ("the gate reads the default branch's edits as the part's", case_integrate_default_merge, I, "names &= _diff_names(top, mb, to)", "pass",
+     "default merge: master's CI and protected edits are not the part's"),
     ("a refused attempt's fixer is pointed at the oldest brief that names the findings", case_next, I, "for _n, name in sorted(found):", "for _n, name in sorted(found, reverse=True):",
      "a later fix round: the brief has"),
     ("the agent's unit is not returned", case_next, I, 'result["unit"], result["brief"] = _write_brief(', '_u, result["brief"] = _write_brief(',
