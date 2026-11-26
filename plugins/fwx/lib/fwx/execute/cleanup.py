@@ -21,13 +21,18 @@ The folder `fwx scratch new <run> <unit>` makes in the checkout (`<top>/.fwx-age
 worktree of their own, write) is removed with the run's worktrees: it is git-ignored, so nothing else would ever clear it. The
 folders of other runs and the ignore file stay; `scratch` in the result lists what was removed.
 
-Imports the standard library and execute.base.
+A run whose `state.json` says `active` while its pid lives is another process's work in progress (a second session sweeping every
+run of the repo would take the worktrees and report folders of a live one): `cleanup` refuses it with a WaveError naming the run and the
+pid. The one exempt is the pid of the caller itself, which is the live driver cleaning up at the end of its own run.
+
+Imports the standard library, fwx.config and execute.base.
 """
 import json
 import os
 import re
 import shutil
 
+from fwx import config
 from fwx.execute.base import AGENT_DIR, WaveError, git, out
 
 PROC = "/proc"
@@ -203,6 +208,20 @@ def recorded_of(fwx_folder, run):
     return branches, paths
 
 
+def _refuse_live(top, run):
+    """Raise WaveError when the run is another live process's: its state says `active` and its pid answers (the check `run.holder` makes)."""
+    try:
+        with open(os.path.join(config.fwx_dir(top), "runs", run, "state.json"), encoding="utf-8") as f:
+            st = json.load(f)
+    except (OSError, ValueError, config.ConfigError):
+        return
+    if not isinstance(st, dict):
+        return
+    pid = st.get("pid")
+    if st.get("state") == "active" and isinstance(pid, int) and pid != os.getpid() and os.path.isdir(os.path.join(PROC, str(pid))):
+        raise WaveError("run %s is still running (pid %d): its worktrees and report folders are in use; remove them after it ends" % (run, pid))
+
+
 def cleanup(cwd, run, recorded=(), owned=(), hold=None):
     """`{removed, kept, leftover, scratch}` for the run's worktrees, from the checkout `cwd` is in (on the phase branch). `hold` is {path: why}:
     a worktree there is kept with that reason whatever its state (a worker whose release is unconfirmed may still use it)."""
@@ -215,6 +234,7 @@ def cleanup(cwd, run, recorded=(), owned=(), hold=None):
     if phase is None:
         raise WaveError("the checkout %s is on no branch: cleanup runs from the phase branch's checkout" % top)
     base = base_of(top, run)
+    _refuse_live(top, run)
     every = worktrees(top)
     owned = {os.path.realpath(p) for p in owned}
     mine = [w for w in every[1:] if w["path"] != top and w["branch"] != phase

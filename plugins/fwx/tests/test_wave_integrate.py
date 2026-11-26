@@ -571,6 +571,50 @@ def case_cleanup_no_proc(R, S):
     sc.stop()
 
 
+def case_cleanup_live_run(R, S):
+    """`wave remove --run R` refuses a run whose state.json says `active` while its pid lives (another session's run: its worktrees and
+    scratch are in use), names the run and the pid, exits 2 and removes nothing; a run whose pid is dead is swept, and the live driver's
+    own end-of-run cleanup (its pid is its own) still works.
+    Seen red on the code before the check (python3 tests/test_wave_integrate.py):
+      FAIL: live run: exit: got (0, ''), want (2, "fwx wave remove: run <id> is still running (pid <n>) ...")
+      FAIL: live run: its worktree and scratch are untouched: got removed"""
+    sc = Scene()
+    wt = sc.agent("mine", [("src/a.py", "a1\n", None)])
+    helpers.git(sc.cwd, "merge", "-q", "--no-ff", "-m", "merge " + wt, wt)
+    scratch = os.path.join(os.path.realpath(sc.cwd), ".fwx-agent", sc.run, "r1")
+    S.eq("live run, setup: scratch for the run", sc.call(R, "scratch", sc.run, "r1").returncode, 0)
+    helpers.write(scratch, "report.json", "{}\n")
+    pid, _ = sc.live()
+    folder = os.path.join(sc.common, "fwx", "runs", sc.run)
+    os.makedirs(folder)
+    helpers.write(folder, "state.json", json.dumps({"run": sc.run, "state": "active", "pid": pid, "worktrees": [{"path": sc.trees[wt]}]}))
+    r = sc.call(R, "cleanup", "--run", sc.run)
+    S.eq("live run: exit %s" % r.returncode, r.returncode, 2)
+    S.ok("live run: stderr names the run and the pid", sc.run in r.stderr and str(pid) in r.stderr, r.stderr[:200])
+    got = "removed" if not exists(sc.trees[wt]) or not exists(scratch) else "kept"
+    S.eq("live run: its worktree and scratch are untouched: got %s" % got, got, "kept")
+    S.eq("live run: nothing was recorded for the refused call", sc.step_files(), ["state.json"])
+    # the same state with a dead pid is a run that was killed: swept
+    dead, _ = sc.dead()
+    helpers.write(folder, "state.json", json.dumps({"run": sc.run, "state": "active", "pid": dead, "worktrees": [{"path": sc.trees[wt]}]}))
+    v = ok_json(S, "dead run", sc.call(R, "cleanup", "--run", sc.run))
+    S.ok("dead run: swept", not exists(sc.trees[wt]) and not exists(scratch), repr(v))
+    # a finished run is swept whatever its pid
+    helpers.write(folder, "state.json", json.dumps({"run": sc.run, "state": "done", "pid": pid}))
+    ok_json(S, "done run, live pid", sc.call(R, "cleanup", "--run", sc.run))
+    # the driver itself: the process whose pid the state names calls cleanup at the end of its run
+    wt2 = sc.agent("again", [("src/b.py", "b1\n", None)])
+    helpers.git(sc.cwd, "merge", "-q", "--no-ff", "-m", "merge " + wt2, wt2)
+    root = getattr(R, "root", ROOT)
+    code = ("import json, os, sys; sys.path.insert(0, %r); from fwx.execute import cleanup\n"
+            "open(%r, 'w').write(json.dumps({'run': %r, 'state': 'active', 'pid': os.getpid()}))\n"
+            "got = cleanup.cleanup('.', %r, (), ())\n"
+            "print(json.dumps([x['branch'] for x in got['removed']]))\n" % (os.path.join(root, "lib"), os.path.join(folder, "state.json"), sc.run, sc.run))
+    r = subprocess.run([PY, "-c", code], cwd=sc.cwd, env=helpers.clean_env(**IDENT), capture_output=True, text=True)
+    S.eq("driver: its own end-of-run cleanup still removes: %s" % r.stderr.strip()[-200:], (r.returncode, r.stdout.strip()), (0, json.dumps([wt2])))
+    sc.stop()
+
+
 def run_no_proc(R, sc):
     root = getattr(R, "root", ROOT)
     code = ("import sys; sys.path.insert(0, %r); from fwx.execute import cleanup; cleanup.PROC = '/nonexistent-proc'; "
@@ -928,7 +972,7 @@ def case_next_rules(R, S):
 
 
 CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
-         case_integrate_findings, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
+         case_integrate_findings, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_cleanup_live_run, case_summary,
          case_summary_report, case_step_files, case_next, case_next_rules]
 
 I = "lib/fwx/execute/integrate.py"
@@ -960,6 +1004,8 @@ MUTANTS = [
      "removed a worktree of another run"),
     ("cleanup keeps a stale-locked worktree", case_cleanup, C, LIVE, 'return "live"', "kept a stale-locked worktree"),
     ("cleanup without /proc runs on", case_cleanup_no_proc, C, "if not os.path.isdir(PROC):", "if False:", "cleanup, no /proc: exit"),
+    ("cleanup takes a live run's worktrees", case_cleanup_live_run, C, 'if st.get("state") == "active" and', 'if False and', "live run: exit"),
+    ("cleanup refuses its own driver", case_cleanup_live_run, C, "and pid != os.getpid()", "and True", "driver: its own end-of-run cleanup still removes"),
     ("cleanup keeps the run's scratch", case_cleanup_scratch, C, "    scratch = _scratch(top, run)", "    scratch = []", "the run's scratch folder is removed and listed"),
     ("cleanup leaves the ignore file", case_cleanup_scratch, C, "            os.rmdir(root)", "            pass", "`.fwx-agent/` and its .gitignore are gone too"),
     ("summary ignores the exit of the evidence", case_summary, I, 'gate = "pass" if rc == "0" and sha == head and not why else "fail"', 'gate = "pass" if sha == head and not why else "fail"',
