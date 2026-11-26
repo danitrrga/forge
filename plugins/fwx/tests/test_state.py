@@ -89,7 +89,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
 
 sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
-from fwx import config, context_base, state  # noqa: E402
+from fwx import config, state  # noqa: E402
 from fwx.core import verify  # noqa: E402
 from fwx.execute import brief, cleanup, run as run_mod  # noqa: E402
 
@@ -720,7 +720,7 @@ s.eq("control: a trailing comma in the frontmatter is caught", frontmatter(os.pa
 # ---- a workspace whose code lives in nested repos (DTC-64): one state folder, `<workspace>/.git/fwx`, from every worktree ----------
 # Seen red with T1 alone (config.fwx_dir exists, state.py and the run modules still ask their own repository):
 #   FAIL: session file in the workspace: <ws>/.git/fwx/sessions/ns1.json missing (written to <ws>/a/.git/fwx/sessions)
-#   (and the same for the gate lock, runs_folder, brief.folder_of's and cleanup.recorded_of's folders and context_base.base_path)
+#   (and the same for the gate lock and runs_folder, brief.folder_of's and cleanup.recorded_of's folders)
 ws = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\na/\n"}))
 na = os.path.join(ws, "a")
 os.makedirs(na)
@@ -755,8 +755,6 @@ rec = mk(ws_fwx, "runs", "r1")
 helpers.write(rec, "1-integrate.json", json.dumps({"step": "integrate", "exit": 0, "args": {"branches": ["task-branch"]}, "result": {}}))
 s.ok("cleanup.recorded_of takes the fwx folder and reads that run's files",
      "task-branch" in cleanup.recorded_of(config.fwx_dir(na_wt), "r1")[0], repr(cleanup.recorded_of(config.fwx_dir(na_wt), "r1")))
-s.eq("context_base.base_path from a worktree of repo a's phase", context_base.base_path(nphase),
-     os.path.join(ws_fwx, "context-base", "fwx__milestones__v1__phases__01-n.md"))
 s.ok("nothing of fwx is left in the nested repo: %s" % os.path.join(na, ".git", "fwx"), not os.path.exists(os.path.join(na, ".git", "fwx")))
 
 s.done()

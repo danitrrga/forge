@@ -61,8 +61,6 @@ DECIDED = [
     ("decision list", "state decisions", "state", ["decisions"]),
     ("state lint", "state check state", "state", ["check-state"]), ("report lint", "state check report", "state", ["check-report"]),
     ("plan lint", "plan check", "plan", ["check"]), ("plan brief", None, "plan", ["brief"]), ("plan status", None, "plan", ["status"]),
-    ("context new", "context-base build", "context_base", ["build"]), ("context seal", "context-base seal", "context_base", ["seal"]),
-    ("context lint", "context-base check", "context_base", ["check"]), ("context audit", "context-base audit", "context_base", ["audit"]),
     ("discuss", "discuss start", "discuss", ["start"]),
     ("linear list", None, "linear", ["list"]), ("linear list --waiting", "linear waiting", "linear", ["waiting"]),
     ("linear new", "linear create", "linear", ["create"]), ("linear comment", None, "linear", ["comment"]),
@@ -88,7 +86,6 @@ DEFAULTS = [
     (["wave", "--run", "R"], "wave", ["summary", "--run", "R"]),
     (["session", "--json"], "state", ["resolve", "--json"]),
     (["decision", "--all"], "state", ["decisions", "--all"]),
-    (["context", "DIR"], "context_base", ["check", "DIR"]),
     (["linear", "--label", "L"], "linear", ["list", "--label", "L"]),
     (["linear", "--project", "P", "list", "--waiting"], "linear", ["waiting", "--project", "P"]),
     (["linear", "--project", "P", "new"], "linear", ["create", "--project", "P"]),
@@ -97,7 +94,7 @@ DEFAULTS = [
     (["linear", "--project", "P", "--waiting", "--json"], "linear", ["waiting", "--project", "P", "--json"]),
     (["discuss", "--json"], "discuss", ["start", "--json"]),
 ]
-OBJECT_OLD = {"context-base": "context"}
+OBJECT_OLD = {}
 # the module whose handlers print their own argparse help for `--help`: the router leaves its rows to them
 OWN_HELP = "state"
 
@@ -210,7 +207,12 @@ def scenario(work):
                        #   FAIL: fwx playbook list: exit 2 and 'unknown command: playbook': got (0, False, 'STUB playbooks ["tree"]\n'), want (2, True, '')
                        #   FAIL: fwx playbooks list: exit 2 and 'unknown command: playbooks': got (2, False, ''), want (2, True, '')  (stderr said it was now `fwx playbook`)
                        (("playbook", "list"), "unknown command: playbook"), (("playbook", "lint"), "unknown command: playbook"),
-                       (("playbooks", "list"), "unknown command: playbooks")):
+                       (("playbooks", "list"), "unknown command: playbooks"),
+                       # the base context is gone: no `context` command, and no old `context-base` name redirecting to it. Red while the
+                       # modules existed (the rows were there, `context-base` an OLD_OBJECTS entry):
+                       #   FAIL: fwx context new .: exit 2 and 'unknown command: context': got (0, False, 'STUB context_base ["build", "."]\n')
+                       (("context", "new", "."), "unknown command: context"), (("context", "lint", "."), "unknown command: context"),
+                       (("context-base", "build"), "unknown command: context-base")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing
@@ -253,6 +255,8 @@ else:
     files = {f[:-3] for f in os.listdir(os.path.join(helpers.ROOT, "lib", "fwx", "commands")) if f.endswith(".py") and f != "__init__.py"}
     s.eq("every command file has a row", sorted(files - {r[2] for r in routes.ROWS}), [])
     s.eq("every row names a command file", sorted({r[2] for r in routes.ROWS} - files), [])
+    s.eq("the routes hold no `context` default and no old `context-base` name",
+         ("context" in routes.DEFAULTS, "context-base" in routes.OLD_OBJECTS), (False, False))
     s.eq("the table has the rows of the decided table, no more, no fewer",
          sorted((r[0], r[1], r[2], r[3]) for r in routes.ROWS), sorted((n, o, m, a) for n, o, m, a in DECIDED))
 
@@ -276,13 +280,39 @@ for name, mutate, label in CONTROLS if os.path.exists(ROUTES) else ():
     s.ok("control (%s) is seen red on `%s...` (%d failed)" % (name, label, len(bad)), any(b[0].startswith(label) for b in bad), bad[:2])
 
 # ---- the texts agents read name no command that is gone ------------------------------------------------------------------
-# A removed command (`fwx capacity`, D90) lived on in a playbook line nothing read, and the workflow no longer did what it said. The base
-# context's own check (`context_base._unknown_commands`, which knows the table and its old names) is run over every playbook, agent,
-# skill, reference and the README: each `fwx <object> [word]` they name must be a command. Seen red on the head of PR 140
-# (playbooks/execute.md still said the workflow runs `fwx capacity --role executor --want N --wait 540`):
+# A removed command (`fwx capacity`, D90) lived on in a playbook line nothing read, and the workflow no longer did what it said.
+# `_unknown_commands` below (the check of the deleted base context, moved here: this test is its only user) knows the table and its old
+# names, and is run over every playbook, agent, skill, reference and the README: each `fwx <object> [word]` they name must be a
+# command. Seen red on the head of PR 140 (playbooks/execute.md still said the workflow runs `fwx capacity --role executor --want N --wait 540`):
 #   FAIL: playbooks/execute.md names no command that is gone: ['unknown command: fwx capacity']
 sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
-from fwx import context_base as _cb  # noqa: E402
+from fwx import routes as _routes  # noqa: E402
+
+_FWX_CMD = re.compile(r"`fwx ([a-z][a-z0-9-]*)(?: ([a-z][a-z0-9-]*))?")
+
+
+def _unknown_commands(text):
+    """A problem for each `fwx <object> [<word>]` the text names that is no command of the table: an old name (and its new one), an
+    unknown object, or a verb the object does not have. An object with a default verb or with no verbs takes any word after it (a
+    positional argument: `fwx decision --all`, `fwx model executor small`)."""
+    objects = {r[0].split()[0] for r in _routes.ROWS}
+    verbs = {}
+    for r in _routes.ROWS:
+        w = r[0].split()
+        if len(w) > 1 and not w[1].startswith("--"):
+            verbs.setdefault(w[0], set()).add(w[1])
+    has_row = {tuple(r[0].split()) for r in _routes.ROWS}
+    out = []
+    for obj, word in dict.fromkeys(_FWX_CMD.findall(text)):
+        name = "fwx %s" % obj + (" %s" % word if word else "")
+        old = _routes.refusal([obj, word] if word else [obj])
+        if old:
+            out.append("old command: %s" % old)
+        elif obj not in objects:
+            out.append("unknown command: fwx %s" % obj)
+        elif word and obj in verbs and word not in verbs[obj] and (obj,) not in has_row and obj not in _routes.DEFAULTS:
+            out.append("unknown command: %s (verbs of %s: %s)" % (name, obj, ", ".join(sorted(verbs[obj]))))
+    return out
 
 texts = sorted(glob.glob(os.path.join(helpers.ROOT, "playbooks", "*.md")) + glob.glob(os.path.join(helpers.ROOT, "agents", "*.md"))
                + glob.glob(os.path.join(helpers.ROOT, "skills", "*", "SKILL.md")) + glob.glob(os.path.join(helpers.ROOT, "skills", "*", "references", "*.md"))
@@ -291,9 +321,9 @@ s.ok("the scan looks at the playbooks, the agents, the skills and the README (%d
      any("playbooks" + os.sep in p for p in texts) and any("agents" + os.sep in p for p in texts) and any(p.endswith("SKILL.md") for p in texts) and len(texts) > 20, len(texts))
 for p in texts:
     with open(p, encoding="utf-8") as f:
-        s.eq("%s names no command that is gone" % os.path.relpath(p, helpers.ROOT), _cb._unknown_commands(f.read()), [])
+        s.eq("%s names no command that is gone" % os.path.relpath(p, helpers.ROOT), _unknown_commands(f.read()), [])
 # control: the scan does see a removed command
-s.eq("control: a text that names `fwx capacity` is caught", _cb._unknown_commands("it runs `fwx capacity --role executor`"), ["unknown command: fwx capacity"])
+s.eq("control: a text that names `fwx capacity` is caught", _unknown_commands("it runs `fwx capacity --role executor`"), ["unknown command: fwx capacity"])
 
 # ---- `--help` after a verb, on the real handlers --------------------------------------------------------------------------
 # The reported case: `fwx walk selftest --help` printed "--help is not an option of this command" on stderr and exited 2. Run as the

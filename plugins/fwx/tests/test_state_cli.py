@@ -42,12 +42,6 @@ Controls, each seen red on lib/fwx/commands/state.py changed in one place (the f
       FAIL: new-milestone with no .fwx: refused, nothing made: exit code: got 0, want 1
   - list marks every phase open (1 failed):
       FAIL: list --json: a closed phase and its stage: got ('01-login', 'closed', True), want ('01-login', 'closed', False)
-
-2.5 U4 (new-phase builds the base context), seen red on lib/fwx/commands/state.py at master (296 checks):
-  FAIL: new-phase: the base file is made, with the map: .../.git/fwx/context-base/fwx__milestones__v1__phases__01-alpha.md
-  FAIL: new-phase with a map over the cap: one `fwx phase new: context-base: ... over the cap` line: ''
-  - new-phase exits 1 when the refresh fails (2 failed):
-      FAIL: new-phase with a map over the cap: exit 0: got 1, want 0
 """
 import json
 import os
@@ -151,22 +145,10 @@ s.ok("new-phase: PROJECT.md and the milestone are made", os.path.exists(os.path.
      and os.path.exists(os.path.join(main, ".fwx", "milestones", "v1", "MILESTONE.md")))
 s.eq("new-phase: the phase folder holds context.md, decisions.tsv and audit.tsv",
      ls(phase1), ["audit.tsv", "context.md", "decisions.tsv"])
-# 2.5 U4: the base context is built with the phase, before any context.md of the owner's
-sys.path.insert(0, os.path.join(helpers.ROOT, "lib"))
-from fwx import context_base as cb  # noqa: E402
-
-base1 = cb.base_path(phase1)
-def text_of(path):
-    with open(path, encoding="utf-8") as f:
-        return f.read()
-
-
-btext = text_of(base1) if os.path.exists(base1) else ""
-s.ok("new-phase: the base file is made, with the map", os.path.exists(base1) and text_of(os.path.join(helpers.ROOT, "data", "context-map.md")).strip() in btext,
-     base1)
-s.ok("new-phase: the base lists the phase's files", "## Files" in btext and os.path.join(phase1, "decisions.tsv") in btext, btext[-400:])
-s.ok("new-phase: the base is in the discuss stage", "<!-- built stage=discuss " in btext, btext[-200:])
-s.eq("new-phase: nothing of the base inside the worktree", tree(wt), before_wt)
+# no base-context file is built with the phase any more. Seen red while it was built (the folder held the phase's file):
+#   FAIL: new-phase builds no context-base file: got ['fwx__milestones__v1__phases__01-alpha.md'], want []
+base_dir = os.path.join(main, ".git", "fwx", "context-base")
+s.eq("new-phase builds no context-base file", sorted(os.listdir(base_dir)) if os.path.isdir(base_dir) else [], [])
 
 s.eq("new-phase: binds the session", session_file(main, "sess-a"), {"subproject": None, "phase_dir": ".fwx/milestones/v1/phases/01-alpha"})
 s.eq("new-phase: the session file is in the main checkout's git dir, not the worktree's",
@@ -412,24 +394,6 @@ s.ok("check state of a short file: no warning", "WARN" not in r.stdout, r.stdout
 helpers.write(k, "state.md", "")
 clean("check state of an empty file", st(k, "state", "lint", state_md), 1)
 clean("check state of a file that is not there", st(k, "state", "lint", os.path.join(k, "none.md")), 1)
-
-# a map over the cap: the phase is made and bound, the exit stays 0, one line on stderr says why (2.5 U4)
-import shutil  # noqa: E402
-
-big = helpers.mkdtemp("fwx-bigmap-")
-for sub in ("bin", "lib", "data", "templates"):
-    shutil.copytree(os.path.join(helpers.ROOT, sub), os.path.join(big, sub), ignore=shutil.ignore_patterns("__pycache__"))
-helpers.write(big, "data/context-map.md", "x" * 9500 + "\n")
-big_repo = helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"})
-r = subprocess.run([sys.executable, os.path.join(big, "bin", "fwx"), "phase", "new", "alpha"], cwd=big_repo,
-                   env=helpers.clean_env(CLAUDE_CODE_SESSION_ID="sess-big"), capture_output=True, text=True)
-bigphase = os.path.join(big_repo, ".fwx", "milestones", "v1", "phases", "01-alpha")
-s.eq("new-phase with a map over the cap: exit 0", r.returncode, 0)
-s.eq("new-phase with a map over the cap: stdout is still the folder", r.stdout.strip(), bigphase)
-s.ok("new-phase with a map over the cap: one `fwx phase new: context-base: ... over the cap` line",
-     re.fullmatch(r"fwx phase new: context-base: .*over the cap.*\n", r.stderr) is not None, repr(r.stderr))
-s.eq("new-phase with a map over the cap: the phase is bound", (session_file(big_repo, "sess-big") or {}).get("phase_dir"),
-     ".fwx/milestones/v1/phases/01-alpha")
 
 # ---- a workspace whose code lives in nested repositories (`project.repos`): `fwx session --json` says where each part works --------
 # Seen red on the code before `part_repos` and `fwx_dir` existed:
