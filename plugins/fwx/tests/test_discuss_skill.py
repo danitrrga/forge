@@ -256,6 +256,117 @@ for label, text, notice, want in [
     got = [c for c, _ in recall_problems(text, notice)]
     check("control: " + label, want in got, "got %s, want %r" % (got, want))
 
+# 01.2 T23 (D9, D11, D2): the discuss is owner-only; a step before the playback checks the draft's claims; round one asks his view and carries no
+# recommendation; the playback calls out every assumption; the paused branches (improve, `focused fix`, factory returns, the closed-list ask), the
+# Linear waiting list and the route confirmation are gone; three pstack rules are in, each with its referent. Seen red at c538909 (the texts before
+# this task), the first FAIL lines printed:
+#   FAIL: discuss frontmatter has disable-model-invocation: true -> its frontmatter has no `disable-model-invocation: true`
+#   FAIL: a claim check runs before the playback -> claim step [], playback step [8]: it needs `models.researcher.normal`, a claim check, ...
+#   FAIL: discuss names no paused branch -> SKILL.md:18 'Improve the system', SKILL.md:19 'focused fix', SKILL.md:19 'factory-issue', ...
+#   FAIL: discuss shows no Linear waiting list -> SKILL.md names 'waiting.groups'
+#   FAIL: the first check names the smallest change -> 'First check:' sentence: 'First check: what you understood, the subproject and why, what waits in Linear (`waiting.g'
+# Controls on toys below: the good toy passes, then each change makes its own check fail.
+PAUSED = ("Improve the system", "focused fix", "factory-issue", "factory-failed", "factory-review", "needs-owner", "closed list", "`direct change`",
+          "`full process`")
+OWNER_ONLY = "disable-model-invocation: true"
+
+
+def stepmap(text):
+    return {int(m.group(1)): m.group(0) for m in re.finditer(r"^(\d+)\. .*?(?=^\d+\. |\Z)", text, flags=re.S | re.M)}
+
+
+def discuss_problems(skill, rounds):
+    """skill: skills/discuss/SKILL.md; rounds: references/rounds.md. Returns [(check, detail)]."""
+    out = []
+    front = skill.split("---", 2)[1] if skill.startswith("---") else ""
+    if OWNER_ONLY not in front.splitlines():
+        out.append(("discuss frontmatter has disable-model-invocation: true", "its frontmatter has no `%s`" % OWNER_ONLY))
+    steps = stepmap(skill)
+    claim = [n for n, t in steps.items() if "`models.researcher.normal`" in t and "claim" in t and "context.md" in t and "decisions.tsv" in t
+             and re.search(r"who and what", t)]
+    playback = [n for n, t in steps.items() if "playback.md" in t]
+    if not claim or not playback or not claim[0] < playback[0]:
+        out.append(("a claim check runs before the playback", "claim step %s, playback step %s: it needs `models.researcher.normal`, a claim check, context.md, "
+                    "decisions.tsv and who and what the change touches" % (claim, playback)))
+    lines = skill.splitlines()
+    paused = ["SKILL.md:%d %r" % (i, w) for i, l in enumerate(lines, 1) for w in PAUSED if w.lower() in l.lower()]
+    if paused:
+        out.append(("discuss names no paused branch", ", ".join(paused)))
+    if "waiting.groups" in skill:
+        out.append(("discuss shows no Linear waiting list", "SKILL.md names 'waiting.groups'"))
+    first = (re.search(r"First check:.*?(?:\.\s|\.$)", skill, re.S | re.M) or [""])[0]
+    if "smallest change that meets it" not in first:
+        out.append(("the first check names the smallest change", "'First check:' sentence: %r" % first[:90]))
+    s3 = steps.get(3, "")
+    if not re.search(r"one or two obvious files[^.]*plain Claude|plain Claude[^.]*one or two obvious files", s3, re.I):
+        out.append(("step 3 offers plain Claude when the change is one or two obvious files", "step 3: %r" % s3[:60]))
+    if not (steps.get(5) and "handful of rows" in steps[5]):
+        out.append(("step 5 says a phase holds a handful of rows", "step 5 has no 'handful of rows'"))
+    s6 = steps.get(6, "")
+    if not all(w in s6 for w in ("throwaway script", "outside the repo", "`researcher`")):
+        out.append(("step 6 sends a fork a throwaway script can settle to a researcher", "step 6: %r" % s6[:90]))
+    head = "\n".join(lines[:12])
+    for name, text in (("SKILL.md", head), ("rounds.md", rounds)):
+        if not re.search(r"referent:.*cursor/plugins.*poteto-mode/SKILL\.md.*@b7b93c36be9b", text.replace("\n", " ")):
+            out.append(("%s names its pstack referent at b7b93c36be9b" % name, "no `referent: cursor/plugins ... poteto-mode/SKILL.md @b7b93c36be9b`"))
+    r1 = next((l for l in rounds.splitlines() if re.match(r"\s*(-\s+)?\*?\*?Round one", l)), "")
+    if not ("view" in r1 and "no `Recommended:`" in r1):
+        out.append(("rounds.md round one asks his view and carries no recommendation", "round-one line: %r" % r1[:90]))
+    if not any("weak" in l and "ADR" in l and "reverses" in l for l in rounds.splitlines()):
+        out.append(("rounds.md says plainly when his reasoning is weak or reverses a rule or ADR", "no line with 'weak', 'reverses' and 'ADR'"))
+    return out
+
+
+def playback_problems(text):
+    """playback.md: the call-out bullet names both support values, and an owner revision waits for explicit confirmation."""
+    out = []
+    if not any(l.lstrip().startswith("- ") and "Call outs" in l and "agent-assumption" in l and "unexamined" in l for l in text.splitlines()):
+        out.append(("the playback calls out every agent-assumption and unexamined row", "no bullet 'Call outs' naming both"))
+    if "wait for explicit confirmation" not in text:
+        out.append(("the playback waits for explicit confirmation", "no 'wait for explicit confirmation'"))
+    return out
+
+
+for name, detail in discuss_problems(files["SKILL.md"], files["rounds.md"]) + playback_problems(files["playback.md"]):
+    check(name, False, detail)
+
+GOOD_DISCUSS = ("---\nname: discuss\ndisable-model-invocation: true\n---\n"
+                "<!-- referent: cursor/plugins pstack/skills/poteto-mode/SKILL.md @b7b93c36be9b (the rules) -->\n"
+                "3. **Ask.** First check: what you understood, the smallest change that meets it. One or two obvious files: say so and offer plain Claude.\n"
+                "5. **Record.** A phase holds a handful of rows.\n"
+                "6. **Research.** A fork a throwaway script outside the repo can settle goes to a `researcher`.\n"
+                "7. **Claim check.** Launch `researcher` (`models.researcher.normal`): every claim of context.md and decisions.tsv, and who and what the change touches.\n"
+                "8. **Playback.** Per `references/playback.md`.\n")
+GOOD_ROUNDS = ("<!-- referent: cursor/plugins pstack/skills/poteto-mode/SKILL.md @b7b93c36be9b -->\n"
+               "- Round one asks his view first: its questions carry no `Recommended:` line.\n"
+               "- When his reasoning is weak or reverses an existing rule or ADR, say so plainly.\n")
+GOOD_PLAYBACK = "- **Call outs** lists every `agent-assumption` or `unexamined` row.\nWait for explicit confirmation: wait for explicit confirmation.\n"
+check("control: the good discuss toy passes", discuss_problems(GOOD_DISCUSS, GOOD_ROUNDS) == [], "got %s" % discuss_problems(GOOD_DISCUSS, GOOD_ROUNDS))
+check("control: the good playback toy passes", playback_problems(GOOD_PLAYBACK) == [], "got %s" % playback_problems(GOOD_PLAYBACK))
+for label, skill2, rounds2, want in [
+        ("no owner-only key", GOOD_DISCUSS.replace("disable-model-invocation: true\n", ""), GOOD_ROUNDS, "discuss frontmatter has disable-model-invocation: true"),
+        ("claim check after the playback", GOOD_DISCUSS.replace("7. **Claim check.**", "9. **Claim check.**"), GOOD_ROUNDS, "a claim check runs before the playback"),
+        ("claim check without who and what", GOOD_DISCUSS.replace("and who and what the change touches", ""), GOOD_ROUNDS, "a claim check runs before the playback"),
+        ("a focused fix branch", GOOD_DISCUSS + "9. **Fix.** A focused fix goes to `/fwx:factory-issue`.\n", GOOD_ROUNDS, "discuss names no paused branch"),
+        ("the route confirmation", GOOD_DISCUSS.replace("First check", "Route `full process`. First check"), GOOD_ROUNDS, "discuss names no paused branch"),
+        ("a Linear waiting list", GOOD_DISCUSS.replace("First check:", "First check: Linear (`waiting.groups` by age),"), GOOD_ROUNDS, "discuss shows no Linear waiting list"),
+        ("a first check without the smallest change", GOOD_DISCUSS.replace("the smallest change that meets it", "the subproject"), GOOD_ROUNDS, "the first check names the smallest change"),
+        ("no plain Claude offer", GOOD_DISCUSS.replace("plain Claude", "a phase"), GOOD_ROUNDS, "step 3 offers plain Claude when the change is one or two obvious files"),
+        ("no handful of rows", GOOD_DISCUSS.replace("A phase holds a handful of rows.", "Record rows."), GOOD_ROUNDS, "step 5 says a phase holds a handful of rows"),
+        ("a fork asked of the owner", GOOD_DISCUSS.replace("throwaway script", "question"), GOOD_ROUNDS, "step 6 sends a fork a throwaway script can settle to a researcher"),
+        ("SKILL.md header without the commit", GOOD_DISCUSS.replace("@b7b93c36be9b", "@36885ea"), GOOD_ROUNDS, "SKILL.md names its pstack referent at b7b93c36be9b"),
+        ("rounds.md without the referent", GOOD_DISCUSS, GOOD_ROUNDS.replace("referent:", "note:"), "rounds.md names its pstack referent at b7b93c36be9b"),
+        ("round one that recommends", GOOD_DISCUSS, GOOD_ROUNDS.replace("carry no `Recommended:` line", "end with a recommendation"), "rounds.md round one asks his view and carries no recommendation"),
+        ("no weak-reasoning line", GOOD_DISCUSS, GOOD_ROUNDS.replace("is weak or reverses", "is odd or changes"), "rounds.md says plainly when his reasoning is weak or reverses a rule or ADR")]:
+    got = [c for c, _ in discuss_problems(skill2, rounds2)]
+    check("control: " + label, want in got, "got %s, want %r" % (got, want))
+for label, text in [("no call-out bullet", GOOD_PLAYBACK.replace("- **Call outs** lists every `agent-assumption` or `unexamined` row.\n", "")),
+                    ("a call-out bullet naming one value", GOOD_PLAYBACK.replace(" or `unexamined`", "")),
+                    ("no explicit confirmation", GOOD_PLAYBACK.replace("wait for explicit confirmation", "go on"))]:
+    check("control: " + label, len(playback_problems(text)) == 1, "got %s" % playback_problems(text))
+check("control: the real playback.md without its call-out bullet fails",
+      [c for c, _ in playback_problems("\n".join(l for l in files["playback.md"].splitlines() if "Call outs" not in l))] == ["the playback calls out every agent-assumption and unexamined row"])
+
 print("looked at %d checks" % looked[0])
 for f in fails:
     print(f)

@@ -41,8 +41,8 @@ EveryInc/compound-engineering-plugin, https://github.com/EveryInc/compound-engin
   mechanisms), in words of its own.
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit 49dd158 (MIT).
-  skills/engineering/domain-modeling/SKILL.md: the three ADR criteria. Read for the same criteria by skills/discuss/SKILL.md step 5,
-  in words of its own; no text is copied.
+  skills/engineering/domain-modeling/SKILL.md: the three ADR criteria. Text copied by skills/session/references/closing.md step 3: lines
+  70-72 (the three tests of an ADR), word for word. Read for the same criteria by skills/discuss/SKILL.md step 5, in words of its own.
 
 pstack, https://github.com/michael-denyer/pstack-claude, commit 36885ea (MIT).
   Read for the shape of playbooks/principles.md, and for the rules of the cleanup of cell text in lib/fwx/state.py (from show-me-your-work/scripts/log.sh, reimplemented in Python, not copied).
@@ -135,6 +135,8 @@ cursor/plugins, https://github.com/cursor/plugins, commit b7b93c36be9b.
   folders of Cursor become this project's `.fwx/` documents, git and gh; `session-pickup` reads `skills/discuss/references/reentry.md`; the
   pointer to the `poteto-mode` Subagents section reads "name the model on every launch (CLAUDE.md)"; the `automate-me` and `unslop` lines
   and the Cursor-only mechanics (MCP agent mode, transcript UUID paths) are removed.
+  Read for skills/discuss/SKILL.md and skills/discuss/references/rounds.md: pstack/skills/poteto-mode/SKILL.md (the first-message rule, the
+  prototype rule and "No is an acceptable answer"), in words of its own. No text is copied.
 
 t3dotgg/tstack, https://github.com/t3dotgg/tstack, commit 11e37a74d0a6868c121cd0910ab2b3bd9873b92a (MIT), Copyright (c) 2026 Theo Browne.
   Only its peer-review and code-review material is used (D4).
