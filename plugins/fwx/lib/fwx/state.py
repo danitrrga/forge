@@ -17,7 +17,6 @@ config.ConfigError, whose message names the fix.
 Imports only the standard library and config: `fwx statusline` has to finish in under 100 ms.
 """
 import contextlib
-import fcntl
 import io
 import json
 import os
@@ -328,8 +327,7 @@ def append_row(path, columns, values):
     """Add one row, with the header first when the file is new or empty. `values` is a sequence in column order or a dict
     by column. The row goes in one `os.write` on an O_APPEND descriptor, so a concurrent writer cannot split it. An
     existing file with another header is refused. Two writers each creating the same new file at the same moment can
-    both write the header: a folder's TSVs are created with their header when the folder is made, and `append_decision`,
-    which also creates `adr.tsv` lazily, holds the folder's lock."""
+    both write the header: a folder's TSVs are created with their header when the folder is made."""
     path, cols = str(path), tuple(columns)
     if isinstance(values, dict):
         missing = [c for c in cols if c not in values]
@@ -381,21 +379,6 @@ def read_rows(path):
     return rows
 
 
-@contextlib.contextmanager
-def _folder_lock(folder):
-    """Hold an exclusive lock on `folder` for the block, so that the writers of one folder take turns (the kernel frees it if the
-    process dies). The folder itself is locked: a lock file would sit among the files `.fwx/` commits."""
-    try:
-        fd = os.open(str(folder), os.O_RDONLY)
-    except OSError as e:
-        raise StateError("%s: the folder cannot be locked (%s)" % (folder, e.strerror))
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        yield
-    finally:
-        os.close(fd)
-
-
 def append_decision(path, *, decision, why, support, rejected="", source="", supersedes=""):
     """Add a row to a decisions.tsv or an adr.tsv and return its id (`D<n>`, or `A<n>` for adr.tsv). Refused, and the
     file left as it was: `support` outside SUPPORT, an empty `decision` or `why`, a `supersedes` that is not an id in
@@ -404,14 +387,13 @@ def append_decision(path, *, decision, why, support, rejected="", source="", sup
         raise StateError("support %r is not one of %s" % (support, ", ".join(SUPPORT)))
     if not str(decision).strip() or not str(why).strip():
         raise StateError("a decision needs a decision text and a why")
+    rows = read_rows(path)
     prefix = "A" if os.path.basename(str(path)) == "adr.tsv" else "D"
-    with _folder_lock(os.path.dirname(os.path.abspath(str(path)))):  # the next id is read and written under one lock: parallel writers never take the same id
-        rows = read_rows(path)
-        if supersedes and supersedes not in {r.get("id") for r in rows}:
-            raise StateError("supersedes %r: no such id in %s" % (supersedes, path))
-        nums = [int(r["id"][1:]) for r in rows if re.fullmatch(prefix + r"\d+", r.get("id", ""))]
-        new_id = "%s%d" % (prefix, max(nums, default=0) + 1)
-        append_row(path, DECISION_COLUMNS, [_now(), new_id, decision, why, rejected, support, source, supersedes])
+    if supersedes and supersedes not in {r.get("id") for r in rows}:
+        raise StateError("supersedes %r: no such id in %s" % (supersedes, path))
+    nums = [int(r["id"][1:]) for r in rows if re.fullmatch(prefix + r"\d+", r.get("id", ""))]
+    new_id = "%s%d" % (prefix, max(nums, default=0) + 1)
+    append_row(path, DECISION_COLUMNS, [_now(), new_id, decision, why, rejected, support, source, supersedes])
     return new_id
 
 
@@ -551,19 +533,17 @@ def _number_taken(parent, n, subphases=False):
 def _claim(parent, make_name, first, subphases=False):
     """`os.mkdir` the first folder `make_name(n)`, n from `first` up, whose number is free. A number another writer took
     since the listing is skipped by a fresh look, and one taken between that look and the mkdir makes the mkdir fail
-    (it creates or fails, it never shares): both move on to the next number. The look and the mkdir run under the parent's
-    lock, because two writers with different slugs make different names, so no mkdir would fail and both would take one number."""
+    (it creates or fails, it never shares): both move on to the next number."""
     os.makedirs(str(parent), exist_ok=True)
-    with _folder_lock(parent):
-        for n in range(first, first + 1000):
-            if _number_taken(parent, n, subphases):
-                continue
-            d = Path(parent) / make_name(n)
-            try:
-                os.mkdir(str(d))
-                return d
-            except FileExistsError:
-                continue
+    for n in range(first, first + 1000):
+        if _number_taken(parent, n, subphases):
+            continue
+        d = Path(parent) / make_name(n)
+        try:
+            os.mkdir(str(d))
+            return d
+        except FileExistsError:
+            continue
     raise StateError("no free number in %s after 1000 tries" % parent)
 
 

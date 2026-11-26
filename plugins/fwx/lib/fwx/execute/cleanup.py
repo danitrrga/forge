@@ -218,7 +218,7 @@ def _refuse_live(top, run):
     if not isinstance(st, dict):
         return
     pid = st.get("pid")
-    if st.get("state") == "active" and isinstance(pid, int) and pid != os.getpid() and os.path.isdir(os.path.join(PROC, str(pid))):
+    if st.get("state") == "active" and isinstance(pid, int) and not isinstance(pid, bool) and pid != os.getpid() and os.path.isdir(os.path.join(PROC, str(pid))):
         raise WaveError("run %s is still running (pid %d): its worktrees and report folders are in use; remove them after it ends" % (run, pid))
 
 

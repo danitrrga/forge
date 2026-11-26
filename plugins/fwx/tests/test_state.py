@@ -81,6 +81,7 @@ Controls, each seen red on a copy with state.py (or a template) changed in one p
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 
@@ -97,6 +98,13 @@ for k in [k for k in os.environ if k.startswith("GIT_")]:  # a hook run exports 
 os.environ.pop("CLAUDE_CODE_SESSION_ID", None)
 
 s = helpers.Suite()
+
+# fwx.state imports without fcntl, as on Windows, where the module does not exist (every fwx command imports state). Seen red on master
+# with `import fcntl` and `_folder_lock` in state.py:
+#   FAIL: fwx.state imports with fcntl blocked (as on Windows): exit code (stderr '...lib/fwx/state.py", line 20, in <module>\n    import fcntl\nModuleNotFoundError: Standard library module 'fcntl' was not found\n'): got 1, want 0
+r = subprocess.run([sys.executable, "-I", "-c", "import sys; sys.modules['fcntl'] = None; sys.path.insert(0, %r); import fwx.state" % os.path.join(helpers.ROOT, "lib")],
+                   capture_output=True, text=True)
+s.eq("fwx.state imports with fcntl blocked (as on Windows): exit code (stderr %r)" % r.stderr[-200:], r.returncode, 0)
 
 
 def refuses(label, fn, needle=None):
