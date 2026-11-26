@@ -72,6 +72,13 @@ def runs_dir(sc):
     return os.path.join(common_dir(sc.repo), "fwx", "runs")
 
 
+def run_tree(sc):
+    """Everything under runs/, files and folders, relative: `prepare` makes the run's folder when it picks the id, so a refusal is clean when it
+    gave the folder back (runs/ itself may stay, empty)."""
+    top = runs_dir(sc)
+    return sorted(os.path.relpath(os.path.join(d, n), top) for d, ds, fs in os.walk(top) for n in ds + fs)
+
+
 def read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
@@ -208,16 +215,16 @@ def case_refused(R, S):
     r = gone.prepare(R)
     S.eq("refused: a CONTEXT file that is not there: exit", r.returncode, 2)
     S.ok("refused: names the task, the field and the file", "task T1: CONTEXT" in r.stderr and "decisions.tsv" in r.stderr, r.stderr)
-    S.ok("refused: nothing written", not os.path.exists(runs_dir(gone)))
+    S.eq("refused: nothing written", run_tree(gone), [])
     bad = wp.Scene(tasks=[wp.task("../T1", 1, ["src/a.py"])])
     r = bad.prepare(R)
     S.eq("refused: a task id that cannot name a file: exit", r.returncode, 2)
     S.ok("refused: says which", "task ../T1" in r.stderr, r.stderr)
-    S.ok("refused: nothing written outside the run", not os.path.exists(os.path.join(common_dir(bad.repo), "fwx", "T1.md")) and not os.path.exists(runs_dir(bad)))
+    S.ok("refused: nothing written outside the run", not os.path.exists(os.path.join(common_dir(bad.repo), "fwx", "T1.md")) and run_tree(bad) == [])
     red = wp.Scene(recipe=["false"], tasks=[wp.task("T1", 1, ["src/a.py"])])
     r = red.prepare(R)
     S.eq("refused: a red base: exit", r.returncode, 1)
-    S.ok("refused: a red base writes no brief", not os.path.exists(runs_dir(red)))
+    S.eq("refused: a red base writes no brief", run_tree(red), [])
 
 
 def case_ui(R, S):
@@ -375,7 +382,7 @@ def case_revert(R, S):
     sc = wp.Scene()
     a = wp.ok_args(S, "revert", sc.prepare(R, "--revert", "F1,F2"))
     S.eq("revert: the ids", a.get("revert"), ["F1", "F2"])
-    S.ok("revert: nothing is launched, so no brief is written", all(t["brief"] is None for t in tasks_of(a).values()) and not os.path.exists(runs_dir(sc)),
+    S.ok("revert: nothing is launched, so no brief is written", all(t["brief"] is None for t in tasks_of(a).values()) and not any("briefs" in p for p in run_tree(sc)),
          repr(tasks_of(a)))
     for label, ids in (("an id with a space", "F1,F 2"), ("an id that starts with a dash", "-F1"), ("an empty list", ",")):
         r = sc.prepare(R, "--revert", ids)
@@ -510,7 +517,7 @@ MUTANTS = [
     ("context file not looked for", case_refused, B, "if not os.path.exists(p)]", "if False]", "a CONTEXT file that is not there: exit"),
     ("briefs written before the base is run", case_refused, P,
      '    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say, cfg["project"]["check_timeout_s"], part, cfg)',
-     '    _write(made, folder, False)\n    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say, cfg["project"]["check_timeout_s"], part, cfg)',
+     '    _write(made, folder)\n    red = None if gating else _base_is_green(top, base, recipe, {part, phase}, say, cfg["project"]["check_timeout_s"], part, cfg)',
      "a red base writes no brief"),
     ("task id not checked", case_refused, P, 'if not brief.ID.match(t["id"]):', "if False:", "a task id that cannot name a file: exit"),
     ("fields out of order", case_briefs, T, "## ACCEPTANCE\n$acceptance\n\n## VERIFY\n", "## VERIFY\n$verify\n\n## ACCEPTANCE\n$acceptance\n\n## OLD\n",

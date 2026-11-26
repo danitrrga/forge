@@ -1086,6 +1086,13 @@ MUTANTS = [
     ("fresh: default branch allowed", case_check_base_moves_fresh, B, "if branch in default:", "if False:",
      "moves-fresh: the default branch's name: exit 0, want 42"),
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
+    ("base checks skip the gate lock", case_base_gate_lock, P, "    with verify.gate_lock(top):  #", "    if True:  #",
+     "gate lock: the base check waits for the held gate lock"),
+    ("run id counted, not claimed", case_run_id_claimed, P, 'os.mkdir(os.path.join(runs, "%s%d" % (prefix, n)))',
+     'os.path.isdir(os.path.join(runs, "%s%d" % (prefix, n))) or os.makedirs(os.path.join(runs, "%s%d" % (prefix, n)), exist_ok=True)',
+     "run id: two wave new on one part and base"),
+    ("a refused run keeps its folder", case_run_id_claimed, P, "                os.rmdir(folder)\n", "                pass\n",
+     "run id: a red base is refused and leaves no empty run folder"),
     ("the part's repo not checked", case_nested, P, "    if have != want:\n", "    if False:\n",
      "nested: part of repo a from a worktree of the workspace: exit: got 0, want 2"),
 ]
