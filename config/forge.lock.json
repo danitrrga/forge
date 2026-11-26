@@ -11,15 +11,15 @@
       "version": "6.30.1"
     },
     "code-review@claude-plugins-official": {
-      "sha": "b5b01ac4f889fec0c4c6bb89f27ca7c8574473f6",
+      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
       "version": "1.0.1"
     },
     "code-simplifier@claude-plugins-official": {
       "version": "1.0.0"
     },
     "context7@claude-plugins-official": {
-      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
-      "version": "fd30cee3ecd5"
+      "sha": "73c8cf3ea7e296057b467990f2f5d61b4c922260",
+      "version": "73c8cf3ea7e2"
     },
     "frontend-design@claude-plugins-official": {
       "sha": "f8c5e7a1dcb71b10cb74586224b5401f3de5db28",
@@ -34,8 +34,8 @@
       "version": "0.4.5"
     },
     "playwright@claude-plugins-official": {
-      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
-      "version": "fd30cee3ecd5"
+      "sha": "73c8cf3ea7e296057b467990f2f5d61b4c922260",
+      "version": "73c8cf3ea7e2"
     },
     "ponytail@ponytail": {
       "sha": "09c434ab73ca43761c5d8b0c5d341926c2fba710",
@@ -45,8 +45,8 @@
       "version": "1.0.0"
     },
     "skill-creator@claude-plugins-official": {
-      "sha": "fd30cee3ecd5a8ee772733c5d20c0f2bae2da2f0",
-      "version": "fd30cee3ecd5"
+      "sha": "73c8cf3ea7e296057b467990f2f5d61b4c922260",
+      "version": "73c8cf3ea7e2"
     },
     "superpowers@claude-plugins-official": {
       "sha": "22f0b463e7a5e579904dd6211a520321035526f7",
