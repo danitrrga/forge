@@ -25,10 +25,6 @@ Controls, each seen red on lib/fwx/commands/state.py changed in one place (the f
   - cancel handed the parent folder (the CLI's wiring; the deletion itself is state.py's, seen red in test_state.py; 4 failed):
       FAIL: cancel: exit code: got 1, want 0
       FAIL: cancel: its folder is gone
-  - check ignores errors (4 failed):
-      FAIL: check report that does not cite the evidence sha: exit code: got 0, want 1
-  - check fails on a length warning (2 failed):
-      FAIL: check report that cites the sha but is long: only a warning: exit code: got 1, want 0
   - --adr writes decisions.tsv (4 failed):
       FAIL: decision --adr: stdout: got 'D3', want 'A1'
   - `use PHASE_DIR` does not take the subproject from the path (2 failed):
@@ -125,9 +121,9 @@ r = helpers.fwx(helpers.ROOT, "help")
 s.ok("bin/fwx help lists `fwx phase new`", re.search(r"^\s+fwx phase new\s+\S", r.stdout, re.M) is not None, r.stdout)
 
 repo = helpers.toy_repo()
-for label, args in (("no verb", ["state"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
+for label, args in (("no verb", ["phase"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
                     ("an unknown flag", ["session", "--nope"]), ("decision new without --why", ["decision", "new", "--decision", "x", "--support", "chosen"]),
-                    ("session attach with nothing", ["session", "attach"]), ("state lint without a path", ["state", "lint"]),
+                    ("session attach with nothing", ["session", "attach"]),
                     ("session attach with a phase and --root", ["session", "attach", "x", "--root"])):
     clean("usage: %s" % label, st(repo, *args), 2)
 s.eq("usage errors write nothing", tree(repo), ["README"])
@@ -364,36 +360,15 @@ for label, target in (("the milestones folder", os.path.join(c, ".fwx", "milesto
 s.ok("cancel of a wrong target deleted nothing", os.path.isdir(os.path.join(c, ".fwx", "milestones")) and os.path.exists(os.path.join(c, "README")))
 clean("cancel without an argument", st(c, "phase", "remove"), 2)
 
-# ---- check ----------------------------------------------------------------------------------------------------------
+# ---- the lint commands are gone ------------------------------------------------------------------------------------------
+# `state lint` and `report lint` left with the `state` agent: the orchestrator writes the report itself. Red before (they ran the check):
+#   FAIL: `fwx report lint` is gone: exit code: got 1, want 2
 k = helpers.mkdtemp("fwx-check-")
-sha = "c0ffee1" + "0" * 33
-report = os.path.join(k, "report-1.md")
 helpers.write(k, "report-1.md", "# Report 1\n\nDone.\n")
-r = st(k, "report", "lint", report, session="")  # outside a repository, but check reads only the files
-clean("check report with no audit.tsv", r, 1)
-audit(k, "evidence", "bin/fwx test", rc="0", sha=sha)
-r = st(k, "report", "lint", report)
-clean("check report that does not cite the evidence sha", r, 1)
-s.ok("check report: the message names the sha", sha[:7] in r.stderr, r.stderr)
-helpers.write(k, "report-1.md", "# Report 1\n\nEvidence: commit %s\n" % sha[:12])
-clean("check report that cites the sha", st(k, "report", "lint", report), 0)
-s.eq("check report: nothing to warn about, nothing printed besides ok", "WARN" in st(k, "report", "lint", report).stdout, False)
-helpers.write(k, "report-1.md", "# Report 1\n\nEvidence: commit %s\n" % sha[:12] + "line\n" * 50)
-r = st(k, "report", "lint", report)
-clean("check report that cites the sha but is long: only a warning", r, 0)
-s.ok("check report: the warning line", re.search(r"^WARN: 53 lines, target 40$", r.stdout, re.M) is not None, r.stdout)
-state_md = os.path.join(k, "state.md")
-helpers.write(k, "state.md", "line\n" * 112)
-r = st(k, "state", "lint", state_md)
-clean("check state of 112 lines: only a warning", r, 0)
-s.ok("check state: WARN: 112 lines, target 100", re.search(r"^WARN: 112 lines, target 100$", r.stdout, re.M) is not None, r.stdout)
-helpers.write(k, "state.md", "short\n")
-r = st(k, "state", "lint", state_md)
-clean("check state of a short file", r, 0)
-s.ok("check state of a short file: no warning", "WARN" not in r.stdout, r.stdout)
-helpers.write(k, "state.md", "")
-clean("check state of an empty file", st(k, "state", "lint", state_md), 1)
-clean("check state of a file that is not there", st(k, "state", "lint", os.path.join(k, "none.md")), 1)
+for obj in ("report", "state"):
+    r = st(k, obj, "lint", os.path.join(k, "report-1.md"))
+    s.eq("`fwx %s lint` is gone: exit code" % obj, r.returncode, 2)
+    s.eq("`fwx %s lint` is gone: it says so" % obj, (r.stderr.splitlines() or [""])[0], "fwx: unknown command: %s" % obj)
 
 # ---- a workspace whose code lives in nested repositories (`project.repos`): `fwx session --json` says where each part works --------
 # Seen red on the code before `part_repos` and `fwx_dir` existed:

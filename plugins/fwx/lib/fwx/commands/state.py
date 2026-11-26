@@ -1,9 +1,7 @@
-"""Make, find, bind, record in and check the project's `.fwx/` state: fwx session|phase|subphase|milestone|decision|state|report <verb> [args] (`fwx --help` lists them).
+"""Make, find, bind, record in and check the project's `.fwx/` state: fwx session|phase|subphase|milestone|decision <verb> [args] (`fwx --help` lists them).
 
 A thin layer over lib/fwx/state.py, which holds every rule: this file parses the arguments, calls it, and prints. The
-commands are `session` and `session attach`, `phase list|new|remove`, `subphase new`, `milestone new`, `decision new`,
-`state lint` and `report lint`. Exit 0 when it
-is done, 1 when the state layer refuses or the phase cannot be resolved (one line on stderr, `resolve` also lists the open
+commands are `session` and `session attach`, `phase list|new|remove`, `subphase new`, `milestone new`, and `decision new`. Exit 0 when it is done, 1 when the state layer refuses or the phase cannot be resolved (one line on stderr, `resolve` also lists the open
 phases), 2 when it cannot run: outside a git repository, a usage error, an unusable configuration. Never a traceback.
 """
 import argparse
@@ -189,17 +187,6 @@ def cmd_decision(a):
     return 0
 
 
-def cmd_check(a):
-    errors, warnings = (state.check_state if a.kind == "state" else state.check_report)(a.path)
-    for w in warnings:
-        print("WARN: %s" % w)
-    for e in errors:
-        sys.stderr.write("%s: %s\n" % (PROG, e.replace("\n", " ")))
-    if not errors and not warnings:
-        print("ok")
-    return 1 if errors else 0
-
-
 def parser():
     p = _Parser(prog=PROG, description=__doc__.strip().splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True, metavar="subcommand")
@@ -244,10 +231,6 @@ def parser():
     sp.add_argument("--supersedes")
     sp.add_argument("--phase")
     sp.add_argument("--session")
-    for kind in ("state", "report"):
-        sp = add("check-" + kind, cmd_check, "lint a state.md" if kind == "state" else "lint a phase report")
-        sp.set_defaults(kind=kind)
-        sp.add_argument("path")
     return p
 
 

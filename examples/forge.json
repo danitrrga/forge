@@ -60,11 +60,6 @@
         "normal": "haiku",
         "big": "haiku"
       },
-      "state": {
-        "small": "haiku",
-        "normal": "haiku",
-        "big": "haiku"
-      },
       "demo": {
         "small": "sonnet",
         "normal": "sonnet",

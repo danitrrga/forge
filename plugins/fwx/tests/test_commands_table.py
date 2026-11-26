@@ -58,7 +58,6 @@ DECIDED = [
     ("phase list", "state list", "state", ["list"]), ("phase new", "state new-phase", "state", ["new-phase"]),
     ("subphase new", "state new-subphase", "state", ["new-subphase"]), ("milestone new", "state new-milestone", "state", ["new-milestone"]),
     ("phase remove", "state cancel", "state", ["cancel"]), ("decision new", "state decision", "state", ["decision"]),
-    ("state lint", "state check state", "state", ["check-state"]), ("report lint", "state check report", "state", ["check-report"]),
     ("plan lint", "plan check", "plan", ["check"]), ("plan brief", None, "plan", ["brief"]), ("plan status", None, "plan", ["status"]),
     ("discuss", "discuss start", "discuss", ["start"]),
     ("linear list", None, "linear", ["list"]), ("linear list --waiting", "linear waiting", "linear", ["waiting"]),
@@ -153,8 +152,13 @@ def scenario(work):
         r = run(work, *words)
         check("default of `%s`: routes to %s %s" % (" ".join(words), module, want), r.stdout.strip() or r.stderr.strip().splitlines()[:1],
               stub(module, want))
-    r = run(work, "state", "check")
-    check("old `state check` names both new names", (r.returncode, r.stderr), (2, "fwx state check: now 'fwx state lint' or 'fwx report lint'\n"))
+    # `state lint` and `report lint` left the table (the orchestrator writes the report itself): each is an unknown command, and so is
+    # the old `state check` that pointed at them. Red before (the rows were there, `state check` named both):
+    #   FAIL: `fwx state lint` is gone: got (0, 'STUB state [...]\n', ''), want exit 2 and 'fwx: unknown command: state'
+    for args in (("state", "lint", "A"), ("report", "lint", "A"), ("state", "check", "A")):
+        r = run(work, *args)
+        check("`fwx %s` is gone and says so" % " ".join(args), (r.returncode, r.stdout, r.stderr.splitlines()[:1]),
+              (2, "", ["fwx: unknown command: %s" % args[0]]))
     # `fwx test` left the table: the suite is run by forge as a group (`forge test fwx`), and the refusal names that, outside fwx. Red on master
     # (the command was a row and ran the suite of the working folder):
     #   FAIL: old `fwx test` is refused with one line naming `forge test fwx`: got (0, 'STUB test []\n', ''), want (2, '', "fwx test: now 'forge test fwx'\n")
@@ -211,7 +215,7 @@ def scenario(work):
                        # at c538909 (the row and the default were there; the stub handler answered):
                        #   FAIL: fwx decision list: exit 2 and 'unknown verb: list': got (0, False, 'STUB state ["decisions"]\n')
                        (("decision", "list"), "unknown verb: list"), (("decision",), "needs a verb"), (("decision", "--all"), "unknown verb: --all"),
-                       (("state", "decisions"), "unknown verb: decisions")):
+                       (("state", "decisions"), "unknown command: state")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing
