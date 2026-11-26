@@ -56,7 +56,7 @@ behind every "built".
 
 - **A supervised session.** You open a chat. The work goes through discuss, pre-mortem, plan, post-mortem on the plan,
   execution in git worktrees, review, a UI walk when the part touches UI, a report and the close. The orchestrator is
-  the only agent that talks to you. Every other agent starts from the same base context and returns a short answer
+  the only agent that talks to you. Every other agent gets, by path in its brief, what its job needs and returns a short answer
   with a path. Built and merged from discuss to close, the session skill included. No real session has closed yet: three
   rehearsals on a clone of a real project reached the close, with an operator typing, and the first real session is still
   to come. The UI walk is built and parked.
@@ -82,7 +82,7 @@ behind every "built".
 2. **Every deciding step is a command, not the model's judgement.** Whether to merge is `fwx decide`. Whether the work
    is good is `fwx verify`, which runs the project's checks on a clean tree at the exact commit. How many fix rounds a
    job may spend is `fwx rounds`. How many agents of a role run at once is the cap in the configuration, a fixed number that
-   `fwx wave new` and `fwx walk start` print and the base context states; nothing is measured. Which model a launch uses is `fwx model <role> <size>`, read from the project's file, never from a
+   `fwx wave new` and `fwx walk start` print; nothing is measured. Which model a launch uses is `fwx model <role> <size>`, read from the project's file, never from a
    prompt. Which stage may follow which is `fwx stage`, from a table. The orchestrator runs the command and acts on
    what it prints; it does not ask itself the question. Built.
 3. **A check is seen to fail before it is trusted.** A test is written first and run against the current code, and the
@@ -102,10 +102,10 @@ behind every "built".
 6. **Whoever checks did not make it.** Reviewers, a verifier that re-checks each finding, and a security reviewer are
    agents other than the executors, and they may find nothing. A dead agent, an empty return or a missing file is a
    failure to report, never "no findings". Built in `fwx wave run`.
-7. **Every agent starts from the same base context.** Once the problem is stated, one text, built once per phase and
-   capped in size, says what the codebase holds, what you want and how the machinery fits. A `SubagentStart` hook hands
-   it to every agent that is launched, by agent type, so a prompt carries only its own part and agents do not each read
-   the same documents. Built (`fwx context`, `plugins/fwx/hooks/subagent_context.py`).
+7. **Every agent gets what its job needs, by path, in its brief.** Once the problem is stated, each launch names the files
+   its role reads (the plan and the decisions for an executor, the goal and success criteria for a reviewer), and critics and
+   reviewers get files, never the author's reasoning. No text is injected into every agent, so a prompt carries only what
+   its agent uses. Built in the brief builders of `fwx wave run` and the agent files.
 8. **Delete before adding.** What always loads costs the most: a study of repository context files (arXiv 2602.11988)
    found that they tend to lower task success and raise cost. The improvement pass deletes before it simplifies and simplifies before it
    automates. The orchestrator also keeps its own context small by delegating: if it compacts before the post-mortem,
@@ -144,7 +144,7 @@ source in a `referent:` line.
 
 - **Built, on the default branch:** the discuss, pre-mortem, plan and post-mortem skills and agents; `fwx wave run`
   (a part's waves of executors in worktrees, each agent an Orca worker, up to three fix rounds per job, the gate, reviewers, the verifier, the
-  security reviewer; the gate is GitHub CI when it can answer and the project's `checks` here when not, and a check CI cannot run goes in `checks_quick`); the project's state under `.fwx/`; the stage table; the base context and its hook; the Linear
+  security reviewer; the gate is GitHub CI when it can answer and the project's `checks` here when not, and a check CI cannot run goes in `checks_quick`); the project's state under `.fwx/`; the stage table; the Linear
   client and the `factory-issue` skill that offers work to the factory; the merge decision; the statusline
   command; the session skill that carries a work item from discuss to close (`plugins/fwx/skills/session/`); the UI walk
   (`plugins/fwx/workflows/ui-walk.js`, `fwx walk`), parked; and forge's
