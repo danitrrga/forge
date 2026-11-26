@@ -540,6 +540,9 @@ for label, cwd in (("at the root", broken), ("inside repo a", os.path.join(broke
 # and before `new_phase` tolerated a `.fwx/` made a moment earlier (6 `phase new` at once in a clone with no `.fwx/`):
 #   FAIL: 6 parallel first phase new: exit codes: got [0, 0, 0, 0, 1, 1], want [0, 0, 0, 0, 0, 0]
 #   FAIL: 6 parallel first phase new: no traceback: FileExistsError: [Errno 17] File exists: '.../.fwx'
+# and with only that fixed, two more races of the same start (a phase numbered twice, a v2 made beside a rival's v1), now under the parent's lock:
+#   FAIL: 6 parallel first phase new: six folders, numbered 01..06: got ['01', '02', '02', '03', '04', '05']
+#   FAIL: 6 parallel first phase new: six folders, numbered 01..06: got ['01']
 
 def parallel(cwd, argvs, env_for=lambda i: {"CLAUDE_CODE_SESSION_ID": ""}):
     """Start every `fwx ARGV` before waiting for any; the CompletedProcess-like (returncode, stdout, stderr) of each, in order."""
