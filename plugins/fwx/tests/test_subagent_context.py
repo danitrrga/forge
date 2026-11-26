@@ -35,6 +35,9 @@ Controls, each seen red on a copy of the repo with one thing changed (first FAIL
   - hooks.json with another matcher / another timeout:
       FAIL: hooks.json: the matcher is `*` (...): got '^fwx:', want '*'
       FAIL: hooks.json: the timeout is 10: got 60, want 10
+  - the plugin root unquoted in the command (the form before the quotes were added), seen failing:
+      FAIL: hooks.json: the command, the plugin root quoted so a path with a space does not split: got 'python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent_context.py', want 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/subagent_context.py"'
+      FAIL: ... and with the plugin root under a path with a space: got (2, ''), want (0, "# Base context ...
   - a failure exits 0 (15 FAIL) / an unexpected exception is swallowed:
       FAIL: a file of 9501 units: exit 1, nothing on stdout: got (0, ''), want (1, '')
       FAIL: an input whose cwd is a list (a TypeError nobody planned for): exit 1, nothing on stdout: got (0, ''), want (1, '')
@@ -165,7 +168,8 @@ s.eq("hooks.json: the matcher is `*` (it fires for general-purpose, workflow-sub
      entry.get("matcher"), "*")
 cmds = entry.get("hooks") or [{}]
 s.eq("hooks.json: one command hook", [c.get("type") for c in cmds], ["command"])
-s.eq("hooks.json: the command", cmds[0].get("command"), "python3 ${CLAUDE_PLUGIN_ROOT}/hooks/subagent_context.py")
+s.eq("hooks.json: the command, the plugin root quoted so a path with a space does not split",
+     cmds[0].get("command"), 'python3 "${CLAUDE_PLUGIN_ROOT}/hooks/subagent_context.py"')
 s.eq("hooks.json: the timeout is 10", cmds[0].get("timeout"), 10)
 s.eq("hooks.json: nothing else is hooked", sorted(hooks.get("hooks") or {}), ["SubagentStart"])
 
@@ -403,6 +407,12 @@ if cmd:
     s.eq("the hooks.json command, with CLAUDE_PLUGIN_ROOT set, delivers the head", (r.returncode, delivered(r)), (0, head))
     r = subprocess.run(["sh", "-c", cmd], input="{}", cwd=repo, env=helpers.clean_env(CLAUDE_PLUGIN_ROOT=ROOT), capture_output=True, text=True)
     s.eq("... and an empty input fails loud", r.returncode, 1)
+    spaced = os.path.join(helpers.mkdtemp("fwx-sp-"), "plugin root")  # a clone or cache under a path with a space, as on macOS
+    os.symlink(ROOT, spaced)
+    r = subprocess.run(["sh", "-c", cmd], input=json.dumps({"hook_event_name": "SubagentStart", "agent_type": "general-purpose",
+                                                           "session_id": "toy-session", "agent_id": "a1", "cwd": repo}),
+                       cwd=repo, env=helpers.clean_env(CLAUDE_PLUGIN_ROOT=spaced), capture_output=True, text=True)
+    s.eq("... and with the plugin root under a path with a space", (r.returncode, delivered(r)), (0, head))
 
 # ---- --file F [--source F]: the construction's hand-written file ---------------------------------------------------------
 fdir = helpers.toy_repo()
