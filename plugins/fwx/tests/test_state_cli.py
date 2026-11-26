@@ -139,7 +139,7 @@ s.ok("new-phase from a worktree: the folder is in the main checkout", os.path.is
 s.eq("new-phase from a worktree: nothing in the worktree", tree(wt), before_wt)
 # The project and milestone files are lowercase. Seen red while the code wrote `PROJECT.md` and `MILESTONE.md`:
 #   FAIL: new-phase: project.md and the milestone are made   (likewise new-milestone, cancel and the 6 parallel ones)
-s.ok("new-phase: project.md and the milestone are made", os.path.exists(os.path.join(main, ".fwx", "PROJECT.md"))
+s.ok("new-phase: project.md and the milestone are made", os.path.exists(os.path.join(main, ".fwx", "project.md"))
      and os.path.exists(os.path.join(main, ".fwx", "milestones", "v1", "milestone.md")))
 s.eq("new-phase: the phase folder holds context.md, decisions.tsv and audit.tsv",
      ls(phase1), ["audit.tsv", "context.md", "decisions.tsv"])

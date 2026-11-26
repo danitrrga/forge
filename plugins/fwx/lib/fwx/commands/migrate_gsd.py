@@ -6,7 +6,7 @@
   apply [--json] [--milestone-map FILE] [--close IDS] [--open IDS]
       In a worktree, on a branch that is not the default one: `git mv` of what is kept, `git rm` of what is purged, the
       backlog (open quick tasks, `todos/pending`, `BACKLOG.md`, `999.x` phases) moved as it is, content not converted, to
-      `backlog/<its path>` under `.fwx/` (the workstream's folder in a workstream), the generated files (`milestones/<vN>/MILESTONE.md`
+      `backlog/<its path>` under `.fwx/` (the workstream's folder in a workstream), the generated files (`milestones/<vN>/milestone.md`
       with the base SHA and the recovery command, a `gsd-roadmap-entry.md` per open phase only the ROADMAP had, a stage row per closed phase through `state.append_audit`),
       the `.fwx/` twin under each `.gitignore` line that names `.planning/`, and the rules of each tracked `.gitignore` inside
       `.planning/` written anew at the matching folder of `.fwx/` (one that moves whole with rules that need no mapping just
@@ -1264,9 +1264,9 @@ def roadmap_section(text, number):
 
 
 def milestone_text(ms, base, totals_, state_ms):
-    """MILESTONE.md of the framework's template (2.3), with the milestone's name as its goal and the block that says where the
+    """milestone.md of the framework's template (2.3), with the milestone's name as its goal and the block that says where the
     files came from and how to get a removed one back."""
-    t = state._read_template("MILESTONE.md")
+    t = state._read_template("milestone.md")
     t = t.replace("<vN>", ms).replace("<name>", ms)
     t = t.replace("<What is true when this milestone is done, in a paragraph.>",
                   "%s, as GSD left it%s: its phases and documents keep their GSD names." % (ms, " (STATE said %s)" % state_ms if state_ms else ""))
@@ -1507,8 +1507,8 @@ def plan_apply(repo, opts):
             milestones.add((m.group(1), m.group(2)))
     taken = set(dests)
     for scope_dest, ms in sorted(milestones):
-        rel = "%s/milestones/%s/MILESTONE.md" % (scope_dest, ms)
-        if rel not in taken and not os.path.lexists(_abs(repo, rel)):
+        rel = "%s/milestones/%s/milestone.md" % (scope_dest, ms)
+        if rel not in taken and not os.path.lexists(_abs(repo, rel)) and not state.milestone_file(_abs(repo, os.path.dirname(rel))).exists():
             job.gens.append((rel, milestone_text(ms, base, job.totals, job.root_state)))
     # the bases file: one line per run, so that every base stays written down, in a file, after later merges and re-runs
     line = ("- %s base %s (branch %s): %d files moved (%d of them backlog, moved as they are to `backlog/`), %d files removed; "

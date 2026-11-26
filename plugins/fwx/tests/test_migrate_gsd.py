@@ -51,7 +51,7 @@ the first FAIL line it printed:
 
 Unit 2 (the write half). Cases: the refusals of `apply`, each with exit 2, its message and the repository unchanged (every path
 with size and mtime, `.git` included, and `git status --porcelain --ignored`); `apply` in a worktree (blob of each kept file,
-CRLF, binary and symlink included; each purged file gone; `state.phases`, `state.last_stage`; MILESTONE.md; nothing written in
+CRLF, binary and symlink included; each purged file gone; `state.phases`, `state.last_stage`; milestone.md; nothing written in
 the main checkout); `refs --rewrite|--prefix` and its refusals; the commit and the proof that every removed file comes back
 with `git show <base>:<path>`; `leftovers` (dry run, refusals, `--apply`); a failure in the middle of `apply`, of a rollback,
 of `refs` and of `leftovers`; a process killed in the middle; re-entrance after a merge.
@@ -790,10 +790,10 @@ s.eq("the workstream's phases are in v1, v2 and v3 and closed where their pairin
      [("v1", "01-one", "closed"), ("v2", "03-two", "closed"), ("v2", "05-three", None), ("v3", "08-four", "closed")])
 rows = state.read_rows(Path(wt) / ".fwx/milestones/v2/phases/01-a/audit.tsv")
 s.eq("the stage row of a closed phase: kind, sha, detail", [(x["kind"], x["sha"], x["detail"]) for x in rows], [("stage", base, "closed migrated-from-gsd " + base)])
-ms_text = open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), encoding="utf-8").read()
-s.ok("MILESTONE.md carries the base SHA, the date, the counts and the recovery command",
+ms_text = open(os.path.join(wt, ".fwx/milestones/v2/milestone.md"), encoding="utf-8").read()
+s.ok("milestone.md carries the base SHA, the date, the counts and the recovery command",
      base in ms_text and re.search(r"Date: \d{4}-\d{2}-\d{2}", ms_text) and "kept" in ms_text and "git show %s:.planning/<path>" % base in ms_text, ms_text)
-s.ok("MILESTONE.md is the framework's template (a Goal and a Scope section, no placeholder left)",
+s.ok("milestone.md is the framework's template (a Goal and a Scope section, no placeholder left)",
      "## Goal" in ms_text and "## Scope" in ms_text and "<vN>" not in ms_text and "<What is true" not in ms_text and "<what the" not in ms_text, ms_text)
 s.ok("the ROADMAP-only phase got its section as gsd-roadmap-entry.md",
      open(os.path.join(wt, road_dest, "gsd-roadmap-entry.md"), encoding="utf-8").read().startswith("### Phase 3: "), road_dest)
@@ -1016,11 +1016,26 @@ s.ok("... says everything moved was put back", "put back" in err and "simulated:
 s.eq("... every file, ignored ones included, is where it was", content(repo), c0)
 s.eq("... and git status is the same", porcelain(repo), s0)
 
+# a milestone converted before the rename holds `MILESTONE.md`: a second apply makes no `milestone.md` beside it
+# Seen red with the generator checking only the lowercase path: staged ['A\t.fwx/milestones/v2/milestone.md', 'R100\t.planning/phases/02.1-b/02.1-02-CONTEXT.md\t.fwx/milestones/v2/phases/02.1-b/02.1-02-CONTEXT.md']
+repo, wt = world()
+run(wt, "apply")
+helpers.git(wt, "mv", ".fwx/milestones/v2/milestone.md", ".fwx/milestones/v2/MILESTONE.md")
+helpers.git(wt, "commit", "-q", "-m", "convert, with an upper-case milestone file")
+wx = helpers.add_worktree(repo, "upper")
+helpers.write(wx, ".planning/phases/02.1-b/02.1-02-CONTEXT.md", "# context\n")
+helpers.git(wx, "add", "-A")
+helpers.git(wx, "commit", "-q", "-m", "a branch that adds to .planning/")
+helpers.git(wt, "-c", "merge.directoryRenames=false", "merge", "--no-edit", "-q", "upper")
+s.eq("apply over an upper-case MILESTONE.md exits 0", run(wt, "apply").returncode, 0)
+s.eq("... and it makes no milestone.md beside it",
+     sorted(l for l in helpers.git(wt, "diff", "--cached", "--name-status").splitlines() if l.lower().endswith("milestone.md")), [])
+
 # ---- U2 4: re-entrance ---------------------------------------------------------------------------------------------------------
 repo, wt = world()
 run(wt, "apply")
 helpers.git(wt, "commit", "-q", "-m", "convert")
-mil0 = open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), "rb").read()
+mil0 = open(os.path.join(wt, ".fwx/milestones/v2/milestone.md"), "rb").read()
 aud0 = open(os.path.join(wt, ".fwx/milestones/v2/phases/02.1-b/audit.tsv"), "rb").read()
 wx = helpers.add_worktree(repo, "extra")
 helpers.write(wx, ".planning/extra/n.md", "# new\n")
@@ -1035,7 +1050,7 @@ s.eq("... it converted only those two files (and added its base to the bases fil
     "M\t.fwx/migrate-gsd-bases.md",
     "R100\t.planning/extra/n.md\t.fwx/extra/n.md",
     "R100\t.planning/phases/02.1-b/02.1-02-CONTEXT.md\t.fwx/milestones/v2/phases/02.1-b/02.1-02-CONTEXT.md"]))
-s.eq("... MILESTONE.md is as it was", open(os.path.join(wt, ".fwx/milestones/v2/MILESTONE.md"), "rb").read(), mil0)
+s.eq("... milestone.md is as it was", open(os.path.join(wt, ".fwx/milestones/v2/milestone.md"), "rb").read(), mil0)
 s.eq("... and the stage rows are as they were", open(os.path.join(wt, ".fwx/milestones/v2/phases/02.1-b/audit.tsv"), "rb").read(), aud0)
 helpers.git(wt, "commit", "-q", "-m", "convert the rest")
 helpers.write(wt, ".planning/extra/n.md", "# the same destination again\n")

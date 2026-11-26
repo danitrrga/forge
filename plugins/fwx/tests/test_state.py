@@ -81,6 +81,7 @@ Controls, each seen red on a copy with state.py (or a template) changed in one p
 import json
 import os
 import re
+from pathlib import Path
 import subprocess
 import sys
 import threading
@@ -480,8 +481,8 @@ os.environ.pop("CLAUDE_CODE_SESSION_ID")
 fr = os.path.join(nm, ".fwx")
 s.eq("new_phase in an empty repo: the folder is <main>/.fwx/milestones/v1/phases/01-a", str(p1),
      os.path.join(fr, "milestones", "v1", "phases", "01-a"))
-s.ok("new_phase: .fwx/PROJECT.md is created from the template", os.path.isfile(os.path.join(fr, "PROJECT.md")))
-s.ok("new_phase: milestones/v1/MILESTONE.md is created", os.path.isfile(os.path.join(fr, "milestones", "v1", "MILESTONE.md")))
+s.ok("new_phase: .fwx/project.md is created from the template", os.path.isfile(os.path.join(fr, "project.md")))
+s.ok("new_phase: milestones/v1/milestone.md is created", os.path.isfile(os.path.join(fr, "milestones", "v1", "milestone.md")))
 s.ok("new_phase: context.md is copied", os.path.isfile(os.path.join(str(p1), "context.md")))
 for f, head in HEADERS.items():
     s.eq("new_phase: %s holds exactly its header" % f, read(os.path.join(str(p1), f)).decode(), head)
@@ -495,7 +496,7 @@ s.eq("new_phase: the folder name of context.md is filled in", [l for l in read(o
 for f in ("context.md",):
     first = read(os.path.join(str(p1), f)).decode().splitlines()[0]
     s.ok("a copied template loses its leading referent comment line (%s)" % f, "referent" not in first and "copied-from" not in first, first)
-s.ok("PROJECT.md loses its leading referent comment line", "<!-- referent" not in read(os.path.join(fr, "PROJECT.md")).decode())
+s.ok("project.md loses its leading referent comment line", "<!-- referent" not in read(os.path.join(fr, "project.md")).decode())
 
 # a number that is already taken is skipped, never shared. Two seams stand in for the two ways it happens: a listing gone
 # stale (`_next_number`), and a rival that creates the folder between the free-number look and the mkdir (`_number_taken`).
@@ -556,9 +557,20 @@ mm = helpers.toy_repo()
 mroot = state.scope_root(os.path.join(mm, ".fwx"))
 m1 = state.new_milestone(mroot)
 s.eq("new_milestone in an empty scope is v1", str(m1), os.path.join(mm, ".fwx", "milestones", "v1"))
-s.ok("new_milestone writes MILESTONE.md from the template", os.path.isfile(os.path.join(str(m1), "MILESTONE.md")))
-s.ok("MILESTONE.md carries its own name and loses the referent line", "# Milestone v1:" in read(os.path.join(str(m1), "MILESTONE.md")).decode()
-     and "<!-- referent" not in read(os.path.join(str(m1), "MILESTONE.md")).decode())
+s.ok("new_milestone writes milestone.md from the template", os.path.isfile(os.path.join(str(m1), "milestone.md")))
+s.ok("milestone.md carries its own name and loses the referent line", "# Milestone v1:" in read(os.path.join(str(m1), "milestone.md")).decode()
+     and "<!-- referent" not in read(os.path.join(str(m1), "milestone.md")).decode())
+# project_file / milestone_file: the lowercase file, else the upper-case one, else the lowercase path for a writer
+# Seen red with the lookup returning the lowercase path always: FAIL: project_file finds the upper-case PROJECT.md of a project not yet renamed
+lk = helpers.toy_repo({".fwx/PROJECT.md": "# up\n", ".fwx/milestones/v1/MILESTONE.md": "# up\n", ".fwx/subprojects/a/project.md": "# low\n",
+                       ".fwx/subprojects/a/PROJECT.md": "# both\n"})
+s.eq("project_file finds the upper-case PROJECT.md of a project not yet renamed", state.project_file(os.path.join(lk, ".fwx")), Path(lk) / ".fwx" / "PROJECT.md")
+s.eq("milestone_file finds the upper-case MILESTONE.md", state.milestone_file(os.path.join(lk, ".fwx", "milestones", "v1")),
+     Path(lk) / ".fwx" / "milestones" / "v1" / "MILESTONE.md")
+s.eq("project_file prefers project.md when both are there", state.project_file(os.path.join(lk, ".fwx", "subprojects", "a")),
+     Path(lk) / ".fwx" / "subprojects" / "a" / "project.md")
+s.eq("project_file of a folder with neither is the lowercase path", state.project_file(os.path.join(lk, ".fwx", "subprojects", "b")),
+     Path(lk) / ".fwx" / "subprojects" / "b" / "project.md")
 mk(mm, ".fwx", "milestones", "v9")
 s.eq("new_milestone: the next one follows the highest (v9 -> v10)", os.path.basename(str(state.new_milestone(mroot))), "v10")
 s.eq("new_milestone with a name", os.path.basename(str(state.new_milestone(mroot, "v12"))), "v12")
@@ -645,7 +657,7 @@ state._read_template = _real_read_template
 for name in sorted(set(read_templates)):
     s.ok("the template %s that state.py copies exists in templates/" % name, os.path.isfile(os.path.join(TEMPLATES, name)), name)
 s.eq("the templates copied by new_phase, new_subphase and new_milestone", sorted(set(read_templates)),
-     ["MILESTONE.md", "PROJECT.md", "phase/context.md", "phase/plan.md"])
+     ["milestone.md", "phase/context.md", "phase/plan.md", "project.md"])
 SECTIONS = {"premortem.md": ["## Verdict", "## Failure reasons", "## Size"],
             "plan.md": ["## Goal", "## Approach", "## Size"],
             "postmortem.md": ["## Verdict", "## Findings", "## Criteria", "## Checked", "## Needs from the owner before executing",
