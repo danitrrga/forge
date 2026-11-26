@@ -558,11 +558,14 @@ def case_refusals(root, S):
     w = world(recipe=("false",))
     r = w.run(root=root)
     S.eq("red base: exit 1 and no Orca call", (r.returncode, w.calls()), (1, []))
-    w = world(context=False, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "hang"}})  # a worker that started would hang: one start, not a run
+    w = world(context=False, tasks=[task("T1", 1, ["src/a.py"])])
     r = w.run(root=root)
-    n = len(w.starts())
-    S.ok("no base context, no worker -> %d start" % n, r.returncode == 2 and n == 0, "exit %d, stderr %r" % (r.returncode, r.stderr[-200:]))
-    S.ok("no base context: the reason names the file", "base" in r.stderr.lower(), "got %r" % r.stderr[-200:])
+    starts = w.starts()
+    S.ok("no base-context file: the run starts its executor -> %d start, exit %d, stderr %r" % (len(starts), r.returncode, r.stderr[-200:]),
+         r.returncode == 0 and len(starts) == 1)
+    spec = starts[0]["spec"] if starts else ""
+    S.ok("no base-context file: the spec holds the agent body and the brief line, and no `# Base context` mark",
+         orca_mod.agent_body("executor") in spec and "Your brief is" in spec and "# Base context" not in spec, "spec %r" % spec[:200])
 
 
 def case_registered(root, S):
