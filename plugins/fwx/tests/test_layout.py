@@ -11,9 +11,9 @@ Seen red with `check` accepting every path (a stub returning no problem), the fi
   and 'milestones/v2/phases/01-x/notes.md')
 Controls on the finished module, each seen red in one edit:
   - a subphase read only by its own stage (the closed phase's stage ignored):
-      FAIL: good path 'milestones/v2/phases/01-x/01.1-sub/state.md' passes: got ['milestones/v2/phases/01-x/01.1-sub/state.md: ...
+      FAIL: good path 'milestones/v2/phases/01-x/01.1-sub/state.md' passes: got ['milestones/v2/phases/01-x/01.1-sub/state.md: state.md is kept only in a closed or cancelled phase; belongs in the phase, once it is closed or cancelled']
   - the factory key not exempt from the lower-case rule:
-      FAIL: good path 'factory/K-1/plan.md' passes: got ['factory/K-1/plan.md: upper-case letter ...
+      FAIL: good path 'factory/K-1/plan.md' passes: got ['factory/K-1/plan.md: upper-case letter or space in a name; belongs in factory/k-1/plan.md']
 """
 import os
 import subprocess
