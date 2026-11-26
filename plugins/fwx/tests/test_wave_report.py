@@ -40,6 +40,8 @@ FAIL line of each, seen red (cut at 120 characters):
   unreadable diff passes:               FAIL: a branch whose diff cannot be read -> next merge: want next 'stop', got 'merge' ...
   a claim binds every wave:             FAIL: a claim of wave 1 binds nobody in wave 2 -> next retry: want next 'merge', got 'retry' ...
   a fixer judged against the plan:      FAIL: a fixer or resolver report (fix-1) is judged with no scope -> next None: want next 'merge', got None ({})
+  relative path read against the cwd:   FAIL: a report path relative to the repository (a worktree path from the repository) is read -> next relaunch: want next 'merge', got 'relaunch' ...
+  relative path names any worktree:     FAIL: a report path relative to the repository (a worktree of another worker) is read -> next merge: want next 'relaunch', got 'merge' ...
   any plane taken:                      FAIL: usage (a plane that is neither): exit 2 with the usage on stderr: got (0, False, '{"next": "relaunch", ...
 """
 import json
@@ -492,8 +494,12 @@ MUTANTS = [
      "a miss is counted per unit"),
     ("the status of the line not compared with the report", case_misses, R_, ' or rep.get("status") != m.group(1):', ":",
      "(a status that differs from the line) relaunches"),
-    ("any path that names a report is read", case_misses, R_, 'if not path.endswith(tail) or ".." in path.split("/"):', "if False:",
+    ("any path that names a report is read", case_misses, R_, 'if not ("/" + path).endswith(tail) or ".." in path.split("/"):', "if False:",
      "(the report of another unit) relaunches"),
+    ("a relative path is read against the driver's cwd", case_relative, R_, "        if wt is None:\n", "        if True:\n",
+     "a report path relative to the repository (a worktree path from the repository) is read -> next relaunch"),
+    ("a relative path names any worktree", case_relative, R_, '        if w.split("/")[len(w.split("/")) - len(want):] == want:\n', "        if True:\n",
+     "(a worktree of another worker) is read -> next merge"),
     ("a path that climbs is read", case_misses, R_, ' or ".." in path.split("/"):', ":",
      "(a path that climbs out of a scratch folder) relaunches"),
     ("a `done` with no branch is merged", case_misses, R_, 'not (isinstance(rep.get("branch"), str) and rep["branch"])', "False",

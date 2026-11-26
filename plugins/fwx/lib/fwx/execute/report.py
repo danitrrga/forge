@@ -29,6 +29,7 @@ import os
 import re
 
 from fwx import config, plan, plan_step, state
+from fwx.execute import run as run_mod
 from fwx.execute.base import WaveError, git, toplevel
 
 EXEC_LINE = re.compile(r"(done|wrong-base|question|failed) (\S+) commits=(\d+)\Z")
@@ -122,18 +123,35 @@ def outside_problem(rep, who, linear):
     return None
 
 
-def _read(line, run, unit, linear):
+def _worktree_of(prefix, worktrees):
+    """The worktree among the unit's recorded ones that a relative report path (its part before `.fwx-agent`) names, or None. The path is relative
+    to the repository or to the worktree: it names the worktree when the worktree's path ends with it, folder by folder."""
+    want = [s for s in prefix.split("/") if s not in ("", ".")]
+    for w in worktrees:
+        if w.split("/")[len(w.split("/")) - len(want):] == want:
+            return w
+    return None
+
+
+def _read(line, run, unit, linear, worktrees=()):
     """(report, worktree, rejection): the report the line names, or None for a miss. `rejection` is the reason when the report was read but
-    is one to write again (its `outside`), and then the report is None too."""
+    is one to write again (its `outside`), and then the report is None too. A path that is not absolute is read in the unit's worktree
+    (`worktrees`, newest first, from the run's state): the driver's cwd is not the worker's, where an agent that wrote it short meant it."""
     m = EXEC_LINE.match(last_line(line))
     if not m:
         return None, None, None
     path = m.group(2).replace("\\", "/")
     tail = "/.fwx-agent/%s/%s/report.json" % (run, unit)
-    if not path.endswith(tail) or ".." in path.split("/"):
+    if not ("/" + path).endswith(tail) or ".." in path.split("/"):
         return None, None, None
+    read = m.group(2)
+    if not os.path.isabs(path):
+        wt = _worktree_of(("/" + path)[:-len(tail)], worktrees)
+        if wt is None:
+            return None, None, None
+        path = read = wt + tail
     try:
-        with open(m.group(2), encoding="utf-8") as f:
+        with open(read, encoding="utf-8") as f:
             rep = json.load(f)
     except (OSError, ValueError):
         return None, None, None
@@ -237,13 +255,22 @@ def _scope(top, part_dir, unit, branch, steps):
     return None, [f for f in changed if not any(covers(e, f) for e in mine)]
 
 
+def _attempt(key):
+    """The attempt number of a worker key (`T1/2`: 2)."""
+    tail = key.rsplit("/", 1)[-1]
+    return int(tail) if tail.isdigit() else 0
+
+
 def judge(cwd, part_dir, run, unit, line, plane, steps):
     """(exit code, result) of the report an executor named in `line`; see the module's text. `steps` are the run's recorded calls, oldest first."""
     top = toplevel(cwd)
     if top is None:
         raise WaveError("not inside a git repository: %s" % cwd)
     linear = bool(config.load(top)["project"].get("linear_project"))  # an unfixed `outside` item needs its key only where there is a Linear project
-    rep, worktree, rejection = _read(line, run, unit, linear)
+    workers = (run_mod.load_state(top, run) or {}).get("workers")
+    mine = [w for k, w in sorted((workers if isinstance(workers, dict) else {}).items(), key=lambda kv: -_attempt(kv[0])) if isinstance(w, dict) and w.get("unit") == unit
+            and isinstance(w.get("worktree"), str)]
+    rep, worktree, rejection = _read(line, run, unit, linear, [w["worktree"].replace("\\", "/") for w in mine])
     if rep is None:
         return 0, _miss(steps, unit, rejection)
     status = rep["status"]
