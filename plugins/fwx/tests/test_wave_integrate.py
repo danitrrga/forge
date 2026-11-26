@@ -926,6 +926,8 @@ MUTANTS = [
     ("a commit may carry two findings", case_integrate_findings, I, "if len(ids) > 1:", "if False:", "one commit for two findings: refused"),
     ("integrate --final needs a branch", case_integrate_gate_only, W, '(() if parsed and "--final" in parsed[0] else ("--branches",))', '("--branches",)',
      "integrate --final with no branch: exit"),
+    ("the gate reads the default branch's edits as the part's", case_integrate_default_merge, I, "names &= _diff_names(top, mb, to)", "pass",
+     "default merge: master's CI and protected edits are not the part's"),
     ("a refused attempt's fixer is pointed at the oldest brief that names the findings", case_next, I, "for _n, name in sorted(found):", "for _n, name in sorted(found, reverse=True):",
      "a later fix round: the brief has"),
     ("the agent's unit is not returned", case_next, I, 'result["unit"], result["brief"] = _write_brief(', '_u, result["brief"] = _write_brief(',
