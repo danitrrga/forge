@@ -130,6 +130,12 @@ OneRedOak/claude-code-workflows, https://github.com/OneRedOak/claude-code-workfl
 29a34c725313c7621f426f838ed31cf482473fb4 (MIT), design-review/design-review-agent.md (the live screen first, problems over
 prescriptions); and the owner's own ui-walk skill of a project, .claude/skills/ui-walk/walker.md and verifier.md @76eca414.
 
+cursor/plugins, https://github.com/cursor/plugins, commit b7b93c36be9b.
+  skills/recall/SKILL.md: pstack/skills/recall/SKILL.md word for word, except the passages its header names as adapted: the transcript
+  folders of Cursor become this project's `.fwx/` documents, git and gh; `session-pickup` reads `skills/discuss/references/reentry.md`; the
+  pointer to the `poteto-mode` Subagents section reads "name the model on every launch (CLAUDE.md)"; the `automate-me` and `unslop` lines
+  and the Cursor-only mechanics (MCP agent mode, transcript UUID paths) are removed.
+
 t3dotgg/tstack, https://github.com/t3dotgg/tstack, commit 11e37a74d0a6868c121cd0910ab2b3bd9873b92a (MIT), Copyright (c) 2026 Theo Browne.
   Only its peer-review and code-review material is used (D4).
   agents/reviewer.md: "Skip style unless it hides a bug." (line 71) and "blocker = intended case wrong. should = real bug callers will hit,

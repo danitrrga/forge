@@ -205,6 +205,57 @@ check("control: a text with no wait passes", waiting({"a.md": "show the page."})
 for bad in ("verdict wait <dir>", "verdict <dir> --serve", "end with its `xdg-open` line"):
     check("control: %r fails" % bad, len(waiting({"a.md": "x " + bad})) == 1)
 
+
+# 01.2 T21 (D12): `recall` is pstack's skill, owner-only, copied from cursor/plugins; what it reads from is this project's `.fwx/` documents,
+# git and gh. The word-for-word part is checked against upstream by the `diff` in the task, which needs the network and is not run here.
+# Seen red at 56a196a (no skills/recall/):
+#   FAIL: skills/recall/SKILL.md exists -> skills/recall/SKILL.md is missing
+# Controls: the good toy passes first, then each change fails its own check. Seen red on a copy with the owner-only and the fwx session
+# checks switched off (`if False:`):
+#   FAIL: control: no owner-only key -> got [], want 'recall is owner-only'
+#   FAIL: control: fwx session named -> got [], want 'recall never runs fwx session'
+RECALL_NAMES = [("project.md", "project.md"), ("adr.tsv", "adr.tsv"), ("the milestone", "milestone"), ("fwx phase list --json", "fwx phase list --json"),
+                ("the phase he names", "phase he names"), ("git", "`git`"), ("gh", "`gh`")]
+
+
+def recall_problems(text, notice):
+    """text: skills/recall/SKILL.md; notice: NOTICE. Returns [(check, detail)]."""
+    out = []
+    front = text.split("---", 2)[1] if text.startswith("---") else ""
+    if "disable-model-invocation: true" not in front.splitlines():
+        out.append(("recall is owner-only", "its frontmatter has no `disable-model-invocation: true`"))
+    head = "\n".join(text.splitlines()[:12])
+    if not re.search(r"copied-from:.*cursor/plugins.*@b7b93c36be9b", head):
+        out.append(("recall carries its copied-from header", "no `copied-from: cursor/plugins ... @b7b93c36be9b` in its first lines"))
+    if not any("cursor/plugins" in b and "b7b93c36be9b" in b and "skills/recall" in b for b in re.split(r"\n\s*\n", notice)):
+        out.append(("NOTICE lists recall", "no entry naming cursor/plugins, b7b93c36be9b and skills/recall"))
+    for label, needle in RECALL_NAMES:
+        if needle not in text:
+            out.append(("recall names " + label, "its text has no %r" % needle))
+    if re.search(r"fwx session", text):
+        out.append(("recall never runs fwx session", "its text names `fwx session`"))
+    return out
+
+
+recall_path = os.path.join(ROOT, "skills", "recall", "SKILL.md")
+check("skills/recall/SKILL.md exists", os.path.exists(recall_path), "skills/recall/SKILL.md is missing")
+if os.path.exists(recall_path):
+    for name, detail in recall_problems(read("skills", "recall", "SKILL.md"), read("NOTICE")):
+        check(name, False, detail)
+
+GOOD_RECALL = ("---\nname: recall\ndisable-model-invocation: true\n---\n<!-- copied-from: cursor/plugins pstack/skills/recall/SKILL.md @b7b93c36be9b -->\n"
+               "project.md adr.tsv milestone fwx phase list --json phase he names `git` `gh`\n")
+GOOD_NOTICE = "cursor/plugins, commit b7b93c36be9b\n  skills/recall/SKILL.md\n"
+check("control: the good recall toy passes", recall_problems(GOOD_RECALL, GOOD_NOTICE) == [])
+for label, text, notice, want in [
+        ("no owner-only key", GOOD_RECALL.replace("disable-model-invocation: true\n", ""), GOOD_NOTICE, "recall is owner-only"),
+        ("header without the commit", GOOD_RECALL.replace("@b7b93c36be9b", "@36885ea"), GOOD_NOTICE, "recall carries its copied-from header"),
+        ("NOTICE without recall", GOOD_RECALL, "cursor/plugins, commit b7b93c36be9b\n", "NOTICE lists recall"),
+        ("adr.tsv not named", GOOD_RECALL.replace("adr.tsv ", ""), GOOD_NOTICE, "recall names adr.tsv"),
+        ("fwx session named", GOOD_RECALL + "run `fwx session --json`\n", GOOD_NOTICE, "recall never runs fwx session")]:
+    got = [c for c, _ in recall_problems(text, notice)]
+    check("control: " + label, want in got, "got %s, want %r" % (got, want))
+
 print("looked at %d checks" % looked[0])
 for f in fails:
     print(f)
