@@ -50,6 +50,8 @@ process may use, at most 8; `--jobs 1` is one file after another); the lines and
 file's output is shown whole. `python3 bin/forge test` with no group runs forge's own tests and leaves this suite out. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
+The owner opens a piece of work himself with `/fwx:recall`, pstack's recall skill (`skills/recall/SKILL.md`, owner-only: `disable-model-invocation: true`): it rebuilds where the work stands from `.fwx/`, git and `gh` and hands back a short brief. It never starts or binds a session. Its source and the passages adapted are named in its header and in `NOTICE`.
+
 ## Agents
 
 Each agent gets, by path in its brief, only what its job needs; nothing is injected into every agent. A critic or a reviewer gets files, never the author's reasoning. The agent files are `agents/<role>.md`; the fixer and the conflict resolver are modes of the executor, chosen by the brief.
