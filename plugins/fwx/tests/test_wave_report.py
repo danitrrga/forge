@@ -285,6 +285,21 @@ def case_relative(R, S):
     nxt(S, "a relative path of an older attempt is not read (its report is stale)", v, "relaunch")
     r, v = W.say(R, "T1", "done %s commits=2" % tail, run=run)
     nxt(S, "a relative path of the newest attempt is read", v, "merge")
+    # the same for a path in full: the older attempt's report is stale, the newest's is read, and a link to the newest worktree is the same worktree
+    # Seen red before the fix: FAIL: an absolute path of an older attempt is not read (its report is stale) -> next merge: want next 'relaunch', got 'merge'
+    run = "r-abs-two"
+    W.write("T1", run=run, branch=br)
+    helpers.write(os.path.join(old, ".fwx-agent", run, "T1"), "report.json", json.dumps({"status": "done", "branch": br, "outside": []}))
+    W.state(run, ("T1", 1, old), ("T1", 2, W.dir("T1")))
+    tail = ".fwx-agent/%s/T1/report.json" % run
+    r, v = W.say(R, "T1", "done %s/%s commits=2" % (old, tail), run=run)
+    nxt(S, "an absolute path of an older attempt is not read (its report is stale)", v, "relaunch")
+    link = os.path.join(helpers.mkdtemp("fwx-link-"), "wt")
+    os.symlink(W.dir("T1"), link)
+    r, v = W.say(R, "T1", "done %s/%s commits=2" % (link, tail), run=run)
+    nxt(S, "an absolute path through a link to the newest worktree is read", v, "merge")
+    r, v = W.say(R, "T1", "done %s/%s commits=2" % (W.dir("T1"), tail), run=run)
+    nxt(S, "an absolute path of the newest attempt is read", v, "merge")
 
 
 # ---------------------------------------------------------------------------------------------------- outside

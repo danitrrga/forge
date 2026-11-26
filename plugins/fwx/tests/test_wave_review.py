@@ -755,6 +755,16 @@ def case_relative(R, S):
     W.state(("r1", 1, helpers.mkdtemp("fwx-old-")), ("r1", 2, W.dirs["r1"]))
     r, v = W.find(R, "reviewed %s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % tail)
     nxt(S, "a relative reviewer path of the newest attempt is read", v, "done")
+    # a path in full is held to the same: the older attempt's report is stale
+    # Seen red before the fix: FAIL: an absolute reviewer path of an older attempt is not read -> next done: want next 'relaunch', got 'done'
+    W = World()
+    W.review(R)
+    W.reply("r1")
+    old = helpers.mkdtemp("fwx-old-")
+    helpers.write(os.path.join(old, ".fwx-agent", RUN, "r1"), "report.json", open(W.path("r1"), encoding="utf-8").read())
+    W.state(("r1", 1, old), ("r1", 2, W.dirs["r1"]))
+    r, v = W.find(R, "reviewed %s/%s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % (old, tail))
+    nxt(S, "an absolute reviewer path of an older attempt is not read", v, "relaunch")
 
 
 CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_forbidden, case_relative, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
