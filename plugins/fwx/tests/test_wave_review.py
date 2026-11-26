@@ -88,6 +88,9 @@ class World:
         r = R(self.S.cwd, "wave", "review", "--part-dir", self.S.part, "--run", run, "--from", frm or self.frm, "--to", to or self.to, *extra, env=self.env)
         return r, J(r) or {}
 
+    def dir_of(self, unit):
+        return self.dirs.setdefault(unit, helpers.mkdtemp("fwx-review-"))
+
     def path(self, unit, run=RUN):
         d = self.dirs.setdefault(unit, helpers.mkdtemp("fwx-review-"))
         return os.path.join(d, ".fwx-agent", run, unit, "report.json")
@@ -660,7 +663,52 @@ def case_fixer_retry(R, S):
         os.environ.update(saved_env)
 
 
-CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
+def case_recorded(R, S):
+    """`wave run` records each unit's worktree in state.json: a reviewer's or verifier's report is read from there, whatever path its line echoes."""
+    W = World()
+    W.review(R)
+    line = W.reply("r1", [finding("F1")])
+    helpers.write(W.run_dir(), "state.json", json.dumps({"workers": {"r1/1": {"unit": "r1", "worktree": W.dirs["r1"]}, "r1-verifier/1": {"unit": "r1-verifier", "worktree": W.dir_of("r1-verifier")}}}))
+    r, v = W.find(R, line.replace(W.path("r1"), ".fwx-agent/%s/r1/report.json" % RUN))
+    nxt(S, "a recorded reviewer is read though its line has no folder before .fwx-agent", v, "fix")
+    W = World()
+    W.review(R)
+    W.find(R, W.reply("r1", [finding("F%d" % i) for i in range(1, 5)]))
+    rows = [{"id": "r1-F%d" % i, "verdict": "fix", "severity": "medium", "reason": "x"} for i in range(1, 5)]
+    helpers.write(os.path.dirname(W.path("r1-verifier")), "report.json", json.dumps({"verdicts": rows}))
+    helpers.write(W.run_dir(), "state.json", json.dumps({"workers": {"r1-verifier/1": {"unit": "r1-verifier", "worktree": W.dirs["r1-verifier"]}}}))
+    r, v = W.say_verdicts(R, "verdicts .fwx-agent/%s/r1-verifier/report.json" % RUN)
+    nxt(S, "a recorded verifier is read though its line has no folder before .fwx-agent", v, "fix")
+
+
+def case_routes(R, S):
+    """A finding on a file under `.fwx/` (executors may not write there) goes to `consider` before the verifier threshold, and an unverified `low`
+    one goes to `consider` instead of a fix round."""
+    W = World()
+    W.review(R)
+    fx = [finding("F%d" % i, file=f) for i, f in enumerate((".fwx/milestones/v1/plan.md", "/abs/repo/.fwx/ctx.md", "sub/.fwx/x.md"), 1)]
+    r, v = W.find(R, W.reply("r1", fx + [finding("F4")]))
+    nxt(S, "3 findings under .fwx/ and 1 real one: no verifier, the real one is fixed", v, "fix")
+    S.eq("findings under .fwx/: only the real one is fixed, the others are listed", (v.get("ids"), [c["id"] for c in v.get("consider") or []]), (["r1-F4"], ["r1-F1", "r1-F2", "r1-F3"]))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file=".fwx/plan.md")], out=[outside(where=".fwx/plan.md:93", size="large")]))
+    S.eq("a finding and a large outside item under .fwx/ are both listed, none fixed or filed", (v.get("next"), v.get("ids"), len(v.get("consider") or []), v.get("file")), ("done", [], 2, []))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", severity="low"), finding("F2", severity="medium")]))
+    S.eq("an unverified low finding is listed, a medium one is fixed", (v.get("ids"), [c["id"] for c in v.get("consider") or []]), (["r1-F2"], ["r1-F1"]))
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", severity="low")]))
+    nxt(S, "a pass of one low finding is done", v, "done")
+    W = World()
+    r, v = W.review(R)
+    text = read(v["reviewers"][0]["brief"])
+    S.ok("the reviewer's brief says `.fwx/` files are not reviewable", "not reviewable" in text, text[-500:])
+
+
+CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry, case_recorded, case_routes]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [

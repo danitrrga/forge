@@ -445,7 +445,26 @@ def case_usage(R, S):
     S.eq("outside a repository: exit 2", r.returncode, 2)
 
 
-CASES = [case_good, case_misses, case_outside, case_branching, case_setup, case_scope, case_usage]
+def case_recorded(R, S):
+    """`wave run` records each unit's worktree in state.json (`workers`, newest attempt last): the report is read from there, and the path the agent
+    echoes is a hint (a worker that echoed `.claude/worktrees/x/.fwx-agent/...` or `.fwx-agent/...` relative to its own worktree had finished work
+    counted as missing)."""
+    W = World()
+    br = W.agent("T1", {"src/a.py": "a2\n"})
+    old = helpers.mkdtemp("fwx-old-")
+    helpers.write(os.path.join(old, ".fwx-agent", RUN, "T1"), "report.json", json.dumps({"status": "failed", "reason": "boom"}))
+    W.write("T1", branch=br)
+    workers = {"T1/1": {"unit": "T1", "worktree": old}, "T1/2": {"unit": "T1", "worktree": W.dir("T1")}}
+    helpers.write(os.path.join(W.S.repo, ".git", "fwx", "runs", RUN), "state.json", json.dumps({"workers": workers}))
+    for label, path in (("no folder before .fwx-agent", ".fwx-agent/%s/T1/report.json" % RUN),
+                        ("a relative folder", ".claude/worktrees/%s-T1/.fwx-agent/%s/T1/report.json" % (RUN, RUN))):
+        r, v = W.say(R, "T1", "done %s commits=2" % path)
+        nxt(S, "a recorded unit is read from its newest worktree, whatever path the line echoes (%s)" % label, v, "merge")
+    r, v = W.say(R, "T1", "done %s commits=2" % os.path.join(old, ".fwx-agent", RUN, "T1", "report.json"))
+    nxt(S, "the echoed path of an older attempt is not read", v, "merge")
+
+
+CASES = [case_good, case_misses, case_outside, case_branching, case_setup, case_scope, case_usage, case_recorded]
 R_ = "lib/fwx/execute/report.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
