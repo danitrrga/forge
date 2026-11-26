@@ -77,9 +77,10 @@ FILES = {"T1": {"src/a.py": "a1\n"}, "T2": {"src/b.py": "b1\n"}, "T3": {"src/c.p
 class World:
     """A Scene (toy repo, phase worktree, the part's plan) with a fake orca on a PATH of its own and the base context in place."""
 
-    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, context=True, registered=(), nested=None):
+    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, context=True, registered=(), nested=None, quick=()):
         self.scene = Scene(tasks=tasks or THREE, recipe=recipe, settings={"worktree": {"baseRef": "head"}, "env": {"KEEP_ME": "1"}}, nested=nested,
-                           config={"limits": {"per_project": {"executor": cap}, "default_cap": {"supervised": 3, "unattended": 4}}})
+                           config=dict({"limits": {"per_project": {"executor": cap}, "default_cap": {"supervised": 3, "unattended": 4}}},
+                                       **({"project": {"checks": list(recipe), "checks_quick": list(quick)}} if quick else {})))
         sc = self.scene
         self.repo, self.cwd, self.part = sc.code, sc.cwd, sc.part  # the repository the part works in: the workspace's own, or a nested one
         self.dir = helpers.mkdtemp("fwx-orca-")
@@ -1075,6 +1076,7 @@ def case_signals(root, S):
       FAIL: SIGTERM: its made terminal is closed: got terminals {'term_1': {... 'open': True}}
       FAIL: SIGTERM: the resume started the cut task again and then the reviewer: got ['T1', 'r1'], want ['T1', 'T1', 'r1']
     SIGHUP the same (exit -1); SIGINT: exit -2 with a KeyboardInterrupt traceback and the state still `active` (its workers and terminal were released by `finish`).
+    Gemini review of PR 270, item 5: FAIL: SIGTERM: `wave list` marks the run interrupted: got '<run> part=01-alpha branch=phase failed pid=<pid> dead workers=0/1 step=wave 1'
     Controls (MUTANTS): the handler not installed, the cut worker not marked, and the resume check not knowing an interrupted run, each red on this case."""
     for name in ("SIGTERM", "SIGHUP", "SIGINT"):
         w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
@@ -1095,6 +1097,8 @@ def case_signals(root, S):
         S.eq("%s: the worker was stopped and released: got %r still open" % (name, [k for k, d in w.dispatches().items() if not d["released"]]),
              [k for k, d in w.dispatches().items() if not d["released"]], [])
         S.ok("%s: its made terminal is closed: got terminals %r" % (name, w.terminals()), not any(t["open"] for t in w.terminals().values()))
+        S.ok("%s: the cut worker's worktree is kept for the resume: got %r" % (name, w.worktrees()), any(x.endswith("-T1") for x in w.worktrees()))
+        S.ok("%s: `wave list` marks the run interrupted" % name, "interrupted=%s" % name in w.fwx("wave", "list").stdout, "got %r" % w.fwx("wave", "list").stdout)
         helpers.write(w.dir, "go-T1", "")
         r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
         m2 = line_of(r2)
@@ -1104,6 +1108,83 @@ def case_signals(root, S):
         S.eq("%s: the resumed run ended done" % name, w.state(run)["state"], "done")
         r3 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=60)
         S.eq("%s: a finished run is not resumable again" % name, r3.returncode, 2)
+
+
+def gone(pid, secs=10):
+    return bool(wait_for(lambda: not os.path.exists("/proc/%d" % pid), secs))
+
+
+def case_signals_merge(root, S):
+    """A signal while the driver's `wave merge` runs the quick checks (Gemini review of PR 270, items 1 and 3). The merge's check group must die with it, the merged
+    worker's branch and worktree must still be there (a merge removed them before its checks, so the replay on `--resume` found `no branch`), and the resume goes on to done.
+    Seen red on the code before it:
+      FAIL: signal in the quick check: the check is gone, not an orphan: got pid <pid> still running
+      FAIL: signal in the quick check: the merged branch and its worktree are kept for the resume: got (False, False)
+      FAIL: signal in the quick check: --resume takes the run up and it is done: got '... run <id> failed: fwx wave merge exited 2 with no JSON: fwx wave merge: no branch worktree-<id>-T1'
+    Controls (MUTANTS): the branches removed before the checks, no unwinding in run_check, and the child of the driver not asked to stop."""
+    base = helpers.mkdtemp("fwx-sigmerge-")
+    pidfile, go = os.path.join(base, "pid"), os.path.join(base, "go")
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], quick=["echo $$ > %s; while [ ! -f %s ]; do sleep 0.1; done" % (pidfile, go)])
+    p = start_run(w, root)
+    S.ok("signal in the quick check: the quick check started", bool(wait_for(lambda: os.path.exists(pidfile) or p.poll() is not None, 60)) and os.path.exists(pidfile))
+    pid = int(open(pidfile).read()) if os.path.exists(pidfile) and open(pidfile).read().strip() else 0
+    os.kill(p.pid, signal.SIGTERM)
+    r = finish_run(p)
+    m = line_of(r)
+    S.ok("signal in the quick check: the run says failed and names the signal: got %r %r" % (r.stdout[-200:], r.stderr[-200:]), bool(m) and m.group(2) == "failed" and "SIGTERM" in m.group(3))
+    S.ok("signal in the quick check: the check is gone, not an orphan: got pid %d still running" % pid, bool(pid) and gone(pid))
+    run = w.runs()[0] if w.runs() else ""
+    branch = "worktree-%s-T1" % run
+    kept = (helpers.git(w.repo, "branch", "--list", branch).strip() != "", any(x.endswith("-T1") for x in w.worktrees()))
+    S.eq("signal in the quick check: the merged branch and its worktree are kept for the resume", kept, (True, True))
+    helpers.write(base, "go", "")
+    r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+    m2 = line_of(r2)
+    S.ok("signal in the quick check: --resume takes the run up and it is done: got %r %r" % (r2.stdout[-300:], r2.stderr[-200:]), bool(m2) and m2.group(2) == "done")
+    S.eq("signal in the quick check: the resume did not start T1 again", units(w), ["T1", "r1"])
+    S.eq("signal in the quick check: no worktree of the run is left after the resume", [x for x in w.worktrees() if os.path.realpath(x) not in (os.path.realpath(w.repo), os.path.realpath(w.cwd))], [])
+
+
+def case_signals_release(root, S):
+    """The release of a cut worker failed (Orca unreachable as the terminal closed): the resume must not start a second worker beside the live one (Gemini review of PR 270,
+    item 4): it releases the cut one first and, when it cannot, ends failed naming it and starts nobody. Seen red on the code before it:
+      FAIL: release failed: the resume ends failed naming the worker that could not be released: got 'run <id> failed: T1 ran past its limit of 2 s and was stopped'
+      FAIL: release failed: no second worker beside the live one: got ['T1', 'T1'], want ['T1']"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}, "release_fail": ["T1"]})
+    p = start_run(w, root, FWX_RUN_LIMIT_S="60")
+    wait_for(lambda: p.poll() is not None or (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())))
+    os.kill(p.pid, signal.SIGTERM)
+    finish_run(p)
+    run = w.runs()[0] if w.runs() else ""
+    st = w.state(run)
+    S.eq("release failed: the run is recorded interrupted with its worker unreleased", ((st.get("result") or {}).get("interrupted"), [x["released"] for x in st["workers"].values()]), ("SIGTERM", [False]))
+    r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+    m2 = line_of(r2)
+    S.ok("release failed: the resume ends failed naming the worker that could not be released: got %r" % r2.stdout[-200:], bool(m2) and m2.group(2) == "failed" and "could not be released" in m2.group(3))
+    S.eq("release failed: no second worker beside the live one", units(w), ["T1"])
+
+
+def case_signals_start(root, S):
+    """A signal between the worktree made for a worker and Orca's answer to `worker-start` (Gemini review of PR 270, item 6): the worker is recorded before the start, so
+    the resume knows the worktree and its branch and starts the task again as the next attempt instead of crashing on `branch ... already exists`. Seen red on the code before it:
+      FAIL: start cut: the worker is recorded before Orca answers: got 0 workers in the state: got 0, want 1
+      FAIL: start cut: the worker's clean worktree is not swept by the cut run (the resume needs it): got [<repo>, <phase worktree>]"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"start_hang": ["T1"]})
+    p = start_run(w, root)
+    S.ok("start cut: the driver is in worker-start", bool(wait_for(lambda: os.path.exists(os.path.join(w.dir, "hanging-T1")) or p.poll() is not None, 60)))
+    os.kill(p.pid, signal.SIGTERM)
+    r = finish_run(p)
+    run = w.runs()[0] if w.runs() else ""
+    S.ok("start cut: the run says failed and names the signal: got %r" % r.stdout[-200:], bool(line_of(r)) and "SIGTERM" in line_of(r).group(3))
+    S.eq("start cut: the worker is recorded before Orca answers: got %d workers in the state" % len(w.state(run)["workers"]), len(w.state(run)["workers"]), 1)
+    S.ok("start cut: the worker's clean worktree is not swept by the cut run (the resume needs it): got %r" % w.worktrees(), any(x.endswith("-T1") for x in w.worktrees()))
+    del w.behave["start_hang"]
+    w.set_behave()
+    os.remove(os.path.join(w.dir, "hanging-T1"))
+    r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+    m2 = line_of(r2)
+    S.ok("start cut: --resume starts the task again and it is done: got %r %r" % (r2.stdout[-300:], r2.stderr[-200:]), bool(m2) and m2.group(2) == "done")
+    S.eq("start cut: the task was started once, as the next attempt", units(w), ["T1", "r1"])
 
 
 # ---------------------------------------------------------------------------------------------------------------------- orchestrator steering
@@ -1453,7 +1534,7 @@ def case_reply_grace(root, S):
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
-         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_signals, case_terminal_discover, case_list_json]
+         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_signals, case_signals_merge, case_signals_release, case_signals_start, case_terminal_discover, case_list_json]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""

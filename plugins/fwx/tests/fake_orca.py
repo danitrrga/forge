@@ -9,7 +9,7 @@ State is in $FAKE_ORCA_DIR: `behave.json` (what the test wants), `state.json` (r
 `bad-outside` (a report whose `outside` item is malformed), `idle` (done, but it never settles: state ready, activity idle), `wait` (an
 agent waiting on a prompt), `hang` (never ends), `later` (running until the test creates `go-<unit>`), `fail` (Orca says failed),
 `failed-report` and `question` (the executor's report says so) and `showfail` (worker-show fails). `release_fail: [unit]` makes `worker-release` of
-that unit's dispatches fail with an error object whose `message` is null. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
+that unit's dispatches fail with an error object whose `message` is null. `start_hang: [unit]` makes `worker-start` of that unit write `hanging-<unit>` and sleep. `orchestration run-create`, `worker-start` and `send` with no `--from` (and none of the session variables
 in its environment) fails with Orca 1.4.273's `no_active_sender_terminal`; `terminal create|show|close` keep `state.json["terminals"]`. `discover_after: N` makes Orca discover a worktree only after N `worktree show` calls on its path (the first N answer `selector_not_found`, as Orca 1.4.273 does for a worktree made with git that it has not
 found yet), and `terminal_discover_after: N` makes the first N `terminal create` calls answer `selector_not_found`, and `close_sender_after: N` closes the sender terminal after the N-th `worker-start`, and a `worker-start` from a closed terminal, or one that is not the terminal the Run was created from,
 answers `consumer_fenced`; `start_not_found: M` makes the first M `worker-start`s on a worktree answer `selector_not_found` even when `show` knows it; with `discover_after` set, `worker-start` on a worktree that is not yet discovered answers `selector_not_found`
@@ -328,6 +328,10 @@ def main(argv):
             fmode = os.stat(os.path.join(wt, ".claude", "settings.local.json")).st_mode & 0o777
         except OSError:
             fmode = None
+        if (marker or {}).get("unit") in behave.get("start_hang", []):  # Orca is slow to answer: the driver is between its worktree and its record of the worker
+            with open(os.path.join(DIR, "hanging-" + marker["unit"]), "w"):
+                pass
+            time.sleep(600)
         state["n"] += 1
         did = "ctx_%d" % state["n"]
         unit = (marker or {}).get("unit", "?")
