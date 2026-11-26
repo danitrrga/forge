@@ -32,8 +32,6 @@ ROWS = [
     ("subphase new", "state new-subphase", "state", ["new-subphase"], "make the next subphase folder of a phase"),
     ("milestone new", "state new-milestone", "state", ["new-milestone"], "make the next milestone (or vN) of a scope"),
     ("decision new", "state decision", "state", ["decision"], "add a row to the phase's decisions.tsv, or with --adr to the scope's adr.tsv"),
-    ("state lint", "state check state", "state", ["check-state"], "lint a state.md: an error for a rule, a WARN line for a length"),
-    ("report lint", "state check report", "state", ["check-report"], "lint a phase report: an error for a rule, a WARN line for a length"),
     # the plan
     ("plan lint", "plan check", "plan", ["check"], "lint the plan files of a phase: <dir> [--json]"),
     ("plan brief", None, "plan", ["brief"], "the brief the agent of a step runs: <dir> <premortem|plan|postmortem> [--unattended] [--diff BASE..BRANCH] [--head]"),
@@ -78,8 +76,7 @@ ROWS = [
 ]
 
 # An old name that two new ones replaced, or that is now a command of another tool: the text after "now", whole.
-OLD_EXTRA = {("state", "check"): "'fwx state lint' or 'fwx report lint'",
-             ("test",): "'forge test fwx'"}
+OLD_EXTRA = {("test",): "'forge test fwx'"}
 # Options that come before the verb and take a value: `fwx linear --project NAME list`.
 LEADING = {"linear": ("--project",)}
 # The verb that `fwx OBJECT` alone runs, for an object whose default is one of its verbs (an object with a row of its own, such as

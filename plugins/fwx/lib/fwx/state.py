@@ -34,8 +34,6 @@ SUPPORT = ("chosen", "approved", "unexamined", "agent-assumption")
 AUDIT_COLUMNS = ("date", "kind", "sha", "detail", "rc")
 AUDIT_KINDS = ("evidence", "stage", "round")
 CLOSED_STAGES = ("closed", "cancelled")
-STATE_LINES = 100   # state.md: the length of GSD's template; over it only warns
-REPORT_LINES = 40   # a phase report: one terminal screen; over it only warns
 
 _NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 _MILESTONE = re.compile(r"v(\d+)\Z")
@@ -148,15 +146,11 @@ def subphases(phase_dir):
 
 
 def phase_paths(dir):
-    """The files of a phase, a subphase or any working folder (also `factory/<KEY>/`), as Paths. Nothing is created;
-    `next_report` is `report-<n>.md` with the first free n."""
+    """The files of a phase, a subphase or any working folder (also `factory/<KEY>/`), as Paths. Nothing is created."""
     d = Path(dir)
-    n = 1
-    while (d / ("report-%d.md" % n)).exists():
-        n += 1
     return {"context": d / "context.md", "decisions": d / "decisions.tsv", "research": d / "research", "demo": d / "demo",
             "premortem": d / "premortem.md", "plan": d / "plan.md", "postmortem": d / "postmortem.md",
-            "state": d / "state.md", "audit": d / "audit.tsv", "next_report": d / ("report-%d.md" % n)}
+            "audit": d / "audit.tsv"}
 
 
 def last_stage(dir):
@@ -641,46 +635,3 @@ def cancel_phase(phase_dir):
             continue
         if isinstance(data, dict) and data.get("phase_dir") == stored:
             _put_session(sessions, n[:-5], data.get("subproject"), None)
-
-
-def _length_warning(lines, target):
-    return ["%d lines, target %d" % (lines, target)] if lines > target else []
-
-
-def _read_text(path):
-    try:
-        with open(str(path), encoding="utf-8") as f:
-            return f.read(), None
-    except OSError as e:
-        return None, "%s cannot be read (%s)" % (path, e.strerror)
-
-
-def check_state(path):
-    """`(errors, warnings)` of a `state.md`: a file that is missing or empty is an error; more than STATE_LINES lines is
-    a warning only (short is wanted, but a long file is not refused)."""
-    text, err = _read_text(path)
-    if err:
-        return [err], []
-    if not text.strip():
-        return ["%s is empty" % path], []
-    return [], _length_warning(len(text.splitlines()), STATE_LINES)
-
-
-def check_report(path):
-    """`(errors, warnings)` of a phase report: an error when it does not cite the sha of the last `evidence` row of the
-    `audit.tsv` next to it (the full sha, or an abbreviation of 7 or more hex digits), or when that file has no such row;
-    more than REPORT_LINES lines is a warning only."""
-    text, err = _read_text(path)
-    if err:
-        return [err], []
-    rows = [r for r in read_rows(os.path.join(os.path.dirname(os.path.abspath(str(path))), "audit.tsv")) if r.get("kind") == "evidence"]
-    errors = []
-    if not rows:
-        errors.append("%s: audit.tsv has no evidence row, so the report has no evidence to cite" % path)
-    else:
-        sha = rows[-1].get("sha", "")
-        cited = bool(sha) and (sha in text or any(sha.lower().startswith(t.lower())
-                                                  for t in re.findall(r"\b[0-9A-Fa-f]{7,40}\b", text)))
-        if not cited:
-            errors.append("%s does not cite the sha of the last evidence row (%s)" % (path, sha[:12] or "empty"))
-    return errors, _length_warning(len(text.splitlines()), REPORT_LINES)

@@ -121,7 +121,7 @@ r = helpers.fwx(helpers.ROOT, "help")
 s.ok("bin/fwx help lists `fwx phase new`", re.search(r"^\s+fwx phase new\s+\S", r.stdout, re.M) is not None, r.stdout)
 
 repo = helpers.toy_repo()
-for label, args in (("no verb", ["state"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
+for label, args in (("no verb", ["phase"]), ("an unknown verb", ["phase", "frobnicate"]), ("phase new without a slug", ["phase", "new"]),
                     ("an unknown flag", ["session", "--nope"]), ("decision new without --why", ["decision", "new", "--decision", "x", "--support", "chosen"]),
                     ("session attach with nothing", ["session", "attach"]),
                     ("session attach with a phase and --root", ["session", "attach", "x", "--root"])):

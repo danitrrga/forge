@@ -15,8 +15,6 @@ python3 bin/fwx phase new <slug>    # the next phase folder, the session bound t
 python3 bin/fwx subphase new <phase dir> <slug>    # the next subphase folder of a phase
 python3 bin/fwx milestone new [vN]    # the next milestone of a scope
 python3 bin/fwx decision new --decision T --why T --support S    # a row in the phase's decisions.tsv (`--adr`: the scope's adr.tsv)
-python3 bin/fwx state lint <state.md>    # a state.md against its rules; exit 1 on an error
-python3 bin/fwx report lint <report.md>    # a phase report against its rules, the same way
 python3 bin/fwx session    # the session's phase; `fwx --help` lists every command, grouped by object
 python3 bin/fwx stage <dir> <stage>    # changes a phase's or a job's stage, if data/stages.json allows it
 python3 bin/fwx rounds <dir>    # rounds a job has used of its cap; --use "<why>" spends one, --reset "<why>" restarts the count

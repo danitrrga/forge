@@ -215,7 +215,7 @@ def scenario(work):
                        # at c538909 (the row and the default were there; the stub handler answered):
                        #   FAIL: fwx decision list: exit 2 and 'unknown verb: list': got (0, False, 'STUB state ["decisions"]\n')
                        (("decision", "list"), "unknown verb: list"), (("decision",), "needs a verb"), (("decision", "--all"), "unknown verb: --all"),
-                       (("state", "decisions"), "unknown verb: decisions")):
+                       (("state", "decisions"), "unknown command: state")):
         r = run(work, *args)
         check("fwx %s: exit 2 and %r" % (" ".join(args), text), (r.returncode, text in r.stderr, r.stdout), (2, True, ""))
     # the listing

@@ -23,10 +23,11 @@ import sys
 
 SCHEMA = 1
 FILE = os.path.join(".claude", "fwx.json")
-ROLES = ("orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem", "planner", "post-mortem",
+ROLES = ("orchestrator", "researcher", "decisions", "demo", "pre-mortem", "planner", "post-mortem",
          "executor", "reviewer", "review-verifier", "security-reviewer", "ui-walker", "ui-verifier",
          "skill-proposer", "factory-orchestrator", "intake", "classifier", "detector", "analytics-verifier",
          "vision", "runner")
+RETIRED_ROLES = ("state",)  # a role the engine dropped: a generated file written before that still names it, and loads
 SIZES = ("small", "normal", "big")
 ALIASES = ("sonnet", "opus", "haiku", "fable")  # a model is one of these, never a full id
 REPO_KEYS = ("checks", "checks_quick", "worktree_setup", "protected_paths", "default_branch")  # what a `repos` entry replaces
@@ -35,11 +36,11 @@ MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; 
 
 def _seed():
     """Sonnet for every role, then the seed's exceptions: the planner decides direction (Opus), the detector, the
-    decisions log, the state files and the runner (an agent that only runs one shell command and returns its output) are
+    decisions log and the runner (an agent that only runs one shell command and returns its output) are
     mechanical (Haiku), the UI walker starts cheap, the analytics verifier escalates on a big job."""
     models = {r: {z: "sonnet" for z in SIZES} for r in ROLES}
     models["planner"] = {z: "opus" for z in SIZES}
-    for r in ("detector", "decisions", "state", "runner"):
+    for r in ("detector", "decisions", "runner"):
         models[r] = {z: "haiku" for z in SIZES}
     models["ui-walker"]["small"] = "haiku"
     models["analytics-verifier"]["big"] = "opus"
@@ -213,6 +214,16 @@ def _merge(base, over):
     return base
 
 
+def _drop_retired(cfg):
+    """The retired roles taken out of `models` and `limits.per_project`, so `ROLES` stays the one list of roles and a file
+    that has not been regenerated yet is not refused for naming one."""
+    limits = cfg.get("limits")
+    for table in (cfg.get("models"), limits.get("per_project") if isinstance(limits, dict) else None):
+        if isinstance(table, dict):
+            for r in RETIRED_ROLES:
+                table.pop(r, None)
+
+
 def _bad(path, what):
     fix = "run `forge sync`, or edit the file by hand to the schema in README.md" if path else "run `forge sync`"
     return ConfigError("%s: %s; %s" % (path or "configuration", what, fix))
@@ -308,6 +319,7 @@ def load(cwd=None, quiet=False):
             sys.stderr.write("fwx: no %s at %s; using defaults\n" % (FILE.replace(os.sep, "/"), path))
     else:
         _merge(cfg, data)
+        _drop_retired(cfg)
         source = path
     _validate(cfg, source)
     _check_walk(cfg, source)
