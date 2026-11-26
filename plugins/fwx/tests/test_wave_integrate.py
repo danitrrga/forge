@@ -19,6 +19,9 @@ Red before `summary` looked at the run's own gate (3.4 U8 fix, F3: `summary --ru
   FAIL: summary, an earlier run that never ran the gate, green evidence of HEAD from elsewhere: gate got 'pass': got ('pass', 0), want ('fail', 1)
   FAIL: summary, the run's own last gate is red, later green evidence: gate got 'pass': got ('pass', 0), want ('fail', 1)
 
+Red before `summary` compared the evidence with the cwd's HEAD (session e2e: `fwx wave --run R` from the main checkout said `fail`, from the phase worktree `pass`):
+  FAIL: summary, from the main checkout: gate got 'fail', head 'aeaaa3a3713aea44b255a1989b50b6ed61fcd5b2': got ('fail', 1, 'aeaaa3a3713aea44b255a1989b50b6ed61fcd5b2'), want ('pass', 0, '966fe74557919309c2ed1f4b8568c5cda333967d')
+
 Red before `next` existed (09.5 T52; case_next and case_next_rules, a conflict, a red check, findings, a lock, a final merge, a result that names no cause):
   FAIL: a conflict says next resolve -> no next: got None, want 'resolve'
   FAIL: next_step: one answer per case (AttributeError: module 'fwx.execute.integrate' has no attribute 'next_step'): got 0, want 12
@@ -577,8 +580,8 @@ def run_no_proc(R, sc):
 
 # ---------------------------------------------------------------------------------------------------- summary
 
-def summ(R, sc, *extra):
-    return sc.call(R, "summary", "--run", sc.run, *extra)
+def summ(R, sc, *extra, cwd=None):
+    return sc.call(R, "summary", "--run", sc.run, *extra, cwd=cwd)
 
 
 def case_summary(R, S):
@@ -643,6 +646,20 @@ def case_summary(R, S):
     ok_json(S, "summary, then the gate on the head (the re-entry)", sw.call(R, "integrate", "--part-dir", sw.part, "--run", sw.run, "--final"))
     r = summ(R, sw)
     S.eq("summary, control: the same run once its own gate passed: gate got %r" % (J(r) or {}).get("gate"), ((J(r) or {}).get("gate"), (J(r) or {}).get("why")), ("pass", ""))
+    # the answer is the same from any checkout of the repo: the gate compares the evidence with the head of the run's branch, not the cwd's
+    sm = Scene()
+    b = sm.agent("one", [("src/a.py", "a1\n", None)])
+    ok_json(S, "summary, from the main checkout: the merge and its gate", sm.integrate(R, b, extra=("--final",)))
+    d = os.path.join(sm.common, "fwx", "runs", sm.run)
+    with open(os.path.join(d, "state.json"), "w", encoding="utf-8") as f:
+        json.dump({"run": sm.run, "branch": "phase"}, f)
+    S.ok("summary, from the main checkout: it is on another head than the run's branch", sm.head(sm.repo) != sm.head(), "the checkouts share a head")
+    r = summ(R, sm, "--part-dir", sm.part, cwd=sm.repo)
+    v = J(r) or {}
+    S.eq("summary, from the main checkout: gate got %r, head %r" % (v.get("gate"), v.get("head")), (v.get("gate"), r.returncode, v.get("head")), ("pass", 0, sm.head()))
+    os.remove(os.path.join(d, "state.json"))  # a run that records no branch: today's behaviour, the cwd's HEAD
+    r = summ(R, sm, "--part-dir", sm.part, cwd=sm.repo)
+    S.eq("summary, a run with no recorded branch: the cwd's HEAD decides", ((J(r) or {}).get("gate"), r.returncode), ("fail", 1))
     sv = Scene()  # a run of `--revert` merges nothing: the gate is `fwx verify` on the head the revert made
     helpers.write(sv.cwd, "src/a.py", "a1\n")
     helpers.git(sv.cwd, "add", "-A")
