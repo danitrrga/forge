@@ -949,32 +949,41 @@ def start(R, sc):
                              "--branch", "phase"], cwd=sc.cwd, env=helpers.clean_env(**sc.env), stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
 
+def hold_gate(sc):
+    """The project's gate lock, held by the test: the open file (close it to let go)."""
+    folder = os.path.join(sc.repo, ".git", "fwx")
+    os.makedirs(folder, exist_ok=True)
+    held = open(os.path.join(folder, "gate.lock"), "a")
+    fcntl.flock(held, fcntl.LOCK_EX)
+    return held
+
+
+def wait_for_gate(p):
+    """True once `p` (a `wave new` started while the test holds the gate lock) has said on stderr that it waits for it, False if its stderr ended
+    first (it ran its check, or died). A guard kills a run that does neither in a minute, so a broken run cannot hang the suite."""
+    guard = threading.Timer(60, p.kill)
+    guard.start()
+    try:
+        return any("waiting for another gate" in line for line in p.stderr)
+    finally:
+        guard.cancel()
+
+
 def case_base_gate_lock(R, S):
     """Concurrency 8: the base checks of `wave new` take the project's gate lock (`.git/fwx/gate.lock`, the one `fwx verify` holds), so
     two runs on one machine do not run full recipes at once and push each other past `check_timeout_s`. The test holds the lock: the
-    run must say it waits and run no check until the lock is let go; with no check to run it must not wait at all.
+    run must say it waits and run no check until the lock is let go; with nobody holding it, it must not wait.
     Seen red: FAIL: gate lock: the base check waits for the held gate lock: got (False, 1), want (True, 0)
     (stderr never said `waiting for another gate`, and the check had already run once)."""
     marker = os.path.join(helpers.mkdtemp("fwx-gate-"), "ran")
     sc = Scene(recipe=[counting(marker)])
-    folder = os.path.join(sc.repo, ".git", "fwx")
-    os.makedirs(folder, exist_ok=True)
-    with open(os.path.join(folder, "gate.lock"), "a") as held:
-        fcntl.flock(held, fcntl.LOCK_EX)
+    held = hold_gate(sc)
+    try:
         p = start(R, sc)
-        guard = threading.Timer(60, p.kill)  # a run that never says it waits and never ends must not hang the suite
-        guard.start()
-        waiting = False
-        try:
-            for line in p.stderr:
-                if "waiting for another gate" in line:
-                    waiting = True
-                    break
-            S.eq("gate lock: the base check waits for the held gate lock", (waiting, ran(marker)), (True, 0))
-        finally:
-            fcntl.flock(held, fcntl.LOCK_UN)
-        out, err = p.communicate()
-        guard.cancel()
+        S.eq("gate lock: the base check waits for the held gate lock", (wait_for_gate(p), ran(marker)), (True, 0))
+    finally:
+        held.close()
+    p.communicate()
     S.eq("gate lock: let go, the run goes on and the check runs once", (p.returncode, ran(marker)), (0, 1))
     free = Scene(recipe=[counting(marker)])
     r = free.prepare(R)
@@ -983,12 +992,20 @@ def case_base_gate_lock(R, S):
 
 def case_run_id_claimed(R, S):
     """Concurrency 14: the run id is claimed with an `os.mkdir` when it is chosen, not counted from folders that appear minutes
-    later (after the base checks), so two `wave new` of one part at one base get two ids. The recipe sleeps, so both runs are past the
-    choice of the id when the first finishes. A run refused after the claim gives the number back: no empty folder is left.
-    Seen red: FAIL: run id: two wave new on one part and base: got ([0, 2], ['01-alpha-24b2d4e-1']), want ([0, 0], ['01-alpha-24b2d4e-1', '01-alpha-24b2d4e-2'])
+    later (after the base checks), so two `wave new` of one part at one base get two ids. The overlap is made, not hoped for: the test holds
+    the gate lock, so each run has chosen its id and then waits at the base check, and lets go only once both have said so. A run refused after the
+    claim gives the number back: no empty folder is left.
+    Seen red on master before either fix, first FAIL: run id: both runs chose their id and wait at the base check: got [False, False], want [True, True]
+    (no gate lock yet); with the lock and the id still counted (the MUTANTS row), the same two runs: FAIL: run id: two wave new on one part and base:
+    got ([0, 2], ['01-alpha-4f124b0-1']), want ([0, 0], ['01-alpha-4f124b0-1', '01-alpha-4f124b0-2'])
     (the second took the same id, and its stderr said `cannot write the briefs of the run in .../runs/01-alpha-<sha7>-1: [Errno 17] File exists`)."""
-    sc = Scene(recipe=["sleep 2"])
-    procs = [start(R, sc), start(R, sc)]
+    sc = Scene()
+    held = hold_gate(sc)
+    try:
+        procs = [start(R, sc), start(R, sc)]
+        S.eq("run id: both runs chose their id and wait at the base check", [wait_for_gate(p) for p in procs], [True, True])
+    finally:
+        held.close()
     done = [p.communicate() for p in procs]
     runs = sorted(a["run"] for a in (args_of(type("r", (), {"stdout": o})) for o, _ in done) if a)
     want = ["%s-%s-%d" % (PHASE, sc.head()[:7], n) for n in (1, 2)]
@@ -1088,8 +1105,8 @@ MUTANTS = [
     ("check-base in the main checkout", case_check_base, B, "if not linked(top):", "if False:", "the main checkout: exit 0, want 42"),
     ("base checks skip the gate lock", case_base_gate_lock, P, "    with verify.gate_lock(top):  #", "    if True:  #",
      "gate lock: the base check waits for the held gate lock"),
-    ("run id counted, not claimed", case_run_id_claimed, P, 'os.mkdir(os.path.join(runs, "%s%d" % (prefix, n)))',
-     'os.path.isdir(os.path.join(runs, "%s%d" % (prefix, n))) or os.makedirs(os.path.join(runs, "%s%d" % (prefix, n)), exist_ok=True)',
+    ("run id looked at, not claimed", case_run_id_claimed, P, 'os.mkdir(os.path.join(runs, "%s%d" % (prefix, n)))',
+     'os.path.isdir(os.path.join(runs, "%s%d" % (prefix, n))) and exec("raise FileExistsError")',
      "run id: two wave new on one part and base"),
     ("a refused run keeps its folder", case_run_id_claimed, P, "                os.rmdir(folder)\n", "                pass\n",
      "run id: a red base is refused and leaves no empty run folder"),
