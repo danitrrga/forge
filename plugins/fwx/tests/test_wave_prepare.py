@@ -941,9 +941,30 @@ def case_nested(R, S):
     S.ok("nested: nothing of fwx's is made in a's own .git", not os.path.exists(os.path.join(sc.nested["a"], ".git", "fwx")))
 
 
+def case_orca_missing(R, S):
+    """`wave run` drives every agent as an Orca worker, so a session-plane `wave new` (and the `wave run` that starts with it) on a machine with no `orca` on PATH
+    refuses before the base checks (exit 2, one line naming what to install) instead of letting the run fail late with `orca: orca repo list: [Errno 2] No such
+    file or directory: 'orca'` and a failed run left behind. The factory plane has its own seam and is not asked. PATH here is the shells and the VCS only.
+    Seen failing on the code before the preflight:
+      FAIL: orca missing: exit: got 0, want 2
+      FAIL: orca missing: the base checks did not run: got 1, want 0
+      FAIL: orca missing: the refusal names orca and what to install: stderr 'fwx wave new: base checks: CI not used (project.default_branch is not set); running the checks here\\n'"""
+    runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
+    sc = Scene(recipe=[counting(runs)])
+    r = sc.prepare(R, env={"PATH": tool_dir()})
+    S.eq("orca missing: exit", r.returncode, 2)
+    S.eq("orca missing: stdout empty", r.stdout, "")
+    S.eq("orca missing: the base checks did not run", ran(runs), 0)
+    S.ok("orca missing: the refusal names orca and what to install", "orca" in r.stderr and "install Orca" in r.stderr and len(r.stderr.strip().splitlines()) == 1,
+         "stderr %r" % r.stderr[:300])
+    S.ok("orca missing: nothing written", not sc.audit_exists())
+    r = sc.prepare(R, plane="factory", env={"PATH": tool_dir()})
+    S.eq("orca missing: the factory plane does not need it", (r.returncode, ran(runs)), (0, 1))
+
+
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
          case_unattended, case_cap, case_security, case_small_plan, case_done, case_worktree_checks, case_subphase, case_fix_options, case_from_gate, case_check_base,
-         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested]
+         case_check_base_moves_fresh, case_scratch, case_dispatch, case_base_reuse, case_base_reuse_sibling, case_base_reuse_sibling_edges, case_base_moved, case_base_timeout, case_base_ci, case_nested, case_orca_missing]
 
 # ---------------------------------------------------------------------------------------------------- the controls
 # (case, file, old line, new line, the FAIL text it must produce); each `old` is in the file exactly once, and a control
