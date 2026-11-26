@@ -288,7 +288,9 @@ def case_nested(root, S):
       FAIL: nested: the run is done: got 'run <id> failed: git worktree add <ws>/.claude/worktrees/<id>-T1 failed: fatal: invalid reference: <sha>'
       FAIL: nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit 2, 'run <id> does not end in -<sha>-<n> of a commit of this repository'
     `wave --run R` from the workspace root (resolved the run's branch in the workspace, not in repo a), seen red before it read the run's checkout:
-      FAIL: nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate 'fail', why '': got (1, 'fail'), want (0, 'pass')"""
+      FAIL: nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate 'fail', why '': got (1, 'fail'), want (0, 'pass')
+    The run's recorded checkout gone fell back to the workspace repo and read its branch:
+      FAIL: nested: `wave --run R` with the run's checkout gone: gate 'fail', why 'branch phase not found': got (1, 'fail', 'branch phase not found'), want (1, 'fail', 'checkout <tmp>/a-gone not found')"""
     checks = {"a": ["test -f MARK_A"], "b": ["test -f MARK_B"]}
     w = world(nested=checks, tasks=[task("T1", 1, ["src/a.py"])])
     sc = w.scene
@@ -314,6 +316,25 @@ def case_nested(root, S):
         gate = {}
     S.eq("nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate %r, why %r" % (gate.get("gate"), gate.get("why")),
          (got.returncode, gate.get("gate")), (0, "pass"))
+    # the run's checkout is gone: the gate fails closed and names it; it never reads the workspace repo, which may hold a branch of the same name
+    sj = os.path.join(w.common, "fwx", "runs", run, "state.json")
+    with open(sj, encoding="utf-8") as f:
+        saved = f.read()
+    gone = a + "-gone"
+    kept = json.loads(saved)
+    kept["args"]["checkout"] = gone
+    with open(sj, "w", encoding="utf-8") as f:
+        json.dump(kept, f)
+    got = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "--run", run], cwd=ws, env=helpers.clean_env(CLAUDE_CONFIG_DIR=sc.conf),
+                         capture_output=True, text=True)
+    try:
+        gate = json.loads(got.stdout)
+    except ValueError:
+        gate = {}
+    S.eq("nested: `wave --run R` with the run's checkout gone: gate %r, why %r" % (gate.get("gate"), gate.get("why")),
+         (got.returncode, gate.get("gate"), gate.get("why")), (1, "fail", "checkout %s not found" % gone))
+    with open(sj, "w", encoding="utf-8") as f:
+        f.write(saved)
     # a second part, in repo b, on the same branch name: its worktrees are b's and the check that decides is b's
     bwt, bpart = w.second_part("b")
     r2 = w.run(cwd=bwt, part=bpart, root=root)
