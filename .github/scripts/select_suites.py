@@ -47,7 +47,7 @@ ROWS = (
     ("publish/engine.gitignore", True, True, "read by the fwx suite"),
     # The engine suite reads one folder of the plugin: README.md shows plugins/fwx/docs/workflow-tree.svg, which tests/test_publish.py pins by
     # hash and tests/test_readme.py looks for (a copy of the tree without plugins/fwx fails exactly those two, measured). Every other test
-    # builds a toy plugin (tests/test_test_group.py, test_context_base_row.py).
+    # builds a toy plugin (tests/test_test_group.py).
     ("plugins/fwx/docs/*", True, True, "an image of the README, pinned by the engine suite"),
     ("plugins/fwx/*", True, False, "the fwx plugin"),
     ("forge/*", False, True, "engine code the fwx suite does not read"),
