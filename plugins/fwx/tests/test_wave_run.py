@@ -1098,7 +1098,8 @@ def case_signals(root, S):
              [k for k, d in w.dispatches().items() if not d["released"]], [])
         S.ok("%s: its made terminal is closed: got terminals %r" % (name, w.terminals()), not any(t["open"] for t in w.terminals().values()))
         S.ok("%s: the cut worker's worktree is kept for the resume: got %r" % (name, w.worktrees()), any(x.endswith("-T1") for x in w.worktrees()))
-        S.ok("%s: `wave list` marks the run interrupted" % name, "interrupted=%s" % name in w.fwx("wave", "list").stdout, "got %r" % w.fwx("wave", "list").stdout)
+        listed = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "list"], cwd=w.cwd, env=w.env(), capture_output=True, text=True).stdout
+        S.ok("%s: `wave list` marks the run interrupted: got %r" % (name, listed), "interrupted=%s" % name in listed)
         helpers.write(w.dir, "go-T1", "")
         r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
         m2 = line_of(r2)
@@ -1626,6 +1627,20 @@ MUTANTS = [
      "SIGTERM: the resume started the cut task again and then the reviewer"),
     ("a run a signal cut is not resumable", case_signals, "lib/fwx/commands/wave.py",
      'if saved["state"] != "active" and not (saved.get("result") or {}).get("interrupted"):', 'if saved["state"] != "active":', "SIGTERM: --resume takes the run up"),
+    ("the merged branches are removed before the checks", case_signals_merge, "lib/fwx/execute/integrate.py",
+     '    result["head"] = verify.head(top)\n    if result["conflict"]:\n        drop_merged()\n', '    drop_merged()\n    result["head"] = verify.head(top)\n    if result["conflict"]:\n',
+     "the merged branch and its worktree are kept for the resume"),
+    ("run_check does not kill its check on a signal", case_signals_merge, "lib/fwx/core/verify.py", "with _unwind_on_signal():", "if True:",
+     "the check is gone, not an orphan"),
+    ("the driver kills its wave call with no stop first", case_signals_merge, "lib/fwx/execute/run.py", "            p.terminate()\n", "            p.kill()\n", "the check is gone, not an orphan"),
+    ("an interrupted run sweeps its worktrees", case_signals_start, "lib/fwx/execute/run.py", "    if interrupted:\n", "    if False:\n",
+     "the worker's clean worktree is not swept by the cut run"),
+    ("a cut worker is not released before the next attempt", case_signals_release, "lib/fwx/execute/run.py",
+     "            self.settle(rec)  # its worker is released first, or the run ends failed: never a second worker beside a live one", "            pass",
+     "no second worker beside the live one"),
+    ("the worker is recorded after Orca answers", case_signals_start, "lib/fwx/execute/run.py", '        self.st["workers"][key] = rec\n        self.save()\n        orca.prepare_worker',
+     "        self.save()\n        orca.prepare_worker", "the worker is recorded before Orca answers"),
+    ("wave list does not mark an interrupted run", case_signals, "lib/fwx/execute/run.py", '" interrupted=%s" % cut if cut else ""', '""', "`wave list` marks the run interrupted"),
 ]
 
 

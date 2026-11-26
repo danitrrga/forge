@@ -329,18 +329,23 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
             result["remaining"] = branches[len(result["merged"]) + 1:]  # not merged yet, after the one that conflicted: the run merges them after the resolver
             break
         result["merged"].append(b)
-    for b in result["merged"]:
-        w = by_branch.get(b)
-        if w and cleanup.lock_state(w) == "none":
-            why = cleanup.remove(top, w)
-            if why:
-                say("worktree of %s stays: %s" % (b, why))
+    def drop_merged():
+        """The merged workers' worktrees and branches go only once the checks have run: a signal that kills this command before its answer is journaled makes
+        `--resume` merge the same branches again (a no-op for a merged one), which needs them."""
+        for b in result["merged"]:
+            w = by_branch.get(b)
+            if w and cleanup.lock_state(w) == "none":
+                why = cleanup.remove(top, w)
+                if why:
+                    say("worktree of %s stays: %s" % (b, why))
     result["head"] = verify.head(top)
     if result["conflict"]:
+        drop_merged()
         return 1, result
     # A merged lockfile changes what the checks need: the dependencies of this checkout are installed again before any check runs
     # (the marker makes it a no-op when no dependency file changed).
     if _setup_again(top, cfg["project"]["worktree_setup"], result, say):
+        drop_merged()
         return 1, result
     result["quick"] = _quick(top, cfg, say)
     result["ok"] = result["quick"]["rc"] == 0
@@ -357,6 +362,7 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
             result["trusted"] = trusted.trusted_edits(changed, cfg["project"]["checks"], setup=setup, manifest=manifest)
             protected = list(decide.load_table()["default_protected_paths"]) + list(cfg["project"]["protected_paths"])
             result["protected"] = [p for p in changed if globs.matches_any(p, protected)]
+    drop_merged()
     return (0 if result["ok"] else 1), result
 
 

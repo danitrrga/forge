@@ -44,7 +44,9 @@ rest in `kept` with the reason. It ends with one line, `run <R> <done|failed|nee
 
 A SIGTERM, SIGHUP (the owner closed the terminal the run borrows) or SIGINT to the driver goes the way an exception does: the workers are stopped and released, the terminal it made is
 closed, and the run ends `failed` with `interrupted by <signal>` as its why and `result.interrupted` set. That is the one failed run `--resume` takes: the workers the
-signal cut are marked `interrupted`, and the resume starts their tasks again (a new worktree each) instead of polling a released dispatch.
+signal cut are marked `interrupted`, and the resume releases any that is still open and starts their tasks again (a new worktree each) instead of polling a released dispatch.
+An interrupted run removes no worktree (a report or a merged branch the resume reads may be in one) and its `wave` calls and their checks are stopped with it. A worker is recorded
+before Orca is asked to start it, so a signal in between leaves nothing the resume does not know.
 
 Progress: the run prints one plain line per step to stdout as it happens, flushed (`progress`: the base check, each worker started, done or failed, each wave merged,
 the gate and its CI wait as `gate: ...` lines, the review and its findings), and the result line last; no redraws. `Run.note` also keeps the last EVENTS of these lines in
@@ -73,6 +75,7 @@ LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 6
 DECIDED = "## Decided\n"
 STATES = ("done", "failed", "needs-owner")
 RELEASE_TRIES = 3
+STOP_GRACE_S = 10.0
 REPLY_GRACE_S = 15.0
 EVENTS = 8  # the last progress lines kept in state.json["events"], for `wave list --json` (the Orca panel)
 ASK = ("\nThis run has an orchestrator. A blocking question or a blocker is asked mid-task with the `ask` command from your Orca preamble (the whole question, each "
@@ -212,8 +215,9 @@ def listing(top):
     for st in all_states(top):
         workers = list((st.get("workers") or {}).values())
         opened = [w for w in workers if not w.get("released")]
-        rows.append("%s part=%s branch=%s %s pid=%s %s workers=%d/%d step=%s" % (
-            st.get("run"), os.path.basename(st.get("part_dir") or "?"), st.get("branch"), st.get("state"), st.get("pid"),
+        cut = (st.get("result") or {}).get("interrupted")
+        rows.append("%s part=%s branch=%s %s%s pid=%s %s workers=%d/%d step=%s" % (
+            st.get("run"), os.path.basename(st.get("part_dir") or "?"), st.get("branch"), st.get("state"), " interrupted=%s" % cut if cut else "", st.get("pid"),
             "alive" if alive(st.get("pid")) else "dead", len(opened), len(workers), st.get("step") or "-"))
     return rows
 
@@ -356,22 +360,26 @@ class Run:
 
     def call(self, words, echo):
         argv = [sys.executable, FWX] + list(words)
-        if echo is None:
-            return subprocess.run(argv, cwd=self.top, capture_output=True, text=True)
         p = subprocess.Popen(argv, cwd=self.top, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         err = []
 
         def pump():
             for row in p.stderr:
                 err.append(row)
-                progress("%s %s" % (echo, row.split(": ", 1)[-1].strip() if row.startswith("fwx ") else row.strip()))
+                if echo is not None:
+                    progress("%s %s" % (echo, row.split(": ", 1)[-1].strip() if row.startswith("fwx ") else row.strip()))
         t = threading.Thread(target=pump, daemon=True)
         t.start()
         try:
             text = p.stdout.read()
             p.wait()
-        except BaseException:  # a signal to the driver: the call is not left running (`subprocess.run` does the same)
-            p.kill()
+        except BaseException:  # a signal to the driver: the call is asked to stop so that it unwinds (its check's process group dies with it), then killed
+            p.terminate()
+            try:
+                p.wait(timeout=STOP_GRACE_S)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait()
             raise
         t.join()
         return subprocess.CompletedProcess(argv, p.returncode, text, "".join(err))
@@ -477,7 +485,8 @@ class Run:
         k = self.counts[job.unit] = self.counts.get(job.unit, 0) + 1
         key = "%s/%d" % (job.unit, k)
         rec = self.st["workers"].get(key)
-        while rec and rec.get("interrupted"):  # the attempt a signal cut: its worker is released and its worktree may hold work, so this launch is the next attempt
+        while rec and (rec.get("interrupted") or not rec["dispatch"]):  # the attempt a signal cut (or Orca never answered): its worktree may hold work, so this launch is the next attempt
+            self.settle(rec)  # its worker is released first, or the run ends failed: never a second worker beside a live one
             k = self.counts[job.unit] = k + 1
             key = "%s/%d" % (job.unit, k)
             rec = self.st["workers"].get(key)
@@ -490,17 +499,19 @@ class Run:
         spec = self.spec(job, k)
         orca.make_worktree(self.repo, worktree, job.head, branch)
         self.st["worktrees"].append({"path": os.path.realpath(worktree), "branch": branch, "role": job.role, "unit": job.unit})
+        # recorded before Orca is asked, so a signal in between leaves a worktree and a branch the resume knows; nothing to release until there is a dispatch
+        rec = {"unit": job.unit, "role": job.role, "worktree": os.path.realpath(worktree), "dispatch": None, "state": None, "released": True,
+               "line": None, "started": time.time(), "idle_since": None}
+        self.st["workers"][key] = rec
         self.save()
         orca.prepare_worker(self.main, worktree, job.role, self.run, job.unit)
-        rec = {"unit": job.unit, "role": job.role, "worktree": os.path.realpath(worktree), "dispatch": None, "state": None, "released": False,
-               "line": None, "started": time.time(), "idle_since": None}
         title = "%s %s (%s%s)" % (os.path.basename(self.part), job.unit, job.role, ", #%d" % k if k > 1 else "")
         try:
             rec["dispatch"] = orca.start(self.orca_run, spec, job.model, worktree, self.st["terminal"], title=title)
+            rec["released"] = False
         except orca.OrcaError:
             self._check_sender()
             raise
-        self.st["workers"][key] = rec
         self.note("worker %s started (%s, %s%s)" % (job.unit, job.role, job.model, ", attempt %d" % k if k > 1 else ""))
         return rec
 
@@ -887,23 +898,25 @@ def drive(args, top, flags, state=None):
         status, why = "failed", "script error: %s: %s" % (type(e).__name__, e)
     finally:
         hold_signals(caught)
-        kept = finish(r, st, folder, status, why) if not fenced else {"kept": [], "removed": []}
-        restore_signals(caught)
+        kept = finish(r, st, folder, status, why, bool(signalled)) if not fenced else {"kept": [], "removed": []}
     if fenced:  # nothing is released or removed and the state stays active: the resume carries on from it
         r.save()
+        restore_signals(caught)
         return "needs-owner", "run %s needs-owner: %s" % (args["run"], why), []
     st["state"] = status if status in STATES else "failed"
     st["result"] = {"status": st["state"], "why": why, "kept": kept["kept"], "removed": kept["removed"], "leftover": kept.get("leftover", [])}
     if signalled:
         st["result"]["interrupted"] = signalled
     r.save()
+    restore_signals(caught)  # after the last write: a signal before it would leave the state active
     why = " ".join(str(why).split())
     n = len(kept["kept"])
     return st["state"], "run %s %s: %s%s" % (args["run"], st["state"], why[:600], (" (%d worktree%s kept)" % (n, "" if n == 1 else "s")) if n else ""), kept["kept"]
 
 
-def finish(r, st, folder, status, why):
-    """Release every worker still open, tell the orchestrator how the run ended, then remove the worktrees of the run: `{removed, kept, leftover}`."""
+def finish(r, st, folder, status, why, interrupted=False):
+    """Release every worker still open, tell the orchestrator how the run ended, then remove the worktrees of the run: `{removed, kept, leftover}`. An interrupted run
+    removes none: a worktree it holds may carry a report or work that no step has journaled yet, which the resume reads (it, or `fwx wave remove`, sweeps them later)."""
     for rec in st["workers"].values():
         r.release(rec)
     if r.orchestrator and st.get("terminal"):  # before the terminal is closed: it is the sender; the end of the run cannot be stopped, so a refusal is only recorded
@@ -923,6 +936,8 @@ def finish(r, st, folder, status, why):
                 st.setdefault("release_errors", []).append("terminal %s: %s" % (st["terminal"], e))
             else:
                 st["terminal"] = None
+    if interrupted:
+        return {"removed": [], "kept": [], "leftover": []}
     branches, paths = cleanup.recorded_of(config.fwx_dir(r.top), st["run"])
     try:
         hold = {os.path.realpath(w["worktree"]): "its worker could not be released, so it may still be using it"

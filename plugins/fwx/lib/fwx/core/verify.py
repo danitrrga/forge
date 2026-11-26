@@ -40,6 +40,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from fwx import config, state
@@ -103,6 +104,37 @@ def _child_env():
         shutil.rmtree(made, ignore_errors=True)
 
 
+def _kill_group(proc):
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except OSError:
+        pass
+    proc.wait()
+
+
+@contextlib.contextmanager
+def _unwind_on_signal():
+    """SIGTERM and SIGHUP raise SystemExit for the block (they end the process without unwinding otherwise), so that `run_check` kills the check's process group on
+    the way out. Not in a thread, and a signal the caller ignores on purpose stays ignored."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def leave(num, _frame):
+        raise SystemExit(128 + num)
+    held = {}
+    for n in (signal.SIGTERM, signal.SIGHUP):
+        old = signal.getsignal(n)
+        if old != signal.SIG_IGN:
+            held[n] = old
+            signal.signal(n, leave)
+    try:
+        yield
+    finally:
+        for n, old in held.items():
+            signal.signal(n, old)
+
+
 def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
     """Run one command with the shell in `cwd`: `{cmd, rc, seconds, output}`. `rc` is the exit status, or None when the
     command was killed by the time limit (its whole process group) or could not start; `output` is the last KEEP_CHARS
@@ -118,14 +150,14 @@ def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
             proc, note = None, "\ncould not start: %s" % e
         if proc:
             try:
-                rc = proc.wait(timeout=timeout)
+                with _unwind_on_signal():
+                    rc = proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(proc.pid, signal.SIGKILL)
-                except OSError:
-                    pass
-                proc.wait()
+                _kill_group(proc)
                 note, timed_out = ("\ntimed out after %d s; raise `project.check_timeout_s` if the check needs longer" % timeout), True
+            except BaseException:  # a signal to this process: the check runs in a session of its own and would outlive it, with the gate lock already free
+                _kill_group(proc)
+                raise
         out.seek(0, os.SEEK_END)
         out.seek(max(0, out.tell() - 4 * KEEP_CHARS))
         text = out.read().decode("utf-8", "replace")[-KEEP_CHARS:]
