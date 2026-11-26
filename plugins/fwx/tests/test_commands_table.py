@@ -321,6 +321,10 @@ s.ok("the scan looks at the playbooks, the agents, the skills and the README (%d
 for p in texts:
     with open(p, encoding="utf-8") as f:
         s.eq("%s names no command that is gone" % os.path.relpath(p, helpers.ROOT), _unknown_commands(f.read()), [])
+    # `fwx decision list` is gone, and a text can name it without the `fwx` the scan looks for (the README said "`decision list` reads them").
+    # Red with the README line kept (routes already without the row):
+    #   FAIL: README.md names no `decision list`: got True, want False
+    s.eq("%s names no `decision list`" % os.path.relpath(p, helpers.ROOT), "decision list" in open(p, encoding="utf-8").read(), False)
 # control: the scan does see a removed command
 s.eq("control: a text that names `fwx capacity` is caught", _unknown_commands("it runs `fwx capacity --role executor`"), ["unknown command: fwx capacity"])
 
