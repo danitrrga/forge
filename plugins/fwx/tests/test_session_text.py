@@ -13,7 +13,6 @@ removed the checks that pinned wording (the steps' sentences, the sub-steps of s
 skills' "another model", the shared marker `Noticed:`) together with their red logs.
 
 Seen red on copies of the real texts (a copy of plugins/fwx with the pinned words changed; the first FAIL line printed):
-  references/part-report.md, "fwx report lint" -> "fwx report check":  FAIL: part-report.md saves the returned report with Write, then checks it -> no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch
   references/ui-review.md, "details.unverified" -> "details.unverfied":  FAIL: references/ui-review.md cites only fields the workflow returns -> not returned: ['unverfied']
   references/ui-review.md, "`support` `approved`" -> "`support` `approvd`":  FAIL: ui-review.md names the support of `not_defect` and `redo`, each a value `fwx decision new` accepts -> ui-review.md {'not_defect': 'approvd', 'redo': 'chosen'}, SUPPORT ('chosen', 'approved', 'unexamined', 'agent-assumption')
   references/ui-review.md, "revert it?" -> "proceed?":  FAIL: ui-review.md asks before the revert -> no 'revert it?' before the first '--revert'
@@ -33,6 +32,8 @@ Seen red on copies of the real texts (a copy of plugins/fwx with the pinned word
   references/closing.md, the `fwx wave list` sweep -> "remove each run":  FAIL: closing.md sweeps the runs `fwx wave list` shows with `fwx wave remove --run` -> no 'fwx wave list' ... 'fwx wave remove --run' in order
   agents/review-verifier.md, "`verdicts <report path>`" -> "`verdicts <path>`":  FAIL: the verifier replies with the line `wave findings --verdicts` reads -> no `verdicts <report path>` in agents/review-verifier.md, or review.VERDICT_LINE does not read it
   agents/reviewer.md, "names a brief file" -> "is your brief, there is no brief file":  FAIL: no agent says it has no brief file -> still says it in ['reviewer']
+01.3 T32 (the orchestrator writes the report from the template; the same copy-and-change, the first FAIL line printed):
+  references/closing.md, `--why "PR <url>"` -> `--why "done"`:  FAIL: closing.md writes the pull request body from the same template and the closing stage row with the PR link -> missing ['--why "PR <url>"']
 Each kept check also has a control on a toy text (the "control:" checks).
 """
 import os
@@ -234,9 +235,46 @@ def main():
     check("every references/ file SKILL.md cites exists", not (cited - present), "missing %s" % sorted(cited - present))
     check("every file in references/ is cited by SKILL.md", not (present - cited), "uncited %s" % sorted(present - cited))
 
-    # The `state` agent returns the report and the session saves it with `Write` (the harness refuses a subagent's Write of a report), then checks it.
-    check("part-report.md saves the returned report with Write, then checks it", in_order(rep_ref, "`state`", "report-<n>.md", "`Write`", "fwx report lint"),
-          "no 'report-<n>.md' ... 'Write' ... 'fwx report lint' in that order after the `state` launch")
+    # 01.3 T32 (D3): the orchestrator writes the report itself, from `fwx wave --run <R> --json` and the last `evidence` row of audit.tsv, into the
+    # template `templates/phase/report.md`, and pastes it to the owner; nothing is saved, so no text launches the `state` agent or names `state.md` or
+    # `report-<n>.md`. The pull request body is made from the same template at the close, and the closing stage row carries the PR link. Seen red at
+    # 56a196a (the texts and the template before this task):
+    #   FAIL: no session text launches `state` or names `state.md` or `report-<n>.md` -> SKILL.md:18, :19, :33, :60, references/factory-return.md:8, references/part-report.md:6, :9, ...
+    #   FAIL: part-report.md fills templates/phase/report.md from `fwx wave --run <R> --json` and the last evidence row, and pastes it -> missing [...]
+    #   FAIL: closing.md writes the pull request body from the same template and the closing stage row with the PR link -> missing [...]
+    #   FAIL: templates/phase/report.md has the six sections of the orchestrator's report in at most 40 lines -> ...
+    def mirror_files(texts_by_name):
+        return {n: [i for i, ln in enumerate(t.splitlines(), 1) if re.search(r"`state`|state\.md|report-<n>", ln)] for n, t in texts_by_name.items()}
+    old_mirror = {n: ls for n, ls in mirror_files(texts).items() if ls}
+    check("no session text launches `state` or names `state.md` or `report-<n>.md`", not old_mirror,
+          ", ".join("%s:%s" % (n, ", :".join(map(str, ls))) for n, ls in sorted(old_mirror.items())))
+    check("control: a text that launches `state` or names its files is caught",
+          all(mirror_files({"a.md": t})["a.md"] == [1] for t in ("Launch `state` now", "writes state.md", "saves report-<n>.md")) and mirror_files({"a.md": "the stage rows"})["a.md"] == [])
+    template_rel = os.path.join(ROOT, "templates", "phase", "report.md")
+    with open(template_rel, encoding="utf-8") as f:
+        template = f.read()
+    TEMPLATE_HEADINGS = ("## Goal", "## Done", "## Assumptions taken without asking", "## Outside", "## Evidence", "## PR")
+
+    def template_problems(text):
+        heads = [ln for ln in text.splitlines() if ln.startswith("## ")]
+        out = ["heading %r" % h for h in TEMPLATE_HEADINGS if h not in heads]
+        if len(text.splitlines()) > 40:
+            out.append("%d lines" % len(text.splitlines()))
+        return out
+    check("templates/phase/report.md has the six sections of the orchestrator's report in at most 40 lines", not template_problems(template), "problems: %s" % template_problems(template))
+    check("control: a template with a missing section or over 40 lines is caught", template_problems("## Goal\n") != [] and template_problems("\n".join("## Goal" for _ in range(41))) != [])
+
+    def fills_template(text):
+        return [w for w in ("templates/phase/report.md", "fwx wave --run <R> --json", "`outside`", "`consider`", "last `evidence` row", "audit.tsv", "paste") if w not in text]
+    check("part-report.md fills templates/phase/report.md from `fwx wave --run <R> --json` and the last evidence row, and pastes it", not fills_template(rep_ref),
+          "missing %s" % fills_template(rep_ref))
+    check("control: a part-report.md that names no template is caught", bool(fills_template("Run `fwx wave --run <R> --json` and paste the last `evidence` row of audit.tsv.")))
+
+    def closing_body(text):
+        return [w for w in ("templates/phase/report.md", '--why "PR <url>"', '--why "commit <sha>"') if w not in text] + (
+            [] if in_order(text, "templates/phase/report.md", "gh pr edit", "fwx stage <phase folder> closed") else ["the order template, gh pr edit, stage row"])
+    check("closing.md writes the pull request body from the same template and the closing stage row with the PR link", not closing_body(closing), "missing %s" % closing_body(closing))
+    check("control: a closing whose body has its own four sections is caught", bool(closing_body("`gh pr edit` with ## Why, ## What changed; `fwx stage <phase folder> closed`")))
 
     # 09.4 D13: the budget nag is gone, so no session text tells an agent to run `fwx budget` or to read its fields, and no check reads the
     # deleted lib/fwx/commands/budget.py. Seen red before the texts changed (rule 7, step 2 and step 5 still named it):
@@ -530,8 +568,6 @@ def main():
 
     # controls of the checks above.
     check("control: a cited reference that is not there is caught", set(re.findall(r"references/([a-z-]+\.md)", "see references/gone.md and references/here.md")) - {"here.md"} == {"gone.md"})
-    check("control: a step 8 that checks before it saves fails", not in_order("`state` returns; run fwx report lint on report-<n>.md, then `Write` it", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
-    check("control: a step 8 that saves then checks passes", in_order("`state` returns; save it to report-<n>.md with `Write`, then run fwx report lint", "`state`", "report-<n>.md", "`Write`", "fwx report lint"))
     check("control: step() cuts one numbered step", step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2).startswith("2. **B.**") and "z" not in step("1. **A.** x\n2. **B.** y\n3. **C.** z\n", 2))
     check("control: revert before the question fails", not asks_before_revert("run wave new --revert 1, then ask: revert it?"))
     check("control: question before the revert passes", asks_before_revert("ask: revert it? Then wave new --revert 1"))
