@@ -160,6 +160,17 @@ The plugin's `bin/fwx` is on `PATH` only inside Claude's Bash tool, so the skill
 `fwx wave run` also needs the Orca app and its command line (`orca` on `PATH`, at least the version `orca/orca-plugin.json` names under `engines`) because
 every agent of a part is an Orca worker, and refuses with a line that says so when it is missing; discuss, plan and the mortems do not need Orca.
 
+## Team use
+
+Several people can run fwx on one repository at once, each in their own clone. What keeps them apart:
+
+- Each person's `.fwx/` stays in their clone: add `.fwx/` and `.claude/` to `.git/info/exclude`. Only code travels, on each phase's
+  branch; nothing merges phase numbers or decision ids between clones, so do not commit `.fwx/` to a shared branch.
+- One phase per person, with a slug no one else uses (the phase branch is `fwx/<milestone>-<phase folder>`, and two people with the
+  same name push to the same branch).
+- Everyone needs push rights on the repository for the CI gate: from a fork, CI is usually off and the gate runs the checks locally after a five-minute wait.
+- On a machine several people share, lower `limits.per_project.executor`: the cap counts each run's agents, not the machine's.
+
 ## Contributing
 
 Work happens in forge's repository, and forge's hooks (`git config core.hooksPath githooks` at its root) run its
