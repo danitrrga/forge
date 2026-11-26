@@ -996,8 +996,6 @@ CHECKS = [
     # Its failures carry their own fix, so the row's is empty.
     ("consent", consent_row, ""),
     ("codex hooks", codex_hooks_row, "forge sync --apply brings ~/.codex/hooks.json in line with codex_harness (forge's rows in with it true, out with it false); a file that does not parse is Codex's own to repair"),
-    # Its failures carry their own fix (python3 bin/forge skills --apply), so the row's is empty.
-    # Its failures carry the command that reproduces them, so the row's fix is empty.
     # Its failures carry their own fix, so the row's is empty.
     ("framework ignore", framework_ignore_row, ""),
     # Its detail names the unset fields, so the row's fix is empty.
