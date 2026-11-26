@@ -71,12 +71,17 @@ class Rig:
         self.sc = tw.Scene()
         self.sc.env["FAKE_FIXTURES"] = os.path.join(helpers.ROOT, "tests", "fixtures", "walk")
         cfg = os.path.join(self.sc.repo, ".claude", "fwx.json")
-        c = json.load(open(cfg, encoding="utf-8"))
-        c["project"]["app_run"]["ready_timeout_s"] = 1  # a page that never draws is given up on after one second here
-        with open(cfg, "w", encoding="utf-8") as f:
-            json.dump(c, f)
+        self.cfg = cfg
+        self.ready_timeout(1)  # a page that never draws is given up on after one second here
         tw.script(os.path.join(self.sc.bin, "agent-browser"), tw.FAKE % {"py": tw.PY, "tail": AB_TAIL})
         self.rd = None
+
+    def ready_timeout(self, seconds):
+        """app_run.ready_timeout_s for the next captures (read at each `fwx walk capture`)."""
+        c = json.load(open(self.cfg, encoding="utf-8"))
+        c["project"]["app_run"]["ready_timeout_s"] = seconds
+        with open(self.cfg, "w", encoding="utf-8") as f:
+            json.dump(c, f)
 
     def up(self, S):
         r, o = self.sc.up(self.R)
@@ -298,6 +303,12 @@ def case_settled(R, S):
              and "no element" in r.stdout, "rc %d %s" % (r.returncode, out))
         S.ok("settled: the page that draws is taken (one PNG)", "ok " in r.stdout and len(os.listdir(rig.shots)) == 1, out)
         rig.sc.clear()
+        # The late page draws at its third snapshot, a count and not a time: it needs two 0.5 s polls plus three `fwx walk ab` launches, so
+        # the 1 s given to the blank page is no margin on a loaded runner (CI run 45745560114, `fwx tests (2/3)`, reproduced here with four
+        # CPU burners and the file pinned to one core, 1 run in 5):
+        #   FAIL: settled: a page that draws late is captured after it drew: rc 1, snapshots asked 2, want 3 or more: missing http://127.0.0.1:15777/slow theme=light width=1440: no element in the snapshot after 1 s: the page did not draw
+        # The late page gets the product's default 30 s; it still returns at the third snapshot, so a healthy run costs the same.
+        rig.ready_timeout(30)
         r = rig.shot("--screens", screens_arg(rig, ("/slow", None)), env={"FAKE_LATE_URL": "/slow"})
         snaps = len([c for c in rig.sc.calls("agent-browser") if "snapshot" in c["argv"]])
         S.ok("settled: a page that draws late is captured after it drew", r.returncode == 0 and snaps >= 3,

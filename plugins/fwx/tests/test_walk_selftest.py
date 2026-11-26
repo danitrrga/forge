@@ -108,7 +108,7 @@ class H(http.server.BaseHTTPRequestHandler):
 
 http.server.HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 """
-UP = """import json, os, subprocess, sys
+UP = """import json, os, socket, subprocess, sys, time
 port, pidfile = int(sys.argv[1]), sys.argv[2]
 here = os.path.dirname(os.path.abspath(__file__))
 open(os.path.join(here, "up-ran"), "a").write("x\\n")
@@ -118,6 +118,14 @@ if os.environ.get("FWX_WALK_STATE") and not os.environ.get("FAKE_NO_SESSION"):
 p = subprocess.Popen([sys.executable, os.path.join(here, "srv.py"), str(port)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                      stdin=subprocess.DEVNULL, start_new_session=True)
 open(pidfile, "a").write(str(p.pid) + "\\n")
+# `up` returns when the app listens: else a slow runner has not bound the port at the walk's first look and the walk looks again, one more probe
+# than the three case_prefix counts (CI run 45746861364: 4 probes where 3 were wanted). Seen red with srv.py sleeping 0.4 s before it binds
+# (a slow runner), before this wait: FAIL: prefix: the probe of the url ran through the rig prefix: [['run', '--', 'python3', '-c'], ... 7 of them]
+for _ in range(300):
+    with socket.socket() as c:
+        if c.connect_ex(("127.0.0.1", port)) == 0:
+            break
+    time.sleep(0.1)
 if os.environ.get("FAKE_LEAK"):
     q = subprocess.Popen([os.environ["FAKE_SLEEP"], "300"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
                          start_new_session=True)
