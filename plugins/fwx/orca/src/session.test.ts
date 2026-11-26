@@ -156,3 +156,25 @@ test('the workflow rows: each planned task by its last worker, then the workers 
   assert.deepEqual(withRuns(runs(RUN)).flow, flowRows(parseWaves(runs(RUN))[0]))
   assert.deepEqual(snap()!.flow, [])
 })
+
+test('already-done tasks render done, reply verbs match whole words, and empty part falls back to run id', () => {
+  // Seen red before the fixes:
+  //   AssertionError: T1 had state 'next' instead of 'done', 'done-foo' matched GOOD, and empty part printed 'atlas ·  · wave 1'
+  const run = parseWaves(runs({
+    ...RUN,
+    part: '',
+    done: ['T1'],
+    workers: [
+      { unit: 'T2', role: 'executor', state: 'succeeded', released: true, line: 'done-foo /w/report.json' },
+      { unit: 'T3', role: 'executor', state: 'running', released: false, line: null }
+    ]
+  }))[0]
+  assert.deepEqual(flowRows(run), [
+    { name: 'Wave 1 · T1', state: 'done', tag: '', failed: false },
+    { name: 'Wave 1 · T2', state: 'next', tag: 'failed', failed: true },
+    { name: 'Wave 2 · T3', state: 'current', tag: 'executor · running', failed: false }
+  ])
+  const v = snapshot(parseSession(JSON.stringify(NO_PHASE)), parsePhases(PHASES), [run])!
+  assert.equal(chipText(v), 'atlas · 01-billing-abc1234-1 · wave 1 (1/2)')
+  assert.equal(tooltip(v), 'Workflow 01-billing-abc1234-1 (wave 1)')
+})

@@ -33,6 +33,7 @@ export type WaveRun = {
   started: number | null
   orca_run: string | null
   waves: WaveInfo[]
+  done: string[]
   workers: WaveWorker[]
   events: string[]
   result: unknown
@@ -131,6 +132,7 @@ export function parseWaves(stdout: string): WaveRun[] {
       started: num(x.started),
       orca_run: str(x.orca_run),
       waves: objs(x.waves).map((w) => ({ n: num(w.n) ?? 0, tasks: strs(w.tasks) })),
+      done: strs(x.done),
       workers: objs(x.workers).map((w) => ({ unit: str(w.unit), role: str(w.role), state: str(w.state), released: w.released === true, line: str(w.line) })),
       events: strs(x.events),
       result: x.result ?? null
@@ -143,21 +145,22 @@ function liveRun(runs: WaveRun[]): WaveRun | null {
 }
 
 /** What a worker's last line says: the replies `fwx wave run` itself counts as a good end (`done`, `reviewed`, `verdicts`). */
-const GOOD = /^(done|reviewed|verdicts)\b/
+const GOOD = /^(done|reviewed|verdicts)(?:\s|$)/
 
-/** The rows of a run: each planned task (by its last worker; `next` until one starts), then the workers the plan does not name (reviewers, fixers). */
+/** The rows of a run: each planned task (by its last worker, `done` if already on the branch, else `next`), then the workers the plan does not name (reviewers, fixers). */
 export function flowRows(run: WaveRun): FlowRow[] {
   const last = new Map<string, WaveWorker>()
   for (const w of run.workers) if (w.unit) last.set(w.unit, w)
-  const row = (name: string, w: WaveWorker | undefined): FlowRow => {
-    if (!w) return { name, state: 'next', tag: '', failed: false }
+  const done = new Set(run.done)
+  const row = (name: string, w: WaveWorker | undefined, alreadyDone = false): FlowRow => {
+    if (!w) return { name, state: alreadyDone ? 'done' : 'next', tag: '', failed: false }
     if (!w.released) return { name, state: 'current', tag: [w.role, w.state ?? 'running'].filter(Boolean).join(' · '), failed: false }
     if (w.line && GOOD.test(w.line)) return { name, state: 'done', tag: w.role ?? '', failed: false }
     return { name, state: 'next', tag: 'failed', failed: true }
   }
   const planned = new Set(run.waves.flatMap((w) => w.tasks))
   return [
-    ...run.waves.flatMap((w) => w.tasks.map((id) => row(`Wave ${w.n} · ${id}`, last.get(id)))),
+    ...run.waves.flatMap((w) => w.tasks.map((id) => row(`Wave ${w.n} · ${id}`, last.get(id), done.has(id)))),
     ...[...last].filter(([unit]) => !planned.has(unit)).map(([unit, w]) => row(unit, w))
   ]
 }
@@ -215,7 +218,7 @@ export function bar(progress: number): string {
 export function chipText(v: Snapshot): string {
   const head = [v.project, v.profile].filter(Boolean).join(' · ')
   const r = v.activeRun
-  if (r) return `${head} · ${r.part} · ${r.step ?? 'running'}${r.workers.length ? ` (${r.workers.filter((w) => !w.released).length}/${r.workers.length})` : ''}`
+  if (r) return `${head} · ${r.part || r.run} · ${r.step ?? 'running'}${r.workers.length ? ` (${r.workers.filter((w) => !w.released).length}/${r.workers.length})` : ''}`
   if (!v.phase) return `${head} · no phase`
   const where = [head, v.phase, v.stage].filter(Boolean).join(' · ')
   return v.progress === null ? where : `${where} · ${bar(v.progress)}`
@@ -227,7 +230,7 @@ const AROUND = 2
 /** The roadmap on one line: Orca's tooltip is `text-balance` with no `white-space: pre`, so a line break would collapse to a
  *  space. Phases around the current one (AROUND each side, `…` beyond), then the parts, then the branch. */
 export function tooltip(v: Snapshot): string {
-  const flow = v.activeRun ? `Workflow ${v.activeRun.part} (${v.activeRun.step ?? 'running'})` : null
+  const flow = v.activeRun ? `Workflow ${v.activeRun.part || v.activeRun.run} (${v.activeRun.step ?? 'running'})` : null
   if (!v.phase) return flow ?? 'No phase open'
   const at = Math.max(0, v.phases.findIndex((p) => p.state === 'current'))
   const from = Math.max(0, at - AROUND)

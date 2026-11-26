@@ -809,6 +809,28 @@ def case_list_json(root, S):
     S.ok("list --json: a live run's events name the worker that started", bool(live) and any(e.startswith("worker T1 started") for e in live["events"]), "events %r" % (live or {}).get("events"))
     helpers.write(w.dir, "go-T1", "")
     finish_run(p)
+    # Relaunch / --fix / --revert / malformed state.json: `done` is emitted, --fix/--revert suppress planned waves, and a broken state never crashes `wave list --json`.
+    # Seen red before the fixes (blocker 1 & blocker 3):
+    #   FAIL: list --json: --fix suppresses planned waves and carries done -> got ([{'n': 1, 'tasks': ['T1']}], None), want ([], ['T1'])
+    #   FAIL: list --json: a malformed state.json does not crash wave list --json -> exit 1
+    runs_dir = os.path.join(w.common, "fwx", "runs")
+    helpers.write(os.path.join(runs_dir, "01-alpha-fix-1"), "state.json", json.dumps({
+        "run": "01-alpha-fix-1", "part_dir": w.part, "branch": "phase", "state": "done", "pid": 1, "step": "fix",
+        "args": {"waves": [{"n": 1, "tasks": [{"id": "T1"}]}], "done": ["T1"], "fix": {"brief": "b", "findings": []}},
+        "workers": {}, "events": []}))
+    helpers.write(os.path.join(runs_dir, "01-alpha-bad-1"), "state.json", json.dumps({
+        "run": "01-alpha-bad-1", "part_dir": None, "branch": "phase", "state": "failed", "pid": True, "step": "start",
+        "args": {"waves": [{"n": 1, "tasks": None}, "bad"], "done": None},
+        "workers": {"k": "not-a-dict"}, "events": None}))
+    j2 = fwx("wave", "list", "--json")
+    try:
+        by_id = {x["run"]: x for x in (json.loads(j2.stdout).get("runs") or [])}
+    except ValueError:
+        by_id = {}
+    S.ok("list --json: a malformed state.json does not crash wave list --json -> exit %d, stderr %r" % (j2.returncode, j2.stderr[:120]),
+         j2.returncode == 0 and "01-alpha-bad-1" in by_id and by_id["01-alpha-bad-1"]["pid"] is None and by_id["01-alpha-bad-1"]["workers"] == [] and by_id["01-alpha-bad-1"]["events"] == [])
+    fx = by_id.get("01-alpha-fix-1") or {}
+    S.eq("list --json: --fix suppresses planned waves and carries done", (fx.get("waves"), fx.get("done")), ([], ["T1"]))
 
 
 # ---------------------------------------------------------------------------------------------------------------------- what the owner sees

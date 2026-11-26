@@ -49,9 +49,14 @@ export default function activate(orca: OrcaWorkerApi): void {
       const session = parseSession(await fwx(here.path, ['session', '--json']))
       // The roadmap is a second read of the same folder; without it the chip still shows.
       const sub = session?.subproject ? ['--subproject', session.subproject] : []
-      const list = session?.project ? parsePhases(await fwx(here.path, ['phase', 'list', '--json', ...sub]).catch(() => '')) : parsePhases('')
-      // The live `fwx wave run`, a third read; an fwx that has no `wave list --json` just shows no workflow.
-      const waves = session?.project ? parseWaves(await fwx(here.path, ['wave', 'list', '--json']).catch(() => '')) : []
+      const [phaseOut, waveOut] = session?.project
+        ? await Promise.all([
+            fwx(here.path, ['phase', 'list', '--json', ...sub]).catch(() => ''),
+            fwx(here.path, ['wave', 'list', '--json']).catch(() => '')
+          ])
+        : ['', '']
+      const list = parsePhases(phaseOut)
+      const waves = parseWaves(waveOut)
       lastProblem = ''
       return snapshot(session, list, waves)
     } catch (e) {

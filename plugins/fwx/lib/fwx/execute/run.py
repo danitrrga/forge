@@ -176,18 +176,26 @@ def listing(top):
 
 
 def listing_json(top):
-    """One dict per run for `fwx wave list --json` (the Orca panel and chip read it): identity, planned waves, workers and the last progress lines."""
+    """One dict per run for `fwx wave list --json` (the Orca panel and chip read it): identity, planned waves, already-done tasks, workers and the last progress lines."""
     rows = []
     for st in all_states(top):
-        args = st.get("args") or {}
+        args = st.get("args") if isinstance(st.get("args"), dict) else {}
+        pid = st.get("pid")
+        pid = pid if isinstance(pid, int) and not isinstance(pid, bool) else None
+        raw_waves = [] if (args.get("fix") or args.get("revert")) else (args.get("waves") if isinstance(args.get("waves"), list) else [])
+        waves = [{"n": w.get("n"), "tasks": [t["id"] for t in (w.get("tasks") if isinstance(w.get("tasks"), list) else [])
+                                             if isinstance(t, dict) and isinstance(t.get("id"), str)]}
+                 for w in raw_waves if isinstance(w, dict)]
+        done = [x for x in (args.get("done") if isinstance(args.get("done"), list) else []) if isinstance(x, str)]
+        raw_workers = st.get("workers") if isinstance(st.get("workers"), dict) else {}
+        workers = [{"unit": w.get("unit"), "role": w.get("role"), "state": w.get("state"), "released": bool(w.get("released")), "line": w.get("line")}
+                   for w in raw_workers.values() if isinstance(w, dict)]
+        events = [e for e in (st.get("events") if isinstance(st.get("events"), list) else []) if isinstance(e, str)][-EVENTS:]
+        part_dir = st.get("part_dir") if isinstance(st.get("part_dir"), str) else ""
         rows.append({
-            "run": st.get("run"), "part": os.path.basename(st.get("part_dir") or "?"), "branch": st.get("branch"), "state": st.get("state"),
-            "pid": st.get("pid") if isinstance(st.get("pid"), int) else None, "alive": alive(st.get("pid")), "step": st.get("step"),
-            "started": st.get("started"), "orca_run": st.get("orca_run"),
-            "waves": [{"n": w["n"], "tasks": [t["id"] for t in w.get("tasks", [])]} for w in args.get("waves") or []],
-            "workers": [{"unit": w.get("unit"), "role": w.get("role"), "state": w.get("state"), "released": bool(w.get("released")), "line": w.get("line")}
-                        for w in (st.get("workers") or {}).values()],
-            "events": list(st.get("events") or [])[-EVENTS:], "result": st.get("result")})
+            "run": st.get("run"), "part": os.path.basename(part_dir or "?"), "branch": st.get("branch"), "state": st.get("state"),
+            "pid": pid, "alive": alive(pid), "step": st.get("step"), "started": st.get("started"), "orca_run": st.get("orca_run"),
+            "waves": waves, "done": done, "workers": workers, "events": events, "result": st.get("result")})
     return rows
 
 
@@ -244,7 +252,9 @@ class Run:
     def note(self, line):
         """`progress`, and the line kept (the last EVENTS) in the state for `wave list --json`: called per step of the run, never per poll tick."""
         progress(line)
-        events = self.st.setdefault("events", [])
+        events = self.st.get("events")
+        if not isinstance(events, list):
+            events = self.st["events"] = []
         events.append(" ".join(str(line).split())[:200])
         del events[:-EVENTS]
         self.save()
@@ -439,7 +449,6 @@ class Run:
             self._check_sender()
             raise
         self.st["workers"][key] = rec
-        self.save()
         self.note("worker %s started (%s, %s%s)" % (job.unit, job.role, job.model, ", attempt %d" % k if k > 1 else ""))
         return rec
 
@@ -747,6 +756,10 @@ class Run:
         args = self.args
         if args["revert"]:
             if self.orchestrator:
+                if not self.st.get("repo_added"):
+                    orca.ensure_repo(self.main)
+                    self.st["repo_added"] = True
+                    self.save()
                 self.sender()
             return self.revert()
         if not self.st.get("repo_added"):
