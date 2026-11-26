@@ -290,12 +290,13 @@ def agent_rows(readme):
 
 def agents_problems(readme, agents=os.path.join(helpers.ROOT, "agents")):
     """What `## Agents` lacks: the section, a row for each file of agents/ plus the fixer and the resolver (modes of the executor, with
-    no file of their own), or a row with an empty cell. The table names the roles only: what each brief holds is the brief builders' own."""
+    no file of their own), a row with no such file, or a row with an empty cell. The table names the roles only: what each brief holds is the brief builders' own."""
     if agents_section(readme) is None:
         return ["README.md has no `## Agents` section"]
     wanted = sorted({f[:-3] for f in os.listdir(agents) if f.endswith(".md")} | {"fixer", "resolver"})
     rows = agent_rows(readme)
     out = ["no row for `%s`" % w for w in wanted if w not in rows]
+    out += ["`%s` has a row but no agent file" % r for r in rows if r not in wanted]
     out += ["`%s` has an empty cell" % r for r, cells in rows.items() if not all(cells)]
     return out
 

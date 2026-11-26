@@ -70,7 +70,6 @@ Each agent gets, by path in its brief, only what its job needs; nothing is injec
 | `ui-walker` | the `ui-walk` skill | one tramo of screens, its axis (`breaker` or `critic`), the session and the command to drive the browser; for the critic, each screen's approved reference; no code |
 | `ui-verifier` | the `ui-walk` skill | the mode (`tramos` or `verify`), the plan, the walkers' findings or the base commit, and the phase's `demo/` folder |
 | `skill-proposer` | the `session` skill | `context.md`, `decisions.tsv`, `plan.md`, the phase branch and the base commit |
-| `state` | the `session` skill | the phase's `context.md`, `decisions.tsv`, `plan.md`, the state and report templates and the run to read |
 
 ## Orca plugin
 
