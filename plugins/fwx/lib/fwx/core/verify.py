@@ -20,7 +20,7 @@ killed by the limit or never started. It goes to `dir` when given, else to the p
 finds it, always in the main checkout whatever worktree the run was launched from; with neither it writes nothing and
 says so.
 
-The whole recipe runs under an exclusive lock on `<git-common-dir>/fwx/gate.lock` (`gate_lock`), so two gates of one repo, from two
+The whole recipe runs under an exclusive lock on `<fwx folder>/gate.lock` (`gate_lock`), so two gates of one repo, from two
 worktrees, run one after the other: two at once take twice as long each and fail on load. The second says it waits and its
 time limits start once it holds the lock. The lock is a flock, so it goes with the process however that ends. While it is held `FWX_GATE_LOCK=<path>` is in the environment of the
 checks, and a `gate_lock` that finds its own path there does not lock again: a check that runs `fwx verify` would otherwise wait for its parent.
@@ -135,12 +135,13 @@ def run_check(command, cwd, timeout=CHECK_TIMEOUT_S):
 
 @contextlib.contextmanager
 def gate_lock(root):
-    """Hold the repo's gate lock, `<git-common-dir>/fwx/gate.lock`, for the block: the same file from every worktree of the repo,
-    so a second gate waits here. It says so once on stderr, before it blocks. Released on any exit; the kernel frees it if the process dies."""
-    r = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if r.returncode or not r.stdout.strip():
-        raise state.StateError("cannot find the git directory of %s to lock the gate: %s" % (root, r.stderr.strip()))
-    folder = os.path.join(r.stdout.strip(), "fwx")
+    """Hold the project's gate lock, `<fwx folder>/gate.lock`, for the block: the same file from every worktree of the repo and every
+    nested repo of its workspace, so a second gate waits here. It says so once on stderr, before it blocks. Released on any exit; the
+    kernel frees it if the process dies."""
+    try:
+        folder = config.fwx_dir(root)
+    except config.ConfigError as e:
+        raise state.StateError("cannot find the fwx folder of %s to lock the gate: %s" % (root, e))
     os.makedirs(folder, exist_ok=True)
     path = os.path.join(folder, "gate.lock")
     if os.environ.get(GATE_LOCK_ENV) == path:  # a check of the recipe running `fwx verify`: its own gate already holds the lock

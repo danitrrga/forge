@@ -6,7 +6,7 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
 
   start --dir D --part N --round R [--app JSON] [--repo P] [--tramos T]
       The run's folder is `<D>/ui-walk/<N>-<R>/` (D is the phase folder, or the job folder in the factory); the screenshots and
-      clips go to `<git-common-dir>/fwx/walks/<namespace>/`. Without `app_run` (and no --app) or with integrations.agent_browser
+      clips go to `<fwx folder>/walks/<namespace>/`. Without `app_run` (and no --app) or with integrations.agent_browser
       off: `NOT RUN, NOT ARMED`, exit 0, `{"armed": false, "reason": ...}`. `app_run.url` is the base address the walk appends each screen's
       path to, so it is the app's root (`/` answers 2xx; redirects to local hosts are followed), never a page of the app: with a page's
       address every screen becomes `<page>/<path>` and answers 404 (`check-screens` stops the walk there). Else: the app's URL must be local (localhost, 127.0.0.1,
@@ -110,10 +110,10 @@ or is left, 2 refused or a usage error (the reason on stderr, nothing started), 
       not in the factory), a capture comes out (a PNG, not the
       `about:blank` one at that size), `stop` leaves 0 processes. Each check says how many things it looked at; looking at 0 is a
       failure, and a check whose predecessor failed is "not reached". The run folder is `<D>/ui-walk/1-1/` (D defaults to
-      `<git-common-dir>/fwx/selftest`); `selftest.json` there is `{image_id?, passed, checks: [{name, looked_at, ok, detail}]}`.
+      `<fwx folder>/selftest`); `selftest.json` there is `{image_id?, passed, checks: [{name, looked_at, ok, detail}]}`.
       Exit 0 all pass, 1 a check failed (named on stderr), 2 `NOT RUN, NOT ARMED` (no `app_run`, agent_browser off, no
       agent-browser): 2 is not green. `stop` always runs once `start` armed. With FWX_FACTORY_CONTAINER=1 the image's scripts are the app.
-  stop --orphans   `stop` of every open run of `<git-common-dir>/fwx/walks/` whose owner process is gone. The owner is the
+  stop --orphans   `stop` of every open run of `<fwx folder>/walks/` whose owner process is gone. The owner is the
       `claude` process above `start` (FWX_WALK_OWNER_PID overrides); with no owner found the run is swept after STALE_H hours.
 
 What the guards of `ab`/`pw` do not see: a URL the page's own code builds when it runs, a click on a link that leaves the app, the
@@ -292,15 +292,15 @@ def read_json(path, what):
 
 
 # ------------------------------------------------------------------------------------------------------ runs and folders
-def common_dir(cwd):
-    c = base.out(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if not c:
-        raise Stop("not inside a git repository: %s" % cwd)
-    return c
+def fwx_folder(cwd):
+    try:
+        return config.fwx_dir(cwd)
+    except config.ConfigError as e:
+        raise Stop(str(e))
 
 
 def walks_dir(cwd):
-    return os.path.join(common_dir(cwd), "fwx", "walks")
+    return os.path.join(fwx_folder(cwd), "walks")
 
 
 def namespace_of(run_dir, part, rnd):
@@ -527,7 +527,7 @@ def cmd_up(argv):
     container = bool(app.get("container"))
     cap = capacity(cfg, tramos * 2, container, factory)
     names = [ns + "-w%d" % k for k in range(1, cap["allowed"] + 1)] if container else [ns]
-    walks = os.path.join(common_dir(repo), "fwx", "walks", ns)
+    walks = os.path.join(fwx_folder(repo), "walks", ns)
     apps = []
     for k, name in enumerate(names, 1):
         tag = name if container else None
@@ -2024,7 +2024,7 @@ def cmd_selftest(argv):
     if not repo or not os.path.isdir(repo):
         raise Stop("no repository: --repo %r, and the current folder is in none" % o.get("--repo"))
     repo = os.path.realpath(repo)
-    folder = os.path.abspath(o.get("--dir") or os.path.join(common_dir(repo), "fwx", "selftest"))
+    folder = os.path.abspath(o.get("--dir") or os.path.join(fwx_folder(repo), "selftest"))
     result_file = os.path.join(folder, "ui-walk", "1-1", "selftest.json")
     if os.path.exists(result_file):
         os.remove(result_file)  # a result of an earlier run must never stand for this one

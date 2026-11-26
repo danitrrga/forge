@@ -9,7 +9,8 @@ The part is `part_dir`: a phase folder, a subphase folder (it uses the `context.
 holds it) or a job folder. Its `plan.md` and `postmortem.md` must load (`plan.load_plan`, `plan.load_postmortem`); a missing
 `postmortem.md` is accepted only for a `small` plan that says `security_review` (_security_why: the planner's answer and a task on a
 default protected path or a `project.protected_paths` glob stand in for the post-mortem's). Refused with
-exit 2, in this order of cost: a plan that does not load; a task file that git ignores (the executor could not commit it); the
+exit 2, in this order of cost: a plan that does not load; a checkout that is not a worktree of the repository the part works in (the plan's `repo`,
+else the workspace: nested repos, `project.repos`); a task file that git ignores (the executor could not commit it); the
 requested branch is a default branch, or is not the one the checkout is on; the checkout holds uncommitted work; the effective
 `worktree.baseRef` is not `head`; the project has no checks. Why the baseRef: without it a workflow agent's worktree is made from
 `origin/<default branch>`, not from the phase branch, and nothing says so (research/execute-measures.md, measured).
@@ -44,7 +45,7 @@ and with `--fix` or `--revert`. It launches nothing, so it writes no brief and d
 red or not), and `base` is where the part's first run started (the oldest `Fwx-Run: <part>-<sha7>-<n>` of the phase branch), not
 the head: the review and the trusted-edit report diff from it. The run id continues that numbering. The result has `from: "gate"`.
 
-The briefs (3.4 U9, execute/brief.py): one file per task in `<git-common-dir>/fwx/runs/<run>/briefs/<task>.md`, its path in
+The briefs (3.4 U9, execute/brief.py): one file per task in `<fwx folder>/runs/<run>/briefs/<task>.md`, its path in
 `waves[].tasks[].brief`. They hold no base sha (a later wave starts from a later head: the workflow names it in the prompt) and
 no path for a report: an agent writes in the folder `fwx scratch new` makes in its own worktree. They are built, and checked, before the base is run: a field that
 is empty stops the run with exit 2, naming task and field, before any file exists; the files are written once the base is green,
@@ -132,6 +133,21 @@ def _security_why(data, post_path, cfg):
     return why
 
 
+def _repo_checked(top, main, part, cfg):
+    """WaveError unless `top` is a worktree of the repository the part works in: the repo its plan names (`plan_form.part_repo`), else
+    the workspace itself. The tasks name that repo's files, its checks and branch are the ones that run here, and a worktree of any
+    other repo holds none of the code."""
+    named = plan_form.part_repo(part, cfg)
+    repos = cfg["project"]["repos"]
+    if named is not None and named not in repos:
+        raise WaveError("%s: repo %s names no repo of project.repos (%s)" % (os.path.join(part, "plan.md"), named, ", ".join(repos) or "none declared"))
+    want = os.path.realpath(os.path.join(main, repos[named]["path"]) if named else main)
+    have = os.path.realpath(config.repo_checkout(top))
+    if have != want:
+        raise WaveError("the part works in %s (%s) and the checkout %s is a worktree of %s: run `fwx wave new` from a worktree of %s"
+                        % ("repo " + named if named else "the workspace", want, top, have, "repo " + named if named else "the workspace"))
+
+
 def _ignored(top, tasks):
     """The task files git ignores in `top` (a tracked file is not ignored: it can be committed)."""
     files = sorted({plan._norm(f) for t in tasks for f in t["files"]})
@@ -200,9 +216,8 @@ def _part_base(top, branch, part_name):
 
 
 def _run_id(top, part_name, base):
-    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
     prefix = "%s-%s-" % (part_name, base[:7])
-    runs = os.path.join(common or "", "fwx", "runs")
+    runs = os.path.join(config.fwx_dir(top), "runs")
     made = [d for d in os.listdir(runs) if d.startswith(prefix)] if os.path.isdir(runs) else []
     return "%s%d" % (prefix, len(made) + 1)
 
@@ -371,6 +386,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         part = plan_step.resolve(part_dir)
     except plan_step.CannotRun as e:
         raise WaveError(str(e))
+    _repo_checked(top, main, part, cfg)
     phase = os.path.dirname(part) if _is_subphase(part) else part
     paths = state.phase_paths(part)
     data = _load(plan.load_plan, paths["plan"], "plan.md")
@@ -414,8 +430,7 @@ def prepare(cwd, part_dir, plane, branch, unattended=False, security=False, fix=
         base = verify.head(top)
     run = _run_id(top, name, base)
     size = data["size"]["tag"]
-    common = out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    folder = brief.folder_of(common, run)
+    folder = brief.folder_of(config.fwx_dir(top), run)
     ctx = {"run": run, "part": name, "folder": folder,
            "paths": {"context": str(owner["context"]), "decisions": str(owner["decisions"]),
                      "plan": str(paths["plan"])}}

@@ -170,7 +170,13 @@ PROJECT_FIELDS = {
     # The profiles a session of the project can run with (forge/profiles.py): {"default": label, "offered": {name: row}}. Its shape
     # and its names are checked by profiles.shape_error, asked from project_error below.
     "profiles": dict,
+    # The nested git repositories of a workspace project, {subproject: {"path": relative to the workspace, + the keys of REPO_LISTS}}:
+    # fwx works each in worktrees of its own repo. Each entry is checked by _repos_error.
+    "repos": dict,
 }
+# The list-of-strings keys a `repos` entry may carry besides `path`, the same fields the workspace itself has; one a repo leaves out is
+# not written, so fwx reads it as its default and never as the workspace's value.
+REPO_LISTS = ("checks", "checks_quick", "worktree_setup", "protected_paths")
 # The keys of the two object fields: (key, type, required, may be empty). 00-division.md 3.4. The type `float` stands
 # for a positive finite number, int or float, never a bool (a bool is an int in Python); `ready` is a text only the
 # logged-in app shows in its snapshot and `ready_timeout_s` the seconds the UI walk waits for it, both read by the
@@ -229,6 +235,30 @@ def _object_error(field, obj, keys):
     return None
 
 
+def _repos_error(repos):
+    """None when every entry of the project's `repos` is an object with a relative `path` that stays inside the workspace and only the
+    REPO_LISTS keys besides, else why not, naming the field as `repos.<name>.<key>`."""
+    for name, entry in repos.items():
+        at = "repos.%s" % name
+        if not isinstance(entry, dict):
+            return "%s is not a JSON object" % at
+        path = entry.get("path")
+        if not isinstance(path, str) or not path.strip():
+            return "%s.path is missing or not a string" % at
+        if os.path.isabs(path) or ".." in path.replace("\\", "/").split("/"):
+            return "%s.path is not a relative path without .." % at
+        for key, v in entry.items():
+            if key == "path":
+                continue
+            if key not in REPO_LISTS:
+                return "%s.%s is not a key of a repos entry (known: path, %s)" % (at, key, ", ".join(REPO_LISTS))
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                return "%s.%s is not a list of strings" % (at, key)
+            if any(not x.strip() for x in v):  # fwx's config._strings refuses a blank entry in every one of these lists
+                return "%s.%s has an empty entry" % (at, key)
+    return None
+
+
 def project_error(prof):
     """None when every PROJECT_FIELDS field `prof` carries has its type, else the first that does
     not, as "<field> is not a <type>"."""
@@ -270,6 +300,10 @@ def project_error(prof):
     for c in prof.get("claude_md_excludes", ()):
         if not c.startswith(("/", "**/")):
             return "claude_md_excludes entry %r is not absolute: it must start with / or **/" % c
+    if "repos" in prof:
+        why = _repos_error(prof["repos"])
+        if why:
+            return why
     if any(not c.strip() for c in prof.get("worktree_setup", ())):
         return "worktree_setup has an empty command"
     if "check_timeout_s" in prof and (isinstance(prof["check_timeout_s"], bool) or not 0 < prof["check_timeout_s"] <= 7 * 24 * 3600):

@@ -431,6 +431,107 @@ s.ok("new-phase with a map over the cap: one `fwx phase new: context-base: ... o
 s.eq("new-phase with a map over the cap: the phase is bound", (session_file(big_repo, "sess-big") or {}).get("phase_dir"),
      ".fwx/milestones/v1/phases/01-alpha")
 
+# ---- a workspace whose code lives in nested repositories (`project.repos`): `fwx session --json` says where each part works --------
+# Seen red on the code before `part_repos` and `fwx_dir` existed:
+#   FAIL: session --json names the part's repo: no key part_repos
+#   FAIL: session --json, from repo a: fwx_dir is the workspace's: got None, want '<ws>/.git/fwx'
+# and a root-scope phase whose two parts both took the hand-named `<milestone>-<phase>` worktree collided
+# (`fatal: '<ws>/.claude/worktrees/v1-01-cross' already exists`, the post-mortem's reproduction).
+# Controls, each seen red on lib/fwx/commands/state.py (or lib/fwx/state.py) changed in one place:
+#   - the worktree name leaves the repo out:  FAIL: root-scope phase, parts of a and b: two different worktrees: got 1, want 2
+#   - part_repos ignores the plan's `repo`:   FAIL: root-scope phase, parts of a, b and the workspace: the repos: got [None, None, None], want ['a', 'b', None]
+#   - part_repos skips the `repos` check:    FAIL: no project.repos: part_repos is null: part_repos is [{'name': None, 'path': '<ws>', ...}]
+#   - fwx_dir is `<main>/.fwx`:               FAIL: session --json, from repo a: fwx_dir is the workspace's: got '<ws>/.fwx', want '<ws>/.git/fwx'
+def nested_repo(ws, name):
+    d = os.path.join(ws, name)
+    os.makedirs(d)
+    helpers.git(d, "init", "-q", "-b", "main")
+    helpers.write(d, "README", "nested %s\n" % name)
+    helpers.git(d, "add", "-A")
+    helpers.git(d, "commit", "-q", "-m", name)
+    return os.path.realpath(d)
+
+
+def plan_with(folder, **front):
+    helpers.write(folder, "plan.md", "---\n%s\n---\n" % json.dumps(dict(front)))
+
+
+ws = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\na/\nb/\n"}))
+a, b = nested_repo(ws, "a"), nested_repo(ws, "b")
+a_wt = helpers.add_worktree(a, "side")
+ws_json = {"schema": 1, "project": {"name": "ws", "default_branch": "master",
+                                    "repos": {"a": {"path": "a", "default_branch": "main"}, "b": {"path": "b", "default_branch": "trunk"}}}}
+helpers.write(ws, ".claude/fwx.json", json.dumps(ws_json))
+sid = {"session": "sess-n"}
+r = st(ws, "phase", "new", "cross", **sid)
+cross = r.stdout.strip()
+sub_x, sub_y, sub_w = (state.new_subphase(cross, n) for n in ("x", "y", "w"))
+plan_with(sub_x, repo="a")
+plan_with(sub_y, repo="b")
+plan_with(sub_w)  # names no repo: the workspace itself
+cross_parts = js(st(ws, "session", "--json", **sid).stdout).get("part_repos")
+s.eq("root-scope phase, parts of a, b and the workspace: the repos",
+     [e.get("name") for e in cross_parts] if cross_parts else cross_parts, ["a", "b", None])
+if cross_parts:
+    wts = os.path.join(ws, ".claude", "worktrees")
+    s.eq("session --json names the part's repo: the entry of a",
+         cross_parts[0], {"name": "a", "path": a, "default_branch": "main", "worktree": os.path.join(wts, "a-v1-01-cross")})
+    s.eq("root-scope phase: the entry of b", cross_parts[1],
+         {"name": "b", "path": b, "default_branch": "trunk", "worktree": os.path.join(wts, "b-v1-01-cross")})
+    s.eq("root-scope phase: a part of the workspace itself keeps <milestone>-<phase>", cross_parts[2],
+         {"name": None, "path": ws, "default_branch": "master", "worktree": os.path.join(wts, "v1-01-cross")})
+    s.eq("root-scope phase, parts of a and b: two different worktrees", len({e["worktree"] for e in cross_parts[:2]}), 2)
+else:
+    s.ok("session --json names the part's repo: no key part_repos", False, "part_repos is %r" % (cross_parts,))
+# the entry of the workspace's own part is the workspace's, whichever folder the command runs from (the configuration read from repo a overlays a's keys)
+# Seen red before the fix: FAIL: part_repos from repo a: the workspace's own part keeps the workspace's default branch: got 'main', want 'master'
+for label, cwd in (("repo a", a), ("a worktree of repo a", a_wt)):
+    from_a = js(st(cwd, "session", "--json", **sid).stdout).get("part_repos") or [None, None, {}]
+    s.eq("part_repos from %s: the workspace's own part keeps the workspace's default branch" % label, from_a[2] and from_a[2].get("default_branch"), "master")
+# a phase of subproject `a`: its one part, with no plan.md of its own, works in the subproject's repo
+r = st(ws, "phase", "new", "feature", "--subproject", "a", **sid)
+sub_phase = r.stdout.strip()
+got = js(st(ws, "session", "--json", **sid).stdout)
+s.eq("a phase of subproject a: its one part works in a",
+     got.get("part_repos"), [{"name": "a", "path": a, "default_branch": "main", "worktree": os.path.join(ws, ".claude", "worktrees", "a-a-v1-01-feature")}])
+# two subprojects with a phase of the same slug, both working in repo a, must not share one worktree
+# Seen red before the fix: FAIL: two subprojects, same phase slug, same repo: two worktrees: got 1, want 2
+sub_a_wt = got["part_repos"][0]["worktree"] if got.get("part_repos") else None
+r = st(ws, "phase", "new", "feature", "--subproject", "web", session="sess-w")
+plan_with(r.stdout.strip(), repo="a")
+web = js(st(ws, "session", "--json", session="sess-w").stdout).get("part_repos") or [{}]
+s.eq("two subprojects, same phase slug, same repo: two worktrees", len({sub_a_wt, web[0].get("worktree")}), 2)
+s.eq("subproject phase: the worktree name carries the subproject", web[0].get("worktree"),
+     os.path.join(ws, ".claude", "worktrees", "a-web-v1-01-feature"))
+for label, cwd in (("the workspace", ws), ("repo a", a), ("a worktree of repo a", a_wt)):
+    got = js(st(cwd, "session", "--json", **sid).stdout)
+    s.eq("session --json, from %s: fwx_dir is the workspace's" % label, got.get("fwx_dir"), os.path.join(ws, ".git", "fwx"))
+    s.eq("session --json, from %s: the same phase is bound" % label, got.get("phase_dir"), sub_phase)
+s.eq("session --json, from repo a: plan_root is the workspace's", js(st(a, "session", "--json", **sid).stdout).get("plan_root"),
+     os.path.join(ws, ".fwx"))
+s.eq("session --json, from repo a: main_checkout is the workspace", js(st(a, "session", "--json", **sid).stdout).get("main_checkout"), ws)
+# a workspace that declares no repos
+plain = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\n"}))
+helpers.write(plain, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"name": "plain"}}))
+st(plain, "phase", "new", "alpha", session="sess-p")
+got = js(st(plain, "session", "--json", session="sess-p").stdout)
+s.ok("no project.repos: part_repos is null", "part_repos" in got and got["part_repos"] is None, "part_repos is %r" % (got.get("part_repos", "<absent>"),))
+got = js(st(plain, "session", "--json", session="sess-none").stdout)
+s.ok("no phase bound and none open to resolve: part_repos is null", got.get("part_repos", "<absent>") is None, repr(got.get("part_repos", "<absent>")))
+
+# a broken `project.repos` entry stops `fwx session --json` at the workspace root, as it does inside the nested repo (it printed part_repos null, exit 0)
+# Seen red on f97847b: FAIL: broken project.repos entry, session --json at the root: exit 2: got 0, want 2
+#   FAIL: broken project.repos entry, session --json at the root: names the entry: ''  (empty stderr)
+broken = os.path.realpath(helpers.toy_repo({"README": "toy\n", ".gitignore": ".fwx/\na/\n"}))
+nested_repo(broken, "a")
+helpers.write(broken, ".claude/fwx.json", json.dumps({"schema": 1, "project": {"name": "broken", "default_branch": "master",
+              "repos": {"a": {"path": "a", "default_branch": "main"}, "b": {"path": "missing"}}}}))
+st(broken, "phase", "new", "alpha", session="sess-b")
+for label, cwd in (("at the root", broken), ("inside repo a", os.path.join(broken, "a"))):
+    r = st(cwd, "session", "--json", session="sess-b")
+    s.eq("broken project.repos entry, session --json %s: exit 2" % label, r.returncode, 2)
+    s.ok("broken project.repos entry, session --json %s: names the entry" % label, "project.repos.b.path" in r.stderr, repr(r.stderr))
+
 # ---- outside a git repository: exit 2 -------------------------------------------------------------------------------
 nogit = helpers.mkdtemp_nogit()
 for args in (["session"], ["phase", "list"], ["session", "attach", "--root"], ["phase", "new", "x"], ["milestone", "new"], ["decision", "new", "--decision", "a", "--why", "b",

@@ -58,7 +58,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import helpers  # noqa: E402
-from test_wave_prepare import CRIT, Scene, task  # noqa: E402
+from test_wave_prepare import CRIT, Scene, front, task  # noqa: E402
 
 ROOT = helpers.ROOT
 sys.path.insert(0, os.path.join(ROOT, "lib"))
@@ -77,11 +77,11 @@ FILES = {"T1": {"src/a.py": "a1\n"}, "T2": {"src/b.py": "b1\n"}, "T3": {"src/c.p
 class World:
     """A Scene (toy repo, phase worktree, the part's plan) with a fake orca on a PATH of its own and the base context in place."""
 
-    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, context=True, registered=()):
-        self.scene = Scene(tasks=tasks or THREE, recipe=recipe, settings={"worktree": {"baseRef": "head"}, "env": {"KEEP_ME": "1"}},
+    def __init__(self, tasks=None, recipe=("true",), cap=1, behave=None, context=True, registered=(), nested=None):
+        self.scene = Scene(tasks=tasks or THREE, recipe=recipe, settings={"worktree": {"baseRef": "head"}, "env": {"KEEP_ME": "1"}}, nested=nested,
                            config={"limits": {"per_project": {"executor": cap}, "default_cap": {"supervised": 3, "unattended": 4}}})
         sc = self.scene
-        self.repo, self.cwd, self.part = sc.repo, sc.cwd, sc.part
+        self.repo, self.cwd, self.part = sc.code, sc.cwd, sc.part  # the repository the part works in: the workspace's own, or a nested one
         self.dir = helpers.mkdtemp("fwx-orca-")
         self.bin = os.path.join(self.dir, "bin")
         helpers.write(self.bin, "orca", "#!/bin/sh\nexec %s %s \"$@\"\n" % (sys.executable, FAKE), 0o755)
@@ -90,7 +90,7 @@ class World:
         if context:
             path = context_base.base_path(self.part)
             helpers.write(os.path.dirname(path), os.path.basename(path), "# map\nBASE-MAP-TEXT\n## Decided\nBASE-DECIDED-TEXT\n")
-        self.common = os.path.join(self.repo, ".git")
+        self.common = os.path.join(sc.repo, ".git")  # fwx's folder is the workspace's, whichever repo the part works in
         self.procs = []
 
     def set_behave(self):
@@ -107,11 +107,27 @@ class World:
             env.pop("ORCA_TERMINAL_HANDLE", None)
         return env
 
-    def argv(self, root, *flags):
-        return [sys.executable, os.path.join(root, "bin", "fwx"), "wave", "run", "--part-dir", self.part, "--plane", "session", "--branch", "phase"] + list(flags)
+    def argv(self, root, *flags, part=None):
+        return [sys.executable, os.path.join(root, "bin", "fwx"), "wave", "run", "--part-dir", part or self.part, "--plane", "session", "--branch", "phase"] + list(flags)
 
-    def run(self, *flags, root=ROOT, cwd=None, **env):
-        return subprocess.run(self.argv(root, *flags), cwd=cwd or self.cwd, env=self.env(**env), capture_output=True, text=True, timeout=120)
+    def run(self, *flags, root=ROOT, cwd=None, part=None, **env):
+        return subprocess.run(self.argv(root, *flags, part=part), cwd=cwd or self.cwd, env=self.env(**env), capture_output=True, text=True, timeout=120)
+
+    def second_part(self, repo, phase="02-beta", tasks=None):
+        """Another part of the workspace, working in nested repo `repo`: its phase worktree on branch `phase` (the first part's branch name), its
+        plan naming the repo, its post-mortem and its base context. (the worktree, the part's folder)"""
+        sc = self.scene
+        cwd = sc.worktree(repo)
+        part = os.path.join(sc.repo, ".fwx", "milestones", "v1", "phases", phase)
+        plan = {"size": {"tag": "normal", "parts": 1, "agents": 2}, "criteria": CRIT, "tasks": tasks or [task("T1", 1, ["src/a.py"])],
+                "not_built": [], "later": [], "repo": repo}
+        helpers.write(part, "plan.md", front(plan))
+        helpers.write(part, "postmortem.md", front({"verdict": "ok", "security_review": False, "round": 1}))
+        helpers.write(part, "context.md", "# context\n")
+        helpers.write(part, "decisions.tsv", "date\tid\tdecision\twhy\trejected\tsupport\tsource\tsupersedes\n")
+        path = context_base.base_path(part)
+        helpers.write(os.path.dirname(path), os.path.basename(path), "# map\nBASE-MAP-TEXT\n## Decided\nBASE-DECIDED-TEXT\n")
+        return cwd, part
 
     def fwx(self, *args):
         return helpers.fwx(self.cwd, *args, env={"CLAUDE_CONFIG_DIR": self.scene.conf})
@@ -264,6 +280,82 @@ def case_loop(root, S):
     listing = w.fwx("wave", "list")
     rows = [x for x in listing.stdout.splitlines() if x.strip()]
     S.ok("loop: `wave list` prints one line per run", listing.returncode == 0 and len(rows) == 1 and run in rows[0] and "done" in rows[0], "got %r" % listing.stdout)
+
+
+def case_nested(root, S):
+    """A workspace whose code lives in nested repos (DTC-64): a part runs in the repo it names, with that repo's worktrees, branch and checks,
+    and everything fwx keeps is the workspace's. Seen red on the code before it (python3 tests/test_wave_run.py):
+      FAIL: nested: the run is done: got 'run <id> failed: git worktree add <ws>/.claude/worktrees/<id>-T1 failed: fatal: invalid reference: <sha>'
+      FAIL: nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit 2, 'run <id> does not end in -<sha>-<n> of a commit of this repository'"""
+    checks = {"a": ["test -f MARK_A"], "b": ["test -f MARK_B"]}
+    w = world(nested=checks, tasks=[task("T1", 1, ["src/a.py"])])
+    sc = w.scene
+    a, b, ws = sc.nested["a"], sc.nested["b"], sc.repo
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("nested: the run is done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    if not m:
+        return
+    run = m.group(1)
+    S.ok("nested: the task commit is on a's phase branch", "work T1" in helpers.git(a, "log", "--format=%s", "phase"), helpers.git(a, "log", "--format=%s", "phase"))
+    S.eq("nested: the workspace has no branch but its own", helpers.git(ws, "branch", "--format=%(refname:short)").split(), ["master"])
+    S.eq("nested: the run's files are under the workspace's .git/fwx/runs", sorted(w.runs()), [run])
+    S.ok("nested: nothing of fwx's is in a's own .git", not os.path.exists(os.path.join(a, ".git", "fwx")))
+    S.eq("nested: `orca repo add` named a", w.state_json().get("repos"), [a])
+    S.eq("nested: no worktree of the run is left in a", [p for p in w.worktrees() if os.path.realpath(p) not in (a, sc.cwd)], [])
+    # a second part, in repo b, on the same branch name: its worktrees are b's and the check that decides is b's
+    bwt, bpart = w.second_part("b")
+    r2 = w.run(cwd=bwt, part=bpart, root=root)
+    m2 = line_of(r2)
+    S.ok("nested: the part of repo b runs after it and is done (its check, `test -f MARK_B`, passes only in b)", bool(m2) and m2.group(2) == "done",
+         "got %r %r" % (r2.stdout[-300:], r2.stderr[-300:]))
+    S.ok("nested: the task commit of the second part is on b's phase branch", "work T1" in helpers.git(b, "log", "--format=%s", "phase"))
+    S.ok("nested: and not on a's", "02-beta" not in helpers.git(a, "log", "--format=%B", "phase"))
+    S.eq("nested: the workspace still has no branch but its own", helpers.git(ws, "branch", "--format=%(refname:short)").split(), ["master"])
+    S.eq("nested: both runs are in the workspace's folder", len(w.runs()), 2)
+    S.eq("nested: `orca repo add` named b after a", w.state_json().get("repos"), [a, b])
+    S.eq("nested: no worktree of the second run is left in b", [p for p in helpers.git(b, "worktree", "list", "--porcelain").split("\n") if p.startswith("worktree ")
+                                                                and os.path.realpath(p.split(" ", 1)[1]) not in (b, bwt)], [])
+    # a leftover worktree of a's run, removed from a worktree of b: `wave remove` works in the checkout the run's own state names
+    left = world(nested=checks, tasks=[task("T1", 1, ["src/a.py"])], behave={"release_fail": ["r1"]})
+    rl = left.run(root=root)
+    ml = line_of(rl)
+    reviewer = next((x["worktree"] for x in left.starts() if x["unit"] == "r1"), "")
+    S.ok("nested: a worker whose release failed leaves its worktree", bool(ml) and os.path.isdir(reviewer), "got %r %r" % (rl.stdout[-200:], rl.stderr[-200:]))
+    if not ml or not os.path.isdir(reviewer):
+        return
+    lsc = left.scene
+    common = helpers.git(reviewer, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()
+    S.eq("nested: the worker's worktree is a worktree of a, under the workspace's .claude/worktrees", (common, os.path.realpath(reviewer).startswith(os.path.join(lsc.repo, ".claude", "worktrees") + os.sep)),
+         (os.path.join(lsc.nested["a"], ".git"), True))
+    away = lsc.worktree("b")
+    rr = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "remove", "--run", ml.group(1)], cwd=away,
+                        env=helpers.clean_env(CLAUDE_CONFIG_DIR=lsc.conf), capture_output=True, text=True)
+    S.eq("nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit", (rr.returncode, rr.stderr.strip()[-200:]), (0, ""))
+    S.ok("nested: the leftover worktree is gone", not os.path.exists(reviewer), "still there")
+
+
+def case_nested_resume(root, S):
+    """A cut run of repo a resumed from a worktree of repo b (the same branch name in both, by design) is refused before any step, naming both repos,
+    and goes on from a's own worktree. Seen red on the code before the check (python3 tests/test_wave_run.py):
+      FAIL: nested resume from repo b: exit 2, no worker, both repos named: got (1, ..., ['T1']), want (2, True, ['T1'])"""
+    w = world(nested={"a": ["true"], "b": ["true"]}, tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
+    sc = w.scene
+    a, b = sc.nested["a"], sc.nested["b"]
+    p = start_run(w, root, FWX_RUN_LIMIT_S="60")
+    end = time.time() + 20
+    while time.time() < end and not (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())):
+        time.sleep(0.1)
+    kill_group(p)  # the whole group: a fake orca call in flight would save a stale state.json after the kill
+    run = w.runs()[0] if w.runs() else ""
+    S.eq("nested resume: the first run started T1", units(w), ["T1"])
+    bwt, _ = w.second_part("b")
+    r = subprocess.run(w.argv(root, "--resume", run), cwd=bwt, env=w.env(), capture_output=True, text=True, timeout=120)
+    S.eq("nested resume from repo b: exit 2, no worker, both repos named", (r.returncode, a in r.stderr and bwt in r.stderr, units(w)), (2, True, ["T1"]))
+    helpers.write(w.dir, "go-T1", "")
+    r = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+    m = line_of(r)
+    S.ok("nested resume from a's own worktree: the run goes on to done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
 
 
 def stop_lags(w, run, unit, stopped, since=None):
@@ -1318,8 +1410,7 @@ def case_reply_grace(root, S):
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
-         case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
-
+         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
@@ -1352,6 +1443,14 @@ MUTANTS = [
     ("worker-start without waiting for the worktree", case_discover, "lib/fwx/execute/orca.py", 'result("worktree", "show", "--worktree", "path:" + worktree)', "pass",
      "worker-start waited for Orca to know the worktree -> 0 show calls"),
     ("a selector_not_found is not retried", case_discover, "lib/fwx/execute/orca.py", "if not _not_found(e):", "if True:", "discover: the run is done"),
+    ("a worker's worktree made in the workspace's repo", case_nested, "lib/fwx/execute/run.py", "orca.make_worktree(self.repo,", "orca.make_worktree(self.main,",
+     "nested: the run is done"),
+    ("Orca told about the workspace, not the part's repo", case_nested, "lib/fwx/execute/run.py", "orca.ensure_repo(self.repo)", "orca.ensure_repo(self.main)",
+     "nested: `orca repo add` named a"),
+    ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'where if where and os.path.isdir(where) else "."', '"."',
+     "nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit"),
+    ("resume from any worktree on the branch", case_nested_resume, "lib/fwx/commands/wave.py", "            if own != here:", "            if False:",
+     "nested resume from repo b: exit 2, no worker, both repos named"),
     ("worker-read loops to 50 on a non-empty end cursor", case_transcript, "lib/fwx/execute/orca.py", 'if not batch or tr.get("limited") is False or not nxt or nxt == cursor:', "if not nxt:",
      "worker-read stops at end cursor"),
     ("the peek also takes worker_done", case_steer_lines, "lib/fwx/execute/orca.py", '"--types", "question,escalation"', '"--types", "question,escalation,worker_done"',

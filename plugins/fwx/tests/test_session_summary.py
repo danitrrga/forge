@@ -38,7 +38,10 @@ from fwx.core import stages  # noqa: E402
 s = helpers.Suite()
 ENV = {"CLAUDE_CODE_SESSION_ID": "sess-sum"}
 NEW = ("project", "stage", "part", "parts", "branch")
-OWN = NEW + ("progress", "part_stages")  # what state.summary and the command add to what state.resolve gives
+OWN = NEW + ("progress", "part_stages", "part_repos")  # what state.summary and the command add to what state.resolve gives
+# Seen red on bb9754c with `part_repos` missing from OWN (the command added it, the test took it for an old key):
+#   FAIL: no phase: the old keys are what state.resolve returns: got {... 'part_repos': None}, want {... 'paths': {}}
+# Passing: python3 plugins/fwx/tests/test_session_summary.py
 SHA = "a" * 40
 
 

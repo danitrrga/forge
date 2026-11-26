@@ -42,7 +42,7 @@ dependencies again; a failure is exit 1 and `setup` in the JSON).
 prints its path (execute/base.py says why it is not under `.git`): exit 0, 2 for a usage error or outside a repository.
 
 The rest is 3.4 U3 (execute/integrate.py and execute/cleanup.py say what each does); each prints its result as one JSON
-object on stdout and also writes it, with the exit code and its arguments, to `<git-common-dir>/fwx/runs/<run>/<n>-<step>.json`
+object on stdout and also writes it, with the exit code and its arguments, to `<fwx folder>/runs/<run>/<n>-<step>.json`
 (`n` counts the run's files; `wave new` and `base` write none, and neither does a call that stops on a usage error or on
 something that must stop it before it starts, exit 2 with a reason on stderr):
   wave merge --part-dir D --run R (--branches B... | --final) [--findings IDS] [--final]
@@ -53,7 +53,8 @@ something that must stop it before it starts, exit 2 with a reason on stderr):
       exit 0 the failure may be fixed (a round spent, or the evidence already counted), 1 the
       rounds are spent and nothing was spent now, 2 usage
   wave revert --part-dir D --run R --findings IDS     exit 0, 1 a revert conflicted (aborted), 2 an id with no single commit
-  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named and the worktrees `wave run` made from the run's files
+  wave remove --run R     exit 0; 77 without /proc. It reads the branches `wave merge` named and the worktrees `wave run` made from the run's files,
+      and works in the checkout the run's `state.json` names (`args.checkout`: a nested repo's phase worktree), else the current folder
   wave report --part-dir D --run R --unit U --line "<last line of the reply>" --plane session|factory
       exit 0 with `next` merge|relaunch|retry|owner|stop (execute/report.py says what each means and what it reads); a miss is
       counted from the run's own files, so each call is recorded; 2 a usage error, an unreadable plan or configuration
@@ -199,6 +200,10 @@ def do_run(argv):
             on = base.out(top, "symbolic-ref", "--short", "-q", "HEAD")
             if on != branch:
                 raise base.WaveError("run %s works on %s and the checkout %s is on %s: check %s out first" % (saved["run"], branch, top, on or "no branch (detached HEAD)", branch))
+            # two repos of one phase share the branch name, and the run's job heads are commits of its own repo only
+            own, here = (os.path.realpath(config.repo_checkout(p)) for p in (saved["args"]["checkout"], top))
+            if own != here:
+                raise base.WaveError("run %s works in the repository %s and the checkout %s is a worktree of %s: resume it from a worktree of %s" % (saved["run"], own, top, here, own))
         live = run_mod.holder(top, branch)
         if live:
             raise base.WaveError("run %s is already running on %s (pid %s): wait for it, or start again with `fwx wave run --resume %s` once it ended"
@@ -317,11 +322,8 @@ def _ids(text):
 
 
 def _record(top, run, step, args, result, code):
-    """Write the call's result to <git-common-dir>/fwx/runs/<run>/<n>-<step>.json and return the path."""
-    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if not common:
-        raise base.WaveError("cannot find the git common dir of %s" % top)
-    folder = os.path.join(common, "fwx", "runs", run)
+    """Write the call's result to <fwx folder>/runs/<run>/<n>-<step>.json and return the path."""
+    folder = os.path.join(config.fwx_dir(top), "runs", run)
     os.makedirs(folder, exist_ok=True)
     n = 1 + max([int(m.group(1)) for m in (re.match(r"(\d+)-", f) for f in os.listdir(folder)) if m], default=0)
     path = os.path.join(folder, "%d-%s.json" % (n, step))
@@ -336,8 +338,7 @@ def _record(top, run, step, args, result, code):
 
 def _steps(top, run):
     """The calls the run's own files record, oldest first: [{step, exit, args, result}]; a file that cannot be read is left out."""
-    common = base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    folder = os.path.join(common or "", "fwx", "runs", run)
+    folder = os.path.join(config.fwx_dir(top), "runs", run)
     names = sorted((f for f in os.listdir(folder) if re.match(r"\d+-", f)), key=lambda f: int(f.split("-")[0])) if os.path.isdir(folder) else []
     found = []
     for name in names:
@@ -412,7 +413,8 @@ def do_step(step, argv):
             code, result = review.findings(".", part, run, got.get("--report"), got.get("--verdicts"), got.get("--control-findings"), _steps(top, run))
         elif step == "cleanup":
             args = {"run": run}
-            result = cleanup.cleanup(".", run, *cleanup.recorded_of(base.out(top, "rev-parse", "--path-format=absolute", "--git-common-dir"), run))
+            where = ((run_mod.load_state(top, run) or {}).get("args") or {}).get("checkout")  # the run's own checkout: its repo may not be this one's
+            result = cleanup.cleanup(where if where and os.path.isdir(where) else ".", run, *cleanup.recorded_of(config.fwx_dir(top), run))
             code = 0
         else:
             part = part or _part_of(top, run)

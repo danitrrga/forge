@@ -7,6 +7,12 @@ Every other part reads the configuration through here and nowhere else. The file
 (forge) or written by hand to the schema in README.md; it lives in the main checkout, never in a worktree, and
 a worktree finds it through git's common directory. Without the file, DEFAULTS apply and one line on stderr says so.
 
+A workspace may keep its code in git repositories nested in its folder (`project.repos`, one entry per repository). A
+command run in one of them, or in a linked worktree of one, has the workspace as its home (`main_checkout`): the repository
+has no file of its own, and the nearest enclosing folder that has one declares it. The home owns the configuration and
+`fwx_dir`, where fwx keeps what it writes; `repo_checkout` is the repository the folder is in; `load` reads the repository's
+own `checks`, `checks_quick`, `worktree_setup`, `protected_paths` and `default_branch` from its entry.
+
 Imports only the standard library: `fwx statusline` has to finish in under 100 ms.
 """
 import copy
@@ -23,6 +29,7 @@ ROLES = ("orchestrator", "researcher", "decisions", "state", "demo", "pre-mortem
          "vision", "runner")
 SIZES = ("small", "normal", "big")
 ALIASES = ("sonnet", "opus", "haiku", "fable")  # a model is one of these, never a full id
+REPO_KEYS = ("checks", "checks_quick", "worktree_setup", "protected_paths", "default_branch")  # what a `repos` entry replaces
 MAX_CHECK_TIMEOUT_S = 7 * 24 * 3600  # the most project.check_timeout_s may be; a bigger number overflows the wait on the child
 
 
@@ -45,7 +52,7 @@ DEFAULTS = {
     "project": {"name": None, "main_checkout": None, "linear_project": None, "default_branch": None,
                 "factory_branch": "factory", "checks": [], "protected_paths": [],
                 "production": {"branches": [], "commands": []}, "verdict_command": None, "ui": False,
-                "checks_quick": [], "app_run": None, "worktree_setup": [], "check_timeout_s": 20 * 60},
+                "checks_quick": [], "app_run": None, "worktree_setup": [], "check_timeout_s": 20 * 60, "repos": {}},
     "factory": {"mode": "off", "ui_bugs": False, "watchdog_nudge_min": 30, "watchdog_fail_min": 30,
                 "cost_warn_x_median": 3, "tick_trigger": None, "classifier": "suggest"},
     "weekly": {"on": True, "min_sessions": 5, "trigger": None, "precision_low": 0.7, "precision_min_marks": 20,
@@ -67,6 +74,10 @@ class ConfigError(Exception):
     """The configuration cannot be used; the message names the fix."""
 
 
+class UnreadableFile(ConfigError):
+    """The file cannot be read, is no JSON or is no object (not a wrong value in it): `fwx session --json` still answers then."""
+
+
 def _git(cwd, *args):
     try:
         return subprocess.run(["git", "-C", cwd] + list(args), capture_output=True, text=True)
@@ -74,11 +85,11 @@ def _git(cwd, *args):
         raise ConfigError("cannot run git (%s); fwx finds its configuration through git" % e)
 
 
-def main_checkout(cwd=None):
-    """The main working tree of the repository `cwd` (default: the current folder) is in, from the main tree, a
-    linked worktree or any folder of either: the common git dir's `core.worktree` when set, else the parent of a
-    common dir called `.git`. ConfigError outside a git repository, and for a layout git does not record (a bare
-    repository, a git dir kept elsewhere)."""
+def _repo(cwd):
+    """(main working tree, common git dir) of the repository `cwd` (default: the current folder) is in, from the main tree, a
+    linked worktree or any folder of either: the common git dir's `core.worktree` when set, else the parent of a common dir
+    called `.git`. ConfigError outside a git repository, and for a layout git does not record (a bare repository, a git dir
+    kept elsewhere)."""
     cwd = os.getcwd() if cwd is None else cwd
     r = _git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir")
     common = r.stdout.strip()
@@ -86,10 +97,110 @@ def main_checkout(cwd=None):
         raise ConfigError("not in a git repository: %s (run fwx inside the project's checkout)" % cwd)
     wt = _git(cwd, "config", "--file", os.path.join(common, "config"), "--get", "core.worktree")
     if wt.returncode == 0 and wt.stdout.strip():
-        return os.path.abspath(os.path.join(common, wt.stdout.strip()))
+        return os.path.abspath(os.path.join(common, wt.stdout.strip())), common
     if os.path.basename(common) == ".git":
-        return os.path.dirname(common)
+        return os.path.dirname(common), common
     raise ConfigError("cannot find the main checkout: the git dir %s is not a .git folder and names no work tree" % common)
+
+
+def repo_checkout(cwd=None):
+    """The main working tree of the git repository `cwd` is in: the nested repository itself, where `main_checkout` is the
+    workspace that declares it."""
+    return _repo(cwd)[0]
+
+
+def _read(path):
+    """The JSON object in `path`, None when the file is missing; ConfigError naming the file when it cannot be read, is no JSON or is no object."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except FileNotFoundError:
+        return None
+    except OSError as e:
+        raise _unreadable(path, "cannot be read (%s)" % e.strerror)
+    except UnicodeDecodeError as e:
+        raise _unreadable(path, "is not UTF-8 text (%s)" % e.reason)
+    try:
+        data = json.loads(text)
+    except ValueError as e:
+        raise _unreadable(path, "is not valid JSON (%s)" % e)
+    if not isinstance(data, dict):
+        raise _unreadable(path, "is not a JSON object")
+    return data
+
+
+def _strings(entry, key, where, path):
+    v = entry.get(key, [])
+    if not isinstance(v, list) or not all(isinstance(c, str) and c.strip() for c in v):
+        raise _bad(path, "%s.%s is %r, not a list of non-empty strings" % (where, key, v))
+
+
+def _declared(ws, project, path):
+    """`[(real path, entry)]` of `project.repos` of the workspace folder `ws`, each entry checked: a table with a `path` that is a
+    folder inside the workspace (relative, no climbing out, not the workspace itself), lists of strings and a `default_branch`
+    that is null or a string. `project` is the file's `project` value; no `repos` is the empty list."""
+    repos = project.get("repos") if isinstance(project, dict) else None
+    if repos is None:
+        return []
+    if not isinstance(repos, dict):
+        raise _bad(path, "project.repos is %r, not a table of repository name to its entry" % (repos,))
+    root, out = os.path.realpath(ws), []
+    for name, entry in repos.items():
+        where = "project.repos.%s" % name
+        if not isinstance(entry, dict):
+            raise _bad(path, "%s is %r, not a table with a path" % (where, entry))
+        rel = entry.get("path")
+        if not isinstance(rel, str) or not rel.strip() or os.path.isabs(rel):
+            raise _bad(path, "%s.path is %r, not a path relative to the workspace" % (where, rel))
+        real = os.path.realpath(os.path.join(ws, rel))
+        if real == root or os.path.commonpath([real, root]) != root:
+            raise _bad(path, "%s.path is %r, which is not a folder inside the workspace %s" % (where, rel, ws))
+        if not os.path.isdir(real):
+            raise _bad(path, "%s.path is %r, and %s is not a folder" % (where, rel, real))
+        for key in ("checks", "checks_quick", "worktree_setup", "protected_paths"):
+            _strings(entry, key, where, path)
+        branch = entry.get("default_branch")
+        if branch is not None and (not isinstance(branch, str) or not branch.strip()):
+            raise _bad(path, "%s.default_branch is %r, not null or a branch name" % (where, branch))
+        out.append((real, entry))
+    return out
+
+
+def _home(cwd):
+    """`(home, common git dir of home, entry)`: the folder that owns the configuration of the repository `cwd` is in. A repository
+    with a `.claude/fwx.json` of its own is its own home (`entry` None), even when a workspace declares it. Without one, the
+    nearest enclosing folder that has the file is the home when its `project.repos` declares the repository (`entry` is the
+    declaration); when it does not, the repository is its own home. A project with no nested repo finds its own file first and
+    never walks."""
+    repo, common = _repo(cwd)
+    if os.path.exists(os.path.join(repo, FILE)):
+        return repo, common, None
+    here = repo
+    while os.path.dirname(here) != here:
+        here = os.path.dirname(here)
+        path = os.path.join(here, FILE)
+        data = _read(path)
+        if data is None:
+            continue
+        for real, entry in _declared(here, data.get("project"), path):
+            if real == os.path.realpath(repo):
+                return here, _repo(here)[1], entry
+        break
+    return repo, common, None
+
+
+def main_checkout(cwd=None):
+    """The folder that owns the configuration of the repository `cwd` (default: the current folder) is in: its main working tree,
+    from the main tree, a linked worktree or any folder of either, or the workspace that declares it in `project.repos` (see
+    `_home`). ConfigError outside a git repository, and for a layout git does not record (a bare repository, a git dir kept
+    elsewhere)."""
+    return _home(cwd)[0]
+
+
+def fwx_dir(cwd=None):
+    """`<git common dir of the home>/fwx`, the one folder where fwx keeps its sessions, runs, briefs and the gate lock, the same
+    from every worktree and every nested repository of a workspace. Creates nothing."""
+    return os.path.join(_home(cwd)[1], "fwx")
 
 
 def _merge(base, over):
@@ -105,6 +216,10 @@ def _merge(base, over):
 def _bad(path, what):
     fix = "run `forge sync`, or edit the file by hand to the schema in README.md" if path else "run `forge sync`"
     return ConfigError("%s: %s; %s" % (path or "configuration", what, fix))
+
+
+def _unreadable(path, what):
+    return UnreadableFile(str(_bad(path, what)))
 
 
 def _validate(cfg, path):
@@ -140,27 +255,17 @@ def _check_setup(cfg, path):
 
 
 def setup_commands(cwd=None):
-    """`project.worktree_setup` of the main checkout's file, and nothing else of it: a worktree's setup does not depend on the rest
+    """`project.worktree_setup` of the main checkout's file (of the repository's entry in the workspace's file, from a nested repository), and nothing else of it: a worktree's setup does not depend on the rest
     of the configuration, so a problem in an unrelated value (a model table, the schema) must not stop it, and a project that never
     set the field gets the empty list from a missing file, a missing `project` and a `project` that is no table, silently.
     What cannot say whether a setup is owed (the file is unreadable, not JSON, not an object, or the field is malformed) is a
     ConfigError naming the file: fail closed, never a traceback."""
-    main = main_checkout(cwd)
-    path = os.path.join(main, FILE)
-    try:
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
-    except FileNotFoundError:
-        return []
-    except OSError as e:
-        raise _bad(path, "cannot be read (%s)" % e.strerror)
-    try:
-        data = json.loads(text)
-    except ValueError as e:
-        raise _bad(path, "is not valid JSON (%s)" % e)
-    if not isinstance(data, dict):
-        raise _bad(path, "is not a JSON object")
-    return _setup_list(data.get("project"), path)
+    home, _, entry = _home(cwd)
+    path = os.path.join(home, FILE)
+    if entry is not None:  # a declared repository runs its own setup, never the workspace's
+        return list(entry.get("worktree_setup", []))
+    data = _read(path)
+    return [] if data is None else _setup_list(data.get("project"), path)
 
 
 def _check_timeout(cfg, path):
@@ -190,34 +295,30 @@ def load(cwd=None, quiet=False):
     """The configuration: the main checkout's .claude/fwx.json laid over DEFAULTS, validated. `_source` is the
     path read, or None when the file is missing (then one line on stderr, once per process, unless `quiet`)."""
     global _warned
-    main = main_checkout(cwd)
+    main, _, entry = _home(cwd)
     path = os.path.join(main, FILE)
     cfg = copy.deepcopy(DEFAULTS)
     cfg["project"]["name"] = os.path.basename(main)
     cfg["project"]["main_checkout"] = main
     source = None
-    try:
-        with open(path, encoding="utf-8") as f:
-            text = f.read()
-    except FileNotFoundError:
+    data = _read(path)
+    if data is None:
         if not _warned and not quiet:
             _warned = True
             sys.stderr.write("fwx: no %s at %s; using defaults\n" % (FILE.replace(os.sep, "/"), path))
-    except OSError as e:
-        raise _bad(path, "cannot be read (%s)" % e.strerror)
     else:
-        try:
-            data = json.loads(text)
-        except ValueError as e:
-            raise _bad(path, "is not valid JSON (%s)" % e)
-        if not isinstance(data, dict):
-            raise _bad(path, "is not a JSON object")
         _merge(cfg, data)
         source = path
     _validate(cfg, source)
     _check_walk(cfg, source)
     _check_setup(cfg, source)
+    _declared(main, cfg["project"], source)
+    if entry is not None:  # in a nested repository its own entry replaces these, and a key the entry leaves out is the default
+        for key in REPO_KEYS:
+            cfg["project"][key] = copy.deepcopy(entry.get(key, DEFAULTS["project"][key]))
     _check_timeout(cfg, source)
+    if cfg["project"].get("repos") is None:  # an explicit `"repos": null` means none, as a missing key does
+        cfg["project"]["repos"] = {}
     cfg["_source"] = source
     return cfg
 

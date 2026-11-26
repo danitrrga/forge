@@ -11,7 +11,7 @@ The review is `wave review`, the reviewers (and the security reviewer where `wav
 so, a fixer for what is to be fixed, `wave merge --final --findings`, and the next pass, until `wave findings` says `done`.
 
 Every agent is an Orca worker (execute/orca.py: the one module that talks to Orca) of one Orca run per part, never more at once than the cap.
-Each gets a worktree made here under `<main checkout>/.claude/worktrees/` at the sha its brief names (a branch for an executor, detached for a
+Each gets a worktree of the part's repository (the workspace's own, or the nested repository its plan names) made here under `<main checkout>/.claude/worktrees/` at the sha its brief names (a branch for an executor, detached for a
 reviewer and the verifier), prepared (the settings copy with the 5-minute cache switch, the marker), and a spec file: the body of its agent file
 (a worker has no agent type), the base context a subagent gets from SubagentStart (data/context-base.tsv's row for its role), its brief and the
 line asking it to send `worker_done`. With no base context the run is refused (exit 2) and nobody starts.
@@ -33,7 +33,7 @@ send --to dispatch:<D> --subject "Answer" --body "..."` wakes the worker, which 
 counted idle and its limit does not run, until Orca shows it working again (or it settles). One more `status` line follows each wave's merge and one the end of
 the run, before its terminal is closed. A send that fails ends the run needs-owner naming the orchestrator. Without the flag none of this happens.
 
-State is `<git-common-dir>/fwx/runs/<run>/state.json`: the Orca run and the terminal made for it (the sender of `run-create`, closed after the workers when the run ends), the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
+State is `<fwx folder>/runs/<run>/state.json`: the Orca run and the terminal made for it (the sender of `run-create`, closed after the workers when the run ends), the pid, the workers, the worktrees the run made, the journal of the `fwx wave`
 calls it made (in order, with their results) and the result. `--resume R` runs the same path again: a call the journal holds is not made again (its
 result is read from it), a worker the state holds is polled, not started again. One live run per branch: a second `wave run` on it exits 2 naming the
 run and `--resume`, and a lock on the branch (`lock_branch`, held until the process ends) closes the gap before the first record is written. A settled
@@ -61,7 +61,7 @@ import time
 
 from fwx import config, context_base
 from fwx.execute import cleanup, orca
-from fwx.execute.base import WaveError, out
+from fwx.execute.base import WaveError
 
 FWX = os.path.join(orca.PLUGIN, "bin", "fwx")
 LIMIT_S = {"executor": 90 * 60, "reviewer": 30 * 60, "security-reviewer": 30 * 60, "review-verifier": 15 * 60}
@@ -115,7 +115,7 @@ def alive(pid):
 
 
 def runs_folder(top):
-    return os.path.join(out(top, "rev-parse", "--path-format=absolute", "--git-common-dir") or "", "fwx", "runs")
+    return os.path.join(config.fwx_dir(top), "runs")
 
 
 def lock_path(top, branch):
@@ -228,7 +228,8 @@ class Job:
 class Run:
     def __init__(self, args, top, flags, state, folder):
         self.args, self.top, self.flags, self.st, self.folder = args, top, flags, state, folder
-        self.main = config.main_checkout(top)
+        self.main = config.main_checkout(top)  # the workspace: where the worktrees go and the settings come from
+        self.repo = config.repo_checkout(top)  # the repository the part works in: where every worktree is made, and what Orca is told about
         self.orchestrator = flags.get("orchestrator")
         self.run = args["run"]
         self.part = args["part_dir"]
@@ -436,7 +437,7 @@ class Run:
         worktree = os.path.join(self.main, ".claude", "worktrees", "%s-%s" % (self.run, name))
         branch = "worktree-%s-%s" % (self.run, name) if job.branch else None
         spec = self.spec(job, k)
-        orca.make_worktree(self.main, worktree, job.head, branch)
+        orca.make_worktree(self.repo, worktree, job.head, branch)
         self.st["worktrees"].append({"path": os.path.realpath(worktree), "branch": branch, "role": job.role, "unit": job.unit})
         self.save()
         orca.prepare_worker(self.main, worktree, job.role, self.run, job.unit)
@@ -754,18 +755,15 @@ class Run:
 
     def execute(self):
         args = self.args
-        if args["revert"]:
-            if self.orchestrator:
-                if not self.st.get("repo_added"):
-                    orca.ensure_repo(self.main)
-                    self.st["repo_added"] = True
-                    self.save()
-                self.sender()
+        if args["revert"] and not self.orchestrator:
             return self.revert()
         if not self.st.get("repo_added"):
-            orca.ensure_repo(self.main)
+            orca.ensure_repo(self.repo)
             self.st["repo_added"] = True
             self.save()
+        if args["revert"]:
+            self.sender()
+            return self.revert()
         before = self.st.get("terminal")
         term = self.sender()
         if term != before:  # an Orca run is bound to the terminal that made it: another terminal needs its own
@@ -863,7 +861,7 @@ def finish(r, st, folder, status, why):
                 st.setdefault("release_errors", []).append("terminal %s: %s" % (st["terminal"], e))
             else:
                 st["terminal"] = None
-    branches, paths = cleanup.recorded_of(os.path.dirname(os.path.dirname(runs_folder(r.top))), st["run"])
+    branches, paths = cleanup.recorded_of(config.fwx_dir(r.top), st["run"])
     try:
         hold = {os.path.realpath(w["worktree"]): "its worker could not be released, so it may still be using it"
                 for w in st["workers"].values() if w.get("dispatch") and not w["released"]}

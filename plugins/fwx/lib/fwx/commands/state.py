@@ -13,7 +13,7 @@ import re
 import shutil
 import sys
 
-from fwx import config, context_base, routes, state
+from fwx import config, context_base, plan_form, routes, state
 from fwx.core import stages
 
 PROG = "fwx state"  # main() sets it to the name the command ran under (`fwx phase new`), for the messages
@@ -52,6 +52,39 @@ def _bound_to(r, bound):
     return bool(bound and bound["phase_dir"]) and os.path.join(os.path.dirname(r["plan_root"]), bound["phase_dir"]) == r["phase_dir"]
 
 
+def part_repos(r):
+    """What `fwx session --json` prints as `part_repos`: one `{name, path, default_branch, worktree}` per part of the bound phase
+    (its subphases in order, or the phase itself), the repository of `project.repos` the part works in and the phase worktree
+    to make there, `<repo>-<milestone>-<phase>` so two repositories of one phase never share a folder, or the workspace itself
+    (name null) at `<milestone>-<phase>`. A repository the plan names and `project.repos` lacks has a null path and worktree
+    (`fwx plan lint` refuses that plan). Null with no phase and with no `project.repos`, where nothing changes."""
+    main, phase = r["main_checkout"], r["phase_dir"]
+    try:
+        cfg = config.load(main, quiet=True)  # the workspace's own, not the nested repo's entry laid over it where the command runs
+    except config.UnreadableFile:  # a fwx.json that is no JSON must not stop `fwx session`, as in state.summary
+        return None
+    # any other ConfigError (a wrong `project.repos` entry) stops the command, as it does from inside the nested repo: null would read as "no nested repos"
+    repos = cfg["project"]["repos"]
+    if not repos or not phase:
+        return None
+    base = "%s-%s" % (r["milestone"], os.path.basename(phase))
+    if r.get("subproject"):  # two subprojects with a phase of one slug must not share a worktree
+        base = "%s-%s" % (r["subproject"], base)
+    out = []
+    for part in r["subphases"] or [phase]:
+        name = plan_form.part_repo(part, cfg)
+        if name is None:
+            out.append({"name": None, "path": main, "default_branch": cfg["project"]["default_branch"],
+                        "worktree": os.path.join(main, ".claude", "worktrees", base)})
+        elif name not in repos:
+            out.append({"name": name, "path": None, "default_branch": None, "worktree": None})
+        else:
+            out.append({"name": name, "path": os.path.normpath(os.path.join(main, repos[name]["path"])),
+                        "default_branch": repos[name].get("default_branch"),
+                        "worktree": os.path.join(main, ".claude", "worktrees", "%s-%s" % (name, base))})
+    return out
+
+
 def cmd_resolve(a):
     sid = state.session_id(a.session)
     bound = state.read_session(session=sid)
@@ -60,6 +93,7 @@ def cmd_resolve(a):
         state.write_session(session=sid, subproject=r["subproject"], phase_dir=r["phase_dir"])
     if a.json:
         extra = state.summary(r)
+        extra["part_repos"] = part_repos(r)
         extra["progress"] = (
             stages.progress(stages.current(r["phase_dir"]), extra["part"], extra["parts"]) if r["phase_dir"] else None)
         _dump(dict(r, **extra))

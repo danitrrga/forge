@@ -10,12 +10,12 @@ errors and warnings as `<file>: <field>: <reason>`. A plan file whose frontmatte
 structure error is the one to fix first. Everything is an error but the first budget step.
 
 Per plan file: no edit history (git is the history); no `T<n>`, `C<n>` or `D<n>` in the prose that `tasks`, `criteria` or
-`decisions.tsv` does not define; every `` `file:line` `` cite points at a file with that line (in the phase folder or the main
-checkout); a non-empty `## Size` when the plan exceeds its band or differs from `premortem.md`. Nothing caps the `## Goal` or the
+`decisions.tsv` does not define; every `` `file:line` `` cite points at a file with that line (in the phase folder or the checkout of the part's
+repository, the main checkout when it has none); a plan's `repo` is a repo of `project.repos`; a non-empty `## Size` when the plan exceeds its band or differs from `premortem.md`. Nothing caps the `## Goal` or the
 body, and `plan.md` has no required heading. `premortem.md`: `## Verdict`, `## Failure reasons`, and the verdict matches the failure
 reasons listed. `postmortem.md`: `## Verdict`, `## Findings` and `## Needs from the owner before executing`; each finding (a list item under `## Findings`) has a severity and an `evidence:` field, a blocker or warning
 with `unproven` evidence is an error, and the verdict matches the findings; `security_review` is true when a task writes a file
-that the decide table's default protected paths or `project.protected_paths` cover; with no `postmortem.md`, the same rule applies to `plan.md`'s own `security_review` when it is false.
+that the decide table's default protected paths or `project.protected_paths` cover (the `protected_paths` of the part's repo instead, when it has one); with no `postmortem.md`, the same rule applies to `plan.md`'s own `security_review` when it is false.
 
 A heading is required only where a script reads it (`## Verdict`, `## Findings`, `## Failure reasons` and the post-mortem's needs
 section); no order of headings is checked.
@@ -42,6 +42,7 @@ SEVERITIES = ("blocker", "warning", "info")
 _HISTORY = re.compile(r"(?:Ajustado el|Revisado el|Adjusted on)\s+(?:\d{4}-\d{2}-\d{2}|\d{1,2}[/.]\d{1,2}[/.]\d{2,4})", re.I)
 _ID = re.compile(r"(?<![\w/.:])([TCD]\d+)(?![\w/]|\.\w)")
 _CITE = re.compile(r"`([\w./-]+\.(?:md|py|mjs|js|ts|tsx|jsx|json|sh|txt|toml|tsv|yml|yaml|html|css|sql|rs|go|rb|java|c|h|cpp|ini|cfg)):(\d+)(?:-(\d+))?`")
+_SUBPROJECT = re.compile(r"/subprojects/([^/]+)/milestones/")
 _ITEM = re.compile(r"^(\s*)(?:[-*+]|\d+[.)])\s+(.*)$")
 _SEVERITY = re.compile(r"^[\s*_\[(]*(blocker|warning|info)\b", re.I)
 _EVIDENCE = re.compile(r"\bevidence:\s*(.*?)\s*(?:/\s*(?:owner|hint):|\Z)", re.I | re.S)
@@ -86,12 +87,37 @@ class _Form:
     def __init__(self, dir, out):
         self.dir, self.errors, self.warnings = dir, out["errors"], out["warnings"]
         self._main = False  # not looked for yet; then (root, None) or (None, why)
+        self._cfg = False  # likewise: (configuration, None) or (None, why)
 
     def error(self, rel, field, reason):
         self.errors.append("%s: %s: %s" % (rel, field, reason))
 
     def warn(self, rel, field, reason):
         self.warnings.append("%s: %s: %s" % (rel, field, reason))
+
+    def cfg(self):
+        """(configuration, None), or (None, why not)."""
+        if self._cfg is False:
+            try:
+                self._cfg = (config.load(self.dir, quiet=True), None)
+            except config.ConfigError as e:
+                self._cfg = (None, str(e))
+        return self._cfg
+
+    def repo(self, rel):
+        """The repository of `project.repos` the plan file `rel` works in (`part_repo`), or None."""
+        cfg, _ = self.cfg()
+        return part_repo(os.path.dirname(os.path.join(self.dir, rel)), cfg) if cfg else None
+
+    def checkout(self, rel):
+        """(where the cites of plan file `rel` are looked up, None), or (None, why not): the repository of its part when that is
+        declared, else the main checkout."""
+        root, why = self.main()
+        cfg = self.cfg()[0]
+        entry = cfg["project"]["repos"].get(self.repo(rel)) if cfg else None
+        if root is not None and entry:
+            root = os.path.realpath(os.path.join(root, entry["path"]))
+        return root, why
 
     def main(self):
         """(main checkout, None), or (None, why not)."""
@@ -106,6 +132,20 @@ class _Form:
         for h in HEADINGS[os.path.basename(rel)]:
             if h not in scanned[2]:
                 self.error(rel, "## " + h, "missing")
+
+
+def part_repo(part_dir, cfg):
+    """The repository of `project.repos` a part works in: the `repo` of the plan.md of `part_dir`, else the subproject the folder is
+    in when `project.repos` names it, else None. The plan's name is returned as written, so a name `project.repos` lacks reaches
+    the caller (`fwx plan lint` reports it)."""
+    try:
+        named = plan.read_frontmatter(os.path.join(str(part_dir), "plan.md")).get("repo")
+    except plan.PlanError:
+        named = None
+    if isinstance(named, str) and named.strip():
+        return named
+    m = _SUBPROJECT.search(os.path.abspath(str(part_dir)))
+    return m.group(1) if m and m.group(1) in cfg["project"]["repos"] else None
 
 
 def _in(root, rel):
@@ -146,7 +186,8 @@ def _ids(f, rel, body, data, decisions):
 
 
 def _cites(f, rel, body):
-    """Each `file:line` cite of the prose: a file of the phase folder or of the main checkout, with that line."""
+    """Each `file:line` cite of the prose: a file of the phase folder or of the checkout of the part's repository (the main
+    checkout when it has none), with that line."""
     unlooked, why = 0, None
     done = set()
     for text in _prose(body):
@@ -157,7 +198,7 @@ def _cites(f, rel, body):
             done.add(m.group(0))
             path = _in(os.path.realpath(f.dir), name)
             if path is None:
-                root, why = f.main()
+                root, why = f.checkout(rel)
                 if root is None:
                     unlooked += 1
                     continue
@@ -238,10 +279,11 @@ def protected_glob(protected, name):
     return next((g for g in protected if p and (globs.matches(p, g) or globs.matches(p + "/", g))), None)
 
 
-def protected_paths(cfg):
-    """The globs a task may not write without the security review: `project.protected_paths`, then the decide table's defaults
-    (what `fwx decide` and `fwx wave integrate` read, so a plan is judged by the same list they are)."""
-    own = cfg["project"].get("protected_paths")
+def protected_paths(cfg, repo=None):
+    """The globs a task may not write without the security review: `project.protected_paths` (the `protected_paths` of the entry
+    of `project.repos` that `repo` names, which replaces the workspace's), then the decide table's defaults (what `fwx decide` and
+    `fwx wave integrate` read, so a plan is judged by the same list they are)."""
+    own = (cfg["project"].get("repos") or {}).get(repo, cfg["project"]).get("protected_paths")
     own = [g for g in own if isinstance(g, str)] if isinstance(own, list) else []
     return own + list(decide.load_table()["default_protected_paths"])
 
@@ -251,13 +293,12 @@ def _security(f, rel, seen):
     tasks = [(r, t) for r, d in seen.items() if d is not None for t in plan._tasks_of(d) if isinstance(t.get("files"), list)]
     if not tasks:
         return
-    try:
-        cfg = config.load(f.dir)
-    except config.ConfigError as e:
-        f.warn(rel, "security_review", "NOT RUN, NOT ARMED: the protected paths are unknown (%s)" % e)
+    cfg, why = f.cfg()
+    if cfg is None:
+        f.warn(rel, "security_review", "NOT RUN, NOT ARMED: the protected paths are unknown (%s)" % why)
         return
-    protected = protected_paths(cfg)
     for r, t in tasks:
+        protected = protected_paths(cfg, f.repo(r))
         for name in t["files"]:
             glob = protected_glob(protected, name)
             if glob:
@@ -266,10 +307,24 @@ def _security(f, rel, seen):
                 break
 
 
+def _repo_names(f, seen):
+    """Each plan file's `repo` is one of `project.repos`."""
+    for rel, data in seen.items():
+        name = data.get("repo") if data is not None else None
+        if not isinstance(name, str) or not name.strip():
+            continue
+        cfg, why = f.cfg()
+        if cfg is None:
+            f.warn(rel, "repo", "NOT RUN, NOT ARMED: project.repos is unknown (%s)" % why)
+        elif name not in cfg["project"]["repos"]:
+            f.error(rel, "repo", "%s names no repo of project.repos (%s)" % (name, ", ".join(cfg["project"]["repos"]) or "none"))
+
+
 def check(dir, seen, out):
     """Add the form errors and warnings of the phase folder `dir` to `out`; see the module text."""
     f = _Form(dir, out)
     decisions = {r.get("id") for r in state.read_rows(os.path.join(dir, "decisions.tsv"))}
+    _repo_names(f, seen)
     pre_path = os.path.join(dir, "premortem.md")
     premortem = _valid(pre_path, plan._premortem_problems) if os.path.exists(pre_path) else None
     for rel, data in seen.items():

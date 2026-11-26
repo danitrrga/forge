@@ -100,10 +100,15 @@ def fm_text(fm):
 _n = [0]
 
 
-def phase(change=None, body=BODY, pre=PRE_BODY, post=POST_BODY, pre_fm=PRE, post_fm=POST, decisions=DECISIONS, extra=None, in_repo=True):
-    """A phase folder with plan.md, premortem.md, postmortem.md and decisions.tsv; `pre` or `post` None leaves the file out."""
+def phase(change=None, body=BODY, pre=PRE_BODY, post=POST_BODY, pre_fm=PRE, post_fm=POST, decisions=DECISIONS, extra=None, in_repo=True,
+          root=None, scope=".fwx"):
+    """A phase folder with plan.md, premortem.md, postmortem.md and decisions.tsv; `pre` or `post` None leaves the file out.
+    `root` is the repository it is made in (default REPO) and `scope` the folder of the plan files in it. `in_repo=False` is a folder git
+    cannot place in any repository, even with TMPDIR inside a worktree (an executor's scratch folder is), where the toy would otherwise
+    find that worktree's configuration and checkout. Seen red there before the fix: 6 FAILs, among them
+    `FAIL: repo with no configuration: NOT RUN, NOT ARMED, no error: {'errors': ['plan.md: repo: a names no repo of project.repos (none)'] ...}`."""
     _n[0] += 1
-    d = os.path.join(REPO, ".fwx", "p%d" % _n[0]) if in_repo else helpers.mkdtemp("fwx-form-")
+    d = os.path.join(root or REPO, scope, "p%d" % _n[0]) if in_repo else helpers.mkdtemp_nogit("fwx-form-")
     fm = base()
     if change:
         change(fm)
@@ -348,5 +353,51 @@ case("a subphase without ## Approach is fine", phase(top, body=GOAL + "## Approa
      exact=(0, 0))
 case("a subphase citing D9", phase(top, body=GOAL + "## Approach\nT1, then T2; D1 and C1.\n\n" + SIZE, pre_fm=dict(PRE, parts=2), extra=subs(b2=SBODY.replace("D1", "D9"))),
      ["01.2-b/plan.md: body: D9 is not defined in decisions.tsv"])
+
+# ---- a workspace whose code lives in nested repositories (`project.repos`): a part is judged against the repository it works in.
+# Red before the code, quoted (the part_repo cases left out, since the module has no part_repo: AttributeError: module
+# 'fwx.plan_form' has no attribute 'part_repo'):
+#   FAIL: error: repo naming no repository of project.repos: 'plan.md: repo: b names no repo of project.repos (a)' not in ['plan.md: repo: unknown field', 'plan.md: body: cited file not found: src/guarded/key.py']
+#   FAIL: error: a task on a's protected path in a subproject a: 'postmortem.md: security_review: task T1 touches a protected path (src/guarded/**): security_review must be true' not in ['plan.md: body: cited file not found: src/guarded/key.py']
+#   FAIL: only these: a cite of a's file in a part of a subproject a: got (1, 0), want (0, 0)
+WS = helpers.toy_repo({"a/src/guarded/key.py": "KEY = 1\n", "a/src/free.py": "x = 1\n", "ws-only/x.py": "y = 1\n",
+                       ".claude/fwx.json": json.dumps({"schema": 1, "project": {"protected_paths": ["ws-only/**"], "repos": {
+                           "a": {"path": "a", "protected_paths": ["src/guarded/**"]}}}})})
+REPO_CITE = APPROACH.replace("`lib/real.py:10-12`", "`src/guarded/key.py:1`")
+guarded = lambda f: task(f, "T1").update(files=["src/guarded/key.py"])
+with_repo = lambda name, change=None: (lambda f: (f.update(repo=name), change(f) if change else None))
+ws_phase = lambda change=None, **kw: phase(change, root=WS, body=GOAL + REPO_CITE + SIZE, **kw)
+sub_scope = lambda name: ".fwx/subprojects/%s/milestones/v1/phases/01-x" % name
+
+from fwx import config, plan_form  # noqa: E402
+cfg_ws = config.load(WS, quiet=True)
+repo_of = lambda change, **kw: plan_form.part_repo(ws_phase(change, **kw), cfg_ws)
+s.eq("part_repo: the plan's repo", repo_of(with_repo("a")), "a")
+s.eq("part_repo: the plan's repo wins over the folder's subproject", repo_of(with_repo("a"), scope=sub_scope("zz")), "a")
+s.eq("part_repo: no repo and the root scope is None", repo_of(None), None)
+s.eq("part_repo: the subproject the repos table names", repo_of(None, scope=sub_scope("a")), "a")
+s.eq("part_repo: a subproject the repos table does not name is None", repo_of(None, scope=sub_scope("zz")), None)
+s.eq("part_repo: a subphase folder of that subproject", repo_of(None, scope=sub_scope("a") + "/01.1-y"), "a")
+
+case("repo naming a repository of project.repos", ws_phase(with_repo("a")), exact=(0, 0))
+case("repo naming no repository of project.repos", ws_phase(with_repo("b")), ["plan.md: repo: b names no repo of project.repos (a)"])
+case("a cite of a's file in a part of a", ws_phase(with_repo("a")), exact=(0, 0))
+case("a cite of a's file in a part of no repo", ws_phase(), ["plan.md: body: cited file not found: src/guarded/key.py"])
+case("a cite of a's file in a part of a subproject a", ws_phase(scope=sub_scope("a")), exact=(0, 0))
+case("a task on a's protected path, security_review false", ws_phase(with_repo("a", guarded)),
+     ["postmortem.md: security_review: task T1 touches a protected path (src/guarded/**): security_review must be true"])
+case("a task on a's protected path, security_review true", ws_phase(with_repo("a", guarded), post_fm=dict(POST, security_review=True)), exact=(0, 0))
+case("a task on a's protected path in a subproject a", ws_phase(guarded, scope=sub_scope("a")),
+     ["postmortem.md: security_review: task T1 touches a protected path (src/guarded/**): security_review must be true"])
+# the repository's list replaces the workspace's: a's `ws-only/x.py` is the workspace's protected path, not a's
+case("the workspace's protected path is not a's", ws_phase(with_repo("a", lambda f: task(f, "T1").update(files=["ws-only/x.py"]))), exact=(0, 0))
+case("the workspace's protected path in a part of the workspace", ws_phase(lambda f: task(f, "T1").update(files=["ws-only/x.py"])),
+     ["postmortem.md: security_review: task T1 touches a protected path (ws-only/**): security_review must be true"])
+case("a default protected path in a part of a", ws_phase(with_repo("a", lambda f: task(f, "T1").update(files=["src/auth/login.py"]))),
+     ["postmortem.md: security_review: task T1 touches a protected path (**/auth/**): security_review must be true"])
+d = phase(with_repo("a"), body=NOCITE, post=None, in_repo=False)
+r = plan.check_phase(d)
+s.ok("repo with no configuration: NOT RUN, NOT ARMED, no error", r["errors"] == [] and any(
+    w.startswith("plan.md: repo: NOT RUN, NOT ARMED") for w in r["warnings"]), repr(r))
 
 s.done()

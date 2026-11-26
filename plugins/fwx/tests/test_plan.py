@@ -194,6 +194,19 @@ for label, v in (("a string", "yes"), ("a number", 1), ("null", None)):
     case("security_review as %s" % label, mutated(lambda f, v=v: f.update(security_review=v)), ["plan.md: security_review: must be true or false"])
 raises("load_plan: security_review \"yes\" raises", lambda: plan.load_plan(os.path.join(
     mutated(lambda f: f.update(security_review="yes")), "plan.md"), "plan.md"), "plan.md: security_review: must be true or false", "security_review")
+# a nested-repo workspace: the plan names the repository its part works in (the check of the name against project.repos is
+# plan_form's, in test_plan_form.py; load_plan only wants a string). Red before the code:
+#   FAIL: a plan with repo loads: plan.md: repo: unknown field
+repo_plan = os.path.join(mutated(lambda f: f.update(repo="a")), "plan.md")
+try:
+    got = plan.load_plan(repo_plan).get("repo")
+except plan.PlanError as e:
+    got = str(e)
+s.eq("a plan with repo loads", got, "a")
+for label, v, why in (("a number", 3, "must be a non-empty string"), ("an empty string", "", "empty"), ("null", None, "must be a non-empty string")):
+    case("repo as %s" % label, mutated(lambda f, v=v: f.update(repo=v)), ["plan.md: repo: " + why])
+raises("load_plan: repo 3 raises", lambda: plan.load_plan(os.path.join(mutated(lambda f: f.update(repo=3)), "plan.md"), "plan.md"),
+       "plan.md: repo: must be a non-empty string", "repo")
 case("an unknown top-level field", mutated(lambda f: f.update(extra=1)), ["plan.md: extra: unknown field"])
 case("size.parts of another type", mutated(lambda f: f["size"].update(parts="2")), ["plan.md: size.parts: must be an integer of at least 1"])
 case("size.parts a bool", mutated(lambda f: f["size"].update(parts=True)), ["plan.md: size.parts: must be an integer of at least 1"])

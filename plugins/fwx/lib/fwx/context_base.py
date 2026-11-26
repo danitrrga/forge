@@ -1,7 +1,7 @@
 """The base-context file every agent of a phase is handed at start, and its check: the one writer is `build` (and `seal`, for a
 file written by hand).
 
-The file is `<git-common-dir>/fwx/context-base/<phase>.md`, where `<phase>` is the folder's path relative to the checkout that
+The file is `<fwx folder>/context-base/<phase>.md`, where `<phase>` is the folder's path relative to the checkout that
 holds `.fwx/`, with `/` turned into `__`. It is outside the work tree on purpose: `.fwx/` is committed before every wave and a
 derived file would dirty it, and every worktree reads the same place. Its parts, in order: the mark (`# Base context · <sha8 of
 everything after this line>`), `data/context-map.md` whole, `## Goal` (Intent and What success means of `context.md`, each cut
@@ -109,11 +109,11 @@ def _phase_name(folder):
 
 
 def base_path(folder):
-    """Where the base of a phase, a subphase or a job folder lives: `<git-common-dir>/fwx/context-base/<phase>.md`, the same
+    """Where the base of a phase, a subphase or a job folder lives: `<fwx folder>/context-base/<phase>.md`, the same
     from every worktree. Creates nothing."""
     f = _folder(folder)
     name = _phase_name(f)
-    return os.path.join(os.path.dirname(state.sessions_dir(f)), "context-base", name + ".md")
+    return os.path.join(config.fwx_dir(f), "context-base", name + ".md")
 
 
 def sections_for(agent_type, table=None):
