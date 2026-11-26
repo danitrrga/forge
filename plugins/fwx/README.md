@@ -51,6 +51,28 @@ process may use, at most 8; `--jobs 1` is one file after another); the lines and
 file's output is shown whole. `python3 bin/forge test` with no group runs forge's own tests and leaves this suite out. A command is a file, `lib/fwx/commands/<name>.py` with a `main(argv)`; its first
 docstring line is its help, and there is no list to edit.
 
+## Agents
+
+Each agent gets, by path in its brief, only what its job needs; nothing is injected into every agent. A critic or a reviewer gets files, never the author's reasoning. The agent files are `agents/<role>.md`; the fixer and the conflict resolver are modes of the executor, chosen by the brief.
+
+| Role | Launched by | What its brief gives |
+| --- | --- | --- |
+| `planner` | the `plan` skill | the phase folder: `context.md`, `decisions.tsv` and any critique, via `fwx plan brief` |
+| `pre-mortem` | the `pre-mortem` skill | `context.md` and `decisions.tsv` of the phase |
+| `post-mortem` | the `post-mortem` skill | the plan, `context.md` and `decisions.tsv`; on a returned job also `git diff` of the branch |
+| `executor` | `fwx wave run` | one task of the plan: its files, tests and limits, with `context.md`, `plan.md` and `decisions.tsv` |
+| `fixer` | `fwx wave run` | the findings to fix (one commit each) or the red check or gate to fix, with the plan's files as its scope |
+| `resolver` | `fwx wave run` | the branch to merge in, the quick checks to run and the task trailers, with the same files as the executor |
+| `reviewer` | `fwx wave run` | the diff `<base>..<head>`, `context.md`, `decisions.tsv`, `plan.md`, the phase goal and success criteria with the measure of each and, for UI, the approved prototypes; never the author's reasoning |
+| `security-reviewer` | `fwx wave run` | the same diff and files as the reviewer and the protected paths the diff touches |
+| `review-verifier` | `fwx wave run` | the reviewer's findings and the diff; not the reasoning of whoever wrote them |
+| `researcher` | the orchestrator, in a discuss | one angle to read, `context.md` and `decisions.tsv`, and the file to write under the phase's `research/` |
+| `demo` | the orchestrator, in a discuss | one UI decision, `context.md` and `decisions.tsv`, the folder to write and the verdict tool and command from `fwx discuss` |
+| `ui-walker` | the `ui-walk` skill | one tramo of screens, its axis (`breaker` or `critic`), the session and the command to drive the browser; for the critic, each screen's approved reference; no code |
+| `ui-verifier` | the `ui-walk` skill | the mode (`tramos` or `verify`), the plan, the walkers' findings or the base commit, and the phase's `demo/` folder |
+| `skill-proposer` | the `session` skill | `context.md`, `decisions.tsv`, `plan.md`, the phase branch and the base commit |
+| `state` | the `session` skill | the phase's `context.md`, `decisions.tsv`, `plan.md`, the state and report templates and the run to read |
+
 ## Orca plugin
 
 `orca/` is an Orca plugin (Orca 1.4.259 or later): a status bar chip (`<project> · <profile> · ▰▰▰▱▱▱▱▱`, the bar being `progress` of `fwx session --json`; hover shows the roadmap, click opens the "Session" panel) for the fwx session of the workspace in view.
