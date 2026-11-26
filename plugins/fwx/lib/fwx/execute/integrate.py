@@ -30,6 +30,7 @@ of the run passes, and carries what the part report reads, from the run's own re
 and the commits of the `Fwx-Finding` trailers of the findings a `wave merge --findings` merged), `criteria`, `outside` (the items of the reports
 that were merged and have no issue), `tried` (one line per round spent), `gaps` and `protected`. Imports the standard library, fwx.state, fwx.config, fwx.plan, fwx.plan_step, fwx.core and execute.base, brief, cleanup and worktree_setup.
 """
+import contextlib
 import json
 import os
 import re
@@ -125,13 +126,14 @@ def _quick(top, cfg, say=lambda line: None):
     cmds = evidence.plan_checks(cfg["project"]["checks_quick"], os.devnull)
     limit = cfg["project"]["check_timeout_s"]
     rc, late = 0, []
-    for c in cmds:
-        r = verify.run_check(c, top, limit)
-        if r["timed_out"]:
-            late.append(c)
-            say("quick check %s timed out after %d s: raise `project.check_timeout_s` if the check needs longer" % (c, limit))
-        if r["rc"] != 0 and rc == 0:
-            rc = 1 if r["rc"] is None else r["rc"]
+    with verify.gate_lock(top) if cmds else contextlib.nullcontext():  # another run of this machine may be running the recipes: the gate waits for it, so do these
+        for c in cmds:
+            r = verify.run_check(c, top, limit)
+            if r["timed_out"]:
+                late.append(c)
+                say("quick check %s timed out after %d s: raise `project.check_timeout_s` if the check needs longer" % (c, limit))
+            if r["rc"] != 0 and rc == 0:
+                rc = 1 if r["rc"] is None else r["rc"]
     out = {"ran": bool(cmds), "cmds": cmds, "rc": rc}
     if late:
         out.update(timed_out=late, limit=limit)

@@ -959,6 +959,8 @@ MUTANTS = [
      "integrate --final with no branch: exit"),
     ("the gate reads the default branch's edits as the part's", case_integrate_default_merge, I, "names &= _diff_names(top, mb, to)", "pass",
      "default merge: master's CI and protected edits are not the part's"),
+    ("the quick checks skip the gate lock", case_integrate_quick_lock, I, "with verify.gate_lock(top) if cmds else contextlib.nullcontext():", "if True:",
+     "a held gate lock keeps the quick check from starting"),
     ("a refused attempt's fixer is pointed at the oldest brief that names the findings", case_next, I, "for _n, name in sorted(found):", "for _n, name in sorted(found, reverse=True):",
      "a later fix round: the brief has"),
     ("the agent's unit is not returned", case_next, I, 'result["unit"], result["brief"] = _write_brief(', '_u, result["brief"] = _write_brief(',
