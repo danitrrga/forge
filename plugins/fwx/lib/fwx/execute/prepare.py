@@ -75,7 +75,7 @@ def need_orca(plane, environ=None):
     """The session plane drives every agent as an Orca worker (execute/orca.py), so without `orca` on PATH a run would fail late and leave a failed run
     behind: refuse first, naming what to install. The factory plane has its own seam."""
     environ = os.environ if environ is None else environ
-    if plane == "session" and shutil.which("orca", path=environ.get("PATH")) is None:
+    if plane == "session" and shutil.which("orca", path=environ.get("PATH", os.defpath)) is None:
         raise WaveError("orca is not on PATH: `wave run` drives each agent as an Orca worker, so install Orca (the desktop app) and its CLI "
                         "(Settings in Orca) first; discuss, plan and the mortems do not need it")
 

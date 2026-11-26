@@ -970,6 +970,20 @@ def case_orca_missing(R, S):
     S.ok("orca missing: nothing written", not sc.audit_exists())
     r = sc.prepare(R, plane="factory", env={"PATH": tool_dir(orca=False)})
     S.eq("orca missing: the factory plane does not need it", (r.returncode, ran(runs)), (0, 1))
+    # An environment with no PATH is searched on the default path, never on this process's PATH (CodeRabbit, PR 268). Seen failing with
+    # `environ.get("PATH")`: FAIL: orca missing: no PATH in the environment does not fall back to the process's PATH: no refusal
+    from fwx.execute import prepare as prep_mod
+    saved = os.environ.get("PATH")
+    os.environ["PATH"] = tool_dir(orca=True) + os.pathsep + (saved or "")
+    try:
+        try:
+            prep_mod.need_orca("session", {})
+            refused = False
+        except prep_mod.WaveError:
+            refused = not shutil.which("orca", path=os.defpath)
+    finally:
+        os.environ["PATH"] = saved
+    S.ok("orca missing: no PATH in the environment does not fall back to the process's PATH", refused, "no refusal")
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
@@ -982,6 +996,8 @@ CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_d
 P, B, CG = "lib/fwx/execute/prepare.py", "lib/fwx/execute/base.py", "lib/fwx/core/ci_gate.py"  # CG: where the base check of CI lives (09.6 T64)
 MUTANTS = [
     ("orca not asked for", case_orca_missing, P, "    need_orca(plane, environ)\n", "", "orca missing: exit: got 0, want 2"),
+    ("orca looked up on the process PATH when the environment has none", case_orca_missing, P, 'environ.get("PATH", os.defpath)', 'environ.get("PATH")',
+     "orca missing: no PATH in the environment does not fall back to the process's PATH"),
     ("orca asked for on the factory plane too", case_orca_missing, P, 'if plane == "session" and shutil.which', "if shutil.which",
      "orca missing: the factory plane does not need it"),
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
