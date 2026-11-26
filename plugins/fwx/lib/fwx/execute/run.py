@@ -152,6 +152,7 @@ def all_states(top):
         data = load_state(top, name)
         if data:
             found.append(data)
+    found.sort(key=lambda st: (st.get("started") or 0, st.get("run") or ""))  # oldest first: run ids sort wrong as text (`-10` before `-2`)
     return found
 
 

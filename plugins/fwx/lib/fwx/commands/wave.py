@@ -419,7 +419,9 @@ def do_step(step, argv):
         else:
             part = part or _part_of(top, run)
             args = {"run": run, "part_dir": part}
-            code, result = integrate.summary(".", part, run, _steps(top, run), (run_mod.load_state(top, run) or {}).get("branch"))
+            saved = run_mod.load_state(top, run) or {}
+            where = (saved.get("args") or {}).get("checkout")  # the run's own checkout, as `remove` reads it: its branch is that repo's
+            code, result = integrate.summary(where if where and os.path.isdir(where) else ".", part, run, _steps(top, run), saved.get("branch"))
             if part is None:
                 say("no --part-dir and no call of run %s names one: gate none" % run)
         if run:

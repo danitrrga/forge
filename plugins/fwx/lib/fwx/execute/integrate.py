@@ -475,7 +475,7 @@ def _kept(top, steps, head="HEAD"):
             if args.get("final"):
                 protected = list(res.get("protected") or [])
     commit = {}
-    if merged:
+    if merged and head:
         for sha, ids in _commits(top, head):
             for i in ids:
                 commit.setdefault(i, sha)
@@ -485,10 +485,10 @@ def _kept(top, steps, head="HEAD"):
 
 def summary(cwd, part_dir, run=None, steps=(), branch=None):
     """(exit code, result): {gate, head, evidence_line, rounds, why} and what `_kept` reads from the run's calls. `pass` when the last evidence row of the part is green and is
-    the head of `branch` (the run's own, so every checkout of the repo gives the same answer; the cwd's HEAD when the run records none), and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
+    the head of `branch` (the run's own, so every checkout of the repo gives the same answer; the cwd's HEAD when the run records none; a recorded branch that is gone leaves no head and the gate fails), and the run `run` (whose calls are `steps`) passed its own gate (`_own_gate`); `fail` when it is red or another
     commit's, or the run did not pass its gate (exit 1, `why` says it); `none` with no evidence row or no part (exit 2)."""
     top = _top(cwd)
-    head = (out(top, "rev-parse", "--verify", "-q", "refs/heads/%s^{commit}" % branch) if branch else None) or verify.head(top)
+    head = (out(top, "rev-parse", "--verify", "-q", "refs/heads/%s^{commit}" % branch) or "") if branch else verify.head(top)
     kept = _kept(top, steps, head)
     if not part_dir:
         return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": None, "why": ""}, **kept)
@@ -500,7 +500,7 @@ def summary(cwd, part_dir, run=None, steps=(), branch=None):
         return 2, dict({"gate": "none", "head": head, "evidence_line": "", "rounds": used, "why": ""}, **kept)
     last = seen[-1]
     rc, sha = last.get("rc", "").strip(), last.get("sha", "")
-    why = _own_gate(run, steps) if run else None
+    why = "branch %s not found" % branch if branch and not head else (_own_gate(run, steps) if run else None)
     gate = "pass" if rc == "0" and sha == head and not why else "fail"
     try:
         commands = json.loads(last.get("detail", ""))["commands"]

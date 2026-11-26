@@ -575,7 +575,8 @@ def case_list_order(root, S):
     for n, name in enumerate(order):
         helpers.write(os.path.join(w.common, "fwx", "runs", name), "state.json", json.dumps({"run": name, "branch": "phase", "part_dir": w.part, "pid": 0, "state": "done",
                       "step": "done", "workers": {}, "worktrees": [], "steps": [], "started": 1000.0 + n}))
-    rows = [x.split()[0] for x in w.fwx("wave", "list").stdout.splitlines() if x.strip()]
+    listed = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "list"], cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=60)
+    rows = [x.split()[0] for x in listed.stdout.splitlines() if x.strip()]
     S.eq("wave list: oldest first by start time", rows, order)
 
 
@@ -1476,7 +1477,7 @@ MUTANTS = [
      "wave list: oldest first by start time"),
     ("wave --run in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'integrate.summary(where if where and os.path.isdir(where) else ".",', 'integrate.summary(".",',
      "nested: `wave --run R` from the workspace root reads the gate of repo a's branch"),
-    ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'where if where and os.path.isdir(where) else "."', '"."',
+    ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'cleanup.cleanup(where if where and os.path.isdir(where) else ".",', 'cleanup.cleanup(".",',
      "nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit"),
     ("resume from any worktree on the branch", case_nested_resume, "lib/fwx/commands/wave.py", "            if own != here:", "            if False:",
      "nested resume from repo b: exit 2, no worker, both repos named"),
