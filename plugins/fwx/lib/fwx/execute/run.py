@@ -755,18 +755,15 @@ class Run:
 
     def execute(self):
         args = self.args
-        if args["revert"]:
-            if self.orchestrator:
-                if not self.st.get("repo_added"):
-                    orca.ensure_repo(self.repo)
-                    self.st["repo_added"] = True
-                    self.save()
-                self.sender()
+        if args["revert"] and not self.orchestrator:
             return self.revert()
         if not self.st.get("repo_added"):
             orca.ensure_repo(self.repo)
             self.st["repo_added"] = True
             self.save()
+        if args["revert"]:
+            self.sender()
+            return self.revert()
         before = self.st.get("terminal")
         term = self.sender()
         if term != before:  # an Orca run is bound to the terminal that made it: another terminal needs its own
