@@ -675,6 +675,22 @@ def case_transcript(root, S):
          "worker_done" in spec and "first" in spec[spec.rfind("worker_done") - 80:] and "When you have returned your last line" not in spec, spec[-260:])
 
 
+def case_relative_reply(root, S):
+    """A worker that replies with its report path from its worktree (`.fwx-agent/<run>/<unit>/report.json`, no folder before `.fwx-agent`) is
+    understood: `orca.REPLY_LINE` takes it as the reply line past the closing prose, and `wave report` and `wave findings` read the report in the
+    worktree the run state names (live-e2e.md defect 1: such a report was dropped and its task reran).
+    Seen red before the fix:
+      FAIL: relative reply: the run ends done: got '... worker T1 failed: Done, I sent worker_done to the coordinator. worker T1 started (executor, sonnet, attempt 2) ...'
+      FAIL: relative reply: the executor and the reviewer run once each: got ['T1', 'T1'], want ['T1', 'r1']"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])],
+              behave={"units": {"T1": {"mode": "ok", "relative": True, "trailing": "Done, I sent worker_done to the coordinator."},
+                                "r1": {"mode": "ok", "relative": True, "trailing": "Reviewed, nothing to fix."}}})
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("relative reply: the run ends done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("relative reply: the executor and the reviewer run once each", units(w), ["T1", "r1"])
+
+
 def case_waiting(root, S):
     """A ready/idle worker whose `waitingOnHuman` is true, `unknown` or absent may be waiting on a person and is left alone until its limit,
     not stopped at IDLE_S.
@@ -1408,7 +1424,7 @@ def case_reply_grace(root, S):
 
 
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
+         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_relative_reply, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
          case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
 

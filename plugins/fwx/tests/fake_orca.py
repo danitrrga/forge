@@ -103,6 +103,7 @@ def play(behave, wt, marker, launch, force=None):
     mode = force or spec.get("mode", "ok")
     folder = scratch(wt, run, unit)
     report = os.path.join(folder, "report.json")
+    shown = os.path.relpath(report, wt) if spec.get("relative") else report  # a worker that writes its path short, from its worktree
     if mode == "garbled":
         return "I could not finish this one", mode, spec
     if mode in ("hang", "wait", "wait-unknown", "wait-absent", "showfail", "ask"):
@@ -130,12 +131,12 @@ def play(behave, wt, marker, launch, force=None):
         rep = {"status": "done", "branch": branch, "outside": [{"where": "x"}] if mode == "bad-outside" else []}
         with open(report, "w", encoding="utf-8") as f:
             json.dump(rep, f)
-        return "done %s commits=1" % report, mode, spec
+        return "done %s commits=1" % shown, mode, spec
     findings = spec.get("findings") or []
     rep = {"looked_at": ["a"], "findings": findings, "outside": [], "criteria": [{"id": c, "met": "yes", "evidence": "seen"} for c in behave.get("criteria", [])]}
     with open(report, "w", encoding="utf-8") as f:
         json.dump(rep, f)
-    return "reviewed %s looked_at=1 findings=%d criteria_no=0 criteria_unproven=0" % (report, len(findings)), mode, spec
+    return "reviewed %s looked_at=1 findings=%d criteria_no=0 criteria_unproven=0" % (shown, len(findings)), mode, spec
 
 
 def shape(d):

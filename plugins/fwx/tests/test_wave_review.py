@@ -77,6 +77,11 @@ class World:
         self.env = dict(self.S.env)
         self.runs = os.path.join(self.S.repo, ".git", "fwx", "runs")
 
+    def state(self, *workers, run=RUN):
+        """The run's state.json with its workers, `(unit, attempt, worktree)` each (what `wave run` keeps: the worktree a worker was started in)."""
+        rows = {"%s/%d" % (u, k): {"unit": u, "worktree": w} for u, k, w in workers}
+        helpers.write(self.run_dir(run), "state.json", json.dumps({"workers": rows}))
+
     def run_dir(self, run=RUN):
         return os.path.join(self.runs, run)
 
@@ -685,6 +690,12 @@ def case_forbidden(R, S):
     W.review(R)
     r, v = W.find(R, W.reply("r1", [finding("F1", file=".fwx-notes/a.md")]))
     S.eq("a file of a folder that only begins with .fwx is fixed", (v.get("next"), v.get("ids")), ("fix", ["r1-F1"]))
+    # the path as the brief or a reviewer wrote it: absolute, or from a reviewer's worktree
+    W = World()
+    W.review(R)
+    absolute = os.path.join(W.S.repo, plan)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file=absolute), finding("F2", file=".claude/worktrees/r-r1/" + plan)]))
+    S.eq("a finding in .fwx/ by an absolute path, or one from a worktree, is for the owner", (v.get("next"), [c["id"] for c in v.get("consider") or []]), ("done", ["r1-F1", "r1-F2"]))
     # above the threshold the verifier says `fix`, and the finding in .fwx/ still goes to the owner
     W = World()
     W.review(R)
@@ -694,7 +705,59 @@ def case_forbidden(R, S):
     S.eq("a verdict `fix` on a finding in .fwx/ is not fixed", (v.get("next"), v.get("ids"), [c["id"] for c in v.get("consider") or []]), ("fix", ["r1-F1", "r1-F2"], ["r1-F3", "r1-F4"]))
 
 
-CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_forbidden, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
+def case_relative(R, S):
+    """A reviewer or a verifier that writes its report path short (from its worktree, or from the folder the worktree is in) is read where the
+    run state puts its worktree, as an executor's is (`wave report`); a path that names no worktree of the unit is a miss, and the newest attempt wins.
+    Seen red before the fix:
+      FAIL: a relative reviewer path (from the worktree itself) is read -> next relaunch: want next 'done', got 'relaunch'
+      FAIL: a relative verifier path (from the worktree itself) is read -> next relaunch: want next 'fix', got 'relaunch'"""
+    tail = ".fwx-agent/%s/%s/report.json" % (RUN, "r1")
+    for label, short in (("from the worktree itself", lambda d: tail), ("from the folder the worktree is in", lambda d: os.path.basename(d) + "/" + tail)):
+        W = World()
+        W.review(R)
+        line = W.reply("r1")
+        W.state(("r1", 1, W.dirs["r1"]))
+        r, v = W.find(R, "reviewed %s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % short(W.dirs["r1"]))
+        nxt(S, "a relative reviewer path (%s) is read" % label, v, "done")
+        W = World()
+        four(W, R)
+        p = W.path("r1-verifier")
+        rows = [{"id": "r1-F%d" % i, "verdict": "fix", "severity": "medium", "reason": "because"} for i in range(1, 5)]
+        helpers.write(os.path.dirname(p), "report.json", json.dumps({"verdicts": rows}))
+        W.state(("r1-verifier", 1, W.dirs["r1-verifier"]))
+        r, v = W.say_verdicts(R, "verdicts %s" % short(W.dirs["r1-verifier"]).replace("r1/", "r1-verifier/"))
+        nxt(S, "a relative verifier path (%s) is read" % label, v, "fix")
+    # no worktree to name (no state), or the path names another one: a miss, whatever waits in the driver's cwd under the same relative path
+    W = World()
+    W.review(R)
+    W.reply("r1")
+    helpers.write(os.path.join(W.S.cwd, ".fwx-agent", RUN, "r1"), "report.json", open(W.path("r1"), encoding="utf-8").read())
+    r, v = W.find(R, "reviewed %s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % tail)
+    nxt(S, "a relative reviewer path in a run with no state is a miss, whatever is in the driver's cwd", v, "relaunch")
+    W = World()
+    W.review(R)
+    W.reply("r1")
+    W.state(("r1", 1, W.dirs["r1"]))
+    r, v = W.find(R, "reviewed other/%s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % tail)
+    nxt(S, "a relative reviewer path that names another folder is a miss", v, "relaunch")
+    # two attempts (a relaunch): only the newest one's worktree is read; the state lists the old one first
+    W = World()
+    W.review(R)
+    W.reply("r1")
+    old = helpers.mkdtemp("fwx-old-")
+    helpers.write(os.path.join(old, ".fwx-agent", RUN, "r1"), "report.json", open(W.path("r1"), encoding="utf-8").read())
+    W.state(("r1", 1, old), ("r1", 2, W.dirs["r1"]))
+    r, v = W.find(R, "reviewed %s/%s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % (os.path.basename(old), tail))
+    nxt(S, "a relative reviewer path of an older attempt is not read", v, "relaunch")
+    W = World()
+    W.review(R)
+    W.reply("r1")
+    W.state(("r1", 1, helpers.mkdtemp("fwx-old-")), ("r1", 2, W.dirs["r1"]))
+    r, v = W.find(R, "reviewed %s looked_at=1 findings=0 criteria_no=0 criteria_unproven=0" % tail)
+    nxt(S, "a relative reviewer path of the newest attempt is read", v, "done")
+
+
+CASES = [case_review, case_default_merge, case_security, case_small_plan, case_threshold, case_outside, case_forbidden, case_relative, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [

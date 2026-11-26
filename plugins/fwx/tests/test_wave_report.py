@@ -120,9 +120,10 @@ class World:
         self.write(unit, status, run, **fields)
         return self.say(R, unit, self.line(unit, status, run), plane, run)
 
-    def state(self, run, unit, k=1):
-        """The run's state.json with the worker of `unit` (what `wave run` keeps: the worktree the worker was started in)."""
-        helpers.write(os.path.join(self.S.repo, ".git", "fwx", "runs", run), "state.json", json.dumps({"workers": {"%s/%d" % (unit, k): {"unit": unit, "worktree": self.dir(unit)}}}))
+    def state(self, run, *workers):
+        """The run's state.json with its workers, `(unit, attempt, worktree)` each (what `wave run` keeps: the worktree a worker was started in)."""
+        rows = {"%s/%d" % (u, k): {"unit": u, "worktree": w} for u, k, w in workers}
+        helpers.write(os.path.join(self.S.repo, ".git", "fwx", "runs", run), "state.json", json.dumps({"workers": rows}))
 
     def files(self, run=RUN):
         d = os.path.join(self.S.repo, ".git", "fwx", "runs", run)
@@ -250,7 +251,9 @@ def case_relative(R, S):
     against the driver's cwd, the report was missing, the finished task relaunched and its worktree left. A relative path is read where the run
     state says the worker's worktree is (it must end with the path's folder part), and a path that points anywhere else is still a miss.
     Seen red before the fix: FAIL: a report path relative to the repository (a worktree path from the repository) is read -> next relaunch: want next 'merge', got 'relaunch'
-    ({"next": "relaunch", ..., "why": "the report is missing or is not one"}); the same for a path from the worktree itself and one with ./ in front."""
+    ({"next": "relaunch", ..., "why": "the report is missing or is not one"}); the same for a path from the worktree itself and one with ./ in front.
+    Two attempts of the unit (the relaunch replies with the older attempt's relative path, whose report is stale), seen red before the fix:
+      FAIL: a relative path of an older attempt is not read (its report is stale) -> next merge: want next 'relaunch', got 'merge'"""
     W = World()
     wt = os.path.join(W.S.repo, ".claude", "worktrees", "r-rel-T1")
     br = W.agent("T1", {"src/a.py": "a2\n"}, at=wt)
@@ -259,15 +262,27 @@ def case_relative(R, S):
                                        ("a folder part that climbs", "relaunch"), ("a folder part that only ends the same way", "relaunch"))):
         run = "r-rel%d" % i  # a run of its own: a second miss of one run is a stop
         W.write("T1", run=run, branch=br)
-        W.state(run, "T1")
+        W.state(run, ("T1", 1, W.dir("T1")))
         tail = ".fwx-agent/%s/T1/report.json" % run
         line = {0: ".claude/worktrees/r-rel-T1/" + tail, 1: tail, 2: "./.claude/worktrees/r-rel-T1/" + tail, 3: ".claude/worktrees/r-rel-T2/" + tail,
                 4: ".claude/../.claude/worktrees/r-rel-T1/" + tail, 5: "x" + "r-rel-T1/" + tail}[i]
         r, v = W.say(R, "T1", "done %s commits=2" % line, run=run)
         nxt(S, "a report path relative to the repository (%s) is read" % label, v, want)
-    W.write("T1", run="r-nostate", branch=br)
+    # a good report waits in the driver's cwd under the same relative path: with no worktree to name, it must not be read there
+    helpers.write(os.path.join(W.S.cwd, ".fwx-agent", "r-nostate", "T1"), "report.json", json.dumps({"status": "done", "branch": br, "outside": []}))
     r, v = W.say(R, "T1", "done .fwx-agent/r-nostate/T1/report.json commits=2", run="r-nostate")
-    nxt(S, "a relative path of a run with no state is a miss", v, "relaunch")
+    nxt(S, "a relative path of a run with no state is a miss, whatever is in the driver's cwd", v, "relaunch")
+    # two attempts of the unit: only the newest one's worktree is read; the older attempt's report is stale (the state lists the old one first)
+    run = "r-rel-two"
+    old = helpers.mkdtemp("fwx-old-")
+    helpers.write(os.path.join(old, ".fwx-agent", run, "T1"), "report.json", json.dumps({"status": "done", "branch": br, "outside": []}))
+    W.write("T1", run=run, branch=br)
+    W.state(run, ("T1", 1, old), ("T1", 2, W.dir("T1")))
+    tail = ".fwx-agent/%s/T1/report.json" % run
+    r, v = W.say(R, "T1", "done %s/%s commits=2" % (os.path.basename(old), tail), run=run)
+    nxt(S, "a relative path of an older attempt is not read (its report is stale)", v, "relaunch")
+    r, v = W.say(R, "T1", "done %s commits=2" % tail, run=run)
+    nxt(S, "a relative path of the newest attempt is read", v, "merge")
 
 
 # ---------------------------------------------------------------------------------------------------- outside
