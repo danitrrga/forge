@@ -11,7 +11,7 @@ upper-case letter or a space (the job key under `factory/` is a Linear key, writ
                                                     a closed or cancelled one also state.md and report-<n>.md
 A subphase counts as closed when its enclosing phase is: `closing.md` writes `closed` on the phase folder only.
 
-`check` reads audit.tsv under the root for the stages. As a module, `python3 -m fwx.layout [ROOT]` (with `lib/` on PYTHONPATH)
+`check` reads each folder's audit file (through `state`) for the stages. As a module, `python3 -m fwx.layout [ROOT]` (with `lib/` on PYTHONPATH)
 checks every file under ROOT (default `.fwx`), prints each bad path and how many it looked at, and exits 1 on a bad path or on
 zero paths.
 """
