@@ -970,20 +970,15 @@ def case_orca_missing(R, S):
     S.ok("orca missing: nothing written", not sc.audit_exists())
     r = sc.prepare(R, plane="factory", env={"PATH": tool_dir(orca=False)})
     S.eq("orca missing: the factory plane does not need it", (r.returncode, ran(runs)), (0, 1))
-    # An environment with no PATH is searched on the default path, never on this process's PATH (CodeRabbit, PR 268). Seen failing with
-    # `environ.get("PATH")`: FAIL: orca missing: no PATH in the environment does not fall back to the process's PATH: no refusal
-    from fwx.execute import prepare as prep_mod
-    saved = os.environ.get("PATH")
-    os.environ["PATH"] = tool_dir(orca=True) + os.pathsep + (saved or "")
-    try:
-        try:
-            prep_mod.need_orca("session", {})
-            refused = False
-        except prep_mod.WaveError:
-            refused = not shutil.which("orca", path=os.defpath)
-    finally:
-        os.environ["PATH"] = saved
-    S.ok("orca missing: no PATH in the environment does not fall back to the process's PATH", refused, "no refusal")
+    # An environment with no PATH is searched on the default path, never on this process's PATH (CodeRabbit, PR 268). The code under test
+    # (R's lib, so a mutant runs) is called in a child whose own PATH has an `orca`. Seen failing with `environ.get("PATH")`:
+    #   FAIL: orca missing: no PATH in the environment does not fall back to the process's PATH: got False, want True
+    probe = ("import sys; sys.path.insert(0, sys.argv[1]); from fwx.execute import prepare\n"
+             "try:\n    prepare.need_orca('session', {}); print('found')\nexcept prepare.WaveError:\n    print('refused')\n")
+    env = dict(os.environ, PATH=tool_dir(orca=True) + os.pathsep + os.environ.get("PATH", ""))
+    got = subprocess.run([sys.executable, "-c", probe, os.path.join(R.root, "lib")], env=env, capture_output=True, text=True).stdout.strip()
+    on_default = bool(shutil.which("orca", path=os.defpath))  # a machine with orca on the default path finds it either way
+    S.eq("orca missing: no PATH in the environment does not fall back to the process's PATH", got == ("found" if on_default else "refused"), True)
 
 
 CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_default_branch, case_plan, case_base_ref,
