@@ -642,7 +642,41 @@ def case_fixer_retry(R, S):
         os.environ.update(saved_env)
 
 
-CASES = [case_review, case_security, case_small_plan, case_threshold, case_outside, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
+def case_forbidden(R, S):
+    """live-e2e.md defect 2: a reviewer finding on a file under `.fwx/` went to a fixer, which may not write `.fwx/`: its commit could not carry the
+    finding, the fix rounds ran out and a green part failed. Such a finding is for the owner (`consider`), never for a fixer.
+    Seen red before the fix:
+      FAIL: a finding in .fwx/ is not sent to the fixer: got ['r1-F1', 'r1-F2', 'r1-O1'], want ['r1-F1']
+      FAIL: only findings in .fwx/ (below the threshold): nothing to fix -> next fix: want next 'done', got 'fix'
+      FAIL: a verdict `fix` on a finding in .fwx/ is not fixed: got ('fix', ['r1-F1', 'r1-F2', 'r1-F3', 'r1-F4'], []), want ('fix', ['r1-F1', 'r1-F2'], ['r1-F3', 'r1-F4'])"""
+    plan = ".fwx/milestones/v1/phases/06-zeta/plan.md"
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1"), finding("F2", file=plan, line=93)], out=[outside(where=plan + ":94")]))
+    nxt(S, "a finding in a file of the executors goes on to the fixer", v, "fix")
+    S.eq("a finding in .fwx/ is not sent to the fixer", v.get("ids"), ["r1-F1"])
+    S.eq("a finding in .fwx/, and an outside item there, are for the owner", [(c["id"], c["file"], c["line"]) for c in v.get("consider") or []], [("r1-F2", plan, 93), ("r1-O1", plan, 94)])
+    S.eq("the routes of a finding in .fwx/", v.get("routes"), {"r1-F1": "fix", "r1-F2": "consider", "r1-O1": "consider"})
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file="./.fwx/x/context.md")]))
+    nxt(S, "only findings in .fwx/ (below the threshold): nothing to fix", v, "done")
+    S.eq("only findings in .fwx/: no brief for a fixer", (v.get("ids"), v.get("brief")), ([], None))
+    # a name that only begins with `.fwx` is a file like any other
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1", file=".fwx-notes/a.md")]))
+    S.eq("a file of a folder that only begins with .fwx is fixed", (v.get("next"), v.get("ids")), ("fix", ["r1-F1"]))
+    # above the threshold the verifier says `fix`, and the finding in .fwx/ still goes to the owner
+    W = World()
+    W.review(R)
+    r, v = W.find(R, W.reply("r1", [finding("F1"), finding("F2"), finding("F3", file=plan), finding("F4", file=plan)]))
+    nxt(S, "four findings go to the verifier", v, "verify")
+    r, v = W.verdicts(R, {"r1-F1": "fix", "r1-F2": "fix", "r1-F3": "fix", "r1-F4": "fix"})
+    S.eq("a verdict `fix` on a finding in .fwx/ is not fixed", (v.get("next"), v.get("ids"), [c["id"] for c in v.get("consider") or []]), ("fix", ["r1-F1", "r1-F2"], ["r1-F3", "r1-F4"]))
+
+
+CASES = [case_review, case_security, case_small_plan, case_threshold, case_outside, case_forbidden, case_control, case_misses, case_verdicts, case_usage, case_fixer_retry]
 V_ = "lib/fwx/execute/review.py"
 W_ = "lib/fwx/commands/wave.py"
 MUTANTS = [
