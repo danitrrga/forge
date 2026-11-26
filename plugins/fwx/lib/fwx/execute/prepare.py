@@ -326,7 +326,7 @@ def _base_is_green(top, base, recipe, folders, say, timeout, part=None, cfg=None
     """None when the base passes (a check ran here, or a green evidence row says so), `[]` when a green CI run of the sha says so, else the red
     results. NotRun when no check is red and one ran out of time (`timeout` seconds each: the project's `check_timeout_s`). `[]` is falsy, like
     None, but the caller writes a row only for None: a CI answer leaves no row, since no check ran here and a row says one did (`integrate` and
-    `check_report` read it as verify evidence); the next `wave new` on the same base asks GitHub again."""
+    the part report read it as verify evidence); the next `wave new` on the same base asks GitHub again."""
     if _record(base, recipe, folders):
         say("base checks: reused the passing record of %s" % base[:7])
         return None
