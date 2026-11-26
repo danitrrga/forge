@@ -286,7 +286,9 @@ def case_nested(root, S):
     """A workspace whose code lives in nested repos (DTC-64): a part runs in the repo it names, with that repo's worktrees, branch and checks,
     and everything fwx keeps is the workspace's. Seen red on the code before it (python3 tests/test_wave_run.py):
       FAIL: nested: the run is done: got 'run <id> failed: git worktree add <ws>/.claude/worktrees/<id>-T1 failed: fatal: invalid reference: <sha>'
-      FAIL: nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit 2, 'run <id> does not end in -<sha>-<n> of a commit of this repository'"""
+      FAIL: nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit 2, 'run <id> does not end in -<sha>-<n> of a commit of this repository'
+    `wave --run R` from the workspace root (resolved the run's branch in the workspace, not in repo a), seen red before it read the run's checkout:
+      FAIL: nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate 'fail', why '': got (1, 'fail'), want (0, 'pass')"""
     checks = {"a": ["test -f MARK_A"], "b": ["test -f MARK_B"]}
     w = world(nested=checks, tasks=[task("T1", 1, ["src/a.py"])])
     sc = w.scene
@@ -303,6 +305,15 @@ def case_nested(root, S):
     S.ok("nested: nothing of fwx's is in a's own .git", not os.path.exists(os.path.join(a, ".git", "fwx")))
     S.eq("nested: `orca repo add` named a", w.state_json().get("repos"), [a])
     S.eq("nested: no worktree of the run is left in a", [p for p in w.worktrees() if os.path.realpath(p) not in (a, sc.cwd)], [])
+    # `fwx wave --run R` from the workspace root: the run's branch is repo a's, so the gate reads a's head (the run's own checkout, as `wave remove` does)
+    got = subprocess.run([sys.executable, os.path.join(root, "bin", "fwx"), "wave", "--run", run], cwd=ws, env=helpers.clean_env(CLAUDE_CONFIG_DIR=sc.conf),
+                         capture_output=True, text=True)
+    try:
+        gate = json.loads(got.stdout)
+    except ValueError:
+        gate = {}
+    S.eq("nested: `wave --run R` from the workspace root reads the gate of repo a's branch: gate %r, why %r" % (gate.get("gate"), gate.get("why")),
+         (got.returncode, gate.get("gate")), (0, "pass"))
     # a second part, in repo b, on the same branch name: its worktrees are b's and the check that decides is b's
     bwt, bpart = w.second_part("b")
     r2 = w.run(cwd=bwt, part=bpart, root=root)
@@ -552,6 +563,20 @@ def case_one_run(root, S):
     S.eq("one run per branch: it started nobody", w.starts(), [])
     rows = [x for x in w.fwx("wave", "list").stdout.splitlines() if "01-alpha-0000000-9" in x]
     S.ok("`wave list` shows the live run", len(rows) == 1 and "alive" in rows[0], "got %r" % rows)
+
+
+def case_list_order(root, S):
+    """`wave list` is oldest run first, by the time the run started: the session takes the newest run of a part from the last line. Run ids sort wrong as text
+    (`-10` before `-2`, a sha `f123456` after `2a3b4c5` whatever the order of the runs).
+    Seen red with the list sorted by run id:
+      FAIL: wave list: oldest first by start time: got ['01-alpha-aaaaaaa-1', '01-alpha-aaaaaaa-10', '01-alpha-aaaaaaa-2', '01-alpha-bbbbbbb-1'], want ['01-alpha-aaaaaaa-1', '01-alpha-aaaaaaa-2', '01-alpha-aaaaaaa-10', '01-alpha-bbbbbbb-1']"""
+    w = world(tasks=[task("T1", 1, ["src/a.py"])])
+    order = ["01-alpha-aaaaaaa-1", "01-alpha-aaaaaaa-2", "01-alpha-aaaaaaa-10", "01-alpha-bbbbbbb-1"]
+    for n, name in enumerate(order):
+        helpers.write(os.path.join(w.common, "fwx", "runs", name), "state.json", json.dumps({"run": name, "branch": "phase", "part_dir": w.part, "pid": 0, "state": "done",
+                      "step": "done", "workers": {}, "worktrees": [], "steps": [], "started": 1000.0 + n}))
+    rows = [x.split()[0] for x in w.fwx("wave", "list").stdout.splitlines() if x.strip()]
+    S.eq("wave list: oldest first by start time", rows, order)
 
 
 def case_resume(root, S):
@@ -1408,7 +1433,7 @@ def case_reply_grace(root, S):
 
 
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
-         case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
+         case_one_run, case_list_order, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
          case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
 
@@ -1447,6 +1472,10 @@ MUTANTS = [
      "nested: the run is done"),
     ("Orca told about the workspace, not the part's repo", case_nested, "lib/fwx/execute/run.py", "orca.ensure_repo(self.repo)", "orca.ensure_repo(self.main)",
      "nested: `orca repo add` named a"),
+    ("wave list sorts by run id", case_list_order, "lib/fwx/execute/run.py", 'found.sort(key=lambda st: (st.get("started") or 0, st.get("run") or ""))', 'found.sort(key=lambda st: st.get("run") or "")',
+     "wave list: oldest first by start time"),
+    ("wave --run in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'integrate.summary(where if where and os.path.isdir(where) else ".",', 'integrate.summary(".",',
+     "nested: `wave --run R` from the workspace root reads the gate of repo a's branch"),
     ("wave remove in the current folder, not the run's checkout", case_nested, "lib/fwx/commands/wave.py", 'where if where and os.path.isdir(where) else "."', '"."',
      "nested: `wave remove` from a worktree of repo b removes repo a's leftover worktree: exit"),
     ("resume from any worktree on the branch", case_nested_resume, "lib/fwx/commands/wave.py", "            if own != here:", "            if False:",
