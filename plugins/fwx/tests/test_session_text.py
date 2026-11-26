@@ -263,26 +263,28 @@ def main():
     old_prepare = mentions(session_texts, "wave new")
     check("the session runs no `fwx wave new`: `fwx wave run` prepares the part itself", not old_prepare, where(old_prepare))
     s5, s6 = step(skill, 5), step(skill, 6)
-    # The owner wants every `fwx wave run` visible in Orca: with Orca answering, step 5 starts it in its own terminal (not focused, titled after
-    # the part) and follows it with `fwx wave list`; without Orca it is still a background run. Seen red on the text before this rule:
-    #   FAIL: step 5 starts `fwx wave run` in its own Orca terminal when Orca answers, else in the background -> run commands [...], missing ['runtimeReachable', 'orca terminal create', '--title'], run_in_background True, never --focus False
-    #   FAIL: no text still tells the session to run `fwx wave run` "in the background" (steps 5 and 6 and ui-review.md point at step 5) -> [('SKILL.md', 49), ('SKILL.md', 52), ('ui-review.md', 10)]
-    def wave_in_terminal(text):
-        return [w for w in ("runtimeReachable", "orca terminal create", "--title", "fwx wave list") if w not in text]
-    check("step 5 starts `fwx wave run` in its own Orca terminal when Orca answers, else in the background",
-          bool(run_flags(s5)) and not wave_in_terminal(s5) and "run_in_background" in s5 and "--focus`" in s5 and "never `--focus`" in s5,
-          "run commands %s, missing %s, run_in_background %s, never --focus %s" % (run_flags(s5), wave_in_terminal(s5), "run_in_background" in s5, "never `--focus`" in s5))
-    check("control: a step 5 with only a background run is caught",
-          bool(wave_in_terminal("5. **Execute a part.** Run `fwx wave run --part-dir <part>` with `run_in_background`.")))
-    # The driver terminal opens in the main checkout's workspace (the owner's view), not in the phase worktree's own, and cd's into the worktree itself.
-    # Seen red on the text before it (`--worktree path:<worktree>`, no `cd`):
-    #   FAIL: step 5 creates the driver terminal in the main checkout's workspace and cd's into the phase worktree -> worktree path:<main checkout> False, cd <worktree> && False
-    def driver(text):
-        return "--worktree path:<main checkout>" in text and "fwx <phase> part <N>\" --command \"sh -c 'cd <worktree> && " in text
-    check("step 5 creates the driver terminal in the main checkout's workspace and runs via sh -c (fish/bash/zsh safe)",
-          driver(s5), "worktree path:<main checkout> %s, sh -c cd <worktree> && %s" % ("--worktree path:<main checkout>" in s5, "sh -c 'cd <worktree> && " in s5))
-    check("control: the old step 5 text is caught", not driver('orca terminal create --worktree path:<worktree> --title "fwx <phase> part <N>" --command "<the wave run command>; echo exit"'))
-    check("control: bare $? without sh -c (fails in fish) is caught", not driver('orca terminal create --worktree path:<main checkout> --title "fwx <phase> part <N>" --command "cd <worktree> && <the wave run command>; echo exit \\$?"'))
+    # The owner rejected a terminal tab beside his chat in the main checkout's workspace: step 5 runs `fwx wave run` with `run_in_background` from the phase worktree,
+    # with `--orchestrator`, and creates no Orca terminal at all (the run's own sender terminal lives in the phase worktree's workspace, made by the run). Progress is
+    # shown by the `fwx` Orca panel, `fwx wave list` and `fwx wave list --json`. Seen red on the text before this rule (step 5 made `orca terminal create`):
+    #   FAIL: step 5 runs `fwx wave run` in the background with --orchestrator and creates no Orca terminal -> run commands [...], run_in_background True, orca terminal create present True, orchestrator True
+    #   FAIL: no session text tells the session to create an Orca terminal -> [('SKILL.md', 46)]
+    #   FAIL: step 5 says where live progress shows -> missing ['wave list --json', 'local.fwx-session']
+    def background_run(text):
+        return bool(run_flags(text)) and "run_in_background" in text and any("--orchestrator" in f for f in run_flags(text)) and "orca terminal create" not in text
+    check("step 5 runs `fwx wave run` in the background with --orchestrator and creates no Orca terminal", background_run(s5),
+          "run commands %s, run_in_background %s, orca terminal create present %s, orchestrator %s" % (
+              run_flags(s5), "run_in_background" in s5, "orca terminal create" in s5, any("--orchestrator" in f for f in run_flags(s5))))
+    check("control: a step 5 that opens a terminal is caught",
+          not background_run("5. Run `fwx wave run --part-dir <part> --orchestrator x` with `run_in_background`; `orca terminal create --worktree path:<main checkout> --title t`."))
+    check("control: a step 5 with no background is caught",
+          not background_run("5. Run `fwx wave run --part-dir <part> --orchestrator x` and wait."))
+    tabs = [(os.path.basename(n), k) for n, t in texts.items() for k, l in enumerate(t.splitlines(), 1) if "orca terminal create" in l]
+    check("no session text tells the session to create an Orca terminal", not tabs, "%s" % tabs)
+    check("control: a line that creates one is caught", bool([1 for l in ["`orca terminal create --worktree path:x`"] if "orca terminal create" in l]))
+    def progress_where(text):
+        return [w for w in ("wave list --json", "local.fwx-session", "fwx wave list") if w not in text]
+    check("step 5 says where live progress shows", not progress_where(s5), "missing %s" % progress_where(s5))
+    check("control: a step 5 that names no progress view is caught", bool(progress_where("5. Run `fwx wave run --part-dir <part>` with `run_in_background`.")))
     stale = [(os.path.basename(n), k) for n, t in texts.items() for k, l in enumerate(t.splitlines(), 1) if "wave run" in l and "in the background" in l]
     check("no text still tells the session to run `fwx wave run` \"in the background\" (steps 5 and 6 and ui-review.md point at step 5)", not stale, "%s" % stale)
     check("control: a line that says it is caught", bool([1 for l in ["run `fwx wave run ... --fix f` in the background"] if "wave run" in l and "in the background" in l]))

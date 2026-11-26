@@ -1,6 +1,6 @@
 // The chip, the tooltip and the panel's data, from what `fwx session --json` and `fwx phase list --json` print. No host.
 import { assert, test } from 'orca/testing'
-import { bar, chipText, parsePhases, parseSession, snapshot, tooltip } from './session'
+import { bar, chipText, flowRows, parsePhases, parseSession, parseWaves, snapshot, tooltip } from './session'
 
 const SESSION = {
   project: 'atlas', phase_dir: '/srv/atlas/.fwx/milestones/v1/phases/03-billing', milestone: 'v1', subproject: null,
@@ -72,4 +72,109 @@ test('without the phase list the chip and the current phase still show', () => {
   assert.equal(chipText(v), 'atlas · 03-billing · executing · ▰▰▰▰▰▱▱▱')
   assert.deepEqual(v.phases, [])
   assert.equal(tooltip(v), 'Milestone v1 · Branch fwx/billing')
+})
+
+// ---- the live workflow: `fwx wave list --json` -----------------------------------------------------------------------------------
+const RUN = {
+  run: '01-billing-abc1234-1', part: '03.1-invoices', branch: 'fwx/billing', state: 'active', pid: 4242, alive: true, step: 'wave 1', started: 100, orca_run: 'run_1',
+  waves: [{ n: 1, tasks: ['T1', 'T2'] }, { n: 2, tasks: ['T3'] }],
+  workers: [
+    { unit: 'T1', role: 'executor', state: 'running', released: false, line: null },
+    { unit: 'T2', role: 'executor', state: 'succeeded', released: true, line: 'done /w/.fwx-agent/T2/report.json commits=1' }
+  ],
+  events: ['worker T1 started (executor, m)', 'worker T2 done'], result: null
+}
+const runs = (...r: object[]) => JSON.stringify({ runs: r })
+const withRuns = (waves: string, s: object = SESSION) => snapshot(parseSession(JSON.stringify(s)), parsePhases(PHASES), parseWaves(waves))!
+const NO_PHASE = { ...SESSION, phase_dir: null, stage: null, part: null, parts: null, branch: null, progress: null }
+
+test('parseWaves reads the runs and never throws on what an older or broken fwx prints', () => {
+  assert.equal(parseWaves(runs(RUN)).length, 1)
+  assert.equal(parseWaves(runs(RUN))[0].workers[0].unit, 'T1')
+  for (const bad of ['', 'not json', 'null', '[]', '{}', '{"runs": 3}', 'usage: fwx wave list\n']) assert.deepEqual(parseWaves(bad), [], bad)
+  assert.deepEqual(parseWaves(runs({ nope: 1 }, 'x', null, RUN)).map((r) => r.run), [RUN.run])
+  const thin = parseWaves(runs({ run: 'r1' }))[0]
+  assert.deepEqual([thin.part, thin.state, thin.alive, thin.waves, thin.workers, thin.events, thin.step], ['', '', false, [], [], [], null])
+})
+
+test('the active run is the newest one that is active and alive; a dead or finished run is ignored', () => {
+  const older = { ...RUN, run: 'r-old', started: 50, part: 'old-part' }
+  assert.equal(withRuns(runs(older, RUN)).activeRun!.run, RUN.run)
+  assert.equal(withRuns(runs(RUN, older)).activeRun!.run, RUN.run)
+  assert.equal(withRuns(runs({ ...RUN, alive: false })).activeRun, null)
+  assert.equal(withRuns(runs({ ...RUN, state: 'done', alive: false })).activeRun, null)
+  assert.equal(withRuns(runs({ ...RUN, state: 'needs-owner' })).activeRun, null)
+  assert.equal(withRuns('').activeRun, null)
+  assert.equal(snap()!.activeRun, null)
+})
+
+test('with no live run the chip and the tooltip are what they were', () => {
+  for (const v of [snap()!, withRuns(runs({ ...RUN, alive: false })), withRuns('')]) {
+    assert.equal(chipText(v), 'atlas · 03-billing · executing · ▰▰▰▰▰▱▱▱')
+    assert.equal(tooltip(v), 'Milestone v1 · ✓ 01-login · ✓ 02-search · ▶ 03-billing (executing) · Parts ▶1 ○2 · Branch fwx/billing')
+  }
+  assert.equal(chipText(withRuns(runs({ ...RUN, alive: false }), NO_PHASE)), 'atlas · no phase')
+})
+
+test('a live run is the chip: project, part, step and open workers of the total', () => {
+  assert.equal(chipText(withRuns(runs(RUN))), 'atlas · 03.1-invoices · wave 1 (1/2)')
+  assert.equal(chipText(withRuns(runs({ ...RUN, step: null, workers: [] }))), 'atlas · 03.1-invoices · running')
+  assert.equal(chipText({ ...withRuns(runs(RUN)), profile: 'web' }), 'atlas · web · 03.1-invoices · wave 1 (1/2)')
+})
+
+test('a live run shows with no phase bound too, in the chip and the tooltip', () => {
+  const v = withRuns(runs(RUN), NO_PHASE)
+  assert.equal(v.phase, null)
+  assert.equal(chipText(v), 'atlas · 03.1-invoices · wave 1 (1/2)')
+  assert.equal(tooltip(v), 'Workflow 03.1-invoices (wave 1)')
+})
+
+test('the tooltip leads with the live run, then the roadmap', () => {
+  assert.equal(tooltip(withRuns(runs(RUN))),
+    'Workflow 03.1-invoices (wave 1) · Milestone v1 · ✓ 01-login · ✓ 02-search · ▶ 03-billing (executing) · Parts ▶1 ○2 · Branch fwx/billing')
+  assert.equal(tooltip(withRuns(runs({ ...RUN, step: null }), NO_PHASE)), 'Workflow 03.1-invoices (running)')
+})
+
+test('the workflow rows: each planned task by its last worker, then the workers the plan did not name', () => {
+  const run = parseWaves(runs({
+    ...RUN,
+    workers: [
+      { unit: 'T1', role: 'executor', state: 'failed', released: true, line: 'failed /w/report.json commits=0' },
+      { unit: 'T1', role: 'executor', state: 'running', released: false, line: null },
+      { unit: 'T2', role: 'executor', state: 'succeeded', released: true, line: 'done /w/.fwx-agent/T2/report.json commits=1' },
+      { unit: 'r1', role: 'reviewer', state: 'succeeded', released: true, line: 'reviewed /w/report.json looked_at=3 findings=0 criteria_no=0 criteria_unproven=0' },
+      { unit: 'fix-1', role: 'executor', state: 'failed', released: true, line: null }
+    ]
+  }))[0]
+  assert.deepEqual(flowRows(run), [
+    { name: 'Wave 1 · T1', state: 'current', tag: 'executor · running', failed: false },
+    { name: 'Wave 1 · T2', state: 'done', tag: 'executor', failed: false },
+    { name: 'Wave 2 · T3', state: 'next', tag: '', failed: false },
+    { name: 'r1', state: 'done', tag: 'reviewer', failed: false },
+    { name: 'fix-1', state: 'next', tag: 'failed', failed: true }
+  ])
+  assert.deepEqual(withRuns(runs(RUN)).flow, flowRows(parseWaves(runs(RUN))[0]))
+  assert.deepEqual(snap()!.flow, [])
+})
+
+test('already-done tasks render done, reply verbs match whole words, and empty part falls back to run id', () => {
+  // Seen red before the fixes:
+  //   AssertionError: T1 had state 'next' instead of 'done', 'done-foo' matched GOOD, and empty part printed 'atlas ·  · wave 1'
+  const run = parseWaves(runs({
+    ...RUN,
+    part: '',
+    done: ['T1'],
+    workers: [
+      { unit: 'T2', role: 'executor', state: 'succeeded', released: true, line: 'done-foo /w/report.json' },
+      { unit: 'T3', role: 'executor', state: 'running', released: false, line: null }
+    ]
+  }))[0]
+  assert.deepEqual(flowRows(run), [
+    { name: 'Wave 1 · T1', state: 'done', tag: '', failed: false },
+    { name: 'Wave 1 · T2', state: 'next', tag: 'failed', failed: true },
+    { name: 'Wave 2 · T3', state: 'current', tag: 'executor · running', failed: false }
+  ])
+  const v = snapshot(parseSession(JSON.stringify(NO_PHASE)), parsePhases(PHASES), [run])!
+  assert.equal(chipText(v), 'atlas · 01-billing-abc1234-1 · wave 1 (1/2)')
+  assert.equal(tooltip(v), 'Workflow 01-billing-abc1234-1 (wave 1)')
 })

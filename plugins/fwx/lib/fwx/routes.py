@@ -55,7 +55,7 @@ ROWS = [
     ("wave", "wave summary", "wave", ["summary"], "did a run's gate pass (the default of `wave`): --run R [--part-dir D]"),
     ("wave new", "wave prepare", "wave", ["prepare"], "prepare a part for `execute`: --part-dir D --plane session|factory --branch W [...]"),
     ("wave run", None, "wave", ["run"], "run a whole part as Orca workers, with the flags of `wave new`, or resume one: --part-dir D --plane session|factory --branch W [...] | --resume R"),
-    ("wave list", None, "wave", ["list"], "one line per run: id, part, branch, state, pid, open workers of the total, last step"),
+    ("wave list", None, "wave", ["list"], "one line per run: id, part, branch, state, pid, open workers of the total, last step; `--json`: the same with the planned waves, the workers and the last events"),
     ("wave merge", "wave integrate", "wave", ["integrate"], "join the branches of a wave and run the gate: --part-dir D --run R (--branches B... | --final)"),
     ("wave report", None, "wave", ["report"], "judge an executor's report and say what comes next: --part-dir D --run R --unit U --line \"<last line>\" --plane session|factory"),
     ("wave review", None, "wave", ["review"], "write the briefs of a review pass: --part-dir D --run R --from A --to B [--security]"),

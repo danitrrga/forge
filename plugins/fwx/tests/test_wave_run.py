@@ -662,7 +662,11 @@ def case_discover(root, S):
 
 def case_terminal(root, S):
     """Orca 1.4.273 refuses `orchestration run-create` with no sender terminal once the session variables are stripped (`no_active_sender_terminal`), so
-    the run makes one terminal (`fwx run <R>`, in the main checkout), names it with `--from` and closes it however the run ends.
+    the run makes one terminal (`fwx run <R>`, in the phase worktree it runs from: a terminal in the main checkout would put a tab in the owner's own workspace), names it
+    with `--from` and closes it however the run ends.
+    Seen red on the code that made it in the main checkout (`self.main`): FAIL: terminal (success): one made, titled for the run, in the phase worktree ->
+    got [('fwx run <id>', 'path:<main checkout>')], want [('fwx run <id>', 'path:<phase worktree>')]. The Orca run's objective names the part and the run:
+    FAIL: terminal (success): run-create objective -> got 'fwx wave run <id>', want 'fwx 01-alpha (<id>)'.
     Seen red on the code before the fix (every case that runs a part): FAIL: loop: exit, stderr -> got (1, 'orca: orca orchestration run-create failed
     (exit 1): no_active_sender_terminal: Could not determine the calling terminal ...'), want (0, '').
     The same for `worker-start` (live, Orca 1.4.273, run 10-nested-repos-0c34fbb-1: `orca orchestration worker-start failed (exit 1):
@@ -675,8 +679,10 @@ def case_terminal(root, S):
         m = line_of(r)
         S.ok("terminal: the %s ends %s" % (name, status), bool(m) and m.group(2) == status, "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
         terms = w.terminals()
-        S.eq("terminal (%s): one made, titled for the run, in the main checkout" % name, [(t["title"], t["worktree"]) for t in terms.values()],
-             [("fwx run " + m.group(1), "path:" + os.path.realpath(w.repo))] if m else [])
+        S.eq("terminal (%s): one made, titled for the run, in the phase worktree" % name, [(t["title"], t["worktree"]) for t in terms.values()],
+             [("fwx run " + m.group(1), "path:" + os.path.realpath(w.cwd))] if m else [])
+        objectives = [c["objective"] for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"] and "objective" in c]
+        S.eq("terminal (%s): run-create objective names the part and the run" % name, objectives, ["fwx %s (%s)" % (os.path.basename(w.part), m.group(1))] if m else [])
         S.ok("the terminal is closed after a %s -> open" % name, bool(terms) and not any(t["open"] for t in terms.values()), "terminals %r" % terms)
         sent = [c["sender"] for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"] and "sender" in c]
         S.eq("terminal (%s): run-create names that terminal" % name, sent, list(terms)[:1])
@@ -724,6 +730,107 @@ def case_terminal_resume(root, S):
         S.ok("terminal resume (%s): none left open" % name, not any(t["open"] for t in terms.values()), "terminals %r" % terms)
         S.eq("terminal resume (%s): Orca runs made (a Run is bound to its terminal: a new terminal makes a new one)" % name,
              len([c for c in w.calls() if c["argv"][:2] == ["orchestration", "run-create"]]), 2 if lose else 1)
+
+
+def case_terminal_discover(root, S):
+    """The sender terminal is made in the phase worktree, which Orca may not have discovered yet (`selector_not_found` from `terminal create`, as `worker-start` answers
+    for a worktree made with git): `terminal_create` retries it for DISCOVER_S, like `start`, and past that ends the run failed naming the worktree.
+    Seen red on the code before the retry (the fake refuses the first 2 `terminal create` calls):
+      FAIL: terminal discover: the run is done -> run <id> failed: orca: orca terminal create failed (exit 1): selector_not_found: No workspace matches --worktree path:...
+      FAIL: terminal discover: the terminal was asked for 3 times (2 refused, then made): got 1, want 3"""
+    fast = {"FWX_ORCA_DISCOVER_POLL_S": "0.05"}
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"terminal_discover_after": 2})
+    r = w.run(root=root, **fast)
+    m = line_of(r)
+    S.ok("terminal discover: the run is done -> %s" % (r.stdout.strip().splitlines() or ["no output"])[-1][:200], bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    tries = [c for c in w.calls() if c["argv"][:2] == ["terminal", "create"]]
+    S.eq("terminal discover: the terminal was asked for 3 times (2 refused, then made)", len(tries), 3)
+    S.eq("terminal discover: the one terminal made is in the phase worktree", [t["worktree"] for t in w.terminals().values()], ["path:" + os.path.realpath(w.cwd)])
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"terminal_discover_after": 10 ** 6})
+    r = w.run(root=root, FWX_ORCA_DISCOVER_POLL_S="0.05", FWX_ORCA_DISCOVER_S="0.4")
+    m = line_of(r)
+    S.ok("terminal discover: a worktree Orca never knows ends the run failed, naming it", bool(m) and m.group(2) == "failed" and "never discovered" in m.group(3)
+         and os.path.realpath(w.cwd) in m.group(3), "got %r %r" % (r.stdout[-300:], r.stderr[-300:]))
+    S.eq("terminal discover: no worker started", units(w), [])
+
+
+def case_list_json(root, S):
+    """`fwx wave list --json` prints `{"runs": [...]}` for the Orca panel and the chip (the plain `wave list` stays as it was). A finished run, a live one, a bad flag.
+    Seen red on the code before it (`wave list` took no flag; the case returns at the first missing run):
+      FAIL: list --json: exit 0 and one JSON document -> exit 2, stdout '', stderr 'usage: fwx wave list\\n'
+      FAIL: list --json: one run: got 0, want 1
+    The plain-output check passed on the old code: it pins the line the JSON must not change."""
+    w = world()
+
+    def fwx(*args):  # through `root`, so that a control tree is the code under test
+        return subprocess.run([sys.executable, os.path.join(root, "bin", "fwx")] + list(args), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=60)
+    r = w.run(root=root)
+    m = line_of(r)
+    S.ok("list --json: the run is done", bool(m) and m.group(2) == "done", "got %r %r" % (r.stdout[-200:], r.stderr[-200:]))
+    if not m:
+        return
+    run, part = m.group(1), os.path.basename(w.part)
+    plain = fwx("wave", "list")
+    S.ok("list: plain output is one line per run, unchanged", plain.returncode == 0 and re.fullmatch(
+        r"%s part=%s branch=phase done pid=\d+ dead workers=0/4 step=\S+( \S+)?\n" % (re.escape(run), re.escape(part)), plain.stdout) is not None, "got %r" % plain.stdout)
+    j = fwx("wave", "list", "--json")
+    try:
+        doc = json.loads(j.stdout)
+    except ValueError:
+        doc = None
+    S.ok("list --json: exit 0 and one JSON document -> exit %d, stdout %r, stderr %r" % (j.returncode, j.stdout[:80], j.stderr[:80]), j.returncode == 0 and isinstance(doc, dict))
+    runs = (doc or {}).get("runs") or []
+    S.eq("list --json: one run", len(runs), 1)
+    if not runs:
+        return
+    x = runs[0]
+    S.eq("list --json: the run's identity", (x["run"], x["part"], x["branch"], x["state"], x["alive"], isinstance(x["pid"], int), isinstance(x["orca_run"], str)),
+         (run, part, "phase", "done", False, True, True))
+    S.eq("list --json: the planned waves with their task ids", x["waves"], [{"n": 1, "tasks": ["T1", "T2"]}, {"n": 2, "tasks": ["T3"]}])
+    S.eq("list --json: every worker, released, with its role and last line", sorted((k["unit"], k["role"], k["released"], bool(k["line"])) for k in x["workers"]),
+         [("T1", "executor", True, True), ("T2", "executor", True, True), ("T3", "executor", True, True), ("r1", "reviewer", True, True)])
+    S.eq("list --json: a worker has exactly the keys the panel reads", sorted(x["workers"][0]), ["line", "released", "role", "state", "unit"])
+    S.eq("list --json: the events are the last 8 progress lines, the newest last (14 were printed)", len(x["events"]), 8)
+    S.ok("list --json: the last event is the review's findings line -> %r" % x["events"][-1:], x["events"] and x["events"][-1].startswith("review findings"))
+    S.eq("list --json: the events are the lines the run printed", [e for e in x["events"] if e not in r.stdout.splitlines()], [])
+    S.eq("list --json: the result of a finished run", (x["result"] or {}).get("status"), "done")
+    bad = fwx("wave", "list", "--bogus")
+    S.eq("list: any other argument exits 2 with the usage", (bad.returncode, "usage: fwx wave list [--json]" in bad.stderr), (2, True))
+    bad = fwx("wave", "list", "--json", "x")
+    S.eq("list: --json with another argument exits 2 too", bad.returncode, 2)
+    w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
+    p = start_run(w, root, FWX_RUN_LIMIT_S="60")
+    wait_for(lambda: w.runs() and any(k.get("dispatch") for k in w.state(w.runs()[0])["workers"].values()))
+    doc = json.loads(fwx("wave", "list", "--json").stdout or "{}")
+    live = (doc.get("runs") or [None])[0]
+    S.ok("list --json: a live run: active, alive, its worker started and not released -> got %s" % ((live["state"], live["alive"], live["workers"]) if live else None,),
+         bool(live) and live["state"] == "active" and live["alive"] is True and live["step"] == "wave 1" and [(k["unit"], k["released"]) for k in live["workers"]] == [("T1", False)]
+         and live["result"] is None)
+    S.ok("list --json: a live run's events name the worker that started", bool(live) and any(e.startswith("worker T1 started") for e in live["events"]), "events %r" % (live or {}).get("events"))
+    helpers.write(w.dir, "go-T1", "")
+    finish_run(p)
+    # Relaunch / --fix / --revert / malformed state.json: `done` is emitted, --fix/--revert suppress planned waves, and a broken state never crashes `wave list --json`.
+    # Seen red before the fixes (blocker 1 & blocker 3):
+    #   FAIL: list --json: --fix suppresses planned waves and carries done -> got ([{'n': 1, 'tasks': ['T1']}], None), want ([], ['T1'])
+    #   FAIL: list --json: a malformed state.json does not crash wave list --json -> exit 1
+    runs_dir = os.path.join(w.common, "fwx", "runs")
+    helpers.write(os.path.join(runs_dir, "01-alpha-fix-1"), "state.json", json.dumps({
+        "run": "01-alpha-fix-1", "part_dir": w.part, "branch": "phase", "state": "done", "pid": 1, "step": "fix",
+        "args": {"waves": [{"n": 1, "tasks": [{"id": "T1"}]}], "done": ["T1"], "fix": {"brief": "b", "findings": []}},
+        "workers": {}, "events": []}))
+    helpers.write(os.path.join(runs_dir, "01-alpha-bad-1"), "state.json", json.dumps({
+        "run": "01-alpha-bad-1", "part_dir": None, "branch": "phase", "state": "failed", "pid": True, "step": "start",
+        "args": {"waves": [{"n": 1, "tasks": None}, "bad"], "done": None},
+        "workers": {"k": "not-a-dict"}, "events": None}))
+    j2 = fwx("wave", "list", "--json")
+    try:
+        by_id = {x["run"]: x for x in (json.loads(j2.stdout).get("runs") or [])}
+    except ValueError:
+        by_id = {}
+    S.ok("list --json: a malformed state.json does not crash wave list --json -> exit %d, stderr %r" % (j2.returncode, j2.stderr[:120]),
+         j2.returncode == 0 and "01-alpha-bad-1" in by_id and by_id["01-alpha-bad-1"]["pid"] is None and by_id["01-alpha-bad-1"]["workers"] == [] and by_id["01-alpha-bad-1"]["events"] == [])
+    fx = by_id.get("01-alpha-fix-1") or {}
+    S.eq("list --json: --fix suppresses planned waves and carries done", (fx.get("waves"), fx.get("done")), ([], ["T1"]))
 
 
 # ---------------------------------------------------------------------------------------------------------------------- what the owner sees
@@ -967,7 +1074,7 @@ def case_steer_resume(root, S):
     m = line_of(res)
     S.ok("steer resume: the resumed run is done", bool(m) and m.group(2) == "done", "exit %d, got %r %r" % (res.returncode, res.stdout[-300:], res.stderr[-300:]))
     S.eq("a question reaches the orchestrator once across a resume -> sends of the question", len([x for x in sent(w, ORCH) + sent(w, NEW_ORCH) if "which colour?" in x["subject"]]), 1)
-    S.eq("steer resume: the final line went to the refreshed address", [x["subject"].split(": ")[0] for x in sent(w, NEW_ORCH) if " done" in x["subject"]],
+    S.eq("steer resume: the final line went to the refreshed address", [x["subject"] for x in sent(w, NEW_ORCH) if x["subject"].endswith(" done")],
          ["[%s] run %s done" % (os.path.basename(w.part), run)])
     S.eq("steer resume: the refreshed address is in the saved flags", w.state(run)["flags"].get("orchestrator") if run else None, NEW_ORCH)
 
@@ -986,9 +1093,12 @@ def case_steer_lines(root, S):
     run, part = m.group(1), os.path.basename(w.part)
     heads = [x["result"]["head"][:8] for x in w.steps(run, "integrate")]
     got = sent(w, ORCH)
-    S.eq("lines: the orchestrator got the wave lines and the final line, nothing else", [x["subject"] for x in got],
-         ["[%s] wave 1/2: 2/2 merged -> %s" % (part, heads[0]), "[%s] wave 2/2: 1/1 merged -> %s" % (part, heads[1]),
-          "[%s] run %s done: the gate and the review passed on %s" % (part, run, heads[-1])])
+    S.eq("lines: the orchestrator got the wave lines and the final line, nothing else", [(x["subject"], (x["body"] or "").rstrip("\n")) for x in got],
+         [("[%s] wave 1/2 merged" % part, "2/2 tasks -> %s" % heads[0]), ("[%s] wave 2/2 merged" % part, "1/1 tasks -> %s" % heads[1]),
+          ("[%s] run %s done" % (part, run), "the gate and the review passed on %s\n\nDetails: fwx wave --run %s --json" % (heads[-1], run))])
+    dup = [x["subject"] for x in got if (x["body"] or "").strip() == x["subject"].strip() or x["subject"] in (x["body"] or "")]
+    S.ok("lines: no status mail repeats its subject in its body (Orca shows both as one duplicated card) -> %s" % dup, not dup)
+    S.ok("lines: no subject is a long dump (at most 80 characters) -> %s" % [len(x["subject"]) for x in got], all(len(x["subject"]) <= 80 for x in got))
     S.ok("lines: all of them are status messages", all(x["type"] == "status" for x in got), "types %r" % [x["type"] for x in got])
     leaked = [x["subject"] for x in got if "worker_done" in (x["body"] or "") + x["subject"] or x["subject"].startswith("done ")]
     S.ok("routine worker_done never reaches the orchestrator -> %s" % leaked, not leaked)
@@ -1011,7 +1121,7 @@ def case_steer_lines(root, S):
     if m:
         got_rev = sent(w, ORCH)
         S.eq("lines: --revert with --orchestrator sends its final status line and closes its terminal",
-             ([x["subject"].split(": ")[0] for x in got_rev], any(t["open"] for t in w.terminals().values())),
+             ([x["subject"] for x in got_rev], any(t["open"] for t in w.terminals().values())),
              (["[%s] run %s done" % (os.path.basename(w.part), m.group(1))], False))
 
 
@@ -1208,7 +1318,7 @@ def case_reply_grace(root, S):
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
-         case_progress, case_own_terminal, case_fenced]
+         case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
 
 
 def mutant_tree(path, old, new):
@@ -1275,6 +1385,17 @@ MUTANTS = [
      '        try:\n            msgs = orca.peek_questions(self.st["terminal"], self.orca_run)\n        except orca.OrcaError:\n            self._check_sender()\n            raise',
      '        msgs = orca.peek_questions(self.st["terminal"], self.orca_run)',
      "fenced (orchestrator): the run stops needs-owner naming its closed terminal"),
+    ("the sender terminal is made in the main checkout", case_terminal, "lib/fwx/execute/run.py", 'orca.terminal_create(self.top, "fwx run %s" % self.run)', 'orca.terminal_create(self.main, "fwx run %s" % self.run)',
+     "terminal (success): one made, titled for the run, in the phase worktree"),
+    ("terminal create is not retried", case_terminal_discover, "lib/fwx/execute/orca.py", 'got = _discover(lambda: result("terminal", "create"', 'got = (lambda f, n: f())(lambda: result("terminal", "create"',
+     "terminal discover: the run is done"),
+    ("a wave line repeats its subject as the body", case_steer_lines, "lib/fwx/execute/run.py", '            self.tell(subject, body)\n        except orca.OrcaError as e:\n            self._check_sender()\n            raise self.unreachable(e, "the run stopped after: %s" % subject)',
+     '            self.tell(subject, subject)\n        except orca.OrcaError as e:\n            self._check_sender()\n            raise self.unreachable(e, "the run stopped after: %s" % subject)',
+     "lines: no status mail repeats its subject in its body"),
+    ("the final line is a long subject", case_steer_lines, "lib/fwx/execute/run.py", 'r.tell("[%s] run %s %s" % (os.path.basename(r.part), st["run"], status),', 'r.tell("[%s] run %s %s: %s" % (os.path.basename(r.part), st["run"], status, line),',
+     "lines: the orchestrator got the wave lines and the final line"),
+    ("--json is not read", case_list_json, "lib/fwx/commands/wave.py", 'if argv and argv != ["--json"]:', "if argv:", "list --json: exit 0 and one JSON document"),
+    ("the events are not capped", case_list_json, "lib/fwx/execute/run.py", "EVENTS = 8", "EVENTS = 10 ** 6", "list --json: the events are the last 8 progress lines"),
     ("a resume keeps the Orca run of a lost terminal", case_fenced, "lib/fwx/execute/run.py", 'self.st["orca_run"] = None', "pass", "fenced (plain): the resume goes on to done"),
 ]
 
