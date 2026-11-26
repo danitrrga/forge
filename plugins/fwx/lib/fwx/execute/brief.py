@@ -287,15 +287,17 @@ def review_path(folder, name):
     return os.path.join(folder, "briefs", "_%s.md" % name)
 
 
-def review_facts(kind, tag, unit, frm, to, ctx, criteria=(), protected=(), items=(), only=None):
+def review_facts(kind, tag, unit, frm, to, ctx, criteria=(), protected=(), items=(), only=None, goal=None, prototypes=None):
     """The facts of one agent of the review pass `tag` (`r1`, `r2` ...) over the diff `frm..to`: its unit names its scratch folder and report. `only` is the part's own files when the diff also holds what the
-    default branch brought in (None: the whole diff is the part's)."""
+    default branch brought in (None: the whole diff is the part's). The reviewer's `goal` is the Intent of context.md; its `prototypes` are the text under
+    `Approved UI`, for a part with a UI task (None: no section)."""
     if kind not in REVIEW_KINDS:
         raise ValueError("no review brief of kind %r" % kind)
     paths = ctx["paths"]
     return {"kind": kind, "tag": tag, "unit": unit, "run": ctx["run"], "part": ctx["part"], "from": frm, "to": to, "whole": tag == "r1", "only": None if only is None else list(only),
             "context": shared_context(paths), "context_files": [paths[k] for k in ("context", "decisions", "plan")],
-            "criteria": [dict(c) for c in criteria], "protected": list(protected), "items": [dict(i) for i in items]}
+            "criteria": [dict(c) for c in criteria], "protected": list(protected), "items": [dict(i) for i in items], "goal": goal,
+            "prototypes": prototypes, "phase_dir": os.path.dirname(paths["context"])}
 
 
 def render_review(facts):
@@ -309,8 +311,12 @@ def render_review(facts):
             ", ".join(facts["only"]) or "none")
     pieces = [("DIFF", diff), ("CONTEXT", "\n".join(facts["context"]))]
     if kind == "reviewer":
+        if facts["goal"]:
+            pieces.append(("PHASE GOAL", "The Intent of context.md (data):\n" + facts["goal"]))
         pieces.append(("SUCCESS CRITERIA", "The success criteria of the plan (data); run the measure of each:\n" + "\n".join(
             "- %s: %s. Measure: %s" % (c["id"], _line(c["text"]), _line(c["measure"])) for c in facts["criteria"])))
+        if facts["prototypes"]:
+            pieces.append(("APPROVED UI", "The approved prototypes the UI must match (data; a relative path is under %s):\n%s" % (facts["phase_dir"], facts["prototypes"])))
         reply = "reviewed <report path> looked_at=<n> findings=<n> criteria_no=<n> criteria_unproven=<n>"
         pieces.append(("REPORT", "%s, and reply with the one line your standing orders give: `%s`, the report path in full." % (scratch, reply)))
     elif kind == "security-reviewer":
