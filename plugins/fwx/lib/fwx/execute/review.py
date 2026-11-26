@@ -21,8 +21,9 @@ and the groups `fix`, `consider`, `note`, `dismissed`, `file` with `routes` (id 
 
 The one behaviour that is not a port is the threshold: the verifier runs only above `THRESHOLD` items (D10), where execute.js ran it on any. Below
 it every item is fixed, a large `outside` item excepted (it is too big for a round: it goes to `file`).
-D25 (09-trim): a verdict `fix` of severity `low` (the verifier's) goes to `consider`, never to `fix`: only medium and high cost a fix round
-and a new gate. Below the threshold nothing is verified, so every item is still fixed.
+D25 (09-trim): an item of severity `low` (the verifier's, else the reviewer's) goes to `consider`, never to `fix`: only medium and high cost a fix
+round and a new gate. So does an item whose file is under `.fwx/` (executors may not write there: no commit could carry its fix), and it counts
+nothing towards the threshold.
 
 State is read from the run's own recorded calls (`steps`, oldest first), never from variables of a running script: the pass, its items, and the
 misses of each unit (a unit's name holds its pass, so a miss of one pass never counts in the next). Only a `report.json` inside the folder
@@ -37,7 +38,7 @@ from fwx import config, plan, plan_step, state
 from fwx.core import evidence
 from fwx.execute import brief, integrate, prepare
 from fwx.execute.base import WaveError, out, toplevel
-from fwx.execute.report import last_line, norm_path, outside_problem
+from fwx.execute.report import last_line, norm_path, outside_problem, recorded_file
 
 THRESHOLD = 3
 REVIEW_LINE = re.compile(r"reviewed (\S+) looked_at=(\d+) findings=(\d+) criteria_no=(\d+) criteria_unproven=(\d+)\Z")
@@ -130,17 +131,17 @@ def _valid(f):
             and isinstance(f.get("line"), int) and not isinstance(f.get("line"), bool) and f.get("severity") in brief.SEVERITY)
 
 
-def _read_review(line, run, unit, want=()):
+def _read_review(top, line, run, unit, want=()):
     """None when the line names no report of `unit`; else (report, rejection): the report is None for a miss, and the rejection is the
     reason when the report was read but is one to write again. `want` are the criterion ids the report must answer (the general reviewer's)."""
     m = REVIEW_LINE.match(last_line(line))
     path = m.group(1).replace("\\", "/") if m else ""
-    if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):
+    if not ("/" + path).endswith(_tail(run, unit)) or ".." in path.split("/"):
         return None
     if int(m.group(2)) == 0:
         return None, None
     try:
-        with open(m.group(1), encoding="utf-8") as f:
+        with open(recorded_file(top, run, unit, m.group(1)), encoding="utf-8") as f:
             rep = json.load(f)
     except (OSError, ValueError):
         return None, None
@@ -243,8 +244,14 @@ def _large(outside_of, ident):
     return o is not None and o["size"] == "large"
 
 
+def _under_fwx(it):
+    """A finding on a file of `.fwx/`: executors may not write there, so no fix round can ever commit it."""
+    return ".fwx" in it["file"].replace("\\", "/").split("/")
+
+
 def _route(items, outside_of, by):
-    """(groups, routes) of the items. `by` is {id: verdict} from the verifier, or None below the threshold: every item is then to fix."""
+    """(groups, routes) of the items. `by` is {id: verdict} from the verifier, or None below the threshold: every item is then to fix, but a
+    `low` one and one under `.fwx/` (listed for the owner)."""
     groups = {"fix": [], "consider": [], "note": [], "dismissed": [], "file": []}
     routes = {}
     for it in items:
@@ -252,14 +259,15 @@ def _route(items, outside_of, by):
         d = (by or {}).get(ident)
         verdict = d["verdict"] if d else "fix"
         severity = d["severity"] if d and d["severity"] in brief.SEVERITY else it["severity"]
-        if _large(outside_of, ident) and verdict == "fix":
+        forced = _under_fwx(it)
+        if _large(outside_of, ident) and verdict == "fix" and not forced:
             # too big for a fix round whatever its severity: returned for the session to file as a Linear issue
             groups["file"].append(outside_of[ident])
             routes[ident] = "file"
             continue
-        demoted = verdict == "fix" and d is not None and severity == "low"
+        demoted = forced or (verdict == "fix" and severity == "low")
         if demoted:
-            verdict = "consider"  # D25: a verified finding of severity low is listed for the owner; only medium and high cost a fix round and a new gate
+            verdict = "consider"  # D25: a finding of severity low is listed for the owner, verified or not; only medium and high cost a fix round and a new gate
         if verdict == "fix":
             groups["fix"].append(dict(it, severity=severity))
             routes[ident] = "fix"
@@ -353,7 +361,7 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
     for x in passed["reviewers"]:
         found = None
         for line in lines:
-            found = _read_review(line, run, x["unit"], asked if x["role"] == "reviewer" else ())
+            found = _read_review(top, line, run, x["unit"], asked if x["role"] == "reviewer" else ())
             if found is not None:
                 break
         rep, rejected = found if found else (None, None)
@@ -366,7 +374,7 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
     items, outside_of, criteria = _items(tag, units, reports, _controls(control) if control else [])
     if not items:
         return 0, _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, _route([], {}, None)[0], {})
-    if len(items) > THRESHOLD:
+    if sum(not _under_fwx(i) for i in items) > THRESHOLD:  # what `_route` lists for the owner anyway is no reason to run a verifier
         unit, ctx = tag + "-verifier", _context(top, part_dir, run)[2]
         facts = brief.review_facts("review-verifier", tag, unit, passed["from"], passed["to"], ctx, items=items)
         path = _write(brief.review_path(ctx["folder"], "verify-%s" % tag), facts, brief.render_review(facts))
@@ -376,14 +384,14 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
     return 0, _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, groups, routes)
 
 
-def _read_verdicts(line, run, unit, items):
+def _read_verdicts(top, line, run, unit, items):
     """(by, note): `by` is {id: verdict} when the line names the verifier's report and it covers every item; else None and the reason."""
     m = VERDICT_LINE.match(last_line(line))
     path = m.group(1).replace("\\", "/") if m else ""
-    if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):
+    if not ("/" + path).endswith(_tail(run, unit)) or ".." in path.split("/"):
         return None, ""
     try:
-        with open(m.group(1), encoding="utf-8") as f:
+        with open(recorded_file(top, run, unit, m.group(1)), encoding="utf-8") as f:
             rep = json.load(f)
     except (OSError, ValueError):
         return None, ""
@@ -415,7 +423,7 @@ def _judge(top, part_dir, run, line, steps):
     if waiting is None:
         raise WaveError("no review pass of run %s waits for the verifier: `fwx wave findings --report` says `verify` when one does" % run)
     tag, unit, items, outside_of, criteria = waiting["pass"], waiting["unit"], waiting["items"], waiting["outside_of"], waiting["criteria"]
-    by, note = _read_verdicts(line, run, unit, items)
+    by, note = _read_verdicts(top, line, run, unit, items)
     if by is None:
         miss = {"role": "review-verifier", "unit": unit, "brief": waiting["brief"], "rejected": None, "note": "\nYour last report was rejected, so write it again: %s." % note if note else ""}
         return _missed(steps, tag, [miss], unit=unit, brief=waiting["brief"], items=items, outside_of=outside_of, criteria=criteria, reported=len(items))

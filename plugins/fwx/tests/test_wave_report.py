@@ -480,7 +480,7 @@ MUTANTS = [
      "a miss is counted per unit"),
     ("the status of the line not compared with the report", case_misses, R_, ' or rep.get("status") != m.group(1):', ":",
      "(a status that differs from the line) relaunches"),
-    ("any path that names a report is read", case_misses, R_, 'if not path.endswith(tail) or ".." in path.split("/"):', "if False:",
+    ("any path that names a report is read", case_misses, R_, 'if not ("/" + path).endswith(tail) or ".." in path.split("/"):', "if False:",
      "(the report of another unit) relaunches"),
     ("a path that climbs is read", case_misses, R_, ' or ".." in path.split("/"):', ":",
      "(a path that climbs out of a scratch folder) relaunches"),
