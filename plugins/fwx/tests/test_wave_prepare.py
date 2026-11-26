@@ -91,6 +91,14 @@ def front(obj):
     return "---\n%s\n---\n\nbody\n" % json.dumps(obj, indent=1)
 
 
+def orca_dir():
+    """A folder holding an `orca` that does nothing: `wave new` on the session plane only asks that `orca` is on PATH, so a case that is not about
+    Orca gets one and passes on a machine that has none (CI)."""
+    d = helpers.mkdtemp("fwx-orca-stub-")
+    helpers.write(d, "orca", "#!/bin/sh\nexit 0\n", 0o755)
+    return d
+
+
 class Scene:
     """A main checkout on master, a linked worktree on `phase` (or, with wt=False, the main one on `phase`), the part's
     folder in the main checkout's `.fwx/`, the project's configuration and settings in its ignored `.claude/`."""
@@ -116,7 +124,7 @@ class Scene:
         self.conf = helpers.mkdtemp("fwx-claude-")
         if user is not None:
             helpers.write(self.conf, "settings.json", json.dumps(user))
-        self.env = {"CLAUDE_CONFIG_DIR": self.conf}
+        self.env = {"CLAUDE_CONFIG_DIR": self.conf, "PATH": orca_dir() + os.pathsep + os.environ["PATH"]}
         if wt and nested:
             self.cwd = self.worktree(self.part_repo)
         elif wt:
@@ -809,10 +817,12 @@ def case_base_timeout(R, S):
     S.ok("timeout: the message names the limit the project set (2 s), not a fixed one", code == 77 and "timed out after 2 s" in err, "exit %s: %s" % (code, err[:300]))
 
 
-def tool_dir(gh=None):
-    """A PATH of its own: git and the shells, and `gh` only when `gh` is given (the shell text of a fake: it logs its arguments
-    to `calls`, next to it, and then runs `gh`). Without one, no gh exists for the run, whatever this machine has installed."""
+def tool_dir(gh=None, orca=True):
+    """A PATH of its own: git and the shells, an `orca` that does nothing unless `orca` is False, and `gh` only when `gh` is given (the shell text of a
+    fake: it logs its arguments to `calls`, next to it, and then runs `gh`). Without one, no gh exists for the run, whatever this machine has installed."""
     d = helpers.mkdtemp("fwx-tools-")
+    if orca:
+        os.symlink(os.path.join(orca_dir(), "orca"), os.path.join(d, "orca"))
     for tool in ("git", "bash", "sh"):
         found = shutil.which(tool)
         if found:
@@ -951,14 +961,14 @@ def case_orca_missing(R, S):
       FAIL: orca missing: the refusal names orca and what to install: stderr 'fwx wave new: base checks: CI not used (project.default_branch is not set); running the checks here\\n'"""
     runs = os.path.join(helpers.mkdtemp("fwx-runs-"), "runs")
     sc = Scene(recipe=[counting(runs)])
-    r = sc.prepare(R, env={"PATH": tool_dir()})
+    r = sc.prepare(R, env={"PATH": tool_dir(orca=False)})
     S.eq("orca missing: exit", r.returncode, 2)
     S.eq("orca missing: stdout empty", r.stdout, "")
     S.eq("orca missing: the base checks did not run", ran(runs), 0)
     S.ok("orca missing: the refusal names orca and what to install", "orca" in r.stderr and "install Orca" in r.stderr and len(r.stderr.strip().splitlines()) == 1,
          "stderr %r" % r.stderr[:300])
     S.ok("orca missing: nothing written", not sc.audit_exists())
-    r = sc.prepare(R, plane="factory", env={"PATH": tool_dir()})
+    r = sc.prepare(R, plane="factory", env={"PATH": tool_dir(orca=False)})
     S.eq("orca missing: the factory plane does not need it", (r.returncode, ran(runs)), (0, 1))
 
 
@@ -971,6 +981,9 @@ CASES = [case_base, case_models, case_clash, case_red_base, case_ignored, case_d
 # whose `old` has gone is an error, never a silent pass.
 P, B, CG = "lib/fwx/execute/prepare.py", "lib/fwx/execute/base.py", "lib/fwx/core/ci_gate.py"  # CG: where the base check of CI lives (09.6 T64)
 MUTANTS = [
+    ("orca not asked for", case_orca_missing, P, "    need_orca(plane, environ)\n", "", "orca missing: exit: got 0, want 2"),
+    ("orca asked for on the factory plane too", case_orca_missing, P, 'if plane == "session" and shutil.which', "if shutil.which",
+     "orca missing: the factory plane does not need it"),
     ("clash not marked", case_clash, P, 'serial = any(c["wave"] == n for c in clashes)', "serial = False", "wave 1 serial=False, want True"),
     ("red base not run", case_red_base, P, "results = [verify.run_check(c, top, timeout) for c in recipe]", "results = []",
      "prepare exit 0 on a red base"),
