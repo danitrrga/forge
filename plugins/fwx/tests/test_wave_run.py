@@ -1340,8 +1340,10 @@ def case_steer_asking(root, S):
     wait_for(lambda: (run and w.state(run)["workers"].get("T1/1", {}).get("asked_idle") is True) or p.poll() is not None, secs=5)
     orchestra(w, "orchestration", "send", "--to", "dispatch:ctx_1", "--subject", "Answer", "--body", "go")
     wait_for(lambda: (w.dispatches().get("ctx_1") or {}).get("shows", 0) >= 2 and (w.dispatches().get("ctx_1") or {}).get("mode") == "woken-hang")
-    # poll persists the cleared asking state a tick after the woken show; stop waiting if `p` exited early.
-    wait_for(lambda: (run and "T1/1" in w.state(run)["workers"] and w.state(run)["workers"]["T1/1"].get("asking") is None) or p.poll() is not None, secs=3)
+    # poll persists the cleared asking state a tick after the woken show; stop waiting if `p` exited early. 8 s, not 3: on a loaded CI
+    # runner the tick came later than 3 s (CI of PR 275, "poll persisted cleared asking state ... got <ts>, want None"); the wait returns
+    # as soon as the state is saved, and stays under `p`'s 10 s limit so the run cannot end first by its limit.
+    wait_for(lambda: (run and "T1/1" in w.state(run)["workers"] and w.state(run)["workers"]["T1/1"].get("asking") is None) or p.poll() is not None, secs=8)
     saved_after = (w.state(run)["workers"].get("T1/1") or {}) if run else {}
     S.ok("asking resume-after-answer: runner is still alive before kill (release did not mask persistence)", p.poll() is None and not saved_after.get("released"),
          "poll=%r released=%r" % (p.poll(), saved_after.get("released")))
