@@ -54,6 +54,7 @@ The first FAIL line of each mutant, seen red:
   summary never finds the part:             FAIL: summary, from the run files: gate: got 'none': got ('none', 2), want ('pass', 0)
   step files all numbered 0:                FAIL: step files: one per call, numbered: got ['0-fix-round.json', '0-integrate.json', '0-revert.json'], want [...]
 """
+import fcntl
 import json
 import os
 import shlex
@@ -282,6 +283,36 @@ def case_integrate_quick(R, S):
     sc.stop()
     sg.stop()
     st.stop()
+
+
+def case_integrate_quick_lock(R, S):
+    """Two runs on one machine must not run check recipes at once: `_quick` waits for the project's gate lock like the gate does (concurrency research, finding 8).
+    The test holds `<fwx folder>/gate.lock`, starts a merge whose quick check writes a marker, and asserts the marker is absent while the lock is held and the
+    merge finishes after the release. Seen red on the code before the fix:
+      FAIL: quick: a held gate lock keeps the quick check from starting: got True, want False
+      FAIL: quick: the command is still running while the lock is held: got 0, want None
+      FAIL: quick: the wait is announced on stderr: ''"""
+    marker = os.path.join(helpers.mkdtemp("fwx-quick-"), "ran")
+    sc = Scene(quick=["touch %s" % shlex.quote(marker)])
+    b = sc.agent("one", [("src/a.py", "a1\n", None)])
+    lock, errfile = os.path.join(sc.common, "fwx", "gate.lock"), os.path.join(os.path.dirname(marker), "err")
+    os.makedirs(os.path.dirname(lock), exist_ok=True)
+    with open(lock, "a") as held, open(errfile, "w") as err:
+        fcntl.flock(held, fcntl.LOCK_EX)
+        p = subprocess.Popen([PY, os.path.join(R.root, "bin", "fwx"), *STEP_WORDS["integrate"], "--part-dir", sc.part, "--run", sc.run, "--branches", b], cwd=sc.cwd,
+                             env=helpers.clean_env(**IDENT), stdout=subprocess.PIPE, stderr=err, text=True)
+        sc.procs.append(p)
+        end = time.time() + 20  # the merge is done and the run is parked on the lock (or, on the old code, past it)
+        while time.time() < end and not os.path.exists(marker) and "waiting for another gate" not in open(errfile).read():
+            time.sleep(0.05)
+        S.eq("quick: a held gate lock keeps the quick check from starting", os.path.exists(marker), False)
+        S.eq("quick: the command is still running while the lock is held", p.poll(), None)
+        fcntl.flock(held, fcntl.LOCK_UN)
+    p.communicate(timeout=60)
+    err = open(errfile).read()
+    S.eq("quick: after the release the merge ends ok and the quick check ran", (p.returncode, os.path.exists(marker), err[-200:] if p.returncode else ""), (0, True, ""))
+    S.ok("quick: the wait is announced on stderr", "waiting for another gate of this repo" in err, repr(err[-200:]))
+    sc.stop()
 
 
 def case_integrate_dirty(R, S):
@@ -910,7 +941,7 @@ def case_next_rules(R, S):
         S.ok("%s: why has %r" % (label, needle), needle in why, repr(why))
 
 
-CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_dirty, case_integrate_lock,
+CASES = [case_integrate_clean, case_integrate_conflict, case_integrate_quick, case_integrate_quick_lock, case_integrate_dirty, case_integrate_lock,
          case_integrate_findings, case_integrate_final, case_integrate_default_merge, case_integrate_gate_only, case_fix_round, case_cleanup, case_cleanup_scratch, case_cleanup_no_proc, case_summary,
          case_summary_report, case_step_files, case_next, case_next_rules]
 
