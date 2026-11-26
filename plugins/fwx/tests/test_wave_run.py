@@ -1063,6 +1063,49 @@ def case_fenced(root, S):
         S.ok("fenced (%s): the new terminal is closed at the end" % label, not any(t["open"] for t in w.terminals().values()), "terminals %r" % w.terminals())
 
 
+def case_signals(root, S):
+    """The driver killed by SIGTERM or SIGHUP (the owner closes the Orca terminal it borrows) or SIGINT ends through the path an exception takes: its workers are stopped and
+    released, its made terminal closed, the run recorded `failed` with the signal named (state `failed`, `result.interrupted` the signal: the one failed run
+    `--resume` takes), exit 1; the resume starts the cut worker's task again under a new worktree and goes on to done. Hackathon-ready research, run-failures G, gap 2
+    (run 10-nested-repos-f97847b-4). Seen red on the code before it (the signal killed the driver at once):
+      FAIL: SIGTERM: the run says failed and names the signal: got 'base check passed at <sha> ... worker T1 started (executor, sonnet)' (no result line)
+      FAIL: SIGTERM: exit 1, no traceback: got (-15, False), want (1, False)
+      FAIL: SIGTERM: the state is no longer active: got 'active': got 'active', want 'failed'
+      FAIL: SIGTERM: the worker was stopped and released: got ['ctx_1'] still open: got ['ctx_1'], want []
+      FAIL: SIGTERM: its made terminal is closed: got terminals {'term_1': {... 'open': True}}
+      FAIL: SIGTERM: the resume started the cut task again and then the reviewer: got ['T1', 'r1'], want ['T1', 'T1', 'r1']
+    SIGHUP the same (exit -1); SIGINT: exit -2 with a KeyboardInterrupt traceback and the state still `active` (its workers and terminal were released by `finish`).
+    Controls (MUTANTS): the handler not installed, and the cut worker not marked, each red on this case."""
+    for name in ("SIGTERM", "SIGHUP", "SIGINT"):
+        w = world(tasks=[task("T1", 1, ["src/a.py"])], behave={"units": {"T1": "later"}})
+        p = start_run(w, root, FWX_RUN_LIMIT_S="60")
+        wait_for(lambda: p.poll() is not None or (w.runs() and any(x.get("dispatch") for x in w.state(w.runs()[0])["workers"].values())))
+        S.eq("%s: the run started T1 and is running" % name, (units(w), p.poll()), (["T1"], None))
+        os.kill(p.pid, getattr(signal, name))
+        r = finish_run(p)
+        m = line_of(r)
+        S.ok("%s: the run says failed and names the signal: got %r" % (name, r.stdout[-200:]), bool(m) and m.group(2) == "failed" and name in m.group(3))
+        S.eq("%s: exit 1, no traceback" % name, (r.returncode, "Traceback" in r.stderr), (1, False))
+        run = w.runs()[0] if w.runs() else ""
+        if not run:
+            continue
+        st = w.state(run)
+        S.eq("%s: the state is no longer active: got %r" % (name, st["state"]), st["state"], "failed")
+        S.eq("%s: the result names the signal" % name, (st.get("result") or {}).get("interrupted"), name)
+        S.eq("%s: the worker was stopped and released: got %r still open" % (name, [k for k, d in w.dispatches().items() if not d["released"]]),
+             [k for k, d in w.dispatches().items() if not d["released"]], [])
+        S.ok("%s: its made terminal is closed: got terminals %r" % (name, w.terminals()), not any(t["open"] for t in w.terminals().values()))
+        helpers.write(w.dir, "go-T1", "")
+        r2 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=120)
+        m2 = line_of(r2)
+        S.ok("%s: --resume takes the run up and it is done: got %r %r" % (name, r2.stdout[-200:], r2.stderr[-200:]), bool(m2) and m2.group(2) == "done" and m2.group(1) == run)
+        S.eq("%s: the resume started the cut task again and then the reviewer" % name, units(w), ["T1", "T1", "r1"])
+        S.ok("%s: every dispatch is released after the resume" % name, all(d["released"] for d in w.dispatches().values()))
+        S.eq("%s: the resumed run ended done" % name, w.state(run)["state"], "done")
+        r3 = subprocess.run(w.argv(root, "--resume", run), cwd=w.cwd, env=w.env(), capture_output=True, text=True, timeout=60)
+        S.eq("%s: a finished run is not resumable again" % name, r3.returncode, 2)
+
+
 # ---------------------------------------------------------------------------------------------------------------------- orchestrator steering
 
 ORCH = "orca_session_id:11111111-2222-3333-4444-555555555555"
@@ -1410,7 +1453,7 @@ def case_reply_grace(root, S):
 CASES = [case_loop, case_failure, case_error, case_gate_red, case_retry, case_conflict, case_fix, case_gate_entry, case_revert, case_security, case_refusals, case_registered,
          case_one_run, case_resume, case_lock, case_release, case_alive, case_settings_mode, case_transcript, case_waiting, case_review_fix, case_terminal, case_terminal_resume, case_discover,
          case_fake_orca, case_steer, case_steer_resume, case_steer_lines, case_steer_off, case_steer_unreachable, case_steer_asking, case_reply_grace,
-         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_terminal_discover, case_list_json]
+         case_nested, case_nested_resume, case_progress, case_own_terminal, case_fenced, case_signals, case_terminal_discover, case_list_json]
 
 def mutant_tree(path, old, new):
     """A copy of the plugin (what `fwx wave run` reads: bin, lib, data, templates, agents) with `old` replaced by `new` in `path`, once."""
