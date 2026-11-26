@@ -2575,7 +2575,11 @@ class Pages:
         class H(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
                 outer.hits.append(self.path)
-                code, loc = {"/go-local": (302, outer.url + "/ok"), "/go-away": (302, "http://example.test/ok"),
+                # /go-away leaves for an address that is not local by name (127.0.0.2) and that nothing listens at, so a probe that followed it
+                # would fail on the refused connection, whatever a runner's resolver does with a name: with example.test here, a CI resolver
+                # that sent it back in a loop made the followed redirect end as the 302 the test wants, and the mutant "a redirect off the app is
+                # followed" passed all 38 checks (CI run 45746798155)
+                code, loc = {"/go-local": (302, outer.url + "/ok"), "/go-away": (302, "http://127.0.0.2:1/ok"),
                              "/docs/docs": (404, None)}.get(self.path, (200, None))
                 self.send_response(code)
                 if loc:
