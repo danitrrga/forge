@@ -26,8 +26,6 @@ X4	executor	workflow	python3 bin/forge test fwx	allow
 X5	executor	workflow	git commit -am probe	allow
 RV1	reviewer	workflow	git diff master...HEAD	allow
 RV2	review-verifier	workflow	python3 tests/test_probe.py	allow
-S1	state	agent	@Write {repo}/.fwx/p1/state.md	allow
-S2	state	agent	fwx report lint {repo}/.fwx/p1/state.md	allow
 W1	ui-walker	workflow	fwx walk start --project probe	allow
 W2	ui-walker	workflow	fwx walk capture --out shot.png	allow
 W3	ui-walker	workflow	git -C {repo} diff	allow

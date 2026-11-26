@@ -229,8 +229,13 @@ def main():
     actions, err = auto_mode.load_actions()
     want("catalogue loads", err, None)
     ids = {x["id"] for x in actions}
-    need = {"D1", "D5", "O1", "O16", "X1", "X5", "RV1", "RV2", "S1", "S2", "W1", "W6", "C1", "C4", "V1", "V2", "K1", "A1"}
+    need = {"D1", "D5", "O1", "O16", "X1", "X5", "RV1", "RV2", "W1", "W6", "C1", "C4", "V1", "V2", "K1", "A1"}
     want("catalogue holds the plan's ids (Apendice C)", sorted(need - ids), [])
+    # The `state` agent and `fwx report lint` were removed (01.3: the orchestrator writes the report itself), so no row probes their paths.
+    # Seen failing before the fix: "catalogue names no removed state agent or state.md: want [], got ['S1', 'S2']".
+    want("catalogue names no removed state agent or state.md", [x["id"] for x in actions if x["role"] == "state" or "state.md" in x["command"]], [])
+    want("CONTROL: the removed-state filter catches a row of that role",
+         [x["id"] for x in [{"id": "S9", "role": "state", "command": "fwx x"}] if x["role"] == "state" or "state.md" in x["command"]], ["S9"])
     want("catalogue: K1 is the control rule, expected denied by rule", [x["expect"] for x in actions if x["id"] == "K1"], ["deny/rule"])
     want("C3 is a forge-flavor cell only", (len(auto_mode.plan_cells([x for x in actions if x["id"] == "C3"], "forge", 1)),
                                             len(auto_mode.plan_cells([x for x in actions if x["id"] == "C3"], "plain", 1))), (1, 0))

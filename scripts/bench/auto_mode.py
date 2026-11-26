@@ -454,7 +454,6 @@ def build_world(base, flavor, forge_root):
     write(os.path.join(repo, "hooks", "guard_tool_use.py"), "# stub: the word before is here so an Edit of it can run\n")
     write(os.path.join(repo, "tools", "verdict.py"), FAKE_PY % (wrappers, "verdict.py"))
     write(os.path.join(repo, "bin", "forge"), FAKE_PY % (wrappers, "bin/forge"))
-    write(os.path.join(repo, ".fwx", "p1", "state.md"), "# state\n")
     write(os.path.join(repo, ".claude", "agents", "readonly.md"), READONLY_AGENT)
     notes = []
     if flavor == "forge":
