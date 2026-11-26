@@ -140,6 +140,10 @@ def report_file(raw, run, unit, worktree):
     if not ("/" + path).endswith(tail) or ".." in path.split("/"):
         return None
     if os.path.isabs(path):
+        # every agent (executor, fixer, resolver, reviewer, verifier) is started in a worktree of its own and `fwx scratch new` prints that worktree's
+        # path, so a path in full that names another one is an older attempt's stale report; a link to the worktree is the same worktree
+        if worktree is not None and os.path.realpath(path[:-len(tail)]) != os.path.realpath(worktree):
+            return None
         return raw, path[:-len(tail)]
     want = [s for s in ("/" + path)[:-len(tail)].split("/") if s not in ("", ".")]
     if worktree is None or worktree.split("/")[len(worktree.split("/")) - len(want):] != want:
