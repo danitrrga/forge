@@ -42,6 +42,8 @@ FAIL line of each, seen red (cut at 120 characters):
   a fixer judged against the plan:      FAIL: a fixer or resolver report (fix-1) is judged with no scope -> next None: want next 'merge', got None ({})
   relative path read against the cwd:   FAIL: a report path relative to the repository (a worktree path from the repository) is read -> next relaunch: want next 'merge', got 'relaunch' ...
   relative path names any worktree:     FAIL: a report path relative to the repository (a worktree of another worker) is read -> next merge: want next 'relaunch', got 'merge' ...
+  relative path with no worktree read in the cwd: FAIL: a relative path of a run with no state is a miss, whatever is in the driver's cwd -> next merge: want next 'relaunch', got 'merge' ...
+  oldest attempt's worktree read:       FAIL: a relative path of an older attempt is not read (its report is stale) -> next merge: want next 'relaunch', got 'merge' ...
   any plane taken:                      FAIL: usage (a plane that is neither): exit 2 with the usage on stderr: got (0, False, '{"next": "relaunch", ...
 """
 import json
@@ -511,10 +513,16 @@ MUTANTS = [
      "(a status that differs from the line) relaunches"),
     ("any path that names a report is read", case_misses, R_, 'if not ("/" + path).endswith(tail) or ".." in path.split("/"):', "if False:",
      "(the report of another unit) relaunches"),
-    ("a relative path is read against the driver's cwd", case_relative, R_, "        if wt is None:\n", "        if True:\n",
+    ("a relative path is never read", case_relative, R_, "    return worktree + tail, worktree\n", "    return None\n",
      "a report path relative to the repository (a worktree path from the repository) is read -> next relaunch"),
-    ("a relative path names any worktree", case_relative, R_, '        if w.split("/")[len(w.split("/")) - len(want):] == want:\n', "        if True:\n",
+    ("a relative path with no worktree is read in the driver's cwd", case_relative, R_,
+     '    if worktree is None or worktree.split("/")[len(worktree.split("/")) - len(want):] != want:\n        return None\n',
+     '    if worktree is None:\n        return raw, ""\n    if worktree.split("/")[len(worktree.split("/")) - len(want):] != want:\n        return None\n',
+     "a relative path of a run with no state is a miss, whatever is in the driver's cwd"),
+    ("a relative path names any worktree", case_relative, R_, ' != want:\n        return None\n', ' != want and False:\n        return None\n',
      "(a worktree of another worker) is read -> next merge"),
+    ("the oldest attempt's worktree is the one read", case_relative, R_, "    return max(mine, key=", "    return min(mine, key=",
+     "a relative path of an older attempt is not read"),
     ("a path that climbs is read", case_misses, R_, ' or ".." in path.split("/"):', ":",
      "(a path that climbs out of a scratch folder) relaunches"),
     ("a `done` with no branch is merged", case_misses, R_, 'not (isinstance(rep.get("branch"), str) and rep["branch"])', "False",

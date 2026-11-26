@@ -123,33 +123,38 @@ def outside_problem(rep, who, linear):
     return None
 
 
-def _worktree_of(prefix, worktrees):
-    """The worktree among the unit's recorded ones that a relative report path (its part before `.fwx-agent`) names, or None. The path is relative
-    to the repository or to the worktree: it names the worktree when the worktree's path ends with it, folder by folder."""
-    want = [s for s in prefix.split("/") if s not in ("", ".")]
-    for w in worktrees:
-        if w.split("/")[len(w.split("/")) - len(want):] == want:
-            return w
-    return None
+def newest_worktree(top, run, unit):
+    """The worktree of the newest attempt of `unit` in the run's state, or None: an older attempt's report is stale, so only the last one is read."""
+    workers = (run_mod.load_state(top, run) or {}).get("workers")
+    mine = [(k, w["worktree"]) for k, w in (workers if isinstance(workers, dict) else {}).items()
+            if isinstance(w, dict) and w.get("unit") == unit and isinstance(w.get("worktree"), str)]
+    return max(mine, key=lambda kw: _attempt(kw[0]))[1].replace("\\", "/") if mine else None
 
 
-def _read(line, run, unit, linear, worktrees=()):
-    """(report, worktree, rejection): the report the line names, or None for a miss. `rejection` is the reason when the report was read but
-    is one to write again (its `outside`), and then the report is None too. A path that is not absolute is read in the unit's worktree
-    (`worktrees`, newest first, from the run's state): the driver's cwd is not the worker's, where an agent that wrote it short meant it."""
-    m = EXEC_LINE.match(last_line(line))
-    if not m:
-        return None, None, None
-    path = m.group(2).replace("\\", "/")
+def report_file(raw, run, unit, worktree):
+    """(the path to open, the worktree it is in) of the report path `raw` an agent named for `unit`, or None when it is not the unit's report.
+    A relative path is the agent's short way of writing the path in full: it is read in `worktree` (the unit's newest, `newest_worktree`; the driver's
+    cwd is not the agent's) when the path's folders before `.fwx-agent` end that worktree's path, folder by folder."""
+    path = raw.replace("\\", "/")
     tail = "/.fwx-agent/%s/%s/report.json" % (run, unit)
     if not ("/" + path).endswith(tail) or ".." in path.split("/"):
+        return None
+    if os.path.isabs(path):
+        return raw, path[:-len(tail)]
+    want = [s for s in ("/" + path)[:-len(tail)].split("/") if s not in ("", ".")]
+    if worktree is None or worktree.split("/")[len(worktree.split("/")) - len(want):] != want:
+        return None
+    return worktree + tail, worktree
+
+
+def _read(line, run, unit, linear, worktree=None):
+    """(report, worktree, rejection): the report the line names, or None for a miss. `rejection` is the reason when the report was read but
+    is one to write again (its `outside`), and then the report is None too. `worktree` is the unit's newest, for a relative path (`report_file`)."""
+    m = EXEC_LINE.match(last_line(line))
+    found = report_file(m.group(2), run, unit, worktree) if m else None
+    if found is None:
         return None, None, None
-    read = m.group(2)
-    if not os.path.isabs(path):
-        wt = _worktree_of(("/" + path)[:-len(tail)], worktrees)
-        if wt is None:
-            return None, None, None
-        path = read = wt + tail
+    read, path = found
     try:
         with open(read, encoding="utf-8") as f:
             rep = json.load(f)
@@ -164,7 +169,7 @@ def _read(line, run, unit, linear, worktrees=()):
     why = outside_problem(rep, "executor", linear)
     if why:
         return None, None, why
-    return rep, path[:-len(tail)], None
+    return rep, path, None
 
 
 def _chain(steps, unit):
@@ -267,10 +272,7 @@ def judge(cwd, part_dir, run, unit, line, plane, steps):
     if top is None:
         raise WaveError("not inside a git repository: %s" % cwd)
     linear = bool(config.load(top)["project"].get("linear_project"))  # an unfixed `outside` item needs its key only where there is a Linear project
-    workers = (run_mod.load_state(top, run) or {}).get("workers")
-    mine = [w for k, w in sorted((workers if isinstance(workers, dict) else {}).items(), key=lambda kv: -_attempt(kv[0])) if isinstance(w, dict) and w.get("unit") == unit
-            and isinstance(w.get("worktree"), str)]
-    rep, worktree, rejection = _read(line, run, unit, linear, [w["worktree"].replace("\\", "/") for w in mine])
+    rep, worktree, rejection = _read(line, run, unit, linear, newest_worktree(top, run, unit))
     if rep is None:
         return 0, _miss(steps, unit, rejection)
     status = rep["status"]

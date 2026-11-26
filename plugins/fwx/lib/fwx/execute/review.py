@@ -39,7 +39,7 @@ from fwx import config, plan, plan_step, state
 from fwx.core import evidence
 from fwx.execute import brief, integrate, prepare
 from fwx.execute.base import WaveError, out, toplevel
-from fwx.execute.report import last_line, norm_path, outside_problem
+from fwx.execute.report import last_line, newest_worktree, norm_path, outside_problem, report_file
 
 THRESHOLD = 3
 REVIEW_LINE = re.compile(r"reviewed (\S+) looked_at=(\d+) findings=(\d+) criteria_no=(\d+) criteria_unproven=(\d+)\Z")
@@ -123,26 +123,22 @@ def review(cwd, part_dir, run, frm, to, security, steps):
 
 # ---------------------------------------------------------------------------------------------------- reading a reviewer
 
-def _tail(run, unit):
-    return "/.fwx-agent/%s/%s/report.json" % (run, unit)
-
-
 def _valid(f):
     return (isinstance(f, dict) and all(_text(f.get(k)) for k in ("id", "file", "claim", "evidence"))
             and isinstance(f.get("line"), int) and not isinstance(f.get("line"), bool) and f.get("severity") in brief.SEVERITY)
 
 
-def _read_review(line, run, unit, want=()):
+def _read_review(line, run, unit, worktree, want=()):
     """None when the line names no report of `unit`; else (report, rejection): the report is None for a miss, and the rejection is the
-    reason when the report was read but is one to write again. `want` are the criterion ids the report must answer (the general reviewer's)."""
+    reason when the report was read but is one to write again. `worktree` is the unit's newest, for a relative path (`report_file`). `want` are the criterion ids the report must answer (the general reviewer's)."""
     m = REVIEW_LINE.match(last_line(line))
-    path = m.group(1).replace("\\", "/") if m else ""
-    if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):
+    found = report_file(m.group(1), run, unit, worktree) if m else None
+    if found is None:
         return None
     if int(m.group(2)) == 0:
         return None, None
     try:
-        with open(m.group(1), encoding="utf-8") as f:
+        with open(found[0], encoding="utf-8") as f:
             rep = json.load(f)
     except (OSError, ValueError):
         return None, None
@@ -241,8 +237,9 @@ def _items(tag, units, reports, control):
 
 
 def _forbidden(path):
-    """Whether executors may not write `path` (a file under `.fwx/`, `brief.AGENT_FORBIDDEN`): a fixer cannot commit a fix there, so its finding is not sent to one."""
-    return norm_path(path).split("/")[0] == ".fwx"
+    """Whether executors may not write `path` (a file under a `.fwx/` folder, `brief.AGENT_FORBIDDEN`, however the reviewer wrote the path: from the repository,
+    from its worktree or in full): a fixer cannot commit a fix there, so its finding is not sent to one."""
+    return ".fwx" in norm_path(path).split("/")
 
 
 def _large(outside_of, ident):
@@ -363,7 +360,7 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
     for x in passed["reviewers"]:
         found = None
         for line in lines:
-            found = _read_review(line, run, x["unit"], asked if x["role"] == "reviewer" else ())
+            found = _read_review(line, run, x["unit"], newest_worktree(top, run, x["unit"]), asked if x["role"] == "reviewer" else ())
             if found is not None:
                 break
         rep, rejected = found if found else (None, None)
@@ -386,14 +383,14 @@ def findings(cwd, part_dir, run, lines, verdicts, control, steps):
     return 0, _conclude(top, part_dir, run, tag, steps, items, outside_of, criteria, groups, routes)
 
 
-def _read_verdicts(line, run, unit, items):
+def _read_verdicts(line, run, unit, worktree, items):
     """(by, note): `by` is {id: verdict} when the line names the verifier's report and it covers every item; else None and the reason."""
     m = VERDICT_LINE.match(last_line(line))
-    path = m.group(1).replace("\\", "/") if m else ""
-    if not path.endswith(_tail(run, unit)) or ".." in path.split("/"):
+    found = report_file(m.group(1), run, unit, worktree) if m else None
+    if found is None:
         return None, ""
     try:
-        with open(m.group(1), encoding="utf-8") as f:
+        with open(found[0], encoding="utf-8") as f:
             rep = json.load(f)
     except (OSError, ValueError):
         return None, ""
@@ -425,7 +422,7 @@ def _judge(top, part_dir, run, line, steps):
     if waiting is None:
         raise WaveError("no review pass of run %s waits for the verifier: `fwx wave findings --report` says `verify` when one does" % run)
     tag, unit, items, outside_of, criteria = waiting["pass"], waiting["unit"], waiting["items"], waiting["outside_of"], waiting["criteria"]
-    by, note = _read_verdicts(line, run, unit, items)
+    by, note = _read_verdicts(line, run, unit, newest_worktree(top, run, unit), items)
     if by is None:
         miss = {"role": "review-verifier", "unit": unit, "brief": waiting["brief"], "rejected": None, "note": "\nYour last report was rejected, so write it again: %s." % note if note else ""}
         return _missed(steps, tag, [miss], unit=unit, brief=waiting["brief"], items=items, outside_of=outside_of, criteria=criteria, reported=len(items))
