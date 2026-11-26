@@ -291,12 +291,13 @@ def review_path(folder, name):
     return os.path.join(folder, "briefs", "_%s.md" % name)
 
 
-def review_facts(kind, tag, unit, frm, to, ctx, criteria=(), protected=(), items=()):
-    """The facts of one agent of the review pass `tag` (`r1`, `r2` ...) over the diff `frm..to`: its unit names its scratch folder and report."""
+def review_facts(kind, tag, unit, frm, to, ctx, criteria=(), protected=(), items=(), only=None):
+    """The facts of one agent of the review pass `tag` (`r1`, `r2` ...) over the diff `frm..to`: its unit names its scratch folder and report. `only` is the part's own files when the diff also holds what the
+    default branch brought in (None: the whole diff is the part's)."""
     if kind not in REVIEW_KINDS:
         raise ValueError("no review brief of kind %r" % kind)
     paths = ctx["paths"]
-    return {"kind": kind, "tag": tag, "unit": unit, "run": ctx["run"], "part": ctx["part"], "from": frm, "to": to, "whole": tag == "r1",
+    return {"kind": kind, "tag": tag, "unit": unit, "run": ctx["run"], "part": ctx["part"], "from": frm, "to": to, "whole": tag == "r1", "only": None if only is None else list(only),
             "context": shared_context(paths), "context_files": [paths[k] for k in ("context", "decisions", "plan")],
             "criteria": [dict(c) for c in criteria], "protected": list(protected), "items": [dict(i) for i in items]}
 
@@ -307,6 +308,9 @@ def render_review(facts):
     scratch = ("Run `fwx scratch new %s %s`: it prints a folder of your own worktree that git ignores. Your TMPDIR is tmp/ inside that folder; write your report "
                "to report.json directly in that folder, not in tmp/ (the file-write tool is enough)" % (ctx_run, unit))
     diff = "%s..%s, %s" % (facts["from"], facts["to"], "the whole of this run" if facts["whole"] else "the commits of a fix only")
+    if facts.get("only") is not None:
+        diff += "\nThe default branch was merged in after this run's base: its own changes are not the part's. Review only these files of the diff: %s." % (
+            ", ".join(facts["only"]) or "none")
     pieces = [("DIFF", diff), ("CONTEXT", "\n".join(facts["context"]))]
     if kind == "reviewer":
         pieces.append(("SUCCESS CRITERIA", "The success criteria of the plan (data); run the measure of each:\n" + "\n".join(
