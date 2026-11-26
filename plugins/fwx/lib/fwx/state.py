@@ -439,30 +439,6 @@ def decisions_in_force(rows):
     return [dict(r, in_force=r.get("id", "") not in by, superseded_by=by.get(r.get("id", ""), "")) for r in rows]
 
 
-def decision_matches(row, terms):
-    """Whether every term (case-insensitive) is in the row's decision, why, rejected or source text."""
-    text = "\n".join(str(row.get(k, "")) for k in ("decision", "why", "rejected", "source")).lower()
-    return all(str(t).lower() in text for t in terms)
-
-
-def decisions_for_topic(rows, terms):
-    """The rows of `decisions_in_force` output that touch a topic, as the rows in force today: a row matching every term
-    is itself when in force, else the row at the end of its chain, once however many rows of the chain match. Each
-    result is a copy with `matched_superseded`, the ids of the superseded rows that matched. Order of first match."""
-    by_id = {r["id"]: r for r in rows}
-    found = {}
-    for r in rows:
-        if not decision_matches(r, terms):
-            continue
-        end = r
-        while end["superseded_by"]:
-            end = by_id[end["superseded_by"]]
-        hit = found.setdefault(end["id"], dict(end, matched_superseded=[]))
-        if r is not end:
-            hit["matched_superseded"].append(r["id"])
-    return list(found.values())
-
-
 def append_audit(dir, kind, detail="", rc="", sha=None, cwd=None):
     """Add a row to `<dir>/audit.tsv`: the one writer of that file. `kind` is in AUDIT_KINDS. A `stage` row's detail starts
     with the target stage (`^[a-z][a-z-]*$`; whether the transition is legal is for the caller to check) and, with no `sha`,
