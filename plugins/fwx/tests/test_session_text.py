@@ -139,7 +139,7 @@ def _commit_effect(line, toy, stale, demo, twice):
         run("git add -A && git commit -q -m older-session")
         with open(os.path.join(toy, old_state), "w") as f:
             f.write("changed\n")
-    for rel in (".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
+    for rel in (".fwx/project.md", ".fwx/milestones/v1/milestone.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html",
                 phase + "/demo/shot.png", phase + "/ui-walk/1-1/demo-state.json", phase + "/ui-walk/1-1/up.log", phase + "/ui-walk/1-1/shot.png"):
         if not demo and "/demo/page.html" in rel:
             continue
@@ -456,7 +456,7 @@ def main():
         rc, tracked, untracked, _, _ = commit_effect(lines[0])
         phase = ".fwx/milestones/v1/phases/01-a"
         check("rule 4's commit line adds the documents and the demo pages", rc == 0 and all(f in tracked for f in (
-            ".fwx/PROJECT.md", ".fwx/milestones/v1/MILESTONE.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
+            ".fwx/project.md", ".fwx/milestones/v1/milestone.md", phase + "/context.md", phase + "/audit.tsv", phase + "/research/r.md", phase + "/demo/page.html")),
               "rc %s, tracked %s" % (rc, tracked))
         check("rule 4's commit line leaves demo-state.json, a log and a screenshot untracked", all(any(u.endswith(n) for u in untracked) for n in (
             "demo-state.json", "up.log", "ui-walk/1-1/shot.png", "demo/shot.png")) and not [f for f in tracked if f.endswith(("demo-state.json", ".log", ".png"))],

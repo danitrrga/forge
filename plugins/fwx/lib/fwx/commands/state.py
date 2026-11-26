@@ -156,7 +156,7 @@ def cmd_new_subphase(a):
 def cmd_new_milestone(a):
     root = state.plan_root()
     if not root.exists():
-        raise state.StateError("%s does not exist: `fwx phase new SLUG` makes it with its PROJECT.md" % root)
+        raise state.StateError("%s does not exist: `fwx phase new SLUG` makes it with its project.md" % root)
     print(state.new_milestone(state.scope_root(root, a.subproject), a.name))
     return 0
 

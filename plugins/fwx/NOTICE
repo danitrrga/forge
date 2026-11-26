@@ -108,7 +108,7 @@ d/b/a HumanLayer. The licence is at https://www.apache.org/licenses/LICENSE-2.0 
   is this repo's own text.
 
 mattpocock/skills, https://github.com/mattpocock/skills, commit abeeaf9 (MIT).
-  Read, nothing copied, by skills/discuss/references/reentry.md and templates/MILESTONE.md: skills/engineering/wayfinder/SKILL.md, for
+  Read, nothing copied, by skills/discuss/references/reentry.md and templates/milestone.md: skills/engineering/wayfinder/SKILL.md, for
   the map (Destination, Decisions so far, Not yet specified, Out of scope) and its decision tickets, in words of its own. Here the map is
   a milestone and the tickets are phases of `.fwx/`, not issues in a tracker.
 

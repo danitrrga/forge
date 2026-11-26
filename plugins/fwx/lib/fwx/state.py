@@ -153,6 +153,23 @@ def phase_paths(dir):
             "audit": d / "audit.tsv"}
 
 
+def _doc(folder, stem):
+    """`folder/<stem>.md`, or `folder/<STEM>.md` when only the upper-case file is there (a project not yet renamed); else
+    the lowercase path, where a writer puts it."""
+    low, up = Path(folder) / (stem + ".md"), Path(folder) / (stem.upper() + ".md")
+    return up if not low.exists() and up.exists() else low
+
+
+def project_file(root):
+    """The project document of a `.fwx/` root or a subproject folder: `project.md`, else `PROJECT.md`."""
+    return _doc(root, "project")
+
+
+def milestone_file(milestone_dir):
+    """The document of a `milestones/vN/` folder: `milestone.md`, else `MILESTONE.md`."""
+    return _doc(milestone_dir, "milestone")
+
+
 def last_stage(dir):
     """The target stage of the last `stage` row of the folder's audit.tsv (the first word of its detail), or None."""
     found = None
@@ -535,12 +552,12 @@ def _check_phase_dir(phase_dir, what):
 
 
 def new_milestone(scope, name=None):
-    """Make `<scope>/milestones/vN/` with its MILESTONE.md and return it. `name` is `vN`, default the next number after
+    """Make `<scope>/milestones/vN/` with its milestone.md and return it. `name` is `vN`, default the next number after
     the highest (v1 in an empty scope); one that exists is refused. `scope` is `.fwx` or `.fwx/subprojects/<name>`."""
     scope = _check_scope(scope)
     if name is not None and not _MILESTONE.match(name):
         raise StateError("bad milestone name %r: vN" % (name,))
-    text = _read_template("MILESTONE.md")
+    text = _read_template("milestone.md")
     if name is None:
         name = "v%d" % (max((int(m[1:]) for m in milestones(scope)), default=0) + 1)
     d = scope / "milestones" / name
@@ -549,14 +566,14 @@ def new_milestone(scope, name=None):
         os.mkdir(str(d))
     except FileExistsError:
         raise StateError("milestone %s already exists in %s" % (name, scope))
-    _write_new(d / "MILESTONE.md", text.replace("<vN>", name))
+    _write_new(d / "milestone.md", text.replace("<vN>", name))
     return d
 
 
 def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
     """Make the next phase folder `NN-slug` of the scope's milestone, with `context.md` and the headers of
     `decisions.tsv` and `audit.tsv`, and bind the session to it (when there is a session id). Returns the folder.
-    Missing pieces are made: `.fwx/` with PROJECT.md, the subproject folder, milestone v1. The scope is `subproject`, or
+    Missing pieces are made: `.fwx/` with project.md, the subproject folder, milestone v1. The scope is `subproject`, or
     else the one the session is bound to, or else the root: a forgotten argument never drops a session out of its
     subproject. `milestone` defaults to the highest and must exist."""
     _check_slug(slug)
@@ -567,13 +584,13 @@ def new_phase(slug, subproject=None, milestone=None, cwd=None, session=None):
         subproject = bound["subproject"]
     root = plan_root(cwd)
     scope = scope_root(root, subproject)
-    texts = {n: _read_template(n) for n in ("PROJECT.md", "MILESTONE.md", "phase/context.md")}  # all of them, before any folder
+    texts = {n: _read_template(n) for n in ("project.md", "milestone.md", "phase/context.md")}  # all of them, before any folder
     try:
         os.makedirs(str(root))
-    except FileExistsError:  # another session made `.fwx/` first and writes PROJECT.md
+    except FileExistsError:  # another session made `.fwx/` first and writes project.md
         pass
     else:
-        _write_new(root / "PROJECT.md", texts["PROJECT.md"])
+        _write_new(root / "project.md", texts["project.md"])
     m = milestone or current_milestone(scope)
     if m is None:
         try:
