@@ -138,11 +138,24 @@ def _quick(top, cfg, say=lambda line: None):
     return out
 
 
-def _changed(top, base):
-    r = git(top, "diff", "--name-only", "%s..HEAD" % base)
+def _diff_names(top, *rng):
+    r = git(top, "diff", "--name-only", *rng)
     if r.returncode:
-        raise WaveError("git diff %s..HEAD failed: %s" % (base, r.stderr.strip()))
-    return [p for p in r.stdout.splitlines() if p]
+        raise WaveError("git diff %s failed: %s" % (" ".join(rng), r.stderr.strip()))
+    return {p for p in r.stdout.splitlines() if p}
+
+
+def _changed(top, base, cfg, to="HEAD"):
+    """The files of the part: those that differ between `base` and `to` and also between `to` and its merge-base with each default
+    branch ref that exists (`origin/<name>` and `<name>` for the names of verify.default_names). What the default branch brought in
+    by a merge after the base is not the part's. With no such ref, every file that differs from the base."""
+    names = _diff_names(top, "%s..%s" % (base, to))
+    for n in sorted(verify.default_names(top, cfg)):
+        for ref in ("refs/remotes/origin/" + n, "refs/heads/" + n):
+            mb = out(top, "merge-base", to, ref)
+            if mb:
+                names &= _diff_names(top, mb, to)
+    return sorted(names)
 
 
 def _oneline(text, limit=600):
@@ -336,7 +349,7 @@ def _merge(cwd, part_dir, run, branches, findings=(), final=False, say=lambda li
         result["verify"] = {"ran": True, "rc": code, "line": line + (" (%s)" % ", ".join(urls) if urls else "")}
         result["ok"] = code == 0
         if result["ok"]:
-            changed = _changed(top, base)
+            changed = _changed(top, base, cfg)
             setup = cfg["project"]["worktree_setup"]
             manifest = (_show(top, base, "package.json"), _show(top, "HEAD", "package.json")) if setup else None
             result["trusted"] = trusted.trusted_edits(changed, cfg["project"]["checks"], setup=setup, manifest=manifest)

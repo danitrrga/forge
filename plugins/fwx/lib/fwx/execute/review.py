@@ -102,9 +102,12 @@ def review(cwd, part_dir, run, frm, to, security, steps):
             raise WaveError("%s is not a commit of this repository" % ref)
     data, owner, ctx = _context(top, part_dir, run)
     try:
-        asked = prepare._security_why(data, owner["postmortem"], config.load(top))  # as `wave new` decides it: a small plan may have no post-mortem
+        cfg = config.load(top)
+        asked = prepare._security_why(data, owner["postmortem"], cfg)  # as `wave new` decides it: a small plan may have no post-mortem
     except (config.ConfigError, state.StateError) as e:
         raise WaveError(str(e))
+    own = integrate._changed(top, frm, cfg, to)
+    only = own if own != sorted(integrate._diff_names(top, "%s..%s" % (frm, to))) else None
     tag = "r%d" % (1 + sum(1 for r in steps if r.get("step") == "review"))
     protected = _protected(steps)
     why = (["--security"] if security else []) + asked + (["the last final merge named a protected path"] if protected else [])
@@ -112,7 +115,7 @@ def review(cwd, part_dir, run, frm, to, security, steps):
     agents = [("reviewer", tag, "review-%s" % tag)] + ([("security-reviewer", tag + "-sec", "review-%s-sec" % tag)] if sec else [])
     made = []
     for kind, unit, name in agents:
-        facts = brief.review_facts(kind, tag, unit, frm, to, ctx, criteria=data["criteria"] if kind == "reviewer" else (), protected=protected)
+        facts = brief.review_facts(kind, tag, unit, frm, to, ctx, criteria=data["criteria"] if kind == "reviewer" else (), protected=protected, only=only)
         made.append({"role": kind, "unit": unit, "brief": _write(brief.review_path(ctx["folder"], name), facts, brief.render_review(facts))})
     return 0, {"next": "launch", "why": "launch each reviewer with its brief, then `fwx wave findings --run %s --report \"<last line of each reply>\"...`" % run,
                "pass": tag, "from": frm, "to": to, "reviewers": made, "security": " and ".join(why) or "not asked for", "protected": protected}
